@@ -18,15 +18,15 @@ Um projeto de hardware e software embarcado para a identificação e análise de
 
 ## 📖 Sobre o Projeto
 
-[cite_start]A crescente utilização de conversores eletrônicos de potência (CEPs) tem introduzido perturbações de alta frequência em redes elétricas, conhecidas como **supraharmônicos**[cite: 5]. [cite_start]Esses componentes, tipicamente na faixa de dezenas de kHz, podem não ser corretamente identificados por analisadores de Qualidade de Energia Elétrica (QEE) convencionais[cite: 7].
+A crescente utilização de conversores eletrônicos de potência (CEPs) tem introduzido perturbações de alta frequência em redes elétricas, conhecidas como **supraharmônicos**. Esses componentes, tipicamente na faixa de dezenas de kHz, podem não ser corretamente identificados por analisadores de Qualidade de Energia Elétrica (QEE) convencionais.
 
-O **SH-Analyzer** nasce como uma solução para este problema. [cite_start]Trata-se de um sistema de instrumentação dedicado à identificação da presença de componentes supraharmônicos significativos na corrente e na tensão de uma instalação elétrica[cite: 8].
+O **SH-Analyzer** nasce como uma solução para este problema. Trata-se de um sistema de instrumentação dedicado à identificação da presença de componentes supraharmônicos significativos na corrente e na tensão de uma instalação elétrica.
 
 Este repositório contém o desenvolvimento do frontend de aquisição de dados, que inclui uma placa de circuito impresso (PCB) para condicionamento de sinais e o firmware de baixo nível para o processamento no microcomputador industrial.
 
 ## ✨ Funcionalidades
 
-* [cite_start]**Condicionamento de Sinal**: Placa dedicada para compatibilizar os sinais de sensores de tensão e corrente com as entradas do conversor AD[cite: 14].
+* **Condicionamento de Sinal**: Placa dedicada para compatibilizar os sinais de sensores de tensão e corrente com as entradas do conversor AD.
 * **Aquisição de Dados em Alta Frequência**: Sistema projetado para digitalizar sinais na faixa de dezenas de kHz, onde os supraharmônicos se manifestam.
 * **Processamento Embarcado**: Utilização do microcomputador industrial BeagleBone para controle da aquisição e processamento inicial dos dados.
 * **Design Aberto**: Todos os arquivos de design de hardware, firmware e documentação estão disponíveis neste repositório.
@@ -62,15 +62,15 @@ Um projeto de hardware e software embarcado para a identificação e análise de
 
 ## 📖 Sobre o Projeto
 
-[cite_start]A crescente utilização de conversores eletrônicos de potência (CEPs) tem introduzido perturbações de alta frequência em redes elétricas, conhecidas como **supraharmônicos**[cite: 5]. [cite_start]Esses componentes, tipicamente na faixa de dezenas de kHz, podem não ser corretamente identificados por analisadores de Qualidade de Energia Elétrica (QEE) convencionais[cite: 7].
+A crescente utilização de conversores eletrônicos de potência (CEPs) tem introduzido perturbações de alta frequência em redes elétricas, conhecidas como **supraharmônicos**. Esses componentes, tipicamente na faixa de dezenas de kHz, podem não ser corretamente identificados por analisadores de Qualidade de Energia Elétrica (QEE) convencionais.
 
-O **SH-Analyzer** nasce como uma solução para este problema. [cite_start]Trata-se de um sistema de instrumentação dedicado à identificação da presença de componentes supraharmônicos significativos na corrente e na tensão de uma instalação elétrica[cite: 8].
+O **SH-Analyzer** nasce como uma solução para este problema. Trata-se de um sistema de instrumentação dedicado à identificação da presença de componentes supraharmônicos significativos na corrente e na tensão de uma instalação elétrica.
 
 Este repositório contém o desenvolvimento do frontend de aquisição de dados, que inclui uma placa de circuito impresso (PCB) para condicionamento de sinais e o firmware de baixo nível para o processamento no microcomputador industrial.
 
 ## ✨ Funcionalidades
 
-* [cite_start]**Condicionamento de Sinal**: Placa dedicada para compatibilizar os sinais de sensores de tensão e corrente com as entradas do conversor AD[cite: 14].
+* **Condicionamento de Sinal**: Placa dedicada para compatibilizar os sinais de sensores de tensão e corrente com as entradas do conversor AD.
 * **Aquisição de Dados em Alta Frequência**: Sistema projetado para digitalizar sinais na faixa de dezenas de kHz, onde os supraharmônicos se manifestam.
 * **Processamento Embarcado**: Utilização do microcomputador industrial BeagleBone para controle da aquisição e processamento inicial dos dados.
 * **Design Aberto**: Todos os arquivos de design de hardware, firmware e documentação estão disponíveis neste repositório.
@@ -78,17 +78,13 @@ Este repositório contém o desenvolvimento do frontend de aquisição de dados,
 ## 📂 Estrutura do Repositório
 
 O projeto está organizado nos seguintes diretórios:
-
+```
 .
-
 ├── /hardware/      # Arquivos de design da PCB (Esquemático, Layout, 3D, Gerber)
-
 ├── /firmware/      # Código fonte em Assembly para o BeagleBone (PRUs)
-
 ├── /docs/          # Documentação geral, datasheets, relatórios e guias
-
 └── /simulation/    # Arquivos de simulação dos circuitos analógicos (PSIM, PSpice)
-
+```
 
 ## 🔩 Hardware
 
@@ -121,14 +117,14 @@ Para replicar ou utilizar este projeto, siga os passos abaixo.
 
 ## 🎓 Contexto Acadêmico
 
-[cite_start]Este projeto é resultado de uma pesquisa de **Iniciação Científica (IC)** desenvolvida no âmbito do projeto "Sistema de identificação da presença de supraharmônicos em redes e cargas elétricas"[cite: 2].
+Este projeto é resultado de uma pesquisa de **Iniciação Científica (IC)** desenvolvida no âmbito do projeto "Sistema de identificação da presença de supraharmônicos em redes e cargas elétricas".
 
-* [cite_start]**Orientador**: Prof. Dr. José Antenor Pomilio[cite: 3].
-* [cite_start]**Objetivo**: Formação de recursos humanos qualificados para pesquisas na área de instrumentação voltada a estudos de QEE[cite: 15].
+* **Orientador**: Prof. Dr. José Antenor Pomilio.
+* **Objetivo**: Formação de recursos humanos qualificados para pesquisas na área de instrumentação voltada a estudos de QEE.
 
 ## 📄 Licença
 
 Este projeto é distribuído sob a Licença MIT. Veja o arquivo `LICENSE` para mais detalhes.
 
 ## 🙏 Agradecimentos
-* Agradecimento especial ao Prof. Dr. José Antenor Pomilio pela orientação e suporte durante o desenvolvimento deste projeto.
+* Agradecimento especial ao Prof. Dr. José Antenor Pomilio e Dr. Mateus Pinheiro Dias pela orientação e suporte durante o desenvolvimento deste projeto.
