@@ -1,0 +1,35 @@
+Added Component: Designator=P?(691313510004)
+Add component (AddParameter): Name = "Color"; Value = "Green"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Contact Material"; Value = "Brass"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Contact Plating"; Value = "Tin"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Current"; Value = "20A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Gender"; Value = "Male"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Height"; Value = "12mm"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Lead Pitch"; Value = "5.08mm"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Length"; Value = "11.5mm"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Mount"; Value = "Through Hole"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "NexarPartId"; Value = "8917761"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Number of Contacts"; Value = "4"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Number of Levels"; Value = "1"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Number of Pins"; Value = "4"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Number of Positions Per Level"; Value = "4"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Number of Rows"; Value = "1"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Packaging"; Value = "Box"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Pitch"; Value = "5.08mm"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "REACH SVHC"; Value = "Unknown"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "RoHS"; Value = "Compliant"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Termination"; Value = "Solder"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Voltage"; Value = "300V"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Width"; Value = "22.32mm"; VariantName = "[No Variations]"
+Add Net: Net with name "NetD?_2" already exists
+Added Member To Class: ClassName=DAQ_SCH Member=Component D? BAT46ZFILM
+Added Member To Class: ClassName=DAQ_SCH Member=Component D? BAT46ZFILM
+Added Member To Class: ClassName=DAQ_SCH Member=Component J? SJ2-3574A-SMT-TR
+Added Member To Class: ClassName=DAQ_SCH Member=Component J? SSW-123-06-T-D
+Added Member To Class: ClassName=DAQ_SCH Member=Component J? SJ2-3574A-SMT-TR
+Added Member To Class: ClassName=DAQ_SCH Member=Component J? SJ2-3574A-SMT-TR
+Added Member To Class: ClassName=DAQ_SCH Member=Component J? SJ2-3574A-SMT-TR
+Added Member To Class: ClassName=DAQ_SCH Member=Component P? 691313510004
+Added Member To Class: ClassName=DAQ_SCH Member=Component U? ADS8688IDBTR
+Added Member To Class: ClassName=DAQ_SCH Member=Component U? SN6501DBVR
+Added Member To Class: ClassName=DAQ_SCH Member=Component U? ADUM3150BRSZ-RL7

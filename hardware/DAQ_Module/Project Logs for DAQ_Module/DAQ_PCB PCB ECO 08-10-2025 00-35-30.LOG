@@ -1,0 +1,25 @@
+Added Pin To Net: NetName=GND_ISO Pin=U?-4
+Added Pin To Net: NetName=GND_ISO Pin=U?-6
+Added Pin To Net: NetName=GND_ISO Pin=U?-8
+Added Pin To Net: NetName=+5V_ISO Pin=U?-9
+Added Pin To Net: NetName=GND_ISO Pin=U?-28
+Added Pin To Net: NetName=GND_ISO Pin=U?-29
+Added Pin To Net: NetName=+5V_ISO Pin=U?-30
+Added Pin To Net: NetName=GND_ISO Pin=U?-31
+Added Pin To Net: NetName=GND_ISO Pin=U?-32
+Added Pin To Net: NetName=GND_ISO Pin=U?-33
+Added Pin To Net: NetName=+5V_ISO Pin=U?-34
+Add Net: Net with name "NetD?_2" already exists
+Added Pin To Net: NetName=NetU?_13 Pin=U?-13
+Added Pin To Net: NetName=NetU?_13 Pin=U?-35
+Added Net: Name=NetU?_13
+Added Member To Class: ClassName=DAQ_SCH Member=Component D? BAT46ZFILM
+Added Member To Class: ClassName=DAQ_SCH Member=Component D? BAT46ZFILM
+Added Member To Class: ClassName=DAQ_SCH Member=Component J? SJ2-3574A-SMT-TR
+Added Member To Class: ClassName=DAQ_SCH Member=Component J? SJ2-3574A-SMT-TR
+Added Member To Class: ClassName=DAQ_SCH Member=Component J? SJ2-3574A-SMT-TR
+Added Member To Class: ClassName=DAQ_SCH Member=Component J? SJ2-3574A-SMT-TR
+Added Member To Class: ClassName=DAQ_SCH Member=Component J? SSW-123-06-T-D
+Added Member To Class: ClassName=DAQ_SCH Member=Component U? ADS8688IDBTR
+Added Member To Class: ClassName=DAQ_SCH Member=Component U? SN6501DBVR
+Added Member To Class: ClassName=DAQ_SCH Member=Component U? ADUM3150BRSZ-RL7
