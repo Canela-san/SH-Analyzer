@@ -68,6 +68,23 @@ DItemRevisionGUID=
 GenerateClassCluster=0
 DocumentUniqueId=TFJJOBOA
 
+[Document2]
+DocumentPath=DAQ_PCB.PcbDoc
+AnnotationEnabled=1
+AnnotateStartValue=1
+AnnotationIndexControlEnabled=0
+AnnotateSuffix=
+AnnotateScope=All
+AnnotateOrder=-1
+DoLibraryUpdate=1
+DoDatabaseUpdate=1
+ClassGenCCAutoEnabled=1
+ClassGenCCAutoRoomEnabled=0
+ClassGenNCAutoScope=None
+DItemRevisionGUID=
+GenerateClassCluster=0
+DocumentUniqueId=XAGDKBDO
+
 [Parameter1]
 Name=Designer
 Value=Gabriel Canela
