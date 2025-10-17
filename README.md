@@ -34,50 +34,6 @@ Este repositório contém o desenvolvimento do frontend de aquisição de dados,
 ## 📂 Estrutura do Repositório
 
 O projeto está organizado nos seguintes diretórios:
-Com certeza. Um README.md bem-feito é o cartão de visitas do seu repositório.
-
-Com base nas informações que você forneceu e nos detalhes do projeto, preparei um arquivo README.md completo e profissional. Ele está estruturado com as seções mais importantes para um projeto de hardware e software embarcado.
-
-Você pode copiar e colar o conteúdo abaixo diretamente em um arquivo README.md no seu repositório do GitHub.
-
-Markdown
-
-# SH-Analyzer: Analisador de Supraharmônicos
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-
-Um projeto de hardware e software embarcado para a identificação e análise de supraharmônicos em redes e cargas elétricas, utilizando uma PCB customizada e um microcomputador industrial BeagleBone.
-
----
-
-## 📝 Sumário
-* [Sobre o Projeto](#-sobre-o-projeto)
-* [Funcionalidades](#-funcionalidades)
-* [Estrutura do Repositório](#-estrutura-do-repositório)
-* [Hardware](#-hardware)
-* [Firmware](#-firmware)
-* [Começando](#-começando)
-* [Contexto Acadêmico](#-contexto-acadêmico)
-* [Licença](#-licença)
-* [Agradecimentos](#-agradecimentos)
-
-## 📖 Sobre o Projeto
-
-A crescente utilização de conversores eletrônicos de potência (CEPs) tem introduzido perturbações de alta frequência em redes elétricas, conhecidas como **supraharmônicos**. Esses componentes, tipicamente na faixa de dezenas de kHz, podem não ser corretamente identificados por analisadores de Qualidade de Energia Elétrica (QEE) convencionais.
-
-O **SH-Analyzer** nasce como uma solução para este problema. Trata-se de um sistema de instrumentação dedicado à identificação da presença de componentes supraharmônicos significativos na corrente e na tensão de uma instalação elétrica.
-
-Este repositório contém o desenvolvimento do frontend de aquisição de dados, que inclui uma placa de circuito impresso (PCB) para condicionamento de sinais e o firmware de baixo nível para o processamento no microcomputador industrial.
-
-## ✨ Funcionalidades
-
-* **Condicionamento de Sinal**: Placa dedicada para compatibilizar os sinais de sensores de tensão e corrente com as entradas do conversor AD.
-* **Aquisição de Dados em Alta Frequência**: Sistema projetado para digitalizar sinais na faixa de dezenas de kHz, onde os supraharmônicos se manifestam.
-* **Processamento Embarcado**: Utilização do microcomputador industrial BeagleBone para controle da aquisição e processamento inicial dos dados.
-* **Design Aberto**: Todos os arquivos de design de hardware, firmware e documentação estão disponíveis neste repositório.
-
-## 📂 Estrutura do Repositório
-
-O projeto está organizado nos seguintes diretórios:
 ```
 .
 ├── /hardware/      # Arquivos de design da PCB (Esquemático, Layout, 3D, Gerber)
