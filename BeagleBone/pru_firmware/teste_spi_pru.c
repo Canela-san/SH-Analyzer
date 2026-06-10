@@ -1,6 +1,5 @@
 #include <stdint.h>
 
-// Tabela de Recursos OBRIGATÓRIA para o driver remoteproc do Linux
 struct resource_table {
     uint32_t ver;
     uint32_t num;
@@ -10,55 +9,90 @@ struct resource_table {
 #pragma RETAIN(resource_table)
 struct resource_table resource_table = { 1, 0, {0, 0} };
 
-// Endereços base e offsets do banco GPIO3 do AM335x
-#define GPIO3_BASE        0x481AE000
-#define GPIO_OE           0x134 
-#define GPIO_CLEARDATAOUT 0x190
-#define GPIO_SETDATAOUT   0x194
+// Fast I/O
+volatile register uint32_t __R30; 
+volatile register uint32_t __R31; 
 
-#define SCLK_PIN (1 << 14) // P9_31
-#define MOSI_PIN (1 << 16) // P9_30
-#define CS_PIN   (1 << 17) // P9_28
+#define SCLK_BIT (1 << 0) 
+#define MOSI_BIT (1 << 1) 
+#define MISO_BIT (1 << 2) 
+#define CS_BIT   (1 << 3) 
 
-volatile uint32_t *gpio3_oe    = (uint32_t *)(GPIO3_BASE + GPIO_OE);
-volatile uint32_t *gpio3_clear = (uint32_t *)(GPIO3_BASE + GPIO_CLEARDATAOUT);
-volatile uint32_t *gpio3_set   = (uint32_t *)(GPIO3_BASE + GPIO_SETDATAOUT);
+// =====================================================================
+// ARQUITETURA EXPANDIDA DA MEMÓRIA COMPARTILHADA
+// =====================================================================
+#define BUFFER_SIZE 2000 
 
-void delay_cycles(uint32_t cycles) {
-    while(cycles--) __delay_cycles(1);
-}
+struct shared_memory {
+    volatile uint32_t sample_period_ticks; // NOVO: Controle Dinâmico da Frequência
+    volatile uint32_t write_index;
+    volatile uint32_t data[BUFFER_SIZE];
+};
+
+#define PRU_SHARED_RAM 0x00010000
+volatile struct shared_memory *shared = (volatile struct shared_memory *)PRU_SHARED_RAM;
+
+volatile uint32_t *pru_ctrl  = (uint32_t *)0x22000;
+volatile uint32_t *pru_cycle = (uint32_t *)0x2200C;
 
 void main(void) {
-    // Habilita a porta OCP Master (bit 4 do SYSCFG)
     volatile uint32_t *pru_syscfg = (uint32_t *)0x26004;
     *pru_syscfg &= ~(1 << 4);
 
-    // Forçando a direção dos pinos como SAÍDA (Hardware puro)
-    *gpio3_oe &= ~(SCLK_PIN | MOSI_PIN | CS_PIN);
+    *pru_ctrl |= (1 << 3); 
+    *pru_cycle = 0;        
 
-    uint8_t test_byte = 0xAA; 
+    __R30 |= CS_BIT;
+    __R30 &= ~SCLK_BIT;
+
+    // Frequência de repouso segura inicial (ex: 10 kHz = 20.000 ticks)
+    // Evita que a PRU trave caso o Linux ainda não tenha enviado a configuração
+    if(shared->sample_period_ticks < 1000) {
+        shared->sample_period_ticks = 20000; 
+    }
+
+    shared->write_index = 0; 
+    
+    uint32_t tx_frame = 0xC4000000;
+    uint32_t next_sample_time = *pru_cycle + shared->sample_period_ticks;
+    volatile uint32_t rx_frame;
     int i;
 
     while(1) {
-        *gpio3_set = CS_PIN; 
-        delay_cycles(100000); 
+        // 1. Lê a frequência exigida pelo Linux dinamicamente
+        uint32_t current_ticks = shared->sample_period_ticks;
         
-        *gpio3_clear = CS_PIN; 
-        delay_cycles(10000);
+        // 2. Trava de Frequência com proteção de Overflow (Qualidade Contínua)
+        // O cast para int32_t resolve matematicamente o momento em que o timer zera a cada 21s
+        while ((int32_t)(next_sample_time - *pru_cycle) > 0);
+        next_sample_time += current_ticks; 
 
-        for(i = 7; i >= 0; i--) {
-            if((test_byte >> i) & 1) *gpio3_set = MOSI_PIN;
-            else *gpio3_clear = MOSI_PIN;
-            delay_cycles(5000);
+        // 3. Transação SPI Fast I/O
+        __R30 &= ~CS_BIT; 
+        __delay_cycles(5); 
+        rx_frame = 0; 
 
-            *gpio3_set = SCLK_PIN;
-            delay_cycles(10000);
+        for(i = 31; i >= 0; i--) {
+            if((tx_frame >> i) & 1) __R30 |= MOSI_BIT;
+            else __R30 &= ~MOSI_BIT;
+            __delay_cycles(5); 
 
-            *gpio3_clear = SCLK_PIN;
-            delay_cycles(5000);
+            __R30 |= SCLK_BIT;
+            __delay_cycles(5);
+            
+            if(__R31 & MISO_BIT) rx_frame |= (1 << i);
+            __delay_cycles(5);
+
+            __R30 &= ~SCLK_BIT;
+            __delay_cycles(5); 
         }
-
-        *gpio3_set = CS_PIN;
-        delay_cycles(50000000); 
+        __R30 |= CS_BIT; 
+        
+        // 4. Gravação Circular
+        shared->data[shared->write_index] = rx_frame;
+        
+        uint32_t next_idx = shared->write_index + 1;
+        if(next_idx >= BUFFER_SIZE) next_idx = 0; 
+        shared->write_index = next_idx;
     }
 }
