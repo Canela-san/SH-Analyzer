@@ -13,7 +13,7 @@ CC_PRU = clpru
 CFLAGS_PRU = -O2 --silicon_version=3
 CMD_PRU = AM335x_PRU.cmd
 TARGET_PRU = fw_pru.out
-SRC_PRU_C = teste_spi_pru.c
+SRC_PRU_C = pru_main.c
 SRC_PRU_ASM = spi_core.asm
 
 # ==============================================================================
