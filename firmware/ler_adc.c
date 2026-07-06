@@ -29,11 +29,16 @@ int main(int argc, char *argv[]) {
     uint16_t *buffer_1_virtual = buffer_0_virtual + SAMPLES_PER_BUFFER;
 
     // 3. Configura a PRU
+    // IMPORTANTE: config_ready só é setado por último, no final deste bloco -
+    // é o que garante que a PRU (que fica presa em "espera_configuracao" logo
+    // no início do spi_core.asm) só comece a gravar depois que TODOS os campos
+    // abaixo já estiverem com valores válidos.
     ctrl->buffer_0_addr = DDR_RESERVED_PHYS;
     ctrl->buffer_1_addr = DDR_RESERVED_PHYS + (SAMPLES_PER_BUFFER * sizeof(uint16_t));
     ctrl->buffer_0_ready = 0;
     ctrl->buffer_1_ready = 0;
     ctrl->sample_period_ticks = 200000000 / frequencia_desejada; // A 1 MSPS = 200 ticks
+    ctrl->config_ready = 1; // <-- Sinal final: PRU pode iniciar a aquisição agora
 
     // 4. Arquivo Binário de Alta Velocidade
     FILE *ficheiro_bin = fopen("supraharmonicos_raw.bin", "wb");
