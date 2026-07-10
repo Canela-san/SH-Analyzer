@@ -1,4 +1,64 @@
+# =====================================================================
+# Ambiente / dados coletados na BeagleBone
+# =====================================================================
 BeagleBone/
 Collected_Data/
-hardware/DAQ_Module/History/
-hardware/DAQ_Module/Project Logs for DAQ_Module/
+
+# =====================================================================
+# Altium Designer - arquivos temporários, histórico e saídas geradas
+# Usando padrões genéricos (**/) para pegar QUALQUER projeto/placa na
+# pasta /hardware, não só o DAQ_Module - evita ter que atualizar isso
+# de novo a cada placa nova.
+# =====================================================================
+**/History/
+**/Project Logs for */
+**/*.OutJob
+**/Project Outputs for */
+**/*.PcbDoc.bak
+**/*.SchDoc.bak
+**/*~
+**/Recovery/
+*.DcvOut
+*.Bak
+
+# =====================================================================
+# Artefatos de compilação do firmware (PRU + ARM)
+# =====================================================================
+firmware/*.out
+firmware/*.map
+firmware/*.obj
+firmware/ler_adc
+firmware/ler_adc_diagnostico
+firmware/fw_pru*.out
+*.out
+*.map
+*.obj
+
+# =====================================================================
+# Dados capturados / gerados em tempo de execução (pesados, não devem
+# ir para o repositório - o objetivo do repo é o código, não os dados
+# de cada teste)
+# =====================================================================
+*.bin
+log.txt
+diagnostico_preambulo.bin
+supraharmonicos_raw.bin
+amostras_*.csv
+
+# =====================================================================
+# Python
+# =====================================================================
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# =====================================================================
+# Sistema operacional / editor
+# =====================================================================
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+.vscode/
