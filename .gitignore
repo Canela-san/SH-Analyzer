@@ -40,10 +40,10 @@ firmware/fw_pru*.out
 # de cada teste)
 # =====================================================================
 *.bin
-log.txt
-diagnostico_preambulo.bin
-supraharmonicos_raw.bin
-amostras_*.csv
+**/log.txt
+**/diagnostico_preambulo.bin
+**/supraharmonicos_raw.bin
+**/amostras_*.csv
 
 # =====================================================================
 # Python
