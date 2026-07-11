@@ -91,9 +91,6 @@ int main(int argc, char *argv[]) {
     
     fprintf(ficheiro_csv, "Amostra,Codigo_Digital,Tensao_ADC_V,Tensao_Real_V\n");
 
-    // ==================================================================
-    // CABEÇALHO DO DASHBOARD NO TERMINAL
-    // ==================================================================
     printf(C_CYAN "=========================================================\n" C_RESET);
     printf(C_BOLD " ⚡ SISTEMA DE AQUISIÇÃO DE ALTA PRECISÃO - UNICAMP ⚡\n" C_RESET);
     printf(C_CYAN "=========================================================\n" C_RESET);
@@ -107,9 +104,8 @@ int main(int argc, char *argv[]) {
     unsigned long long contador_amostras = 0;
 
     float dc_offset_estimado = 0.0;
-    float alpha = 0.0002; // Filtro suave para rastrear o offset do transformador
+    float alpha = 0.0002;
 
-    // Taxa de atualização do terminal (Atualiza a tela 10 vezes por segundo)
     uint32_t update_rate = frequencia_desejada / 1; 
     if(update_rate == 0) update_rate = 1;
 
@@ -131,15 +127,15 @@ int main(int argc, char *argv[]) {
             fprintf(ficheiro_csv, "%llu,0x%04X,%.4f,%.4f\n", contador_amostras, adc_code, v_adc_ac_coupled, v_real);
             contador_amostras++;
 
-            // Atualização visual do terminal sem travar a escrita
+
             if (contador_amostras % update_rate == 0) {
-                // O \r faz o cursor voltar ao início da linha para reescrevê-la
+  
                 printf("\r " C_BOLD "Status:" C_RESET " %s%8llu%s ams | Rede: %s%+8.2f V%s | ADC: %s%+6.3f V%s | Offset DC: %+6.3f V  ", 
                        C_YELLOW, contador_amostras, C_RESET,
                        C_GREEN, v_real, C_RESET,
                        C_CYAN, v_adc_ac_coupled, C_RESET,
                        dc_offset_estimado);
-                fflush(stdout); // Força o terminal a desenhar imediatamente
+                fflush(stdout); 
             }
 
             read_index++;
