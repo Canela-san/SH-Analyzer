@@ -10,12 +10,12 @@
 volatile int manter_execucao = 1;
 void lidar_interrupcao(int dummy) { manter_execucao = 0; }
 
-#define BLOCOS_PARA_CAPTURAR 8   // auto-encerra depois de capturar essa quantidade
+#define BLOCOS_PARA_CAPTURAR 1   // auto-encerra depois de capturar essa quantidade
 
 int main(int argc, char *argv[]) {
     signal(SIGINT, lidar_interrupcao);
 
-    uint32_t frequencia_desejada = 2000; // Bem mais baixa - a transação agora leva ~21 us
+    uint32_t frequencia_desejada = 30000; // Bem mais baixa - a transação agora leva ~21 us
     if (argc > 1) {
         frequencia_desejada = (uint32_t)atoi(argv[1]);
         if (frequencia_desejada == 0 || frequencia_desejada > 500000) {
