@@ -4,6 +4,7 @@
 #     "pandas",
 #     "matplotlib",
 #     "numpy",
+#     "pyqt6>=6.11.0",
 # ]
 # ///
 

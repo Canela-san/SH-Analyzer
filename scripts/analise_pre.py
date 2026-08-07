@@ -2,6 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "numpy",
+#     "pyqt6>=6.11.0",
 # ]
 # ///
 
