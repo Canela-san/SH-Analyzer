@@ -2,150 +2,137 @@
     .sect ".text"
 
 ; ==============================================================================
-; VERSÃO DE DIAGNÓSTICO - CAPTURA TAMBÉM O "PREÂMBULO" (16 PRIMEIROS CICLOS)
+; SPI_CORE - VERSÃO DE PRODUÇÃO (validada em hardware)
 ; ==============================================================================
-; Objetivo: descobrir se o MISO está preso em 1 o tempo todo (hardware) ou
-; só durante a fase de dado (ADC/referência). Segundo o datasheet do
-; ADS8688, o SDO fica em 0 durante os primeiros 16 ciclos de SCLK (fase em
-; que só estamos escrevendo o comando); só a partir do 16º ciclo é que o
-; SDO passa a mostrar os 16 bits reais da conversão anterior.
-;
-; Esta versão grava AMBOS os valores por amostra (4 bytes em vez de 2):
-;   [preambulo_lo, preambulo_hi, dado_lo, dado_hi]
-; ou seja, cada amostra agora é um par de uint16: (preambulo, dado).
-;
-; INTERPRETAÇÃO DO RESULTADO (ver script analisar_preambulo.py):
-;   - preambulo ~= 0x0000 e dado sempre no mesmo valor -> comunicação SPI
-;     básica está OK (o ADC "ouve" o CS/SCLK corretamente), o problema está
-;     na conversão em si (referência, alimentação, canal, ou o ADC está
-;     saturado/em erro).
-;   - preambulo TAMBÉM travado (ex: sempre 0xFFFF) -> o MISO está sendo
-;     lido como 1 o tempo todo, independente da fase do protocolo. Isso
-;     aponta para hardware (pull-up dominando, fio desconectado, ADC sem
-;     alimentação/referência deixando SDO em alta impedância) e não para
-;     lógica de software.
-;
-; Baseado em spi_core_diagnostico_lento.asm (mesma margem de CS, mesmo
-; reset de CYCLE, mesma inicialização de pinos em repouso).
+; Histórico resumido do que foi validado experimentalmente até chegar aqui:
+;   - Frame de 32 ciclos de SCLK por amostra (16 para escrever o comando de
+;     canal + 16 para ler o dado da conversão anterior), conforme datasheet
+;     SBAS582 do ADS8688.
+;   - Comando enviado a cada frame: MAN_Ch_1 (0xC400) - o canal 1, que é o
+;     que está de fato conectado a um sinal válido nesta placa (o canal 0
+;     ficava sempre saturado em fundo de escala, mesmo com a comunicação SPI
+;     comprovadamente correta - ver histórico de depuração).
+;   - Escrita do bit de MOSI feita com desvio condicional (QBBC), replicando
+;     o if/else do firmware original em C (teste_spi_pru.c) - a versão
+;     "branchless" com deslocamentos/máscaras não deu certo na prática.
+;   - Amostragem do MISO no ÚLTIMO instante seguro antes da borda de DESCIDA
+;     do SCLK (máximo tempo de acomodação do sinal dentro do período em que
+;     o SCLK está alto) - foi essa mudança (mais a de cima) que resolveu a
+;     leitura presa em fundo de escala.
+;   - CS/SCLK/MOSI inicializados em repouso antes do laço principal.
+;   - Registrador CYCLE da PRU é ressincronizado no início da aquisição e a
+;     cada troca de buffer (ele trava em vez de dar a volta ao estourar
+;     32 bits, ~21,47 s a 200 MHz).
+;   - Margens de tempo em torno do CS (setup, hold, e tempo mínimo em nível
+;     alto entre transações) mantidas como no arquivo validado.
 ; ==============================================================================
-; PINOS (compatível com o antigo teste_spi_pru.c):
+; PINOS:
 ;   Bit 0 (r30) = SCLK   | Bit 1 (r30) = SDI/MOSI
 ;   Bit 2 (r31) = SDO/MISO | Bit 3 (r30) = CS
 ; ==============================================================================
 
 ; ==============================================================================
-; VERSÃO 2 DE DIAGNÓSTICO: replica o MESMO ponto de amostragem do MISO que o
-; código antigo comprovadamente funcional (teste_spi_pru.c) - ele lê o MISO
-; logo APÓS SUBIR o SCLK (borda de subida), não depois de descer como a
-; versão anterior deste diagnóstico fazia. Se o optoacoplador tiver tempos
-; de subida/descida assimétricos (muito comum), sampleab um pino no
-; momento errado do ciclo pode capturar sempre o mesmo "resquício" de uma
-; transição lenta - o que bate exatamente com o padrão visto (uma única
-; transição no meio dos 32 ciclos, sempre no mesmo lugar).
-;
-; Também MUITO mais lento: ~555 ns/bit (~1,8 MHz), bem além da margem do
-; código antigo. Use com uma frequência de amostragem baixa (ex: 2000 Hz),
-; já que cada transação agora consome ~17,8 us.
+; MACRO: Escreve 1 bit de comando no SDI (Ciclos 1-16 do frame do ADS8688)
+; r28 = registrador de comando (deslocado a cada chamada, MSB no bit 31)
 ; ==============================================================================
-; ==============================================================================
-; DELAY_TICKS: mesmo mecanismo do spi_core.asm principal - ajuste este único
-; valor para controlar a velocidade do SPI sem estourar a PRU_IMEM.
-; ==============================================================================
-DELAY_TICKS .set 1
-
 CMD_BIT .macro
-    ; 1. Configura o MOSI (SDI) testando estritamente o bit 31 (igual ao if do C)
+    ; 1. Configura o MOSI testando o bit 31 (igual ao if/else do C validado)
     QBBC limpa_mosi?, r28, 31
-    SET r30, r30, 1          ; Se bit 31 for 1, MOSI = 1
+    SET r30, r30, 1          ; bit 31 = 1 -> MOSI alto
     QBA mosi_pronto?
 limpa_mosi?:
-    CLR r30, r30, 1          ; Se bit 31 for 0, MOSI = 0
+    CLR r30, r30, 1          ; bit 31 = 0 -> MOSI baixo
 mosi_pronto?:
     LSL r28, r28, 1          ; Desloca para o próximo bit
 
-    ; 2. Delay Setup MOSI
-    LDI r0, DELAY_TICKS
-espera_a?: SUB r0, r0, 1; QBNE espera_a?, r0, 0
+    NOP
+    NOP
+    NOP
 
-    ; 3. Sobe o SCLK
-    SET r30, r30, 0
+    SET r30, r30, 0          ; Sobe o SCLK
 
-    ; 4. Delay duplo: Maximiza o tempo de estabilização do sinal físico
-    LDI r0, DELAY_TICKS
-espera_b?: SUB r0, r0, 1; QBNE espera_b?, r0, 0
-    LDI r0, DELAY_TICKS
-espera_c?: SUB r0, r0, 1; QBNE espera_c?, r0, 0
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP                      ; Acomodação máxima antes da borda de descida
 
-    ; 5. Amostra o MISO no último instante seguro (igual ao if do C)
+    ; NOTA: este bloco não faz nada útil com o resultado (r5 é descartado) -
+    ; ele existe só para manter o CMD_BIT com EXATAMENTE a mesma duração do
+    ; DATA_BIT em nível ALTO do SCLK, igual estava na versão validada em
+    ; hardware (lá esse bloco capturava o preâmbulo de diagnóstico, na
+    ; mesma posição, logo antes de descer o SCLK). Remover essa simetria
+    ; encurtou justo a margem de acomodação/aquisição antes da borda de
+    ; descida, e é a suspeita mais provável para a distorção de 2x/período
+    ; relatada (a taxa de variação do sinal é máxima nos cruzamentos por
+    ; zero, onde essa margem apertada mais afetaria a leitura).
     LSL r5, r5, 1
-    QBBC pula_set_miso?, r31, 2
-    OR r5, r5, 1             ; Adiciona 1 se o MISO estiver alto
-pula_set_miso?:
+    QBBC pula_descarte?, r31, 2
+    OR r5, r5, 1
+pula_descarte?:
 
-    ; 6. Desce o SCLK
-    CLR r30, r30, 0
+    CLR r30, r30, 0          ; Desce o SCLK -> ADC lê o bit no SDI
 
-    ; 7. Delay Hold SCLK
-    LDI r0, DELAY_TICKS
-espera_d?: SUB r0, r0, 1; QBNE espera_d?, r0, 0
+    NOP
+    NOP
+    NOP
     .endm
 
+; ==============================================================================
+; MACRO: Lê 1 bit de dado do SDO (Ciclos 17-32 do frame do ADS8688)
+; r23 = acumulador de 16 bits da amostra
+; ==============================================================================
 DATA_BIT .macro
-    ; O MOSI já está em 0 do último CMD_BIT, não precisamos mexer
+    NOP
+    NOP
+    NOP
 
-    ; 1. Delay Setup
-    LDI r0, DELAY_TICKS
-espera_e?: SUB r0, r0, 1; QBNE espera_e?, r0, 0
+    SET r30, r30, 0          ; Sobe o SCLK
 
-    ; 2. Sobe o SCLK
-    SET r30, r30, 0
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP                      ; Acomodação máxima antes da amostragem
 
-    ; 3. Delay duplo: Maximiza o tempo de estabilização do sinal físico
-    LDI r0, DELAY_TICKS
-espera_f?: SUB r0, r0, 1; QBNE espera_f?, r0, 0
-    LDI r0, DELAY_TICKS
-espera_g?: SUB r0, r0, 1; QBNE espera_g?, r0, 0
-
-    ; 4. Amostra o MISO (Dado real) no último instante seguro
+    ; Amostra o MISO no ÚLTIMO instante seguro, logo antes de descer o SCLK
     LSL r23, r23, 1
-    QBBC pula_set_dado?, r31, 2
+    QBBC pula_dado?, r31, 2
     OR r23, r23, 1
-pula_set_dado?:
+pula_dado?:
 
-    ; 5. Desce o SCLK
-    CLR r30, r30, 0
+    CLR r30, r30, 0          ; Desce o SCLK
 
-    ; 6. Delay Hold SCLK
-    LDI r0, DELAY_TICKS
-espera_h?: SUB r0, r0, 1; QBNE espera_h?, r0, 0
+    NOP
+    NOP
+    NOP
     .endm
 
 ; ==============================================================================
 ; ASSINATURA: void ler_ads8688_asm(volatile struct shared_control *ctrl)
 ; r14 = Ponteiro base da struct shared_control (0x00010000)
-; r5  = acumulador do preâmbulo (NOVO - só para diagnóstico)
 ; ==============================================================================
 ler_ads8688_asm:
     SET r30, r30, 3   ; CS alto (desselecionado)
     CLR r30, r30, 0   ; SCLK baixo
     CLR r30, r30, 1   ; MOSI baixo
 
+    ; Monta o endereço físico do Cycle Counter (0x2200C) no registrador r18
     LDI r18.w0, 0x200C
     LDI r18.w2, 0x0002
 
-    ; ==========================================================================
-    ; NOVO: SAMPLES_PER_BUFFER reduzido para 8192 (era 1.048.576), só para
-    ; este diagnóstico encher o buffer quase instantaneamente. Se mudar este
-    ; valor, ajuste também SAMPLES_PER_BUFFER em memoria_pru_diagnostico.h
-    ; para bater exatamente com o mesmo número.
-    ; ==========================================================================
-    LDI r21.w0, 0x2000   ; 0x00002000 em Hex = 8.192
-    LDI r21.w2, 0x0000
+    ; Limite do buffer: 1.048.576 amostras (2 MB por buffer)
+    LDI r21.w0, 0x0000
+    LDI r21.w2, 0x0010   ; 0x00100000 em Hex = 1.048.576
 
 espera_configuracao:
     LBBO &r20, r14, 24, 4
     QBEQ espera_configuracao, r20, 0
 
+    ; Zera o contador de ciclos agora, no momento real em que a aquisição
+    ; começa (ver histórico: CYCLE trava ao estourar, não dá a volta).
     LDI r20, 0
     SBBO &r20, r18, 0, 4
 
@@ -157,19 +144,7 @@ espera_configuracao:
     LDI r15, 0
     LDI r26, 0
 
-    LBBO &r17, r18, 0, 4
-    ADD r17, r17, r16
-
-    ; ==========================================================================
-    ; NOVO: manda um comando de RESET (0x8500) uma única vez, antes do laço
-    ; principal, para garantir que o ADS8688 comece do valor padrão de
-    ; fábrica conhecido (registrador de range = ±2,5*VREF = ±10,24V em TODOS
-    ; os canais, conforme Table 3 do datasheet SBAS582), independente de
-    ; qualquer configuração residual deixada por sessões de teste anteriores
-    ; (o registrador de range só volta ao padrão com RESET ou power-cycle -
-    ; nunca mandamos esse comando antes, e o histórico de depuração já teve
-    ; várias versões com bugs que mandavam bits inesperados pelo SDI).
-    ; ==========================================================================
+    MOV r17, r16           ; r17 = next_sample_time = 0 + período
 
 laco_principal:
     LBBO &r16, r14, 0, 4
@@ -190,8 +165,7 @@ delay_cs_setup:
     QBNE delay_cs_setup, r1, 0
 
     LDI r23, 0
-    LDI r5, 0                ; NOVO: zera o acumulador do preâmbulo
-    LDI32 r28, 0xC4000000
+    LDI32 r28, 0xC4000000    ; MAN_Ch_1 - ver nota no cabeçalho do arquivo
 
     CMD_BIT
     CMD_BIT
@@ -232,23 +206,20 @@ delay_cs_hold:
     SUB r1, r1, 1
     QBNE delay_cs_hold, r1, 0
 
-    SET r30, r30, 3          ; Levanta o CS - Fim da transação
+    SET r30, r30, 3          ; Levanta o CS - fim da transação
 
-    ; =======================================================================
-    ; TRAVA DE QUALIDADE DE AQUISIÇÃO
-    ; Garante >400ns de CS ALTO para o ADS8688 recarregar o capacitor interno,
-    ; mesmo que a frequência exigida pela memória compartilhada seja extrema ou 0.
-    ; =======================================================================
+    ; Tempo mínimo de CS alto entre transações (recarga do capacitor interno
+    ; de amostragem do ADS8688), independente da frequência configurada.
     LDI r1, 100
 delay_cs_high_minimo:
     SUB r1, r1, 1
     QBNE delay_cs_high_minimo, r1, 0
 
-    ; Grava preâmbulo (2 bytes) + dado (2 bytes) = 4 bytes/amostra
-    SBBO &r5, r19, 0, 2
-    SBBO &r23, r19, 2, 2
-    ADD r19, r19, 4
+    ; --- GRAVAÇÃO DIRETA NA MEMÓRIA DDR ---
+    SBBO &r23, r19, 0, 2
+    ADD r19, r19, 2
 
+    ; --- LÓGICA DE PING-PONG ---
     ADD r15, r15, 1
     QBNE continua, r15, r21
 
