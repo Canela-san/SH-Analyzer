@@ -1,3 +1,13 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "matplotlib>=3.10.9",
+#     "numpy",
+#     "pyqt6>=6.11.0",
+#     "scipy>=1.15.3",
+# ]
+# ///
+
 import argparse
 import sys
 import numpy as np

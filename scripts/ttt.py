@@ -1,3 +1,11 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "matplotlib>=3.11.1",
+#     "numpy>=2.5.1",
+#     "pyqt6>=6.11.0",
+# ]
+# ///
 import numpy as np
 import matplotlib.pyplot as plt
 
