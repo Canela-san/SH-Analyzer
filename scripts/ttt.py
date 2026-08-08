@@ -19,7 +19,7 @@ estrutura_pacote = np.dtype([
 
 # 2. Leitura Otimizada do Arquivo
 # O fromfile mapeia o binário direto para a memória usando a estrutura em C
-dados = np.fromfile('diagnostico_preambulo.bin', dtype=estrutura_pacote)
+dados = np.fromfile('supraharmonicos_raw.bin', dtype=estrutura_pacote)
 
 # 3. Isolamento da Tensão
 # O Numpy separa o array permitindo que a gente pegue apenas a "coluna" dos dados
