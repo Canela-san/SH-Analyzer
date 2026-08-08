@@ -25,6 +25,12 @@
 ;     32 bits, ~21,47 s a 200 MHz).
 ;   - Margens de tempo em torno do CS (setup, hold, e tempo mínimo em nível
 ;     alto entre transações) mantidas como no arquivo validado.
+;   - Preâmbulo (r5, capturado durante o CMD_BIT) é usado só para manter o
+;     timing simétrico com o DATA_BIT - NUNCA é gravado na DDR. A única
+;     escrita em memória do laço principal é "SBBO &r23, r19, 0, 2", ou
+;     seja, só os 16 bits de dado real da amostra (2 bytes/amostra). A
+;     captura do preâmbulo para diagnóstico (arquivo *_diagnostico_*.asm,
+;     separado deste) não faz parte do fluxo de produção.
 ; ==============================================================================
 ; PINOS:
 ;   Bit 0 (r30) = SCLK   | Bit 1 (r30) = SDI/MOSI

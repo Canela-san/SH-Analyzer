@@ -38,10 +38,10 @@ int main(int argc, char *argv[]) {
     }
     volatile struct shared_control *ctrl = (volatile struct shared_control *)ctrl_map;
 
-    // NOVO: cada amostra agora ocupa 4 bytes (preambulo uint16 + dado uint16)
-    // em vez de 2. O tamanho total mapeado e o endereço do buffer 1 têm que
-    // refletir isso.
-    size_t bytes_por_buffer = (size_t)SAMPLES_PER_BUFFER * 2 * sizeof(uint16_t);
+    // Cada amostra ocupa 2 bytes (só o dado real do ADC - o preâmbulo é lido
+    // pela PRU só para manter o timing simétrico entre as duas metades do
+    // frame SPI, mas nunca é gravado na DDR, então não entra aqui).
+    size_t bytes_por_buffer = (size_t)SAMPLES_PER_BUFFER * sizeof(uint16_t);
     void *ddr_map = mmap(0, bytes_por_buffer * 2, PROT_READ, MAP_SHARED, mem_fd, DDR_RESERVED_PHYS);
     if (ddr_map == MAP_FAILED) {
         perror("Erro ao mapear a região DDR reservada");
@@ -51,7 +51,7 @@ int main(int argc, char *argv[]) {
     }
 
     uint16_t *buffer_0_virtual = (uint16_t *)ddr_map;
-    uint16_t *buffer_1_virtual = buffer_0_virtual + (SAMPLES_PER_BUFFER * 2);
+    uint16_t *buffer_1_virtual = buffer_0_virtual + SAMPLES_PER_BUFFER;
 
     ctrl->buffer_0_addr = DDR_RESERVED_PHYS;
     ctrl->buffer_1_addr = DDR_RESERVED_PHYS + (uint32_t)bytes_por_buffer;
@@ -60,16 +60,16 @@ int main(int argc, char *argv[]) {
     ctrl->sample_period_ticks = 200000000 / frequencia_desejada;
     ctrl->config_ready = 1;
 
-    FILE *ficheiro_bin = fopen("diagnostico_preambulo.bin", "wb");
+    FILE *ficheiro_bin = fopen("supraharmonicos_raw.bin", "wb");
     if (!ficheiro_bin) {
-        perror("Erro ao criar diagnostico_preambulo.bin");
+        perror("Erro ao criar supraharmonicos_raw.bin");
         munmap(ddr_map, bytes_por_buffer * 2);
         munmap(ctrl_map, 4096);
         close(mem_fd);
         return -1;
     }
 
-    printf("Frequência: %u Hz | SAMPLES_PER_BUFFER=%d (diagnóstico) | ticks=%u\n",
+    printf("Frequência: %u Hz | SAMPLES_PER_BUFFER=%d | ticks=%u\n",
            frequencia_desejada, SAMPLES_PER_BUFFER, ctrl->sample_period_ticks);
     printf("Capturando %d blocos e encerrando automaticamente...\n", BLOCOS_PARA_CAPTURAR);
 
@@ -77,13 +77,13 @@ int main(int argc, char *argv[]) {
 
     while (manter_execucao && blocos_salvos < BLOCOS_PARA_CAPTURAR) {
         if (ctrl->buffer_0_ready) {
-            fwrite(buffer_0_virtual, sizeof(uint16_t), SAMPLES_PER_BUFFER * 2, ficheiro_bin);
+            fwrite(buffer_0_virtual, sizeof(uint16_t), SAMPLES_PER_BUFFER, ficheiro_bin);
             ctrl->buffer_0_ready = 0;
             blocos_salvos++;
             printf("Bloco A gravado (%llu/%d)\n", blocos_salvos, BLOCOS_PARA_CAPTURAR);
         }
         if (ctrl->buffer_1_ready) {
-            fwrite(buffer_1_virtual, sizeof(uint16_t), SAMPLES_PER_BUFFER * 2, ficheiro_bin);
+            fwrite(buffer_1_virtual, sizeof(uint16_t), SAMPLES_PER_BUFFER, ficheiro_bin);
             ctrl->buffer_1_ready = 0;
             blocos_salvos++;
             printf("Bloco B gravado (%llu/%d)\n", blocos_salvos, BLOCOS_PARA_CAPTURAR);
@@ -91,7 +91,7 @@ int main(int argc, char *argv[]) {
         usleep(2000);
     }
 
-    printf("Diagnóstico concluído: %s\n", "diagnostico_preambulo.bin");
+    printf("Captura concluída: %s\n", "supraharmonicos_raw.bin");
 
     fclose(ficheiro_bin);
     munmap(ddr_map, bytes_por_buffer * 2);
