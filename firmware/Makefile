@@ -1,5 +1,5 @@
-# Makefile temporário para o diagnóstico do preâmbulo.
-# Uso: make -f Makefile.diagnostico
+# Makefile de build do firmware (PRU) e do leitor ARM (ler_adc).
+# Uso: make
 
 CC_ARM = gcc
 CFLAGS_ARM = -Wall -O3
@@ -17,4 +17,4 @@ pru:
 	$(CC_PRU) $(CFLAGS_PRU) pru_main.c spi_core.asm -z $(CMD_PRU) -o fw_pru.out
 
 clean:
-	rm -f ler_adc fw_pru.out *.map *.obj diagnostico_preambulo.bin
+	rm -f ler_adc fw_pru.out *.map *.obj supraharmonicos_raw.bin

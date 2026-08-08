@@ -34,7 +34,7 @@ SECTIONS {
     
     /* Variáveis locais, pilha e seções padrão do C */
     .stack          >  PRU_DMEM_0_1, PAGE 1
-    .bss            >  PRU_DMEM_0_1, PAGE 1 [cite: 99]
+    .bss            >  PRU_DMEM_0_1, PAGE 1
     .cio            >  PRU_DMEM_0_1, PAGE 1
     .data           >  PRU_DMEM_0_1, PAGE 1
     .rodata         >  PRU_DMEM_0_1, PAGE 1
@@ -42,7 +42,7 @@ SECTIONS {
     .cinit          >  PRU_DMEM_0_1, PAGE 1
   
     /* Tabela obrigatória para o Linux (remoteproc) ligar a PRU */
-    .resource_table >  PRU_DMEM_0_1, PAGE 1 [cite: 100]
+    .resource_table >  PRU_DMEM_0_1, PAGE 1
     
     /* Mapeamento nominal das novas memórias (Evita warnings do compilador) */
     .shared_ram     >  PRU_SHARED_RAM, PAGE 1
