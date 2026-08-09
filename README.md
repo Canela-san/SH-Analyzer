@@ -82,7 +82,7 @@ O firmware gerencia todo o ecossistema de aquisição em tempo real na BeagleBon
 Para não sobrecarregar o processador embarcado durante a coleta crítica de dados, o cálculo de grandezas físicas e a análise espectral são desacoplados do firmware.
 
 * **Pós-processamento:** a pasta `/scripts` contém rotinas em Python encarregadas de ler os arquivos binários gerados pela BeagleBone.
-* **Funcionalidades:** extração de métricas, Transformada Rápida de Fourier (FFT), filtragem digital e plotagem de gráficos para análise dos supraharmônicos (`analise.py`, `plot_adc.py`, `verificar_dados.py`).
+* **Funcionalidades:** extração de métricas, Transformada Rápida de Fourier (FFT), filtragem digital, plotagem de gráficos e conversão de formato (`.bin` ↔ `.csv`) para análise dos supraharmônicos (`analise.py`, `adc_tool.py` — renomeado do antigo `plot_adc.py`, já que o script deixou de fazer só plotagem —, `verificar_dados.py`).
 * **Diagnóstico:** `analisar_preambulo.py` inspeciona capturas feitas com o firmware de diagnóstico (ver comentários em `firmware/spi_core_diagnostico_preambulo.asm`), separando os 16 bits de "preâmbulo" (que deveriam ser sempre zero) dos 16 bits de dado real, para isolar problemas de protocolo/hardware sem precisar de osciloscópio.
 
 ## 🚀 Começando
@@ -99,7 +99,7 @@ Para não sobrecarregar o processador embarcado durante a coleta crítica de dad
 3. **Compilação:** rode `make` dentro de `/firmware` para compilar o firmware da PRU (`fw_pru.out`) e o binário do ARM (`ler_adc`).
 4. **Deploy:** execute `./setup.sh` para configurar os pinos e carregar o firmware na PRU.
 5. **Aquisição:** rode `sudo ./ler_adc <frequência_em_Hz>` para iniciar a captura.
-6. **Análise:** após a coleta, transfira os arquivos `.bin` para o seu computador principal e utilize as ferramentas da pasta `/scripts` para visualização.
+6. **Análise:** após a coleta, transfira os arquivos `.bin` para o seu computador principal e utilize as ferramentas da pasta `/scripts` (ex.: `python3 adc_tool.py captura.bin -f <frequência_em_Hz> --fft`) para visualização, ou `adc_tool.py -c captura.bin -o captura.csv` para converter para `.csv`.
 
 ## 🎓 Contexto Acadêmico
 
