@@ -30,6 +30,7 @@ comando/atalho antigo ainda chamar `plot_adc.py`, atualize para
      6.1 O problema do vazamento espectral (spectral leakage)
      6.2 Estratégia adotada: fundamental + cruzamento por zero interpolado
      6.3 Analisando distúrbios momentâneos (--fft N)
+     6.4 Escolha da janela espectral (--janela / --kaiser-beta)
   7. CONVERSÃO PARA TENSÃO (--faixa / --offset / --ganho / --formato)
   8. DESEMPENHO E USO DE MEMÓRIA
   9. EXEMPLOS DE USO (ver também `--help`)
@@ -153,10 +154,14 @@ de conversão.
          ciclos disponíveis, mais preciso o período estimado.
       5) O trecho enviado à FFT é cortado exatamente nos cruzamentos por
          zero (arredondados para a amostra mais próxima -- o erro
-         residual disso é uma fração de amostra, desprezível), e ainda
-         assim uma janela de Hann é aplicada como segurança adicional
-         contra qualquer imperfeição residual (a rede real nunca é
-         perfeitamente periódica).
+         residual disso é uma fração de amostra, desprezível). Por cima
+         desse recorte, a janela escolhida em --janela é aplicada (ver
+         seção 6.4) -- por padrão NENHUMA (retangular), já que o recorte
+         em ciclos inteiros já ataca a causa raiz do vazamento; outras
+         janelas ficam disponíveis como camada extra de proteção contra
+         qualquer imperfeição residual (a rede real nunca é perfeitamente
+         periódica), ao custo de resolução em frequência e/ou exatidão de
+         amplitude.
 
 6.3 Analisando distúrbios momentâneos (--fft N)
     Por padrão (--fft sem argumento), usa-se TODOS os ciclos completos
@@ -169,6 +174,72 @@ de conversão.
 
     O trecho efetivamente usado na FFT é sempre destacado (sombreado) no
     gráfico do domínio do tempo, para deixar claro o que entrou no cálculo.
+
+6.4 Escolha da janela espectral (--janela / --kaiser-beta)
+    A janela aplicada ao trecho ANTES da FFT PRINCIPAL (a que gera o
+    espectro exibido/salvo) é configurável via --janela. Isso é
+    independente do recorte em ciclos inteiros da seção 6.2: o recorte
+    ataca a causa raiz do vazamento (descontinuidade na "emenda"); a
+    janela, quando usada, é uma camada adicional que reduz ainda mais os
+    lóbulos laterais à custa de alargar o lóbulo principal (menos
+    resolução em frequência) e/ou atenuar a amplitude reportada -- por
+    isso a correção pelo ganho coerente (seção 4, calcular_espectro_dbv)
+    é sempre aplicada, para QUALQUER janela escolhida.
+
+    Nem a estimativa grosseira da fundamental (função
+    estimar_frequencia_fundamental) nem o recorte em ciclos inteiros são
+    afetados por --janela -- ambos usam Hann internamente, de forma fixa,
+    só como ferramenta de triagem. --janela afeta somente o espectro
+    final mostrado ao usuário.
+
+    Opções aceitas (--janela ACEITA sinônimos; acentos, hifens, espaços e
+    maiúsculas/minúsculas são todos ignorados na comparação):
+
+        retangular / boxcar   (PADRÃO -- equivale a não aplicar janela
+                                nenhuma, ou seja, multiplicar por 1.0)
+            Lóbulo principal mais estreito possível -> melhor resolução
+            em frequência e nenhuma atenuação de amplitude. Em troca,
+            tem os lóbulos laterais mais altos (~-13 dB) de todas as
+            opções -- só é uma boa escolha quando o recorte em ciclos
+            inteiros (seção 6.2) já está fazendo o trabalho pesado contra
+            vazamento, o que é o caso normal deste script.
+
+        hann / hanning
+            Compromisso clássico entre resolução e vazamento (lóbulos
+            laterais a partir de ~-31 dB). Era o comportamento padrão
+            (fixo) de versões anteriores deste script.
+
+        blackmanharris / blackman-harris
+            Lóbulos laterais muito baixos (~-92 dB) -- ajuda a enxergar
+            um supraharmônico de amplitude baixa perto de uma fundamental
+            de amplitude alta, ao custo de um lóbulo principal bem mais
+            largo (pior resolução para separar duas componentes
+            próximas em frequência).
+
+        flattop / flat-top
+            Topo do lóbulo principal muito achatado -- a melhor EXATIDÃO
+            DE AMPLITUDE de todas as opções (minimiza o erro de "scalloping
+            loss" quando um tom não cai exatamente num bin da FFT), mas a
+            PIOR resolução em frequência e o lóbulo principal mais largo
+            de todos. Use quando o objetivo é medir com precisão o valor
+            de pico de uma componente já conhecida (ex.: a fundamental),
+            não separar componentes vizinhas.
+
+        kaiser (+ --kaiser-beta)
+            Família ajustável por um único parâmetro (beta): permite
+            variar continuamente entre o comportamento "quase retangular"
+            (beta baixo) e "lóbulos laterais muitíssimo baixos, lóbulo
+            principal muito largo" (beta alto). Ver --help de
+            --kaiser-beta para valores de referência aproximados
+            (equivalência com Hamming/Hann/Blackman).
+
+    Exemplos:
+        --janela retangular              (padrão, pode ser omitido)
+        --janela hann
+        --janela blackmanharris
+        --janela blackman-harris         (equivalente ao anterior)
+        --janela "flat top"
+        --janela kaiser --kaiser-beta 12
 
 7. CONVERSÃO PARA TENSÃO (--faixa / --offset / --ganho / --formato)
 -----------------------------------------------------------------------
@@ -233,6 +304,14 @@ passado (a coluna `tensao_v` do CSV é só informativa).
   # FFT de alta resolução temporal: só 10 ciclos, a partir da amostra 50000
   python3 adc_tool.py supraharmonicos_raw.bin -f 102400 --inicio 50000 --fft 10
 
+  # FFT com janela Blackman-Harris (lóbulos laterais bem mais baixos que
+  # o padrão retangular -- útil para caçar um supraharmônico fraco perto
+  # da fundamental)
+  python3 adc_tool.py supraharmonicos_raw.bin -f 102400 --fft --janela blackman-harris
+
+  # FFT com janela Kaiser e beta customizado
+  python3 adc_tool.py supraharmonicos_raw.bin -f 102400 --fft --janela kaiser --kaiser-beta 12
+
   # Convertendo para tensão real (ADC ±10.24 V, sensor com ganho 19.53)
   python3 adc_tool.py supraharmonicos_raw.bin -f 102400 --faixa 10.24 --ganho 19.53 --fft
 
@@ -258,11 +337,12 @@ Rode `python3 adc_tool.py --help` para a referência completa de argumentos.
 import argparse
 import itertools
 import sys
+import unicodedata
 from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, filtfilt, get_window
 from scipy.fft import rfft, rfftfreq
 
 # Tamanho de bloco padrão (em amostras) usado nas conversões .bin<->.csv.
@@ -274,6 +354,29 @@ TAMANHO_CHUNK_PADRAO = 500_000
 FORMATOS_NUMPY = {
     "int16": np.dtype("<i2"),   # complemento de dois, bipolar
     "uint16": np.dtype("<u2"),  # binário reto, unipolar (padrão de fábrica)
+}
+
+# Mapeia alias normalizado (sem acento/hífen/espaço, minúsculo -- ver
+# _normalizar_nome_janela) -> nome canônico aceito por scipy.signal.get_window.
+# Ver seção 6.4 do docstring do módulo para a explicação de cada opção.
+JANELA_PADRAO = "retangular"
+ALIASES_JANELA = {
+    "retangular": "boxcar",
+    "retangulo": "boxcar",
+    "boxcar": "boxcar",
+    "hann": "hann",
+    "hanning": "hann",
+    "blackmanharris": "blackmanharris",
+    "flattop": "flattop",
+    "kaiser": "kaiser",
+}
+# Nome canônico do scipy -> rótulo legível usado em prints/títulos de gráfico.
+NOMES_EXIBICAO_JANELA = {
+    "boxcar": "Retangular (sem janela)",
+    "hann": "Hann",
+    "blackmanharris": "Blackman-Harris",
+    "flattop": "Flat Top",
+    "kaiser": "Kaiser",
 }
 
 
@@ -615,6 +718,13 @@ def estimar_frequencia_fundamental(sinal: np.ndarray, fs: float,
     if n < 16:
         raise SystemExit("Erro: poucos dados para estimar a frequência fundamental.")
 
+    # Janela fixa em Hann aqui, independente de --janela: esta é só uma
+    # estimativa GROSSEIRA interna (usada para achar o corte do passa-baixa
+    # antes do refinamento por cruzamento por zero, ver seção 6.2), não o
+    # espectro final mostrado ao usuário -- Hann é uma escolha robusta e
+    # neutra para esse papel de localizar o pico aproximado, e mantê-la
+    # fixa evita, por exemplo, que --janela retangular (o padrão, ver seção
+    # 6.4) produza vazamento excessivo justamente nesta etapa de triagem.
     janela = np.hanning(n)
     espectro = np.abs(rfft((sinal - np.mean(sinal)) * janela))
     freqs = rfftfreq(n, 1.0 / fs)
@@ -733,17 +843,71 @@ def recortar_ciclos_inteiros(sinal: np.ndarray, fs: float, freq_min: float,
 # 4. CÁLCULO DA FFT
 # ==============================================================================
 
-def calcular_espectro_dbv(sinal: np.ndarray, fs: float):
-    """FFT em dBV com janela de Hann (ver seção 6.2 sobre a dupla proteção
-    contra vazamento: recorte em ciclos inteiros + janelamento).
+def _normalizar_nome_janela(nome: str) -> str:
+    """
+    Normaliza um nome de janela vindo de --janela para comparação com
+    ALIASES_JANELA: remove acentos, hifens, espaços e underscores, e
+    converte para minúsculas. Assim 'Blackman-Harris', 'blackmanharris',
+    'BLACKMAN_HARRIS' e 'blackman harris' resolvem todos para a mesma
+    chave. Ver seção 6.4 do docstring do módulo.
+    """
+    sem_acento = unicodedata.normalize("NFKD", nome)
+    sem_acento = "".join(c for c in sem_acento if not unicodedata.combining(c))
+    chave = sem_acento.strip().lower()
+    for caractere in ("-", "_", " "):
+        chave = chave.replace(caractere, "")
+    return chave
+
+
+def resolver_nome_janela(nome: str) -> str:
+    """
+    Valida --janela e resolve para o nome canônico aceito por
+    scipy.signal.get_window. Levantado logo após o parse dos argumentos
+    (antes de carregar qualquer arquivo, potencialmente grande), para dar
+    erro rápido em caso de nome digitado errado, em vez de falhar só
+    depois de já ter processado a captura inteira.
+    """
+    chave = _normalizar_nome_janela(nome)
+    if chave not in ALIASES_JANELA:
+        raise SystemExit(
+            f"Erro: janela '{nome}' não reconhecida em --janela. Valores "
+            f"aceitos (acentos/hífens/espaços e maiúsculas/minúsculas são "
+            f"ignorados): retangular/boxcar (padrão, sem janela), "
+            f"hann/hanning, blackmanharris/blackman-harris, "
+            f"flattop/flat-top, kaiser."
+        )
+    return ALIASES_JANELA[chave]
+
+
+def obter_janela(nome_canonico: str, n: int, kaiser_beta: float) -> np.ndarray:
+    """
+    Constrói o array (tamanho n) da janela já resolvida para o nome
+    canônico do scipy (ver resolver_nome_janela). Usa fftbins=True
+    (variante "periódica" da janela, a recomendada para análise
+    espectral por FFT -- evita a amostra final redundante da variante
+    "simétrica", mais apropriada para filtragem no domínio do tempo).
+    """
+    if nome_canonico == "kaiser":
+        return get_window(("kaiser", kaiser_beta), n, fftbins=True)
+    return get_window(nome_canonico, n, fftbins=True)
+
+
+def calcular_espectro_dbv(sinal: np.ndarray, fs: float, nome_janela: str,
+                           kaiser_beta: float):
+    """FFT em dBV com a janela escolhida via --janela (ver seção 6.4 do
+    docstring do módulo para o trade-off de cada opção; padrão:
+    retangular/sem janela).
 
     A amplitude é corrigida pelo GANHO COERENTE da janela (média dos seus
     valores) -- sem essa correção, a amplitude reportada fica sistemati-
-    camente abaixo da real (para a janela de Hann, ~6 dB abaixo), porque a
-    própria janela atenua a energia do sinal antes da FFT.
+    camente abaixo da real (ex.: para a janela de Hann, ~6 dB abaixo),
+    porque a própria janela atenua a energia do sinal antes da FFT. Essa
+    correção vale para QUALQUER janela, inclusive a retangular (ganho
+    coerente = 1.0, ou seja, sem efeito -- é só o caso trivial da mesma
+    fórmula).
     """
     n = len(sinal)
-    janela = np.hanning(n)
+    janela = obter_janela(nome_janela, n, kaiser_beta)
     ganho_coerente = np.mean(janela)
 
     sinal_janelado = (sinal - np.mean(sinal)) * janela
@@ -801,7 +965,8 @@ def plotar(tensao: np.ndarray, fs: float, idx_inicio_arquivo: int,
         ax_fft.plot(freqs, amplitude_db, color="tab:blue", linewidth=1.2)
         ax_fft.set_title(
             f"Espectro de Frequência -- f0 estimada = {info_fft['f0']:.3f} Hz "
-            f"| {info_fft['n_ciclos']} ciclo(s) completo(s)"
+            f"| {info_fft['n_ciclos']} ciclo(s) completo(s) | janela: "
+            f"{info_fft['janela']}"
         )
         ax_fft.set_xlabel("Frequência (Hz)")
         ax_fft.set_ylabel("Magnitude (dBV)")
@@ -854,6 +1019,9 @@ def montar_parser() -> argparse.ArgumentParser:
             "\n"
             "  # FFT de alta resolução temporal (só 10 ciclos)\n"
             "  %(prog)s captura.bin -f 102400 --inicio 50000 --fft 10\n"
+            "\n"
+            "  # FFT com janela Blackman-Harris (menos vazamento espectral)\n"
+            "  %(prog)s captura.bin -f 102400 --fft --janela blackman-harris\n"
             "\n"
             "  # Plotar direto de um .csv (mesmas flags, formato autodetectado)\n"
             "  %(prog)s captura.csv -f 102400 --fft\n"
@@ -981,6 +1149,47 @@ def montar_parser() -> argparse.ArgumentParser:
              "busca da frequência fundamental da rede, em Hz (padrão: 65.0)."
     )
     parser.add_argument(
+        "--janela", type=str, default=JANELA_PADRAO, metavar="NOME",
+        help="[MODO DE PLOTAGEM, só com --fft] Janela aplicada ao trecho "
+             "antes da FFT PRINCIPAL (a que gera o espectro exibido/salvo "
+             "-- não afeta a estimativa grosseira interna da fundamental, "
+             "que sempre usa Hann, nem o recorte em ciclos inteiros; ver "
+             "seção 6.4 do docstring do módulo para o trade-off completo "
+             "de cada opção). Acentos, hifens, espaços e maiúsculas/"
+             "minúsculas são ignorados ao interpretar o valor. Valores "
+             "aceitos: 'retangular' ou 'boxcar' (SEM janela -- PADRÃO; "
+             "melhor resolução em frequência e nenhuma atenuação de "
+             "amplitude, mas mais sensível a qualquer imperfeição residual "
+             "no recorte em ciclos inteiros); 'hann' ou 'hanning' "
+             "(compromisso clássico entre resolução e vazamento); "
+             "'blackmanharris' ou 'blackman-harris' (lóbulos laterais "
+             "muito baixos, ~-92 dB -- ajuda a separar um supraharmônico "
+             "fraco perto de uma fundamental forte, ao custo de um lóbulo "
+             "principal mais largo); 'flattop' ou 'flat-top' (topo do "
+             "lóbulo principal muito plano -- melhor EXATIDÃO DE "
+             "AMPLITUDE para medir o valor de pico de uma componente já "
+             "conhecida, mas a pior resolução em frequência de todas); "
+             "'kaiser' (parâmetro ajustável via --kaiser-beta, permite "
+             "variar continuamente entre resolução e rejeição de lóbulo "
+             "lateral). Exemplos: '--janela blackmanharris' ou "
+             "'--janela blackman-harris' (equivalentes)."
+    )
+    parser.add_argument(
+        "--kaiser-beta", type=float, default=8.6, metavar="BETA",
+        help="[MODO DE PLOTAGEM, só com --janela kaiser] Parâmetro beta da "
+             "janela Kaiser: controla o compromisso entre a largura do "
+             "lóbulo principal (resolução em frequência) e a atenuação "
+             "dos lóbulos laterais (rejeição de vazamento espectral) -- "
+             "beta maior = lóbulos laterais mais baixos, porém lóbulo "
+             "principal mais largo. Padrão: 8.6 (atenuação de lóbulo "
+             "lateral próxima da janela Blackman, ~-58 dB). Referências "
+             "aproximadas: beta=0 -> equivalente à retangular; beta≈5 -> "
+             "equivalente à Hamming; beta≈6 -> equivalente à Hann; "
+             "beta≈8.6 -> equivalente à Blackman; beta≈14 -> lóbulos "
+             "laterais muitíssimo baixos (~-120 dB), lóbulo principal bem "
+             "mais largo. Ignorado se --janela não for 'kaiser'."
+    )
+    parser.add_argument(
         "--formato", choices=["int16", "uint16"], default="uint16",
         help="Como interpretar cada código bruto de 16 bits do ADC. "
              "Valores possíveis: 'uint16' (binário reto / straight "
@@ -1057,6 +1266,13 @@ def main(argv=None):
     if args.frequencia is None:
         parser.error("-f/--frequencia é obrigatório no modo de plotagem.")
 
+    # Valida --janela cedo (antes de carregar o arquivo, que pode ser
+    # grande) para dar erro imediato em caso de nome digitado errado, em
+    # vez de só falhar depois de já ter processado a captura inteira.
+    nome_janela_canonico = None
+    if args.fft is not None:
+        nome_janela_canonico = resolver_nome_janela(args.janela)
+
     offset = args.offset
     if offset is None:
         offset = args.faixa / 2.0 if args.formato == "uint16" else 0.0
@@ -1081,11 +1297,18 @@ def main(argv=None):
         sinal_fft, idx_i_local, idx_f_local, f0, n_ciclos = recortar_ciclos_inteiros(
             tensao, args.frequencia, args.freq_min, args.freq_max, n_ciclos_pedido
         )
-        freqs, amplitude_db = calcular_espectro_dbv(sinal_fft, args.frequencia)
+        freqs, amplitude_db = calcular_espectro_dbv(
+            sinal_fft, args.frequencia, nome_janela_canonico, args.kaiser_beta
+        )
+
+        rotulo_janela = NOMES_EXIBICAO_JANELA[nome_janela_canonico]
+        if nome_janela_canonico == "kaiser":
+            rotulo_janela += f" (beta={args.kaiser_beta:g})"
 
         print(f"FFT: fundamental estimada f0 = {f0:.3f} Hz | "
               f"{n_ciclos} ciclo(s) completo(s) | "
-              f"{len(sinal_fft)} amostras (amostras locais {idx_i_local}..{idx_f_local})")
+              f"{len(sinal_fft)} amostras (amostras locais {idx_i_local}..{idx_f_local}) | "
+              f"janela: {rotulo_janela}")
 
         info_fft = {
             "freqs": freqs,
@@ -1094,6 +1317,7 @@ def main(argv=None):
             "n_ciclos": n_ciclos,
             "idx_inicio_local": idx_i_local,
             "idx_fim_local": idx_f_local,
+            "janela": rotulo_janela,
         }
 
     plotar(tensao, args.frequencia, idx_inicio, info_fft,
