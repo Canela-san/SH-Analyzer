@@ -1,4 +1,4 @@
-    .global ler_ads8688_asm
+.global ler_ads8688_asm
     .sect ".text"
 
 ; ==============================================================================
@@ -31,10 +31,39 @@
 ;     seja, só os 16 bits de dado real da amostra (2 bytes/amostra). A
 ;     captura do preâmbulo para diagnóstico (arquivo *_diagnostico_*.asm,
 ;     separado deste) não faz parte do fluxo de produção.
+;
+;   - [MULTI-CANAL] O comando de canal enviado a cada frame (r28) deixou de
+;     ser fixo em MAN_Ch_1 (0xC4000000) e passou a vir de uma tabela em RAM
+;     compartilhada (ctrl->comandos_canais[], escrita pelo ARM em
+;     ler_adc.c), percorrida em round-robin por um índice (r6) que nunca é
+;     reiniciado na troca de buffer -- só ao dar a volta em num_canais
+;     (r7). Ver o bloco logo após espera_configuracao, e o trecho que
+;     substitui o antigo "LDI32 r28, 0xC4000000" dentro de laco_principal.
+;     IMPORTANTE (não removido daqui de propósito, é crítico para
+;     entender o dado): o ADS8688 em modo manual devolve em cada frame o
+;     resultado da conversão do comando enviado no frame ANTERIOR, não do
+;     comando enviado agora. Com 1 canal só isso é invisível (o canal
+;     nunca muda). Com vários canais intercalados, isso desalinharia em
+;     1 posição a correspondência (posição no arquivo) <-> (canal) -- a
+;     correção para isso foi feita DELIBERADAMENTE do lado do ARM
+;     (descartando a primeiríssima amostra de toda a captura, ver
+;     ler_adc.c), e não aqui, para não precisar duplicar mais um trecho
+;     de código de transação SPI bit-a-bit e pressionar ainda mais os
+;     8 KB de PRU_IMEM (ver nota no README sobre esse limite). Se um dia
+;     esta rotina for alterada para não chamar mais o ARM de "dono" desse
+;     alinhamento, lembre-se desse detalhe.
 ; ==============================================================================
 ; PINOS:
 ;   Bit 0 (r30) = SCLK   | Bit 1 (r30) = SDI/MOSI
 ;   Bit 2 (r31) = SDO/MISO | Bit 3 (r30) = CS
+; ==============================================================================
+; REGISTRADORES NOVOS (round-robin de canais, ver bloco de setup e
+; laco_principal): r6 = índice do canal atual (0..num_canais-1, persiste
+; durante toda a captura, NÃO é resetado na troca de buffer); r7 =
+; num_canais (lido uma vez, constante durante a captura); r9 = endereço
+; base de ctrl->comandos_canais[]; r8 = registrador de rascunho (scratch)
+; usado só para calcular o endereço efetivo dentro do array a cada
+; iteração.
 ; ==============================================================================
 
 ; ==============================================================================
@@ -146,6 +175,17 @@ espera_configuracao:
     LBBO &r24, r14, 16, 4 ; r24 = buffer_0_addr
     LBBO &r25, r14, 20, 4 ; r25 = buffer_1_addr
 
+    ; [MULTI-CANAL] Config de canais: lida uma única vez aqui, fora do
+    ; laço - não muda durante o resto da captura (ao contrário de r16,
+    ; que é relido a cada iteração dentro de laco_principal para permitir
+    ; ajuste dinâmico de frequência). r9 fica com o endereço BASE do array
+    ; (ctrl + 32); o índice de canal r6 começa em 0 e nunca é reiniciado
+    ; depois disso, nem mesmo na troca de buffer (ver "continua:" mais
+    ; abaixo) - só dá a volta ao chegar em r7 (num_canais).
+    LBBO &r7, r14, 28, 4   ; r7 = num_canais
+    ADD r9, r14, 32        ; r9 = endereço base de ctrl->comandos_canais[]
+    LDI r6, 0               ; r6 = índice do canal atual
+
     MOV r19, r24
     LDI r15, 0
     LDI r26, 0
@@ -171,7 +211,18 @@ delay_cs_setup:
     QBNE delay_cs_setup, r1, 0
 
     LDI r23, 0
-    LDI32 r28, 0xC4000000    ; MAN_Ch_1 - ver nota no cabeçalho do arquivo
+
+    ; [MULTI-CANAL] r28 = ctrl->comandos_canais[r6] (substitui o antigo
+    ; "LDI32 r28, 0xC4000000" fixo em MAN_Ch_1 - ver nota no cabeçalho do
+    ; arquivo). Endereço efetivo calculado em 2 passos (em vez de
+    ; endereçamento indexado por registrador direto no LBBO) para não
+    ; depender de um modo de endereçamento cujo suporte eu não conseguiria
+    ; validar aqui sem o compilador clpru à mão - só usa a mesma forma
+    ; "base + deslocamento constante (0)" já comprovada no resto do
+    ; arquivo.
+    LSL r8, r6, 2            ; r8 = índice_canal * 4 (bytes por entrada)
+    ADD r8, r8, r9           ; r8 = endereço efetivo de comandos_canais[r6]
+    LBBO &r28, r8, 0, 4      ; r28 = comando de 32 bits do canal atual
 
     CMD_BIT
     CMD_BIT
@@ -224,6 +275,22 @@ delay_cs_high_minimo:
     ; --- GRAVAÇÃO DIRETA NA MEMÓRIA DDR ---
     SBBO &r23, r19, 0, 2
     ADD r19, r19, 2
+
+    ; --- AVANÇA O ÍNDICE DE CANAL (round-robin) ---
+    ; Roda de forma totalmente independente da lógica de ping-pong logo
+    ; abaixo: r6 SÓ dá a volta ao chegar em num_canais (r7), nunca é
+    ; tocado pela troca de buffer. Isso é o que garante que a
+    ; correspondência (posição da amostra no arquivo final, concatenando
+    ; todos os buffers) <-> canal se mantenha em fase por toda a captura,
+    ; mesmo com SAMPLES_PER_BUFFER não sendo múltiplo de num_canais (ex.:
+    ; 1.048.576 amostras não é múltiplo de 3). Instruções fora da janela
+    ; de timing crítico do SCLK (acontecem depois do CS já ter subido, na
+    ; folga entre transações), então não afetam o timing bit-a-bit
+    ; validado em hardware.
+    ADD r6, r6, 1
+    QBNE canal_ok, r6, r7
+    LDI r6, 0
+canal_ok:
 
     ; --- LÓGICA DE PING-PONG ---
     ADD r15, r15, 1
