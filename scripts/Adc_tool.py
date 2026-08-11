@@ -34,6 +34,14 @@ comando/atalho antigo ainda chamar `plot_adc.py`, atualize para
   7. CONVERSÃO PARA TENSÃO (--faixa / --offset / --ganho / --formato)
   8. DESEMPENHO E USO DE MEMÓRIA
   9. EXEMPLOS DE USO (ver também `--help`)
+  10. CAPTURA E ANÁLISE MULTI-CANAL (--canais / --canais-exibir / --layout-canais)
+      10.1 Convenção de intercalação (round-robin)
+      10.2 Selecionando e organizando a exibição dos canais
+      10.3 Frequência efetiva por canal
+      10.4 FFT em modo multi-canal
+      10.5 Calibração por canal (--faixa / --ganho / --offset como listas)
+      10.6 Modo de conversão: a coluna `canal` no `.csv`
+      10.7 Casos de borda
 
 1. PARA QUE SERVE
 ------------------
@@ -330,7 +338,126 @@ passado (a coluna `tensao_v` do CSV é só informativa).
   # Converter só um recorte (amostras 0..9999) para abrir rápido no Excel
   python3 adc_tool.py -c supraharmonicos_raw.bin -o trecho.csv --fim 10000
 
+  # -- Multi-canal (ver seção 10) ---------------------------------------
+  # Captura feita com `ler_adc 102400 0,1,3` -- 3 canais intercalados.
+  # Plotar todos, um subplot por canal (padrão --layout-canais separados)
+  python3 adc_tool.py captura.bin -f 102400 --canais 0,1,3 --fft
+
+  # Mesma captura, mas só os canais 0 e 3, sobrepostos no mesmo eixo
+  python3 adc_tool.py captura.bin -f 102400 --canais 0,1,3 \
+      --canais-exibir 0,3 --layout-canais sobrepostos --fft
+
+  # Canal 0 = tensão (ganho 19.53), canal 1 = corrente (ganho 0.1) --
+  # --faixa/--ganho/--offset aceitam 1 valor (todos os canais) ou uma
+  # lista com 1 valor por canal, na MESMA ordem de --canais
+  python3 adc_tool.py captura.bin -f 102400 --canais 0,1 \
+      --ganho 19.53,0.1 --faixa 10.24,10.24 --fft
+
 Rode `python3 adc_tool.py --help` para a referência completa de argumentos.
+==============================================================================
+
+10. CAPTURA E ANÁLISE MULTI-CANAL
+--------------------------------------
+`firmware/ler_adc.c` pode capturar vários canais do ADS8688 numa mesma
+captura, intercalados (round-robin) num único arquivo `.bin` -- sem
+buffers separados por canal e sem cabeçalho nenhum no arquivo. Esta seção
+explica como este script decodifica e apresenta esse formato.
+
+10.1 Convenção de intercalação (round-robin)
+    Com N canais selecionados na captura (`ler_adc <freq> <canais>`), a
+    amostra bruta na posição `i` do arquivo (0-based, considerando o
+    arquivo inteiro) pertence ao canal `lista_de_canais[i % N]`, sendo
+    `lista_de_canais` a MESMA lista, na MESMA ordem, passada ao `ler_adc`
+    na hora da captura. O firmware já cuida internamente de um atraso de
+    pipeline de 1 quadro do ADS8688 (descartando a amostra de
+    alinhamento necessária -- ver comentários em `firmware/ler_adc.c` e
+    `firmware/spi_core.asm`), então essa correspondência simples de
+    posição -> canal já vale a partir da amostra 0 do arquivo, sem
+    nenhum ajuste adicional necessário aqui.
+
+    Como o `.bin` não carrega metadado nenhum (mesma filosofia que já
+    valia para a frequência de amostragem, sempre externa ao arquivo),
+    é preciso informar essa lista de novo aqui, via --canais -- `ler_adc`
+    já imprime a lista usada no console durante a captura, para anotação.
+
+10.2 Selecionando e organizando a exibição dos canais
+    --canais LISTA        -- canais presentes no arquivo, na ordem da
+                              captura (ex.: "0,1,3"). Padrão: "1" (um
+                              canal só -- comportamento idêntico ao deste
+                              script antes do suporte multi-canal).
+    --canais-exibir LISTA  -- subconjunto de --canais a plotar/analisar
+                              de fato (padrão: todos os de --canais).
+    --layout-canais {separados,sobrepostos} -- só importa com mais de 1
+                              canal em --canais-exibir. 'separados'
+                              (padrão): um subplot por canal -- mais
+                              seguro visualmente quando os canais medem
+                              grandezas diferentes (ex.: tensão e
+                              corrente, escalas bem distintas).
+                              'sobrepostos': todos os canais no MESMO
+                              eixo de tempo (e no mesmo eixo de
+                              frequência, se --fft), cada um com uma cor
+                              e uma entrada na legenda.
+
+10.3 Frequência efetiva por canal
+    -f/--frequencia continua sendo a frequência TOTAL de transação SPI
+    (mesmo significado de sempre, e o mesmo valor que se passaria a
+    `ler_adc`). Com N canais, cada canal individualmente foi amostrado a
+    `--frequencia / N` -- é essa frequência efetiva, não a total, que
+    este script usa para montar o eixo do tempo e a base da FFT de cada
+    canal (já que amostras consecutivas do MESMO canal, no arquivo
+    intercalado, estão separadas por N posições, não por 1).
+
+10.4 FFT em modo multi-canal
+    Com --fft, cada canal selecionado passa pelo MESMO pipeline de
+    sempre (estimativa grosseira da fundamental -> recorte em ciclos
+    inteiros por cruzamento de zero -> espectro com a janela de
+    --janela) de forma INDEPENDENTE dos outros -- não se assume que
+    todos os canais tenham exatamente a mesma fundamental/fase estimada,
+    mesmo vindo da mesma rede elétrica (ruído, sensor e ganho diferentes
+    por canal podem afetar ligeiramente a detecção de cada um).
+    --freq-min/--freq-max/--janela/--kaiser-beta/--fft N continuam sendo
+    parâmetros GLOBAIS, aplicados igualmente a todos os canais
+    processados.
+
+10.5 Calibração por canal (--faixa / --ganho / --offset como listas)
+    Numa captura real deste projeto é comum um canal medir tensão e
+    outro corrente, cada um com sensor/ganho diferentes. Por isso,
+    --faixa/--ganho/--offset aceitam DOIS formatos:
+        - um valor único, aplicado a TODOS os canais (comportamento de
+          sempre, retrocompatível);
+        - uma lista separada por vírgula do MESMO tamanho de --canais,
+          um valor por canal, na mesma ordem (ex.: --canais 0,1
+          --ganho 19.53,0.1 -> canal 0 usa ganho 19.53, canal 1 usa
+          ganho 0.1).
+    --offset, quando omitido, continua com o padrão automático
+    (faixa/2 para --formato uint16, 0.0 para int16) calculado
+    individualmente para cada canal a partir da sua própria --faixa.
+
+10.6 Modo de conversão: a coluna `canal` no `.csv`
+    Na conversão '.bin'->'.csv', se --canais tiver mais de 1 canal, o
+    CSV gerado ganha uma coluna `canal` a mais (formato:
+    `amostra,canal,valor_bruto[,tensao_v]`), com o canal de cada linha
+    já resolvido. Com --canais tendo só 1 canal (ou omitido, padrão),
+    o CSV continua EXATAMENTE igual a hoje (`amostra,valor_bruto
+    [,tensao_v]`, sem coluna `canal`), para não alterar o formato de
+    nenhum fluxo de trabalho de 1 canal já existente.
+
+    Um CSV COM coluna `canal` é autodescritivo: '.csv'->'.bin' não
+    precisa mais de --canais para reconstruir a intercalação original
+    -- a ordem das linhas no CSV já preserva isso (a conversão só
+    escreve `valor_bruto` de cada linha, na ordem em que aparecem,
+    exatamente como sempre fez).
+
+10.7 Casos de borda
+    --inicio/--fim continuam contando posições BRUTAS no arquivo (sem
+    mudar de significado). Se o recorte resultante não for múltiplo do
+    número de canais, o script trunca por baixo antes de desintercalar,
+    para que todos os canais fiquem com o MESMO número de amostras
+    (evita desalinhar o eixo de tempo entre canais no layout
+    'sobrepostos'). `SAMPLES_PER_BUFFER` do firmware (1.048.576) também
+    não é necessariamente múltiplo do número de canais -- isso é
+    esperado e não afeta a intercalação, que se mantém em fase ao longo
+    de toda a captura (ver 10.1).
 ==============================================================================
 """
 
@@ -378,6 +505,17 @@ NOMES_EXIBICAO_JANELA = {
     "flattop": "Flat Top",
     "kaiser": "Kaiser",
 }
+
+# Número máximo de canais do ADS8688 (canais 0-7) -- mesmo valor usado em
+# firmware/memoria_pru.h (ADS8688_MAX_CANAIS), mantido em sincronia
+# manualmente (não há um único arquivo de constantes compartilhado entre
+# o firmware em C/Assembly e este script em Python). Ver seção 10 do
+# docstring do módulo para o suporte multi-canal.
+ADS8688_MAX_CANAIS = 8
+
+# Canal usado quando --canais não é passado -- mesmo padrão histórico de
+# `ler_adc` (um canal só, o canal 1) mantido aqui para consistência.
+CANAL_PADRAO = "1"
 
 
 # ==============================================================================
@@ -517,12 +655,170 @@ def converter_para_tensao(codigos: np.ndarray, faixa: float, ganho: float,
 
 
 # ==============================================================================
+# 1B. SUPORTE MULTI-CANAL (ver seção 10 do docstring do módulo)
+# ==============================================================================
+
+def analisar_lista_canais(texto: str, nome_flag: str = "--canais") -> list[int]:
+    """
+    Interpreta uma lista de canais (--canais ou --canais-exibir), ex.
+    "0,1,3", separada por vírgula, sem espaços. Mesmas regras de
+    validação usadas em firmware/ler_adc.c (analisar_lista_canais lá),
+    mantidas em sincronia de propósito: canal entre 0 e 7 (o ADS8688 só
+    tem 8 entradas), sem repetição, sem lista vazia. A ORDEM é
+    preservada -- é ela que define a convenção de intercalação (seção
+    10.1 do docstring).
+    """
+    partes = [p.strip() for p in texto.split(",")]
+    canais: list[int] = []
+    for p in partes:
+        if p == "":
+            continue
+        try:
+            valor = int(p)
+        except ValueError:
+            raise SystemExit(
+                f"Erro: '{p}' não é um número de canal válido em "
+                f"{nome_flag}='{texto}'."
+            )
+        if valor < 0 or valor > 7:
+            raise SystemExit(
+                f"Erro: canal {valor} inválido em {nome_flag} -- o ADS8688 "
+                f"só tem canais 0-7."
+            )
+        if valor in canais:
+            raise SystemExit(
+                f"Erro: canal {valor} repetido em {nome_flag}='{texto}'."
+            )
+        if len(canais) >= ADS8688_MAX_CANAIS:
+            raise SystemExit(
+                f"Erro: mais de {ADS8688_MAX_CANAIS} canais em "
+                f"{nome_flag}='{texto}' -- o ADS8688 só tem "
+                f"{ADS8688_MAX_CANAIS} entradas."
+            )
+        canais.append(valor)
+
+    if not canais:
+        raise SystemExit(f"Erro: lista de canais vazia em {nome_flag}.")
+    return canais
+
+
+def validar_subconjunto_canais(canais_exibir: list[int], canais: list[int]) -> None:
+    """
+    Garante que todo canal pedido em --canais-exibir também está em
+    --canais (não faz sentido pedir para exibir um canal que não foi
+    informado como presente no arquivo).
+    """
+    faltando = [c for c in canais_exibir if c not in canais]
+    if faltando:
+        raise SystemExit(
+            f"Erro: --canais-exibir pede o(s) canal(is) {faltando}, que "
+            f"não está(ão) em --canais ({canais}). --canais-exibir precisa "
+            f"ser um subconjunto de --canais."
+        )
+
+
+def analisar_lista_calibracao(texto: str, num_canais: int, nome_flag: str) -> list[float]:
+    """
+    Interpreta um parâmetro de calibração (--faixa/--ganho/--offset) que
+    pode vir como UM valor único (aplicado a todos os canais -- forma
+    retrocompatível, usada por qualquer captura de 1 canal só) ou como
+    uma lista separada por vírgula do MESMO tamanho de --canais, um
+    valor por canal, na mesma ordem (ver seção 10.5 do docstring).
+    """
+    partes = [p.strip() for p in texto.split(",")]
+    try:
+        valores = [float(p) for p in partes]
+    except ValueError:
+        raise SystemExit(
+            f"Erro: valor inválido em {nome_flag}='{texto}' (use um número, "
+            f"ou vários separados por vírgula)."
+        )
+    if len(valores) == 1:
+        return valores * num_canais
+    if len(valores) != num_canais:
+        raise SystemExit(
+            f"Erro: {nome_flag} tem {len(valores)} valor(es), mas --canais "
+            f"tem {num_canais} canal(is). Passe 1 valor (aplicado a todos "
+            f"os canais) ou exatamente {num_canais} valores separados por "
+            f"vírgula, na mesma ordem de --canais."
+        )
+    return valores
+
+
+def desintercalar(amostras_brutas, canais: list[int],
+                   canais_selecionados: list[int] | None = None) -> dict[int, np.ndarray]:
+    """
+    Desintercala um array de amostras brutas (visto como um ciclo
+    round-robin de len(canais) canais -- ver seção 10.1 do docstring) e
+    devolve um dict {canal: array_de_amostras_daquele_canal}, só para os
+    canais pedidos em 'canais_selecionados' (padrão: todos os de
+    'canais').
+
+    Implementação: trunca para um múltiplo de len(canais) (ver seção
+    10.7 -- descarta um resto de até len(canais)-1 amostras no final, se
+    houver) e usa reshape(-1, num_canais) + seleção de coluna, em vez de
+    um loop Python amostra a amostra -- isso mantém tudo como VIEWS do
+    array original (sem cópia), inclusive quando 'amostras_brutas' vem
+    de um memmap de '.bin' (ver seção 8 do docstring sobre desempenho/
+    memória). Com 1 canal só (fluxo de hoje), isso se reduz a um reshape
+    trivial que devolve o mesmo conteúdo do array original.
+    """
+    if canais_selecionados is None:
+        canais_selecionados = canais
+
+    num_canais = len(canais)
+    n = len(amostras_brutas)
+    n_ciclos = n // num_canais
+    n_truncado = n_ciclos * num_canais
+
+    if n_truncado == 0:
+        raise SystemExit(
+            f"Erro: só {n} amostra(s) bruta(s) disponível(is), insuficiente "
+            f"para completar 1 ciclo de {num_canais} canais. Aumente a "
+            f"janela selecionada (--inicio/--fim) ou verifique se --canais "
+            f"bate com a captura de verdade."
+        )
+    if n_truncado < n:
+        print(
+            f"Aviso: {n - n_truncado} amostra(s) bruta(s) no final do "
+            f"recorte não completam um ciclo inteiro de {num_canais} "
+            f"canais e foram descartadas para manter todos os canais com "
+            f"o mesmo número de amostras.",
+            file=sys.stderr,
+        )
+
+    amostras_truncadas = np.asarray(amostras_brutas[:n_truncado])
+    matriz = amostras_truncadas.reshape(n_ciclos, num_canais)
+    indice_no_ciclo = {canal: i for i, canal in enumerate(canais)}
+
+    return {canal: matriz[:, indice_no_ciclo[canal]] for canal in canais_selecionados}
+
+
+def resolver_offsets_por_canal(offset_texto: str | None, faixas: list[float],
+                                formato: str, num_canais: int) -> list[float]:
+    """
+    Resolve --offset por canal: se o usuário não passou --offset
+    (offset_texto is None), aplica o mesmo padrão automático de sempre
+    (faixa/2 para --formato uint16, 0.0 para int16), individualmente
+    para CADA canal a partir da sua própria --faixa (seção 10.5 do
+    docstring) -- em vez de um único offset global. Se o usuário passou
+    --offset explicitamente (valor único ou lista), usa
+    analisar_lista_calibracao normalmente, sem aplicar o padrão
+    automático.
+    """
+    if offset_texto is None:
+        return [faixa / 2.0 if formato == "uint16" else 0.0 for faixa in faixas]
+    return analisar_lista_calibracao(offset_texto, num_canais, "--offset")
+
+
+# ==============================================================================
 # 2. MODO DE CONVERSÃO: .bin <-> .csv
 # ==============================================================================
 
 def bin_para_csv(caminho_bin: Path, caminho_csv: Path, formato: str,
                   inicio: int, fim: int | None, incluir_tensao: bool,
-                  faixa: float, ganho: float, offset: float | None,
+                  canais: list[int], faixas: list[float], ganhos: list[float],
+                  offsets: list[float],
                   tamanho_chunk: int = TAMANHO_CHUNK_PADRAO) -> int:
     """
     Converte um '.bin' (código bruto do ADC, 2 bytes/amostra) para '.csv',
@@ -531,12 +827,27 @@ def bin_para_csv(caminho_bin: Path, caminho_csv: Path, formato: str,
 
     Colunas geradas no CSV:
         amostra      -- índice da amostra no arquivo original (0-based)
+        canal        -- SÓ incluída quando len(canais) > 1 (ver seção
+                         10.6 do docstring): canal daquela linha,
+                         resolvido como canais[amostra % len(canais)].
+                         Com 1 canal só, essa coluna não aparece -- o
+                         CSV gerado fica byte-a-byte igual ao formato de
+                         antes do suporte multi-canal.
         valor_bruto  -- código de 16 bits do ADC, decodificado conforme
                          --formato (é essa coluna, e só ela, que é usada
                          para reconstruir o '.bin' de volta)
-        tensao_v     -- só se incluir_tensao=True: tensão já convertida,
-                         apenas para inspeção humana -- IGNORADA na
-                         conversão inversa (csv -> bin)
+        tensao_v     -- só se incluir_tensao=True: tensão já convertida
+                         usando a calibração DAQUELE canal (faixas/
+                         ganhos/offsets, alinhados posicionalmente com
+                         'canais' -- ver seção 10.5), apenas para
+                         inspeção humana -- IGNORADA na conversão
+                         inversa (csv -> bin)
+
+    'canais'/'faixas'/'ganhos'/'offsets' descrevem a captura (ver seção
+    10 do docstring): as três últimas já vêm resolvidas como listas com
+    1 valor por canal, na MESMA ordem/tamanho de 'canais' (ver
+    analisar_lista_calibracao/resolver_offsets_por_canal). Com 1 canal
+    só (fluxo de hoje), todas têm tamanho 1.
 
     Retorna o número de amostras convertidas.
 
@@ -545,27 +856,64 @@ def bin_para_csv(caminho_bin: Path, caminho_csv: Path, formato: str,
     `numpy.savetxt` -- em benchmark local (1 048 576 amostras, um
     buffer de produção inteiro), essa abordagem foi ~35% mais rápida
     que `numpy.savetxt` para escrever o mesmo CSV, porque evita o loop
-    interno de formatação linha-a-linha do `numpy.savetxt`.
+    interno de formatação linha-a-linha do `numpy.savetxt`. A
+    calibração por posição-no-ciclo (faixa/ganho/offset de cada
+    amostra, quando multi-canal) é resolvida de forma vetorizada por
+    bloco via numpy (indexação por `posição % num_canais`), não
+    amostra a amostra em Python.
     """
     amostras = carregar_amostras_bin(caminho_bin, formato)
     _, inicio, fim, total = selecionar_intervalo(amostras, inicio, fim)
 
-    if offset is None:
-        offset = faixa / 2.0 if formato == "uint16" else 0.0
+    num_canais = len(canais)
+    incluir_coluna_canal = num_canais > 1
+
+    canais_arr = np.array(canais)
+    faixas_arr = np.array(faixas, dtype=np.float64)
+    ganhos_arr = np.array(ganhos, dtype=np.float64)
+    offsets_arr = np.array(offsets, dtype=np.float64)
 
     with open(caminho_csv, "w", newline="") as f:
+        colunas = ["amostra"]
+        if incluir_coluna_canal:
+            colunas.append("canal")
+        colunas.append("valor_bruto")
         if incluir_tensao:
-            f.write("amostra,valor_bruto,tensao_v\n")
-        else:
-            f.write("amostra,valor_bruto\n")
+            colunas.append("tensao_v")
+        f.write(",".join(colunas) + "\n")
 
         for ini_bloco in range(inicio, fim, tamanho_chunk):
             fim_bloco = min(ini_bloco + tamanho_chunk, fim)
             bloco = np.asarray(amostras[ini_bloco:fim_bloco]).astype(np.int64)
             indices = range(ini_bloco, fim_bloco)
 
+            pos_no_ciclo = None
+            if incluir_coluna_canal or incluir_tensao:
+                pos_no_ciclo = np.arange(ini_bloco, fim_bloco) % num_canais
+
             if incluir_tensao:
-                tensao = converter_para_tensao(bloco, faixa, ganho, formato, offset)
+                # converter_para_tensao aceita faixa/ganho/offset como
+                # arrays (broadcast elemento a elemento) tão bem quanto
+                # escalares -- reaproveitada sem duplicar a fórmula.
+                tensao = converter_para_tensao(
+                    bloco, faixas_arr[pos_no_ciclo], ganhos_arr[pos_no_ciclo],
+                    formato, offsets_arr[pos_no_ciclo],
+                )
+
+            if incluir_coluna_canal:
+                canal_bloco = canais_arr[pos_no_ciclo]
+                if incluir_tensao:
+                    linhas = (
+                        f"{i},{c},{v},{t:.6f}"
+                        for i, c, v, t in zip(indices, canal_bloco.tolist(),
+                                               bloco.tolist(), tensao.tolist())
+                    )
+                else:
+                    linhas = (
+                        f"{i},{c},{v}"
+                        for i, c, v in zip(indices, canal_bloco.tolist(), bloco.tolist())
+                    )
+            elif incluir_tensao:
                 linhas = (
                     f"{i},{v},{t:.6f}"
                     for i, v, t in zip(indices, bloco.tolist(), tensao.tolist())
@@ -588,10 +936,22 @@ def csv_para_bin(caminho_csv: Path, caminho_bin: Path, formato: str,
     blocos de 'tamanho_chunk' amostras -- sem carregar o arquivo de
     texto inteiro na memória (ver seção 8 do docstring do módulo).
 
-    Só a coluna 'valor_bruto' é usada -- qualquer outra coluna (ex.:
-    'tensao_v') é ignorada, para garantir que o '.bin' resultante seja
-    byte-a-byte equivalente ao original (round-trip sem perdas), em vez
-    de uma versão recalculada a partir de uma tensão já arredondada.
+    Só a coluna 'valor_bruto' é usada para reconstruir os bytes -- ver
+    seção 10.6 do docstring do módulo: NÃO precisa de --canais aqui,
+    mesmo para um CSV multi-canal, porque a ORDEM das linhas já
+    preserva a intercalação original (a reconstrução escreve
+    'valor_bruto' de cada linha na ordem em que aparece, exatamente
+    como sempre fez). Qualquer outra coluna (ex.: 'tensao_v') é
+    ignorada, para garantir que o '.bin' resultante seja byte-a-byte
+    equivalente ao original (round-trip sem perdas), em vez de uma
+    versão recalculada a partir de uma tensão já arredondada.
+
+    Se existir uma coluna 'canal' (gravada por bin_para_csv em captura
+    multi-canal), ela é usada só para uma verificação LEVE (O(1) de
+    memória, streaming) de que o padrão de canais se repete
+    ciclicamente do início ao fim do arquivo -- não é uma validação
+    exaustiva, só um alerta cedo para um CSV editado manualmente ou
+    corrompido; não impede a conversão.
 
     --inicio/--fim aqui contam LINHAS DE DADOS do CSV (não contam o
     cabeçalho).
@@ -618,6 +978,7 @@ def csv_para_bin(caminho_csv: Path, caminho_bin: Path, formato: str,
                 f"cabeçalho (colunas encontradas: {cabecalho})."
             )
         indice_coluna = cabecalho.index("valor_bruto")
+        indice_coluna_canal = cabecalho.index("canal") if "canal" in cabecalho else None
 
         fim_absoluto = None if fim is None else fim
         # itertools.islice(f_in, inicio, fim_absoluto) pula 'inicio' linhas
@@ -626,19 +987,54 @@ def csv_para_bin(caminho_csv: Path, caminho_bin: Path, formato: str,
         # descartadas na memória.
         linhas_dados = itertools.islice(f_in, inicio, fim_absoluto)
 
+        # Estado da verificação leve do padrão cíclico de 'canal' (ver
+        # docstring acima) -- tudo em O(1) de memória: só guarda os
+        # valores distintos vistos até o padrão se repetir pela primeira
+        # vez, nunca o arquivo inteiro.
+        padrao_canais: list[str] = []
+        periodo_detectado: int | None = None
+        posicao_no_padrao = 0
+        inconsistencias = 0
+
         n_convertidas = 0
         with open(caminho_bin, "wb") as f_out:
             bloco = []
             for linha in linhas_dados:
                 if not linha.strip():
                     continue  # ignora linha em branco (ex.: fim de arquivo)
-                bloco.append(int(linha.split(",")[indice_coluna]))
+                campos = linha.rstrip("\n").split(",")
+                bloco.append(int(campos[indice_coluna]))
+
+                if indice_coluna_canal is not None:
+                    canal_linha = campos[indice_coluna_canal]
+                    if periodo_detectado is None:
+                        if canal_linha in padrao_canais:
+                            periodo_detectado = len(padrao_canais)
+                        else:
+                            padrao_canais.append(canal_linha)
+                    if periodo_detectado is not None:
+                        esperado = padrao_canais[posicao_no_padrao % periodo_detectado]
+                        if canal_linha != esperado:
+                            inconsistencias += 1
+                        posicao_no_padrao += 1
+
                 n_convertidas += 1
                 if len(bloco) >= tamanho_chunk:
                     f_out.write(np.array(bloco, dtype=dtype).tobytes())
                     bloco = []
             if bloco:
                 f_out.write(np.array(bloco, dtype=dtype).tobytes())
+
+        if indice_coluna_canal is not None and inconsistencias > 0:
+            print(
+                f"Aviso: a coluna 'canal' de '{caminho_csv}' não segue um "
+                f"padrão cíclico consistente ({inconsistencias} linha(s) "
+                f"fora do padrão detectado {padrao_canais}). O '.bin' "
+                f"gerado preserva a ordem das linhas de qualquer forma, "
+                f"mas isso pode indicar um CSV editado manualmente ou "
+                f"corrompido.",
+                file=sys.stderr,
+            )
 
         if fim is not None and n_convertidas < (fim - inicio):
             print(
@@ -661,12 +1057,16 @@ def csv_para_bin(caminho_csv: Path, caminho_bin: Path, formato: str,
 
 def converter_arquivo(caminho_entrada: Path, caminho_saida: Path, formato: str,
                        inicio: int, fim: int | None, incluir_tensao: bool,
-                       faixa: float, ganho: float, offset: float | None,
+                       canais: list[int], faixas: list[float], ganhos: list[float],
+                       offsets: list[float],
                        tamanho_chunk: int) -> None:
     """
     Decide a direção da conversão pelas extensões de entrada/saída e
     despacha para bin_para_csv() ou csv_para_bin() (ver seção 4 do
-    docstring do módulo).
+    docstring do módulo). 'canais'/'faixas'/'ganhos'/'offsets' só têm
+    efeito na direção '.bin'->'.csv' (ver seção 10.6) -- na direção
+    '.csv'->'.bin' são ignorados, já que essa direção nunca precisou
+    dessa informação (nem precisa agora, ver csv_para_bin).
     """
     tipo_entrada = detectar_tipo_arquivo(caminho_entrada)
     tipo_saida = detectar_tipo_arquivo(caminho_saida)
@@ -689,10 +1089,15 @@ def converter_arquivo(caminho_entrada: Path, caminho_saida: Path, formato: str,
 
     if tipo_entrada == "bin" and tipo_saida == "csv":
         n = bin_para_csv(caminho_entrada, caminho_saida, formato, inicio, fim,
-                          incluir_tensao, faixa, ganho, offset, tamanho_chunk)
+                          incluir_tensao, canais, faixas, ganhos, offsets,
+                          tamanho_chunk)
         extra = " | coluna tensao_v incluída" if incluir_tensao else ""
+        extra_canal = (
+            f" | {len(canais)} canais intercalados {canais} (coluna 'canal' incluída)"
+            if len(canais) > 1 else ""
+        )
         print(f"Convertido: '{caminho_entrada}' (.bin) -> '{caminho_saida}' "
-              f"(.csv) | {n} amostra(s) | --formato {formato}{extra}")
+              f"(.csv) | {n} amostra(s) | --formato {formato}{extra}{extra_canal}")
     else:
         n = csv_para_bin(caminho_entrada, caminho_saida, formato, inicio, fim,
                           tamanho_chunk)
@@ -933,50 +1338,153 @@ def escolher_unidade_tempo(duracao_s: float):
     return 1.0, "Tempo (s)"
 
 
-def plotar(tensao: np.ndarray, fs: float, idx_inicio_arquivo: int,
-           info_fft: dict | None, titulo_arquivo: str, caminho_saida: Path | None):
-    n = len(tensao)
-    fator_tempo, rotulo_tempo = escolher_unidade_tempo(n / fs)
-    tempo = (np.arange(n) / fs) * fator_tempo
+def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: float,
+                       idx_inicio_arquivo: int, infos_fft: dict | None,
+                       titulo_arquivo: str, caminho_saida: Path | None,
+                       layout: str) -> None:
+    """
+    Plota a forma de onda (e, opcionalmente, o espectro) de 1 ou mais
+    canais -- ver seção 10 do docstring do módulo.
 
-    if info_fft is None:
-        fig, ax_tempo = plt.subplots(figsize=(10, 5))
+    IMPORTANTE (retrocompatibilidade, ver seção 10.8): com 1 canal só,
+    este é o MESMO caminho de código que trata múltiplos canais, apenas
+    com n_canais==1 -- não existe uma função "plotar de 1 canal"
+    separada. O resultado visual (cores, título, ausência de legenda)
+    é construído para ficar idêntico ao do antigo `plotar()` de antes do
+    suporte multi-canal.
+
+    tensoes_por_canal: dict {canal: array de tensão}, todos os arrays
+        do MESMO tamanho (ver desintercalar() -- ela já garante isso,
+        truncando para um múltiplo de num_canais). A ordem de iteração
+        do dict (preservada desde Python 3.7) define a ordem de
+        plotagem/legenda/cores.
+    fs_efetiva: frequência de amostragem de CADA canal individualmente
+        (--frequencia já dividida pelo número de canais -- seção 10.3).
+    infos_fft: None (sem --fft) ou dict {canal: info_fft}, um por canal
+        presente em tensoes_por_canal, no mesmo formato que
+        recortar_ciclos_inteiros/calcular_espectro_dbv já produzem.
+    layout: "separados" ou "sobrepostos" -- ignorado com 1 canal só.
+    """
+    canais = list(tensoes_por_canal.keys())
+    n_canais = len(canais)
+    tem_fft = infos_fft is not None
+
+    n = len(tensoes_por_canal[canais[0]])
+    fator_tempo, rotulo_tempo = escolher_unidade_tempo(n / fs_efetiva)
+    tempo = (np.arange(n) / fs_efetiva) * fator_tempo
+
+    cores = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    usar_eixo_unico = (n_canais == 1) or (layout == "sobrepostos")
+
+    if usar_eixo_unico:
+        # --- 1 canal, OU vários canais sobrepostos no mesmo eixo ---
+        if tem_fft:
+            fig, (ax_tempo, ax_fft) = plt.subplots(2, 1, figsize=(10, 8))
+        else:
+            fig, ax_tempo = plt.subplots(figsize=(10, 5))
+            ax_fft = None
+
+        for i, canal in enumerate(canais):
+            cor_tempo = "tab:green" if n_canais == 1 else cores[i % len(cores)]
+            rotulo = None if n_canais == 1 else f"Canal {canal}"
+            ax_tempo.plot(tempo, tensoes_por_canal[canal], color=cor_tempo,
+                          linewidth=1.0, label=rotulo)
+
+        if n_canais == 1:
+            ax_tempo.set_title(f"Forma de onda -- amostras {idx_inicio_arquivo} .. "
+                                f"{idx_inicio_arquivo + n} de '{titulo_arquivo}'")
+        else:
+            ax_tempo.set_title(f"Forma de onda -- amostras {idx_inicio_arquivo} .. "
+                                f"{idx_inicio_arquivo + n} de '{titulo_arquivo}' "
+                                f"(canais {canais}, sobrepostos)")
+        ax_tempo.set_xlabel(rotulo_tempo)
+        ax_tempo.set_ylabel("Tensão (V)")
+        ax_tempo.grid(True, alpha=0.4)
+
+        if tem_fft:
+            for i, canal in enumerate(canais):
+                info = infos_fft[canal]
+                cor_sombra = "tab:orange" if n_canais == 1 else cores[i % len(cores)]
+                ini_janela = info["idx_inicio_local"] / fs_efetiva * fator_tempo
+                fim_janela = info["idx_fim_local"] / fs_efetiva * fator_tempo
+                rotulo_sombra = (
+                    f"Janela da FFT ({info['n_ciclos']} ciclo(s))" if n_canais == 1
+                    else f"Janela FFT canal {canal} ({info['n_ciclos']} ciclo(s))"
+                )
+                ax_tempo.axvspan(ini_janela, fim_janela, color=cor_sombra, alpha=0.20,
+                                  label=rotulo_sombra)
+            ax_tempo.legend(loc="upper right", fontsize=9 if n_canais == 1 else 8)
+
+            for i, canal in enumerate(canais):
+                info = infos_fft[canal]
+                cor_fft = "tab:blue" if n_canais == 1 else cores[i % len(cores)]
+                rotulo_fft = None if n_canais == 1 else f"Canal {canal} (f0={info['f0']:.2f} Hz)"
+                ax_fft.plot(info["freqs"], info["amplitude_db"], color=cor_fft,
+                            linewidth=1.2, label=rotulo_fft)
+
+            if n_canais == 1:
+                info = infos_fft[canais[0]]
+                ax_fft.set_title(
+                    f"Espectro de Frequência -- f0 estimada = {info['f0']:.3f} Hz "
+                    f"| {info['n_ciclos']} ciclo(s) completo(s) | janela: "
+                    f"{info['janela']}"
+                )
+            else:
+                ax_fft.set_title(f"Espectro de Frequência -- canais {canais} | "
+                                  f"janela: {infos_fft[canais[0]]['janela']}")
+                ax_fft.legend(loc="upper right", fontsize=8)
+
+            ax_fft.set_xlabel("Frequência (Hz)")
+            ax_fft.set_ylabel("Magnitude (dBV)")
+            ax_fft.grid(True, which="both", ls="-", alpha=0.4)
+
+            nyquist = fs_efetiva / 2.0
+            ax_fft.set_xlim(0, nyquist * 1.10)
+            ax_fft.set_ylim(bottom=-100)
+
+        plt.tight_layout()
+
     else:
-        fig, (ax_tempo, ax_fft) = plt.subplots(2, 1, figsize=(10, 8))
+        # --- vários canais, layout "separados": 1 linha de subplots por canal ---
+        n_colunas = 2 if tem_fft else 1
+        fig, eixos = plt.subplots(n_canais, n_colunas,
+                                   figsize=(6.5 * n_colunas, 3.2 * n_canais),
+                                   squeeze=False)
 
-    # --- Domínio do tempo ---
-    ax_tempo.plot(tempo, tensao, color="tab:green", linewidth=1.0)
-    ax_tempo.set_title(f"Forma de onda -- amostras {idx_inicio_arquivo} .. "
-                        f"{idx_inicio_arquivo + n} de '{titulo_arquivo}'")
-    ax_tempo.set_xlabel(rotulo_tempo)
-    ax_tempo.set_ylabel("Tensão (V)")
-    ax_tempo.grid(True, alpha=0.4)
+        for i, canal in enumerate(canais):
+            cor = cores[i % len(cores)]
+            ax_tempo = eixos[i, 0]
 
-    # --- Domínio da frequência (opcional) ---
-    if info_fft is not None:
-        # Sombreia, no gráfico de tempo, exatamente o trecho usado na FFT.
-        ini_janela = info_fft["idx_inicio_local"] / fs * fator_tempo
-        fim_janela = info_fft["idx_fim_local"] / fs * fator_tempo
-        ax_tempo.axvspan(ini_janela, fim_janela, color="tab:orange", alpha=0.20,
-                          label=f"Janela da FFT ({info_fft['n_ciclos']} ciclo(s))")
-        ax_tempo.legend(loc="upper right", fontsize=9)
+            ax_tempo.plot(tempo, tensoes_por_canal[canal], color=cor, linewidth=1.0)
+            ax_tempo.set_title(f"Canal {canal} -- amostras {idx_inicio_arquivo} .. "
+                                f"{idx_inicio_arquivo + n}")
+            ax_tempo.set_xlabel(rotulo_tempo)
+            ax_tempo.set_ylabel("Tensão (V)")
+            ax_tempo.grid(True, alpha=0.4)
 
-        freqs, amplitude_db = info_fft["freqs"], info_fft["amplitude_db"]
-        ax_fft.plot(freqs, amplitude_db, color="tab:blue", linewidth=1.2)
-        ax_fft.set_title(
-            f"Espectro de Frequência -- f0 estimada = {info_fft['f0']:.3f} Hz "
-            f"| {info_fft['n_ciclos']} ciclo(s) completo(s) | janela: "
-            f"{info_fft['janela']}"
-        )
-        ax_fft.set_xlabel("Frequência (Hz)")
-        ax_fft.set_ylabel("Magnitude (dBV)")
-        ax_fft.grid(True, which="both", ls="-", alpha=0.4)
+            if tem_fft:
+                info = infos_fft[canal]
+                ax_fft = eixos[i, 1]
 
-        nyquist = fs / 2.0
-        ax_fft.set_xlim(0, nyquist * 1.10)
-        ax_fft.set_ylim(bottom=-100)
+                ini_janela = info["idx_inicio_local"] / fs_efetiva * fator_tempo
+                fim_janela = info["idx_fim_local"] / fs_efetiva * fator_tempo
+                ax_tempo.axvspan(ini_janela, fim_janela, color=cor, alpha=0.20,
+                                  label=f"Janela da FFT ({info['n_ciclos']} ciclo(s))")
+                ax_tempo.legend(loc="upper right", fontsize=8)
 
-    plt.tight_layout()
+                ax_fft.plot(info["freqs"], info["amplitude_db"], color=cor, linewidth=1.2)
+                ax_fft.set_title(f"Canal {canal} -- f0 = {info['f0']:.3f} Hz | "
+                                  f"{info['n_ciclos']} ciclo(s) | janela: {info['janela']}")
+                ax_fft.set_xlabel("Frequência (Hz)")
+                ax_fft.set_ylabel("Magnitude (dBV)")
+                ax_fft.grid(True, which="both", ls="-", alpha=0.4)
+
+                nyquist = fs_efetiva / 2.0
+                ax_fft.set_xlim(0, nyquist * 1.10)
+                ax_fft.set_ylim(bottom=-100)
+
+        fig.suptitle(f"'{titulo_arquivo}' -- canais {canais} (separados)")
+        plt.tight_layout(rect=[0, 0, 1, 0.97])
 
     if caminho_saida is not None:
         fig.savefig(caminho_saida, dpi=150)
@@ -1039,6 +1547,21 @@ def montar_parser() -> argparse.ArgumentParser:
             "\n"
             "  # Converter só um recorte (amostras 0..9999) para inspecionar rápido\n"
             "  %(prog)s -c captura.bin -o trecho.csv --fim 10000\n"
+            "\n"
+            "  # -- Multi-canal (seção 10 do docstring) --------------------\n"
+            "  # Captura feita com `ler_adc 102400 0,1,3`: 3 canais, plotados\n"
+            "  # um por subplot (padrão --layout-canais separados)\n"
+            "  %(prog)s captura.bin -f 102400 --canais 0,1,3 --fft\n"
+            "\n"
+            "  # Mesma captura, só os canais 0 e 3, sobrepostos no mesmo eixo\n"
+            "  %(prog)s captura.bin -f 102400 --canais 0,1,3 "
+            "--canais-exibir 0,3 --layout-canais sobrepostos --fft\n"
+            "\n"
+            "  # Canal 0 = tensão (ganho 19.53), canal 1 = corrente (ganho 0.1)\n"
+            "  %(prog)s captura.bin -f 102400 --canais 0,1 --ganho 19.53,0.1 --fft\n"
+            "\n"
+            "  # Converter captura multi-canal para .csv (ganha a coluna 'canal')\n"
+            "  %(prog)s -c captura.bin -o captura.csv --canais 0,1,3\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1056,10 +1579,54 @@ def montar_parser() -> argparse.ArgumentParser:
         "-f", "--frequencia", type=float, default=None,
         metavar="HZ",
         help="[MODO DE PLOTAGEM] Frequência de amostragem usada na coleta, "
-             "em Hz (ex.: -f 102400). Define o eixo do tempo e o eixo de "
-             "frequência da FFT. OBRIGATÓRIO nesse modo; NÃO USADO no modo "
-             "de conversão (a taxa de amostragem não é gravada dentro dos "
-             "arquivos '.bin'/'.csv')."
+             "em Hz (ex.: -f 102400). Com mais de 1 canal em --canais, "
+             "esta é a frequência TOTAL de transação passada a `ler_adc` "
+             "(mesmo significado de sempre) -- a frequência EFETIVA de "
+             "cada canal é esse valor dividido pelo número de canais (ver "
+             "seção 10.3 do docstring). Define o eixo do tempo e o eixo "
+             "de frequência da FFT. OBRIGATÓRIO no modo de plotagem; NÃO "
+             "USADO no modo de conversão (a taxa de amostragem não é "
+             "gravada dentro dos arquivos '.bin'/'.csv')."
+    )
+
+    grupo_multicanal = parser.add_argument_group(
+        "Captura multi-canal (ver seção 10 do docstring do módulo)",
+        "Uma captura de `ler_adc <freq> <canais>` com mais de 1 canal "
+        "grava as amostras intercaladas (round-robin) num único arquivo, "
+        "sem cabeçalho -- estas flags dizem a este script como "
+        "desintercalar de volta. Válidas tanto no modo de plotagem quanto "
+        "na conversão '.bin'->'.csv'.",
+    )
+    grupo_multicanal.add_argument(
+        "--canais", type=str, default=CANAL_PADRAO, metavar="LISTA",
+        help="Canais presentes no arquivo, separados por vírgula sem "
+             "espaços, na MESMA ordem usada na captura (`ler_adc <freq> "
+             "<canais>`) -- ex.: '0,1,3'. Padrão: '1' (um canal só, "
+             "idêntico ao comportamento deste script antes do suporte "
+             "multi-canal). `ler_adc` já imprime a lista usada no "
+             "console durante a captura, para anotação -- o '.bin' em si "
+             "não carrega esse metadado."
+    )
+    grupo_multicanal.add_argument(
+        "--canais-exibir", type=str, default=None, metavar="LISTA",
+        help="Subconjunto de --canais a efetivamente plotar/analisar "
+             "(padrão: todos os canais de --canais). Útil para focar em "
+             "1-2 canais de uma captura com vários, sem precisar "
+             "reprocessar --canais inteiro. Precisa ser um subconjunto "
+             "de --canais."
+    )
+    grupo_multicanal.add_argument(
+        "--layout-canais", choices=["separados", "sobrepostos"],
+        default="separados",
+        help="[MODO DE PLOTAGEM, só importa com mais de 1 canal em "
+             "--canais-exibir] Como organizar múltiplos canais na "
+             "mesma figura. 'separados' (PADRÃO): um subplot de forma "
+             "de onda por canal (mais um de espectro por canal, se "
+             "--fft) -- mais seguro visualmente quando os canais medem "
+             "grandezas diferentes (ex.: tensão e corrente, escalas bem "
+             "distintas). 'sobrepostos': todos os canais no MESMO eixo "
+             "de tempo (e no mesmo eixo de frequência, se --fft), cada "
+             "um com uma cor e uma entrada na legenda."
     )
 
     grupo_conversao = parser.add_argument_group(
@@ -1202,28 +1769,42 @@ def montar_parser() -> argparse.ArgumentParser:
              "-> bytes em '.csv'->'.bin')."
     )
     parser.add_argument(
-        "--faixa", type=float, default=10.24, metavar="VOLTS",
+        "--faixa", type=str, default="10.24", metavar="VOLTS",
         help="[Conversão para tensão: plotagem, ou conversão de arquivo "
              "com --incluir-tensao] Faixa de fundo de escala do ADC em "
              "Volts (padrão: 10.24, a faixa bipolar default de fábrica do "
-             "ADS8688: ±10.24 V)."
+             "ADS8688: ±10.24 V). ACEITA um valor único (aplicado a "
+             "TODOS os canais de --canais) ou uma lista separada por "
+             "vírgula do mesmo tamanho de --canais, um valor por canal, "
+             "na mesma ordem (ex.: --canais 0,1 --faixa 10.24,10.24) -- "
+             "ver seção 10.5 do docstring para o caso de uso (canais com "
+             "sensores/faixas diferentes, ex.: tensão e corrente)."
     )
     parser.add_argument(
-        "--ganho", type=float, default=1.0, metavar="FATOR",
+        "--ganho", type=str, default="1.0", metavar="FATOR",
         help="[Conversão para tensão: plotagem, ou conversão de arquivo "
              "com --incluir-tensao] Fator de ganho do sensor/PCB para "
              "converter a tensão no ADC na tensão real da rede (padrão: "
-             "1.0, sem conversão adicional)."
+             "1.0, sem conversão adicional). ACEITA um valor único "
+             "(aplicado a TODOS os canais) ou uma lista separada por "
+             "vírgula do mesmo tamanho de --canais, um valor por canal "
+             "(ex.: --canais 0,1 --ganho 19.53,0.1 -- canal 0 é tensão "
+             "com ganho 19.53, canal 1 é corrente com ganho 0.1). Ver "
+             "seção 10.5 do docstring."
     )
     parser.add_argument(
-        "--offset", type=float, default=None, metavar="VOLTS",
+        "--offset", type=str, default=None, metavar="VOLTS",
         help="[Conversão para tensão: plotagem, ou conversão de arquivo "
              "com --incluir-tensao] Deslocamento DC subtraído da tensão "
-             "do ADC antes do ganho (padrão automático: faixa/2 para "
+             "do ADC antes do ganho (padrão automático, calculado por "
+             "canal a partir da respectiva --faixa: faixa/2 para "
              "--formato uint16, o que centraliza a onda CA em torno de "
              "0 V; 0.0 para --formato int16, que já é bipolar). Ajuste "
              "manualmente se o offset real do seu ADC/sensor não for "
-             "exatamente metade da faixa (erro de calibração)."
+             "exatamente metade da faixa (erro de calibração). ACEITA um "
+             "valor único (todos os canais) ou uma lista separada por "
+             "vírgula do mesmo tamanho de --canais, mesma convenção de "
+             "--faixa/--ganho (ver seção 10.5)."
     )
 
     return parser
@@ -1232,6 +1813,23 @@ def montar_parser() -> argparse.ArgumentParser:
 def main(argv=None):
     parser = montar_parser()
     args = parser.parse_args(argv)
+
+    # Resolve a configuração multi-canal cedo (antes de carregar qualquer
+    # arquivo, que pode ser grande) -- mesma filosofia de --janela abaixo,
+    # e ver seção 10 do docstring do módulo. Vale para os dois modos; com
+    # o padrão --canais "1" (não passado), tudo se reduz ao comportamento
+    # de sempre (1 canal só) -- o caminho de 1 canal é um caso particular
+    # deste mesmo fluxo, não um fluxo separado (seção 10.8).
+    canais = analisar_lista_canais(args.canais, "--canais")
+    if args.canais_exibir is not None:
+        canais_exibir = analisar_lista_canais(args.canais_exibir, "--canais-exibir")
+        validar_subconjunto_canais(canais_exibir, canais)
+    else:
+        canais_exibir = canais
+
+    faixas = analisar_lista_calibracao(args.faixa, len(canais), "--faixa")
+    ganhos = analisar_lista_calibracao(args.ganho, len(canais), "--ganho")
+    offsets = resolver_offsets_por_canal(args.offset, faixas, args.formato, len(canais))
 
     # --------------------------------------------------------------------
     # MODO DE CONVERSÃO
@@ -1250,13 +1848,13 @@ def main(argv=None):
             )
         converter_arquivo(
             args.converter, args.saida, args.formato, args.inicio, args.fim,
-            args.incluir_tensao, args.faixa, args.ganho, args.offset,
+            args.incluir_tensao, canais, faixas, ganhos, offsets,
             args.tamanho_chunk,
         )
         return
 
     # --------------------------------------------------------------------
-    # MODO DE PLOTAGEM (comportamento original)
+    # MODO DE PLOTAGEM
     # --------------------------------------------------------------------
     if args.arquivo is None:
         parser.error(
@@ -1273,55 +1871,95 @@ def main(argv=None):
     if args.fft is not None:
         nome_janela_canonico = resolver_nome_janela(args.janela)
 
-    offset = args.offset
-    if offset is None:
-        offset = args.faixa / 2.0 if args.formato == "uint16" else 0.0
-
     tipo_arquivo = detectar_tipo_arquivo(args.arquivo)
     amostras = carregar_amostras(args.arquivo, args.formato)
     bruto, idx_inicio, idx_fim, total = selecionar_intervalo(
         amostras, args.inicio, args.fim
     )
-    tensao = converter_para_tensao(bruto, args.faixa, args.ganho, args.formato, offset)
+
+    num_canais = len(canais)
+    # Frequência EFETIVA de cada canal individual -- ver seção 10.3 do
+    # docstring. Com 1 canal só, isso é exatamente args.frequencia (sem
+    # nenhuma mudança de comportamento).
+    fs_efetiva = args.frequencia / num_canais
+
+    # Desintercala (ver seção 10.1/10.7) -- com 1 canal só, isso é um
+    # reshape trivial que devolve o mesmo conteúdo do array original.
+    por_canal_bruto = desintercalar(bruto, canais, canais_exibir)
+    indice_no_ciclo = {c: i for i, c in enumerate(canais)}
+
+    por_canal_tensao: dict[int, np.ndarray] = {}
+    for canal in canais_exibir:
+        idx = indice_no_ciclo[canal]
+        por_canal_tensao[canal] = converter_para_tensao(
+            por_canal_bruto[canal], faixas[idx], ganhos[idx], args.formato, offsets[idx]
+        )
+
+    n_por_canal = len(next(iter(por_canal_tensao.values())))
 
     print(f"Arquivo: {args.arquivo}  ({total} amostras no total, "
           f"formato de arquivo: .{tipo_arquivo})")
-    print(f"Conversão: --formato {args.formato} | --faixa {args.faixa} V | "
-          f"--offset {offset} V | --ganho {args.ganho}")
-    print(f"Janela selecionada: amostras {idx_inicio}..{idx_fim} "
-          f"({len(tensao)} amostras, {len(tensao) / args.frequencia * 1000:.2f} ms)")
 
-    info_fft = None
+    if num_canais == 1:
+        # Texto idêntico ao de antes do suporte multi-canal.
+        idx0 = indice_no_ciclo[canais_exibir[0]]
+        print(f"Conversão: --formato {args.formato} | --faixa {faixas[idx0]} V | "
+              f"--offset {offsets[idx0]} V | --ganho {ganhos[idx0]}")
+        print(f"Janela selecionada: amostras {idx_inicio}..{idx_fim} "
+              f"({n_por_canal} amostras, {n_por_canal / fs_efetiva * 1000:.2f} ms)")
+    else:
+        print(f"Canais na captura: {canais} | exibindo: {canais_exibir} | "
+              f"layout: {args.layout_canais}")
+        print(f"Frequência total {args.frequencia:g} Hz / {num_canais} canais "
+              f"-> frequência efetiva por canal: {fs_efetiva:g} Hz")
+        for canal in canais_exibir:
+            idx = indice_no_ciclo[canal]
+            print(f"  Canal {canal}: --formato {args.formato} | "
+                  f"--faixa {faixas[idx]} V | --offset {offsets[idx]} V | "
+                  f"--ganho {ganhos[idx]}")
+        print(f"Janela selecionada: amostras brutas {idx_inicio}..{idx_fim} "
+              f"({n_por_canal} amostras/canal, "
+              f"{n_por_canal / fs_efetiva * 1000:.2f} ms/canal)")
+
+    infos_fft = None
     if args.fft is not None:
         n_ciclos_pedido = args.fft if args.fft > 0 else None
-        sinal_fft, idx_i_local, idx_f_local, f0, n_ciclos = recortar_ciclos_inteiros(
-            tensao, args.frequencia, args.freq_min, args.freq_max, n_ciclos_pedido
-        )
-        freqs, amplitude_db = calcular_espectro_dbv(
-            sinal_fft, args.frequencia, nome_janela_canonico, args.kaiser_beta
-        )
+        infos_fft = {}
+        for canal in canais_exibir:
+            sinal_fft, idx_i_local, idx_f_local, f0, n_ciclos = recortar_ciclos_inteiros(
+                por_canal_tensao[canal], fs_efetiva, args.freq_min, args.freq_max,
+                n_ciclos_pedido
+            )
+            freqs, amplitude_db = calcular_espectro_dbv(
+                sinal_fft, fs_efetiva, nome_janela_canonico, args.kaiser_beta
+            )
 
-        rotulo_janela = NOMES_EXIBICAO_JANELA[nome_janela_canonico]
-        if nome_janela_canonico == "kaiser":
-            rotulo_janela += f" (beta={args.kaiser_beta:g})"
+            rotulo_janela = NOMES_EXIBICAO_JANELA[nome_janela_canonico]
+            if nome_janela_canonico == "kaiser":
+                rotulo_janela += f" (beta={args.kaiser_beta:g})"
 
-        print(f"FFT: fundamental estimada f0 = {f0:.3f} Hz | "
-              f"{n_ciclos} ciclo(s) completo(s) | "
-              f"{len(sinal_fft)} amostras (amostras locais {idx_i_local}..{idx_f_local}) | "
-              f"janela: {rotulo_janela}")
+            if num_canais == 1:
+                print(f"FFT: fundamental estimada f0 = {f0:.3f} Hz | "
+                      f"{n_ciclos} ciclo(s) completo(s) | "
+                      f"{len(sinal_fft)} amostras (amostras locais {idx_i_local}..{idx_f_local}) | "
+                      f"janela: {rotulo_janela}")
+            else:
+                print(f"  Canal {canal}: FFT f0 = {f0:.3f} Hz | "
+                      f"{n_ciclos} ciclo(s) completo(s) | {len(sinal_fft)} amostras "
+                      f"(locais {idx_i_local}..{idx_f_local}) | janela: {rotulo_janela}")
 
-        info_fft = {
-            "freqs": freqs,
-            "amplitude_db": amplitude_db,
-            "f0": f0,
-            "n_ciclos": n_ciclos,
-            "idx_inicio_local": idx_i_local,
-            "idx_fim_local": idx_f_local,
-            "janela": rotulo_janela,
-        }
+            infos_fft[canal] = {
+                "freqs": freqs,
+                "amplitude_db": amplitude_db,
+                "f0": f0,
+                "n_ciclos": n_ciclos,
+                "idx_inicio_local": idx_i_local,
+                "idx_fim_local": idx_f_local,
+                "janela": rotulo_janela,
+            }
 
-    plotar(tensao, args.frequencia, idx_inicio, info_fft,
-           args.arquivo.name, args.saida)
+    plotar_multicanal(por_canal_tensao, fs_efetiva, idx_inicio, infos_fft,
+                       args.arquivo.name, args.saida, args.layout_canais)
 
 
 if __name__ == "__main__":
