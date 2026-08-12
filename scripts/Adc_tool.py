@@ -272,7 +272,10 @@ manualmente.
 Ajuste --faixa conforme o registrador de range configurado no ADS8688 e
 --ganho conforme a calibração do seu sensor/PCB. Esses quatro parâmetros
 também são usados no modo de conversão, mas só se --incluir-tensao for
-passado (a coluna `tensao_v` do CSV é só informativa).
+passado (a coluna `tensao_v` do CSV é só informativa). Com captura
+multi-canal, --faixa/--ganho/--offset podem variar por canal (ex.: um
+canal de tensão e um de corrente, com sensores diferentes) -- ver seção
+10.5.
 
 8. DESEMPENHO E USO DE MEMÓRIA
 -----------------------------------
@@ -1509,8 +1512,11 @@ def montar_parser() -> argparse.ArgumentParser:
             "Excel), nos dois sentidos; (2) MODO DE PLOTAGEM (padrão, sem "
             "-c), que plota a forma de onda e, opcionalmente (--fft), "
             "calcula o espectro de frequência de uma captura em '.bin' OU "
-            "'.csv'. Rode com --help para a referência completa de flags; "
-            "o cabeçalho do script (docstring) tem a explicação técnica "
+            "'.csv'. Os dois modos suportam capturas de 1 ou vários canais "
+            "do ADS8688 intercalados (ver grupo de flags 'Captura "
+            "multi-canal' abaixo, ou a seção 10 do docstring do módulo). "
+            "Rode com --help para a referência completa de flags; o "
+            "cabeçalho do script (docstring) tem a explicação técnica "
             "completa de cada etapa."
         ),
         epilog=(
@@ -1633,7 +1639,12 @@ def montar_parser() -> argparse.ArgumentParser:
         "Modo de conversão (.bin <-> .csv)",
         "Ativado por -c/--converter; nesse modo o posicional 'arquivo' e "
         "-f/--frequencia são ignorados. A direção (bin->csv ou csv->bin) é "
-        "detectada automaticamente pelas extensões de -c e -o.",
+        "detectada automaticamente pelas extensões de -c e -o. As flags do "
+        "grupo 'Captura multi-canal' (--canais) e de calibração (--faixa/"
+        "--ganho/--offset/--formato) também valem aqui -- têm efeito "
+        "junto com --incluir-tensao (coluna 'tensao_v') e/ou quando "
+        "--canais tem mais de 1 canal (coluna 'canal'); ver seção 10.6 "
+        "do docstring.",
     )
     grupo_conversao.add_argument(
         "-c", "--converter", type=Path, default=None, metavar="ARQUIVO_ENTRADA",
@@ -1772,8 +1783,10 @@ def montar_parser() -> argparse.ArgumentParser:
         "--faixa", type=str, default="10.24", metavar="VOLTS",
         help="[Conversão para tensão: plotagem, ou conversão de arquivo "
              "com --incluir-tensao] Faixa de fundo de escala do ADC em "
-             "Volts (padrão: 10.24, a faixa bipolar default de fábrica do "
-             "ADS8688: ±10.24 V). ACEITA um valor único (aplicado a "
+             "Volts (padrão: 10.24 V, o valor de fábrica do ADS8688). A "
+             "POLARIDADE da faixa (unipolar 0..+faixa ou bipolar "
+             "-faixa..+faixa) é decidida por --formato, não por este "
+             "valor -- ver --formato. ACEITA um valor único (aplicado a "
              "TODOS os canais de --canais) ou uma lista separada por "
              "vírgula do mesmo tamanho de --canais, um valor por canal, "
              "na mesma ordem (ex.: --canais 0,1 --faixa 10.24,10.24) -- "

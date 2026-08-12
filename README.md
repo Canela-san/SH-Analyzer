@@ -37,14 +37,21 @@ O sistema utiliza uma arquitetura híbrida no BeagleBone:
 
 ## 🩺 Status Atual / Depuração em Andamento
 
-A reescrita do firmware original (protótipo em C puro, veja `backup pre-assembly/`) para a arquitetura híbrida PRU (Assembly) + ARM, com o objetivo de superar o limite de ~102,4 kHz do protótipo, está em andamento. Já foram resolvidos e validados:
+A reescrita do firmware original (protótipo em C puro, veja `backup pre-assembly/`) para a arquitetura híbrida PRU (Assembly) + ARM, com o objetivo de superar o limite de ~102,4 kHz do protótipo, está em andamento. Já foram resolvidos e validados **em hardware**:
 
-* Protocolo correto do ADS8688 em modo manual: frame de **32 ciclos de SCLK** por amostra (16 para escrever o comando + 16 para ler o dado da conversão anterior), com o comando `MAN_Ch_0` reenviado a cada frame.
+* Protocolo correto do ADS8688 em modo manual: frame de **32 ciclos de SCLK** por amostra (16 para escrever o comando + 16 para ler o dado da conversão anterior). Nesta placa, o canal 1 (`MAN_Ch_1`, comando `0xC400`) é o que está de fato conectado a um sinal válido -- o canal 0 fica saturado em fundo de escala mesmo com a comunicação SPI comprovadamente correta (ver histórico de depuração no cabeçalho de `firmware/spi_core.asm`). É por isso que o canal 1 é o padrão quando nenhuma lista de canais é passada a `ler_adc`.
 * Handshake de sincronização `config_ready` entre ARM e PRU (evita a PRU gravar num endereço de buffer ainda não configurado).
 * Ressincronização periódica do registrador `CYCLE` da PRU (que **trava** em vez de dar a volta ao estourar 32 bits, ~21,47 s a 200 MHz) - sem isso, capturas longas travavam sozinhas.
 * Inicialização explícita de CS/SCLK/MOSI em repouso antes do laço principal.
 * Uso de laços de atraso (em vez de `NOP` repetido) para controlar a velocidade do SPI sem estourar os 8 KB de `PRU_IMEM`.
-* Captura multi-canal: intercalação (round-robin) de até 8 canais do ADS8688 num mesmo par de buffers, com a frequência de amostragem total dividida entre os canais selecionados. Ver a nota sobre o atraso de pipeline de 1 quadro do ADS8688 no cabeçalho de `firmware/spi_core.asm` (crítica para entender como a intercalação foi alinhada corretamente).
+
+### 🆕 Captura multi-canal -- implementada, aguardando validação em hardware
+
+O firmware (`ler_adc.c`, `spi_core.asm`, `pru_main.c`, `memoria_pru.h`) e o `adc_tool.py` já têm suporte completo a capturar vários canais do ADS8688 intercalados (round-robin) numa mesma captura -- ver a seção "Começando" para o uso, e a seção 10 do docstring de `adc_tool.py` (`python3 adc_tool.py --help`) para a referência completa.
+
+**O que já foi verificado:** a lógica do lado ARM (parsing de argumentos, montagem da tabela de comandos de canal, tratamento do atraso de pipeline de 1 quadro do ADS8688 -- ver comentário no cabeçalho de `spi_core.asm`) foi validada com testes automatizados isolados (dados sintéticos), e `adc_tool.py` foi validado ponta a ponta com capturas multi-canal sintéticas, incluindo o round-trip `.bin -> .csv -> .bin`.
+
+**O que AINDA NÃO foi validado:** as mudanças em `spi_core.asm` (o índice de canal round-robin que substitui o comando fixo `MAN_Ch_1`) não foram compiladas com o `clpru` nem testadas na PRU real -- isso ainda precisa ser feito com cuidado antes de confiar na captura multi-canal em produção, especialmente considerando o bug de saturação de SPI abaixo, ainda em aberto mesmo no caminho de 1 canal já validado.
 
 **Em aberto:** a comunicação SPI ainda está saturando no valor de fundo de escala (leitura constante, independente da tensão real de entrada), mesmo em velocidades bem mais lentas que o firmware original comprovadamente funcional (`backup pre-assembly/teste_spi_pru.c`). Os testes de diagnóstico (captura do "preâmbulo" de 16 bits que deveria ser sempre zero - ver `scripts/analisar_preambulo.py`) indicam um padrão de transição único e consistente, característico de assimetria de tempo de subida/descida num optoacoplador. Próximo passo: eliminar os jumpers longos e conectar as placas diretamente, para isolar se a causa é mesmo integridade de sinal.
 
@@ -83,7 +90,7 @@ O firmware gerencia todo o ecossistema de aquisição em tempo real na BeagleBon
 Para não sobrecarregar o processador embarcado durante a coleta crítica de dados, o cálculo de grandezas físicas e a análise espectral são desacoplados do firmware.
 
 * **Pós-processamento:** a pasta `/scripts` contém rotinas em Python encarregadas de ler os arquivos binários gerados pela BeagleBone.
-* **Funcionalidades:** extração de métricas, Transformada Rápida de Fourier (FFT), filtragem digital, plotagem de gráficos e conversão de formato (`.bin` ↔ `.csv`) para análise dos supraharmônicos (`analise.py`, `adc_tool.py` — renomeado do antigo `plot_adc.py`, já que o script deixou de fazer só plotagem —, `verificar_dados.py`). Suporte a leitura/plotagem de capturas multi-canal em `adc_tool.py` está planejado (ver prompt de especificação mantido junto ao projeto) mas ainda não implementado — hoje o script assume uma captura de um canal só.
+* **Funcionalidades:** extração de métricas, Transformada Rápida de Fourier (FFT), filtragem digital, plotagem de gráficos e conversão de formato (`.bin` ↔ `.csv`) para análise dos supraharmônicos (`analise.py`, `adc_tool.py` — renomeado do antigo `plot_adc.py`, já que o script deixou de fazer só plotagem —, `verificar_dados.py`). `adc_tool.py` lê, plota e converte tanto capturas de 1 canal quanto capturas multi-canal (`--canais`/`--canais-exibir`/`--layout-canais`), com FFT independente por canal e calibração (`--faixa`/`--ganho`/`--offset`) configurável por canal -- ver `python3 adc_tool.py --help` ou a seção 10 do docstring do módulo para a referência completa.
 * **Diagnóstico:** `analisar_preambulo.py` inspeciona capturas feitas com o firmware de diagnóstico (ver comentários em `firmware/spi_core_diagnostico_preambulo.asm`), separando os 16 bits de "preâmbulo" (que deveriam ser sempre zero) dos 16 bits de dado real, para isolar problemas de protocolo/hardware sem precisar de osciloscópio.
 
 ## 🚀 Começando
@@ -91,7 +98,7 @@ Para não sobrecarregar o processador embarcado durante a coleta crítica de dad
 ### Pré-requisitos
 
 * **Hardware:** Altium Designer (para edição da placa).
-* **Software:** Sistema operacional Linux/PopOS ou Windows 10 para desenvolvimento, toolchain C/C++ (GCC) e compilador Texas Instruments (`clpru`) para a BeagleBone. Python 3+ (com `numpy`/`pandas`/`matplotlib`/`scipy`) para execução dos scripts.
+* **Software:** Sistema operacional Linux/PopOS ou Windows 10 para desenvolvimento, toolchain C/C++ (GCC) e compilador Texas Instruments (`clpru`) para a BeagleBone. Python 3.10+ (com `numpy`/`pandas`/`matplotlib`/`scipy`) para execução dos scripts. `adc_tool.py` especificamente também precisa de `PyQt6` (janela interativa do gráfico -- sem ele, ainda funciona normalmente com `-o/--saida` para salvar em arquivo); ele declara todas as suas dependências inline (PEP 723) no próprio cabeçalho, então também pode ser rodado sem instalação manual via `uv run scripts/adc_tool.py ...`, se você tiver o [`uv`](https://docs.astral.sh/uv/) instalado.
 
 ### Instalação e Execução
 
@@ -100,7 +107,22 @@ Para não sobrecarregar o processador embarcado durante a coleta crítica de dad
 3. **Compilação:** rode `make` dentro de `/firmware` para compilar o firmware da PRU (`fw_pru.out`) e o binário do ARM (`ler_adc`).
 4. **Deploy:** execute `./setup.sh` para configurar os pinos e carregar o firmware na PRU.
 5. **Aquisição:** rode `sudo ./ler_adc <frequência_em_Hz> [lista_de_canais]` para iniciar a captura. `lista_de_canais` é opcional e separada por vírgulas sem espaços (ex.: `0,1,3`); sem ela, captura só o canal 1 (comportamento padrão/histórico). Com mais de um canal, a frequência informada é dividida entre eles (amostras intercaladas em round-robin, na ordem passada). Exemplos: `sudo ./ler_adc 102400` (só canal 1, como antes) ou `sudo ./ler_adc 102400 0,1,3` (3 canais, cada um efetivamente a ~34,1 kHz).
-6. **Análise:** após a coleta, transfira os arquivos `.bin` para o seu computador principal e utilize as ferramentas da pasta `/scripts` (ex.: `python3 adc_tool.py captura.bin -f <frequência_em_Hz> --fft`) para visualização, ou `adc_tool.py -c captura.bin -o captura.csv` para converter para `.csv`. **Nota:** a leitura de capturas multi-canal em `adc_tool.py` ainda não está implementada (ver seção "Scripts e Análise") — anote sempre a lista e a ordem de canais usada em `ler_adc`, pois o `.bin` não carrega esse metadado.
+6. **Análise:** após a coleta, transfira os arquivos `.bin` para o seu computador principal e utilize as ferramentas da pasta `/scripts`. Para uma captura de 1 canal (padrão), nada muda: `python3 adc_tool.py captura.bin -f <frequência_em_Hz> --fft` para visualizar, ou `adc_tool.py -c captura.bin -o captura.csv` para converter para `.csv`. Para uma captura multi-canal, informe a MESMA lista de canais (e a mesma ordem) usada em `ler_adc` via `--canais` -- o `.bin` não carrega esse metadado, então é essa a hora de usar a lista que `ler_adc` imprimiu no console durante a captura:
+   ```bash
+   # Captura feita com: sudo ./ler_adc 102400 0,1,3
+   python3 adc_tool.py captura.bin -f 102400 --canais 0,1,3 --fft
+
+   # Só os canais 0 e 3, sobrepostos no mesmo eixo em vez de subplots separados
+   python3 adc_tool.py captura.bin -f 102400 --canais 0,1,3 \
+       --canais-exibir 0,3 --layout-canais sobrepostos --fft
+
+   # Canal 0 = tensão (ganho 19.53), canal 1 = corrente (ganho 0.1)
+   python3 adc_tool.py captura.bin -f 102400 --canais 0,1 --ganho 19.53,0.1 --fft
+
+   # Converter para .csv (ganha uma coluna 'canal' quando há mais de 1 canal)
+   python3 adc_tool.py -c captura.bin -o captura.csv --canais 0,1,3
+   ```
+   Rode `python3 adc_tool.py --help` (seção "Captura multi-canal") ou veja a seção 10 do docstring do módulo para a referência completa -- incluindo como funciona a calibração por canal, o layout de plotagem e o formato do `.csv` multi-canal.
 
 ## 🎓 Contexto Acadêmico
 
