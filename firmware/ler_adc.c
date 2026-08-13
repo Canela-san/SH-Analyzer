@@ -107,7 +107,7 @@ static int analisar_lista_canais(const char *texto, int *canais_saida) {
 int main(int argc, char *argv[]) {
     signal(SIGINT, lidar_interrupcao);
 
-    uint32_t frequencia_desejada = 30000; // Bem mais baixa - a transação agora leva ~21 us
+    uint32_t frequencia_desejada = 30000;
     if (argc > 1) {
         frequencia_desejada = (uint32_t)atoi(argv[1]);
         if (frequencia_desejada == 0 || frequencia_desejada > 500000) {
