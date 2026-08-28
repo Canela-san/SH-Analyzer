@@ -39,7 +39,7 @@ O sistema utiliza uma arquitetura híbrida no BeagleBone:
 
 A reescrita do firmware original (protótipo em C puro, veja `backup pre-assembly/`) para a arquitetura híbrida PRU (Assembly) + ARM, com o objetivo de superar o limite de ~102,4 kHz do protótipo, está em andamento. Já foram resolvidos e validados **em hardware**:
 
-* Protocolo correto do ADS8688 em modo manual: frame de **32 ciclos de SCLK** por amostra (16 para escrever o comando + 16 para ler o dado da conversão anterior). Nesta placa, o canal 1 (`MAN_Ch_1`, comando `0xC400`) é o que está de fato conectado a um sinal válido -- o canal 0 fica saturado em fundo de escala mesmo com a comunicação SPI comprovadamente correta (ver histórico de depuração no cabeçalho de `firmware/spi_core.asm`). É por isso que o canal 1 é o padrão quando nenhuma lista de canais é passada a `ler_adc`.
+* Protocolo correto do ADS8688 em modo manual: frame de **32 ciclos de SCLK** por amostra (16 para escrever o comando + 16 para ler o dado da conversão anterior). Nesta placa, o canal 1 (`MAN_Ch_1`, comando `0xC400`). O canal 1 é o padrão quando nenhuma lista de canais é passada a `ler_adc`.
 * Handshake de sincronização `config_ready` entre ARM e PRU (evita a PRU gravar num endereço de buffer ainda não configurado).
 * Ressincronização periódica do registrador `CYCLE` da PRU (que **trava** em vez de dar a volta ao estourar 32 bits, ~21,47 s a 200 MHz) - sem isso, capturas longas travavam sozinhas.
 * Inicialização explícita de CS/SCLK/MOSI em repouso antes do laço principal.
@@ -90,7 +90,7 @@ O firmware gerencia todo o ecossistema de aquisição em tempo real na BeagleBon
 Para não sobrecarregar o processador embarcado durante a coleta crítica de dados, o cálculo de grandezas físicas e a análise espectral são desacoplados do firmware.
 
 * **Pós-processamento:** a pasta `/scripts` contém rotinas em Python encarregadas de ler os arquivos binários gerados pela BeagleBone.
-* **Funcionalidades:** extração de métricas, Transformada Rápida de Fourier (FFT), filtragem digital, plotagem de gráficos e conversão de formato (`.bin` ↔ `.csv`) para análise dos supraharmônicos (`analise.py`, `adc_tool.py` — renomeado do antigo `plot_adc.py`, já que o script deixou de fazer só plotagem —, `verificar_dados.py`). `adc_tool.py` lê, plota e converte tanto capturas de 1 canal quanto capturas multi-canal (`--canais`/`--canais-exibir`/`--layout-canais`), com FFT independente por canal e calibração (`--faixa`/`--ganho`/`--offset`) configurável por canal -- ver `python3 adc_tool.py --help` ou a seção 10 do docstring do módulo para a referência completa.
+* **Funcionalidades:** extração de métricas, Transformada Rápida de Fourier (FFT), filtragem digital, plotagem de gráficos e conversão de formato (`.bin` ↔ `.csv`) para análise dos supraharmônicos (`analise.py`, `adc_tool.py` — renomeado do antigo `plot_adc.py`, já que o script deixou de fazer só plotagem —, `verificar_dados.py`). `adc_tool.py` lê, plota e converte tanto capturas de 1 canal quanto capturas multi-canal (`--canais`/`--canais-exibir`/`--layout-canais`), com FFT independente por canal e calibração (`--faixa`/`--ganho`/`--offset`) configurável por canal, além de filtragem digital opcional Butterworth passa-baixa e/ou passa-alta (`--filtro-passa-baixa`/`--filtro-passa-alta`/`--ordem-filtro`, ordem 4 a 8) aplicada antes da FFT e da plotagem -- ver `python3 adc_tool.py --help` ou a seção 10 (multi-canal) e 11 (filtragem digital) do docstring do módulo para a referência completa.
 * **Diagnóstico:** `analisar_preambulo.py` inspeciona capturas feitas com o firmware de diagnóstico (ver comentários em `firmware/spi_core_diagnostico_preambulo.asm`), separando os 16 bits de "preâmbulo" (que deveriam ser sempre zero) dos 16 bits de dado real, para isolar problemas de protocolo/hardware sem precisar de osciloscópio.
 
 ## 🚀 Começando
@@ -123,6 +123,20 @@ Para não sobrecarregar o processador embarcado durante a coleta crítica de dad
    python3 adc_tool.py -c captura.bin -o captura.csv --canais 0,1,3
    ```
    Rode `python3 adc_tool.py --help` (seção "Captura multi-canal") ou veja a seção 10 do docstring do módulo para a referência completa -- incluindo como funciona a calibração por canal, o layout de plotagem e o formato do `.csv` multi-canal.
+
+   Para limpar ruído de alta frequência (ex.: aliasing residual perto da Nyquist) ou deriva de DC antes de plotar/calcular a FFT, use o filtro digital Butterworth opcional (`--filtro-passa-baixa`/`--filtro-passa-alta`/`--ordem-filtro`, seção 11 do docstring):
+   ```bash
+   # Captura a 102.4 kHz (Nyquist = 51.2 kHz): limpa ruído acima de 45 kHz
+   python3 adc_tool.py captura.bin -f 102400 --filtro-passa-baixa 45000 --fft
+
+   # Remove deriva de DC/baixa frequência com um filtro de ordem mais alta
+   python3 adc_tool.py captura.bin -f 102400 --filtro-passa-alta 20 --ordem-filtro 8 --fft
+
+   # Os dois combinados (passa-faixa), ordem 6
+   python3 adc_tool.py captura.bin -f 102400 \
+       --filtro-passa-alta 20 --filtro-passa-baixa 45000 --ordem-filtro 6 --fft
+   ```
+   O filtro só se aplica ao modo de plotagem (não afeta a coluna `tensao_v` opcional do modo de conversão, que continua refletindo o dado bruto sem filtragem, para preservar o round-trip `.bin`<->`.csv` sem perdas).
 
 ## 🎓 Contexto Acadêmico
 

@@ -42,6 +42,7 @@ comando/atalho antigo ainda chamar `plot_adc.py`, atualize para
       10.5 Calibração por canal (--faixa / --ganho / --offset como listas)
       10.6 Modo de conversão: a coluna `canal` no `.csv`
       10.7 Casos de borda
+  11. FILTRAGEM DIGITAL (--filtro-passa-baixa / --filtro-passa-alta / --ordem-filtro)
 
 1. PARA QUE SERVE
 ------------------
@@ -128,6 +129,13 @@ de conversão.
 
 6. ANÁLISE EM FREQUÊNCIA (--fft)
 -----------------------------------
+(Nota: se --filtro-passa-baixa/--filtro-passa-alta forem usados (seção
+11), eles são aplicados ANTES de qualquer etapa desta seção -- o sinal
+que entra aqui, e também o que é plotado no domínio do tempo, já sai
+filtrado. São mecanismos independentes: o filtro da seção 11 é uma
+escolha explícita do usuário sobre o sinal inteiro; o passa-baixa
+mencionado no passo 2 abaixo é interno, fixo em ordem 4, e serve só
+para isolar a fundamental na hora de achar os cruzamentos por zero.)
 
 6.1 O problema do vazamento espectral (spectral leakage)
     A FFT assume implicitamente que o trecho analisado se repete
@@ -323,6 +331,13 @@ canal de tensão e um de corrente, com sensores diferentes) -- ver seção
   # FFT com janela Kaiser e beta customizado
   python3 adc_tool.py supraharmonicos_raw.bin -f 102400 --fft --janela kaiser --kaiser-beta 12
 
+  # Filtro digital Butterworth passa-baixa em 45 kHz antes da FFT/plotagem
+  # (limpa ruído de alta frequência numa captura a 102.4 kHz -- ver seção 11)
+  python3 adc_tool.py supraharmonicos_raw.bin -f 102400 --filtro-passa-baixa 45000 --fft
+
+  # Filtro passa-alta (remove deriva de DC/baixa frequência) com ordem 8
+  python3 adc_tool.py supraharmonicos_raw.bin -f 102400 --filtro-passa-alta 20 --ordem-filtro 8 --fft
+
   # Convertendo para tensão real (ADC ±10.24 V, sensor com ganho 19.53)
   python3 adc_tool.py supraharmonicos_raw.bin -f 102400 --faixa 10.24 --ganho 19.53 --fft
 
@@ -461,6 +476,88 @@ explica como este script decodifica e apresenta esse formato.
     não é necessariamente múltiplo do número de canais -- isso é
     esperado e não afeta a intercalação, que se mantém em fase ao longo
     de toda a captura (ver 10.1).
+
+11. FILTRAGEM DIGITAL (--filtro-passa-baixa / --filtro-passa-alta / --ordem-filtro)
+----------------------------------------------------------------------------------------
+[MODO DE PLOTAGEM] Antes de QUALQUER outra etapa -- o recorte em ciclos
+inteiros da seção 6.2, a FFT da seção 6, e a própria forma de onda
+plotada no domínio do tempo --, é possível aplicar um ou dois filtros
+digitais Butterworth ao sinal já convertido para Volts de cada canal.
+
+    --filtro-passa-baixa HZ   -- rejeita acima de HZ.
+    --filtro-passa-alta HZ    -- rejeita abaixo de HZ.
+    --ordem-filtro N          -- ordem de AMBOS os filtros acima, quando
+                                  usados (padrão: 5; aceita 4 a 8).
+
+Nenhum dos dois é aplicado por padrão -- comportamento idêntico ao de
+antes desta funcionalidade. Podem ser usados isoladamente ou em
+conjunto: nesse caso, o sinal passa primeiro pelo passa-alta e depois
+pelo passa-baixa, formando efetivamente um passa-faixa (sendo os dois
+filtros lineares, a ordem de aplicação não muda o resultado além de um
+erro de arredondamento de ponto flutuante desprezível). Usados juntos,
+--filtro-passa-alta precisa ser menor que --filtro-passa-baixa -- do
+contrário a banda passante resultante seria vazia (erro reportado antes
+de carregar o arquivo, ver validação abaixo).
+
+Exemplo motivador: numa captura a 102.4 kHz a frequência de Nyquist é
+51.2 kHz. Ruído/aliasing que já tenha entrado na banda amostrada durante
+a conversão A/D não pode mais ser "desfeito" digitalmente depois --
+isso só a filtragem ANALÓGICA do frontend evita de fato (ver seção
+"Arquitetura e Desempenho" do README). O que --filtro-passa-baixa faz
+aqui é diferente e complementar: atacar o que sobrou de ruído de alta
+frequência DENTRO da própria banda já amostrada (entre a frequência de
+corte escolhida e a Nyquist), o que limpa a leitura da fundamental e
+dos supraharmônicos de interesse abaixo desse corte. Ex.:
+--filtro-passa-baixa 45000 --ordem-filtro 6 ataca o que sobrar acima de
+45 kHz numa captura a 102.4 kHz.
+
+Implementação (scipy.signal.butter(..., output="sos") +
+scipy.signal.sosfiltfilt, função aplicar_filtro_digital):
+    - SOS (Second-Order Sections) em vez da forma clássica (b, a) usada
+      no filtro interno de triagem da seção 6.2 (esse fixo em ordem 4):
+      para as ordens mais altas permitidas aqui (até 8), a forma (b, a)
+      fica numericamente instável (coeficientes de um polinômio de grau
+      alto perdem precisão em ponto flutuante), enquanto SOS decompõe o
+      filtro numa cascata de seções de 2ª ordem, cada uma bem
+      condicionada -- essencial para um filtro de ordem 8 não introduzir
+      artefatos espúrios no sinal.
+    - filtfilt (aqui, sosfiltfilt) filtra para frente e para trás
+      (forward-backward), zerando o atraso de fase -- essencial aqui,
+      porque um atraso de fase deslocaria os cruzamentos por zero usados
+      no recorte em ciclos inteiros (seção 6.2) e distorceria a forma de
+      onda no gráfico do tempo -- ao custo de dobrar a ordem efetiva do
+      filtro (a magnitude é elevada ao quadrado), então a ordem pedida
+      em --ordem-filtro já é suficiente sem precisar compensar
+      manualmente.
+    - Custo computacional: aplicado uma vez por canal exibido, por
+      filtro solicitado (no máximo 2x, se ambos forem usados) -- com
+      scipy vetorizado, isso é desprezível frente ao tempo de leitura do
+      arquivo, mesmo para um buffer de produção inteiro (1 048 576
+      amostras) e ordem 8.
+
+A frequência de corte de cada filtro é validada contra a frequência de
+Nyquist EFETIVA de cada canal (--frequencia dividida pelo número de
+canais em --canais -- seção 10.3), logo após o parse dos argumentos e
+ANTES de carregar o arquivo (que pode ser grande) -- mesma filosofia de
+validação adotada para --janela (seção 6.4).
+
+Este filtro só existe no modo de plotagem e NÃO afeta o modo de
+conversão '.bin'<->'.csv': a coluna 'tensao_v' opcional
+(--incluir-tensao) continua refletindo a tensão calculada diretamente
+do código bruto do ADC, sem filtragem nenhuma, para preservar a
+fidelidade do round-trip '.bin'->'.csv'->'.bin' (que só usa
+'valor_bruto', nunca a tensão -- ver seção 3 do docstring).
+
+Exemplos:
+    # Passa-baixa em 45 kHz, ordem padrão (5), captura a 102.4 kHz
+    python3 adc_tool.py captura.bin -f 102400 --filtro-passa-baixa 45000 --fft
+
+    # Passa-alta em 20 Hz (remove deriva de DC/baixa frequência), ordem 8
+    python3 adc_tool.py captura.bin -f 102400 --filtro-passa-alta 20 --ordem-filtro 8 --fft
+
+    # Passa-faixa: passa-alta 20 Hz + passa-baixa 45 kHz, ordem 6
+    python3 adc_tool.py captura.bin -f 102400 \
+        --filtro-passa-alta 20 --filtro-passa-baixa 45000 --ordem-filtro 6 --fft
 ==============================================================================
 """
 
@@ -472,7 +569,7 @@ from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.signal import butter, filtfilt, get_window
+from scipy.signal import butter, filtfilt, get_window, sosfiltfilt
 from scipy.fft import rfft, rfftfreq
 
 # Tamanho de bloco padrão (em amostras) usado nas conversões .bin<->.csv.
@@ -519,6 +616,16 @@ ADS8688_MAX_CANAIS = 8
 # Canal usado quando --canais não é passado -- mesmo padrão histórico de
 # `ler_adc` (um canal só, o canal 1) mantido aqui para consistência.
 CANAL_PADRAO = "1"
+
+# Ordem do(s) filtro(s) digital(is) Butterworth de --filtro-passa-baixa/
+# --filtro-passa-alta (ver seção 11 do docstring do módulo). Limitada a
+# 4-8: abaixo de 4 a rejeição fora da banda fica fraca demais para o
+# propósito (limpar ruído/aliasing residual antes da FFT); acima de 8 a
+# distorção de fase perto do corte cresce sem trazer benefício
+# proporcional, mesmo com a implementação em SOS (numericamente estável).
+ORDEM_FILTRO_MINIMA = 4
+ORDEM_FILTRO_MAXIMA = 8
+ORDEM_FILTRO_PADRAO = 5
 
 
 # ==============================================================================
@@ -812,6 +919,83 @@ def resolver_offsets_por_canal(offset_texto: str | None, faixas: list[float],
     if offset_texto is None:
         return [faixa / 2.0 if formato == "uint16" else 0.0 for faixa in faixas]
     return analisar_lista_calibracao(offset_texto, num_canais, "--offset")
+
+
+# ==============================================================================
+# 1C. FILTRAGEM DIGITAL OPCIONAL (ver seção 11 do docstring do módulo)
+# ==============================================================================
+
+def validar_corte_filtro(corte: float, fs: float, nome_flag: str) -> None:
+    """
+    Valida a frequência de corte de --filtro-passa-baixa/--filtro-passa-
+    alta contra a frequência de Nyquist EFETIVA do canal (fs/2 -- 'fs'
+    aqui já é a frequência efetiva por canal, seção 10.3 do docstring,
+    não a frequência total de --frequencia quando há mais de 1 canal).
+
+    Chamada logo após o parse dos argumentos, ANTES de carregar o
+    arquivo (que pode ser grande) -- mesma filosofia adotada para
+    --janela (resolver_nome_janela) -- para dar um erro claro e
+    imediato em vez de processar a captura inteira e falhar só depois.
+    """
+    nyquist = fs / 2.0
+    if corte <= 0:
+        raise SystemExit(
+            f"Erro: {nome_flag} precisa ser uma frequência positiva "
+            f"(recebido: {corte:g} Hz)."
+        )
+    if corte >= nyquist:
+        raise SystemExit(
+            f"Erro: {nome_flag}={corte:g} Hz precisa ser menor que a "
+            f"frequência de Nyquist efetiva ({nyquist:g} Hz = frequência "
+            f"efetiva por canal {fs:g} Hz / 2 -- ver seção 10.3 do "
+            f"docstring quando há mais de 1 canal). Um corte >= Nyquist "
+            f"não é um filtro digital válido."
+        )
+
+
+def aplicar_filtro_digital(sinal: np.ndarray, fs: float, tipo: str,
+                            corte: float, ordem: int) -> np.ndarray:
+    """
+    Aplica um filtro digital Butterworth passa-baixa ('tipo="low"') ou
+    passa-alta ('tipo="high"') ao sinal, com filtragem de fase zero
+    (scipy.signal.sosfiltfilt) -- ver seção 11 do docstring do módulo
+    para a motivação e o trade-off completo.
+
+    Implementado em SOS (Second-Order Sections, via
+    butter(..., output="sos")) em vez da forma clássica (b, a) usada
+    internamente em recortar_ciclos_inteiros (essa fixa em ordem 4):
+    para as ordens mais altas aceitas aqui (--ordem-filtro, 4 a 8), a
+    forma (b, a) fica numericamente instável -- coeficientes de um
+    polinômio de grau alto perdem precisão em ponto flutuante --,
+    enquanto SOS decompõe o filtro numa cascata de seções de 2ª ordem
+    bem condicionadas, essencial para uma ordem 8 não introduzir
+    artefatos espúrios.
+
+    sosfiltfilt (equivalente em SOS do filtfilt clássico) filtra para
+    frente e para trás (forward-backward), zerando o atraso de fase --
+    um atraso de fase deslocaria os cruzamentos por zero usados no
+    recorte em ciclos inteiros (seção 6.2) e distorceria a forma de
+    onda plotada no tempo -- ao custo de dobrar a ordem efetiva do
+    filtro (a magnitude da resposta é elevada ao quadrado), então a
+    ordem pedida em --ordem-filtro já é suficiente sem compensação
+    manual.
+
+    'corte' já foi validado (> 0 e < Nyquist) por validar_corte_filtro
+    antes de chegar aqui.
+    """
+    nyquist = fs / 2.0
+    sos = butter(ordem, corte / nyquist, btype=tipo, output="sos")
+    try:
+        return sosfiltfilt(sos, sinal)
+    except ValueError as e:
+        rotulo_tipo = "passa-baixa" if tipo == "low" else "passa-alta"
+        raise SystemExit(
+            f"Erro ao aplicar o filtro digital {rotulo_tipo} (corte "
+            f"{corte:g} Hz, ordem {ordem}): {e}. A janela selecionada "
+            f"(--inicio/--fim) provavelmente tem poucas amostras para "
+            f"essa ordem de filtro -- aumente a janela ou reduza "
+            f"--ordem-filtro."
+        )
 
 
 # ==============================================================================
@@ -1537,6 +1721,9 @@ def montar_parser() -> argparse.ArgumentParser:
             "  # FFT com janela Blackman-Harris (menos vazamento espectral)\n"
             "  %(prog)s captura.bin -f 102400 --fft --janela blackman-harris\n"
             "\n"
+            "  # Filtro digital Butterworth passa-baixa antes da FFT/plotagem\n"
+            "  %(prog)s captura.bin -f 102400 --filtro-passa-baixa 45000 --fft\n"
+            "\n"
             "  # Plotar direto de um .csv (mesmas flags, formato autodetectado)\n"
             "  %(prog)s captura.csv -f 102400 --fft\n"
             "\n"
@@ -1675,6 +1862,63 @@ def montar_parser() -> argparse.ArgumentParser:
              "menores usam menos memória RAM; blocos maiores tendem a ser "
              "um pouco mais rápidos (menos overhead por chamada), até o "
              "limite da RAM disponível. Só é usado no modo de conversão."
+    )
+
+    grupo_filtro = parser.add_argument_group(
+        "Filtragem digital (Butterworth, ver seção 11 do docstring do módulo)",
+        "[MODO DE PLOTAGEM] Filtro(s) digital(is) Butterworth, de fase "
+        "zero, aplicado(s) ao sinal (já em Volts, por canal) ANTES do "
+        "recorte em ciclos inteiros, da FFT e da plotagem no tempo -- "
+        "útil, por exemplo, para atacar ruído/aliasing residual acima da "
+        "frequência de Nyquist efetiva antes de qualquer outra etapa. Não "
+        "afeta o modo de conversão '.bin'<->'.csv'. Nenhum filtro é "
+        "aplicado se nem --filtro-passa-baixa nem --filtro-passa-alta "
+        "forem passados (padrão, comportamento idêntico ao de antes "
+        "desta funcionalidade).",
+    )
+    grupo_filtro.add_argument(
+        "--filtro-passa-baixa", type=float, default=None, metavar="HZ",
+        help="Frequência de corte (Hz) de um filtro digital Butterworth "
+             "passa-baixa, aplicado com fase zero (scipy.signal."
+             "sosfiltfilt) a cada canal antes de qualquer outra etapa "
+             "(recorte em ciclos inteiros, FFT, plotagem no tempo). "
+             "Precisa ser menor que a frequência de Nyquist EFETIVA de "
+             "cada canal (--frequencia / número de canais / 2 -- seção "
+             "10.3 do docstring). Útil para remover ruído/aliasing de "
+             "alta frequência antes da análise -- ex.: amostrando a "
+             "102.4 kHz (Nyquist = 51.2 kHz), "
+             "'--filtro-passa-baixa 45000' ataca componentes acima de "
+             "45 kHz. Pode ser combinado com --filtro-passa-alta (nesse "
+             "caso, passa-alta é aplicado primeiro, depois passa-baixa "
+             "-- ver seção 11). Padrão: nenhum filtro passa-baixa "
+             "aplicado."
+    )
+    grupo_filtro.add_argument(
+        "--filtro-passa-alta", type=float, default=None, metavar="HZ",
+        help="Frequência de corte (Hz) de um filtro digital Butterworth "
+             "passa-alta, aplicado com fase zero a cada canal antes de "
+             "qualquer outra etapa -- mesma mecânica de "
+             "--filtro-passa-baixa, mas rejeitando ABAIXO do corte em "
+             "vez de acima. Útil para remover deriva de DC/nível ou "
+             "ruído de baixa frequência antes da análise. Padrão: "
+             "nenhum filtro passa-alta aplicado."
+    )
+    grupo_filtro.add_argument(
+        "--ordem-filtro", type=int, default=ORDEM_FILTRO_PADRAO,
+        choices=range(ORDEM_FILTRO_MINIMA, ORDEM_FILTRO_MAXIMA + 1),
+        metavar=f"[{ORDEM_FILTRO_MINIMA}-{ORDEM_FILTRO_MAXIMA}]",
+        help=f"Ordem do(s) filtro(s) Butterworth de --filtro-passa-baixa/"
+             f"--filtro-passa-alta (mesma ordem para os dois, se ambos "
+             f"forem usados). Aceita {ORDEM_FILTRO_MINIMA} a "
+             f"{ORDEM_FILTRO_MAXIMA} (padrão: {ORDEM_FILTRO_PADRAO}). "
+             f"Ordens mais altas cortam mais abruptamente na frequência "
+             f"de corte (transição mais estreita entre a banda passante "
+             f"e a rejeitada), ao custo de maior distorção de fase perto "
+             f"do corte -- implementado internamente em seções de 2ª "
+             f"ordem (SOS) para permanecer numericamente estável mesmo "
+             f"nas ordens mais altas. Ignorado se nem "
+             f"--filtro-passa-baixa nem --filtro-passa-alta forem "
+             f"passados."
     )
 
     parser.add_argument(
@@ -1877,6 +2121,15 @@ def main(argv=None):
     if args.frequencia is None:
         parser.error("-f/--frequencia é obrigatório no modo de plotagem.")
 
+    num_canais = len(canais)
+    # Frequência EFETIVA de cada canal individual -- ver seção 10.3 do
+    # docstring. Com 1 canal só, isso é exatamente args.frequencia (sem
+    # nenhuma mudança de comportamento). Calculada cedo (antes de
+    # carregar o arquivo) porque tanto --janela (kaiser) quanto os
+    # cortes de --filtro-passa-baixa/--filtro-passa-alta precisam dela
+    # para a validação antecipada logo abaixo.
+    fs_efetiva = args.frequencia / num_canais
+
     # Valida --janela cedo (antes de carregar o arquivo, que pode ser
     # grande) para dar erro imediato em caso de nome digitado errado, em
     # vez de só falhar depois de já ter processado a captura inteira.
@@ -1884,17 +2137,27 @@ def main(argv=None):
     if args.fft is not None:
         nome_janela_canonico = resolver_nome_janela(args.janela)
 
+    # Valida os cortes do filtro digital opcional pelo mesmo motivo (ver
+    # seção 11 do docstring).
+    if args.filtro_passa_baixa is not None:
+        validar_corte_filtro(args.filtro_passa_baixa, fs_efetiva, "--filtro-passa-baixa")
+    if args.filtro_passa_alta is not None:
+        validar_corte_filtro(args.filtro_passa_alta, fs_efetiva, "--filtro-passa-alta")
+    if (args.filtro_passa_alta is not None and args.filtro_passa_baixa is not None
+            and args.filtro_passa_alta >= args.filtro_passa_baixa):
+        raise SystemExit(
+            f"Erro: --filtro-passa-alta ({args.filtro_passa_alta:g} Hz) "
+            f"precisa ser menor que --filtro-passa-baixa "
+            f"({args.filtro_passa_baixa:g} Hz) para formar uma banda "
+            f"passante válida -- do contrário a interseção das duas "
+            f"bandas é vazia e o sinal resultante seria ~zero."
+        )
+
     tipo_arquivo = detectar_tipo_arquivo(args.arquivo)
     amostras = carregar_amostras(args.arquivo, args.formato)
     bruto, idx_inicio, idx_fim, total = selecionar_intervalo(
         amostras, args.inicio, args.fim
     )
-
-    num_canais = len(canais)
-    # Frequência EFETIVA de cada canal individual -- ver seção 10.3 do
-    # docstring. Com 1 canal só, isso é exatamente args.frequencia (sem
-    # nenhuma mudança de comportamento).
-    fs_efetiva = args.frequencia / num_canais
 
     # Desintercala (ver seção 10.1/10.7) -- com 1 canal só, isso é um
     # reshape trivial que devolve o mesmo conteúdo do array original.
@@ -1907,6 +2170,26 @@ def main(argv=None):
         por_canal_tensao[canal] = converter_para_tensao(
             por_canal_bruto[canal], faixas[idx], ganhos[idx], args.formato, offsets[idx]
         )
+
+    # Filtro digital opcional (ver seção 11 do docstring) -- aplicado
+    # ANTES do recorte em ciclos inteiros, da FFT e da plotagem, sobre o
+    # sinal já em Volts de cada canal exibido. Passa-alta primeiro,
+    # depois passa-baixa (ver docstring de aplicar_filtro_digital sobre
+    # por que a ordem não importa matematicamente aqui). Sem nenhuma das
+    # duas flags, este bloco não roda e o comportamento é idêntico ao de
+    # antes desta funcionalidade.
+    if args.filtro_passa_alta is not None or args.filtro_passa_baixa is not None:
+        for canal in canais_exibir:
+            sinal = por_canal_tensao[canal]
+            if args.filtro_passa_alta is not None:
+                sinal = aplicar_filtro_digital(
+                    sinal, fs_efetiva, "high", args.filtro_passa_alta, args.ordem_filtro
+                )
+            if args.filtro_passa_baixa is not None:
+                sinal = aplicar_filtro_digital(
+                    sinal, fs_efetiva, "low", args.filtro_passa_baixa, args.ordem_filtro
+                )
+            por_canal_tensao[canal] = sinal
 
     n_por_canal = len(next(iter(por_canal_tensao.values())))
 
@@ -1933,6 +2216,15 @@ def main(argv=None):
         print(f"Janela selecionada: amostras brutas {idx_inicio}..{idx_fim} "
               f"({n_por_canal} amostras/canal, "
               f"{n_por_canal / fs_efetiva * 1000:.2f} ms/canal)")
+
+    if args.filtro_passa_alta is not None or args.filtro_passa_baixa is not None:
+        partes_filtro = []
+        if args.filtro_passa_alta is not None:
+            partes_filtro.append(f"passa-alta {args.filtro_passa_alta:g} Hz")
+        if args.filtro_passa_baixa is not None:
+            partes_filtro.append(f"passa-baixa {args.filtro_passa_baixa:g} Hz")
+        print(f"Filtro digital Butterworth aplicado (ordem {args.ordem_filtro}, "
+              f"fase zero, sosfiltfilt): {' + '.join(partes_filtro)}")
 
     infos_fft = None
     if args.fft is not None:
