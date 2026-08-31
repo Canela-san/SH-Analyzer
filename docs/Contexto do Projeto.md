@@ -239,21 +239,6 @@ do vazamento.
 - **Captura multi-canal completa**, incluindo o índice round-robin em
   Assembly (atualização — ver seção 4).
 
-### 6.2 Em aberto — bug de saturação SPI
-
-A comunicação SPI ainda satura no valor de fundo de escala (leitura
-constante, independente da tensão real de entrada), mesmo em velocidades
-bem mais lentas que o firmware original comprovadamente funcional (`backup
-pre-assembly/teste_spi_pru.c`). Diagnóstico do "preâmbulo" (16 bits que
-deveriam ser sempre zero) indica um padrão de transição único e
-consistente, característico de assimetria de tempo de subida/descida num
-isolador (ver nota de reconciliação na seção 2.2 sobre a identidade exata
-do componente). Próximo passo já cogitado: eliminar jumpers longos e
-conectar as placas diretamente, para isolar se a causa é integridade de
-sinal.
-
----
-
 ## 7. Próximos Passos (plano atual do usuário)
 
 **Passo 1 — Modo automático do ADS8688.** Implementar o modo automático
@@ -345,7 +330,6 @@ pedido explícito). Pontos mais relevantes para o plano da seção 7:
 | `hardware/DAQ_Module/` | Projeto Altium Designer (esquemático + PCB) do frontend analógico/DAQ |
 | `docs/melhorias-propostas.md` | Revisão técnica: taxa de amostragem + reorganização/profissionalização do repo (seção 8) |
 | `docs/Contexto do Projeto-2.md` | Este documento (versões anteriores: `-1.pdf`, `-2.pdf`) |
-| `backup pre-assembly/` | Protótipo funcional em C puro, pré-reescrita em Assembly — referência de comportamento correto (`teste_spi_pru.c`) |
 
 ---
 
