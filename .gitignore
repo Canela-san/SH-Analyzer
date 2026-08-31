@@ -40,6 +40,7 @@ firmware/fw_pru*.out
 # de cada teste)
 # =====================================================================
 *.bin
+*.bin.old
 **/log.txt
 **/diagnostico_preambulo.bin
 **/supraharmonicos_raw.bin
