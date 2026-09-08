@@ -9,7 +9,7 @@ Um projeto de hardware e software embarcado de alto desempenho para a identifica
 
 * [Sobre o Projeto](#sobre-o-projeto)
 * [Arquitetura e Desempenho](#arquitetura-e-desempenho)
-* [Status Atual / Depuração em Andamento](#status-atual--depuração-em-andamento)
+* [Status Atual](#status-atual)
 * [Estrutura do Repositório](#estrutura-do-repositório)
 * [Hardware](#hardware)
 * [Firmware](#firmware)
@@ -31,39 +31,33 @@ Para atingir taxas de amostragem na ordem das centenas de kHz (com metas de expa
 
 O sistema utiliza uma arquitetura híbrida no BeagleBone:
 
-* **PRU (Programmable Real-Time Unit):** Encarregada do controle determinístico e *bit-banging* via comunicação SPI (protocolo manual de 32 ciclos) com o conversor Analógico-Digital ADS8688, e da gravação direta das amostras num par de buffers ("ping-pong") reservados numa região exclusiva da DDR (fora do alcance do gerenciador de memória do Linux). Suporta capturar 1 ou vários canais do ADS8688 ao mesmo tempo, intercalados (round-robin) num mesmo par de buffers -- ver `firmware/ler_adc.c` e `firmware/spi_core.asm`.
-* **Processador Principal (ARM):** Focado exclusivamente em extrair os blocos prontos da DDR e gravá-los em disco (`.bin`) o mais rápido possível, evitando corrupção ou perdas de amostras causadas por gargalos de software. Também é responsável por configurar quais canais do ADC serão lidos em cada captura.
-* **Sincronização ARM ↔ PRU:** feita via uma pequena struct de controle (`shared_control`, em `memoria_pru.h`) mapeada numa região dedicada da RAM interna da PRU-ICSS - inclui um handshake explícito (`config_ready`) para garantir que a PRU só comece a gravar depois que o ARM já configurou os endereços físicos dos buffers, o número de canais ativos e a tabela de comandos de canal usada na intercalação.
+* **PRU (Programmable Real-Time Unit):** encarregada do controle determinístico e *bit-banging* via comunicação SPI com o conversor Analógico-Digital ADS8688, e da gravação direta das amostras num par de buffers ("ping-pong") reservados numa região exclusiva da DDR (fora do alcance do gerenciador de memória do Linux). O ADS8688 opera em **modo automático de varredura (AUTO_RST)**: o host programa a sequência de canais uma única vez e o próprio ADC avança de canal sozinho a cada amostra, em ordem crescente — sem reenviar um comando de seleção de canal a cada quadro SPI, como exigiria o modo manual. Suporta capturar 1 ou vários canais do ADS8688 ao mesmo tempo, intercalados num mesmo par de buffers — ver `firmware/ler_adc.c` e `firmware/spi_core.asm`.
+* **Processador Principal (ARM):** focado exclusivamente em extrair os blocos prontos da DDR e gravá-los em disco (`.bin`) o mais rápido possível, evitando corrupção ou perdas de amostras causadas por gargalos de software. Também é responsável por configurar quais canais do ADC serão lidos em cada captura.
+* **Sincronização ARM ↔ PRU:** feita via uma pequena struct de controle (`shared_control`, em `memoria_pru.h`) mapeada numa região dedicada da RAM interna da PRU-ICSS — inclui um handshake explícito (`config_ready`) para garantir que a PRU só comece a configurar o ADC e a gravar depois que o ARM já configurou os endereços físicos dos buffers e a máscara de canais habilitados.
 
-## 🩺 Status Atual / Depuração em Andamento
+## 🩺 Status Atual
 
-A reescrita do firmware original (protótipo em C puro, veja `backup pre-assembly/`) para a arquitetura híbrida PRU (Assembly) + ARM, com o objetivo de superar o limite de ~102,4 kHz do protótipo, está em andamento. Já foram resolvidos e validados **em hardware**:
+O firmware original, um protótipo em C puro rodando diretamente no ARM sob Linux e limitado a ~102,4 kHz pelo jitter de escalonamento do sistema operacional, foi reescrito para a arquitetura híbrida PRU (Assembly) + ARM descrita acima. Já foram **validados em hardware**:
 
-* Protocolo correto do ADS8688 em modo manual: frame de **32 ciclos de SCLK** por amostra (16 para escrever o comando + 16 para ler o dado da conversão anterior). Nesta placa, o canal 1 (`MAN_Ch_1`, comando `0xC400`). O canal 1 é o padrão quando nenhuma lista de canais é passada a `ler_adc`.
-* Handshake de sincronização `config_ready` entre ARM e PRU (evita a PRU gravar num endereço de buffer ainda não configurado).
-* Ressincronização periódica do registrador `CYCLE` da PRU (que **trava** em vez de dar a volta ao estourar 32 bits, ~21,47 s a 200 MHz) - sem isso, capturas longas travavam sozinhas.
+* Protocolo de **32 ciclos de SCLK por amostra** com o ADS8688 (16 de comando + 16 de leitura da conversão anterior).
+* Handshake de sincronização `config_ready` entre ARM e PRU.
+* Ressincronização periódica do registrador `CYCLE` da PRU (que **trava** em vez de dar a volta ao estourar 32 bits, ~21,47 s a 200 MHz) — sem isso, capturas longas travavam sozinhas.
 * Inicialização explícita de CS/SCLK/MOSI em repouso antes do laço principal.
 * Uso de laços de atraso (em vez de `NOP` repetido) para controlar a velocidade do SPI sem estourar os 8 KB de `PRU_IMEM`.
+* Integridade do sinal SPI entre a placa de aquisição e o frontend analógico — um bug de saturação (leitura presa em fundo de escala) foi rastreado até os jumpers longos usados na bancada de testes; resolvido conectando as placas diretamente.
+* **Captura em modo automático (AUTO_RST), 1 canal.**
+* **Captura em modo automático (AUTO_RST), multi-canal** — testado com 5 canais simultâneos (0–4) a 102,4 kHz (≈20,48 kHz efetivos por canal): os canais fisicamente conectados à rede mostraram a forma de onda de 60 Hz esperada, e os canais deixados desconectados de propósito mostraram apenas ruído, confirmando que a varredura automática alterna corretamente entre canais.
 
-### 🆕 Captura multi-canal -- implementada, aguardando validação em hardware
-
-O firmware (`ler_adc.c`, `spi_core.asm`, `pru_main.c`, `memoria_pru.h`) e o `adc_tool.py` já têm suporte completo a capturar vários canais do ADS8688 intercalados (round-robin) numa mesma captura -- ver a seção "Começando" para o uso, e a seção 10 do docstring de `adc_tool.py` (`python3 adc_tool.py --help`) para a referência completa.
-
-**O que já foi verificado:** a lógica do lado ARM (parsing de argumentos, montagem da tabela de comandos de canal, tratamento do atraso de pipeline de 1 quadro do ADS8688 -- ver comentário no cabeçalho de `spi_core.asm`) foi validada com testes automatizados isolados (dados sintéticos), e `adc_tool.py` foi validado ponta a ponta com capturas multi-canal sintéticas, incluindo o round-trip `.bin -> .csv -> .bin`.
-
-**O que AINDA NÃO foi validado:** as mudanças em `spi_core.asm` (o índice de canal round-robin que substitui o comando fixo `MAN_Ch_1`) não foram compiladas com o `clpru` nem testadas na PRU real -- isso ainda precisa ser feito com cuidado antes de confiar na captura multi-canal em produção, especialmente considerando o bug de saturação de SPI abaixo, ainda em aberto mesmo no caminho de 1 canal já validado.
-
-**Em aberto:** a comunicação SPI ainda está saturando no valor de fundo de escala (leitura constante, independente da tensão real de entrada), mesmo em velocidades bem mais lentas que o firmware original comprovadamente funcional (`backup pre-assembly/teste_spi_pru.c`). Os testes de diagnóstico (captura do "preâmbulo" de 16 bits que deveria ser sempre zero - ver `scripts/analisar_preambulo.py`) indicam um padrão de transição único e consistente, característico de assimetria de tempo de subida/descida num optoacoplador. Próximo passo: eliminar os jumpers longos e conectar as placas diretamente, para isolar se a causa é mesmo integridade de sinal.
+**Pendente:** validação quantitativa em bancada controlada, com um sinal/ruído de frequência e amplitude conhecidas injetado deliberadamente, para confirmar exatidão (não só plausibilidade) das leituras. Ver `docs/contexto_projeto.md`, seção 7, para o roteiro completo dos próximos passos.
 
 ## 📂 Estrutura do Repositório
 
 ```text
 .
-├── /docs/                     # Proposta de Iniciação Científica (IC), datasheets dos componentes e relatórios
-├── /firmware/                 # Firmware da PRU (Assembly/C), programa do ARM, memoria_pru.h e scripts de deploy (setup.sh, comandos.sh)
+├── /docs/                     # Proposta de Iniciação Científica (IC), datasheets dos componentes, contexto do projeto e relatórios
+├── /firmware/                 # Firmware da PRU (Assembly/C), programa do ARM, memoria_pru.h e scripts de deploy/depuração
 ├── /hardware/                 # Arquivos de design da PCB, esquemático elétrico e modelo 3D (Altium Designer)
-├── /scripts/                  # Scripts Python para conversão, pós-processamento, aplicação de filtros e visualização dos dados
-└── /backup pre-assembly/      # Protótipo funcional em C puro (pré-reescrita em Assembly), mantido como referência de comportamento correto
+└── /scripts/                  # Scripts Python para conversão, pós-processamento, aplicação de filtros e visualização dos dados
 
 ```
 
@@ -71,7 +65,7 @@ O firmware (`ler_adc.c`, `spi_core.asm`, `pru_main.c`, `memoria_pru.h`) e o `adc
 
 O hardware atua como um frontend analógico de precisão.
 
-* **Função:** Condicionar e adaptar os níveis de tensão e corrente vindos dos sensores para a faixa de operação ótima do ADC de alta velocidade, incluindo isolamento galvânico (optoacoplador) entre a PRU e o frontend conectado à rede elétrica.
+* **Função:** Condicionar e adaptar os níveis de tensão e corrente vindos dos sensores para a faixa de operação ótima do ADC de alta velocidade, incluindo isolamento galvânico entre a PRU e o frontend conectado à rede elétrica.
 * **Ferramenta:** O projeto da placa foi integralmente desenvolvido no **Altium Designer**.
 * **Conteúdo:** A pasta `/hardware` contém os esquemáticos, o layout da PCB, visualizações 3D em alta resolução, lista de materiais (BOM) e os arquivos Gerber para fabricação.
 
@@ -80,34 +74,40 @@ O hardware atua como um frontend analógico de precisão.
 O firmware gerencia todo o ecossistema de aquisição em tempo real na BeagleBone.
 
 * **Linguagens:** C (ARM) e Assembly (PRU).
-* **PRU:** o laço de controle crítico de tempo (`spi_core.asm`) é executado inteiramente em Assembly para garantir timing determinístico na varredura do ADC; `pru_main.c` faz a inicialização mínima (contador de ciclos, handshake) antes de chamar a rotina em Assembly.
-* **ARM (Linux):** `ler_adc.c` mapeia a região de controle e os buffers de dados via `/dev/mem`, configura quais canais do ADS8688 serão lidos (um só, por padrão, ou uma lista intercalada), e despeja os blocos prontos direto em disco como binário bruto (`.bin`), sem processamento em tempo real.
-* **`memoria_pru.h`:** define o layout da struct de controle compartilhada (incluindo a configuração multi-canal) e as constantes de endereço físico/tamanho de buffer - compartilhado entre o código C do ARM e (por valor, manualmente sincronizado) as constantes hardcoded no Assembly da PRU.
-* **Setup:** o arquivo `setup.sh` automatiza a configuração da pinagem (via `config-pin`) e carrega o firmware compilado (`fw_pru.out`) no `remoteproc`.
+* **PRU:** o laço de controle crítico de tempo (`spi_core.asm`) é executado inteiramente em Assembly para garantir timing determinístico na varredura do ADC — inclui a sequência de configuração do modo automático (escrita do registrador `AUTO_SEQ_EN` + comando `AUTO_RST`) e o laço principal de aquisição; `pru_main.c` faz a inicialização mínima (contador de ciclos, handshake, clamps de segurança) antes de chamar a rotina em Assembly.
+* **ARM (Linux):** `ler_adc.c` mapeia a região de controle e os buffers de dados via `/dev/mem`, monta a máscara de canais habilitados para o modo automático (um canal só, por padrão, ou uma lista), e despeja os blocos prontos direto em disco como binário bruto (`.bin`), sem processamento em tempo real.
+* **`memoria_pru.h`:** define o layout da struct de controle compartilhada e as constantes de endereço físico/tamanho de buffer — compartilhado entre o código C do ARM e (por valor, manualmente sincronizado) as constantes hardcoded no Assembly da PRU.
+* **Setup:** `setup.sh` automatiza a configuração da pinagem (via `config-pin`) e carrega o firmware compilado (`fw_pru.out`) no `remoteproc`.
+* **Depuração:** `debug_sh_analyzer.sh` inspeciona, sem interromper a captura, o estado do `remoteproc`, o `dmesg` e o conteúdo ao vivo da struct de controle compartilhada via `/dev/mem` — útil para diagnosticar travamentos ou comportamento inesperado da PRU.
+
+### Canais e ordem de amostragem
+
+Em modo automático, o ADS8688 varre os canais habilitados sempre em **ordem crescente** de número de canal — não na ordem em que forem digitados na linha de comando. `ler_adc.c` ordena a lista internamente e imprime a ordem real usada; use exatamente essa ordem (impressa no console) ao passar `--canais` para `adc_tool.py`.
 
 ## 📊 Scripts e Análise
 
 Para não sobrecarregar o processador embarcado durante a coleta crítica de dados, o cálculo de grandezas físicas e a análise espectral são desacoplados do firmware.
 
 * **Pós-processamento:** a pasta `/scripts` contém rotinas em Python encarregadas de ler os arquivos binários gerados pela BeagleBone.
-* **Funcionalidades:** extração de métricas, Transformada Rápida de Fourier (FFT), filtragem digital, plotagem de gráficos e conversão de formato (`.bin` ↔ `.csv`) para análise dos supraharmônicos (`analise.py`, `adc_tool.py` — renomeado do antigo `plot_adc.py`, já que o script deixou de fazer só plotagem —, `verificar_dados.py`). `adc_tool.py` lê, plota e converte tanto capturas de 1 canal quanto capturas multi-canal (`--canais`/`--canais-exibir`/`--layout-canais`), com FFT independente por canal e calibração (`--faixa`/`--ganho`/`--offset`) configurável por canal, além de filtragem digital opcional Butterworth passa-baixa e/ou passa-alta (`--filtro-passa-baixa`/`--filtro-passa-alta`/`--ordem-filtro`, ordem 4 a 8) aplicada antes da FFT e da plotagem -- ver `python3 adc_tool.py --help` ou a seção 10 (multi-canal) e 11 (filtragem digital) do docstring do módulo para a referência completa.
-* **Diagnóstico:** `analisar_preambulo.py` inspeciona capturas feitas com o firmware de diagnóstico (ver comentários em `firmware/spi_core_diagnostico_preambulo.asm`), separando os 16 bits de "preâmbulo" (que deveriam ser sempre zero) dos 16 bits de dado real, para isolar problemas de protocolo/hardware sem precisar de osciloscópio.
+* **Funcionalidades:** extração de métricas, Transformada Rápida de Fourier (FFT), filtragem digital, plotagem de gráficos e conversão de formato (`.bin` ↔ `.csv`) para análise dos supraharmônicos (`analise.py`, `adc_tool.py` — renomeado do antigo `plot_adc.py` —, `verificar_dados.py`). `adc_tool.py` lê, plota e converte tanto capturas de 1 canal quanto capturas multi-canal (`--canais`/`--canais-exibir`/`--layout-canais`), com FFT independente por canal e calibração (`--faixa`/`--ganho`/`--offset`) configurável por canal, além de filtragem digital opcional Butterworth passa-baixa e/ou passa-alta (`--filtro-passa-baixa`/`--filtro-passa-alta`/`--ordem-filtro`, ordem 4 a 8) aplicada antes da FFT e da plotagem — ver `python3 adc_tool.py --help` ou o docstring do módulo para a referência completa.
+* **Diagnóstico:** `analisar_preambulo.py` inspeciona capturas feitas com o firmware de diagnóstico (`firmware/spi_core_diagnostico_preambulo.asm`), separando os 16 bits de "preâmbulo" (que deveriam ser sempre zero) dos 16 bits de dado real — foi essa ferramenta que ajudou a isolar o problema de integridade de sinal dos jumpers longos (ver "Status Atual").
 
 ## 🚀 Começando
 
 ### Pré-requisitos
 
 * **Hardware:** Altium Designer (para edição da placa).
-* **Software:** Sistema operacional Linux/PopOS ou Windows 10 para desenvolvimento, toolchain C/C++ (GCC) e compilador Texas Instruments (`clpru`) para a BeagleBone. Python 3.10+ (com `numpy`/`pandas`/`matplotlib`/`scipy`) para execução dos scripts. `adc_tool.py` especificamente também precisa de `PyQt6` (janela interativa do gráfico -- sem ele, ainda funciona normalmente com `-o/--saida` para salvar em arquivo); ele declara todas as suas dependências inline (PEP 723) no próprio cabeçalho, então também pode ser rodado sem instalação manual via `uv run scripts/adc_tool.py ...`, se você tiver o [`uv`](https://docs.astral.sh/uv/) instalado.
+* **Software:** Linux/PopOS ou Windows 10 para desenvolvimento, toolchain C/C++ (GCC) e compilador Texas Instruments (`clpru`) para a BeagleBone. Python 3.10+ (com `numpy`/`pandas`/`matplotlib`/`scipy`) para os scripts. `adc_tool.py` também precisa de `PyQt6` (janela interativa do gráfico — sem ele, ainda funciona com `-o/--saida` para salvar em arquivo); declara suas dependências inline (PEP 723), então também pode ser rodado sem instalação manual via `uv run scripts/adc_tool.py ...`, se você tiver o [`uv`](https://docs.astral.sh/uv/) instalado.
 
 ### Instalação e Execução
 
 1. **Fabricação da PCB:** utilize os arquivos Gerber na pasta `/hardware` para produção da placa de circuito impresso.
-2. **Preparação da BeagleBone:** envie os arquivos da pasta `/firmware` para o microcomputador.
+2. **Preparação da BeagleBone:** envie os arquivos da pasta `/firmware` para o microcomputador. **Evite jumpers longos** entre a placa de aquisição e o frontend analógico — conecte diretamente sempre que possível (ver "Status Atual").
 3. **Compilação:** rode `make` dentro de `/firmware` para compilar o firmware da PRU (`fw_pru.out`) e o binário do ARM (`ler_adc`).
 4. **Deploy:** execute `./setup.sh` para configurar os pinos e carregar o firmware na PRU.
-5. **Aquisição:** rode `sudo ./ler_adc <frequência_em_Hz> [lista_de_canais]` para iniciar a captura. `lista_de_canais` é opcional e separada por vírgulas sem espaços (ex.: `0,1,3`); sem ela, captura só o canal 1 (comportamento padrão/histórico). Com mais de um canal, a frequência informada é dividida entre eles (amostras intercaladas em round-robin, na ordem passada). Exemplos: `sudo ./ler_adc 102400` (só canal 1, como antes) ou `sudo ./ler_adc 102400 0,1,3` (3 canais, cada um efetivamente a ~34,1 kHz).
-6. **Análise:** após a coleta, transfira os arquivos `.bin` para o seu computador principal e utilize as ferramentas da pasta `/scripts`. Para uma captura de 1 canal (padrão), nada muda: `python3 adc_tool.py captura.bin -f <frequência_em_Hz> --fft` para visualizar, ou `adc_tool.py -c captura.bin -o captura.csv` para converter para `.csv`. Para uma captura multi-canal, informe a MESMA lista de canais (e a mesma ordem) usada em `ler_adc` via `--canais` -- o `.bin` não carrega esse metadado, então é essa a hora de usar a lista que `ler_adc` imprimiu no console durante a captura:
+5. **Aquisição:** rode `sudo ./ler_adc <frequência_em_Hz> [lista_de_canais]` para iniciar a captura. `lista_de_canais` é opcional e separada por vírgulas sem espaços (ex.: `0,1,3`); sem ela, captura só o canal 1 (padrão histórico — único canal desta placa com sinal conectado por padrão). Com mais de um canal, a frequência informada é dividida entre eles, sempre em ordem crescente de canal (ver "Firmware"). Exemplos: `sudo ./ler_adc 102400` (só canal 1) ou `sudo ./ler_adc 102400 0,1,3` (3 canais, cada um efetivamente a ~34,1 kHz).
+   * Se a captura parecer travada (nenhum "Bloco gravado" aparece), rode `firmware/debug_sh_analyzer.sh` em outro terminal antes de interromper — ele mostra se a PRU está progredindo ou presa, sem precisar de osciloscópio.
+6. **Análise:** após a coleta, transfira os arquivos `.bin` para o seu computador principal e utilize as ferramentas da pasta `/scripts`. Para uma captura de 1 canal (padrão): `python3 adc_tool.py captura.bin -f <frequência_em_Hz> --fft` para visualizar, ou `adc_tool.py -c captura.bin -o captura.csv` para converter para `.csv`. Para uma captura multi-canal, informe a **mesma lista de canais, na ordem impressa pelo `ler_adc`** durante a captura, via `--canais`:
    ```bash
    # Captura feita com: sudo ./ler_adc 102400 0,1,3
    python3 adc_tool.py captura.bin -f 102400 --canais 0,1,3 --fft
@@ -122,21 +122,17 @@ Para não sobrecarregar o processador embarcado durante a coleta crítica de dad
    # Converter para .csv (ganha uma coluna 'canal' quando há mais de 1 canal)
    python3 adc_tool.py -c captura.bin -o captura.csv --canais 0,1,3
    ```
-   Rode `python3 adc_tool.py --help` (seção "Captura multi-canal") ou veja a seção 10 do docstring do módulo para a referência completa -- incluindo como funciona a calibração por canal, o layout de plotagem e o formato do `.csv` multi-canal.
+   Rode `python3 adc_tool.py --help` (seção "Captura multi-canal") para a referência completa.
 
-   Para limpar ruído de alta frequência (ex.: aliasing residual perto da Nyquist) ou deriva de DC antes de plotar/calcular a FFT, use o filtro digital Butterworth opcional (`--filtro-passa-baixa`/`--filtro-passa-alta`/`--ordem-filtro`, seção 11 do docstring):
+   Para limpar ruído de alta frequência (ex.: aliasing residual perto da Nyquist) ou deriva de DC antes de plotar/calcular a FFT, use o filtro digital Butterworth opcional:
    ```bash
    # Captura a 102.4 kHz (Nyquist = 51.2 kHz): limpa ruído acima de 45 kHz
    python3 adc_tool.py captura.bin -f 102400 --filtro-passa-baixa 45000 --fft
 
    # Remove deriva de DC/baixa frequência com um filtro de ordem mais alta
    python3 adc_tool.py captura.bin -f 102400 --filtro-passa-alta 20 --ordem-filtro 8 --fft
-
-   # Os dois combinados (passa-faixa), ordem 6
-   python3 adc_tool.py captura.bin -f 102400 \
-       --filtro-passa-alta 20 --filtro-passa-baixa 45000 --ordem-filtro 6 --fft
    ```
-   O filtro só se aplica ao modo de plotagem (não afeta a coluna `tensao_v` opcional do modo de conversão, que continua refletindo o dado bruto sem filtragem, para preservar o round-trip `.bin`<->`.csv` sem perdas).
+   O filtro só se aplica ao modo de plotagem (não afeta a coluna opcional do modo de conversão, que continua refletindo o dado bruto sem filtragem, para preservar o round-trip `.bin`↔`.csv` sem perdas).
 
 ## 🎓 Contexto Acadêmico
 
