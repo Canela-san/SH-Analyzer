@@ -32,7 +32,7 @@ Para atingir taxas de amostragem na ordem das centenas de kHz (com metas de expa
 O sistema utiliza uma arquitetura híbrida no BeagleBone:
 
 * **PRU (Programmable Real-Time Unit):** encarregada do controle determinístico e *bit-banging* via comunicação SPI com o conversor Analógico-Digital ADS8688, e da gravação direta das amostras num par de buffers ("ping-pong") reservados numa região exclusiva da DDR (fora do alcance do gerenciador de memória do Linux). O ADS8688 opera em **modo automático de varredura (AUTO_RST)**: o host programa a sequência de canais uma única vez e o próprio ADC avança de canal sozinho a cada amostra, em ordem crescente — sem reenviar um comando de seleção de canal a cada quadro SPI, como exigiria o modo manual. Suporta capturar 1 ou vários canais do ADS8688 ao mesmo tempo, intercalados num mesmo par de buffers — ver `firmware/ler_adc.c` e `firmware/spi_core.asm`.
-* **Processador Principal (ARM):** focado exclusivamente em extrair os blocos prontos da DDR e gravá-los em disco (`.bin`) o mais rápido possível, evitando corrupção ou perdas de amostras causadas por gargalos de software. Também é responsável por configurar quais canais do ADC serão lidos em cada captura.
+* **Processador Principal (ARM):** focado exclusivamente em extrair os blocos prontos da DDR e gravá-los em disco (`.bin`) o mais rápido possível, evitando corrupção ou perdas de amostras causadas por gargalos de software. Também é responsável por configurar quais canais do ADC serão lidos em cada captura, e por quanto tempo a captura roda (`--blocos`/`--duracao`, ver "Começando").
 * **Sincronização ARM ↔ PRU:** feita via uma pequena struct de controle (`shared_control`, em `memoria_pru.h`) mapeada numa região dedicada da RAM interna da PRU-ICSS — inclui um handshake explícito (`config_ready`) para garantir que a PRU só comece a configurar o ADC e a gravar depois que o ARM já configurou os endereços físicos dos buffers e a máscara de canais habilitados.
 
 ## 🩺 Status Atual
@@ -75,7 +75,7 @@ O firmware gerencia todo o ecossistema de aquisição em tempo real na BeagleBon
 
 * **Linguagens:** C (ARM) e Assembly (PRU).
 * **PRU:** o laço de controle crítico de tempo (`spi_core.asm`) é executado inteiramente em Assembly para garantir timing determinístico na varredura do ADC — inclui a sequência de configuração do modo automático (escrita do registrador `AUTO_SEQ_EN` + comando `AUTO_RST`) e o laço principal de aquisição; `pru_main.c` faz a inicialização mínima (contador de ciclos, handshake, clamps de segurança) antes de chamar a rotina em Assembly.
-* **ARM (Linux):** `ler_adc.c` mapeia a região de controle e os buffers de dados via `/dev/mem`, monta a máscara de canais habilitados para o modo automático (um canal só, por padrão, ou uma lista), e despeja os blocos prontos direto em disco como binário bruto (`.bin`), sem processamento em tempo real.
+* **ARM (Linux):** `ler_adc.c` mapeia a região de controle e os buffers de dados via `/dev/mem`, monta a máscara de canais habilitados para o modo automático (um canal só, por padrão, ou uma lista), controla por quanto tempo a captura roda (`--blocos`/`--duracao`, ou 1 bloco por padrão) e despeja os blocos prontos direto em disco como binário bruto (`.bin`), sem processamento em tempo real.
 * **`memoria_pru.h`:** define o layout da struct de controle compartilhada e as constantes de endereço físico/tamanho de buffer — compartilhado entre o código C do ARM e (por valor, manualmente sincronizado) as constantes hardcoded no Assembly da PRU.
 * **Setup:** `setup.sh` automatiza a configuração da pinagem (via `config-pin`) e carrega o firmware compilado (`fw_pru.out`) no `remoteproc`.
 * **Depuração:** `debug_sh_analyzer.sh` inspeciona, sem interromper a captura, o estado do `remoteproc`, o `dmesg` e o conteúdo ao vivo da struct de controle compartilhada via `/dev/mem` — útil para diagnosticar travamentos ou comportamento inesperado da PRU.
@@ -105,7 +105,21 @@ Para não sobrecarregar o processador embarcado durante a coleta crítica de dad
 2. **Preparação da BeagleBone:** envie os arquivos da pasta `/firmware` para o microcomputador. **Evite jumpers longos** entre a placa de aquisição e o frontend analógico — conecte diretamente sempre que possível (ver "Status Atual").
 3. **Compilação:** rode `make` dentro de `/firmware` para compilar o firmware da PRU (`fw_pru.out`) e o binário do ARM (`ler_adc`).
 4. **Deploy:** execute `./setup.sh` para configurar os pinos e carregar o firmware na PRU.
-5. **Aquisição:** rode `sudo ./ler_adc <frequência_em_Hz> [lista_de_canais]` para iniciar a captura. `lista_de_canais` é opcional e separada por vírgulas sem espaços (ex.: `0,1,3`); sem ela, captura só o canal 1 (padrão histórico — único canal desta placa com sinal conectado por padrão). Com mais de um canal, a frequência informada é dividida entre eles, sempre em ordem crescente de canal (ver "Firmware"). Exemplos: `sudo ./ler_adc 102400` (só canal 1) ou `sudo ./ler_adc 102400 0,1,3` (3 canais, cada um efetivamente a ~34,1 kHz).
+5. **Aquisição:** rode `sudo ./ler_adc <frequência_em_Hz> [lista_de_canais] [--blocos N | --duracao T]` para iniciar a captura. `lista_de_canais` é opcional e separada por vírgulas sem espaços (ex.: `0,1,3`); sem ela, captura só o canal 1 (padrão histórico — único canal desta placa com sinal conectado por padrão). Com mais de um canal, a frequência informada é dividida entre eles, sempre em ordem crescente de canal (ver "Firmware").
+
+   Por padrão, a captura para sozinha depois de **1 bloco** (`SAMPLES_PER_BUFFER` = 1.048.576 amostras brutas). Para controlar por quanto tempo a captura roda, use:
+   * `--blocos N` — captura exatamente `N` blocos e para. `N=0` captura **indefinidamente**, até `Ctrl+C`.
+   * `--duracao T` — alternativa mais conveniente quando o que importa é o tempo, não o número de blocos: aceita um sufixo `s`/`m`/`h` (ou nenhum, assumindo segundos) — ex. `600`, `10m`, `1.5h` — e o número de blocos equivalente é calculado automaticamente a partir da frequência escolhida.
+
+   `--blocos` e `--duracao` são mutuamente exclusivas. Exemplos:
+   ```bash
+   sudo ./ler_adc 102400                    # 1 bloco, canal 1 (padrão)
+   sudo ./ler_adc 102400 0,1,3 --blocos 5   # 5 blocos, 3 canais
+   sudo ./ler_adc 102400 --blocos 0         # indefinido, até Ctrl+C
+   sudo ./ler_adc 102400 --duracao 10m      # ~10 minutos de captura
+   ```
+   Rode `sudo ./ler_adc --help` para a referência completa de flags.
+
    * Se a captura parecer travada (nenhum "Bloco gravado" aparece), rode `firmware/debug_sh_analyzer.sh` em outro terminal antes de interromper — ele mostra se a PRU está progredindo ou presa, sem precisar de osciloscópio.
 6. **Análise:** após a coleta, transfira os arquivos `.bin` para o seu computador principal e utilize as ferramentas da pasta `/scripts`. Para uma captura de 1 canal (padrão): `python3 adc_tool.py captura.bin -f <frequência_em_Hz> --fft` para visualizar, ou `adc_tool.py -c captura.bin -o captura.csv` para converter para `.csv`. Para uma captura multi-canal, informe a **mesma lista de canais, na ordem impressa pelo `ler_adc`** durante a captura, via `--canais`:
    ```bash
