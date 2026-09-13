@@ -1,13 +1,19 @@
 # SH-Analyzer — Contexto do Projeto
 
 > Documento de referência compacto para uso como contexto por assistentes de IA.
-> Atualizado em 07/09/2026. **A partir desta versão, o nome deste arquivo é
-> fixo (`docs/contexto_projeto.md`) — não recriar com sufixo de versão.**
+> Atualizado em 12/09/2026. **O nome deste arquivo é fixo
+> (`docs/contexto_projeto.md`) — não recriar com sufixo de versão.**
 >
-> Marco desta atualização: migração do ADS8688 do modo manual para o modo
-> automático (AUTO_RST) **validada em hardware**, incluindo captura
-> multi-canal. Esta versão do firmware/documentação acompanha um release no
-> GitHub (nova versão da placa/firmware).
+> Marco desta atualização: refatoração da arquitetura de análise espectral de
+> `scripts/adc_tool.py` — separação explícita entre análise ciclo-sincronizada
+> (fundamental/harmônicos, técnica já existente) e análise por segmentação e
+> média espectral, método de Welch (nova, direcionada a supraharmônicos), com
+> normalização configurável (tom/ruído), agrupamento em bandas e extração de
+> picos por interpolação parabólica. A refatoração foi implementada e testada
+> com sinais sintéticos (fundamental + supraharmônicos injetados + ruído,
+> incluindo *dithering* de frequência); a validação em bancada com sinal real
+> continua sendo o Passo 2 (seção 7), que agora passa a usar esta ferramenta
+> ampliada.
 
 **Propósito:** os arquivos reais do projeto (firmware em C/Assembly, script de
 análise em Python, arquivos de hardware) são grandes demais para enviar de uma
@@ -29,8 +35,8 @@ O sistema tem duas partes: (a) um **frontend analógico** (PCB própria, com
 isolamento galvânico) que condiciona os sinais de tensão/corrente da rede, e
 (b) um **BeagleBone** que faz a aquisição de altíssima frequência via
 arquitetura híbrida **PRU (tempo real) + ARM (Linux)**. Dados brutos são
-gravados em disco e pós-processados (FFT, filtragem, conversão de formato)
-por um script Python dedicado (seção 5).
+gravados em disco e pós-processados (análise espectral, filtragem, conversão
+de formato) por um script Python dedicado (seção 5).
 
 **Contexto acadêmico:** Iniciação Científica (IC) — "Sistema de identificação
 da presença de supraharmônicos em redes e cargas elétricas", Engenharia de
@@ -227,9 +233,9 @@ registrador `AUTO_SEQ_EN`.
 - Formato do `.bin`: amostra bruta na posição *i* (já descontada a amostra
   0 descartada) pertence a `canais[i % num_canais]`, com `canais` na ordem
   crescente impressa no console.
-- `adc_tool.py` não precisou de nenhuma alteração para funcionar com o modo
-  automático — ele já tratava `--canais` como uma lista arbitrária
-  fornecida pelo usuário.
+- `adc_tool.py` não precisou de nenhuma alteração estrutural para funcionar
+  com o modo automático — ele já tratava `--canais` como uma lista
+  arbitrária fornecida pelo usuário.
 
 **Pendente (validação quantitativa, não mais de funcionamento básico):**
 confirmar com um gerador de sinal/ruído em frequência conhecida, injetado
@@ -238,44 +244,169 @@ foi injetado — isso ainda não foi feito (ver seção 7, Passo 2).
 
 ---
 
-## 5. `scripts/adc_tool.py` — Ferramenta de Análise
+## 5. `scripts/adc_tool.py` — Arquitetura de Análise Espectral
 
 Renomeado do antigo `plot_adc.py` — deixou de fazer só plotagem. Não é
 formalmente parte do escopo da IC, mas foi necessário desenvolver para
 poder verificar e depurar o hardware/firmware de aquisição — cresceu ao
 longo do projeto conforme cada novo problema de hardware/firmware exigiu
 uma nova função de diagnóstico. Declara dependências inline (PEP 723:
-matplotlib, numpy, scipy, PyQt6), roda via `uv run scripts/adc_tool.py ...`
-sem instalação manual.
+matplotlib, numpy≥1.20, scipy, PyQt6), roda via `uv run scripts/adc_tool.py
+...` sem instalação manual.
 
-### 5.1 Dois modos
+### 5.1 Dois modos de operação
 
 - **Conversão** (`-c/--converter` + `-o/--saida`): converte `.bin` ↔ `.csv`,
-  detectando direção pelas extensões. Processa em blocos (streaming).
-- **Plotagem** (padrão): plota forma de onda no tempo e, opcionalmente
-  (`--fft`), o espectro de frequência. Aceita `.bin` (`numpy.memmap`) ou
-  `.csv` (carregado inteiro).
+  detectando direção pelas extensões. Processa em blocos (streaming), tanto
+  na leitura do `.bin` (`numpy.memmap`) quanto na escrita/leitura do `.csv`.
+- **Plotagem** (padrão): plota a forma de onda no tempo e, opcionalmente, o
+  espectro de frequência — agora por **duas estratégias complementares**
+  (seção 5.2), não mais uma só.
 
-### 5.2 FFT sem vazamento espectral (spectral leakage)
+### 5.2 Duas estratégias de análise espectral — e por quê
 
-Estratégia de 5 passos: (1) estimativa grosseira da fundamental via
-FFT+Hann (`--freq-min`/`--freq-max`, padrão 45–65 Hz); (2) filtro
-passa-baixa Butterworth ordem 4 para isolar a fundamental; (3) cruzamentos
-por zero ascendentes interpolados linearmente; (4) refinamento do período
-usando todos os ciclos disponíveis; (5) corte do trecho em ciclos inteiros
-antes da FFT principal.
+A limitação da técnica original de combate a vazamento espectral (*spectral
+leakage*, recorte em ciclos inteiros, seção 5.3) é que ela só funciona para
+conteúdo cuja fase está travada ao ciclo da rede elétrica — a fundamental e
+seus harmônicos verdadeiros. **Supraharmônicos gerados por conversores
+eletrônicos de potência não têm relação de fase com o ciclo de 50/60 Hz**:
+não existe corte de janela sincronizado ao ciclo que elimine o vazamento
+desse conteúdo especificamente, porque o corte ataca a descontinuidade
+errada. Por isso `adc_tool.py` passou a oferecer duas estratégias,
+selecionáveis por flag e combináveis numa mesma chamada (cada uma plota sua
+própria curva, no mesmo eixo de frequência):
 
-### 5.3 Recursos principais
+| | `--fft` (ciclo-sincronizado) | `--welch` (segmentado, médio) |
+|---|---|---|
+| Alvo | Fundamental e harmônicos de baixa ordem | Supraharmônicos (ruído de conversores chaveados) |
+| Como ataca o vazamento | Corte em ciclos inteiros por cruzamento de zero (fase travada ao ciclo de rede) | Janela espectral + média entre segmentos (independe de fase) |
+| Resolução em frequência | Cresce com a duração da captura | Fixa, definida por `--resolucao-welch` (Hz) |
+| Robustez a não estacionariedade | Baixa (assume conteúdo estável durante a janela) | Alta — a média entre segmentos suaviza *dithering* de frequência de chaveamento ao longo da captura |
+| Função central | `recortar_ciclos_inteiros` + `calcular_espectro` | `calcular_espectro_welch` |
 
-- **Janelas espectrais** (`--janela`): retangular/boxcar (padrão), hann,
-  blackman-harris, flattop, kaiser (+ `--kaiser-beta`).
-- **`--fft N`:** analisa só os primeiros N ciclos completos.
-- **Multi-canal completo:** `--canais`, `--canais-exibir`,
-  `--layout-canais {separados, sobrepostos}`; FFT independente por canal;
-  calibração `--faixa`/`--ganho`/`--offset` (valor único ou lista).
-- **Filtragem digital opcional** (Butterworth SOS + `sosfiltfilt`,
-  `--ordem-filtro` 4–8), aplicada antes de qualquer outra etapa.
-- Conversão `.bin`→`.csv` ganha coluna `canal` quando há mais de 1 canal.
+### 5.3 `--fft`: recorte em ciclos inteiros (técnica original, mantida)
+
+Estratégia de 5 passos, inalterada em essência desde a versão anterior:
+
+1. Estimativa grosseira da fundamental por FFT + janela de Hann fixa,
+   dentro de `--freq-min`/`--freq-max` (padrão 45–65 Hz).
+2. **Novo:** o pico dessa estimativa é refinado por **interpolação
+   parabólica em log-magnitude** (`refinar_pico_parabolico`) — reduz o
+   erro de quantização do bin (*scalloping loss*) sem precisar de uma FFT
+   maior, melhorando a precisão do corte do passa-baixa que segue.
+3. Filtro passa-baixa Butterworth (ordem 4) isola a fundamental antes da
+   detecção de cruzamento de zero. **Corrigido nesta atualização:** estava
+   implementado na forma clássica `(b, a)`, inconsistente com o resto do
+   código na mesma razão fs/f0 extrema (dezenas de milhares para 1) em que
+   essa forma perde precisão numérica — migrado para SOS (Second-Order
+   Sections) + `sosfiltfilt`, a mesma técnica já usada em
+   `aplicar_filtro_digital`.
+4. Cruzamentos por zero ascendentes, interpolados linearmente entre
+   amostras vizinhas.
+5. Refinamento do período usando todos os ciclos disponíveis, e corte do
+   trecho exatamente nesses ciclos antes da FFT principal.
+
+**Novo (desempenho):** com `--fft N` (análise de distúrbios momentâneos, só
+os N primeiros ciclos), o sinal agora é pré-truncado a uma estimativa
+generosa de amostras necessárias (`estimar_amostras_para_n_ciclos`, baseada
+no pior caso de `--freq-min` + margem de ciclos) ANTES de filtrar/buscar
+cruzamentos — evita processar uma captura inteira de minutos só para olhar
+os primeiros milissegundos. Em teste local (captura sintética de 1 minuto a
+102,4 kHz), `--fft 5` processou só o início da captura, sem alterar o
+resultado (f0 detectada idêntica à de `--fft` sem truncamento, dentro do
+erro normal de estimativa).
+
+### 5.4 `--welch`: espectro médio por segmentação (novo)
+
+Implementa o método de Welch: o sinal é dividido em segmentos de tamanho
+`fs_efetiva / --resolucao-welch` amostras (padrão de resolução: 200 Hz),
+com sobreposição configurável (`--sobreposicao-welch`, padrão 50%); cada
+segmento é janelado e transformado, e os periodogramas (`|X(f)|²`)
+resultantes são **mediados** — não as fases. Isso reduz a variância da
+estimativa espectral (proporcionalmente a `1/√(nº de segmentos)`) e suaviza
+deriva de frequência de chaveamento (*dithering*) ao longo da captura, ao
+custo de uma resolução em frequência fixa (não cresce com o tamanho da
+captura, ao contrário de `--fft`).
+
+Implementado com `numpy.lib.stride_tricks.sliding_window_view`, processado
+em lotes (`calcular_espectro_welch`) em vez de 1 segmento por vez em laço
+Python puro (lento para os milhares de segmentos de uma captura longa) ou
+de todos de uma vez (poderia esgotar RAM numa captura de vários minutos com
+sobreposição) — equilíbrio deliberado entre desempenho (FFT vetorizada por
+lote) e uso de memória.
+
+### 5.5 `--modo-espectro {tom, ruido}`: duas normalizações, um mesmo espectro
+
+Um mesmo espectro de potência bruto pode ser normalizado de duas formas,
+conforme o tipo de conteúdo analisado (`_normalizar_espectro`):
+
+- **`tom`** (padrão, comportamento idêntico ao de antes desta atualização):
+  amplitude linear corrigida pelo ganho coerente da janela — correta para
+  um **tom discreto** (a fundamental, um harmônico), cuja energia cai
+  essencialmente num único bin.
+- **`ruido`** (novo): densidade espectral de potência (PSD, V²/Hz),
+  normalizada pelo ganho incoerente/ENBW (*Equivalent Noise Bandwidth*) da
+  janela. Necessário para **conteúdo de banda larga** — sem essa
+  normalização, a leitura em modo `tom` do MESMO ruído físico mudaria
+  artificialmente conforme o tamanho da FFT/segmento escolhido, invalidando
+  qualquer comparação entre capturas com parâmetros diferentes.
+
+Aplica-se igualmente a `--fft` (com 1 único segmento, é um periodograma
+simples) e a `--welch` (média de vários periodogramas).
+
+### 5.6 `--agrupar-bandas`: agregação em bandas fixas
+
+Resume o espectro fino em bandas de largura configurável (ex.: 200 Hz —
+convenção comum na literatura e em documentos técnicos de caracterização de
+supraharmônicos), reportando o nível RMS de tensão de cada banda em vez do
+valor bin a bin. Torna o resultado **comparável entre capturas com
+resoluções em frequência diferentes**, ao contrário do valor por bin, que
+muda de significado só porque o tamanho da FFT/segmento mudou. Funciona
+sobre o espectro de `--fft` e/ou `--welch`, em qualquer um dos dois modos
+de normalização (`agrupar_em_bandas` reconcilia as duas convenções para o
+mesmo nível de banda em dBV).
+
+### 5.7 `--picos`: extração quantitativa de frequência e amplitude
+
+Localiza picos espectrais acima de um limiar configurável dentro de uma
+faixa de busca (`--freq-min-picos`/`--freq-max-picos`, padrão a partir de
+2000 Hz — início convencional da faixa de supraharmônicos), via
+`scipy.signal.find_peaks`, e refina cada um por **interpolação parabólica**
+(a mesma técnica da seção 5.3, item 2, aqui aplicada à extração de
+componentes individuais). Entrega frequência e amplitude de cada
+supraharmônico sem depender de aumentar o tamanho da FFT para "acertar" o
+bin exato — a extração quantitativa que faltava para ir além da inspeção
+visual do gráfico. Roda sobre o espectro FINO (antes de `--agrupar-bandas`,
+que resolveria só em múltiplos de sua largura de banda).
+
+### 5.8 Filtragem digital e um cuidado novo de uso combinado
+
+A filtragem digital opcional (Butterworth SOS + `sosfiltfilt`,
+`--filtro-passa-baixa`/`--filtro-passa-alta`, ordem 4–8) já existia e
+continua igual: aplicada a cada canal, em Volts, antes de qualquer outra
+etapa. O que muda nesta atualização:
+
+- A correção de SOS no filtro interno do recorte em ciclos (seção 5.3).
+- **Novo aviso de uso combinado:** `--fft` depende da fundamental estar
+  presente na faixa `--freq-min`/`--freq-max` para sincronizar o corte em
+  ciclos. Se `--filtro-passa-alta` for igual ou maior que `--freq-min`, a
+  fundamental é removida ANTES do corte, e a estimativa de f0/o corte
+  resultante ficam inválidos — sintoma observado em teste: f0 estimada
+  caindo para poucos Hz em vez de ~60 Hz. `adc_tool.py` agora detecta essa
+  combinação e avisa no console, recomendando rodar `--fft` e
+  `--welch`/`--picos` (que sim se beneficiam de um passa-alta acima da
+  fundamental, para não deixar resíduo mascarar um supraharmônico fraco)
+  em **chamadas separadas**.
+
+### 5.9 Recursos herdados (inalterados)
+
+- Multi-canal completo: `--canais`, `--canais-exibir`,
+  `--layout-canais {separados, sobrepostos}`; cada canal processado de
+  forma independente por `--fft`/`--welch`.
+- Calibração `--faixa`/`--ganho`/`--offset` (valor único ou lista por
+  canal).
+- Conversão `.bin`→`.csv` ganha coluna `canal` quando há mais de 1 canal;
+  round-trip sem perdas (só `valor_bruto` é usado na reconstrução).
 
 ---
 
@@ -294,12 +425,29 @@ antes da FFT principal.
   incluindo a correção do bug de escrita do registrador `AUTO_SEQ_EN`.
 - `PRU_IMEM` dentro do orçamento de 8 KB com folga confortável.
 
-### 6.2 Pendente
+### 6.2 Validado com sinais sintéticos (não hardware)
+
+- **Refatoração da análise espectral de `adc_tool.py`** (seção 5): testada
+  com sinais sintéticos gerados em Python (fundamental de 60 Hz +
+  supraharmônicos injetados — incluindo um com *dithering* de frequência —
+  + ruído gaussiano), cobrindo `--fft`, `--welch`, `--modo-espectro`,
+  `--agrupar-bandas`, `--picos`, multi-canal (com *aliasing* proposital
+  acima da Nyquist efetiva de um canal) e round-trip `.bin`↔`.csv`. Os
+  picos injetados foram recuperados com erro compatível com a resolução
+  espectral (exemplo: 15.321,3 Hz injetado → 15.321,37 Hz encontrado por
+  `--picos`). **Isto não substitui a validação quantitativa em bancada com
+  sinal real (Passo 2, seção 7)** — confirma a correção matemática/
+  numérica da implementação, não a fidelidade do hardware de aquisição.
+
+### 6.3 Pendente
 
 - Validação quantitativa em bancada controlada com sinal/ruído de
   frequência conhecida injetado (Passo 2, seção 7) — a validação atual é
-  qualitativa (canal conectado mostra sinal, desconectado mostra ruído),
-  ainda não confirma exatidão de amplitude/frequência.
+  qualitativa em hardware (canal conectado mostra sinal, desconectado
+  mostra ruído) e, agora também, numérica sobre sinais sintéticos (seção
+  6.2); nenhuma das duas confirma ainda exatidão de amplitude/frequência
+  sobre um sinal real passando pela cadeia analógica completa (frontend +
+  ADC + PRU).
 - Margens de tempo do CS (200/100/100 ciclos) seguem sem comparação formal
   com o datasheet do ADS8688.
 - Risco de corrupção silenciosa no ping-pong sem backpressure (seção 3.4).
@@ -320,7 +468,12 @@ medir com o SH-Analyzer. Comparar o espectro medido contra o ruído
 efetivamente injetado demonstra que os dados coletados **não estão sendo
 corrompidos** e que a amplitude/frequência medidas são exatas — este é o
 resultado que dá credibilidade científica às leituras para o relatório
-final.
+final. **Com a refatoração de `adc_tool.py` (seção 5), este passo passa a
+usar `--welch` + `--agrupar-bandas` + `--picos` para o ruído injetado
+(supraharmônico, sem relação de fase com a rede) e `--fft` para a
+fundamental/harmônicos — a mesma validação em bancada passa a servir
+também como a primeira validação em hardware real da nova arquitetura de
+análise (até aqui, validada só com sinais sintéticos, seção 6.2).**
 
 **Passo 3 — Aumento gradual da frequência (se sobrar tempo).** Partindo de
 102,4 kHz (validado), subir a frequência aos poucos até os dados começarem
@@ -360,6 +513,20 @@ apresentação para a equipe quanto para o relatório.
   ciclos a menos nessa transação (só acontece 1x por captura, então o
   ganho de desempenho é irrelevante — o que importa aqui é a correção
   funcional).
+- **Filtro interno de isolamento da fundamental** (`recortar_ciclos_inteiros`,
+  seção 5.3) migrado de `(b, a)` para SOS + `sosfiltfilt` — mesma técnica
+  de `aplicar_filtro_digital`, corrigindo uma inconsistência de precisão
+  numérica na razão fs/f0 mais extrema do script (dezenas de milhares para
+  1).
+- `--fft N` (análise de distúrbios momentâneos) agora pré-trunca a captura
+  a uma estimativa de amostras necessárias antes de filtrar/buscar
+  cruzamentos, em vez de processar o buffer inteiro selecionado por
+  `--inicio`/`--fim` — custo passa a escalar com N, não com o tamanho
+  total da janela.
+- `calcular_espectro_welch` vetorizado em lotes
+  (`numpy.lib.stride_tricks.sliding_window_view`) em vez de 1 segmento por
+  vez em laço Python — necessário porque uma captura de minutos com 50% de
+  sobreposição gera centenas de milhares de segmentos.
 
 ### 8.2 Identificado, não alterado (requer validação em bancada)
 
@@ -383,7 +550,7 @@ apresentação para a equipe quanto para o relatório.
 
 | Caminho | Conteúdo / papel |
 |---|---|
-| `README.md` | Visão geral, arquitetura, status, guia de uso — atualizado junto com esta versão para refletir o modo automático |
+| `README.md` | Visão geral, arquitetura, status, guia de uso — atualizado junto com esta versão para refletir a nova arquitetura de análise espectral |
 | `LICENSE` | MIT |
 | `.gitignore` | Artefatos de build, dados coletados, ambiente Python/editor |
 | `firmware/setup.sh` | Deploy: config-pin dos 4 pinos + carrega `fw_pru.out` no remoteproc. Inalterado |
@@ -392,13 +559,13 @@ apresentação para a equipe quanto para o relatório.
 | `firmware/memoria_pru.h` | `shared_control` simplificado (32 bytes), `auto_seq_mask` (seção 3.3) |
 | `firmware/pru_main.c` | Clamp defensivo para `auto_seq_mask` |
 | `firmware/spi_core.asm` | Modo automático (AUTO_RST), validado em hardware (1 canal e multi-canal) — macros `CMD_BIT`/`DATA_BIT` mantidas idênticas ao validado |
-| `firmware/ler_adc.c` | Monta máscara `auto_seq_mask`, ordena canais em ordem crescente, descarte incondicional da 1ª amostra, checa retorno de `fwrite()` |
-| `firmware/debug_sh_analyzer.sh` | **Novo.** Script de diagnóstico (remoteproc, dmesg, leitura ao vivo de `shared_control` via `/dev/mem`) — útil para depurar travamentos sem osciloscópio |
-| `scripts/adc_tool.py` | Conversão `.bin`↔`.csv` + plotagem + FFT + filtros digitais, multi-canal completo |
+| `firmware/ler_adc.c` | Monta máscara `auto_seq_mask`, ordena canais em ordem crescente, descarte incondicional da 1ª amostra, checa retorno de `fwrite()`, controla duração da captura (`--blocos`/`--duracao`) |
+| `firmware/debug_sh_analyzer.sh` | Script de diagnóstico (remoteproc, dmesg, leitura ao vivo de `shared_control` via `/dev/mem`) — útil para depurar travamentos sem osciloscópio |
+| `scripts/adc_tool.py` | Conversão `.bin`↔`.csv` + plotagem + **duas estratégias de análise espectral** (`--fft` ciclo-sincronizado, `--welch` segmentado/médio) + normalização tom/ruído + agrupamento em bandas + extração de picos + filtros digitais, multi-canal completo (seção 5) |
 | `hardware/DAQ_Module/` | Projeto Altium Designer (esquemático + PCB) do frontend analógico/DAQ |
 | `docs/melhorias-propostas.md` | Revisão técnica: taxa de amostragem + reorganização/profissionalização do repo (seção 8) |
 | `docs/contexto_projeto.md` | Este documento — nome fixo a partir de agora |
-| `docs/notas_apresentacao_relatorio.md` | **Novo.** Roteiro cronológico do que foi feito, para apresentação à equipe e para o relatório final |
+| `docs/notas_apresentacao_relatorio.md` | Roteiro cronológico do que foi feito, para apresentação à equipe e para o relatório final |
 
 ---
 

@@ -14,6 +14,7 @@ Um projeto de hardware e software embarcado de alto desempenho para a identifica
 * [Hardware](#hardware)
 * [Firmware](#firmware)
 * [Scripts e Análise](#scripts-e-análise)
+* [Análise Espectral e Tratamento de Vazamento](#análise-espectral-e-tratamento-de-vazamento)
 * [Começando](#começando)
 * [Contexto Acadêmico](#contexto-acadêmico)
 * [Licença](#licença)
@@ -48,7 +49,9 @@ O firmware original, um protótipo em C puro rodando diretamente no ARM sob Linu
 * **Captura em modo automático (AUTO_RST), 1 canal.**
 * **Captura em modo automático (AUTO_RST), multi-canal** — testado com 5 canais simultâneos (0–4) a 102,4 kHz (≈20,48 kHz efetivos por canal): os canais fisicamente conectados à rede mostraram a forma de onda de 60 Hz esperada, e os canais deixados desconectados de propósito mostraram apenas ruído, confirmando que a varredura automática alterna corretamente entre canais.
 
-**Pendente:** validação quantitativa em bancada controlada, com um sinal/ruído de frequência e amplitude conhecidas injetado deliberadamente, para confirmar exatidão (não só plausibilidade) das leituras. Ver `docs/contexto_projeto.md`, seção 7, para o roteiro completo dos próximos passos.
+A ferramenta de análise (`adc_tool.py`) passou por uma refatoração da sua arquitetura de análise espectral — ver [Análise Espectral e Tratamento de Vazamento](#análise-espectral-e-tratamento-de-vazamento) — **validada até aqui com sinais sintéticos** (fundamental e supraharmônicos gerados em software), não ainda com um sinal real injetado em bancada.
+
+**Pendente:** validação quantitativa em bancada controlada, com um sinal/ruído de frequência e amplitude conhecidas injetado deliberadamente, para confirmar exatidão (não só plausibilidade) das leituras — tanto do hardware de aquisição quanto, agora, da nova arquitetura de análise espectral. Ver `docs/contexto_projeto.md`, seção 7, para o roteiro completo dos próximos passos.
 
 ## 📂 Estrutura do Repositório
 
@@ -89,8 +92,55 @@ Em modo automático, o ADS8688 varre os canais habilitados sempre em **ordem cre
 Para não sobrecarregar o processador embarcado durante a coleta crítica de dados, o cálculo de grandezas físicas e a análise espectral são desacoplados do firmware.
 
 * **Pós-processamento:** a pasta `/scripts` contém rotinas em Python encarregadas de ler os arquivos binários gerados pela BeagleBone.
-* **Funcionalidades:** extração de métricas, Transformada Rápida de Fourier (FFT), filtragem digital, plotagem de gráficos e conversão de formato (`.bin` ↔ `.csv`) para análise dos supraharmônicos (`analise.py`, `adc_tool.py` — renomeado do antigo `plot_adc.py` —, `verificar_dados.py`). `adc_tool.py` lê, plota e converte tanto capturas de 1 canal quanto capturas multi-canal (`--canais`/`--canais-exibir`/`--layout-canais`), com FFT independente por canal e calibração (`--faixa`/`--ganho`/`--offset`) configurável por canal, além de filtragem digital opcional Butterworth passa-baixa e/ou passa-alta (`--filtro-passa-baixa`/`--filtro-passa-alta`/`--ordem-filtro`, ordem 4 a 8) aplicada antes da FFT e da plotagem — ver `python3 adc_tool.py --help` ou o docstring do módulo para a referência completa.
+* **Funcionalidades:** extração de métricas, análise espectral (FFT ciclo-sincronizada e espectro médio por segmentação/Welch — ver [Análise Espectral e Tratamento de Vazamento](#análise-espectral-e-tratamento-de-vazamento)), filtragem digital, plotagem de gráficos e conversão de formato (`.bin` ↔ `.csv`) para análise dos supraharmônicos (`analise.py`, `adc_tool.py` — renomeado do antigo `plot_adc.py` —, `verificar_dados.py`). `adc_tool.py` lê, plota e converte tanto capturas de 1 canal quanto capturas multi-canal (`--canais`/`--canais-exibir`/`--layout-canais`), com análise espectral independente por canal e calibração (`--faixa`/`--ganho`/`--offset`) configurável por canal, além de filtragem digital opcional Butterworth passa-baixa e/ou passa-alta (`--filtro-passa-baixa`/`--filtro-passa-alta`/`--ordem-filtro`, ordem 4 a 8) aplicada antes de qualquer análise espectral e da plotagem — ver `python3 adc_tool.py --help` ou o docstring do módulo para a referência completa.
 * **Diagnóstico:** `analisar_preambulo.py` inspeciona capturas feitas com o firmware de diagnóstico (`firmware/spi_core_diagnostico_preambulo.asm`), separando os 16 bits de "preâmbulo" (que deveriam ser sempre zero) dos 16 bits de dado real — foi essa ferramenta que ajudou a isolar o problema de integridade de sinal dos jumpers longos (ver "Status Atual").
+
+## 🧮 Análise Espectral e Tratamento de Vazamento
+
+Medir supraharmônicos corretamente depende tanto do hardware de aquisição quanto da matemática usada para transformar as amostras em um espectro de frequência. A FFT assume implicitamente que o trecho analisado se repete infinitamente; quando isso não é verdade, a descontinuidade na "emenda" vaza energia para frequências vizinhas (*spectral leakage*), borrando picos que deveriam ser nítidos — especialmente prejudicial para enxergar um supraharmônico de amplitude baixa perto de uma fundamental de amplitude alta. `adc_tool.py` trata esse problema com **duas estratégias complementares**, porque a fundamental/harmônicos e os supraharmônicos têm características diferentes que exigem tratamentos diferentes.
+
+### `--fft`: corte em ciclos inteiros (fundamental e harmônicos)
+
+A fundamental e seus harmônicos têm fase travada ao ciclo da rede elétrica, então dá para eliminar o vazamento na raiz: o trecho analisado é cortado exatamente num número inteiro de ciclos, localizados por cruzamento de zero interpolado linearmente (não preso à grade de amostragem). O processo:
+
+1. Estimativa grosseira da fundamental por FFT (janela de Hann), refinada por interpolação parabólica em log-magnitude para reduzir o erro de quantização do bin sem precisar de uma FFT maior.
+2. Filtro passa-baixa Butterworth (SOS, fase zero) isola a fundamental antes da detecção de cruzamento de zero.
+3. Refinamento do período usando todos os ciclos disponíveis (dilui o erro de detecção de um cruzamento individual).
+4. Corte do trecho exatamente nesses ciclos, ANTES da FFT principal.
+
+```bash
+# FFT ciclo-sincronizada de todos os ciclos completos da janela
+python3 adc_tool.py captura.bin -f 102400 --fft
+
+# Só os 10 primeiros ciclos (análise de um distúrbio momentâneo) --
+# processa só o início da captura, não o buffer inteiro
+python3 adc_tool.py captura.bin -f 102400 --fft 10
+```
+
+### `--welch`: espectro médio por segmentação (supraharmônicos)
+
+Supraharmônicos vêm de conversores eletrônicos de potência chaveados e **não têm relação de fase com o ciclo da rede** — não existe corte de ciclo que elimine o vazamento desse conteúdo especificamente, e o próprio chaveamento costuma variar de frequência ao longo do tempo (*dithering*), o que uma única FFT longa borraria. Em vez de sincronismo de ciclo, `--welch` segmenta o sinal (tamanho definido por `--resolucao-welch`, em Hz de resolução), janela e transforma cada segmento, e **média** os periodogramas resultantes — reduz a variância da estimativa e suaviza a deriva de frequência, ao custo de uma resolução em frequência fixa.
+
+```bash
+# Espectro médio, resolução de 200 Hz, com passa-alta para remover o
+# resíduo da fundamental antes de procurar supraharmônicos
+python3 adc_tool.py captura.bin -f 102400 --welch --filtro-passa-alta 2000
+```
+
+> ⚠️ `--fft` precisa da fundamental intacta na faixa `--freq-min`/`--freq-max` para sincronizar o corte em ciclos. Um `--filtro-passa-alta` igual ou maior que `--freq-min` remove essa banda e invalida o resultado de `--fft` — nesse caso, rode `--fft` e `--welch`/`--picos` em **comandos separados**. `adc_tool.py` detecta essa combinação e avisa no console.
+
+### Normalização, bandas e picos
+
+* **`--modo-espectro {tom, ruido}`** — `tom` (padrão) mede a amplitude de um tom discreto; `ruido` reporta densidade espectral de potência (PSD, V²/Hz), correta para conteúdo de banda larga, onde `tom` daria uma leitura que muda artificialmente com o tamanho da FFT/segmento para o mesmo ruído físico.
+* **`--agrupar-bandas HZ`** — resume o espectro em bandas de largura fixa (ex.: 200 Hz, convenção comum na caracterização de supraharmônicos), tornando o resultado comparável entre capturas com resoluções diferentes.
+* **`--picos LIMIAR_DB`** — extrai frequência e amplitude de componentes espectrais individuais acima de um limiar, refinadas por interpolação parabólica — a extração quantitativa que complementa a inspeção visual do gráfico.
+
+```bash
+# Espectro médio, agrupado em bandas de 200 Hz, reportando picos acima de -60 dB
+python3 adc_tool.py captura.bin -f 102400 --welch --agrupar-bandas 200 --picos -60
+```
+
+Rode `python3 adc_tool.py --help` (grupo "Análise espectral avançada") para a referência completa de flags.
 
 ## 🚀 Começando
 
@@ -147,6 +197,8 @@ Para não sobrecarregar o processador embarcado durante a coleta crítica de dad
    python3 adc_tool.py captura.bin -f 102400 --filtro-passa-alta 20 --ordem-filtro 8 --fft
    ```
    O filtro só se aplica ao modo de plotagem (não afeta a coluna opcional do modo de conversão, que continua refletindo o dado bruto sem filtragem, para preservar o round-trip `.bin`↔`.csv` sem perdas).
+
+   Para caracterizar especificamente **supraharmônicos** (conteúdo sem relação de fase com o ciclo da rede), use `--welch` em vez de, ou junto com, `--fft` — ver [Análise Espectral e Tratamento de Vazamento](#análise-espectral-e-tratamento-de-vazamento) para a explicação completa, o porquê de cada técnica e mais exemplos (`--modo-espectro`, `--agrupar-bandas`, `--picos`).
 
 ## 🎓 Contexto Acadêmico
 
