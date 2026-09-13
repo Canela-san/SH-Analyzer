@@ -4,564 +4,44 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "matplotlib>=3.10.9",
-#     "numpy",
+#     "numpy>=1.20",
 #     "scipy>=1.15.3",
 #     "PyQt6",
 # ]
 # ///
 """
-==============================================================================
- adc_tool.py -- Conversão, visualização e análise (FFT) de capturas do
-                 SH-Analyzer
-==============================================================================
-(Renomeado de `plot_adc.py`: o script deixou de fazer só plotagem -- agora
-também converte arquivos entre binário bruto `.bin` e `.csv`. Se algum
-comando/atalho antigo ainda chamar `plot_adc.py`, atualize para
-`adc_tool.py`; as flags de plotagem continuam as mesmas.)
-
-ÍNDICE
-------
-  1. PARA QUE SERVE
-  2. OS DOIS MODOS DE OPERAÇÃO (plotagem x conversão)
-  3. FORMATOS DE ARQUIVO SUPORTADOS (.bin e .csv)
-  4. MODO DE CONVERSÃO: -c/--converter e -o/--saida
-  5. JANELAMENTO NO TEMPO (--inicio / --fim)
-  6. ANÁLISE EM FREQUÊNCIA (--fft)
-     6.1 O problema do vazamento espectral (spectral leakage)
-     6.2 Estratégia adotada: fundamental + cruzamento por zero interpolado
-     6.3 Analisando distúrbios momentâneos (--fft N)
-     6.4 Escolha da janela espectral (--janela / --kaiser-beta)
-  7. CONVERSÃO PARA TENSÃO (--faixa / --offset / --ganho / --formato)
-  8. DESEMPENHO E USO DE MEMÓRIA
-  9. EXEMPLOS DE USO (ver também `--help`)
-  10. CAPTURA E ANÁLISE MULTI-CANAL (--canais / --canais-exibir / --layout-canais)
-      10.1 Convenção de intercalação (round-robin)
-      10.2 Selecionando e organizando a exibição dos canais
-      10.3 Frequência efetiva por canal
-      10.4 FFT em modo multi-canal
-      10.5 Calibração por canal (--faixa / --ganho / --offset como listas)
-      10.6 Modo de conversão: a coluna `canal` no `.csv`
-      10.7 Casos de borda
-  11. FILTRAGEM DIGITAL (--filtro-passa-baixa / --filtro-passa-alta / --ordem-filtro)
-
-1. PARA QUE SERVE
-------------------
-Este script lê capturas brutas do ADS8688 gravadas pela BeagleBone
-(`firmware/ler_adc.c`, arquivo `supraharmonicos_raw.bin`: sequência de
-amostras de 16 bits, sem cabeçalho e sem preâmbulo -- 2 bytes por amostra)
-e faz duas coisas, dependendo das flags usadas:
-
-    a) MODO DE CONVERSÃO (-c/--converter + -o/--saida): converte o arquivo
-       entre `.bin` (formato compacto gravado pelo firmware) e `.csv`
-       (texto legível por humanos/Excel/planilhas), nos dois sentidos.
-
-    b) MODO DE PLOTAGEM (padrão, sem -c): plota a forma de onda no tempo
-       e, opcionalmente (--fft), calcula e plota o espectro de frequência,
-       a partir de um arquivo `.bin` OU `.csv`.
-
-2. OS DOIS MODOS DE OPERAÇÃO
-------------------------------
-    - Presença de -c/--converter  -> MODO DE CONVERSÃO.
-      Nesse modo o argumento posicional `arquivo` e a flag -f/--frequencia
-      NÃO são usados (a taxa de amostragem não é gravada dentro do .bin/
-      .csv, então não há o que fazer com ela aqui). Use -c para apontar o
-      arquivo de ENTRADA e -o/--saida para apontar o arquivo de SAÍDA.
-
-    - Ausência de -c/--converter  -> MODO DE PLOTAGEM (comportamento
-      original do antigo `plot_adc.py`). Nesse modo o argumento
-      posicional `arquivo` e -f/--frequencia são OBRIGATÓRIOS.
-
-3. FORMATOS DE ARQUIVO SUPORTADOS (.bin e .csv)
---------------------------------------------------
-    .bin (padrão, já era o único formato suportado antes desta versão)
-        Binário puro, little-endian, 1 amostra = 2 bytes = 1 int16 ou
-        uint16 (ver --formato), só o código de conversão do ADC -- é
-        exatamente o que `firmware/ler_adc.c` grava. Lido via
-        `numpy.memmap`: o arquivo NÃO é carregado inteiro na RAM, só as
-        páginas efetivamente acessadas (ver seção 8).
-
-    .csv (novo)
-        Texto separado por vírgulas, com cabeçalho. Formato gerado/lido
-        por este script:
-            amostra,valor_bruto[,tensao_v]
-            0,32768,0.000000
-            1,32770,0.000305
-            ...
-        - `amostra`: índice da amostra no arquivo original (0-based).
-        - `valor_bruto`: código de 16 bits do ADC, já decodificado como
-          inteiro (com sinal ou sem, conforme --formato) -- é essa coluna,
-          e SÓ ela, que é usada para reconstruir o `.bin` de volta.
-        - `tensao_v`: coluna OPCIONAL (só com --incluir-tensao na
-          conversão .bin->.csv), só para conferência visual humana. É
-          IGNORADA ao converter de volta para `.bin`, para o round-trip
-          nunca perder precisão por causa de arredondamento de ponto
-          flutuante.
-        O formato/ordem das colunas extras não importa para leitura (a
-        coluna é localizada pelo nome no cabeçalho), mas a coluna
-        `valor_bruto` precisa existir com esse nome exato.
-
-    O tipo é sempre AUTODETECTADO pela extensão do arquivo (.bin ou
-    .csv) -- tanto no argumento posicional do modo de plotagem quanto em
-    -c/--converter e -o/--saida no modo de conversão.
-
-4. MODO DE CONVERSÃO: -c/--converter e -o/--saida
-------------------------------------------------------
-    -c ARQUIVO_ENTRADA -o ARQUIVO_SAIDA
-
-    A direção da conversão é decidida automaticamente pelas EXTENSÕES dos
-    dois caminhos (não importa qual vem primeiro na linha de comando):
-
-        .bin -> .csv   ex.: adc_tool.py -c dados.bin -o dados.csv
-        .csv -> .bin   ex.: adc_tool.py -c dados.csv -o dados.bin
-
-    --inicio/--fim também funcionam no modo de conversão, para converter
-    só um recorte de um arquivo grande (ex.: extrair só as primeiras
-    10 000 amostras de uma captura de várias centenas de MB para inspeção
-    rápida em uma planilha).
-
-5. JANELAMENTO NO TEMPO (--inicio / --fim)
---------------------------------------------
-Uma coleta longa pode ter milhões de amostras (cada buffer de produção tem
-1 048 576 amostras) -- carregar/converter/plotar tudo de uma vez pode ser
-lento. --inicio/--fim selecionam, em NÚMERO DE AMOSTRAS (não em tempo nem
-em bytes), a fatia a ser usada. Valem tanto no modo de plotagem quanto no
-de conversão.
-
-6. ANÁLISE EM FREQUÊNCIA (--fft)
------------------------------------
-(Nota: se --filtro-passa-baixa/--filtro-passa-alta forem usados (seção
-11), eles são aplicados ANTES de qualquer etapa desta seção -- o sinal
-que entra aqui, e também o que é plotado no domínio do tempo, já sai
-filtrado. São mecanismos independentes: o filtro da seção 11 é uma
-escolha explícita do usuário sobre o sinal inteiro; o passa-baixa
-mencionado no passo 2 abaixo é interno, fixo em ordem 4, e serve só
-para isolar a fundamental na hora de achar os cruzamentos por zero.)
-
-6.1 O problema do vazamento espectral (spectral leakage)
-    A FFT assume implicitamente que o trecho analisado se repete
-    infinitamente. Se o trecho não contém um número inteiro de ciclos da
-    fundamental, há uma descontinuidade na "emenda" entre o fim e o
-    início do trecho repetido, e essa descontinuidade "vaza" energia para
-    frequências vizinhas (o vazamento espectral), borrando picos que
-    deveriam ser nítidos -- especialmente ruim para achar supraharmônicos
-    de baixa amplitude perto de uma fundamental de amplitude alta.
-
-6.2 Estratégia adotada: fundamental + cruzamento por zero interpolado
-    Dados reais têm ruído, então não dá para simplesmente contar amostras
-    e cortar em "um período redondo". A estratégia usada aqui:
-
-      1) Estima-se a frequência fundamental por FFT, buscando o pico de
-         maior energia dentro de uma faixa esperada (--freq-min/--freq-max,
-         por padrão 45-65 Hz, cobrindo redes de 50 e 60 Hz). Essa é só uma
-         estimativa GROSSEIRA (resolução limitada pelo tamanho da FFT).
-      2) Filtra-se o sinal com um passa-baixa (Butterworth) com corte um
-         pouco acima da fundamental estimada, para isolar a fundamental e
-         eliminar ruído/supraharmônicos que criariam cruzamentos por zero
-         espúrios.
-      3) Encontra-se TODOS os cruzamentos por zero ascendentes do sinal
-         filtrado, com INTERPOLAÇÃO LINEAR entre as duas amostras vizinhas
-         -- ou seja, o instante do cruzamento não fica preso à grade de
-         amostragem, e sim numa posição fracionária entre amostras.
-      4) Refina-se o período: em vez de usar um único intervalo entre dois
-         cruzamentos (sensível a ruído), usa-se
-         (último cruzamento - primeiro cruzamento) / número de ciclos.
-         Isso faz com que o erro de estimativa seja diluído por todos os
-         ciclos observados, em vez de concentrado num só -- quanto mais
-         ciclos disponíveis, mais preciso o período estimado.
-      5) O trecho enviado à FFT é cortado exatamente nos cruzamentos por
-         zero (arredondados para a amostra mais próxima -- o erro
-         residual disso é uma fração de amostra, desprezível). Por cima
-         desse recorte, a janela escolhida em --janela é aplicada (ver
-         seção 6.4) -- por padrão NENHUMA (retangular), já que o recorte
-         em ciclos inteiros já ataca a causa raiz do vazamento; outras
-         janelas ficam disponíveis como camada extra de proteção contra
-         qualquer imperfeição residual (a rede real nunca é perfeitamente
-         periódica), ao custo de resolução em frequência e/ou exatidão de
-         amplitude.
-
-6.3 Analisando distúrbios momentâneos (--fft N)
-    Por padrão (--fft sem argumento), usa-se TODOS os ciclos completos
-    disponíveis dentro da janela selecionada por --inicio/--fim. Para
-    investigar um distúrbio breve (ex.: um afundamento de tensão que dura
-    poucos ciclos), passe o número de ciclos a analisar, por exemplo
-    `--fft 10` analisa só os primeiros 10 ciclos completos encontrados
-    dentro da janela -- combine com --inicio/--fim para posicionar essa
-    janela exatamente onde o distúrbio ocorreu.
-
-    O trecho efetivamente usado na FFT é sempre destacado (sombreado) no
-    gráfico do domínio do tempo, para deixar claro o que entrou no cálculo.
-
-6.4 Escolha da janela espectral (--janela / --kaiser-beta)
-    A janela aplicada ao trecho ANTES da FFT PRINCIPAL (a que gera o
-    espectro exibido/salvo) é configurável via --janela. Isso é
-    independente do recorte em ciclos inteiros da seção 6.2: o recorte
-    ataca a causa raiz do vazamento (descontinuidade na "emenda"); a
-    janela, quando usada, é uma camada adicional que reduz ainda mais os
-    lóbulos laterais à custa de alargar o lóbulo principal (menos
-    resolução em frequência) e/ou atenuar a amplitude reportada -- por
-    isso a correção pelo ganho coerente (seção 4, calcular_espectro_dbv)
-    é sempre aplicada, para QUALQUER janela escolhida.
-
-    Nem a estimativa grosseira da fundamental (função
-    estimar_frequencia_fundamental) nem o recorte em ciclos inteiros são
-    afetados por --janela -- ambos usam Hann internamente, de forma fixa,
-    só como ferramenta de triagem. --janela afeta somente o espectro
-    final mostrado ao usuário.
-
-    Opções aceitas (--janela ACEITA sinônimos; acentos, hifens, espaços e
-    maiúsculas/minúsculas são todos ignorados na comparação):
-
-        retangular / boxcar   (PADRÃO -- equivale a não aplicar janela
-                                nenhuma, ou seja, multiplicar por 1.0)
-            Lóbulo principal mais estreito possível -> melhor resolução
-            em frequência e nenhuma atenuação de amplitude. Em troca,
-            tem os lóbulos laterais mais altos (~-13 dB) de todas as
-            opções -- só é uma boa escolha quando o recorte em ciclos
-            inteiros (seção 6.2) já está fazendo o trabalho pesado contra
-            vazamento, o que é o caso normal deste script.
-
-        hann / hanning
-            Compromisso clássico entre resolução e vazamento (lóbulos
-            laterais a partir de ~-31 dB). Era o comportamento padrão
-            (fixo) de versões anteriores deste script.
-
-        blackmanharris / blackman-harris
-            Lóbulos laterais muito baixos (~-92 dB) -- ajuda a enxergar
-            um supraharmônico de amplitude baixa perto de uma fundamental
-            de amplitude alta, ao custo de um lóbulo principal bem mais
-            largo (pior resolução para separar duas componentes
-            próximas em frequência).
-
-        flattop / flat-top
-            Topo do lóbulo principal muito achatado -- a melhor EXATIDÃO
-            DE AMPLITUDE de todas as opções (minimiza o erro de "scalloping
-            loss" quando um tom não cai exatamente num bin da FFT), mas a
-            PIOR resolução em frequência e o lóbulo principal mais largo
-            de todos. Use quando o objetivo é medir com precisão o valor
-            de pico de uma componente já conhecida (ex.: a fundamental),
-            não separar componentes vizinhas.
-
-        kaiser (+ --kaiser-beta)
-            Família ajustável por um único parâmetro (beta): permite
-            variar continuamente entre o comportamento "quase retangular"
-            (beta baixo) e "lóbulos laterais muitíssimo baixos, lóbulo
-            principal muito largo" (beta alto). Ver --help de
-            --kaiser-beta para valores de referência aproximados
-            (equivalência com Hamming/Hann/Blackman).
-
-    Exemplos:
-        --janela retangular              (padrão, pode ser omitido)
-        --janela hann
-        --janela blackmanharris
-        --janela blackman-harris         (equivalente ao anterior)
-        --janela "flat top"
-        --janela kaiser --kaiser-beta 12
-
-7. CONVERSÃO PARA TENSÃO (--faixa / --offset / --ganho / --formato)
------------------------------------------------------------------------
-O ADS8688 devolve um código de 16 bits por amostra. Para converter esse
-código em Volts:
-
-    tensao_no_ADC = codigo * (faixa / 65536)      [--formato uint16, padrão]
-                                                    (unipolar, 0 .. +faixa)
-    tensao_no_ADC = codigo * (faixa / 32768)      [--formato int16]
-                                                    (bipolar, ex.: ±10.24 V)
-
-    tensao_final = (tensao_no_ADC - offset) * ganho
-
---offset tem um padrão AUTOMÁTICO: 0 V para --formato int16 (que já é
-bipolar, centrado em 0) e faixa/2 para --formato uint16 -- ou seja, se a
-faixa unipolar do ADC é 0..10.24 V, o padrão já subtrai 5.12 V para
-devolver a onda CA pura, centralizada em 0 V (-5.12 V .. +5.12 V), em vez
-da tensão bruta 0..10.24 V. Se o offset real do seu ADC/sensor não for
-exatamente metade da faixa (erro de calibração), informe --offset
-manualmente.
-
-Ajuste --faixa conforme o registrador de range configurado no ADS8688 e
---ganho conforme a calibração do seu sensor/PCB. Esses quatro parâmetros
-também são usados no modo de conversão, mas só se --incluir-tensao for
-passado (a coluna `tensao_v` do CSV é só informativa). Com captura
-multi-canal, --faixa/--ganho/--offset podem variar por canal (ex.: um
-canal de tensão e um de corrente, com sensores diferentes) -- ver seção
-10.5.
-
-8. DESEMPENHO E USO DE MEMÓRIA
------------------------------------
-- `.bin` é sempre lido via `numpy.memmap`: o sistema operacional só carrega
-  as páginas realmente acessadas, então plotar/converter um recorte
-  pequeno (--inicio/--fim) de um arquivo gigante continua rápido e leve,
-  mesmo em capturas de centenas de MB.
-- A conversão `.bin -> .csv` processa os dados em BLOCOS (--tamanho-chunk,
-  padrão 500 000 amostras) em vez de montar o CSV inteiro na RAM de uma
-  vez -- necessário porque cada buffer de produção já tem 1 048 576
-  amostras, e uma captura real tem vários buffers.
-- A conversão `.csv -> .bin` também é feita em blocos, lendo o CSV como um
-  fluxo (streaming, uma linha por vez) -- não carrega o arquivo de texto
-  inteiro na memória antes de converter.
-- Texto (`.csv`) é inerentemente maior e mais lento de gerar/ler do que
-  binário puro (`.bin`) -- isso é esperado e é o preço de ser legível por
-  humanos/Excel. Para capturas de produção grandes, prefira manter o
-  arquivo original em `.bin` e use `.csv` como formato de interâmbio/
-  inspeção manual de recortes menores (--inicio/--fim), não como o
-  formato primário de armazenamento.
-- No modo de PLOTAGEM, um `.csv` de entrada É carregado inteiro na
-  memória (ao contrário do `.bin`), porque texto precisa ser
-  integralmente escaneado para ser interpretado -- não há equivalente de
-  memory-map para CSV. Leve isso em conta ao plotar CSVs muito grandes.
-
-9. EXEMPLOS DE USO
----------------------
-  # Plotar o arquivo inteiro no tempo, amostrado a 102.4 kHz
-  python3 adc_tool.py supraharmonicos_raw.bin -f 102400
-
-  # Só as amostras 125 a 3000 (útil para inspecionar um trecho específico)
-  python3 adc_tool.py supraharmonicos_raw.bin -f 102400 --inicio 125 --fim 3000
-
-  # Forma de onda + FFT usando todos os ciclos completos da janela
-  python3 adc_tool.py supraharmonicos_raw.bin -f 102400 --fft
-
-  # FFT de alta resolução temporal: só 10 ciclos, a partir da amostra 50000
-  python3 adc_tool.py supraharmonicos_raw.bin -f 102400 --inicio 50000 --fft 10
-
-  # FFT com janela Blackman-Harris (lóbulos laterais bem mais baixos que
-  # o padrão retangular -- útil para caçar um supraharmônico fraco perto
-  # da fundamental)
-  python3 adc_tool.py supraharmonicos_raw.bin -f 102400 --fft --janela blackman-harris
-
-  # FFT com janela Kaiser e beta customizado
-  python3 adc_tool.py supraharmonicos_raw.bin -f 102400 --fft --janela kaiser --kaiser-beta 12
-
-  # Filtro digital Butterworth passa-baixa em 45 kHz antes da FFT/plotagem
-  # (limpa ruído de alta frequência numa captura a 102.4 kHz -- ver seção 11)
-  python3 adc_tool.py supraharmonicos_raw.bin -f 102400 --filtro-passa-baixa 45000 --fft
-
-  # Filtro passa-alta (remove deriva de DC/baixa frequência) com ordem 8
-  python3 adc_tool.py supraharmonicos_raw.bin -f 102400 --filtro-passa-alta 20 --ordem-filtro 8 --fft
-
-  # Convertendo para tensão real (ADC ±10.24 V, sensor com ganho 19.53)
-  python3 adc_tool.py supraharmonicos_raw.bin -f 102400 --faixa 10.24 --ganho 19.53 --fft
-
-  # Plotar direto de um .csv (mesmas flags de sempre)
-  python3 adc_tool.py supraharmonicos_raw.csv -f 102400 --fft
-
-  # Converter .bin -> .csv
-  python3 adc_tool.py -c supraharmonicos_raw.bin -o supraharmonicos_raw.csv
-
-  # Converter .bin -> .csv incluindo a coluna de tensão (só informativa)
-  python3 adc_tool.py -c supraharmonicos_raw.bin -o dados.csv --incluir-tensao --faixa 10.24 --ganho 19.53
-
-  # Converter .csv -> .bin (round-trip; só a coluna valor_bruto é usada)
-  python3 adc_tool.py -c dados.csv -o dados_reconstruido.bin
-
-  # Converter só um recorte (amostras 0..9999) para abrir rápido no Excel
-  python3 adc_tool.py -c supraharmonicos_raw.bin -o trecho.csv --fim 10000
-
-  # -- Multi-canal (ver seção 10) ---------------------------------------
-  # Captura feita com `ler_adc 102400 0,1,3` -- 3 canais intercalados.
-  # Plotar todos, um subplot por canal (padrão --layout-canais separados)
-  python3 adc_tool.py captura.bin -f 102400 --canais 0,1,3 --fft
-
-  # Mesma captura, mas só os canais 0 e 3, sobrepostos no mesmo eixo
-  python3 adc_tool.py captura.bin -f 102400 --canais 0,1,3 \
-      --canais-exibir 0,3 --layout-canais sobrepostos --fft
-
-  # Canal 0 = tensão (ganho 19.53), canal 1 = corrente (ganho 0.1) --
-  # --faixa/--ganho/--offset aceitam 1 valor (todos os canais) ou uma
-  # lista com 1 valor por canal, na MESMA ordem de --canais
-  python3 adc_tool.py captura.bin -f 102400 --canais 0,1 \
-      --ganho 19.53,0.1 --faixa 10.24,10.24 --fft
-
-Rode `python3 adc_tool.py --help` para a referência completa de argumentos.
-==============================================================================
-
-10. CAPTURA E ANÁLISE MULTI-CANAL
---------------------------------------
-`firmware/ler_adc.c` pode capturar vários canais do ADS8688 numa mesma
-captura, intercalados (round-robin) num único arquivo `.bin` -- sem
-buffers separados por canal e sem cabeçalho nenhum no arquivo. Esta seção
-explica como este script decodifica e apresenta esse formato.
-
-10.1 Convenção de intercalação (round-robin)
-    Com N canais selecionados na captura (`ler_adc <freq> <canais>`), a
-    amostra bruta na posição `i` do arquivo (0-based, considerando o
-    arquivo inteiro) pertence ao canal `lista_de_canais[i % N]`, sendo
-    `lista_de_canais` a MESMA lista, na MESMA ordem, passada ao `ler_adc`
-    na hora da captura. O firmware já cuida internamente de um atraso de
-    pipeline de 1 quadro do ADS8688 (descartando a amostra de
-    alinhamento necessária -- ver comentários em `firmware/ler_adc.c` e
-    `firmware/spi_core.asm`), então essa correspondência simples de
-    posição -> canal já vale a partir da amostra 0 do arquivo, sem
-    nenhum ajuste adicional necessário aqui.
-
-    Como o `.bin` não carrega metadado nenhum (mesma filosofia que já
-    valia para a frequência de amostragem, sempre externa ao arquivo),
-    é preciso informar essa lista de novo aqui, via --canais -- `ler_adc`
-    já imprime a lista usada no console durante a captura, para anotação.
-
-10.2 Selecionando e organizando a exibição dos canais
-    --canais LISTA        -- canais presentes no arquivo, na ordem da
-                              captura (ex.: "0,1,3"). Padrão: "1" (um
-                              canal só -- comportamento idêntico ao deste
-                              script antes do suporte multi-canal).
-    --canais-exibir LISTA  -- subconjunto de --canais a plotar/analisar
-                              de fato (padrão: todos os de --canais).
-    --layout-canais {separados,sobrepostos} -- só importa com mais de 1
-                              canal em --canais-exibir. 'separados'
-                              (padrão): um subplot por canal -- mais
-                              seguro visualmente quando os canais medem
-                              grandezas diferentes (ex.: tensão e
-                              corrente, escalas bem distintas).
-                              'sobrepostos': todos os canais no MESMO
-                              eixo de tempo (e no mesmo eixo de
-                              frequência, se --fft), cada um com uma cor
-                              e uma entrada na legenda.
-
-10.3 Frequência efetiva por canal
-    -f/--frequencia continua sendo a frequência TOTAL de transação SPI
-    (mesmo significado de sempre, e o mesmo valor que se passaria a
-    `ler_adc`). Com N canais, cada canal individualmente foi amostrado a
-    `--frequencia / N` -- é essa frequência efetiva, não a total, que
-    este script usa para montar o eixo do tempo e a base da FFT de cada
-    canal (já que amostras consecutivas do MESMO canal, no arquivo
-    intercalado, estão separadas por N posições, não por 1).
-
-10.4 FFT em modo multi-canal
-    Com --fft, cada canal selecionado passa pelo MESMO pipeline de
-    sempre (estimativa grosseira da fundamental -> recorte em ciclos
-    inteiros por cruzamento de zero -> espectro com a janela de
-    --janela) de forma INDEPENDENTE dos outros -- não se assume que
-    todos os canais tenham exatamente a mesma fundamental/fase estimada,
-    mesmo vindo da mesma rede elétrica (ruído, sensor e ganho diferentes
-    por canal podem afetar ligeiramente a detecção de cada um).
-    --freq-min/--freq-max/--janela/--kaiser-beta/--fft N continuam sendo
-    parâmetros GLOBAIS, aplicados igualmente a todos os canais
-    processados.
-
-10.5 Calibração por canal (--faixa / --ganho / --offset como listas)
-    Numa captura real deste projeto é comum um canal medir tensão e
-    outro corrente, cada um com sensor/ganho diferentes. Por isso,
-    --faixa/--ganho/--offset aceitam DOIS formatos:
-        - um valor único, aplicado a TODOS os canais (comportamento de
-          sempre, retrocompatível);
-        - uma lista separada por vírgula do MESMO tamanho de --canais,
-          um valor por canal, na mesma ordem (ex.: --canais 0,1
-          --ganho 19.53,0.1 -> canal 0 usa ganho 19.53, canal 1 usa
-          ganho 0.1).
-    --offset, quando omitido, continua com o padrão automático
-    (faixa/2 para --formato uint16, 0.0 para int16) calculado
-    individualmente para cada canal a partir da sua própria --faixa.
-
-10.6 Modo de conversão: a coluna `canal` no `.csv`
-    Na conversão '.bin'->'.csv', se --canais tiver mais de 1 canal, o
-    CSV gerado ganha uma coluna `canal` a mais (formato:
-    `amostra,canal,valor_bruto[,tensao_v]`), com o canal de cada linha
-    já resolvido. Com --canais tendo só 1 canal (ou omitido, padrão),
-    o CSV continua EXATAMENTE igual a hoje (`amostra,valor_bruto
-    [,tensao_v]`, sem coluna `canal`), para não alterar o formato de
-    nenhum fluxo de trabalho de 1 canal já existente.
-
-    Um CSV COM coluna `canal` é autodescritivo: '.csv'->'.bin' não
-    precisa mais de --canais para reconstruir a intercalação original
-    -- a ordem das linhas no CSV já preserva isso (a conversão só
-    escreve `valor_bruto` de cada linha, na ordem em que aparecem,
-    exatamente como sempre fez).
-
-10.7 Casos de borda
-    --inicio/--fim continuam contando posições BRUTAS no arquivo (sem
-    mudar de significado). Se o recorte resultante não for múltiplo do
-    número de canais, o script trunca por baixo antes de desintercalar,
-    para que todos os canais fiquem com o MESMO número de amostras
-    (evita desalinhar o eixo de tempo entre canais no layout
-    'sobrepostos'). `SAMPLES_PER_BUFFER` do firmware (1.048.576) também
-    não é necessariamente múltiplo do número de canais -- isso é
-    esperado e não afeta a intercalação, que se mantém em fase ao longo
-    de toda a captura (ver 10.1).
-
-11. FILTRAGEM DIGITAL (--filtro-passa-baixa / --filtro-passa-alta / --ordem-filtro)
-----------------------------------------------------------------------------------------
-[MODO DE PLOTAGEM] Antes de QUALQUER outra etapa -- o recorte em ciclos
-inteiros da seção 6.2, a FFT da seção 6, e a própria forma de onda
-plotada no domínio do tempo --, é possível aplicar um ou dois filtros
-digitais Butterworth ao sinal já convertido para Volts de cada canal.
-
-    --filtro-passa-baixa HZ   -- rejeita acima de HZ.
-    --filtro-passa-alta HZ    -- rejeita abaixo de HZ.
-    --ordem-filtro N          -- ordem de AMBOS os filtros acima, quando
-                                  usados (padrão: 5; aceita 4 a 8).
-
-Nenhum dos dois é aplicado por padrão -- comportamento idêntico ao de
-antes desta funcionalidade. Podem ser usados isoladamente ou em
-conjunto: nesse caso, o sinal passa primeiro pelo passa-alta e depois
-pelo passa-baixa, formando efetivamente um passa-faixa (sendo os dois
-filtros lineares, a ordem de aplicação não muda o resultado além de um
-erro de arredondamento de ponto flutuante desprezível). Usados juntos,
---filtro-passa-alta precisa ser menor que --filtro-passa-baixa -- do
-contrário a banda passante resultante seria vazia (erro reportado antes
-de carregar o arquivo, ver validação abaixo).
-
-Exemplo motivador: numa captura a 102.4 kHz a frequência de Nyquist é
-51.2 kHz. Ruído/aliasing que já tenha entrado na banda amostrada durante
-a conversão A/D não pode mais ser "desfeito" digitalmente depois --
-isso só a filtragem ANALÓGICA do frontend evita de fato (ver seção
-"Arquitetura e Desempenho" do README). O que --filtro-passa-baixa faz
-aqui é diferente e complementar: atacar o que sobrou de ruído de alta
-frequência DENTRO da própria banda já amostrada (entre a frequência de
-corte escolhida e a Nyquist), o que limpa a leitura da fundamental e
-dos supraharmônicos de interesse abaixo desse corte. Ex.:
---filtro-passa-baixa 45000 --ordem-filtro 6 ataca o que sobrar acima de
-45 kHz numa captura a 102.4 kHz.
-
-Implementação (scipy.signal.butter(..., output="sos") +
-scipy.signal.sosfiltfilt, função aplicar_filtro_digital):
-    - SOS (Second-Order Sections) em vez da forma clássica (b, a) usada
-      no filtro interno de triagem da seção 6.2 (esse fixo em ordem 4):
-      para as ordens mais altas permitidas aqui (até 8), a forma (b, a)
-      fica numericamente instável (coeficientes de um polinômio de grau
-      alto perdem precisão em ponto flutuante), enquanto SOS decompõe o
-      filtro numa cascata de seções de 2ª ordem, cada uma bem
-      condicionada -- essencial para um filtro de ordem 8 não introduzir
-      artefatos espúrios no sinal.
-    - filtfilt (aqui, sosfiltfilt) filtra para frente e para trás
-      (forward-backward), zerando o atraso de fase -- essencial aqui,
-      porque um atraso de fase deslocaria os cruzamentos por zero usados
-      no recorte em ciclos inteiros (seção 6.2) e distorceria a forma de
-      onda no gráfico do tempo -- ao custo de dobrar a ordem efetiva do
-      filtro (a magnitude é elevada ao quadrado), então a ordem pedida
-      em --ordem-filtro já é suficiente sem precisar compensar
-      manualmente.
-    - Custo computacional: aplicado uma vez por canal exibido, por
-      filtro solicitado (no máximo 2x, se ambos forem usados) -- com
-      scipy vetorizado, isso é desprezível frente ao tempo de leitura do
-      arquivo, mesmo para um buffer de produção inteiro (1 048 576
-      amostras) e ordem 8.
-
-A frequência de corte de cada filtro é validada contra a frequência de
-Nyquist EFETIVA de cada canal (--frequencia dividida pelo número de
-canais em --canais -- seção 10.3), logo após o parse dos argumentos e
-ANTES de carregar o arquivo (que pode ser grande) -- mesma filosofia de
-validação adotada para --janela (seção 6.4).
-
-Este filtro só existe no modo de plotagem e NÃO afeta o modo de
-conversão '.bin'<->'.csv': a coluna 'tensao_v' opcional
-(--incluir-tensao) continua refletindo a tensão calculada diretamente
-do código bruto do ADC, sem filtragem nenhuma, para preservar a
-fidelidade do round-trip '.bin'->'.csv'->'.bin' (que só usa
-'valor_bruto', nunca a tensão -- ver seção 3 do docstring).
-
-Exemplos:
-    # Passa-baixa em 45 kHz, ordem padrão (5), captura a 102.4 kHz
-    python3 adc_tool.py captura.bin -f 102400 --filtro-passa-baixa 45000 --fft
-
-    # Passa-alta em 20 Hz (remove deriva de DC/baixa frequência), ordem 8
-    python3 adc_tool.py captura.bin -f 102400 --filtro-passa-alta 20 --ordem-filtro 8 --fft
-
-    # Passa-faixa: passa-alta 20 Hz + passa-baixa 45 kHz, ordem 6
-    python3 adc_tool.py captura.bin -f 102400 \
-        --filtro-passa-alta 20 --filtro-passa-baixa 45000 --ordem-filtro 6 --fft
-==============================================================================
+adc_tool.py -- Conversão, visualização e análise espectral de capturas do
+SH-Analyzer (ADS8688 via BeagleBone).
+
+Dois modos:
+  - Conversão (-c/--converter + -o/--saida): '.bin' <-> '.csv'.
+  - Plotagem (padrão): forma de onda e, opcionalmente, espectro.
+
+Duas estratégias de análise espectral, escolhidas conforme o tipo de sinal:
+  - --fft: FFT única, sincronizada em ciclos inteiros da fundamental (corte
+    por cruzamento de zero, ver recortar_ciclos_inteiros). Ideal para a
+    fundamental e harmônicos de baixa ordem, cuja fase está travada ao ciclo
+    da rede.
+  - --welch: espectro médio por segmentação, método de Welch (ver
+    calcular_espectro_welch). Ideal para supraharmônicos: ruído de
+    conversores chaveados não tem relação de fase com o ciclo da rede, então
+    o corte em ciclos inteiros não elimina o vazamento desse conteúdo -- aqui
+    o controle é feito pela janela espectral e pela média entre segmentos,
+    que também suaviza deriva de frequência de chaveamento (dithering) ao
+    longo da captura.
+
+--modo-espectro escolhe a normalização usada por --fft e --welch: 'tom'
+(amplitude de um tom discreto) ou 'ruido' (densidade espectral de potência,
+invariante ao tamanho da FFT/segmento -- ver _normalizar_espectro).
+--agrupar-bandas resume o espectro em bandas de largura fixa (convenção da
+literatura de supraharmônicos). --picos extrai frequência e amplitude de
+componentes espectrais individuais por interpolação parabólica.
+
+Suporta captura multi-canal intercalada (--canais/--canais-exibir), com
+calibração e filtragem digital Butterworth por canal. Rode com --help para a
+referência completa de flags.
 """
 
-import argparse
 import itertools
 import sys
 import unicodedata
@@ -569,23 +49,20 @@ from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.signal import butter, filtfilt, get_window, sosfiltfilt
+from scipy.signal import butter, find_peaks, get_window, sosfiltfilt
 from scipy.fft import rfft, rfftfreq
 
-# Tamanho de bloco padrão (em amostras) usado nas conversões .bin<->.csv.
-# Ver seção 8 do docstring do módulo ("DESEMPENHO E USO DE MEMÓRIA").
+# ---------------------------------------------------------------------------
+# Constantes
+# ---------------------------------------------------------------------------
+
 TAMANHO_CHUNK_PADRAO = 500_000
 
-# Mapeia --formato -> dtype numpy usado tanto para ler .bin (memmap) quanto
-# para decodificar/empacotar valores nas conversões .bin<->.csv.
 FORMATOS_NUMPY = {
     "int16": np.dtype("<i2"),   # complemento de dois, bipolar
     "uint16": np.dtype("<u2"),  # binário reto, unipolar (padrão de fábrica)
 }
 
-# Mapeia alias normalizado (sem acento/hífen/espaço, minúsculo -- ver
-# _normalizar_nome_janela) -> nome canônico aceito por scipy.signal.get_window.
-# Ver seção 6.4 do docstring do módulo para a explicação de cada opção.
 JANELA_PADRAO = "retangular"
 ALIASES_JANELA = {
     "retangular": "boxcar",
@@ -597,7 +74,6 @@ ALIASES_JANELA = {
     "flattop": "flattop",
     "kaiser": "kaiser",
 }
-# Nome canônico do scipy -> rótulo legível usado em prints/títulos de gráfico.
 NOMES_EXIBICAO_JANELA = {
     "boxcar": "Retangular (sem janela)",
     "hann": "Hann",
@@ -606,39 +82,33 @@ NOMES_EXIBICAO_JANELA = {
     "kaiser": "Kaiser",
 }
 
-# Número máximo de canais do ADS8688 (canais 0-7) -- mesmo valor usado em
-# firmware/memoria_pru.h (ADS8688_MAX_CANAIS), mantido em sincronia
-# manualmente (não há um único arquivo de constantes compartilhado entre
-# o firmware em C/Assembly e este script em Python). Ver seção 10 do
-# docstring do módulo para o suporte multi-canal.
+# Precisa ficar em sincronia manual com ADS8688_MAX_CANAIS em
+# firmware/memoria_pru.h -- não há arquivo de constantes compartilhado entre
+# o firmware em C/Assembly e este script.
 ADS8688_MAX_CANAIS = 8
-
-# Canal usado quando --canais não é passado -- mesmo padrão histórico de
-# `ler_adc` (um canal só, o canal 1) mantido aqui para consistência.
 CANAL_PADRAO = "1"
 
-# Ordem do(s) filtro(s) digital(is) Butterworth de --filtro-passa-baixa/
-# --filtro-passa-alta (ver seção 11 do docstring do módulo). Limitada a
-# 4-8: abaixo de 4 a rejeição fora da banda fica fraca demais para o
-# propósito (limpar ruído/aliasing residual antes da FFT); acima de 8 a
-# distorção de fase perto do corte cresce sem trazer benefício
-# proporcional, mesmo com a implementação em SOS (numericamente estável).
 ORDEM_FILTRO_MINIMA = 4
 ORDEM_FILTRO_MAXIMA = 8
 ORDEM_FILTRO_PADRAO = 5
 
+# Início convencional da faixa de supraharmônicos (IEC 61000-4-7) -- usado
+# como padrão de busca de picos, não como corte de filtro automático (ver
+# --filtro-passa-alta).
+CORTE_SUPRAHARMONICOS_PADRAO = 2000.0
+RESOLUCAO_WELCH_PADRAO = 200.0
+SOBREPOSICAO_WELCH_PADRAO = 0.5
+DISTANCIA_MINIMA_PICOS_PADRAO = 100.0
+TAMANHO_LOTE_WELCH_PADRAO = 2048
 
-# ==============================================================================
-# 1. DETECÇÃO DE FORMATO E LEITURA DOS DADOS
-# ==============================================================================
+
+# ---------------------------------------------------------------------------
+# 1. Leitura e escrita de amostras
+# ---------------------------------------------------------------------------
 
 def detectar_tipo_arquivo(caminho: Path) -> str:
-    """
-    Detecta se um caminho é '.bin' ou '.csv' pela extensão (case-
-    insensitive). Este script só entende esses dois formatos de dados
-    brutos do ADC -- qualquer outra extensão é um erro do usuário (ex.:
-    caminho de saída digitado errado).
-    """
+    """Detecta '.bin' ou '.csv' pela extensão -- qualquer outra é erro do
+    usuário (ex.: caminho de saída digitado errado)."""
     sufixo = caminho.suffix.lower()
     if sufixo == ".bin":
         return "bin"
@@ -646,17 +116,13 @@ def detectar_tipo_arquivo(caminho: Path) -> str:
         return "csv"
     raise SystemExit(
         f"Erro: extensão '{sufixo or '(nenhuma)'}' não reconhecida em "
-        f"'{caminho}'. Este script só trabalha com arquivos '.bin' "
-        f"(binário bruto) ou '.csv' (texto separado por vírgulas)."
+        f"'{caminho}'. Use '.bin' ou '.csv'."
     )
 
 
 def carregar_amostras_bin(caminho: Path, formato: str) -> np.memmap:
-    """
-    Abre um '.bin' em modo memory-map (não carrega o arquivo inteiro na
-    RAM -- só as páginas efetivamente acessadas depois, na hora de
-    fatiar com --inicio/--fim ou de processar em blocos na conversão).
-    """
+    """Memory-map: só as páginas efetivamente acessadas (--inicio/--fim, ou
+    o processamento em blocos da conversão) são carregadas na RAM."""
     dtype = FORMATOS_NUMPY[formato]
     try:
         amostras = np.memmap(caminho, dtype=dtype, mode="r")
@@ -671,19 +137,9 @@ def carregar_amostras_bin(caminho: Path, formato: str) -> np.memmap:
 
 
 def carregar_amostras_csv(caminho: Path, formato: str) -> np.ndarray:
-    """
-    Lê a coluna 'valor_bruto' de um '.csv' gerado por este script (ou
-    compatível: precisa ter uma linha de cabeçalho com uma coluna
-    chamada exatamente 'valor_bruto'). Colunas extras (ex.: 'amostra',
-    'tensao_v') são ignoradas -- só o código bruto do ADC é usado, para
-    manter a MESMA fonte de verdade usada na conversão de volta para
-    '.bin' (ver seção 3 do docstring do módulo).
-
-    Ao contrário do '.bin' (lido via memmap, só toca as páginas
-    realmente usadas), um '.csv' é texto e precisa ser integralmente
-    escaneado para ser interpretado -- por isso ele é carregado inteiro
-    na memória aqui (ver seção 8 do docstring).
-    """
+    """Lê a coluna 'valor_bruto' -- a mesma fonte de verdade usada para
+    reconstruir o '.bin'. Ao contrário do memmap, um '.csv' precisa ser
+    escaneado inteiro para ser interpretado, então é carregado por completo."""
     try:
         with open(caminho, "r", newline="") as f:
             primeira_linha = f.readline()
@@ -692,11 +148,8 @@ def carregar_amostras_csv(caminho: Path, formato: str) -> np.ndarray:
             cabecalho = primeira_linha.strip().split(",")
             if "valor_bruto" not in cabecalho:
                 raise SystemExit(
-                    f"Erro: '{caminho}' não tem uma coluna 'valor_bruto' no "
-                    f"cabeçalho (colunas encontradas: {cabecalho}). Use um "
-                    f"'.csv' gerado por este script (-c/--converter) ou "
-                    f"renomeie a coluna com os códigos brutos do ADC para "
-                    f"'valor_bruto'."
+                    f"Erro: '{caminho}' não tem coluna 'valor_bruto' "
+                    f"(colunas encontradas: {cabecalho})."
                 )
             indice_coluna = cabecalho.index("valor_bruto")
             amostras = np.loadtxt(
@@ -713,12 +166,6 @@ def carregar_amostras_csv(caminho: Path, formato: str) -> np.ndarray:
 
 
 def carregar_amostras(caminho: Path, formato: str):
-    """
-    Ponto de entrada único de leitura para o modo de plotagem: decide
-    entre '.bin' (memmap, leve) e '.csv' (carregado inteiro) só pela
-    extensão do arquivo -- o resto do script (janelamento, conversão
-    para tensão, FFT) não precisa saber qual dos dois formatos foi usado.
-    """
     tipo = detectar_tipo_arquivo(caminho)
     if tipo == "bin":
         return carregar_amostras_bin(caminho, formato)
@@ -726,12 +173,8 @@ def carregar_amostras(caminho: Path, formato: str):
 
 
 def selecionar_intervalo(amostras, inicio: int, fim: int | None):
-    """
-    Aplica --inicio/--fim (em número de amostras) sobre o array completo.
-    Sem --fim, usa até o final do arquivo/array. Sem --inicio, usa desde
-    o começo. Funciona igual para um memmap de '.bin' (fatiar só toca as
-    páginas pedidas) ou um ndarray de '.csv' já carregado.
-    """
+    """Aplica --inicio/--fim (em amostras). Funciona igual para memmap
+    (fatiar só toca as páginas pedidas) ou ndarray já carregado."""
     total = len(amostras)
     inicio = max(0, inicio)
     fim = total if fim is None else min(fim, total)
@@ -741,43 +184,30 @@ def selecionar_intervalo(amostras, inicio: int, fim: int | None):
             f"Erro: intervalo inválido (--inicio {inicio} >= --fim {fim}). "
             f"O arquivo tem {total} amostras no total."
         )
-
     return np.asarray(amostras[inicio:fim]), inicio, fim, total
 
 
 def converter_para_tensao(codigos: np.ndarray, faixa: float, ganho: float,
                            formato: str, offset: float) -> np.ndarray:
-    """Converte códigos brutos do ADC (int16/uint16) para Volts (ver seção 7
-    do docstring do módulo).
-
-    'offset' é subtraído da tensão do ADC ANTES de aplicar o ganho -- serve
-    para remover o nível DC de uma faixa unipolar (--formato uint16), cuja
-    tensão do ADC varia entre 0 e +faixa, e assim recuperar a onda CA pura
-    centralizada em 0 V (ex.: faixa=10.24 -> offset=5.12 -> onda entre
-    -5.12 V e +5.12 V no lugar de 0..10.24 V).
-    """
+    """codigo -> Volts: unipolar (uint16, 0..+faixa) ou bipolar (int16,
+    -faixa..+faixa). 'offset' remove o nível DC antes do ganho -- para
+    uint16, o padrão é faixa/2, recuperando a onda CA centrada em 0 V."""
     codigos = codigos.astype(np.float64)
     if formato == "int16":
-        tensao_adc = codigos * (faixa / 32768.0)   # bipolar: -faixa .. +faixa
+        tensao_adc = codigos * (faixa / 32768.0)
     else:
-        tensao_adc = codigos * (faixa / 65536.0)   # unipolar: 0 .. +faixa
+        tensao_adc = codigos * (faixa / 65536.0)
     return (tensao_adc - offset) * ganho
 
 
-# ==============================================================================
-# 1B. SUPORTE MULTI-CANAL (ver seção 10 do docstring do módulo)
-# ==============================================================================
+# ---------------------------------------------------------------------------
+# 2. Suporte multi-canal
+# ---------------------------------------------------------------------------
 
 def analisar_lista_canais(texto: str, nome_flag: str = "--canais") -> list[int]:
-    """
-    Interpreta uma lista de canais (--canais ou --canais-exibir), ex.
-    "0,1,3", separada por vírgula, sem espaços. Mesmas regras de
-    validação usadas em firmware/ler_adc.c (analisar_lista_canais lá),
-    mantidas em sincronia de propósito: canal entre 0 e 7 (o ADS8688 só
-    tem 8 entradas), sem repetição, sem lista vazia. A ORDEM é
-    preservada -- é ela que define a convenção de intercalação (seção
-    10.1 do docstring).
-    """
+    """Mesmas regras de validação usadas em firmware/ler_adc.c: canal 0-7,
+    sem repetição. A ORDEM é preservada -- define a convenção de
+    intercalação round-robin do arquivo."""
     partes = [p.strip() for p in texto.split(",")]
     canais: list[int] = []
     for p in partes:
@@ -786,25 +216,13 @@ def analisar_lista_canais(texto: str, nome_flag: str = "--canais") -> list[int]:
         try:
             valor = int(p)
         except ValueError:
-            raise SystemExit(
-                f"Erro: '{p}' não é um número de canal válido em "
-                f"{nome_flag}='{texto}'."
-            )
+            raise SystemExit(f"Erro: '{p}' não é um canal válido em {nome_flag}='{texto}'.")
         if valor < 0 or valor > 7:
-            raise SystemExit(
-                f"Erro: canal {valor} inválido em {nome_flag} -- o ADS8688 "
-                f"só tem canais 0-7."
-            )
+            raise SystemExit(f"Erro: canal {valor} inválido em {nome_flag} -- ADS8688 só tem canais 0-7.")
         if valor in canais:
-            raise SystemExit(
-                f"Erro: canal {valor} repetido em {nome_flag}='{texto}'."
-            )
+            raise SystemExit(f"Erro: canal {valor} repetido em {nome_flag}='{texto}'.")
         if len(canais) >= ADS8688_MAX_CANAIS:
-            raise SystemExit(
-                f"Erro: mais de {ADS8688_MAX_CANAIS} canais em "
-                f"{nome_flag}='{texto}' -- o ADS8688 só tem "
-                f"{ADS8688_MAX_CANAIS} entradas."
-            )
+            raise SystemExit(f"Erro: mais de {ADS8688_MAX_CANAIS} canais em {nome_flag}='{texto}'.")
         canais.append(valor)
 
     if not canais:
@@ -813,66 +231,38 @@ def analisar_lista_canais(texto: str, nome_flag: str = "--canais") -> list[int]:
 
 
 def validar_subconjunto_canais(canais_exibir: list[int], canais: list[int]) -> None:
-    """
-    Garante que todo canal pedido em --canais-exibir também está em
-    --canais (não faz sentido pedir para exibir um canal que não foi
-    informado como presente no arquivo).
-    """
     faltando = [c for c in canais_exibir if c not in canais]
     if faltando:
         raise SystemExit(
-            f"Erro: --canais-exibir pede o(s) canal(is) {faltando}, que "
-            f"não está(ão) em --canais ({canais}). --canais-exibir precisa "
-            f"ser um subconjunto de --canais."
+            f"Erro: --canais-exibir pede o(s) canal(is) {faltando}, ausente(s) "
+            f"em --canais ({canais})."
         )
 
 
 def analisar_lista_calibracao(texto: str, num_canais: int, nome_flag: str) -> list[float]:
-    """
-    Interpreta um parâmetro de calibração (--faixa/--ganho/--offset) que
-    pode vir como UM valor único (aplicado a todos os canais -- forma
-    retrocompatível, usada por qualquer captura de 1 canal só) ou como
-    uma lista separada por vírgula do MESMO tamanho de --canais, um
-    valor por canal, na mesma ordem (ver seção 10.5 do docstring).
-    """
+    """--faixa/--ganho/--offset: um valor único (todos os canais) ou uma
+    lista do mesmo tamanho de --canais, na mesma ordem."""
     partes = [p.strip() for p in texto.split(",")]
     try:
         valores = [float(p) for p in partes]
     except ValueError:
-        raise SystemExit(
-            f"Erro: valor inválido em {nome_flag}='{texto}' (use um número, "
-            f"ou vários separados por vírgula)."
-        )
+        raise SystemExit(f"Erro: valor inválido em {nome_flag}='{texto}'.")
     if len(valores) == 1:
         return valores * num_canais
     if len(valores) != num_canais:
         raise SystemExit(
-            f"Erro: {nome_flag} tem {len(valores)} valor(es), mas --canais "
-            f"tem {num_canais} canal(is). Passe 1 valor (aplicado a todos "
-            f"os canais) ou exatamente {num_canais} valores separados por "
-            f"vírgula, na mesma ordem de --canais."
+            f"Erro: {nome_flag} tem {len(valores)} valor(es), mas --canais tem "
+            f"{num_canais} canal(is). Passe 1 valor ou exatamente {num_canais}."
         )
     return valores
 
 
 def desintercalar(amostras_brutas, canais: list[int],
                    canais_selecionados: list[int] | None = None) -> dict[int, np.ndarray]:
-    """
-    Desintercala um array de amostras brutas (visto como um ciclo
-    round-robin de len(canais) canais -- ver seção 10.1 do docstring) e
-    devolve um dict {canal: array_de_amostras_daquele_canal}, só para os
-    canais pedidos em 'canais_selecionados' (padrão: todos os de
-    'canais').
-
-    Implementação: trunca para um múltiplo de len(canais) (ver seção
-    10.7 -- descarta um resto de até len(canais)-1 amostras no final, se
-    houver) e usa reshape(-1, num_canais) + seleção de coluna, em vez de
-    um loop Python amostra a amostra -- isso mantém tudo como VIEWS do
-    array original (sem cópia), inclusive quando 'amostras_brutas' vem
-    de um memmap de '.bin' (ver seção 8 do docstring sobre desempenho/
-    memória). Com 1 canal só (fluxo de hoje), isso se reduz a um reshape
-    trivial que devolve o mesmo conteúdo do array original.
-    """
+    """Desintercala via reshape(-1, num_canais) + seleção de coluna -- sem
+    cópia (view), mesmo sobre um memmap de '.bin'. Trunca para um múltiplo de
+    num_canais, descartando o resto no final (mantém todos os canais com o
+    mesmo número de amostras)."""
     if canais_selecionados is None:
         canais_selecionados = canais
 
@@ -883,172 +273,84 @@ def desintercalar(amostras_brutas, canais: list[int],
 
     if n_truncado == 0:
         raise SystemExit(
-            f"Erro: só {n} amostra(s) bruta(s) disponível(is), insuficiente "
-            f"para completar 1 ciclo de {num_canais} canais. Aumente a "
-            f"janela selecionada (--inicio/--fim) ou verifique se --canais "
-            f"bate com a captura de verdade."
+            f"Erro: só {n} amostra(s) bruta(s), insuficiente para 1 ciclo de "
+            f"{num_canais} canais."
         )
     if n_truncado < n:
         print(
-            f"Aviso: {n - n_truncado} amostra(s) bruta(s) no final do "
-            f"recorte não completam um ciclo inteiro de {num_canais} "
-            f"canais e foram descartadas para manter todos os canais com "
-            f"o mesmo número de amostras.",
+            f"Aviso: {n - n_truncado} amostra(s) no final do recorte não "
+            f"completam um ciclo de {num_canais} canais e foram descartadas.",
             file=sys.stderr,
         )
 
     amostras_truncadas = np.asarray(amostras_brutas[:n_truncado])
     matriz = amostras_truncadas.reshape(n_ciclos, num_canais)
     indice_no_ciclo = {canal: i for i, canal in enumerate(canais)}
-
     return {canal: matriz[:, indice_no_ciclo[canal]] for canal in canais_selecionados}
 
 
 def resolver_offsets_por_canal(offset_texto: str | None, faixas: list[float],
                                 formato: str, num_canais: int) -> list[float]:
-    """
-    Resolve --offset por canal: se o usuário não passou --offset
-    (offset_texto is None), aplica o mesmo padrão automático de sempre
-    (faixa/2 para --formato uint16, 0.0 para int16), individualmente
-    para CADA canal a partir da sua própria --faixa (seção 10.5 do
-    docstring) -- em vez de um único offset global. Se o usuário passou
-    --offset explicitamente (valor único ou lista), usa
-    analisar_lista_calibracao normalmente, sem aplicar o padrão
-    automático.
-    """
+    """Sem --offset explícito, aplica o padrão automático (faixa/2 para
+    uint16, 0.0 para int16) individualmente para cada canal, a partir da
+    própria --faixa desse canal."""
     if offset_texto is None:
         return [faixa / 2.0 if formato == "uint16" else 0.0 for faixa in faixas]
     return analisar_lista_calibracao(offset_texto, num_canais, "--offset")
 
 
-# ==============================================================================
-# 1C. FILTRAGEM DIGITAL OPCIONAL (ver seção 11 do docstring do módulo)
-# ==============================================================================
+# ---------------------------------------------------------------------------
+# 3. Filtragem digital opcional (Butterworth, SOS + sosfiltfilt)
+# ---------------------------------------------------------------------------
 
 def validar_corte_filtro(corte: float, fs: float, nome_flag: str) -> None:
-    """
-    Valida a frequência de corte de --filtro-passa-baixa/--filtro-passa-
-    alta contra a frequência de Nyquist EFETIVA do canal (fs/2 -- 'fs'
-    aqui já é a frequência efetiva por canal, seção 10.3 do docstring,
-    não a frequência total de --frequencia quando há mais de 1 canal).
-
-    Chamada logo após o parse dos argumentos, ANTES de carregar o
-    arquivo (que pode ser grande) -- mesma filosofia adotada para
-    --janela (resolver_nome_janela) -- para dar um erro claro e
-    imediato em vez de processar a captura inteira e falhar só depois.
-    """
+    """Valida contra a Nyquist EFETIVA do canal (fs já é por canal, não a
+    frequência total de --frequencia). Chamada antes de carregar o arquivo,
+    que pode ser grande."""
     nyquist = fs / 2.0
     if corte <= 0:
-        raise SystemExit(
-            f"Erro: {nome_flag} precisa ser uma frequência positiva "
-            f"(recebido: {corte:g} Hz)."
-        )
+        raise SystemExit(f"Erro: {nome_flag} precisa ser positivo (recebido: {corte:g} Hz).")
     if corte >= nyquist:
         raise SystemExit(
-            f"Erro: {nome_flag}={corte:g} Hz precisa ser menor que a "
-            f"frequência de Nyquist efetiva ({nyquist:g} Hz = frequência "
-            f"efetiva por canal {fs:g} Hz / 2 -- ver seção 10.3 do "
-            f"docstring quando há mais de 1 canal). Um corte >= Nyquist "
-            f"não é um filtro digital válido."
+            f"Erro: {nome_flag}={corte:g} Hz precisa ser menor que a Nyquist "
+            f"efetiva ({nyquist:g} Hz = {fs:g} Hz / 2)."
         )
 
 
 def aplicar_filtro_digital(sinal: np.ndarray, fs: float, tipo: str,
                             corte: float, ordem: int) -> np.ndarray:
-    """
-    Aplica um filtro digital Butterworth passa-baixa ('tipo="low"') ou
-    passa-alta ('tipo="high"') ao sinal, com filtragem de fase zero
-    (scipy.signal.sosfiltfilt) -- ver seção 11 do docstring do módulo
-    para a motivação e o trade-off completo.
-
-    Implementado em SOS (Second-Order Sections, via
-    butter(..., output="sos")) em vez da forma clássica (b, a) usada
-    internamente em recortar_ciclos_inteiros (essa fixa em ordem 4):
-    para as ordens mais altas aceitas aqui (--ordem-filtro, 4 a 8), a
-    forma (b, a) fica numericamente instável -- coeficientes de um
-    polinômio de grau alto perdem precisão em ponto flutuante --,
-    enquanto SOS decompõe o filtro numa cascata de seções de 2ª ordem
-    bem condicionadas, essencial para uma ordem 8 não introduzir
-    artefatos espúrios.
-
-    sosfiltfilt (equivalente em SOS do filtfilt clássico) filtra para
-    frente e para trás (forward-backward), zerando o atraso de fase --
-    um atraso de fase deslocaria os cruzamentos por zero usados no
-    recorte em ciclos inteiros (seção 6.2) e distorceria a forma de
-    onda plotada no tempo -- ao custo de dobrar a ordem efetiva do
-    filtro (a magnitude da resposta é elevada ao quadrado), então a
-    ordem pedida em --ordem-filtro já é suficiente sem compensação
-    manual.
-
-    'corte' já foi validado (> 0 e < Nyquist) por validar_corte_filtro
-    antes de chegar aqui.
-    """
+    """Butterworth em SOS (não a forma clássica (b, a)): nas ordens mais
+    altas aceitas aqui (4-8), (b, a) perde precisão numérica; SOS decompõe em
+    seções de 2ª ordem bem condicionadas. sosfiltfilt filtra para frente e
+    para trás (fase zero) -- um atraso de fase deslocaria os cruzamentos por
+    zero usados no corte em ciclos inteiros e distorceria a forma de onda no
+    tempo, ao custo de dobrar a ordem efetiva (magnitude ao quadrado)."""
     nyquist = fs / 2.0
     sos = butter(ordem, corte / nyquist, btype=tipo, output="sos")
     try:
         return sosfiltfilt(sos, sinal)
     except ValueError as e:
-        rotulo_tipo = "passa-baixa" if tipo == "low" else "passa-alta"
+        rotulo = "passa-baixa" if tipo == "low" else "passa-alta"
         raise SystemExit(
-            f"Erro ao aplicar o filtro digital {rotulo_tipo} (corte "
-            f"{corte:g} Hz, ordem {ordem}): {e}. A janela selecionada "
-            f"(--inicio/--fim) provavelmente tem poucas amostras para "
-            f"essa ordem de filtro -- aumente a janela ou reduza "
+            f"Erro ao aplicar o filtro {rotulo} (corte {corte:g} Hz, ordem "
+            f"{ordem}): {e}. A janela selecionada provavelmente tem poucas "
+            f"amostras para essa ordem -- aumente a janela ou reduza "
             f"--ordem-filtro."
         )
 
 
-# ==============================================================================
-# 2. MODO DE CONVERSÃO: .bin <-> .csv
-# ==============================================================================
+# ---------------------------------------------------------------------------
+# 4. Modo de conversão: .bin <-> .csv
+# ---------------------------------------------------------------------------
 
 def bin_para_csv(caminho_bin: Path, caminho_csv: Path, formato: str,
                   inicio: int, fim: int | None, incluir_tensao: bool,
                   canais: list[int], faixas: list[float], ganhos: list[float],
                   offsets: list[float],
                   tamanho_chunk: int = TAMANHO_CHUNK_PADRAO) -> int:
-    """
-    Converte um '.bin' (código bruto do ADC, 2 bytes/amostra) para '.csv',
-    em blocos de 'tamanho_chunk' amostras -- sem carregar o arquivo
-    inteiro na RAM de uma vez (ver seção 8 do docstring do módulo).
-
-    Colunas geradas no CSV:
-        amostra      -- índice da amostra no arquivo original (0-based)
-        canal        -- SÓ incluída quando len(canais) > 1 (ver seção
-                         10.6 do docstring): canal daquela linha,
-                         resolvido como canais[amostra % len(canais)].
-                         Com 1 canal só, essa coluna não aparece -- o
-                         CSV gerado fica byte-a-byte igual ao formato de
-                         antes do suporte multi-canal.
-        valor_bruto  -- código de 16 bits do ADC, decodificado conforme
-                         --formato (é essa coluna, e só ela, que é usada
-                         para reconstruir o '.bin' de volta)
-        tensao_v     -- só se incluir_tensao=True: tensão já convertida
-                         usando a calibração DAQUELE canal (faixas/
-                         ganhos/offsets, alinhados posicionalmente com
-                         'canais' -- ver seção 10.5), apenas para
-                         inspeção humana -- IGNORADA na conversão
-                         inversa (csv -> bin)
-
-    'canais'/'faixas'/'ganhos'/'offsets' descrevem a captura (ver seção
-    10 do docstring): as três últimas já vêm resolvidas como listas com
-    1 valor por canal, na MESMA ordem/tamanho de 'canais' (ver
-    analisar_lista_calibracao/resolver_offsets_por_canal). Com 1 canal
-    só (fluxo de hoje), todas têm tamanho 1.
-
-    Retorna o número de amostras convertidas.
-
-    NOTA DE DESEMPENHO: a formatação de cada linha é feita com uma
-    list comprehension de f-strings + `str.join`, e não com
-    `numpy.savetxt` -- em benchmark local (1 048 576 amostras, um
-    buffer de produção inteiro), essa abordagem foi ~35% mais rápida
-    que `numpy.savetxt` para escrever o mesmo CSV, porque evita o loop
-    interno de formatação linha-a-linha do `numpy.savetxt`. A
-    calibração por posição-no-ciclo (faixa/ganho/offset de cada
-    amostra, quando multi-canal) é resolvida de forma vetorizada por
-    bloco via numpy (indexação por `posição % num_canais`), não
-    amostra a amostra em Python.
-    """
+    """Converte em blocos, sem carregar o '.bin' inteiro na RAM. Ganha uma
+    coluna 'canal' quando len(canais) > 1 (formato de 1 canal permanece
+    idêntico ao de antes do suporte multi-canal)."""
     amostras = carregar_amostras_bin(caminho_bin, formato)
     _, inicio, fim, total = selecionar_intervalo(amostras, inicio, fim)
 
@@ -1079,9 +381,6 @@ def bin_para_csv(caminho_bin: Path, caminho_csv: Path, formato: str,
                 pos_no_ciclo = np.arange(ini_bloco, fim_bloco) % num_canais
 
             if incluir_tensao:
-                # converter_para_tensao aceita faixa/ganho/offset como
-                # arrays (broadcast elemento a elemento) tão bem quanto
-                # escalares -- reaproveitada sem duplicar a fórmula.
                 tensao = converter_para_tensao(
                     bloco, faixas_arr[pos_no_ciclo], ganhos_arr[pos_no_ciclo],
                     formato, offsets_arr[pos_no_ciclo],
@@ -1090,21 +389,14 @@ def bin_para_csv(caminho_bin: Path, caminho_csv: Path, formato: str,
             if incluir_coluna_canal:
                 canal_bloco = canais_arr[pos_no_ciclo]
                 if incluir_tensao:
-                    linhas = (
-                        f"{i},{c},{v},{t:.6f}"
-                        for i, c, v, t in zip(indices, canal_bloco.tolist(),
-                                               bloco.tolist(), tensao.tolist())
-                    )
+                    linhas = (f"{i},{c},{v},{t:.6f}" for i, c, v, t in
+                              zip(indices, canal_bloco.tolist(), bloco.tolist(), tensao.tolist()))
                 else:
-                    linhas = (
-                        f"{i},{c},{v}"
-                        for i, c, v in zip(indices, canal_bloco.tolist(), bloco.tolist())
-                    )
+                    linhas = (f"{i},{c},{v}" for i, c, v in
+                              zip(indices, canal_bloco.tolist(), bloco.tolist()))
             elif incluir_tensao:
-                linhas = (
-                    f"{i},{v},{t:.6f}"
-                    for i, v, t in zip(indices, bloco.tolist(), tensao.tolist())
-                )
+                linhas = (f"{i},{v},{t:.6f}" for i, v, t in
+                          zip(indices, bloco.tolist(), tensao.tolist()))
             else:
                 linhas = (f"{i},{v}" for i, v in zip(indices, bloco.tolist()))
 
@@ -1117,40 +409,9 @@ def bin_para_csv(caminho_bin: Path, caminho_csv: Path, formato: str,
 def csv_para_bin(caminho_csv: Path, caminho_bin: Path, formato: str,
                   inicio: int, fim: int | None,
                   tamanho_chunk: int = TAMANHO_CHUNK_PADRAO) -> int:
-    """
-    Converte um '.csv' (com coluna 'valor_bruto') de volta para '.bin'
-    bruto, lendo o CSV como um FLUXO (uma linha por vez) e gravando em
-    blocos de 'tamanho_chunk' amostras -- sem carregar o arquivo de
-    texto inteiro na memória (ver seção 8 do docstring do módulo).
-
-    Só a coluna 'valor_bruto' é usada para reconstruir os bytes -- ver
-    seção 10.6 do docstring do módulo: NÃO precisa de --canais aqui,
-    mesmo para um CSV multi-canal, porque a ORDEM das linhas já
-    preserva a intercalação original (a reconstrução escreve
-    'valor_bruto' de cada linha na ordem em que aparece, exatamente
-    como sempre fez). Qualquer outra coluna (ex.: 'tensao_v') é
-    ignorada, para garantir que o '.bin' resultante seja byte-a-byte
-    equivalente ao original (round-trip sem perdas), em vez de uma
-    versão recalculada a partir de uma tensão já arredondada.
-
-    Se existir uma coluna 'canal' (gravada por bin_para_csv em captura
-    multi-canal), ela é usada só para uma verificação LEVE (O(1) de
-    memória, streaming) de que o padrão de canais se repete
-    ciclicamente do início ao fim do arquivo -- não é uma validação
-    exaustiva, só um alerta cedo para um CSV editado manualmente ou
-    corrompido; não impede a conversão.
-
-    --inicio/--fim aqui contam LINHAS DE DADOS do CSV (não contam o
-    cabeçalho).
-
-    Retorna o número de amostras convertidas.
-
-    NOTA DE DESEMPENHO: as linhas são separadas com `str.split(',')`
-    direto (sem o módulo `csv` da stdlib) -- em benchmark local isso foi
-    ~35% mais rápido para ler o mesmo volume de dados, já que o formato
-    gerado por este script é sempre texto simples sem aspas/escapes que
-    justifiquem o parser mais genérico (e mais lento) do módulo `csv`.
-    """
+    """Lê o '.csv' em streaming e grava em blocos -- só 'valor_bruto' é
+    usada, então nenhuma informação de --canais é necessária aqui (a ORDEM
+    das linhas já preserva a intercalação original)."""
     dtype = FORMATOS_NUMPY[formato]
     inicio = max(0, inicio)
 
@@ -1160,24 +421,15 @@ def csv_para_bin(caminho_csv: Path, caminho_bin: Path, formato: str,
             raise SystemExit(f"Erro: '{caminho_csv}' está vazio.")
         cabecalho = primeira_linha.rstrip("\n").split(",")
         if "valor_bruto" not in cabecalho:
-            raise SystemExit(
-                f"Erro: '{caminho_csv}' não tem uma coluna 'valor_bruto' no "
-                f"cabeçalho (colunas encontradas: {cabecalho})."
-            )
+            raise SystemExit(f"Erro: '{caminho_csv}' não tem coluna 'valor_bruto'.")
         indice_coluna = cabecalho.index("valor_bruto")
         indice_coluna_canal = cabecalho.index("canal") if "canal" in cabecalho else None
 
-        fim_absoluto = None if fim is None else fim
-        # itertools.islice(f_in, inicio, fim_absoluto) pula 'inicio' linhas
-        # de dados e para no índice absoluto 'fim_absoluto' (ou no fim do
-        # arquivo, se None) -- tudo em streaming, sem carregar linhas
-        # descartadas na memória.
-        linhas_dados = itertools.islice(f_in, inicio, fim_absoluto)
+        linhas_dados = itertools.islice(f_in, inicio, fim)
 
-        # Estado da verificação leve do padrão cíclico de 'canal' (ver
-        # docstring acima) -- tudo em O(1) de memória: só guarda os
-        # valores distintos vistos até o padrão se repetir pela primeira
-        # vez, nunca o arquivo inteiro.
+        # Verificação leve (O(1) de memória) de que a coluna 'canal', se
+        # presente, segue um padrão cíclico -- alerta cedo para um CSV
+        # editado manualmente ou corrompido, sem impedir a conversão.
         padrao_canais: list[str] = []
         periodo_detectado: int | None = None
         posicao_no_padrao = 0
@@ -1188,7 +440,7 @@ def csv_para_bin(caminho_csv: Path, caminho_bin: Path, formato: str,
             bloco = []
             for linha in linhas_dados:
                 if not linha.strip():
-                    continue  # ignora linha em branco (ex.: fim de arquivo)
+                    continue
                 campos = linha.rstrip("\n").split(",")
                 bloco.append(int(campos[indice_coluna]))
 
@@ -1214,197 +466,192 @@ def csv_para_bin(caminho_csv: Path, caminho_bin: Path, formato: str,
 
         if indice_coluna_canal is not None and inconsistencias > 0:
             print(
-                f"Aviso: a coluna 'canal' de '{caminho_csv}' não segue um "
+                f"Aviso: coluna 'canal' de '{caminho_csv}' não segue um "
                 f"padrão cíclico consistente ({inconsistencias} linha(s) "
-                f"fora do padrão detectado {padrao_canais}). O '.bin' "
-                f"gerado preserva a ordem das linhas de qualquer forma, "
-                f"mas isso pode indicar um CSV editado manualmente ou "
-                f"corrompido.",
+                f"fora do padrão {padrao_canais}).",
                 file=sys.stderr,
             )
 
         if fim is not None and n_convertidas < (fim - inicio):
             print(
-                f"Aviso: --fim pediu {fim} amostra(s) (a partir de --inicio "
-                f"{inicio}), mas '{caminho_csv}' só tinha {inicio + n_convertidas} "
-                f"linha(s) de dados no total. Convertida(s) {n_convertidas} "
-                f"amostra(s).",
+                f"Aviso: --fim pediu {fim} amostra(s), mas '{caminho_csv}' só "
+                f"tinha {inicio + n_convertidas} linha(s). Convertida(s) "
+                f"{n_convertidas}.",
                 file=sys.stderr,
             )
 
     if n_convertidas == 0:
-        raise SystemExit(
-            f"Erro: nenhuma amostra convertida de '{caminho_csv}' "
-            f"(--inicio além do fim do arquivo, ou intervalo --inicio/--fim "
-            f"vazio?)."
-        )
-
+        raise SystemExit(f"Erro: nenhuma amostra convertida de '{caminho_csv}'.")
     return n_convertidas
 
 
 def converter_arquivo(caminho_entrada: Path, caminho_saida: Path, formato: str,
                        inicio: int, fim: int | None, incluir_tensao: bool,
                        canais: list[int], faixas: list[float], ganhos: list[float],
-                       offsets: list[float],
-                       tamanho_chunk: int) -> None:
-    """
-    Decide a direção da conversão pelas extensões de entrada/saída e
-    despacha para bin_para_csv() ou csv_para_bin() (ver seção 4 do
-    docstring do módulo). 'canais'/'faixas'/'ganhos'/'offsets' só têm
-    efeito na direção '.bin'->'.csv' (ver seção 10.6) -- na direção
-    '.csv'->'.bin' são ignorados, já que essa direção nunca precisou
-    dessa informação (nem precisa agora, ver csv_para_bin).
-    """
+                       offsets: list[float], tamanho_chunk: int) -> None:
+    """Direção decidida pelas extensões de entrada/saída."""
     tipo_entrada = detectar_tipo_arquivo(caminho_entrada)
     tipo_saida = detectar_tipo_arquivo(caminho_saida)
 
     if tipo_entrada == tipo_saida:
         raise SystemExit(
-            f"Erro: entrada ('{caminho_entrada}', .{tipo_entrada}) e saída "
-            f"('{caminho_saida}', .{tipo_saida}) têm o mesmo formato -- não "
-            f"há conversão a fazer. Use -c com '.bin' e -o com '.csv' (ou "
-            f"vice-versa)."
+            f"Erro: entrada e saída têm o mesmo formato (.{tipo_entrada}) -- "
+            f"não há conversão a fazer."
         )
 
     if incluir_tensao and tipo_entrada != "bin":
         print(
-            "Aviso: --incluir-tensao só tem efeito na conversão .bin -> "
-            ".csv; ignorado nesta conversão (.csv -> .bin sempre usa "
-            "apenas a coluna 'valor_bruto').",
+            "Aviso: --incluir-tensao só tem efeito em .bin -> .csv; ignorado.",
             file=sys.stderr,
         )
 
     if tipo_entrada == "bin" and tipo_saida == "csv":
         n = bin_para_csv(caminho_entrada, caminho_saida, formato, inicio, fim,
-                          incluir_tensao, canais, faixas, ganhos, offsets,
-                          tamanho_chunk)
+                          incluir_tensao, canais, faixas, ganhos, offsets, tamanho_chunk)
         extra = " | coluna tensao_v incluída" if incluir_tensao else ""
-        extra_canal = (
-            f" | {len(canais)} canais intercalados {canais} (coluna 'canal' incluída)"
-            if len(canais) > 1 else ""
-        )
-        print(f"Convertido: '{caminho_entrada}' (.bin) -> '{caminho_saida}' "
-              f"(.csv) | {n} amostra(s) | --formato {formato}{extra}{extra_canal}")
+        extra_canal = (f" | {len(canais)} canais intercalados {canais} (coluna 'canal')"
+                       if len(canais) > 1 else "")
+        print(f"Convertido: '{caminho_entrada}' (.bin) -> '{caminho_saida}' (.csv) | "
+              f"{n} amostra(s) | --formato {formato}{extra}{extra_canal}")
     else:
-        n = csv_para_bin(caminho_entrada, caminho_saida, formato, inicio, fim,
-                          tamanho_chunk)
-        print(f"Convertido: '{caminho_entrada}' (.csv) -> '{caminho_saida}' "
-              f"(.bin) | {n} amostra(s) | --formato {formato} (usado para "
-              f"empacotar cada valor de volta em 2 bytes)")
+        n = csv_para_bin(caminho_entrada, caminho_saida, formato, inicio, fim, tamanho_chunk)
+        print(f"Convertido: '{caminho_entrada}' (.csv) -> '{caminho_saida}' (.bin) | "
+              f"{n} amostra(s) | --formato {formato}")
 
 
-# ==============================================================================
-# 3. ESTIMATIVA DA FREQUÊNCIA FUNDAMENTAL E JANELAMENTO EM CICLOS INTEIROS
-# ==============================================================================
+# ---------------------------------------------------------------------------
+# 5. Fundamental: estimativa, corte em ciclos inteiros, interpolação de pico
+# ---------------------------------------------------------------------------
+
+def refinar_pico_parabolico(espectro_db: np.ndarray, indice_pico: int) -> tuple[float, float]:
+    """Interpolação parabólica (log-magnitude) ao redor de um pico já
+    localizado por argmax -- corrige o erro de quantização do bin
+    (scalloping loss) sem precisar de uma FFT maior. Retorna (delta_bins em
+    [-0.5, 0.5], amplitude_db estimada no vértice da parábola)."""
+    n = len(espectro_db)
+    if indice_pico <= 0 or indice_pico >= n - 1:
+        return 0.0, float(espectro_db[indice_pico])
+
+    y_menos, y_pico, y_mais = espectro_db[indice_pico - 1:indice_pico + 2]
+    denominador = y_menos - 2.0 * y_pico + y_mais
+    if denominador == 0:
+        return 0.0, float(y_pico)
+
+    delta = float(np.clip(0.5 * (y_menos - y_mais) / denominador, -0.5, 0.5))
+    amplitude_vertice = y_pico - 0.25 * (y_menos - y_mais) * delta
+    return delta, float(amplitude_vertice)
+
 
 def estimar_frequencia_fundamental(sinal: np.ndarray, fs: float,
                                     freq_min: float, freq_max: float) -> float:
-    """
-    Estimativa GROSSEIRA da fundamental: pico de maior energia da FFT
-    dentro de [freq_min, freq_max]. Resolução limitada por fs/N -- serve
-    só para escolher o corte do filtro passa-baixa; a precisão real do
-    período vem do refinamento por cruzamentos por zero (ver
-    refinar_periodo_fundamental).
-    """
+    """Estimativa grosseira via FFT + Hann fixa (independente de --janela --
+    só uma ferramenta de triagem para o corte do passa-baixa que segue; a
+    precisão real vem do refinamento por cruzamento de zero). O pico é
+    refinado por interpolação parabólica para reduzir o erro de quantização
+    do bin sem precisar de uma FFT maior."""
     n = len(sinal)
     if n < 16:
         raise SystemExit("Erro: poucos dados para estimar a frequência fundamental.")
 
-    # Janela fixa em Hann aqui, independente de --janela: esta é só uma
-    # estimativa GROSSEIRA interna (usada para achar o corte do passa-baixa
-    # antes do refinamento por cruzamento por zero, ver seção 6.2), não o
-    # espectro final mostrado ao usuário -- Hann é uma escolha robusta e
-    # neutra para esse papel de localizar o pico aproximado, e mantê-la
-    # fixa evita, por exemplo, que --janela retangular (o padrão, ver seção
-    # 6.4) produza vazamento excessivo justamente nesta etapa de triagem.
     janela = np.hanning(n)
-    espectro = np.abs(rfft((sinal - np.mean(sinal)) * janela))
+    espectro_db = 20 * np.log10(np.maximum(np.abs(rfft((sinal - np.mean(sinal)) * janela)), 1e-12))
     freqs = rfftfreq(n, 1.0 / fs)
 
     banda = (freqs >= freq_min) & (freqs <= freq_max)
     if not np.any(banda):
         raise SystemExit(
-            f"Erro: nenhuma componente de frequência encontrada entre "
-            f"{freq_min} Hz e {freq_max} Hz. Ajuste --freq-min/--freq-max "
-            f"ou verifique a frequência de amostragem (-f)."
+            f"Erro: nenhuma componente de frequência entre {freq_min} Hz e "
+            f"{freq_max} Hz. Ajuste --freq-min/--freq-max ou -f."
         )
 
-    idx_pico = np.argmax(espectro[banda])
-    return float(freqs[banda][idx_pico])
+    indices_banda = np.where(banda)[0]
+    idx_pico = indices_banda[np.argmax(espectro_db[indices_banda])]
+    delta, _ = refinar_pico_parabolico(espectro_db, idx_pico)
+    resolucao_bin = freqs[1] - freqs[0]
+    return float(freqs[idx_pico] + delta * resolucao_bin)
 
 
 def detectar_cruzamentos_por_zero(sinal_filtrado: np.ndarray) -> np.ndarray:
-    """
-    Cruzamentos por zero ASCENDENTES do sinal filtrado, com posição
-    FRACIONÁRIA (interpolação linear entre a amostra negativa e a
-    positiva) -- muito mais preciso do que só pegar o índice inteiro mais
-    próximo, principalmente em fs baixa relativa à fundamental.
-    Retorna as posições em número de amostras (float).
-    """
+    """Cruzamentos ascendentes com posição FRACIONÁRIA (interpolação linear
+    entre a amostra negativa e a positiva) -- mais preciso que o índice
+    inteiro mais próximo, principalmente em fs baixa relativa à fundamental."""
     indices = np.where((sinal_filtrado[:-1] < 0) & (sinal_filtrado[1:] >= 0))[0]
     if len(indices) == 0:
         return np.array([])
 
     y0 = sinal_filtrado[indices]
     y1 = sinal_filtrado[indices + 1]
-    fracao = -y0 / (y1 - y0)   # 0..1, posição do zero entre as duas amostras
+    fracao = -y0 / (y1 - y0)
     return indices + fracao
 
 
 def refinar_periodo_fundamental(posicoes_cruzamento: np.ndarray, fs: float):
-    """
-    Refina o período usando TODOS os cruzamentos disponíveis, não só um
-    par: periodo = (ultimo - primeiro) / n_ciclos. O erro de detecção de
-    cada cruzamento individual é assim diluído por todos os ciclos
-    observados, em vez de concentrado num único intervalo -- quanto mais
-    ciclos, mais preciso o período (e, portanto, a frequência) resultante.
-    """
+    """periodo = (último - primeiro) / n_ciclos -- dilui o erro de detecção
+    de cada cruzamento por todos os ciclos observados, em vez de concentrá-lo
+    num único intervalo."""
     n_ciclos_disponiveis = len(posicoes_cruzamento) - 1
     if n_ciclos_disponiveis < 1:
         raise SystemExit(
             "Erro: cruzamentos por zero insuficientes para estimar o período "
-            "da fundamental (janela de dados curta demais ou sinal sem "
-            "componente periódica clara nessa faixa de frequência)."
+            "da fundamental (janela curta demais, ou sinal sem componente "
+            "periódica clara nessa faixa)."
         )
     periodo_amostras = (posicoes_cruzamento[-1] - posicoes_cruzamento[0]) / n_ciclos_disponiveis
-    periodo_segundos = periodo_amostras / fs
-    return periodo_segundos, n_ciclos_disponiveis
+    return periodo_amostras / fs, n_ciclos_disponiveis
+
+
+def estimar_amostras_para_n_ciclos(n_ciclos: int, fs: float, freq_min: float,
+                                    margem_ciclos: int = 5) -> int:
+    """Estima quantas amostras bastam para conter N ciclos completos, usando
+    freq_min (período mais longo da faixa de busca) mais uma margem -- evita
+    filtrar/varrer uma captura inteira quando --fft N (análise de distúrbios
+    momentâneos) só precisa dos primeiros N ciclos."""
+    amostras_por_ciclo_pior_caso = fs / freq_min
+    return int(np.ceil((n_ciclos + margem_ciclos) * amostras_por_ciclo_pior_caso))
 
 
 def recortar_ciclos_inteiros(sinal: np.ndarray, fs: float, freq_min: float,
                               freq_max: float, n_ciclos_pedido: int | None):
-    """
-    Recorta 'sinal' para conter um número inteiro de ciclos da
-    fundamental, alinhado ao primeiro cruzamento por zero ascendente
-    detectado. Ver seção 6.2 do docstring do módulo para a estratégia.
+    """Recorta 'sinal' para um número inteiro de ciclos da fundamental,
+    alinhado ao primeiro cruzamento por zero ascendente. Eficaz para a
+    fundamental e seus harmônicos (fase travada ao ciclo de rede); NÃO
+    elimina vazamento de supraharmônicos, cuja fase é independente do ciclo
+    de rede -- para esses, ver calcular_espectro_welch.
 
-    n_ciclos_pedido:
-        None  -> usa todos os ciclos completos disponíveis na janela.
-        int N -> usa só os primeiros N ciclos completos (--fft N).
+    n_ciclos_pedido: None -> todos os ciclos completos da janela; int N ->
+    só os N primeiros (análise de distúrbios momentâneos), pré-truncando o
+    sinal a uma estimativa generosa de amostras necessárias antes de
+    filtrar/buscar cruzamentos, para não processar uma captura inteira só
+    para olhar os primeiros milissegundos.
 
     Retorna (sinal_recortado, idx_inicio, idx_fim, f0_estimada, n_ciclos_usados).
     """
-    freq_estimada = estimar_frequencia_fundamental(sinal, fs, freq_min, freq_max)
+    sinal_analise = sinal
+    if n_ciclos_pedido is not None and n_ciclos_pedido > 0:
+        limite = estimar_amostras_para_n_ciclos(n_ciclos_pedido, fs, freq_min)
+        if limite < len(sinal_analise):
+            sinal_analise = sinal_analise[:limite]
 
-    # Remove o nível DC antes de filtrar/detectar cruzamentos: sem isso, um
-    # sinal com offset (ex.: faixa unipolar, ou um pequeno desvio de
-    # calibração) poderia nunca cruzar o zero literal e a detecção falharia.
-    # Centralizando em torno da própria média, o critério "cruzamento
-    # ascendente por zero" funciona igual para sinais bipolares e unipolares.
-    sinal_centrado = sinal - np.mean(sinal)
+    freq_estimada = estimar_frequencia_fundamental(sinal_analise, fs, freq_min, freq_max)
+
+    # Remove nível DC antes de filtrar/detectar cruzamentos: sem isso, um
+    # sinal com offset residual poderia nunca cruzar o zero literal.
+    sinal_centrado = sinal_analise - np.mean(sinal_analise)
 
     # Corte do passa-baixa: acima o bastante da fundamental para não
-    # atenuá-la, abaixo do 3o harmônico (rede) para eliminar ruído/
-    # supraharmônicos que atrapalhariam a detecção de cruzamento por zero.
+    # atenuá-la, abaixo do 3º harmônico para eliminar ruído/supraharmônicos
+    # que atrapalhariam a detecção de cruzamento por zero. SOS em vez de
+    # (b, a): fs/f0 é extremo aqui (dezenas de milhares para 1) e a forma
+    # polinomial clássica perde precisão numérica nesse regime.
     corte = min(freq_estimada * 2.5, 0.45 * fs)
-    b, a = butter(4, corte / (fs / 2.0), btype="low")
-    sinal_filtrado = filtfilt(b, a, sinal_centrado)
+    sos = butter(4, corte / (fs / 2.0), btype="low", output="sos")
+    sinal_filtrado = sosfiltfilt(sos, sinal_centrado)
 
     posicoes_cruzamento = detectar_cruzamentos_por_zero(sinal_filtrado)
     if len(posicoes_cruzamento) < 2:
         raise SystemExit(
             "Erro: não foi possível encontrar ciclos completos na janela "
-            "selecionada. Tente aumentar o intervalo com --inicio/--fim."
+            "selecionada. Tente aumentar --inicio/--fim."
         )
 
     periodo_s, n_ciclos_disponiveis = refinar_periodo_fundamental(posicoes_cruzamento, fs)
@@ -1417,32 +664,24 @@ def recortar_ciclos_inteiros(sinal: np.ndarray, fs: float, freq_min: float,
         if n_ciclos_pedido > n_ciclos_disponiveis:
             print(
                 f"Aviso: --fft pediu {n_ciclos_pedido} ciclos, mas só "
-                f"{n_ciclos_disponiveis} ciclos completos estão disponíveis "
-                f"na janela selecionada. Usando {n_ciclos_usados}.",
+                f"{n_ciclos_disponiveis} completos estão disponíveis na "
+                f"janela processada. Usando {n_ciclos_usados}.",
                 file=sys.stderr,
             )
 
-    pos_inicio = posicoes_cruzamento[0]
-    pos_fim = posicoes_cruzamento[n_ciclos_usados]
-
-    idx_inicio = int(round(pos_inicio))
-    idx_fim = int(round(pos_fim))
-
+    idx_inicio = int(round(posicoes_cruzamento[0]))
+    idx_fim = int(round(posicoes_cruzamento[n_ciclos_usados]))
     return sinal[idx_inicio:idx_fim], idx_inicio, idx_fim, f0, n_ciclos_usados
 
 
-# ==============================================================================
-# 4. CÁLCULO DA FFT
-# ==============================================================================
+# ---------------------------------------------------------------------------
+# 6. Janelas espectrais
+# ---------------------------------------------------------------------------
 
 def _normalizar_nome_janela(nome: str) -> str:
-    """
-    Normaliza um nome de janela vindo de --janela para comparação com
-    ALIASES_JANELA: remove acentos, hifens, espaços e underscores, e
-    converte para minúsculas. Assim 'Blackman-Harris', 'blackmanharris',
-    'BLACKMAN_HARRIS' e 'blackman harris' resolvem todos para a mesma
-    chave. Ver seção 6.4 do docstring do módulo.
-    """
+    """Remove acentos, hifens, espaços e underscores, e converte para
+    minúsculas -- 'Blackman-Harris', 'blackmanharris' e 'BLACKMAN_HARRIS'
+    resolvem todos para a mesma chave."""
     sem_acento = unicodedata.normalize("NFKD", nome)
     sem_acento = "".join(c for c in sem_acento if not unicodedata.combining(c))
     chave = sem_acento.strip().lower()
@@ -1452,109 +691,219 @@ def _normalizar_nome_janela(nome: str) -> str:
 
 
 def resolver_nome_janela(nome: str) -> str:
-    """
-    Valida --janela e resolve para o nome canônico aceito por
-    scipy.signal.get_window. Levantado logo após o parse dos argumentos
-    (antes de carregar qualquer arquivo, potencialmente grande), para dar
-    erro rápido em caso de nome digitado errado, em vez de falhar só
-    depois de já ter processado a captura inteira.
-    """
+    """Validado antes de carregar qualquer arquivo, para dar erro rápido em
+    caso de nome digitado errado."""
     chave = _normalizar_nome_janela(nome)
     if chave not in ALIASES_JANELA:
         raise SystemExit(
-            f"Erro: janela '{nome}' não reconhecida em --janela. Valores "
-            f"aceitos (acentos/hífens/espaços e maiúsculas/minúsculas são "
-            f"ignorados): retangular/boxcar (padrão, sem janela), "
-            f"hann/hanning, blackmanharris/blackman-harris, "
+            f"Erro: janela '{nome}' não reconhecida em --janela. Aceitos: "
+            f"retangular/boxcar, hann/hanning, blackmanharris/blackman-harris, "
             f"flattop/flat-top, kaiser."
         )
     return ALIASES_JANELA[chave]
 
 
 def obter_janela(nome_canonico: str, n: int, kaiser_beta: float) -> np.ndarray:
-    """
-    Constrói o array (tamanho n) da janela já resolvida para o nome
-    canônico do scipy (ver resolver_nome_janela). Usa fftbins=True
-    (variante "periódica" da janela, a recomendada para análise
-    espectral por FFT -- evita a amostra final redundante da variante
-    "simétrica", mais apropriada para filtragem no domínio do tempo).
-    """
+    """fftbins=True (variante periódica) -- a recomendada para análise
+    espectral por FFT, evita a amostra final redundante da variante
+    simétrica (mais apropriada para filtragem no tempo)."""
     if nome_canonico == "kaiser":
         return get_window(("kaiser", kaiser_beta), n, fftbins=True)
     return get_window(nome_canonico, n, fftbins=True)
 
 
-def calcular_espectro_dbv(sinal: np.ndarray, fs: float, nome_janela: str,
-                           kaiser_beta: float):
-    """FFT em dBV com a janela escolhida via --janela (ver seção 6.4 do
-    docstring do módulo para o trade-off de cada opção; padrão:
-    retangular/sem janela).
+def _rotulo_janela_completo(nome_canonico: str, kaiser_beta: float) -> str:
+    rotulo = NOMES_EXIBICAO_JANELA[nome_canonico]
+    if nome_canonico == "kaiser":
+        rotulo += f" (beta={kaiser_beta:g})"
+    return rotulo
 
-    A amplitude é corrigida pelo GANHO COERENTE da janela (média dos seus
-    valores) -- sem essa correção, a amplitude reportada fica sistemati-
-    camente abaixo da real (ex.: para a janela de Hann, ~6 dB abaixo),
-    porque a própria janela atenua a energia do sinal antes da FFT. Essa
-    correção vale para QUALQUER janela, inclusive a retangular (ganho
-    coerente = 1.0, ou seja, sem efeito -- é só o caso trivial da mesma
-    fórmula).
+
+# ---------------------------------------------------------------------------
+# 7. Cálculo de espectro: FFT única, Welch, bandas e picos
+# ---------------------------------------------------------------------------
+
+def _normalizar_espectro(potencia: np.ndarray, fs: float, tamanho_fft: int,
+                          janela: np.ndarray, modo: str) -> np.ndarray:
+    """Converte um espectro de potência bruto |X(f)|^2 (de 1 segmento, ou já
+    somado/mediado entre vários) para dB, em uma de duas convenções:
+
+    'tom': amplitude linear corrigida pelo ganho coerente da janela (média de
+        seus valores) -- sem essa correção a amplitude fica sistematicamente
+        abaixo da real, porque a janela atenua energia do sinal antes da FFT.
+        Correta para um tom discreto (fundamental, harmônico), cuja energia
+        cai essencialmente num único bin.
+    'ruido': densidade espectral de potência (PSD, V²/Hz), normalizada pelo
+        ganho INCOERENTE da janela (soma de seus valores ao quadrado) --
+        correta para conteúdo de banda larga, onde 'tom' daria uma leitura
+        que muda artificialmente com o tamanho da FFT/segmento, mesmo para o
+        MESMO ruído físico.
     """
+    if modo == "tom":
+        ganho_coerente = np.mean(janela)
+        amplitude_linear = (2.0 / (tamanho_fft * ganho_coerente)) * np.sqrt(potencia)
+        amplitude_linear[0] /= 2.0
+        return 20 * np.log10(np.maximum(amplitude_linear, 1e-12))
+
+    soma_quadrados_janela = np.sum(janela ** 2)
+    psd = potencia / (fs * soma_quadrados_janela)
+    psd[1:-1] *= 2.0
+    return 10 * np.log10(np.maximum(psd, 1e-20))
+
+
+def calcular_espectro(sinal: np.ndarray, fs: float, nome_janela: str,
+                       kaiser_beta: float, modo: str = "tom"):
+    """FFT de um único segmento -- ver calcular_espectro_welch para o
+    caminho com múltiplos segmentos médios. 'modo' escolhe a normalização
+    (ver _normalizar_espectro)."""
     n = len(sinal)
     janela = obter_janela(nome_janela, n, kaiser_beta)
-    ganho_coerente = np.mean(janela)
-
     sinal_janelado = (sinal - np.mean(sinal)) * janela
     espectro = rfft(sinal_janelado)
     freqs = rfftfreq(n, 1.0 / fs)
-
-    amplitude_linear = (2.0 / (n * ganho_coerente)) * np.abs(espectro)
-    amplitude_linear[0] /= 2.0   # componente DC não é duplicada como as demais
-    amplitude_segura = np.maximum(amplitude_linear, 1e-12)
-    amplitude_db = 20 * np.log10(amplitude_segura)
-
+    potencia = np.abs(espectro) ** 2
+    amplitude_db = _normalizar_espectro(potencia, fs, n, janela, modo)
     return freqs, amplitude_db
 
 
-# ==============================================================================
-# 5. PLOTAGEM
-# ==============================================================================
+def calcular_espectro_welch(sinal: np.ndarray, fs: float, nome_janela: str,
+                             kaiser_beta: float, resolucao_hz: float,
+                             sobreposicao: float, modo: str = "ruido"):
+    """Espectro médio por segmentação (Welch): reduz a variância da
+    estimativa por segmentação + média de periodogramas, ao custo de
+    resolução fixa em frequência (fs/resolucao_hz, não o comprimento total
+    do sinal).
+
+    Ao contrário do corte em ciclos inteiros (recortar_ciclos_inteiros), não
+    tenta eliminar vazamento por sincronismo de ciclo -- ruído de conversores
+    chaveados (supraharmônicos) não tem relação de fase com o ciclo da rede,
+    então não existe corte "certo" para essa finalidade. Aqui o controle de
+    vazamento é a janela espectral e a média entre segmentos, que também
+    suaviza deriva de frequência de chaveamento (dithering) ao longo da
+    captura.
+
+    Processado em lotes (numpy.lib.stride_tricks.sliding_window_view) em vez
+    de 1 segmento por vez em Python puro ou de todos de uma vez -- equilibra
+    desempenho (FFT vetorizada por lote) e memória (uma captura longa com
+    50% de sobreposição pode gerar centenas de milhares de segmentos).
+    """
+    tamanho_segmento = max(16, int(round(fs / resolucao_hz)))
+    passo = max(1, int(round(tamanho_segmento * (1.0 - sobreposicao))))
+    n = len(sinal)
+
+    if n < tamanho_segmento:
+        raise SystemExit(
+            f"Erro: sinal com {n} amostras insuficiente para 1 segmento de "
+            f"Welch de {tamanho_segmento} amostras (--resolucao-welch "
+            f"{resolucao_hz:g} Hz). Aumente a janela de captura ou "
+            f"--resolucao-welch."
+        )
+
+    n_segmentos = (n - tamanho_segmento) // passo + 1
+    janela = obter_janela(nome_janela, tamanho_segmento, kaiser_beta)
+    freqs = rfftfreq(tamanho_segmento, 1.0 / fs)
+    acumulador = np.zeros(len(freqs))
+    janela_deslizante = np.lib.stride_tricks.sliding_window_view(sinal, tamanho_segmento)
+
+    for inicio_lote in range(0, n_segmentos, TAMANHO_LOTE_WELCH_PADRAO):
+        indices_lote = np.arange(inicio_lote, min(inicio_lote + TAMANHO_LOTE_WELCH_PADRAO, n_segmentos))
+        lote = janela_deslizante[indices_lote * passo]
+        lote_janelado = (lote - lote.mean(axis=1, keepdims=True)) * janela
+        espectros = rfft(lote_janelado, axis=1)
+        acumulador += np.sum(np.abs(espectros) ** 2, axis=0)
+
+    potencia_media = acumulador / n_segmentos
+    amplitude_db = _normalizar_espectro(potencia_media, fs, tamanho_segmento, janela, modo)
+    return freqs, amplitude_db, n_segmentos
+
+
+def agrupar_em_bandas(freqs: np.ndarray, amplitude_db: np.ndarray,
+                       largura_hz: float, modo: str):
+    """Resume um espectro fino em bandas de largura fixa (ex.: 200 Hz --
+    convenção da literatura de supraharmônicos para tornar o resultado
+    comparável entre capturas com resoluções em frequência diferentes, ao
+    contrário do valor bin a bin, que muda de significado só porque o
+    tamanho da FFT/segmento mudou).
+
+    Cada banda reporta o nível RMS de tensão contido nela, em dBV: para
+    'tom' (bins em amplitude linear) é a soma das POTÊNCIAS dos bins; para
+    'ruido' (bins em densidade espectral de potência) é a integral da PSD
+    sobre a banda. As duas convergem para a mesma grandeza física (energia
+    contida na banda), o que torna o resultado comparável entre os modos.
+    """
+    largura_bin = freqs[1] - freqs[0]
+    bordas = np.arange(freqs[0], freqs[-1], largura_hz)
+    if len(bordas) == 0:
+        bordas = np.array([freqs[0]])
+
+    if modo == "tom":
+        potencia_linear = 10 ** (amplitude_db / 10.0)          # |V|^2 por bin
+    else:
+        potencia_linear = (10 ** (amplitude_db / 10.0)) * largura_bin  # PSD * Hz = V^2 por bin
+
+    centros, valores_db = [], []
+    for inicio_banda in bordas:
+        mascara = (freqs >= inicio_banda) & (freqs < inicio_banda + largura_hz)
+        if not np.any(mascara):
+            continue
+        energia = np.sum(potencia_linear[mascara])
+        centros.append(inicio_banda + largura_hz / 2.0)
+        valores_db.append(10 * np.log10(max(energia, 1e-24)))
+
+    return np.array(centros), np.array(valores_db)
+
+
+def encontrar_picos_espectro(freqs: np.ndarray, amplitude_db: np.ndarray,
+                              freq_min: float, freq_max: float, limiar_db: float,
+                              distancia_minima_hz: float) -> list[dict]:
+    """Localiza picos locais dentro de [freq_min, freq_max] acima de
+    'limiar_db' (scipy.signal.find_peaks) e refina cada um por interpolação
+    parabólica (refinar_pico_parabolico) -- entrega frequência e amplitude de
+    cada componente supraharmônica individual sem depender de aumentar N
+    para "acertar" o bin exato."""
+    mascara = (freqs >= freq_min) & (freqs <= freq_max)
+    indices_banda = np.where(mascara)[0]
+    if len(indices_banda) < 3:
+        return []
+
+    largura_bin = freqs[1] - freqs[0]
+    distancia_bins = max(1, int(round(distancia_minima_hz / largura_bin)))
+
+    sub_espectro = amplitude_db[indices_banda]
+    indices_locais, _ = find_peaks(sub_espectro, height=limiar_db, distance=distancia_bins)
+
+    picos = []
+    for i_local in indices_locais:
+        idx_global = indices_banda[i_local]
+        delta, amplitude_vertice = refinar_pico_parabolico(amplitude_db, idx_global)
+        freq_refinada = freqs[idx_global] + delta * largura_bin
+        picos.append({"frequencia_hz": float(freq_refinada), "amplitude_db": float(amplitude_vertice)})
+    return picos
+
+
+# ---------------------------------------------------------------------------
+# 8. Plotagem
+# ---------------------------------------------------------------------------
 
 def escolher_unidade_tempo(duracao_s: float):
-    """Escolhe ms ou s para o eixo do tempo conforme a duração da janela."""
     if duracao_s < 2.0:
         return 1000.0, "Tempo (ms)"
     return 1.0, "Tempo (s)"
 
 
 def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: float,
-                       idx_inicio_arquivo: int, infos_fft: dict | None,
+                       idx_inicio_arquivo: int, infos_espectro: dict | None,
                        titulo_arquivo: str, caminho_saida: Path | None,
-                       layout: str) -> None:
-    """
-    Plota a forma de onda (e, opcionalmente, o espectro) de 1 ou mais
-    canais -- ver seção 10 do docstring do módulo.
-
-    IMPORTANTE (retrocompatibilidade, ver seção 10.8): com 1 canal só,
-    este é o MESMO caminho de código que trata múltiplos canais, apenas
-    com n_canais==1 -- não existe uma função "plotar de 1 canal"
-    separada. O resultado visual (cores, título, ausência de legenda)
-    é construído para ficar idêntico ao do antigo `plotar()` de antes do
-    suporte multi-canal.
-
-    tensoes_por_canal: dict {canal: array de tensão}, todos os arrays
-        do MESMO tamanho (ver desintercalar() -- ela já garante isso,
-        truncando para um múltiplo de num_canais). A ordem de iteração
-        do dict (preservada desde Python 3.7) define a ordem de
-        plotagem/legenda/cores.
-    fs_efetiva: frequência de amostragem de CADA canal individualmente
-        (--frequencia já dividida pelo número de canais -- seção 10.3).
-    infos_fft: None (sem --fft) ou dict {canal: info_fft}, um por canal
-        presente em tensoes_por_canal, no mesmo formato que
-        recortar_ciclos_inteiros/calcular_espectro_dbv já produzem.
-    layout: "separados" ou "sobrepostos" -- ignorado com 1 canal só.
-    """
+                       layout: str, rotulo_espectro_y: str,
+                       limite_inferior_db: float | None) -> None:
+    """Plota forma de onda e, se disponível, espectro(s) de 1+ canais. Um
+    canal pode ter até 2 espectros simultâneos (--fft e --welch, chaves
+    "ciclo"/"welch" em infos_espectro[canal]) -- plotados como curvas
+    distintas no mesmo eixo, já que respondem perguntas diferentes
+    (fundamental/harmônicos vs. conteúdo de banda larga não estacionário)."""
     canais = list(tensoes_por_canal.keys())
     n_canais = len(canais)
-    tem_fft = infos_fft is not None
+    tem_espectro = infos_espectro is not None
 
     n = len(tensoes_por_canal[canais[0]])
     fator_tempo, rotulo_tempo = escolher_unidade_tempo(n / fs_efetiva)
@@ -1562,113 +911,123 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
 
     cores = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     usar_eixo_unico = (n_canais == 1) or (layout == "sobrepostos")
+    estilo_metodo = {"ciclo": "-", "welch": "--"}
 
     if usar_eixo_unico:
-        # --- 1 canal, OU vários canais sobrepostos no mesmo eixo ---
-        if tem_fft:
-            fig, (ax_tempo, ax_fft) = plt.subplots(2, 1, figsize=(10, 8))
+        if tem_espectro:
+            fig, (ax_tempo, ax_espectro) = plt.subplots(2, 1, figsize=(10, 8))
         else:
             fig, ax_tempo = plt.subplots(figsize=(10, 5))
-            ax_fft = None
+            ax_espectro = None
 
         for i, canal in enumerate(canais):
             cor_tempo = "tab:green" if n_canais == 1 else cores[i % len(cores)]
             rotulo = None if n_canais == 1 else f"Canal {canal}"
-            ax_tempo.plot(tempo, tensoes_por_canal[canal], color=cor_tempo,
-                          linewidth=1.0, label=rotulo)
+            ax_tempo.plot(tempo, tensoes_por_canal[canal], color=cor_tempo, linewidth=1.0, label=rotulo)
 
-        if n_canais == 1:
-            ax_tempo.set_title(f"Forma de onda -- amostras {idx_inicio_arquivo} .. "
-                                f"{idx_inicio_arquivo + n} de '{titulo_arquivo}'")
-        else:
-            ax_tempo.set_title(f"Forma de onda -- amostras {idx_inicio_arquivo} .. "
-                                f"{idx_inicio_arquivo + n} de '{titulo_arquivo}' "
-                                f"(canais {canais}, sobrepostos)")
+        titulo_base = f"Forma de onda -- amostras {idx_inicio_arquivo}..{idx_inicio_arquivo + n} de '{titulo_arquivo}'"
+        ax_tempo.set_title(titulo_base if n_canais == 1 else f"{titulo_base} (canais {canais}, sobrepostos)")
         ax_tempo.set_xlabel(rotulo_tempo)
         ax_tempo.set_ylabel("Tensão (V)")
         ax_tempo.grid(True, alpha=0.4)
 
-        if tem_fft:
+        if tem_espectro:
+            houve_sombra = False
             for i, canal in enumerate(canais):
-                info = infos_fft[canal]
+                info_ciclo = infos_espectro[canal].get("ciclo")
+                if info_ciclo is None:
+                    continue
                 cor_sombra = "tab:orange" if n_canais == 1 else cores[i % len(cores)]
-                ini_janela = info["idx_inicio_local"] / fs_efetiva * fator_tempo
-                fim_janela = info["idx_fim_local"] / fs_efetiva * fator_tempo
+                ini_janela = info_ciclo["idx_inicio_local"] / fs_efetiva * fator_tempo
+                fim_janela = info_ciclo["idx_fim_local"] / fs_efetiva * fator_tempo
                 rotulo_sombra = (
-                    f"Janela da FFT ({info['n_ciclos']} ciclo(s))" if n_canais == 1
-                    else f"Janela FFT canal {canal} ({info['n_ciclos']} ciclo(s))"
+                    f"Janela do ciclo ({info_ciclo['n_ciclos']} ciclo(s))" if n_canais == 1
+                    else f"Janela ciclo canal {canal}"
                 )
-                ax_tempo.axvspan(ini_janela, fim_janela, color=cor_sombra, alpha=0.20,
-                                  label=rotulo_sombra)
-            ax_tempo.legend(loc="upper right", fontsize=9 if n_canais == 1 else 8)
+                ax_tempo.axvspan(ini_janela, fim_janela, color=cor_sombra, alpha=0.20, label=rotulo_sombra)
+                houve_sombra = True
+            if houve_sombra:
+                ax_tempo.legend(loc="upper right", fontsize=9 if n_canais == 1 else 8)
 
             for i, canal in enumerate(canais):
-                info = infos_fft[canal]
-                cor_fft = "tab:blue" if n_canais == 1 else cores[i % len(cores)]
-                rotulo_fft = None if n_canais == 1 else f"Canal {canal} (f0={info['f0']:.2f} Hz)"
-                ax_fft.plot(info["freqs"], info["amplitude_db"], color=cor_fft,
-                            linewidth=1.2, label=rotulo_fft)
+                metodos_canal = infos_espectro[canal]
+                for metodo, info in metodos_canal.items():
+                    cor_linha = "tab:blue" if n_canais == 1 else cores[i % len(cores)]
+                    if n_canais == 1:
+                        rotulo_linha = metodo if len(metodos_canal) > 1 else None
+                    else:
+                        rotulo_linha = f"Canal {canal} ({metodo})"
+                    ax_espectro.plot(info["freqs"], info["amplitude_db"], color=cor_linha, linewidth=1.2,
+                                      linestyle=estilo_metodo[metodo], label=rotulo_linha)
 
-            if n_canais == 1:
-                info = infos_fft[canais[0]]
-                ax_fft.set_title(
-                    f"Espectro de Frequência -- f0 estimada = {info['f0']:.3f} Hz "
-                    f"| {info['n_ciclos']} ciclo(s) completo(s) | janela: "
-                    f"{info['janela']}"
-                )
+            metodos_canal0 = infos_espectro[canais[0]]
+            if n_canais == 1 and len(metodos_canal0) == 1:
+                metodo_unico, info_unico = next(iter(metodos_canal0.items()))
+                if metodo_unico == "ciclo":
+                    ax_espectro.set_title(
+                        f"Espectro (ciclo) -- f0 = {info_unico['f0']:.3f} Hz | "
+                        f"{info_unico['n_ciclos']} ciclo(s) | janela: {info_unico['janela']}"
+                    )
+                else:
+                    ax_espectro.set_title(
+                        f"Espectro (Welch) -- {info_unico['n_segmentos']} segmento(s) médios | "
+                        f"janela: {info_unico['janela']}"
+                    )
             else:
-                ax_fft.set_title(f"Espectro de Frequência -- canais {canais} | "
-                                  f"janela: {infos_fft[canais[0]]['janela']}")
-                ax_fft.legend(loc="upper right", fontsize=8)
+                ax_espectro.set_title(f"Espectro -- canais {canais}")
+                ax_espectro.legend(loc="upper right", fontsize=8)
 
-            ax_fft.set_xlabel("Frequência (Hz)")
-            ax_fft.set_ylabel("Magnitude (dBV)")
-            ax_fft.grid(True, which="both", ls="-", alpha=0.4)
-
-            nyquist = fs_efetiva / 2.0
-            ax_fft.set_xlim(0, nyquist * 1.10)
-            ax_fft.set_ylim(bottom=-100)
+            ax_espectro.set_xlabel("Frequência (Hz)")
+            ax_espectro.set_ylabel(rotulo_espectro_y)
+            ax_espectro.grid(True, which="both", ls="-", alpha=0.4)
+            ax_espectro.set_xlim(0, (fs_efetiva / 2.0) * 1.10)
+            if limite_inferior_db is not None:
+                ax_espectro.set_ylim(bottom=limite_inferior_db)
 
         plt.tight_layout()
 
     else:
-        # --- vários canais, layout "separados": 1 linha de subplots por canal ---
-        n_colunas = 2 if tem_fft else 1
-        fig, eixos = plt.subplots(n_canais, n_colunas,
-                                   figsize=(6.5 * n_colunas, 3.2 * n_canais),
-                                   squeeze=False)
+        n_colunas = 2 if tem_espectro else 1
+        fig, eixos = plt.subplots(n_canais, n_colunas, figsize=(6.5 * n_colunas, 3.2 * n_canais), squeeze=False)
 
         for i, canal in enumerate(canais):
             cor = cores[i % len(cores)]
             ax_tempo = eixos[i, 0]
-
             ax_tempo.plot(tempo, tensoes_por_canal[canal], color=cor, linewidth=1.0)
-            ax_tempo.set_title(f"Canal {canal} -- amostras {idx_inicio_arquivo} .. "
-                                f"{idx_inicio_arquivo + n}")
+            ax_tempo.set_title(f"Canal {canal} -- amostras {idx_inicio_arquivo}..{idx_inicio_arquivo + n}")
             ax_tempo.set_xlabel(rotulo_tempo)
             ax_tempo.set_ylabel("Tensão (V)")
             ax_tempo.grid(True, alpha=0.4)
 
-            if tem_fft:
-                info = infos_fft[canal]
-                ax_fft = eixos[i, 1]
+            if tem_espectro:
+                metodos_canal = infos_espectro[canal]
+                ax_espectro = eixos[i, 1]
 
-                ini_janela = info["idx_inicio_local"] / fs_efetiva * fator_tempo
-                fim_janela = info["idx_fim_local"] / fs_efetiva * fator_tempo
-                ax_tempo.axvspan(ini_janela, fim_janela, color=cor, alpha=0.20,
-                                  label=f"Janela da FFT ({info['n_ciclos']} ciclo(s))")
-                ax_tempo.legend(loc="upper right", fontsize=8)
+                info_ciclo = metodos_canal.get("ciclo")
+                if info_ciclo is not None:
+                    ini_janela = info_ciclo["idx_inicio_local"] / fs_efetiva * fator_tempo
+                    fim_janela = info_ciclo["idx_fim_local"] / fs_efetiva * fator_tempo
+                    ax_tempo.axvspan(ini_janela, fim_janela, color=cor, alpha=0.20,
+                                      label=f"Janela do ciclo ({info_ciclo['n_ciclos']} ciclo(s))")
+                    ax_tempo.legend(loc="upper right", fontsize=8)
 
-                ax_fft.plot(info["freqs"], info["amplitude_db"], color=cor, linewidth=1.2)
-                ax_fft.set_title(f"Canal {canal} -- f0 = {info['f0']:.3f} Hz | "
-                                  f"{info['n_ciclos']} ciclo(s) | janela: {info['janela']}")
-                ax_fft.set_xlabel("Frequência (Hz)")
-                ax_fft.set_ylabel("Magnitude (dBV)")
-                ax_fft.grid(True, which="both", ls="-", alpha=0.4)
+                for metodo, info in metodos_canal.items():
+                    ax_espectro.plot(info["freqs"], info["amplitude_db"], color=cor, linewidth=1.2,
+                                      linestyle=estilo_metodo[metodo],
+                                      label=metodo if len(metodos_canal) > 1 else None)
+                if len(metodos_canal) > 1:
+                    ax_espectro.legend(loc="upper right", fontsize=8)
 
-                nyquist = fs_efetiva / 2.0
-                ax_fft.set_xlim(0, nyquist * 1.10)
-                ax_fft.set_ylim(bottom=-100)
+                titulo_espectro = f"Canal {canal}"
+                if info_ciclo is not None:
+                    titulo_espectro += f" -- f0 = {info_ciclo['f0']:.3f} Hz | {info_ciclo['n_ciclos']} ciclo(s)"
+                ax_espectro.set_title(titulo_espectro)
+                ax_espectro.set_xlabel("Frequência (Hz)")
+                ax_espectro.set_ylabel(rotulo_espectro_y)
+                ax_espectro.grid(True, which="both", ls="-", alpha=0.4)
+                ax_espectro.set_xlim(0, (fs_efetiva / 2.0) * 1.10)
+                if limite_inferior_db is not None:
+                    ax_espectro.set_ylim(bottom=limite_inferior_db)
 
         fig.suptitle(f"'{titulo_arquivo}' -- canais {canais} (separados)")
         plt.tight_layout(rect=[0, 0, 1, 0.97])
@@ -1680,388 +1039,282 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
         plt.show()
 
 
-# ==============================================================================
-# 6. LINHA DE COMANDO
-# ==============================================================================
+def _imprimir_picos(canal: int, metodo: str, picos: list[dict], num_canais: int) -> None:
+    prefixo = f"  Canal {canal} " if num_canais > 1 else "  "
+    if not picos:
+        print(f"{prefixo}[{metodo}] nenhum pico acima do limiar encontrado.")
+        return
+    for pico in picos:
+        print(f"{prefixo}[{metodo}] pico: {pico['frequencia_hz']:.2f} Hz @ {pico['amplitude_db']:.2f} dB")
 
-def montar_parser() -> argparse.ArgumentParser:
+
+# ---------------------------------------------------------------------------
+# 9. Linha de comando
+# ---------------------------------------------------------------------------
+
+def montar_parser():
+    import argparse
+
     parser = argparse.ArgumentParser(
         prog="adc_tool.py",
         description=(
             "Ferramenta de linha de comando do SH-Analyzer para dados brutos "
-            "do ADS8688 (antigo 'plot_adc.py'). Dois modos: (1) MODO DE "
-            "CONVERSÃO (-c/--converter + -o/--saida), que converte capturas "
-            "entre binário bruto '.bin' (formato gravado por "
-            "firmware/ler_adc.c) e '.csv' (texto legível por humanos/"
-            "Excel), nos dois sentidos; (2) MODO DE PLOTAGEM (padrão, sem "
-            "-c), que plota a forma de onda e, opcionalmente (--fft), "
-            "calcula o espectro de frequência de uma captura em '.bin' OU "
-            "'.csv'. Os dois modos suportam capturas de 1 ou vários canais "
-            "do ADS8688 intercalados (ver grupo de flags 'Captura "
-            "multi-canal' abaixo, ou a seção 10 do docstring do módulo). "
-            "Rode com --help para a referência completa de flags; o "
-            "cabeçalho do script (docstring) tem a explicação técnica "
-            "completa de cada etapa."
+            "do ADS8688. Dois modos: (1) CONVERSÃO (-c/--converter + "
+            "-o/--saida), '.bin' <-> '.csv'; (2) PLOTAGEM (padrão), forma de "
+            "onda e, opcionalmente, espectro via --fft (ciclo-sincronizado, "
+            "ideal para fundamental/harmônicos) e/ou --welch (segmentado e "
+            "médio, ideal para supraharmônicos). Suporta 1 ou vários canais "
+            "intercalados (grupo 'Captura multi-canal')."
         ),
         epilog=(
             "Exemplos:\n"
-            "  # -- Modo de plotagem --------------------------------------\n"
-            "  # Plotar (arquivo .bin, formato padrão)\n"
-            "  %(prog)s captura.bin -f 102400\n"
-            "\n"
-            "  # Plotar um recorte específico de amostras\n"
-            "  %(prog)s captura.bin -f 102400 --inicio 125 --fim 3000\n"
-            "\n"
-            "  # Plotar com FFT (todos os ciclos completos da janela)\n"
+            "  # Plotar com FFT ciclo-sincronizada (fundamental/harmônicos)\n"
             "  %(prog)s captura.bin -f 102400 --fft\n"
             "\n"
-            "  # FFT de alta resolução temporal (só 10 ciclos)\n"
+            "  # Espectro médio (Welch) para conteúdo de banda larga\n"
+            "  %(prog)s captura.bin -f 102400 --welch --modo-espectro ruido "
+            "--filtro-passa-alta 2000\n"
+            "\n"
+            "  # Agrupar em bandas de 200 Hz e reportar picos acima de -60 dB\n"
+            "  %(prog)s captura.bin -f 102400 --welch --agrupar-bandas 200 "
+            "--picos -60\n"
+            "\n"
+            "  # FFT de alta resolução temporal (só 10 ciclos, distúrbio)\n"
             "  %(prog)s captura.bin -f 102400 --inicio 50000 --fft 10\n"
             "\n"
-            "  # FFT com janela Blackman-Harris (menos vazamento espectral)\n"
-            "  %(prog)s captura.bin -f 102400 --fft --janela blackman-harris\n"
-            "\n"
-            "  # Filtro digital Butterworth passa-baixa antes da FFT/plotagem\n"
-            "  %(prog)s captura.bin -f 102400 --filtro-passa-baixa 45000 --fft\n"
-            "\n"
-            "  # Plotar direto de um .csv (mesmas flags, formato autodetectado)\n"
-            "  %(prog)s captura.csv -f 102400 --fft\n"
-            "\n"
-            "  # -- Modo de conversão --------------------------------------\n"
             "  # Converter .bin -> .csv\n"
             "  %(prog)s -c captura.bin -o captura.csv\n"
             "\n"
-            "  # Converter .bin -> .csv incluindo uma coluna de tensão\n"
-            "  %(prog)s -c captura.bin -o captura.csv --incluir-tensao "
-            "--faixa 10.24 --ganho 19.53\n"
-            "\n"
-            "  # Converter .csv -> .bin (round-trip; só valor_bruto é usada)\n"
-            "  %(prog)s -c captura.csv -o captura_reconstruida.bin\n"
-            "\n"
-            "  # Converter só um recorte (amostras 0..9999) para inspecionar rápido\n"
-            "  %(prog)s -c captura.bin -o trecho.csv --fim 10000\n"
-            "\n"
-            "  # -- Multi-canal (seção 10 do docstring) --------------------\n"
-            "  # Captura feita com `ler_adc 102400 0,1,3`: 3 canais, plotados\n"
-            "  # um por subplot (padrão --layout-canais separados)\n"
-            "  %(prog)s captura.bin -f 102400 --canais 0,1,3 --fft\n"
-            "\n"
-            "  # Mesma captura, só os canais 0 e 3, sobrepostos no mesmo eixo\n"
-            "  %(prog)s captura.bin -f 102400 --canais 0,1,3 "
-            "--canais-exibir 0,3 --layout-canais sobrepostos --fft\n"
-            "\n"
-            "  # Canal 0 = tensão (ganho 19.53), canal 1 = corrente (ganho 0.1)\n"
-            "  %(prog)s captura.bin -f 102400 --canais 0,1 --ganho 19.53,0.1 --fft\n"
-            "\n"
-            "  # Converter captura multi-canal para .csv (ganha a coluna 'canal')\n"
-            "  %(prog)s -c captura.bin -o captura.csv --canais 0,1,3\n"
+            "  # Multi-canal: 3 canais, ganho por canal, FFT independente\n"
+            "  %(prog)s captura.bin -f 102400 --canais 0,1,3 --ganho "
+            "19.53,0.1,1.0 --fft\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     parser.add_argument(
         "arquivo", type=Path, nargs="?", default=None,
-        help="[MODO DE PLOTAGEM] Caminho do arquivo de dados a plotar. "
-             "Aceita '.bin' (binário bruto, lido via memory-map -- não "
-             "carrega tudo na RAM) ou '.csv' (precisa ter uma coluna "
-             "'valor_bruto', é carregado inteiro na RAM). O formato é "
-             "autodetectado pela extensão. OBRIGATÓRIO nesse modo; NÃO "
-             "USADO se -c/--converter for passado."
+        help="[PLOTAGEM] Caminho do arquivo a plotar ('.bin' via memory-map "
+             "ou '.csv' com coluna 'valor_bruto'). Obrigatório nesse modo; "
+             "não usado com -c/--converter."
     )
     parser.add_argument(
-        "-f", "--frequencia", type=float, default=None,
-        metavar="HZ",
-        help="[MODO DE PLOTAGEM] Frequência de amostragem usada na coleta, "
-             "em Hz (ex.: -f 102400). Com mais de 1 canal em --canais, "
-             "esta é a frequência TOTAL de transação passada a `ler_adc` "
-             "(mesmo significado de sempre) -- a frequência EFETIVA de "
-             "cada canal é esse valor dividido pelo número de canais (ver "
-             "seção 10.3 do docstring). Define o eixo do tempo e o eixo "
-             "de frequência da FFT. OBRIGATÓRIO no modo de plotagem; NÃO "
-             "USADO no modo de conversão (a taxa de amostragem não é "
-             "gravada dentro dos arquivos '.bin'/'.csv')."
+        "-f", "--frequencia", type=float, default=None, metavar="HZ",
+        help="[PLOTAGEM] Frequência de amostragem TOTAL da captura, em Hz. "
+             "Com N canais em --canais, a frequência EFETIVA por canal é "
+             "esse valor / N. Obrigatório nesse modo."
     )
 
     grupo_multicanal = parser.add_argument_group(
-        "Captura multi-canal (ver seção 10 do docstring do módulo)",
-        "Uma captura de `ler_adc <freq> <canais>` com mais de 1 canal "
-        "grava as amostras intercaladas (round-robin) num único arquivo, "
-        "sem cabeçalho -- estas flags dizem a este script como "
-        "desintercalar de volta. Válidas tanto no modo de plotagem quanto "
-        "na conversão '.bin'->'.csv'.",
+        "Captura multi-canal",
+        "Uma captura com mais de 1 canal grava as amostras intercaladas "
+        "(round-robin) num único arquivo -- estas flags dizem como "
+        "desintercalar. Válidas na plotagem e na conversão '.bin'->'.csv'.",
     )
     grupo_multicanal.add_argument(
         "--canais", type=str, default=CANAL_PADRAO, metavar="LISTA",
-        help="Canais presentes no arquivo, separados por vírgula sem "
-             "espaços, na MESMA ordem usada na captura (`ler_adc <freq> "
-             "<canais>`) -- ex.: '0,1,3'. Padrão: '1' (um canal só, "
-             "idêntico ao comportamento deste script antes do suporte "
-             "multi-canal). `ler_adc` já imprime a lista usada no "
-             "console durante a captura, para anotação -- o '.bin' em si "
-             "não carrega esse metadado."
+        help="Canais no arquivo, separados por vírgula, na ordem impressa "
+             "por `ler_adc` durante a captura (ex.: '0,1,3'). Padrão: '1'."
     )
     grupo_multicanal.add_argument(
         "--canais-exibir", type=str, default=None, metavar="LISTA",
         help="Subconjunto de --canais a efetivamente plotar/analisar "
-             "(padrão: todos os canais de --canais). Útil para focar em "
-             "1-2 canais de uma captura com vários, sem precisar "
-             "reprocessar --canais inteiro. Precisa ser um subconjunto "
-             "de --canais."
+             "(padrão: todos)."
     )
     grupo_multicanal.add_argument(
-        "--layout-canais", choices=["separados", "sobrepostos"],
-        default="separados",
-        help="[MODO DE PLOTAGEM, só importa com mais de 1 canal em "
-             "--canais-exibir] Como organizar múltiplos canais na "
-             "mesma figura. 'separados' (PADRÃO): um subplot de forma "
-             "de onda por canal (mais um de espectro por canal, se "
-             "--fft) -- mais seguro visualmente quando os canais medem "
-             "grandezas diferentes (ex.: tensão e corrente, escalas bem "
-             "distintas). 'sobrepostos': todos os canais no MESMO eixo "
-             "de tempo (e no mesmo eixo de frequência, se --fft), cada "
-             "um com uma cor e uma entrada na legenda."
+        "--layout-canais", choices=["separados", "sobrepostos"], default="separados",
+        help="[PLOTAGEM, >1 canal] 'separados' (padrão): 1 subplot por "
+             "canal. 'sobrepostos': todos no mesmo eixo, com legenda."
     )
 
     grupo_conversao = parser.add_argument_group(
         "Modo de conversão (.bin <-> .csv)",
-        "Ativado por -c/--converter; nesse modo o posicional 'arquivo' e "
-        "-f/--frequencia são ignorados. A direção (bin->csv ou csv->bin) é "
-        "detectada automaticamente pelas extensões de -c e -o. As flags do "
-        "grupo 'Captura multi-canal' (--canais) e de calibração (--faixa/"
-        "--ganho/--offset/--formato) também valem aqui -- têm efeito "
-        "junto com --incluir-tensao (coluna 'tensao_v') e/ou quando "
-        "--canais tem mais de 1 canal (coluna 'canal'); ver seção 10.6 "
-        "do docstring.",
+        "Ativado por -c/--converter; nesse modo 'arquivo' e -f são "
+        "ignorados. Direção detectada pelas extensões de -c e -o.",
     )
     grupo_conversao.add_argument(
         "-c", "--converter", type=Path, default=None, metavar="ARQUIVO_ENTRADA",
-        help="Ativa o MODO DE CONVERSÃO em vez de plotagem: converte "
-             "ARQUIVO_ENTRADA para o caminho passado em -o/--saida "
-             "(OBRIGATÓRIO junto com esta flag). Valores possíveis para a "
-             "extensão de ARQUIVO_ENTRADA: '.bin' ou '.csv' -- a direção da "
-             "conversão é o par (entrada, saída) com extensões opostas: "
-             "'.bin'->'.csv' gera as colunas 'amostra,valor_bruto[,tensao_v]'; "
-             "'.csv'->'.bin' lê a coluna 'valor_bruto' e grava de volta os "
-             "códigos brutos de 16 bits (round-trip sem perdas)."
+        help="Ativa o modo de conversão: converte ARQUIVO_ENTRADA para "
+             "-o/--saida (obrigatório junto com esta flag)."
     )
     grupo_conversao.add_argument(
         "--incluir-tensao", action="store_true",
-        help="Só tem efeito na direção '.bin'->'.csv': acrescenta uma "
-             "coluna 'tensao_v' ao CSV gerado, calculada com --faixa/"
-             "--ganho/--offset/--formato, só para conferência visual -- "
-             "essa coluna é IGNORADA se o CSV for convertido de volta "
-             "para '.bin' (a reconstrução usa sempre 'valor_bruto', nunca "
-             "a tensão, para não introduzir erro de arredondamento). "
-             "Não recebe valor (flag liga/desliga). Padrão: desligado "
-             "(CSV só com 'amostra,valor_bruto')."
+        help="Só em '.bin'->'.csv': acrescenta a coluna 'tensao_v' (só "
+             "informativa -- ignorada na reconstrução de volta para '.bin')."
     )
     grupo_conversao.add_argument(
         "--tamanho-chunk", type=int, default=TAMANHO_CHUNK_PADRAO, metavar="N",
-        help="Número de amostras processadas por bloco durante a conversão "
-             f"'.bin'<->'.csv' (padrão: {TAMANHO_CHUNK_PADRAO}). Blocos "
-             "menores usam menos memória RAM; blocos maiores tendem a ser "
-             "um pouco mais rápidos (menos overhead por chamada), até o "
-             "limite da RAM disponível. Só é usado no modo de conversão."
+        help=f"Amostras por bloco na conversão (padrão: {TAMANHO_CHUNK_PADRAO})."
     )
 
     grupo_filtro = parser.add_argument_group(
-        "Filtragem digital (Butterworth, ver seção 11 do docstring do módulo)",
-        "[MODO DE PLOTAGEM] Filtro(s) digital(is) Butterworth, de fase "
-        "zero, aplicado(s) ao sinal (já em Volts, por canal) ANTES do "
-        "recorte em ciclos inteiros, da FFT e da plotagem no tempo -- "
-        "útil, por exemplo, para atacar ruído/aliasing residual acima da "
-        "frequência de Nyquist efetiva antes de qualquer outra etapa. Não "
-        "afeta o modo de conversão '.bin'<->'.csv'. Nenhum filtro é "
-        "aplicado se nem --filtro-passa-baixa nem --filtro-passa-alta "
-        "forem passados (padrão, comportamento idêntico ao de antes "
-        "desta funcionalidade).",
+        "Filtragem digital (Butterworth, fase zero)",
+        "[PLOTAGEM] Aplicado a cada canal, em Volts, ANTES do recorte em "
+        "ciclos inteiros, de --fft/--welch e da plotagem no tempo.",
     )
     grupo_filtro.add_argument(
         "--filtro-passa-baixa", type=float, default=None, metavar="HZ",
-        help="Frequência de corte (Hz) de um filtro digital Butterworth "
-             "passa-baixa, aplicado com fase zero (scipy.signal."
-             "sosfiltfilt) a cada canal antes de qualquer outra etapa "
-             "(recorte em ciclos inteiros, FFT, plotagem no tempo). "
-             "Precisa ser menor que a frequência de Nyquist EFETIVA de "
-             "cada canal (--frequencia / número de canais / 2 -- seção "
-             "10.3 do docstring). Útil para remover ruído/aliasing de "
-             "alta frequência antes da análise -- ex.: amostrando a "
-             "102.4 kHz (Nyquist = 51.2 kHz), "
-             "'--filtro-passa-baixa 45000' ataca componentes acima de "
-             "45 kHz. Pode ser combinado com --filtro-passa-alta (nesse "
-             "caso, passa-alta é aplicado primeiro, depois passa-baixa "
-             "-- ver seção 11). Padrão: nenhum filtro passa-baixa "
-             "aplicado."
+        help="Corte (Hz) de um passa-baixa Butterworth de fase zero. "
+             "Precisa ser menor que a Nyquist efetiva do canal. Pode ser "
+             "combinado com --filtro-passa-alta (passa-alta primeiro)."
     )
     grupo_filtro.add_argument(
         "--filtro-passa-alta", type=float, default=None, metavar="HZ",
-        help="Frequência de corte (Hz) de um filtro digital Butterworth "
-             "passa-alta, aplicado com fase zero a cada canal antes de "
-             "qualquer outra etapa -- mesma mecânica de "
-             "--filtro-passa-baixa, mas rejeitando ABAIXO do corte em "
-             "vez de acima. Útil para remover deriva de DC/nível ou "
-             "ruído de baixa frequência antes da análise. Padrão: "
-             "nenhum filtro passa-alta aplicado."
+        help="Corte (Hz) de um passa-alta Butterworth de fase zero -- útil "
+             "para remover deriva de DC/nível, ou o resíduo da fundamental "
+             "antes de --welch/--picos na faixa de supraharmônicos."
     )
     grupo_filtro.add_argument(
         "--ordem-filtro", type=int, default=ORDEM_FILTRO_PADRAO,
         choices=range(ORDEM_FILTRO_MINIMA, ORDEM_FILTRO_MAXIMA + 1),
         metavar=f"[{ORDEM_FILTRO_MINIMA}-{ORDEM_FILTRO_MAXIMA}]",
-        help=f"Ordem do(s) filtro(s) Butterworth de --filtro-passa-baixa/"
-             f"--filtro-passa-alta (mesma ordem para os dois, se ambos "
-             f"forem usados). Aceita {ORDEM_FILTRO_MINIMA} a "
-             f"{ORDEM_FILTRO_MAXIMA} (padrão: {ORDEM_FILTRO_PADRAO}). "
-             f"Ordens mais altas cortam mais abruptamente na frequência "
-             f"de corte (transição mais estreita entre a banda passante "
-             f"e a rejeitada), ao custo de maior distorção de fase perto "
-             f"do corte -- implementado internamente em seções de 2ª "
-             f"ordem (SOS) para permanecer numericamente estável mesmo "
-             f"nas ordens mais altas. Ignorado se nem "
-             f"--filtro-passa-baixa nem --filtro-passa-alta forem "
-             f"passados."
+        help=f"Ordem do(s) filtro(s) acima (padrão: {ORDEM_FILTRO_PADRAO}). "
+             f"Implementado em SOS para permanecer estável nas ordens mais altas."
     )
 
     parser.add_argument(
-        "-o", "--saida", "--salvar", dest="saida", type=Path, default=None,
-        metavar="ARQUIVO",
-        help="Caminho de SAÍDA -- o significado depende do modo ativo: "
-             "[MODO DE CONVERSÃO, -c presente] caminho do arquivo "
-             "convertido, com extensão '.csv' ou '.bin' (a OPOSTA à de "
-             "-c/--converter); OBRIGATÓRIO junto com -c. "
-             "[MODO DE PLOTAGEM, -c ausente] caminho de imagem (ex.: "
-             "'grafico.png', ou qualquer extensão suportada pelo "
-             "matplotlib) onde salvar o gráfico em vez de abrir a janela "
-             "interativa; OPCIONAL, padrão None (abre a janela "
-             "interativa). '--salvar' é o nome antigo desta flag, mantido "
-             "por compatibilidade com o antigo 'plot_adc.py'."
+        "-o", "--saida", "--salvar", dest="saida", type=Path, default=None, metavar="ARQUIVO",
+        help="[CONVERSÃO] arquivo de saída ('.csv' ou '.bin', obrigatório "
+             "com -c). [PLOTAGEM] caminho de imagem para salvar o gráfico "
+             "em vez de abrir a janela interativa (opcional)."
     )
-
     parser.add_argument(
         "--inicio", type=int, default=0, metavar="N",
-        help="Índice da primeira amostra a usar, contando a partir de 0 "
-             "(padrão: 0, início do arquivo). Usado tanto no modo de "
-             "plotagem quanto no de conversão (permite plotar/converter "
-             "só um recorte de um arquivo grande)."
+        help="Primeira amostra a usar, 0-based (padrão: 0)."
     )
     parser.add_argument(
         "--fim", type=int, default=None, metavar="N",
-        help="Índice (exclusive) da última amostra a usar (padrão: None, "
-             "processa até o final do arquivo). Usado tanto no modo de "
-             "plotagem quanto no de conversão."
+        help="Última amostra (exclusive) a usar (padrão: até o fim do arquivo)."
     )
     parser.add_argument(
         "--fft", nargs="?", type=int, const=0, default=None, metavar="N_CICLOS",
-        help="[MODO DE PLOTAGEM] Também calcula e plota a FFT. Valores "
-             "possíveis: omitido (padrão) -> não calcula FFT, só plota a "
-             "forma de onda no tempo; '--fft' sem número -> usa TODOS os "
-             "ciclos completos da fundamental disponíveis na janela "
-             "selecionada por --inicio/--fim; '--fft N' (N inteiro > 0) "
-             "-> usa só os primeiros N ciclos completos, útil para "
-             "analisar distúrbios momentâneos."
+        help="[PLOTAGEM] Espectro por FFT única, sincronizada em ciclos "
+             "inteiros da fundamental -- ideal para a fundamental e "
+             "harmônicos de baixa ordem. Sem número: todos os ciclos "
+             "completos da janela. Com N: só os N primeiros (distúrbios "
+             "momentâneos). Pode ser combinado com --welch."
     )
     parser.add_argument(
         "--freq-min", type=float, default=45.0, metavar="HZ",
-        help="[MODO DE PLOTAGEM, só com --fft] Limite inferior da faixa de "
-             "busca da frequência fundamental da rede, em Hz (padrão: "
-             "45.0 -- cobre redes de 50/60 Hz com folga)."
+        help="[--fft] Limite inferior de busca da fundamental (padrão: 45)."
     )
     parser.add_argument(
         "--freq-max", type=float, default=65.0, metavar="HZ",
-        help="[MODO DE PLOTAGEM, só com --fft] Limite superior da faixa de "
-             "busca da frequência fundamental da rede, em Hz (padrão: 65.0)."
+        help="[--fft] Limite superior de busca da fundamental (padrão: 65)."
     )
     parser.add_argument(
         "--janela", type=str, default=JANELA_PADRAO, metavar="NOME",
-        help="[MODO DE PLOTAGEM, só com --fft] Janela aplicada ao trecho "
-             "antes da FFT PRINCIPAL (a que gera o espectro exibido/salvo "
-             "-- não afeta a estimativa grosseira interna da fundamental, "
-             "que sempre usa Hann, nem o recorte em ciclos inteiros; ver "
-             "seção 6.4 do docstring do módulo para o trade-off completo "
-             "de cada opção). Acentos, hifens, espaços e maiúsculas/"
-             "minúsculas são ignorados ao interpretar o valor. Valores "
-             "aceitos: 'retangular' ou 'boxcar' (SEM janela -- PADRÃO; "
-             "melhor resolução em frequência e nenhuma atenuação de "
-             "amplitude, mas mais sensível a qualquer imperfeição residual "
-             "no recorte em ciclos inteiros); 'hann' ou 'hanning' "
-             "(compromisso clássico entre resolução e vazamento); "
-             "'blackmanharris' ou 'blackman-harris' (lóbulos laterais "
-             "muito baixos, ~-92 dB -- ajuda a separar um supraharmônico "
-             "fraco perto de uma fundamental forte, ao custo de um lóbulo "
-             "principal mais largo); 'flattop' ou 'flat-top' (topo do "
-             "lóbulo principal muito plano -- melhor EXATIDÃO DE "
-             "AMPLITUDE para medir o valor de pico de uma componente já "
-             "conhecida, mas a pior resolução em frequência de todas); "
-             "'kaiser' (parâmetro ajustável via --kaiser-beta, permite "
-             "variar continuamente entre resolução e rejeição de lóbulo "
-             "lateral). Exemplos: '--janela blackmanharris' ou "
-             "'--janela blackman-harris' (equivalentes)."
+        help="[--fft/--welch] Janela espectral: 'retangular'/'boxcar' "
+             "(padrão -- sem atenuação, mas mais sensível a vazamento fora "
+             "do corte em ciclos inteiros), 'hann'/'hanning', "
+             "'blackmanharris'/'blackman-harris' (lóbulos laterais muito "
+             "baixos, útil para separar um supraharmônico fraco perto de "
+             "uma fundamental forte), 'flattop'/'flat-top' (melhor exatidão "
+             "de amplitude, pior resolução), 'kaiser' (+ --kaiser-beta)."
     )
     parser.add_argument(
         "--kaiser-beta", type=float, default=8.6, metavar="BETA",
-        help="[MODO DE PLOTAGEM, só com --janela kaiser] Parâmetro beta da "
-             "janela Kaiser: controla o compromisso entre a largura do "
-             "lóbulo principal (resolução em frequência) e a atenuação "
-             "dos lóbulos laterais (rejeição de vazamento espectral) -- "
-             "beta maior = lóbulos laterais mais baixos, porém lóbulo "
-             "principal mais largo. Padrão: 8.6 (atenuação de lóbulo "
-             "lateral próxima da janela Blackman, ~-58 dB). Referências "
-             "aproximadas: beta=0 -> equivalente à retangular; beta≈5 -> "
-             "equivalente à Hamming; beta≈6 -> equivalente à Hann; "
-             "beta≈8.6 -> equivalente à Blackman; beta≈14 -> lóbulos "
-             "laterais muitíssimo baixos (~-120 dB), lóbulo principal bem "
-             "mais largo. Ignorado se --janela não for 'kaiser'."
+        help="[--janela kaiser] beta≈5 ~ Hamming, beta≈6 ~ Hann, beta≈8.6 ~ "
+             "Blackman (padrão), beta≈14: lóbulos laterais muitíssimo baixos."
     )
+
+    grupo_espectro = parser.add_argument_group(
+        "Análise espectral avançada (Welch, bandas, picos)",
+        "Complementa --fft (sincronizado no ciclo da fundamental) com um "
+        "caminho pensado para supraharmônicos: ruído de conversores "
+        "chaveados não tem relação de fase com o ciclo da rede, então --fft "
+        "não elimina o vazamento desse conteúdo por corte de ciclo -- "
+        "--welch ataca o problema por segmentação + média (Welch), em vez "
+        "de sincronismo de ciclo.",
+    )
+    grupo_espectro.add_argument(
+        "--welch", action="store_true",
+        help="[PLOTAGEM] Espectro médio por segmentação: o sinal é dividido "
+             "em blocos de --resolucao-welch Hz de resolução, cada um "
+             "janelado e transformado, e os periodogramas resultantes são "
+             "MEDIADOS -- reduz variância e é robusto a ruído de banda "
+             "larga e deriva de frequência de chaveamento (dithering), ao "
+             "custo de resolução fixa em frequência. Pode ser combinado com "
+             "--fft (cada um plota sua própria curva)."
+    )
+    grupo_espectro.add_argument(
+        "--resolucao-welch", type=float, default=RESOLUCAO_WELCH_PADRAO, metavar="HZ",
+        help=f"[--welch] Resolução de cada segmento em Hz -- define o "
+             f"tamanho do segmento como fs_efetiva/HZ amostras (padrão: "
+             f"{RESOLUCAO_WELCH_PADRAO:g}). Menor = mais segmentos médios "
+             f"(menos variância), resolução mais grossa."
+    )
+    grupo_espectro.add_argument(
+        "--sobreposicao-welch", type=float, default=SOBREPOSICAO_WELCH_PADRAO, metavar="FRACAO",
+        help=f"[--welch] Fração de sobreposição entre segmentos, em [0, 1) "
+             f"(padrão: {SOBREPOSICAO_WELCH_PADRAO:g})."
+    )
+    grupo_espectro.add_argument(
+        "--modo-espectro", choices=["tom", "ruido"], default="tom",
+        help="Normalização usada por --fft e --welch: 'tom' (padrão) "
+             "reporta amplitude corrigida pelo ganho coerente da janela -- "
+             "correta para um tom discreto. 'ruido' reporta densidade "
+             "espectral de potência (PSD, V²/Hz), normalizada pelo ganho "
+             "incoerente/ENBW -- correta para conteúdo de banda larga, onde "
+             "'tom' mudaria artificialmente com o tamanho da FFT/segmento "
+             "para o mesmo ruído físico."
+    )
+    grupo_espectro.add_argument(
+        "--agrupar-bandas", type=float, default=None, metavar="HZ",
+        help="Agrupa o(s) espectro(s) em bandas de largura HZ (ex.: 200), "
+             "reportando o nível RMS de cada banda em vez do valor bin a "
+             "bin -- convenção da literatura de supraharmônicos, torna o "
+             "resultado comparável entre capturas com resoluções "
+             "diferentes. Sem esta flag, mostra o espectro fino. Requer "
+             "--fft e/ou --welch."
+    )
+    grupo_espectro.add_argument(
+        "--picos", type=float, default=None, metavar="LIMIAR_DB",
+        help="Reporta no console os picos espectrais (frequência e "
+             "amplitude, refinados por interpolação parabólica) acima de "
+             "LIMIAR_DB dentro de [--freq-min-picos, --freq-max-picos] -- "
+             "extração quantitativa de componentes supraharmônicas "
+             "individuais. Requer --fft e/ou --welch; usa o espectro FINO "
+             "(antes de --agrupar-bandas)."
+    )
+    grupo_espectro.add_argument(
+        "--freq-min-picos", type=float, default=CORTE_SUPRAHARMONICOS_PADRAO, metavar="HZ",
+        help=f"[--picos] Limite inferior da busca (padrão: "
+             f"{CORTE_SUPRAHARMONICOS_PADRAO:g} Hz -- início convencional "
+             f"da faixa de supraharmônicos, IEC 61000-4-7). Independente de "
+             f"--freq-min/--freq-max, que buscam a fundamental."
+    )
+    grupo_espectro.add_argument(
+        "--freq-max-picos", type=float, default=None, metavar="HZ",
+        help="[--picos] Limite superior da busca (padrão: Nyquist efetiva)."
+    )
+    grupo_espectro.add_argument(
+        "--distancia-minima-picos", type=float, default=DISTANCIA_MINIMA_PICOS_PADRAO, metavar="HZ",
+        help=f"[--picos] Distância mínima entre dois picos reportados, para "
+             f"não contar o mesmo lóbulo várias vezes (padrão: "
+             f"{DISTANCIA_MINIMA_PICOS_PADRAO:g} Hz)."
+    )
+
     parser.add_argument(
         "--formato", choices=["int16", "uint16"], default="uint16",
-        help="Como interpretar cada código bruto de 16 bits do ADC. "
-             "Valores possíveis: 'uint16' (binário reto / straight "
-             "binary, faixa UNIPOLAR 0..+faixa -- PADRÃO, é o formato de "
-             "saída real do ADS8688 nesta placa) ou 'int16' (complemento "
-             "de dois, faixa BIPOLAR -faixa..+faixa, ex.: ±10.24 V). "
-             "Usado tanto no modo de plotagem/FFT (decodifica os bytes "
-             "lidos) quanto no modo de conversão (decide como decodificar "
-             "bytes -> número em '.bin'->'.csv', e como empacotar número "
-             "-> bytes em '.csv'->'.bin')."
+        help="Como interpretar o código de 16 bits do ADC: 'uint16' "
+             "(unipolar 0..+faixa, padrão) ou 'int16' (bipolar -faixa..+faixa)."
     )
     parser.add_argument(
         "--faixa", type=str, default="10.24", metavar="VOLTS",
-        help="[Conversão para tensão: plotagem, ou conversão de arquivo "
-             "com --incluir-tensao] Faixa de fundo de escala do ADC em "
-             "Volts (padrão: 10.24 V, o valor de fábrica do ADS8688). A "
-             "POLARIDADE da faixa (unipolar 0..+faixa ou bipolar "
-             "-faixa..+faixa) é decidida por --formato, não por este "
-             "valor -- ver --formato. ACEITA um valor único (aplicado a "
-             "TODOS os canais de --canais) ou uma lista separada por "
-             "vírgula do mesmo tamanho de --canais, um valor por canal, "
-             "na mesma ordem (ex.: --canais 0,1 --faixa 10.24,10.24) -- "
-             "ver seção 10.5 do docstring para o caso de uso (canais com "
-             "sensores/faixas diferentes, ex.: tensão e corrente)."
+        help="Faixa de fundo de escala do ADC em Volts (padrão: 10.24). "
+             "Um valor único (todos os canais) ou lista por canal, na "
+             "ordem de --canais."
     )
     parser.add_argument(
         "--ganho", type=str, default="1.0", metavar="FATOR",
-        help="[Conversão para tensão: plotagem, ou conversão de arquivo "
-             "com --incluir-tensao] Fator de ganho do sensor/PCB para "
-             "converter a tensão no ADC na tensão real da rede (padrão: "
-             "1.0, sem conversão adicional). ACEITA um valor único "
-             "(aplicado a TODOS os canais) ou uma lista separada por "
-             "vírgula do mesmo tamanho de --canais, um valor por canal "
-             "(ex.: --canais 0,1 --ganho 19.53,0.1 -- canal 0 é tensão "
-             "com ganho 19.53, canal 1 é corrente com ganho 0.1). Ver "
-             "seção 10.5 do docstring."
+        help="Ganho do sensor/PCB (padrão: 1.0). Um valor ou lista por canal."
     )
     parser.add_argument(
         "--offset", type=str, default=None, metavar="VOLTS",
-        help="[Conversão para tensão: plotagem, ou conversão de arquivo "
-             "com --incluir-tensao] Deslocamento DC subtraído da tensão "
-             "do ADC antes do ganho (padrão automático, calculado por "
-             "canal a partir da respectiva --faixa: faixa/2 para "
-             "--formato uint16, o que centraliza a onda CA em torno de "
-             "0 V; 0.0 para --formato int16, que já é bipolar). Ajuste "
-             "manualmente se o offset real do seu ADC/sensor não for "
-             "exatamente metade da faixa (erro de calibração). ACEITA um "
-             "valor único (todos os canais) ou uma lista separada por "
-             "vírgula do mesmo tamanho de --canais, mesma convenção de "
-             "--faixa/--ganho (ver seção 10.5)."
+        help="Deslocamento DC subtraído antes do ganho (padrão automático: "
+             "faixa/2 para uint16, 0.0 para int16, por canal). Um valor ou "
+             "lista por canal."
     )
 
     return parser
@@ -2071,12 +1324,6 @@ def main(argv=None):
     parser = montar_parser()
     args = parser.parse_args(argv)
 
-    # Resolve a configuração multi-canal cedo (antes de carregar qualquer
-    # arquivo, que pode ser grande) -- mesma filosofia de --janela abaixo,
-    # e ver seção 10 do docstring do módulo. Vale para os dois modos; com
-    # o padrão --canais "1" (não passado), tudo se reduz ao comportamento
-    # de sempre (1 canal só) -- o caminho de 1 canal é um caso particular
-    # deste mesmo fluxo, não um fluxo separado (seção 10.8).
     canais = analisar_lista_canais(args.canais, "--canais")
     if args.canais_exibir is not None:
         canais_exibir = analisar_lista_canais(args.canais_exibir, "--canais-exibir")
@@ -2088,57 +1335,41 @@ def main(argv=None):
     ganhos = analisar_lista_calibracao(args.ganho, len(canais), "--ganho")
     offsets = resolver_offsets_por_canal(args.offset, faixas, args.formato, len(canais))
 
-    # --------------------------------------------------------------------
-    # MODO DE CONVERSÃO
-    # --------------------------------------------------------------------
+    # -------------------------------------------------------------- #
+    # Modo de conversão
+    # -------------------------------------------------------------- #
     if args.converter is not None:
         if args.arquivo is not None:
             parser.error(
                 "não use o argumento posicional 'arquivo' junto com "
-                "-c/--converter; passe o caminho de entrada em -c e o de "
-                "saída em -o/--saida."
+                "-c/--converter; passe entrada em -c e saída em -o."
             )
         if args.saida is None:
-            parser.error(
-                "-o/--saida é obrigatório junto com -c/--converter "
-                "(caminho do arquivo de saída)."
-            )
+            parser.error("-o/--saida é obrigatório junto com -c/--converter.")
         converter_arquivo(
             args.converter, args.saida, args.formato, args.inicio, args.fim,
-            args.incluir_tensao, canais, faixas, ganhos, offsets,
-            args.tamanho_chunk,
+            args.incluir_tensao, canais, faixas, ganhos, offsets, args.tamanho_chunk,
         )
         return
 
-    # --------------------------------------------------------------------
-    # MODO DE PLOTAGEM
-    # --------------------------------------------------------------------
+    # -------------------------------------------------------------- #
+    # Modo de plotagem
+    # -------------------------------------------------------------- #
     if args.arquivo is None:
-        parser.error(
-            "o argumento 'arquivo' é obrigatório no modo de plotagem "
-            "(ou use -c/--converter para converter .bin<->.csv)."
-        )
+        parser.error("o argumento 'arquivo' é obrigatório no modo de plotagem.")
     if args.frequencia is None:
         parser.error("-f/--frequencia é obrigatório no modo de plotagem.")
 
     num_canais = len(canais)
-    # Frequência EFETIVA de cada canal individual -- ver seção 10.3 do
-    # docstring. Com 1 canal só, isso é exatamente args.frequencia (sem
-    # nenhuma mudança de comportamento). Calculada cedo (antes de
-    # carregar o arquivo) porque tanto --janela (kaiser) quanto os
-    # cortes de --filtro-passa-baixa/--filtro-passa-alta precisam dela
-    # para a validação antecipada logo abaixo.
     fs_efetiva = args.frequencia / num_canais
+    usa_fft = args.fft is not None
+    usa_welch = args.welch
 
-    # Valida --janela cedo (antes de carregar o arquivo, que pode ser
-    # grande) para dar erro imediato em caso de nome digitado errado, em
-    # vez de só falhar depois de já ter processado a captura inteira.
-    nome_janela_canonico = None
-    if args.fft is not None:
-        nome_janela_canonico = resolver_nome_janela(args.janela)
+    # Validação de argumentos ANTES de tocar o arquivo (que pode ser
+    # grande) -- mesma filosofia para --janela, filtros e Welch abaixo.
+    nome_janela_canonico = resolver_nome_janela(args.janela) if (usa_fft or usa_welch) else None
+    rotulo_janela = _rotulo_janela_completo(nome_janela_canonico, args.kaiser_beta) if nome_janela_canonico else None
 
-    # Valida os cortes do filtro digital opcional pelo mesmo motivo (ver
-    # seção 11 do docstring).
     if args.filtro_passa_baixa is not None:
         validar_corte_filtro(args.filtro_passa_baixa, fs_efetiva, "--filtro-passa-baixa")
     if args.filtro_passa_alta is not None:
@@ -2148,19 +1379,60 @@ def main(argv=None):
         raise SystemExit(
             f"Erro: --filtro-passa-alta ({args.filtro_passa_alta:g} Hz) "
             f"precisa ser menor que --filtro-passa-baixa "
-            f"({args.filtro_passa_baixa:g} Hz) para formar uma banda "
-            f"passante válida -- do contrário a interseção das duas "
-            f"bandas é vazia e o sinal resultante seria ~zero."
+            f"({args.filtro_passa_baixa:g} Hz)."
+        )
+
+    if not (usa_fft or usa_welch):
+        if args.picos is not None:
+            parser.error("--picos requer --fft e/ou --welch ativos.")
+        if args.agrupar_bandas is not None:
+            parser.error("--agrupar-bandas requer --fft e/ou --welch ativos.")
+
+    if args.agrupar_bandas is not None and args.agrupar_bandas <= 0:
+        parser.error("--agrupar-bandas precisa ser positivo.")
+
+    if usa_welch:
+        if args.resolucao_welch <= 0:
+            parser.error("--resolucao-welch precisa ser positiva.")
+        if not (0.0 <= args.sobreposicao_welch < 1.0):
+            parser.error("--sobreposicao-welch precisa estar em [0, 1).")
+        if fs_efetiva / args.resolucao_welch < 16:
+            raise SystemExit(
+                f"Erro: --resolucao-welch {args.resolucao_welch:g} Hz produz "
+                f"um segmento menor que 16 amostras na frequência efetiva "
+                f"{fs_efetiva:g} Hz. Reduza --resolucao-welch."
+            )
+
+    freq_max_picos = None
+    if args.picos is not None:
+        freq_max_picos = args.freq_max_picos if args.freq_max_picos is not None else fs_efetiva / 2.0
+        if args.freq_min_picos >= freq_max_picos:
+            raise SystemExit("Erro: --freq-min-picos precisa ser menor que --freq-max-picos.")
+
+    if (usa_welch or args.picos is not None) and args.filtro_passa_alta is None:
+        print(
+            "Aviso: --welch/--picos sem --filtro-passa-alta -- resíduo da "
+            "fundamental e de harmônicos de baixa ordem pode mascarar "
+            "supraharmônicos fracos. Considere, por exemplo, "
+            "'--filtro-passa-alta 2000'.",
+            file=sys.stderr,
+        )
+    if usa_fft and args.filtro_passa_alta is not None and args.filtro_passa_alta >= args.freq_min:
+        print(
+            f"Aviso: --fft precisa da fundamental (banda {args.freq_min:g}-"
+            f"{args.freq_max:g} Hz) para sincronizar o corte em ciclos "
+            f"inteiros, mas --filtro-passa-alta {args.filtro_passa_alta:g} Hz "
+            f"remove essa banda ANTES do corte -- f0/o corte resultantes "
+            f"provavelmente ficam inválidos. Para isolar supraharmônicos com "
+            f"--welch/--picos sem quebrar --fft, rode os dois em comandos "
+            f"separados em vez de na mesma chamada.",
+            file=sys.stderr,
         )
 
     tipo_arquivo = detectar_tipo_arquivo(args.arquivo)
     amostras = carregar_amostras(args.arquivo, args.formato)
-    bruto, idx_inicio, idx_fim, total = selecionar_intervalo(
-        amostras, args.inicio, args.fim
-    )
+    bruto, idx_inicio, idx_fim, total = selecionar_intervalo(amostras, args.inicio, args.fim)
 
-    # Desintercala (ver seção 10.1/10.7) -- com 1 canal só, isso é um
-    # reshape trivial que devolve o mesmo conteúdo do array original.
     por_canal_bruto = desintercalar(bruto, canais, canais_exibir)
     indice_no_ciclo = {c: i for i, c in enumerate(canais)}
 
@@ -2171,51 +1443,35 @@ def main(argv=None):
             por_canal_bruto[canal], faixas[idx], ganhos[idx], args.formato, offsets[idx]
         )
 
-    # Filtro digital opcional (ver seção 11 do docstring) -- aplicado
-    # ANTES do recorte em ciclos inteiros, da FFT e da plotagem, sobre o
-    # sinal já em Volts de cada canal exibido. Passa-alta primeiro,
-    # depois passa-baixa (ver docstring de aplicar_filtro_digital sobre
-    # por que a ordem não importa matematicamente aqui). Sem nenhuma das
-    # duas flags, este bloco não roda e o comportamento é idêntico ao de
-    # antes desta funcionalidade.
     if args.filtro_passa_alta is not None or args.filtro_passa_baixa is not None:
         for canal in canais_exibir:
             sinal = por_canal_tensao[canal]
             if args.filtro_passa_alta is not None:
-                sinal = aplicar_filtro_digital(
-                    sinal, fs_efetiva, "high", args.filtro_passa_alta, args.ordem_filtro
-                )
+                sinal = aplicar_filtro_digital(sinal, fs_efetiva, "high", args.filtro_passa_alta, args.ordem_filtro)
             if args.filtro_passa_baixa is not None:
-                sinal = aplicar_filtro_digital(
-                    sinal, fs_efetiva, "low", args.filtro_passa_baixa, args.ordem_filtro
-                )
+                sinal = aplicar_filtro_digital(sinal, fs_efetiva, "low", args.filtro_passa_baixa, args.ordem_filtro)
             por_canal_tensao[canal] = sinal
 
     n_por_canal = len(next(iter(por_canal_tensao.values())))
 
-    print(f"Arquivo: {args.arquivo}  ({total} amostras no total, "
-          f"formato de arquivo: .{tipo_arquivo})")
+    print(f"Arquivo: {args.arquivo}  ({total} amostras no total, formato: .{tipo_arquivo})")
 
     if num_canais == 1:
-        # Texto idêntico ao de antes do suporte multi-canal.
         idx0 = indice_no_ciclo[canais_exibir[0]]
         print(f"Conversão: --formato {args.formato} | --faixa {faixas[idx0]} V | "
               f"--offset {offsets[idx0]} V | --ganho {ganhos[idx0]}")
         print(f"Janela selecionada: amostras {idx_inicio}..{idx_fim} "
               f"({n_por_canal} amostras, {n_por_canal / fs_efetiva * 1000:.2f} ms)")
     else:
-        print(f"Canais na captura: {canais} | exibindo: {canais_exibir} | "
-              f"layout: {args.layout_canais}")
-        print(f"Frequência total {args.frequencia:g} Hz / {num_canais} canais "
-              f"-> frequência efetiva por canal: {fs_efetiva:g} Hz")
+        print(f"Canais na captura: {canais} | exibindo: {canais_exibir} | layout: {args.layout_canais}")
+        print(f"Frequência total {args.frequencia:g} Hz / {num_canais} canais -> "
+              f"frequência efetiva por canal: {fs_efetiva:g} Hz")
         for canal in canais_exibir:
             idx = indice_no_ciclo[canal]
-            print(f"  Canal {canal}: --formato {args.formato} | "
-                  f"--faixa {faixas[idx]} V | --offset {offsets[idx]} V | "
-                  f"--ganho {ganhos[idx]}")
+            print(f"  Canal {canal}: --formato {args.formato} | --faixa {faixas[idx]} V | "
+                  f"--offset {offsets[idx]} V | --ganho {ganhos[idx]}")
         print(f"Janela selecionada: amostras brutas {idx_inicio}..{idx_fim} "
-              f"({n_por_canal} amostras/canal, "
-              f"{n_por_canal / fs_efetiva * 1000:.2f} ms/canal)")
+              f"({n_por_canal} amostras/canal, {n_por_canal / fs_efetiva * 1000:.2f} ms/canal)")
 
     if args.filtro_passa_alta is not None or args.filtro_passa_baixa is not None:
         partes_filtro = []
@@ -2223,48 +1479,80 @@ def main(argv=None):
             partes_filtro.append(f"passa-alta {args.filtro_passa_alta:g} Hz")
         if args.filtro_passa_baixa is not None:
             partes_filtro.append(f"passa-baixa {args.filtro_passa_baixa:g} Hz")
-        print(f"Filtro digital Butterworth aplicado (ordem {args.ordem_filtro}, "
-              f"fase zero, sosfiltfilt): {' + '.join(partes_filtro)}")
+        print(f"Filtro digital Butterworth aplicado (ordem {args.ordem_filtro}, fase zero): "
+              f"{' + '.join(partes_filtro)}")
 
-    infos_fft = None
-    if args.fft is not None:
+    infos_espectro = {canal: {} for canal in canais_exibir} if (usa_fft or usa_welch) else None
+
+    if usa_fft:
         n_ciclos_pedido = args.fft if args.fft > 0 else None
-        infos_fft = {}
         for canal in canais_exibir:
             sinal_fft, idx_i_local, idx_f_local, f0, n_ciclos = recortar_ciclos_inteiros(
-                por_canal_tensao[canal], fs_efetiva, args.freq_min, args.freq_max,
-                n_ciclos_pedido
+                por_canal_tensao[canal], fs_efetiva, args.freq_min, args.freq_max, n_ciclos_pedido
             )
-            freqs, amplitude_db = calcular_espectro_dbv(
-                sinal_fft, fs_efetiva, nome_janela_canonico, args.kaiser_beta
+            freqs, amplitude_db = calcular_espectro(
+                sinal_fft, fs_efetiva, nome_janela_canonico, args.kaiser_beta, args.modo_espectro
             )
 
-            rotulo_janela = NOMES_EXIBICAO_JANELA[nome_janela_canonico]
-            if nome_janela_canonico == "kaiser":
-                rotulo_janela += f" (beta={args.kaiser_beta:g})"
+            if args.picos is not None:
+                picos = encontrar_picos_espectro(
+                    freqs, amplitude_db, args.freq_min_picos, freq_max_picos,
+                    args.picos, args.distancia_minima_picos
+                )
+                _imprimir_picos(canal, "ciclo", picos, num_canais)
+
+            if args.agrupar_bandas is not None:
+                freqs, amplitude_db = agrupar_em_bandas(freqs, amplitude_db, args.agrupar_bandas, args.modo_espectro)
 
             if num_canais == 1:
-                print(f"FFT: fundamental estimada f0 = {f0:.3f} Hz | "
-                      f"{n_ciclos} ciclo(s) completo(s) | "
-                      f"{len(sinal_fft)} amostras (amostras locais {idx_i_local}..{idx_f_local}) | "
-                      f"janela: {rotulo_janela}")
+                print(f"FFT (ciclo): f0 = {f0:.3f} Hz | {n_ciclos} ciclo(s) completo(s) | "
+                      f"{len(sinal_fft)} amostras (locais {idx_i_local}..{idx_f_local}) | "
+                      f"janela: {rotulo_janela} | modo: {args.modo_espectro}")
             else:
-                print(f"  Canal {canal}: FFT f0 = {f0:.3f} Hz | "
-                      f"{n_ciclos} ciclo(s) completo(s) | {len(sinal_fft)} amostras "
-                      f"(locais {idx_i_local}..{idx_f_local}) | janela: {rotulo_janela}")
+                print(f"  Canal {canal} FFT (ciclo): f0 = {f0:.3f} Hz | {n_ciclos} ciclo(s) | "
+                      f"{len(sinal_fft)} amostras (locais {idx_i_local}..{idx_f_local})")
 
-            infos_fft[canal] = {
-                "freqs": freqs,
-                "amplitude_db": amplitude_db,
-                "f0": f0,
-                "n_ciclos": n_ciclos,
-                "idx_inicio_local": idx_i_local,
-                "idx_fim_local": idx_f_local,
-                "janela": rotulo_janela,
+            infos_espectro[canal]["ciclo"] = {
+                "freqs": freqs, "amplitude_db": amplitude_db, "f0": f0, "n_ciclos": n_ciclos,
+                "idx_inicio_local": idx_i_local, "idx_fim_local": idx_f_local, "janela": rotulo_janela,
             }
 
-    plotar_multicanal(por_canal_tensao, fs_efetiva, idx_inicio, infos_fft,
-                       args.arquivo.name, args.saida, args.layout_canais)
+    if usa_welch:
+        for canal in canais_exibir:
+            freqs, amplitude_db, n_segmentos = calcular_espectro_welch(
+                por_canal_tensao[canal], fs_efetiva, nome_janela_canonico, args.kaiser_beta,
+                args.resolucao_welch, args.sobreposicao_welch, args.modo_espectro,
+            )
+
+            if args.picos is not None:
+                picos = encontrar_picos_espectro(
+                    freqs, amplitude_db, args.freq_min_picos, freq_max_picos,
+                    args.picos, args.distancia_minima_picos
+                )
+                _imprimir_picos(canal, "welch", picos, num_canais)
+
+            if args.agrupar_bandas is not None:
+                freqs, amplitude_db = agrupar_em_bandas(freqs, amplitude_db, args.agrupar_bandas, args.modo_espectro)
+
+            prefixo = f"  Canal {canal} " if num_canais > 1 else ""
+            print(f"{prefixo}Welch: {n_segmentos} segmento(s) médios | "
+                  f"resolução {args.resolucao_welch:g} Hz | modo: {args.modo_espectro}")
+
+            infos_espectro[canal]["welch"] = {
+                "freqs": freqs, "amplitude_db": amplitude_db,
+                "n_segmentos": n_segmentos, "janela": rotulo_janela,
+            }
+
+    if args.agrupar_bandas is not None:
+        rotulo_espectro_y = f"Nível por banda de {args.agrupar_bandas:g} Hz (dBV)"
+    else:
+        rotulo_espectro_y = "Magnitude (dBV)" if args.modo_espectro == "tom" else "PSD (dB re V²/Hz)"
+    limite_inferior_db = -100.0 if (args.modo_espectro == "tom" and args.agrupar_bandas is None) else None
+
+    plotar_multicanal(
+        por_canal_tensao, fs_efetiva, idx_inicio, infos_espectro, args.arquivo.name,
+        args.saida, args.layout_canais, rotulo_espectro_y, limite_inferior_db,
+    )
 
 
 if __name__ == "__main__":
