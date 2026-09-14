@@ -348,7 +348,7 @@ def imprimir_resumo_cabecalho(cabecalho: CabecalhoArquivo) -> None:
     """Bloco de resumo impresso no console quando um cabeçalho válido é
     encontrado -- visão rápida de proveniência/integridade antes de entrar
     na análise em si."""
-    print(f"Cabeçalho da captura encontrado (formato versão {cabecalho.versao_cabecalho}):")
+    print(f"Versão de cabeçalho: {cabecalho.versao_cabecalho}")
     if not cabecalho.crc32_valido:
         print(
             "  ⚠️  CRC-32 do cabeçalho NÃO confere -- os campos abaixo podem "
@@ -362,8 +362,7 @@ def imprimir_resumo_cabecalho(cabecalho: CabecalhoArquivo) -> None:
         print(f"  Descrição: {cabecalho.descricao}")
     print(
         f"  Capturado em: {cabecalho.timestamp_iso_utc} "
-        f"(epoch {cabecalho.timestamp_unix}) -- ⚠️ BeagleBones sem RTC podem "
-        f"registrar um horário incorreto sem sincronização de rede"
+        f"(epoch {cabecalho.timestamp_unix})"
     )
     print(f"  Frequência: {cabecalho.frequencia_hz} Hz total | canais: {list(cabecalho.lista_canais)}")
     if cabecalho.total_amostras_gravadas > 0:
@@ -1901,7 +1900,6 @@ def main(argv=None):
     elif cabecalho is not None:
         canais = list(cabecalho.lista_canais)
         canais_veio_do_cabecalho = True
-        print(f"--canais não informado -- usando os canais registrados no cabeçalho da captura: {canais}")
     else:
         canais = analisar_lista_canais(CANAL_PADRAO, "--canais")
         canais_veio_do_cabecalho = False
@@ -1986,7 +1984,7 @@ def main(argv=None):
         frequencia_total = args.frequencia
     elif cabecalho is not None and cabecalho.frequencia_hz > 0:
         frequencia_total = float(cabecalho.frequencia_hz)
-        print(f"-f/--frequencia não informado -- usando a frequência do cabeçalho: {frequencia_total:g} Hz")
+        print(f"usando a frequência: {frequencia_total:g} Hz")
     else:
         parser.error(
             "-f/--frequencia é obrigatório no modo de plotagem (nenhum "
@@ -2093,7 +2091,7 @@ def main(argv=None):
         idx0 = indice_no_ciclo[canais_exibir[0]]
         print(f"Conversão: --formato {args.formato} | --faixa {faixas[idx0]} V | "
               f"--offset {offsets[idx0]} V | --ganho {ganhos[idx0]}")
-        print(f"Janela selecionada: amostras {idx_inicio}..{idx_fim} "
+        print(f"Janela de dados: amostras {idx_inicio}..{idx_fim} "
               f"({n_por_canal} amostras, {n_por_canal / fs_efetiva * 1000:.2f} ms)")
     else:
         print(f"Canais na captura: {canais} | exibindo: {canais_exibir} | layout: {args.layout_canais}")
@@ -2103,7 +2101,7 @@ def main(argv=None):
             idx = indice_no_ciclo[canal]
             print(f"  Canal {canal}: --formato {args.formato} | --faixa {faixas[idx]} V | "
                   f"--offset {offsets[idx]} V | --ganho {ganhos[idx]}")
-        print(f"Janela selecionada: amostras brutas {idx_inicio}..{idx_fim} "
+        print(f"Janela de dados: amostras brutas {idx_inicio}..{idx_fim} "
               f"({n_por_canal} amostras/canal, {n_por_canal / fs_efetiva * 1000:.2f} ms/canal)")
 
     if args.filtro_passa_alta is not None or args.filtro_passa_baixa is not None:
