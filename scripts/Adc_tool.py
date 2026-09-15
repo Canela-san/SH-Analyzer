@@ -7,14 +7,30 @@
 #     "numpy>=1.20",
 #     "scipy>=1.15.3",
 #     "PyQt6",
+#     "h5py>=3.0",
 # ]
 # ///
 """
-adc_tool.py -- Conversão, visualização e análise espectral de capturas do
-SH-Analyzer (ADS8688 via BeagleBone).
+adc_tool.py -- Conversão, visualização, análise espectral e exportação HDF5
+de capturas do SH-Analyzer (ADS8688 via BeagleBone).
 
-Dois modos:
+Formato do '.bin': a partir da versão do firmware que passou a gravar um
+cabeçalho fixo de 1024 bytes no início de cada captura (magic number
+"SHAN" -- ver firmware/ler_adc.c, struct cabecalho_arquivo), este script
+detecta esse cabeçalho automaticamente e usa seus metadados (frequência,
+canais, título/descrição, etc.) como padrão para flags que, de outra forma,
+teriam que ser informadas na mão (--canais, -f/--frequencia). Arquivos '.bin'
+mais antigos, gravados por versões do firmware sem esse cabeçalho, continuam
+funcionando normalmente (detectados pela ausência do magic number) -- nesse
+caso, -f/--frequencia (e opcionalmente --canais) voltam a ser obrigatórios,
+como antes. Ver ler_cabecalho()/CabecalhoArquivo, mais abaixo.
+
+Três modos:
   - Conversão (-c/--converter + -o/--saida): '.bin' <-> '.csv'.
+  - Exportação HDF5 (--export-hdf5 ARQUIVO.h5): '.bin' -> '.h5', com os
+    metadados do cabeçalho (se houver) gravados como atributos na raiz.
+    Escrita sempre em blocos sobre o memmap -- nunca materializa a captura
+    inteira na RAM (ver exportar_hdf5).
   - Plotagem (padrão): forma de onda e, opcionalmente, espectro.
 
 Duas estratégias de análise espectral, escolhidas conforme o tipo de sinal:
@@ -43,8 +59,12 @@ referência completa de flags.
 """
 
 import itertools
+import struct
 import sys
 import unicodedata
+import zlib
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -103,6 +123,330 @@ TAMANHO_LOTE_WELCH_PADRAO = 2048
 
 
 # ---------------------------------------------------------------------------
+# 0. Cabeçalho binário do '.bin' (formato "SHAN")
+# ---------------------------------------------------------------------------
+# A partir da versão do firmware que passou a gravar um cabeçalho fixo de
+# 1024 bytes no início de cada captura (ver firmware/ler_adc.c, struct
+# cabecalho_arquivo), todo '.bin' NOVO tem essa estrutura antes das amostras
+# brutas. Arquivos mais antigos (sem cabeçalho) continuam suportados -- ver
+# ler_cabecalho(), que detecta a ausência do magic number e retorna None
+# nesse caso, deixando o chamador (main()) cair de volta no comportamento
+# pré-cabeçalho.
+
+CABECALHO_MAGIC = b"SHAN"
+CABECALHO_TAMANHO_TOTAL = 1024
+CABECALHO_VERSAO_SUPORTADA = 1  # versão do FORMATO do cabeçalho que este script sabe interpretar
+
+# Format string para struct.unpack, campo a campo -- espelha EXATAMENTE
+# 'struct cabecalho_arquivo_campos' em firmware/ler_adc.c (packed, sem
+# padding de alinhamento entre campos). O prefixo '<' (little-endian) é o
+# que garante a correspondência com __attribute__((packed)) do lado C: os
+# prefixos de byte-order explícitos do módulo struct ('<', '>', '=', '!')
+# desligam o padding "nativo" que '@'/nenhum prefixo aplicariam (o mesmo
+# padding que __attribute__((packed)) elimina do lado C) -- '<' também é o
+# byte-order real da plataforma (BeagleBone: ARM Cortex-A8, little-endian).
+# Sem isso, struct.calcsize já divergiria de 408 bytes por causa do
+# alinhamento de 'timestamp_unix' (um Q de 8 bytes), do mesmo jeito que
+# __attribute__((packed)) foi necessário no C por essa mesma razão.
+#
+#   4s   magic                        (4 bytes, ASCII "SHAN", NÃO terminado em nulo)
+#   I    versao_cabecalho             (uint32_t)
+#   I    tamanho_cabecalho            (uint32_t)
+#   Q    timestamp_unix               (uint64_t, epoch Unix UTC)
+#   I    frequencia_hz                (uint32_t)
+#   I    auto_seq_mask                (uint32_t)
+#   I    num_canais                   (uint32_t)
+#   8B   lista_canais                 (8x uint8_t -- slots não usados = 0xFF)
+#   I    samples_per_buffer           (uint32_t)
+#   I    bytes_por_amostra            (uint32_t)
+#   I    pru_clock_hz                 (uint32_t)
+#   I    sample_period_ticks          (uint32_t)
+#   I    primeira_amostra_descartada  (uint32_t, 0/1 como booleano)
+#   d    duracao_pedida_segundos      (double, 8 bytes)
+#   Q    blocos_gravados              (uint64_t)
+#   Q    total_amostras_gravadas      (uint64_t)
+#   64s  titulo                       (64 bytes, UTF-8, terminado em nulo + zero-padding)
+#   256s descricao                    (256 bytes, UTF-8, terminado em nulo + zero-padding)
+#   I    header_crc32                 (uint32_t, CRC-32/ISO-HDLC dos 1024 bytes com este campo zerado)
+# (os 616 bytes restantes até completar 1024 são padding reservado, sem
+# significado -- não fazem parte deste format string; struct.unpack só
+# recebe os primeiros _TAMANHO_CAMPOS_CABECALHO bytes, nunca os 1024 inteiros)
+_FORMATO_CABECALHO_CAMPOS = "<4sIIQIII8BIIIIIdQQ64s256sI"
+_TAMANHO_CAMPOS_CABECALHO = struct.calcsize(_FORMATO_CABECALHO_CAMPOS)  # 408 bytes
+_OFFSET_HEADER_CRC32 = _TAMANHO_CAMPOS_CABECALHO - struct.calcsize("I")  # header_crc32 é o último campo com significado -- offset 404
+
+
+@dataclass(frozen=True)
+class CabecalhoArquivo:
+    """Metadados extraídos do cabeçalho de 1024 bytes de um '.bin' novo --
+    ver ler_cabecalho() para como é construído a partir dos bytes brutos."""
+    versao_cabecalho: int
+    tamanho_cabecalho: int
+    timestamp_unix: int
+    frequencia_hz: int
+    auto_seq_mask: int
+    num_canais: int
+    lista_canais: tuple[int, ...]
+    samples_per_buffer: int
+    bytes_por_amostra: int
+    pru_clock_hz: int
+    sample_period_ticks: int
+    primeira_amostra_descartada: bool
+    duracao_pedida_segundos: float
+    blocos_gravados: int
+    total_amostras_gravadas: int
+    titulo: str
+    descricao: str
+    header_crc32: int
+    crc32_valido: bool  # calculado por este script ao ler -- não é, em si, um campo do cabeçalho
+
+    @property
+    def timestamp_iso_utc(self) -> str:
+        """Representação legível de timestamp_unix. ⚠️ Reflete o relógio da
+        BeagleBone no instante da captura -- a maioria das BeagleBones não
+        tem RTC com bateria, então sem sincronização de rede (NTP) no
+        momento da captura este valor pode estar incorreto (ex.: próximo
+        de 1970)."""
+        return datetime.fromtimestamp(self.timestamp_unix, tz=timezone.utc).isoformat()
+
+    @property
+    def duracao_real_segundos(self) -> float | None:
+        """total_amostras_gravadas / frequencia_hz -- duração de fato
+        capturada, para comparar com duracao_pedida_segundos (só preenchida
+        quando --duracao foi usado no firmware). None se frequencia_hz == 0
+        (não deveria acontecer na prática, mas evita divisão por zero)."""
+        if self.frequencia_hz == 0:
+            return None
+        return self.total_amostras_gravadas / self.frequencia_hz
+
+    def para_attrs_hdf5(self) -> dict[str, object]:
+        """Achata os campos para um dict pronto para virar atributos HDF5 na
+        raiz do arquivo -- h5py aceita escalares (int/float/str/bool) e
+        arrays numpy diretamente como valor de atributo; só lista_canais
+        precisa virar um array explícito (h5py não aceita tuplas Python)."""
+        return {
+            "cabecalho_versao": self.versao_cabecalho,
+            "cabecalho_tamanho_bytes": self.tamanho_cabecalho,
+            "timestamp_unix": self.timestamp_unix,
+            "timestamp_iso_utc": self.timestamp_iso_utc,
+            "frequencia_hz": self.frequencia_hz,
+            "auto_seq_mask": self.auto_seq_mask,
+            "num_canais": self.num_canais,
+            "lista_canais": np.array(self.lista_canais, dtype=np.uint8),
+            "samples_per_buffer": self.samples_per_buffer,
+            "bytes_por_amostra": self.bytes_por_amostra,
+            "pru_clock_hz": self.pru_clock_hz,
+            "sample_period_ticks": self.sample_period_ticks,
+            "primeira_amostra_descartada": self.primeira_amostra_descartada,
+            "duracao_pedida_segundos": self.duracao_pedida_segundos,
+            "duracao_real_segundos": (
+                self.duracao_real_segundos if self.duracao_real_segundos is not None else -1.0
+            ),
+            "blocos_gravados": self.blocos_gravados,
+            "total_amostras_gravadas": self.total_amostras_gravadas,
+            "titulo": self.titulo,
+            "descricao": self.descricao,
+            "header_crc32": self.header_crc32,
+            "header_crc32_valido": self.crc32_valido,
+        }
+
+
+def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
+    """Lê e valida os primeiros 1024 bytes de 'caminho'.
+
+    Retorna None quando o arquivo não parece ter esse cabeçalho -- menor
+    que 1024 bytes, ou os 4 primeiros bytes não são o magic number "SHAN"
+    (formato antigo do firmware, sem cabeçalho, ou não é um '.bin' do
+    SH-Analyzer). None aqui NÃO é um erro: é o sinal para quem chama cair de
+    volta no comportamento pré-cabeçalho (offset=0 no memmap, -f/--canais
+    voltam a ser obrigatórios).
+
+    Quando o magic bate mas o CRC-32 gravado não confere com o CRC
+    recalculado sobre os 1024 bytes (mesma convenção do firmware: campo do
+    CRC zerado antes de calcular -- ver ler_adc.c), o cabeçalho AINDA é
+    retornado, com crc32_valido=False -- os campos podem estar parcialmente
+    certos (só um byte pode ter sido corrompido), e cabe a quem usa decidir
+    se confia ou prefere passar -f/--canais manualmente.
+    """
+    try:
+        with open(caminho, "rb") as f:
+            bruto = f.read(CABECALHO_TAMANHO_TOTAL)
+    except FileNotFoundError:
+        return None  # deixa o erro "arquivo não encontrado" aparecer mais tarde, no carregamento de verdade (carregar_amostras)
+
+    if len(bruto) < CABECALHO_TAMANHO_TOTAL:
+        return None  # arquivo menor que 1 cabeçalho inteiro -- não pode ser o formato novo
+    if bruto[:4] != CABECALHO_MAGIC:
+        return None  # sem magic number -- arquivo legado (pré-cabeçalho) ou não é um '.bin' do SH-Analyzer
+
+    campos = struct.unpack(_FORMATO_CABECALHO_CAMPOS, bruto[:_TAMANHO_CAMPOS_CABECALHO])
+    (
+        _magic, versao_cabecalho, tamanho_cabecalho, timestamp_unix, frequencia_hz,
+        auto_seq_mask, num_canais, *lista_canais_bytes, samples_per_buffer,
+        bytes_por_amostra, pru_clock_hz, sample_period_ticks,
+        primeira_amostra_descartada, duracao_pedida_segundos, blocos_gravados,
+        total_amostras_gravadas, titulo_bruto, descricao_bruto, header_crc32,
+    ) = campos
+
+    # CRC-32 recalculado sobre os 1024 bytes com o campo header_crc32 (4
+    # bytes no offset 404) zerado -- mesmo algoritmo (CRC-32/ISO-HDLC,
+    # polinômio 0xEDB88320) implementado bit a bit em ler_adc.c;
+    # zlib.crc32 já é exatamente esse CRC, então não há motivo para
+    # reimplementar manualmente aqui como foi feito em C (lá, a
+    # reimplementação evitava puxar uma lib externa só para isso).
+    bruto_para_crc = bytearray(bruto)
+    bruto_para_crc[_OFFSET_HEADER_CRC32:_OFFSET_HEADER_CRC32 + 4] = b"\x00\x00\x00\x00"
+    crc_recalculado = zlib.crc32(bruto_para_crc)
+    crc32_valido = (crc_recalculado == header_crc32)
+
+    if versao_cabecalho != CABECALHO_VERSAO_SUPORTADA:
+        print(
+            f"Aviso: cabeçalho de '{caminho}' está na versão "
+            f"{versao_cabecalho}, mas este script só foi testado com a "
+            f"versão {CABECALHO_VERSAO_SUPORTADA}. Os campos abaixo podem "
+            f"estar incompletos ou incorretos se o formato mudou.",
+            file=sys.stderr,
+        )
+
+    # titulo/descricao são strings estilo C dentro de um buffer de tamanho
+    # fixo: o conteúdo de verdade termina no primeiro '\0', o resto é
+    # zero-padding (nunca lixo -- o firmware sempre zera a struct inteira
+    # antes de preencher os campos, ver ler_adc.c). errors="replace" em vez
+    # de deixar estourar: um decode UTF-8 inválido aqui só afetaria texto
+    # descritivo não-crítico, não os campos numéricos que definem como as
+    # AMOSTRAS devem ser interpretadas -- não vale abortar o programa
+    # inteiro por causa do título.
+    titulo = titulo_bruto.split(b"\x00", 1)[0].decode("utf-8", errors="replace")
+    descricao = descricao_bruto.split(b"\x00", 1)[0].decode("utf-8", errors="replace")
+
+    lista_canais = tuple(lista_canais_bytes[:num_canais])
+
+    return CabecalhoArquivo(
+        versao_cabecalho=versao_cabecalho,
+        tamanho_cabecalho=tamanho_cabecalho,
+        timestamp_unix=timestamp_unix,
+        frequencia_hz=frequencia_hz,
+        auto_seq_mask=auto_seq_mask,
+        num_canais=num_canais,
+        lista_canais=lista_canais,
+        samples_per_buffer=samples_per_buffer,
+        bytes_por_amostra=bytes_por_amostra,
+        pru_clock_hz=pru_clock_hz,
+        sample_period_ticks=sample_period_ticks,
+        primeira_amostra_descartada=bool(primeira_amostra_descartada),
+        duracao_pedida_segundos=duracao_pedida_segundos,
+        blocos_gravados=blocos_gravados,
+        total_amostras_gravadas=total_amostras_gravadas,
+        titulo=titulo,
+        descricao=descricao,
+        header_crc32=header_crc32,
+        crc32_valido=crc32_valido,
+    )
+
+
+def imprimir_resumo_cabecalho(cabecalho: CabecalhoArquivo) -> None:
+    """Bloco de resumo impresso no console quando um cabeçalho válido é
+    encontrado -- visão rápida de proveniência/integridade antes de entrar
+    na análise em si."""
+    print(f"Versão de cabeçalho: {cabecalho.versao_cabecalho}")
+    if not cabecalho.crc32_valido:
+        print(
+            "  ⚠️  CRC-32 do cabeçalho NÃO confere -- os campos abaixo podem "
+            "estar corrompidos/incompletos. Considere passar -f/--canais "
+            "manualmente se algum valor parecer estranho.",
+            file=sys.stderr,
+        )
+    if cabecalho.titulo:
+        print(f"  Título: {cabecalho.titulo}")
+    if cabecalho.descricao:
+        print(f"  Descrição: {cabecalho.descricao}")
+    print(
+        f"  Capturado em: {cabecalho.timestamp_iso_utc} "
+        f"(epoch {cabecalho.timestamp_unix})"
+    )
+    print(f"  Frequência: {cabecalho.frequencia_hz} Hz total | canais: {list(cabecalho.lista_canais)}")
+    if cabecalho.total_amostras_gravadas > 0:
+        duracao_real = cabecalho.duracao_real_segundos
+        texto_duracao = f"{duracao_real:.3f} s reais" if duracao_real is not None else "duração real desconhecida"
+        texto_pedida = (
+            f" (pedida: {cabecalho.duracao_pedida_segundos:.3f} s)"
+            if cabecalho.duracao_pedida_segundos > 0 else ""
+        )
+        print(
+            f"  {cabecalho.blocos_gravados} bloco(s), "
+            f"{cabecalho.total_amostras_gravadas} amostra(s) brutas -- {texto_duracao}{texto_pedida}"
+        )
+    else:
+        print(
+            "  blocos_gravados/total_amostras_gravadas = 0 -- captura "
+            "provavelmente interrompida antes da atualização final do "
+            "cabeçalho (os dados de amostra em si não são afetados por isso)."
+        )
+
+
+def contar_amostras_arquivo_bin(caminho: Path, formato: str, offset: int) -> int:
+    """Conta quantas amostras cabem no arquivo depois de 'offset' bytes, só
+    pelo tamanho em disco (sem abrir memmap) -- usado nas checagens de
+    consistência contra o cabeçalho, antes de efetivamente carregar os
+    dados."""
+    tamanho_bytes = caminho.stat().st_size
+    itemsize = FORMATOS_NUMPY[formato].itemsize
+    return max(0, tamanho_bytes - offset) // itemsize
+
+
+def conferir_consistencia_cabecalho(cabecalho: CabecalhoArquivo, canais: list[int],
+                                     canais_veio_do_cabecalho: bool,
+                                     n_amostras_no_arquivo: int, formato: str) -> None:
+    """Confere os metadados do cabeçalho contra o que foi de fato
+    fornecido/carregado. A checagem de --canais só roda quando --canais foi
+    informado explicitamente (comparar o cabeçalho contra ele mesmo seria
+    tautológico); as outras duas (total de amostras, bytes por amostra)
+    sempre rodam."""
+    if not canais_veio_do_cabecalho:
+        if len(canais) != cabecalho.num_canais:
+            raise SystemExit(
+                f"Erro: --canais tem {len(canais)} canal(is) ({canais}), mas "
+                f"o cabeçalho da captura registra {cabecalho.num_canais} "
+                f"canal(is) ({list(cabecalho.lista_canais)}). Isso não é só "
+                f"um rótulo errado -- a CONTAGEM de canais define o passo da "
+                f"desintercalação; usar a contagem errada embaralha todos os "
+                f"canais entre si. Ajuste --canais para ter "
+                f"{cabecalho.num_canais} entrada(s), ou omita a flag para "
+                f"usar os canais do cabeçalho automaticamente."
+            )
+        if tuple(canais) != cabecalho.lista_canais:
+            print(
+                f"Aviso: --canais {canais} tem a mesma quantidade de canais "
+                f"do cabeçalho, mas números diferentes de "
+                f"{list(cabecalho.lista_canais)} -- a desintercalação em si "
+                f"fica correta (mesma contagem), mas os RÓTULOS de canal no "
+                f"gráfico/CSV/HDF5 vão descrever fisicamente canais "
+                f"diferentes dos usados na captura.",
+                file=sys.stderr,
+            )
+
+    if cabecalho.total_amostras_gravadas > 0 and n_amostras_no_arquivo != cabecalho.total_amostras_gravadas:
+        print(
+            f"Aviso: o cabeçalho registra {cabecalho.total_amostras_gravadas} "
+            f"amostra(s) brutas gravadas, mas o arquivo tem "
+            f"{n_amostras_no_arquivo} amostra(s) após o cabeçalho -- pode "
+            f"estar truncado, concatenado com outro arquivo, ou algo além do "
+            f"esperado.",
+            file=sys.stderr,
+        )
+
+    bytes_formato = FORMATOS_NUMPY[formato].itemsize
+    if cabecalho.bytes_por_amostra != 0 and cabecalho.bytes_por_amostra != bytes_formato:
+        print(
+            f"Aviso: o cabeçalho registra {cabecalho.bytes_por_amostra} "
+            f"byte(s) por amostra, mas --formato {formato} interpreta cada "
+            f"amostra como {bytes_formato} byte(s) -- os dados podem ser "
+            f"lidos incorretamente.",
+            file=sys.stderr,
+        )
+
+
+# ---------------------------------------------------------------------------
 # 1. Leitura e escrita de amostras
 # ---------------------------------------------------------------------------
 
@@ -120,19 +464,31 @@ def detectar_tipo_arquivo(caminho: Path) -> str:
     )
 
 
-def carregar_amostras_bin(caminho: Path, formato: str) -> np.memmap:
+def carregar_amostras_bin(caminho: Path, formato: str, offset: int = 0) -> np.memmap:
     """Memory-map: só as páginas efetivamente acessadas (--inicio/--fim, ou
-    o processamento em blocos da conversão) são carregadas na RAM."""
+    o processamento em blocos da conversão/exportação) são carregadas na
+    RAM. 'offset' pula os primeiros N bytes do arquivo antes de começar a
+    interpretar amostras -- usado para pular o cabeçalho de 1024 bytes dos
+    '.bin' novos (ver CABECALHO_TAMANHO_TOTAL/ler_cabecalho).
+
+    offset=1024 funciona normalmente mesmo sem estar alinhado ao tamanho de
+    página do SO (tipicamente 4096 bytes): o requisito documentado do
+    numpy.memmap é só que 'offset' seja múltiplo do itemsize do dtype (2
+    bytes para int16/uint16 -- 1024 é múltiplo de 2). O numpy resolve o
+    alinhamento de baixo nível exigido pelo mmap() do SO internamente."""
     dtype = FORMATOS_NUMPY[formato]
     try:
-        amostras = np.memmap(caminho, dtype=dtype, mode="r")
+        amostras = np.memmap(caminho, dtype=dtype, mode="r", offset=offset)
     except FileNotFoundError:
         raise SystemExit(f"Erro: arquivo '{caminho}' não encontrado.")
     except ValueError as e:
-        raise SystemExit(f"Erro ao abrir '{caminho}': {e}")
+        raise SystemExit(f"Erro ao abrir '{caminho}' (offset={offset} byte(s)): {e}")
 
     if amostras.size == 0:
-        raise SystemExit(f"Erro: '{caminho}' está vazio (0 amostras).")
+        raise SystemExit(
+            f"Erro: '{caminho}' está vazio (0 amostras) após pular "
+            f"{offset} byte(s) de cabeçalho."
+        )
     return amostras
 
 
@@ -165,10 +521,12 @@ def carregar_amostras_csv(caminho: Path, formato: str) -> np.ndarray:
     return amostras
 
 
-def carregar_amostras(caminho: Path, formato: str):
+def carregar_amostras(caminho: Path, formato: str, offset: int = 0):
+    """'offset' só é relevante (e só é repassado) para '.bin' -- um '.csv'
+    não tem o conceito de cabeçalho binário no início do arquivo."""
     tipo = detectar_tipo_arquivo(caminho)
     if tipo == "bin":
-        return carregar_amostras_bin(caminho, formato)
+        return carregar_amostras_bin(caminho, formato, offset=offset)
     return carregar_amostras_csv(caminho, formato)
 
 
@@ -346,12 +704,15 @@ def aplicar_filtro_digital(sinal: np.ndarray, fs: float, tipo: str,
 def bin_para_csv(caminho_bin: Path, caminho_csv: Path, formato: str,
                   inicio: int, fim: int | None, incluir_tensao: bool,
                   canais: list[int], faixas: list[float], ganhos: list[float],
-                  offsets: list[float],
+                  offsets: list[float], offset_amostras: int = 0,
                   tamanho_chunk: int = TAMANHO_CHUNK_PADRAO) -> int:
     """Converte em blocos, sem carregar o '.bin' inteiro na RAM. Ganha uma
     coluna 'canal' quando len(canais) > 1 (formato de 1 canal permanece
-    idêntico ao de antes do suporte multi-canal)."""
-    amostras = carregar_amostras_bin(caminho_bin, formato)
+    idêntico ao de antes do suporte multi-canal). 'offset_amostras' pula o
+    cabeçalho de 1024 bytes quando presente (ver ler_cabecalho em main()) --
+    --inicio/--fim continuam contando a partir da primeira amostra REAL
+    (pós-cabeçalho), nunca do byte 0 do arquivo."""
+    amostras = carregar_amostras_bin(caminho_bin, formato, offset=offset_amostras)
     _, inicio, fim, total = selecionar_intervalo(amostras, inicio, fim)
 
     num_canais = len(canais)
@@ -488,7 +849,8 @@ def csv_para_bin(caminho_csv: Path, caminho_bin: Path, formato: str,
 def converter_arquivo(caminho_entrada: Path, caminho_saida: Path, formato: str,
                        inicio: int, fim: int | None, incluir_tensao: bool,
                        canais: list[int], faixas: list[float], ganhos: list[float],
-                       offsets: list[float], tamanho_chunk: int) -> None:
+                       offsets: list[float], tamanho_chunk: int,
+                       offset_amostras: int = 0) -> None:
     """Direção decidida pelas extensões de entrada/saída."""
     tipo_entrada = detectar_tipo_arquivo(caminho_entrada)
     tipo_saida = detectar_tipo_arquivo(caminho_saida)
@@ -507,7 +869,8 @@ def converter_arquivo(caminho_entrada: Path, caminho_saida: Path, formato: str,
 
     if tipo_entrada == "bin" and tipo_saida == "csv":
         n = bin_para_csv(caminho_entrada, caminho_saida, formato, inicio, fim,
-                          incluir_tensao, canais, faixas, ganhos, offsets, tamanho_chunk)
+                          incluir_tensao, canais, faixas, ganhos, offsets,
+                          offset_amostras, tamanho_chunk)
         extra = " | coluna tensao_v incluída" if incluir_tensao else ""
         extra_canal = (f" | {len(canais)} canais intercalados {canais} (coluna 'canal')"
                        if len(canais) > 1 else "")
@@ -517,6 +880,166 @@ def converter_arquivo(caminho_entrada: Path, caminho_saida: Path, formato: str,
         n = csv_para_bin(caminho_entrada, caminho_saida, formato, inicio, fim, tamanho_chunk)
         print(f"Convertido: '{caminho_entrada}' (.csv) -> '{caminho_saida}' (.bin) | "
               f"{n} amostra(s) | --formato {formato}")
+        print(
+            "Aviso: o '.bin' reconstruído NÃO tem o cabeçalho de 1024 bytes "
+            "(magic 'SHAN', título, timestamp, etc.) -- essa informação não "
+            "sobrevive a uma ida por '.csv', que não tem onde guardá-la. "
+            "Ferramentas que leem este arquivo de volta vão tratá-lo como "
+            "captura no formato antigo (sem cabeçalho).",
+            file=sys.stderr,
+        )
+
+
+# ---------------------------------------------------------------------------
+# 4.1 Modo de exportação HDF5
+# ---------------------------------------------------------------------------
+
+def exportar_hdf5(caminho_bin: Path, caminho_h5: Path, formato: str,
+                   canais: list[int], cabecalho: CabecalhoArquivo | None,
+                   faixas: list[float], ganhos: list[float], offsets: list[float],
+                   incluir_tensao: bool, offset_amostras: int,
+                   inicio: int, fim: int | None,
+                   tamanho_chunk: int = TAMANHO_CHUNK_PADRAO) -> tuple[int, int]:
+    """Converte 'caminho_bin' para HDF5 em 'caminho_h5'.
+
+    REGRA CRÍTICA DE MEMÓRIA: a gravação percorre o memmap em blocos de até
+    'tamanho_chunk' amostras BRUTAS por vez -- em nenhum momento o array
+    completo é materializado na RAM. Com SAMPLES_PER_BUFFER=1.048.576
+    amostras por bloco de captura e --duracao/--blocos 0 permitindo captura
+    indefinida do lado do firmware, um '.bin' de uma sessão de bancada longa
+    pode facilmente passar de dezenas de GB -- carregar tudo de uma vez não
+    é viável nem no notebook mais robusto. A fatia [inicio:fim] do memmap a
+    cada iteração só toca as páginas do SO correspondentes àquele bloco
+    (mesmo princípio de bin_para_csv, mais acima); np.asarray sobre essa
+    fatia já limitada não força a leitura do arquivo inteiro.
+
+    Layout do '.h5' resultante:
+      /amostras   dataset 2D (n_amostras_por_canal, num_canais), dtype igual
+                  a --formato (uint16/int16) -- RAW, sem calibração (mesma
+                  filosofia "round-trip sem perdas" da conversão .bin<->.csv
+                  existente). Coluna i = canal canais[i] (ver atributo
+                  'canais_ordem' na raiz).
+      /tensao_v   [só se incluir_tensao=True] dataset 2D igual, dtype
+                  float32, já calibrado em Volts (mesmo cálculo de
+                  converter_para_tensao usado no resto do script).
+      attrs (raiz) metadados do cabeçalho da captura (se disponível, via
+                  CabecalhoArquivo.para_attrs_hdf5) + parâmetros de
+                  calibração usados (faixa/ganho/offset por canal) +
+                  proveniência (arquivo de origem, --formato).
+
+    Retorna (n_amostras_por_canal_exportadas, num_canais).
+    """
+    try:
+        import h5py
+    except ImportError:
+        raise SystemExit(
+            "Erro: --export-hdf5 precisa da biblioteca 'h5py', que não está "
+            "instalada neste Python. Instale com 'pip install h5py' (ou "
+            "'pip install h5py --break-system-packages' conforme o seu "
+            "ambiente), ou rode este script via 'uv run adc_tool.py ...' -- "
+            "h5py já está declarado nas dependências inline (PEP 723) no "
+            "topo do arquivo e seria instalado automaticamente nesse caso."
+        )
+
+    dtype = FORMATOS_NUMPY[formato]
+    num_canais = len(canais)
+
+    amostras = carregar_amostras_bin(caminho_bin, formato, offset=offset_amostras)
+    _, inicio, fim, _total = selecionar_intervalo(amostras, inicio, fim)
+    n_disponivel = fim - inicio
+
+    n_linhas_total = n_disponivel // num_canais
+    n_truncado = n_linhas_total * num_canais
+    if n_truncado < n_disponivel:
+        print(
+            f"Aviso: {n_disponivel - n_truncado} amostra(s) no final do "
+            f"recorte não completam um ciclo de {num_canais} canais e foram "
+            f"descartadas na exportação HDF5.",
+            file=sys.stderr,
+        )
+    if n_linhas_total == 0:
+        raise SystemExit(
+            f"Erro: nenhuma linha completa de {num_canais} canais disponível "
+            f"para exportar ({n_disponivel} amostra(s) brutas na janela "
+            f"selecionada)."
+        )
+
+    with h5py.File(caminho_h5, "w") as f5:
+        # ---- attrs na raiz: cabeçalho + calibração + proveniência -------
+        if cabecalho is not None:
+            for chave, valor in cabecalho.para_attrs_hdf5().items():
+                f5.attrs[chave] = valor
+        f5.attrs["arquivo_origem"] = caminho_bin.name
+        f5.attrs["offset_amostras_bytes"] = offset_amostras
+        f5.attrs["formato_amostra"] = formato
+        f5.attrs["canais_ordem"] = np.array(canais, dtype=np.uint8)
+        f5.attrs["faixa_v_por_canal"] = np.array(faixas, dtype=np.float64)
+        f5.attrs["ganho_por_canal"] = np.array(ganhos, dtype=np.float64)
+        f5.attrs["offset_v_por_canal"] = np.array(offsets, dtype=np.float64)
+
+        dataset_bruto = f5.create_dataset(
+            "amostras", shape=(n_linhas_total, num_canais), dtype=dtype, chunks=True,
+        )
+        dataset_bruto.attrs["descricao"] = (
+            "Amostras brutas (códigos do ADC, sem calibração). Linha = 1 "
+            "instante de amostragem; coluna i = canal canais_ordem[i] (ver "
+            "atributo na raiz)."
+        )
+
+        dataset_tensao = None
+        if incluir_tensao:
+            dataset_tensao = f5.create_dataset(
+                "tensao_v", shape=(n_linhas_total, num_canais), dtype=np.float32, chunks=True,
+            )
+            dataset_tensao.attrs["descricao"] = (
+                "Amostras calibradas em Volts (faixa/ganho/offset por canal "
+                "-- ver atributos 'faixa_v_por_canal'/'ganho_por_canal'/"
+                "'offset_v_por_canal' na raiz). float32."
+            )
+
+        # Tamanho de bloco em LINHAS (amostras/canal) derivado do tamanho de
+        # bloco em amostras BRUTAS (mesma unidade de --tamanho-chunk usada
+        # em bin_para_csv, por consistência) -- garante que cada bloco lido
+        # do memmap seja um múltiplo exato de num_canais, então nunca corta
+        # uma "linha" ao meio entre duas iterações.
+        linhas_por_bloco = max(1, tamanho_chunk // num_canais)
+        amostras_por_bloco = linhas_por_bloco * num_canais
+
+        linha_atual = 0
+        for ini_bloco in range(inicio, inicio + n_truncado, amostras_por_bloco):
+            fim_bloco = min(ini_bloco + amostras_por_bloco, inicio + n_truncado)
+
+            # Único ponto por iteração onde um pedaço do memmap "materializa"
+            # de verdade -- a fatia [ini_bloco:fim_bloco] só toca as páginas
+            # do SO correspondentes A ESTE BLOCO; np.asarray sobre uma fatia
+            # já delimitada não lê o arquivo inteiro (mesmo padrão já usado
+            # em bin_para_csv, seção 4 acima).
+            bloco_bruto = np.asarray(amostras[ini_bloco:fim_bloco])
+            assert len(bloco_bruto) % num_canais == 0, (
+                "bloco não fechado em um múltiplo de num_canais -- bug na "
+                "lógica de particionamento em blocos (linhas_por_bloco)"
+            )
+            n_linhas_bloco = len(bloco_bruto) // num_canais
+            matriz_bloco = bloco_bruto.reshape(n_linhas_bloco, num_canais)
+
+            dataset_bruto[linha_atual: linha_atual + n_linhas_bloco, :] = matriz_bloco
+
+            if incluir_tensao:
+                tensao_bloco = np.empty((n_linhas_bloco, num_canais), dtype=np.float32)
+                for i in range(num_canais):
+                    tensao_bloco[:, i] = converter_para_tensao(
+                        matriz_bloco[:, i], faixas[i], ganhos[i], formato, offsets[i]
+                    )
+                dataset_tensao[linha_atual: linha_atual + n_linhas_bloco, :] = tensao_bloco
+
+            linha_atual += n_linhas_bloco
+
+        assert linha_atual == n_linhas_total, (
+            "número de linhas escritas não bate com n_linhas_total -- bug na "
+            "lógica de particionamento em blocos"
+        )
+
+    return n_linhas_total, num_canais
 
 
 # ---------------------------------------------------------------------------
@@ -1085,6 +1608,9 @@ def montar_parser():
             "  # Converter .bin -> .csv\n"
             "  %(prog)s -c captura.bin -o captura.csv\n"
             "\n"
+            "  # Exportar para HDF5 (canais/frequência do cabeçalho, se houver)\n"
+            "  %(prog)s captura.bin --export-hdf5 captura.h5 --incluir-tensao\n"
+            "\n"
             "  # Multi-canal: 3 canais, ganho por canal, FFT independente\n"
             "  %(prog)s captura.bin -f 102400 --canais 0,1,3 --ganho "
             "19.53,0.1,1.0 --fft\n"
@@ -1100,9 +1626,11 @@ def montar_parser():
     )
     parser.add_argument(
         "-f", "--frequencia", type=float, default=None, metavar="HZ",
-        help="[PLOTAGEM] Frequência de amostragem TOTAL da captura, em Hz. "
-             "Com N canais em --canais, a frequência EFETIVA por canal é "
-             "esse valor / N. Obrigatório nesse modo."
+        help="[PLOTAGEM/HDF5] Frequência de amostragem TOTAL da captura, em "
+             "Hz. Com N canais em --canais, a frequência EFETIVA por canal é "
+             "esse valor / N. Sem esta flag: usa a frequência registrada no "
+             "cabeçalho do '.bin' (se houver); senão, é obrigatória no modo "
+             "de plotagem."
     )
 
     grupo_multicanal = parser.add_argument_group(
@@ -1112,9 +1640,11 @@ def montar_parser():
         "desintercalar. Válidas na plotagem e na conversão '.bin'->'.csv'.",
     )
     grupo_multicanal.add_argument(
-        "--canais", type=str, default=CANAL_PADRAO, metavar="LISTA",
+        "--canais", type=str, default=None, metavar="LISTA",
         help="Canais no arquivo, separados por vírgula, na ordem impressa "
-             "por `ler_adc` durante a captura (ex.: '0,1,3'). Padrão: '1'."
+             "por `ler_adc` durante a captura (ex.: '0,1,3'). Sem esta "
+             "flag: usa os canais registrados no cabeçalho do '.bin' "
+             f"(se houver); senão, padrão histórico '{CANAL_PADRAO}'."
     )
     grupo_multicanal.add_argument(
         "--canais-exibir", type=str, default=None, metavar="LISTA",
@@ -1145,6 +1675,26 @@ def montar_parser():
     grupo_conversao.add_argument(
         "--tamanho-chunk", type=int, default=TAMANHO_CHUNK_PADRAO, metavar="N",
         help=f"Amostras por bloco na conversão (padrão: {TAMANHO_CHUNK_PADRAO})."
+    )
+
+    grupo_hdf5 = parser.add_argument_group(
+        "Modo de exportação HDF5",
+        "Ativado por --export-hdf5; usa o argumento posicional 'arquivo' "
+        "como entrada (um '.bin'). Sempre grava em blocos sobre o memmap -- "
+        "nunca carrega a captura inteira na RAM. Ignora --fft/--welch/"
+        "--picos/--agrupar-bandas/--canais-exibir (só se aplicam ao modo de "
+        "plotagem).",
+    )
+    grupo_hdf5.add_argument(
+        "--export-hdf5", type=Path, default=None, metavar="ARQUIVO.h5",
+        dest="export_hdf5",
+        help="Converte 'arquivo' ('.bin') para HDF5 em ARQUIVO.h5. Grava "
+             "/amostras (códigos brutos do ADC, 2D: amostras_por_canal x "
+             "num_canais) e, com --incluir-tensao, também /tensao_v "
+             "(calibrado, float32). O cabeçalho da captura (se houver) e os "
+             "parâmetros de calibração são gravados como atributos na raiz. "
+             "Requer 'h5py' instalado (ou rodar via 'uv run', que já "
+             "declara a dependência)."
     )
 
     grupo_filtro = parser.add_argument_group(
@@ -1324,7 +1874,36 @@ def main(argv=None):
     parser = montar_parser()
     args = parser.parse_args(argv)
 
-    canais = analisar_lista_canais(args.canais, "--canais")
+    if args.export_hdf5 is not None and args.converter is not None:
+        parser.error("--export-hdf5 e -c/--converter não podem ser usados juntos -- escolha um modo.")
+
+    # -------------------------------------------------------------- #
+    # Detecção do cabeçalho -- ANTES de resolver --canais/-f, que podem
+    # cair de volta nos metadados dele quando não informados explicitamente.
+    # O arquivo de ENTRADA muda conforme o modo: -c/--converter usa seu
+    # próprio caminho; plotagem e --export-hdf5 usam o posicional 'arquivo'.
+    # Só um '.bin' pode ter esse cabeçalho -- um '.csv' nunca tem.
+    # -------------------------------------------------------------- #
+    caminho_entrada = args.converter if args.converter is not None else args.arquivo
+
+    cabecalho: CabecalhoArquivo | None = None
+    offset_amostras = 0
+    if caminho_entrada is not None and caminho_entrada.suffix.lower() == ".bin" and caminho_entrada.exists():
+        cabecalho = ler_cabecalho(caminho_entrada)
+        if cabecalho is not None:
+            offset_amostras = CABECALHO_TAMANHO_TOTAL
+
+    # --canais: explícito (CLI) > cabeçalho da captura > padrão histórico.
+    if args.canais is not None:
+        canais = analisar_lista_canais(args.canais, "--canais")
+        canais_veio_do_cabecalho = False
+    elif cabecalho is not None:
+        canais = list(cabecalho.lista_canais)
+        canais_veio_do_cabecalho = True
+    else:
+        canais = analisar_lista_canais(CANAL_PADRAO, "--canais")
+        canais_veio_do_cabecalho = False
+
     if args.canais_exibir is not None:
         canais_exibir = analisar_lista_canais(args.canais_exibir, "--canais-exibir")
         validar_subconjunto_canais(canais_exibir, canais)
@@ -1334,6 +1913,47 @@ def main(argv=None):
     faixas = analisar_lista_calibracao(args.faixa, len(canais), "--faixa")
     ganhos = analisar_lista_calibracao(args.ganho, len(canais), "--ganho")
     offsets = resolver_offsets_por_canal(args.offset, faixas, args.formato, len(canais))
+
+    if cabecalho is not None:
+        imprimir_resumo_cabecalho(cabecalho)
+        n_amostras_arquivo = contar_amostras_arquivo_bin(caminho_entrada, args.formato, offset_amostras)
+        conferir_consistencia_cabecalho(cabecalho, canais, canais_veio_do_cabecalho, n_amostras_arquivo, args.formato)
+
+    # -------------------------------------------------------------- #
+    # Modo de exportação HDF5
+    # -------------------------------------------------------------- #
+    if args.export_hdf5 is not None:
+        if args.arquivo is None:
+            parser.error("--export-hdf5 precisa do argumento posicional 'arquivo' (o '.bin' de entrada).")
+        if detectar_tipo_arquivo(args.arquivo) != "bin":
+            parser.error("--export-hdf5 só aceita um arquivo de entrada '.bin'.")
+        if args.canais_exibir is not None:
+            print(
+                "Aviso: --canais-exibir é ignorado em --export-hdf5 (todos "
+                "os canais de --canais são exportados).",
+                file=sys.stderr,
+            )
+        flags_de_plotagem_ignoradas = (
+            args.fft is not None or args.welch or args.picos is not None or args.agrupar_bandas is not None
+        )
+        if flags_de_plotagem_ignoradas:
+            print(
+                "Aviso: --export-hdf5 ignora --fft/--welch/--picos/"
+                "--agrupar-bandas (só se aplicam ao modo de plotagem).",
+                file=sys.stderr,
+            )
+
+        n_linhas, n_canais_exportados = exportar_hdf5(
+            args.arquivo, args.export_hdf5, args.formato, canais, cabecalho,
+            faixas, ganhos, offsets, args.incluir_tensao, offset_amostras,
+            args.inicio, args.fim, args.tamanho_chunk,
+        )
+        extra_tensao = " + tensao_v calibrada" if args.incluir_tensao else ""
+        print(
+            f"Exportado: '{args.arquivo}' -> '{args.export_hdf5}' | "
+            f"{n_linhas} amostra(s)/canal x {n_canais_exportados} canal(is){extra_tensao}"
+        )
+        return
 
     # -------------------------------------------------------------- #
     # Modo de conversão
@@ -1349,6 +1969,7 @@ def main(argv=None):
         converter_arquivo(
             args.converter, args.saida, args.formato, args.inicio, args.fim,
             args.incluir_tensao, canais, faixas, ganhos, offsets, args.tamanho_chunk,
+            offset_amostras,
         )
         return
 
@@ -1357,11 +1978,21 @@ def main(argv=None):
     # -------------------------------------------------------------- #
     if args.arquivo is None:
         parser.error("o argumento 'arquivo' é obrigatório no modo de plotagem.")
-    if args.frequencia is None:
-        parser.error("-f/--frequencia é obrigatório no modo de plotagem.")
+
+    # -f/--frequencia: explícita (CLI) > cabeçalho da captura > obrigatória.
+    if args.frequencia is not None:
+        frequencia_total = args.frequencia
+    elif cabecalho is not None and cabecalho.frequencia_hz > 0:
+        frequencia_total = float(cabecalho.frequencia_hz)
+        print(f"usando a frequência: {frequencia_total:g} Hz")
+    else:
+        parser.error(
+            "-f/--frequencia é obrigatório no modo de plotagem (nenhum "
+            "cabeçalho com essa informação foi encontrado em 'arquivo')."
+        )
 
     num_canais = len(canais)
-    fs_efetiva = args.frequencia / num_canais
+    fs_efetiva = frequencia_total / num_canais
     usa_fft = args.fft is not None
     usa_welch = args.welch
 
@@ -1430,7 +2061,7 @@ def main(argv=None):
         )
 
     tipo_arquivo = detectar_tipo_arquivo(args.arquivo)
-    amostras = carregar_amostras(args.arquivo, args.formato)
+    amostras = carregar_amostras(args.arquivo, args.formato, offset=offset_amostras)
     bruto, idx_inicio, idx_fim, total = selecionar_intervalo(amostras, args.inicio, args.fim)
 
     por_canal_bruto = desintercalar(bruto, canais, canais_exibir)
@@ -1460,17 +2091,17 @@ def main(argv=None):
         idx0 = indice_no_ciclo[canais_exibir[0]]
         print(f"Conversão: --formato {args.formato} | --faixa {faixas[idx0]} V | "
               f"--offset {offsets[idx0]} V | --ganho {ganhos[idx0]}")
-        print(f"Janela selecionada: amostras {idx_inicio}..{idx_fim} "
+        print(f"Janela de dados: amostras {idx_inicio}..{idx_fim} "
               f"({n_por_canal} amostras, {n_por_canal / fs_efetiva * 1000:.2f} ms)")
     else:
         print(f"Canais na captura: {canais} | exibindo: {canais_exibir} | layout: {args.layout_canais}")
-        print(f"Frequência total {args.frequencia:g} Hz / {num_canais} canais -> "
+        print(f"Frequência total {frequencia_total:g} Hz / {num_canais} canais -> "
               f"frequência efetiva por canal: {fs_efetiva:g} Hz")
         for canal in canais_exibir:
             idx = indice_no_ciclo[canal]
             print(f"  Canal {canal}: --formato {args.formato} | --faixa {faixas[idx]} V | "
                   f"--offset {offsets[idx]} V | --ganho {ganhos[idx]}")
-        print(f"Janela selecionada: amostras brutas {idx_inicio}..{idx_fim} "
+        print(f"Janela de dados: amostras brutas {idx_inicio}..{idx_fim} "
               f"({n_por_canal} amostras/canal, {n_por_canal / fs_efetiva * 1000:.2f} ms/canal)")
 
     if args.filtro_passa_alta is not None or args.filtro_passa_baixa is not None:
@@ -1549,8 +2180,17 @@ def main(argv=None):
         rotulo_espectro_y = "Magnitude (dBV)" if args.modo_espectro == "tom" else "PSD (dB re V²/Hz)"
     limite_inferior_db = -100.0 if (args.modo_espectro == "tom" and args.agrupar_bandas is None) else None
 
+    # Usa o título do cabeçalho da captura (--titulo no firmware) para
+    # enriquecer o título do gráfico, quando presente -- puramente
+    # cosmético, não afeta nenhum cálculo.
+    titulo_exibicao = (
+        f"{cabecalho.titulo} ({args.arquivo.name})"
+        if (cabecalho is not None and cabecalho.titulo)
+        else args.arquivo.name
+    )
+
     plotar_multicanal(
-        por_canal_tensao, fs_efetiva, idx_inicio, infos_espectro, args.arquivo.name,
+        por_canal_tensao, fs_efetiva, idx_inicio, infos_espectro, titulo_exibicao,
         args.saida, args.layout_canais, rotulo_espectro_y, limite_inferior_db,
     )
 
