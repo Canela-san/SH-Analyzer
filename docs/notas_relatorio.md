@@ -9,10 +9,17 @@
 > apresentado sem essas marcações provém diretamente do código-fonte e dos
 > testes já registrados, podendo ser utilizado com confiança.
 >
-> Última atualização: 15/09/2026 — cobre o período compreendido entre a
+> Última atualização: 23/09/2026 — cobre o período compreendido entre a
 > última apresentação (placa ainda sem Assembly, modo manual, sem
-> `adc_tool.py`, sem suporte multi-canal) e a implementação do cabeçalho de
-> metadados com exportação para HDF5.
+> `adc_tool.py`, sem suporte multi-canal) e o estado atual do repositório:
+> cabeçalho de metadados com exportação para HDF5, migração completa para o
+> modo automático (AUTO_RST) do ADS8688, e a refatoração de `adc_tool.py`
+> orientada a DSP (método de Welch, normalização tom/ruído, bandas, extração
+> de picos — Marco 7, novo nesta atualização). Esta revisão também
+> reconciliou a cronologia com uma análise completa do repositório atual —
+> ver `docs/melhorias-propostas.md` para os achados de engenharia que não
+> são, em si, matéria de relatório (itens de robustez, higiene de código e
+> organização de repositório).
 
 ---
 
@@ -61,8 +68,11 @@
   captura acompanhada de um cabeçalho de metadados autodescritivo
   (frequência, canais, timestamp, título/descrição, checksum de
   integridade); e ferramenta própria de análise em Python (`adc_tool.py`),
-  com FFT livre de vazamento espectral, filtragem digital, suporte
-  multi-canal completo e exportação para o formato HDF5.
+  com duas estratégias de análise espectral complementares — FFT
+  ciclo-sincronizada (fundamental/harmônicos) e método de Welch com
+  normalização tom/ruído, agrupamento em bandas e extração de picos
+  (supraharmônicos, o próprio alvo científico do projeto) —, filtragem
+  digital, suporte multi-canal completo e exportação para o formato HDF5.
 
 ---
 
@@ -200,7 +210,14 @@ subida/descida em algum ponto do caminho de sinal).
 
 **Causa raiz e correção:** os **jumpers longos** utilizados para conectar a
 placa de aquisição ao frontend analógico na bancada. O problema foi
-resolvido eliminando-se os jumpers e conectando as placas diretamente.
+resolvido eliminando-se os jumpers e conectando as placas diretamente. Essa
+correção permanece em vigor no estado atual do projeto — `docs/
+contexto_projeto.md` lista a integridade de sinal entre as duas placas como
+item validado em hardware, e o isolador galvânico documentado hoje
+(Analog Devices ADuM3150) já é um isolador digital dedicado, não um
+optoacoplador simples — reforçando que a causa do problema original era
+mesmo de integridade de sinal (conexão física), não de um componente
+inadequado.
 
 **Relevância para o relatório:** este marco ilustra um processo de
 depuração sistemático — sintoma → desenvolvimento de ferramenta de
@@ -221,7 +238,7 @@ registrar, não apenas o resultado final.
       (situação anterior) em contraste com uma medição íntegra (situação
       corrigida), no mesmo canal e sob a mesma condição.
 
-### Marco 5 — Ferramenta de Análise em Python (`adc_tool.py`)
+### Marco 5 — Ferramenta de Análise em Python (`adc_tool.py`) — Versão Inicial
 
 **Justificativa, ainda que fora do escopo formal da IC:** sem uma
 ferramenta própria de conversão, plotagem e análise espectral, não havia
@@ -258,6 +275,15 @@ visualização.
   (faixa/ganho/offset) por canal e layout de plotagem configurável.
 - Filtragem digital opcional (Butterworth passa-baixa/passa-alta, fase
   zero, via `sosfiltfilt`).
+
+**Limitação desta etapa, resolvida no Marco 7:** a estratégia acima (corte
+em ciclos inteiros) elimina vazamento espectral para a fundamental e seus
+harmônicos, cuja fase está travada ao ciclo da rede — mas **não** ataca o
+vazamento de conteúdo sem essa relação de fase, que é exatamente o caso dos
+supraharmônicos (ruído de conversores eletrônicos de potência chaveados).
+Nesta etapa, a ferramenta ainda não tinha um caminho espectral
+matematicamente apropriado para o próprio objeto de medição do projeto —
+ver Marco 7.
 
 **Relevância para a apresentação:** a estratégia de FFT sem vazamento
 (particularmente a etapa 5) constitui um detalhe metodológico que evidencia
@@ -296,7 +322,10 @@ a cada amostra.
 - O índice de canal em esquema round-robin, anteriormente mantido em
   software pela PRU no modo manual multi-canal, foi eliminado — essa
   função passou a ser executada pelo próprio ADS8688, em hardware, sempre
-  em **ordem crescente** de canal.
+  em **ordem crescente** de canal. O antigo modo manual (single-channel e
+  multi-canal) não foi mantido como opção alternativa: foi removido por
+  completo do firmware, a pedido explícito registrado no próprio
+  código-fonte.
 - Benefício adicional identificado, ainda não quantificado por
   osciloscópio: como o comando enviado a cada amostra passa a ser
   invariavelmente zero (`NO_OP`), o pino MOSI permanece eletricamente
@@ -313,12 +342,15 @@ limitado das instruções de desvio condicional "rápido" da PRU, capazes de
 saltar no máximo ±511 posições — insuficiente para o corpo do laço, que
 compreendia uma transação SPI completa. A correção substituiu o salto de
 retorno por um salto incondicional, sem essa restrição, mantendo apenas o
-teste de condição como salto curto.
+teste de condição como salto curto. Na versão final entregue, as duas
+transações de configuração acabaram implementadas por extenso (sem laço),
+já que suas durações diferentes (24 vs. 32 ciclos) tornariam um laço
+compartilhado mais complexo do que o ganho de código justificaria.
 
 **Verificação do orçamento de memória:** a inspeção do arquivo `.map`
 gerado pela compilação confirmou que o código coube com margem
 confortável, utilizando aproximadamente 67% dos 8 KB de `PRU_IMEM`
-disponíveis.
+disponíveis (~5.480 de 8.192 bytes).
 
 **Problema 2 — falha de hardware, não restrita à compilação.** A primeira
 tentativa de captura multi-canal produziu canais **idênticos** entre si,
@@ -343,7 +375,13 @@ canais 1 e 3 fisicamente conectados à tensão de rede e os canais 0, 2 e 4
 deliberadamente deixados desconectados, os canais 1 e 3 exibiram a forma de
 onda de 60 Hz esperada, ao passo que os canais 0, 2 e 4 apresentaram apenas
 ruído — confirmando que a varredura automática alterna corretamente entre
-os canais habilitados.
+os canais habilitados. A captura de validação rodou a 102,4 kHz totais
+(≈20,48 kHz efetivos por canal) — número que, cruzado com uma reanálise do
+código feita junto com esta atualização (ver `docs/melhorias-propostas.md`,
+item 1.1), já supera uma estimativa antiga de piso de velocidade da
+implementação de bit-banging que não sobreviveu à reescrita para o modo
+automático — um indício indireto, mas concreto, de que a migração também
+trouxe ganho de desempenho, além da simplificação de código.
 
 **Relevância deste marco para o relatório e a apresentação:** reúne todos
 os elementos de um processo de engenharia e depuração bem conduzido —
@@ -369,7 +407,101 @@ Prof. Pomilio.
       técnico; adequada ao relatório, dispensável na apresentação de 1
       hora, salvo disponibilidade de tempo).
 
-### Marco 7 — Cabeçalho de Metadados e Exportação para HDF5
+### Marco 7 — Refatoração de `adc_tool.py` Orientada a DSP: Welch, Normalização Tom/Ruído e Extração de Picos
+
+> ⚠️ **Confirme com você mesmo:** a ordem exata deste marco em relação ao
+> Marco 8 (cabeçalho de metadados/HDF5) não está totalmente certa a partir
+> dos registros disponíveis — os dois podem ter sido desenvolvidos em
+> paralelo ou em ordem inversa à apresentada aqui. O conteúdo técnico
+> abaixo (o que foi construído, por quê, e que já está validado com sinais
+> sintéticos) vem diretamente do estado atual do código e pode ser usado
+> com confiança; só a posição relativa exata na linha do tempo merece uma
+> conferência rápida antes da apresentação.
+
+**Motivação:** a estratégia de FFT ciclo-sincronizada do Marco 5 resolve
+vazamento espectral para a fundamental e seus harmônicos, mas
+supraharmônicos — o próprio objeto de medição do projeto — vêm de
+conversores eletrônicos de potência chaveados e **não têm relação de fase
+com o ciclo da rede**. Não existe corte em ciclos inteiros que elimine
+vazamento desse tipo de conteúdo: sem um caminho de análise dedicado, a
+ferramenta conseguia caracterizar bem a rede elétrica "limpa" (60 Hz e
+harmônicos), mas não o ruído de alta frequência que motiva a pesquisa como
+um todo.
+
+**O que foi construído:** uma refatoração de `adc_tool.py` orientada
+especificamente a essa lacuna, somando ao caminho de FFT já existente:
+
+- **Método de Welch** (`calcular_espectro_welch`, ativado por `--welch`):
+  o sinal é segmentado (tamanho definido por `--resolucao-welch`, padrão
+  200 Hz de resolução), cada segmento é janelado e transformado, e os
+  periodogramas resultantes são **mediados** — reduz a variância da
+  estimativa espectral e suaviza a deriva de frequência de chaveamento
+  (*dithering*) ao longo da captura, sem depender de nenhuma relação de
+  fase com a rede. Processado em lotes vetorizados
+  (`numpy.lib.stride_tricks.sliding_window_view`) em vez de segmento a
+  segmento em laço Python puro, necessário porque uma captura longa com
+  sobreposição pode gerar centenas de milhares de segmentos.
+- **Duas normalizações complementares** (`--modo-espectro {tom, ruido}`):
+  `tom` mede a amplitude de um tom discreto (a fundamental, um harmônico
+  isolado); `ruido` reporta densidade espectral de potência (PSD, V²/Hz),
+  normalizada pelo ganho incoerente/ENBW da janela — necessária para
+  conteúdo de banda larga, onde a normalização `tom` daria uma leitura que
+  muda artificialmente com o tamanho da FFT/segmento para o mesmo ruído
+  físico. Sem essa distinção, comparar a amplitude de um supraharmônico
+  entre duas capturas com parâmetros de FFT diferentes seria
+  matematicamente inválido.
+- **Agrupamento em bandas fixas** (`--agrupar-bandas`, ex. 200 Hz —
+  convenção da literatura de caracterização de supraharmônicos): resume o
+  espectro fino em bandas de largura configurável, tornando o resultado
+  comparável entre capturas com resoluções em frequência diferentes.
+- **Extração quantitativa de picos** (`--picos`, via
+  `scipy.signal.find_peaks` + interpolação parabólica, busca por padrão a
+  partir de 2000 Hz — início convencional da faixa de supraharmônicos
+  segundo a norma IEC 61000-4-7): entrega frequência e amplitude de cada
+  componente supraharmônica individual, sem depender de aumentar o tamanho
+  da FFT para "acertar" o bin exato.
+- Correção da forma do filtro digital (SOS em vez da forma clássica
+  `(b, a)`) para estabilidade numérica na razão fs/f0 extrema típica deste
+  sistema (dezenas de milhares para 1), e um caminho de pré-filtragem
+  passa-alta para remover o resíduo da fundamental antes de `--welch`/
+  `--picos`.
+
+**Validação:** toda essa arquitetura foi validada com sinais sintéticos
+gerados em Python — fundamental de 60 Hz, harmônicos, supraharmônicos
+injetados (incluindo um com *dithering* de frequência) e ruído gaussiano —
+cobrindo `--fft`, `--welch`, ambos os modos de normalização,
+`--agrupar-bandas`, `--picos`, captura multi-canal (com *aliasing*
+proposital acima da Nyquist efetiva de um canal) e o round-trip
+`.bin`↔`.csv`. Os picos injetados são recuperados com erro compatível com a
+resolução espectral (exemplo: 15.321,3 Hz injetado → 15.321,37 Hz
+encontrado por `--picos`). Essa validação confirma a correção
+matemática/numérica da implementação — não ainda a fidelidade do hardware
+de aquisição sobre um sinal real (ver Marco 9).
+
+**Relevância para o relatório e a apresentação:** este é, dos marcos de
+software, o mais diretamente ligado à pergunta de pesquisa do projeto. O
+Marco 5 tornou possível *verificar* que o hardware/firmware funcionam
+(ver a fundamental de 60 Hz numa FFT limpa); este marco é o que torna
+possível, de fato, *medir supraharmônicos* de forma metodologicamente
+defensável — a escolha de Welch em vez de uma FFT longa única, e a
+distinção tom/ruído, são exatamente o tipo de decisão de método que um
+relatório científico precisa justificar explicitamente, não só aplicar.
+
+- [ ] Captura de uma análise `--welch --agrupar-bandas --picos` sobre uma
+      medição real, mostrando supraharmônicos extraídos com frequência e
+      amplitude — provável candidato a imagem central da seção de
+      resultados do relatório, junto com o gráfico dos 5 canais do Marco 6.
+- [ ] Comparativo `--fft` vs. `--welch` sobre o **mesmo** sinal sintético
+      com *dithering* de frequência injetado — visualmente demonstra por
+      que uma FFT ciclo-sincronizada sozinha não seria adequada para
+      supraharmônicos, reforçando a justificativa de método.
+- [ ] ⚠️ **Confirme com você mesmo:** vale registrar com captura de tela o
+      console mostrando o aviso automático de `adc_tool.py` quando
+      `--filtro-passa-alta` é usado junto de `--fft` de forma incompatível
+      (a ferramenta detecta e avisa) — pequeno, mas evidencia atenção a
+      casos de uso combinados incorretamente.
+
+### Marco 8 — Cabeçalho de Metadados e Exportação para HDF5
 
 **Motivação:** à medida que o volume de capturas cresceu, tornou-se
 necessário um mecanismo de rastreabilidade: cada arquivo `.bin` deveria
@@ -411,13 +543,22 @@ registro:
    o cálculo ocorre apenas duas vezes por captura (início e fim), fora do
    laço crítico de aquisição.
 
+Vale notar, para o relatório: uma alternativa mais simples (um arquivo
+lateral `.json` separado) foi cogitada em algum momento da revisão do
+projeto, mas descartada em favor do cabeçalho embutido — um único arquivo
+por captura, sem risco de o metadado se perder ou dessincronizar do `.bin`
+correspondente, com verificação de integridade própria (CRC-32) que um
+`.json` avulso não teria.
+
 **Extensão da interface de linha de comando:** `ler_adc` passou a aceitar
 `-o` (nome do arquivo de saída, com geração automática por timestamp na
-ausência da flag), `-t` (título) e `-d` (descrição). Um cuidado de
-implementação relevante: textos que excedam o espaço reservado no
-cabeçalho são **rejeitados**, e não truncados — truncar uma string UTF-8 em
-um limite de bytes arbitrário arrisca interromper uma sequência multibyte,
-produzindo texto inválido gravado permanentemente no arquivo.
+ausência da flag), `-t` (título) e `-d` (descrição), além de `--blocos`/
+`--duracao` para controlar a duração da captura (antes fixa em 1 bloco no
+código-fonte). Um cuidado de implementação relevante: textos que excedam o
+espaço reservado no cabeçalho são **rejeitados**, e não truncados —
+truncar uma string UTF-8 em um limite de bytes arbitrário arrisca
+interromper uma sequência multibyte, produzindo texto inválido gravado
+permanentemente no arquivo.
 
 **Integração no pós-processamento (`adc_tool.py`):** o script foi
 estendido para detectar o cabeçalho automaticamente pelo número mágico. Na
@@ -482,26 +623,34 @@ software.
       propriedade de memória constante, em espírito análogo ao gráfico do
       Marco 6.
 
-### Marco 8 — Trabalho Pendente
+### Marco 9 — Trabalho Pendente
 
 Apresentar esta seção é tão importante quanto apresentar o que já foi
 realizado.
 
 - **Validação quantitativa em bancada controlada:** a validação atual
   (Marco 6) é de natureza **qualitativa** — confirma que os canais
-  apresentam comportamento distinto e plausível (sinal vs. ruído), mas não
-  confirma a exatidão numérica da amplitude e da frequência medidas. A
-  próxima etapa consiste em gerar um sinal/ruído de frequência e amplitude
-  conhecidas em bancada controlada, realizar a medição com o SH-Analyzer e
-  comparar o espectro medido com o sinal efetivamente injetado.
-- **Validação em hardware do cabeçalho de metadados (Marco 7):** a
+  apresentam comportamento distinto e plausível (sinal vs. ruído), e o
+  Marco 7 confirma a correção numérica do pipeline de análise sobre sinais
+  sintéticos — mas nenhum dos dois ainda confirma exatidão numérica de
+  amplitude e frequência sobre um sinal real passando pela cadeia analógica
+  completa (frontend + ADC + PRU). A próxima etapa consiste em gerar um
+  sinal/ruído de frequência e amplitude conhecidas em bancada controlada,
+  realizar a medição com o SH-Analyzer, e comparar o espectro medido (via
+  `--welch`/`--agrupar-bandas`/`--picos`, Marco 7) com o sinal efetivamente
+  injetado.
+- **Validação em hardware do cabeçalho de metadados (Marco 8):** a
   implementação foi verificada por testes automatizados com arquivos
   sintéticos (offsets de campo, round-trip de CRC, perfil de memória), mas
   ainda não exercitada numa captura real na BeagleBone.
 - As margens de tempo do sinal de CS (*chip-select*) associadas às
   transações SPI permanecem calibradas empiricamente, sem comparação
   formal com os tempos mínimos especificados no datasheet do ADS8688 —
-  possível fonte de ganho de frequência máxima ainda não explorada.
+  possível fonte de ganho de frequência máxima ainda não explorada. Um
+  ponto a favor de que ainda há margem real: a captura validada do Marco 6
+  já roda a 102,4 kHz, acima de uma estimativa antiga (e hoje considerada
+  desatualizada) do piso de velocidade da implementação — ver `docs/
+  melhorias-propostas.md`, itens 1.1–1.2, para o detalhamento.
 - Risco identificado e não mitigado: a troca de buffer no esquema
   ping-pong não verifica se o processador principal concluiu o
   processamento do buffer anterior antes de iniciar sua sobrescrita —
@@ -538,12 +687,17 @@ clareza valorizada por qualquer orientador.
    real de protocolo (24 vs. 32 ciclos na escrita de registrador,
    identificada por meio de fontes primárias) e foi validada em hardware
    com 1 e com 5 canais simultâneos.
-7. O cabeçalho de metadados de 1024 bytes tornou cada captura
+7. `adc_tool.py` recebeu uma refatoração orientada a DSP especificamente
+   para supraharmônicos — método de Welch, normalização tom/ruído,
+   agrupamento em bandas e extração de picos — resolvendo a limitação do
+   Marco 5 (o corte em ciclos inteiros não ataca conteúdo sem relação de
+   fase com a rede), e validada com sinais sintéticos.
+8. O cabeçalho de metadados de 1024 bytes tornou cada captura
    autodescritiva (frequência, canais, timestamp, título/descrição,
    CRC-32), e a exportação para HDF5, implementada com escrita em blocos
    sobre o arquivo mapeado em memória, foi validada quanto ao uso
    constante de memória por instrumentação com `tracemalloc`.
-8. A próxima etapa é a validação quantitativa mediante sinal conhecido
+9. A próxima etapa é a validação quantitativa mediante sinal conhecido
    injetado em bancada controlada, incluindo a primeira validação em
    hardware real do cabeçalho de metadados.
 
@@ -570,9 +724,13 @@ clareza valorizada por qualquer orientador.
 - [ ] (Marco 6) Gráfico da falha (5 canais idênticos), caso os dados ainda
       estejam disponíveis
 - [ ] (Marco 6) Captura de tela do `.map` do `PRU_IMEM` (opcional)
-- [ ] (Marco 7) Diagrama do layout de bytes do cabeçalho
-- [ ] (Marco 7) Captura do resumo do cabeçalho impresso por `adc_tool.py`
-- [ ] (Marco 7) Gráfico/tabela do teste de memória da exportação HDF5
+- [ ] (Marco 7) **[PRIORIDADE ALTA]** Análise `--welch --agrupar-bandas
+      --picos` sobre uma medição real, com supraharmônicos extraídos
+- [ ] (Marco 7) Comparativo `--fft` vs. `--welch` sobre o mesmo sinal
+      sintético com *dithering*
+- [ ] (Marco 8) Diagrama do layout de bytes do cabeçalho
+- [ ] (Marco 8) Captura do resumo do cabeçalho impresso por `adc_tool.py`
+- [ ] (Marco 8) Gráfico/tabela do teste de memória da exportação HDF5
 
 ---
 
@@ -592,21 +750,27 @@ caminho percorrido até ele:
    de desenvolvimento.
 3. **Evidência de funcionamento (10 min):** o gráfico dos 5 canais (Marco
    6) — apresentar precocemente, por se tratar do resultado mais robusto.
+   Vale complementar com uma análise `--welch`/`--picos` (Marco 7) sobre a
+   mesma captura ou uma equivalente: o gráfico dos 5 canais mostra que a
+   *aquisição* funciona; a extração de picos supraharmônicos mostra que a
+   *análise* — a pergunta de pesquisa em si — também funciona.
 4. **Trajetória técnica — principais desafios e suas soluções (20 min):**
    cronologia detalhada (Marcos 2, 4 e 6), apresentada como um relato dos
    problemas reais de engenharia encontrados e de como cada um foi
    diagnosticado e resolvido, e não como uma simples enumeração de eventos.
-5. **Cabeçalho de metadados e exportação HDF5 (5 min):** Marco 7 —
+5. **Cabeçalho de metadados e exportação HDF5 (5 min):** Marco 8 —
    apresentado com menor profundidade que a etapa 4, por não envolver um
    processo de depuração de hardware; ênfase na motivação (rastreabilidade,
    interoperabilidade) e na verificação quantitativa de memória.
-6. **Próximos passos (5 min):** Marco 8 — validação quantitativa e
+6. **Próximos passos (5 min):** Marco 9 — validação quantitativa e
    melhorias de desempenho identificadas, porém ainda não implementadas.
 7. **Perguntas (5 min).**
 
-> Nota: a distribuição de tempo acima já contempla o Marco 7; caso o tempo
-> total disponível seja reduzido, este é o item mais adequado para
-> supressão ou tratamento em um único slide de transição.
+> Nota: a distribuição de tempo acima já contempla os Marcos 7 e 8; caso o
+> tempo total disponível seja reduzido, o Marco 8 é o item mais adequado
+> para supressão ou tratamento em um único slide de transição — o Marco 7,
+> por estar diretamente ligado à pergunta de pesquisa, é candidato mais
+> fraco a corte.
 
 ---
 
@@ -620,13 +784,18 @@ caminho percorrido até ele:
   formato de dados (cabeçalho de metadados, exportação HDF5).
 - **Metodologia:** decisões técnicas específicas e respectiva justificativa
   — a opção pela PRU em detrimento do C puro, a opção pelo modo automático
-  em detrimento do modo manual, a técnica de FFT sem vazamento espectral, e
-  as decisões de formato do cabeçalho binário (compatibilidade C/Python,
+  em detrimento do modo manual, as duas estratégias de análise espectral
+  complementares e por que cada uma existe (FFT ciclo-sincronizada para a
+  fundamental/harmônicos vs. método de Welch com normalização tom/ruído
+  para supraharmônicos sem relação de fase com a rede — Marco 7), e as
+  decisões de formato do cabeçalho binário (compatibilidade C/Python,
   verificação de integridade).
 - **Validação e Resultados:** a validação multi-canal atual (de natureza
-  qualitativa), a verificação quantitativa do uso de memória na exportação
-  HDF5 e, quando disponível, a validação quantitativa com sinal conhecido
-  (Marco 8) — esta última seção constitui o núcleo científico do relatório.
+  qualitativa), a validação numérica do pipeline de análise espectral com
+  sinais sintéticos (Marco 7), a verificação quantitativa do uso de memória
+  na exportação HDF5 e, quando disponível, a validação quantitativa com
+  sinal conhecido (Marco 9) — esta última seção constitui o núcleo
+  científico do relatório.
 - **Discussão e Limitações:** riscos e itens em aberto (ausência de
   backpressure no esquema ping-pong, margens de CS não comparadas
   formalmente ao datasheet, cabeçalho de metadados ainda não validado em

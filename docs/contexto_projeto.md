@@ -59,7 +59,15 @@ introduzem reflexo e ruído induzido suficientes para saturar as leituras do
 ADC. O padrão de erro correspondente é observável nos 16 bits de preâmbulo
 de cada quadro SPI, que devem permanecer sempre zero (`scripts/
 analisar_preambulo.py` inspeciona essa condição a partir de uma captura de
-diagnóstico dedicada, `firmware/spi_core_diagnostico_preambulo.asm`).
+diagnóstico dedicada, `firmware/spi_core_diagnostico_preambulo.asm`). Esse
+problema já foi diagnosticado e corrigido (jumpers longos → conexão direta
+entre as placas — ver seção 6.1 e `docs/notas_relatorio.md`, Marco 4); a
+família ADuM3150 listada acima já é um isolador digital dedicado (não um
+optoacoplador simples), então a suspeita original de descasamento de
+subida/descida num componente inadequado para comunicação digital
+provavelmente não se aplica mais — falta apenas confirmar a peça
+formalmente contra o esquemático/BOM (ver `docs/melhorias-propostas.md`,
+item 1.10).
 
 ### 2.3 PCB
 
@@ -89,7 +97,12 @@ O ADS8688 opera em **modo automático de varredura (AUTO_RST)**: o host
 programa a sequência de canais habilitados uma única vez, e o próprio ADC
 avança de canal sozinho a cada quadro SPI, sempre em ordem crescente entre
 os canais habilitados — sem reenviar um comando de seleção de canal a cada
-amostra.
+amostra. Esta migração (do antigo modo manual, com um comando de canal
+reenviado a cada quadro, para o modo automático) já foi implementada e
+**validada em hardware**, com 1 canal e com múltiplos canais — ver seção
+6.1 e `docs/notas_relatorio.md`, Marco 6, para o histórico completo (inclui
+um bug real de protocolo encontrado e corrigido em hardware, não apenas uma
+reescrita teórica a partir do datasheet).
 
 - Frame de **32 ciclos de SCLK por amostra** no laço principal (16 de
   comando + 16 de leitura da conversão anterior). Os 16 ciclos de comando
@@ -125,6 +138,18 @@ amostra.
   comando — reduz uma fonte de chaveamento digital potencialmente acoplada
   à cadeia analógica sensível a ruído de alta frequência (benefício ainda
   não quantificado com osciloscópio).
+
+> **Nota de higiene de código:** o cabeçalho de comentários no topo de
+> `spi_core.asm` ainda traz um aviso "⚠️ AINDA NÃO VALIDADO EM HARDWARE"
+> (e referencia um nome de arquivo antigo, `Contexto do Projeto-3.md`, de
+> antes da convenção de nome fixo desta seção 1). Esse aviso está
+> desatualizado — o próprio arquivo documenta, mais abaixo, um bug real
+> encontrado **em hardware** (a diferença de 24 vs. 32 ciclos na escrita
+> de `AUTO_SEQ_EN`) e corrigido, e a validação com 5 canais está registrada
+> nesta seção e em `docs/notas_relatorio.md` (Marco 6). Ver
+> `docs/melhorias-propostas.md` para a sugestão de correção desse
+> comentário (item de baixíssimo esforço, mas relevante para não confundir
+> um leitor futuro do código-fonte).
 
 ### 3.3 Sincronização ARM ↔ PRU — `shared_control` (`memoria_pru.h`)
 
@@ -162,11 +187,14 @@ pelo hardware do ADC, não pelo firmware.
 - `firmware/Makefile`: `make` compila ARM (`gcc -O3` → `ler_adc`) e PRU
   (`clpru --silicon_version=3` → `fw_pru.out`).
 - `firmware/setup.sh`: configura os 4 pinos via `config-pin` e recarrega
-  `fw_pru.out` no remoteproc (stop/start).
-- **Orçamento de `PRU_IMEM`:** a compilação atual usa aproximadamente 67%
-  dos 8 KB disponíveis, com folga confortável para expansão futura.
-  Recomenda-se checar o `.map` gerado pela compilação após qualquer
-  mudança relevante no Assembly.
+  `fw_pru.out` no remoteproc (stop/start). Hoje não confere se a PRU de
+  fato entrou em estado `running` depois do `start` — só um comentário
+  sugerindo checar `dmesg` manualmente (ver `docs/melhorias-propostas.md`,
+  item 2.6, para a versão defensiva proposta).
+- **Orçamento de `PRU_IMEM`:** a compilação atual usa aproximadamente
+  **5.480 de 8.192 bytes (~67%)** disponíveis, com folga confortável para
+  expansão futura. Recomenda-se checar o `.map` gerado pela compilação após
+  qualquer mudança relevante no Assembly.
 - **Nota de implementação:** as 2 transações de configuração (escrita de
   `AUTO_SEQ_EN` e comando `AUTO_RST`) são implementadas sem laço, por
   extenso, no Assembly. As instruções de desvio condicional "rápido" da PRU
@@ -233,6 +261,18 @@ inicial do cabeçalho (o total real só é conhecido ao final da captura);
 terminar, com os valores finais e o CRC recalculado — fora do caminho
 crítico de tempo, já que ocorre depois do término da aquisição.
 
+Este cabeçalho embutido também resolve, de forma mais robusta do que
+originalmente cogitado, o problema de rastreabilidade de metadados por
+captura: uma versão anterior deste documento e de `docs/
+melhorias-propostas.md` cogitava um arquivo lateral (*sidecar*) `.json`
+separado para essa finalidade; a implementação real optou por embutir os
+metadados diretamente no `.bin` (com verificação de integridade via CRC-32,
+que um `.json` avulso não teria) — um arquivo, sem risco de o sidecar se
+perder ou ficar dessincronizado do `.bin` correspondente. Não há, ainda,
+um campo de hash do commit do firmware no cabeçalho (rastreabilidade de
+versão do firmware por captura permanece um item em aberto — ver seção 8 e
+`docs/melhorias-propostas.md`, item 2.4).
+
 `adc_tool.py` detecta o cabeçalho pelo magic number: quando ausente
 (arquivos legados, sem cabeçalho), o script exige `-f/--frequencia` e
 `--canais` explícitos; quando presente, usa os campos do cabeçalho como
@@ -258,7 +298,11 @@ HDF5:
 A escrita percorre o `.bin` mapeado em memória (`numpy.memmap`) em blocos,
 nunca materializando a captura inteira na RAM — a exportação permanece
 viável independentemente do tamanho do arquivo de origem, dentro do espaço
-em disco disponível para o `.h5` de saída.
+em disco disponível para o `.h5` de saída. Essa propriedade (uso de memória
+Python praticamente constante, independente do tamanho do arquivo de
+origem ou do tamanho do bloco de processamento) já foi verificada
+empiricamente com `tracemalloc` sobre um arquivo sintético de 130 MB — ver
+`docs/notas_relatorio.md`, Marco 8.
 
 ---
 
@@ -282,6 +326,14 @@ Declara dependências inline (PEP 723: matplotlib, numpy, scipy, PyQt6,
 h5py); roda via `uv run scripts/adc_tool.py ...` sem instalação manual, se
 o [`uv`](https://docs.astral.sh/uv/) estiver disponível.
 
+> **Nota de nomenclatura:** todo o resto deste documento, o README e o
+> próprio script (docstring interno, `argparse(prog="adc_tool.py")`) tratam
+> o arquivo como `adc_tool.py`, em minúsculas. Ver
+> `docs/melhorias-propostas.md` para uma discrepância de nome de arquivo em
+> disco encontrada durante esta revisão, que quebra esse comando tal como
+> documentado em sistemas de arquivos sensíveis a maiúsculas/minúsculas
+> (Linux).
+
 ### 5.2 Duas estratégias de análise espectral — e por quê
 
 A FFT assume implicitamente que o trecho analisado se repete infinitamente;
@@ -298,6 +350,18 @@ complementares, selecionáveis por flag e combináveis numa mesma chamada:
 | Resolução em frequência | Cresce com a duração da captura | Fixa, definida por `--resolucao-welch` (Hz) |
 | Robustez a não estacionariedade | Baixa (assume conteúdo estável durante a janela) | Alta — a média entre segmentos suaviza *dithering* de frequência de chaveamento |
 | Função central | `recortar_ciclos_inteiros` + `calcular_espectro` | `calcular_espectro_welch` |
+
+Este par de estratégias — junto com a normalização tom/ruído (seção 5.5), o
+agrupamento em bandas (seção 5.6) e a extração de picos (seção 5.7) — é
+resultado de uma refatoração de `adc_tool.py` orientada especificamente a
+DSP, feita depois da versão inicial da ferramenta (que cobria só `--fft`,
+janelas espectrais e suporte multi-canal — ver `docs/notas_relatorio.md`,
+Marco 5) e validada com sinais sintéticos (Marco 7 do mesmo documento). É a
+parte da ferramenta mais diretamente ligada ao objetivo científico do
+projeto: sem `--welch`/`--agrupar-bandas`/`--picos`, a ferramenta mediria
+bem a fundamental e seus harmônicos, mas não teria um caminho matematicamente
+apropriado para caracterizar o próprio supraharmônico que o projeto existe
+para medir.
 
 ### 5.3 `--fft`: recorte em ciclos inteiros
 
@@ -401,6 +465,10 @@ fundamental) em **comandos separados**.
   round-trip sem perdas (só `valor_bruto` é usado na reconstrução) — a ida
   por `.csv` não preserva o cabeçalho de metadados, já que o CSV não tem
   onde armazená-lo.
+- A validação de `--canais` (0–7, sem repetição, no máximo
+  `ADS8688_MAX_CANAIS`) duplica manualmente, em Python, a mesma regra já
+  aplicada em `ler_adc.c` — não há um arquivo de constantes compartilhado
+  entre o firmware em C/Assembly e este script (ver seção 8).
 
 ---
 
@@ -415,14 +483,19 @@ fundamental) em **comandos separados**.
   travar).
 - Inicialização explícita de CS/SCLK/MOSI em repouso; laços de atraso para
   controlar velocidade do SPI sem estourar `PRU_IMEM`.
-- Integridade de sinal entre placa de aquisição e frontend (seção 2.2).
+- Integridade de sinal entre placa de aquisição e frontend (seção 2.2) —
+  jumpers longos identificados como causa raiz da saturação e substituídos
+  por conexão direta entre as placas.
 - Captura em modo automático (AUTO_RST), com 1 canal e com múltiplos
   canais — testado com 5 canais simultâneos (0–4) a 102,4 kHz (≈20,48 kHz
   efetivos por canal): os canais fisicamente conectados à rede mostram a
   onda de 60 Hz esperada; os canais deixados desconectados mostram apenas
   ruído, confirmando a alternância correta entre canais habilitados.
 - Cabeçalho de metadados do `.bin` (seção 4.2), incluindo verificação de
-  integridade por CRC-32.
+  integridade por CRC-32 — a implementação em si já foi hardware-exercitada
+  na captura acima; a validação end-to-end específica do cabeçalho (campo a
+  campo, contra uma captura real) segue como item de trabalho pendente (ver
+  seção 6.3 e `docs/notas_relatorio.md`, Marco 9).
 - `PRU_IMEM` dentro do orçamento de 8 KB, com folga confortável.
 
 ### 6.2 Validado com sinais sintéticos
@@ -450,6 +523,9 @@ fidelidade do hardware de aquisição — ver seção 6.3.
 - Risco de corrupção silenciosa no ping-pong sem backpressure (seção 3.4).
 - Benefício de ruído do MOSI parado em modo automático (seção 3.2) não
   medido com osciloscópio.
+- Cabeçalho de metadados (seção 4.2) ainda não exercitado numa captura real
+  na BeagleBone — validado até aqui só por testes automatizados com
+  arquivos sintéticos (offsets de campo, round-trip de CRC).
 
 ---
 
@@ -470,7 +546,15 @@ sintéticos, seção 6.2).
 (validado), subir a frequência aos poucos até os dados começarem a
 falhar/corromper, mapeando o teto real do sistema completo. O risco de
 corrupção silenciosa do ping-pong sem backpressure (seção 3.4) fica mais
-provável em frequências mais altas.
+provável em frequências mais altas. Uma revisão de `docs/
+melhorias-propostas.md` feita em paralelo a este documento encontrou
+indícios de que uma estimativa antiga do "piso" de velocidade da
+implementação de bit-banging (baseada num comentário que não existe mais no
+`ler_adc.c` atual) já está desatualizada: o teste de 102,4 kHz acima
+**já roda acima** dessa estimativa antiga, sugerindo que a folga real hoje
+é maior do que se pensava — reforço a mais para medir o piso real (ver
+`docs/melhorias-propostas.md`, itens 1.1–1.3) antes de assumir qualquer
+número de cabeça.
 
 **Diagnóstico de gargalo.** Ao identificar um gargalo/limite, isolar em
 qual elo da cadeia ele está: ADS8688 (teto físico de 500 kSPS agregado),
@@ -516,12 +600,20 @@ validação em bancada antes de qualquer ajuste):
   de ganho de frequência máxima identificado até agora, mas só deve ser
   ajustado com medição real (osciloscópio).
 - Backpressure no ping-pong (seção 3.4).
-- `BLOCOS_PADRAO` fixo em 1 bloco; `SCHED_FIFO` + `mlockall()` no lado ARM;
-  revisão do `usleep(2000)` fixo do polling.
+- `SCHED_FIFO` + `mlockall()` no lado ARM; revisão do `usleep(2000)` fixo
+  do polling (o `BLOCOS_PADRAO`/checagem de `fwrite()` já foram
+  endereçados — ver `docs/melhorias-propostas.md`, item 1.8).
 - `SAMPLES_PER_BUFFER` sincronizado manualmente entre `memoria_pru.h` e
   `spi_core.asm`, sem checagem automática em tempo de compilação entre os
-  dois lados.
+  dois lados; `ADS8688_MAX_CANAIS` tem o mesmo problema, agora duplicado
+  também em `adc_tool.py` (Python), já que não existe um arquivo de
+  constantes compartilhado entre C/Assembly e o script de análise (seção
+  5.9).
 - Ampliação do uso da DDR reservada (hoje 4 MB dos 16 MB disponíveis).
+
+Ver `docs/melhorias-propostas.md` para o detalhamento de impacto/esforço de
+cada oportunidade listada acima, incluindo o que já foi resolvido desde a
+última revisão daquele documento.
 
 ---
 
@@ -531,7 +623,7 @@ validação em bancada antes de qualquer ajuste):
 |---|---|
 | `README.md` | Visão geral, arquitetura, formato de dados, status de validação, guia de uso |
 | `LICENSE` | MIT |
-| `.gitignore` | Artefatos de build, dados coletados, ambiente Python/editor |
+| `.gitignore` | Artefatos de build, dados coletados, ambiente Python/editor, temporários do Altium Designer |
 | `firmware/setup.sh` | Deploy: config-pin dos 4 pinos + carrega `fw_pru.out` no remoteproc |
 | `firmware/Makefile` | `make` → compila ARM (`ler_adc`) e PRU (`fw_pru.out`) |
 | `firmware/AM335x_PRU.cmd` | Linker script da PRU |
@@ -541,6 +633,8 @@ validação em bancada antes de qualquer ajuste):
 | `firmware/ler_adc.c` | Monta a máscara `auto_seq_mask`, ordena canais em ordem crescente, descarta a primeira amostra, grava e atualiza o cabeçalho de metadados (seção 4.2), controla nome de saída (`-o`), título/descrição (`-t`/`-d`) e duração da captura (`--blocos`/`--duracao`) |
 | `firmware/debug_sh_analyzer.sh` | Script de diagnóstico (remoteproc, dmesg, leitura ao vivo de `shared_control` via `/dev/mem`) — útil para depurar travamentos sem osciloscópio |
 | `scripts/adc_tool.py` | Leitura do cabeçalho de metadados, conversão `.bin`↔`.csv`, exportação HDF5, plotagem e as duas estratégias de análise espectral (seção 5) |
+| `scripts/set_date.sh` | Sincroniza a data/hora local (dev machine) para a BeagleBone via SSH — mitiga a ausência de RTC com bateria mencionada em `ler_adc.c`/seção 4.2 (`timestamp_unix`) |
+| `scripts/compactar_amostras.sh` | Compacta capturas `.bin`/`.h5`/`.hdf5` num único arquivo, priorizando densidade de compressão (7-Zip/LZMA2 por padrão, `zpaq -m5` opcional) — arquivamento de longo prazo, fora do caminho crítico de captura |
 | `hardware/DAQ_Module/` | Projeto Altium Designer (esquemático + PCB) do frontend analógico/DAQ |
 | `docs/melhorias-propostas.md` | Revisão técnica: taxa de amostragem + reorganização/profissionalização do repo (seção 8) |
 | `docs/contexto_projeto.md` | Este documento |
