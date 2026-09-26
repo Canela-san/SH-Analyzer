@@ -40,7 +40,7 @@ void lidar_interrupcao(int dummy) { manter_execucao = 0; }
 // -- ver docs/contexto_projeto.md para o item pendente de atualizar o lado
 // Python antes da próxima captura real.
 #define CABECALHO_MAGIC "SHAN"      // 4 bytes, sem terminador nulo armazenado
-#define CABECALHO_VERSAO 1u         // versão do FORMATO do cabeçalho (não do firmware/software)
+#define CABECALHO_VERSAO 2u         // versão do FORMATO do cabeçalho (não do firmware/software) -- v2 adiciona grandeza_por_canal/sonda_id_por_canal (ver struct cabecalho_arquivo_campos); adc_tool.py ainda não foi atualizado para ler esses campos novos nesta revisão, ver docs/proposta_correcao_sonda.md
 #define CABECALHO_TAMANHO_TOTAL 1024u
 
 // Tamanho FIXO (bytes, incluindo o terminador nulo) dos campos de texto
@@ -51,6 +51,33 @@ void lidar_interrupcao(int dummy) { manter_execucao = 0; }
 // lugar do arquivo.
 #define CABECALHO_TITULO_TAMANHO 64u
 #define CABECALHO_DESCRICAO_TAMANHO 256u
+
+// [SONDA/GRANDEZA] Tamanho FIXO (bytes, incluindo o terminador nulo) do
+// identificador de sonda por canal -- ver --sonda, sonda_id_por_canal na
+// struct abaixo, e docs/proposta_correcao_sonda.md para o racional
+// completo. 16 bytes (15 úteis de texto ASCII) é suficiente para um código
+// curto (ex.: "fluke_i30_01"); o nome/descrição completos da sonda
+// ficam no arquivo de perfil correspondente, do lado Python -- este campo
+// é só a CHAVE de busca desse arquivo, não o perfil em si.
+#define CABECALHO_SONDA_ID_TAMANHO 16u
+
+// [SONDA/GRANDEZA] Valores possíveis para grandeza_por_canal na struct
+// abaixo -- a grandeza física que cada canal habilitado está medindo.
+// Mesma indexação de lista_canais (posição i descreve o canal
+// lista_canais[i]); slots não usados (índice >= num_canais) ficam em
+// GRANDEZA_NAO_USADA. Precisa ficar em sincronia manual com os mesmos
+// valores do lado Python (adc_tool.py) -- não há arquivo de constantes
+// compartilhado entre C e Python neste projeto (mesma situação já conhecida
+// de ADS8688_MAX_CANAIS).
+#define GRANDEZA_TENSAO       0u
+#define GRANDEZA_CORRENTE     1u
+#define GRANDEZA_TEMPERATURA  2u
+#define GRANDEZA_NAO_USADA    0xFFu
+
+// Grandeza assumida para um canal habilitado que não recebeu --grandeza
+// explícito -- preserva o uso histórico deste programa (nenhuma flag nova
+// = tudo como antes, canal de tensão).
+#define GRANDEZA_PADRAO GRANDEZA_TENSAO
 
 // Clock da PRU usado para converter uma frequência em Hz para um número de
 // ciclos da PRU (sample_period_ticks, escrito em shared_control). Nomeado em
@@ -131,6 +158,8 @@ struct cabecalho_arquivo_campos {
     uint64_t total_amostras_gravadas;  // idem, total de amostras BRUTAS intercaladas gravadas após o descarte da primeira -- equivale a (tamanho_do_arquivo - 1024) / bytes_por_amostra. uint64_t É NECESSÁRIO aqui, não só por consistência: a 500 kSPS contínuos, um uint32_t estouraria em pouco mais de 2 horas de captura.
     char     titulo[CABECALHO_TITULO_TAMANHO];       // [RASTREABILIDADE] --titulo/-t, opcional, texto livre em UTF-8, terminado em '\0'. Não informado -> todos os bytes zerados (string vazia), não lixo -- ver memset(0) da struct inteira em main(). Rejeitado (não truncado) em main() se não couber -- ver comentário lá sobre por que truncar um UTF-8 num limite de bytes arbitrário é arriscado.
     char     descricao[CABECALHO_DESCRICAO_TAMANHO]; // [RASTREABILIDADE] --descricao/-d, mesmas regras de titulo, só que maior -- espaço para uma frase completa sobre o objetivo/contexto do ensaio (ex.: local, o que estava sendo injetado/medido).
+    uint8_t  grandeza_por_canal[ADS8688_MAX_CANAIS];             // [SONDA/GRANDEZA, v2] grandeza física de cada canal habilitado (GRANDEZA_TENSAO/CORRENTE/TEMPERATURA) -- mesma indexação de lista_canais (posição i descreve lista_canais[i]); slots não usados = GRANDEZA_NAO_USADA. Sem --grandeza na linha de comando, todo canal assume GRANDEZA_PADRAO (tensão), preservando o comportamento histórico.
+    char     sonda_id_por_canal[ADS8688_MAX_CANAIS][CABECALHO_SONDA_ID_TAMANHO]; // [SONDA/GRANDEZA, v2] identificador ASCII da sonda usada em cada canal (--sonda), mesma indexação acima; string vazia = nenhuma sonda associada a este canal. Só a CHAVE de busca -- este programa não valida se o id corresponde a um arquivo de perfil real nem interpreta a curva de calibração; isso é feito inteiramente por adc_tool.py, que é onde os perfis de fato residem (ver docs/proposta_correcao_sonda.md).
     uint32_t header_crc32;             // CRC-32 (polinômio 0xEDB88320, o mesmo de zlib/PNG/Ethernet) de todo o cabeçalho, calculado com este próprio campo zerado -- permite a um leitor detectar um cabeçalho truncado/corrompido antes de confiar nos campos acima
 } __attribute__((packed));
 
@@ -275,10 +304,23 @@ static void imprimir_uso(const char *nome_programa) {
         "                    cabeçalho (até %u bytes em UTF-8). Sem esta flag, fica\n"
         "                    vazia. Texto maior que o limite é um ERRO (não é\n"
         "                    truncado) -- encurte e tente de novo.\n"
+        "  --grandeza C:G[,...] Opcional. Grandeza física medida em cada canal,\n"
+        "                    no formato 'canal:grandeza' (ex.:\n"
+        "                    '0:tensao,1:corrente,3:corrente'). Valores aceitos:\n"
+        "                    'tensao', 'corrente', 'temperatura'. Canal da captura\n"
+        "                    não citado aqui assume 'tensao' (padrão histórico).\n"
+        "  --sonda C:ID[,...]   Opcional. Identificador da sonda usada em cada\n"
+        "                    canal, no formato 'canal:id' (ex.:\n"
+        "                    '1:fluke_i30_01'), até %u bytes por id. Aceito em\n"
+        "                    qualquer canal (tensão, corrente ou temperatura).\n"
+        "                    Gravado só como texto no cabeçalho -- este programa\n"
+        "                    NÃO valida se o id corresponde a um perfil real; a\n"
+        "                    correção em si é feita por adc_tool.py, na análise.\n"
         "\n"
         "O arquivo gerado começa com um cabeçalho fixo de 1024 bytes (frequência,\n"
-        "canais, timestamp, título/descrição e outros metadados da captura) antes\n"
-        "das amostras brutas -- ver 'struct cabecalho_arquivo' em ler_adc.c.\n"
+        "canais, timestamp, título/descrição, grandeza/sonda por canal e outros\n"
+        "metadados da captura) antes das amostras brutas -- ver 'struct\n"
+        "cabecalho_arquivo' em ler_adc.c.\n"
         "\n"
         "Exemplos:\n"
         "  sudo %s 102400                        # %d bloco(s), canal %d, nome automático\n"
@@ -286,11 +328,14 @@ static void imprimir_uso(const char *nome_programa) {
         "  sudo %s 102400 --blocos 0             # indefinido, até Ctrl+C\n"
         "  sudo %s 102400 --duracao 10m          # ~10 minutos de captura\n"
         "  sudo %s 102400 -o ensaio_bancada.bin  # nome de arquivo explícito\n"
-        "  sudo %s 102400 -t \"Medição Condomínio X\" -d \"Busca por supraharmônicos\"\n",
+        "  sudo %s 102400 -t \"Medição Condomínio X\" -d \"Busca por supraharmônicos\"\n"
+        "  sudo %s 102400 0,1 --grandeza 0:tensao,1:corrente --sonda 1:fluke_i30_01\n",
         nome_programa, CANAL_PADRAO, BLOCOS_PADRAO,
         CABECALHO_TITULO_TAMANHO - 1u, CABECALHO_DESCRICAO_TAMANHO - 1u,
+        CABECALHO_SONDA_ID_TAMANHO - 1u,
         nome_programa, BLOCOS_PADRAO, CANAL_PADRAO,
-        nome_programa, nome_programa, nome_programa, nome_programa, nome_programa);
+        nome_programa, nome_programa, nome_programa, nome_programa, nome_programa,
+        nome_programa);
 }
 
 /*
@@ -381,6 +426,196 @@ static int analisar_lista_canais(const char *texto, int *canais_saida) {
     }
 
     return total;
+}
+
+/*
+ * [SONDA/GRANDEZA] Traduz um número de canal físico (0-7) para sua POSIÇÃO
+ * dentro de 'canais' (a lista já ordenada em ordem crescente, produzida por
+ * analisar_lista_canais) -- a mesma indexação usada por lista_canais no
+ * cabeçalho, e portanto também por grandeza_por_canal/sonda_id_por_canal.
+ * Existe como função separada, em vez de embutir a busca linear em cada
+ * chamador, para deixar explícito que --grandeza/--sonda são informados
+ * pelo NÚMERO do canal (o que o usuário digitou), não pela posição -- essa
+ * tradução evita reproduzir, para estas duas flags novas, a mesma classe de
+ * bug de desalinhamento que a ordenação de canais em modo automático já
+ * exigiu corrigir uma vez neste projeto (ver docstring de
+ * analisar_lista_canais).
+ *
+ * Retorna a posição (>= 0) se 'canal_alvo' está em 'canais', ou -1 se não
+ * está.
+ */
+static int posicao_do_canal(const int *canais, int num_canais, int canal_alvo) {
+    for (int i = 0; i < num_canais; i++) {
+        if (canais[i] == canal_alvo) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/*
+ * [SONDA/GRANDEZA] Interpreta --grandeza (ex.: "0:tensao,1:corrente,3:corrente"),
+ * uma lista de pares "canal:grandeza" separados por vírgula, sem espaços.
+ * Cada canal citado precisa fazer parte de 'canais' (a lista final, já
+ * ordenada, vinda de analisar_lista_canais) -- referenciar um canal fora da
+ * captura é erro. Canais da captura que não aparecerem aqui mantêm o valor
+ * já presente em 'grandeza_saida' (ver chamador: preenchido com
+ * GRANDEZA_PADRAO antes desta função ser chamada), preservando o uso
+ * histórico deste programa (nenhuma flag nova = tudo como antes, canal de
+ * tensão).
+ *
+ * 'grandeza_saida' precisa ter pelo menos ADS8688_MAX_CANAIS posições, já
+ * indexadas pela MESMA posição que 'canais' usa (posição i descreve
+ * canais[i]) -- não pelo número físico do canal (ver posicao_do_canal).
+ *
+ * Retorna 0 em sucesso, -1 em erro (já reportado em stderr).
+ */
+static int analisar_lista_grandezas(const char *texto, const int *canais, int num_canais,
+                                     uint8_t *grandeza_saida) {
+    char copia[512];
+    strncpy(copia, texto, sizeof(copia) - 1);
+    copia[sizeof(copia) - 1] = '\0';
+
+    char *cursor = copia;
+    char *token;
+    while ((token = strtok(cursor, ",")) != NULL) {
+        cursor = NULL;
+
+        char *dois_pontos = strchr(token, ':');
+        if (dois_pontos == NULL) {
+            fprintf(stderr, "Erro: '%s' em --grandeza precisa estar no "
+                             "formato 'canal:grandeza' (ex.: '0:tensao').\n",
+                    token);
+            return -1;
+        }
+        *dois_pontos = '\0';
+        const char *parte_canal = token;
+        const char *parte_grandeza = dois_pontos + 1;
+
+        char *fim;
+        long canal = strtol(parte_canal, &fim, 10);
+        if (fim == parte_canal || *fim != '\0') {
+            fprintf(stderr, "Erro: '%s' não é um número de canal válido em "
+                             "--grandeza.\n", parte_canal);
+            return -1;
+        }
+
+        int posicao = posicao_do_canal(canais, num_canais, (int)canal);
+        if (posicao < 0) {
+            fprintf(stderr, "Erro: --grandeza referencia o canal %ld, que "
+                             "não faz parte da captura (canais "
+                             "selecionados: ", canal);
+            for (int i = 0; i < num_canais; i++) {
+                fprintf(stderr, "%d%s", canais[i], (i + 1 < num_canais) ? ", " : "");
+            }
+            fprintf(stderr, ").\n");
+            return -1;
+        }
+
+        uint8_t valor;
+        if (strcmp(parte_grandeza, "tensao") == 0) {
+            valor = GRANDEZA_TENSAO;
+        } else if (strcmp(parte_grandeza, "corrente") == 0) {
+            valor = GRANDEZA_CORRENTE;
+        } else if (strcmp(parte_grandeza, "temperatura") == 0) {
+            valor = GRANDEZA_TEMPERATURA;
+        } else {
+            fprintf(stderr, "Erro: grandeza '%s' desconhecida em --grandeza "
+                             "(canal %ld) -- use 'tensao', 'corrente' ou "
+                             "'temperatura'.\n", parte_grandeza, canal);
+            return -1;
+        }
+
+        grandeza_saida[posicao] = valor;
+    }
+
+    return 0;
+}
+
+/*
+ * [SONDA/GRANDEZA] Interpreta --sonda (ex.:
+ * "1:fluke_i30_01,3:tp_101_sn2"), mesma sintaxe "canal:valor" de
+ * --grandeza. Aceito em QUALQUER canal (tensão, corrente ou temperatura) --
+ * por pedido explícito, este programa não restringe --sonda a canais de
+ * corrente. ler_adc.c também não sabe (nem precisa saber) se o id
+ * informado corresponde a um perfil de sonda real: essa validação, e toda a
+ * lógica de correção em si, ficam inteiramente do lado Python
+ * (adc_tool.py), que é onde os arquivos de perfil de fato existem -- aqui
+ * só se grava a string, como uma chave de busca para o outro lado resolver
+ * depois (ver docs/proposta_correcao_sonda.md).
+ *
+ * 'sonda_saida' precisa ter pelo menos ADS8688_MAX_CANAIS linhas de
+ * CABECALHO_SONDA_ID_TAMANHO bytes cada, na mesma indexação por posição de
+ * 'canais' usada por analisar_lista_grandezas/lista_canais.
+ *
+ * Retorna 0 em sucesso, -1 em erro (já reportado em stderr) -- o único erro
+ * possível aqui é sintaxe ou um id que não cabe no campo de tamanho fixo do
+ * cabeçalho (REJEITADO, não truncado -- mesma filosofia já usada para
+ * --titulo/--descricao, pela mesma razão: um id truncado na mão poderia
+ * colidir silenciosamente com outra sonda de nome parecido).
+ */
+static int analisar_lista_sondas(const char *texto, const int *canais, int num_canais,
+                                  char sonda_saida[][CABECALHO_SONDA_ID_TAMANHO]) {
+    char copia[512];
+    strncpy(copia, texto, sizeof(copia) - 1);
+    copia[sizeof(copia) - 1] = '\0';
+
+    char *cursor = copia;
+    char *token;
+    while ((token = strtok(cursor, ",")) != NULL) {
+        cursor = NULL;
+
+        char *dois_pontos = strchr(token, ':');
+        if (dois_pontos == NULL) {
+            fprintf(stderr, "Erro: '%s' em --sonda precisa estar no formato "
+                             "'canal:id' (ex.: '1:fluke_i30_01').\n",
+                    token);
+            return -1;
+        }
+        *dois_pontos = '\0';
+        const char *parte_canal = token;
+        const char *parte_id = dois_pontos + 1;
+
+        char *fim;
+        long canal = strtol(parte_canal, &fim, 10);
+        if (fim == parte_canal || *fim != '\0') {
+            fprintf(stderr, "Erro: '%s' não é um número de canal válido em "
+                             "--sonda.\n", parte_canal);
+            return -1;
+        }
+
+        int posicao = posicao_do_canal(canais, num_canais, (int)canal);
+        if (posicao < 0) {
+            fprintf(stderr, "Erro: --sonda referencia o canal %ld, que não "
+                             "faz parte da captura (canais selecionados: ",
+                    canal);
+            for (int i = 0; i < num_canais; i++) {
+                fprintf(stderr, "%d%s", canais[i], (i + 1 < num_canais) ? ", " : "");
+            }
+            fprintf(stderr, ").\n");
+            return -1;
+        }
+
+        if (parte_id[0] == '\0') {
+            fprintf(stderr, "Erro: id de sonda vazio para o canal %ld em "
+                             "--sonda.\n", canal);
+            return -1;
+        }
+        if (strlen(parte_id) > CABECALHO_SONDA_ID_TAMANHO - 1u) {
+            fprintf(stderr, "Erro: id de sonda '%s' (canal %ld) tem %zu "
+                             "bytes, mas o campo do cabeçalho só suporta até "
+                             "%u bytes (%u no total, reservando 1 para o "
+                             "terminador nulo). Encurte o id.\n",
+                    parte_id, canal, strlen(parte_id),
+                    CABECALHO_SONDA_ID_TAMANHO - 1u, CABECALHO_SONDA_ID_TAMANHO);
+            return -1;
+        }
+
+        strncpy(sonda_saida[posicao], parte_id, CABECALHO_SONDA_ID_TAMANHO - 1u);
+        sonda_saida[posicao][CABECALHO_SONDA_ID_TAMANHO - 1u] = '\0';
+    }
+
+    return 0;
 }
 
 /*
@@ -515,6 +750,8 @@ int main(int argc, char *argv[]) {
     const char *nome_arquivo_texto = NULL; // [CABECALHO/NOME DE ARQUIVO] valor de -o/--saida, se passado
     const char *titulo_texto = NULL;       // [CABECALHO/RASTREABILIDADE] valor de -t/--titulo, se passado
     const char *descricao_texto = NULL;    // [CABECALHO/RASTREABILIDADE] valor de -d/--descricao, se passado
+    const char *grandeza_texto = NULL;     // [SONDA/GRANDEZA] valor de --grandeza, se passado
+    const char *sonda_texto = NULL;        // [SONDA/GRANDEZA] valor de --sonda, se passado
 
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "--blocos") == 0) {
@@ -558,6 +795,20 @@ int main(int argc, char *argv[]) {
                 return -1;
             }
             descricao_texto = argv[++i];
+        } else if (strcmp(argv[i], "--grandeza") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Erro: --grandeza precisa de um valor (ex.: "
+                                 "--grandeza 0:tensao,1:corrente).\n");
+                return -1;
+            }
+            grandeza_texto = argv[++i];
+        } else if (strcmp(argv[i], "--sonda") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Erro: --sonda precisa de um valor (ex.: "
+                                 "--sonda 1:fluke_i30_01).\n");
+                return -1;
+            }
+            sonda_texto = argv[++i];
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "Erro: opção desconhecida '%s'.\n", argv[i]);
             imprimir_uso(argv[0]);
@@ -594,6 +845,35 @@ int main(int argc, char *argv[]) {
     } else {
         num_canais = 1;
         canais[0] = CANAL_PADRAO;
+    }
+
+    // [SONDA/GRANDEZA] Resolvido logo após 'canais'/'num_canais' -- ambas as
+    // flags são expressas em NÚMERO de canal (analisar_lista_grandezas/
+    // analisar_lista_sondas traduzem para posição internamente), então
+    // dependem da lista final já validada e ordenada. Mesma filosofia de
+    // "validar primeiro, tocar hardware/disco depois" do resto do arquivo.
+    //
+    // grandeza_canais começa com GRANDEZA_NAO_USADA em todo slot (mesmo
+    // sentinela de lista_canais), depois GRANDEZA_PADRAO só nos slots
+    // realmente usados por esta captura (0..num_canais) -- --grandeza, se
+    // passado, sobrescreve a partir daí. sonda_canais começa vazio (nenhuma
+    // sonda associada) em todo canal; --sonda, se passado, preenche.
+    uint8_t grandeza_canais[ADS8688_MAX_CANAIS];
+    char sonda_canais[ADS8688_MAX_CANAIS][CABECALHO_SONDA_ID_TAMANHO];
+    memset(grandeza_canais, GRANDEZA_NAO_USADA, sizeof(grandeza_canais));
+    memset(sonda_canais, 0, sizeof(sonda_canais));
+    for (int i = 0; i < num_canais; i++) {
+        grandeza_canais[i] = GRANDEZA_PADRAO;
+    }
+    if (grandeza_texto != NULL) {
+        if (analisar_lista_grandezas(grandeza_texto, canais, num_canais, grandeza_canais) < 0) {
+            return -1; // erro já reportado em stderr por analisar_lista_grandezas
+        }
+    }
+    if (sonda_texto != NULL) {
+        if (analisar_lista_sondas(sonda_texto, canais, num_canais, sonda_canais) < 0) {
+            return -1; // erro já reportado em stderr por analisar_lista_sondas
+        }
     }
 
     // Resolve blocos_desejados cedo (antes de tocar em /dev/mem ou criar o
@@ -772,6 +1052,12 @@ int main(int argc, char *argv[]) {
         cabecalho.campos.lista_canais[i] = (uint8_t)canais[i];
     }
 
+    // [SONDA/GRANDEZA] grandeza_canais/sonda_canais já vêm prontos (com os
+    // sentinelas/padrões corretos nos slots não usados) de mais acima --
+    // só copiar para dentro da struct do cabeçalho.
+    memcpy(cabecalho.campos.grandeza_por_canal, grandeza_canais, sizeof(grandeza_canais));
+    memcpy(cabecalho.campos.sonda_id_por_canal, sonda_canais, sizeof(sonda_canais));
+
     cabecalho.campos.samples_per_buffer = (uint32_t)SAMPLES_PER_BUFFER;
     cabecalho.campos.bytes_por_amostra = (uint32_t)sizeof(uint16_t);
     cabecalho.campos.pru_clock_hz = PRU_CLOCK_HZ;
@@ -827,6 +1113,22 @@ int main(int argc, char *argv[]) {
            "independente de como foram digitados: ", num_canais);
     for (int i = 0; i < num_canais; i++) {
         printf("%d%s", canais[i], (i + 1 < num_canais) ? ", " : "\n");
+    }
+
+    printf("Grandeza/sonda por canal:\n");
+    for (int i = 0; i < num_canais; i++) {
+        const char *nome_grandeza;
+        switch (grandeza_canais[i]) {
+            case GRANDEZA_TENSAO:      nome_grandeza = "tensao"; break;
+            case GRANDEZA_CORRENTE:    nome_grandeza = "corrente"; break;
+            case GRANDEZA_TEMPERATURA: nome_grandeza = "temperatura"; break;
+            default:                   nome_grandeza = "desconhecida"; break;
+        }
+        if (sonda_canais[i][0] != '\0') {
+            printf("  Canal %d: %s (sonda: %s)\n", canais[i], nome_grandeza, sonda_canais[i]);
+        } else {
+            printf("  Canal %d: %s\n", canais[i], nome_grandeza);
+        }
     }
 
     if (num_canais > 1) {
