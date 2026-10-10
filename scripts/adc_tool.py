@@ -60,6 +60,7 @@ referência completa de flags.
 
 import itertools
 import json
+import re
 import struct
 import sys
 import unicodedata
@@ -71,7 +72,7 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import butter, find_peaks, get_window, sosfiltfilt
-from scipy.fft import rfft, rfftfreq, irfft
+from scipy.fft import rfft, rfftfreq, irfft, next_fast_len
 from scipy.interpolate import PchipInterpolator
 
 # ---------------------------------------------------------------------------
@@ -823,6 +824,17 @@ def resolver_offsets_por_canal(offset_texto: str | None, faixas: list[float],
 
 TIPOS_PERFIL_SUPORTADOS = ("resposta_frequencia", "ganho_fixo")
 
+# Id de sonda aceito para montar 'sondas_dir/<id>.json' a partir do cabeçalho:
+# começa com letra/dígito, depois só letras, dígitos, '_', '-' e '.'. Exclui
+# separadores de caminho (e, junto com o teste de '..' em
+# resolver_perfil_canal, qualquer tentativa de sair de sondas_dir).
+# scripts/calibrar_sonda.sh já sanitiza para [a-z0-9_-], bem dentro disso.
+PADRAO_SONDA_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+# Acima deste reforço (dB) sobre o ruído do ADC, aplicar_correcao_sonda()
+# avisa que a correção está amplificando muito o ruído de fundo.
+AVISO_AMPLIFICACAO_RUIDO_DB = 20.0
+
 
 class PerfilSonda:
     """Perfil de calibração de uma sonda, carregado de um arquivo .json em
@@ -847,11 +859,16 @@ class PerfilSonda:
 
     def __init__(self, id: str, tipo: str, caminho: Path,
                  pontos_freq_hz: np.ndarray, pontos_ganho: np.ndarray,
-                 faixa_freq_valida_hz: tuple[float, float] | None = None):
+                 faixa_freq_valida_hz: tuple[float, float] | None = None,
+                 calibracao_adc: dict | None = None):
         self.id = id
         self.tipo = tipo
         self.caminho = caminho
         self.faixa_freq_valida_hz = faixa_freq_valida_hz
+        # Metadado gravado por gerar_perfil_sonda.py (formato/faixa/--ganho de
+        # cada canal NA CALIBRAÇÃO) -- usado só por conferir_calibracao_perfil(),
+        # nunca na matemática da correção. None em perfis escritos à mão.
+        self.calibracao_adc = calibracao_adc
         self._avisou_fora_da_faixa = False  # emite o aviso de "fora da faixa calibrada" só 1x por perfil, não por bin
 
         if tipo == "resposta_frequencia":
@@ -886,19 +903,34 @@ class PerfilSonda:
 
         freqs_clampadas = np.clip(freqs_hz, self._freq_min_pontos, self._freq_max_pontos)
         if not self._avisou_fora_da_faixa:
-            fora = (freqs_hz < self._freq_min_pontos) | (freqs_hz > self._freq_max_pontos)
-            if np.any(fora):
-                n_fora = int(np.count_nonzero(fora))
+            # Faixa de validade: a declarada no perfil (faixa_freq_valida_hz,
+            # que o operador pode ter estreitado de propósito) ou, na falta
+            # dela, a faixa coberta pelos pontos. O bin de DC (0 Hz) nunca
+            # conta: nenhuma calibração por tom o cobre, e contá-lo fazia o
+            # aviso disparar em TODA execução, mesmo com a banda de interesse
+            # inteira dentro da curva -- o que ensina o operador a ignorá-lo.
+            faixa_lo, faixa_hi = self.faixa_freq_valida_hz or (self._freq_min_pontos, self._freq_max_pontos)
+            positivas = freqs_hz > 0.0
+            abaixo = positivas & (freqs_hz < faixa_lo)
+            acima = freqs_hz > faixa_hi
+            if np.any(abaixo) or np.any(acima):
+                partes = []
+                if np.any(abaixo):
+                    dica_rede = " -- inclui a fundamental da rede (50/60 Hz); calibre um ponto em ~50 Hz" if faixa_lo > 50.0 else ""
+                    partes.append(f"{int(np.count_nonzero(abaixo))} abaixo de {faixa_lo:g} Hz{dica_rede}")
+                if np.any(acima):
+                    partes.append(f"{int(np.count_nonzero(acima))} acima de {faixa_hi:g} Hz")
                 print(
                     f"Aviso: sonda '{self.id}' ({self.caminho}) -- "
-                    f"{n_fora} componente(s) de frequência da análise caem "
-                    f"fora da faixa calibrada [{self._freq_min_pontos:g}, "
-                    f"{self._freq_max_pontos:g}] Hz. O ganho nessas "
-                    f"frequências foi mantido constante (igual ao do ponto "
-                    f"calibrado mais próximo), não extrapolado -- a "
-                    f"correção nessa região é uma aproximação. Adicione "
-                    f"pontos de calibração cobrindo essa faixa se precisar "
-                    f"de exatidão ali.",
+                    f"componentes de frequência da análise fora da faixa "
+                    f"válida [{faixa_lo:g}, {faixa_hi:g}] Hz ("
+                    f"{'; '.join(partes)}). O ganho nessas frequências foi "
+                    f"mantido constante (igual ao do ponto calibrado mais "
+                    f"próximo), não extrapolado -- se a sonda continua "
+                    f"atenuando além do último ponto, a amplitude corrigida "
+                    f"ali fica ABAIXO do valor real. Adicione pontos de "
+                    f"calibração cobrindo essa faixa se precisar de exatidão "
+                    f"ali.",
                     file=sys.stderr,
                 )
                 self._avisou_fora_da_faixa = True
@@ -921,9 +953,13 @@ def carregar_perfil_sonda(caminho: Path) -> PerfilSonda:
     except json.JSONDecodeError as e:
         raise SystemExit(f"Erro: '{caminho}' não é um JSON válido ({e}).")
 
+    if not isinstance(dados, dict):
+        raise SystemExit(f"Erro: perfil '{caminho}' precisa ser um objeto JSON ({{...}}), não {type(dados).__name__}.")
     for campo in ("id", "tipo"):
         if campo not in dados:
             raise SystemExit(f"Erro: perfil '{caminho}' não tem o campo obrigatório '{campo}'.")
+    if not isinstance(dados["id"], str):
+        raise SystemExit(f"Erro: campo 'id' de '{caminho}' precisa ser texto.")
 
     tipo = dados["tipo"]
     if tipo not in TIPOS_PERFIL_SUPORTADOS:
@@ -949,6 +985,12 @@ def carregar_perfil_sonda(caminho: Path) -> PerfilSonda:
             ganhos = np.array([float(p["ganho"]) for p in pontos], dtype=np.float64)
         except (KeyError, TypeError, ValueError) as e:
             raise SystemExit(f"Erro: ponto de calibração inválido em '{caminho}' ({e}).")
+        # json.load aceita NaN/Infinity (extensão não padrão do módulo json do
+        # Python): "nan <= 0" é False, então sem esta checagem um ganho NaN
+        # passava pelas validações abaixo e só estourava dentro do SciPy, com
+        # um traceback de ValueError em vez de uma mensagem clara.
+        if not (np.all(np.isfinite(freqs)) and np.all(np.isfinite(ganhos))):
+            raise SystemExit(f"Erro: 'freq_hz'/'ganho' em '{caminho}' precisam ser números finitos (encontrado NaN ou infinito).")
         if np.any(freqs <= 0):
             raise SystemExit(f"Erro: 'freq_hz' em '{caminho}' precisa ser positivo em todo ponto (DC não é calibrável por interpolação log-frequência).")
         if np.any(ganhos <= 0):
@@ -957,7 +999,13 @@ def carregar_perfil_sonda(caminho: Path) -> PerfilSonda:
             raise SystemExit(f"Erro: 'freq_hz' repetida em algum ponto de '{caminho}' -- cada frequência deve aparecer uma única vez.")
         faixa_bruta = dados.get("faixa_freq_valida_hz")
         if faixa_bruta is not None:
-            faixa_freq_valida_hz = (float(faixa_bruta[0]), float(faixa_bruta[1]))
+            try:
+                faixa_freq_valida_hz = (float(faixa_bruta[0]), float(faixa_bruta[1]))
+            except (TypeError, ValueError, IndexError, KeyError):
+                raise SystemExit(f"Erro: 'faixa_freq_valida_hz' em '{caminho}' precisa ser uma lista [min_hz, max_hz].")
+            if not (np.isfinite(faixa_freq_valida_hz[0]) and np.isfinite(faixa_freq_valida_hz[1])
+                    and 0 < faixa_freq_valida_hz[0] < faixa_freq_valida_hz[1]):
+                raise SystemExit(f"Erro: 'faixa_freq_valida_hz' em '{caminho}' precisa ter 0 < min < max (valores finitos).")
     else:  # "ganho_fixo"
         if "ganho" not in dados:
             raise SystemExit(f"Erro: perfil '{caminho}' do tipo 'ganho_fixo' precisa do campo 'ganho'.")
@@ -965,15 +1013,20 @@ def carregar_perfil_sonda(caminho: Path) -> PerfilSonda:
             ganho_unico = float(dados["ganho"])
         except (TypeError, ValueError) as e:
             raise SystemExit(f"Erro: 'ganho' inválido em '{caminho}' ({e}).")
-        if ganho_unico <= 0:
-            raise SystemExit(f"Erro: 'ganho' em '{caminho}' precisa ser positivo.")
+        if not np.isfinite(ganho_unico) or ganho_unico <= 0:
+            raise SystemExit(f"Erro: 'ganho' em '{caminho}' precisa ser um número finito e positivo.")
         freqs = np.array([1.0])       # não usado para ganho_fixo -- só para uma assinatura uniforme do construtor
         ganhos = np.array([ganho_unico])
+
+    calibracao_adc = dados.get("calibracao_adc")
+    if not isinstance(calibracao_adc, dict):
+        calibracao_adc = None  # ausente (perfil escrito à mão) ou malformado: a conferência em main() simplesmente não acontece
 
     return PerfilSonda(
         id=dados["id"], tipo=tipo, caminho=caminho,
         pontos_freq_hz=freqs, pontos_ganho=ganhos,
         faixa_freq_valida_hz=faixa_freq_valida_hz,
+        calibracao_adc=calibracao_adc,
     )
 
 
@@ -1036,6 +1089,19 @@ def resolver_perfil_canal(canal: int, sonda_id: str, overrides_perfil: dict[int,
     if canal in overrides_perfil:
         return carregar_perfil_sonda(overrides_perfil[canal])
     if sonda_id:
+        # O id vem de 32 bytes de um '.bin' que pode ter sido gravado por
+        # outra pessoa/máquina, e ler_adc.c não valida os caracteres (só o
+        # tamanho). Sem esta checagem, um id como '../x' ou '/etc/foo' faria
+        # 'sondas_dir / "<id>.json"' sair de sondas_dir (um caminho absoluto
+        # à direita do operador '/' substitui o da esquerda).
+        if not PADRAO_SONDA_ID.match(sonda_id) or ".." in sonda_id:
+            raise SystemExit(
+                f"Erro: canal {canal} tem o id de sonda '{sonda_id}' no "
+                f"cabeçalho da captura, que não é um nome de arquivo seguro "
+                f"(só letras, dígitos, '_', '-' e '.' no meio; sem '/', '\\' "
+                f"nem '..'). Use --sonda-perfil {canal}:ARQUIVO para indicar "
+                f"o perfil explicitamente."
+            )
         caminho = sondas_dir / f"{sonda_id}.json"
         if not caminho.exists():
             raise SystemExit(
@@ -1045,8 +1111,58 @@ def resolver_perfil_canal(canal: int, sonda_id: str, overrides_perfil: dict[int,
                 f"onde os perfis estão, ou use --sonda-perfil "
                 f"{canal}:ARQUIVO para indicar um arquivo específico."
             )
-        return carregar_perfil_sonda(caminho)
+        perfil = carregar_perfil_sonda(caminho)
+        if perfil.id != sonda_id:
+            print(
+                f"Aviso: canal {canal}: o cabeçalho da captura registra a "
+                f"sonda '{sonda_id}', mas o arquivo '{caminho}' declara "
+                f"id='{perfil.id}' -- confira se não é o perfil de outra "
+                f"sonda (arquivo copiado/renomeado).",
+                file=sys.stderr,
+            )
+        return perfil
     return None
+
+
+def conferir_calibracao_perfil(perfil: PerfilSonda, canal: int, formato: str,
+                                faixa: float, ganho: float) -> None:
+    """Avisa (nunca aborta) se o perfil foi gerado sob uma calibração de ADC
+    diferente da usada AGORA para o canal. O ganho(f) de um perfil é
+    RELATIVO ao --ganho (e depende de --faixa/--formato) com que foi medido
+    (ver gerar_perfil_sonda.py, seção --ganho): usá-lo com outro --ganho
+    multiplica toda a corrente corrigida, sem qualquer outro sintoma -- o
+    erro seria silencioso. Só confere o que gerar_perfil_sonda.py grava em
+    'calibracao_adc'; perfil sem esse bloco (escrito à mão) não é conferido."""
+    cal = perfil.calibracao_adc
+    if not cal:
+        return
+    problemas = []
+    try:
+        ganho_perfil = cal.get("ganho", {}).get("sonda")
+        if ganho_perfil is not None and not np.isclose(float(ganho_perfil), ganho, rtol=1e-3, atol=0.0):
+            problemas.append(
+                f"--ganho do canal = {ganho:g}, mas o perfil foi gerado com "
+                f"{float(ganho_perfil):g} -- as amplitudes corrigidas saem "
+                f"multiplicadas por {ganho / float(ganho_perfil):.4g}"
+            )
+        faixa_perfil = cal.get("faixa_v", {}).get("sonda")
+        if faixa_perfil is not None and not np.isclose(float(faixa_perfil), faixa, rtol=1e-3, atol=0.0):
+            problemas.append(
+                f"--faixa do canal = {faixa:g} V, mas o perfil foi gerado com "
+                f"{float(faixa_perfil):g} V -- as amplitudes saem "
+                f"multiplicadas por {faixa / float(faixa_perfil):.4g}"
+            )
+        formato_perfil = cal.get("formato")
+        if formato_perfil is not None and formato_perfil != formato:
+            problemas.append(f"--formato = {formato}, mas o perfil foi gerado com {formato_perfil}")
+    except (AttributeError, TypeError, ValueError):
+        return  # bloco calibracao_adc malformado -- não vale derrubar a análise por causa de um metadado
+    for problema in problemas:
+        print(
+            f"Aviso: canal {canal}, sonda '{perfil.id}': {problema}. Use a "
+            f"mesma calibração da geração do perfil, ou gere o perfil de novo.",
+            file=sys.stderr,
+        )
 
 
 def aplicar_correcao_sonda(sinal: np.ndarray, fs: float, perfil: PerfilSonda) -> np.ndarray:
@@ -1068,6 +1184,17 @@ def aplicar_correcao_sonda(sinal: np.ndarray, fs: float, perfil: PerfilSonda) ->
     do script (ver docs/proposta_correcao_sonda.md, seção 6.2, para a
     alternativa por FIR considerada e por que foi preterida aqui).
 
+    LIMITAÇÃO (medida na auditoria, ver docs/auditoria_perfil_sonda.md): a
+    correção restaura a AMPLITUDE de cada componente espectral (erro < 0.1%
+    em tons de teste), mas NÃO a fase -- a fase da sonda real continua no
+    sinal. A forma de onda no tempo do canal corrigido, portanto, não é a
+    corrente verdadeira (numa sonda passa-baixa de 1ª ordem com fc=30 kHz, o
+    erro RMS da forma de onda de uma soma de tons de 2.5-40 kHz chega a ~40%,
+    com a amplitude de cada tom exata). Serve para espectro/Welch/picos;
+    NÃO use o sinal corrigido para grandezas que dependem de fase entre
+    canais (potência ativa/impedância em supraharmônicos) sem uma calibração
+    de fase.
+
     Espera um sinal já centrado o bastante para caber inteiro na FFT de uma
     vez -- consistente com o resto do modo de plotagem deste script, que já
     carrega o trecho selecionado (--inicio/--fim) inteiro num ndarray antes
@@ -1076,11 +1203,37 @@ def aplicar_correcao_sonda(sinal: np.ndarray, fs: float, perfil: PerfilSonda) ->
     seção 6 de docs/proposta_correcao_sonda.md para essa decisão de
     escopo)."""
     n = len(sinal)
-    espectro = rfft(sinal)
-    freqs = rfftfreq(n, 1.0 / fs)
+    # Tamanho de FFT "rápido" (só fatores 2/3/5/7...): com N de fator primo
+    # grande (ex.: um --inicio/--fim arbitrário) a FFT cai no algoritmo de
+    # Bluestein, ~8x mais lenta nas medições deste projeto (N=2000003:
+    # 1.74 s vs 0.20 s; N já "rápido" não muda). O sinal é
+    # completado com zeros até esse tamanho e o resultado recortado de volta
+    # a N -- a divisão por ganho(f) acontece na grade do tamanho maior.
+    n_fft = next_fast_len(n, real=True)
+    espectro = rfft(sinal, n=n_fft)
+    freqs = rfftfreq(n_fft, 1.0 / fs)
     ganho = perfil.ganho_em(freqs)
+
+    # Diagnóstico: onde 1/ganho(f) é grande, o ruído do ADC (que NÃO passou
+    # pela sonda) é amplificado junto com o sinal -- o piso de ruído, em
+    # Amperes, sobe por esse fator. Não é erro (é físico), mas quem lê o
+    # espectro corrigido precisa saber. Ignora o bin de DC.
+    if len(ganho) > 1:
+        i_min = 1 + int(np.argmin(ganho[1:]))
+        reforco_db = -20.0 * np.log10(ganho[i_min])
+        if reforco_db > AVISO_AMPLIFICACAO_RUIDO_DB:
+            print(
+                f"Aviso: sonda '{perfil.id}': a correção amplifica o ruído do "
+                f"ADC em até {reforco_db:.1f} dB (em {freqs[i_min]:g} Hz, onde "
+                f"o ganho da sonda é {ganho[i_min]:.3g}). O piso de ruído em "
+                f"Amperes nessa região é correspondentemente maior -- "
+                f"componentes fracas ali podem estar abaixo do que o "
+                f"espectro corrigido sugere.",
+                file=sys.stderr,
+            )
+
     espectro_corrigido = espectro / ganho
-    return irfft(espectro_corrigido, n=n)
+    return irfft(espectro_corrigido, n=n_fft)[:n]
 
 
 # ---------------------------------------------------------------------------
@@ -2137,9 +2290,12 @@ def montar_parser():
         "Grandeza física e correção de sonda",
         "[PLOTAGEM] Corrente atenua de forma diferente em cada frequência "
         "(ao contrário de tensão, que usa só --ganho escalar) -- estas "
-        "flags dizem qual grandeza cada canal mede e, para corrente, qual "
-        "sonda usar para corrigir isso antes de --fft/--welch/plot. Ver "
-        "docs/proposta_correcao_sonda.md.",
+        "flags dizem qual grandeza cada canal mede e qual sonda usar para "
+        "corrigir isso antes de --fft/--welch/plot (canal de corrente, ou "
+        "de tensão com sonda registrada). A correção restaura a AMPLITUDE "
+        "por frequência, não a fase. O perfil só vale com o mesmo --ganho/"
+        "--faixa/--formato da sua geração (conferido, com aviso). Ver "
+        "docs/proposta_correcao_sonda.md e docs/auditoria_perfil_sonda.md.",
     )
     grupo_sonda.add_argument(
         "--grandeza", type=str, default=None, metavar="C:G[,...]",
@@ -2153,7 +2309,8 @@ def montar_parser():
     grupo_sonda.add_argument(
         "--sondas-dir", type=Path, default=None, metavar="DIR",
         help="Pasta onde procurar o perfil de uma sonda pelo id gravado no "
-             "cabeçalho da captura (arquivo '<id>.json' dentro de DIR). "
+             "cabeçalho da captura (arquivo '<id>.json' dentro de DIR; o id "
+             "só pode ter letras, dígitos, '_', '-' e '.'). "
              "Padrão: a pasta 'sondas' ao lado deste script "
              "(scripts/sondas/)."
     )
@@ -2631,13 +2788,31 @@ def main(argv=None):
     # aplicar_correcao_sonda()).
     grandeza_por_canal_exibir = {canal: grandeza_do_canal(canal) for canal in canais_exibir}
     for canal in canais_exibir:
-        if grandeza_por_canal_exibir[canal] != GRANDEZA_CORRENTE:
+        grandeza = grandeza_por_canal_exibir[canal]
+        sonda_id = sonda_id_do_canal(canal)
+        # Uma sonda REGISTRADA (id no cabeçalho ou --sonda-perfil) vale para
+        # qualquer grandeza de frequência (corrente, e também tensão -- ex.:
+        # divisor/ponta com banda limitada): antes, só grandeza==corrente
+        # corrigia, e um canal de tensão com sonda registrada era ignorado
+        # em silêncio. Corrente SEM sonda continua só avisando.
+        sonda_registrada = bool(sonda_id) or canal in overrides_perfil_cli
+        if grandeza == GRANDEZA_TEMPERATURA:
+            if sonda_registrada:
+                print(
+                    f"Aviso: canal {canal} é de temperatura -- a sonda "
+                    f"registrada ('{sonda_id or overrides_perfil_cli[canal]}') "
+                    f"não é aplicada (correção por frequência não se aplica "
+                    f"a temperatura; perfis 'polinomio'/'tabela' ainda não "
+                    f"existem).",
+                    file=sys.stderr,
+                )
+            continue
+        if grandeza != GRANDEZA_CORRENTE and not sonda_registrada:
             continue
         prefixo = f"  Canal {canal}: " if num_canais > 1 else "  "
         if args.sem_correcao_sonda:
             print(f"{prefixo}--sem-correcao-sonda ativo -- usando só --ganho escalar (sem correção por frequência).")
             continue
-        sonda_id = sonda_id_do_canal(canal)
         perfil = resolver_perfil_canal(canal, sonda_id, overrides_perfil_cli, sondas_dir)
         if perfil is None:
             print(
@@ -2648,6 +2823,8 @@ def main(argv=None):
                 file=sys.stderr,
             )
             continue
+        idx_canal = indice_no_ciclo[canal]
+        conferir_calibracao_perfil(perfil, canal, args.formato, faixas[idx_canal], ganhos[idx_canal])
         por_canal_tensao[canal] = aplicar_correcao_sonda(por_canal_tensao[canal], fs_efetiva, perfil)
         print(f"{prefixo}correção de sonda aplicada (perfil '{perfil.id}', {perfil.caminho})")
 
