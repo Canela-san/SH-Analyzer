@@ -1,0 +1,21 @@
+{
+  "id": "exemplo_sonda",
+  "tipo": "resposta_frequencia",
+  "fabricante": "Fabricante",
+  "modelo": "Modelo",
+  "numero_serie": "0000",
+  "tipo_saida": "mV/A",
+  "corrente_nominal_a": 30,
+  "faixa_freq_valida_hz": [50, 100000],
+  "data_calibracao": "AAAA-MM-DD",
+  "calibrado_com": "cadeia completa SH-Analyzer (sonda + isolador + ADS8688)",
+  "incerteza_estimada_pct": 2.0,
+  "pontos": [
+    {"freq_hz": 60,    "ganho": 1.000},
+    {"freq_hz": 500,   "ganho": 0.987},
+    {"freq_hz": 2000,  "ganho": 0.941},
+    {"freq_hz": 10000, "ganho": 0.812},
+    {"freq_hz": 50000, "ganho": 0.55},
+    {"freq_hz": 100000,"ganho": 0.30}
+  ]
+}
