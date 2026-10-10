@@ -40,7 +40,7 @@ void lidar_interrupcao(int dummy) { manter_execucao = 0; }
 // -- ver docs/contexto_projeto.md para o item pendente de atualizar o lado
 // Python antes da próxima captura real.
 #define CABECALHO_MAGIC "SHAN"      // 4 bytes, sem terminador nulo armazenado
-#define CABECALHO_VERSAO 2u         // versão do FORMATO do cabeçalho (não do firmware/software) -- v2 adiciona grandeza_por_canal/sonda_id_por_canal (ver struct cabecalho_arquivo_campos); adc_tool.py ainda não foi atualizado para ler esses campos novos nesta revisão, ver docs/proposta_correcao_sonda.md
+#define CABECALHO_VERSAO 2u         // versão do FORMATO do cabeçalho (não do firmware/software) -- v2 adiciona grandeza_por_canal/sonda_id_por_canal (ver struct cabecalho_arquivo_campos); adc_tool.py já foi atualizado para ler esses campos (ver docs/proposta_correcao_sonda.md)
 #define CABECALHO_TAMANHO_TOTAL 1024u
 
 // Tamanho FIXO (bytes, incluindo o terminador nulo) dos campos de texto
@@ -55,11 +55,12 @@ void lidar_interrupcao(int dummy) { manter_execucao = 0; }
 // [SONDA/GRANDEZA] Tamanho FIXO (bytes, incluindo o terminador nulo) do
 // identificador de sonda por canal -- ver --sonda, sonda_id_por_canal na
 // struct abaixo, e docs/proposta_correcao_sonda.md para o racional
-// completo. 16 bytes (15 úteis de texto ASCII) é suficiente para um código
-// curto (ex.: "fluke_i30_01"); o nome/descrição completos da sonda
-// ficam no arquivo de perfil correspondente, do lado Python -- este campo
-// é só a CHAVE de busca desse arquivo, não o perfil em si.
-#define CABECALHO_SONDA_ID_TAMANHO 16u
+// completo. 32 bytes (31 úteis de texto ASCII) cobre confortavelmente um
+// código do tipo "fabricante_modelo_serial" sem precisar abreviar; o nome/
+// descrição completos da sonda ficam no arquivo de perfil correspondente,
+// do lado Python -- este campo é só a CHAVE de busca desse arquivo, não o
+// perfil em si.
+#define CABECALHO_SONDA_ID_TAMANHO 32u
 
 // [SONDA/GRANDEZA] Valores possíveis para grandeza_por_canal na struct
 // abaixo -- a grandeza física que cada canal habilitado está medindo.
@@ -152,10 +153,10 @@ struct cabecalho_arquivo_campos {
     uint32_t bytes_por_amostra;        // largura de cada amostra bruta no '.bin', em bytes (hoje sempre 2 = sizeof(uint16_t))
     uint32_t pru_clock_hz;             // clock da PRU usado para converter Hz -> ciclos (PRU_CLOCK_HZ, hoje 200 MHz) -- permite reconstruir/conferir sample_period_ticks a partir de frequencia_hz sem hardcodar 200 MHz do lado de quem lê
     uint32_t sample_period_ticks;      // valor efetivamente escrito em shared_control->sample_period_ticks para esta captura
-    uint32_t primeira_amostra_descartada; // 1 = a primeira amostra bruta de toda a captura foi descartada antes de chegar ao arquivo (comportamento padrão atual, ver main()); reservado para o caso, não implementado hoje, de um firmware futuro mudar isso
+    uint32_t primeira_amostra_descartada; // 1 = a primeira amostra bruta de toda a captura foi descartada antes de chegar ao arquivo; hoje sempre 0 (ver main() -- descarte removido: no modo AUTO_RST a primeira amostra do laço principal já é dado válido de canais[0], não resíduo). Campo mantido por compatibilidade de formato, reservado para o caso de um firmware futuro reintroduzir algum descarte
     double   duracao_pedida_segundos;  // se --duracao foi usado, a duração pedida em segundos; 0.0 caso contrário (--blocos ou o padrão de 1 bloco)
     uint64_t blocos_gravados;          // preenchido (reescrito) só ao FINAL da captura -- fica 0 enquanto a captura está em andamento, ou se o programa for encerrado (crash, kill -9) antes da reescrita final. uint64_t (não uint32_t) por consistência com blocos_salvos/total_amostras_gravadas, que já são de 64 bits no resto do arquivo -- ver main().
-    uint64_t total_amostras_gravadas;  // idem, total de amostras BRUTAS intercaladas gravadas após o descarte da primeira -- equivale a (tamanho_do_arquivo - 1024) / bytes_por_amostra. uint64_t É NECESSÁRIO aqui, não só por consistência: a 500 kSPS contínuos, um uint32_t estouraria em pouco mais de 2 horas de captura.
+    uint64_t total_amostras_gravadas;  // idem, total de amostras BRUTAS intercaladas gravadas -- equivale a (tamanho_do_arquivo - 1024) / bytes_por_amostra, e é sempre um múltiplo exato de samples_per_buffer (nenhuma amostra é descartada, ver primeira_amostra_descartada acima). uint64_t É NECESSÁRIO aqui, não só por consistência: a 500 kSPS contínuos, um uint32_t estouraria em pouco mais de 2 horas de captura.
     char     titulo[CABECALHO_TITULO_TAMANHO];       // [RASTREABILIDADE] --titulo/-t, opcional, texto livre em UTF-8, terminado em '\0'. Não informado -> todos os bytes zerados (string vazia), não lixo -- ver memset(0) da struct inteira em main(). Rejeitado (não truncado) em main() se não couber -- ver comentário lá sobre por que truncar um UTF-8 num limite de bytes arbitrário é arriscado.
     char     descricao[CABECALHO_DESCRICAO_TAMANHO]; // [RASTREABILIDADE] --descricao/-d, mesmas regras de titulo, só que maior -- espaço para uma frase completa sobre o objetivo/contexto do ensaio (ex.: local, o que estava sendo injetado/medido).
     uint8_t  grandeza_por_canal[ADS8688_MAX_CANAIS];             // [SONDA/GRANDEZA, v2] grandeza física de cada canal habilitado (GRANDEZA_TENSAO/CORRENTE/TEMPERATURA) -- mesma indexação de lista_canais (posição i descreve lista_canais[i]); slots não usados = GRANDEZA_NAO_USADA. Sem --grandeza na linha de comando, todo canal assume GRANDEZA_PADRAO (tensão), preservando o comportamento histórico.
@@ -715,6 +716,97 @@ static void imprimir_bloco_gravado(char rotulo, unsigned long long blocos_salvos
     }
 }
 
+// ============================================================================
+// [BUG CORRIGIDO -- CANAIS "GRUDADOS" ENTRE CAPTURAS] Reinicia o núcleo da
+// PRU0 via remoteproc ANTES de cada captura.
+//
+// SINTOMA: uma segunda chamada a `ler_adc` com uma lista de canais/máscara
+// diferente da primeira silenciosamente continuava usando os canais da
+// PRIMEIRA captura, mesmo com `auto_seq_mask` sendo escrito corretamente em
+// shared_control a cada execução.
+//
+// CAUSA RAIZ: `spi_core.asm` só executa a sequência de configuração do
+// ADS8688 (escrita de AUTO_SEQ_EN com a máscara de canais + comando
+// AUTO_RST) UMA ÚNICA VEZ por boot da PRU -- em `espera_configuracao`,
+// esperando o primeiro `config_ready == 1` depois do firmware carregar.
+// Depois disso, a PRU entra em `laco_principal`, que roda PARA SEMPRE
+// (`JMP laco_principal`) e nunca mais volta a checar `config_ready` nem a
+// reler `auto_seq_mask` -- só `sample_period_ticks` é relido a cada
+// amostra dentro do laço (por isso a FREQUÊNCIA sim atualizava entre
+// capturas; os CANAIS, não). `buffer_0_addr`/`buffer_1_addr` também são
+// lidos só uma vez, mas como são sempre os mesmos endereços fixos
+// (DDR_RESERVED_PHYS + offsets constantes), isso não produzia sintoma
+// visível.
+//
+// Ou seja: a partir da segunda vez que `setup.sh` é rodado (ou que a PRU é
+// reiniciada), TODAS as capturas seguintes -- não importa o que `ler_adc`
+// escreva em `auto_seq_mask` -- reaproveitam os canais configurados na
+// PRIMEIRA captura feita desde aquele boot da PRU.
+//
+// CORREÇÃO: em vez de mexer no laço de tempo crítico já validado em
+// hardware (`spi_core.asm`) -- risco desnecessário para um laço cujo
+// timing já foi calibrado e depurado em bancada --, force um stop+start
+// do núcleo PRU0 (mesmo mecanismo que `setup.sh` já usa para carregar o
+// firmware) antes de CADA captura. Isso faz `pru_main.c` rodar de novo do
+// zero (`config_ready = 0`, clamps de segurança) e a PRU volta a esperar
+// em `espera_configuracao` -- garantindo que a máscara de canais escrita
+// logo em seguida por este programa seja sempre a que a PRU realmente usa
+// na próxima configuração do ADS8688.
+//
+// CUSTO/DESEMPENHO: um stop+start de remoteproc leva poucos milissegundos
+// e é pago UMA VEZ por invocação de `ler_adc`, totalmente fora do laço de
+// aquisição -- nenhuma instrução extra é adicionada ao laço principal, e a
+// taxa de amostragem máxima suportada não muda em nada. O conteúdo da RAM
+// compartilhada em si NÃO é apagado por esse stop+start (só o contador de
+// programa e os registradores da PRU são resetados) -- irrelevante aqui,
+// porque TODOS os campos que a PRU lê antes do laço principal
+// (buffer_0_addr, buffer_1_addr, sample_period_ticks, auto_seq_mask) já
+// são reescritos por este programa logo abaixo, incondicionalmente, antes
+// de sinalizar config_ready=1 de novo.
+//
+// Falha ao reiniciar é tratada como erro FATAL (retorna -1 em vez de só
+// avisar): prosseguir mesmo assim reproduziria silenciosamente o bug que
+// esta função existe para eliminar -- uma captura gravada com os canais
+// errados, sem nenhum aviso no cabeçalho nem no console.
+// ============================================================================
+#define REMOTEPROC_PRU0_ESTADO "/sys/class/remoteproc/remoteproc1/state"
+
+// Escreve um comando ("stop"/"start") no arquivo de estado do remoteproc.
+// Retorna 0 em sucesso, -1 em falha (arquivo não existe/sem permissão/
+// escrita incompleta).
+static int escrever_estado_remoteproc(const char *comando) {
+    int fd = open(REMOTEPROC_PRU0_ESTADO, O_WRONLY);
+    if (fd < 0) {
+        return -1;
+    }
+    size_t tamanho = strlen(comando);
+    ssize_t escrito = write(fd, comando, tamanho);
+    close(fd);
+    return (escrito == (ssize_t)tamanho) ? 0 : -1;
+}
+
+static int reiniciar_pru_antes_da_captura(void) {
+    // "stop" pode falhar se a PRU já estiver parada (ex.: primeira
+    // captura logo após `setup.sh`, antes de qualquer `ler_adc` ter
+    // rodado) -- não é um erro real, por isso o retorno é ignorado aqui;
+    // só a falha do "start" seguinte é que importa.
+    escrever_estado_remoteproc("stop");
+    usleep(50000); // folga para o núcleo terminar de parar
+
+    if (escrever_estado_remoteproc("start") != 0) {
+        fprintf(stderr, "Erro ao reiniciar a PRU via '%s' (rode primeiro "
+                         "'sudo ./setup.sh' para carregar o firmware ao "
+                         "menos uma vez, ou confira se o caminho do "
+                         "remoteproc está certo neste kernel -- pode ser "
+                         "remoteproc0 em vez de remoteproc1 dependendo da "
+                         "imagem).\n", REMOTEPROC_PRU0_ESTADO);
+        return -1;
+    }
+    usleep(50000); // folga para a PRU inicializar e chegar em espera_configuracao
+                    // antes de escrevermos a nova configuração em shared_control
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     signal(SIGINT, lidar_interrupcao);
 
@@ -970,6 +1062,20 @@ int main(int argc, char *argv[]) {
         mascara_auto_seq |= (1u << canais[i]);
     }
 
+    // [BUG CORRIGIDO -- CANAIS "GRUDADOS" ENTRE CAPTURAS] Reinicia a PRU
+    // ANTES de tocar em /dev/mem ou abrir o arquivo de saída -- último
+    // passo da fase de validação, primeiro passo que efetivamente toca
+    // hardware. Ver docstring de reiniciar_pru_antes_da_captura() para o
+    // porquê: sem isso, uma captura com canais diferentes da anterior
+    // silenciosamente reaproveitava a máscara de canais já configurada na
+    // PRU desde o boot anterior, em vez da máscara calculada acima.
+    printf("Reiniciando a PRU para garantir que os canais desta captura "
+           "sejam aplicados (evita reaproveitar a configuração de uma "
+           "captura anterior)...\n");
+    if (reiniciar_pru_antes_da_captura() != 0) {
+        return -1;
+    }
+
     int mem_fd = open("/dev/mem", O_RDWR | O_SYNC);
     if (mem_fd < 0) {
         perror("Erro ao abrir /dev/mem (rode com sudo)");
@@ -1062,7 +1168,11 @@ int main(int argc, char *argv[]) {
     cabecalho.campos.bytes_por_amostra = (uint32_t)sizeof(uint16_t);
     cabecalho.campos.pru_clock_hz = PRU_CLOCK_HZ;
     cabecalho.campos.sample_period_ticks = ctrl->sample_period_ticks;
-    cabecalho.campos.primeira_amostra_descartada = 1u;
+    // [BUG CORRIGIDO -- CANAL TROCADO EM CAPTURA MULTI-CANAL] Não há mais
+    // descarte de amostra nenhuma -- ver a explicação grande junto à
+    // remoção de 'descarte_pendente', mais abaixo, sobre por que o
+    // descarte herdado do modo manual estava incorreto para o AUTO_RST.
+    cabecalho.campos.primeira_amostra_descartada = 0u;
     cabecalho.campos.duracao_pedida_segundos = duracao_pedida_segundos;
     cabecalho.campos.blocos_gravados = 0;         // preenchido no final, ver fim de main()
     cabecalho.campos.total_amostras_gravadas = 0; // idem
@@ -1151,11 +1261,6 @@ int main(int argc, char *argv[]) {
                num_canais);
     }
 
-    printf("A primeira amostra bruta de toda a captura é sempre descartada "
-           "antes de chegar no arquivo (dado residual do ADS8688 anterior "
-           "ao início real da varredura -- ver comentário no laço de "
-           "captura abaixo).\n");
-
     if (blocos_desejados == 0) {
         printf("Capturando indefinidamente -- pressione Ctrl+C para parar e "
                "salvar o arquivo...\n");
@@ -1165,75 +1270,79 @@ int main(int argc, char *argv[]) {
     }
 
     unsigned long long blocos_salvos = 0;
-    unsigned long long total_amostras_gravadas = 0; // [CABECALHO] soma de amostras brutas efetivamente gravadas (pós-descarte) -- preenchido no cabeçalho final
+    unsigned long long total_amostras_gravadas = 0; // [CABECALHO] soma de amostras brutas gravadas -- preenchido no cabeçalho final
 
-    // A primeira amostra bruta de TODA captura -- 1 canal ou vários -- é
-    // sempre descartada, incondicionalmente.
+    // ============================================================================
+    // [BUG CORRIGIDO -- CANAL TROCADO EM CAPTURA MULTI-CANAL] Este programa
+    // costumava descartar incondicionalmente a primeira amostra bruta de
+    // TODA captura, herdando uma lógica do antigo modo MANUAL multi-canal
+    // (onde cada quadro SPI reenvia o comando MAN_Ch_x do canal desejado, e
+    // o ADS8688 só devolve, em cada quadro, o resultado do comando do
+    // quadro ANTERIOR -- exigindo descartar 1 amostra para realinhar
+    // posição <-> canal contra o primeiro comando de configuração).
     //
-    // POR QUE: o ADS8688 (em qualquer modo, manual ou automático) sempre
-    // devolve, em cada quadro SPI, o resultado do comando/estado do quadro
-    // ANTERIOR, nunca do quadro atual (ver cabeçalho de spi_core.asm). A
-    // própria primeiríssima transação SPI que a PRU executa depois do boot
-    // -- ainda dentro da sequência de configuração do modo automático,
-    // antes mesmo do laço principal começar -- necessariamente reflete o
-    // que já estava pendente no ADS8688 de ANTES da captura começar (lixo
-    // de inicialização, ou resíduo de uma execução anterior do firmware).
-    // Esse resíduo se propaga, por causa desse mesmo efeito de pipeline de
-    // 1 quadro, até a primeira amostra que de fato chega no laço principal
-    // e é gravada na DDR.
+    // Essa lógica NÃO se aplica da mesma forma ao modo AUTO_RST atual, e
+    // descartá-la aqui estava introduzindo exatamente o bug: no modo
+    // automático, o comando AUTO_RST (enviado uma única vez, na
+    // configuração -- ver spi_core.asm/Transação 2) já é, ele próprio, o
+    // "comando anterior" cujo resultado é descartado -- seu quadro SPI
+    // retorna lixo (times de antes da configuração), que já é jogado fora
+    // corretamente pela PRU sem nunca tocar a DDR. O datasheet (SBAS582C,
+    // Figura 100/101, "Device Operation Example in AUTO_RST Mode") e o
+    // fluxo de referência da própria TI (fórum E2E, thread "ADS8688 flow
+    // chart") confirmam: o quadro AUTO_RST retorna dado indefinido
+    // (descartado), e o PRIMEIRO quadro NO_OP seguinte -- que é exatamente
+    // o quadro 0 do laço principal abaixo -- já retorna o dado VÁLIDO do
+    // canal habilitado de menor número (canais[0]). Não existe um segundo
+    // quadro de lixo a descartar depois desse.
     //
-    // Antes desta mudança, o descarte só era feito em captura multi-canal
-    // (para realinhar posição <-> canal). A partir de agora é sempre feito,
-    // porque o problema de fundo ("primeiro dado é antigo/residual") existe
-    // também com 1 canal só -- só não era corrigido. Descartar exatamente 1
-    // amostra é uma amostra a menos em mais de 1 milhão por buffer --
-    // estatisticamente irrelevante para a FFT -- e mantém intacto o
-    // alinhamento (amostra retida 0 -> canais[0]) usado em todo o resto
-    // deste programa e em adc_tool.py.
-    int descarte_pendente = 1;
+    // Descartar mais uma amostra aqui, como o código fazia antes, jogava
+    // fora esse primeiro dado válido de canais[0] e deslocava TODA a
+    // intercalação em -1 posição: a amostra retida na posição i passava a
+    // conter o dado do canal canais[(i+1) % N], não canais[i % N] como
+    // documentado -- ou seja, o dado do canal canais[1] aparecia rotulado
+    // como canais[0], o de canais[2] como canais[1], e assim por diante
+    // (o último canal da lista "vazava" para a posição 0 do bloco
+    // seguinte). Em captura de 1 canal só isso é matematicamente
+    // invisível (todo quadro é o mesmo canal, então um deslocamento de 1
+    // amostra no tempo não muda qual canal aparece onde) -- por isso só
+    // apareceu em captura multi-canal, e só ficou claro com um único canal
+    // realmente conectado entre vários habilitados.
+    //
+    // Sem nenhum descarte, a amostra retida i corresponde exatamente a
+    // canais[i % N] em qualquer captura (1 canal ou N canais), batendo com
+    // a fórmula já documentada no README/cabeçalho/mensagens de console
+    // deste programa -- nenhuma outra mudança é necessária.
+    // ============================================================================
 
     while (manter_execucao && (blocos_desejados == 0 || blocos_salvos < blocos_desejados)) {
         if (ctrl->buffer_0_ready) {
-            const uint16_t *origem = buffer_0_virtual;
-            size_t esperado = SAMPLES_PER_BUFFER;
-            if (descarte_pendente) {
-                origem = buffer_0_virtual + 1;
-                esperado = SAMPLES_PER_BUFFER - 1;
-            }
-            size_t gravado = fwrite(origem, sizeof(uint16_t), esperado, ficheiro_bin);
+            size_t gravado = fwrite(buffer_0_virtual, sizeof(uint16_t), SAMPLES_PER_BUFFER, ficheiro_bin);
             ctrl->buffer_0_ready = 0;
-            if (gravado != esperado) {
-                fprintf(stderr, "Erro: fwrite gravou só %zu/%zu amostras no "
+            if (gravado != (size_t)SAMPLES_PER_BUFFER) {
+                fprintf(stderr, "Erro: fwrite gravou só %zu/%d amostras no "
                                  "bloco A -- disco cheio ou erro de I/O? "
                                  "Encerrando a captura para não deixar um "
                                  ".bin truncado sem aviso.\n",
-                        gravado, esperado);
+                        gravado, SAMPLES_PER_BUFFER);
                 manter_execucao = 0;
             } else {
-                descarte_pendente = 0;
                 blocos_salvos++;
                 total_amostras_gravadas += gravado;
                 imprimir_bloco_gravado('A', blocos_salvos, blocos_desejados);
             }
         }
         if (ctrl->buffer_1_ready) {
-            const uint16_t *origem = buffer_1_virtual;
-            size_t esperado = SAMPLES_PER_BUFFER;
-            if (descarte_pendente) {
-                origem = buffer_1_virtual + 1;
-                esperado = SAMPLES_PER_BUFFER - 1;
-            }
-            size_t gravado = fwrite(origem, sizeof(uint16_t), esperado, ficheiro_bin);
+            size_t gravado = fwrite(buffer_1_virtual, sizeof(uint16_t), SAMPLES_PER_BUFFER, ficheiro_bin);
             ctrl->buffer_1_ready = 0;
-            if (gravado != esperado) {
-                fprintf(stderr, "Erro: fwrite gravou só %zu/%zu amostras no "
+            if (gravado != (size_t)SAMPLES_PER_BUFFER) {
+                fprintf(stderr, "Erro: fwrite gravou só %zu/%d amostras no "
                                  "bloco B -- disco cheio ou erro de I/O? "
                                  "Encerrando a captura para não deixar um "
                                  ".bin truncado sem aviso.\n",
-                        gravado, esperado);
+                        gravado, SAMPLES_PER_BUFFER);
                 manter_execucao = 0;
             } else {
-                descarte_pendente = 0;
                 blocos_salvos++;
                 total_amostras_gravadas += gravado;
                 imprimir_bloco_gravado('B', blocos_salvos, blocos_desejados);
