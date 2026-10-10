@@ -59,6 +59,8 @@ referência completa de flags.
 """
 
 import itertools
+import json
+import re
 import struct
 import sys
 import unicodedata
@@ -70,7 +72,8 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import butter, find_peaks, get_window, sosfiltfilt
-from scipy.fft import rfft, rfftfreq
+from scipy.fft import rfft, rfftfreq, irfft, next_fast_len
+from scipy.interpolate import PchipInterpolator
 
 # ---------------------------------------------------------------------------
 # Constantes
@@ -108,6 +111,31 @@ NOMES_EXIBICAO_JANELA = {
 ADS8688_MAX_CANAIS = 8
 CANAL_PADRAO = "1"
 
+# [SONDA/GRANDEZA] Mesmos valores de GRANDEZA_TENSAO/CORRENTE/TEMPERATURA/
+# NAO_USADA em firmware/ler_adc.c -- precisa ficar em sincronia manual com
+# aquele lado, mesma situação de ADS8688_MAX_CANAIS acima.
+GRANDEZA_TENSAO = 0
+GRANDEZA_CORRENTE = 1
+GRANDEZA_TEMPERATURA = 2
+GRANDEZA_NAO_USADA = 0xFF
+GRANDEZA_PADRAO = GRANDEZA_TENSAO  # mesmo padrão histórico do lado C: canal sem info assumido como tensão
+
+NOMES_GRANDEZA = {
+    GRANDEZA_TENSAO: "tensão",
+    GRANDEZA_CORRENTE: "corrente",
+    GRANDEZA_TEMPERATURA: "temperatura",
+}
+UNIDADE_GRANDEZA = {
+    GRANDEZA_TENSAO: "V",
+    GRANDEZA_CORRENTE: "A",
+    GRANDEZA_TEMPERATURA: "°C",
+}
+NOMES_GRANDEZA_CLI = {  # valores aceitos em --grandeza (sem acento, como no lado C)
+    "tensao": GRANDEZA_TENSAO,
+    "corrente": GRANDEZA_CORRENTE,
+    "temperatura": GRANDEZA_TEMPERATURA,
+}
+
 ORDEM_FILTRO_MINIMA = 4
 ORDEM_FILTRO_MAXIMA = 8
 ORDEM_FILTRO_PADRAO = 5
@@ -135,20 +163,25 @@ TAMANHO_LOTE_WELCH_PADRAO = 2048
 
 CABECALHO_MAGIC = b"SHAN"
 CABECALHO_TAMANHO_TOTAL = 1024
-CABECALHO_VERSAO_SUPORTADA = 1  # versão do FORMATO do cabeçalho que este script sabe interpretar
+CABECALHO_VERSAO_SUPORTADA = 2  # versão mais recente do FORMATO do cabeçalho que este script sabe interpretar
 
-# Format string para struct.unpack, campo a campo -- espelha EXATAMENTE
+# [SONDA/GRANDEZA] Tamanho fixo (bytes, incluindo terminador nulo) do id de
+# sonda por canal na v2 do cabeçalho -- precisa bater com
+# CABECALHO_SONDA_ID_TAMANHO em firmware/ler_adc.c (mesma situação de
+# ADS8688_MAX_CANAIS: sincronia manual, sem arquivo de constantes
+# compartilhado entre C e Python).
+CABECALHO_SONDA_ID_TAMANHO = 32
+
+# Format strings para struct.unpack, campo a campo -- espelham EXATAMENTE
 # 'struct cabecalho_arquivo_campos' em firmware/ler_adc.c (packed, sem
-# padding de alinhamento entre campos). O prefixo '<' (little-endian) é o
-# que garante a correspondência com __attribute__((packed)) do lado C: os
-# prefixos de byte-order explícitos do módulo struct ('<', '>', '=', '!')
-# desligam o padding "nativo" que '@'/nenhum prefixo aplicariam (o mesmo
-# padding que __attribute__((packed)) elimina do lado C) -- '<' também é o
-# byte-order real da plataforma (BeagleBone: ARM Cortex-A8, little-endian).
-# Sem isso, struct.calcsize já divergiria de 408 bytes por causa do
-# alinhamento de 'timestamp_unix' (um Q de 8 bytes), do mesmo jeito que
-# __attribute__((packed)) foi necessário no C por essa mesma razão.
+# padding de alinhamento entre campos), em cada versão do formato. O
+# prefixo '<' (little-endian) é o que garante a correspondência com
+# __attribute__((packed)) do lado C: os prefixos de byte-order explícitos
+# do módulo struct ('<', '>', '=', '!') desligam o padding "nativo" que
+# '@'/nenhum prefixo aplicariam -- '<' também é o byte-order real da
+# plataforma (BeagleBone: ARM Cortex-A8, little-endian).
 #
+# v1 (campos originais, sem grandeza/sonda):
 #   4s   magic                        (4 bytes, ASCII "SHAN", NÃO terminado em nulo)
 #   I    versao_cabecalho             (uint32_t)
 #   I    tamanho_cabecalho            (uint32_t)
@@ -168,12 +201,54 @@ CABECALHO_VERSAO_SUPORTADA = 1  # versão do FORMATO do cabeçalho que este scri
 #   64s  titulo                       (64 bytes, UTF-8, terminado em nulo + zero-padding)
 #   256s descricao                    (256 bytes, UTF-8, terminado em nulo + zero-padding)
 #   I    header_crc32                 (uint32_t, CRC-32/ISO-HDLC dos 1024 bytes com este campo zerado)
-# (os 616 bytes restantes até completar 1024 são padding reservado, sem
-# significado -- não fazem parte deste format string; struct.unpack só
-# recebe os primeiros _TAMANHO_CAMPOS_CABECALHO bytes, nunca os 1024 inteiros)
-_FORMATO_CABECALHO_CAMPOS = "<4sIIQIII8BIIIIIdQQ64s256sI"
-_TAMANHO_CAMPOS_CABECALHO = struct.calcsize(_FORMATO_CABECALHO_CAMPOS)  # 408 bytes
-_OFFSET_HEADER_CRC32 = _TAMANHO_CAMPOS_CABECALHO - struct.calcsize("I")  # header_crc32 é o último campo com significado -- offset 404
+#
+# v2 (mesmos campos acima, mais grandeza_por_canal/sonda_id_por_canal
+# inseridos ENTRE descricao e header_crc32 -- ver docs/proposta_correcao_sonda.md):
+#   8B   grandeza_por_canal           (8x uint8_t -- GRANDEZA_TENSAO/CORRENTE/TEMPERATURA/NAO_USADA)
+#   32s * 8  sonda_id_por_canal       (8 strings de 32 bytes, uma por canal, terminadas em nulo)
+#   I    header_crc32
+_FORMATO_CABECALHO_V1 = "<4sIIQIII8BIIIIIdQQ64s256sI"
+_FORMATO_CABECALHO_V2 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "I"
+
+# Contagens de valores por campo, na mesma ordem do format string -- usadas
+# por _consumir() para dividir a tupla plana devolvida por struct.unpack.
+# Cada entrada é 1 (campo escalar) ou N (campo com N valores, ex.: 8 para
+# lista_canais/grandeza_por_canal, que vêm de "8B"). Isso evita ter que
+# escrever a atribuição por desempacotamento de tupla do jeito usual
+# (ex.: "a, *b, c = tupla") -- que só permite UM '*' por atribuição, e este
+# cabeçalho tem TRÊS campos que são, cada um, vários valores dentro do
+# mesmo unpack (lista_canais, e agora também grandeza_por_canal e
+# sonda_id_por_canal).
+_CONTAGENS_CABECALHO_V1 = [1, 1, 1, 1, 1, 1, 1, 8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+_CONTAGENS_CABECALHO_V2 = _CONTAGENS_CABECALHO_V1[:-1] + [8, ADS8688_MAX_CANAIS, 1]  # ...antes do header_crc32: +8 (grandeza) +8 (sonda) +1 (crc)
+
+_TAMANHO_CAMPOS_V1 = struct.calcsize(_FORMATO_CABECALHO_V1)  # 408 bytes
+_TAMANHO_CAMPOS_V2 = struct.calcsize(_FORMATO_CABECALHO_V2)  # 408 + 8 + 8*32 = 672 bytes
+_OFFSET_HEADER_CRC32_V1 = _TAMANHO_CAMPOS_V1 - struct.calcsize("I")  # 404
+_OFFSET_HEADER_CRC32_V2 = _TAMANHO_CAMPOS_V2 - struct.calcsize("I")  # 668
+
+
+def _consumir(campos_tupla: tuple, contagens: list[int]) -> list:
+    """Divide 'campos_tupla' (a tupla plana devolvida por struct.unpack) em
+    blocos, nos tamanhos dados por 'contagens' -- 1 devolve um valor
+    escalar, N > 1 devolve uma tupla de N valores. Existe só para contornar
+    a limitação do Python de aceitar no máximo um '*' por atribuição de
+    tupla (ver comentário em _CONTAGENS_CABECALHO_V1, acima). O assert é o
+    equivalente, em tempo de execução, à verificação de tamanho em tempo de
+    COMPILAÇÃO que o lado C faz para o cabeçalho (verificacao_cabecalho_1024_bytes
+    em ler_adc.c) -- pega uma dessincronização entre o format string e a
+    lista de contagens antes que ela vire um bug silencioso mais adiante."""
+    partes = []
+    i = 0
+    for n in contagens:
+        partes.append(campos_tupla[i] if n == 1 else campos_tupla[i:i + n])
+        i += n
+    assert i == len(campos_tupla), (
+        f"soma das contagens ({i}) não bate com o tamanho da tupla "
+        f"({len(campos_tupla)}) -- format string do cabeçalho e lista de "
+        f"contagens ficaram dessincronizados"
+    )
+    return partes
 
 
 @dataclass(frozen=True)
@@ -199,6 +274,15 @@ class CabecalhoArquivo:
     descricao: str
     header_crc32: int
     crc32_valido: bool  # calculado por este script ao ler -- não é, em si, um campo do cabeçalho
+    # [SONDA/GRANDEZA, v2] Ambos SEMPRE presentes (mesmo tamanho de
+    # lista_canais), independente da versão do cabeçalho de origem: para um
+    # '.bin' v1 (sem estes campos), ler_cabecalho() os preenche com o
+    # padrão histórico -- GRANDEZA_PADRAO (tensão) em todo canal habilitado
+    # e string vazia (nenhuma sonda) -- em vez de deixar quem usa esta
+    # classe ter que checar a versão a cada acesso. Mesma indexação de
+    # lista_canais: posição i descreve o canal lista_canais[i].
+    grandeza_por_canal: tuple[int, ...]
+    sonda_id_por_canal: tuple[str, ...]
 
     @property
     def timestamp_iso_utc(self) -> str:
@@ -248,6 +332,8 @@ class CabecalhoArquivo:
             "descricao": self.descricao,
             "header_crc32": self.header_crc32,
             "header_crc32_valido": self.crc32_valido,
+            "grandeza_por_canal": np.array(self.grandeza_por_canal, dtype=np.uint8),
+            "sonda_id_por_canal": np.array(self.sonda_id_por_canal, dtype="S32"),
         }
 
 
@@ -267,6 +353,17 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
     retornado, com crc32_valido=False -- os campos podem estar parcialmente
     certos (só um byte pode ter sido corrompido), e cabe a quem usa decidir
     se confia ou prefere passar -f/--canais manualmente.
+
+    [SONDA/GRANDEZA] A versão do formato (campo versao_cabecalho, os 4
+    bytes logo após o magic) é lida ANTES do resto -- só ela decide qual
+    format string de struct.unpack usar para o restante dos bytes. v1 (sem
+    grandeza_por_canal/sonda_id_por_canal) e v2 (com esses campos) têm
+    layouts diferentes a partir do byte 404; tentar sempre desempacotar com
+    o formato mais novo quebraria a leitura de um '.bin' v1 antigo (o
+    header_crc32 apareceria no lugar errado, entre muitas outras coisas).
+    Uma versão > 2 (formato futuro que este script ainda não conhece) é
+    tratada como v2 na tentativa de leitura -- mais provável de funcionar
+    parcialmente do que assumir v1 -- mas com aviso.
     """
     try:
         with open(caminho, "rb") as f:
@@ -279,25 +376,16 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
     if bruto[:4] != CABECALHO_MAGIC:
         return None  # sem magic number -- arquivo legado (pré-cabeçalho) ou não é um '.bin' do SH-Analyzer
 
-    campos = struct.unpack(_FORMATO_CABECALHO_CAMPOS, bruto[:_TAMANHO_CAMPOS_CABECALHO])
-    (
-        _magic, versao_cabecalho, tamanho_cabecalho, timestamp_unix, frequencia_hz,
-        auto_seq_mask, num_canais, *lista_canais_bytes, samples_per_buffer,
-        bytes_por_amostra, pru_clock_hz, sample_period_ticks,
-        primeira_amostra_descartada, duracao_pedida_segundos, blocos_gravados,
-        total_amostras_gravadas, titulo_bruto, descricao_bruto, header_crc32,
-    ) = campos
+    # Peek: só magic (4 bytes) + versao_cabecalho (uint32 logo em seguida) --
+    # o suficiente para decidir qual format string usar no restante.
+    (versao_cabecalho,) = struct.unpack_from("<I", bruto, 4)
 
-    # CRC-32 recalculado sobre os 1024 bytes com o campo header_crc32 (4
-    # bytes no offset 404) zerado -- mesmo algoritmo (CRC-32/ISO-HDLC,
-    # polinômio 0xEDB88320) implementado bit a bit em ler_adc.c;
-    # zlib.crc32 já é exatamente esse CRC, então não há motivo para
-    # reimplementar manualmente aqui como foi feito em C (lá, a
-    # reimplementação evitava puxar uma lib externa só para isso).
-    bruto_para_crc = bytearray(bruto)
-    bruto_para_crc[_OFFSET_HEADER_CRC32:_OFFSET_HEADER_CRC32 + 4] = b"\x00\x00\x00\x00"
-    crc_recalculado = zlib.crc32(bruto_para_crc)
-    crc32_valido = (crc_recalculado == header_crc32)
+    if versao_cabecalho <= 1:
+        formato, contagens, offset_crc = _FORMATO_CABECALHO_V1, _CONTAGENS_CABECALHO_V1, _OFFSET_HEADER_CRC32_V1
+        tem_grandeza_sonda = False
+    else:
+        formato, contagens, offset_crc = _FORMATO_CABECALHO_V2, _CONTAGENS_CABECALHO_V2, _OFFSET_HEADER_CRC32_V2
+        tem_grandeza_sonda = True
 
     if versao_cabecalho != CABECALHO_VERSAO_SUPORTADA:
         print(
@@ -307,6 +395,40 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
             f"estar incompletos ou incorretos se o formato mudou.",
             file=sys.stderr,
         )
+
+    tamanho_campos = struct.calcsize(formato)
+    campos = struct.unpack(formato, bruto[:tamanho_campos])
+
+    if tem_grandeza_sonda:
+        (
+            _magic, _versao, tamanho_cabecalho, timestamp_unix, frequencia_hz,
+            auto_seq_mask, num_canais, lista_canais_bytes, samples_per_buffer,
+            bytes_por_amostra, pru_clock_hz, sample_period_ticks,
+            primeira_amostra_descartada, duracao_pedida_segundos, blocos_gravados,
+            total_amostras_gravadas, titulo_bruto, descricao_bruto,
+            grandeza_bytes, sonda_id_bytes_lista, header_crc32,
+        ) = _consumir(campos, contagens)
+    else:
+        (
+            _magic, _versao, tamanho_cabecalho, timestamp_unix, frequencia_hz,
+            auto_seq_mask, num_canais, lista_canais_bytes, samples_per_buffer,
+            bytes_por_amostra, pru_clock_hz, sample_period_ticks,
+            primeira_amostra_descartada, duracao_pedida_segundos, blocos_gravados,
+            total_amostras_gravadas, titulo_bruto, descricao_bruto, header_crc32,
+        ) = _consumir(campos, contagens)
+        grandeza_bytes = None
+        sonda_id_bytes_lista = None
+
+    # CRC-32 recalculado sobre os 1024 bytes com o campo header_crc32 (no
+    # offset correto PARA ESTA VERSÃO do formato) zerado -- mesmo algoritmo
+    # (CRC-32/ISO-HDLC, polinômio 0xEDB88320) implementado bit a bit em
+    # ler_adc.c; zlib.crc32 já é exatamente esse CRC, então não há motivo
+    # para reimplementar manualmente aqui como foi feito em C (lá, a
+    # reimplementação evitava puxar uma lib externa só para isso).
+    bruto_para_crc = bytearray(bruto)
+    bruto_para_crc[offset_crc:offset_crc + 4] = b"\x00\x00\x00\x00"
+    crc_recalculado = zlib.crc32(bruto_para_crc)
+    crc32_valido = (crc_recalculado == header_crc32)
 
     # titulo/descricao são strings estilo C dentro de um buffer de tamanho
     # fixo: o conteúdo de verdade termina no primeiro '\0', o resto é
@@ -320,6 +442,21 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
     descricao = descricao_bruto.split(b"\x00", 1)[0].decode("utf-8", errors="replace")
 
     lista_canais = tuple(lista_canais_bytes[:num_canais])
+
+    # [SONDA/GRANDEZA] v1 não tem estes campos -- preenche com o padrão
+    # histórico (todo canal habilitado = tensão, nenhuma sonda) em vez de
+    # None, para quem usa CabecalhoArquivo não precisar checar a versão a
+    # cada acesso (ver docstring do dataclass). v2 usa os bytes lidos de
+    # verdade, na mesma indexação por posição de lista_canais.
+    if tem_grandeza_sonda:
+        grandeza_por_canal = tuple(grandeza_bytes[:num_canais])
+        sonda_id_por_canal = tuple(
+            bruto_id.split(b"\x00", 1)[0].decode("ascii", errors="replace")
+            for bruto_id in sonda_id_bytes_lista[:num_canais]
+        )
+    else:
+        grandeza_por_canal = tuple(GRANDEZA_PADRAO for _ in range(num_canais))
+        sonda_id_por_canal = tuple("" for _ in range(num_canais))
 
     return CabecalhoArquivo(
         versao_cabecalho=versao_cabecalho,
@@ -341,6 +478,8 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
         descricao=descricao,
         header_crc32=header_crc32,
         crc32_valido=crc32_valido,
+        grandeza_por_canal=grandeza_por_canal,
+        sonda_id_por_canal=sonda_id_por_canal,
     )
 
 
@@ -365,6 +504,14 @@ def imprimir_resumo_cabecalho(cabecalho: CabecalhoArquivo) -> None:
         f"(epoch {cabecalho.timestamp_unix})"
     )
     print(f"  Frequência: {cabecalho.frequencia_hz} Hz total | canais: {list(cabecalho.lista_canais)}")
+    if cabecalho.versao_cabecalho >= 2:
+        partes = []
+        for canal, grandeza, sonda_id in zip(
+            cabecalho.lista_canais, cabecalho.grandeza_por_canal, cabecalho.sonda_id_por_canal
+        ):
+            nome = NOMES_GRANDEZA.get(grandeza, f"desconhecida ({grandeza})")
+            partes.append(f"canal {canal}: {nome}" + (f" (sonda: {sonda_id})" if sonda_id else ""))
+        print("  Grandeza/sonda por canal: " + " | ".join(partes))
     if cabecalho.total_amostras_gravadas > 0:
         duracao_real = cabecalho.duracao_real_segundos
         texto_duracao = f"{duracao_real:.3f} s reais" if duracao_real is not None else "duração real desconhecida"
@@ -658,6 +805,438 @@ def resolver_offsets_por_canal(offset_texto: str | None, faixas: list[float],
 
 
 # ---------------------------------------------------------------------------
+# 2.1 Perfis de sonda e correção dependente de frequência
+# ---------------------------------------------------------------------------
+# Ver docs/proposta_correcao_sonda.md para o racional completo desta seção.
+#
+# Resumo: tensão usa ganho ESCALAR fixo (--ganho, seção 2 acima) -- correto,
+# porque o frontend aplica um divisor/ganho constante independente de
+# frequência. Uma sonda de corrente, ao contrário, atenua o sinal em
+# magnitudes DIFERENTES conforme a frequência -- um escalar não é
+# suficiente para caracterizar isso, principalmente na faixa de
+# supraharmônicos que é o objeto de estudo deste projeto. Esta seção
+# resolve, para cada canal marcado como corrente, um "perfil de sonda"
+# (arquivo .json com uma tabela de pontos frequência/ganho) e usa esses
+# pontos para corrigir o sinal no domínio da frequência, ANTES do resto do
+# pipeline (recorte de ciclos, --fft/--welch, filtro Butterworth opcional
+# do usuário, plotagem) -- nenhuma dessas etapas precisa saber que existe
+# uma sonda.
+
+TIPOS_PERFIL_SUPORTADOS = ("resposta_frequencia", "ganho_fixo")
+
+# Id de sonda aceito para montar 'sondas_dir/<id>.json' a partir do cabeçalho:
+# começa com letra/dígito, depois só letras, dígitos, '_', '-' e '.'. Exclui
+# separadores de caminho (e, junto com o teste de '..' em
+# resolver_perfil_canal, qualquer tentativa de sair de sondas_dir).
+# scripts/calibrar_sonda.sh já sanitiza para [a-z0-9_-], bem dentro disso.
+PADRAO_SONDA_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+# Acima deste reforço (dB) sobre o ruído do ADC, aplicar_correcao_sonda()
+# avisa que a correção está amplificando muito o ruído de fundo.
+AVISO_AMPLIFICACAO_RUIDO_DB = 20.0
+
+
+class PerfilSonda:
+    """Perfil de calibração de uma sonda, carregado de um arquivo .json em
+    scripts/sondas/ (ou de --sonda-perfil) -- ver carregar_perfil_sonda().
+
+    'tipo' == "resposta_frequencia": o caso principal (sondas de corrente).
+    'pontos_freq_hz'/'pontos_ganho' são os pontos de calibração (ganho
+    LINEAR, não dB -- ex.: 1.0 = sem atenuação, 0.8 = 80% da amplitude
+    ideal), ordenados por frequência crescente. ganho_em() interpola entre
+    eles em escala log-frequência/dB (PCHIP, monotônica -- evita overshoot
+    de uma spline cúbica comum entre pontos) e mantém constante (clamp) fora
+    da faixa coberta pelos pontos -- nunca extrapola livremente, o que
+    poderia inverter a tendência real da curva (ver docs/proposta_correcao_sonda.md,
+    seção 6.2).
+
+    'tipo' == "ganho_fixo": caso trivial (ganho único, sem dependência de
+    frequência) -- coberto aqui só por generalidade/completude do conceito
+    de "perfil de sensor" (ver proposta, seção 3); na prática, um canal que
+    só precisa de ganho fixo normalmente já é coberto por --ganho e não
+    precisa de um perfil.
+    """
+
+    def __init__(self, id: str, tipo: str, caminho: Path,
+                 pontos_freq_hz: np.ndarray, pontos_ganho: np.ndarray,
+                 faixa_freq_valida_hz: tuple[float, float] | None = None,
+                 calibracao_adc: dict | None = None):
+        self.id = id
+        self.tipo = tipo
+        self.caminho = caminho
+        self.faixa_freq_valida_hz = faixa_freq_valida_hz
+        # Metadado gravado por gerar_perfil_sonda.py (formato/faixa/--ganho de
+        # cada canal NA CALIBRAÇÃO) -- usado só por conferir_calibracao_perfil(),
+        # nunca na matemática da correção. None em perfis escritos à mão.
+        self.calibracao_adc = calibracao_adc
+        self._avisou_fora_da_faixa = False  # emite o aviso de "fora da faixa calibrada" só 1x por perfil, não por bin
+
+        if tipo == "resposta_frequencia":
+            ordem = np.argsort(pontos_freq_hz)
+            self._freqs_pontos = np.asarray(pontos_freq_hz, dtype=np.float64)[ordem]
+            ganhos_ordenados = np.asarray(pontos_ganho, dtype=np.float64)[ordem]
+            ganhos_db = 20.0 * np.log10(ganhos_ordenados)
+            # extrapolate=False -> PchipInterpolator devolve NaN fora do
+            # domínio dos pontos; ganho_em() faz o clamp explicitamente
+            # ANTES de chamar o interpolador (ver abaixo), então NaN nunca
+            # deveria aparecer na prática -- extrapolate=False aqui é só
+            # uma segunda trava de segurança.
+            self._interpolador_db = PchipInterpolator(
+                np.log10(self._freqs_pontos), ganhos_db, extrapolate=False
+            )
+            self._freq_min_pontos = float(self._freqs_pontos[0])
+            self._freq_max_pontos = float(self._freqs_pontos[-1])
+        else:  # "ganho_fixo"
+            self._ganho_fixo = float(pontos_ganho[0])
+
+    def ganho_em(self, freqs_hz: np.ndarray) -> np.ndarray:
+        """Ganho LINEAR (não dB) interpolado em cada frequência de
+        'freqs_hz' (array numpy, Hz). Para 'ganho_fixo', devolve o mesmo
+        valor em todo bin. Para 'resposta_frequencia', clampa qualquer
+        frequência fora de [freq_min_pontos, freq_max_pontos] no valor do
+        ponto extremo mais próximo -- inclui o bin de DC (0 Hz), que nunca
+        está entre os pontos de calibração."""
+        freqs_hz = np.asarray(freqs_hz, dtype=np.float64)
+
+        if self.tipo == "ganho_fixo":
+            return np.full_like(freqs_hz, self._ganho_fixo)
+
+        freqs_clampadas = np.clip(freqs_hz, self._freq_min_pontos, self._freq_max_pontos)
+        if not self._avisou_fora_da_faixa:
+            # Faixa de validade: a declarada no perfil (faixa_freq_valida_hz,
+            # que o operador pode ter estreitado de propósito) ou, na falta
+            # dela, a faixa coberta pelos pontos. O bin de DC (0 Hz) nunca
+            # conta: nenhuma calibração por tom o cobre, e contá-lo fazia o
+            # aviso disparar em TODA execução, mesmo com a banda de interesse
+            # inteira dentro da curva -- o que ensina o operador a ignorá-lo.
+            faixa_lo, faixa_hi = self.faixa_freq_valida_hz or (self._freq_min_pontos, self._freq_max_pontos)
+            positivas = freqs_hz > 0.0
+            abaixo = positivas & (freqs_hz < faixa_lo)
+            acima = freqs_hz > faixa_hi
+            if np.any(abaixo) or np.any(acima):
+                partes = []
+                if np.any(abaixo):
+                    dica_rede = " -- inclui a fundamental da rede (50/60 Hz); calibre um ponto em ~50 Hz" if faixa_lo > 50.0 else ""
+                    partes.append(f"{int(np.count_nonzero(abaixo))} abaixo de {faixa_lo:g} Hz{dica_rede}")
+                if np.any(acima):
+                    partes.append(f"{int(np.count_nonzero(acima))} acima de {faixa_hi:g} Hz")
+                print(
+                    f"Aviso: sonda '{self.id}' ({self.caminho}) -- "
+                    f"componentes de frequência da análise fora da faixa "
+                    f"válida [{faixa_lo:g}, {faixa_hi:g}] Hz ("
+                    f"{'; '.join(partes)}). O ganho nessas frequências foi "
+                    f"mantido constante (igual ao do ponto calibrado mais "
+                    f"próximo), não extrapolado -- se a sonda continua "
+                    f"atenuando além do último ponto, a amplitude corrigida "
+                    f"ali fica ABAIXO do valor real. Adicione pontos de "
+                    f"calibração cobrindo essa faixa se precisar de exatidão "
+                    f"ali.",
+                    file=sys.stderr,
+                )
+                self._avisou_fora_da_faixa = True
+
+        ganho_db = self._interpolador_db(np.log10(freqs_clampadas))
+        return 10.0 ** (ganho_db / 20.0)
+
+
+def carregar_perfil_sonda(caminho: Path) -> PerfilSonda:
+    """Lê e valida um arquivo de perfil de sonda (.json) -- ver
+    docs/proposta_correcao_sonda.md, seção 3, para o formato completo.
+    Campos mínimos: 'id', 'tipo', e os campos específicos de 'tipo'
+    ('pontos': lista de {"freq_hz": ..., "ganho": ...} para
+    'resposta_frequencia'; 'ganho' escalar para 'ganho_fixo')."""
+    try:
+        with open(caminho, "r", encoding="utf-8") as f:
+            dados = json.load(f)
+    except FileNotFoundError:
+        raise SystemExit(f"Erro: arquivo de perfil de sonda '{caminho}' não encontrado.")
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"Erro: '{caminho}' não é um JSON válido ({e}).")
+
+    if not isinstance(dados, dict):
+        raise SystemExit(f"Erro: perfil '{caminho}' precisa ser um objeto JSON ({{...}}), não {type(dados).__name__}.")
+    for campo in ("id", "tipo"):
+        if campo not in dados:
+            raise SystemExit(f"Erro: perfil '{caminho}' não tem o campo obrigatório '{campo}'.")
+    if not isinstance(dados["id"], str):
+        raise SystemExit(f"Erro: campo 'id' de '{caminho}' precisa ser texto.")
+
+    tipo = dados["tipo"]
+    if tipo not in TIPOS_PERFIL_SUPORTADOS:
+        raise SystemExit(
+            f"Erro: tipo de perfil '{tipo}' em '{caminho}' não suportado "
+            f"por esta versão de adc_tool.py -- tipos aceitos: "
+            f"{', '.join(repr(t) for t in TIPOS_PERFIL_SUPORTADOS)}. (Tipos "
+            f"como 'polinomio'/'tabela', para sensores de temperatura, "
+            f"ainda são trabalho futuro -- ver docs/proposta_correcao_sonda.md.)"
+        )
+
+    faixa_freq_valida_hz = None
+    if tipo == "resposta_frequencia":
+        pontos = dados.get("pontos", [])
+        if len(pontos) < 2:
+            raise SystemExit(
+                f"Erro: perfil '{caminho}' é do tipo 'resposta_frequencia' "
+                f"mas tem só {len(pontos)} ponto(s) de calibração -- são "
+                f"necessários pelo menos 2 para interpolar."
+            )
+        try:
+            freqs = np.array([float(p["freq_hz"]) for p in pontos], dtype=np.float64)
+            ganhos = np.array([float(p["ganho"]) for p in pontos], dtype=np.float64)
+        except (KeyError, TypeError, ValueError) as e:
+            raise SystemExit(f"Erro: ponto de calibração inválido em '{caminho}' ({e}).")
+        # json.load aceita NaN/Infinity (extensão não padrão do módulo json do
+        # Python): "nan <= 0" é False, então sem esta checagem um ganho NaN
+        # passava pelas validações abaixo e só estourava dentro do SciPy, com
+        # um traceback de ValueError em vez de uma mensagem clara.
+        if not (np.all(np.isfinite(freqs)) and np.all(np.isfinite(ganhos))):
+            raise SystemExit(f"Erro: 'freq_hz'/'ganho' em '{caminho}' precisam ser números finitos (encontrado NaN ou infinito).")
+        if np.any(freqs <= 0):
+            raise SystemExit(f"Erro: 'freq_hz' em '{caminho}' precisa ser positivo em todo ponto (DC não é calibrável por interpolação log-frequência).")
+        if np.any(ganhos <= 0):
+            raise SystemExit(f"Erro: 'ganho' em '{caminho}' precisa ser positivo em todo ponto.")
+        if len(set(freqs.tolist())) != len(freqs):
+            raise SystemExit(f"Erro: 'freq_hz' repetida em algum ponto de '{caminho}' -- cada frequência deve aparecer uma única vez.")
+        faixa_bruta = dados.get("faixa_freq_valida_hz")
+        if faixa_bruta is not None:
+            try:
+                faixa_freq_valida_hz = (float(faixa_bruta[0]), float(faixa_bruta[1]))
+            except (TypeError, ValueError, IndexError, KeyError):
+                raise SystemExit(f"Erro: 'faixa_freq_valida_hz' em '{caminho}' precisa ser uma lista [min_hz, max_hz].")
+            if not (np.isfinite(faixa_freq_valida_hz[0]) and np.isfinite(faixa_freq_valida_hz[1])
+                    and 0 < faixa_freq_valida_hz[0] < faixa_freq_valida_hz[1]):
+                raise SystemExit(f"Erro: 'faixa_freq_valida_hz' em '{caminho}' precisa ter 0 < min < max (valores finitos).")
+    else:  # "ganho_fixo"
+        if "ganho" not in dados:
+            raise SystemExit(f"Erro: perfil '{caminho}' do tipo 'ganho_fixo' precisa do campo 'ganho'.")
+        try:
+            ganho_unico = float(dados["ganho"])
+        except (TypeError, ValueError) as e:
+            raise SystemExit(f"Erro: 'ganho' inválido em '{caminho}' ({e}).")
+        if not np.isfinite(ganho_unico) or ganho_unico <= 0:
+            raise SystemExit(f"Erro: 'ganho' em '{caminho}' precisa ser um número finito e positivo.")
+        freqs = np.array([1.0])       # não usado para ganho_fixo -- só para uma assinatura uniforme do construtor
+        ganhos = np.array([ganho_unico])
+
+    calibracao_adc = dados.get("calibracao_adc")
+    if not isinstance(calibracao_adc, dict):
+        calibracao_adc = None  # ausente (perfil escrito à mão) ou malformado: a conferência em main() simplesmente não acontece
+
+    return PerfilSonda(
+        id=dados["id"], tipo=tipo, caminho=caminho,
+        pontos_freq_hz=freqs, pontos_ganho=ganhos,
+        faixa_freq_valida_hz=faixa_freq_valida_hz,
+        calibracao_adc=calibracao_adc,
+    )
+
+
+def analisar_overrides_por_canal(texto: str, nome_flag: str) -> dict[int, str]:
+    """Interpreta flags no formato 'canal:valor[,canal:valor...]' (mesma
+    sintaxe de --grandeza/--sonda em ler_adc.c) -- usado por --grandeza e
+    --sonda-perfil neste script. Devolve {canal: valor_bruto_em_texto},
+    deixando a interpretação do valor (grandeza conhecida? caminho de
+    arquivo?) para o chamador, que conhece o contexto de cada flag."""
+    overrides: dict[int, str] = {}
+    for token in texto.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if ":" not in token:
+            raise SystemExit(
+                f"Erro: '{token}' em {nome_flag} precisa estar no formato "
+                f"'canal:valor' (ex.: '1:corrente')."
+            )
+        canal_txt, valor_txt = token.split(":", 1)
+        try:
+            canal = int(canal_txt.strip())
+        except ValueError:
+            raise SystemExit(f"Erro: '{canal_txt}' não é um canal válido em {nome_flag}.")
+        overrides[canal] = valor_txt.strip()
+    return overrides
+
+
+def analisar_overrides_grandeza(texto: str) -> dict[int, int]:
+    """--grandeza CANAL:tensao|corrente|temperatura[,...] -- mesma sintaxe e
+    mesmos nomes aceitos de --grandeza em ler_adc.c."""
+    brutos = analisar_overrides_por_canal(texto, "--grandeza")
+    resultado = {}
+    for canal, valor_txt in brutos.items():
+        if valor_txt not in NOMES_GRANDEZA_CLI:
+            raise SystemExit(
+                f"Erro: grandeza '{valor_txt}' desconhecida em --grandeza "
+                f"(canal {canal}) -- use 'tensao', 'corrente' ou "
+                f"'temperatura'."
+            )
+        resultado[canal] = NOMES_GRANDEZA_CLI[valor_txt]
+    return resultado
+
+
+def analisar_overrides_perfil(texto: str) -> dict[int, Path]:
+    """--sonda-perfil CANAL:ARQUIVO[,...] -- aponta diretamente para um
+    arquivo de perfil, sem depender do sonda_id do cabeçalho nem de
+    --sondas-dir. Maior prioridade na resolução (ver resolver_perfil_canal)."""
+    brutos = analisar_overrides_por_canal(texto, "--sonda-perfil")
+    return {canal: Path(caminho_txt) for canal, caminho_txt in brutos.items()}
+
+
+def resolver_perfil_canal(canal: int, sonda_id: str, overrides_perfil: dict[int, Path],
+                           sondas_dir: Path) -> PerfilSonda | None:
+    """Resolve o perfil de sonda para 'canal', na mesma hierarquia de 3
+    níveis já usada em --canais/--faixa/--ganho: --sonda-perfil explícito
+    (maior prioridade) > sonda_id do cabeçalho da captura + busca em
+    'sondas_dir/<id>.json' > None (nenhum perfil resolvido -- quem chama
+    decide o que fazer, ver main())."""
+    if canal in overrides_perfil:
+        return carregar_perfil_sonda(overrides_perfil[canal])
+    if sonda_id:
+        # O id vem de 32 bytes de um '.bin' que pode ter sido gravado por
+        # outra pessoa/máquina, e ler_adc.c não valida os caracteres (só o
+        # tamanho). Sem esta checagem, um id como '../x' ou '/etc/foo' faria
+        # 'sondas_dir / "<id>.json"' sair de sondas_dir (um caminho absoluto
+        # à direita do operador '/' substitui o da esquerda).
+        if not PADRAO_SONDA_ID.match(sonda_id) or ".." in sonda_id:
+            raise SystemExit(
+                f"Erro: canal {canal} tem o id de sonda '{sonda_id}' no "
+                f"cabeçalho da captura, que não é um nome de arquivo seguro "
+                f"(só letras, dígitos, '_', '-' e '.' no meio; sem '/', '\\' "
+                f"nem '..'). Use --sonda-perfil {canal}:ARQUIVO para indicar "
+                f"o perfil explicitamente."
+            )
+        caminho = sondas_dir / f"{sonda_id}.json"
+        if not caminho.exists():
+            raise SystemExit(
+                f"Erro: canal {canal} tem a sonda '{sonda_id}' registrada "
+                f"no cabeçalho da captura, mas não existe um perfil em "
+                f"'{caminho}'. Crie o arquivo, aponte --sondas-dir para "
+                f"onde os perfis estão, ou use --sonda-perfil "
+                f"{canal}:ARQUIVO para indicar um arquivo específico."
+            )
+        perfil = carregar_perfil_sonda(caminho)
+        if perfil.id != sonda_id:
+            print(
+                f"Aviso: canal {canal}: o cabeçalho da captura registra a "
+                f"sonda '{sonda_id}', mas o arquivo '{caminho}' declara "
+                f"id='{perfil.id}' -- confira se não é o perfil de outra "
+                f"sonda (arquivo copiado/renomeado).",
+                file=sys.stderr,
+            )
+        return perfil
+    return None
+
+
+def conferir_calibracao_perfil(perfil: PerfilSonda, canal: int, formato: str,
+                                faixa: float, ganho: float) -> None:
+    """Avisa (nunca aborta) se o perfil foi gerado sob uma calibração de ADC
+    diferente da usada AGORA para o canal. O ganho(f) de um perfil é
+    RELATIVO ao --ganho (e depende de --faixa/--formato) com que foi medido
+    (ver gerar_perfil_sonda.py, seção --ganho): usá-lo com outro --ganho
+    multiplica toda a corrente corrigida, sem qualquer outro sintoma -- o
+    erro seria silencioso. Só confere o que gerar_perfil_sonda.py grava em
+    'calibracao_adc'; perfil sem esse bloco (escrito à mão) não é conferido."""
+    cal = perfil.calibracao_adc
+    if not cal:
+        return
+    problemas = []
+    try:
+        ganho_perfil = cal.get("ganho", {}).get("sonda")
+        if ganho_perfil is not None and not np.isclose(float(ganho_perfil), ganho, rtol=1e-3, atol=0.0):
+            problemas.append(
+                f"--ganho do canal = {ganho:g}, mas o perfil foi gerado com "
+                f"{float(ganho_perfil):g} -- as amplitudes corrigidas saem "
+                f"multiplicadas por {ganho / float(ganho_perfil):.4g}"
+            )
+        faixa_perfil = cal.get("faixa_v", {}).get("sonda")
+        if faixa_perfil is not None and not np.isclose(float(faixa_perfil), faixa, rtol=1e-3, atol=0.0):
+            problemas.append(
+                f"--faixa do canal = {faixa:g} V, mas o perfil foi gerado com "
+                f"{float(faixa_perfil):g} V -- as amplitudes saem "
+                f"multiplicadas por {faixa / float(faixa_perfil):.4g}"
+            )
+        formato_perfil = cal.get("formato")
+        if formato_perfil is not None and formato_perfil != formato:
+            problemas.append(f"--formato = {formato}, mas o perfil foi gerado com {formato_perfil}")
+    except (AttributeError, TypeError, ValueError):
+        return  # bloco calibracao_adc malformado -- não vale derrubar a análise por causa de um metadado
+    for problema in problemas:
+        print(
+            f"Aviso: canal {canal}, sonda '{perfil.id}': {problema}. Use a "
+            f"mesma calibração da geração do perfil, ou gere o perfil de novo.",
+            file=sys.stderr,
+        )
+
+
+def aplicar_correcao_sonda(sinal: np.ndarray, fs: float, perfil: PerfilSonda) -> np.ndarray:
+    """Corrige 'sinal' (já em Volts/Ampères pela calibração --faixa/--ganho/
+    --offset, ainda SEM a resposta em frequência da sonda) pela curva de
+    'perfil', por divisão espectral direta: FFT do sinal INTEIRO
+    selecionado, escala cada bin por 1/ganho(f) interpolado, IFFT de volta
+    ao tempo. Aplicada UMA vez, antes de qualquer outra etapa do pipeline
+    (recorte de ciclos, --fft/--welch, filtro Butterworth opcional do
+    usuário, plotagem) -- nenhuma delas precisa saber que existe uma sonda.
+
+    Por que espectral em vez de um filtro FIR/IIR no tempo: como a correção
+    aqui é só de MAGNITUDE (ganho real e positivo por bin, sem alterar
+    fase -- suficiente hoje, já que todo o pipeline de análise trabalha só
+    com amplitude em dB), a divisão espectral direta É, matematicamente, a
+    aplicação de um filtro de fase zero com exatamente a resposta desejada
+    -- sem o trabalho extra de projetar um FIR (scipy.signal.firwin2) que
+    aproximaria a mesma coisa. Reaproveita rfft/rfftfreq já usados no resto
+    do script (ver docs/proposta_correcao_sonda.md, seção 6.2, para a
+    alternativa por FIR considerada e por que foi preterida aqui).
+
+    LIMITAÇÃO (medida na auditoria, ver docs/auditoria_perfil_sonda.md): a
+    correção restaura a AMPLITUDE de cada componente espectral (erro < 0.1%
+    em tons de teste), mas NÃO a fase -- a fase da sonda real continua no
+    sinal. A forma de onda no tempo do canal corrigido, portanto, não é a
+    corrente verdadeira (numa sonda passa-baixa de 1ª ordem com fc=30 kHz, o
+    erro RMS da forma de onda de uma soma de tons de 2.5-40 kHz chega a ~40%,
+    com a amplitude de cada tom exata). Serve para espectro/Welch/picos;
+    NÃO use o sinal corrigido para grandezas que dependem de fase entre
+    canais (potência ativa/impedância em supraharmônicos) sem uma calibração
+    de fase.
+
+    Espera um sinal já centrado o bastante para caber inteiro na FFT de uma
+    vez -- consistente com o resto do modo de plotagem deste script, que já
+    carrega o trecho selecionado (--inicio/--fim) inteiro num ndarray antes
+    de --fft/--welch/plot (só os modos de conversão e exportação HDF5
+    processam em blocos, e nenhum dos dois aplica correção de sonda -- ver
+    seção 6 de docs/proposta_correcao_sonda.md para essa decisão de
+    escopo)."""
+    n = len(sinal)
+    # Tamanho de FFT "rápido" (só fatores 2/3/5/7...): com N de fator primo
+    # grande (ex.: um --inicio/--fim arbitrário) a FFT cai no algoritmo de
+    # Bluestein, ~8x mais lenta nas medições deste projeto (N=2000003:
+    # 1.74 s vs 0.20 s; N já "rápido" não muda). O sinal é
+    # completado com zeros até esse tamanho e o resultado recortado de volta
+    # a N -- a divisão por ganho(f) acontece na grade do tamanho maior.
+    n_fft = next_fast_len(n, real=True)
+    espectro = rfft(sinal, n=n_fft)
+    freqs = rfftfreq(n_fft, 1.0 / fs)
+    ganho = perfil.ganho_em(freqs)
+
+    # Diagnóstico: onde 1/ganho(f) é grande, o ruído do ADC (que NÃO passou
+    # pela sonda) é amplificado junto com o sinal -- o piso de ruído, em
+    # Amperes, sobe por esse fator. Não é erro (é físico), mas quem lê o
+    # espectro corrigido precisa saber. Ignora o bin de DC.
+    if len(ganho) > 1:
+        i_min = 1 + int(np.argmin(ganho[1:]))
+        reforco_db = -20.0 * np.log10(ganho[i_min])
+        if reforco_db > AVISO_AMPLIFICACAO_RUIDO_DB:
+            print(
+                f"Aviso: sonda '{perfil.id}': a correção amplifica o ruído do "
+                f"ADC em até {reforco_db:.1f} dB (em {freqs[i_min]:g} Hz, onde "
+                f"o ganho da sonda é {ganho[i_min]:.3g}). O piso de ruído em "
+                f"Amperes nessa região é correspondentemente maior -- "
+                f"componentes fracas ali podem estar abaixo do que o "
+                f"espectro corrigido sugere.",
+                file=sys.stderr,
+            )
+
+    espectro_corrigido = espectro / ganho
+    return irfft(espectro_corrigido, n=n_fft)[:n]
+
+
+# ---------------------------------------------------------------------------
 # 3. Filtragem digital opcional (Butterworth, SOS + sosfiltfilt)
 # ---------------------------------------------------------------------------
 
@@ -899,8 +1478,23 @@ def exportar_hdf5(caminho_bin: Path, caminho_h5: Path, formato: str,
                    faixas: list[float], ganhos: list[float], offsets: list[float],
                    incluir_tensao: bool, offset_amostras: int,
                    inicio: int, fim: int | None,
-                   tamanho_chunk: int = TAMANHO_CHUNK_PADRAO) -> tuple[int, int]:
+                   tamanho_chunk: int = TAMANHO_CHUNK_PADRAO,
+                   grandeza_por_canal: list[int] | None = None,
+                   sonda_id_por_canal: list[str] | None = None) -> tuple[int, int]:
     """Converte 'caminho_bin' para HDF5 em 'caminho_h5'.
+
+    'grandeza_por_canal'/'sonda_id_por_canal' (opcionais, na mesma ordem de
+    'canais'), quando informados, são gravados como atributos na raiz --
+    mesmos valores já resolvidos pelo chamador (CLI > cabeçalho > padrão,
+    ver grandeza_do_canal()/sonda_id_do_canal() em main()). NÃO alteram os
+    dados exportados em si: a correção de sonda dependente de frequência
+    (aplicar_correcao_sonda(), seção 2.1) não é aplicada aqui -- só no modo
+    de plotagem. /tensao_v continua sendo a calibração --faixa/--ganho/
+    --offset pura, sem correção de sonda, para qualquer canal. Ver
+    docs/proposta_correcao_sonda.md, seção 6.3, para essa decisão de
+    escopo (aplicar a correção também aqui exigiria repetir, em streaming
+    por blocos, a mesma divisão espectral que hoje opera sobre o sinal
+    inteiro de uma vez -- deixado como trabalho futuro).
 
     REGRA CRÍTICA DE MEMÓRIA: a gravação percorre o memmap em blocos de até
     'tamanho_chunk' amostras BRUTAS por vez -- em nenhum momento o array
@@ -976,6 +1570,10 @@ def exportar_hdf5(caminho_bin: Path, caminho_h5: Path, formato: str,
         f5.attrs["faixa_v_por_canal"] = np.array(faixas, dtype=np.float64)
         f5.attrs["ganho_por_canal"] = np.array(ganhos, dtype=np.float64)
         f5.attrs["offset_v_por_canal"] = np.array(offsets, dtype=np.float64)
+        if grandeza_por_canal is not None:
+            f5.attrs["grandeza_por_canal"] = np.array(grandeza_por_canal, dtype=np.uint8)
+        if sonda_id_por_canal is not None:
+            f5.attrs["sonda_id_por_canal"] = np.array(sonda_id_por_canal, dtype="S32")
 
         dataset_bruto = f5.create_dataset(
             "amostras", shape=(n_linhas_total, num_canais), dtype=dtype, chunks=True,
@@ -1414,19 +2012,42 @@ def escolher_unidade_tempo(duracao_s: float):
     return 1.0, "Tempo (s)"
 
 
+def rotulo_eixo_grandeza(canais: list[int], grandeza_por_canal: dict[int, int]) -> str:
+    """Rótulo do eixo Y da forma de onda no tempo, a partir da grandeza de
+    cada canal em 'canais' -- 'Tensão (V)', 'Corrente (A)' ou
+    'Temperatura (°C)' quando todos os canais plotados juntos compartilham
+    a mesma grandeza; um rótulo genérico com aviso único (ver chamador em
+    main()) quando misturados no mesmo eixo (--layout-canais sobrepostos
+    com grandezas diferentes -- fisicamente estranho de sobrepor, mas não
+    impedido)."""
+    grandezas_presentes = {grandeza_por_canal.get(c, GRANDEZA_TENSAO) for c in canais}
+    if len(grandezas_presentes) == 1:
+        g = next(iter(grandezas_presentes))
+        return f"{NOMES_GRANDEZA.get(g, 'Valor').capitalize()} ({UNIDADE_GRANDEZA.get(g, '?')})"
+    return "Valor (unidades mistas -- ver rótulo de cada canal)"
+
+
 def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: float,
                        idx_inicio_arquivo: int, infos_espectro: dict | None,
                        titulo_arquivo: str, caminho_saida: Path | None,
                        layout: str, rotulo_espectro_y: str,
-                       limite_inferior_db: float | None) -> None:
+                       limite_inferior_db: float | None,
+                       grandeza_por_canal: dict[int, int] | None = None) -> None:
     """Plota forma de onda e, se disponível, espectro(s) de 1+ canais. Um
     canal pode ter até 2 espectros simultâneos (--fft e --welch, chaves
     "ciclo"/"welch" em infos_espectro[canal]) -- plotados como curvas
     distintas no mesmo eixo, já que respondem perguntas diferentes
-    (fundamental/harmônicos vs. conteúdo de banda larga não estacionário)."""
+    (fundamental/harmônicos vs. conteúdo de banda larga não estacionário).
+
+    'grandeza_por_canal' (opcional -- None mantém o rótulo histórico
+    "Tensão (V)" para compatibilidade) rotula o eixo Y no tempo conforme a
+    grandeza real de cada canal (tensão/corrente/temperatura), em vez de
+    assumir sempre tensão -- ver rotulo_eixo_grandeza()."""
     canais = list(tensoes_por_canal.keys())
     n_canais = len(canais)
     tem_espectro = infos_espectro is not None
+    if grandeza_por_canal is None:
+        grandeza_por_canal = {c: GRANDEZA_TENSAO for c in canais}
 
     n = len(tensoes_por_canal[canais[0]])
     fator_tempo, rotulo_tempo = escolher_unidade_tempo(n / fs_efetiva)
@@ -1451,7 +2072,7 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
         titulo_base = f"Forma de onda -- amostras {idx_inicio_arquivo}..{idx_inicio_arquivo + n} de '{titulo_arquivo}'"
         ax_tempo.set_title(titulo_base if n_canais == 1 else f"{titulo_base} (canais {canais}, sobrepostos)")
         ax_tempo.set_xlabel(rotulo_tempo)
-        ax_tempo.set_ylabel("Tensão (V)")
+        ax_tempo.set_ylabel(rotulo_eixo_grandeza(canais, grandeza_por_canal))
         ax_tempo.grid(True, alpha=0.4)
 
         if tem_espectro:
@@ -1519,7 +2140,7 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
             ax_tempo.plot(tempo, tensoes_por_canal[canal], color=cor, linewidth=1.0)
             ax_tempo.set_title(f"Canal {canal} -- amostras {idx_inicio_arquivo}..{idx_inicio_arquivo + n}")
             ax_tempo.set_xlabel(rotulo_tempo)
-            ax_tempo.set_ylabel("Tensão (V)")
+            ax_tempo.set_ylabel(rotulo_eixo_grandeza([canal], grandeza_por_canal))
             ax_tempo.grid(True, alpha=0.4)
 
             if tem_espectro:
@@ -1614,6 +2235,14 @@ def montar_parser():
             "  # Multi-canal: 3 canais, ganho por canal, FFT independente\n"
             "  %(prog)s captura.bin -f 102400 --canais 0,1,3 --ganho "
             "19.53,0.1,1.0 --fft\n"
+            "\n"
+            "  # Canal 1 = corrente com sonda registrada no cabeçalho (correção\n"
+            "  # automática via scripts/sondas/<id>.json); canal 0 = tensão\n"
+            "  %(prog)s captura.bin --fft --welch\n"
+            "\n"
+            "  # Mesma ideia, mas sem cabeçalho / sonda diferente da gravada\n"
+            "  %(prog)s captura.bin -f 102400 --canais 0,1 "
+            "--grandeza 0:tensao,1:corrente --sonda-perfil 1:sondas/outra_sonda.json --welch\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1655,6 +2284,50 @@ def montar_parser():
         "--layout-canais", choices=["separados", "sobrepostos"], default="separados",
         help="[PLOTAGEM, >1 canal] 'separados' (padrão): 1 subplot por "
              "canal. 'sobrepostos': todos no mesmo eixo, com legenda."
+    )
+
+    grupo_sonda = parser.add_argument_group(
+        "Grandeza física e correção de sonda",
+        "[PLOTAGEM] Corrente atenua de forma diferente em cada frequência "
+        "(ao contrário de tensão, que usa só --ganho escalar) -- estas "
+        "flags dizem qual grandeza cada canal mede e qual sonda usar para "
+        "corrigir isso antes de --fft/--welch/plot (canal de corrente, ou "
+        "de tensão com sonda registrada). A correção restaura a AMPLITUDE "
+        "por frequência, não a fase. O perfil só vale com o mesmo --ganho/"
+        "--faixa/--formato da sua geração (conferido, com aviso). Ver "
+        "docs/proposta_correcao_sonda.md e docs/auditoria_perfil_sonda.md.",
+    )
+    grupo_sonda.add_argument(
+        "--grandeza", type=str, default=None, metavar="C:G[,...]",
+        help="Grandeza física de cada canal, no formato 'canal:grandeza' "
+             "(ex.: '0:tensao,1:corrente'). Valores aceitos: 'tensao' "
+             "(padrão), 'corrente', 'temperatura'. Sem esta flag: usa a "
+             "grandeza registrada no cabeçalho da captura (se houver, "
+             "cabeçalho versão 2+); senão, assume tensão em todo canal "
+             "(comportamento histórico)."
+    )
+    grupo_sonda.add_argument(
+        "--sondas-dir", type=Path, default=None, metavar="DIR",
+        help="Pasta onde procurar o perfil de uma sonda pelo id gravado no "
+             "cabeçalho da captura (arquivo '<id>.json' dentro de DIR; o id "
+             "só pode ter letras, dígitos, '_', '-' e '.'). "
+             "Padrão: a pasta 'sondas' ao lado deste script "
+             "(scripts/sondas/)."
+    )
+    grupo_sonda.add_argument(
+        "--sonda-perfil", type=str, default=None, metavar="C:ARQUIVO[,...]",
+        help="Aponta diretamente para o arquivo de perfil (.json) de um "
+             "canal, no formato 'canal:arquivo' -- maior prioridade que o "
+             "id gravado no cabeçalho + --sondas-dir. Use quando o "
+             "cabeçalho não tem sonda registrada (captura antiga, ou sem "
+             "cabeçalho) ou para testar um perfil diferente do gravado."
+    )
+    grupo_sonda.add_argument(
+        "--sem-correcao-sonda", action="store_true",
+        help="Desliga a correção por frequência em canais de corrente "
+             "(fica só a calibração --ganho escalar) -- útil para comparar "
+             "o espectro corrigido com o bruto, ou depurar um perfil "
+             "suspeito."
     )
 
     grupo_conversao = parser.add_argument_group(
@@ -1914,6 +2587,37 @@ def main(argv=None):
     ganhos = analisar_lista_calibracao(args.ganho, len(canais), "--ganho")
     offsets = resolver_offsets_por_canal(args.offset, faixas, args.formato, len(canais))
 
+    # -------------------------------------------------------------- #
+    # [SONDA/GRANDEZA] --grandeza/--sonda-perfil: explícito (CLI) > cabeçalho
+    # da captura (se v2+) > padrão histórico (tensão, sem sonda). Mesma
+    # hierarquia de 3 níveis de --canais/--faixa/--ganho, mas resolvida por
+    # CANAL (não por posição) porque nem todo canal necessariamente aparece
+    # nas flags -- ver analisar_overrides_grandeza/analisar_overrides_perfil.
+    # -------------------------------------------------------------- #
+    indice_no_ciclo_para_sonda = {c: i for i, c in enumerate(canais)}
+
+    overrides_grandeza_cli = analisar_overrides_grandeza(args.grandeza) if args.grandeza is not None else {}
+    overrides_perfil_cli = analisar_overrides_perfil(args.sonda_perfil) if args.sonda_perfil is not None else {}
+    sondas_dir = args.sondas_dir if args.sondas_dir is not None else Path(__file__).resolve().parent / "sondas"
+
+    def grandeza_do_canal(canal: int) -> int:
+        if canal in overrides_grandeza_cli:
+            return overrides_grandeza_cli[canal]
+        if cabecalho is not None and cabecalho.versao_cabecalho >= 2:
+            idx = indice_no_ciclo_para_sonda[canal]
+            if idx < len(cabecalho.grandeza_por_canal):
+                g = cabecalho.grandeza_por_canal[idx]
+                if g != GRANDEZA_NAO_USADA:
+                    return g
+        return GRANDEZA_PADRAO
+
+    def sonda_id_do_canal(canal: int) -> str:
+        if cabecalho is not None and cabecalho.versao_cabecalho >= 2:
+            idx = indice_no_ciclo_para_sonda[canal]
+            if idx < len(cabecalho.sonda_id_por_canal):
+                return cabecalho.sonda_id_por_canal[idx]
+        return ""
+
     if cabecalho is not None:
         imprimir_resumo_cabecalho(cabecalho)
         n_amostras_arquivo = contar_amostras_arquivo_bin(caminho_entrada, args.formato, offset_amostras)
@@ -1947,6 +2651,8 @@ def main(argv=None):
             args.arquivo, args.export_hdf5, args.formato, canais, cabecalho,
             faixas, ganhos, offsets, args.incluir_tensao, offset_amostras,
             args.inicio, args.fim, args.tamanho_chunk,
+            grandeza_por_canal=[grandeza_do_canal(c) for c in canais],
+            sonda_id_por_canal=[sonda_id_do_canal(c) for c in canais],
         )
         extra_tensao = " + tensao_v calibrada" if args.incluir_tensao else ""
         print(
@@ -2074,6 +2780,54 @@ def main(argv=None):
             por_canal_bruto[canal], faixas[idx], ganhos[idx], args.formato, offsets[idx]
         )
 
+    # [SONDA/GRANDEZA] Correção dependente de frequência, só em canais de
+    # corrente com um perfil resolvido -- aplicada ANTES do filtro
+    # Butterworth opcional do usuário (mais abaixo) e de qualquer análise
+    # espectral, para que --fft/--welch/--picos/plot já operem sobre o
+    # sinal corrigido sem precisar saber que uma sonda existe (ver
+    # aplicar_correcao_sonda()).
+    grandeza_por_canal_exibir = {canal: grandeza_do_canal(canal) for canal in canais_exibir}
+    for canal in canais_exibir:
+        grandeza = grandeza_por_canal_exibir[canal]
+        sonda_id = sonda_id_do_canal(canal)
+        # Uma sonda REGISTRADA (id no cabeçalho ou --sonda-perfil) vale para
+        # qualquer grandeza de frequência (corrente, e também tensão -- ex.:
+        # divisor/ponta com banda limitada): antes, só grandeza==corrente
+        # corrigia, e um canal de tensão com sonda registrada era ignorado
+        # em silêncio. Corrente SEM sonda continua só avisando.
+        sonda_registrada = bool(sonda_id) or canal in overrides_perfil_cli
+        if grandeza == GRANDEZA_TEMPERATURA:
+            if sonda_registrada:
+                print(
+                    f"Aviso: canal {canal} é de temperatura -- a sonda "
+                    f"registrada ('{sonda_id or overrides_perfil_cli[canal]}') "
+                    f"não é aplicada (correção por frequência não se aplica "
+                    f"a temperatura; perfis 'polinomio'/'tabela' ainda não "
+                    f"existem).",
+                    file=sys.stderr,
+                )
+            continue
+        if grandeza != GRANDEZA_CORRENTE and not sonda_registrada:
+            continue
+        prefixo = f"  Canal {canal}: " if num_canais > 1 else "  "
+        if args.sem_correcao_sonda:
+            print(f"{prefixo}--sem-correcao-sonda ativo -- usando só --ganho escalar (sem correção por frequência).")
+            continue
+        perfil = resolver_perfil_canal(canal, sonda_id, overrides_perfil_cli, sondas_dir)
+        if perfil is None:
+            print(
+                f"{prefixo}canal de corrente sem sonda/perfil resolvido -- "
+                f"usando só --ganho escalar (sem correção por frequência). "
+                f"Registre a sonda na captura (--sonda em ler_adc) ou use "
+                f"--sonda-perfil {canal}:ARQUIVO.",
+                file=sys.stderr,
+            )
+            continue
+        idx_canal = indice_no_ciclo[canal]
+        conferir_calibracao_perfil(perfil, canal, args.formato, faixas[idx_canal], ganhos[idx_canal])
+        por_canal_tensao[canal] = aplicar_correcao_sonda(por_canal_tensao[canal], fs_efetiva, perfil)
+        print(f"{prefixo}correção de sonda aplicada (perfil '{perfil.id}', {perfil.caminho})")
+
     if args.filtro_passa_alta is not None or args.filtro_passa_baixa is not None:
         for canal in canais_exibir:
             sinal = por_canal_tensao[canal]
@@ -2192,6 +2946,7 @@ def main(argv=None):
     plotar_multicanal(
         por_canal_tensao, fs_efetiva, idx_inicio, infos_espectro, titulo_exibicao,
         args.saida, args.layout_canais, rotulo_espectro_y, limite_inferior_db,
+        grandeza_por_canal_exibir,
     )
 
 
