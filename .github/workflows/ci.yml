@@ -1,0 +1,37 @@
+# Integração contínua: a cada push na main e a cada pull request, roda o ruff e a suíte
+# de testes (tests/) no menor e no maior Python suportados. Detalhes em docs/arquitetura_software.md.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancela execuções antigas da mesma branch/PR quando chega um push novo.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  testes:
+    name: testes (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.13"]   # 3.10 = mínimo declarado em pyproject.toml (requires-python)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar o uv
+        run: pipx install uv
+
+      - name: Estilo e erros comuns (ruff)
+        run: uv run --python ${{ matrix.python }} --extra dev ruff check .
+
+      - name: Testes (pytest)
+        run: uv run --python ${{ matrix.python }} --extra dev pytest

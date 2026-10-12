@@ -2,7 +2,7 @@
 
 **Escopo:** `calibrar_sonda.sh` → `gerar_perfil_sonda.py` → `scripts/sondas/<id>.json` → `adc_tool.py` (cabeçalho v2 gravado por `ler_adc.c`).
 **Método:** leitura do código + experimentos com capturas **sintéticas** de uma sonda de resposta conhecida (passa-baixa de 1ª ordem, fc = 30 kHz; shunt 0,1 Ω; ruído de 0,5 mV no ADC). Nada foi testado em hardware real — as conclusões abaixo valem para o *software*; a exatidão física depende da bancada (seção 3).
-**Reprodução:** `python3 scripts/testes/test_perfil_sonda.py` (11 testes, ~1 min).
+**Reprodução:** `uv run --extra dev pytest tests/e2e` (12 testes, ~30 s; a suíte nasceu como `scripts/test_perfil_sonda.py` e foi migrada para pytest quando o código Python virou o pacote `scripts/supraharmonicos/` — ver `docs/arquitetura_software.md`). Os nomes de função citados abaixo (`ler_cabecalho`, `aplicar_correcao_sonda`, `carregar_perfil_sonda`...) continuam os mesmos; só mudaram de arquivo, do antigo `adc_tool.py` para os módulos do pacote.
 
 ---
 
@@ -107,8 +107,8 @@ A divisão espectral do registro inteiro trata o sinal como periódico; em regis
 |---|---|
 | `scripts/adc_tool.py` | bugs 1–5; `next_fast_len`; avisos de ruído e id; textos de ajuda |
 | `scripts/gerar_perfil_sonda.py` | bugs 6–7; `n`/`desvio_pct` nos pontos |
-| `scripts/testes/test_perfil_sonda.py` | **novo** — suíte sintética de regressão (11 testes) |
+| `scripts/test_perfil_sonda.py` (hoje `tests/e2e/test_perfil_sonda_e2e.py`) | **novo** — suíte sintética de regressão (11 testes; 12 após a migração para pytest) |
 | `docs/auditoria_perfil_sonda.md` | **novo** — este documento |
 | `docs/contexto_projeto.md` | seções atualizadas (modelo de calibração, pipeline, geração de perfil, status, restrições) |
 
-Sem alteração: `firmware/ler_adc.c`, `scripts/calibrar_sonda.sh`, `scripts/sondas/exemplo_sonda.json`.
+Sem alteração: `firmware/ler_adc.c`, `firmware/calibrar_sonda.sh`, `docs/exemplo_sonda.json`.
