@@ -8,7 +8,14 @@
 > adotado no projeto, só deve ser considerada "pronta" depois de compilada com `clpru` e
 > validada em hardware real.
 >
-> **Nota desta revisão:** a revisão anterior deste documento excluía `scripts/adc_tool.py`
+> **Atualização de 2026-10 (antes do merge da refatoração do código Python):** os status
+> abaixo foram revisados contra o repositório atual. Mudanças desde a revisão anterior: o
+> código Python virou o pacote `scripts/supraharmonicos/` (ver `docs/arquitetura_software.md`),
+> ganhou testes automáticos (226) e integração contínua, e o cabeçalho do `.bin` passou à
+> versão 2 (grandeza e sonda por canal) com as ferramentas de calibração de sondas. Os itens
+> que dependem de medição em hardware continuam abertos.
+>
+> **Nota da revisão anterior:** ela excluía `scripts/adc_tool.py`
 > do escopo, a pedido; esta revisão é uma reanálise completa do projeto e passa a cobrir
 > o script também. Boa parte do que era só proposta na revisão anterior já foi
 > implementada (em alguns casos, de forma diferente e melhor do que o que havia sido
@@ -16,9 +23,9 @@
 
 | Status | Itens |
 |---|---|
-| ✅ **Concluído** | 1.5 (modo automático AUTO_RST), 1.8 (parcial: checagem de `fwrite()` + `--blocos`/`--duracao`), 1.10 (parcial: causa raiz da saturação — jumpers), 2.1 (parcial: `backup pre-assembly/` removido), 2.2 (`.gitignore`), 2.3 (metadados — via cabeçalho embutido, não sidecar) |
-| 🆕 **Novo nesta revisão** | Nome de arquivo `Adc_tool.py` vs. `adc_tool.py` (quebra os comandos documentados em sistema de arquivos sensível a maiúsculas/minúsculas), aviso obsoleto no cabeçalho de `spi_core.asm`, credencial em texto plano em `scripts/set_date.sh`, `ADS8688_MAX_CANAIS` agora também duplicado em Python |
-| 🔄 **Ainda aberto, com nota atualizada** | 1.1–1.4 (o "piso" antigo de ~48 kHz parece estar desatualizado — ver nota abaixo), 1.6, 1.7, 1.9 (revisado), 2.4, 2.5, 2.6, 2.7 |
+| ✅ **Concluído** | 1.5 (modo automático AUTO_RST, e o comentário obsoleto de `spi_core.asm` corrigido), 2.9 (`set_date.sh` sem senha no arquivo), 2.10 (`calibrar_sonda.sh` reescrito: Nyquist efetiva, conferência de cada captura, novos modos e testes), 1.8 (parcial: checagem de `fwrite()` + `--blocos`/`--duracao`), 1.9 (parte Python: mitigado por `tests/test_contrato_firmware.py`), 1.10 (parcial: causa raiz da saturação — jumpers), 2.1 (parcial: `backup pre-assembly/` removido), 2.2 (`.gitignore`), 2.3 (metadados — via cabeçalho embutido, não sidecar), 2.5 (parcial: lado Python — suíte `pytest` de 226 testes, `ruff` e CI no GitHub Actions), 2.7 (parcial: README, guia de uso, arquitetura do software e contexto), 2.8 (arquivo já se chama `adc_tool.py`) |
+| 🆕 **Novo** | Melhorias do fluxo de perfil de sonda vindas da auditoria (2.11) |
+| 🔄 **Ainda aberto, com nota atualizada** | 1.1–1.4 (o "piso" antigo de ~48 kHz parece estar desatualizado — ver nota abaixo), 1.6, 1.7, 1.9 (revisado), 2.4, 2.5 (parte C/CI), 2.6, 2.7 (`licoes-aprendidas.md`), 2.11 |
 
 ---
 
@@ -161,23 +168,18 @@ sequência a cada frame sem precisar receber um novo comando de canal a cada tra
 - Validado em hardware com 1 canal e com 5 canais simultâneos (0–4) a 102,4 kHz totais —
   canais conectados mostram a onda de 60 Hz esperada, desconectados mostram só ruído.
 
-**Follow-up de higiene encontrado nesta revisão:** o cabeçalho de comentários no topo de
-`spi_core.asm` ainda traz o aviso "⚠️ AINDA NÃO VALIDADO EM HARDWARE... tratar como
-experimento isolado nesta branch... antes de fazer merge na main" — e referencia um nome
-de arquivo de contexto antigo (`Contexto do Projeto-3.md`), de antes da convenção de nome
-fixo (`docs/contexto_projeto.md`, sem sufixo de versão) adotada a partir desta mesma
-migração. Esse aviso está desatualizado e **é internamente inconsistente com o resto do
-próprio arquivo**: mais abaixo, o mesmo arquivo documenta o bug de 24 vs. 32 ciclos como
-"observado em hardware" — o que só é possível se o código já tivesse sido testado na PRU
-física, contradizendo o aviso do topo. Recomenda-se atualizar esse comentário para
-refletir o status real (validado, com o histórico de bug/correção como veio a ser), tanto
-por clareza para quem ler o código depois quanto porque um avaliador/recrutador lendo
-`spi_core.asm` diretamente hoje sairia com a impressão errada de que um código
-experimental e não testado está em produção.
+**Follow-up de higiene (✅ resolvido):** o cabeçalho de comentários no topo de `spi_core.asm`
+trazia o aviso "⚠️ AINDA NÃO VALIDADO EM HARDWARE... tratar como experimento isolado nesta
+branch... antes de fazer merge na main" e referenciava um arquivo de contexto antigo
+(`Contexto do Projeto-3.md`), contradizendo o resto do próprio arquivo (que documenta o bug de
+24 vs. 32 ciclos como "observado em hardware"). O comentário agora diz que o AUTO_RST está
+validado em hardware (1 e 5 canais a 102,4 kHz) e que falta a validação quantitativa de
+exatidão. Só comentários mudaram: as linhas que não são comentário ficaram idênticas, então não
+há o que recompilar nem revalidar na PRU (o `setup.sh` recompila de qualquer forma).
 
 **Impacto:** Alto (multi-canal com menos overhead por canal, MOSI parado durante a fase de
-comando). **Esforço do follow-up de comentário:** Trivial. **Toca PRU asm:** sim (o
-follow-up é só o comentário, não a lógica).
+comando). **Esforço do follow-up de comentário:** Trivial (feito). **Toca PRU asm:** sim (o
+follow-up foi só o comentário, não a lógica).
 
 ---
 
@@ -315,6 +317,14 @@ física do chip (número de entradas do ADS8688) com risco de mudança praticame
 prioridade mais baixa que `SAMPLES_PER_BUFFER`, que é um valor de projeto plausivelmente
 ajustado no curto prazo (item 1.7).
 
+**Atualização de 2026-10 (lado Python mitigado):** o Python agora vive em
+`scripts/supraharmonicos/constantes.py` e `cabecalho.py`, e `tests/test_contrato_firmware.py`
+lê `firmware/ler_adc.c` e `firmware/memoria_pru.h` a cada `pytest`: confere constantes do
+cabeçalho, códigos `GRANDEZA_*`, o layout campo a campo da struct v2 e o valor de
+`ADS8688_MAX_CANAIS`. Se um lado mudar sem o outro, o teste falha (e a CI também). O teste
+**não** cobre `SAMPLES_PER_BUFFER` nem o `LDI r21` de `spi_core.asm`, então essa metade do
+item segue aberta.
+
 **Impacto:** Médio (evita uma classe inteira de bugs futuros). **Esforço:**
 Baixo-Médio para `SAMPLES_PER_BUFFER`; Baixo para `ADS8688_MAX_CANAIS` (ou aceitar como
 está, dado o baixo risco de mudança). **Toca PRU asm:** sim, só para `SAMPLES_PER_BUFFER`
@@ -330,7 +340,8 @@ está, dado o baixo risco de mudança). **Toca PRU asm:** sim, só para `SAMPLES
 > `docs/contexto_projeto.md` (seções 2.2 e 6.1), essa correção **já foi feita**: a causa
 > raiz identificada (jumpers longos entre a placa de aquisição e o frontend, gerando
 > reflexo/ruído induzido) foi confirmada com uma ferramenta de diagnóstico dedicada
-> (`spi_core_diagnostico_preambulo.asm` + `analisar_preambulo.py`) e corrigida conectando
+> (`spi_core_diagnostico_preambulo.asm` + `analisar_preambulo.py`, não versionados neste
+> repositório) e corrigida conectando
 > as placas diretamente. Este item deixa de ser um bloqueador urgente e passa a ser uma
 > checklist de confirmação/hardening para a próxima revisão de PCB.
 
@@ -399,9 +410,11 @@ diretório com espaço no nome) foi alcançado, mesmo que o histórico do protó
 pré-Assembly não esteja mais navegável diretamente no repositório (ele permanece
 documentado em prosa em `docs/notas_relatorio.md`, Marco 1).
 
-**Ainda em aberto:** `docs/datasheets/`, `docs/architecture.md`,
-`docs/licoes-aprendidas.md` e `firmware/tests/` — nenhum desses foi criado ainda (ver
-itens 2.5 e 2.7 abaixo para o detalhamento de cada um).
+**Atualização de 2026-10:** foram criados `tests/` (na raiz, com os testes do Python),
+`.github/workflows/ci.yml` e `docs/arquitetura_software.md` (cumpre o papel do
+`architecture.md` sugerido, para o lado Python). Os datasheets continuam em
+`docs/Datasheets/`. **Ainda em aberto:** `docs/licoes-aprendidas.md` e `firmware/tests/` (ver
+itens 2.5 e 2.7 abaixo).
 
 **Impacto:** Médio (organização/portfólio). **Esforço:** Baixo.
 
@@ -477,7 +490,18 @@ Baixo. **Status:** ainda em aberto.
 
 ### 2.5 Testes e CI
 
-Boa parte da disciplina de validação já existe no projeto — mas informalmente, não como
+✅ **Atualização de 2026-10 — lado Python concluído.** Existe uma suíte `pytest` versionada
+em `tests/` (226 testes, ~1–2 min; `-m "not e2e"` roda em ~6 s), cobrindo unidades por módulo,
+CLI, o contrato C↔Python (`test_contrato_firmware.py`), as regras de arquitetura
+(`test_arquitetura.py`), as dependências e o fluxo completo de perfil de sonda
+(`tests/e2e/`). O `ruff` cuida do estilo. O GitHub Actions (`.github/workflows/ci.yml`)
+roda `ruff` + `pytest` em Python 3.10 e 3.13 a cada pull request e a cada push na `main`
+(ver `docs/arquitetura_software.md`, seção 7.1). **Continua em aberto** o que toca o C:
+testes de host para `analisar_lista_canais()`/`comando_canal()` (extraídos de `ler_adc.c`) e
+`make arm` com `-Wextra` na CI. O texto abaixo é o da revisão anterior, mantido como
+registro.
+
+Boa parte da disciplina de validação já existia no projeto — mas informalmente, não como
 algo que roda sozinho:
 
 - O lado Python (`adc_tool.py`) já tem uma suíte de validação com capturas sintéticas
@@ -512,13 +536,15 @@ algo que roda sozinho:
 
 **Impacto:** Médio (qualidade/portfólio — sinaliza rigor de engenharia de forma
 verificável; mais barato agora que a suíte sintética Python já existe informalmente).
-**Esforço:** Baixo-Médio. **Status:** ainda em aberto.
+**Esforço:** Baixo-Médio. **Status:** parcial — Python e CI concluídos; testes de host do C
+e `make arm` na CI em aberto.
 
 ---
 
 ### 2.6 `setup.sh` mais defensivo
 
-Sem mudanças desde a última revisão — o script ainda tem só o comentário avisando sobre o
+Sem mudanças desde a última revisão (reconferido em 2026-10; o script também não tem
+*shebang*) — o script ainda tem só o comentário avisando sobre o
 risco de nome de arquivo errado e sugerindo checar `dmesg` manualmente depois do `start`,
 sem nenhuma checagem automática. A versão defensiva proposta permanece válida tal como
 estava:
@@ -544,8 +570,11 @@ echo "PRU carregada e em execução."
 
 ### 2.7 Documentação consolidada
 
-- **`docs/architecture.md`** — ainda não criado como arquivo separado, embora
-  `docs/contexto_projeto.md` já cumpra boa parte desse papel de referência hoje. Um
+- **`docs/architecture.md`** — ✅ em grande parte atendido em 2026-10: o `README.md` traz um
+  diagrama Mermaid do fluxo (PCB → PRU → DDR → ARM → computador), `docs/arquitetura_software.md`
+  cobre o software, e `docs/guia_de_uso.md` cobre a operação. Para o fluxo ARM ↔ PRU em
+  detalhe, o diagrama abaixo continua sem equivalente. Antes, este item dizia que
+  `docs/contexto_projeto.md` já cumpria boa parte desse papel de referência. Um
   diagrama simples do fluxo ARM ↔ PRU ↔ DDR ↔ ADC continua valendo a pena como ponto de
   entrada visual. Vale atualizar o esboço de diagrama Mermaid abaixo (já ligeiramente
   diferente do sugerido na revisão anterior) para refletir explicitamente a sequência de
@@ -592,11 +621,15 @@ echo "PRU carregada e em execução."
   por ordem cronológica, complementando em vez de duplicando.
 
 **Impacto:** Médio-Alto para fins de portfólio. **Esforço:** Baixo-Médio. **Status:**
-ainda em aberto.
+parcial — `README.md`, guia de uso e arquitetura do software prontos; `licoes-aprendidas.md` e
+o diagrama detalhado ARM ↔ PRU abaixo seguem abertos.
 
 ---
 
-### 2.8 🆕 Nome de arquivo `Adc_tool.py` — inconsistência que quebra os comandos documentados
+### 2.8 ✅ CONCLUÍDO — Nome de arquivo `Adc_tool.py` — inconsistência que quebra os comandos documentados
+
+> **Resolvido:** o arquivo foi renomeado (commit `1d0965e`) e hoje é `scripts/adc_tool.py`.
+> O texto abaixo é mantido como registro do achado.
 
 Achado novo desta revisão, e provavelmente o item de **maior retorno por menor esforço**
 de todo o documento. O arquivo em disco está nomeado `scripts/Adc_tool.py` (`A` e `T`
@@ -622,25 +655,79 @@ Trivial (`git mv scripts/Adc_tool.py scripts/adc_tool.py`). **Toca PRU asm:** n�
 
 ---
 
-### 2.9 🆕 Credencial em texto plano em `scripts/set_date.sh`
+### 2.9 ✅ Credencial em texto plano em `scripts/set_date.sh` (resolvido)
 
-`scripts/set_date.sh` (sincroniza a data/hora local para a BeagleBone, mitigando a
-ausência de RTC com bateria mencionada em `ler_adc.c`) autentica via SSH usando `sshpass`
-com uma senha **hardcoded em texto plano** no próprio script versionado
-(`PASSWORD="temppwd"`). Mesmo sendo uma senha de laboratório de baixo risco, é um hábito
-que vale corrigir antes de tratar este repositório como peça de portfólio público — um
-avaliador ou recrutador lendo o código vê uma credencial exposta em texto plano no
-histórico do Git.
+`scripts/set_date.sh` (sincroniza a data/hora do computador para a BeagleBone, mitigando a
+ausência de RTC com bateria mencionada em `ler_adc.c`) autenticava via SSH usando `sshpass`
+com uma senha **hardcoded em texto plano** no script versionado (`PASSWORD="temppwd"`).
+Mesmo sendo uma senha de laboratório de baixo risco, é um hábito que não convém num
+repositório público.
 
-**Sugestão:** trocar autenticação por senha (`sshpass`) por **autenticação por chave SSH**
-entre a máquina de desenvolvimento e a BeagleBone — elimina tanto a senha hardcoded quanto
-a própria dependência de `sshpass`, e é o padrão razoável para um par de máquinas
-confiáveis usado repetidamente (exatamente o caso de uso deste script). Se uma senha
-ainda for necessária por algum motivo, uma alternativa mínima é lê-la de uma variável de
-ambiente ou de um arquivo à parte listado no `.gitignore`, nunca hardcoded no script.
+**O que foi feito:** o script foi reescrito. Nenhuma senha fica no arquivo: o padrão é
+**chave SSH** (`ssh-copy-id`) ou o próprio `ssh`/`sudo` pedindo a senha no terminal; quem não
+quiser digitar pode exportar `SSHPASS` (o `sshpass` só é usado nesse caso, e a senha vai pela
+variável de ambiente, não pela linha de comando). Usuário e endereço vêm de `BBB_USER` e
+`BBB_IP` (padrão `debian@192.168.6.2`). Mais duas correções no caminho: o horário agora vai
+como instante absoluto UTC (`date -u -s @epoch`), em vez de texto no fuso do computador — se o
+fuso da BeagleBone fosse outro, o `timestamp_unix` do cabeçalho saía deslocado —, e
+`StrictHostKeyChecking=no` virou `accept-new` (aceita a chave na primeira conexão, mas
+recusa se ela mudar). O script não instala mais nada sozinho (`apt install sshpass`).
 
-**Impacto:** Médio (segurança/higiene, relevante para portfólio público). **Esforço:**
-Baixo (gerar/copiar uma chave SSH já resolve; remover a linha do `sshpass`). **Toca PRU
+**Ação que sobra:** a senha antiga continua no **histórico do Git**. Por ser a senha padrão da
+imagem Debian da BeagleBone (um valor público) o risco é baixo, mas, se a BeagleBone for
+exposta a alguma rede, troque a senha do usuário `debian` (`passwd`).
+
+---
+
+### 2.10 ✅ `calibrar_sonda.sh`: Nyquist efetiva, reescrita e testes (resolvido)
+
+Achado de 2026-10, ao revisar a documentação contra o código: `validar_nyquist()` exigia
+`freq_max < taxa / 2`, em que `taxa` é a taxa **total** pedida ao `ler_adc`. Só que a captura de
+calibração usa **dois canais** (referência + sonda), a taxa total é dividida entre eles e a
+Nyquist efetiva de cada um é `taxa / 4`: a 102,4 kHz totais, o script aceitava pontos até
+51,2 kHz, mas acima de 25,6 kHz o sinal já sofre *aliasing*.
+
+**O que foi feito:** em vez de remendar a checagem, o script foi reescrito a partir do que ele
+precisa fazer (ver `docs/guia_de_uso.md`, "Passo 1"): o operador informa só a taxa, o número de
+pontos e a sonda, e o script **escolhe as frequências** (escala logarítmica até 80% da Nyquist
+efetiva, `taxa / 4`), instrui o operador ("INJETE 200 Hz"), chama o `ler_adc` com o cabeçalho
+completo e **confere cada captura** (cabeçalho, CRC, tamanho, saturação, nível e frequência
+medida). Também ganhou os modos `retomar`, `refinar`, `adensar`, `refazer` e `resumo`, captura
+em arquivo temporário (só vira ponto o que o operador aceita), tempo limite para o `ler_adc` e
+Ctrl+C seguro. Na reescrita apareceram e foram corrigidos erros do script antigo além do da
+Nyquist: o `ler_adc` devolve sucesso mesmo quando o disco enche e a captura sai cortada (agora o
+tamanho do arquivo é conferido), o `ler_valor` nunca aceitava ENTER (`grep` com `^$`), o título
+passava de 63 bytes com ids de sonda longos (o `ler_adc` rejeita), e o menu antigo podia disparar
+nova medição com uma opção inválida. `tests/test_calibrar_sonda.py` (38 testes, com um `ler_adc`
+falso) cobre o fluxo e confere que as constantes do cabeçalho no script batem com o firmware e o
+Python.
+
+**Ação que sobra:** o arquivo está sem permissão de execução no Git (`100644`); ao fazer o commit,
+use `git update-index --chmod=+x firmware/calibrar_sonda.sh` (ou `git add --chmod=+x`).
+**Ainda falta** rodar o script na bancada real: os testes usam um `ler_adc` falso, então o que
+não foi exercitado é a interação com o hardware (tempo real de captura, `/dev/mem`, PRU).
+
+---
+
+### 2.11 🆕 Melhorias do fluxo de perfil de sonda (vindas da auditoria)
+
+A auditoria (`docs/auditoria_perfil_sonda.md`, seção 4) deixou propostas que dependem de
+decisão de projeto ou de bancada. Resumo, com o status atual (nenhuma implementada):
+
+| Proposta | Para quê | Esforço | Decisão necessária |
+|---|---|---|---|
+| Ganho **complexo** (fase) — seção 4.1 | Análise V×I, potência, direção de emissão | Médio–Alto | Sim: muda o formato do perfil e a correção |
+| Perfil **absoluto** (V/A) — seção 4.2 | Elimina o risco de usar um `--ganho` diferente do da calibração | Médio | Sim: muda a semântica de `--ganho` |
+| Validação por frequências retidas (*hold-out*) — seção 4.3 | Única forma de detectar ressonância perdida com dados reais | Médio | Não |
+| Teto de ganho da correção — seção 4.4 | Evita "corrigir" ruído em frequências onde a sonda atenua muito | Baixo | Sim: altera o resultado |
+| Atributo HDF5 `correcao_sonda_aplicada` — seção 4.5 | Avisar quem abre o `.h5` fora do `adc_tool.py` | Baixo | Não |
+| Aviso de perfil velho (`data_calibracao`) | Lembrar de recalibrar | Baixo | Não |
+
+**Pré-requisito de tudo isso:** executar uma calibração real de sonda em bancada. Sem ela, a
+exatidão do perfil contra uma referência independente continua desconhecida (ver
+`docs/contexto_projeto.md`, `status_validacao`).
+
+**Impacto:** Alto para quem for analisar corrente. **Esforço:** variável (tabela). **Toca PRU
 asm:** não.
 
 ---
@@ -649,31 +736,31 @@ asm:** não.
 
 | # | Item | Impacto | Esforço | Toca PRU asm? | Status |
 |---|------|---------|---------|----------------|--------|
-| 2.8 | Renomear `Adc_tool.py` → `adc_tool.py` | Alto | Trivial | Não | 🆕 aberto |
+| 2.11 | Fluxo de perfil de sonda: fase, perfil absoluto, hold-out | Alto (p/ corrente) | Variável | Não | 🆕 aberto (precisa de bancada) |
 | 1.6 | Detecção/backpressure de overrun no ping-pong | Alto | Baixo–Médio | Sim (versões mais completas) | Aberto |
 | 1.3 | Validar frequência pedida contra piso real | Alto | Baixo | Não | Aberto (depende de 1.2) |
 | 1.2 | Instrumentar e medir onde o tempo por transação vai | Alto | Baixo | Sim (temporário) | Aberto — mais urgente após achado do item 1.1 |
 | 1.4 | Revisar atrasos fixos com base no datasheet | Alto | Médio | Sim | Aberto |
 | 1.8 (parte 2) | `SCHED_FIFO`/`mlockall()`, revisão do `usleep(2000)` | Alto | Baixo | Não | Aberto (metade já concluída) |
 | 1.7 | Mais buffers dentro dos 16 MB já reservados | Médio–Alto | Médio | Sim | Aberto |
-| 2.7 | `docs/architecture.md` + lições aprendidas | Médio–Alto | Baixo–Médio | Não | Aberto |
-| 2.9 | Credencial em texto plano em `set_date.sh` | Médio | Baixo | Não | 🆕 aberto |
+| 2.7 | `docs/licoes-aprendidas.md` + diagrama ARM↔PRU | Médio | Baixo | Não | Parcial (README, guia e arquitetura prontos) |
 | 1.9 (asm) | Gerar `SAMPLES_PER_BUFFER` em vez de duplicar | Médio | Baixo–Médio | Sim (só geração) | Aberto |
 | 2.4 | Hash do commit embutido no firmware/binário | Médio | Baixo | Não | Aberto |
-| 2.5 | Formalizar testes sintéticos em `pytest` + CI leve | Médio | Baixo–Médio | Não | Aberto |
+| 2.5 | Testes de host do C e `make arm -Wextra` na CI | Médio | Baixo–Médio | Não | Parcial (Python + CI prontos) |
 | 2.6 | `setup.sh` com checagem automática de estado | Médio | Baixo | Não | Aberto |
 | 1.10 | Confirmar isolador (ADuM3150) contra BOM + test points | Baixo–Médio | Baixo–Médio | Não (hardware) | Aberto, causa raiz já resolvida |
-| 1.9 (python) | Sync `ADS8688_MAX_CANAIS` C/Python | Baixo–Médio | Baixo | Não | Aberto, baixo risco |
-| 1.5 (comentário) | Corrigir aviso obsoleto no topo de `spi_core.asm` | Baixo (clareza) | Trivial | Sim (só comentário) | 🆕 aberto |
+| 1.9 (python) | Sync `ADS8688_MAX_CANAIS` C/Python | Baixo–Médio | Baixo | Não | Mitigado por `test_contrato_firmware.py` |
 
-**Concluído desde a última revisão** (fora da tabela acima, já não precisa de ação): 1.5
-(modo automático AUTO_RST), 1.8 — checagem de `fwrite()` e `--blocos`/`--duracao`, 1.10 —
-causa raiz do bug de saturação, 2.1 — remoção de `backup pre-assembly/`, 2.2 —
-`.gitignore`, 2.3 — metadados via cabeçalho embutido.
+**Concluído** (fora da tabela acima, já não precisa de ação): 1.5 (modo automático
+AUTO_RST), 1.8 — checagem de `fwrite()` e `--blocos`/`--duracao`, 1.10 — causa raiz do bug de
+saturação, 2.1 — remoção de `backup pre-assembly/`, 2.2 — `.gitignore`, 2.3 — metadados via
+cabeçalho embutido, 2.8 — nome `adc_tool.py`, 2.9 — `set_date.sh` sem senha, 2.10 — `calibrar_sonda.sh` reescrito, 1.5 — comentário de `spi_core.asm`. Desde 2026-10, também: o código Python virou
+um pacote com testes e CI (2.5, parte Python), e o cabeçalho v2 com as ferramentas de
+calibração de sondas.
 
-**Sugestão de ordem de ataque:** o item 2.8 (renomear o arquivo) é trivial e deveria ser o
-primeiro commit desta rodada, independente de tudo o mais. Em seguida, os itens que são
-puramente do lado ARM/C e de processo (1.8 restante, 1.3, 2.4–2.9) — baixo risco, ganho
+**Sugestão de ordem de ataque:** comece por **rodar o `calibrar_sonda.sh` numa bancada real**
+(2.10 foi validado só com um `ler_adc` falso e é pré-requisito do 2.11). Em seguida, os itens
+puramente do lado ARM/C e de processo (1.8 restante, 1.3, 2.4–2.6) — baixo risco, ganho
 imediato de robustez e de apresentação do repositório. Em paralelo, confirmar o isolador
 contra o BOM (1.10) para fechar de vez esse item. Só depois disso partir para a medição
 (1.2) e os ajustes de timing na PRU (1.2 → 1.4), já que a medição de 1.2 também resolve a

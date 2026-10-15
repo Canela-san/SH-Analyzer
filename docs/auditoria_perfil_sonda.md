@@ -19,6 +19,13 @@ Com 19 pontos, o `gerar_perfil_sonda.py` recuperou o ganho verdadeiro com erro �
 
 ## 2. Bugs encontrados e corrigidos
 
+> A coluna "Onde" mostra os arquivos **da época da auditoria**. Depois, o código passou para o
+> pacote `scripts/supraharmonicos/`. Onde cada correção mora hoje: bugs 1, 3 e 5 em `sonda.py`
+> (`conferir_calibracao_perfil`, `resolver_perfil_canal`, `aplicar_correcao_sonda`); bug 2 em
+> `modos.py` (`_aplicar_correcao_sondas`); bug 4 em `sonda.py` (`carregar_perfil_sonda`) e
+> `escrita_perfil.py`; bug 6 em `escrita_perfil.py` (`gravar_perfil_validado`); bug 7 em
+> `calibracao_sonda.py`.
+
 | # | Onde | Problema (evidência) | Correção |
 |---|---|---|---|
 | 1 | `adc_tool.py` | **`--ganho`/`--faixa`/`--formato` diferentes dos da calibração não geravam aviso.** Perfil gerado com `--ganho 1,10`, usado com `--ganho 1,1`: tons saíam 10× baixos (0,0100 em vez de 0,1); `--faixa 5.12` em vez de 10.24: 2× baixos. O perfil já gravava `calibracao_adc`, mas ninguém lia. | `conferir_calibracao_perfil()` compara com a calibração do canal e avisa o fator de erro. Só avisa (não aborta): perfis escritos à mão não têm o bloco. |
@@ -74,6 +81,9 @@ Estes determinam se o perfil é *fisicamente* correto; o software não consegue 
 
 ## 4. Limitações de projeto e melhorias propostas (decisão sua)
 
+> **Status em 2026-10:** nenhuma das propostas abaixo foi implementada. Elas estão resumidas,
+> com esforço e necessidade de decisão, em `docs/melhorias-propostas.md` (item 2.11).
+
 ### 4.1 Correção só de magnitude (fase não corrigida) — impacto alto *se* houver análise V×I
 Medido: sonda passa-baixa causal de fc = 30 kHz, tons 2,5/9/20/40 kHz com amplitude restaurada exata, mas fase residual −4,8°/−16,7°/−33,7°/−53,1° e **erro RMS da forma de onda de 42 %** (o pico coincidiu por acaso). Hoje o pipeline só usa amplitude em dB, então é inofensivo; deixa de ser quando se calcular potência ativa, impedância ou direção de emissão em supraharmônicos.
 Soma-se um efeito do hardware: canais multiplexados (AUTO_RST) são amostrados em instantes diferentes — atraso de 1/f_total entre canais consecutivos (a 400 kS/s: 2,5 µs = 36° a 40 kHz; a ~100 kS/s totais: 10 µs = 36° já a 10 kHz).
@@ -96,12 +106,14 @@ A divisão espectral do registro inteiro trata o sinal como periódico; em regis
 
 ### 4.7 Menores
 - `gerar_perfil_sonda.py` não verifica estabilidade da amplitude *dentro* da captura (deriva do gerador durante os 2–3 s); comparar a 1ª e 2ª metade e avisar > 1–2 %.
-- `calibrar_sonda.sh` não foi alterado; sem achados na revisão e nos testes anteriores (`bash -n` ok; `shellcheck` não disponível neste ambiente nesta sessão — rodar localmente).
+- `calibrar_sonda.sh` não foi alterado por esta auditoria; sem achados na revisão e nos testes anteriores (`bash -n` ok; `shellcheck` não disponível neste ambiente nesta sessão — rodar localmente). **Achado posterior (2026-10), já corrigido:** a checagem de Nyquist usava a taxa total em vez da efetiva por canal (`taxa/4` com 2 canais); o script foi reescrito (escolha automática de frequências, conferência de cada captura, novos modos) — ver `docs/melhorias-propostas.md`, item 2.10, e `docs/guia_de_uso.md`, "Passo 1". O texto desta auditoria descreve o script **como ele estava** na época.
 - `ler_adc.c` não foi alterado. Por decisão do projeto não valida o id da sonda; a validação de caracteres ficou no Python. Se quiser defesa em profundidade, validar também no `--sonda` do C (exige recompilar e retestar no BeagleBone).
 
 ---
 
 ## 5. Arquivos alterados
+
+> Caminhos da época da auditoria; hoje a lógica Python está no pacote `scripts/supraharmonicos/` e a suíte em `tests/e2e/`.
 
 | Arquivo | Mudança |
 |---|---|
@@ -111,4 +123,4 @@ A divisão espectral do registro inteiro trata o sinal como periódico; em regis
 | `docs/auditoria_perfil_sonda.md` | **novo** — este documento |
 | `docs/contexto_projeto.md` | seções atualizadas (modelo de calibração, pipeline, geração de perfil, status, restrições) |
 
-Sem alteração: `firmware/ler_adc.c`, `firmware/calibrar_sonda.sh`, `docs/exemplo_sonda.json`.
+Sem alteração (na época desta auditoria): `firmware/ler_adc.c`, `firmware/calibrar_sonda.sh`, `docs/exemplo_sonda.json`. O `calibrar_sonda.sh` foi reescrito depois (item 2.10 de `docs/melhorias-propostas.md`).

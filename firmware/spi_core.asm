@@ -23,13 +23,12 @@
 ; supraharmônicos = sensível a ruído de chaveamento digital acoplado na cadeia
 ; analógica).
 ;
-; ⚠️ AINDA NÃO VALIDADO EM HARDWARE (ver docs/Contexto do Projeto-3.md, seção
-; 4). O modo manual (single-channel e multi-canal) foi validado em hardware
-; real; esta reescrita para modo automático foi implementada com base na
-; leitura do datasheet, mas ainda não foi compilada com o clpru nem testada na
-; PRU física. Tratar como experimento isolado nesta branch, com o mesmo rigor
-; de validação já aplicado ao modo manual, antes de fazer merge na main (ver
-; roadmap no Contexto do Projeto).
+; ✅ VALIDADO EM HARDWARE: a varredura automática (AUTO_RST) foi testada na PRU
+; física com 1 canal e com 5 canais a 102,4 kHz de taxa total (≈20,48 kHz por
+; canal): canais ligados à rede mostram os 60 Hz, canais desconectados mostram
+; só ruído (ver docs/contexto_projeto.md e o README). Ainda falta a validação
+; QUANTITATIVA de exatidão (amplitude e frequência de um sinal de referência
+; calibrado, injetado em bancada).
 ;
 ; --- O QUE FOI PRESERVADO DO MODO MANUAL (validado em hardware, não mudou) ---
 ;   - Frame de 32 ciclos de SCLK por amostra (16 para "comando" + 16 para
@@ -54,8 +53,8 @@
 ;   - Margens de tempo em torno do CS (setup, hold, tempo mínimo em nível
 ;     alto) mantidas com os mesmos valores calibrados empiricamente
 ;     (200/100/100 ciclos) — NÃO foram comparadas ao datasheet do ADS8688 e
-;     não foram alteradas aqui; ver nota de desempenho no Contexto do Projeto
-;     sobre uma possível folga não aproveitada nesses números.
+;     não foram alteradas aqui; ver docs/melhorias-propostas.md sobre uma
+;     possível folga não aproveitada nesses números.
 ;
 ; --- O QUE MUDOU (removido nesta versão) ------------------------------------
 ;   - Modo manual (MAN_Ch_x) completamente removido, por pedido explícito:
