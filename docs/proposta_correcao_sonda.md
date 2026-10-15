@@ -1,11 +1,41 @@
 # SH-Analyzer — Proposta: Correção de Sondas de Corrente e Metadados de Grandeza por Canal
 
-> Documento de proposta técnica — **nada aqui foi implementado**. Cobre como suportar
+> Documento de proposta técnica, **já implementada** (status de 2026-10: veja a tabela
+> "Do proposto ao implementado" logo abaixo; o texto das seções 1 a 9 é o original, mantido
+> como registro do raciocínio). Cobre como suportar
 > captura simultânea de tensão e corrente (e, futuramente, temperatura) em canais
 > diferentes do ADS8688, com correção de ganho dependente de frequência para sondas de
 > corrente, perfis de sonda reutilizáveis e trocáveis entre ensaios, e metadados de
 > grandeza física por canal gravados no cabeçalho da captura. Escrito para discussão e
 > priorização antes de qualquer mudança em `firmware/` ou `scripts/adc_tool.py`.
+
+---
+
+## Status: do proposto ao implementado
+
+O que está valendo hoje é descrito em `docs/contexto_projeto.md` (seções `modelo_calibracao_sonda`,
+`pipeline_dsp_python` e `ferramenta_geracao_perfil`). Para usar, veja `docs/guia_de_uso.md`.
+A tabela mostra o que mudou entre esta proposta e o código.
+
+| Tema | Proposta | Como ficou |
+|---|---|---|
+| `--grandeza` e `--sonda` em `ler_adc` | Chaveados pelo número do canal; `--sonda` só em corrente | Chaveados pelo número do canal, como proposto. `--sonda` é aceito em **qualquer** grandeza (decisão do projeto, seção 9) |
+| Cabeçalho v2 | `sonda_id` com 16 bytes por canal; CRC do perfil por canal | `sonda_id` com **32 bytes** (31 úteis); o **CRC do perfil foi descartado**: o `ler_adc.c` nunca vê o `.json`, então não tem como calculá-lo. O cabeçalho continua com 1024 bytes (672 de campos, 352 de reserva) e o CRC do cabeçalho passou para o deslocamento 668 |
+| Leitura do cabeçalho | Ramificar pela versão antes do `struct.unpack` | Feito: v1 (sem os campos novos) e v2 coexistem |
+| Validação do id da sonda | Só no Python (opção da seção 9) | Só no Python: o id precisa casar com `^[A-Za-z0-9][A-Za-z0-9_.-]*$` e não pode escapar de `--sondas-dir` |
+| Correção em frequência | Divisão espectral, PCHIP em (log f, dB) | Feito, com `next_fast_len` na FFT. Fora da faixa calibrada: **clamp** no ponto mais próximo com aviso (não bloqueia e não extrapola) |
+| Rótulo do eixo por grandeza | Dinâmico | Feito |
+| `--sem-correcao-sonda` e fallback para `--ganho` escalar | Propostos | Feitos, e há também `--sonda-perfil CANAL:ARQUIVO` e `--sondas-dir` |
+| Ferramenta de calibração (seção 7.1) | `scripts/calibrar_sonda.py` | Dividida em duas: `firmware/calibrar_sonda.sh` (coleta interativa, na BeagleBone) e `scripts/gerar_perfil_sonda.py` (análise, gera o `.json`) |
+| Validação por frequências retidas (seção 7) | Reservar pontos fora da malha | **Não implementada** (ver `docs/auditoria_perfil_sonda.md`, 4.3) |
+| Fase (`fase_graus`) | Campo reservado | Campo reservado; a correção é só de **magnitude** (auditoria, 4.1) |
+| Exportação HDF5 (seção 6.3) | Gravar a curva usada | Grava grandeza e id da sonda como atributos, mas **não aplica** a correção nem grava a curva |
+| Entrada CSV de pontos (seção 8) | Alternativa ao JSON | Não implementada; o `gerar_perfil_sonda.py` gera o JSON direto das capturas |
+| Metadados extras no perfil (seção 8) | Fabricante, incerteza etc. | Feitos (`--fabricante`, `--modelo`, `--numero-serie`, `--tipo-saida`, `--incerteza-estimada-pct`, `--calibrado-com`, `--data-calibracao`), mais o bloco `calibracao_adc`, usado para avisar se o `--ganho` mudou |
+
+Quatro das questões da seção 9 foram decididas: id com 32 bytes; curva fica fora do cabeçalho
+(só como atributo HDF5, e hoje nem isso); `--sonda` vale para qualquer grandeza; validação do
+id só no Python.
 
 ---
 
@@ -242,7 +272,10 @@ Sim — essa é a forma padrão de caracterizar resposta em frequência de um tr
   ponto tende a ser baixo; ainda assim, repetir 2-3 medições por frequência e promediar o
   ganho extraído é barato e reduz o risco de um ponto ruim isolado distorcer a curva.
 
-### 7.1 Ferramenta futura: `scripts/calibrar_sonda.py`
+### 7.1 Ferramenta: `calibrar_sonda.py` (hoje `calibrar_sonda.sh` + `gerar_perfil_sonda.py`)
+
+> Implementada em duas partes (ver a tabela de status no topo). O nome `calibrar_sonda` ficou
+> com o script de coleta; a análise é o `gerar_perfil_sonda.py`.
 
 Fecha o laço entre medir e gerar o perfil: recebe a corrente injetada conhecida por
 frequência (manual, ou de um log do gerador de sinal), mede automaticamente via
@@ -268,7 +301,7 @@ processo de calibração.
   análise, se o perfil usado na captura foi editado/recalibrado depois — mesma filosofia
   de rastreabilidade do `firmware_git_hash` já sugerido em `docs/melhorias-propostas.md`.
 
-## 9. Questões em aberto
+## 9. Questões em aberto (decididas; ver a tabela de status no topo)
 
 - Tamanho fixo de `sonda_id_por_canal` (proposto: 16 bytes por canal) — suficiente para os
   ids esperados, ou vale mais espaço?

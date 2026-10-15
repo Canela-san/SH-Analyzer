@@ -1,97 +1,201 @@
 #!/bin/bash
 #
-# calibrar_sonda.sh -- Coleta interativa de pontos de calibração de
-# resposta em frequência para sondas de corrente do SH-Analyzer.
+# ==============================================================================
+# calibrar_sonda.sh -- coleta automatizada de pontos de calibração de uma sonda
+# de corrente do SH-Analyzer (roda NA BEAGLEBONE, ao lado do binário `ler_adc`).
+# ==============================================================================
 #
-# Guia o operador na injeção manual de um sinal conhecido em várias
-# frequências (via gerador de sinal de bancada), disparando o `ler_adc`
-# para cada ponto e organizando as capturas resultantes em
-# capturas/<sonda>/. Não calcula ganho nem faz nenhuma análise de
-# amplitude -- isso é feito depois, em adc_tool.py (--fft/--welch/--picos
-# sobre as capturas geradas aqui). Ver docs/proposta_correcao_sonda.md,
-# seção 7, para a metodologia completa.
+# PARA QUE SERVE
+#   Para criar o perfil de uma sonda (scripts/gerar_perfil_sonda.py) é preciso
+#   medir o ganho dela em várias frequências. Fazer isso na mão significaria
+#   chamar o `ler_adc` dezenas de vezes, repetindo a taxa, os canais e todos os
+#   metadados do cabeçalho (grandeza, id da sonda, título), sem saber de antemão
+#   quais frequências valem a pena. Este script faz isso por você:
 #
-# Bancada esperada (ajustável nas constantes CANAL_REFERENCIA/CANAL_SONDA,
-# logo abaixo): um resistor shunt de precisão em série com a sonda sob
-# calibração, com o canal CANAL_REFERENCIA medindo a tensão sobre esse
-# shunt (corrente real = V/R_shunt, calculada depois na análise -- este
-# script só grava os dois canais brutos) e CANAL_SONDA lendo a saída da
-# sonda sendo calibrada.
+#     1. você diz QUANTOS pontos quer e a TAXA de amostragem do ADC;
+#     2. ele ESCOLHE as frequências (espaçadas em escala logarítmica, dentro do
+#        que a taxa permite medir) e mostra o plano;
+#     3. para cada ponto ele pede "INJETE <f> Hz" no gerador de sinal, chama o
+#        `ler_adc` com o cabeçalho certo e confere o `.bin` gerado (cabeçalho,
+#        tamanho, saturação do ADC, nível do sinal, frequência realmente
+#        injetada);
+#     4. você aceita, refaz, pula ou aborta cada ponto;
+#     5. no fim ele resume a coleta e sugere pontos EXTRAS onde a resposta da
+#        sonda varia mais entre vizinhos (a "melhor frequência" a mais é a que
+#        fica onde a curva muda rápido).
 #
-# Dois modos:
-#   1) Novo perfil     -- gera N pontos log-espaçados entre freq_min/max.
-#   2) Expandir perfil -- lê as frequências já capturadas em
-#                         capturas/<sonda>/ e insere um novo ponto (média
-#                         GEOMÉTRICA, não aritmética -- ver
-#                         calcular_pontos_densificacao) entre cada par de
-#                         frequências adjacentes, adensando a malha.
+# BANCADA ESPERADA
+#   Gerador de sinal -> resistor shunt de precisão em série com a sonda sob
+#   calibração. O canal de REFERÊNCIA (padrão 0) mede a tensão sobre o shunt
+#   (corrente real = V/R, calculada depois em gerar_perfil_sonda.py) e o canal
+#   da SONDA (padrão 1) lê a saída da sonda. Mude com --canal-referencia e
+#   --canal-sonda. Ajuste a amplitude do gerador para o sinal ocupar de ~20% a
+#   ~80% da escala do ADC e MANTENHA-A em todas as frequências.
 #
-# Requisitos: bash 4.3+ (usa 'local -n', nameref), e os utilitários padrão
-# bc (com a biblioteca matemática, flag -l), awk, sed, grep, find, df --
-# presentes em qualquer instalação Debian/Ubuntu comum de BeagleBone.
-# DE PROPÓSITO, nenhuma matemática de ponto flutuante roda em Python (ou
-# qualquer outro interpretador externo) -- tudo aqui é feito com 'bc -l'
-# (log-espaçamento, média geométrica, comparação de Nyquist).
+# USO
+#   sudo ./calibrar_sonda.sh                      # modo interativo (pergunta tudo)
+#   sudo ./calibrar_sonda.sh --taxa 102400 --pontos 20 --sonda fluke_i30_sn0001
+#   sudo ./calibrar_sonda.sh --modo retomar --sonda fluke_i30_sn0001
+#   sudo ./calibrar_sonda.sh --modo refinar --sonda fluke_i30_sn0001
+#   sudo ./calibrar_sonda.sh --modo refazer --freqs 200,1000 --sonda fluke_i30_sn0001
+#   ./calibrar_sonda.sh --help                    # todas as opções
 #
-# Uso: sudo ./calibrar_sonda.sh   (precisa de root, porque chama ./ler_adc,
-#                                  que acessa /dev/mem)
+# MODOS
+#   novo     plano novo de N pontos log-espaçados (padrão).
+#   retomar  continua uma coleta interrompida: mede só o que falta do plano.
+#   refinar  adiciona pontos onde o ganho (medido na coleta) muda mais entre
+#            frequências vizinhas.
+#   adensar  adiciona 1 ponto (média geométrica) entre CADA par de frequências
+#            já capturadas.
+#   refazer  mede de novo pontos JÁ aceitos (--freqs); a captura antiga só sai
+#            de cena depois que a nova é aceita, e vai para descartadas/.
+#   resumo   só mostra a tabela da coleta e os próximos passos (não mede nada).
+#
+# O QUE FICA EM DISCO  (pasta capturas/<id-da-sonda>/, relativa a onde você rodou)
+#   calibracao_<FREQ>Hz_rep<N>.bin   capturas aceitas (é o que gerar_perfil_sonda.py lê)
+#   pontos_coletados.csv             manifesto: HISTÓRICO de cada ponto (status e métricas rápidas)
+#   plano_coleta.txt                 taxa, canais, repetições e frequências do plano
+#   ler_adc.log                      saída completa do ler_adc (útil se algo falhar)
+#   descartadas/                     capturas substituídas pelo modo refazer (nunca apagadas)
+#   (capturas/_arquivadas/           coletas antigas que você mandou "começar do zero")
+#
+# DEPOIS DA COLETA (no computador, a partir da raiz do repositório)
+#   uv run scripts/gerar_perfil_sonda.py capturas/<id> --resistencia-shunt <ohms> --plot
+#
+# DECISÕES DE PROJETO (leia antes de mexer)
+#   * SEM Python/interpretador externo: só bash + utilitários padrão do Debian
+#     (awk, od, gzip, sed, sort, timeout...). A matemática de ponto flutuante é
+#     feita em awk (o `bc` deixou de ser necessário).
+#   * SEM 'set -e': o fluxo depende de checar códigos de saída que PODEM falhar
+#     (ler_adc travado por SPI, por exemplo) sem encerrar o script -- é para isso
+#     que existe o menu [C]ontinuar/[R]efazer/[P]ular/[A]bortar. 'set -u' e
+#     'pipefail' continuam ligados.
+#   * Cada captura vai primeiro para um arquivo temporário (.em_andamento_*.bin) e
+#     só ganha o nome definitivo depois de aceita: um .bin parcial, descartado ou
+#     de uma execução interrompida nunca é confundido com um ponto válido.
+#   * Toda saída informativa vai para stderr, NUNCA stdout: stdout é reservado ao
+#     valor de retorno das funções chamadas com $(...).
+#   * Todo `read` trata EOF explicitamente (senão há laço infinito com stdin fechado).
+#   * Nunca use 'while read ... done <<< "$lista"' em volta de código que também lê o
+#     teclado: o here-string substitui o stdin de TODO o laço (ver coletar_pares).
+#   * O menu de escolha é um laço SEPARADO do laço de medição: uma opção inválida
+#     nunca dispara uma nova medição.
+#   * A Nyquist é a EFETIVA POR CANAL: com 2 canais, a taxa total é dividida entre
+#     eles, então o limite é taxa/(2*2) = taxa/4.
+#   * As checagens rápidas (saturação, nível, frequência) são para dar feedback
+#     imediato ao operador; a medição de verdade (Welch, SNR, ganho) é do
+#     gerar_perfil_sonda.py.
+#
+# PARA TESTES: SH_LER_ADC=<caminho> troca o executável do ler_adc; SH_LER_ADC_TIMEOUT=<s>
+# muda o limite de tempo de uma captura; SH_PULAR_VERIFICACAO_ROOT=1 dispensa o 'sudo'.
+# tests/test_calibrar_sonda.py usa os três com um ler_adc falso.
+#
+# Requisitos: bash 4.4+ (nameref), coreutils GNU (od, timeout, df, find -printf),
+# awk (mawk ou gawk), gzip, sed. Todos presentes numa BeagleBone com Debian.
+# ==============================================================================
 
-# -----------------------------------------------------------------------
-# Por que este script NÃO usa 'set -e' (errexit):
-#
-# O fluxo inteiro depende de checar explicitamente o código de saída de
-# comandos que PODEM (e, no caso do ler_adc travando por SPI, DEVEM) falhar
-# sem que isso encerre o script -- é exatamente disso que o menu de
-# retentativa [C]/[R]/[A] trata. 'set -e' tem um comportamento notoriamente
-# inconsistente dentro de funções usadas em condicionais e substituições de
-# comando, e "esconder" uma falha esperada atrás dele tornaria o fluxo mais
-# difícil de auditar, não mais seguro. Preferimos checar cada retorno que
-# importa, explicitamente, com 'if'/'case'.
-#
-# 'set -u' (nounset) e 'pipefail' continuam ligados -- pegam variável não
-# inicializada e falha silenciosa no meio de um pipe, que são bugs de
-# verdade, não fluxo de controle esperado.
 set -u
 set -o pipefail
 
-# -----------------------------------------------------------------------
-# 0. Pré-checagem da versão do bash (nameref -- 'local -n' -- exige 4.3+)
-# -----------------------------------------------------------------------
+# Ponto decimal sempre '.', qualquer que seja o idioma do sistema (awk e printf
+# respeitam o locale e imprimiriam '200,5' em pt_BR).
+export LC_ALL=C
+
+# -----------------------------------------------------------------------------
+# 0. Pré-checagem da versão do bash (nameref e arrays vazios com 'set -u' exigem 4.4+)
+# -----------------------------------------------------------------------------
 if [ -z "${BASH_VERSINFO:-}" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ] || \
-   { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -lt 3 ]; }; then
-    echo "ERRO: este script precisa do bash 4.3 ou mais novo (usa" >&2
-    echo "'local -n'/nameref). Versão detectada: ${BASH_VERSION:-desconhecida}." >&2
+   { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -lt 4 ]; }; then
+    echo "ERRO: este script precisa do bash 4.4 ou mais novo (usa nameref e" >&2
+    echo "arrays vazios com 'set -u'). Versão detectada: ${BASH_VERSION:-desconhecida}." >&2
     exit 1
 fi
 
-# =========================================================================
+# =============================================================================
 # 1. Configuração
-# =========================================================================
-readonly PASTA_BASE="capturas"
+# =============================================================================
 readonly NOME_MANIFESTO="pontos_coletados.csv"
+readonly NOME_PLANO="plano_coleta.txt"
+readonly NOME_LOG="ler_adc.log"
 readonly ESPACO_MINIMO_MB=50
 
-# Canais da bancada -- ver cabeçalho do arquivo para o racional.
-readonly CANAL_REFERENCIA=0
-readonly CANAL_SONDA=1
+# Padrões usados quando o operador não informa o valor.
+readonly PADRAO_PONTOS=20
+readonly PADRAO_FREQ_MIN=50            # Hz
+readonly FRACAO_NYQUIST_PADRAO="0.8"   # freq. máxima padrão = 80% da Nyquist efetiva
+readonly PADRAO_REPETICOES=1
+readonly PADRAO_BLOCOS=1               # 1 bloco = SAMPLES_PER_BUFFER amostras (~10 s a 102,4 kHz)
 
-# Resolve o caminho do ler_adc relativo a ESTE script (não ao diretório
-# corrente de quem chama) -- assim `sudo ./calibrar_sonda.sh` funciona
-# não importa de onde for invocado, desde que o binário esteja ao lado
-# deste script.
+# A captura de calibração usa SEMPRE 2 canais (referência + sonda).
+readonly NUM_CANAIS_CAPTURA=2
+
+# Limites de qualidade das checagens rápidas (ver analisar_rapido/avaliar_qualidade).
+readonly SATURACAO_MAXIMA="0.0005"     # fração de amostras no fundo de escala (= gerar_perfil_sonda.py)
+readonly PP_SEM_SINAL_PCT=1            # pico-a-pico abaixo disto (% da escala): praticamente sem sinal
+readonly PP_FRACO_PCT=10               # abaixo disto: sinal fraco, SNR ruim
+readonly FREQ_DESVIO_AVISO_PCT=5       # frequência medida difere da planejada: aviso
+readonly FREQ_DESVIO_ERRO_PCT=10       # ... e erro (gerar_perfil_sonda.py só procura o tom em ±10%)
+readonly LIMIAR_REFINO_DB="0.5"        # variação de ganho entre vizinhos que justifica um ponto extra
+readonly RAZAO_FREQ_MIN_REFINO="1.04"  # não sugere pontos entre frequências a menos de 4% uma da outra
+readonly AMOSTRAS_ANALISE_RAPIDA=262144   # amostras brutas (todos os canais) olhadas na checagem rápida
+readonly AMOSTRAS_IGNORADAS_INICIO=4096   # descarta o começo da captura (transitório do arranque)
+readonly SPB_PADRAO=1048576                # SAMPLES_PER_BUFFER (só para estimar tempo; o valor real vem do cabeçalho)
+
+# Layout do cabeçalho .bin v2 (firmware/ler_adc.c; conferido por tests/test_contrato_firmware.py).
+readonly CAB_TAMANHO=1024
+readonly CAB_OFF_VERSAO=4
+readonly CAB_OFF_FREQUENCIA=20
+readonly CAB_OFF_NUM_CANAIS=28
+readonly CAB_OFF_LISTA_CANAIS=32
+readonly CAB_OFF_SPB=40
+readonly CAB_OFF_BYTES_AMOSTRA=44
+readonly CAB_OFF_BLOCOS=68
+readonly CAB_OFF_TOTAL_AMOSTRAS=76
+readonly CAB_OFF_GRANDEZA=404
+readonly CAB_OFF_SONDA_ID=412
+readonly CAB_TAM_SONDA_ID=32
+readonly CAB_OFF_CRC_V2=668
+readonly GRANDEZA_TENSAO=0
+readonly GRANDEZA_CORRENTE=1
+
+# Resolve o caminho do ler_adc relativo a ESTE script (não ao diretório corrente de
+# quem chama). SH_LER_ADC permite apontar para outro binário (usado nos testes).
 DIR_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly DIR_SCRIPT
-readonly LER_ADC="${DIR_SCRIPT}/ler_adc"
+LER_ADC="${SH_LER_ADC:-${DIR_SCRIPT}/ler_adc}"
+readonly LER_ADC
 
-REDUNDANCIA=1          # sobrescrito pela resposta do operador
-SONDA_ID_SANITIZADO="" # idem
+# Parâmetros (preenchidos pela linha de comando, pelo plano salvo ou por perguntas).
+PASTA_BASE="capturas"
+CANAL_REFERENCIA=0
+CANAL_SONDA=1
+TAXA=""
+PONTOS=""
+SONDA_BRUTA=""
+SONDA_ID=""
+FREQ_MIN=""
+FREQ_MAX=""
+REPETICOES=""
+BLOCOS=""
+MODO=""
+FREQS_ALVO=""           # --freqs: lista de frequências (modo refazer)
+ASSUMIR_SIM=0
+VERBOSO=0
 
-# =========================================================================
+# Estado da execução.
+PASTA_SONDA=""
+PLANO_FREQS=()          # frequências (Hz inteiros) do plano, ordenadas
+ARQUIVO_EM_CAPTURA=""   # temporário em uso (limpo se o script for interrompido)
+SESSAO_ACEITOS=0
+SESSAO_PULADOS=0
+LOG_LINHAS_ANTES=0      # linhas do ler_adc.log antes da captura atual (para mostrar só a saída dela)
+SUBSTITUIR_EXISTENTES=0 # 1 no modo refazer: a captura aceita substitui (arquiva) a antiga
+
+# =============================================================================
 # 2. Cores ANSI e funções de saída
-# =========================================================================
-# Sem cores se a saída não for um terminal (ex.: redirecionada para um
-# arquivo de log) -- evita poluir o log com códigos de escape.
-if [ -t 1 ]; then
+# =============================================================================
+# Sem cores se a saída não for um terminal (ex.: redirecionada para um arquivo de log).
+if [ -t 2 ]; then
     COR_VERMELHO='\033[0;31m'; COR_VERDE='\033[0;32m'
     COR_AMARELO='\033[0;33m';  COR_AZUL='\033[0;34m'
     COR_NEGRITO='\033[1m';     COR_RESET='\033[0m'
@@ -104,46 +208,139 @@ log_info()    { printf "%b\n" "${COR_AZUL}[INFO]${COR_RESET} $*" >&2; }
 log_sucesso() { printf "%b\n" "${COR_VERDE}[OK]${COR_RESET} $*" >&2; }
 log_aviso()   { printf "%b\n" "${COR_AMARELO}[ATENCAO]${COR_RESET} $*" >&2; }
 log_erro()    { printf "%b\n" "${COR_VERMELHO}[ERRO]${COR_RESET} $*" >&2; }
+saida()       { printf "%b\n" "$*" >&2; }
 
 erro_fatal() { log_erro "$*"; exit 1; }
 
 separador() {
-    printf "%b\n" "${COR_AZUL}────────────────────────────────────────────────────────────${COR_RESET}"
+    printf "%b\n" "${COR_AZUL}────────────────────────────────────────────────────────────${COR_RESET}" >&2
 }
 
 titulo_secao() {
-    echo
-    printf "%b\n" "${COR_NEGRITO}${COR_AZUL}=== $* ===${COR_RESET}"
+    echo >&2
+    printf "%b\n" "${COR_NEGRITO}${COR_AZUL}=== $* ===${COR_RESET}" >&2
 }
 
-# Ctrl+C em qualquer ponto do script deve avisar e sair limpo, em vez de
-# deixar uma mensagem de erro genérica do bash.
-trap 'echo; log_aviso "Interrompido (Ctrl+C). Nenhuma captura em andamento foi perdida -- as já concluídas continuam em '"'"'${PASTA_BASE}'"'"'."; exit 130' INT
+# Ctrl+C (ou SIGTERM) em qualquer ponto: apaga o temporário da captura em andamento
+# (se houver) e sai limpo. As capturas já aceitas continuam na pasta.
+interrompido() {
+    echo >&2
+    if [ -n "$ARQUIVO_EM_CAPTURA" ]; then
+        rm -f "$ARQUIVO_EM_CAPTURA" 2>/dev/null
+        ARQUIVO_EM_CAPTURA=""
+    fi
+    log_aviso "Interrompido. A captura em andamento foi descartada; as já aceitas continuam em '${PASTA_SONDA:-${PASTA_BASE}}/'."
+    [ -n "$PASTA_SONDA" ] && log_info "Para continuar depois:  sudo ./calibrar_sonda.sh --modo retomar --sonda ${SONDA_ID}"
+    exit 130
+}
+trap interrompido INT TERM
 
-# =========================================================================
-# 3. Verificações de ambiente
-# =========================================================================
+# =============================================================================
+# 3. Ajuda e linha de comando
+# =============================================================================
+uso() {
+    cat <<EOF
+Uso: sudo ./calibrar_sonda.sh [opções]
 
-# Confere se todos os utilitários externos usados pelo script existem --
-# falha cedo e com uma mensagem clara, em vez de um erro obscuro de
-# "comando não encontrado" no meio da coleta.
+Coleta os pontos de calibração de uma sonda de corrente: escolhe as frequências,
+pede para você injetá-las na bancada, captura com o ler_adc (cabeçalho preenchido
+corretamente) e confere cada .bin. Sem opções, pergunta o que precisa.
+
+Principais:
+  -t, --taxa HZ          Taxa de amostragem TOTAL do ADC (1-500000), ex.: 102400 ou
+                         102.4k. Com 2 canais, cada canal é amostrado a taxa/2.
+  -n, --pontos N         Quantidade de frequências do plano (padrão ${PADRAO_PONTOS}).
+                         No modo refinar: quantos pontos EXTRAS coletar.
+  -s, --sonda ID         Identificador da sonda (ex.: fluke_i30_sn0001, até 31
+                         caracteres: letras, números, '-' e '_').
+
+Plano de frequências:
+      --freq-min HZ      Menor frequência (padrão ${PADRAO_FREQ_MIN} Hz).
+      --freq-max HZ      Maior frequência (padrão: 80% da Nyquist efetiva, taxa/4 x 0,8).
+  -r, --repeticoes N     Capturas por frequência (padrão ${PADRAO_REPETICOES}).
+  -b, --blocos N         Blocos por captura (padrão ${PADRAO_BLOCOS}; 1 bloco ~ 10 s a 102,4 kHz).
+
+Modo:
+  -m, --modo MODO        novo (padrão) | retomar | refinar | adensar | refazer | resumo
+                         (veja o cabeçalho deste script ou o docs/guia_de_uso.md).
+  -f, --freqs LISTA      Frequências a medir de novo (modo refazer), ex.: "200,1000".
+
+Bancada e saída:
+      --canal-referencia N   Canal que mede a tensão sobre o shunt (padrão ${CANAL_REFERENCIA}).
+      --canal-sonda N        Canal que lê a saída da sonda (padrão ${CANAL_SONDA}).
+      --pasta DIR            Pasta base das capturas (padrão: ./capturas).
+  -y, --sim              Não pede confirmação do plano (você ainda ajusta o
+                         gerador a cada ponto).
+  -v, --verboso          Mostra a saída do ler_adc durante a captura.
+  -h, --help             Esta ajuda.
+
+Exemplos:
+  sudo ./calibrar_sonda.sh --taxa 102400 --pontos 20 --sonda fluke_i30_sn0001
+  sudo ./calibrar_sonda.sh --taxa 102400 --pontos 12 --freq-min 100 --freq-max 15000 --sonda minha_sonda
+  sudo ./calibrar_sonda.sh --modo retomar --sonda fluke_i30_sn0001
+  sudo ./calibrar_sonda.sh --modo refinar --pontos 4 --sonda fluke_i30_sn0001
+  sudo ./calibrar_sonda.sh --modo refazer --freqs 200,1000 --sonda fluke_i30_sn0001
+  sudo ./calibrar_sonda.sh --modo resumo --sonda fluke_i30_sn0001
+
+Em cada ponto: [C]ontinuar aceita, [R]efazer mede de novo, [P]ular deixa o ponto
+de fora (dá para pegá-lo depois com --modo retomar), [A]bortar encerra.
+
+Variáveis de ambiente (avançado):
+  SH_LER_ADC           Caminho de outro executável no lugar do ./ler_adc.
+  SH_LER_ADC_TIMEOUT   Limite (s) para o ler_adc terminar uma captura (padrão: 3 x
+                       a duração prevista + 60 s).
+EOF
+}
+
+parse_args() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h|--help)         uso; exit 0 ;;
+            -t|--taxa)         exigir_valor "$@"; TAXA="$2"; shift 2 ;;
+            -n|--pontos)       exigir_valor "$@"; PONTOS="$2"; shift 2 ;;
+            -s|--sonda)        exigir_valor "$@"; SONDA_BRUTA="$2"; shift 2 ;;
+            --freq-min)        exigir_valor "$@"; FREQ_MIN="${2//,/.}"; shift 2 ;;
+            --freq-max)        exigir_valor "$@"; FREQ_MAX="${2//,/.}"; shift 2 ;;
+            -r|--repeticoes)   exigir_valor "$@"; REPETICOES="$2"; shift 2 ;;
+            -b|--blocos)       exigir_valor "$@"; BLOCOS="$2"; shift 2 ;;
+            -m|--modo)         exigir_valor "$@"; MODO="${2,,}"; shift 2 ;;
+            -f|--freqs)        exigir_valor "$@"; FREQS_ALVO="$2"; shift 2 ;;
+            --canal-referencia) exigir_valor "$@"; CANAL_REFERENCIA="$2"; shift 2 ;;
+            --canal-sonda)     exigir_valor "$@"; CANAL_SONDA="$2"; shift 2 ;;
+            --pasta)           exigir_valor "$@"; PASTA_BASE="$2"; shift 2 ;;
+            -y|--sim)          ASSUMIR_SIM=1; shift ;;
+            -v|--verboso)      VERBOSO=1; shift ;;
+            *) log_erro "Opção desconhecida: '$1'."; echo "Use --help para ver as opções." >&2; exit 2 ;;
+        esac
+    done
+}
+
+exigir_valor() {
+    if [ $# -lt 2 ]; then
+        log_erro "A opção '$1' precisa de um valor."
+        exit 2
+    fi
+}
+
+# =============================================================================
+# 4. Verificações de ambiente
+# =============================================================================
+
+# Falha cedo e com mensagem clara se faltar algum utilitário, em vez de um "comando
+# não encontrado" no meio da coleta.
 verificar_dependencias() {
     local faltando=() cmd
-    for cmd in bc awk sed grep find df date; do
+    for cmd in awk sed od gzip head tail tr sort date df find timeout mv; do
         command -v "$cmd" >/dev/null 2>&1 || faltando+=("$cmd")
     done
     if [ "${#faltando[@]}" -gt 0 ]; then
-        erro_fatal "Ferramenta(s) obrigatória(s) não encontrada(s): ${faltando[*]}. Este script depende só de utilitários POSIX padrão -- confira a integridade do sistema."
+        erro_fatal "Utilitário(s) obrigatório(s) não encontrado(s): ${faltando[*]}. Instale o pacote correspondente (coreutils, gawk/mawk, gzip, sed)."
     fi
-
-    # bc precisa da biblioteca matemática (-l: funções l()/e(), log/exp
-    # naturais) usada no espaçamento log e na média geométrica.
-    if ! printf 'e(l(2))\n' | bc -l >/dev/null 2>&1; then
-        erro_fatal "'bc -l' não respondeu como esperado -- confira se o 'bc' instalado suporta a biblioteca matemática (pacote 'bc' padrão do Debian suporta; um bc minimalista de outra distro pode não suportar)."
+    if ! printf '1 2\n' | awk '{ x = log($2 / $1) / log(10); exit !(x > 0.3) }' 2>/dev/null; then
+        erro_fatal "O 'awk' instalado não respondeu como esperado nas funções matemáticas (log/exp)."
     fi
-
     if [ ! -e "$LER_ADC" ]; then
-        erro_fatal "Não encontrei o executável 'ler_adc' em '${DIR_SCRIPT}'. Compile-o ('make' dentro de firmware/) e mantenha este script na mesma pasta do binário."
+        erro_fatal "Não encontrei o executável '${LER_ADC}'. Compile-o ('make' dentro de firmware/ ou ./setup.sh) e mantenha este script na mesma pasta do binário."
     fi
     if [ ! -x "$LER_ADC" ]; then
         erro_fatal "'${LER_ADC}' existe mas não é executável -- rode 'chmod +x ${LER_ADC}'."
@@ -151,17 +348,24 @@ verificar_dependencias() {
 }
 
 verificar_root() {
+    [ "${SH_PULAR_VERIFICACAO_ROOT:-0}" = "1" ] && return 0   # só para testes automáticos
     if [ "$(id -u)" -ne 0 ]; then
-        erro_fatal "Este script precisa rodar como root (ele chama '${LER_ADC##*/}', que acessa /dev/mem) -- rode com 'sudo'."
+        erro_fatal "Este script precisa rodar como root (o '${LER_ADC##*/}' acessa /dev/mem) -- rode com 'sudo'."
     fi
 }
 
-# Confere o espaço livre (MB) na partição onde 'pasta' vive. A memória
-# interna da BeagleBone é pequena -- isso evita descobrir no meio de uma
-# sessão de bancada (com o operador longe do terminal) que o disco encheu
-# e o '.bin' foi truncado sem aviso. NÃO aborta sozinho: pausa e deixa o
-# operador liberar espaço (e conferir de novo) ou abortar por vontade
-# própria.
+# A BeagleBone não tem bateria de RTC: sem acerto de relógio, o timestamp gravado no
+# cabeçalho de cada captura sai errado. Só avisa -- não impede a coleta.
+verificar_relogio() {
+    local ano
+    ano="$(date +%Y)"
+    if [ "$ano" -lt 2024 ]; then
+        log_aviso "O relógio da BeagleBone marca ${ano}: o timestamp gravado no cabeçalho das capturas ficará errado. No computador, rode scripts/set_date.sh para acertá-lo (ou continue se isso não importar)."
+    fi
+}
+
+# Confere o espaço livre (MB) na partição onde 'pasta' vive. NÃO aborta sozinho:
+# pausa e deixa o operador liberar espaço (e conferir de novo) ou abortar.
 verificar_espaco_disco() {
     local pasta="$1" livre_mb resposta
     while true; do
@@ -174,7 +378,7 @@ verificar_espaco_disco() {
             return 0
         fi
         log_erro "Espaço em disco CRÍTICO: só ${livre_mb} MB livres (mínimo configurado: ${ESPACO_MINIMO_MB} MB)."
-        if ! read -r -p "$(printf "%b" "${COR_AMARELO}Libere espaço (ex.: copie capturas antigas para outro computador) e pressione ENTER para checar de novo, ou digite 'a' para abortar: ${COR_RESET}")" resposta; then
+        if ! read -r -p "$(printf "%b" "${COR_AMARELO}Libere espaço (ex.: copie capturas antigas para o computador) e pressione ENTER para checar de novo, ou digite 'a' para abortar: ${COR_RESET}")" resposta; then
             erro_fatal "Entrada encerrada inesperadamente (EOF em stdin) -- abortando."
         fi
         if [ "${resposta,,}" = "a" ]; then
@@ -183,21 +387,15 @@ verificar_espaco_disco() {
     done
 }
 
-# =========================================================================
-# 4. Entrada de dados do operador (validação)
-# =========================================================================
+# =============================================================================
+# 5. Entrada de dados do operador
+# =============================================================================
 readonly REGEX_INTEIRO_POSITIVO='^[0-9]+$'
 readonly REGEX_FLOAT_POSITIVO='^[0-9]+(\.[0-9]+)?$'
 
-# Lê um valor do operador, repetindo o prompt até bater com 'regex' (ERE).
-# Aceita vírgula OU ponto como separador decimal (troca vírgula por ponto
-# antes de validar -- conveniência de digitação em pt-BR; bc/awk exigem
-# ponto). Define a variável cujo NOME é passado em $1 (nameref) em vez de
-# devolver o valor via stdout -- evita qualquer ambiguidade entre o texto
-# do prompt e o valor lido quando a função é chamada de dentro de outra
-# lógica (nada de "$(ler_valor ...)").
-#
-# Uso: ler_valor NOME_DA_VARIAVEL "Mensagem do prompt: " "$REGEX"
+# Lê um valor, repetindo o prompt até bater com 'regex' (ERE). Aceita vírgula ou ponto
+# como separador decimal. Define a variável cujo NOME é passado em $1 (nameref).
+# Uso: ler_valor VARIAVEL "Mensagem: " "$REGEX"
 ler_valor() {
     local -n _destino="$1"
     local mensagem="$2" regex="$3" entrada
@@ -207,13 +405,8 @@ ler_valor() {
         fi
         entrada="${entrada//,/.}"
         entrada="$(printf '%s' "$entrada" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-        # [[ =~ ]] nativo do bash em vez de 'printf | grep -E': grep opera
-        # por LINHA, e 'printf %s ""' (sem newline final, de propósito,
-        # para não injetar espaço nenhum) produz ZERO linhas para uma
-        # entrada vazia -- então um padrão como '^$' (usado para aceitar
-        # "ENTER em branco = usar padrão") nunca bateria via grep, mesmo
-        # sendo exatamente o caso que deveria casar. [[ =~ ]] compara a
-        # STRING diretamente, sem essa pegadinha de linha/newline.
+        # [[ =~ ]] nativo (e não 'printf | grep'): grep opera por LINHA e uma entrada vazia
+        # produz ZERO linhas, então '^$' (ENTER = usar o padrão) nunca casaria.
         if [[ "$entrada" =~ $regex ]]; then
             _destino="$entrada"
             return 0
@@ -222,38 +415,75 @@ ler_valor() {
     done
 }
 
-# Pergunta S/n (padrão = sim quando ENTER vazio). Define $1 como "s" ou "n".
-ler_confirmacao() {
-    local -n _destino="$1"
-    local mensagem="$2" entrada
-    if ! read -r -p "$(printf "%b" "${COR_AMARELO}${mensagem} [S/n]: ${COR_RESET}")" entrada; then
-        erro_fatal "Entrada encerrada inesperadamente (EOF em stdin) -- abortando."
+# Se a variável (nome em $1) ainda está vazia, pergunta; ENTER aceita o padrão ($4).
+# Uso: obter_parametro VARIAVEL "Pergunta" "$REGEX" [padrao]
+obter_parametro() {
+    local -n _alvo="$1"
+    local pergunta="$2" regex="$3" padrao="${4:-}" resposta
+    [ -n "$_alvo" ] && return 0
+    if [ -n "$padrao" ]; then
+        ler_valor resposta "${pergunta} [${padrao}]: " "(${regex})|^\$"
+        _alvo="${resposta:-$padrao}"
+    else
+        ler_valor resposta "${pergunta}: " "$regex"
+        _alvo="$resposta"
     fi
-    case "${entrada,,}" in
-        n|nao|não) _destino="n" ;;
-        *)         _destino="s" ;;
-    esac
 }
 
-# Menu simples de escolha entre N opções numeradas. Define $1 com o índice
-# escolhido (1-based). $2 é o título; os itens vêm depois, um por
-# argumento.
+# Pergunta sim/não. $3 = padrão quando o operador só dá ENTER ("s", padrão, ou "n").
+# Define $1 como "s" ou "n".
+ler_confirmacao() {
+    local -n _destino="$1"
+    local mensagem="$2" padrao="${3:-s}" entrada dica="[S/n]"
+    [ "$padrao" = "n" ] && dica="[s/N]"
+    while true; do
+        if ! read -r -p "$(printf "%b" "${COR_AMARELO}${mensagem} ${dica}: ${COR_RESET}")" entrada; then
+            erro_fatal "Entrada encerrada inesperadamente (EOF em stdin) -- abortando."
+        fi
+        case "${entrada,,}" in
+            "")          _destino="$padrao"; return 0 ;;
+            s|sim)       _destino="s"; return 0 ;;
+            n|nao|não)   _destino="n"; return 0 ;;
+            *)           log_erro "Responda s ou n." ;;
+        esac
+    done
+}
+
+# Pergunta uma frequência (aceita 102400, 102.4k, 102,4 kHz...) até receber algo válido.
+# Define $1 com o número em Hz. $3 = padrão opcional (ENTER aceita).
+ler_hz() {
+    local -n _destino="$1"
+    local mensagem="$2" padrao="${3:-}" entrada convertido dica=""
+    [ -n "$padrao" ] && dica=" [${padrao}]"
+    while true; do
+        if ! read -r -p "$(printf "%b" "${COR_AMARELO}${mensagem}${dica}: ${COR_RESET}")" entrada; then
+            erro_fatal "Entrada encerrada inesperadamente (EOF em stdin) -- abortando."
+        fi
+        [ -z "$entrada" ] && [ -n "$padrao" ] && entrada="$padrao"
+        if convertido="$(normalizar_hz "$entrada")"; then
+            _destino="$convertido"
+            return 0
+        fi
+        log_erro "Valor inválido: '${entrada}'. Use algo como 102400, 102.4k ou 5kHz."
+    done
+}
+
+# Menu de N opções numeradas. Define $1 com o índice escolhido (1-based).
 ler_escolha_menu() {
     local -n _destino="$1"
     local titulo="$2"
     shift 2
     local -a itens=("$@")
     local i entrada
-    echo "$titulo"
+    echo "$titulo" >&2
     for i in "${!itens[@]}"; do
-        printf "  %d) %s\n" "$((i + 1))" "${itens[$i]}"
+        printf "  %d) %s\n" "$((i + 1))" "${itens[$i]}" >&2
     done
     while true; do
         if ! read -r -p "$(printf "%b" "${COR_AMARELO}Escolha [1-${#itens[@]}]: ${COR_RESET}")" entrada; then
             erro_fatal "Entrada encerrada inesperadamente (EOF em stdin) -- abortando."
         fi
-        if [[ "$entrada" =~ ^[0-9]+$ ]] && \
-           [ "$entrada" -ge 1 ] && [ "$entrada" -le "${#itens[@]}" ]; then
+        if [[ "$entrada" =~ ^[0-9]+$ ]] && [ "$entrada" -ge 1 ] && [ "$entrada" -le "${#itens[@]}" ]; then
             _destino="$entrada"
             return 0
         fi
@@ -261,106 +491,167 @@ ler_escolha_menu() {
     done
 }
 
-# Sanitiza um id de sonda em algo seguro para nome de pasta/arquivo:
-# minúsculas, só [a-z0-9_-], sem espaços, sem repetição/sobra de '_'.
+# Id de sonda seguro para nome de pasta/arquivo: minúsculas, só [a-z0-9_-].
 sanitizar_id() {
-    local bruto="$1" limpo
-    limpo="$(printf '%s' "$bruto" | tr '[:upper:]' '[:lower:]')"
-    limpo="$(printf '%s' "$limpo" | sed -E 's/[^a-z0-9_-]+/_/g; s/_+/_/g; s/^[_-]+//; s/[_-]+$//')"
-    printf '%s' "$limpo"
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' \
+        | sed -E 's/[^a-z0-9_-]+/_/g; s/_+/_/g; s/^[_-]+//; s/[_-]+$//'
 }
 
-# =========================================================================
-# 5. Matemática (bc -l -- sem Python)
-# =========================================================================
+# =============================================================================
+# 6. Matemática (awk)
+# =============================================================================
 
-# Confere Nyquist: freq_max PRECISA ser ESTRITAMENTE menor que taxa/2.
-# Comparação feita em bc (não em bash/(( ))), porque taxa e freq_max podem
-# não ser inteiros com quociente exato.
-validar_nyquist() {
-    local taxa="$1" freq_max="$2" ok nyquist
-    nyquist="$(echo "scale=6; $taxa / 2" | bc -l)"
-    ok="$(echo "$freq_max < ($taxa / 2)" | bc -l)"
-    if [ "$ok" -ne 1 ]; then
-        erro_fatal "Frequência máxima (${freq_max} Hz) precisa ser ESTRITAMENTE menor que metade da taxa de amostragem (${taxa} Hz / 2 = ${nyquist} Hz) -- viola o teorema de Nyquist. Reduza a frequência máxima ou aumente a taxa de amostragem."
-    fi
+# Converte "102400", "102.4k", "102,4 kHz", "5khz" em Hz (número, sem 'k'/'Hz'). Imprime o
+# valor e retorna 0; retorna 1 (sem imprimir) se não for um número positivo.
+normalizar_hz() {
+    local t
+    t="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+    t="${t//,/.}"
+    t="${t%hz}"
+    awk -v t="$t" 'BEGIN {
+        mult = 1
+        if (t ~ /k$/) { mult = 1000; sub(/k$/, "", t) }
+        if (t !~ /^[0-9]+(\.[0-9]+)?$/) exit 1
+        v = int(t * mult * 1000 + 0.5) / 1000
+        if (v <= 0) exit 1
+        if (v == int(v)) printf "%d", v; else printf "%.3f", v
+    }'
 }
 
-# Gera N frequências espaçadas LOGARITMICAMENTE entre freq_min e freq_max
-# (incluindo as duas pontas) -- mais denso nos extremos em termos
-# relativos, a convenção padrão para caracterizar resposta em frequência
-# (ver docs/proposta_correcao_sonda.md, seção 7). Uma frequência por linha
-# em stdout.
+# Nyquist EFETIVA por canal: a taxa total é dividida entre os NUM_CANAIS_CAPTURA canais.
+nyquist_efetiva() {
+    awk -v t="$1" -v n="$NUM_CANAIS_CAPTURA" 'BEGIN { printf "%.1f", t / (2 * n) }'
+}
+
+# Retorna 0 (verdadeiro) se $1 < $2, comparando como números.
+num_menor() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a < b) }'; }
+
+# Duração de uma captura, em segundos: blocos x SAMPLES_PER_BUFFER / taxa total.
+duracao_captura() {
+    awk -v b="$BLOCOS" -v spb="$SPB_PADRAO" -v t="$TAXA" 'BEGIN { printf "%.1f", b * spb / t }'
+}
+
+# Frequência máxima padrão: 80% da Nyquist efetiva, arredondada PARA BAIXO a 3 algarismos.
+freq_max_padrao() {
+    awk -v t="$1" -v n="$NUM_CANAIS_CAPTURA" -v fr="$FRACAO_NYQUIST_PADRAO" 'BEGIN {
+        f = fr * t / (2 * n)
+        if (f >= 1000) { m = 10 ^ (int(log(f) / log(10) + 1e-9) - 2); f = int(f / m) * m }
+        else f = int(f)
+        printf "%d", f
+    }'
+}
+
+# N frequências log-espaçadas entre fmin e fmax (pontas incluídas), arredondadas a
+# frequências "amigáveis" para o gerador (inteiros; acima de 1 kHz, 3 algarismos
+# significativos). Sem repetições, em ordem crescente, uma por linha. Pode devolver
+# menos de N linhas se o arredondamento juntar pontos vizinhos.
 calcular_pontos_log() {
-    local freq_min="$1" freq_max="$2" n="$3"
-    bc -l <<BC_EOF
-scale = 10
-lmin = l($freq_min)
-lmax = l($freq_max)
-passo = (lmax - lmin) / ($n - 1)
-for (i = 0; i < $n; i++) {
-    ponto = e(lmin + i * passo)
-    print ponto, "\n"
-}
-BC_EOF
+    awk -v fmin="$1" -v fmax="$2" -v n="$3" '
+    function amigavel(f,   m) {
+        if (f >= 1000) { m = 10 ^ (int(log(f) / log(10) + 1e-9) - 2); return sprintf("%d", int(f / m + 0.5) * m) }
+        return sprintf("%d", int(f + 0.5))
+    }
+    BEGIN {
+        lmin = log(fmin); lmax = log(fmax)
+        for (i = 0; i < n; i++) print amigavel(exp(lmin + (lmax - lmin) * i / (n - 1)))
+    }' | sort -n -u
 }
 
-# Para cada par de frequências ADJACENTES em 'freqs' (lista de argumentos,
-# já ordenada), calcula a média GEOMÉTRICA -- não a aritmética -- como
-# novo ponto entre elas: é o ponto exatamente equidistante das duas em
-# escala LOGARÍTMICA, consistente com o espaçamento log da malha original
-# (calcular_pontos_log, acima). A média aritmética simples ((f1+f2)/2)
-# ficaria enviesada para o lado de maior frequência quando vista em escala
-# log -- por isso a troca em relação à sugestão original do "ponto médio"
-# simples.
-calcular_pontos_densificacao() {
-    local -a freqs=("$@")
-    local i
-    for ((i = 0; i < ${#freqs[@]} - 1; i++)); do
-        echo "sqrt(${freqs[i]} * ${freqs[i + 1]})" | bc -l
-    done
+# Para cada par de frequências ADJACENTES (uma por linha em stdin, crescentes), a média
+# GEOMÉTRICA -- o ponto equidistante em escala log -- arredondada como acima. Só emite
+# valores estritamente entre as duas pontas.
+pontos_medios_geometricos() {
+    awk '
+    function amigavel(f,   m) {
+        if (f >= 1000) { m = 10 ^ (int(log(f) / log(10) + 1e-9) - 2); return int(f / m + 0.5) * m }
+        return int(f + 0.5)
+    }
+    NR > 1 { novo = amigavel(sqrt(ant * $1)); if (novo > ant && novo < $1) print novo }
+    { ant = $1 }'
 }
 
-# Lista as frequências (Hz, inteiras) já presentes nos nomes de arquivo em
-# 'pasta', a partir do padrão 'calibracao_<FREQ>Hz_rep<N>.bin' -- únicas e
-# ordenadas numericamente crescente, uma por linha. Vazio (sem erro) se a
-# pasta não existir ou não tiver nada reconhecível.
-extrair_frequencias_existentes() {
-    local pasta="$1"
-    [ -d "$pasta" ] || return 0
-    find "$pasta" -maxdepth 1 -type f -name 'calibracao_*Hz_rep*.bin' -printf '%f\n' 2>/dev/null \
-        | sed -nE 's/^calibracao_([0-9]+)Hz_rep[0-9]+\.bin$/\1/p' \
+# Junta listas de frequências (argumentos), ordenando e removendo duplicatas.
+unir_frequencias() { printf '%s\n' "$@" | sort -n -u; }
+
+# =============================================================================
+# 7. Plano, manifesto e arquivos já capturados
+# =============================================================================
+readonly CABECALHO_MANIFESTO="frequencia_hz,repeticao,arquivo,timestamp,status,freq_medida_hz,pp_ref_pct,pp_sonda_pct,razao_rms"
+
+salvar_plano() {
+    local arquivo="${PASTA_SONDA}/${NOME_PLANO}"
+    {
+        echo "# Plano de coleta do calibrar_sonda.sh (editado automaticamente; pode ser lido, não precisa ser editado)"
+        echo "taxa=${TAXA}"
+        echo "canal_referencia=${CANAL_REFERENCIA}"
+        echo "canal_sonda=${CANAL_SONDA}"
+        echo "repeticoes=${REPETICOES}"
+        echo "blocos=${BLOCOS}"
+        echo "frequencias=${PLANO_FREQS[*]}"
+    } > "$arquivo"
+}
+
+# Valor de uma chave 'chave=valor' do plano (vazio se não existir).
+valor_do_plano() {
+    local arquivo="${PASTA_SONDA}/${NOME_PLANO}"
+    [ -f "$arquivo" ] || return 0
+    sed -n "s/^$1=//p" "$arquivo" | head -n 1
+}
+
+# Preenche os parâmetros AINDA vazios com os do plano salvo (a linha de comando vence).
+carregar_plano() {
+    [ -f "${PASTA_SONDA}/${NOME_PLANO}" ] || return 1
+    local v usar
+    v="$(valor_do_plano taxa)"
+    if [ -z "$TAXA" ]; then
+        TAXA="$v"
+    elif [ -n "$v" ] && [ "$TAXA" != "$v" ]; then
+        log_aviso "A coleta desta sonda foi planejada com ${v} Hz, mas você pediu ${TAXA} Hz. Misturar taxas no mesmo perfil costuma ser engano."
+        [ "$ASSUMIR_SIM" -eq 1 ] && erro_fatal "Taxa diferente da do plano (${v} Hz). Remova --taxa para usar a do plano."
+        ler_confirmacao usar "Usar ${TAXA} Hz mesmo assim?" n
+        [ "$usar" = "n" ] && { log_aviso "Cancelado."; exit 0; }
+    fi
+    v="$(valor_do_plano repeticoes)";       [ -z "$REPETICOES" ] && REPETICOES="$v"
+    v="$(valor_do_plano blocos)";           [ -z "$BLOCOS" ] && BLOCOS="$v"
+    v="$(valor_do_plano canal_referencia)"; [ -n "$v" ] && [ "$CANAL_REFERENCIA" = "0" ] && CANAL_REFERENCIA="$v"
+    v="$(valor_do_plano canal_sonda)";      [ -n "$v" ] && [ "$CANAL_SONDA" = "1" ] && CANAL_SONDA="$v"
+    v="$(valor_do_plano frequencias)"
+    PLANO_FREQS=()
+    if [ -n "$v" ]; then
+        local f
+        for f in $v; do PLANO_FREQS+=("$f"); done
+    fi
+    return 0
+}
+
+inicializar_manifesto() {
+    local caminho="${PASTA_SONDA}/${NOME_MANIFESTO}"
+    [ -f "$caminho" ] || echo "$CABECALHO_MANIFESTO" > "$caminho"
+}
+
+# registrar_manifesto FREQ REP ARQUIVO STATUS FREQ_MEDIDA PP_REF PP_SONDA RAZAO
+registrar_manifesto() {
+    local ts
+    ts="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$1" "$2" "$3" "$ts" "$4" "${5:-}" "${6:-}" "${7:-}" "${8:-}" \
+        >> "${PASTA_SONDA}/${NOME_MANIFESTO}"
+}
+
+# Capturas JÁ presentes em disco (a fonte de verdade, a mesma que o gerar_perfil_sonda.py
+# usa): "FREQ REP", únicas e ordenadas, a partir de 'calibracao_<FREQ>Hz_rep<N>[_vM].bin'.
+capturas_em_disco() {
+    [ -d "$PASTA_SONDA" ] || return 0
+    find "$PASTA_SONDA" -maxdepth 1 -type f -name 'calibracao_*Hz_rep*.bin' -printf '%f\n' 2>/dev/null \
+        | sed -nE 's/^calibracao_([0-9]+)Hz_rep([0-9]+)(_v[0-9]+)?\.bin$/\1 \2/p' \
         | sort -n -u
 }
 
-# =========================================================================
-# 6. Manifesto (CSV de acompanhamento -- insumo para o futuro
-#    scripts/calibrar_sonda.py que calcula o ganho a partir das capturas)
-# =========================================================================
+frequencias_em_disco() { capturas_em_disco | awk '{ print $1 }' | sort -n -u; }
 
-inicializar_manifesto() {
-    local caminho="$1"
-    [ -f "$caminho" ] || echo "frequencia_hz,repeticao,arquivo,timestamp,status" > "$caminho"
-}
-
-registrar_manifesto() {
-    local caminho="$1" freq="$2" rep="$3" arquivo="$4" status="$5" ts
-    ts="$(date '+%Y-%m-%dT%H:%M:%S%z')"
-    printf '%s,%s,%s,%s,%s\n' "$freq" "$rep" "$arquivo" "$ts" "$status" >> "$caminho"
-}
-
-# =========================================================================
-# 7. Execução de uma medição
-# =========================================================================
-
-# Se 'caminho' já existe, devolve uma variante '_v2', '_v3', ... em vez de
-# deixar o ler_adc sobrescrever silenciosamente uma captura anterior (pode
-# acontecer ao rodar "Expandir" mais de uma vez sobre a mesma malha, ou ao
-# repetir manualmente uma sessão). Avisa em amarelo quando isso acontece.
+# Se 'caminho' já existe, devolve uma variante '_v2', '_v3'... em vez de sobrescrever.
 caminho_disponivel() {
     local caminho="$1" base="${1%.bin}" versao=2 candidato
     [ -e "$caminho" ] || { printf '%s' "$caminho"; return 0; }
-    log_aviso "'${caminho}' já existe -- gravando como uma nova versão em vez de sobrescrever."
     while true; do
         candidato="${base}_v${versao}.bin"
         [ -e "$candidato" ] || { printf '%s' "$candidato"; return 0; }
@@ -368,254 +659,1067 @@ caminho_disponivel() {
     done
 }
 
-# Monta e roda a chamada ao ler_adc para um ponto de calibração. Devolve o
-# código de saída do ler_adc -- NÃO decide sozinha o que fazer com uma
-# falha; isso é responsabilidade de quem chama (o menu de retentativa).
-executar_medicao() {
-    local taxa="$1" arquivo_saida="$2" titulo="$3"
-    "$LER_ADC" "$taxa" "${CANAL_REFERENCIA},${CANAL_SONDA}" \
-        --grandeza "${CANAL_SONDA}:corrente" \
-        --sonda "${CANAL_SONDA}:${SONDA_ID_SANITIZADO}" \
-        -o "$arquivo_saida" \
-        -t "$titulo"
-    return $?
+# =============================================================================
+# 8. Conferência do .bin (cabeçalho + checagens rápidas de sinal)
+# =============================================================================
+QC_ERROS=()
+QC_AVISOS=()
+QC_TAGS=""            # etiquetas dos problemas, para o manifesto (ex.: saturacao_fraco)
+QC_FREQ_MEDIDA=""
+QC_PP_REF=""
+QC_PP_SONDA=""
+QC_RAZAO=""
+
+ler_u32() { od -An -tu4 -j "$2" -N 4 "$1" | tr -d ' \n'; }
+ler_u64() { od -An -tu8 -j "$2" -N 8 "$1" | tr -d ' \n'; }
+ler_u8()  { od -An -tu1 -j "$2" -N 1 "$1" | tr -d ' \n'; }
+# Texto (ASCII/UTF-8) de $3 bytes a partir do offset $2, sem os '\0' de preenchimento.
+ler_texto() { head -c "$(($2 + $3))" "$1" | tail -c "$3" | tr -d '\0'; }
+
+# CRC-32 do cabeçalho v2: o do zlib/gzip sobre os 1024 bytes com o campo do CRC zerado
+# (o trailer do gzip guarda exatamente esse CRC-32, em little-endian).
+crc_cabecalho_calculado() {
+    {
+        head -c "$CAB_OFF_CRC_V2" "$1"
+        printf '\0\0\0\0'
+        head -c "$CAB_TAMANHO" "$1" | tail -c +"$((CAB_OFF_CRC_V2 + 5))"
+    } | gzip -1 -c | tail -c 8 | head -c 4 | od -An -tu4 | tr -d ' \n'
 }
 
-# Processa 1 ponto de frequência: REDUNDANCIA repetições, cada uma com
-# checagem de disco, pausa para o operador ajustar o gerador, chamada ao
-# ler_adc e o menu [C]ontinuar/[R]efazer/[A]bortar.
-processar_ponto() {
-    local indice="$1" total="$2" freq="$3" taxa="$4" pasta_sonda="$5" manifesto="$6"
-    local freq_exibicao freq_arquivo rep
+qc_erro()  { QC_ERROS+=("$1");  QC_TAGS="${QC_TAGS:+${QC_TAGS}_}$2"; }
+qc_aviso() { QC_AVISOS+=("$1"); QC_TAGS="${QC_TAGS:+${QC_TAGS}_}$2"; }
 
-    freq_exibicao="$(printf '%.2f' "$freq")"
-    freq_arquivo="$(printf '%.0f' "$freq")"
+# Confere que o cabeçalho gravado pelo ler_adc é o que PEDIMOS (taxa, canais, grandeza
+# e sonda) e que a captura está completa.
+validar_cabecalho() {
+    local arq="$1" tamanho versao magic crc_gravado crc_calculado
+    tamanho="$(wc -c < "$arq" | tr -d ' ')"
+    if [ "$tamanho" -lt "$CAB_TAMANHO" ]; then
+        qc_erro "o arquivo tem só ${tamanho} bytes (menos que o cabeçalho de ${CAB_TAMANHO})" arquivo_curto
+        return
+    fi
+    magic="$(head -c 4 "$arq")"
+    if [ "$magic" != "SHAN" ]; then
+        qc_erro "o arquivo não começa com o cabeçalho 'SHAN' (ler_adc antigo, sem cabeçalho?)" sem_cabecalho
+        return
+    fi
+    versao="$(ler_u32 "$arq" "$CAB_OFF_VERSAO")"
+    if [ "$versao" -lt 2 ]; then
+        qc_erro "cabeçalho versão ${versao}: não registra grandeza/sonda por canal. Recompile o firmware (make em firmware/)" cabecalho_v1
+        return
+    fi
+    if [ "$versao" -gt 2 ]; then
+        qc_aviso "cabeçalho versão ${versao}, mais nova que a conhecida por este script: não conferi grandeza/sonda" cabecalho_desconhecido
+        return
+    fi
 
-    for ((rep = 1; rep <= REDUNDANCIA; rep++)); do
-        separador
-        printf "%b\n" "${COR_NEGRITO}Ponto ${indice} de ${total}  |  Frequência: ${freq_exibicao} Hz  |  Repetição ${rep} de ${REDUNDANCIA}${COR_RESET}"
-        separador
+    crc_gravado="$(ler_u32 "$arq" "$CAB_OFF_CRC_V2")"
+    crc_calculado="$(crc_cabecalho_calculado "$arq")"
+    if [ "$crc_gravado" != "$crc_calculado" ]; then
+        qc_erro "o CRC-32 do cabeçalho não confere (arquivo corrompido ou truncado)" crc
+    fi
 
-        verificar_espaco_disco "$pasta_sonda"
+    local freq num_canais pos_ref pos_sonda c0 c1 esperado0 esperado1
+    freq="$(ler_u32 "$arq" "$CAB_OFF_FREQUENCIA")"
+    if [ "$freq" != "$TAXA" ]; then
+        qc_erro "o cabeçalho registra ${freq} Hz de taxa, mas o pedido foi ${TAXA} Hz" taxa
+    fi
 
-        local resposta_pronto
-        if ! read -r -p "$(printf "%b" "${COR_AMARELO}Ajuste o gerador de sinal para ${freq_exibicao} Hz, aguarde a estabilização e pressione ENTER para medir (ou 'a' para abortar): ${COR_RESET}")" resposta_pronto; then
+    num_canais="$(ler_u32 "$arq" "$CAB_OFF_NUM_CANAIS")"
+    c0="$(ler_u8 "$arq" "$CAB_OFF_LISTA_CANAIS")"
+    c1="$(ler_u8 "$arq" "$((CAB_OFF_LISTA_CANAIS + 1))")"
+    if [ "$CANAL_REFERENCIA" -lt "$CANAL_SONDA" ]; then
+        esperado0="$CANAL_REFERENCIA"; esperado1="$CANAL_SONDA"; pos_ref=0; pos_sonda=1
+    else
+        esperado0="$CANAL_SONDA"; esperado1="$CANAL_REFERENCIA"; pos_ref=1; pos_sonda=0
+    fi
+    if [ "$num_canais" != "$NUM_CANAIS_CAPTURA" ] || [ "$c0" != "$esperado0" ] || [ "$c1" != "$esperado1" ]; then
+        qc_erro "canais no cabeçalho: ${num_canais} (${c0},${c1}); esperado ${NUM_CANAIS_CAPTURA} (${esperado0},${esperado1})" canais
+        return
+    fi
+
+    local g_sonda g_ref id_sonda id_ref
+    g_sonda="$(ler_u8 "$arq" "$((CAB_OFF_GRANDEZA + pos_sonda))")"
+    g_ref="$(ler_u8 "$arq" "$((CAB_OFF_GRANDEZA + pos_ref))")"
+    if [ "$g_sonda" != "$GRANDEZA_CORRENTE" ]; then
+        qc_erro "o canal ${CANAL_SONDA} (sonda) não está marcado como 'corrente' no cabeçalho (código ${g_sonda})" grandeza
+    fi
+    if [ "$g_ref" != "$GRANDEZA_TENSAO" ]; then
+        qc_aviso "o canal ${CANAL_REFERENCIA} (referência) não está marcado como 'tensão' no cabeçalho (código ${g_ref})" grandeza_ref
+    fi
+    id_sonda="$(ler_texto "$arq" "$((CAB_OFF_SONDA_ID + pos_sonda * CAB_TAM_SONDA_ID))" "$CAB_TAM_SONDA_ID")"
+    id_ref="$(ler_texto "$arq" "$((CAB_OFF_SONDA_ID + pos_ref * CAB_TAM_SONDA_ID))" "$CAB_TAM_SONDA_ID")"
+    if [ "$id_sonda" != "$SONDA_ID" ]; then
+        qc_erro "id da sonda no cabeçalho é '${id_sonda}'; esperado '${SONDA_ID}'" sonda_id
+    fi
+    if [ -n "$id_ref" ]; then
+        qc_aviso "o canal de referência tem uma sonda registrada ('${id_ref}'), o que não era esperado" sonda_ref
+    fi
+
+    local spb bytes_amostra blocos total esperado_total esperado_tamanho
+    spb="$(ler_u32 "$arq" "$CAB_OFF_SPB")"
+    bytes_amostra="$(ler_u32 "$arq" "$CAB_OFF_BYTES_AMOSTRA")"
+    blocos="$(ler_u64 "$arq" "$CAB_OFF_BLOCOS")"
+    total="$(ler_u64 "$arq" "$CAB_OFF_TOTAL_AMOSTRAS")"
+    esperado_total=$((BLOCOS * spb))
+    esperado_tamanho=$((CAB_TAMANHO + esperado_total * bytes_amostra))
+    if [ "$tamanho" -ne "$esperado_tamanho" ]; then
+        qc_erro "tamanho do arquivo ${tamanho} B; esperado ${esperado_tamanho} B para ${BLOCOS} bloco(s) -- captura incompleta (disco cheio?)" tamanho
+    elif [ "$blocos" != "$BLOCOS" ] || [ "$total" != "$esperado_total" ]; then
+        if [ "$blocos" = "0" ]; then
+            qc_aviso "o cabeçalho final não foi atualizado pelo ler_adc (blocos_gravados=0), mas o tamanho do arquivo está correto: as amostras estão íntegras" cabecalho_final
+        else
+            qc_erro "o cabeçalho registra ${blocos} bloco(s) / ${total} amostras; esperado ${BLOCOS} / ${esperado_total}" blocos
+        fi
+    fi
+}
+
+# Olha as primeiras amostras e imprime, numa linha:
+#   fmed_ref fmed_sonda pp_ref_pct pp_sonda_pct rms_ref rms_sonda sat_ref sat_sonda razao_rms
+# (fmed = frequência medida por cruzamentos de zero com histerese; pp = pico-a-pico em %
+# da escala de 16 bits; sat = fração de amostras no fundo de escala; razao = rms_sonda /
+# rms_ref). Não é a medição de verdade (essa é o Welch do gerar_perfil_sonda.py), só um
+# feedback imediato para o operador.
+analisar_rapido() {
+    local arq="$1" pos_ref="$2" pos_sonda="$3" fs_canal
+    fs_canal="$(awk -v t="$TAXA" -v n="$NUM_CANAIS_CAPTURA" 'BEGIN { printf "%.6f", t / n }')"
+    od -An -v -tu2 -w32 -j "$((CAB_TAMANHO + AMOSTRAS_IGNORADAS_INICIO * 2))" -N "$((AMOSTRAS_ANALISE_RAPIDA * 2))" "$arq" \
+        | awk -v fs="$fs_canal" -v pr="$pos_ref" -v ps="$pos_sonda" '
+    function analisa(pos,   j, x, s, ss, mn, mx, rail, mean, rms, amp, h, arm, prev, cruz, t, tf, tl) {
+        s = 0; ss = 0; mn = 1e9; mx = -1; rail = 0
+        for (j = 0; j < m; j++) {
+            x = v[2 * j + pos]; s += x; ss += x * x
+            if (x < mn) mn = x
+            if (x > mx) mx = x
+            if (x <= 1 || x >= 65534) rail++
+        }
+        mean = s / m; rms = ss / m - mean * mean; rms = (rms > 0) ? sqrt(rms) : 0
+        amp = (mx - mn) / 2; h = 0.1 * amp
+        arm = 0; cruz = 0; prev = v[pos]; tf = 0; tl = 0
+        if (amp >= 20) {
+            for (j = 1; j < m; j++) {
+                x = v[2 * j + pos]
+                if (x < mean - h) arm = 1
+                else if (arm && prev <= mean && x > mean) {
+                    t = (j - 1) + (mean - prev) / (x - prev)
+                    if (cruz == 0) tf = t
+                    tl = t; cruz++; arm = 0
+                }
+                prev = x
+            }
+        }
+        FMED[pos] = (cruz >= 3 && tl > tf) ? (cruz - 1) * fs / (tl - tf) : 0
+        PP[pos] = (mx - mn) / 65535 * 100
+        RMS[pos] = rms
+        SAT[pos] = rail / m
+    }
+    { for (i = 1; i <= NF; i++) v[n++] = $i }
+    END {
+        m = int(n / 2)
+        if (m < 2048) { print "ERRO_POUCAS_AMOSTRAS"; exit }
+        analisa(0); analisa(1)
+        razao = (RMS[pr] > 0) ? RMS[ps] / RMS[pr] : 0
+        printf "%.3f %.3f %.2f %.2f %.3f %.3f %.6f %.6f %.6f\n", FMED[pr], FMED[ps], PP[pr], PP[ps], RMS[pr], RMS[ps], SAT[pr], SAT[ps], razao
+    }'
+}
+
+# Avalia as métricas rápidas e acrescenta erros/avisos. $1 = arquivo, $2 = freq planejada.
+avaliar_sinal() {
+    local arq="$1" freq_plano="$2" pos_ref pos_sonda linha
+    local f_ref f_sonda pp_ref pp_sonda rms_ref rms_sonda sat_ref sat_sonda razao f_med
+    if [ "$CANAL_REFERENCIA" -lt "$CANAL_SONDA" ]; then pos_ref=0; pos_sonda=1; else pos_ref=1; pos_sonda=0; fi
+
+    linha="$(analisar_rapido "$arq" "$pos_ref" "$pos_sonda")"
+    if [ -z "$linha" ] || [ "$linha" = "ERRO_POUCAS_AMOSTRAS" ]; then
+        qc_erro "poucas amostras no arquivo para analisar o sinal" poucas_amostras
+        return
+    fi
+    read -r f_ref f_sonda pp_ref pp_sonda rms_ref rms_sonda sat_ref sat_sonda razao <<< "$linha"
+    QC_PP_REF="$pp_ref"; QC_PP_SONDA="$pp_sonda"; QC_RAZAO="$razao"
+
+    # Saturação do ADC: o gerar_perfil_sonda.py descarta capturas assim.
+    if num_menor "$SATURACAO_MAXIMA" "$sat_ref"; then
+        qc_erro "o canal de referência (${CANAL_REFERENCIA}) saturou o ADC em $(awk -v s="$sat_ref" 'BEGIN { printf "%.2f", s * 100 }')% das amostras -- reduza a amplitude do gerador" saturacao_ref
+    fi
+    if num_menor "$SATURACAO_MAXIMA" "$sat_sonda"; then
+        qc_erro "o canal da sonda (${CANAL_SONDA}) saturou o ADC em $(awk -v s="$sat_sonda" 'BEGIN { printf "%.2f", s * 100 }')% das amostras -- reduza a amplitude (ou a corrente injetada)" saturacao_sonda
+    fi
+
+    # Nível do sinal (pico-a-pico, % da escala): pouco sinal = SNR ruim no perfil.
+    if num_menor "$pp_ref" "$PP_SEM_SINAL_PCT"; then
+        qc_erro "praticamente sem sinal no canal de referência (${CANAL_REFERENCIA}): pico-a-pico de ${pp_ref}% da escala. O gerador está ligado e o shunt conectado?" sem_sinal_ref
+    elif num_menor "$pp_ref" "$PP_FRACO_PCT"; then
+        qc_aviso "sinal fraco no canal de referência (${pp_ref}% da escala): aumente a amplitude do gerador para melhorar a SNR" fraco_ref
+    fi
+    if num_menor "$pp_sonda" "$PP_SEM_SINAL_PCT"; then
+        qc_erro "praticamente sem sinal no canal da sonda (${CANAL_SONDA}): pico-a-pico de ${pp_sonda}% da escala. A sonda está no condutor certo e ligada?" sem_sinal_sonda
+    elif num_menor "$pp_sonda" "$PP_FRACO_PCT"; then
+        qc_aviso "sinal fraco no canal da sonda (${pp_sonda}% da escala): aumente a corrente/amplitude para melhorar a SNR" fraco_sonda
+    fi
+
+    # Frequência realmente injetada (a medida vale mais que a planejada).
+    # Só confio na frequência de um canal que TEM sinal (sobre ruído os cruzamentos de zero
+    # dão uma "frequência" qualquer).
+    f_med=0
+    if ! num_menor "$pp_ref" "$PP_SEM_SINAL_PCT" && num_menor 0.5 "$f_ref"; then
+        f_med="$f_ref"
+    elif ! num_menor "$pp_sonda" "$PP_SEM_SINAL_PCT" && num_menor 0.5 "$f_sonda"; then
+        f_med="$f_sonda"
+    fi
+    if num_menor 0.5 "$f_med"; then
+        QC_FREQ_MEDIDA="$f_med"
+        local desvio
+        desvio="$(awk -v m="$f_med" -v p="$freq_plano" 'BEGIN { d = (m - p) / p * 100; printf "%.1f", (d < 0) ? -d : d }')"
+        if num_menor "$FREQ_DESVIO_ERRO_PCT" "$desvio"; then
+            qc_erro "a frequência medida é ${f_med} Hz, ${desvio}% fora da planejada (${freq_plano} Hz): o gerador está ajustado errado? (o gerar_perfil_sonda.py só procura o tom até ±10%)" freq_errada
+        elif num_menor "$FREQ_DESVIO_AVISO_PCT" "$desvio"; then
+            qc_aviso "a frequência medida é ${f_med} Hz, ${desvio}% fora da planejada (${freq_plano} Hz); vale para o perfil porque a frequência é medida, mas confira o gerador" freq_diferente
+        fi
+    fi
+}
+
+# Confere uma captura completa. $1 = arquivo, $2 = freq planejada. Preenche QC_*.
+conferir_captura() {
+    QC_ERROS=(); QC_AVISOS=(); QC_TAGS=""
+    QC_FREQ_MEDIDA=""; QC_PP_REF=""; QC_PP_SONDA=""; QC_RAZAO=""
+    if [ ! -s "$1" ]; then
+        qc_erro "o ler_adc não gerou o arquivo (ou ele está vazio)" sem_arquivo
+        return
+    fi
+    validar_cabecalho "$1"
+    # Só vale analisar o sinal se o arquivo tem tamanho e cabeçalho minimamente sãos.
+    case "$QC_TAGS" in
+        *arquivo_curto*|*sem_cabecalho*|*cabecalho_v1*|*canais*|*tamanho*) return ;;
+    esac
+    avaliar_sinal "$1" "$2"
+}
+
+# O manifesto é um HISTÓRICO (um ponto refeito aparece mais de uma vez). Esta função devolve
+# só as linhas que valem hoje: a ÚLTIMA de cada arquivo, com status ok*/aceito* e o arquivo
+# ainda presente na pasta. Colunas: freq,rep,arquivo,timestamp,status,freq_medida,pp_ref,pp_sonda,razao.
+linhas_validas_manifesto() {
+    local manifesto="${PASTA_SONDA}/${NOME_MANIFESTO}" f rep arq ts status resto
+    [ -f "$manifesto" ] || return 0
+    awk -F, 'NR > 1 && $3 != "" { ultima[$3] = $0 } END { for (a in ultima) print ultima[a] }' "$manifesto" \
+    | while IFS=, read -r f rep arq ts status resto; do
+        case "$status" in ok*|aceito*) ;; *) continue ;; esac
+        if [ -f "${PASTA_SONDA}/${arq}" ]; then
+            printf '%s,%s,%s,%s,%s,%s\n' "$f" "$rep" "$arq" "$ts" "$status" "$resto"
+        fi
+    done
+}
+
+# Só as linhas SEM erro (status ok*): as únicas que entram em médias de ganho e na sugestão
+# de pontos extras (uma captura aceita "com erro", p.ex. saturada, não pode guiar nada).
+linhas_ok_manifesto() { linhas_validas_manifesto | awk -F, '$5 ~ /^ok/'; }
+
+# Referência de ganho: razão rms (sonda/referência) média no PONTO DE MENOR FREQUÊNCIA com
+# captura ok (0 se ainda não há nenhum). Os ganhos relativos são em dB contra ela.
+razao_base() {
+    linhas_ok_manifesto | awk -F, '$9 + 0 > 0 {
+        f = $1 + 0
+        if (min == "" || f < min) { min = f; s = 0; n = 0 }
+        if (f == min) { s += $9; n++ }
+    } END { if (n > 0) printf "%.6f", s / n; else print 0 }'
+}
+
+# Frequências cuja captura foi aceita COM erro (candidatas a --modo refazer), uma por linha.
+frequencias_para_revisar() {
+    linhas_validas_manifesto | awk -F, '$5 ~ /^aceito/ { print $1 + 0 }' | sort -n -u
+}
+
+# =============================================================================
+# 9. Captura de um ponto
+# =============================================================================
+
+# Mostra o resultado da conferência e define SUGESTAO (C ou R).
+mostrar_resultado() {
+    local freq="$1" base ganho_txt="" linha msg
+    if [ "${#QC_ERROS[@]}" -eq 0 ]; then
+        SUGESTAO="C"
+        if [ "${#QC_AVISOS[@]}" -eq 0 ]; then
+            log_sucesso "Captura conferida: cabeçalho, tamanho e sinal OK."
+        else
+            log_sucesso "Captura utilizável (cabeçalho e tamanho íntegros), mas com avisos:"
+        fi
+    else
+        SUGESTAO="R"
+        for msg in "${QC_ERROS[@]}"; do log_erro "$msg"; done
+    fi
+    if [ "${#QC_AVISOS[@]}" -gt 0 ]; then
+        for msg in "${QC_AVISOS[@]}"; do log_aviso "$msg"; done
+    fi
+    if [ -n "$QC_PP_SONDA" ]; then
+        base="$(razao_base)"
+        if [ "${#QC_ERROS[@]}" -gt 0 ]; then
+            ganho_txt=""   # com erro (saturação, sem sinal...) o ganho medido não significa nada
+        elif [ -n "$QC_RAZAO" ] && num_menor 0 "$QC_RAZAO" && num_menor 0 "$base"; then
+            ganho_txt="$(awk -v r="$QC_RAZAO" -v b="$base" 'BEGIN { printf "ganho relativo à menor frequência: %+.2f dB", 20 * log(r / b) / log(10) }')"
+        elif [ -n "$QC_RAZAO" ] && num_menor 0 "$QC_RAZAO"; then
+            ganho_txt="primeiro ponto sem erro: servirá de referência (0 dB) para os próximos"
+        fi
+        linha="  Referência: ${QC_PP_REF}% da escala | Sonda: ${QC_PP_SONDA}% | frequência medida: ${QC_FREQ_MEDIDA:-não medida}${QC_FREQ_MEDIDA:+ Hz} (planejada ${freq} Hz)"
+        saida "$linha"
+        [ -n "$ganho_txt" ] && saida "  ${ganho_txt}"
+    fi
+}
+
+# Chama o ler_adc para UM ponto, gravando em $1 (temporário). Sai com o código do ler_adc
+# (124 = estourou o tempo limite). Saída completa no log da pasta.
+executar_captura() {
+    local destino="$1" titulo="$2" duracao limite codigo log="${PASTA_SONDA}/${NOME_LOG}"
+    duracao="$(duracao_captura)"
+    limite="${SH_LER_ADC_TIMEOUT:-$(awk -v d="$duracao" 'BEGIN { printf "%d", d * 3 + 60 }')}"
+    : >> "$log"
+    LOG_LINHAS_ANTES="$(wc -l < "$log" | tr -d ' ')"
+    echo "=== $(date '+%Y-%m-%d %H:%M:%S') | ${LER_ADC##*/} ${TAXA} ${CANAL_REFERENCIA},${CANAL_SONDA} --blocos ${BLOCOS} --grandeza ${CANAL_SONDA}:corrente --sonda ${CANAL_SONDA}:${SONDA_ID} -o ${destino##*/}" >> "$log"
+    log_info "Capturando (~${duracao} s)..."
+    if [ "$VERBOSO" -eq 1 ]; then
+        timeout --foreground "$limite" "$LER_ADC" "$TAXA" "${CANAL_REFERENCIA},${CANAL_SONDA}" \
+            --blocos "$BLOCOS" --grandeza "${CANAL_SONDA}:corrente" --sonda "${CANAL_SONDA}:${SONDA_ID}" \
+            -o "$destino" -t "$titulo" 2>&1 | tee -a "$log" >&2
+        codigo="${PIPESTATUS[0]}"
+    else
+        timeout --foreground "$limite" "$LER_ADC" "$TAXA" "${CANAL_REFERENCIA},${CANAL_SONDA}" \
+            --blocos "$BLOCOS" --grandeza "${CANAL_SONDA}:corrente" --sonda "${CANAL_SONDA}:${SONDA_ID}" \
+            -o "$destino" -t "$titulo" >> "$log" 2>&1
+        codigo=$?
+    fi
+    return "$codigo"
+}
+
+descrever_falha_ler_adc() {
+    local codigo="$1" log="${PASTA_SONDA}/${NOME_LOG}"
+    if [ "$codigo" -eq 124 ]; then
+        log_erro "O ler_adc travou (estourou o tempo limite) -- a PRU provavelmente não está respondendo. Rode ./setup.sh de novo se isso se repetir."
+    else
+        log_erro "O ler_adc terminou com código ${codigo}."
+    fi
+    if [ "$VERBOSO" -eq 0 ]; then
+        local trecho
+        trecho="$(tail -n +"$((LOG_LINHAS_ANTES + 2))" "$log" | tail -n 12)"
+        if [ -n "$trecho" ]; then
+            saida "  Saída do ler_adc nesta tentativa (histórico completo em ${log}):"
+            printf '%s\n' "$trecho" | sed 's/^/    | /' >&2
+        fi
+    fi
+}
+
+# Pergunta o que fazer com a captura (laço PRÓPRIO para validar a escolha: opção inválida
+# nunca remede). Define ESCOLHA como c, r, p ou a. ENTER = sugestão.
+perguntar_destino() {
+    local sugestao="$1" entrada
+    echo >&2
+    saida "  [C] Continuar  -- aceita esta captura e segue"
+    saida "  [R] Refazer    -- descarta e mede este ponto de novo"
+    saida "  [P] Pular      -- descarta e deixa este ponto de fora (dá para pegá-lo depois com --modo retomar)"
+    saida "  [A] Abortar    -- descarta e encerra (o que já foi aceito fica salvo)"
+    while true; do
+        if ! read -r -p "$(printf "%b" "${COR_AMARELO}Escolha [${sugestao}]: ${COR_RESET}")" entrada; then
             erro_fatal "Entrada encerrada inesperadamente (EOF em stdin) -- abortando."
         fi
-        if [ "${resposta_pronto,,}" = "a" ]; then
-            log_aviso "Abortado pelo operador antes da medição."
-            exit 0
+        entrada="${entrada,,}"
+        [ -z "$entrada" ] && entrada="${sugestao,,}"
+        case "$entrada" in
+            c|r|p|a) ESCOLHA="$entrada"; return 0 ;;
+            *) log_erro "Opção inválida -- digite C, R, P ou A." ;;
+        esac
+    done
+}
+
+# Modo refazer: ao aceitar a captura nova, as antigas do mesmo ponto vão para descartadas/
+# (nunca são apagadas) e o manifesto registra o que foi substituído.
+arquivar_capturas_antigas() {
+    local freq="$1" rep="$2" f dest
+    mkdir -p "${PASTA_SONDA}/descartadas" || return 1
+    for f in "${PASTA_SONDA}/calibracao_${freq}Hz_rep${rep}.bin" \
+             "${PASTA_SONDA}"/calibracao_"${freq}"Hz_rep"${rep}"_v[0-9]*.bin; do
+        [ -f "$f" ] || continue
+        dest="${PASTA_SONDA}/descartadas/$(date +%Y%m%d_%H%M%S)_${f##*/}"
+        if mv -f "$f" "$dest"; then
+            registrar_manifesto "$freq" "$rep" "descartadas/${dest##*/}" "substituido"
+            log_info "Captura antiga arquivada em descartadas/${dest##*/}"
         fi
+    done
+}
 
-        local arquivo_alvo arquivo_saida titulo codigo_saida escolha sugestao
-        arquivo_alvo="${pasta_sonda}/calibracao_${freq_arquivo}Hz_rep${rep}.bin"
-        titulo="Calibracao ${freq_arquivo}Hz rep${rep} sonda=${SONDA_ID_SANITIZADO}"
+# Processa UMA captura (frequência + repetição). Retorna 0 se aceita, 3 se pulada.
+# Aborta o script (exit 0) se o operador pedir.
+processar_captura() {
+    local indice="$1" total="$2" freq="$3" rep="$4" repeticao_mesma_freq="$5"
+    local resposta alvo temporario titulo codigo status final
 
-        while true; do
-            arquivo_saida="$(caminho_disponivel "$arquivo_alvo")"
-            log_info "Medindo (${LER_ADC##*/} ${taxa} ${CANAL_REFERENCIA},${CANAL_SONDA} --grandeza ${CANAL_SONDA}:corrente --sonda ${CANAL_SONDA}:${SONDA_ID_SANITIZADO} -o $(basename "$arquivo_saida")) ..."
-            executar_medicao "$taxa" "$arquivo_saida" "$titulo"
-            codigo_saida=$?
+    separador
+    printf "%b\n" "${COR_NEGRITO}Ponto ${indice} de ${total}  |  ${freq} Hz  |  repetição ${rep} de ${REPETICOES}${COR_RESET}" >&2
+    separador
 
-            if [ "$codigo_saida" -eq 0 ]; then
-                log_sucesso "Medição concluída: $(basename "$arquivo_saida")"
-                sugestao="C"
-            else
-                log_erro "ler_adc terminou com código ${codigo_saida} -- provável falha de hardware/SPI, ou captura incompleta."
-                sugestao="R"
+    if [ "$repeticao_mesma_freq" -eq 1 ]; then
+        saida "  Mesma frequência da captura anterior (${freq} Hz): não precisa mexer no gerador."
+    else
+        printf "%b\n" "  ${COR_NEGRITO}>>> INJETE ${freq} Hz no gerador <<<${COR_RESET}" >&2
+        saida "  Mantenha a mesma amplitude de antes e espere o sinal estabilizar."
+    fi
+    while true; do
+        verificar_espaco_disco "$PASTA_SONDA"
+        if ! read -r -p "$(printf "%b" "${COR_AMARELO}ENTER para medir  |  p = pular este ponto  |  a = abortar: ${COR_RESET}")" resposta; then
+            erro_fatal "Entrada encerrada inesperadamente (EOF em stdin) -- abortando."
+        fi
+        case "${resposta,,}" in
+            a) log_aviso "Abortado pelo operador antes da medição."; resumo_curto; dica_retomar; exit 0 ;;
+            p) log_aviso "Ponto de ${freq} Hz pulado."
+               registrar_manifesto "$freq" "$rep" "" "pulado"
+               SESSAO_PULADOS=$((SESSAO_PULADOS + 1))
+               return 3 ;;
+        esac
+
+        alvo="${PASTA_SONDA}/calibracao_${freq}Hz_rep${rep}.bin"
+        temporario="${PASTA_SONDA}/.em_andamento_$$.bin"
+        titulo="Calibracao ${freq}Hz rep${rep} ${SONDA_ID}"
+        titulo="${titulo:0:63}"   # o ler_adc REJEITA (não trunca) títulos acima de 63 bytes
+        rm -f "$temporario"
+        ARQUIVO_EM_CAPTURA="$temporario"
+
+        executar_captura "$temporario" "$titulo"
+        codigo=$?
+        if [ "$codigo" -ne 0 ]; then
+            descrever_falha_ler_adc "$codigo"
+        fi
+        conferir_captura "$temporario" "$freq"
+        if [ "$codigo" -ne 0 ] && [ -s "$temporario" ]; then
+            qc_aviso "o ler_adc terminou com erro (código ${codigo}) mas deixou um arquivo; a conferência abaixo é do que foi gravado" ler_adc_erro
+        fi
+        mostrar_resultado "$freq"
+        if [ "$codigo" -ne 0 ]; then SUGESTAO="R"; fi
+
+        perguntar_destino "$SUGESTAO"
+        case "$ESCOLHA" in
+            c)
+                if [ ! -s "$temporario" ]; then
+                    log_erro "Não há arquivo para aceitar (a captura falhou antes de gravar). Refazendo este ponto."
+                    ARQUIVO_EM_CAPTURA=""
+                    continue
+                fi
+                if [ "$SUBSTITUIR_EXISTENTES" -eq 1 ]; then arquivar_capturas_antigas "$freq" "$rep"; fi
+                final="$(caminho_disponivel "$alvo")"
+                [ "$final" != "$alvo" ] && log_aviso "'${alvo##*/}' já existe -- gravando como '${final##*/}' em vez de sobrescrever."
+                if ! mv -f "$temporario" "$final"; then
+                    log_erro "Não consegui renomear a captura para '${final}' -- refazendo."
+                    rm -f "$temporario"; ARQUIVO_EM_CAPTURA=""
+                    continue
+                fi
+                ARQUIVO_EM_CAPTURA=""
+                if [ "$codigo" -ne 0 ]; then
+                    status="aceito_com_erro_${codigo}"
+                elif [ "${#QC_ERROS[@]}" -gt 0 ]; then
+                    status="aceito_com_erro_qc_${QC_TAGS}"
+                elif [ "${#QC_AVISOS[@]}" -gt 0 ]; then
+                    status="ok_com_aviso_${QC_TAGS}"
+                else
+                    status="ok"
+                fi
+                registrar_manifesto "$freq" "$rep" "${final##*/}" "$status" "$QC_FREQ_MEDIDA" "$QC_PP_REF" "$QC_PP_SONDA" "$QC_RAZAO"
+                SESSAO_ACEITOS=$((SESSAO_ACEITOS + 1))
+                log_sucesso "Ponto aceito: ${final##*/}"
+                return 0
+                ;;
+            r)
+                log_aviso "Descartando a captura e repetindo este ponto."
+                rm -f "$temporario"; ARQUIVO_EM_CAPTURA=""
+                ;;
+            p)
+                log_aviso "Ponto de ${freq} Hz pulado (captura descartada)."
+                rm -f "$temporario"; ARQUIVO_EM_CAPTURA=""
+                registrar_manifesto "$freq" "$rep" "" "pulado"
+                SESSAO_PULADOS=$((SESSAO_PULADOS + 1))
+                return 3
+                ;;
+            a)
+                log_aviso "Abortado pelo operador (captura descartada)."
+                rm -f "$temporario"; ARQUIVO_EM_CAPTURA=""
+                resumo_curto
+                dica_retomar
+                exit 0
+                ;;
+        esac
+    done
+}
+
+# Coleta uma lista de pares "FREQ REP" (um por linha, em $1 como texto), na ordem dada.
+# Itera por um ARRAY: um 'while read ... done <<< "$pares"' redirecionaria o stdin de TUDO que
+# está dentro do laço, e os 'read' interativos do operador leriam a lista em vez do teclado.
+coletar_pares() {
+    local -a linhas=()
+    local linha freq rep indice=0 anterior="" total
+    mapfile -t linhas <<< "$1"
+    total="${#linhas[@]}"
+    [ -z "${linhas[0]:-}" ] && return 0
+    for linha in "${linhas[@]}"; do
+        read -r freq rep <<< "$linha"
+        [ -z "$freq" ] && continue
+        indice=$((indice + 1))
+        if [ "$freq" = "$anterior" ]; then
+            processar_captura "$indice" "$total" "$freq" "$rep" 1
+        else
+            processar_captura "$indice" "$total" "$freq" "$rep" 0
+        fi
+        anterior="$freq"
+    done
+}
+
+# Pares "FREQ REP" (rep de 1 a REPETICOES) para as frequências dadas que ainda NÃO têm
+# captura em disco. Frequências em argumentos.
+pares_pendentes() {
+    local existentes freq rep
+    existentes="$(capturas_em_disco | awk '{ print $1 "_" $2 }')"
+    for freq in "$@"; do
+        for ((rep = 1; rep <= REPETICOES; rep++)); do
+            if ! grep -qx "${freq}_${rep}" <<< "$existentes"; then
+                echo "${freq} ${rep}"
             fi
-
-            echo
-            echo "  [C] Continuar        -- aceita esta medição e segue em frente"
-            echo "  [R] Refazer          -- descarta o arquivo e repete este mesmo ponto"
-            echo "  [A] Abortar          -- encerra o script agora"
-
-            # Laço INTERNO só para validar a escolha -- uma resposta
-            # inválida (nem c/r/a) deve voltar a perguntar, NUNCA disparar
-            # outra medição. Só 'r' sai deste laço interno de volta para o
-            # laço externo (que remede); 'c' sai dos DOIS laços de uma vez
-            # ('break 2').
-            while true; do
-                read -r -p "$(printf "%b" "${COR_AMARELO}Escolha (sugestão: ${sugestao}): ${COR_RESET}")" escolha || {
-                    erro_fatal "Entrada encerrada inesperadamente (EOF em stdin) -- abortando."
-                }
-                case "${escolha,,}" in
-                    c)
-                        local status_manifesto
-                        if [ ! -e "$arquivo_saida" ]; then
-                            log_erro "Escolhido continuar, mas '$(basename "$arquivo_saida")' não existe em disco (o ler_adc provavelmente falhou antes de gravar qualquer coisa) -- o manifesto vai registrar isso como 'sem_arquivo', não 'ok'. Considere [R]efazer em vez de continuar."
-                            status_manifesto="sem_arquivo"
-                        elif [ "$codigo_saida" -eq 0 ]; then
-                            status_manifesto="ok"
-                        else
-                            status_manifesto="aceito_com_erro_${codigo_saida}"
-                        fi
-                        registrar_manifesto "$manifesto" "$freq_exibicao" "$rep" "$(basename "$arquivo_saida")" "$status_manifesto"
-                        break 2
-                        ;;
-                    r)
-                        log_aviso "Descartando '$(basename "$arquivo_saida")' e repetindo esta medição."
-                        rm -f "$arquivo_saida"
-                        break
-                        ;;
-                    a)
-                        log_aviso "Abortado pelo operador."
-                        rm -f "$arquivo_saida" 2>/dev/null
-                        exit 0
-                        ;;
-                    *)
-                        log_erro "Opção inválida -- digite C, R ou A."
-                        ;;
-                esac
-            done
         done
     done
 }
 
-# =========================================================================
-# 8. Fluxo principal
-# =========================================================================
+# =============================================================================
+# 10. Resumo e sugestão de pontos extras
+# =============================================================================
 
-banner() {
-    printf "%b\n" "${COR_NEGRITO}${COR_AZUL}"
-    cat <<'EOF'
-╔══════════════════════════════════════════════════════════════╗
-║       SH-Analyzer -- Coleta de calibração de sonda            ║
-╚══════════════════════════════════════════════════════════════╝
-EOF
-    printf "%b\n" "${COR_RESET}"
+# Tabela por frequência (capturas aceitas que ainda existem em disco): quantas, frequência
+# medida, nível da sonda e ganho relativo (dB) ao ponto de menor frequência (só capturas ok).
+mostrar_tabela() {
+    local linhas
+    linhas="$(linhas_validas_manifesto | sort -t, -k1,1n)"
+    if [ -z "$linhas" ]; then
+        saida "  (nenhuma captura aceita ainda)"
+        return 0
+    fi
+    printf '%s\n' "$linhas" | awk -F, '
+    {
+        f = $1 + 0
+        if (!(f in cnt)) { ordem[++nf] = f }
+        cnt[f]++
+        if ($6 + 0 > 0) { sf[f] += $6; nfm[f]++ }
+        if ($8 + 0 > 0) { sp[f] += $8; nsp[f]++ }
+        if ($5 ~ /^ok/ && $9 + 0 > 0) { sr[f] += $9; nr[f]++ }
+        if ($5 ~ /^aceito/) nivel[f] = 2
+        else if ($5 ~ /^ok_com_aviso/ && nivel[f] < 1) nivel[f] = 1
+    }
+    END {
+        base = 0
+        for (i = 1; i <= nf; i++) { f = ordem[i]; if (nr[f] > 0) { base = sr[f] / nr[f]; break } }
+        printf "  %10s  %5s  %12s  %10s  %12s  %s\n", "freq plano", "caps", "freq medida", "sonda (%)", "ganho rel.", "obs"
+        for (i = 1; i <= nf; i++) {
+            f = ordem[i]
+            fm = (nfm[f] > 0) ? sprintf("%.1f", sf[f] / nfm[f]) : "-"
+            pp = (nsp[f] > 0) ? sprintf("%.1f", sp[f] / nsp[f]) : "-"
+            g = (nr[f] > 0 && base > 0) ? sprintf("%+.2f dB", 20 * log((sr[f] / nr[f]) / base) / log(10)) : "-"
+            obs = (nivel[f] == 2) ? "ACEITA COM ERRO (refazer)" : ((nivel[f] == 1) ? "aviso" : "")
+            printf "  %10d  %5d  %12s  %10s  %12s  %s\n", f, cnt[f], fm, pp, g, obs
+        }
+    }' >&2
 }
 
-coletar_parametros_comuns() {
-    # Preenche, via nameref, as variáveis cujos NOMES são passados: taxa,
-    # sonda_bruta, redundancia.
-    local -n _taxa="$1" _sonda_bruta="$2" _redundancia="$3"
-    ler_valor _taxa "Taxa de amostragem TOTAL do sistema, em Hz (ex.: 102400): " "$REGEX_INTEIRO_POSITIVO"
-    ler_valor _sonda_bruta "Identificador da sonda (ex.: fluke_i30_sn0001): " '^.+$'
-    ler_valor _redundancia "Fator de redundância -- repetições por frequência [padrão 1]: " "${REGEX_INTEIRO_POSITIVO}|^$"
-    [ -z "$_redundancia" ] && _redundancia=1
+# Intervalos onde o ganho relativo muda mais entre frequências vizinhas. Imprime
+# "DELTA_DB F_BAIXA F_ALTA F_NOVA", do maior para o menor delta, só os acima do limiar e
+# com F_NOVA estritamente entre as duas e fora do plano. $1.. = frequências já no plano.
+candidatos_refino() {
+    local plano="$*"
+    linhas_ok_manifesto | awk -F, '$9 + 0 > 0 { print $1 + 0, $9 }' | sort -n \
+    | awk -v lim="$LIMIAR_REFINO_DB" -v rmin="$RAZAO_FREQ_MIN_REFINO" -v plano="$plano" '
+    function amigavel(f,   m) {
+        if (f >= 1000) { m = 10 ^ (int(log(f) / log(10) + 1e-9) - 2); return int(f / m + 0.5) * m }
+        return int(f + 0.5)
+    }
+    BEGIN { np = split(plano, P, " "); for (i = 1; i <= np; i++) NO_PLANO[P[i] + 0] = 1 }
+    { f = $1 + 0; if (!(f in S)) { ordem[++n] = f }; S[f] += $2; C[f]++ }
+    END {
+        for (i = 1; i < n; i++) {
+            f1 = ordem[i]; f2 = ordem[i + 1]
+            r1 = S[f1] / C[f1]; r2 = S[f2] / C[f2]
+            d = 20 * log(r2 / r1) / log(10); if (d < 0) d = -d
+            if (d < lim || f2 / f1 < rmin) continue
+            novo = amigavel(sqrt(f1 * f2))
+            if (novo <= f1 || novo >= f2 || (novo in NO_PLANO)) continue
+            printf "%.2f %d %d %d\n", d, f1, f2, novo
+        }
+    }' | sort -rn
 }
 
-fluxo_novo_perfil() {
-    local taxa sonda_bruta redundancia freq_min freq_max num_pontos
-    coletar_parametros_comuns taxa sonda_bruta redundancia
-
-    ler_valor freq_min "Frequência MÍNIMA da faixa, em Hz (ex.: 50): " "$REGEX_FLOAT_POSITIVO"
-    ler_valor freq_max "Frequência MÁXIMA da faixa, em Hz (ex.: 100000): " "$REGEX_FLOAT_POSITIVO"
-    ler_valor num_pontos "Número total de pontos de calibração (mínimo 2): " "$REGEX_INTEIRO_POSITIVO"
-
-    if [ "$num_pontos" -lt 2 ]; then
-        erro_fatal "São necessários pelo menos 2 pontos para definir uma faixa."
-    fi
-    if [ "$(echo "$freq_min >= $freq_max" | bc -l)" -eq 1 ]; then
-        erro_fatal "Frequência mínima (${freq_min} Hz) precisa ser menor que a máxima (${freq_max} Hz)."
-    fi
-    validar_nyquist "$taxa" "$freq_max"
-
-    local -a pontos=()
-    while IFS= read -r linha; do
-        pontos+=("$linha")
-    done < <(calcular_pontos_log "$freq_min" "$freq_max" "$num_pontos")
-
-    iniciar_coleta "$taxa" "$sonda_bruta" "$redundancia" pontos
+dica_retomar() {
+    log_info "Para continuar depois:  sudo ./calibrar_sonda.sh --modo retomar --sonda ${SONDA_ID}"
 }
 
-fluxo_expandir_perfil() {
-    local taxa sonda_bruta redundancia sonda_sanitizada pasta_sonda
-    coletar_parametros_comuns taxa sonda_bruta redundancia
-    sonda_sanitizada="$(sanitizar_id "$sonda_bruta")"
-    pasta_sonda="${PASTA_BASE}/${sonda_sanitizada}"
-
-    local -a existentes=()
-    while IFS= read -r linha; do
-        [ -n "$linha" ] && existentes+=("$linha")
-    done < <(extrair_frequencias_existentes "$pasta_sonda")
-
-    if [ "${#existentes[@]}" -lt 2 ]; then
-        erro_fatal "Encontrei ${#existentes[@]} frequência(s) já capturada(s) em '${pasta_sonda}' -- são necessárias pelo menos 2 (em captura(s) anteriores, nomeadas 'calibracao_<FREQ>Hz_rep<N>.bin') para calcular pontos de adensamento entre elas."
+resumo_curto() {
+    separador
+    if [ $((SESSAO_ACEITOS + SESSAO_PULADOS)) -gt 0 ]; then
+        log_info "Nesta sessão: ${SESSAO_ACEITOS} captura(s) aceita(s), ${SESSAO_PULADOS} ponto(s) pulado(s)."
     fi
-
-    log_info "Frequências já capturadas em '${pasta_sonda}': ${existentes[*]} Hz"
-
-    local -a pontos=()
-    while IFS= read -r linha; do
-        pontos+=("$linha")
-    done < <(calcular_pontos_densificacao "${existentes[@]}")
-
-    log_info "$(( ${#existentes[@]} - 1 )) novo(s) ponto(s) de adensamento (1 entre cada par adjacente, média geométrica)."
-
-    validar_nyquist "$taxa" "$(printf '%s\n' "${pontos[@]}" | sort -n | tail -1)"
-
-    iniciar_coleta "$taxa" "$sonda_bruta" "$redundancia" pontos
+    log_info "Pasta: ${PASTA_SONDA}/"
 }
 
-# Etapa comum aos dois modos: mostra o plano de coleta, pede confirmação,
-# cria a pasta/manifesto e processa cada ponto em sequência.
-iniciar_coleta() {
-    local taxa="$1" sonda_bruta="$2" redundancia="$3"
-    local -n _pontos="$4"
+instrucoes_finais() {
+    separador
+    log_sucesso "Sonda '${SONDA_ID}': situação da coleta."
+    mostrar_tabela
+    resumo_curto
+    proximos_passos
+}
 
-    SONDA_ID_SANITIZADO="$(sanitizar_id "$sonda_bruta")"
-    if [ -z "$SONDA_ID_SANITIZADO" ]; then
-        erro_fatal "O identificador de sonda '${sonda_bruta}' não sobrou com nenhum caractere válido depois de sanitizado -- use letras, números, '-' ou '_'."
+proximos_passos() {
+    saida ""
+    saida "Próximos passos:"
+    saida "  1. Copie a pasta para o computador:   scp -r debian@<ip-da-beaglebone>:$(cd "$PASTA_SONDA" && pwd) ."
+    saida "  2. Gere o perfil (na raiz do repositório):"
+    saida "       uv run scripts/gerar_perfil_sonda.py capturas/${SONDA_ID} --resistencia-shunt <ohms-do-shunt> --plot"
+    saida "     Use os mesmos --faixa/--ganho/--formato que usará depois no adc_tool.py."
+    local pendentes
+    pendentes="$(pares_pendentes "${PLANO_FREQS[@]}" | grep -c . || true)"
+    if [ "$pendentes" -gt 0 ]; then
+        log_aviso "Há ${pendentes} captura(s) do plano ainda sem arquivo. Para completar:  sudo ./calibrar_sonda.sh --modo retomar --sonda ${SONDA_ID}"
     fi
-    if [ "$SONDA_ID_SANITIZADO" != "$sonda_bruta" ]; then
-        log_aviso "Identificador de sonda normalizado para '${SONDA_ID_SANITIZADO}' (era '${sonda_bruta}') -- use exatamente esse valor no perfil .json e em --sonda-perfil/adc_tool.py depois."
+}
+
+# Oferece pontos extras onde o ganho varia mais. $1 = quantos no máximo ("" = perguntar).
+oferecer_refino() {
+    local maximo="${1:-}" candidatos n sugestao escolhido linha confirmar resposta
+    candidatos="$(candidatos_refino "${PLANO_FREQS[@]}")"
+    n="$(printf '%s\n' "$candidatos" | grep -c . || true)"
+    if [ "$n" -eq 0 ]; then
+        log_sucesso "Malha adequada: o ganho varia menos de ${LIMIAR_REFINO_DB} dB entre frequências vizinhas. Não vejo pontos extras úteis."
+        return 1
     fi
+    titulo_secao "Pontos extras sugeridos"
+    saida "O ganho (relativo) muda mais entre estas frequências vizinhas; um ponto no meio melhora o perfil:"
+    saida ""
+    printf '%s\n' "$candidatos" | awk '{ printf "  entre %6d e %6d Hz: variação de %5.2f dB  ->  medir em %d Hz\n", $2, $3, $1, $4 }' >&2
+    saida ""
+    if [ -z "$maximo" ]; then
+        sugestao=$(( n < 5 ? n : 5 ))
+        if [ "$ASSUMIR_SIM" -eq 1 ]; then
+            maximo=0
+            log_info "Para coletar esses pontos:  sudo ./calibrar_sonda.sh --modo refinar --sonda ${SONDA_ID}"
+        else
+            ler_valor resposta "Quantos pontos extras coletar? (0 = nenhum) [${sugestao}]: " "^[0-9]+\$|^\$"
+            maximo="${resposta:-$sugestao}"
+        fi
+    fi
+    [ "$maximo" -le 0 ] && return 1
+    [ "$maximo" -gt "$n" ] && maximo="$n"
+    escolhido="$(printf '%s\n' "$candidatos" | head -n "$maximo" | awk '{ print $4 }' | sort -n -u)"
+    local -a novas=()
+    while read -r linha; do [ -n "$linha" ] && novas+=("$linha"); done <<< "$escolhido"
+    coletar_extras "${novas[@]}"
+    return 0
+}
 
-    REDUNDANCIA="$redundancia"
-    local pasta_sonda="${PASTA_BASE}/${SONDA_ID_SANITIZADO}"
-    local manifesto="${pasta_sonda}/${NOME_MANIFESTO}"
-    local total="${#_pontos[@]}"
-    local total_medicoes="$((total * REDUNDANCIA))"
+# Acrescenta frequências ao plano e coleta o que falta delas.
+coletar_extras() {
+    local -a extras=("$@") unidas=()
+    local f pares
+    [ "${#extras[@]}" -eq 0 ] && return 0
+    while read -r f; do [ -n "$f" ] && unidas+=("$f"); done < <(unir_frequencias "${PLANO_FREQS[@]}" "${extras[@]}")
+    PLANO_FREQS=("${unidas[@]}")
+    salvar_plano
+    pares="$(pares_pendentes "${extras[@]}")"
+    if [ -z "$pares" ]; then
+        log_info "Nenhuma captura nova a fazer (as frequências extras já têm arquivo)."
+        return 0
+    fi
+    log_info "Coletando ${#extras[@]} frequência(s) extra(s): ${extras[*]} Hz"
+    coletar_pares "$pares"
+}
 
+# =============================================================================
+# 11. Parâmetros, plano e modos
+# =============================================================================
+
+validar_inteiro_faixa() {   # nome valor min max
+    if ! [[ "$2" =~ $REGEX_INTEIRO_POSITIVO ]] || [ "$2" -lt "$3" ] || [ "$2" -gt "$4" ]; then
+        erro_fatal "Valor inválido para $1: '$2'. Use um inteiro entre $3 e $4."
+    fi
+}
+
+validar_parametros_comuns() {
+    validar_inteiro_faixa "Taxa (--taxa)" "$TAXA" 1 500000
+    validar_inteiro_faixa "Canal de referência" "$CANAL_REFERENCIA" 0 7
+    validar_inteiro_faixa "Canal da sonda" "$CANAL_SONDA" 0 7
+    if [ "$CANAL_REFERENCIA" -eq "$CANAL_SONDA" ]; then
+        erro_fatal "O canal de referência e o da sonda não podem ser o mesmo (${CANAL_SONDA})."
+    fi
+    validar_inteiro_faixa "Repetições (--repeticoes)" "$REPETICOES" 1 50
+    validar_inteiro_faixa "Blocos (--blocos)" "$BLOCOS" 1 1000
+
+    SONDA_ID="$(sanitizar_id "$SONDA_BRUTA")"
+    if [ -z "$SONDA_ID" ]; then
+        erro_fatal "O identificador de sonda '${SONDA_BRUTA}' não tem nenhum caractere válido -- use letras, números, '-' ou '_'."
+    fi
+    if [ "${#SONDA_ID}" -gt 31 ]; then
+        erro_fatal "O identificador '${SONDA_ID}' tem ${#SONDA_ID} caracteres; o cabeçalho aceita no máximo 31. Use um nome mais curto."
+    fi
+    if [ "$SONDA_ID" != "$SONDA_BRUTA" ]; then
+        log_aviso "Identificador normalizado para '${SONDA_ID}' (era '${SONDA_BRUTA}'). Use exatamente esse valor no perfil e em --sonda-perfil/adc_tool.py."
+    fi
+    PASTA_SONDA="${PASTA_BASE}/${SONDA_ID}"
+}
+
+# Para o modo 'novo': faixa de frequências e quantidade de pontos.
+validar_faixa_e_pontos() {
+    local nyq duracao
+    validar_inteiro_faixa "Pontos (--pontos)" "$PONTOS" 2 500
+    if ! [[ "$FREQ_MIN" =~ $REGEX_FLOAT_POSITIVO ]] || ! [[ "$FREQ_MAX" =~ $REGEX_FLOAT_POSITIVO ]]; then
+        erro_fatal "Frequências inválidas: min='${FREQ_MIN}' max='${FREQ_MAX}'."
+    fi
+    if ! num_menor "$FREQ_MIN" "$FREQ_MAX"; then
+        erro_fatal "A frequência mínima (${FREQ_MIN} Hz) precisa ser menor que a máxima (${FREQ_MAX} Hz)."
+    fi
+    nyq="$(nyquist_efetiva "$TAXA")"
+    if ! num_menor "$FREQ_MAX" "$nyq"; then
+        erro_fatal "A frequência máxima (${FREQ_MAX} Hz) precisa ser MENOR que a Nyquist efetiva de cada canal: ${nyq} Hz (= taxa ${TAXA} Hz / (2 x ${NUM_CANAIS_CAPTURA} canais)). Reduza --freq-max ou aumente --taxa."
+    fi
+    if num_menor "$(awk -v n="$nyq" 'BEGIN { printf "%.1f", n * 0.9 }')" "$FREQ_MAX"; then
+        log_aviso "A frequência máxima (${FREQ_MAX} Hz) passa de 90% da Nyquist efetiva (${nyq} Hz): perto do limite, qualquer componente acima dele dobra para dentro da banda e atrapalha a medição."
+    fi
+    duracao="$(duracao_captura)"
+    if num_menor "$(awk -v f="$FREQ_MIN" -v d="$duracao" 'BEGIN { printf "%.1f", f * d }')" 20; then
+        log_aviso "Com ${FREQ_MIN} Hz e capturas de ${duracao} s cabem menos de 20 ciclos: a medição de baixa frequência fica imprecisa. Aumente --blocos ou a frequência mínima."
+    fi
+    if [ "$PONTOS" -lt 10 ]; then
+        log_aviso "Só ${PONTOS} pontos: o erro de interpolação do perfil pode passar de 1%. De 15 a 25 pontos costuma bastar (e o script sugere extras no fim)."
+    fi
+}
+
+mostrar_plano() {
+    local duracao total_caps mb nyq
+    duracao="$(duracao_captura)"
+    total_caps=$(( ${#PLANO_FREQS[@]} * REPETICOES ))
+    mb="$(awk -v n="$total_caps" -v b="$BLOCOS" -v spb="$SPB_PADRAO" 'BEGIN { printf "%.0f", n * (1024 + b * spb * 2) / 1048576 + 0.5 }')"
+    nyq="$(nyquist_efetiva "$TAXA")"
     titulo_secao "Plano de coleta"
-    echo "Sonda:                ${SONDA_ID_SANITIZADO}"
-    echo "Taxa de amostragem:   ${taxa} Hz total (canais ${CANAL_REFERENCIA},${CANAL_SONDA} -- referência,sonda)"
-    echo "Pontos de frequência: ${total}"
-    echo "Redundância:          ${REDUNDANCIA}x por ponto"
-    echo "Total de medições:    ${total_medicoes}"
-    echo "Pasta de saída:       ${pasta_sonda}/"
-    echo
-    echo "Frequências (Hz):"
-    printf '  %.2f\n' "${_pontos[@]}"
-    echo
+    saida "Sonda:               ${SONDA_ID}"
+    saida "Taxa total do ADC:   ${TAXA} Hz  (${NUM_CANAIS_CAPTURA} canais -> $(awk -v t="$TAXA" -v n="$NUM_CANAIS_CAPTURA" 'BEGIN { printf "%.1f", t / n }') Hz por canal; Nyquist efetiva ${nyq} Hz)"
+    saida "Canais:              referência = ${CANAL_REFERENCIA} (tensão no shunt), sonda = ${CANAL_SONDA} (corrente)"
+    saida "Frequências:         ${#PLANO_FREQS[@]} pontos, de ${PLANO_FREQS[0]} a ${PLANO_FREQS[$((${#PLANO_FREQS[@]} - 1))]} Hz"
+    saida "Repetições:          ${REPETICOES} por frequência -> ${total_caps} captura(s)"
+    saida "Cada captura:        ${BLOCOS} bloco(s), ~${duracao} s"
+    saida "Espaço em disco:     ~${mb} MB em ${PASTA_SONDA}/"
+    saida ""
+    saida "Frequências (Hz):    ${PLANO_FREQS[*]}"
+    saida ""
+    avisar_espaco_do_plano "$mb"
+}
 
+# Avisa (sem impedir) se o plano não cabe no espaço livre. $1 = MB necessários.
+avisar_espaco_do_plano() {
+    local alvo="$PASTA_SONDA" livre
+    while [ ! -d "$alvo" ] && [ "$alvo" != "." ] && [ "$alvo" != "/" ]; do alvo="$(dirname "$alvo")"; done
+    livre="$(df -Pm "$alvo" 2>/dev/null | awk 'NR==2 {print $4}')"
+    [ -z "${livre:-}" ] && return 0
+    if [ "$livre" -lt "$1" ]; then
+        log_aviso "O plano precisa de ~$1 MB, mas só há ${livre} MB livres. Libere espaço ou reduza --pontos/--blocos/--repeticoes."
+    fi
+}
+
+confirmar_inicio() {
     local confirmar
+    [ "$ASSUMIR_SIM" -eq 1 ] && return 0
     ler_confirmacao confirmar "Iniciar a coleta?"
     if [ "$confirmar" = "n" ]; then
-        log_aviso "Cancelado pelo operador antes de iniciar."
+        log_aviso "Cancelado antes de iniciar. Nada foi gravado."
         exit 0
     fi
+}
 
-    mkdir -p "$pasta_sonda"
-    inicializar_manifesto "$manifesto"
+preparar_pasta() {
+    mkdir -p "$PASTA_SONDA" || erro_fatal "Não consegui criar a pasta '${PASTA_SONDA}'."
+    inicializar_manifesto
+}
 
-    local i=0
-    for freq in "${_pontos[@]}"; do
-        i=$((i + 1))
-        processar_ponto "$i" "$total" "$freq" "$taxa" "$pasta_sonda" "$manifesto"
+# Move a coleta existente da sonda para capturas/_arquivadas/ (nada é apagado).
+arquivar_coleta_anterior() {
+    local destino="${PASTA_BASE}/_arquivadas/${SONDA_ID}_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "${PASTA_BASE}/_arquivadas" && mv "$PASTA_SONDA" "$destino" \
+        || erro_fatal "Não consegui arquivar '${PASTA_SONDA}' em '${destino}'."
+    log_info "Coleta anterior guardada em ${destino}/"
+}
+
+fluxo_novo() {
+    [ -z "$TAXA" ] && ler_hz TAXA "Taxa de amostragem TOTAL do ADC (ex.: 102400 ou 102.4k)"
+    obter_parametro SONDA_BRUTA "Identificador da sonda (ex.: fluke_i30_sn0001)" '^.*[A-Za-z0-9].*$'
+    obter_parametro PONTOS "Quantos pontos de frequência coletar" "$REGEX_INTEIRO_POSITIVO" "$PADRAO_PONTOS"
+    validar_inteiro_faixa "Taxa (--taxa)" "$TAXA" 1 500000
+    [ -z "$FREQ_MIN" ] && FREQ_MIN="$PADRAO_FREQ_MIN"
+    if [ -z "$FREQ_MAX" ]; then FREQ_MAX="$(freq_max_padrao "$TAXA")"; fi
+    [ -z "$REPETICOES" ] && REPETICOES="$PADRAO_REPETICOES"
+    [ -z "$BLOCOS" ] && BLOCOS="$PADRAO_BLOCOS"
+    validar_parametros_comuns
+    validar_faixa_e_pontos
+
+    # Já existe coleta desta sonda? Evita duplicar pontos sem querer.
+    local existentes
+    existentes="$(capturas_em_disco | grep -c . || true)"
+    if [ "$existentes" -gt 0 ]; then
+        log_aviso "A pasta '${PASTA_SONDA}' já tem ${existentes} captura(s)."
+        if [ "$ASSUMIR_SIM" -eq 1 ]; then
+            erro_fatal "Para continuar essa coleta use --modo retomar; para uma coleta nova use outro --sonda."
+        fi
+        local escolha
+        ler_escolha_menu escolha "O que fazer?" \
+            "Retomar a coleta anterior (medir só o que falta)" \
+            "Arquivar a coleta anterior e começar do zero (nada é apagado)" \
+            "Cancelar"
+        case "$escolha" in
+            1) fluxo_retomar; return ;;
+            2) arquivar_coleta_anterior ;;
+            3) log_aviso "Cancelado."; exit 0 ;;
+        esac
+    fi
+
+    PLANO_FREQS=()
+    local f
+    while read -r f; do [ -n "$f" ] && PLANO_FREQS+=("$f"); done < <(calcular_pontos_log "$FREQ_MIN" "$FREQ_MAX" "$PONTOS")
+    if [ "${#PLANO_FREQS[@]}" -lt 2 ]; then
+        erro_fatal "O arredondamento deixou menos de 2 frequências distintas entre ${FREQ_MIN} e ${FREQ_MAX} Hz. Aumente a faixa."
+    fi
+    if [ "${#PLANO_FREQS[@]}" -lt "$PONTOS" ]; then
+        log_aviso "Pedidos ${PONTOS} pontos, mas só há ${#PLANO_FREQS[@]} frequências inteiras distintas nessa faixa."
+    fi
+    local nyq
+    nyq="$(nyquist_efetiva "$TAXA")"
+    if ! num_menor "${PLANO_FREQS[$((${#PLANO_FREQS[@]} - 1))]}" "$nyq"; then
+        erro_fatal "Depois do arredondamento a maior frequência (${PLANO_FREQS[$((${#PLANO_FREQS[@]} - 1))]} Hz) chegou à Nyquist efetiva (${nyq} Hz). Reduza --freq-max."
+    fi
+
+    mostrar_plano
+    confirmar_inicio
+    preparar_pasta
+    salvar_plano
+    verificar_espaco_disco "$PASTA_SONDA"
+    coletar_pares "$(pares_pendentes "${PLANO_FREQS[@]}")"
+    oferecer_refino "" || true
+    instrucoes_finais
+}
+
+# Carrega taxa/canais/etc. do plano salvo (se houver) para os modos que continuam uma coleta.
+preparar_continuacao() {
+    obter_parametro SONDA_BRUTA "Identificador da sonda (ex.: fluke_i30_sn0001)" '^.*[A-Za-z0-9].*$'
+    SONDA_ID="$(sanitizar_id "$SONDA_BRUTA")"
+    [ -z "$SONDA_ID" ] && erro_fatal "Identificador de sonda inválido: '${SONDA_BRUTA}'."
+    PASTA_SONDA="${PASTA_BASE}/${SONDA_ID}"
+    if [ ! -d "$PASTA_SONDA" ]; then
+        erro_fatal "Não encontrei a pasta '${PASTA_SONDA}'. Rode antes uma coleta nova (--modo novo) para essa sonda, ou confira o --sonda e a pasta atual."
+    fi
+    if ! carregar_plano; then
+        log_aviso "Não há '${NOME_PLANO}' em '${PASTA_SONDA}' (coleta feita por uma versão antiga do script?). Vou usar as capturas existentes; informe a taxa."
+    fi
+    if [ "${#PLANO_FREQS[@]}" -eq 0 ]; then
+        local f
+        while read -r f; do [ -n "$f" ] && PLANO_FREQS+=("$f"); done < <(frequencias_em_disco)
+    fi
+    [ -z "$TAXA" ] && ler_hz TAXA "Taxa de amostragem TOTAL do ADC (ex.: 102400 ou 102.4k)"
+    [ -z "$REPETICOES" ] && REPETICOES="$PADRAO_REPETICOES"
+    [ -z "$BLOCOS" ] && BLOCOS="$PADRAO_BLOCOS"
+    SONDA_BRUTA="$SONDA_ID"
+    validar_parametros_comuns
+    inicializar_manifesto
+}
+
+fluxo_retomar() {
+    preparar_continuacao
+    if [ "${#PLANO_FREQS[@]}" -eq 0 ]; then
+        erro_fatal "Não há plano nem capturas em '${PASTA_SONDA}' para retomar."
+    fi
+    local pares
+    pares="$(pares_pendentes "${PLANO_FREQS[@]}")"
+    if [ -z "$pares" ]; then
+        log_sucesso "A coleta de '${SONDA_ID}' já está completa (todas as ${#PLANO_FREQS[@]} frequências têm captura)."
+        oferecer_refino "" || true
+        instrucoes_finais
+        return
+    fi
+    mostrar_plano
+    log_info "Faltam $(printf '%s\n' "$pares" | grep -c .) captura(s):  $(printf '%s\n' "$pares" | awk '{ print $1 "Hz(rep" $2 ")" }' | tr '\n' ' ')"
+    confirmar_inicio
+    salvar_plano
+    verificar_espaco_disco "$PASTA_SONDA"
+    coletar_pares "$pares"
+    oferecer_refino "" || true
+    instrucoes_finais
+}
+
+fluxo_refinar() {
+    preparar_continuacao
+    titulo_secao "Refinar a malha"
+    mostrar_tabela
+    local maximo="${PONTOS:-}"
+    [ -z "$maximo" ] && [ "$ASSUMIR_SIM" -eq 1 ] && maximo=5
+    oferecer_refino "$maximo" || true
+    instrucoes_finais
+}
+
+# Lê uma linha livre (sem tratar vírgula como decimal). Define $1.
+ler_linha() {
+    local -n _destino="$1"
+    if ! read -r -p "$(printf "%b" "${COR_AMARELO}$2${COR_RESET}")" _destino; then
+        erro_fatal "Entrada encerrada inesperadamente (EOF em stdin) -- abortando."
+    fi
+}
+
+# Refaz pontos já capturados (a captura nova substitui a antiga, que vai para descartadas/).
+fluxo_refazer() {
+    preparar_continuacao
+    titulo_secao "Refazer pontos"
+    mostrar_tabela
+    local lista="$FREQS_ALVO" sugeridas tok pares="" rep
+    sugeridas="$(frequencias_para_revisar | tr '\n' ' ')"
+    sugeridas="${sugeridas% }"
+    if [ -z "$lista" ]; then
+        if [ "$ASSUMIR_SIM" -eq 1 ]; then
+            lista="$sugeridas"
+        else
+            ler_linha lista "Quais frequências refazer? (Hz, separadas por espaço ou vírgula${sugeridas:+; ENTER = ${sugeridas}}): "
+            [ -z "$lista" ] && lista="$sugeridas"
+        fi
+    fi
+    lista="${lista//,/ }"
+    if [ -z "${lista// /}" ]; then
+        log_info "Nada a refazer."
+        return 0
+    fi
+    local existentes
+    existentes="$(capturas_em_disco)"
+    for tok in $lista; do
+        if ! [[ "$tok" =~ $REGEX_INTEIRO_POSITIVO ]]; then
+            erro_fatal "Frequência inválida em --freqs: '${tok}' (use inteiros em Hz, como aparecem na tabela)."
+        fi
+        if ! awk -v f="$tok" '$1 == f { achou = 1 } END { exit !achou }' <<< "$existentes"; then
+            log_aviso "Não há captura de ${tok} Hz nesta pasta -- ignorando (para medir pontos que faltam use --modo retomar)."
+            continue
+        fi
+        while read -r _ rep; do
+            pares+="${tok} ${rep}"$'\n'
+        done < <(awk -v f="$tok" '$1 == f' <<< "$existentes")
     done
+    pares="${pares%$'\n'}"
+    if [ -z "$pares" ]; then
+        log_info "Nada a refazer."
+        return 0
+    fi
+    log_info "A captura nova substitui a antiga; a antiga vai para ${PASTA_SONDA}/descartadas/ só depois que a nova for aceita."
+    confirmar_inicio
+    verificar_espaco_disco "$PASTA_SONDA"
+    SUBSTITUIR_EXISTENTES=1
+    coletar_pares "$pares"
+    SUBSTITUIR_EXISTENTES=0
+    instrucoes_finais
+}
 
-    separador
-    log_sucesso "Coleta concluída: ${total_medicoes} medição/medições em '${pasta_sonda}/'."
-    log_info "Manifesto: ${manifesto}"
-    log_info "Próximo passo: extrair a amplitude de cada captura (ex.: adc_tool.py --fft --picos ou --welch) e montar o perfil scripts/sondas/${SONDA_ID_SANITIZADO}.json -- ver docs/proposta_correcao_sonda.md, seção 7.1."
+# Só mostra o estado da coleta (nada é medido).
+fluxo_resumo() {
+    preparar_continuacao
+    titulo_secao "Resumo da coleta de '${SONDA_ID}'"
+    saida "Pasta: ${PASTA_SONDA}/    Taxa: ${TAXA} Hz    Canais: referência ${CANAL_REFERENCIA}, sonda ${CANAL_SONDA}"
+    saida ""
+    mostrar_tabela
+    local rev cand
+    rev="$(frequencias_para_revisar | tr '\n' ' ')"
+    [ -n "$rev" ] && log_aviso "Capturas aceitas COM erro (considere --modo refazer --freqs): ${rev}"
+    cand="$(candidatos_refino "${PLANO_FREQS[@]}")"
+    if [ -n "$cand" ]; then
+        saida ""
+        saida "Pontos extras sugeridos (o ganho muda mais entre estes vizinhos):"
+        printf '%s\n' "$cand" | awk '{ printf "  entre %6d e %6d Hz: variação de %5.2f dB  ->  medir em %d Hz\n", $2, $3, $1, $4 }' >&2
+    fi
+    proximos_passos
+}
+
+fluxo_adensar() {
+    preparar_continuacao
+    local -a existentes=() novas=()
+    local f
+    while read -r f; do [ -n "$f" ] && existentes+=("$f"); done < <(frequencias_em_disco)
+    if [ "${#existentes[@]}" -lt 2 ]; then
+        erro_fatal "Há só ${#existentes[@]} frequência(s) capturada(s) em '${PASTA_SONDA}'; preciso de pelo menos 2 para calcular pontos entre elas."
+    fi
+    while read -r f; do [ -n "$f" ] && novas+=("$f"); done < <(printf '%s\n' "${existentes[@]}" | pontos_medios_geometricos)
+    if [ "${#novas[@]}" -eq 0 ]; then
+        erro_fatal "As frequências já capturadas estão tão próximas que não há inteiro novo entre elas."
+    fi
+    local nyq
+    nyq="$(nyquist_efetiva "$TAXA")"
+    if ! num_menor "${novas[$((${#novas[@]} - 1))]}" "$nyq"; then
+        erro_fatal "Um dos pontos novos (${novas[$((${#novas[@]} - 1))]} Hz) chega à Nyquist efetiva (${nyq} Hz) para a taxa ${TAXA} Hz."
+    fi
+    log_info "${#novas[@]} ponto(s) de adensamento (1 entre cada par adjacente, média geométrica): ${novas[*]} Hz"
+    confirmar_inicio
+    coletar_extras "${novas[@]}"
+    instrucoes_finais
+}
+
+# =============================================================================
+# 12. Programa principal
+# =============================================================================
+banner() {
+    printf "%b\n" "${COR_NEGRITO}${COR_AZUL}" >&2
+    cat >&2 <<'EOF'
+╔══════════════════════════════════════════════════════════════╗
+║      SH-Analyzer -- coleta de calibração de sonda             ║
+╚══════════════════════════════════════════════════════════════╝
+EOF
+    printf "%b\n" "${COR_RESET}" >&2
+}
+
+# Converte --taxa/--freq-min/--freq-max ("102.4k", "5 kHz") em Hz.
+normalizar_parametro_hz() {   # nome_da_variavel rotulo
+    local -n _v="$1"
+    local n
+    [ -z "$_v" ] && return 0
+    if ! n="$(normalizar_hz "$_v")"; then
+        erro_fatal "Valor inválido para $2: '${_v}'. Use algo como 102400, 102.4k ou 5kHz."
+    fi
+    _v="$n"
 }
 
 main() {
+    parse_args "$@"
+    normalizar_parametro_hz TAXA "--taxa"
+    normalizar_parametro_hz FREQ_MIN "--freq-min"
+    normalizar_parametro_hz FREQ_MAX "--freq-max"
     banner
     verificar_dependencias
     verificar_root
+    verificar_relogio
 
-    local escolha_modo
-    ler_escolha_menu escolha_modo "Modo de operação:" \
-        "Novo perfil (gerar pontos log-espaçados do zero)" \
-        "Expandir perfil existente (adensar malha de um perfil já iniciado)"
+    if [ -z "$MODO" ]; then
+        local escolha
+        if [ -n "$TAXA" ] && [ -n "$SONDA_BRUTA" ]; then
+            MODO="novo"
+        else
+            ler_escolha_menu escolha "O que você quer fazer?" \
+                "Coleta nova (o script escolhe as frequências)" \
+                "Retomar uma coleta interrompida" \
+                "Refinar: pontos extras onde o ganho varia mais" \
+                "Adensar: 1 ponto entre cada par de frequências já capturadas" \
+                "Refazer pontos já capturados" \
+                "Resumo: ver o estado da coleta (não mede nada)"
+            case "$escolha" in
+                1) MODO="novo" ;;
+                2) MODO="retomar" ;;
+                3) MODO="refinar" ;;
+                4) MODO="adensar" ;;
+                5) MODO="refazer" ;;
+                6) MODO="resumo" ;;
+            esac
+        fi
+    fi
 
-    case "$escolha_modo" in
-        1) fluxo_novo_perfil ;;
-        2) fluxo_expandir_perfil ;;
+    case "$MODO" in
+        novo)    fluxo_novo ;;
+        retomar) fluxo_retomar ;;
+        refinar) fluxo_refinar ;;
+        adensar) fluxo_adensar ;;
+        refazer) fluxo_refazer ;;
+        resumo)  fluxo_resumo ;;
+        *) erro_fatal "Modo desconhecido: '${MODO}'. Use novo, retomar, refinar, adensar, refazer ou resumo." ;;
     esac
 }
 

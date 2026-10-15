@@ -152,7 +152,7 @@ log.warning("--welch sem filtro")  # aviso → stderr, o handler põe "Aviso: " 
 | Usar o pacote em um notebook | `pip install -e .` e `from supraharmonicos.espectro import calcular_espectro_welch` |
 | Backend gráfico interativo (`plt.show()`) | extra `gui` (`PyQt6`); para salvar PNG (`-o`) não precisa |
 
-O `.gitignore` do repositório já ignora `.venv/` e `__pycache__/`; acrescente `.pytest_cache/`, `.ruff_cache/` e `*.egg-info/` (este último só aparece se alguém rodar `pip install -e .`).
+O `.gitignore` do repositório já ignora `.venv/`, `__pycache__/`, `.pytest_cache/`, `.ruff_cache/`, `*.egg-info/` e `uv.lock`. O `uv.lock` é ignorado de propósito: o projeto fixa só limites mínimos de versão (`pyproject.toml`), e a CI testa sempre contra as versões mais recentes que o `uv` resolver.
 
 Atenção: a pasta padrão de perfis (`sondas.SONDAS_DIR_PADRAO`) é `scripts/sondas/`, **ao lado** do pacote — vale para o repositório e para instalação editável (`-e`). Fora disso, use `--sondas-dir`.
 
@@ -175,9 +175,9 @@ O caminho quente é tudo que toca **todas** as amostras de uma captura (dezenas 
 ## 7. Testes
 
 ```bash
-uv run --extra dev pytest                 # tudo (~35 s)
-uv run --extra dev pytest -m "not e2e"    # rápido (~5 s) — use no dia a dia
-uv run --extra dev pytest -m e2e          # só ponta a ponta (~30 s)
+uv run --extra dev pytest                 # tudo: 226 testes (~2 min)
+uv run --extra dev pytest -m "not e2e"    # rápido: 178 testes (~6 s) — use no dia a dia
+uv run --extra dev pytest -m e2e          # só ponta a ponta: 48 testes (~1,5 min)
 uv run --extra dev ruff check .
 ```
 
@@ -194,7 +194,10 @@ uv run --extra dev ruff check .
 | `test_contrato_firmware.py` | C ↔ Python: constantes e layout do cabeçalho |
 | `test_arquitetura.py` | camadas sem ciclo, sem `print`/`SystemExit` em biblioteca, matplotlib/h5py confinados, entradas finas |
 | `test_dependencias.py` | PEP 723 das entradas == `pyproject.toml` |
+| `test_calibrar_sonda.py` (+ `ler_adc_falso.py`) | `firmware/calibrar_sonda.sh` de ponta a ponta contra um `ler_adc` falso: plano de frequências, conferência de cada captura (saturação, nível, frequência, CRC, disco cheio), menu C/R/P/A, modos `retomar`/`refinar`/`adensar`/`refazer`/`resumo`, Ctrl+C, e que as constantes do cabeçalho batem com o firmware e o Python. Marcado `e2e` (usa `bash`; é pulado fora do Linux) |
 | `e2e/test_perfil_sonda_e2e.py` | fluxo completo por subprocess nas entradas reais: calibração → perfil → correção (inclui as 7 correções da auditoria) |
+
+**Testando um script de shell.** `tests/ler_adc_falso.py` imita a linha de comando do `ler_adc` e grava um `.bin` v2 sintético; o arquivo `cenario` (uma diretiva por chamada: `ok`, `sat_sonda`, `falha`, `truncar`, `travar`, ...) faz cada captura falhar de um jeito específico. É assim que se testa o tratamento de erros do `calibrar_sonda.sh` sem a BeagleBone.
 
 **Escrevendo um teste novo.** `tests/capturas_sinteticas.py` monta `.bin` v1/v2 a partir de sinais em Volts (`escrever_bin`), uma sonda de resposta conhecida (`planta_h`) e pastas de calibração (`criar_pasta_calibracao`). A fixture `cli` (em `conftest.py`) roda `main([...])` no mesmo processo e devolve `(código, stdout, stderr)`. Nenhum teste precisa de hardware.
 
