@@ -79,6 +79,10 @@ def montar_perfil_json(pontos: list[PontoPerfil], args) -> dict:
     }
     if args.modo_referencia == "shunt":
         calibracao_adc["resistencia_shunt_ohms"] = args.resistencia_shunt
+    elif args.modo_referencia == "externa":
+        # referência lida no osciloscópio/multímetro (ver calibracao_sonda.ler_referencia_externa)
+        if args.resistencia_shunt is not None:
+            calibracao_adc["resistencia_shunt_ohms"] = args.resistencia_shunt
     else:
         calibracao_adc["amplitude_referencia_a"] = args.amplitude_referencia
     perfil["calibracao_adc"] = calibracao_adc

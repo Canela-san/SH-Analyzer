@@ -16,9 +16,10 @@ firmware/calibrar_sonda.sh ──▶ capturas/<sonda>/calibracao_*.bin
 scripts/gerar_perfil_sonda.py ──▶ scripts/sondas/<id>.json   (perfil de resposta em frequência da sonda)
                                    │
 scripts/adc_tool.py captura.bin  ──▶ gráfico / espectro (FFT, Welch, picos, bandas) / .csv / .h5
+scripts/medir_captura.py captura.bin ──▶ números para o relatório (ruído, THD, SINAD, ENOB, SFDR, continuidade, diafonia) / .csv
 ```
 
-Todo o código Python vive no **pacote `scripts/supraharmonicos/`**. Os dois arquivos `scripts/adc_tool.py` e `scripts/gerar_perfil_sonda.py` são **entradas finas** (menos de 30 linhas): só chamam `main()` do pacote. Eles mantêm o bloco PEP 723 (`# /// script`), então `uv run scripts/adc_tool.py ...` continua funcionando sem instalar nada.
+Todo o código Python vive no **pacote `scripts/supraharmonicos/`**. Os três arquivos `scripts/adc_tool.py`, `scripts/gerar_perfil_sonda.py` e `scripts/medir_captura.py` são **entradas finas** (menos de 40 linhas): só chamam `main()` do pacote. Eles mantêm o bloco PEP 723 (`# /// script`), então `uv run scripts/adc_tool.py ...` continua funcionando sem instalar nada.
 
 Três ideias organizam tudo:
 
@@ -36,6 +37,7 @@ firmware/                 C/Assembly (ARM + PRU) — fora deste guia — e calib
 scripts/
   adc_tool.py             entrada fina: CLI de análise/conversão/exportação
   gerar_perfil_sonda.py   entrada fina: CLI do gerador de perfis de sonda
+  medir_captura.py        entrada fina: CLI das métricas de captura (para o relatório)
   sondas/*.json           perfis de sonda gerados (dados, não código); a pasta nasce no 1º perfil
   supraharmonicos/        ← TODA a lógica Python (seção 3)
 tests/                    pytest (seção 7)
@@ -67,11 +69,13 @@ Camada = quem pode importar quem (um módulo só importa camadas **menores**).
 | 2 | `espectro` | Janelas, FFT única, Welch, bandas, picos | `calcular_espectro`, `calcular_espectro_welch`, `agrupar_em_bandas`, `encontrar_picos_espectro` |
 | 2 | `conversao` | `.bin` ↔ `.csv` em blocos | `converter_arquivo` |
 | 2 | `hdf5` | `.bin` → `.h5` em blocos (`h5py` importado só ao usar) | `exportar_hdf5` |
+| 2 | `metricas_captura` | Métricas de uma captura, sem I/O: estatística, ruído, tom, THD/SINAD/SNR/ENOB/SFDR, continuidade, diafonia/atraso (FFT única, janela Kaiser β = 14) | `analisar_espectro`, `verificar_continuidade`, `calcular_acoplamento`, `calcular_basicas` |
 | 2 | `contexto` | "O que esta captura é": cabeçalho + canais + calibração + grandeza/sonda por canal, resolvidos uma vez | `ContextoCaptura`, `resolver_contexto` |
 | 3 | `modos` | Os 3 modos do `adc_tool` (plotagem, conversão, HDF5); a plotagem é um pipeline de etapas pequenas | `executar_plotagem`, `executar_conversao`, `executar_exportacao_hdf5` |
-| 3 | `calibracao_sonda` | Medir tons de calibração, ganho vs corrente real, agregar repetições | `medir_tom`, `processar_captura`, `agregar_por_frequencia` |
+| 3 | `calibracao_sonda` | Medir tons de calibração (Welch localiza, FFT única mede), ganho vs corrente real, agregar repetições | `medir_tom`, `processar_captura`, `agregar_por_frequencia` |
 | 4 | `escrita_perfil` | Monta o JSON do perfil, grava com segurança (`.tmp` → validação → `.bak` → troca), gráfico de diagnóstico | `montar_perfil_json`, `gravar_perfil_validado` |
 | 4 | `cli_adc_tool` | **Borda**: flags do `adc_tool` e `main()` | `montar_parser`, `main` |
+| 4 | `cli_medir_captura` | **Borda**: flags do `medir_captura`, saída em texto e CSV (`COLUNAS_CSV`) | `montar_parser`, `main`, `medir_arquivo` |
 | 5 | `cli_gerar_perfil` | **Borda**: flags do gerador e `main()` | `montar_parser`, `main`, `executar_geracao` |
 
 ### Pipeline do modo de plotagem (`modos.executar_plotagem`)
@@ -81,7 +85,7 @@ Cada etapa é uma função pequena e testável; **a ordem importa**:
 ```
 _resolver_frequencia → _validar_parametros → _avisar_combinacoes_arriscadas
 → _carregar_sinal (memmap → volts por canal)
-→ _aplicar_correcao_sondas   ← ANTES de tudo que é espectral
+→ aplicar_correcao_sondas   ← ANTES de tudo que é espectral
 → _aplicar_filtros_usuario   (Butterworth opcional)
 → _resumir_dados → _analisar_fft / _analisar_welch → plotagem.plotar_multicanal
 ```
@@ -175,9 +179,9 @@ O caminho quente é tudo que toca **todas** as amostras de uma captura (dezenas 
 ## 7. Testes
 
 ```bash
-uv run --extra dev pytest                 # tudo: 226 testes (~2 min)
-uv run --extra dev pytest -m "not e2e"    # rápido: 178 testes (~6 s) — use no dia a dia
-uv run --extra dev pytest -m e2e          # só ponta a ponta: 48 testes (~1,5 min)
+uv run --extra dev pytest                 # tudo: 331 testes (~2 min)
+uv run --extra dev pytest -m "not e2e"    # rápido: 262 testes (~10 s) — use no dia a dia
+uv run --extra dev pytest -m e2e          # só ponta a ponta: 69 testes (~1,5 min)
 uv run --extra dev ruff check .
 ```
 
@@ -189,7 +193,8 @@ uv run --extra dev ruff check .
 | `test_sonda.py` | validação do JSON (NaN, ids inseguros, faixa), interpolação, avisos, correção restaura amplitude |
 | `test_dsp.py` | filtros, fundamental, janelas, FFT/Welch, bandas, picos (com sinais de amplitude conhecida) |
 | `test_conversao.py` | round-trip `.bin`↔`.csv`, exportação HDF5 (dados e metadados) |
-| `test_calibracao_sonda.py` | `medir_tom`, resolução de canais, agregação, CLI do gerador |
+| `test_calibracao_sonda.py` | `medir_tom` (amplitude exata com o tom em qualquer posição do bin), resolução de canais, agregação, CLI do gerador (inclusive os modos de 1 canal e `--referencia-externa`) |
+| `test_metricas_captura.py` | `medir_captura`: tom, ruído, THD/SINAD/ENOB/SFDR contra sinais de verdade conhecida, continuidade (amostra removida/duplicada), diafonia/atraso, CLI, CSV, correção de sonda e comparação com instrumento |
 | `test_cli_adc_tool.py` | CLI no mesmo processo: códigos de saída 0/1/2, stdout×stderr, arquivos gerados |
 | `test_contrato_firmware.py` | C ↔ Python: constantes e layout do cabeçalho |
 | `test_arquitetura.py` | camadas sem ciclo, sem `print`/`SystemExit` em biblioteca, matplotlib/h5py confinados, entradas finas |
@@ -217,7 +222,7 @@ Os testes não precisam de hardware nem de arquivos `.bin` do repositório (`*.b
 
 **Adicionar uma flag ao `adc_tool`.** (1) `cli_adc_tool.montar_parser`: declare a flag; (2) leia-a em `modos.py` (ou em `contexto.resolver_contexto` se for sobre "o que é a captura"); (3) valide cedo — antes de abrir a captura — levantando `ErroSHAN`/`ErroUso`; (4) teste em `test_cli_adc_tool.py`; (5) documente em `docs/contexto_projeto.md` (`<pipeline_dsp_python>`).
 
-**Novo tipo de perfil de sonda** (ex.: `polinomio`/`tabela` para temperatura — hoje não implementado). Em `sonda.py`: acrescente o tipo em `TIPOS_PERFIL_SUPORTADOS`, valide os campos em `carregar_perfil_sonda`, trate-o em `PerfilSonda.ganho_em`, e decida em `modos._aplicar_correcao_sondas` a quais grandezas se aplica. Teste em `test_sonda.py`.
+**Novo tipo de perfil de sonda** (ex.: `polinomio`/`tabela` para temperatura — hoje não implementado). Em `sonda.py`: acrescente o tipo em `TIPOS_PERFIL_SUPORTADOS`, valide os campos em `carregar_perfil_sonda`, trate-o em `PerfilSonda.ganho_em`, e decida em `modos.aplicar_correcao_sondas` a quais grandezas se aplica. Teste em `test_sonda.py`.
 
 **Novo campo no cabeçalho do `.bin`.** Firmware (`ler_adc.c`: struct + `CABECALHO_VERSAO`) → `cabecalho._FORMATO_CABECALHO_Vn` e `_CONTAGENS_...` → `CabecalhoArquivo` → fixture (`montar_cabecalho` em `tests/capturas_sinteticas.py`) → rode `test_contrato_firmware.py`, que aponta qualquer divergência de layout. Leitores **nunca** assumem a versão mais nova: o formato antigo continua suportado.
 

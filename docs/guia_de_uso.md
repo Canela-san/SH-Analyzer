@@ -11,9 +11,12 @@ Passo a passo para quem vai **operar** o SH-Analyzer: capturar na BeagleBone, an
 5. [Analisar com `adc_tool.py`](#analisar-com-adc_toolpy)
 6. [FFT ou Welch?](#fft-ou-welch)
 7. [Sondas de corrente: calibração e correção](#sondas-de-corrente-calibração-e-correção)
-8. [O arquivo `.bin`](#o-arquivo-bin)
-9. [Utilitários](#utilitários)
-10. [Problemas comuns](#problemas-comuns)
+8. [Medir uma captura para o relatório: `medir_captura.py`](#medir-uma-captura-para-o-relatório-medir_capturapy)
+9. [O arquivo `.bin`](#o-arquivo-bin)
+10. [Utilitários](#utilitários)
+11. [Problemas comuns](#problemas-comuns)
+
+Indo ao laboratório validar o projeto inteiro? Siga o [`roteiro_laboratorio.md`](roteiro_laboratorio.md): testes numerados, sinal a injetar em cada um, comandos e o que anotar.
 
 > Os comandos `uv run scripts/...` deste guia são executados **a partir da raiz do repositório**, no computador. Os comandos `./setup.sh`, `./ler_adc` e `./calibrar_sonda.sh` são executados **na BeagleBone**, dentro da pasta `firmware/`.
 
@@ -28,6 +31,7 @@ Passo a passo para quem vai **operar** o SH-Analyzer: capturar na BeagleBone, an
 | 3. Transferir | — | `scp` (ou similar) | `.bin` no seu computador |
 | 4. Analisar | Computador | `scripts/adc_tool.py` | Gráficos, lista de picos, CSV ou HDF5 |
 | (extra) Calibrar sonda | BeagleBone + computador | `firmware/calibrar_sonda.sh` → `scripts/gerar_perfil_sonda.py` | Perfil `.json` que corrige a resposta em frequência da sonda |
+| (extra) Medir para o relatório | Computador | `scripts/medir_captura.py` | Números com unidade (ruído, THD, SINAD, ENOB, SFDR, continuidade, diafonia) e uma linha de CSV por canal |
 
 ---
 
@@ -231,20 +235,36 @@ O fluxo tem três passos:
 
 ### Passo 1: coletar os pontos (na BeagleBone)
 
-Monte a bancada: gerador de sinal, um **resistor shunt de precisão** em série com a sonda, o **canal 0** medindo a tensão sobre o shunt (a corrente real é V/R) e o **canal 1** lendo a saída da sonda. Ajuste a amplitude do gerador para o sinal ocupar de ~20% a ~80% da escala do ADC e **mantenha a mesma amplitude em todas as frequências**. Se a sua bancada usa outros canais, passe `--canal-referencia` e `--canal-sonda`.
+Para o perfil, o script precisa saber **qual é a corrente real** em cada frequência. Há três jeitos (escolha um):
+
+| Jeito | Opção do `calibrar_sonda.sh` | Canais por captura | Nyquist por canal | Quando usar |
+|---|---|---|---|---|
+| **Osciloscópio** (recomendado) | `--ref-externa` | **1** (só a saída da sonda) | taxa ÷ 2 | Chega até a banda inteira de supraharmônicos. A cadeia medida é igual à de produção. Você lê a tensão RMS sobre o shunt no osciloscópio a cada ponto e digita |
+| Segundo canal do ADC | `--canal-referencia N` | 2 (sonda e shunt) | taxa ÷ 4 | Sem instrumento externo. O shunt vai a um segundo canal; divide a taxa entre os dois |
+| Corrente constante | (nenhuma das duas) | 1 | taxa ÷ 2 | Você mantém a mesma corrente em todas as frequências (a deriva do gerador entra no perfil) |
+
+**Qual canal?** Por padrão a calibração usa **um canal só**, e o número dele é obrigatório: `--canal-sonda N` (0 a 7; se você esquecer, o script pergunta). É o canal onde a saída da sonda está ligada, o mesmo que você usará em produção: o perfil descreve a cadeia daquele canal.
+
+Monte a bancada: gerador de sinal (com amplificador, se precisar de mais corrente), o condutor atravessando a garra da sonda e um **resistor shunt de precisão e baixa indutância** em série. Com `--ref-externa`, o osciloscópio mede a tensão sobre o shunt (a corrente real é V ÷ R); com `--canal-referencia`, um segundo canal do ADC faz isso. A amplitude pode variar de uma frequência para outra nos dois jeitos com referência (a corrente real é medida a cada ponto); no jeito de corrente constante, ela precisa ser a mesma. Ajuste para o sinal da sonda ocupar ~20% a ~80% da escala do ADC, sem saturar.
 
 Você só diz **quantos pontos** quer, a **taxa de amostragem** do ADC e o **nome da sonda**. O script escolhe as frequências, chama o `ler_adc` para cada uma (com cabeçalho preenchido corretamente), confere o `.bin` e guarda tudo no formato que o `gerar_perfil_sonda.py` lê:
 
 ```bash
 cd firmware
-sudo ./calibrar_sonda.sh --taxa 102400 --pontos 20 --sonda fluke_i30_sn0001
+# 1 canal, referência no osciloscópio, até a banda de supraharmônicos (Nyquist 200 kHz, pontos até 160 kHz):
+sudo ./calibrar_sonda.sh --taxa 400000 --canal-sonda 1 --pontos 24 --freq-max 160k --sonda fluke_i30_sn0001 --ref-externa
+
+# Sem osciloscópio: segundo canal do ADC (canal 0) no shunt; Nyquist por canal = taxa/4
+sudo ./calibrar_sonda.sh --taxa 204800 --canal-sonda 1 --canal-referencia 0 --pontos 20 --sonda fluke_i30_sn0001
 ```
 
 > Se aparecer `Permission denied`, o arquivo está sem permissão de execução: rode `chmod +x calibrar_sonda.sh` uma vez (ou use `sudo bash calibrar_sonda.sh`). Sem nenhuma opção, o script pergunta o que precisa. A taxa aceita `102400`, `102.4k` ou `102,4 kHz`.
 
-**Quais frequências?** O script espalha os pontos em **escala logarítmica** entre 50 Hz e **80% da Nyquist efetiva** (a 102,4 kHz, de 50 Hz a 20,4 kHz), arredondados para valores fáceis de ajustar no gerador, e mostra o plano antes de começar. Escala logarítmica é a escolha padrão porque a resposta de uma sonda varia por décadas de frequência, e depois da primeira rodada o script sugere **pontos extras** onde o ganho mais variou entre vizinhos. Para outra faixa: `--freq-min` e `--freq-max`.
+**Quais frequências?** O script espalha os pontos em **escala logarítmica** entre 50 Hz e **80% da Nyquist efetiva** (com 1 canal a 400 kHz, de 50 Hz a 160 kHz; com 2 canais a 102,4 kHz, de 50 Hz a 20,4 kHz), arredondados para valores fáceis de ajustar no gerador, e mostra o plano antes de começar. Escala logarítmica é a escolha padrão porque a resposta de uma sonda varia por décadas de frequência, e depois da primeira rodada o script sugere **pontos extras** onde o ganho mais variou entre vizinhos. Para outra faixa: `--freq-min` e `--freq-max`.
 
-> **Nyquist efetiva.** A taxa que você informa é a **total**, dividida entre os dois canais: a 102,4 kHz, cada canal é amostrado a 51,2 kHz, e a maior frequência que dá para medir é **taxa ÷ 4 = 25,6 kHz**. O script recusa planos que passem disso e avisa acima de 90% do limite.
+> **Nyquist efetiva.** A taxa que você informa é a **total**, dividida entre os canais da captura. Com **1 canal** (o padrão), ele é amostrado a essa taxa e a maior frequência que dá para medir é **taxa ÷ 2**: a 400 kHz, 200 kHz. Com **2 canais** (`--canal-referencia`), cada um é amostrado à metade da taxa e o limite cai para **taxa ÷ 4**: a 500 kHz (o máximo do ADC), 125 kHz, o que **não cobre** os 150 kHz dos supraharmônicos. Por isso, para calibrar até 150 kHz, use 1 canal e pelo menos ~400 kHz. O script recusa planos a partir de 98% do limite e avisa acima de 90%.
+>
+> **O ADS8688 tem um filtro passa-baixa interno de 2ª ordem em cada canal, com corte de ~15 kHz** (seção 8.3.5 do datasheet). Acima disso o sinal chega ao conversor cada vez menor (algo como −15 a −21 dB em 50 kHz e −33 a −40 dB em 150 kHz, a medir). Por isso o script avisa "sinal fraco" nas frequências altas: é esperado. Mantenha a amplitude no pino do ADC alta (~4 V de pico) para que o sinal ainda fique acima do ruído. O perfil gerado inclui esse filtro, e a correção devolve a amplitude, **amplificando também o ruído** na mesma proporção (+30 dB em 100 kHz).
 
 **Em cada ponto**, o script diz o que fazer:
 
@@ -254,11 +274,11 @@ Ponto 4 de 20  |  129 Hz  |  repetição 1 de 1
   ENTER para medir  |  p = pular este ponto  |  a = abortar:
 ```
 
-Você ajusta o gerador, aperta ENTER e espera ~10 s (um bloco a 102,4 kHz). O script então confere a captura:
+Você ajusta o gerador e aperta ENTER. Com `--ref-externa`, o script pede então a leitura do osciloscópio (`Osciloscópio: tensão RMS no shunt, em V (ex.: 0.1234 ou 123.4m)`); leia o **RMS de ciclos inteiros, com média**, e digite (ENTER sem valor deixa o ponto sem referência, e o gerador de perfil o descarta). A captura leva ~10 s (um bloco a 102,4 kHz). O script então confere a captura:
 
 * **cabeçalho**: taxa, canais, grandeza `corrente` no canal da sonda, id da sonda, CRC-32 e tamanho do arquivo (o `ler_adc` devolve sucesso mesmo quando o disco enche e a captura sai cortada, e só o tamanho revela isso);
 * **saturação** do ADC (mais de 0,05% das amostras no fundo de escala, o mesmo critério que o `gerar_perfil_sonda.py` usa para descartar a captura);
-* **nível do sinal**: sem sinal (gerador desligado, sonda fora do condutor) é erro; sinal fraco é aviso;
+* **nível do sinal**: sem sinal (gerador desligado, sonda fora do condutor, menos de 0,2% da escala pico a pico) é erro; abaixo de 10% da escala é aviso de sinal fraco;
 * **frequência realmente injetada**: se ficou mais de 5% fora do planejado, avisa; mais de 10%, é erro (o gerador está ajustado errado).
 
 Ele mostra o nível de cada canal, a frequência medida e o **ganho relativo ao ponto de menor frequência** (em dB), o que ajuda a perceber na hora uma ligação errada. Depois você escolhe (ENTER aceita a sugestão: `C` se a captura está boa, `R` se tem erro):
@@ -290,6 +310,7 @@ Outras opções úteis: `--repeticoes N` (várias capturas por frequência: o `g
 | Arquivo | Conteúdo |
 |---|---|
 | `calibracao_<FREQ>Hz_rep<N>.bin` | As capturas aceitas, que o `gerar_perfil_sonda.py` lê |
+| `referencia_externa.csv` | Só com `--ref-externa`: `arquivo,v_shunt_rms_V`, a tensão RMS que você digitou em cada ponto |
 | `pontos_coletados.csv` | Histórico de cada ponto: status (`ok`, `ok_com_aviso_...`, `aceito_com_erro_...`, `pulado`, `substituido`) e métricas rápidas |
 | `plano_coleta.txt` | Taxa, canais, repetições e frequências do plano (é o que o `--modo retomar` lê) |
 | `ler_adc.log` | Saída completa do `ler_adc` em cada tentativa |
@@ -301,14 +322,22 @@ Ao terminar, o script mostra a tabela da coleta (frequência medida, nível da s
 
 ### Passo 2: gerar o perfil (no computador)
 
-Copie a pasta `capturas/<id-da-sonda>/` para o computador e rode:
+Copie a pasta `capturas/<id-da-sonda>/` para o computador e rode o comando que corresponde ao jeito que você usou no passo 1:
 
 ```bash
-uv run scripts/gerar_perfil_sonda.py capturas/fluke_i30_sn0001 --resistencia-shunt 0.1 --plot
+# --ref-externa (1 canal + osciloscópio). --resistencia-shunt é o valor EFETIVO do shunt (R/N se o fio deu N voltas na garra)
+uv run scripts/gerar_perfil_sonda.py capturas/fluke_i30_sn0001 --referencia-externa --resistencia-shunt 0.1 --ganho 10 --plot
+
+# --canal-referencia (2 canais): a corrente real vem do segundo canal
+uv run scripts/gerar_perfil_sonda.py capturas/fluke_i30_sn0001 --resistencia-shunt 0.1 --ganho 10 --plot
+
+# Corrente constante em toda a varredura
+uv run scripts/gerar_perfil_sonda.py capturas/fluke_i30_sn0001 --amplitude-referencia 1.0 --ganho 10 --plot
 ```
 
-* `--resistencia-shunt OHMS` (recomendado) calcula a corrente real de cada ponto a partir da tensão medida sobre o shunt, o que absorve a deriva de amplitude do gerador. A alternativa é `--amplitude-referencia A`, para uma corrente constante em toda a varredura.
-* O script **mede** a frequência e a amplitude de cada captura (não confia no nome do arquivo), descarta capturas com sinal fraco demais (SNR abaixo de 20 dB) e avisa se alguma repetição divergir mais de 10%.
+* `--referencia-externa [CSV]` lê o `referencia_externa.csv` da pasta (ou o arquivo que você indicar) e calcula a corrente de pico de cada ponto como `√2 × V_RMS ÷ R`. Pontos sem leitura ficam de fora. Com `--resistencia-shunt` sozinho, a corrente vem do segundo canal da captura. `--amplitude-referencia A` serve para corrente constante.
+* `--ganho` é o fator tensão no pino do ADC → corrente (tipicamente 1 ÷ sensibilidade: sonda de 100 mV/A → `--ganho 10`). O perfil é **relativo** a ele: use o mesmo valor em produção. O script avisa se o ganho na menor frequência ficar fora de 0,7 a 1,3, o que indica um `--ganho` errado.
+* O script **mede** a frequência e a amplitude de cada captura (não confia no nome do arquivo; FFT única da captura inteira, com erro de amplitude < 0,01% em sinais sintéticos), descarta capturas com sinal fraco demais (SNR abaixo de 20 dB) e avisa se alguma repetição divergir mais de 10%.
 * `--plot` salva um PNG com a curva obtida.
 * Use os mesmos `--formato`, `--faixa` e `--ganho` que você usará no `adc_tool.py`; o `adc_tool.py` avisa se forem diferentes.
 
@@ -341,6 +370,29 @@ uv run scripts/adc_tool.py captura.bin --sem-correcao-sonda --welch
 * As exportações CSV/HDF5 não aplicam a correção.
 
 A análise completa dos limites está em [`auditoria_perfil_sonda.md`](auditoria_perfil_sonda.md).
+
+---
+
+## Medir uma captura para o relatório: `medir_captura.py`
+
+O `adc_tool.py` mostra o sinal; o `medir_captura.py` o **mede** e imprime números com unidade, prontos para uma tabela. Serve para caracterizar o ADC (ruído, distorção), conferir a integridade de uma captura e comparar com um osciloscópio.
+
+```bash
+uv run scripts/medir_captura.py captura.bin                          # tudo sobre o maior tom
+uv run scripts/medir_captura.py curto_*.bin --sem-tom --csv res.csv  # só ruído; uma linha de CSV por canal
+uv run scripts/medir_captura.py t.bin --freq 10000 --referencia-rms 1.7654 --referencia-freq 10000.02
+```
+
+O que ele mede, por canal:
+
+* **Estatística**: DC, RMS CA, pico a pico, saturação (acima de 0,05% das amostras no fundo de escala, ele avisa).
+* **Ruído**: densidade (nV/√Hz, pela mediana do espectro) e ruído RMS em LSB.
+* **Tom e distorção**: frequência e amplitude (pico e RMS) do maior pico, THD (até o harmônico `--harmonicos`, padrão 9; os que passam de Nyquist são medidos dobrados e marcados `[alias]`), SINAD, SNR, ENOB (corrigido para um tom abaixo do fundo de escala) e SFDR.
+* **Continuidade**: salto de fase do tom entre segmentos, em amostras equivalentes. Uma amostra perdida ou duplicada vale ~1,0; acima de 0,5 é descontinuidade.
+* **Acoplamento** (2 canais ou mais): diafonia (quanto do tom do canal mais forte aparece nos outros) e atraso entre canais, contra o esperado (`Δposição ÷ taxa total`).
+* **Comparação com instrumento**: `--referencia-rms` (RMS do tom lido no osciloscópio, na unidade do canal) e `--referencia-freq` (Hz, do contador) dão o erro em % e em ppm. `--fs-pru` analisa com a taxa que a PRU de fato gera (`clock ÷ ticks`, que difere da pedida quando 200 MHz ÷ taxa não é inteiro).
+
+Canais de corrente com sonda registrada no cabeçalho são corrigidos pelo perfil antes das métricas, como no `adc_tool.py`. Nesse caso, ruído, SINAD e ENOB **não** descrevem o ADC: use `--sem-correcao-sonda` para caracterizá-lo. O método (FFT única, janela Kaiser β = 14, vazamento abaixo de −110 dBc) e os limites estão em [`arquitetura_software.md`](arquitetura_software.md) e no docstring de `supraharmonicos/metricas_captura.py`; os testes de laboratório que o usam, em [`roteiro_laboratorio.md`](roteiro_laboratorio.md).
 
 ---
 
@@ -394,6 +446,9 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 | `calibrar_sonda.sh`: "captura incompleta (disco cheio?)" | O `ler_adc` devolve sucesso mesmo com o disco cheio, a captura sai cortada | Libere espaço (copie capturas antigas para o computador) e refaça o ponto |
 | `calibrar_sonda.sh`: "saturou o ADC" | Amplitude do gerador (ou corrente) alta demais | Reduza a amplitude e refaça o ponto. Capturas saturadas são descartadas pelo `gerar_perfil_sonda.py` |
 | `calibrar_sonda.sh`: "frequência medida fora da planejada" | Gerador ajustado errado | Corrija a frequência no gerador e refaça o ponto |
-| `calibrar_sonda.sh`: "praticamente sem sinal" | Gerador desligado, shunt/sonda mal ligados ou canal errado | Confira a bancada e os números de `--canal-referencia`/`--canal-sonda` |
+| `calibrar_sonda.sh`: "praticamente sem sinal" | Gerador desligado, shunt/sonda mal ligados ou canal errado | Confira a bancada e o número de `--canal-sonda` (e `--canal-referencia`, se usou) |
+| `calibrar_sonda.sh`: "sinal fraco" nas frequências altas | Filtro passa-baixa de ~15 kHz embutido no ADS8688 | Esperado. Aumente a amplitude no pino do ADC; aceite o ponto (`C`) se ainda tiver ≥ 0,2% da escala |
+| `calibrar_sonda.sh` recusa o plano: "frequência máxima ... Nyquist" | `--freq-max` ≥ 98% da Nyquist efetiva (taxa ÷ 2 com 1 canal, ÷ 4 com 2) | Aumente `--taxa` ou use 1 canal; para 150 kHz, 400 kHz e 1 canal |
+| `gerar_perfil_sonda.py`: ganho na menor frequência fora de [0,7; 1,3] | `--ganho` diferente de 1 ÷ sensibilidade da sonda | Confira o `--ganho` (sonda de 100 mV/A → 10) e o `--resistencia-shunt` |
 
 Se o problema não está aqui, a referência técnica completa está em [`contexto_projeto.md`](contexto_projeto.md).

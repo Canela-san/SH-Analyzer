@@ -3,22 +3,34 @@
 Núcleo "sem CLI" do gerador de perfis (a linha de comando está em
 ``cli_gerar_perfil``). Entrada: a pasta de capturas de UMA sonda
 (``capturas/<sonda>/``), com arquivos ``calibracao_<FREQ>Hz_rep<N>[_vM].bin``
-(2 canais: referência + sonda; grandeza/sonda_id gravados no cabeçalho v2 --
-ver ``firmware/ler_adc.c``) gerados por ``firmware/calibrar_sonda.sh`` e,
-opcionalmente, o manifesto ``pontos_coletados.csv`` (só referência cruzada).
+(grandeza/sonda_id gravados no cabeçalho v2 -- ver ``firmware/ler_adc.c``)
+gerados por ``firmware/calibrar_sonda.sh`` e, opcionalmente, o manifesto
+``pontos_coletados.csv`` (só referência cruzada).
 
 COMO A CORRENTE REAL É CONHECIDA (mutuamente exclusivos):
 
-* modo ``fixa``  -- corrente injetada CONSTANTE em toda a varredura
-  (``--amplitude-referencia``);
-* modo ``shunt`` -- [RECOMENDADO] corrente real por frequência a partir do
-  canal de referência: ``corrente_real(f) = V_shunt_medido(f) / OHMS``.
+* modo ``shunt``   -- corrente real por frequência a partir de um SEGUNDO canal
+  do ADC (referência) ligado ao shunt: ``corrente_real(f) = V_shunt_medido(f) /
+  OHMS``. A captura tem 2 canais (referência + sonda), então a Nyquist efetiva de
+  cada um é ``taxa_total / 4``;
+* modo ``externa`` -- corrente real lida num instrumento externo (osciloscópio,
+  multímetro) a cada ponto e anotada em ``referencia_externa.csv``. A captura
+  tem 1 canal só (a sonda): Nyquist efetiva = ``taxa_total / 2``, o dobro do modo
+  ``shunt``. A cadeia medida fica igual à de produção (um canal só);
+* modo ``fixa``    -- corrente injetada CONSTANTE em toda a varredura
+  (``--amplitude-referencia``); também com 1 canal.
 
-MEDIÇÃO DA FREQUÊNCIA: a frequência de cada ponto é MEDIDA na própria captura
-(pico + interpolação parabólica, o mesmo princípio de ``refinar_pico_parabolico``),
-não copiada do nome do arquivo -- o nome é só uma DICA de onde procurar
-(janela alvo ± tolerância), porque o operador ajusta o gerador à mão e o valor
-nominal pedido nunca é exatamente o injetado.
+Quantos canais há numa captura vem do cabeçalho (ou de ``--canal-sonda``): nos
+modos ``fixa`` e ``externa`` o canal de referência não é lido.
+
+MEDIÇÃO DA FREQUÊNCIA E DA AMPLITUDE: ambas são MEDIDAS na própria captura, não
+copiadas do nome do arquivo -- o nome é só uma DICA de onde procurar (janela alvo
+± tolerância), porque o operador ajusta o gerador à mão e o valor nominal pedido
+nunca é exatamente o injetado. O Welch (flat-top) localiza o tom; a amplitude e a
+frequência finais vêm de uma FFT única da captura inteira (``metricas_captura``),
+que não depende de onde o tom cai no bin. A diferença importa nos modos de 1 canal
+(``externa``/``fixa``), em que a amplitude é absoluta: o erro do Welch + parabólica
+chegava a ~1,8 % e só se cancelava na razão do modo ``shunt``.
 
 SOBRE ``--ganho`` (gotcha de unidades): mesmo significado de ``adc_tool --ganho``
 (fator Volts no pino do ADC -> grandeza física; para a sonda, tipicamente
@@ -27,10 +39,12 @@ relativo a ESSE valor: o perfil só é correto se usado depois, em produção, c
 o MESMO ``--ganho`` no canal da sonda.
 
 Depende de: ``amostras``, ``canais``, ``cabecalho``, ``constantes``, ``espectro``,
-``fundamental``, ``erros``.
+``fundamental``, ``metricas_captura``, ``erros``.
 """
 
+import csv
 import logging
+import math
 import re
 import statistics
 from dataclasses import dataclass
@@ -45,12 +59,18 @@ from .constantes import GRANDEZA_CORRENTE
 from .erros import ErroSHAN
 from .espectro import calcular_espectro_welch
 from .fundamental import refinar_pico_parabolico
+from .metricas_captura import GUARDA_DC, SEMILARGURA_LOBULO, analisar_espectro
 
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constantes
 # ---------------------------------------------------------------------------
+
+# Arquivo (na pasta de capturas) com as leituras do instrumento externo, uma linha por captura:
+# 'arquivo' + 'v_shunt_rms_V' (tensão RMS no shunt, em V -- precisa de --resistencia-shunt) OU
+# 'corrente_rms_A' (corrente RMS, em A). Escrito por firmware/calibrar_sonda.sh --ref-externa.
+NOME_REFERENCIA_EXTERNA = "referencia_externa.csv"
 
 # Mesmo padrão de nome usado por firmware/calibrar_sonda.sh
 # (calibracao_<FREQ>Hz_rep<N>.bin), incluindo a variante "_vM" que
@@ -61,6 +81,7 @@ TOLERANCIA_FREQ_PCT_PADRAO = 10.0
 RESOLUCAO_WELCH_CALIBRACAO_PADRAO = 100.0
 SOBREPOSICAO_WELCH_CALIBRACAO_PADRAO = 0.75  # mais alta que o padrão de adc_tool.py (0.5): aqui não há restrição de tempo real, e mais sobreposição reduz mais a variância da estimativa sobre a mesma captura
 JANELA_CALIBRACAO_PADRAO = "flattop"  # não é o padrão de adc_tool.py (retangular) -- flat-top é a escolha recomendada na literatura de metrologia especificamente para EXATIDÃO DE AMPLITUDE de um tom discreto isolado (ao custo de resolução em frequência, irrelevante aqui: já sabemos a frequência aproximada)
+MAX_AMOSTRAS_REFINO = 1 << 22  # amostras por canal usadas no refinamento por FFT única (limita a memória: ~10 s a 400 kS/s)
 SNR_MINIMO_DB_PADRAO = 20.0  # um 'tom' precisa se destacar do piso de ruído por pelo menos isso, senão é só o maior bin de ruído (ex.: sonda desconectada) -- ver medir_tom()
 DESVIO_ALERTA_PCT = 10.0  # coeficiente de variação do ganho entre repetições acima disso = aviso
 FRACAO_SATURACAO_MAXIMA = 0.0005  # fração de amostras brutas no fundo de escala do ADC (código mínimo/máximo) acima da qual a captura é descartada: uma senoide ceifada tem a amplitude subestimada e distorção harmônica, e o ganho medido dela é lixo
@@ -196,7 +217,35 @@ def medir_tom(sinal: np.ndarray, fs: float, freq_alvo_hz: float, tolerancia_pct:
     resolucao_bin = freqs[1] - freqs[0]
     freq_medida = freqs[idx_pico_global] + delta * resolucao_bin
     amplitude_linear = 10.0 ** (amplitude_db_refinada / 20.0)
+
+    refinado = _refinar_tom_por_fft(sinal, fs, freq_medida, 2.0 * resolucao_bin)
+    if refinado is not None:
+        return refinado
     return freq_medida, amplitude_linear
+
+
+def _refinar_tom_por_fft(sinal: np.ndarray, fs: float, freq_aprox_hz: float,
+                         tolerancia_hz: float) -> tuple[float, float] | None:
+    """(freq, amplitude de pico) do tom perto de 'freq_aprox_hz' por FFT ÚNICA sobre a captura inteira
+    (janela Kaiser beta=14, energia do lóbulo somada: ``metricas_captura.analisar_espectro``), ou None
+    se não der para refinar (captura curta, tom perto demais do DC, ou o pico achado não é o mesmo
+    do Welch) -- aí vale a estimativa do Welch.
+
+    Por que refinar: o Welch de ~100 Hz de resolução acha o tom, mas a interpolação parabólica sobre
+    o lóbulo largo e achatado da flat-top erra a amplitude em até ~1,8 % (e a frequência em até ~14 Hz)
+    quando o tom não cai no centro de um bin -- do tamanho da incerteza do osciloscópio, e erro de
+    software que não deveria entrar no perfil. A soma da energia do lóbulo é exata para qualquer
+    posição do tom (Parseval; ver o docstring de ``metricas_captura``)."""
+    n = min(len(sinal), MAX_AMOSTRAS_REFINO)
+    if freq_aprox_hz * n / fs < GUARDA_DC + SEMILARGURA_LOBULO + 2:
+        return None
+    try:
+        espectro = analisar_espectro(sinal[:n], fs, freq_dica=freq_aprox_hz, num_harmonicos=1)
+    except ErroSHAN:
+        return None
+    if not espectro.tem_tom or abs(espectro.freq_tom_hz - freq_aprox_hz) > tolerancia_hz:
+        return None
+    return espectro.freq_tom_hz, espectro.amplitude_pico
 
 
 # ---------------------------------------------------------------------------
@@ -209,14 +258,43 @@ class PontoMedido:
     freq_alvo_hz: float          # só a "dica" (nome do arquivo/manifesto) -- não é a frequência de verdade
     freq_medida_hz: float        # medida de verdade, ver medir_tom()
     amplitude_sonda: float       # já na grandeza física do canal (--ganho aplicado -- ver docstring do módulo)
-    amplitude_referencia: float | None  # idem, canal de referência; None se não foi lido (modo --amplitude-referencia)
+    amplitude_referencia: float | None  # idem, canal de referência; None se não foi lido (modos fixa/externa)
+    corrente_externa_pico_a: float | None = None  # modo externa: corrente de PICO lida no instrumento externo (A); preenchida pelo CLI
 
 
-def resolver_canais(cabecalho, canal_referencia_cli: int | None, canal_sonda_cli: int | None) -> tuple[int, int]:
+def resolver_canais(cabecalho, canal_referencia_cli: int | None, canal_sonda_cli: int | None,
+                    exige_referencia: bool = True) -> tuple[int | None, int]:
     """Decide qual canal é referência e qual é sonda. Prioridade: flags
-    explícitas > detecção automática pelo cabeçalho v2 (grandeza==CORRENTE
-    == sonda; o outro canal == referência, exige exatamente 2 canais na
-    captura)."""
+    explícitas > detecção automática pelo cabeçalho v2.
+
+    ``exige_referencia=True`` (modo ``shunt``): a captura precisa ter o canal de
+    referência; a detecção automática exige exatamente 2 canais, com um deles de
+    grandeza=corrente (== sonda; o outro == referência).
+
+    ``exige_referencia=False`` (modos ``fixa``/``externa``): só o canal da sonda
+    importa e o retorno é ``(canal_referencia_ou_None, canal_sonda)``. Com 1 canal
+    no cabeçalho, ele é a sonda; com mais, a sonda é o único de grandeza=corrente
+    (ou o dado por ``--canal-sonda``). A referência só aparece se vier de
+    ``--canal-referencia``."""
+    if not exige_referencia:
+        if canal_sonda_cli is not None:
+            return canal_referencia_cli, canal_sonda_cli
+        if cabecalho is None or cabecalho.versao_cabecalho < 2:
+            raise ErroSHAN(
+                "captura sem cabeçalho v2 (com grandeza por canal) -- "
+                "informe --canal-sonda explicitamente."
+            )
+        if cabecalho.num_canais == 1:
+            return canal_referencia_cli, cabecalho.lista_canais[0]
+        indices_corrente = [i for i, g in enumerate(cabecalho.grandeza_por_canal[:cabecalho.num_canais])
+                            if g == GRANDEZA_CORRENTE]
+        if len(indices_corrente) != 1:
+            raise ErroSHAN(
+                f"captura com {cabecalho.num_canais} canais e {len(indices_corrente)} marcado(s) como "
+                f"corrente no cabeçalho -- não sei qual é a sonda; informe --canal-sonda."
+            )
+        return canal_referencia_cli, cabecalho.lista_canais[indices_corrente[0]]
+
     if canal_referencia_cli is not None and canal_sonda_cli is not None:
         return canal_referencia_cli, canal_sonda_cli
     if cabecalho is None or cabecalho.versao_cabecalho < 2:
@@ -249,38 +327,45 @@ def processar_captura(caminho: Path, freq_alvo_hz: float, modo_referencia: str,
                        tolerancia_pct: float, nome_janela: str, resolucao_hz: float,
                        sobreposicao: float, snr_minimo_db: float = SNR_MINIMO_DB_PADRAO,
                        frequencia_cli: float | None = None) -> PontoMedido | None:
-    """Carrega 'caminho', calibra os 2 canais em Volts/Amperes e mede o
-    tom em cada um. Devolve None (com aviso já impresso) em vez de lançar
-    exceção, para um arquivo ruim não derrubar o lote inteiro."""
+    """Carrega 'caminho', calibra o(s) canal(is) em Volts/Amperes e mede o
+    tom em cada um (sonda e, no modo ``shunt``, referência). Devolve None (com
+    aviso já impresso) em vez de lançar exceção, para um arquivo ruim não
+    derrubar o lote inteiro."""
     cabecalho = ler_cabecalho(caminho)
     offset_amostras = CABECALHO_TAMANHO_TOTAL if cabecalho is not None else 0
 
+    usa_referencia = modo_referencia == "shunt"
     try:
-        canal_ref, canal_sonda = resolver_canais(cabecalho, canal_referencia_cli, canal_sonda_cli)
+        canal_ref, canal_sonda = resolver_canais(cabecalho, canal_referencia_cli, canal_sonda_cli,
+                                                 exige_referencia=usa_referencia)
     except ErroSHAN as e:
         log.warning(f"pulando '{caminho.name}' -- {e}")
         return None
+    if not usa_referencia:
+        canal_ref = None  # nesses modos o canal de referência (se a captura tiver um) não é lido
 
     # Ordem de intercalação no arquivo = a lista de canais do cabeçalho (canais
     # habilitados em ordem CRESCENTE de número, imposta pelo ADS8688, ver
-    # ler_adc.c). Sem cabeçalho (captura legada), assume exatamente os 2
-    # canais pedidos, em ordem crescente. Usar a lista do cabeçalho -- e não
+    # ler_adc.c). Sem cabeçalho (captura legada), assume exatamente os canais
+    # pedidos, em ordem crescente. Usar a lista do cabeçalho -- e não
     # sempre "os 2 canais" -- importa quando --canal-referencia/--canal-sonda
-    # são forçados numa captura com MAIS de 2 canais: desintercalar e a
+    # são forçados numa captura com MAIS canais: desintercalar e a
     # frequência efetiva (fs_total/n_canais) precisam do número REAL de
     # canais intercalados. As listas de calibração (--faixa/--ganho/--offset)
     # são indexadas por PAPEL, na ordem documentada [referencia, sonda],
     # independente de qual canal tem o número menor -- senão, uma sonda num
     # canal de número menor que o da referência trocaria os valores de papel
-    # em silêncio.
-    if canal_ref == canal_sonda:
+    # em silêncio. Sem canal de referência (1 canal), só o valor do papel
+    # "sonda" é usado; um único número em --faixa/--ganho vale para os dois.
+    if canal_ref is not None and canal_ref == canal_sonda:
         log.warning(f"pulando '{caminho.name}' -- canal de referência e de sonda são o mesmo ({canal_ref}).")
         return None
+    papeis = [("referência", canal_ref), ("sonda", canal_sonda)] if canal_ref is not None else [("sonda", canal_sonda)]
     if cabecalho is not None and cabecalho.num_canais > 0:
-        canais = list(cabecalho.lista_canais)
+        canais = list(cabecalho.lista_canais[:cabecalho.num_canais])
     else:
-        canais = sorted([canal_ref, canal_sonda])
-    ausentes = [c for c in (canal_ref, canal_sonda) if c not in canais]
+        canais = sorted(c for _, c in papeis)
+    ausentes = [c for _, c in papeis if c not in canais]
     if ausentes:
         log.warning(f"pulando '{caminho.name}' -- canal(is) {ausentes} não está(ão) na lista de canais da captura {canais}.")
         return None
@@ -294,7 +379,7 @@ def processar_captura(caminho: Path, freq_alvo_hz: float, modo_referencia: str,
         log.warning(f"pulando '{caminho.name}' -- {e}")
         return None
 
-    por_canal_bruto = desintercalar(amostras, canais, [canal_ref, canal_sonda])
+    por_canal_bruto = desintercalar(amostras, canais, [c for _, c in papeis])
     # Frequência TOTAL de amostragem: cabeçalho (sempre, quando existe) >
     # -f/--frequencia (captura legada sem cabeçalho) > erro claro. Mesma
     # hierarquia de adc_tool.py.
@@ -310,9 +395,9 @@ def processar_captura(caminho: Path, freq_alvo_hz: float, modo_referencia: str,
         return None
     fs_efetiva = fs_total / len(canais)
 
-    # Saturação do ADC (código mínimo/máximo) em qualquer um dos 2 canais.
+    # Saturação do ADC (código mínimo/máximo) em qualquer um dos canais lidos.
     limite_inf, limite_sup = (0, 65535) if formato == "uint16" else (-32768, 32767)
-    for papel, canal_papel in (("referência", canal_ref), ("sonda", canal_sonda)):
+    for papel, canal_papel in papeis:
         codigos = por_canal_bruto[canal_papel]
         fracao_saturada = float(np.count_nonzero((codigos <= limite_inf) | (codigos >= limite_sup))) / max(1, len(codigos))
         if fracao_saturada > FRACAO_SATURACAO_MAXIMA:
@@ -324,9 +409,11 @@ def processar_captura(caminho: Path, freq_alvo_hz: float, modo_referencia: str,
             )
             return None
 
-    sinal_ref_v = converter_para_tensao(
-        por_canal_bruto[canal_ref], faixas[0], ganhos[0], formato, offsets[0]
-    )
+    sinal_ref_v = None
+    if canal_ref is not None:
+        sinal_ref_v = converter_para_tensao(
+            por_canal_bruto[canal_ref], faixas[0], ganhos[0], formato, offsets[0]
+        )
     sinal_sonda_v = converter_para_tensao(
         por_canal_bruto[canal_sonda], faixas[1], ganhos[1], formato, offsets[1]
     )
@@ -344,7 +431,7 @@ def processar_captura(caminho: Path, freq_alvo_hz: float, modo_referencia: str,
 
     amplitude_referencia = None
     freq_medida = freq_medida_sonda
-    if modo_referencia == "shunt":
+    if usa_referencia:
         resultado_ref = medir_tom(sinal_ref_v, fs_efetiva, freq_alvo_hz, tolerancia_pct,
                                    nome_janela, resolucao_hz, sobreposicao, snr_minimo_db)
         if resultado_ref is None:
@@ -364,6 +451,70 @@ def processar_captura(caminho: Path, freq_alvo_hz: float, modo_referencia: str,
         arquivo=caminho, freq_alvo_hz=freq_alvo_hz, freq_medida_hz=freq_medida,
         amplitude_sonda=amplitude_sonda, amplitude_referencia=amplitude_referencia,
     )
+
+
+# ---------------------------------------------------------------------------
+# Referência externa (modo 'externa'): leituras do osciloscópio/multímetro
+# ---------------------------------------------------------------------------
+
+def ler_referencia_externa(caminho: Path, resistencia_shunt: float | None) -> dict[str, float]:
+    """Lê ``referencia_externa.csv`` e devolve ``{nome_do_arquivo: corrente_RMS_em_A}``.
+
+    Colunas: ``arquivo`` e UMA entre ``corrente_rms_A`` (A, RMS) e ``v_shunt_rms_V``
+    (tensão RMS no shunt, em V -- convertida com ``resistencia_shunt``). Aceita ``,`` ou
+    ``;`` como separador (planilhas em pt-BR salvam com ``;`` e vírgula decimal) e
+    ignora linhas em branco e comentários (``#``). Se um arquivo aparece mais de uma
+    vez, vale a ÚLTIMA linha (``calibrar_sonda.sh`` só acrescenta quando você refaz um
+    ponto); uma linha SEM valor anula a leitura anterior daquele arquivo. Valor ausente, não numérico ou não positivo é erro: uma leitura digitada
+    errada viraria um ganho errado em silêncio."""
+    if not caminho.is_file():
+        raise ErroSHAN(
+            f"não encontrei o arquivo de referência externa '{caminho}'. Ele é escrito por "
+            f"'calibrar_sonda.sh --ref-externa' (uma linha por captura: arquivo,v_shunt_rms_V) "
+            f"ou pode ser criado à mão com esse formato."
+        )
+    linhas = [ln for ln in caminho.read_text(encoding="utf-8-sig").splitlines()
+              if ln.strip() and not ln.lstrip().startswith("#")]
+    if not linhas:
+        raise ErroSHAN(f"'{caminho.name}' está vazio.")
+    delimitador = ";" if ";" in linhas[0] else ","
+    leitor = csv.DictReader(linhas, delimiter=delimitador)
+    colunas = [c.strip() for c in (leitor.fieldnames or [])]
+    leitor.fieldnames = colunas
+    if "arquivo" not in colunas:
+        raise ErroSHAN(f"'{caminho.name}' precisa de uma coluna 'arquivo' (colunas encontradas: {colunas}).")
+    if "corrente_rms_A" in colunas:
+        coluna, converter = "corrente_rms_A", lambda v: v
+    elif "v_shunt_rms_V" in colunas:
+        if resistencia_shunt is None or resistencia_shunt <= 0:
+            raise ErroSHAN(
+                f"'{caminho.name}' traz a tensão no shunt (v_shunt_rms_V): informe --resistencia-shunt "
+                f"com a resistência dele, em ohms, para converter em corrente."
+            )
+        coluna, converter = "v_shunt_rms_V", lambda v: v / resistencia_shunt
+    else:
+        raise ErroSHAN(
+            f"'{caminho.name}' precisa de uma coluna 'v_shunt_rms_V' (tensão RMS no shunt, V) "
+            f"ou 'corrente_rms_A' (corrente RMS, A); encontradas: {colunas}."
+        )
+
+    correntes: dict[str, float] = {}
+    for linha in leitor:
+        arquivo = (linha.get("arquivo") or "").strip()
+        texto = (linha.get(coluna) or "").strip()
+        if not arquivo:
+            continue
+        if not texto:
+            correntes.pop(arquivo, None)   # linha em branco = leitura anulada (ponto refeito sem nova leitura)
+            continue
+        try:
+            valor = float(texto.replace(",", ".")) if delimitador == ";" else float(texto)
+        except ValueError:
+            raise ErroSHAN(f"'{caminho.name}': valor '{texto}' de '{arquivo}' não é um número.") from None
+        if not math.isfinite(valor) or valor <= 0:
+            raise ErroSHAN(f"'{caminho.name}': o valor de '{arquivo}' ({texto}) precisa ser um número positivo.")
+        correntes[arquivo] = converter(valor)
+    return correntes
 
 
 # ---------------------------------------------------------------------------
@@ -404,9 +555,11 @@ def agregar_por_frequencia(pontos: list[PontoMedido], modo_referencia: str,
         for p in grupo:
             if modo_referencia == "fixa":
                 corrente_real = amplitude_referencia_fixa
+            elif modo_referencia == "externa":
+                corrente_real = p.corrente_externa_pico_a
             else:
                 corrente_real = p.amplitude_referencia / resistencia_shunt
-            if corrente_real <= 0:
+            if corrente_real is None or corrente_real <= 0:
                 log.warning(f"descartando '{p.arquivo.name}' -- corrente de referência calculada <= 0.")
                 continue
             ganhos.append(p.amplitude_sonda / corrente_real)

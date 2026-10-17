@@ -120,3 +120,20 @@ def captura_producao(caminho: Path, sonda_id: str = "sonda_teste", grandeza_cana
     v_sonda = v_sonda + rng.normal(0, 5e-4, n)
     v_tensao = 3.25 * np.sin(2 * np.pi * 50 * t) + rng.normal(0, 5e-4, n)
     return escrever_bin(caminho, [v_tensao, v_sonda], (0, 1), (0, grandeza_canal1), ("", sonda_id))
+
+
+def criar_pasta_calibracao_1canal(pasta: Path, freqs=FREQS_CAL, canal: int = 3, corrente_a: float = 1.0,
+                                  nome_sonda: str = "sonda_teste", com_referencia_externa: bool = True,
+                                  fs_total: int = 200_000) -> Path:
+    """Pasta no formato de ``calibrar_sonda.sh`` com UM canal só (a sonda) e, opcionalmente, o
+    ``referencia_externa.csv`` com a tensão RMS lida "no osciloscópio" sobre o shunt (``R_SHUNT``)."""
+    pasta.mkdir(parents=True, exist_ok=True)
+    linhas = ["arquivo,v_shunt_rms_V"]
+    for k, f in enumerate(freqs):
+        _, v_sonda = captura_calibracao(f, seed=2000 + k, fs_canal=float(fs_total))
+        nome = f"calibracao_{f}Hz_rep1.bin"
+        escrever_bin(pasta / nome, [v_sonda * corrente_a], (canal,), (1,), (nome_sonda,), fs_total=fs_total)
+        linhas.append(f"{nome},{R_SHUNT * corrente_a / np.sqrt(2):.6f}")
+    if com_referencia_externa:
+        (pasta / "referencia_externa.csv").write_text("\n".join(linhas) + "\n", encoding="utf-8")
+    return pasta

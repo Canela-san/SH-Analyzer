@@ -14,7 +14,7 @@ except ModuleNotFoundError:  # Python 3.10 (o mínimo suportado): tomllib só ex
 
 RAIZ = Path(__file__).resolve().parents[1]
 SCRIPTS = RAIZ / "scripts"
-ENTRADAS = ["adc_tool.py", "gerar_perfil_sonda.py"]
+ENTRADAS = ["adc_tool.py", "gerar_perfil_sonda.py", "medir_captura.py"]
 
 
 def nome_e_spec(requisito: str) -> tuple[str, str]:

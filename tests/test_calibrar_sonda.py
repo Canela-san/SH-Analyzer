@@ -8,6 +8,8 @@ entra um FALSO (``ler_adc_falso.py``) que grava ``.bin`` v2 sintéticos e sabe s
   saturação que o script usa batem com o firmware (C) e com o Python;
 * o fluxo do operador: coleta nova, refazer um ponto ruim, opção inválida no menu, pular e
   retomar, refazer um ponto já aceito, adensar e refinar;
+* os dois jeitos de capturar: 2 canais (sonda + referência no shunt; Nyquist efetiva = taxa/4) e
+  1 canal (só a sonda, com a leitura do osciloscópio digitada a cada ponto; Nyquist = taxa/2);
 * que o que o script produz é exatamente o que ``gerar_perfil_sonda.py`` consome.
 
 Marcados ``e2e`` (rodam bash e processos Python; ~1 min no total). Só funcionam em Linux com
@@ -81,8 +83,16 @@ class Bancada:
         (self.sim / "contador").unlink(missing_ok=True)
         (self.sim / "chamadas.log").unlink(missing_ok=True)
 
-    def rodar(self, *args, entradas: str = "", extra_env: dict | None = None) -> tuple[int, str]:
-        """Roda o script. ``entradas`` = respostas do operador (linhas); depois vêm só ENTERs."""
+    def rodar(self, *args, entradas: str = "", extra_env: dict | None = None, canais: bool = True,
+              eof: bool = False) -> tuple[int, str]:
+        """Roda o script. ``entradas`` = respostas do operador (linhas); depois vêm só ENTERs
+        (ou, com ``eof=True``, a entrada acaba logo após ``entradas``).
+
+        ``canais=True`` acrescenta ``--canal-sonda 1 --canal-referencia 0`` (captura de 2 canais) quando
+        os argumentos não trazem ``--canal-sonda``; ``canais=False`` não acrescenta nada."""
+        args = [str(a) for a in args]
+        if canais and not {"--canal-sonda", "-c"} & set(args):
+            args = ["--canal-sonda", "1", "--canal-referencia", "0", *args]
         env = {
             **os.environ,
             "SIM_DIR": str(self.sim),
@@ -92,8 +102,8 @@ class Bancada:
             **(extra_env or {}),
         }
         proc = subprocess.run(
-            ["bash", str(SCRIPT), "--pasta", str(self.capturas), *map(str, args)],
-            input=entradas + "\n" * 400, capture_output=True, text=True, env=env, timeout=600,
+            ["bash", str(SCRIPT), "--pasta", str(self.capturas), *args],
+            input=entradas if eof else entradas + "\n" * 400, capture_output=True, text=True, env=env, timeout=600,
         )
         return proc.returncode, proc.stderr + proc.stdout
 
@@ -122,6 +132,17 @@ def coleta_base(tmp_path_factory):
     """Uma coleta nova de 3 pontos, feita UMA vez; cada teste que precisa dela trabalha numa cópia."""
     b = Bancada(tmp_path_factory.mktemp("coleta_base"))
     rc, saida = b.rodar("--taxa", "102.4k", "--pontos", 3, "--sonda", SONDA, "-y")
+    assert rc == 0, saida
+    return b
+
+
+@pytest.fixture(scope="module")
+def coleta_1canal(tmp_path_factory):
+    """Coleta de 1 canal (só a sonda, no canal 3) com 3 pontos e a leitura do osciloscópio de cada um."""
+    b = Bancada(tmp_path_factory.mktemp("coleta_1canal"))
+    por_ponto = "\n0.7071\n\n"   # ENTER (medir), leitura do osciloscópio, ENTER (aceitar)
+    rc, saida = b.rodar("--taxa", TAXA, "--pontos", 3, "--sonda", SONDA, "--canal-sonda", 3, "--ref-externa", "-y",
+                        entradas=por_ponto * 3)
     assert rc == 0, saida
     return b
 
@@ -190,7 +211,11 @@ def test_codigos_e_limites_do_script_batem_com_firmware_e_python():
         (["--taxa", "600000", "--sonda", "x"], "entre 1 e 500000"),
         (["--taxa", "102400", "--sonda", "x", "--pontos", "1"], "entre 2 e 500"),
         (["--taxa", "102400", "--sonda", "x", "--freq-max", "30k"], "Nyquist efetiva"),
+        (["--taxa", "102400", "--sonda", "x", "--canal-sonda", "1", "--freq-max", "51k"], "abaixo de 98%"),
+        (["--taxa", "102400", "--sonda", "x", "--canal-sonda", "1", "--canal-referencia", "0", "--freq-max", "25.2k"], "abaixo de 98%"),
         (["--taxa", "102400", "--sonda", "x", "--canal-referencia", "1", "--canal-sonda", "1"], "não podem ser o mesmo"),
+        (["--taxa", "102400", "--sonda", "x", "--canal-sonda", "8"], "entre 0 e 7"),
+        (["--taxa", "102400", "--sonda", "x", "--canal-sonda", "1", "--canal-referencia", "0", "--ref-externa"], "captura de 1 canal"),
         (["--taxa", "102400", "--sonda", "s" * 40], "no máximo 31"),
         (["--taxa", "102400", "--sonda", "///"], "nenhum caractere válido"),
         (["--taxa", "102400", "--sonda", "x", "--modo", "xyz"], "Modo desconhecido"),
@@ -410,3 +435,156 @@ def test_novo_sobre_pasta_existente_pede_decisao(com_coleta):
     arquivadas = list((com_coleta.capturas / "_arquivadas").glob(f"{SONDA}_*"))
     assert len(arquivadas) == 1 and len(list(arquivadas[0].glob("calibracao_*.bin"))) == 3
     assert len(com_coleta.bins()) == 2
+
+
+# --------------------------------------------------------------------------------------
+# Captura de 1 canal (padrão): só a sonda, Nyquist efetiva = taxa/2
+# --------------------------------------------------------------------------------------
+@com_e2e
+def test_um_canal_vai_ate_perto_da_nyquist_inteira_e_o_cabecalho_tem_so_a_sonda(bancada):
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 3, "--pontos", 3, "--freq-min", 1000, "--freq-max", 50000,
+                              "--sonda", SONDA, "-y")
+    assert rc == 0, saida
+    assert "passa de 90% da Nyquist efetiva (51200.0 Hz)" in saida  # 50 kHz = 97,7%: permitido, mas avisa
+    assert [m["status"] for m in bancada.manifesto()] == ["ok"] * 3  # inclusive o ponto de 50 kHz (2,05 amostras por ciclo)
+    assert sorted(int(n.split("_")[1].removesuffix("Hz")) for n in bancada.bins())[-1] == 50000
+    for nome in bancada.bins():
+        h = cab.ler_cabecalho(bancada.pasta() / nome)
+        assert h.crc32_valido and h.frequencia_hz == TAXA
+        assert h.num_canais == 1 and list(h.lista_canais[:1]) == [3]
+        assert h.grandeza_por_canal[0] == 1 and h.sonda_id_por_canal[0] == SONDA
+    # o ler_adc recebeu UM canal só
+    assert all(f":: {TAXA} 3 --blocos" in linha for linha in bancada.chamadas())
+    assert "referência" not in "\n".join(re.findall(r"Canais:.*", saida)) and "Corrente real:       CONSTANTE" in saida
+
+
+@com_e2e
+def test_plano_de_um_canal_passa_do_limite_dos_dois_canais(bancada):
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 20, "--sonda", SONDA, entradas="n\n")
+    assert rc == 0 and "Cancelado antes de iniciar" in saida
+    freqs = [int(f) for f in re.search(r"Frequências \(Hz\):\s+([\d ]+)", saida).group(1).split()]
+    assert TAXA / 4 < freqs[-1] < 0.9 * TAXA / 2  # 40,9 kHz: 80% de taxa/2 (com 2 canais seriam 20,4 kHz)
+    assert "Nyquist efetiva 51200.0 Hz" in saida
+
+
+@com_e2e
+@pytest.mark.parametrize(
+    ("diretiva", "mensagem"),
+    [
+        ("crc_ruim", "CRC-32 do cabeçalho não confere"),
+        ("sonda_errada", "id da sonda no cabeçalho"),
+        ("grandeza_tensao", "não está marcado como 'corrente'"),
+        ("truncar", "captura incompleta"),
+        ("sat_sonda", "canal da sonda (1) saturou"),
+        ("sem_sinal_sonda", "sem sinal no canal da sonda"),
+        ("freq_errada", "fora da planejada"),
+    ],
+)
+def test_um_canal_detecta_os_mesmos_defeitos(bancada, diretiva, mensagem):
+    bancada.cenario(diretiva, "ok", "ok")
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", SONDA, "-y")
+    assert rc == 0
+    assert mensagem in saida
+    assert len(bancada.chamadas()) == 3
+    assert len(bancada.bins()) == 2 and all(m["status"] == "ok" for m in bancada.manifesto())
+
+
+@com_e2e
+def test_ref_externa_pede_a_leitura_valida_a_entrada_e_grava_o_csv(bancada):
+    # ponto 1: ENTER (medir), 'abc' (inválida), 707.1m (milivolts), ENTER (aceita); ponto 2: leitura em volts
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 3, "--pontos", 2, "--sonda", SONDA, "--ref-externa", "-y",
+                              entradas="\nabc\n707.1m\n\n\n0,7071\n\n")
+    assert rc == 0, saida
+    assert "Valor inválido: 'abc'" in saida and "Leitura do osciloscópio: 0.7071 V RMS no shunt" in saida
+    linhas = (bancada.pasta() / "referencia_externa.csv").read_text().splitlines()
+    assert linhas[0] == "arquivo,v_shunt_rms_V" and len(linhas) == 3
+    assert [ln.split(",")[1] for ln in linhas[1:]] == ["0.7071", "0.7071"]
+    assert [m["ref_externa_v_rms"] for m in bancada.manifesto()] == ["0.7071", "0.7071"]
+    assert "--referencia-externa --resistencia-shunt" in saida  # o comando sugerido para gerar o perfil
+
+
+@com_e2e
+def test_ref_externa_sem_leitura_avisa_e_deixa_o_ponto_de_fora_do_perfil(bancada, cli, tmp_path):
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 3, "--pontos", 2, "--sonda", SONDA, "--ref-externa", "-y",
+                              entradas="\n0.7071\n\n\n\n\n")  # ponto 2 sem leitura (ENTER)
+    assert rc == 0, saida
+    assert "Sem leitura para este ponto" in saida and "1 captura(s) sem leitura do osciloscópio" in saida
+    rc, _, err = cli(gerar_perfil, bancada.pasta(), "--referencia-externa", "--resistencia-shunt", 1, "-o", tmp_path / "p.json")
+    assert rc == 1 and "sem leitura do instrumento externo" in err  # sobrou 1 ponto: precisa de 2
+
+
+@com_e2e
+def test_um_canal_e_ref_externa_servem_de_entrada_para_gerar_perfil_sonda(coleta_1canal, tmp_path, cli):
+    b = coleta_1canal
+    assert [m["status"] for m in b.manifesto()] == ["ok"] * 3
+    saida_json = tmp_path / "perfil.json"
+    # shunt de 1 ohm: a leitura digitada (0,7071 V RMS) = 1 A de pico; o ler_adc falso gera H(f) V na sonda
+    rc, _, err = cli(gerar_perfil, b.pasta(), "--referencia-externa", "--resistencia-shunt", 1, "-o", saida_json)
+    assert rc == 0, err
+    pontos = json.loads(saida_json.read_text())["pontos"]
+    assert len(pontos) == 3
+    for p in pontos:
+        assert p["ganho"] == pytest.approx(float(planta_h(p["freq_hz"])), rel=0.02)
+    # e a corrente constante informada à mão dá o mesmo perfil
+    rc, _, err = cli(gerar_perfil, b.pasta(), "--amplitude-referencia", 1, "-o", tmp_path / "p2.json")
+    assert rc == 0, err
+    for p in json.loads((tmp_path / "p2.json").read_text())["pontos"]:
+        assert p["ganho"] == pytest.approx(float(planta_h(p["freq_hz"])), rel=0.02)
+
+
+@com_e2e
+def test_refazer_com_ref_externa_nao_herda_a_leitura_antiga(com_coleta_1canal):
+    b = com_coleta_1canal
+    nome = b.bins()[0]
+    antes = (b.pasta() / "referencia_externa.csv").read_text()
+    # refaz o 1º ponto SEM digitar leitura (ENTER): a leitura antiga daquele arquivo tem que ser anulada
+    freq = nome.split("_")[1].removesuffix("Hz")
+    rc, saida = b.rodar("--modo", "refazer", "--freqs", freq, "--sonda", SONDA, "-y", canais=False, entradas="\n\n\n")
+    assert rc == 0, saida
+    depois = (b.pasta() / "referencia_externa.csv").read_text()
+    assert depois.startswith(antes) and depois.splitlines()[-1] == f"{nome},"
+    assert "1 captura(s) sem leitura do osciloscópio" in saida
+
+
+@pytest.fixture
+def com_coleta_1canal(coleta_1canal, tmp_path):
+    b = Bancada(tmp_path)
+    shutil.copytree(coleta_1canal.capturas, b.capturas)
+    return b
+
+
+@com_e2e
+def test_sem_canal_da_sonda_o_script_pergunta(bancada):
+    # respostas: canal 2; referência: opção 2 (corrente constante, 1 canal); depois só ENTERs
+    rc, saida = bancada.rodar("--taxa", TAXA, "--pontos", 2, "--sonda", SONDA, "-y", canais=False, entradas="2\n2\n")
+    assert rc == 0, saida
+    assert "Como o script vai saber a corrente real" in saida  # (o prompt do read não aparece com stdin em pipe)
+    h = cab.ler_cabecalho(bancada.pasta() / bancada.bins()[0])
+    assert h.num_canais == 1 and list(h.lista_canais[:1]) == [2]
+
+
+@com_e2e
+def test_sem_canal_da_sonda_e_sem_resposta_da_erro_claro(bancada):
+    rc, saida = bancada.rodar("--taxa", TAXA, "--pontos", 2, "--sonda", SONDA, "-y", canais=False, eof=True)
+    assert rc != 0 and "--canal-sonda" in saida
+    assert bancada.chamadas() == []
+
+
+@com_e2e
+def test_retomar_herda_os_canais_do_plano(coleta_1canal, tmp_path):
+    b = Bancada(tmp_path)
+    shutil.copytree(coleta_1canal.capturas, b.capturas)
+    (b.pasta() / b.bins()[0]).unlink()   # falta 1 ponto
+    rc, saida = b.rodar("--modo", "retomar", "--sonda", SONDA, "-y", canais=False, entradas="\n0.7071\n\n")
+    assert rc == 0, saida
+    assert len(b.bins()) == 3 and f":: {TAXA} 3 --blocos" in b.chamadas()[0]   # canal 3, sem referência, vindo do plano
+    assert "Faltam 1 captura" in saida
+
+
+@com_e2e
+def test_retomar_com_canais_diferentes_do_plano_e_recusado(coleta_1canal):
+    antes = coleta_1canal.chamadas()
+    rc, saida = coleta_1canal.rodar("--modo", "retomar", "--sonda", SONDA, "--canal-sonda", 1, "--canal-referencia", 0, "-y",
+                                    canais=False)
+    assert rc != 0 and "Canais diferentes dos do plano" in saida
+    assert coleta_1canal.chamadas() == antes  # nada novo foi medido

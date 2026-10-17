@@ -156,7 +156,7 @@ def executar_plotagem(args: argparse.Namespace, ctx: ContextoCaptura) -> None:
     sinal = _carregar_sinal(args, ctx)
     por_canal_tensao = sinal.por_canal_tensao
 
-    grandeza_por_canal_exibir = _aplicar_correcao_sondas(args, ctx, por_canal_tensao, fs_efetiva)
+    grandeza_por_canal_exibir = aplicar_correcao_sondas(args, ctx, por_canal_tensao, fs_efetiva)
     _aplicar_filtros_usuario(args, ctx, por_canal_tensao, fs_efetiva)
     _resumir_dados(args, ctx, sinal, frequencia_total, fs_efetiva)
 
@@ -286,9 +286,9 @@ def _carregar_sinal(args: argparse.Namespace, ctx: ContextoCaptura) -> SinalCarr
     return SinalCarregado(por_canal_tensao, idx_inicio, idx_fim, total, tipo_arquivo)
 
 
-def _aplicar_correcao_sondas(args: argparse.Namespace, ctx: ContextoCaptura,
-                             por_canal_tensao: dict[int, np.ndarray],
-                             fs_efetiva: float) -> dict[int, int]:
+def aplicar_correcao_sondas(args: argparse.Namespace, ctx: ContextoCaptura,
+                            por_canal_tensao: dict[int, np.ndarray],
+                            fs_efetiva: float) -> dict[int, int]:
     """Correção dependente de frequência, canal a canal (modifica 'por_canal_tensao').
 
     Aplicada ANTES do filtro Butterworth opcional do usuário e de qualquer
