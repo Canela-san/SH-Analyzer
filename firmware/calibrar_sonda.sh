@@ -26,15 +26,28 @@
 #
 # BANCADA ESPERADA
 #   Gerador de sinal -> resistor shunt de precisão em série com a sonda sob
-#   calibração. O canal de REFERÊNCIA (padrão 0) mede a tensão sobre o shunt
-#   (corrente real = V/R, calculada depois em gerar_perfil_sonda.py) e o canal
-#   da SONDA (padrão 1) lê a saída da sonda. Mude com --canal-referencia e
-#   --canal-sonda. Ajuste a amplitude do gerador para o sinal ocupar de ~20% a
-#   ~80% da escala do ADC e MANTENHA-A em todas as frequências.
+#   calibração. A saída da SONDA vai para o canal do ADC dado em --canal-sonda (é
+#   obrigatório dizer qual). A corrente REAL (a que passa pelo shunt) pode ser
+#   conhecida de três jeitos -- só muda o que você faz na bancada; o perfil é gerado
+#   depois por scripts/gerar_perfil_sonda.py:
+#
+#     1 canal + osciloscópio (--ref-externa)  [RECOMENDADO]  o osciloscópio mede a tensão
+#        RMS sobre o shunt e você digita a leitura a cada ponto. Só um canal do ADC é
+#        capturado, então a Nyquist efetiva vai até taxa/2 (o dobro do modo de 2 canais)
+#        e a cadeia medida é a mesma da produção.
+#     1 canal, corrente constante (padrão sem outras opções)  você garante que a
+#        amplitude da corrente é a mesma em todas as frequências (informada depois em
+#        gerar_perfil_sonda.py --amplitude-referencia). Também taxa/2.
+#     2 canais (--canal-referencia R)  um SEGUNDO canal do ADC mede a tensão sobre o
+#        shunt (corrente real = V/R, calculada depois). Sem digitar nada, mas a taxa
+#        total é dividida entre os 2 canais: Nyquist efetiva = taxa/4.
+#
+#   Ajuste a amplitude do gerador para o sinal ocupar de ~20% a ~80% da escala do ADC.
 #
 # USO
 #   sudo ./calibrar_sonda.sh                      # modo interativo (pergunta tudo)
-#   sudo ./calibrar_sonda.sh --taxa 102400 --pontos 20 --sonda fluke_i30_sn0001
+#   sudo ./calibrar_sonda.sh --taxa 102400 --canal-sonda 1 --pontos 20 --sonda fluke_i30_sn0001 --ref-externa
+#   sudo ./calibrar_sonda.sh --taxa 102400 --canal-sonda 1 --canal-referencia 0 --pontos 20 --sonda fluke_i30_sn0001
 #   sudo ./calibrar_sonda.sh --modo retomar --sonda fluke_i30_sn0001
 #   sudo ./calibrar_sonda.sh --modo refinar --sonda fluke_i30_sn0001
 #   sudo ./calibrar_sonda.sh --modo refazer --freqs 200,1000 --sonda fluke_i30_sn0001
@@ -55,12 +68,15 @@
 #   calibracao_<FREQ>Hz_rep<N>.bin   capturas aceitas (é o que gerar_perfil_sonda.py lê)
 #   pontos_coletados.csv             manifesto: HISTÓRICO de cada ponto (status e métricas rápidas)
 #   plano_coleta.txt                 taxa, canais, repetições e frequências do plano
+#   referencia_externa.csv           (só com --ref-externa) leituras do osciloscópio, uma por captura
 #   ler_adc.log                      saída completa do ler_adc (útil se algo falhar)
 #   descartadas/                     capturas substituídas pelo modo refazer (nunca apagadas)
 #   (capturas/_arquivadas/           coletas antigas que você mandou "começar do zero")
 #
 # DEPOIS DA COLETA (no computador, a partir da raiz do repositório)
-#   uv run scripts/gerar_perfil_sonda.py capturas/<id> --resistencia-shunt <ohms> --plot
+#   2 canais:            uv run scripts/gerar_perfil_sonda.py capturas/<id> --resistencia-shunt <ohms> --plot
+#   1 canal + scope:     uv run scripts/gerar_perfil_sonda.py capturas/<id> --referencia-externa --resistencia-shunt <ohms> --plot
+#   1 canal, constante:  uv run scripts/gerar_perfil_sonda.py capturas/<id> --amplitude-referencia <A_de_pico> --plot
 #
 # DECISÕES DE PROJETO (leia antes de mexer)
 #   * SEM Python/interpretador externo: só bash + utilitários padrão do Debian
@@ -80,8 +96,10 @@
 #     teclado: o here-string substitui o stdin de TODO o laço (ver coletar_pares).
 #   * O menu de escolha é um laço SEPARADO do laço de medição: uma opção inválida
 #     nunca dispara uma nova medição.
-#   * A Nyquist é a EFETIVA POR CANAL: com 2 canais, a taxa total é dividida entre
-#     eles, então o limite é taxa/(2*2) = taxa/4.
+#   * A Nyquist é a EFETIVA POR CANAL: a taxa total é dividida entre os canais
+#     capturados, então o limite é taxa/(2*canais): taxa/2 com 1 canal (padrão),
+#     taxa/4 com 2. O script recusa frequências a partir de 98% da Nyquist e avisa
+#     acima de 90%.
 #   * As checagens rápidas (saturação, nível, frequência) são para dar feedback
 #     imediato ao operador; a medição de verdade (Welch, SNR, ganho) é do
 #     gerar_perfil_sonda.py.
@@ -116,6 +134,7 @@ fi
 # =============================================================================
 readonly NOME_MANIFESTO="pontos_coletados.csv"
 readonly NOME_PLANO="plano_coleta.txt"
+readonly NOME_REFERENCIA_EXTERNA="referencia_externa.csv"
 readonly NOME_LOG="ler_adc.log"
 readonly ESPACO_MINIMO_MB=50
 
@@ -123,15 +142,18 @@ readonly ESPACO_MINIMO_MB=50
 readonly PADRAO_PONTOS=20
 readonly PADRAO_FREQ_MIN=50            # Hz
 readonly FRACAO_NYQUIST_PADRAO="0.8"   # freq. máxima padrão = 80% da Nyquist efetiva
+readonly FRACAO_NYQUIST_AVISO="0.9"    # acima disto: aviso (aliasing/vazamento perto do limite)
+readonly FRACAO_NYQUIST_MAXIMA="0.98"  # a partir disto: erro (o tom encosta na sua imagem espelhada)
 readonly PADRAO_REPETICOES=1
 readonly PADRAO_BLOCOS=1               # 1 bloco = SAMPLES_PER_BUFFER amostras (~10 s a 102,4 kHz)
 
-# A captura de calibração usa SEMPRE 2 canais (referência + sonda).
-readonly NUM_CANAIS_CAPTURA=2
+# Canais capturados: 1 (só a sonda; padrão) ou 2 (sonda + referência no shunt). Definido por
+# definir_canais() a partir de --canal-sonda / --canal-referencia (ou do plano salvo).
+NUM_CANAIS_CAPTURA=1
 
 # Limites de qualidade das checagens rápidas (ver analisar_rapido/avaliar_qualidade).
 readonly SATURACAO_MAXIMA="0.0005"     # fração de amostras no fundo de escala (= gerar_perfil_sonda.py)
-readonly PP_SEM_SINAL_PCT=1            # pico-a-pico abaixo disto (% da escala): praticamente sem sinal
+readonly PP_SEM_SINAL_PCT=0.2          # pico-a-pico abaixo disto (% da escala): praticamente sem sinal (o ruído do ADC é ~0,03%; o filtro de 15 kHz do ADS8688 derruba as frequências altas em 30-40 dB, então o limite tem de ser baixo)
 readonly PP_FRACO_PCT=10               # abaixo disto: sinal fraco, SNR ruim
 readonly FREQ_DESVIO_AVISO_PCT=5       # frequência medida difere da planejada: aviso
 readonly FREQ_DESVIO_ERRO_PCT=10       # ... e erro (gerar_perfil_sonda.py só procura o tom em ±10%)
@@ -167,8 +189,11 @@ readonly LER_ADC
 
 # Parâmetros (preenchidos pela linha de comando, pelo plano salvo ou por perguntas).
 PASTA_BASE="capturas"
-CANAL_REFERENCIA=0
-CANAL_SONDA=1
+CANAL_REFERENCIA=""        # vazio = captura de 1 canal (sem canal de referência no ADC)
+CANAL_SONDA=""             # obrigatório (--canal-sonda; senão o script pergunta)
+CANAL_REF_INFORMADO=0      # 1 se --canal-referencia veio da linha de comando
+REF_EXTERNA=0              # 1 = a cada ponto, anotar a leitura do osciloscópio (só com 1 canal)
+LISTA_CANAIS=""            # "<sonda>" ou "<ref>,<sonda>", para o ler_adc
 TAXA=""
 PONTOS=""
 SONDA_BRUTA=""
@@ -189,6 +214,7 @@ ARQUIVO_EM_CAPTURA=""   # temporário em uso (limpo se o script for interrompido
 SESSAO_ACEITOS=0
 SESSAO_PULADOS=0
 LOG_LINHAS_ANTES=0      # linhas do ler_adc.log antes da captura atual (para mostrar só a saída dela)
+REF_VALOR=""            # leitura do osciloscópio (V RMS no shunt) do ponto em andamento
 SUBSTITUIR_EXISTENTES=0 # 1 no modo refazer: a captura aceita substitui (arquiva) a antiga
 
 # =============================================================================
@@ -248,7 +274,10 @@ corretamente) e confere cada .bin. Sem opções, pergunta o que precisa.
 
 Principais:
   -t, --taxa HZ          Taxa de amostragem TOTAL do ADC (1-500000), ex.: 102400 ou
-                         102.4k. Com 2 canais, cada canal é amostrado a taxa/2.
+                         102.4k. Com 1 canal (padrão) ele é amostrado a essa taxa
+                         (Nyquist = taxa/2); com 2 canais, cada um a taxa/2 (Nyquist = taxa/4).
+  -c, --canal-sonda N    Canal do ADC (0-7) onde a saída da SONDA está ligada. Obrigatório
+                         (se faltar, o script pergunta).
   -n, --pontos N         Quantidade de frequências do plano (padrão ${PADRAO_PONTOS}).
                          No modo refinar: quantos pontos EXTRAS coletar.
   -s, --sonda ID         Identificador da sonda (ex.: fluke_i30_sn0001, até 31
@@ -256,7 +285,8 @@ Principais:
 
 Plano de frequências:
       --freq-min HZ      Menor frequência (padrão ${PADRAO_FREQ_MIN} Hz).
-      --freq-max HZ      Maior frequência (padrão: 80% da Nyquist efetiva, taxa/4 x 0,8).
+      --freq-max HZ      Maior frequência (padrão: 80% da Nyquist efetiva de cada canal; o
+                         script recusa 98% ou mais e avisa acima de 90%).
   -r, --repeticoes N     Capturas por frequência (padrão ${PADRAO_REPETICOES}).
   -b, --blocos N         Blocos por captura (padrão ${PADRAO_BLOCOS}; 1 bloco ~ 10 s a 102,4 kHz).
 
@@ -265,9 +295,16 @@ Modo:
                          (veja o cabeçalho deste script ou o docs/guia_de_uso.md).
   -f, --freqs LISTA      Frequências a medir de novo (modo refazer), ex.: "200,1000".
 
-Bancada e saída:
-      --canal-referencia N   Canal que mede a tensão sobre o shunt (padrão ${CANAL_REFERENCIA}).
-      --canal-sonda N        Canal que lê a saída da sonda (padrão ${CANAL_SONDA}).
+Referência da corrente real (como o perfil vai saber a corrente que a sonda mediu):
+      --ref-externa          1 canal + osciloscópio: a cada ponto o script pede a tensão RMS
+                             lida sobre o shunt e grava em ${NOME_REFERENCIA_EXTERNA}
+                             (use depois: gerar_perfil_sonda.py --referencia-externa).
+      --canal-referencia N   2 canais: um SEGUNDO canal do ADC mede a tensão sobre o shunt.
+                             Divide a taxa entre os canais (Nyquist efetiva = taxa/4).
+      (nenhuma das duas)     1 canal, corrente constante: você mantém a amplitude igual em
+                             todas as frequências (gerar_perfil_sonda.py --amplitude-referencia).
+
+Saída:
       --pasta DIR            Pasta base das capturas (padrão: ./capturas).
   -y, --sim              Não pede confirmação do plano (você ainda ajusta o
                          gerador a cada ponto).
@@ -275,8 +312,9 @@ Bancada e saída:
   -h, --help             Esta ajuda.
 
 Exemplos:
-  sudo ./calibrar_sonda.sh --taxa 102400 --pontos 20 --sonda fluke_i30_sn0001
-  sudo ./calibrar_sonda.sh --taxa 102400 --pontos 12 --freq-min 100 --freq-max 15000 --sonda minha_sonda
+  sudo ./calibrar_sonda.sh --taxa 102400 --canal-sonda 1 --pontos 20 --sonda fluke_i30_sn0001 --ref-externa
+  sudo ./calibrar_sonda.sh --taxa 400000 --canal-sonda 1 --pontos 24 --freq-max 160k --sonda minha_sonda
+  sudo ./calibrar_sonda.sh --taxa 204800 --canal-sonda 1 --canal-referencia 0 --pontos 20 --sonda minha_sonda
   sudo ./calibrar_sonda.sh --modo retomar --sonda fluke_i30_sn0001
   sudo ./calibrar_sonda.sh --modo refinar --pontos 4 --sonda fluke_i30_sn0001
   sudo ./calibrar_sonda.sh --modo refazer --freqs 200,1000 --sonda fluke_i30_sn0001
@@ -305,8 +343,9 @@ parse_args() {
             -b|--blocos)       exigir_valor "$@"; BLOCOS="$2"; shift 2 ;;
             -m|--modo)         exigir_valor "$@"; MODO="${2,,}"; shift 2 ;;
             -f|--freqs)        exigir_valor "$@"; FREQS_ALVO="$2"; shift 2 ;;
-            --canal-referencia) exigir_valor "$@"; CANAL_REFERENCIA="$2"; shift 2 ;;
-            --canal-sonda)     exigir_valor "$@"; CANAL_SONDA="$2"; shift 2 ;;
+            --canal-referencia) exigir_valor "$@"; CANAL_REFERENCIA="$2"; CANAL_REF_INFORMADO=1; shift 2 ;;
+            -c|--canal-sonda)  exigir_valor "$@"; CANAL_SONDA="$2"; shift 2 ;;
+            --ref-externa)     REF_EXTERNA=1; shift ;;
             --pasta)           exigir_valor "$@"; PASTA_BASE="$2"; shift 2 ;;
             -y|--sim)          ASSUMIR_SIM=1; shift ;;
             -v|--verboso)      VERBOSO=1; shift ;;
@@ -518,9 +557,32 @@ normalizar_hz() {
     }'
 }
 
+# Converte uma leitura de tensão ("0.1234", "123,4m", "123.4 mV", "0.12 V") em Volts. Imprime o
+# valor e retorna 0; retorna 1 (sem imprimir) se não for um número positivo.
+normalizar_tensao() {
+    local t
+    t="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+    t="${t//,/.}"
+    awk -v t="$t" 'BEGIN {
+        mult = 1
+        if (t ~ /mv$/) { mult = 0.001; sub(/mv$/, "", t) }
+        else if (t ~ /m$/) { mult = 0.001; sub(/m$/, "", t) }
+        else if (t ~ /v$/) sub(/v$/, "", t)
+        if (t !~ /^[0-9]+(\.[0-9]+)?$/ && t !~ /^\.[0-9]+$/) exit 1
+        v = t * mult
+        if (v <= 0) exit 1
+        printf "%.6g", v
+    }'
+}
+
 # Nyquist EFETIVA por canal: a taxa total é dividida entre os NUM_CANAIS_CAPTURA canais.
 nyquist_efetiva() {
     awk -v t="$1" -v n="$NUM_CANAIS_CAPTURA" 'BEGIN { printf "%.1f", t / (2 * n) }'
+}
+
+# Fração da Nyquist efetiva ($2, ex.: 0.98) em Hz, para a taxa $1.
+fracao_da_nyquist() {
+    awk -v t="$1" -v n="$NUM_CANAIS_CAPTURA" -v fr="$2" 'BEGIN { printf "%.1f", fr * t / (2 * n) }'
 }
 
 # Retorna 0 (verdadeiro) se $1 < $2, comparando como números.
@@ -576,15 +638,16 @@ unir_frequencias() { printf '%s\n' "$@" | sort -n -u; }
 # =============================================================================
 # 7. Plano, manifesto e arquivos já capturados
 # =============================================================================
-readonly CABECALHO_MANIFESTO="frequencia_hz,repeticao,arquivo,timestamp,status,freq_medida_hz,pp_ref_pct,pp_sonda_pct,razao_rms"
+readonly CABECALHO_MANIFESTO="frequencia_hz,repeticao,arquivo,timestamp,status,freq_medida_hz,pp_ref_pct,pp_sonda_pct,razao_rms,ref_externa_v_rms"
 
 salvar_plano() {
     local arquivo="${PASTA_SONDA}/${NOME_PLANO}"
     {
         echo "# Plano de coleta do calibrar_sonda.sh (editado automaticamente; pode ser lido, não precisa ser editado)"
         echo "taxa=${TAXA}"
-        echo "canal_referencia=${CANAL_REFERENCIA}"
         echo "canal_sonda=${CANAL_SONDA}"
+        echo "canal_referencia=${CANAL_REFERENCIA}"
+        echo "ref_externa=${REF_EXTERNA}"
         echo "repeticoes=${REPETICOES}"
         echo "blocos=${BLOCOS}"
         echo "frequencias=${PLANO_FREQS[*]}"
@@ -613,8 +676,24 @@ carregar_plano() {
     fi
     v="$(valor_do_plano repeticoes)";       [ -z "$REPETICOES" ] && REPETICOES="$v"
     v="$(valor_do_plano blocos)";           [ -z "$BLOCOS" ] && BLOCOS="$v"
-    v="$(valor_do_plano canal_referencia)"; [ -n "$v" ] && [ "$CANAL_REFERENCIA" = "0" ] && CANAL_REFERENCIA="$v"
-    v="$(valor_do_plano canal_sonda)";      [ -n "$v" ] && [ "$CANAL_SONDA" = "1" ] && CANAL_SONDA="$v"
+    # Canais: sem --canal-sonda na linha de comando, herda tudo do plano; com ele, a linha de
+    # comando vence e qualquer diferença em relação ao plano pede confirmação (como a taxa).
+    local plano_sonda plano_ref plano_ext
+    plano_sonda="$(valor_do_plano canal_sonda)"
+    plano_ref="$(valor_do_plano canal_referencia)"
+    plano_ext="$(valor_do_plano ref_externa)"
+    if [ -n "$plano_sonda" ]; then
+        if [ -z "$CANAL_SONDA" ]; then
+            CANAL_SONDA="$plano_sonda"
+            [ "$CANAL_REF_INFORMADO" -eq 0 ] && CANAL_REFERENCIA="$plano_ref"
+        elif [ "$CANAL_SONDA" != "$plano_sonda" ] || [ "$CANAL_REFERENCIA" != "$plano_ref" ]; then
+            log_aviso "A coleta desta sonda foi planejada com sonda no canal ${plano_sonda}${plano_ref:+ e referência no canal ${plano_ref}}, mas você pediu sonda no canal ${CANAL_SONDA}${CANAL_REFERENCIA:+ e referência no canal ${CANAL_REFERENCIA}}. Misturar configurações no mesmo perfil costuma ser engano."
+            [ "$ASSUMIR_SIM" -eq 1 ] && erro_fatal "Canais diferentes dos do plano. Remova --canal-sonda/--canal-referencia para usar os do plano."
+            ler_confirmacao usar "Usar os canais pedidos mesmo assim?" n
+            [ "$usar" = "n" ] && { log_aviso "Cancelado."; exit 0; }
+        fi
+        [ "$REF_EXTERNA" -eq 0 ] && [ "$plano_ext" = "1" ] && [ -z "$CANAL_REFERENCIA" ] && REF_EXTERNA=1
+    fi
     v="$(valor_do_plano frequencias)"
     PLANO_FREQS=()
     if [ -n "$v" ]; then
@@ -629,12 +708,38 @@ inicializar_manifesto() {
     [ -f "$caminho" ] || echo "$CABECALHO_MANIFESTO" > "$caminho"
 }
 
-# registrar_manifesto FREQ REP ARQUIVO STATUS FREQ_MEDIDA PP_REF PP_SONDA RAZAO
+# registrar_manifesto FREQ REP ARQUIVO STATUS FREQ_MEDIDA PP_REF PP_SONDA RAZAO REF_EXTERNA
 registrar_manifesto() {
     local ts
     ts="$(date '+%Y-%m-%dT%H:%M:%S%z')"
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$1" "$2" "$3" "$ts" "$4" "${5:-}" "${6:-}" "${7:-}" "${8:-}" \
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$1" "$2" "$3" "$ts" "$4" "${5:-}" "${6:-}" "${7:-}" "${8:-}" "${9:-}" \
         >> "${PASTA_SONDA}/${NOME_MANIFESTO}"
+}
+
+# Anota a leitura do osciloscópio de uma captura aceita em referencia_externa.csv (o arquivo que o
+# gerar_perfil_sonda.py --referencia-externa lê; vale a ÚLTIMA linha de cada arquivo). Sem leitura
+# ($2 vazio), só acrescenta uma linha em branco se o arquivo JÁ tinha leitura (ponto refeito): assim
+# uma leitura antiga nunca é herdada por uma captura nova de mesmo nome.
+registrar_referencia_externa() {
+    local arquivo="$1" valor="${2:-}" csv="${PASTA_SONDA}/${NOME_REFERENCIA_EXTERNA}"
+    if [ -z "$valor" ]; then
+        if [ -f "$csv" ] && grep -q "^${arquivo}," "$csv"; then printf '%s,\n' "$arquivo" >> "$csv"; fi
+        return 0
+    fi
+    [ -f "$csv" ] || echo "arquivo,v_shunt_rms_V" > "$csv"
+    printf '%s,%s\n' "$arquivo" "$valor" >> "$csv"
+}
+
+# Capturas aceitas (em disco) SEM leitura externa válida, uma por linha.
+capturas_sem_leitura_externa() {
+    local csv="${PASTA_SONDA}/${NOME_REFERENCIA_EXTERNA}" f
+    [ -d "$PASTA_SONDA" ] || return 0
+    while read -r f; do
+        [ -z "$f" ] && continue
+        if [ ! -f "$csv" ] || ! awk -F, -v a="$f" '$1 == a { v = $2 } END { exit !(v != "") }' "$csv"; then
+            echo "$f"
+        fi
+    done < <(find "$PASTA_SONDA" -maxdepth 1 -type f -name 'calibracao_*Hz_rep*.bin' -printf '%f\n' 2>/dev/null | sort)
 }
 
 # Capturas JÁ presentes em disco (a fonte de verdade, a mesma que o gerar_perfil_sonda.py
@@ -719,41 +824,51 @@ validar_cabecalho() {
         qc_erro "o CRC-32 do cabeçalho não confere (arquivo corrompido ou truncado)" crc
     fi
 
-    local freq num_canais pos_ref pos_sonda c0 c1 esperado0 esperado1
+    local freq num_canais pos_ref pos_sonda c0 c1 esperado0 esperado1 achado esperado
     freq="$(ler_u32 "$arq" "$CAB_OFF_FREQUENCIA")"
     if [ "$freq" != "$TAXA" ]; then
         qc_erro "o cabeçalho registra ${freq} Hz de taxa, mas o pedido foi ${TAXA} Hz" taxa
     fi
 
+    # A lista de canais do cabeçalho vem em ordem CRESCENTE (a do ADS8688), não na ordem pedida.
     num_canais="$(ler_u32 "$arq" "$CAB_OFF_NUM_CANAIS")"
     c0="$(ler_u8 "$arq" "$CAB_OFF_LISTA_CANAIS")"
-    c1="$(ler_u8 "$arq" "$((CAB_OFF_LISTA_CANAIS + 1))")"
-    if [ "$CANAL_REFERENCIA" -lt "$CANAL_SONDA" ]; then
-        esperado0="$CANAL_REFERENCIA"; esperado1="$CANAL_SONDA"; pos_ref=0; pos_sonda=1
+    if [ -z "$CANAL_REFERENCIA" ]; then
+        esperado0="$CANAL_SONDA"; pos_ref=-1; pos_sonda=0
+        achado="${c0}"; esperado="${esperado0}"
+        c1=""; esperado1=""
     else
-        esperado0="$CANAL_SONDA"; esperado1="$CANAL_REFERENCIA"; pos_ref=1; pos_sonda=0
+        c1="$(ler_u8 "$arq" "$((CAB_OFF_LISTA_CANAIS + 1))")"
+        if [ "$CANAL_REFERENCIA" -lt "$CANAL_SONDA" ]; then
+            esperado0="$CANAL_REFERENCIA"; esperado1="$CANAL_SONDA"; pos_ref=0; pos_sonda=1
+        else
+            esperado0="$CANAL_SONDA"; esperado1="$CANAL_REFERENCIA"; pos_ref=1; pos_sonda=0
+        fi
+        achado="${c0},${c1}"; esperado="${esperado0},${esperado1}"
     fi
     if [ "$num_canais" != "$NUM_CANAIS_CAPTURA" ] || [ "$c0" != "$esperado0" ] || [ "$c1" != "$esperado1" ]; then
-        qc_erro "canais no cabeçalho: ${num_canais} (${c0},${c1}); esperado ${NUM_CANAIS_CAPTURA} (${esperado0},${esperado1})" canais
+        qc_erro "canais no cabeçalho: ${num_canais} (${achado}); esperado ${NUM_CANAIS_CAPTURA} (${esperado})" canais
         return
     fi
 
     local g_sonda g_ref id_sonda id_ref
     g_sonda="$(ler_u8 "$arq" "$((CAB_OFF_GRANDEZA + pos_sonda))")"
-    g_ref="$(ler_u8 "$arq" "$((CAB_OFF_GRANDEZA + pos_ref))")"
     if [ "$g_sonda" != "$GRANDEZA_CORRENTE" ]; then
         qc_erro "o canal ${CANAL_SONDA} (sonda) não está marcado como 'corrente' no cabeçalho (código ${g_sonda})" grandeza
     fi
-    if [ "$g_ref" != "$GRANDEZA_TENSAO" ]; then
-        qc_aviso "o canal ${CANAL_REFERENCIA} (referência) não está marcado como 'tensão' no cabeçalho (código ${g_ref})" grandeza_ref
-    fi
     id_sonda="$(ler_texto "$arq" "$((CAB_OFF_SONDA_ID + pos_sonda * CAB_TAM_SONDA_ID))" "$CAB_TAM_SONDA_ID")"
-    id_ref="$(ler_texto "$arq" "$((CAB_OFF_SONDA_ID + pos_ref * CAB_TAM_SONDA_ID))" "$CAB_TAM_SONDA_ID")"
     if [ "$id_sonda" != "$SONDA_ID" ]; then
         qc_erro "id da sonda no cabeçalho é '${id_sonda}'; esperado '${SONDA_ID}'" sonda_id
     fi
-    if [ -n "$id_ref" ]; then
-        qc_aviso "o canal de referência tem uma sonda registrada ('${id_ref}'), o que não era esperado" sonda_ref
+    if [ "$pos_ref" -ge 0 ]; then
+        g_ref="$(ler_u8 "$arq" "$((CAB_OFF_GRANDEZA + pos_ref))")"
+        id_ref="$(ler_texto "$arq" "$((CAB_OFF_SONDA_ID + pos_ref * CAB_TAM_SONDA_ID))" "$CAB_TAM_SONDA_ID")"
+        if [ "$g_ref" != "$GRANDEZA_TENSAO" ]; then
+            qc_aviso "o canal ${CANAL_REFERENCIA} (referência) não está marcado como 'tensão' no cabeçalho (código ${g_ref})" grandeza_ref
+        fi
+        if [ -n "$id_ref" ]; then
+            qc_aviso "o canal de referência tem uma sonda registrada ('${id_ref}'), o que não era esperado" sonda_ref
+        fi
     fi
 
     local spb bytes_amostra blocos total esperado_total esperado_tamanho
@@ -778,27 +893,32 @@ validar_cabecalho() {
 #   fmed_ref fmed_sonda pp_ref_pct pp_sonda_pct rms_ref rms_sonda sat_ref sat_sonda razao_rms
 # (fmed = frequência medida por cruzamentos de zero com histerese; pp = pico-a-pico em %
 # da escala de 16 bits; sat = fração de amostras no fundo de escala; razao = rms_sonda /
-# rms_ref). Não é a medição de verdade (essa é o Welch do gerar_perfil_sonda.py), só um
-# feedback imediato para o operador.
+# rms_ref com 2 canais, ou o próprio rms_sonda com 1). Sem canal de referência ($2 = -1), os
+# campos da referência saem 0. Não é a medição de verdade (essa é o Welch do
+# gerar_perfil_sonda.py), só um feedback imediato para o operador.
+#
+# $4 = frequência planejada: define a histerese do detector de cruzamentos. Perto da Nyquist
+# há só 2 a 5 amostras por ciclo e uma histerese de 10% da amplitude perderia ciclos inteiros;
+# acima de 20% da taxa por canal ela cai para 3% (que ainda enxerga todo ciclo até ~49%).
 analisar_rapido() {
-    local arq="$1" pos_ref="$2" pos_sonda="$3" fs_canal
+    local arq="$1" pos_ref="$2" pos_sonda="$3" freq_plano="$4" fs_canal
     fs_canal="$(awk -v t="$TAXA" -v n="$NUM_CANAIS_CAPTURA" 'BEGIN { printf "%.6f", t / n }')"
     od -An -v -tu2 -w32 -j "$((CAB_TAMANHO + AMOSTRAS_IGNORADAS_INICIO * 2))" -N "$((AMOSTRAS_ANALISE_RAPIDA * 2))" "$arq" \
-        | awk -v fs="$fs_canal" -v pr="$pos_ref" -v ps="$pos_sonda" '
+        | awk -v fs="$fs_canal" -v nc="$NUM_CANAIS_CAPTURA" -v pr="$pos_ref" -v ps="$pos_sonda" -v fp="$freq_plano" '
     function analisa(pos,   j, x, s, ss, mn, mx, rail, mean, rms, amp, h, arm, prev, cruz, t, tf, tl) {
         s = 0; ss = 0; mn = 1e9; mx = -1; rail = 0
         for (j = 0; j < m; j++) {
-            x = v[2 * j + pos]; s += x; ss += x * x
+            x = v[nc * j + pos]; s += x; ss += x * x
             if (x < mn) mn = x
             if (x > mx) mx = x
             if (x <= 1 || x >= 65534) rail++
         }
         mean = s / m; rms = ss / m - mean * mean; rms = (rms > 0) ? sqrt(rms) : 0
-        amp = (mx - mn) / 2; h = 0.1 * amp
+        amp = (mx - mn) / 2; h = hfrac * amp
         arm = 0; cruz = 0; prev = v[pos]; tf = 0; tl = 0
         if (amp >= 20) {
             for (j = 1; j < m; j++) {
-                x = v[2 * j + pos]
+                x = v[nc * j + pos]
                 if (x < mean - h) arm = 1
                 else if (arm && prev <= mean && x > mean) {
                     t = (j - 1) + (mean - prev) / (x - prev)
@@ -815,11 +935,17 @@ analisar_rapido() {
     }
     { for (i = 1; i <= NF; i++) v[n++] = $i }
     END {
-        m = int(n / 2)
+        m = int(n / nc)
         if (m < 2048) { print "ERRO_POUCAS_AMOSTRAS"; exit }
-        analisa(0); analisa(1)
-        razao = (RMS[pr] > 0) ? RMS[ps] / RMS[pr] : 0
-        printf "%.3f %.3f %.2f %.2f %.3f %.3f %.6f %.6f %.6f\n", FMED[pr], FMED[ps], PP[pr], PP[ps], RMS[pr], RMS[ps], SAT[pr], SAT[ps], razao
+        hfrac = (fp / fs > 0.2) ? 0.03 : 0.1
+        analisa(ps)
+        if (pr >= 0) {
+            analisa(pr)
+            razao = (RMS[pr] > 0) ? RMS[ps] / RMS[pr] : 0
+            printf "%.3f %.3f %.2f %.2f %.3f %.3f %.6f %.6f %.6f\n", FMED[pr], FMED[ps], PP[pr], PP[ps], RMS[pr], RMS[ps], SAT[pr], SAT[ps], razao
+        } else {
+            printf "%.3f %.3f %.2f %.2f %.3f %.3f %.6f %.6f %.6f\n", 0, FMED[ps], 0, PP[ps], 0, RMS[ps], 0, SAT[ps], RMS[ps]
+        }
     }'
 }
 
@@ -827,18 +953,27 @@ analisar_rapido() {
 avaliar_sinal() {
     local arq="$1" freq_plano="$2" pos_ref pos_sonda linha
     local f_ref f_sonda pp_ref pp_sonda rms_ref rms_sonda sat_ref sat_sonda razao f_med
-    if [ "$CANAL_REFERENCIA" -lt "$CANAL_SONDA" ]; then pos_ref=0; pos_sonda=1; else pos_ref=1; pos_sonda=0; fi
+    if [ -z "$CANAL_REFERENCIA" ]; then pos_ref=-1; pos_sonda=0
+    elif [ "$CANAL_REFERENCIA" -lt "$CANAL_SONDA" ]; then pos_ref=0; pos_sonda=1
+    else pos_ref=1; pos_sonda=0; fi
 
-    linha="$(analisar_rapido "$arq" "$pos_ref" "$pos_sonda")"
+    linha="$(analisar_rapido "$arq" "$pos_ref" "$pos_sonda" "$freq_plano")"
     if [ -z "$linha" ] || [ "$linha" = "ERRO_POUCAS_AMOSTRAS" ]; then
         qc_erro "poucas amostras no arquivo para analisar o sinal" poucas_amostras
         return
     fi
     read -r f_ref f_sonda pp_ref pp_sonda rms_ref rms_sonda sat_ref sat_sonda razao <<< "$linha"
-    QC_PP_REF="$pp_ref"; QC_PP_SONDA="$pp_sonda"; QC_RAZAO="$razao"
+    QC_PP_SONDA="$pp_sonda"
+    if [ -n "$CANAL_REFERENCIA" ]; then
+        QC_PP_REF="$pp_ref"; QC_RAZAO="$razao"
+    elif [ "$REF_EXTERNA" -eq 0 ]; then
+        QC_RAZAO="$rms_sonda"     # 1 canal, corrente suposta constante: o próprio nível da sonda (códigos do ADC)
+    elif [ -n "$REF_VALOR" ]; then
+        QC_RAZAO="$(awk -v r="$rms_sonda" -v v="$REF_VALOR" 'BEGIN { printf "%.6f", r / v }')"   # códigos por volt no shunt
+    fi
 
     # Saturação do ADC: o gerar_perfil_sonda.py descarta capturas assim.
-    if num_menor "$SATURACAO_MAXIMA" "$sat_ref"; then
+    if [ -n "$CANAL_REFERENCIA" ] && num_menor "$SATURACAO_MAXIMA" "$sat_ref"; then
         qc_erro "o canal de referência (${CANAL_REFERENCIA}) saturou o ADC em $(awk -v s="$sat_ref" 'BEGIN { printf "%.2f", s * 100 }')% das amostras -- reduza a amplitude do gerador" saturacao_ref
     fi
     if num_menor "$SATURACAO_MAXIMA" "$sat_sonda"; then
@@ -846,22 +981,24 @@ avaliar_sinal() {
     fi
 
     # Nível do sinal (pico-a-pico, % da escala): pouco sinal = SNR ruim no perfil.
-    if num_menor "$pp_ref" "$PP_SEM_SINAL_PCT"; then
-        qc_erro "praticamente sem sinal no canal de referência (${CANAL_REFERENCIA}): pico-a-pico de ${pp_ref}% da escala. O gerador está ligado e o shunt conectado?" sem_sinal_ref
-    elif num_menor "$pp_ref" "$PP_FRACO_PCT"; then
-        qc_aviso "sinal fraco no canal de referência (${pp_ref}% da escala): aumente a amplitude do gerador para melhorar a SNR" fraco_ref
+    if [ -n "$CANAL_REFERENCIA" ]; then
+        if num_menor "$pp_ref" "$PP_SEM_SINAL_PCT"; then
+            qc_erro "praticamente sem sinal no canal de referência (${CANAL_REFERENCIA}): pico-a-pico de ${pp_ref}% da escala. O gerador está ligado e o shunt conectado?" sem_sinal_ref
+        elif num_menor "$pp_ref" "$PP_FRACO_PCT"; then
+            qc_aviso "sinal fraco no canal de referência (${pp_ref}% da escala): aumente a amplitude do gerador para melhorar a SNR" fraco_ref
+        fi
     fi
     if num_menor "$pp_sonda" "$PP_SEM_SINAL_PCT"; then
         qc_erro "praticamente sem sinal no canal da sonda (${CANAL_SONDA}): pico-a-pico de ${pp_sonda}% da escala. A sonda está no condutor certo e ligada?" sem_sinal_sonda
     elif num_menor "$pp_sonda" "$PP_FRACO_PCT"; then
-        qc_aviso "sinal fraco no canal da sonda (${pp_sonda}% da escala): aumente a corrente/amplitude para melhorar a SNR" fraco_sonda
+        qc_aviso "sinal fraco no canal da sonda (${pp_sonda}% da escala): aumente a corrente/amplitude para melhorar a SNR (em frequência alta é esperado: o filtro de 15 kHz do ADS8688 atenua o sinal)" fraco_sonda
     fi
 
     # Frequência realmente injetada (a medida vale mais que a planejada).
     # Só confio na frequência de um canal que TEM sinal (sobre ruído os cruzamentos de zero
     # dão uma "frequência" qualquer).
     f_med=0
-    if ! num_menor "$pp_ref" "$PP_SEM_SINAL_PCT" && num_menor 0.5 "$f_ref"; then
+    if [ -n "$CANAL_REFERENCIA" ] && ! num_menor "$pp_ref" "$PP_SEM_SINAL_PCT" && num_menor 0.5 "$f_ref"; then
         f_med="$f_ref"
     elif ! num_menor "$pp_sonda" "$PP_SEM_SINAL_PCT" && num_menor 0.5 "$f_sonda"; then
         f_med="$f_sonda"
@@ -950,16 +1087,23 @@ mostrar_resultado() {
         for msg in "${QC_AVISOS[@]}"; do log_aviso "$msg"; done
     fi
     if [ -n "$QC_PP_SONDA" ]; then
+        local rotulo="ganho relativo à menor frequência"
+        if [ -z "$CANAL_REFERENCIA" ] && [ "$REF_EXTERNA" -eq 0 ]; then
+            rotulo="nível relativo à menor frequência (supondo corrente constante)"
+        fi
         base="$(razao_base)"
         if [ "${#QC_ERROS[@]}" -gt 0 ]; then
             ganho_txt=""   # com erro (saturação, sem sinal...) o ganho medido não significa nada
         elif [ -n "$QC_RAZAO" ] && num_menor 0 "$QC_RAZAO" && num_menor 0 "$base"; then
-            ganho_txt="$(awk -v r="$QC_RAZAO" -v b="$base" 'BEGIN { printf "ganho relativo à menor frequência: %+.2f dB", 20 * log(r / b) / log(10) }')"
+            ganho_txt="$(awk -v r="$QC_RAZAO" -v b="$base" -v t="$rotulo" 'BEGIN { printf "%s: %+.2f dB", t, 20 * log(r / b) / log(10) }')"
         elif [ -n "$QC_RAZAO" ] && num_menor 0 "$QC_RAZAO"; then
             ganho_txt="primeiro ponto sem erro: servirá de referência (0 dB) para os próximos"
         fi
-        linha="  Referência: ${QC_PP_REF}% da escala | Sonda: ${QC_PP_SONDA}% | frequência medida: ${QC_FREQ_MEDIDA:-não medida}${QC_FREQ_MEDIDA:+ Hz} (planejada ${freq} Hz)"
+        linha="  "
+        [ -n "$CANAL_REFERENCIA" ] && linha+="Referência: ${QC_PP_REF}% da escala | "
+        linha+="Sonda: ${QC_PP_SONDA}% | frequência medida: ${QC_FREQ_MEDIDA:-não medida}${QC_FREQ_MEDIDA:+ Hz} (planejada ${freq} Hz)"
         saida "$linha"
+        [ -n "$REF_VALOR" ] && saida "  Leitura do osciloscópio: ${REF_VALOR} V RMS no shunt"
         [ -n "$ganho_txt" ] && saida "  ${ganho_txt}"
     fi
 }
@@ -972,15 +1116,15 @@ executar_captura() {
     limite="${SH_LER_ADC_TIMEOUT:-$(awk -v d="$duracao" 'BEGIN { printf "%d", d * 3 + 60 }')}"
     : >> "$log"
     LOG_LINHAS_ANTES="$(wc -l < "$log" | tr -d ' ')"
-    echo "=== $(date '+%Y-%m-%d %H:%M:%S') | ${LER_ADC##*/} ${TAXA} ${CANAL_REFERENCIA},${CANAL_SONDA} --blocos ${BLOCOS} --grandeza ${CANAL_SONDA}:corrente --sonda ${CANAL_SONDA}:${SONDA_ID} -o ${destino##*/}" >> "$log"
+    echo "=== $(date '+%Y-%m-%d %H:%M:%S') | ${LER_ADC##*/} ${TAXA} ${LISTA_CANAIS} --blocos ${BLOCOS} --grandeza ${CANAL_SONDA}:corrente --sonda ${CANAL_SONDA}:${SONDA_ID} -o ${destino##*/}" >> "$log"
     log_info "Capturando (~${duracao} s)..."
     if [ "$VERBOSO" -eq 1 ]; then
-        timeout --foreground "$limite" "$LER_ADC" "$TAXA" "${CANAL_REFERENCIA},${CANAL_SONDA}" \
+        timeout --foreground "$limite" "$LER_ADC" "$TAXA" "$LISTA_CANAIS" \
             --blocos "$BLOCOS" --grandeza "${CANAL_SONDA}:corrente" --sonda "${CANAL_SONDA}:${SONDA_ID}" \
             -o "$destino" -t "$titulo" 2>&1 | tee -a "$log" >&2
         codigo="${PIPESTATUS[0]}"
     else
-        timeout --foreground "$limite" "$LER_ADC" "$TAXA" "${CANAL_REFERENCIA},${CANAL_SONDA}" \
+        timeout --foreground "$limite" "$LER_ADC" "$TAXA" "$LISTA_CANAIS" \
             --blocos "$BLOCOS" --grandeza "${CANAL_SONDA}:corrente" --sonda "${CANAL_SONDA}:${SONDA_ID}" \
             -o "$destino" -t "$titulo" >> "$log" 2>&1
         codigo=$?
@@ -1043,12 +1187,37 @@ arquivar_capturas_antigas() {
     done
 }
 
+# Modo --ref-externa: pede a tensão RMS sobre o shunt lida no osciloscópio e a deixa em REF_VALOR
+# (em Volts). ENTER sem valor = sem leitura -- ou, numa nova tentativa do mesmo ponto, reaproveita
+# a leitura anterior (mostrada entre colchetes).
+pedir_leitura_externa() {
+    local entrada convertido dica=""
+    [ -n "$REF_VALOR" ] && dica=" [${REF_VALOR}]"
+    while true; do
+        if ! read -r -p "$(printf "%b" "${COR_AMARELO}Osciloscópio: tensão RMS no shunt, em V (ex.: 0.1234 ou 123.4m)${dica}; ENTER = sem leitura: ${COR_RESET}")" entrada; then
+            erro_fatal "Entrada encerrada inesperadamente (EOF em stdin) -- abortando."
+        fi
+        if [ -z "$entrada" ]; then
+            if [ -z "$REF_VALOR" ]; then
+                log_aviso "Sem leitura para este ponto: sem ela o gerar_perfil_sonda.py --referencia-externa o deixa de fora. Dá para anotá-la depois em ${NOME_REFERENCIA_EXTERNA} (coluna v_shunt_rms_V)."
+            fi
+            return 0
+        fi
+        if convertido="$(normalizar_tensao "$entrada")"; then
+            REF_VALOR="$convertido"
+            return 0
+        fi
+        log_erro "Valor inválido: '${entrada}'. Use a tensão RMS em volts (0.1234) ou milivolts (123.4m)."
+    done
+}
+
 # Processa UMA captura (frequência + repetição). Retorna 0 se aceita, 3 se pulada.
 # Aborta o script (exit 0) se o operador pedir.
 processar_captura() {
     local indice="$1" total="$2" freq="$3" rep="$4" repeticao_mesma_freq="$5"
     local resposta alvo temporario titulo codigo status final
 
+    REF_VALOR=""
     separador
     printf "%b\n" "${COR_NEGRITO}Ponto ${indice} de ${total}  |  ${freq} Hz  |  repetição ${rep} de ${REPETICOES}${COR_RESET}" >&2
     separador
@@ -1057,7 +1226,13 @@ processar_captura() {
         saida "  Mesma frequência da captura anterior (${freq} Hz): não precisa mexer no gerador."
     else
         printf "%b\n" "  ${COR_NEGRITO}>>> INJETE ${freq} Hz no gerador <<<${COR_RESET}" >&2
-        saida "  Mantenha a mesma amplitude de antes e espere o sinal estabilizar."
+        if [ "$REF_EXTERNA" -eq 1 ]; then
+            saida "  Espere o sinal estabilizar e leia a tensão RMS sobre o shunt no osciloscópio."
+        elif [ -z "$CANAL_REFERENCIA" ]; then
+            saida "  Mantenha a MESMA corrente (amplitude) de antes e espere o sinal estabilizar."
+        else
+            saida "  Mantenha a mesma amplitude de antes e espere o sinal estabilizar."
+        fi
     fi
     while true; do
         verificar_espaco_disco "$PASTA_SONDA"
@@ -1072,6 +1247,7 @@ processar_captura() {
                return 3 ;;
         esac
 
+        if [ "$REF_EXTERNA" -eq 1 ]; then pedir_leitura_externa; fi
         alvo="${PASTA_SONDA}/calibracao_${freq}Hz_rep${rep}.bin"
         temporario="${PASTA_SONDA}/.em_andamento_$$.bin"
         titulo="Calibracao ${freq}Hz rep${rep} ${SONDA_ID}"
@@ -1117,7 +1293,8 @@ processar_captura() {
                 else
                     status="ok"
                 fi
-                registrar_manifesto "$freq" "$rep" "${final##*/}" "$status" "$QC_FREQ_MEDIDA" "$QC_PP_REF" "$QC_PP_SONDA" "$QC_RAZAO"
+                registrar_manifesto "$freq" "$rep" "${final##*/}" "$status" "$QC_FREQ_MEDIDA" "$QC_PP_REF" "$QC_PP_SONDA" "$QC_RAZAO" "$REF_VALOR"
+                if [ "$REF_EXTERNA" -eq 1 ]; then registrar_referencia_externa "${final##*/}" "$REF_VALOR"; fi
                 SESSAO_ACEITOS=$((SESSAO_ACEITOS + 1))
                 log_sucesso "Ponto aceito: ${final##*/}"
                 return 0
@@ -1193,7 +1370,9 @@ mostrar_tabela() {
         saida "  (nenhuma captura aceita ainda)"
         return 0
     fi
-    printf '%s\n' "$linhas" | awk -F, '
+    local const=0
+    [ -z "$CANAL_REFERENCIA" ] && [ "$REF_EXTERNA" -eq 0 ] && const=1
+    printf '%s\n' "$linhas" | awk -F, -v const="$const" '
     {
         f = $1 + 0
         if (!(f in cnt)) { ordem[++nf] = f }
@@ -1207,7 +1386,7 @@ mostrar_tabela() {
     END {
         base = 0
         for (i = 1; i <= nf; i++) { f = ordem[i]; if (nr[f] > 0) { base = sr[f] / nr[f]; break } }
-        printf "  %10s  %5s  %12s  %10s  %12s  %s\n", "freq plano", "caps", "freq medida", "sonda (%)", "ganho rel.", "obs"
+        printf "  %10s  %5s  %12s  %10s  %12s  %s\n", "freq plano", "caps", "freq medida", "sonda (%)", (const ? "nivel rel." : "ganho rel."), "obs"
         for (i = 1; i <= nf; i++) {
             f = ordem[i]
             fm = (nfm[f] > 0) ? sprintf("%.1f", sf[f] / nfm[f]) : "-"
@@ -1270,8 +1449,20 @@ proximos_passos() {
     saida "Próximos passos:"
     saida "  1. Copie a pasta para o computador:   scp -r debian@<ip-da-beaglebone>:$(cd "$PASTA_SONDA" && pwd) ."
     saida "  2. Gere o perfil (na raiz do repositório):"
-    saida "       uv run scripts/gerar_perfil_sonda.py capturas/${SONDA_ID} --resistencia-shunt <ohms-do-shunt> --plot"
-    saida "     Use os mesmos --faixa/--ganho/--formato que usará depois no adc_tool.py."
+    if [ -n "$CANAL_REFERENCIA" ]; then
+        saida "       uv run scripts/gerar_perfil_sonda.py capturas/${SONDA_ID} --resistencia-shunt <ohms-do-shunt> --plot"
+    elif [ "$REF_EXTERNA" -eq 1 ]; then
+        saida "       uv run scripts/gerar_perfil_sonda.py capturas/${SONDA_ID} --referencia-externa --resistencia-shunt <ohms-do-shunt> --plot"
+        local sem_leitura
+        sem_leitura="$(capturas_sem_leitura_externa | grep -c . || true)"
+        if [ "$sem_leitura" -gt 0 ]; then
+            log_aviso "${sem_leitura} captura(s) sem leitura do osciloscópio em ${NOME_REFERENCIA_EXTERNA}: ficarão FORA do perfil até você anotar o valor (coluna v_shunt_rms_V) ou refazer o ponto."
+        fi
+    else
+        saida "       uv run scripts/gerar_perfil_sonda.py capturas/${SONDA_ID} --amplitude-referencia <amplitude-de-pico-da-corrente-em-A> --plot"
+        saida "     Isso só vale se a corrente teve a MESMA amplitude em todas as frequências; se não, recolha com --ref-externa."
+    fi
+    saida "     Use os mesmos --faixa/--ganho/--formato que usará depois no adc_tool.py (com 1 canal, --ganho aceita um valor só)."
     local pendentes
     pendentes="$(pares_pendentes "${PLANO_FREQS[@]}" | grep -c . || true)"
     if [ "$pendentes" -gt 0 ]; then
@@ -1333,6 +1524,55 @@ coletar_extras() {
 # 11. Parâmetros, plano e modos
 # =============================================================================
 
+# Valida os canais e define NUM_CANAIS_CAPTURA e LISTA_CANAIS. Sem canal de referência, a captura
+# tem 1 canal (a sonda) e a Nyquist efetiva é taxa/2; com ele, 2 canais e taxa/4. Idempotente.
+definir_canais() {
+    validar_inteiro_faixa "Canal da sonda (--canal-sonda)" "$CANAL_SONDA" 0 7
+    if [ -z "$CANAL_REFERENCIA" ]; then
+        NUM_CANAIS_CAPTURA=1
+        LISTA_CANAIS="$CANAL_SONDA"
+        return 0
+    fi
+    validar_inteiro_faixa "Canal de referência (--canal-referencia)" "$CANAL_REFERENCIA" 0 7
+    if [ "$CANAL_REFERENCIA" -eq "$CANAL_SONDA" ]; then
+        erro_fatal "O canal de referência e o da sonda não podem ser o mesmo (${CANAL_SONDA})."
+    fi
+    if [ "$REF_EXTERNA" -eq 1 ]; then
+        erro_fatal "--ref-externa é para captura de 1 canal (o osciloscópio faz o papel do canal de referência). Tire --canal-referencia ou --ref-externa."
+    fi
+    NUM_CANAIS_CAPTURA=2
+    LISTA_CANAIS="${CANAL_REFERENCIA},${CANAL_SONDA}"
+}
+
+# Pergunta o que ainda falta sobre a bancada (só no modo interativo): o canal da sonda e, se NADA
+# foi dito na linha de comando, se a referência vem de um 2º canal, do osciloscópio ou é constante.
+obter_canais() {
+    local resposta
+    if [ -z "$CANAL_SONDA" ]; then
+        local sem_dica=0
+        [ "$CANAL_REF_INFORMADO" -eq 0 ] && [ "$REF_EXTERNA" -eq 0 ] && sem_dica=1
+        if ! read -r -p "$(printf "%b" "${COR_AMARELO}Canal do ADC (0-7) onde a saída da SONDA está ligada: ${COR_RESET}")" CANAL_SONDA; then
+            erro_fatal "Informe o canal da sonda com --canal-sonda N (não consegui perguntar: a entrada foi encerrada)."
+        fi
+        CANAL_SONDA="${CANAL_SONDA// /}"
+        validar_inteiro_faixa "Canal da sonda" "$CANAL_SONDA" 0 7
+        if [ "$sem_dica" -eq 1 ]; then
+            saida "  Como o script vai saber a corrente real que passa pela sonda?"
+            local escolha
+            ler_escolha_menu escolha "  Referência da corrente:" \
+                "Osciloscópio no shunt: você digita a leitura a cada ponto (1 canal; vai até taxa/2)" \
+                "Corrente constante: mesma amplitude em todas as frequências (1 canal; vai até taxa/2)" \
+                "Segundo canal do ADC no shunt (2 canais; só vai até taxa/4)"
+            case "$escolha" in
+                1) REF_EXTERNA=1 ;;
+                2) ;;
+                3) ler_valor resposta "Canal do ADC (0-7) ligado ao shunt (referência): " '^[0-7]$'
+                   CANAL_REFERENCIA="$resposta"; CANAL_REF_INFORMADO=1 ;;
+            esac
+        fi
+    fi
+}
+
 validar_inteiro_faixa() {   # nome valor min max
     if ! [[ "$2" =~ $REGEX_INTEIRO_POSITIVO ]] || [ "$2" -lt "$3" ] || [ "$2" -gt "$4" ]; then
         erro_fatal "Valor inválido para $1: '$2'. Use um inteiro entre $3 e $4."
@@ -1341,11 +1581,7 @@ validar_inteiro_faixa() {   # nome valor min max
 
 validar_parametros_comuns() {
     validar_inteiro_faixa "Taxa (--taxa)" "$TAXA" 1 500000
-    validar_inteiro_faixa "Canal de referência" "$CANAL_REFERENCIA" 0 7
-    validar_inteiro_faixa "Canal da sonda" "$CANAL_SONDA" 0 7
-    if [ "$CANAL_REFERENCIA" -eq "$CANAL_SONDA" ]; then
-        erro_fatal "O canal de referência e o da sonda não podem ser o mesmo (${CANAL_SONDA})."
-    fi
+    definir_canais
     validar_inteiro_faixa "Repetições (--repeticoes)" "$REPETICOES" 1 50
     validar_inteiro_faixa "Blocos (--blocos)" "$BLOCOS" 1 1000
 
@@ -1373,11 +1609,11 @@ validar_faixa_e_pontos() {
         erro_fatal "A frequência mínima (${FREQ_MIN} Hz) precisa ser menor que a máxima (${FREQ_MAX} Hz)."
     fi
     nyq="$(nyquist_efetiva "$TAXA")"
-    if ! num_menor "$FREQ_MAX" "$nyq"; then
-        erro_fatal "A frequência máxima (${FREQ_MAX} Hz) precisa ser MENOR que a Nyquist efetiva de cada canal: ${nyq} Hz (= taxa ${TAXA} Hz / (2 x ${NUM_CANAIS_CAPTURA} canais)). Reduza --freq-max ou aumente --taxa."
+    if ! num_menor "$FREQ_MAX" "$(fracao_da_nyquist "$TAXA" "$FRACAO_NYQUIST_MAXIMA")"; then
+        erro_fatal "A frequência máxima (${FREQ_MAX} Hz) precisa ficar abaixo de 98% da Nyquist efetiva de cada canal (Nyquist = ${nyq} Hz = taxa ${TAXA} Hz / (2 x ${NUM_CANAIS_CAPTURA} canal(is))): encostado nela o tom se confunde com a própria imagem espelhada. Reduza --freq-max ou aumente --taxa."
     fi
-    if num_menor "$(awk -v n="$nyq" 'BEGIN { printf "%.1f", n * 0.9 }')" "$FREQ_MAX"; then
-        log_aviso "A frequência máxima (${FREQ_MAX} Hz) passa de 90% da Nyquist efetiva (${nyq} Hz): perto do limite, qualquer componente acima dele dobra para dentro da banda e atrapalha a medição."
+    if num_menor "$(fracao_da_nyquist "$TAXA" "$FRACAO_NYQUIST_AVISO")" "$FREQ_MAX"; then
+        log_aviso "A frequência máxima (${FREQ_MAX} Hz) passa de 90% da Nyquist efetiva (${nyq} Hz): perto do limite há só 2 a 2,5 amostras por ciclo e qualquer componente acima dele (harmônicas do gerador!) dobra para dentro da banda. Use um gerador de baixa distorção nesses pontos e confira o resultado no osciloscópio."
     fi
     duracao="$(duracao_captura)"
     if num_menor "$(awk -v f="$FREQ_MIN" -v d="$duracao" 'BEGIN { printf "%.1f", f * d }')" 20; then
@@ -1396,8 +1632,8 @@ mostrar_plano() {
     nyq="$(nyquist_efetiva "$TAXA")"
     titulo_secao "Plano de coleta"
     saida "Sonda:               ${SONDA_ID}"
-    saida "Taxa total do ADC:   ${TAXA} Hz  (${NUM_CANAIS_CAPTURA} canais -> $(awk -v t="$TAXA" -v n="$NUM_CANAIS_CAPTURA" 'BEGIN { printf "%.1f", t / n }') Hz por canal; Nyquist efetiva ${nyq} Hz)"
-    saida "Canais:              referência = ${CANAL_REFERENCIA} (tensão no shunt), sonda = ${CANAL_SONDA} (corrente)"
+    saida "Taxa total do ADC:   ${TAXA} Hz  (${NUM_CANAIS_CAPTURA} canal(is) -> $(awk -v t="$TAXA" -v n="$NUM_CANAIS_CAPTURA" 'BEGIN { printf "%.1f", t / n }') Hz por canal; Nyquist efetiva ${nyq} Hz)"
+    descrever_bancada
     saida "Frequências:         ${#PLANO_FREQS[@]} pontos, de ${PLANO_FREQS[0]} a ${PLANO_FREQS[$((${#PLANO_FREQS[@]} - 1))]} Hz"
     saida "Repetições:          ${REPETICOES} por frequência -> ${total_caps} captura(s)"
     saida "Cada captura:        ${BLOCOS} bloco(s), ~${duracao} s"
@@ -1406,6 +1642,20 @@ mostrar_plano() {
     saida "Frequências (Hz):    ${PLANO_FREQS[*]}"
     saida ""
     avisar_espaco_do_plano "$mb"
+}
+
+# Linha(s) "Canais: ..." e "Corrente real: ..." do plano/resumo.
+descrever_bancada() {
+    if [ -n "$CANAL_REFERENCIA" ]; then
+        saida "Canais:              sonda = ${CANAL_SONDA} (corrente), referência = ${CANAL_REFERENCIA} (tensão no shunt)"
+        saida "Corrente real:       calculada pelo canal de referência (gerar_perfil_sonda.py --resistencia-shunt)"
+    elif [ "$REF_EXTERNA" -eq 1 ]; then
+        saida "Canais:              sonda = ${CANAL_SONDA} (corrente); 1 canal só"
+        saida "Corrente real:       leitura do osciloscópio a cada ponto (tensão RMS no shunt), em ${NOME_REFERENCIA_EXTERNA}"
+    else
+        saida "Canais:              sonda = ${CANAL_SONDA} (corrente); 1 canal só"
+        saida "Corrente real:       CONSTANTE (mantenha a mesma amplitude de corrente em todas as frequências)"
+    fi
 }
 
 # Avisa (sem impedir) se o plano não cabe no espaço livre. $1 = MB necessários.
@@ -1445,8 +1695,10 @@ arquivar_coleta_anterior() {
 fluxo_novo() {
     [ -z "$TAXA" ] && ler_hz TAXA "Taxa de amostragem TOTAL do ADC (ex.: 102400 ou 102.4k)"
     obter_parametro SONDA_BRUTA "Identificador da sonda (ex.: fluke_i30_sn0001)" '^.*[A-Za-z0-9].*$'
+    obter_canais
     obter_parametro PONTOS "Quantos pontos de frequência coletar" "$REGEX_INTEIRO_POSITIVO" "$PADRAO_PONTOS"
     validar_inteiro_faixa "Taxa (--taxa)" "$TAXA" 1 500000
+    definir_canais   # o número de canais define a Nyquist efetiva e, com ela, a frequência máxima padrão
     [ -z "$FREQ_MIN" ] && FREQ_MIN="$PADRAO_FREQ_MIN"
     if [ -z "$FREQ_MAX" ]; then FREQ_MAX="$(freq_max_padrao "$TAXA")"; fi
     [ -z "$REPETICOES" ] && REPETICOES="$PADRAO_REPETICOES"
@@ -1485,8 +1737,8 @@ fluxo_novo() {
     fi
     local nyq
     nyq="$(nyquist_efetiva "$TAXA")"
-    if ! num_menor "${PLANO_FREQS[$((${#PLANO_FREQS[@]} - 1))]}" "$nyq"; then
-        erro_fatal "Depois do arredondamento a maior frequência (${PLANO_FREQS[$((${#PLANO_FREQS[@]} - 1))]} Hz) chegou à Nyquist efetiva (${nyq} Hz). Reduza --freq-max."
+    if ! num_menor "${PLANO_FREQS[$((${#PLANO_FREQS[@]} - 1))]}" "$(fracao_da_nyquist "$TAXA" "$FRACAO_NYQUIST_MAXIMA")"; then
+        erro_fatal "Depois do arredondamento a maior frequência (${PLANO_FREQS[$((${#PLANO_FREQS[@]} - 1))]} Hz) chegou a 98% ou mais da Nyquist efetiva (${nyq} Hz). Reduza --freq-max."
     fi
 
     mostrar_plano
@@ -1516,6 +1768,7 @@ preparar_continuacao() {
         while read -r f; do [ -n "$f" ] && PLANO_FREQS+=("$f"); done < <(frequencias_em_disco)
     fi
     [ -z "$TAXA" ] && ler_hz TAXA "Taxa de amostragem TOTAL do ADC (ex.: 102400 ou 102.4k)"
+    obter_canais
     [ -z "$REPETICOES" ] && REPETICOES="$PADRAO_REPETICOES"
     [ -z "$BLOCOS" ] && BLOCOS="$PADRAO_BLOCOS"
     SONDA_BRUTA="$SONDA_ID"
@@ -1617,7 +1870,8 @@ fluxo_refazer() {
 fluxo_resumo() {
     preparar_continuacao
     titulo_secao "Resumo da coleta de '${SONDA_ID}'"
-    saida "Pasta: ${PASTA_SONDA}/    Taxa: ${TAXA} Hz    Canais: referência ${CANAL_REFERENCIA}, sonda ${CANAL_SONDA}"
+    saida "Pasta: ${PASTA_SONDA}/    Taxa: ${TAXA} Hz"
+    descrever_bancada
     saida ""
     mostrar_tabela
     local rev cand
@@ -1646,8 +1900,8 @@ fluxo_adensar() {
     fi
     local nyq
     nyq="$(nyquist_efetiva "$TAXA")"
-    if ! num_menor "${novas[$((${#novas[@]} - 1))]}" "$nyq"; then
-        erro_fatal "Um dos pontos novos (${novas[$((${#novas[@]} - 1))]} Hz) chega à Nyquist efetiva (${nyq} Hz) para a taxa ${TAXA} Hz."
+    if ! num_menor "${novas[$((${#novas[@]} - 1))]}" "$(fracao_da_nyquist "$TAXA" "$FRACAO_NYQUIST_MAXIMA")"; then
+        erro_fatal "Um dos pontos novos (${novas[$((${#novas[@]} - 1))]} Hz) chega a 98% ou mais da Nyquist efetiva (${nyq} Hz) para a taxa ${TAXA} Hz."
     fi
     log_info "${#novas[@]} ponto(s) de adensamento (1 entre cada par adjacente, média geométrica): ${novas[*]} Hz"
     confirmar_inicio

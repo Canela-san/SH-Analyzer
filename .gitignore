@@ -70,3 +70,6 @@ git-commit.sh
 .ruff_cache/
 *.egg-info/
 uv.lock
+
+
+Prompts/

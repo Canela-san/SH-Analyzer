@@ -23,9 +23,9 @@
 
 | Status | Itens |
 |---|---|
-| ✅ **Concluído** | 1.5 (modo automático AUTO_RST, e o comentário obsoleto de `spi_core.asm` corrigido), 2.9 (`set_date.sh` sem senha no arquivo), 2.10 (`calibrar_sonda.sh` reescrito: Nyquist efetiva, conferência de cada captura, novos modos e testes), 1.8 (parcial: checagem de `fwrite()` + `--blocos`/`--duracao`), 1.9 (parte Python: mitigado por `tests/test_contrato_firmware.py`), 1.10 (parcial: causa raiz da saturação — jumpers), 2.1 (parcial: `backup pre-assembly/` removido), 2.2 (`.gitignore`), 2.3 (metadados — via cabeçalho embutido, não sidecar), 2.5 (parcial: lado Python — suíte `pytest` de 226 testes, `ruff` e CI no GitHub Actions), 2.7 (parcial: README, guia de uso, arquitetura do software e contexto), 2.8 (arquivo já se chama `adc_tool.py`) |
-| 🆕 **Novo** | Melhorias do fluxo de perfil de sonda vindas da auditoria (2.11) |
-| 🔄 **Ainda aberto, com nota atualizada** | 1.1–1.4 (o "piso" antigo de ~48 kHz parece estar desatualizado — ver nota abaixo), 1.6, 1.7, 1.9 (revisado), 2.4, 2.5 (parte C/CI), 2.6, 2.7 (`licoes-aprendidas.md`), 2.11 |
+| ✅ **Concluído** | 1.5 (modo automático AUTO_RST, e o comentário obsoleto de `spi_core.asm` corrigido), 2.9 (`set_date.sh` sem senha no arquivo), 2.10 (`calibrar_sonda.sh` reescrito: Nyquist efetiva, conferência de cada captura, novos modos e testes), 1.8 (parcial: checagem de `fwrite()` + `--blocos`/`--duracao`), 1.9 (parte Python: mitigado por `tests/test_contrato_firmware.py`), 1.10 (parcial: causa raiz da saturação — jumpers), 2.1 (parcial: `backup pre-assembly/` removido), 2.2 (`.gitignore`), 2.3 (metadados — via cabeçalho embutido, não sidecar), 2.5 (parcial: lado Python — suíte `pytest` de 331 testes, `ruff` e CI no GitHub Actions), 2.7 (parcial: README, guia de uso, arquitetura do software e contexto), 2.8 (arquivo já se chama `adc_tool.py`) |
+| 🆕 **Novo** | Melhorias do fluxo de perfil de sonda vindas da auditoria (2.11); achados do datasheet e do código a confirmar em bancada: filtro de 15 kHz do ADS8688 e taxa de amostragem real (2.12); `medir_captura.py` e `docs/roteiro_laboratorio.md` (já entregues) |
+| 🔄 **Ainda aberto, com nota atualizada** | 1.1–1.4 (o "piso" antigo de ~48 kHz parece estar desatualizado — ver nota abaixo), 1.6, 1.7, 1.9 (revisado), 2.4, 2.5 (parte C/CI), 2.6, 2.7 (`licoes-aprendidas.md`), 2.11, 2.12 |
 
 ---
 
@@ -698,9 +698,20 @@ Ctrl+C seguro. Na reescrita apareceram e foram corrigidos erros do script antigo
 Nyquist: o `ler_adc` devolve sucesso mesmo quando o disco enche e a captura sai cortada (agora o
 tamanho do arquivo é conferido), o `ler_valor` nunca aceitava ENTER (`grep` com `^$`), o título
 passava de 63 bytes com ids de sonda longos (o `ler_adc` rejeita), e o menu antigo podia disparar
-nova medição com uma opção inválida. `tests/test_calibrar_sonda.py` (38 testes, com um `ler_adc`
+nova medição com uma opção inválida. `tests/test_calibrar_sonda.py` (59 testes, com um `ler_adc`
 falso) cobre o fluxo e confere que as constantes do cabeçalho no script batem com o firmware e o
 Python.
+
+**Atualização (2026-10): 1 canal por padrão.** A calibração com dois canais limita a Nyquist a
+`taxa / 4`: no máximo 125 kHz com os 500 kS/s do ADC, o que não cobre os 150 kHz dos supraharmônicos.
+Agora o padrão é **um canal só** (`--canal-sonda N`, obrigatório; Nyquist `taxa / 2`, ex.: 400 kS/s →
+200 kHz, pontos até 160 kHz), e a corrente real vem do osciloscópio (`--ref-externa`: o script pede a
+tensão RMS lida sobre o shunt a cada ponto e a grava em `referencia_externa.csv`; o
+`gerar_perfil_sonda.py --referencia-externa` a usa). `--canal-referencia N` mantém o modo de 2 canais, e
+sem nenhum dos dois vale a corrente constante. O limiar de "sem sinal" caiu de 1% para 0,2% da escala
+(o filtro de 15 kHz do ADS8688 derruba o sinal em alta frequência; ver 2.12). No gerador de perfil, o
+estimador de amplitude passou a refinar o tom por FFT única: o Welch com flat-top errava até 1,8% nos
+modos de 1 canal, onde a amplitude é absoluta (adendo em `docs/auditoria_perfil_sonda.md`).
 
 **Ação que sobra:** o arquivo está sem permissão de execução no Git (`100644`); ao fazer o commit,
 use `git update-index --chmod=+x firmware/calibrar_sonda.sh` (ou `git add --chmod=+x`).
@@ -732,11 +743,28 @@ asm:** não.
 
 ---
 
+### 2.12 🆕 Achados do datasheet e do código que a bancada precisa confirmar
+
+Ao planejar o roteiro de laboratório (`docs/roteiro_laboratorio.md`), a leitura do datasheet do
+ADS8688 e do `ler_adc.c` levantou três pontos. Nenhum foi medido em hardware ainda.
+
+| Achado | Consequência | Proposta | Teste do roteiro |
+|---|---|---|---|
+| O ADS8688 tem um **filtro passa-baixa de 2ª ordem em cada canal, ~15 kHz a −3 dB** (seção 8.3.5, Fig. 55; −0,1 dB em 2,5 kHz) | Na banda de supraharmônicos o sinal chega ao conversor 15 a 40 dB menor (estimativa; 150 kHz: −33 a −40 dB). A correção devolve a amplitude e amplifica o ruído igualmente. O anti-aliasing é fraco para 200 a 500 kHz | Medir a resposta da cadeia de **tensão** com o mesmo fluxo da sonda (`calibrar_sonda.sh --ref-externa` + `gerar_perfil_sonda.py --referencia-externa --resistencia-shunt 1`) e registrá-la como "sonda" do canal de tensão; decidir sobre um anti-aliasing externo e sobre o teto de ganho da correção (2.11) | T3, T8 |
+| A taxa real é `200 MHz ÷ ticks` com **divisão inteira**: 102 400 Hz gera 102 406,55 Hz (+64 ppm), 204 800 Hz +576 ppm, 300 000 Hz +1001 ppm; 100/200/250/400/500 kHz saem exatas | Todas as frequências medidas se deslocam pela mesma razão. O `adc_tool.py` usa a taxa **pedida** do cabeçalho | Recomendar taxas exatas; se T4 confirmar, usar `pru_clock_hz ÷ sample_period_ticks` por padrão no `adc_tool.py` (hoje só no `medir_captura.py --fs-pru`) e/ou medir o relógio da PRU | T4 |
+| ENOB e THD do ADC não são medidos pelo sistema completo | Sem eles não há como separar o erro do ADC do erro do frontend/sonda | `medir_captura.py` (entregue) com o ADC em curto e com tons de baixa distorção | T1, T5 |
+
+**Impacto:** Alto para a exatidão do perfil e da banda 50 a 150 kHz. **Esforço:** baixo (software);
+a decisão sobre o filtro externo depende do resultado do T8. **Toca PRU asm:** não.
+
+---
+
 ## Parte 3 — Priorização sugerida
 
 | # | Item | Impacto | Esforço | Toca PRU asm? | Status |
 |---|------|---------|---------|----------------|--------|
 | 2.11 | Fluxo de perfil de sonda: fase, perfil absoluto, hold-out | Alto (p/ corrente) | Variável | Não | 🆕 aberto (precisa de bancada) |
+| 2.12 | Filtro de 15 kHz do ADS8688 e taxa real (ticks inteiros): medir e decidir | Alto (banda 50–150 kHz) | Baixo | Não | 🆕 aberto (precisa de bancada: T3, T4, T8) |
 | 1.6 | Detecção/backpressure de overrun no ping-pong | Alto | Baixo–Médio | Sim (versões mais completas) | Aberto |
 | 1.3 | Validar frequência pedida contra piso real | Alto | Baixo | Não | Aberto (depende de 1.2) |
 | 1.2 | Instrumentar e medir onde o tempo por transação vai | Alto | Baixo | Sim (temporário) | Aberto — mais urgente após achado do item 1.1 |

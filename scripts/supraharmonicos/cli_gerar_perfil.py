@@ -8,12 +8,14 @@ em ``escrita_perfil``.
 
 import argparse
 import logging
+import math
 import re
 from datetime import date
 from pathlib import Path
 
 from .calibracao_sonda import (
     JANELA_CALIBRACAO_PADRAO,
+    NOME_REFERENCIA_EXTERNA,
     PADRAO_NOME_CAPTURA,
     RESOLUCAO_WELCH_CALIBRACAO_PADRAO,
     SNR_MINIMO_DB_PADRAO,
@@ -22,6 +24,7 @@ from .calibracao_sonda import (
     PontoMedido,
     agregar_por_frequencia,
     descobrir_capturas,
+    ler_referencia_externa,
     ler_status_manifesto,
     processar_captura,
 )
@@ -41,35 +44,52 @@ def montar_parser() -> argparse.ArgumentParser:
             "a partir das capturas de firmware/calibrar_sonda.sh. Mede "
             "frequência e amplitude de cada captura (não confia no nome do "
             "arquivo), calcula o ganho contra uma referência de corrente "
-            "real, e agrega repetições."
+            "real, e agrega repetições. A corrente real vem de UMA destas fontes: "
+            "um segundo canal do ADC no shunt (--resistencia-shunt), leituras do "
+            "osciloscópio anotadas a cada ponto (--referencia-externa) ou uma "
+            "corrente constante (--amplitude-referencia)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Exemplo:\n"
+            "Exemplos:\n"
+            "  # 2 canais (referência no ADC): corrente = V_shunt(canal de referência) / R\n"
             "  uv run gerar_perfil_sonda.py capturas/fluke_i30_01 \\\n"
             "      --resistencia-shunt 0.1 --ganho 1,10 --fabricante Fluke --modelo i30s --plot\n"
+            "  # 1 canal (Nyquist 2x maior), corrente lida no osciloscópio (referencia_externa.csv da pasta)\n"
+            "  uv run gerar_perfil_sonda.py capturas/fluke_i30_01 \\\n"
+            "      --referencia-externa --resistencia-shunt 1.0 --ganho 10 --plot\n"
             "\n"
-            "--faixa/--ganho/--offset: 1 valor (vale p/ os 2 canais) ou 'referencia,sonda'.\n"
+            "--faixa/--ganho/--offset: 1 valor (vale p/ os canais lidos) ou 'referencia,sonda'.\n"
             "--ganho do canal da sonda = 1/sensibilidade_nominal (sonda de 100 mV/A -> 10) e DEVE ser\n"
             "o mesmo usado depois em 'adc_tool.py --ganho' -- ver docstring do módulo."
         ),
     )
     parser.add_argument("pasta_capturas", type=Path, help="Pasta com os '.bin' de calibração (ex.: capturas/fluke_i30_01/).")
 
-    grupo_ref = parser.add_mutually_exclusive_group(required=True)
-    grupo_ref.add_argument("--amplitude-referencia", type=float, metavar="A",
-                            help="Corrente real CONSTANTE injetada em toda a varredura, em Amperes.")
+    grupo_ref = parser.add_argument_group(
+        "Referência da corrente real (escolha UMA fonte)",
+        "Sem referência não há ganho: --resistencia-shunt sozinho (canal de referência no ADC, 2 canais por captura), "
+        "--referencia-externa (leituras do osciloscópio, 1 canal por captura) ou --amplitude-referencia (corrente constante).",
+    )
     grupo_ref.add_argument("--resistencia-shunt", type=float, metavar="OHMS",
-                            help="[Recomendado] Resistência do shunt de precisão no canal de referência -- corrente real calculada por frequência.")
+                           help="Resistência do shunt de precisão, em ohms. Sozinho: a corrente real é calculada por frequência a "
+                                "partir do canal de referência da captura (2 canais). Com --referencia-externa: converte a tensão "
+                                "RMS no shunt lida no osciloscópio em corrente.")
+    grupo_ref.add_argument("--referencia-externa", nargs="?", const="@pasta", default=None, type=str, metavar="CSV",
+                           help=f"Corrente real lida num instrumento externo, anotada por captura em um CSV (colunas 'arquivo' e "
+                                f"'v_shunt_rms_V' -- ou 'corrente_rms_A'). Sem caminho: '{NOME_REFERENCIA_EXTERNA}' dentro da pasta "
+                                f"de capturas (escrito por 'calibrar_sonda.sh --ref-externa'). As capturas têm 1 canal só (o da sonda).")
+    grupo_ref.add_argument("--amplitude-referencia", type=float, metavar="A",
+                           help="Corrente real CONSTANTE injetada em toda a varredura, em Amperes (amplitude de pico).")
 
     parser.add_argument("--id", type=str, default=None, help="Id da sonda no perfil de saída (padrão: nome da pasta).")
     parser.add_argument("-o", "--saida", type=Path, default=None, metavar="ARQUIVO.json",
                          help="Caminho do .json de saída (padrão: scripts/sondas/<id>.json, ao lado deste script).")
 
     parser.add_argument("--canal-referencia", type=int, default=None, metavar="N",
-                         help="Força o número do canal de referência (padrão: detectado do cabeçalho v2).")
+                         help="Força o número do canal de referência (padrão: detectado do cabeçalho v2). Só é lido com --resistencia-shunt sozinho.")
     parser.add_argument("--canal-sonda", type=int, default=None, metavar="N",
-                         help="Força o número do canal da sonda (padrão: detectado do cabeçalho v2 -- canal com grandeza=corrente).")
+                         help="Força o número do canal da sonda (padrão: o único canal da captura, ou o de grandeza=corrente no cabeçalho v2).")
 
     parser.add_argument("--formato", choices=["int16", "uint16"], default="uint16",
                          help="Mesmo significado de adc_tool.py --formato (padrão: uint16).")
@@ -112,10 +132,24 @@ def montar_parser() -> argparse.ArgumentParser:
 
 def _validar_e_completar_args(args: argparse.Namespace) -> None:
     """Valida flags e preenche ``modo_referencia`` e ``id`` (padrão: nome da pasta)."""
-    args.modo_referencia = "fixa" if args.amplitude_referencia is not None else "shunt"
+    if args.referencia_externa is not None:
+        args.modo_referencia = "externa"
+    elif args.amplitude_referencia is not None:
+        args.modo_referencia = "fixa"
+    elif args.resistencia_shunt is not None:
+        args.modo_referencia = "shunt"
+    else:
+        raise ErroUso(
+            "informe a referência da corrente real: --resistencia-shunt (canal de referência no ADC), "
+            "--referencia-externa (leituras do osciloscópio) ou --amplitude-referencia (corrente constante)."
+        )
+    if args.amplitude_referencia is not None and args.modo_referencia != "fixa":
+        raise ErroUso("--amplitude-referencia não pode ser combinado com --referencia-externa.")
+    if args.amplitude_referencia is not None and args.resistencia_shunt is not None:
+        raise ErroUso("--amplitude-referencia não pode ser combinado com --resistencia-shunt.")
     if args.modo_referencia == "fixa" and args.amplitude_referencia <= 0:
         raise ErroUso("--amplitude-referencia precisa ser positiva.")
-    if args.modo_referencia == "shunt" and args.resistencia_shunt <= 0:
+    if args.resistencia_shunt is not None and args.resistencia_shunt <= 0:
         raise ErroUso("--resistencia-shunt precisa ser positiva.")
 
     if args.id is None:
@@ -128,10 +162,20 @@ def _validar_e_completar_args(args: argparse.Namespace) -> None:
         )
 
 
+def _caminho_referencia_externa(args: argparse.Namespace) -> Path:
+    if args.referencia_externa == "@pasta":
+        return args.pasta_capturas / NOME_REFERENCIA_EXTERNA
+    return Path(args.referencia_externa)
+
+
 def _medir_capturas(args: argparse.Namespace, arquivos: list[Path],
                     status_manifesto: dict[str, str]) -> list[PontoMedido]:
     """Mede cada captura; arquivos ruins são pulados com aviso (não derrubam o lote)."""
     pontos_medidos: list[PontoMedido] = []
+    correntes_externas: dict[str, float] = {}
+    if args.modo_referencia == "externa":
+        correntes_externas = ler_referencia_externa(_caminho_referencia_externa(args), args.resistencia_shunt)
+        log.info(f"{len(correntes_externas)} leitura(s) externa(s) lida(s) de '{_caminho_referencia_externa(args)}'.")
     for caminho in arquivos:
         m = PADRAO_NOME_CAPTURA.match(caminho.name)
         freq_alvo_hz = float(m.group(1))
@@ -149,6 +193,16 @@ def _medir_capturas(args: argparse.Namespace, arquivos: list[Path],
             args.tolerancia_freq_pct, args.janela, args.resolucao_welch, args.sobreposicao_welch,
             args.snr_minimo_db, args.frequencia,
         )
+        if resultado is not None and args.modo_referencia == "externa":
+            corrente_rms = correntes_externas.get(caminho.name)
+            if corrente_rms is None:
+                log.warning(
+                    f"pulando '{caminho.name}' -- sem leitura do instrumento externo em "
+                    f"'{_caminho_referencia_externa(args).name}'. Anote o valor (ou refaça o ponto com "
+                    f"'calibrar_sonda.sh --ref-externa --modo refazer')."
+                )
+                continue
+            resultado.corrente_externa_pico_a = math.sqrt(2.0) * corrente_rms  # RMS -> pico (tom senoidal)
         if resultado is not None:
             pontos_medidos.append(resultado)
     return pontos_medidos

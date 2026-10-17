@@ -9,7 +9,7 @@
 ## 1. Respostas diretas
 
 **O jeito de definir o perfil é confiável?** Sim como *método* — com ressalvas de bancada.
-Com 19 pontos, o `gerar_perfil_sonda.py` recuperou o ganho verdadeiro com erro ≤ 0,02 % nos pontos medidos (0,012 % nos testes finais) e ≤ 0,17 % entre pontos (interpolação). O estimador de amplitude (Welch + janela flat-top + refino parabólico) é tão bom quanto um ajuste senoidal por mínimos quadrados — comparados lado a lado, de 100 Hz a 80 kHz, ambos ficam em desvio ≤ 0,008 % e viés ≤ 0,003 % (o ajuste senoidal é ~10× mais lento). **Não há ganho de exatidão em trocar o estimador.** O que limita a confiança no perfil real é a bancada (shunt, canal de referência, gerador, dependência de amplitude/CC), não o software.
+Com 19 pontos, o `gerar_perfil_sonda.py` recuperou o ganho verdadeiro com erro ≤ 0,02 % nos pontos medidos (0,012 % nos testes finais) e ≤ 0,17 % entre pontos (interpolação). O estimador de amplitude (Welch + janela flat-top + refino parabólico) é tão bom quanto um ajuste senoidal por mínimos quadrados — comparados lado a lado, de 100 Hz a 80 kHz, ambos ficam em desvio ≤ 0,008 % e viés ≤ 0,003 % (o ajuste senoidal é ~10× mais lento). **Isso vale para o modo `--resistencia-shunt` (razão entre dois canais, em que o erro do estimador se cancela); nos modos de 1 canal (`--referencia-externa`, `--amplitude-referencia`) o erro de amplitude não se cancela e foi corrigido depois — ver o [adendo](#adendo-2026-10-estimador-de-amplitude-nos-modos-de-1-canal).** O que limita a confiança no perfil real é a bancada (shunt, canal de referência, gerador, dependência de amplitude/CC), não o software.
 
 **O jeito de aplicar a correção é confiável?** Para **espectro de amplitude** (Welch, `--fft`, `--picos`), sim: tons de 2,5/9/20/40 kHz (0,2/0,1/0,1/0,1 A) voltaram a 0,2000/0,1000/0,1001/0,1000 A; sem correção o de 40 kHz saía 0,060 A (−40 %). Para **forma de onda no tempo** e **qualquer grandeza que dependa de fase entre canais**, não: a correção é só de magnitude (seção 4.1).
 
@@ -22,7 +22,7 @@ Com 19 pontos, o `gerar_perfil_sonda.py` recuperou o ganho verdadeiro com erro �
 > A coluna "Onde" mostra os arquivos **da época da auditoria**. Depois, o código passou para o
 > pacote `scripts/supraharmonicos/`. Onde cada correção mora hoje: bugs 1, 3 e 5 em `sonda.py`
 > (`conferir_calibracao_perfil`, `resolver_perfil_canal`, `aplicar_correcao_sonda`); bug 2 em
-> `modos.py` (`_aplicar_correcao_sondas`); bug 4 em `sonda.py` (`carregar_perfil_sonda`) e
+> `modos.py` (`aplicar_correcao_sondas`); bug 4 em `sonda.py` (`carregar_perfil_sonda`) e
 > `escrita_perfil.py`; bug 6 em `escrita_perfil.py` (`gravar_perfil_validado`); bug 7 em
 > `calibracao_sonda.py`.
 
@@ -124,3 +124,16 @@ A divisão espectral do registro inteiro trata o sinal como periódico; em regis
 | `docs/contexto_projeto.md` | seções atualizadas (modelo de calibração, pipeline, geração de perfil, status, restrições) |
 
 Sem alteração (na época desta auditoria): `firmware/ler_adc.c`, `firmware/calibrar_sonda.sh`, `docs/exemplo_sonda.json`. O `calibrar_sonda.sh` foi reescrito depois (item 2.10 de `docs/melhorias-propostas.md`).
+
+---
+
+## Adendo (2026-10): estimador de amplitude nos modos de 1 canal
+
+A conclusão da seção 1 ("não há ganho de exatidão em trocar o estimador") foi tirada no modo `--resistencia-shunt`, em que o ganho é a **razão** entre a amplitude da sonda e a da referência, medidas pelo mesmo estimador na mesma frequência: o erro de posição do tom no bin é igual nos dois e se cancela. Ao simular os modos de 1 canal (um canal só, corrente real lida no osciloscópio), em que a amplitude é **absoluta**, o erro aparece: 24 pontos de 50 Hz a 160 kHz, 3 s a 400 kS/s, resultado do Welch de 100 Hz com janela flat-top e refino parabólico:
+
+| | Erro de amplitude (máx.) | Erro de frequência (máx.) |
+|---|---|---|
+| Welch + flat-top + parabólica (antes) | **1,83 %** (nos tons fora do centro do bin; 0 nos que caem no centro) | 14 Hz |
+| Refinamento por FFT única (janela Kaiser β = 14, energia do lóbulo; agora) | 0,001 % | < 0,01 Hz |
+
+O `medir_tom` continua usando o Welch para **localizar** o tom (e para a checagem de SNR), mas a amplitude e a frequência vêm de `_refinar_tom_por_fft` (o mesmo estimador do `medir_captura.py`), sobre até 4 M amostras. Se a captura for curta ou o tom estiver a menos de ~14 bins do DC, ou se o pico da FFT não coincidir com o do Welch, vale a estimativa do Welch. Cobertura: `tests/test_calibracao_sonda.py::TestMedirTom` (tons em 1,2, 9,7, 13,7, 55,8 e 112,6 kHz: erro < 0,05 % e < 0,5 Hz).

@@ -67,7 +67,13 @@ uv run scripts/adc_tool.py captura.bin --export-hdf5 captura.h5 --incluir-tensao
 
 Frequência e canais vêm do cabeçalho da captura, então não é preciso informá-los. Ajuda completa: `uv run scripts/adc_tool.py --help`.
 
-Mais exemplos (multi-canal, filtros, conversão para CSV, calibração de sondas de corrente) estão no **[guia de uso](docs/guia_de_uso.md)**.
+Para **medir** a captura (ruído, THD, SINAD, ENOB, SFDR, amostras perdidas, diafonia, comparação com um osciloscópio) e gerar uma tabela de números para o relatório:
+
+```bash
+uv run scripts/medir_captura.py captura.bin --csv resultados.csv
+```
+
+Mais exemplos (multi-canal, filtros, conversão para CSV, calibração de sondas de corrente) estão no **[guia de uso](docs/guia_de_uso.md)**. Vai validar o projeto em bancada? Use o **[roteiro de laboratório](docs/roteiro_laboratorio.md)**.
 
 ## 📈 FFT ou Welch?
 
@@ -83,7 +89,7 @@ As duas podem ser combinadas na mesma execução. A explicação completa, com o
 ```text
 .
 ├── firmware/    # Código da BeagleBone: PRU (spi_core.asm, pru_main.c), ler_adc.c, Makefile, setup.sh, calibrar_sonda.sh
-├── scripts/     # Python (adc_tool.py, gerar_perfil_sonda.py, pacote supraharmonicos/) e utilitários .sh
+├── scripts/     # Python (adc_tool.py, gerar_perfil_sonda.py, medir_captura.py, pacote supraharmonicos/) e utilitários .sh
 ├── tests/       # Testes automáticos (pytest), sem precisar de hardware
 ├── hardware/    # Projeto da PCB no Altium Designer (DAQ_Module)
 └── docs/        # Documentação, proposta de IC, datasheets e imagens
@@ -94,6 +100,7 @@ As duas podem ser combinadas na mesma execução. A explicação completa, com o
 | Documento | Para quem | Conteúdo |
 |---|---|---|
 | [`docs/guia_de_uso.md`](docs/guia_de_uso.md) | Quem vai **usar** | Passo a passo: capturar, analisar, calibrar sondas, formato do `.bin`, problemas comuns |
+| [`docs/roteiro_laboratorio.md`](docs/roteiro_laboratorio.md) | Quem vai **testar em bancada** | Lista de testes (T0 a T11): sinal a injetar, comandos, o que anotar no osciloscópio, critérios de aceitação e dados para o relatório |
 | [`docs/arquitetura_software.md`](docs/arquitetura_software.md) | Quem vai **modificar o Python** | Módulos e camadas, convenções, testes, CI, receitas e checklist de PR |
 | [`docs/contexto_projeto.md`](docs/contexto_projeto.md) | Quem quer a **referência técnica completa** | Protocolo SPI, firmware, formato do cabeçalho, pipeline de análise, status e limites (texto denso, escrito também para ser lido por IA) |
 | [`docs/melhorias-propostas.md`](docs/melhorias-propostas.md) | Quem vai **evoluir o projeto** | Melhorias abertas, com prioridade e esforço |
@@ -107,7 +114,9 @@ As duas podem ser combinadas na mesma execução. A explicação completa, com o
 |---|---|
 | ✅ Validado em hardware | Protocolo SPI do ADS8688 (32 ciclos de clock por amostra); handshake ARM↔PRU; varredura automática (AUTO_RST) com 1 e com 5 canais a 102,4 kHz totais (≈20,48 kHz por canal): canais ligados à rede mostram os 60 Hz, canais desconectados mostram só ruído |
 | 🧪 Validado com sinais sintéticos | Toda a análise espectral (`--fft`, `--welch`, bandas, picos), a correção de sondas e a geração de perfis |
-| ⏳ Pendente | **Validação quantitativa de exatidão:** medir amplitude e frequência de um sinal de referência calibrado, injetado em bancada. Falta também calibrar uma sonda real e conferir o cabeçalho v2 numa captura real |
+| ⏳ Pendente | **Validação quantitativa de exatidão:** medir amplitude e frequência de um sinal de referência calibrado, injetado em bancada (plano em [`docs/roteiro_laboratorio.md`](docs/roteiro_laboratorio.md)). Falta também calibrar uma sonda real e conferir o cabeçalho v2 numa captura real |
+
+**Atenção ao filtro do ADC:** o ADS8688 tem um filtro passa-baixa de 2ª ordem embutido em cada canal, com corte de cerca de 15 kHz (datasheet, seção 8.3.5). Na banda de supraharmônicos (2 a 150 kHz) o sinal chega ao conversor atenuado em dezenas de dB, e a correção por perfil devolve a amplitude mas amplifica o ruído na mesma proporção. Por isso o perfil deve cobrir a cadeia inteira (sonda, frontend e ADC) até 150 kHz.
 
 Limites conhecidos, como a ausência de controle de *overrun* nos buffers (risco cresce com a taxa de amostragem) e a correção de sonda só de magnitude, estão em [`docs/contexto_projeto.md`](docs/contexto_projeto.md) e [`docs/melhorias-propostas.md`](docs/melhorias-propostas.md).
 
@@ -117,7 +126,7 @@ Quem for modificar o código Python deve começar por [`docs/arquitetura_softwar
 
 ```bash
 uv run --extra dev ruff check .   # estilo e erros comuns
-uv run --extra dev pytest         # 226 testes, ~2 min (use -m "not e2e" para a versão rápida: 178 testes, ~6 s)
+uv run --extra dev pytest         # 331 testes, ~2 min (use -m "not e2e" para a versão rápida: 262 testes, ~10 s)
 ```
 
 Os testes também conferem que o firmware (C) e o Python concordam sobre o formato do cabeçalho: se você mudar um lado, o `pytest` avisa até o outro acompanhar.
