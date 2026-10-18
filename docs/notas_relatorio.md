@@ -79,7 +79,7 @@
   digital, suporte multi-canal completo e exportação para o formato HDF5;
   rotulagem de grandeza e sonda por canal no cabeçalho (versão 2) e correção
   em frequência de sondas de corrente (validada apenas com sinais
-  sintéticos); e código Python organizado em pacote, com 331 testes
+  sintéticos); e código Python organizado em pacote, com 483 testes
   automáticos e integração contínua, e preparação da validação em bancada
   (ferramenta de métricas e roteiro de laboratório).
 
@@ -665,7 +665,9 @@ reordena os canais em ordem crescente.
    sinal + resistor *shunt* de precisão): o operador informa a taxa de
    amostragem, o canal da sonda e o número de pontos; por padrão a captura
    usa **um canal só** (Nyquist = taxa ÷ 2, o que permite calibrar até a
-   banda de supraharmônicos) e a corrente real é lida num osciloscópio a
+   banda de supraharmônicos) e a referência vem de uma senoide de
+   **amplitude conhecida**, gravada com a frequência nos metadados de cada
+   captura (`--amplitude 500mVpp`), ou de uma leitura do osciloscópio a
    cada ponto (`--ref-externa`); o jeito de dois canais (um segundo canal do
    ADC no *shunt*, Nyquist = taxa ÷ 4) continua disponível. O script escolhe
    as frequências (escala
@@ -675,9 +677,16 @@ reordena os canais em ordem crescente.
    coleta interrompida, refinar e adensar pontos.
 2. `scripts/gerar_perfil_sonda.py` — mede amplitude e frequência de cada
    captura (Welch com janela *flat-top* para localizar o tom e FFT única com janela
-   Kaiser para a amplitude e a frequência finais), calcula o ganho contra a corrente
-   real e grava o perfil, com validação antes de substituir um perfil
-   existente.
+   Kaiser para a amplitude e a frequência finais), calcula o ganho contra o que foi
+   injetado (amplitude conhecida nos metadados, forma de onda `.m` do osciloscópio,
+   leitura anotada ou canal de referência no shunt) e grava o perfil, com
+   validação antes de substituir um perfil existente. O perfil descreve o
+   **conjunto** sonda + frontend + ADC (inclusive o filtro passa-baixa de 2ª ordem
+   do ADS8688, de frequência de corte desconhecida: ela aparece na curva), e o
+   resumo da resposta (−3 dB, inclinação, amplificação de ruído) é impresso e
+   gravado no perfil. `scripts/medir_captura.py` compara o ADC com a amplitude
+   injetada e com o `.m` do osciloscópio, o que permite conferir a efetividade
+   do método numa única medição.
 3. Correção no `adc_tool.py` — divisão espectral com interpolação PCHIP sobre
    (log da frequência, ganho em dB), aplicada antes de FFT/Welch/plotagem.
 
@@ -731,7 +740,7 @@ reduzir o custo de alterar o código sem quebrar o que já funciona.
    comando foram registradas e depois comparadas com a nova versão — 57
    idênticas e 4 com diferença só no texto de mensagens de erro/aviso
    padronizadas. Nomes de flags, saídas e códigos de saída foram preservados.
-3. **331 testes automáticos**, sem necessidade de hardware: unidades por
+3. **483 testes automáticos**, sem necessidade de hardware: unidades por
    módulo, linha de comando, regras de arquitetura, dependências, o fluxo
    completo de perfil de sonda e o script de coleta de calibração
    (`calibrar_sonda.sh`, exercitado contra um `ler_adc` simulado). Um teste de **contrato C↔Python** lê o
@@ -907,7 +916,7 @@ clareza valorizada por qualquer orientador.
    um fluxo de calibração e correção em frequência de sondas de corrente;
    a auditoria do fluxo encontrou e corrigiu sete bugs e registrou os
    limites (correção só de magnitude; validação apenas sintética).
-10. O código Python foi reorganizado em pacote, com 331 testes automáticos
+10. O código Python foi reorganizado em pacote, com 483 testes automáticos
     (inclusive um teste de contrato C↔Python) e integração contínua,
     preservando o comportamento anterior (61 execuções comparadas).
 11. A próxima etapa (Marco 12) é a validação quantitativa mediante sinal conhecido

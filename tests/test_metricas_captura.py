@@ -10,7 +10,15 @@ import math
 
 import numpy as np
 import pytest
-from capturas_sinteticas import FAIXA, FREQS_CAL, SENS_NOMINAL, escrever_bin, planta_h, volts_para_codigos
+from capturas_sinteticas import (
+    FAIXA,
+    FREQS_CAL,
+    SENS_NOMINAL,
+    escrever_bin,
+    escrever_m_osciloscopio,
+    planta_h,
+    volts_para_codigos,
+)
 from supraharmonicos.cli_medir_captura import COLUNAS_CSV, main
 from supraharmonicos.erros import ErroSHAN
 from supraharmonicos.metricas_captura import (
@@ -396,3 +404,113 @@ class TestCliSondaEReferencia:
     def test_referencia_sem_tom_avisa(self, cli, pasta):
         rc, _, err = cli(main, pasta / "um_canal.bin", "--sem-tom", "--referencia-rms", 1.0)
         assert rc == 0 and "sem tom" in err
+
+
+# ---------------------------------------------------------------------------
+# Amplitude injetada conhecida + osciloscópio: a checagem do ADC e do método do perfil
+# ---------------------------------------------------------------------------
+
+F_REF = 5000.0
+PICO_MOSTRADOR = 0.25            # 500 mVpp no mostrador do gerador
+ERRO_GERADOR = 0.98              # o gerador entrega 2 % menos que o mostrador
+GANHO_CADEIA = 0.9               # atenuação do conjunto (sonda + frontend + filtro do ADC) nessa frequência
+
+
+@pytest.fixture(scope="module")
+def ambiente_ref(tmp_path_factory):
+    from supraharmonicos.referencia import formatar_referencia
+
+    base = tmp_path_factory.mktemp("ref")
+    rng = np.random.default_rng(11)
+    real = PICO_MOSTRADOR * ERRO_GERADOR
+    descricao = formatar_referencia(F_REF, "500mVpp")
+    adc = GANHO_CADEIA * real * np.sin(2 * np.pi * F_REF * tempo(1 << 18, 200_000.0) + 0.4) + rng.normal(0, 5e-4, 1 << 18)
+    escrever_bin(base / "um.bin", [adc], canais=(3,), grandezas=(0,), sondas=("",), fs_total=200_000, descricao=descricao)
+    fs_osc = 200.0 * F_REF
+    osc = real * np.sin(2 * np.pi * F_REF * np.arange(8000) / fs_osc + 0.1) + rng.normal(0, 2e-3, 8000)
+    escrever_m_osciloscopio(base / "um.m", osc, fs_osc)
+    # 60 Hz da rede 20x maior que o tom: só a frequência dos metadados faz o tom ser achado
+    com_rede = adc * 0.2 + 1.0 * np.sin(2 * np.pi * 60.0 * tempo(1 << 18, 200_000.0))
+    escrever_bin(base / "rede.bin", [com_rede], canais=(3,), grandezas=(0,), sondas=("",), fs_total=200_000, descricao=descricao)
+    escrever_bin(base / "sem_meta.bin", [adc], canais=(3,), grandezas=(0,), sondas=("",), fs_total=200_000)
+    return base
+
+
+class TestAmplitudeInjetadaEOsciloscopio:
+    def medir(self, cli, ambiente, tmp_path, *extra, arquivo="um.bin"):
+        saida = tmp_path / "r.csv"
+        rc, out, err = cli(main, ambiente / arquivo, *extra, "--csv", saida)
+        return rc, out, err, (ler_csv(saida)[0] if saida.exists() else None)
+
+    def test_amplitude_dos_metadados_e_osciloscopio_irmao(self, cli, ambiente_ref, tmp_path):
+        rc, out, err, linha = self.medir(cli, ambiente_ref, tmp_path, "--osciloscopio")
+        assert rc == 0, err
+        assert "referência gravada na captura: f=5000 Hz, amp=500mVpp" in out
+        assert "vs amplitude injetada" in out and "vs osciloscópio" in out and "osciloscópio vs injetada" in out
+        assert linha["ref_amplitude_texto"] == "500mVpp"
+        assert float(linha["ref_amplitude_pico"]) == pytest.approx(PICO_MOSTRADOR)
+        assert float(linha["razao_vs_amplitude_ref"]) == pytest.approx(GANHO_CADEIA * ERRO_GERADOR, rel=3e-3)
+        assert float(linha["razao_vs_osc"]) == pytest.approx(GANHO_CADEIA, rel=3e-3)
+        assert float(linha["osc_vs_amplitude_ref_pct"]) == pytest.approx(-2.0, abs=0.1)
+        assert float(linha["osc_freq_hz"]) == pytest.approx(F_REF, rel=1e-5)
+        assert abs(float(linha["erro_freq_vs_osc_ppm"])) < 30
+        assert linha["osc_arquivo"] == "um.m"
+
+    def test_arquivo_explicito_e_pasta(self, cli, ambiente_ref, tmp_path):
+        for destino in (ambiente_ref / "um.m", ambiente_ref):
+            rc, _, err, linha = self.medir(cli, ambiente_ref, tmp_path, "--osciloscopio", destino)
+            assert rc == 0, err
+            assert float(linha["razao_vs_osc"]) == pytest.approx(GANHO_CADEIA, rel=3e-3)
+            (tmp_path / "r.csv").unlink()
+
+    def test_a_linha_de_comando_vence_os_metadados(self, cli, ambiente_ref, tmp_path):
+        rc, out, err, linha = self.medir(cli, ambiente_ref, tmp_path, "--amplitude-referencia", "400mVpp")
+        assert rc == 0, err
+        assert "linha de comando" in out
+        assert float(linha["razao_vs_amplitude_ref"]) == pytest.approx(GANHO_CADEIA * ERRO_GERADOR * 0.25 / 0.2, rel=3e-3)
+
+    def test_o_ganho_converte_volts_em_grandeza_fisica_e_a_razao_nao_muda(self, cli, ambiente_ref, tmp_path):
+        rc, _, err, linha = self.medir(cli, ambiente_ref, tmp_path, "--ganho", "10", "--osciloscopio")
+        assert rc == 0, err
+        assert float(linha["ref_amplitude_pico"]) == pytest.approx(PICO_MOSTRADOR * 10)
+        assert float(linha["razao_vs_amplitude_ref"]) == pytest.approx(GANHO_CADEIA * ERRO_GERADOR, rel=3e-3)
+        assert float(linha["razao_vs_osc"]) == pytest.approx(GANHO_CADEIA, rel=3e-3)
+
+    def test_metadado_de_frequencia_acha_o_tom_fraco_ao_lado_da_rede(self, cli, ambiente_ref, tmp_path):
+        rc, _, err, linha = self.medir(cli, ambiente_ref, tmp_path, arquivo="rede.bin")
+        assert rc == 0, err
+        assert float(linha["freq_tom_hz"]) == pytest.approx(F_REF, rel=1e-4)
+        assert float(linha["razao_vs_amplitude_ref"]) == pytest.approx(0.2 * GANHO_CADEIA * ERRO_GERADOR, rel=5e-3)
+
+    def test_sem_nenhuma_referencia_as_colunas_novas_ficam_vazias(self, cli, ambiente_ref, tmp_path):
+        rc, out, err, linha = self.medir(cli, ambiente_ref, tmp_path, arquivo="sem_meta.bin")
+        assert rc == 0 and "vs amplitude injetada" not in out
+        assert linha["razao_vs_amplitude_ref"] == "" and linha["osc_arquivo"] == ""
+
+    def test_canal_corrigido_pelo_perfil_volta_a_razao_um(self, cli, ambiente_sonda, tmp_path):
+        """A checagem do método: 3 A injetados; sem correção a razão é o ganho do conjunto, com correção é 1."""
+        escrever_m_osciloscopio(ambiente_sonda / "corrente.m", CORRENTE_A * np.sin(2 * np.pi * FREQ_SONDA * np.arange(6000) / (100 * FREQ_SONDA)),
+                                100 * FREQ_SONDA)
+        razoes = {}
+        for nome, extra in (("com", ()), ("sem", ("--sem-correcao-sonda",))):
+            saida = tmp_path / f"{nome}.csv"
+            rc, _, err = cli(main, ambiente_sonda / "corrente.bin", *args_sonda(ambiente_sonda, "--amplitude-referencia", "3Apk",
+                                                                               "--osciloscopio", "--osc-unidade", "A", "--csv", saida, *extra))
+            assert rc == 0, err
+            linha = ler_csv(saida)[0]
+            razoes[nome] = (float(linha["razao_vs_amplitude_ref"]), float(linha["razao_vs_osc"]))
+        assert razoes["com"] == pytest.approx((1.0, 1.0), abs=0.01)
+        assert razoes["sem"] == pytest.approx((float(planta_h(FREQ_SONDA)),) * 2, rel=0.01)
+
+    def test_arquivo_do_osciloscopio_inexistente_e_erro_de_dominio(self, cli, ambiente_ref, tmp_path):
+        rc, _, err, _ = self.medir(cli, ambiente_ref, tmp_path, "--osciloscopio", ambiente_ref / "nao_existe.m")
+        assert rc == 1 and "não achei o arquivo do osciloscópio" in err
+        rc, _, err, _ = self.medir(cli, ambiente_ref, tmp_path, "--osciloscopio", arquivo="sem_meta.bin")
+        assert rc == 1 and "esperava 'sem_meta.m'" in err
+
+    def test_flags_invalidas_saem_com_codigo_2(self, cli, ambiente_ref, tmp_path):
+        assert cli(main, ambiente_ref / "um.bin", "--osc-fs", "1e6")[0] == 2
+        rc, _, err = cli(main, ambiente_ref / "um.bin", "--amplitude-referencia", "500mV")
+        assert rc == 2 and "sem tipo" in err
+        rc, _, err = cli(main, ambiente_ref / "um.bin", ambiente_ref / "rede.bin", "--osciloscopio", ambiente_ref / "um.m")
+        assert rc == 2 and "uma captura só" in err

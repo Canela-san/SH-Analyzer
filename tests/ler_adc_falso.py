@@ -2,8 +2,9 @@
 """``ler_adc`` FALSO, só para testar ``firmware/calibrar_sonda.sh`` sem hardware.
 
 Imita a interface de linha de comando do ``firmware/ler_adc.c`` (taxa, lista de canais,
-``--blocos``, ``--grandeza``, ``--sonda``, ``-o``, ``-t``) e grava um ``.bin`` v2 sintético com
-o mesmo formato (``capturas_sinteticas.montar_cabecalho``). Quem usa é ``test_calibrar_sonda.py``,
+``--blocos``, ``--grandeza``, ``--sonda``, ``-o``, ``-t``, ``-d``) e grava um ``.bin`` v2 sintético com
+o mesmo formato (``capturas_sinteticas.montar_cabecalho``). A descrição (``-d``) vai para o cabeçalho
+e, se trouxer ``ref: amp=...``, a amplitude do tom injetado é essa (o gerador "obedeceu" ao operador). Quem usa é ``test_calibrar_sonda.py``,
 que o chama através de um pequeno wrapper ``sh`` (o script de calibração executa o binário direto).
 
 Variáveis de ambiente:
@@ -28,7 +29,9 @@ Variáveis de ambiente:
     sem_cabecalho    só amostras, sem o cabeçalho "SHAN"
 
 A frequência "injetada na bancada" é a pedida no título (``Calibracao <F>Hz rep<N> ...``), como se
-o operador tivesse obedecido à instrução do script.
+o operador tivesse obedecido à instrução do script. Sem ``-d`` (ou sem ``amp=``) o tom tem 1 de pico
+(1 V no canal de referência, ``planta_h(f)`` V no da sonda); com ``amp=`` o tom da sonda é ``planta_h(f)``
+vezes o PICO da amplitude (em V ou A, o número que o ``referencia.py`` calcula).
 """
 
 import os
@@ -41,7 +44,9 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from capturas_sinteticas import montar_cabecalho, planta_h, volts_para_codigos  # noqa: E402
+from supraharmonicos.referencia import extrair_referencia  # noqa: E402
 
 OFFSET_BLOCOS = 68
 OFFSET_CRC_V2 = 668
@@ -71,6 +76,7 @@ def main(argv: list[str]) -> int:
     blocos = int(opcoes.get("--blocos", "1"))
     saida = opcoes["-o"]
     titulo = opcoes.get("-t", "")
+    descricao = opcoes.get("-d", "")
     grandeza = dict(p.split(":") for p in opcoes["--grandeza"].split(",")) if "--grandeza" in opcoes else {}
     sonda = dict(p.split(":") for p in opcoes["--sonda"].split(",")) if "--sonda" in opcoes else {}
     grandezas = [CODIGO_GRANDEZA[grandeza.get(str(c), "tensao")] for c in canais]
@@ -87,7 +93,9 @@ def main(argv: list[str]) -> int:
 
     f_nominal = float(titulo.split()[1].removesuffix("Hz"))
     f = f_nominal * {"freq_errada": 1.3, "freq_leve": 1.07}.get(diretiva, 1.0)
-    amp_ref, amp_sonda, ruido = 1.0, float(planta_h(f_nominal)), 1e-3
+    referencia = extrair_referencia(descricao)
+    escala = referencia.amplitude.pico if referencia and referencia.amplitude else 1.0
+    amp_ref, amp_sonda, ruido = 1.0, float(planta_h(f_nominal)) * escala, 1e-3
     if diretiva == "sat_sonda":
         amp_sonda = 6.0
     if diretiva == "sat_ref":
@@ -97,7 +105,7 @@ def main(argv: list[str]) -> int:
     if diretiva == "sem_sinal_ref":
         amp_ref = 0.0
     if diretiva == "fraco":
-        amp_ref, amp_sonda = 0.3, 0.3 * float(planta_h(f_nominal))
+        amp_ref, amp_sonda = 0.3, 0.3 * float(planta_h(f_nominal)) * escala
 
     k = len(canais)
     n_por_canal = blocos * spb // k
@@ -115,7 +123,8 @@ def main(argv: list[str]) -> int:
     if diretiva == "grandeza_tensao":
         grandezas = [0] * k
     versao = 1 if diretiva == "cab_v1" else 2
-    cabecalho = bytearray(montar_cabecalho(n_por_canal, canais, grandezas, sondas, taxa, versao=versao, titulo=titulo))
+    cabecalho = bytearray(montar_cabecalho(n_por_canal, canais, grandezas, sondas, taxa, versao=versao, titulo=titulo,
+                                         descricao=descricao))
     struct.pack_into("<I", cabecalho, 40, spb)  # samples_per_buffer
     if versao == 2:
         struct.pack_into("<Q", cabecalho, OFFSET_BLOCOS, 0 if diretiva == "cab_zero" else blocos)

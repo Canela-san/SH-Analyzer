@@ -9,7 +9,8 @@ entra um FALSO (``ler_adc_falso.py``) que grava ``.bin`` v2 sintéticos e sabe s
 * o fluxo do operador: coleta nova, refazer um ponto ruim, opção inválida no menu, pular e
   retomar, refazer um ponto já aceito, adensar e refinar;
 * os dois jeitos de capturar: 2 canais (sonda + referência no shunt; Nyquist efetiva = taxa/4) e
-  1 canal (só a sonda, com a leitura do osciloscópio digitada a cada ponto; Nyquist = taxa/2);
+  1 canal (só a sonda; Nyquist = taxa/2), com a referência vinda da leitura do osciloscópio digitada a
+  cada ponto ou da AMPLITUDE conhecida da senoide, gravada nos metadados de cada captura (``ref: f=.. amp=..``);
 * que o que o script produz é exatamente o que ``gerar_perfil_sonda.py`` consome.
 
 Marcados ``e2e`` (rodam bash e processos Python; ~1 min no total). Só funcionam em Linux com
@@ -31,6 +32,8 @@ from capturas_sinteticas import planta_h
 from supraharmonicos import cabecalho as cab
 from supraharmonicos import calibracao_sonda
 from supraharmonicos.cli_gerar_perfil import main as gerar_perfil
+from supraharmonicos.erros import ErroSHAN
+from supraharmonicos.referencia import analisar_amplitude
 
 RAIZ = Path(__file__).resolve().parents[1]
 SCRIPT = RAIZ / "firmware" / "calibrar_sonda.sh"
@@ -219,6 +222,13 @@ def test_codigos_e_limites_do_script_batem_com_firmware_e_python():
         (["--taxa", "102400", "--sonda", "s" * 40], "no máximo 31"),
         (["--taxa", "102400", "--sonda", "///"], "nenhum caractere válido"),
         (["--taxa", "102400", "--sonda", "x", "--modo", "xyz"], "Modo desconhecido"),
+        (["--taxa", "102400", "--sonda", "x", "--canal-sonda", "1", "--amplitude", "500mV"], "sem tipo"),
+        (["--taxa", "102400", "--sonda", "x", "--canal-sonda", "1", "--amplitude", "0.5"], "sem unidade"),
+        (["--taxa", "102400", "--sonda", "x", "--canal-sonda", "1", "--amplitude", "0Vpp"], "positivo"),
+        (["--taxa", "102400", "--sonda", "x", "--canal-sonda", "1", "--amplitude", "abc"], "Valor inválido para --amplitude"),
+        (["--taxa", "102400", "--sonda", "x", "--canal-sonda", "1", "--amplitude", "500mVpp", "--ref-externa"], "não combinam"),
+        (["--taxa", "102400", "--sonda", "x", "--canal-sonda", "1", "--amplitude", "500mVpp", "--canal-referencia", "0"], "não combinam"),
+        (["--taxa", "102400", "--sonda", "x", "--canal-sonda", "1", "--amplitude-por-ponto", "--ref-externa"], "não combinam"),
     ],
 )
 def test_argumentos_invalidos_sao_recusados_antes_de_medir(bancada, args, trecho):
@@ -555,7 +565,8 @@ def com_coleta_1canal(coleta_1canal, tmp_path):
 
 @com_e2e
 def test_sem_canal_da_sonda_o_script_pergunta(bancada):
-    # respostas: canal 2; referência: opção 2 (corrente constante, 1 canal); depois só ENTERs
+    # respostas: canal 2; referência: opção 2 (amplitude conhecida, 1 canal); ENTER = não declarar a amplitude agora
+    # (cai em "corrente constante": informada depois no gerar_perfil_sonda.py); depois só ENTERs
     rc, saida = bancada.rodar("--taxa", TAXA, "--pontos", 2, "--sonda", SONDA, "-y", canais=False, entradas="2\n2\n")
     assert rc == 0, saida
     assert "Como o script vai saber a corrente real" in saida  # (o prompt do read não aparece com stdin em pipe)
@@ -588,3 +599,187 @@ def test_retomar_com_canais_diferentes_do_plano_e_recusado(coleta_1canal):
                                     canais=False)
     assert rc != 0 and "Canais diferentes dos do plano" in saida
     assert coleta_1canal.chamadas() == antes  # nada novo foi medido
+
+
+# --------------------------------------------------------------------------------------
+# Metadados da captura: frequência e amplitude injetadas (ref: f=.. amp=..) no campo "descrição" do cabeçalho
+# --------------------------------------------------------------------------------------
+def descricoes(b: Bancada, sonda: str = SONDA) -> dict[str, str]:
+    return {n: cab.ler_cabecalho(b.pasta(sonda) / n).descricao for n in b.bins(sonda)}
+
+
+def freq_do_arquivo(nome: str) -> int:
+    return int(nome.split("_")[1].removesuffix("Hz"))
+
+
+@pytest.fixture(scope="module")
+def coleta_amplitude(tmp_path_factory):
+    """1 canal (canal 3), 3 pontos, senoide de 2 Vpp (= 1 V de pico), SEM digitar nada além de ENTER."""
+    b = Bancada(tmp_path_factory.mktemp("coleta_amplitude"))
+    rc, saida = b.rodar("--taxa", TAXA, "--pontos", 3, "--sonda", SONDA, "--canal-sonda", 3, "--amplitude", "2 Vpp", "-y")
+    assert rc == 0, saida
+    b.saida = saida
+    return b
+
+
+@com_e2e
+def test_coleta_sem_amplitude_grava_so_a_frequencia_nos_metadados(coleta_base):
+    for nome, descricao in descricoes(coleta_base).items():
+        assert descricao == f"ref: f={freq_do_arquivo(nome)}Hz"   # 2 canais: a amplitude não é declarada
+    assert "amplitude_ref" in (coleta_base.pasta() / "pontos_coletados.csv").read_text().splitlines()[0]
+    assert all(m["amplitude_ref"] == "" for m in coleta_base.manifesto())
+
+
+@com_e2e
+def test_amplitude_constante_vai_para_os_metadados_o_manifesto_e_o_plano(coleta_amplitude):
+    b = coleta_amplitude
+    assert [m["status"] for m in b.manifesto()] == ["ok"] * 3
+    assert {m["amplitude_ref"] for m in b.manifesto()} == {"2Vpp"}        # o texto foi limpo: "2 Vpp" -> "2Vpp"
+    for nome, descricao in descricoes(b).items():
+        assert descricao == f"ref: f={freq_do_arquivo(nome)}Hz amp=2Vpp"
+    plano = (b.pasta() / "plano_coleta.txt").read_text()
+    assert "amplitude=2Vpp" in plano and "amplitude_por_ponto=0" in plano
+    assert "Referência:          senoide de 2Vpp em todas as frequências" in b.saida
+    assert "SENOIDE pura de 2Vpp" in b.saida and "ganho relativo à menor frequência (pela amplitude injetada)" in b.saida
+    # o comando sugerido não pede mais nada: a amplitude está nos arquivos
+    assert "gerar_perfil_sonda.py capturas/sonda_ci --plot" in b.saida
+    # e o ler_adc recebeu o -d
+    assert all("-d ref: f=" in linha and " amp=2Vpp" in linha for linha in b.chamadas())
+
+
+@com_e2e
+def test_amplitude_constante_gera_o_perfil_sem_nenhuma_flag_de_referencia(coleta_amplitude, tmp_path, cli):
+    saida_json = tmp_path / "perfil.json"
+    rc, _, err = cli(gerar_perfil, coleta_amplitude.pasta(), "-o", saida_json)
+    assert rc == 0, err
+    perfil = json.loads(saida_json.read_text())
+    assert perfil["calibracao_adc"]["modo_referencia"] == "amplitude" and len(perfil["pontos"]) == 3
+    for p in perfil["pontos"]:       # o ler_adc falso injeta H(f) V por 1 V de pico: o perfil tem que devolver H(f)
+        assert p["ganho"] == pytest.approx(float(planta_h(p["freq_hz"])), rel=0.02)
+
+
+@com_e2e
+def test_amplitude_por_ponto_pergunta_valida_e_grava_a_de_cada_captura(bancada, cli, tmp_path):
+    # ponto 1: ENTER (medir), 'abc' (inválida), 2Vpp, ENTER (aceita);  ponto 2: ENTER, ENTER (mantém 2Vpp), ENTER;
+    # ponto 3: ENTER, 500mVrms (muda), ENTER
+    entradas = "\nabc\n2Vpp\n\n" + "\n\n\n" + "\n500mVrms\n\n"
+    rc, saida = bancada.rodar("--taxa", TAXA, "--pontos", 3, "--sonda", SONDA, "--canal-sonda", 3,
+                              "--amplitude-por-ponto", "-y", entradas=entradas)
+    assert rc == 0, saida
+    assert "Amplitude inválida: 'abc'" in saida and "Amplitude injetada (gravada nos metadados): 2Vpp" in saida
+    assert [m["amplitude_ref"] for m in bancada.manifesto()] == ["2Vpp", "2Vpp", "500mVrms"]
+    por_arquivo = {m["arquivo"]: m["amplitude_ref"] for m in bancada.manifesto()}
+    for nome, descricao in descricoes(bancada).items():
+        assert descricao == f"ref: f={freq_do_arquivo(nome)}Hz amp={por_arquivo[nome]}"
+    assert "amplitude_por_ponto=1" in (bancada.pasta() / "plano_coleta.txt").read_text()
+    # amplitudes diferentes, mesmo ganho: o perfil lê a amplitude de CADA captura
+    rc, _, err = cli(gerar_perfil, bancada.pasta(), "-o", tmp_path / "p.json")
+    assert rc == 0, err
+    for p in json.loads((tmp_path / "p.json").read_text())["pontos"]:
+        assert p["ganho"] == pytest.approx(float(planta_h(p["freq_hz"])), rel=0.02)
+
+
+@com_e2e
+def test_amplitude_por_ponto_com_valor_inicial_e_enter_mantem(bancada):
+    rc, saida = bancada.rodar("--taxa", TAXA, "--pontos", 2, "--sonda", SONDA, "--canal-sonda", 3,
+                              "--amplitude-por-ponto", "--amplitude", "1Vpk", "-y")   # só ENTERs: todos aceitam 1Vpk
+    assert rc == 0, saida
+    assert [m["amplitude_ref"] for m in bancada.manifesto()] == ["1Vpk", "1Vpk"]
+    assert "valor inicial 1Vpk" in saida
+
+
+@com_e2e
+def test_amplitude_por_ponto_sem_valor_inicial_exige_a_primeira_amplitude(bancada):
+    rc, saida = bancada.rodar("--taxa", TAXA, "--pontos", 2, "--sonda", SONDA, "--canal-sonda", 3,
+                              "--amplitude-por-ponto", "-y", eof=True, entradas="\n\n")   # ENTER (medir), ENTER (sem valor), EOF
+    assert rc != 0 and "Informe a amplitude que o gerador está injetando" in saida
+    assert bancada.chamadas() == []   # nada foi medido sem saber a amplitude
+
+
+@com_e2e
+def test_menu_interativo_amplitude_conhecida_e_igual_em_todos_os_pontos(bancada):
+    # canal 2; referência: opção 2 (amplitude); '500mV' (sem tipo: recusada); 4Vpp; mesma em todos os pontos (ENTER = sim)
+    rc, saida = bancada.rodar("--taxa", TAXA, "--pontos", 2, "--sonda", SONDA, "-y", canais=False,
+                              entradas="2\n2\n500mV\n4Vpp\n\n")
+    assert rc == 0, saida
+    assert "Amplitude inválida: '500mV' -- sem tipo" in saida
+    assert {m["amplitude_ref"] for m in bancada.manifesto()} == {"4Vpp"}
+    assert "amplitude_por_ponto=0" in (bancada.pasta() / "plano_coleta.txt").read_text()
+
+
+@com_e2e
+def test_menu_interativo_amplitude_que_muda_vira_por_ponto(bancada):
+    # canal 2; opção 2; 4Vpp; "n" = muda entre os pontos; ponto 1: ENTER (medir), ENTER (mantém 4Vpp), ENTER; ponto 2: ENTER, 2Vpp, ENTER
+    rc, saida = bancada.rodar("--taxa", TAXA, "--pontos", 2, "--sonda", SONDA, "-y", canais=False,
+                              entradas="2\n2\n4Vpp\nn\n" + "\n\n\n" + "\n2Vpp\n\n")
+    assert rc == 0, saida
+    assert [m["amplitude_ref"] for m in bancada.manifesto()] == ["4Vpp", "2Vpp"]
+
+
+@com_e2e
+def test_retomar_herda_a_amplitude_do_plano_e_o_manifesto_antigo_ganha_a_coluna(coleta_amplitude, tmp_path):
+    b = Bancada(tmp_path)
+    shutil.copytree(coleta_amplitude.capturas, b.capturas)
+    faltante = b.bins()[0]
+    (b.pasta() / faltante).unlink()
+    manifesto = b.pasta() / "pontos_coletados.csv"
+    linhas = manifesto.read_text().splitlines()
+    manifesto.write_text("\n".join(ln.rsplit(",", 1)[0] for ln in linhas) + "\n")   # como era antes da coluna amplitude_ref
+    assert "amplitude_ref" not in manifesto.read_text()
+    rc, saida = b.rodar("--modo", "retomar", "--sonda", SONDA, "-y", canais=False)
+    assert rc == 0, saida
+    assert len(b.bins()) == 3
+    assert descricoes(b)[faltante] == f"ref: f={freq_do_arquivo(faltante)}Hz amp=2Vpp"   # veio do plano
+    assert manifesto.read_text().splitlines()[0].endswith(",ref_externa_v_rms,amplitude_ref")
+    assert b.manifesto()[-1]["amplitude_ref"] == "2Vpp"
+
+
+@com_e2e
+def test_amplitude_da_linha_de_comando_vence_a_do_plano_ao_retomar(coleta_amplitude, tmp_path):
+    b = Bancada(tmp_path)
+    shutil.copytree(coleta_amplitude.capturas, b.capturas)
+    faltante = b.bins()[0]
+    (b.pasta() / faltante).unlink()
+    rc, saida = b.rodar("--modo", "retomar", "--sonda", SONDA, "--amplitude", "4Vpp", "-y", canais=False)
+    assert rc == 0, saida
+    assert descricoes(b)[faltante].endswith("amp=4Vpp")
+    assert "amplitude=4Vpp" in (b.pasta() / "plano_coleta.txt").read_text()
+
+
+# --------------------------------------------------------------------------------------
+# A leitura de amplitude do script (awk) e a do Python (referencia.py) têm que concordar
+# --------------------------------------------------------------------------------------
+AMPLITUDES_DE_TESTE = [
+    "500mVpp", "500 mV pp", "500mV_pp", "500mVp-p", "0,5Vpp", "1Vpk-pk", "250mVpk", "250mVp", "0.25V pico",
+    "500uVpp", "500µVpp", "500μVpp", "1e-1Vpk", "2Arms", "353.55mVrms", "1.2 A_pp", "3kApk", "500mvpp", "1Vpeak", "2Aeficaz",
+    ".5Vpk", "5.Vpk",
+    "500mV", "2A", "2rms", "500pp", "10m", "500MVpp", "abc", "", "-1Vpp", "0Vpp", "500mVpp extra", "5k", "1e", "Vpp",
+]
+# Só o Python aceita: número puro (vale pico em A, por compatibilidade com --amplitude-referencia 0.5); o script
+# o recusa de propósito (para uma amplitude gravada nos metadados, o número sem unidade é quase sempre engano).
+SO_O_PYTHON_ACEITA = ["0.5", "2", "+500mVpp"]
+
+
+@com_e2e
+def test_script_e_python_aceitam_e_recusam_as_mesmas_amplitudes():
+    entradas = AMPLITUDES_DE_TESTE + SO_O_PYTHON_ACEITA
+    programa = 'source "$1"; shift; for a in "$@"; do t="$(normalizar_amplitude "$a")"; rc=$?; p="$(pico_da_amplitude "$a")"; printf "%s\\t%s\\t%s\\n" "$rc" "$t" "$p"; done'
+    proc = subprocess.run(["bash", "-c", programa, "_", str(SCRIPT), *entradas], capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr
+    linhas = proc.stdout.split("\n")[: len(entradas)]
+    assert len(linhas) == len(entradas)
+    for entrada, linha in zip(entradas, linhas, strict=True):
+        rc, texto, pico = linha.split("\t")
+        try:
+            esperado = analisar_amplitude(entrada)
+        except ErroSHAN:
+            esperado = None
+        if entrada in SO_O_PYTHON_ACEITA:
+            assert rc == "1" and esperado is not None, entrada
+        elif esperado is None:
+            assert rc == "1", f"o script aceitou '{entrada}', que o Python recusa: {texto}"
+        else:
+            assert rc == "0", f"o script recusou '{entrada}', que o Python aceita: {texto}"
+            assert float(pico) == pytest.approx(esperado.pico, rel=1e-9), entrada
+            # o texto limpo que vai para os metadados é aceito pelo Python e vale o mesmo
+            assert analisar_amplitude(texto).pico == pytest.approx(esperado.pico, rel=1e-9), entrada

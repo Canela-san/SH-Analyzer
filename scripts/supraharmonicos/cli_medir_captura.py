@@ -6,6 +6,12 @@ traduz ``ErroSHAN`` -> ``Erro: ...`` (código 1) e ``ErroUso`` -> ``parser.error
 contexto da captura (canais, faixa, ganho, frequência -- a mesma hierarquia do
 ``adc_tool``), se formata o relatório e se acrescenta uma linha por canal ao CSV
 (``--csv``), para montar as tabelas do relatório a partir de várias capturas.
+
+Referências conhecidas (para checar o ADC e o método do perfil da sonda): a amplitude
+injetada (``--amplitude-referencia``, ou a gravada nos metadados da captura, ``ref: amp=``)
+e/ou a forma de onda do osciloscópio (``--osciloscopio``, ``.m``/``.mat``/``.csv``). O
+resultado é a razão ADC / referência no tom, na grandeza física do canal -- com o canal
+corrigido pelo perfil da sonda, ela deve ficar em 1.
 """
 
 from __future__ import annotations
@@ -39,6 +45,14 @@ from .metricas_captura import (
     verificar_continuidade,
 )
 from .modos import aplicar_correcao_sondas
+from .osciloscopio import (
+    TomMedido,
+    adicionar_argumentos_osciloscopio,
+    ler_forma_de_onda_dos_args,
+    localizar_arquivo_osciloscopio,
+    medir_senoide,
+)
+from .referencia import Amplitude, ReferenciaCaptura, analisar_amplitude, extrair_referencia, pico_fisico
 from .registro import configurar_logging_cli
 
 log = logging.getLogger(__name__)
@@ -54,6 +68,8 @@ COLUNAS_CSV = [
     "salto_max_amostras", "saltos_acima_do_limite", "variacao_amplitude_pct",
     "diafonia_db", "atraso_medido_us", "atraso_esperado_us",
     "correcao_sonda", "referencia_rms", "erro_amplitude_pct", "referencia_freq_hz", "erro_freq_ppm",
+    "ref_amplitude_texto", "ref_amplitude_pico", "razao_vs_amplitude_ref",
+    "osc_arquivo", "osc_freq_hz", "osc_amplitude_pico", "razao_vs_osc", "erro_freq_vs_osc_ppm", "osc_vs_amplitude_ref_pct",
 ]
 
 
@@ -76,6 +92,9 @@ def montar_parser() -> argparse.ArgumentParser:
             "\n"
             "  # Capturas antigas, sem cabeçalho\n"
             "  %(prog)s antiga.bin -f 102400 --canais 0,1\n"
+            "\n"
+            "  # Uma medição com a amplitude injetada conhecida e o .m do osciloscópio: checa o ADC e o método do perfil\n"
+            "  %(prog)s senoide.bin --amplitude-referencia 500mVpp --osciloscopio senoide.m\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -138,6 +157,23 @@ def montar_parser() -> argparse.ArgumentParser:
     grupo_ref.add_argument("--referencia-freq", type=float, default=None, metavar="HZ",
                            help="Frequência do tom lida no osciloscópio/contador. Imprime/grava o erro em ppm "
                                 "(= erro da frequência de amostragem, com o sinal trocado).")
+    grupo_conhecida = parser.add_argument_group(
+        "Amplitude injetada e osciloscópio (a grandeza física REAL do tom)",
+        "A razão ADC / referência sai na grandeza física do canal (depois de --ganho e da correção de sonda). "
+        "Em V, a amplitude é a tensão no ponto onde o --ganho é aplicado (grandeza física = V * ganho); em A, "
+        "já é a grandeza física. Com o canal SEM correção, a razão é o ganho do conjunto naquela frequência; "
+        "com a correção pelo perfil, deve ser 1 -- é a checagem do perfil, melhor com uma frequência que não "
+        "entrou na calibração.",
+    )
+    grupo_conhecida.add_argument(
+        "--amplitude-referencia", type=str, default=None, metavar="AMPLITUDE",
+        help="Amplitude conhecida da senoide injetada: número + unidade + tipo (500mVpp, 250mVpk, 176.8mVrms, 2Arms). "
+             "Padrão: a gravada nos metadados da captura ('ref: amp=...'), se houver.")
+    grupo_conhecida.add_argument(
+        "--osciloscopio", nargs="?", const="@irmao", default=None, type=str, metavar="ARQUIVO",
+        help="Forma de onda do osciloscópio (.m/.mat/.csv) do MESMO sinal. Sem valor: o arquivo de mesmo nome da captura "
+             "(X.bin -> X.m). Pode ser uma pasta (procura X.m nela). A senoide é medida por mínimos quadrados.")
+    adicionar_argumentos_osciloscopio(grupo_conhecida)
     parser.add_argument("--rotulo", type=str, default=None, metavar="TEXTO",
                         help="Nome do teste, gravado no CSV (padrão: o título do cabeçalho).")
     parser.add_argument("--csv", type=Path, default=None, metavar="ARQUIVO",
@@ -323,8 +359,62 @@ def _acrescentar_csv(caminho: Path, linhas: list[dict[str, str]]) -> None:
 # Orquestração
 # ---------------------------------------------------------------------------
 
-def _comparar_referencia(e: Espectro, args: argparse.Namespace, unidade: str) -> tuple[list[str], dict[str, str]]:
-    """Erro do tom medido contra --referencia-rms / --referencia-freq: (linhas do relatório, colunas do CSV)."""
+@dataclass
+class Referencias:
+    """O que se sabe, por fora do ADC, sobre o tom de UMA captura."""
+    gravada: ReferenciaCaptura | None       # 'ref: f=.. amp=..' do cabeçalho
+    amplitude: Amplitude | None             # --amplitude-referencia, ou a dos metadados
+    amplitude_origem: str
+    osc: TomMedido | None                   # senoide medida no arquivo do osciloscópio
+    osc_arquivo: Path | None
+    freq_dica: float | None                 # --freq, ou a frequência dos metadados: onde procurar o tom
+
+
+def _arquivo_osciloscopio(args: argparse.Namespace, captura: Path) -> Path:
+    destino = args.osciloscopio
+    if destino == "@irmao":
+        achado, onde = localizar_arquivo_osciloscopio(captura), f"ao lado de '{captura.name}'"
+    elif Path(destino).is_dir():
+        achado, onde = localizar_arquivo_osciloscopio(captura, Path(destino)), f"em '{destino}'"
+    else:
+        achado, onde = (Path(destino) if Path(destino).is_file() else None), f"'{destino}'"
+    if achado is None:
+        raise ErroSHAN(f"não achei o arquivo do osciloscópio {onde} (esperava '{captura.stem}.m', .mat, .csv ou .txt).")
+    return achado
+
+
+def carregar_referencias(caminho: Path, args: argparse.Namespace, ctx: ContextoCaptura) -> Referencias:
+    """Referência gravada nos metadados + ``--amplitude-referencia`` + osciloscópio (já medido) de uma captura."""
+    gravada = None
+    if ctx.cabecalho is not None:
+        try:
+            gravada = extrair_referencia(ctx.cabecalho.descricao)
+        except ErroSHAN as e:
+            log.warning(f"metadados 'ref:' da captura ilegíveis, ignorando-os -- {e}")
+    if gravada is not None:
+        partes = [f"f={gravada.freq_hz:g} Hz" if gravada.freq_hz is not None else "", f"amp={gravada.amplitude.texto}" if gravada.amplitude else ""]
+        log.info(f"referência gravada na captura: {', '.join(p for p in partes if p)}")
+    constante: Amplitude | None = args.amplitude_constante
+    amplitude, origem = (constante, "linha de comando") if constante is not None else (
+        (gravada.amplitude, "metadados da captura") if gravada is not None and gravada.amplitude is not None else (None, ""))
+    freq_dica = args.freq if args.freq is not None else (gravada.freq_hz if gravada is not None else None)
+    osc, osc_arquivo = None, None
+    if args.osciloscopio is not None:
+        osc_arquivo = _arquivo_osciloscopio(args, caminho)
+        forma = ler_forma_de_onda_dos_args(osc_arquivo, args)
+        osc = medir_senoide(forma.valores, forma.fs, freq_dica=freq_dica)
+        log.info(f"osciloscópio '{osc_arquivo.name}': {forma.origem}")
+    return Referencias(gravada, amplitude, origem, osc, osc_arquivo, freq_dica)
+
+
+def _razao_texto(razao: float) -> str:
+    return f"{razao:.5f} ({20 * math.log10(razao):+.3f} dB, {(razao - 1) * 100:+.3f} %)" if razao > 0 else "indefinida"
+
+
+def _comparar_referencia(e: Espectro, args: argparse.Namespace, unidade: str, ganho: float,
+                         refs: Referencias) -> tuple[list[str], dict[str, str]]:
+    """Compara o tom medido com --referencia-rms/--referencia-freq, a amplitude injetada e o osciloscópio:
+    (linhas do relatório, colunas do CSV). As referências em V valem ``V * ganho`` na grandeza física do canal."""
     linhas, colunas = [], {}
     if args.referencia_rms is not None:
         erro = (e.amplitude_rms - args.referencia_rms) / args.referencia_rms * 100.0
@@ -335,11 +425,36 @@ def _comparar_referencia(e: Espectro, args: argparse.Namespace, unidade: str) ->
         erro = (e.freq_tom_hz - args.referencia_freq) / args.referencia_freq * 1e6
         colunas.update({"referencia_freq_hz": _num(args.referencia_freq), "erro_freq_ppm": _num(erro)})
         linhas.append(_campo("vs referência (frequência)", f"{erro:+.1f} ppm (ADC {e.freq_tom_hz:.4f} Hz contra {args.referencia_freq:.4f} Hz)"))
+
+    esperado_amp = None
+    if refs.amplitude is not None:
+        esperado_amp = pico_fisico(refs.amplitude, ganho)
+        colunas.update({"ref_amplitude_texto": refs.amplitude.texto, "ref_amplitude_pico": _num(esperado_amp),
+                        "razao_vs_amplitude_ref": _num(e.amplitude_pico / esperado_amp)})
+        linhas.append(_campo("vs amplitude injetada", f"ADC/injetado = {_razao_texto(e.amplitude_pico / esperado_amp)} -- "
+                                                      f"ADC {e.amplitude_pico:.6g} {unidade} pico contra {esperado_amp:.6g} {unidade} "
+                                                      f"({refs.amplitude.texto}, {refs.amplitude_origem})"))
+    if refs.osc is not None:
+        pico_osc = pico_fisico(Amplitude(refs.osc.amplitude_pico, args.osc_unidade, "pico", refs.osc_arquivo.name), ganho)
+        erro_f = (e.freq_tom_hz / refs.osc.freq_hz - 1.0) * 1e6
+        colunas.update({"osc_arquivo": refs.osc_arquivo.name, "osc_freq_hz": _num(refs.osc.freq_hz),
+                        "osc_amplitude_pico": _num(pico_osc), "razao_vs_osc": _num(e.amplitude_pico / pico_osc),
+                        "erro_freq_vs_osc_ppm": _num(erro_f)})
+        linhas.append(_campo("vs osciloscópio", f"ADC/osciloscópio = {_razao_texto(e.amplitude_pico / pico_osc)} -- osciloscópio "
+                                                f"{pico_osc:.6g} {unidade} pico ({refs.osc.amplitude_pico_a_pico:.6g} {args.osc_unidade}pp), "
+                                                f"{refs.osc.freq_hz:.4f} Hz, ruído+distorção {refs.osc.residuo_rms:.3g} {args.osc_unidade} RMS"))
+        linhas.append(_campo("", f"frequência: ADC {erro_f:+.1f} ppm do osciloscópio (= erro da frequência de amostragem, se o "
+                                 f"osciloscópio estiver certo)"))
+        if esperado_amp is not None:
+            dif = (pico_osc / esperado_amp - 1.0) * 100.0
+            colunas["osc_vs_amplitude_ref_pct"] = _num(dif)
+            linhas.append(_campo("osciloscópio vs injetada", f"{dif:+.3f} % ({'o gerador entregou menos' if dif < 0 else 'o gerador entregou mais'} "
+                                                             f"que o ajustado: se for >1 %, use o osciloscópio como referência do perfil)"))
     return linhas, colunas
 
 
 def _medir_canal(canal: int, sinal: np.ndarray, corrigido: bool, saturacao: float, args: argparse.Namespace,
-                 ctx: ContextoCaptura, fs_canal: float) -> ResultadoCanal:
+                 ctx: ContextoCaptura, fs_canal: float, refs: Referencias) -> ResultadoCanal:
     i = ctx.indice_no_ciclo(canal)
     codigo = ctx.grandeza_do_canal(canal)
     grandeza, unidade = NOMES_GRANDEZA.get(codigo, "tensão"), UNIDADE_GRANDEZA.get(codigo, "V")
@@ -349,15 +464,15 @@ def _medir_canal(canal: int, sinal: np.ndarray, corrigido: bool, saturacao: floa
         log.warning(f"canal {canal}: {saturacao * 100:.3f} % das amostras no fundo de escala -- a captura saturou; "
                     f"amplitude, THD e SINAD deste canal NÃO são confiáveis. Reduza a amplitude e meça de novo.")
     basicas = calcular_basicas(sinal, fs_canal, lsb)
-    espectro = analisar_espectro(sinal, fs_canal, args.freq, args.harmonicos, fundo_escala, procurar_tom=not args.sem_tom)
+    espectro = analisar_espectro(sinal, fs_canal, refs.freq_dica, args.harmonicos, fundo_escala, procurar_tom=not args.sem_tom)
     cont = verificar_continuidade(sinal, fs_canal, espectro.freq_tom_hz) if espectro.tem_tom else None
     linhas = _formatar_canal(canal, unidade, grandeza, basicas, espectro, saturacao, cont, lsb, fs_canal, not args.sem_tom)
     comparacao: dict[str, str] = {}
     if espectro.tem_tom:
-        extras, comparacao = _comparar_referencia(espectro, args, unidade)
+        extras, comparacao = _comparar_referencia(espectro, args, unidade, ctx.ganhos[i], refs)
         linhas += extras
-    elif args.referencia_rms is not None or args.referencia_freq is not None:
-        log.warning(f"canal {canal}: sem tom, então não há o que comparar com --referencia-*.")
+    elif args.referencia_rms is not None or args.referencia_freq is not None or refs.amplitude is not None or refs.osc is not None:
+        log.warning(f"canal {canal}: sem tom, então não há o que comparar com as referências.")
     if corrigido:
         linhas.append("  (canal corrigido pelo perfil da sonda: ruído, SINAD e ENOB acima NÃO descrevem o ADC -- "
                       "para isso, meça com --sem-correcao-sonda)")
@@ -417,14 +532,32 @@ def medir_arquivo(caminho: Path, args: argparse.Namespace) -> list[dict[str, str
     log.info(f"=== {caminho.name}" + (f" -- {titulo}" if titulo else "") + " ===")
     nominal = _anunciar_frequencias(args, ctx, fs_total, fs_pru)
 
+    refs = carregar_referencias(caminho, args, ctx)
     antes = dict(sinais)
     aplicar_correcao_sondas(args, ctx, sinais, fs_canal)
-    resultados = [_medir_canal(c, sinais[c], sinais[c] is not antes[c], saturacao[c], args, ctx, fs_canal)
+    resultados = [_medir_canal(c, sinais[c], sinais[c] is not antes[c], saturacao[c], args, ctx, fs_canal, refs)
                   for c in ctx.canais_exibir]
     acoplamentos = _medir_acoplamento(sinais, resultados, ctx, fs_canal, fs_total)
 
     rotulo = args.rotulo if args.rotulo is not None else titulo
     return [_linha_csv(caminho, rotulo, nominal, fs_pru, fs_canal, r, acoplamentos.get(r.canal)) for r in resultados]
+
+
+def _validar_referencias(args: argparse.Namespace) -> None:
+    """``--amplitude-referencia`` -> ``args.amplitude_constante``; um arquivo de osciloscópio só vale para UMA captura."""
+    args.amplitude_constante = None
+    if args.amplitude_referencia is not None:
+        try:
+            args.amplitude_constante = analisar_amplitude(args.amplitude_referencia)
+        except ErroSHAN as e:
+            raise ErroUso(f"--amplitude-referencia: {e}") from None
+    if args.osciloscopio not in (None, "@irmao") and Path(args.osciloscopio).is_file() and len(args.arquivos) > 1:
+        raise ErroUso("--osciloscopio ARQUIVO vale para uma captura só; com várias, use --osciloscopio sem valor "
+                      "(o arquivo de mesmo nome de cada captura) ou aponte para uma pasta.")
+    usou_osc = (args.osc_var is not None or args.osc_tempo is not None or args.osc_fs is not None
+                or args.osc_escala != 1.0 or args.osc_unidade != "V")
+    if usou_osc and args.osciloscopio is None:
+        raise ErroUso("as opções --osc-* só valem com --osciloscopio.")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -435,6 +568,7 @@ def main(argv: list[str] | None = None) -> int:
     linhas: list[dict[str, str]] = []
     falhas = 0
     try:
+        _validar_referencias(args)
         if args.canais is not None:
             validar = analisar_lista_canais(args.canais, "--canais")
             if args.canais_medir is not None:

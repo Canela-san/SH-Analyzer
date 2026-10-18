@@ -35,9 +35,18 @@
 #        RMS sobre o shunt e você digita a leitura a cada ponto. Só um canal do ADC é
 #        capturado, então a Nyquist efetiva vai até taxa/2 (o dobro do modo de 2 canais)
 #        e a cadeia medida é a mesma da produção.
-#     1 canal, corrente constante (padrão sem outras opções)  você garante que a
-#        amplitude da corrente é a mesma em todas as frequências (informada depois em
-#        gerar_perfil_sonda.py --amplitude-referencia). Também taxa/2.
+#     1 canal + amplitude conhecida (--amplitude 500mVpp)  o gerador injeta uma SENOIDE pura
+#        de amplitude conhecida (a que você ajustou nele). O script GRAVA essa amplitude e a
+#        frequência nos metadados de cada captura (campo "descrição" do cabeçalho do .bin):
+#        "ref: f=1000Hz amp=500mVpp". Com --amplitude-por-ponto ele pergunta a amplitude a
+#        cada frequência (para gerador que não mantém o nível). Nada é digitado depois: o
+#        gerar_perfil_sonda.py lê os metadados. Também vai até taxa/2.
+#     1 canal, corrente constante SEM declarar a amplitude (padrão sem outras opções)  você
+#        garante que a amplitude é a mesma em todas as frequências e a informa depois em
+#        gerar_perfil_sonda.py --amplitude-referencia. Também taxa/2.
+#
+#   Em todos os casos o perfil descreve a SONDA como o CONJUNTO medido de ponta a ponta:
+#   sonda + frontend + ADS8688 (que tem um filtro passa-baixa interno de 2ª ordem, ~15 kHz).
 #     2 canais (--canal-referencia R)  um SEGUNDO canal do ADC mede a tensão sobre o
 #        shunt (corrente real = V/R, calculada depois). Sem digitar nada, mas a taxa
 #        total é dividida entre os 2 canais: Nyquist efetiva = taxa/4.
@@ -48,6 +57,7 @@
 #   sudo ./calibrar_sonda.sh                      # modo interativo (pergunta tudo)
 #   sudo ./calibrar_sonda.sh --taxa 102400 --canal-sonda 1 --pontos 20 --sonda fluke_i30_sn0001 --ref-externa
 #   sudo ./calibrar_sonda.sh --taxa 102400 --canal-sonda 1 --canal-referencia 0 --pontos 20 --sonda fluke_i30_sn0001
+#   sudo ./calibrar_sonda.sh --taxa 102400 --canal-sonda 1 --pontos 20 --sonda fluke_i30_sn0001 --amplitude 500mVpp
 #   sudo ./calibrar_sonda.sh --modo retomar --sonda fluke_i30_sn0001
 #   sudo ./calibrar_sonda.sh --modo refinar --sonda fluke_i30_sn0001
 #   sudo ./calibrar_sonda.sh --modo refazer --freqs 200,1000 --sonda fluke_i30_sn0001
@@ -69,6 +79,7 @@
 #   pontos_coletados.csv             manifesto: HISTÓRICO de cada ponto (status e métricas rápidas)
 #   plano_coleta.txt                 taxa, canais, repetições e frequências do plano
 #   referencia_externa.csv           (só com --ref-externa) leituras do osciloscópio, uma por captura
+#                                    (com --amplitude a referência fica DENTRO de cada .bin: ref: f=.. amp=..)
 #   ler_adc.log                      saída completa do ler_adc (útil se algo falhar)
 #   descartadas/                     capturas substituídas pelo modo refazer (nunca apagadas)
 #   (capturas/_arquivadas/           coletas antigas que você mandou "começar do zero")
@@ -76,7 +87,8 @@
 # DEPOIS DA COLETA (no computador, a partir da raiz do repositório)
 #   2 canais:            uv run scripts/gerar_perfil_sonda.py capturas/<id> --resistencia-shunt <ohms> --plot
 #   1 canal + scope:     uv run scripts/gerar_perfil_sonda.py capturas/<id> --referencia-externa --resistencia-shunt <ohms> --plot
-#   1 canal, constante:  uv run scripts/gerar_perfil_sonda.py capturas/<id> --amplitude-referencia <A_de_pico> --plot
+#   1 canal, amplitude:  uv run scripts/gerar_perfil_sonda.py capturas/<id> --plot     (lê "ref: amp=" dos metadados)
+#   1 canal, constante:  uv run scripts/gerar_perfil_sonda.py capturas/<id> --amplitude-referencia <amplitude> --plot
 #
 # DECISÕES DE PROJETO (leia antes de mexer)
 #   * SEM Python/interpretador externo: só bash + utilitários padrão do Debian
@@ -106,7 +118,8 @@
 #
 # PARA TESTES: SH_LER_ADC=<caminho> troca o executável do ler_adc; SH_LER_ADC_TIMEOUT=<s>
 # muda o limite de tempo de uma captura; SH_PULAR_VERIFICACAO_ROOT=1 dispensa o 'sudo'.
-# tests/test_calibrar_sonda.py usa os três com um ler_adc falso.
+# tests/test_calibrar_sonda.py usa os três com um ler_adc falso. Quem faz 'source' deste arquivo
+# só carrega as funções (o main não roda), o que permite testá-las uma a uma.
 #
 # Requisitos: bash 4.4+ (nameref), coreutils GNU (od, timeout, df, find -printf),
 # awk (mawk ou gawk), gzip, sed. Todos presentes numa BeagleBone com Debian.
@@ -193,6 +206,8 @@ CANAL_REFERENCIA=""        # vazio = captura de 1 canal (sem canal de referênci
 CANAL_SONDA=""             # obrigatório (--canal-sonda; senão o script pergunta)
 CANAL_REF_INFORMADO=0      # 1 se --canal-referencia veio da linha de comando
 REF_EXTERNA=0              # 1 = a cada ponto, anotar a leitura do osciloscópio (só com 1 canal)
+AMPLITUDE=""               # --amplitude: amplitude (com unidade e tipo, ex.: 500mVpp) da senoide injetada, a mesma em todos os pontos
+AMPLITUDE_POR_PONTO=0      # 1 = perguntar a amplitude a cada frequência (--amplitude-por-ponto; --amplitude dá o valor inicial)
 LISTA_CANAIS=""            # "<sonda>" ou "<ref>,<sonda>", para o ler_adc
 TAXA=""
 PONTOS=""
@@ -215,6 +230,7 @@ SESSAO_ACEITOS=0
 SESSAO_PULADOS=0
 LOG_LINHAS_ANTES=0      # linhas do ler_adc.log antes da captura atual (para mostrar só a saída dela)
 REF_VALOR=""            # leitura do osciloscópio (V RMS no shunt) do ponto em andamento
+AMPLITUDE_PONTO=""      # amplitude da senoide injetada no ponto em andamento (vai para os metadados da captura)
 SUBSTITUIR_EXISTENTES=0 # 1 no modo refazer: a captura aceita substitui (arquiva) a antiga
 
 # =============================================================================
@@ -295,14 +311,23 @@ Modo:
                          (veja o cabeçalho deste script ou o docs/guia_de_uso.md).
   -f, --freqs LISTA      Frequências a medir de novo (modo refazer), ex.: "200,1000".
 
-Referência da corrente real (como o perfil vai saber a corrente que a sonda mediu):
+Referência (como o perfil vai saber o que foi injetado na sonda; escolha UMA):
+      --amplitude AMP        1 canal, senoide de amplitude CONHECIDA: AMP é a que você ajustou no
+                             gerador, SEMPRE com unidade e tipo (pp = pico a pico, pk = pico,
+                             rms = eficaz): 500mVpp, 250mVpk, 176.8mVrms, 2Arms. Vale para todos
+                             os pontos e é gravada nos metadados de cada captura junto com a
+                             frequência ("ref: f=1000Hz amp=500mVpp"): o gerar_perfil_sonda.py
+                             lê sozinho, não há nada para digitar depois.
+      --amplitude-por-ponto  Como --amplitude, mas pergunta a amplitude a cada frequência (ENTER
+                             mantém a anterior; --amplitude dá o valor inicial).
       --ref-externa          1 canal + osciloscópio: a cada ponto o script pede a tensão RMS
                              lida sobre o shunt e grava em ${NOME_REFERENCIA_EXTERNA}
                              (use depois: gerar_perfil_sonda.py --referencia-externa).
       --canal-referencia N   2 canais: um SEGUNDO canal do ADC mede a tensão sobre o shunt.
                              Divide a taxa entre os canais (Nyquist efetiva = taxa/4).
-      (nenhuma das duas)     1 canal, corrente constante: você mantém a amplitude igual em
-                             todas as frequências (gerar_perfil_sonda.py --amplitude-referencia).
+      (nenhuma das quatro)   1 canal, corrente constante SEM declarar a amplitude: você mantém a
+                             amplitude igual em todas as frequências e a informa depois
+                             (gerar_perfil_sonda.py --amplitude-referencia).
 
 Saída:
       --pasta DIR            Pasta base das capturas (padrão: ./capturas).
@@ -313,6 +338,7 @@ Saída:
 
 Exemplos:
   sudo ./calibrar_sonda.sh --taxa 102400 --canal-sonda 1 --pontos 20 --sonda fluke_i30_sn0001 --ref-externa
+  sudo ./calibrar_sonda.sh --taxa 102400 --canal-sonda 1 --pontos 20 --sonda minha_sonda --amplitude 500mVpp
   sudo ./calibrar_sonda.sh --taxa 400000 --canal-sonda 1 --pontos 24 --freq-max 160k --sonda minha_sonda
   sudo ./calibrar_sonda.sh --taxa 204800 --canal-sonda 1 --canal-referencia 0 --pontos 20 --sonda minha_sonda
   sudo ./calibrar_sonda.sh --modo retomar --sonda fluke_i30_sn0001
@@ -346,6 +372,8 @@ parse_args() {
             --canal-referencia) exigir_valor "$@"; CANAL_REFERENCIA="$2"; CANAL_REF_INFORMADO=1; shift 2 ;;
             -c|--canal-sonda)  exigir_valor "$@"; CANAL_SONDA="$2"; shift 2 ;;
             --ref-externa)     REF_EXTERNA=1; shift ;;
+            --amplitude)       exigir_valor "$@"; AMPLITUDE="$2"; shift 2 ;;
+            --amplitude-por-ponto) AMPLITUDE_POR_PONTO=1; shift ;;
             --pasta)           exigir_valor "$@"; PASTA_BASE="$2"; shift 2 ;;
             -y|--sim)          ASSUMIR_SIM=1; shift ;;
             -v|--verboso)      VERBOSO=1; shift ;;
@@ -575,6 +603,71 @@ normalizar_tensao() {
     }'
 }
 
+# Amplitude da senoide injetada, com unidade E tipo: "500mVpp", "250mVpk", "176.8mVrms", "2Arms". É a
+# mesma gramática de scripts/supraharmonicos/referencia.py (analisar_amplitude), de propósito um pouco mais
+# ESTRITA: número puro, unidade sem tipo ("500mV": pico a pico? pico? eficaz?) e tipo sem unidade são
+# recusados, porque o fator 2 (ou 1,41) escondido viraria um erro de ganho silencioso no perfil.
+# Prefixo n, u (ou µ), m ou k; unidade V ou A; tipo pp/pk/p/pico/rms/eficaz (e variantes: pk-pk, p-p...).
+# Espaços e '_' são ignorados; vírgula decimal vale. O programa awk imprime, conforme -v saida=:
+#   texto -> a amplitude limpa (sem espaços, ponto decimal), que é o que vai para os metadados;
+#   pico  -> o valor de PICO em V ou A.
+# Se a entrada for inválida imprime o MOTIVO e sai com 1. tests/test_calibrar_sonda.py confere que este
+# programa e o Python aceitam e recusam as mesmas entradas.
+readonly AWK_AMPLITUDE='
+BEGIN {
+    split("pk-pk pkpk pico-a-pico p-p p2p pp", PP, " "); for (i in PP) FATOR[PP[i]] = 0.5
+    split("peak pico pk p", PK, " ");                    for (i in PK) FATOR[PK[i]] = 1
+    split("rms eficaz", RM, " ");                        for (i in RM) FATOR[RM[i]] = sqrt(2)
+    if (!match(t, /^([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?/)) {
+        print "não entendida (use número + unidade + tipo, ex.: 500mVpp)"; exit 1
+    }
+    num = substr(t, 1, RLENGTH) + 0; resto = substr(t, RLENGTH + 1)
+    if (num <= 0) { print "o valor precisa ser um número positivo"; exit 1 }
+    pref = ""; unid = ""
+    if (resto ~ /^[numk]/) { pref = substr(resto, 1, 1); resto = substr(resto, 2) }
+    if (resto ~ /^[VvAa]/) { unid = substr(resto, 1, 1); resto = substr(resto, 2) }
+    tipo = tolower(resto)
+    if (unid == "") { print "sem unidade: diga se é V ou A (ex.: 500mVpp, 2Arms)"; exit 1 }
+    if (tipo == "") {
+        print "sem tipo: diga se é pico a pico (pp), pico (pk) ou eficaz (rms), ex.: 500mVpp; sem isso o resultado erraria por um fator 2 ou 1,41"
+        exit 1
+    }
+    if (!(tipo in FATOR)) { print "não entendida (use número + unidade + tipo, ex.: 500mVpp)"; exit 1 }
+    mult = (pref == "n") ? 1e-9 : (pref == "u") ? 1e-6 : (pref == "m") ? 1e-3 : (pref == "k") ? 1e3 : 1
+    if (saida == "pico") printf "%.10g", num * mult * FATOR[tipo]; else printf "%s", t
+}'
+
+_analisar_amplitude() {   # TEXTO texto|pico
+    local t
+    t="$(printf '%s' "$1" | sed 's/µ/u/g; s/μ/u/g' | tr -d '[:space:]_')"
+    t="${t//,/.}"
+    awk -v t="$t" -v saida="$2" "$AWK_AMPLITUDE"
+}
+
+# Imprime a amplitude "limpa" (a que vai para os metadados) e retorna 0; se inválida, imprime o motivo e retorna 1.
+normalizar_amplitude() { _analisar_amplitude "$1" texto; }
+
+# Imprime o PICO (em V ou A) de uma amplitude já válida.
+pico_da_amplitude() { _analisar_amplitude "$1" pico; }
+
+# Metadados da captura (campo "descrição" do cabeçalho, ler_adc -d): a frequência que o operador
+# deve ter ajustado no gerador e, quando conhecida, a amplitude. scripts/supraharmonicos/referencia.py lê.
+descricao_da_captura() {   # FREQ_HZ
+    local d="ref: f=${1}Hz"
+    [ -n "$AMPLITUDE_PONTO" ] && d+=" amp=${AMPLITUDE_PONTO}"
+    printf '%s' "$d"
+}
+
+# Valida --amplitude (na linha de comando) e a troca pelo texto limpo; erro claro se for inválida.
+normalizar_parametro_amplitude() {
+    [ -n "$AMPLITUDE" ] || return 0
+    local bruto="$AMPLITUDE" limpo
+    if ! limpo="$(normalizar_amplitude "$bruto")"; then
+        erro_fatal "Valor inválido para --amplitude: '${bruto}' -- ${limpo}. Exemplos: 500mVpp, 250mVpk, 176.8mVrms, 2Arms."
+    fi
+    AMPLITUDE="$limpo"
+}
+
 # Nyquist EFETIVA por canal: a taxa total é dividida entre os NUM_CANAIS_CAPTURA canais.
 nyquist_efetiva() {
     awk -v t="$1" -v n="$NUM_CANAIS_CAPTURA" 'BEGIN { printf "%.1f", t / (2 * n) }'
@@ -638,7 +731,7 @@ unir_frequencias() { printf '%s\n' "$@" | sort -n -u; }
 # =============================================================================
 # 7. Plano, manifesto e arquivos já capturados
 # =============================================================================
-readonly CABECALHO_MANIFESTO="frequencia_hz,repeticao,arquivo,timestamp,status,freq_medida_hz,pp_ref_pct,pp_sonda_pct,razao_rms,ref_externa_v_rms"
+readonly CABECALHO_MANIFESTO="frequencia_hz,repeticao,arquivo,timestamp,status,freq_medida_hz,pp_ref_pct,pp_sonda_pct,razao_rms,ref_externa_v_rms,amplitude_ref"
 
 salvar_plano() {
     local arquivo="${PASTA_SONDA}/${NOME_PLANO}"
@@ -648,6 +741,8 @@ salvar_plano() {
         echo "canal_sonda=${CANAL_SONDA}"
         echo "canal_referencia=${CANAL_REFERENCIA}"
         echo "ref_externa=${REF_EXTERNA}"
+        echo "amplitude=${AMPLITUDE}"
+        echo "amplitude_por_ponto=${AMPLITUDE_POR_PONTO}"
         echo "repeticoes=${REPETICOES}"
         echo "blocos=${BLOCOS}"
         echo "frequencias=${PLANO_FREQS[*]}"
@@ -678,7 +773,7 @@ carregar_plano() {
     v="$(valor_do_plano blocos)";           [ -z "$BLOCOS" ] && BLOCOS="$v"
     # Canais: sem --canal-sonda na linha de comando, herda tudo do plano; com ele, a linha de
     # comando vence e qualquer diferença em relação ao plano pede confirmação (como a taxa).
-    local plano_sonda plano_ref plano_ext
+    local plano_sonda plano_ref plano_ext plano_amp plano_amp_ponto
     plano_sonda="$(valor_do_plano canal_sonda)"
     plano_ref="$(valor_do_plano canal_referencia)"
     plano_ext="$(valor_do_plano ref_externa)"
@@ -694,6 +789,14 @@ carregar_plano() {
         fi
         [ "$REF_EXTERNA" -eq 0 ] && [ "$plano_ext" = "1" ] && [ -z "$CANAL_REFERENCIA" ] && REF_EXTERNA=1
     fi
+    # Amplitude da senoide: a linha de comando vence; sem nada dito (e sem outra fonte de referência),
+    # herda a do plano. Cada captura carrega a sua amplitude nos metadados, então mudar no meio não mistura nada.
+    plano_amp="$(valor_do_plano amplitude)"
+    plano_amp_ponto="$(valor_do_plano amplitude_por_ponto)"
+    if [ -z "$AMPLITUDE" ] && [ "$AMPLITUDE_POR_PONTO" -eq 0 ] && [ "$REF_EXTERNA" -eq 0 ] && [ -z "$CANAL_REFERENCIA" ]; then
+        AMPLITUDE="$plano_amp"
+        [ "$plano_amp_ponto" = "1" ] && AMPLITUDE_POR_PONTO=1
+    fi
     v="$(valor_do_plano frequencias)"
     PLANO_FREQS=()
     if [ -n "$v" ]; then
@@ -705,14 +808,19 @@ carregar_plano() {
 
 inicializar_manifesto() {
     local caminho="${PASTA_SONDA}/${NOME_MANIFESTO}"
-    [ -f "$caminho" ] || echo "$CABECALHO_MANIFESTO" > "$caminho"
+    if [ ! -f "$caminho" ]; then
+        echo "$CABECALHO_MANIFESTO" > "$caminho"
+    elif [ "$(head -n 1 "$caminho")" = "${CABECALHO_MANIFESTO%,amplitude_ref}" ]; then
+        # manifesto de uma versão anterior (sem a coluna amplitude_ref): ganha a coluna, as linhas antigas ficam com ela vazia
+        sed -i '1s/$/,amplitude_ref/' "$caminho"
+    fi
 }
 
-# registrar_manifesto FREQ REP ARQUIVO STATUS FREQ_MEDIDA PP_REF PP_SONDA RAZAO REF_EXTERNA
+# registrar_manifesto FREQ REP ARQUIVO STATUS FREQ_MEDIDA PP_REF PP_SONDA RAZAO REF_EXTERNA AMPLITUDE
 registrar_manifesto() {
     local ts
     ts="$(date '+%Y-%m-%dT%H:%M:%S%z')"
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$1" "$2" "$3" "$ts" "$4" "${5:-}" "${6:-}" "${7:-}" "${8:-}" "${9:-}" \
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$1" "$2" "$3" "$ts" "$4" "${5:-}" "${6:-}" "${7:-}" "${8:-}" "${9:-}" "${10:-}" \
         >> "${PASTA_SONDA}/${NOME_MANIFESTO}"
 }
 
@@ -966,6 +1074,9 @@ avaliar_sinal() {
     QC_PP_SONDA="$pp_sonda"
     if [ -n "$CANAL_REFERENCIA" ]; then
         QC_PP_REF="$pp_ref"; QC_RAZAO="$razao"
+    elif [ "$REF_EXTERNA" -eq 0 ] && [ -n "$AMPLITUDE_PONTO" ]; then
+        # 1 canal, amplitude injetada conhecida: códigos do ADC por unidade (V ou A) de pico injetada
+        QC_RAZAO="$(awk -v r="$rms_sonda" -v p="$(pico_da_amplitude "$AMPLITUDE_PONTO")" 'BEGIN { printf "%.6f", r / p }')"
     elif [ "$REF_EXTERNA" -eq 0 ]; then
         QC_RAZAO="$rms_sonda"     # 1 canal, corrente suposta constante: o próprio nível da sonda (códigos do ADC)
     elif [ -n "$REF_VALOR" ]; then
@@ -1089,7 +1200,11 @@ mostrar_resultado() {
     if [ -n "$QC_PP_SONDA" ]; then
         local rotulo="ganho relativo à menor frequência"
         if [ -z "$CANAL_REFERENCIA" ] && [ "$REF_EXTERNA" -eq 0 ]; then
-            rotulo="nível relativo à menor frequência (supondo corrente constante)"
+            if [ -n "$AMPLITUDE_PONTO" ]; then
+                rotulo="ganho relativo à menor frequência (pela amplitude injetada)"
+            else
+                rotulo="nível relativo à menor frequência (supondo corrente constante)"
+            fi
         fi
         base="$(razao_base)"
         if [ "${#QC_ERROS[@]}" -gt 0 ]; then
@@ -1104,6 +1219,7 @@ mostrar_resultado() {
         linha+="Sonda: ${QC_PP_SONDA}% | frequência medida: ${QC_FREQ_MEDIDA:-não medida}${QC_FREQ_MEDIDA:+ Hz} (planejada ${freq} Hz)"
         saida "$linha"
         [ -n "$REF_VALOR" ] && saida "  Leitura do osciloscópio: ${REF_VALOR} V RMS no shunt"
+        [ -n "$AMPLITUDE_PONTO" ] && saida "  Amplitude injetada (gravada nos metadados): ${AMPLITUDE_PONTO}"
         [ -n "$ganho_txt" ] && saida "  ${ganho_txt}"
     fi
 }
@@ -1111,22 +1227,24 @@ mostrar_resultado() {
 # Chama o ler_adc para UM ponto, gravando em $1 (temporário). Sai com o código do ler_adc
 # (124 = estourou o tempo limite). Saída completa no log da pasta.
 executar_captura() {
-    local destino="$1" titulo="$2" duracao limite codigo log="${PASTA_SONDA}/${NOME_LOG}"
+    local destino="$1" titulo="$2" descricao="${3:-}" duracao limite codigo log="${PASTA_SONDA}/${NOME_LOG}"
+    local -a extra=()
+    [ -n "$descricao" ] && extra=(-d "$descricao")   # metadados: frequência e amplitude injetadas (ref: f=.. amp=..)
     duracao="$(duracao_captura)"
     limite="${SH_LER_ADC_TIMEOUT:-$(awk -v d="$duracao" 'BEGIN { printf "%d", d * 3 + 60 }')}"
     : >> "$log"
     LOG_LINHAS_ANTES="$(wc -l < "$log" | tr -d ' ')"
-    echo "=== $(date '+%Y-%m-%d %H:%M:%S') | ${LER_ADC##*/} ${TAXA} ${LISTA_CANAIS} --blocos ${BLOCOS} --grandeza ${CANAL_SONDA}:corrente --sonda ${CANAL_SONDA}:${SONDA_ID} -o ${destino##*/}" >> "$log"
+    echo "=== $(date '+%Y-%m-%d %H:%M:%S') | ${LER_ADC##*/} ${TAXA} ${LISTA_CANAIS} --blocos ${BLOCOS} --grandeza ${CANAL_SONDA}:corrente --sonda ${CANAL_SONDA}:${SONDA_ID} -o ${destino##*/}${descricao:+ -d '${descricao}'}" >> "$log"
     log_info "Capturando (~${duracao} s)..."
     if [ "$VERBOSO" -eq 1 ]; then
         timeout --foreground "$limite" "$LER_ADC" "$TAXA" "$LISTA_CANAIS" \
             --blocos "$BLOCOS" --grandeza "${CANAL_SONDA}:corrente" --sonda "${CANAL_SONDA}:${SONDA_ID}" \
-            -o "$destino" -t "$titulo" 2>&1 | tee -a "$log" >&2
+            -o "$destino" -t "$titulo" "${extra[@]}" 2>&1 | tee -a "$log" >&2
         codigo="${PIPESTATUS[0]}"
     else
         timeout --foreground "$limite" "$LER_ADC" "$TAXA" "$LISTA_CANAIS" \
             --blocos "$BLOCOS" --grandeza "${CANAL_SONDA}:corrente" --sonda "${CANAL_SONDA}:${SONDA_ID}" \
-            -o "$destino" -t "$titulo" >> "$log" 2>&1
+            -o "$destino" -t "$titulo" "${extra[@]}" >> "$log" 2>&1
         codigo=$?
     fi
     return "$codigo"
@@ -1211,11 +1329,34 @@ pedir_leitura_externa() {
     done
 }
 
+# Modo --amplitude-por-ponto: pergunta a amplitude da senoide que o gerador está injetando e a deixa em
+# AMPLITUDE_PONTO (texto limpo, vai para os metadados da captura). ENTER mantém a anterior (entre
+# colchetes); na primeira vez, sem valor inicial, a amplitude é obrigatória.
+pedir_amplitude_ponto() {
+    local entrada limpo dica=""
+    [ -n "$AMPLITUDE_PONTO" ] && dica=" [${AMPLITUDE_PONTO}]"
+    while true; do
+        if ! read -r -p "$(printf "%b" "${COR_AMARELO}Amplitude da senoide no gerador (ex.: 500mVpp, 250mVpk, 2Arms)${dica}: ${COR_RESET}")" entrada; then
+            erro_fatal "Entrada encerrada inesperadamente (EOF em stdin) -- abortando."
+        fi
+        if [ -z "$entrada" ]; then
+            [ -n "$AMPLITUDE_PONTO" ] && return 0
+            log_erro "Informe a amplitude que o gerador está injetando (ex.: 500mVpp)."
+            continue
+        fi
+        if limpo="$(normalizar_amplitude "$entrada")"; then
+            AMPLITUDE_PONTO="$limpo"
+            return 0
+        fi
+        log_erro "Amplitude inválida: '${entrada}' -- ${limpo}."
+    done
+}
+
 # Processa UMA captura (frequência + repetição). Retorna 0 se aceita, 3 se pulada.
 # Aborta o script (exit 0) se o operador pedir.
 processar_captura() {
     local indice="$1" total="$2" freq="$3" rep="$4" repeticao_mesma_freq="$5"
-    local resposta alvo temporario titulo codigo status final
+    local resposta alvo temporario titulo descricao codigo status final
 
     REF_VALOR=""
     separador
@@ -1228,6 +1369,10 @@ processar_captura() {
         printf "%b\n" "  ${COR_NEGRITO}>>> INJETE ${freq} Hz no gerador <<<${COR_RESET}" >&2
         if [ "$REF_EXTERNA" -eq 1 ]; then
             saida "  Espere o sinal estabilizar e leia a tensão RMS sobre o shunt no osciloscópio."
+        elif [ "$AMPLITUDE_POR_PONTO" -eq 1 ]; then
+            saida "  Ajuste o gerador (SENOIDE pura), espere o sinal estabilizar e informe a amplitude que ele está injetando."
+        elif [ -n "$AMPLITUDE" ]; then
+            saida "  Ajuste o gerador para uma SENOIDE pura de ${AMPLITUDE} e espere o sinal estabilizar."
         elif [ -z "$CANAL_REFERENCIA" ]; then
             saida "  Mantenha a MESMA corrente (amplitude) de antes e espere o sinal estabilizar."
         else
@@ -1248,6 +1393,7 @@ processar_captura() {
         esac
 
         if [ "$REF_EXTERNA" -eq 1 ]; then pedir_leitura_externa; fi
+        if [ "$AMPLITUDE_POR_PONTO" -eq 1 ]; then pedir_amplitude_ponto; fi
         alvo="${PASTA_SONDA}/calibracao_${freq}Hz_rep${rep}.bin"
         temporario="${PASTA_SONDA}/.em_andamento_$$.bin"
         titulo="Calibracao ${freq}Hz rep${rep} ${SONDA_ID}"
@@ -1255,7 +1401,8 @@ processar_captura() {
         rm -f "$temporario"
         ARQUIVO_EM_CAPTURA="$temporario"
 
-        executar_captura "$temporario" "$titulo"
+        descricao="$(descricao_da_captura "$freq")"
+        executar_captura "$temporario" "$titulo" "$descricao"
         codigo=$?
         if [ "$codigo" -ne 0 ]; then
             descrever_falha_ler_adc "$codigo"
@@ -1293,7 +1440,7 @@ processar_captura() {
                 else
                     status="ok"
                 fi
-                registrar_manifesto "$freq" "$rep" "${final##*/}" "$status" "$QC_FREQ_MEDIDA" "$QC_PP_REF" "$QC_PP_SONDA" "$QC_RAZAO" "$REF_VALOR"
+                registrar_manifesto "$freq" "$rep" "${final##*/}" "$status" "$QC_FREQ_MEDIDA" "$QC_PP_REF" "$QC_PP_SONDA" "$QC_RAZAO" "$REF_VALOR" "$AMPLITUDE_PONTO"
                 if [ "$REF_EXTERNA" -eq 1 ]; then registrar_referencia_externa "${final##*/}" "$REF_VALOR"; fi
                 SESSAO_ACEITOS=$((SESSAO_ACEITOS + 1))
                 log_sucesso "Ponto aceito: ${final##*/}"
@@ -1371,7 +1518,7 @@ mostrar_tabela() {
         return 0
     fi
     local const=0
-    [ -z "$CANAL_REFERENCIA" ] && [ "$REF_EXTERNA" -eq 0 ] && const=1
+    [ -z "$CANAL_REFERENCIA" ] && [ "$REF_EXTERNA" -eq 0 ] && [ -z "$AMPLITUDE" ] && [ "$AMPLITUDE_POR_PONTO" -eq 0 ] && const=1
     printf '%s\n' "$linhas" | awk -F, -v const="$const" '
     {
         f = $1 + 0
@@ -1458,9 +1605,14 @@ proximos_passos() {
         if [ "$sem_leitura" -gt 0 ]; then
             log_aviso "${sem_leitura} captura(s) sem leitura do osciloscópio em ${NOME_REFERENCIA_EXTERNA}: ficarão FORA do perfil até você anotar o valor (coluna v_shunt_rms_V) ou refazer o ponto."
         fi
+    elif [ -n "$AMPLITUDE" ] || [ "$AMPLITUDE_POR_PONTO" -eq 1 ]; then
+        saida "       uv run scripts/gerar_perfil_sonda.py capturas/${SONDA_ID} --plot"
+        saida "     A amplitude injetada de cada captura está nos metadados (ref: f=.. amp=..) e é lida sozinha. Amplitude em V é a tensão"
+        saida "     no ponto onde o --ganho é aplicado (ver docs/guia_de_uso.md); para conferir o método, meça alguns pontos também no"
+        saida "     osciloscópio e use --referencia-osciloscopio (um .m por captura, com o nome dela)."
     else
-        saida "       uv run scripts/gerar_perfil_sonda.py capturas/${SONDA_ID} --amplitude-referencia <amplitude-de-pico-da-corrente-em-A> --plot"
-        saida "     Isso só vale se a corrente teve a MESMA amplitude em todas as frequências; se não, recolha com --ref-externa."
+        saida "       uv run scripts/gerar_perfil_sonda.py capturas/${SONDA_ID} --amplitude-referencia <amplitude, ex.: 500mVpp ou 2Apk> --plot"
+        saida "     Isso só vale se o sinal teve a MESMA amplitude em todas as frequências; se não, refaça com --amplitude-por-ponto (ou --ref-externa)."
     fi
     saida "     Use os mesmos --faixa/--ganho/--formato que usará depois no adc_tool.py (com 1 canal, --ganho aceita um valor só)."
     local pendentes
@@ -1528,6 +1680,9 @@ coletar_extras() {
 # tem 1 canal (a sonda) e a Nyquist efetiva é taxa/2; com ele, 2 canais e taxa/4. Idempotente.
 definir_canais() {
     validar_inteiro_faixa "Canal da sonda (--canal-sonda)" "$CANAL_SONDA" 0 7
+    if { [ -n "$AMPLITUDE" ] || [ "$AMPLITUDE_POR_PONTO" -eq 1 ]; } && { [ "$REF_EXTERNA" -eq 1 ] || [ -n "$CANAL_REFERENCIA" ]; }; then
+        erro_fatal "--amplitude/--amplitude-por-ponto não combinam com --ref-externa nem com --canal-referencia: escolha UMA fonte para o que foi injetado na sonda."
+    fi
     if [ -z "$CANAL_REFERENCIA" ]; then
         NUM_CANAIS_CAPTURA=1
         LISTA_CANAIS="$CANAL_SONDA"
@@ -1550,7 +1705,7 @@ obter_canais() {
     local resposta
     if [ -z "$CANAL_SONDA" ]; then
         local sem_dica=0
-        [ "$CANAL_REF_INFORMADO" -eq 0 ] && [ "$REF_EXTERNA" -eq 0 ] && sem_dica=1
+        [ "$CANAL_REF_INFORMADO" -eq 0 ] && [ "$REF_EXTERNA" -eq 0 ] && [ -z "$AMPLITUDE" ] && [ "$AMPLITUDE_POR_PONTO" -eq 0 ] && sem_dica=1
         if ! read -r -p "$(printf "%b" "${COR_AMARELO}Canal do ADC (0-7) onde a saída da SONDA está ligada: ${COR_RESET}")" CANAL_SONDA; then
             erro_fatal "Informe o canal da sonda com --canal-sonda N (não consegui perguntar: a entrada foi encerrada)."
         fi
@@ -1561,16 +1716,35 @@ obter_canais() {
             local escolha
             ler_escolha_menu escolha "  Referência da corrente:" \
                 "Osciloscópio no shunt: você digita a leitura a cada ponto (1 canal; vai até taxa/2)" \
-                "Corrente constante: mesma amplitude em todas as frequências (1 canal; vai até taxa/2)" \
+                "Amplitude conhecida do gerador (senoide de 500mVpp, 2Arms...): gravada nos metadados (1 canal; vai até taxa/2)" \
                 "Segundo canal do ADC no shunt (2 canais; só vai até taxa/4)"
             case "$escolha" in
                 1) REF_EXTERNA=1 ;;
-                2) ;;
+                2) ler_amplitude_interativa ;;
                 3) ler_valor resposta "Canal do ADC (0-7) ligado ao shunt (referência): " '^[0-7]$'
                    CANAL_REFERENCIA="$resposta"; CANAL_REF_INFORMADO=1 ;;
             esac
         fi
     fi
+}
+
+# Menu interativo, opção "amplitude conhecida": pergunta a amplitude da senoide do gerador e se ela é a mesma
+# em todas as frequências. ENTER sem valor = não declarar agora (vira "corrente constante": a amplitude é
+# informada depois, em gerar_perfil_sonda.py --amplitude-referencia).
+ler_amplitude_interativa() {
+    local entrada limpo igual
+    while true; do
+        ler_linha entrada "  Amplitude da senoide do gerador (ex.: 500mVpp, 250mVpk, 2Arms); ENTER = informar só depois: "
+        [ -z "$entrada" ] && return 0
+        if limpo="$(normalizar_amplitude "$entrada")"; then
+            AMPLITUDE="$limpo"
+            break
+        fi
+        log_erro "Amplitude inválida: '${entrada}' -- ${limpo}."
+    done
+    ler_confirmacao igual "  O gerador fica com essa MESMA amplitude em todas as frequências?" s
+    [ "$igual" = "n" ] && AMPLITUDE_POR_PONTO=1
+    return 0
 }
 
 validar_inteiro_faixa() {   # nome valor min max
@@ -1582,6 +1756,7 @@ validar_inteiro_faixa() {   # nome valor min max
 validar_parametros_comuns() {
     validar_inteiro_faixa "Taxa (--taxa)" "$TAXA" 1 500000
     definir_canais
+    AMPLITUDE_PONTO="$AMPLITUDE"   # com --amplitude-por-ponto é só o valor inicial: o operador o troca a cada frequência
     validar_inteiro_faixa "Repetições (--repeticoes)" "$REPETICOES" 1 50
     validar_inteiro_faixa "Blocos (--blocos)" "$BLOCOS" 1 1000
 
@@ -1652,6 +1827,12 @@ descrever_bancada() {
     elif [ "$REF_EXTERNA" -eq 1 ]; then
         saida "Canais:              sonda = ${CANAL_SONDA} (corrente); 1 canal só"
         saida "Corrente real:       leitura do osciloscópio a cada ponto (tensão RMS no shunt), em ${NOME_REFERENCIA_EXTERNA}"
+    elif [ "$AMPLITUDE_POR_PONTO" -eq 1 ]; then
+        saida "Canais:              sonda = ${CANAL_SONDA} (corrente); 1 canal só"
+        saida "Referência:          senoide de amplitude conhecida, informada a cada frequência${AMPLITUDE:+ (valor inicial ${AMPLITUDE})}; gravada nos metadados de cada captura"
+    elif [ -n "$AMPLITUDE" ]; then
+        saida "Canais:              sonda = ${CANAL_SONDA} (corrente); 1 canal só"
+        saida "Referência:          senoide de ${AMPLITUDE} em todas as frequências; gravada nos metadados de cada captura"
     else
         saida "Canais:              sonda = ${CANAL_SONDA} (corrente); 1 canal só"
         saida "Corrente real:       CONSTANTE (mantenha a mesma amplitude de corrente em todas as frequências)"
@@ -1938,6 +2119,7 @@ main() {
     normalizar_parametro_hz TAXA "--taxa"
     normalizar_parametro_hz FREQ_MIN "--freq-min"
     normalizar_parametro_hz FREQ_MAX "--freq-max"
+    normalizar_parametro_amplitude
     banner
     verificar_dependencias
     verificar_root
@@ -1977,4 +2159,7 @@ main() {
     esac
 }
 
-main "$@"
+# Só executa quando chamado como programa (quem faz 'source' neste arquivo, como os testes, recebe só as funções).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    main "$@"
+fi

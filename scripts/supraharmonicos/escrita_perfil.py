@@ -3,7 +3,9 @@
 Formato de saída: o consumido por ``sonda.carregar_perfil_sonda`` -- ver
 ``docs/proposta_correcao_sonda.md``. ``montar_perfil_json`` lê os atributos de
 metadados do ``argparse.Namespace`` de ``cli_gerar_perfil.montar_parser``
-(``id``, ``fabricante``, ``faixa``, ``ganho``, ``modo_referencia``...).
+(``id``, ``fabricante``, ``faixa``, ``ganho``, ``modo_referencia``...) e, quando existem, os
+resumos preenchidos pelo ``cli_gerar_perfil``: ``referencia_resumo`` (de onde veio a grandeza
+injetada) e ``resposta_resumo`` (queda de 3 dB, inclinação final do conjunto).
 
 Depende de: ``calibracao_sonda``, ``canais``, ``sonda``, ``erros``;
 ``matplotlib`` só dentro de ``gerar_grafico``.
@@ -18,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .calibracao_sonda import PontoPerfil
+from .calibracao_sonda import PontoPerfil, ResumoResposta
 from .canais import analisar_lista_calibracao
 from .erros import ErroSHAN
 from .sonda import PerfilSonda, carregar_perfil_sonda
@@ -83,8 +85,17 @@ def montar_perfil_json(pontos: list[PontoPerfil], args) -> dict:
         # referência lida no osciloscópio/multímetro (ver calibracao_sonda.ler_referencia_externa)
         if args.resistencia_shunt is not None:
             calibracao_adc["resistencia_shunt_ohms"] = args.resistencia_shunt
-    else:
-        calibracao_adc["amplitude_referencia_a"] = args.amplitude_referencia
+    referencia = getattr(args, "referencia_resumo", None)
+    if referencia:
+        calibracao_adc["referencia"] = referencia       # modos 'amplitude' e 'osciloscopio': de onde veio a grandeza injetada
+    resposta: ResumoResposta | None = getattr(args, "resposta_resumo", None)
+    if resposta is not None:
+        calibracao_adc["resposta_conjunto"] = {
+            "ganho_baixa_frequencia": round(resposta.ganho_baixa_frequencia, 6),
+            "freq_menos3db_hz": None if resposta.freq_menos3db_hz is None else round(resposta.freq_menos3db_hz, 1),
+            "inclinacao_db_por_oitava": None if resposta.inclinacao_db_oitava is None else round(resposta.inclinacao_db_oitava, 2),
+            "ganho_na_maior_frequencia_db": round(resposta.ganho_final_db, 2),
+        }
     perfil["calibracao_adc"] = calibracao_adc
     return perfil
 

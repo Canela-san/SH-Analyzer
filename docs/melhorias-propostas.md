@@ -23,7 +23,7 @@
 
 | Status | Itens |
 |---|---|
-| ✅ **Concluído** | 1.5 (modo automático AUTO_RST, e o comentário obsoleto de `spi_core.asm` corrigido), 2.9 (`set_date.sh` sem senha no arquivo), 2.10 (`calibrar_sonda.sh` reescrito: Nyquist efetiva, conferência de cada captura, novos modos e testes), 1.8 (parcial: checagem de `fwrite()` + `--blocos`/`--duracao`), 1.9 (parte Python: mitigado por `tests/test_contrato_firmware.py`), 1.10 (parcial: causa raiz da saturação — jumpers), 2.1 (parcial: `backup pre-assembly/` removido), 2.2 (`.gitignore`), 2.3 (metadados — via cabeçalho embutido, não sidecar), 2.5 (parcial: lado Python — suíte `pytest` de 331 testes, `ruff` e CI no GitHub Actions), 2.7 (parcial: README, guia de uso, arquitetura do software e contexto), 2.8 (arquivo já se chama `adc_tool.py`) |
+| ✅ **Concluído** | 1.5 (modo automático AUTO_RST, e o comentário obsoleto de `spi_core.asm` corrigido), 2.9 (`set_date.sh` sem senha no arquivo), 2.10 (`calibrar_sonda.sh` reescrito: Nyquist efetiva, conferência de cada captura, novos modos e testes), 1.8 (parcial: checagem de `fwrite()` + `--blocos`/`--duracao`), 1.9 (parte Python: mitigado por `tests/test_contrato_firmware.py`), 1.10 (parcial: causa raiz da saturação — jumpers), 2.1 (parcial: `backup pre-assembly/` removido), 2.2 (`.gitignore`), 2.3 (metadados — via cabeçalho embutido, não sidecar), 2.5 (parcial: lado Python — suíte `pytest` de 483 testes, `ruff` e CI no GitHub Actions), 2.7 (parcial: README, guia de uso, arquitetura do software e contexto), 2.8 (arquivo já se chama `adc_tool.py`) |
 | 🆕 **Novo** | Melhorias do fluxo de perfil de sonda vindas da auditoria (2.11); achados do datasheet e do código a confirmar em bancada: filtro de 15 kHz do ADS8688 e taxa de amostragem real (2.12); `medir_captura.py` e `docs/roteiro_laboratorio.md` (já entregues) |
 | 🔄 **Ainda aberto, com nota atualizada** | 1.1–1.4 (o "piso" antigo de ~48 kHz parece estar desatualizado — ver nota abaixo), 1.6, 1.7, 1.9 (revisado), 2.4, 2.5 (parte C/CI), 2.6, 2.7 (`licoes-aprendidas.md`), 2.11, 2.12 |
 
@@ -491,7 +491,7 @@ Baixo. **Status:** ainda em aberto.
 ### 2.5 Testes e CI
 
 ✅ **Atualização de 2026-10 — lado Python concluído.** Existe uma suíte `pytest` versionada
-em `tests/` (226 testes, ~1–2 min; `-m "not e2e"` roda em ~6 s), cobrindo unidades por módulo,
+em `tests/` (483 testes, ~2 min; `-m "not e2e"` roda em ~10 s), cobrindo unidades por módulo,
 CLI, o contrato C↔Python (`test_contrato_firmware.py`), as regras de arquitetura
 (`test_arquitetura.py`), as dependências e o fluxo completo de perfil de sonda
 (`tests/e2e/`). O `ruff` cuida do estilo. O GitHub Actions (`.github/workflows/ci.yml`)
@@ -712,6 +712,19 @@ sem nenhum dos dois vale a corrente constante. O limiar de "sem sinal" caiu de 1
 (o filtro de 15 kHz do ADS8688 derruba o sinal em alta frequência; ver 2.12). No gerador de perfil, o
 estimador de amplitude passou a refinar o tom por FFT única: o Welch com flat-top errava até 1,8% nos
 modos de 1 canal, onde a amplitude é absoluta (adendo em `docs/auditoria_perfil_sonda.md`).
+
+**Atualização (2026-10, amplitude conhecida e osciloscópio).** Dois jeitos novos de dar a referência ao
+perfil, ambos de 1 canal: (a) **senoide de amplitude conhecida** (`calibrar_sonda.sh --amplitude 500mVpp`
+ou `--amplitude-por-ponto`): o script grava `ref: f=<Hz> amp=<amplitude>` no campo `descricao` do cabeçalho
+de cada captura (`ler_adc -d`) e o `gerar_perfil_sonda.py` o lê sem flag nenhuma; a amplitude exige unidade e
+tipo (`500mVpp`, `250mVpk`, `176.8mVrms`, `2Arms`) porque pico a pico, pico e eficaz diferem por um fator
+2 ou 1,41; (b) **`.m` do osciloscópio** (`--referencia-osciloscopio`): um arquivo por captura, com o nome dela,
+ajustado por mínimos quadrados. O `medir_captura.py` ganhou `--amplitude-referencia` e `--osciloscopio` para
+comparar o ADC com a amplitude injetada e com o osciloscópio (conferência do método), e o gerador de perfil
+imprime e grava a resposta do conjunto (−3 dB, inclinação, amplificação de ruído). O manifesto ganhou a coluna
+`amplitude_ref`. Limites a declarar: o "500 mVpp" do gerador vale para carga de 50 Ω (o dobro em alta
+impedância); a planura do gerador entra no perfil; injetar tensão no lugar da saída da sonda mede o frontend e
+o ADC, sem a sonda de corrente.
 
 **Ação que sobra:** o arquivo está sem permissão de execução no Git (`100644`); ao fazer o commit,
 use `git update-index --chmod=+x firmware/calibrar_sonda.sh` (ou `git add --chmod=+x`).
