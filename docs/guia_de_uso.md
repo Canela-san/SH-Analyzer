@@ -235,17 +235,27 @@ O fluxo tem três passos:
 
 ### Passo 1: coletar os pontos (na BeagleBone)
 
-Para o perfil, o script precisa saber **qual é a corrente real** em cada frequência. Há três jeitos (escolha um):
+> **O que é "a sonda" neste projeto.** O perfil descreve o **conjunto medido de ponta a ponta**: a sonda de corrente, o frontend/isolador e o ADS8688 (que tem um filtro passa-baixa interno de 2ª ordem em cada canal, corte de ~15 kHz). Tudo o que esse conjunto atenua ou realça entra no ganho por frequência do perfil, e a correção em produção o desfaz. Por isso a referência precisa ser **o que foi injetado na entrada do conjunto**, e a frequência de corte do filtro do ADC não precisa ser conhecida: ela aparece na curva medida.
+
+Para o perfil, o script precisa saber **o que foi injetado** em cada frequência. Há quatro jeitos (escolha um):
 
 | Jeito | Opção do `calibrar_sonda.sh` | Canais por captura | Nyquist por canal | Quando usar |
 |---|---|---|---|---|
-| **Osciloscópio** (recomendado) | `--ref-externa` | **1** (só a saída da sonda) | taxa ÷ 2 | Chega até a banda inteira de supraharmônicos. A cadeia medida é igual à de produção. Você lê a tensão RMS sobre o shunt no osciloscópio a cada ponto e digita |
+| **Amplitude conhecida** | `--amplitude 500mVpp` (ou `--amplitude-por-ponto`) | **1** (só a saída da sonda) | taxa ÷ 2 | O gerador injeta uma **senoide pura** de amplitude e frequência ajustáveis e você **sabe a amplitude** que ajustou. Nada é digitado a cada ponto: amplitude e frequência ficam gravadas nos **metadados** de cada captura, e várias frequências dão o perfil |
+| **Osciloscópio** | `--ref-externa` (leitura digitada) ou o `.m` do osciloscópio (veja abaixo) | **1** | taxa ÷ 2 | Chega até a banda inteira de supraharmônicos, e o osciloscópio mede o que o gerador **de fato** entregou (planura do gerador incluída) |
 | Segundo canal do ADC | `--canal-referencia N` | 2 (sonda e shunt) | taxa ÷ 4 | Sem instrumento externo. O shunt vai a um segundo canal; divide a taxa entre os dois |
-| Corrente constante | (nenhuma das duas) | 1 | taxa ÷ 2 | Você mantém a mesma corrente em todas as frequências (a deriva do gerador entra no perfil) |
+| Amplitude constante, sem declarar | (nenhuma das anteriores) | 1 | taxa ÷ 2 | Você mantém a mesma amplitude em todas as frequências e a informa só depois, em `gerar_perfil_sonda.py --amplitude-referencia` (a deriva do gerador entra no perfil) |
 
 **Qual canal?** Por padrão a calibração usa **um canal só**, e o número dele é obrigatório: `--canal-sonda N` (0 a 7; se você esquecer, o script pergunta). É o canal onde a saída da sonda está ligada, o mesmo que você usará em produção: o perfil descreve a cadeia daquele canal.
 
-Monte a bancada: gerador de sinal (com amplificador, se precisar de mais corrente), o condutor atravessando a garra da sonda e um **resistor shunt de precisão e baixa indutância** em série. Com `--ref-externa`, o osciloscópio mede a tensão sobre o shunt (a corrente real é V ÷ R); com `--canal-referencia`, um segundo canal do ADC faz isso. A amplitude pode variar de uma frequência para outra nos dois jeitos com referência (a corrente real é medida a cada ponto); no jeito de corrente constante, ela precisa ser a mesma. Ajuste para o sinal da sonda ocupar ~20% a ~80% da escala do ADC, sem saturar.
+Monte a bancada: gerador de sinal (com amplificador, se precisar de mais corrente), o condutor atravessando a garra da sonda e, nos jeitos que medem a corrente, um **resistor shunt de precisão e baixa indutância** em série. Com `--ref-externa`, o osciloscópio mede a tensão sobre o shunt (a corrente real é V ÷ R); com `--canal-referencia`, um segundo canal do ADC faz isso. Com `--amplitude`, não há nada para medir: vale a amplitude que você ajustou no gerador. A amplitude pode variar de uma frequência para outra em todos os jeitos, **menos** no de amplitude constante sem declarar (use `--amplitude-por-ponto` quando ela mudar). Ajuste para o sinal da sonda ocupar ~20% a ~80% da escala do ADC, sem saturar.
+
+**Amplitude conhecida (`--amplitude`).** Sinal injetado: uma **senoide pura** (a conversão entre pico a pico, pico e eficaz só vale para senoide) com amplitude e frequência reguláveis.
+
+* **Como escrever a amplitude:** número + unidade + tipo, sempre os três: `500mVpp` (pico a pico), `250mVpk` (pico), `176.8mVrms` (eficaz), `2Arms`. `500mV` sozinho é recusado de propósito: pico a pico, pico e eficaz diferem por um fator 2 ou 1,41, que viraria erro de ganho silencioso. Prefixos `n`, `u` (ou `µ`), `m` e `k`; espaços e vírgula decimal são aceitos.
+* **Em V ou em A.** Em **V**, é a tensão injetada no ponto onde o `--ganho` do canal é aplicado (a saída da sonda, antes do ganho); a grandeza física injetada é `V × ganho` (500 mVpp com `--ganho 10` são 2,5 A de pico). Em **A**, é a própria corrente. O ganho do perfil sai como (amplitude medida) ÷ (amplitude injetada), na mesma grandeza física.
+* **Metadados.** Cada captura sai do `ler_adc` com `ref: f=1000Hz amp=500mVpp` no campo `descricao` do cabeçalho (`-d`), e o `gerar_perfil_sonda.py` lê esse trecho: não há nada para digitar depois. Se a amplitude muda entre pontos (o gerador não mantém o nível, ou você a reduziu para não saturar), use `--amplitude-por-ponto`: o script pergunta a amplitude de cada frequência (ENTER mantém a anterior; `--amplitude` dá o valor inicial).
+* **Cuidados com o gerador.** (1) O "500 mVpp" do display de um gerador vale para carga de **50 Ω**; numa entrada de alta impedância a tensão real é o **dobro** (1 Vpp). Configure o gerador para *High-Z* ou confira com o osciloscópio. (2) A planura do gerador em função da frequência (décimos de dB, mais em frequência alta) entra no perfil como se fosse da sonda; por isso vale conferir alguns pontos com o osciloscópio (veja "Conferir o método"). (3) Se você injeta **tensão** no lugar da saída da sonda, o perfil mede o frontend e o ADC, **sem a sonda de corrente**; para incluí-la, injete **corrente** de verdade pela garra (amplitude em A, conhecida pela tensão no shunt ÷ R).
 
 Você só diz **quantos pontos** quer, a **taxa de amostragem** do ADC e o **nome da sonda**. O script escolhe as frequências, chama o `ler_adc` para cada uma (com cabeçalho preenchido corretamente), confere o `.bin` e guarda tudo no formato que o `gerar_perfil_sonda.py` lê:
 
@@ -253,6 +263,9 @@ Você só diz **quantos pontos** quer, a **taxa de amostragem** do ADC e o **nom
 cd firmware
 # 1 canal, referência no osciloscópio, até a banda de supraharmônicos (Nyquist 200 kHz, pontos até 160 kHz):
 sudo ./calibrar_sonda.sh --taxa 400000 --canal-sonda 1 --pontos 24 --freq-max 160k --sonda fluke_i30_sn0001 --ref-externa
+
+# Amplitude conhecida: senoide de 500 mVpp no gerador, a mesma em todos os pontos; vai para os metadados de cada captura
+sudo ./calibrar_sonda.sh --taxa 400000 --canal-sonda 1 --pontos 24 --freq-max 160k --sonda fluke_i30_sn0001 --amplitude 500mVpp
 
 # Sem osciloscópio: segundo canal do ADC (canal 0) no shunt; Nyquist por canal = taxa/4
 sudo ./calibrar_sonda.sh --taxa 204800 --canal-sonda 1 --canal-referencia 0 --pontos 20 --sonda fluke_i30_sn0001
@@ -274,14 +287,14 @@ Ponto 4 de 20  |  129 Hz  |  repetição 1 de 1
   ENTER para medir  |  p = pular este ponto  |  a = abortar:
 ```
 
-Você ajusta o gerador e aperta ENTER. Com `--ref-externa`, o script pede então a leitura do osciloscópio (`Osciloscópio: tensão RMS no shunt, em V (ex.: 0.1234 ou 123.4m)`); leia o **RMS de ciclos inteiros, com média**, e digite (ENTER sem valor deixa o ponto sem referência, e o gerador de perfil o descarta). A captura leva ~10 s (um bloco a 102,4 kHz). O script então confere a captura:
+Você ajusta o gerador e aperta ENTER. Com `--amplitude`, a instrução também diz a amplitude (`Ajuste o gerador para uma SENOIDE pura de 500mVpp`); com `--amplitude-por-ponto`, o script pergunta a amplitude que o gerador está injetando (`Amplitude da senoide no gerador (...) [anterior]`). Com `--ref-externa`, o script pede então a leitura do osciloscópio (`Osciloscópio: tensão RMS no shunt, em V (ex.: 0.1234 ou 123.4m)`); leia o **RMS de ciclos inteiros, com média**, e digite (ENTER sem valor deixa o ponto sem referência, e o gerador de perfil o descarta). A captura leva ~10 s (um bloco a 102,4 kHz). O script então confere a captura:
 
 * **cabeçalho**: taxa, canais, grandeza `corrente` no canal da sonda, id da sonda, CRC-32 e tamanho do arquivo (o `ler_adc` devolve sucesso mesmo quando o disco enche e a captura sai cortada, e só o tamanho revela isso);
 * **saturação** do ADC (mais de 0,05% das amostras no fundo de escala, o mesmo critério que o `gerar_perfil_sonda.py` usa para descartar a captura);
 * **nível do sinal**: sem sinal (gerador desligado, sonda fora do condutor, menos de 0,2% da escala pico a pico) é erro; abaixo de 10% da escala é aviso de sinal fraco;
 * **frequência realmente injetada**: se ficou mais de 5% fora do planejado, avisa; mais de 10%, é erro (o gerador está ajustado errado).
 
-Ele mostra o nível de cada canal, a frequência medida e o **ganho relativo ao ponto de menor frequência** (em dB), o que ajuda a perceber na hora uma ligação errada. Depois você escolhe (ENTER aceita a sugestão: `C` se a captura está boa, `R` se tem erro):
+Ele mostra o nível de cada canal, a frequência medida e o **ganho relativo ao ponto de menor frequência** (em dB; com amplitude conhecida, já descontada a amplitude injetada em cada ponto), o que ajuda a perceber na hora uma ligação errada. Depois você escolhe (ENTER aceita a sugestão: `C` se a captura está boa, `R` se tem erro):
 
 | Tecla | O que faz |
 |---|---|
@@ -309,10 +322,10 @@ Outras opções úteis: `--repeticoes N` (várias capturas por frequência: o `g
 
 | Arquivo | Conteúdo |
 |---|---|
-| `calibracao_<FREQ>Hz_rep<N>.bin` | As capturas aceitas, que o `gerar_perfil_sonda.py` lê |
+| `calibracao_<FREQ>Hz_rep<N>.bin` | As capturas aceitas, que o `gerar_perfil_sonda.py` lê. O campo `descricao` do cabeçalho leva o que foi injetado (`ref: f=1000Hz amp=500mVpp`; só `f=` se a amplitude não foi declarada) |
 | `referencia_externa.csv` | Só com `--ref-externa`: `arquivo,v_shunt_rms_V`, a tensão RMS que você digitou em cada ponto |
-| `pontos_coletados.csv` | Histórico de cada ponto: status (`ok`, `ok_com_aviso_...`, `aceito_com_erro_...`, `pulado`, `substituido`) e métricas rápidas |
-| `plano_coleta.txt` | Taxa, canais, repetições e frequências do plano (é o que o `--modo retomar` lê) |
+| `pontos_coletados.csv` | Histórico de cada ponto: status (`ok`, `ok_com_aviso_...`, `aceito_com_erro_...`, `pulado`, `substituido`), métricas rápidas e a amplitude injetada (`amplitude_ref`) |
+| `plano_coleta.txt` | Taxa, canais, amplitude, repetições e frequências do plano (é o que o `--modo retomar` lê) |
 | `ler_adc.log` | Saída completa do `ler_adc` em cada tentativa |
 | `descartadas/` | Capturas substituídas pelo `--modo refazer` (nunca são apagadas) |
 
@@ -325,23 +338,53 @@ Ao terminar, o script mostra a tabela da coleta (frequência medida, nível da s
 Copie a pasta `capturas/<id-da-sonda>/` para o computador e rode o comando que corresponde ao jeito que você usou no passo 1:
 
 ```bash
+# --amplitude (1 canal, senoide de amplitude conhecida): nenhuma flag de referência, a amplitude de cada captura está nos metadados
+uv run scripts/gerar_perfil_sonda.py capturas/fluke_i30_sn0001 --ganho 10 --plot
+
 # --ref-externa (1 canal + osciloscópio). --resistencia-shunt é o valor EFETIVO do shunt (R/N se o fio deu N voltas na garra)
 uv run scripts/gerar_perfil_sonda.py capturas/fluke_i30_sn0001 --referencia-externa --resistencia-shunt 0.1 --ganho 10 --plot
 
 # --canal-referencia (2 canais): a corrente real vem do segundo canal
 uv run scripts/gerar_perfil_sonda.py capturas/fluke_i30_sn0001 --resistencia-shunt 0.1 --ganho 10 --plot
 
-# Corrente constante em toda a varredura
-uv run scripts/gerar_perfil_sonda.py capturas/fluke_i30_sn0001 --amplitude-referencia 1.0 --ganho 10 --plot
+# Amplitude constante em toda a varredura, informada aqui (capturas sem metadados de amplitude)
+uv run scripts/gerar_perfil_sonda.py capturas/fluke_i30_sn0001 --amplitude-referencia 500mVpp --ganho 10 --plot
+
+# A referência vem de um .m do osciloscópio por captura (calibracao_1000Hz_rep1.bin -> calibracao_1000Hz_rep1.m)
+uv run scripts/gerar_perfil_sonda.py capturas/fluke_i30_sn0001 --referencia-osciloscopio --ganho 10 --plot
 ```
 
-* `--referencia-externa [CSV]` lê o `referencia_externa.csv` da pasta (ou o arquivo que você indicar) e calcula a corrente de pico de cada ponto como `√2 × V_RMS ÷ R`. Pontos sem leitura ficam de fora. Com `--resistencia-shunt` sozinho, a corrente vem do segundo canal da captura. `--amplitude-referencia A` serve para corrente constante.
+* **De onde vem a referência.** Sem nenhuma flag de referência, se as capturas trazem `ref: amp=...` nos metadados, o script usa a amplitude de **cada captura** (modo `amplitude`; o perfil registra `modo_referencia: "amplitude"`). `--amplitude-referencia AMP` (`500mVpp`, `2Arms`; um número puro continua valendo como pico em A) vale para **todas** as capturas e, se os metadados dizem outra coisa, **vence com um aviso**. `--referencia-osciloscopio` usa um arquivo do osciloscópio por captura. `--referencia-externa [CSV]` lê o `referencia_externa.csv` da pasta (ou o arquivo que você indicar) e calcula a corrente de pico de cada ponto como `√2 × V_RMS ÷ R`; pontos sem leitura ficam de fora. Com `--resistencia-shunt` sozinho, a corrente vem do segundo canal da captura. As quatro fontes são exclusivas.
+* **Amplitude em V ou A.** Em V, a amplitude é a tensão no ponto onde o `--ganho` é aplicado (grandeza física = V × `--ganho`); em A, já é a grandeza física. O ganho do perfil sai como amplitude medida ÷ amplitude injetada, na mesma grandeza.
+* **Resumo da resposta.** Ao final, o script imprime e grava no perfil (`calibracao_adc.resposta_conjunto`) o ganho de baixa frequência, a frequência da queda de 3 dB, a inclinação final (um passa-baixa de 2ª ordem cai 12 dB/oitava; o filtro de ~15 kHz do ADS8688 aparece aqui) e quanto a correção amplifica o ruído na maior frequência medida.
 * `--ganho` é o fator tensão no pino do ADC → corrente (tipicamente 1 ÷ sensibilidade: sonda de 100 mV/A → `--ganho 10`). O perfil é **relativo** a ele: use o mesmo valor em produção. O script avisa se o ganho na menor frequência ficar fora de 0,7 a 1,3, o que indica um `--ganho` errado.
 * O script **mede** a frequência e a amplitude de cada captura (não confia no nome do arquivo; FFT única da captura inteira, com erro de amplitude < 0,01% em sinais sintéticos), descarta capturas com sinal fraco demais (SNR abaixo de 20 dB) e avisa se alguma repetição divergir mais de 10%.
 * `--plot` salva um PNG com a curva obtida.
 * Use os mesmos `--formato`, `--faixa` e `--ganho` que você usará no `adc_tool.py`; o `adc_tool.py` avisa se forem diferentes.
 
 O resultado é `scripts/sondas/<id>.json`. Para ver o formato de um perfil, abra [`exemplo_sonda.json`](exemplo_sonda.json).
+
+### Referência pelo osciloscópio (arquivo `.m`)
+
+Se você tem o osciloscópio de gigasamples medindo o **mesmo sinal** de cada captura, ele é a referência mais independente: mede o que o gerador de fato entregou, com a planura do gerador incluída.
+
+1. Em cada ponto, salve a forma de onda do osciloscópio (`.m` do MATLAB, ou `.mat`/`.csv`/`.txt`) com o **mesmo nome base da captura**, na mesma pasta: `calibracao_1000Hz_rep1.bin` ↔ `calibracao_1000Hz_rep1.m`. Se preferir outra pasta: `--referencia-osciloscopio PASTA`.
+2. Rode `gerar_perfil_sonda.py capturas/<id> --referencia-osciloscopio --ganho G`. A senoide do arquivo é ajustada por mínimos quadrados (amplitude, frequência, fase e nível DC; o método de referência para tons, IEEE 1057) e a amplitude vira a referência daquela captura. Capturas sem arquivo do osciloscópio ficam de fora, com aviso.
+3. O formato de um `.m` varia conforme o osciloscópio, então o leitor é tolerante (variáveis `Y = [...]`, vetor de tempo, matriz `[t v]`, escalares como `Tinterval`). Se não tiver certeza do que é a forma de onda, ele **para e lista o que achou**; aí use `--osc-var NOME` (ou `NOME:COLUNA`), `--osc-tempo NOME` e `--osc-fs HZ`. Ponta 10x que o osciloscópio não compensou: `--osc-escala 10`. Se o arquivo já está em A (tensão no shunt ÷ R), use `--osc-unidade A`.
+
+### Conferir o método com o osciloscópio (uma medição basta)
+
+Antes de confiar no perfil, vale checar o conjunto numa captura onde você **sabe a amplitude injetada** e tem o `.m`. O `medir_captura.py` compara as três coisas, na grandeza física do canal:
+
+```bash
+# Captura SEM correção: a razão ADC/injetado é o ganho do conjunto naquela frequência
+uv run scripts/medir_captura.py senoide.bin --sem-correcao-sonda --amplitude-referencia 500mVpp --osciloscopio senoide.m --ganho 10
+
+# Captura COM o perfil já aplicado (de preferência numa frequência que NÃO entrou na calibração): a razão deve dar ~1
+uv run scripts/medir_captura.py senoide.bin --amplitude-referencia 500mVpp --osciloscopio senoide.m --ganho 10
+```
+
+A saída traz `vs amplitude injetada` (ADC ÷ injetado), `vs osciloscópio` (ADC ÷ osciloscópio, com a frequência em ppm) e `osciloscópio vs injetada`: se o osciloscópio e a amplitude do gerador divergem mais de ~1%, o gerador não entregou o que foi ajustado (carga de 50 Ω × alta impedância, por exemplo), e o osciloscópio é a referência melhor para o perfil. Sem `--amplitude-referencia`, a amplitude usada é a gravada nos metadados da captura (`ref: amp=...`).
 
 ### Passo 3: usar o perfil na análise
 
@@ -390,7 +433,7 @@ O que ele mede, por canal:
 * **Tom e distorção**: frequência e amplitude (pico e RMS) do maior pico, THD (até o harmônico `--harmonicos`, padrão 9; os que passam de Nyquist são medidos dobrados e marcados `[alias]`), SINAD, SNR, ENOB (corrigido para um tom abaixo do fundo de escala) e SFDR.
 * **Continuidade**: salto de fase do tom entre segmentos, em amostras equivalentes. Uma amostra perdida ou duplicada vale ~1,0; acima de 0,5 é descontinuidade.
 * **Acoplamento** (2 canais ou mais): diafonia (quanto do tom do canal mais forte aparece nos outros) e atraso entre canais, contra o esperado (`Δposição ÷ taxa total`).
-* **Comparação com instrumento**: `--referencia-rms` (RMS do tom lido no osciloscópio, na unidade do canal) e `--referencia-freq` (Hz, do contador) dão o erro em % e em ppm. `--fs-pru` analisa com a taxa que a PRU de fato gera (`clock ÷ ticks`, que difere da pedida quando 200 MHz ÷ taxa não é inteiro).
+* **Comparação com instrumento**: `--referencia-rms` (RMS do tom lido no osciloscópio, na unidade do canal) e `--referencia-freq` (Hz, do contador) dão o erro em % e em ppm. `--amplitude-referencia` (a amplitude injetada, com unidade e tipo; padrão: a dos metadados) e `--osciloscopio` (o `.m` do mesmo sinal) comparam o ADC com a amplitude ajustada e com a medida do osciloscópio (veja "Conferir o método com o osciloscópio"). `--fs-pru` analisa com a taxa que a PRU de fato gera (`clock ÷ ticks`, que difere da pedida quando 200 MHz ÷ taxa não é inteiro).
 
 Canais de corrente com sonda registrada no cabeçalho são corrigidos pelo perfil antes das métricas, como no `adc_tool.py`. Nesse caso, ruído, SINAD e ENOB **não** descrevem o ADC: use `--sem-correcao-sonda` para caracterizá-lo. O método (FFT única, janela Kaiser β = 14, vazamento abaixo de −110 dBc) e os limites estão em [`arquitetura_software.md`](arquitetura_software.md) e no docstring de `supraharmonicos/metricas_captura.py`; os testes de laboratório que o usam, em [`roteiro_laboratorio.md`](roteiro_laboratorio.md).
 
@@ -411,7 +454,7 @@ O cabeçalho começa com o texto `SHAN` e termina com um **CRC-32**; se o `adc_t
 | `grandeza_por_canal`, `sonda_id_por_canal` | Grandeza e sonda de cada canal (versão 2) |
 | `samples_per_buffer`, `bytes_por_amostra` | Geometria dos blocos |
 | `blocos_gravados`, `total_amostras_gravadas` | Totais reais, preenchidos ao final da captura |
-| `titulo`, `descricao` | Texto livre (`-t`, `-d`) |
+| `titulo`, `descricao` | Texto livre (`-t`, até 63 bytes; `-d`, até 255 bytes). Convenção para calibração: um trecho `ref: f=1000Hz amp=500mVpp` na descrição registra a frequência e a amplitude injetadas, e o `gerar_perfil_sonda.py` o lê; texto livre antes ou depois é ignorado |
 | `header_crc32` | Detecta corrupção do cabeçalho |
 
 Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Capturas sem cabeçalho](#capturas-sem-cabeçalho-arquivos-antigos)), e os de versão 1 do cabeçalho também. A tabela completa, com os deslocamentos de cada campo, está em [`contexto_projeto.md`](contexto_projeto.md) (seção `formato_bin_v2`).
@@ -449,6 +492,9 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 | `calibrar_sonda.sh`: "praticamente sem sinal" | Gerador desligado, shunt/sonda mal ligados ou canal errado | Confira a bancada e o número de `--canal-sonda` (e `--canal-referencia`, se usou) |
 | `calibrar_sonda.sh`: "sinal fraco" nas frequências altas | Filtro passa-baixa de ~15 kHz embutido no ADS8688 | Esperado. Aumente a amplitude no pino do ADC; aceite o ponto (`C`) se ainda tiver ≥ 0,2% da escala |
 | `calibrar_sonda.sh` recusa o plano: "frequência máxima ... Nyquist" | `--freq-max` ≥ 98% da Nyquist efetiva (taxa ÷ 2 com 1 canal, ÷ 4 com 2) | Aumente `--taxa` ou use 1 canal; para 150 kHz, 400 kHz e 1 canal |
+| `calibrar_sonda.sh`/`gerar_perfil_sonda.py`: amplitude "sem tipo" ou "sem unidade" | `500mV`, `0.5` ou `2rms`: faltou dizer se é pico a pico, pico ou eficaz, ou se é V ou A | Escreva número + unidade + tipo: `500mVpp`, `250mVpk`, `176.8mVrms`, `2Arms` |
+| `gerar_perfil_sonda.py`: "informe a referência da grandeza injetada" ou "sem amplitude conhecida" | As capturas não trazem `ref: amp=...` nos metadados e nenhuma flag de referência foi dada | Use `--amplitude-referencia AMP` (mesma amplitude em todas), `--referencia-osciloscopio`, `--referencia-externa` ou `--resistencia-shunt`; ou refaça a coleta com `--amplitude` |
+| `gerar_perfil_sonda.py`: "ADC/osciloscópio" ou "osciloscópio vs injetada" diverge mais de ~1% | O gerador não entregou a amplitude ajustada (carga de 50 Ω × alta impedância, planura em frequência alta) | Use o osciloscópio como referência (`--referencia-osciloscopio`) ou corrija o ajuste do gerador |
 | `gerar_perfil_sonda.py`: ganho na menor frequência fora de [0,7; 1,3] | `--ganho` diferente de 1 ÷ sensibilidade da sonda | Confira o `--ganho` (sonda de 100 mV/A → 10) e o `--resistencia-shunt` |
 
 Se o problema não está aqui, a referência técnica completa está em [`contexto_projeto.md`](contexto_projeto.md).

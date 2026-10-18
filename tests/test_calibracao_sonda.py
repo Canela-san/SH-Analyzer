@@ -2,26 +2,32 @@
 
 import json
 import logging
+import re
 
 import numpy as np
 import pytest
 from capturas_sinteticas import (
     R_SHUNT,
     captura_calibracao,
+    criar_pasta_amplitude_conhecida,
     criar_pasta_calibracao,
     criar_pasta_calibracao_1canal,
     escrever_bin,
+    passa_baixa_2a_ordem,
     planta_h,
 )
 from supraharmonicos.cabecalho import ler_cabecalho
 from supraharmonicos.calibracao_sonda import (
     PontoMedido,
+    PontoPerfil,
     agregar_por_frequencia,
     descobrir_capturas,
+    identificar_captura,
     ler_referencia_externa,
     medir_tom,
     resolucao_efetiva_hz,
     resolver_canais,
+    resumir_resposta,
 )
 from supraharmonicos.cli_gerar_perfil import main
 from supraharmonicos.erros import ErroSHAN
@@ -176,27 +182,32 @@ class TestAgregacao:
                 for i, (g, f) in enumerate(ganhos_e_freqs, 1)]
 
     def test_media_das_repeticoes_do_mesmo_alvo(self):
-        [p] = agregar_por_frequencia(self.pontos([(0.50, 990.0), (0.52, 1010.0)]), "shunt", None, R_SHUNT)
+        [p] = agregar_por_frequencia(self.pontos([(0.50, 990.0), (0.52, 1010.0)]), "shunt", R_SHUNT)
         assert p.n_amostras == 2 and p.ganho == pytest.approx(0.51) and p.freq_hz == pytest.approx(1000.0)
         assert p.desvio_pct == pytest.approx(np.std([0.50, 0.52], ddof=1) / 0.51 * 100)
 
     def test_repeticoes_discordantes_avisam(self, caplog):
         with caplog.at_level(logging.WARNING):
-            agregar_por_frequencia(self.pontos([(0.5, 1000.0), (0.8, 1000.0)]), "shunt", None, R_SHUNT)
+            agregar_por_frequencia(self.pontos([(0.5, 1000.0), (0.8, 1000.0)]), "shunt", R_SHUNT)
         assert any("discordam" in r.getMessage() for r in caplog.records)
 
-    def test_modo_fixa_usa_a_amplitude_informada(self):
-        [p] = agregar_por_frequencia(self.pontos([(0.5, 1000.0)]), "fixa", 2.0, None)
-        assert p.ganho == pytest.approx(0.25)
-
-    def test_modo_externa_usa_a_corrente_lida_em_cada_ponto(self):
+    @pytest.mark.parametrize("modo", ["externa", "amplitude", "osciloscopio"])
+    def test_modos_de_um_canal_usam_a_referencia_de_cada_ponto(self, modo):
         pts = self.pontos([(0.5, 1000.0)])
-        pts[0].corrente_externa_pico_a = 2.0
-        [p] = agregar_por_frequencia(pts, "externa", None, None)
+        pts[0].referencia_pico = 2.0
+        [p] = agregar_por_frequencia(pts, modo, None)
         assert p.ganho == pytest.approx(0.25)
 
-    def test_modo_externa_sem_leitura_descarta_o_ponto(self):
-        assert agregar_por_frequencia(self.pontos([(0.5, 1000.0)]), "externa", None, None) == []
+    @pytest.mark.parametrize("modo", ["externa", "amplitude", "osciloscopio"])
+    def test_modos_de_um_canal_sem_referencia_descartam_o_ponto(self, modo):
+        assert agregar_por_frequencia(self.pontos([(0.5, 1000.0)]), modo, None) == []
+
+    def test_cada_ponto_tem_a_sua_amplitude_injetada(self):
+        """Gerador com a amplitude ajustada a cada frequência: o ganho sai de cada referência, não de uma média."""
+        pts = self.pontos([(0.5, 1000.0), (0.5, 1000.0)])
+        pts[0].referencia_pico, pts[1].referencia_pico = 1.0, 0.5
+        [p] = agregar_por_frequencia(pts, "amplitude", None)
+        assert p.n_amostras == 2 and p.ganho == pytest.approx((0.5 + 1.0) / 2)
 
 
 def test_descobrir_capturas_filtra_pelo_padrao_de_nome(tmp_path):
@@ -269,7 +280,8 @@ class TestCliUmCanal:
         rc, _, err = cli(main, pasta_1canal, "--amplitude-referencia", "1.0", "--ganho", "10", "-o", saida)
         assert rc == 0, err
         d = json.loads(saida.read_text(encoding="utf-8"))
-        assert d["calibracao_adc"]["modo_referencia"] == "fixa"
+        assert d["calibracao_adc"]["modo_referencia"] == "amplitude"
+        assert d["calibracao_adc"]["referencia"] == {"origem": "constante", "amplitudes": ["1.0"]}
         assert d["pontos"][-1]["ganho"] == pytest.approx(float(planta_h(d["pontos"][-1]["freq_hz"])), rel=2e-3)
 
     def test_csv_em_outro_caminho_e_em_corrente(self, cli, pasta_1canal, tmp_path):
@@ -297,11 +309,11 @@ class TestCliUmCanal:
 
     def test_sem_nenhuma_referencia_e_erro_de_uso(self, cli, pasta_1canal, tmp_path):
         rc, _, err = cli(main, pasta_1canal, "-o", tmp_path / "p.json")
-        assert rc == 2 and "informe a referência da corrente real" in err
+        assert rc == 2 and "informe a referência da grandeza injetada" in err and "ref: amp=" in err
 
     def test_referencias_incompativeis_sao_erro_de_uso(self, cli, pasta_1canal, tmp_path):
         rc, _, err = cli(main, pasta_1canal, "--referencia-externa", "--amplitude-referencia", "1", "-o", tmp_path / "p.json")
-        assert rc == 2 and "não pode ser combinado" in err
+        assert rc == 2 and "não podem ser combinados" in err
         rc, _, err = cli(main, pasta_1canal, "--resistencia-shunt", "0.1", "--amplitude-referencia", "1", "-o", tmp_path / "p.json")
         assert rc == 2 and "não pode ser combinado" in err
 
@@ -309,3 +321,241 @@ class TestCliUmCanal:
         pasta = criar_pasta_calibracao_1canal(tmp_path / "s", freqs=[1000, 5000], com_referencia_externa=False)
         rc, _, err = cli(main, pasta, "--referencia-externa", "--resistencia-shunt", R_SHUNT, "-o", tmp_path / "p.json")
         assert rc == 1 and "não encontrei o arquivo de referência externa" in err
+
+
+# ---------------------------------------------------------------------------
+# Amplitude conhecida (metadados / constante) e osciloscópio: o conjunto "sonda" medido de ponta a ponta
+# ---------------------------------------------------------------------------
+
+FREQS_CONJUNTO = [100, 220, 470, 1000, 2200, 4700, 10000, 15000, 22000, 33000, 47000, 68000, 80000]
+
+
+def esperado(freq_hz, fc=15e3):
+    return passa_baixa_2a_ordem(freq_hz, fc)
+
+
+def ler_json(caminho):
+    return json.loads(caminho.read_text(encoding="utf-8"))
+
+
+class TestIdentificarCaptura:
+    def test_metadado_vence_o_nome_e_aceita_nome_livre(self, tmp_path):
+        pasta = criar_pasta_amplitude_conhecida(tmp_path / "s", freqs=[1000, 5000], nomes_livres=True)
+        assert [p.name for p in descobrir_capturas(pasta)] == ["medicao_00.bin", "medicao_01.bin"]
+        assert identificar_captura(pasta / "medicao_01.bin")[0] == 5000.0
+        freq, ref = identificar_captura(pasta / "medicao_00.bin")
+        assert freq == 1000.0 and ref.amplitude.texto == "500mVpp"
+
+    def test_sem_metadado_cai_no_nome_do_arquivo(self, tmp_path):
+        pasta = criar_pasta_amplitude_conhecida(tmp_path / "s", freqs=[1000], metadados=False)
+        assert identificar_captura(pasta / "calibracao_1000Hz_rep1.bin") == (1000.0, None)
+
+    def test_metadado_ilegivel_vale_como_ausente_com_aviso(self, tmp_path, caplog):
+        pasta = tmp_path / "s"
+        pasta.mkdir()
+        escrever_bin(pasta / "calibracao_1000Hz_rep1.bin", [np.zeros(1000)], (3,), (1,), ("x",), fs_total=200_000,
+                     descricao="ref: f=1000Hz amp=500mV")
+        with caplog.at_level(logging.WARNING):
+            assert identificar_captura(pasta / "calibracao_1000Hz_rep1.bin") == (1000.0, None)
+        assert any("ilegíveis" in r.getMessage() for r in caplog.records)
+
+    def test_bin_sem_metadado_e_sem_nome_do_padrao_nao_e_captura(self, tmp_path):
+        pasta = criar_pasta_amplitude_conhecida(tmp_path / "s", freqs=[1000], metadados=False)
+        (pasta / "outro.bin").write_bytes((pasta / "calibracao_1000Hz_rep1.bin").read_bytes())
+        assert [p.name for p in descobrir_capturas(pasta)] == ["calibracao_1000Hz_rep1.bin"]
+
+
+class TestResumoDaResposta:
+    def pontos(self, freqs, fc=15e3):
+        return [PontoPerfil(f, float(esperado(f, fc)), 1, 0.0) for f in freqs]
+
+    def test_acha_a_queda_de_3_db_e_a_inclinacao_de_um_passa_baixa_de_2a_ordem(self):
+        r = resumir_resposta(self.pontos(FREQS_CONJUNTO))
+        assert r.freq_menos3db_hz == pytest.approx(15e3, rel=0.05)
+        assert r.inclinacao_db_oitava == pytest.approx(-12.0, abs=0.5)
+        assert r.ganho_baixa_frequencia == pytest.approx(1.0, abs=1e-3)
+        assert r.ganho_final_db == pytest.approx(20 * np.log10(esperado(80000)), abs=0.05)
+
+    def test_passa_baixa_de_primeira_ordem_da_6_db_por_oitava(self):
+        pts = [PontoPerfil(f, float(planta_h(f, 30e3, 1e-3)), 1, 0.0) for f in FREQS_CONJUNTO + [120000, 160000]]
+        r = resumir_resposta(pts)
+        assert r.freq_menos3db_hz == pytest.approx(30e3, rel=0.06) and r.inclinacao_db_oitava == pytest.approx(-6.0, abs=0.7)
+
+    def test_resposta_plana_nao_tem_queda(self):
+        r = resumir_resposta([PontoPerfil(f, 0.98, 1, 0.0) for f in (100, 1000, 10000, 50000)])
+        assert r.freq_menos3db_hz is None and r.inclinacao_db_oitava is None and r.ganho_final_db == pytest.approx(0.0)
+
+    def test_poucos_pontos_nao_resumem(self):
+        assert resumir_resposta(self.pontos([100, 1000])) is None
+
+
+@pytest.fixture(scope="module")
+def pasta_meta(tmp_path_factory):
+    return criar_pasta_amplitude_conhecida(tmp_path_factory.mktemp("amp") / "sonda_teste", freqs=FREQS_CONJUNTO)
+
+
+@pytest.fixture(scope="module")
+def pasta_osc(tmp_path_factory):
+    """O gerador entrega 2 % menos que o mostrador (500 mVpp): só o osciloscópio vê isso."""
+    return criar_pasta_amplitude_conhecida(tmp_path_factory.mktemp("osc") / "sonda_teste", freqs=FREQS_OSC,
+                                           erro_gerador=0.98, osciloscopio=True)
+
+
+FREQS_OSC = [100, 470, 1000, 4700, 15000, 33000, 80000]
+
+
+class TestCliAmplitudeConhecida:
+    """O sinal injetado é uma senoide pura de amplitude conhecida; o perfil sai de ganho = medido / injetado."""
+
+    def conferir_planta(self, d, rel=3e-3):
+        for p in d["pontos"]:
+            assert p["ganho"] == pytest.approx(float(esperado(p["freq_hz"])), rel=rel), p
+
+    def test_modo_automatico_le_a_amplitude_dos_metadados(self, cli, pasta_meta, tmp_path):
+        saida = tmp_path / "p.json"
+        rc, out, err = cli(main, pasta_meta, "-o", saida)
+        assert rc == 0, err
+        d = ler_json(saida)
+        assert d["calibracao_adc"]["modo_referencia"] == "amplitude"
+        assert d["calibracao_adc"]["referencia"] == {"origem": "metadados", "amplitudes": ["500mVpp"]}
+        assert "gravada nos metadados de 13 das 13" in out
+        self.conferir_planta(d)
+
+    def test_resumo_do_conjunto_no_log_e_no_json(self, cli, pasta_meta, tmp_path):
+        saida = tmp_path / "p.json"
+        rc, out, err = cli(main, pasta_meta, "-o", saida)
+        resumo = ler_json(saida)["calibracao_adc"]["resposta_conjunto"]
+        assert resumo["freq_menos3db_hz"] == pytest.approx(15e3, rel=0.05)
+        assert resumo["inclinacao_db_por_oitava"] == pytest.approx(-12.0, abs=0.7)
+        assert "queda de 3 dB em ~" in out and "dB/oitava" in out and "amplifica" in out
+
+    def test_o_ganho_nao_depende_do_ganho_do_canal_quando_a_amplitude_e_em_volts(self, cli, pasta_meta, tmp_path):
+        """V é a tensão no ponto onde o --ganho é aplicado: a grandeza física verdadeira é V * ganho, e o ganho do perfil é o mesmo."""
+        saida = tmp_path / "p.json"
+        rc, _, err = cli(main, pasta_meta, "--ganho", "10", "-o", saida)
+        assert rc == 0, err
+        self.conferir_planta(ler_json(saida))
+
+    def test_constante_na_linha_de_comando_funciona_sem_metadados(self, cli, tmp_path):
+        pasta = criar_pasta_amplitude_conhecida(tmp_path / "s", freqs=FREQS_CONJUNTO, metadados=False)
+        saida = tmp_path / "p.json"
+        rc, _, err = cli(main, pasta, "--amplitude-referencia", "500mVpp", "-o", saida)
+        assert rc == 0, err
+        d = ler_json(saida)
+        assert d["calibracao_adc"]["referencia"] == {"origem": "constante", "amplitudes": ["500mVpp"]}
+        self.conferir_planta(d)
+
+    def test_nomes_livres_com_a_frequencia_nos_metadados(self, cli, tmp_path):
+        pasta = criar_pasta_amplitude_conhecida(tmp_path / "s", freqs=FREQS_CONJUNTO, nomes_livres=True)
+        rc, _, err = cli(main, pasta, "--id", "x", "-o", tmp_path / "p.json")
+        assert rc == 0, err
+        self.conferir_planta(ler_json(tmp_path / "p.json"))
+
+    def test_amplitude_diferente_a_cada_ponto(self, cli, tmp_path):
+        """O gerador tem a amplitude regulada a cada frequência; cada captura usa a sua."""
+        pasta = criar_pasta_amplitude_conhecida(tmp_path / "s", freqs=FREQS_CONJUNTO,
+                                                amplitudes=lambda f: "1Vpp" if f < 1000 else ("400mVrms" if f < 20000 else "250mVpk"))
+        rc, _, err = cli(main, pasta, "-o", tmp_path / "p.json")
+        assert rc == 0, err
+        d = ler_json(tmp_path / "p.json")
+        assert d["calibracao_adc"]["referencia"]["amplitudes"] == ["1Vpp", "250mVpk", "400mVrms"]
+        self.conferir_planta(d)
+
+    def test_a_constante_vence_os_metadados_e_avisa(self, cli, pasta_meta, tmp_path):
+        rc, _, err = cli(main, pasta_meta, "--amplitude-referencia", "400mVpp", "-o", tmp_path / "p.json")
+        assert rc == 0
+        assert "os metadados dizem 500mVpp, mas --amplitude-referencia 400mVpp vale" in err
+        assert ler_json(tmp_path / "p.json")["pontos"][0]["ganho"] == pytest.approx(float(esperado(100)) * 1.25, rel=3e-3)
+
+    def test_captura_sem_amplitude_e_pulada_com_aviso(self, cli, tmp_path):
+        pasta = criar_pasta_amplitude_conhecida(tmp_path / "s", freqs=FREQS_CONJUNTO)
+        sem = criar_pasta_amplitude_conhecida(tmp_path / "t", freqs=[3300], metadados=False)
+        (pasta / "calibracao_3300Hz_rep1.bin").write_bytes((sem / "calibracao_3300Hz_rep1.bin").read_bytes())
+        rc, _, err = cli(main, pasta, "-o", tmp_path / "p.json")
+        assert rc == 0
+        assert "pulando 'calibracao_3300Hz_rep1.bin' -- sem amplitude conhecida" in err
+
+    def test_gerador_em_outra_frequencia_que_o_metadado_avisa(self, cli, tmp_path):
+        pasta = criar_pasta_amplitude_conhecida(tmp_path / "s", freqs=[1000, 2000, 5000])
+        errado = pasta / "calibracao_2000Hz_rep1.bin"
+        dados = errado.read_bytes()
+        dados = dados.replace(b"f=2000Hz", b"f=2100Hz")                                 # metadado diz 2100, a captura é 2000
+        errado.write_bytes(dados)
+        rc, _, err = cli(main, pasta, "--id", "x", "-o", tmp_path / "p.json")
+        assert rc == 0 or "CRC" in err
+        assert "o gerador estava em 2100 Hz" in err
+
+    @pytest.mark.parametrize("valor,trecho", [("500mV", "sem tipo"), ("abc", "não entendida"), ("0Vpp", "positivo")])
+    def test_amplitude_invalida_e_erro_de_uso(self, cli, pasta_meta, tmp_path, valor, trecho):
+        rc, _, err = cli(main, pasta_meta, "--amplitude-referencia", valor, "-o", tmp_path / "p.json")
+        assert rc == 2 and "--amplitude-referencia:" in err and trecho in err
+
+
+class TestCliOsciloscopio:
+    def test_o_osciloscopio_corrige_o_erro_do_mostrador_do_gerador(self, cli, pasta_osc, tmp_path):
+        rc, _, err = cli(main, pasta_osc, "--referencia-osciloscopio", "-o", tmp_path / "osc.json")
+        assert rc == 0, err
+        osc = ler_json(tmp_path / "osc.json")
+        assert osc["calibracao_adc"]["modo_referencia"] == "osciloscopio"
+        assert osc["calibracao_adc"]["referencia"] == {"origem": "osciloscopio", "escala": 1.0, "unidade": "V"}
+        for p in osc["pontos"]:
+            assert p["ganho"] == pytest.approx(float(esperado(p["freq_hz"])), rel=4e-3)
+
+        rc, _, err = cli(main, pasta_osc, "-o", tmp_path / "amp.json")           # só o mostrador do gerador: 2 % de erro
+        assert rc == 0, err
+        for p in ler_json(tmp_path / "amp.json")["pontos"]:
+            assert p["ganho"] == pytest.approx(float(esperado(p["freq_hz"])) * 0.98, rel=4e-3)
+
+    def test_mostra_a_frequencia_do_adc_contra_a_do_osciloscopio(self, cli, pasta_osc, tmp_path):
+        rc, out, err = cli(main, pasta_osc, "--referencia-osciloscopio", "-o", tmp_path / "p.json")
+        assert re.search(r"calibracao_1000Hz_rep1.bin: osciloscópio \d+\.\d+ Hz, [\d.]+ Vpp \(ADC: [+-]\d+ ppm na frequência\)", out), out
+
+    def test_com_ganho_o_valor_do_osciloscopio_em_volts_vira_grandeza_fisica(self, cli, pasta_osc, tmp_path):
+        rc, _, err = cli(main, pasta_osc, "--referencia-osciloscopio", "--ganho", "10", "-o", tmp_path / "p.json")
+        assert rc == 0, err
+        assert ler_json(tmp_path / "p.json")["pontos"][0]["ganho"] == pytest.approx(float(esperado(100)), rel=4e-3)
+
+    def test_unidade_a_com_escala_para_osciloscopio_no_shunt(self, cli, pasta_osc, tmp_path):
+        """Osciloscópio no shunt de 0,1 ohm: V/0,1 = A, e A não é multiplicado pelo --ganho."""
+        rc, _, err = cli(main, pasta_osc, "--referencia-osciloscopio", "--osc-escala", "10", "--osc-unidade", "A",
+                         "--ganho", "0.1", "-o", tmp_path / "p.json")
+        assert rc == 0, err
+        # A_real = 10 * V_osc; ADC mede V*H -> fisico = 0.1 * V*H ; ganho = 0.1*H*V / (10*V) = H/100
+        assert ler_json(tmp_path / "p.json")["pontos"][0]["ganho"] == pytest.approx(float(esperado(100)) / 100, rel=4e-3)
+
+    def test_captura_sem_arquivo_do_osciloscopio_e_pulada(self, cli, pasta_osc, tmp_path):
+        copia = tmp_path / "c"
+        copia.mkdir()
+        for p in pasta_osc.iterdir():
+            if "4700Hz" not in p.name or p.suffix == ".bin":
+                (copia / p.name).write_bytes(p.read_bytes())
+        rc, _, err = cli(main, copia, "--referencia-osciloscopio", "--id", "x", "-o", tmp_path / "p.json")
+        assert rc == 0
+        assert "pulando 'calibracao_4700Hz_rep1.bin' -- sem arquivo do osciloscópio 'calibracao_4700Hz_rep1.m'" in err
+
+    def test_pasta_separada_para_os_arquivos_do_osciloscopio(self, cli, pasta_osc, tmp_path):
+        so_bins, so_osc = tmp_path / "bins", tmp_path / "osc"
+        so_bins.mkdir()
+        so_osc.mkdir()
+        for p in pasta_osc.iterdir():
+            (so_bins if p.suffix == ".bin" else so_osc).joinpath(p.name).write_bytes(p.read_bytes())
+        rc, _, err = cli(main, so_bins, "--referencia-osciloscopio", so_osc, "--id", "x", "-o", tmp_path / "p.json")
+        assert rc == 0, err
+
+    def test_arquivo_do_osciloscopio_ilegivel_e_pulado_com_motivo(self, cli, pasta_osc, tmp_path):
+        copia = tmp_path / "c"
+        copia.mkdir()
+        for p in pasta_osc.iterdir():
+            (copia / p.name).write_bytes(p.read_bytes())
+        (copia / "calibracao_1000Hz_rep1.m").write_text("nada util aqui = 'texto';\n")
+        rc, _, err = cli(main, copia, "--referencia-osciloscopio", "--id", "x", "-o", tmp_path / "p.json")
+        assert rc == 0
+        assert "pulando 'calibracao_1000Hz_rep1.bin' -- osciloscópio 'calibracao_1000Hz_rep1.m': não achei nenhuma forma de onda" in err
+
+    def test_opcoes_osc_sem_o_modo_sao_erro_de_uso(self, cli, pasta_osc, tmp_path):
+        rc, _, err = cli(main, pasta_osc, "--osc-fs", "1e6", "-o", tmp_path / "p.json")
+        assert rc == 2 and "--osc-*" in err
+
+    def test_osciloscopio_nao_combina_com_resistencia_shunt(self, cli, pasta_osc, tmp_path):
+        rc, _, err = cli(main, pasta_osc, "--referencia-osciloscopio", "--resistencia-shunt", "0.1", "-o", tmp_path / "p.json")
+        assert rc == 2 and "--osc-escala" in err

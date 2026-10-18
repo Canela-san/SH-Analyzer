@@ -24,6 +24,7 @@ CAMADAS = {
     "erros": 0, "constantes": 0, "registro": 0,
     # 1 -- formatos e algoritmos puros
     "cabecalho": 1, "amostras": 1, "canais": 1, "filtros": 1, "fundamental": 1, "sonda": 1, "plotagem": 1,
+    "referencia": 1, "osciloscopio": 1,
     # 2 -- composições de camada 1
     "espectro": 2, "conversao": 2, "hdf5": 2, "contexto": 2, "metricas_captura": 2,
     # 3 -- aplicação

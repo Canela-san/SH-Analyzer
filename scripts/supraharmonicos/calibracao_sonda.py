@@ -7,21 +7,33 @@ Núcleo "sem CLI" do gerador de perfis (a linha de comando está em
 gerados por ``firmware/calibrar_sonda.sh`` e, opcionalmente, o manifesto
 ``pontos_coletados.csv`` (só referência cruzada).
 
-COMO A CORRENTE REAL É CONHECIDA (mutuamente exclusivos):
+O QUE É "A SONDA": o perfil descreve o CONJUNTO medido, de ponta a ponta -- a sonda de corrente,
+o frontend/isolador e o ADS8688 com o filtro passa-baixa de 2ª ordem que ele tem em cada canal (~15 kHz,
+seção 8.3.5 do datasheet) -- e não a sonda isolada. Tudo o que esse conjunto atenua ou realça entra
+no ``ganho(f)`` e é desfeito por ele em produção, então a referência tem de ser a grandeza injetada
+na ENTRADA do conjunto.
 
-* modo ``shunt``   -- corrente real por frequência a partir de um SEGUNDO canal
-  do ADC (referência) ligado ao shunt: ``corrente_real(f) = V_shunt_medido(f) /
-  OHMS``. A captura tem 2 canais (referência + sonda), então a Nyquist efetiva de
-  cada um é ``taxa_total / 4``;
-* modo ``externa`` -- corrente real lida num instrumento externo (osciloscópio,
-  multímetro) a cada ponto e anotada em ``referencia_externa.csv``. A captura
-  tem 1 canal só (a sonda): Nyquist efetiva = ``taxa_total / 2``, o dobro do modo
-  ``shunt``. A cadeia medida fica igual à de produção (um canal só);
-* modo ``fixa``    -- corrente injetada CONSTANTE em toda a varredura
-  (``--amplitude-referencia``); também com 1 canal.
+COMO A GRANDEZA INJETADA É CONHECIDA (mutuamente exclusivos):
 
-Quantos canais há numa captura vem do cabeçalho (ou de ``--canal-sonda``): nos
-modos ``fixa`` e ``externa`` o canal de referência não é lido.
+* modo ``amplitude``   -- a senoide injetada tem amplitude CONHECIDA (a que se ajustou no gerador), dada
+  com unidade e tipo (``500mVpp``). Ela vem, por captura, do campo de descrição do cabeçalho
+  (``ler_adc -d "ref: f=1000Hz amp=500mVpp"``, o que ``calibrar_sonda.sh --amplitude`` grava) ou, para
+  todas as capturas de uma vez, de ``--amplitude-referencia``. Uma captura de 1 canal só (a sonda);
+* modo ``osciloscopio`` -- a amplitude vem de um osciloscópio que mediu o MESMO sinal: um ``.m``/``.mat``/
+  ``.csv`` por captura, com o nome da captura (ver ``osciloscopio``), ajustado por mínimos quadrados.
+  Também 1 canal só, e é a referência mais independente (mede o que o gerador de fato entregou);
+* modo ``shunt``   -- corrente real por frequência a partir de um SEGUNDO canal do ADC (referência) ligado
+  ao shunt: ``corrente_real(f) = V_shunt_medido(f) / OHMS``. A captura tem 2 canais (referência + sonda),
+  então a Nyquist efetiva de cada um é ``taxa_total / 4``;
+* modo ``externa`` -- corrente real lida num instrumento externo (osciloscópio, multímetro) a cada ponto
+  e anotada em ``referencia_externa.csv``. A captura tem 1 canal só (a sonda): Nyquist efetiva =
+  ``taxa_total / 2``, o dobro do modo ``shunt``.
+
+Nos modos de 1 canal a cadeia medida fica igual à de produção (um canal só) e o canal de referência não é lido.
+A amplitude injetada, quando dada em V, é a tensão no ponto onde o ``--ganho`` é aplicado: a grandeza
+física verdadeira é ``V * ganho`` (``referencia.pico_fisico``); em A, é a própria grandeza física.
+
+Quantos canais há numa captura vem do cabeçalho (ou de ``--canal-sonda``).
 
 MEDIÇÃO DA FREQUÊNCIA E DA AMPLITUDE: ambas são MEDIDAS na própria captura, não
 copiadas do nome do arquivo -- o nome é só uma DICA de onde procurar (janela alvo
@@ -29,7 +41,7 @@ copiadas do nome do arquivo -- o nome é só uma DICA de onde procurar (janela a
 nunca é exatamente o injetado. O Welch (flat-top) localiza o tom; a amplitude e a
 frequência finais vêm de uma FFT única da captura inteira (``metricas_captura``),
 que não depende de onde o tom cai no bin. A diferença importa nos modos de 1 canal
-(``externa``/``fixa``), em que a amplitude é absoluta: o erro do Welch + parabólica
+(``externa``/``amplitude``/``osciloscopio``), em que a amplitude é absoluta: o erro do Welch + parabólica
 chegava a ~1,8 % e só se cancelava na razão do modo ``shunt``.
 
 SOBRE ``--ganho`` (gotcha de unidades): mesmo significado de ``adc_tool --ganho``
@@ -39,7 +51,7 @@ relativo a ESSE valor: o perfil só é correto se usado depois, em produção, c
 o MESMO ``--ganho`` no canal da sonda.
 
 Depende de: ``amostras``, ``canais``, ``cabecalho``, ``constantes``, ``espectro``,
-``fundamental``, ``metricas_captura``, ``erros``.
+``fundamental``, ``metricas_captura``, ``referencia``, ``erros``.
 """
 
 import csv
@@ -60,6 +72,7 @@ from .erros import ErroSHAN
 from .espectro import calcular_espectro_welch
 from .fundamental import refinar_pico_parabolico
 from .metricas_captura import GUARDA_DC, SEMILARGURA_LOBULO, analisar_espectro
+from .referencia import ReferenciaCaptura, extrair_referencia
 
 log = logging.getLogger(__name__)
 
@@ -91,20 +104,47 @@ FRACAO_SATURACAO_MAXIMA = 0.0005  # fração de amostras brutas no fundo de esca
 # Descoberta de arquivos e manifesto
 # ---------------------------------------------------------------------------
 
+def _referencia_gravada(cabecalho, nome: str, avisar: bool) -> ReferenciaCaptura | None:
+    """Referência ``ref: f=.. amp=..`` do cabeçalho; metadado ilegível vale como ausente (com aviso, se pedido)."""
+    if cabecalho is None:
+        return None
+    try:
+        return extrair_referencia(cabecalho.descricao)
+    except ErroSHAN as e:
+        if avisar:
+            log.warning(f"'{nome}': metadados 'ref:' ilegíveis, ignorando-os -- {e}")
+        return None
+
+
+def identificar_captura(caminho: Path) -> tuple[float | None, ReferenciaCaptura | None]:
+    """(frequência-alvo, referência gravada) de uma captura. A frequência-alvo é só uma DICA de onde procurar
+    o tom (a frequência de verdade é medida); vem dos metadados (``ref: f=``) e, na falta deles, do nome
+    ``calibracao_<FREQ>Hz_rep<N>.bin``. ``None`` na frequência: a captura não diz qual é."""
+    referencia = _referencia_gravada(ler_cabecalho(caminho), caminho.name, avisar=True)
+    if referencia is not None and referencia.freq_hz is not None:
+        return referencia.freq_hz, referencia
+    m = PADRAO_NOME_CAPTURA.match(caminho.name)
+    return (float(m.group(1)) if m else None), referencia
+
+
 def descobrir_capturas(pasta: Path) -> list[Path]:
-    """Lista os '.bin' de calibração em 'pasta', pelo padrão de nome de
-    firmware/calibrar_sonda.sh -- não depende do manifesto existir."""
+    """Lista os '.bin' de calibração em 'pasta': os que seguem o padrão de nome de firmware/calibrar_sonda.sh
+    E qualquer outro '.bin' cujo cabeçalho traga a frequência injetada (``ref: f=...``) -- com os metadados, o
+    nome do arquivo deixa de importar. Não depende do manifesto existir."""
     if not pasta.is_dir():
         raise ErroSHAN(f"'{pasta}' não é uma pasta.")
     arquivos = sorted(
         p for p in pasta.iterdir()
-        if p.is_file() and PADRAO_NOME_CAPTURA.match(p.name)
+        if p.is_file() and p.suffix.lower() == ".bin" and (
+            PADRAO_NOME_CAPTURA.match(p.name)
+            or ((r := _referencia_gravada(ler_cabecalho(p), p.name, avisar=False)) is not None and r.freq_hz is not None)
+        )
     )
     if not arquivos:
         raise ErroSHAN(
-            f"nenhum arquivo 'calibracao_<FREQ>Hz_rep<N>.bin' encontrado "
-            f"em '{pasta}'. Essa é a convenção de nome gravada por "
-            f"firmware/calibrar_sonda.sh -- confira se a pasta está certa."
+            f"nenhum arquivo 'calibracao_<FREQ>Hz_rep<N>.bin' (nem '.bin' com 'ref: f=...' nos metadados) "
+            f"encontrado em '{pasta}'. Essa é a convenção de nome gravada por firmware/calibrar_sonda.sh "
+            f"-- confira se a pasta está certa."
         )
     return arquivos
 
@@ -258,8 +298,9 @@ class PontoMedido:
     freq_alvo_hz: float          # só a "dica" (nome do arquivo/manifesto) -- não é a frequência de verdade
     freq_medida_hz: float        # medida de verdade, ver medir_tom()
     amplitude_sonda: float       # já na grandeza física do canal (--ganho aplicado -- ver docstring do módulo)
-    amplitude_referencia: float | None  # idem, canal de referência; None se não foi lido (modos fixa/externa)
-    corrente_externa_pico_a: float | None = None  # modo externa: corrente de PICO lida no instrumento externo (A); preenchida pelo CLI
+    amplitude_referencia: float | None  # idem, canal de referência; None se não foi lido (modos de 1 canal)
+    referencia_pico: float | None = None  # modos de 1 canal: amplitude REAL do tom (pico), na grandeza física do canal da sonda; preenchida pelo CLI
+    referencia_gravada: ReferenciaCaptura | None = None  # o que o cabeçalho da captura diz que foi injetado (ref: f=.. amp=..); preenchida pelo CLI
 
 
 def resolver_canais(cabecalho, canal_referencia_cli: int | None, canal_sonda_cli: int | None,
@@ -271,7 +312,7 @@ def resolver_canais(cabecalho, canal_referencia_cli: int | None, canal_sonda_cli
     referência; a detecção automática exige exatamente 2 canais, com um deles de
     grandeza=corrente (== sonda; o outro == referência).
 
-    ``exige_referencia=False`` (modos ``fixa``/``externa``): só o canal da sonda
+    ``exige_referencia=False`` (modos ``amplitude``/``osciloscopio``/``externa``): só o canal da sonda
     importa e o retorno é ``(canal_referencia_ou_None, canal_sonda)``. Com 1 canal
     no cabeçalho, ele é a sonda; com mais, a sonda é o único de grandeza=corrente
     (ou o dado por ``--canal-sonda``). A referência só aparece se vier de
@@ -530,7 +571,6 @@ class PontoPerfil:
 
 
 def agregar_por_frequencia(pontos: list[PontoMedido], modo_referencia: str,
-                            amplitude_referencia_fixa: float | None,
                             resistencia_shunt: float | None) -> list[PontoPerfil]:
     """Agrupa 'pontos' pela frequência-ALVO nominal (freq_alvo_hz, herdada
     do nome do arquivo/--redundancia em firmware/calibrar_sonda.sh) -- essa
@@ -544,6 +584,9 @@ def agregar_por_frequencia(pontos: list[PontoMedido], modo_referencia: str,
     final ainda vem inteiramente de medição (média das freq_medida_hz do
     grupo) -- só a decisão de QUAIS pontos pertencem ao mesmo grupo usa o
     alvo nominal.
+
+    A grandeza real do ponto é ``amplitude_referencia / resistencia_shunt`` no modo ``shunt`` e
+    ``referencia_pico`` (já na grandeza física do canal) nos demais; ponto sem ela é descartado.
     """
     por_alvo: dict[float, list[PontoMedido]] = {}
     for p in pontos:
@@ -553,14 +596,12 @@ def agregar_por_frequencia(pontos: list[PontoMedido], modo_referencia: str,
     for freq_alvo, grupo in sorted(por_alvo.items()):
         ganhos, freqs_medidas, nomes = [], [], []
         for p in grupo:
-            if modo_referencia == "fixa":
-                corrente_real = amplitude_referencia_fixa
-            elif modo_referencia == "externa":
-                corrente_real = p.corrente_externa_pico_a
-            else:
+            if modo_referencia == "shunt":
                 corrente_real = p.amplitude_referencia / resistencia_shunt
+            else:
+                corrente_real = p.referencia_pico
             if corrente_real is None or corrente_real <= 0:
-                log.warning(f"descartando '{p.arquivo.name}' -- corrente de referência calculada <= 0.")
+                log.warning(f"descartando '{p.arquivo.name}' -- sem amplitude de referência positiva.")
                 continue
             ganhos.append(p.amplitude_sonda / corrente_real)
             freqs_medidas.append(p.freq_medida_hz)
@@ -585,3 +626,52 @@ def agregar_por_frequencia(pontos: list[PontoMedido], modo_referencia: str,
                                           n_amostras=len(ganhos), desvio_pct=desvio_pct))
 
     return perfil_pontos
+
+
+# ---------------------------------------------------------------------------
+# Resumo da resposta em frequência (o que o perfil diz do conjunto)
+# ---------------------------------------------------------------------------
+
+LIMIAR_QUEDA_DB = -3.0
+LIMIAR_INCLINACAO_DB = -6.0   # só mede a inclinação final em pontos pelo menos tão atenuados quanto isso
+PONTOS_INCLINACAO = 4
+
+
+@dataclass
+class ResumoResposta:
+    """Números-resumo do perfil (todos em relação ao ganho de baixa frequência)."""
+    ganho_baixa_frequencia: float          # mediana dos pontos até 3x a menor frequência medida: o "0 dB"
+    freq_menos3db_hz: float | None         # onde o ganho cai 3 dB (interpolado em log f); None se não cai na faixa medida
+    inclinacao_db_oitava: float | None     # regressão dB x log2(f) nos últimos pontos já atenuados >= 6 dB; None se há poucos
+    freq_final_hz: float
+    ganho_final_db: float                  # no ponto de maior frequência
+
+
+def resumir_resposta(pontos: list[PontoPerfil]) -> ResumoResposta | None:
+    """Quanto o conjunto atenua, e onde: a queda de 3 dB e a inclinação final (um passa-baixa de 2ª ordem
+    cai 12 dB/oitava; de 1ª, 6). Serve para conferir a medida contra o que se espera do ADS8688 (~15 kHz)
+    e para saber quanto a correção amplifica o ruído em alta frequência. ``None`` com menos de 3 pontos."""
+    ordenados = sorted(pontos, key=lambda p: p.freq_hz)
+    if len(ordenados) < 3:
+        return None
+    f = np.array([p.freq_hz for p in ordenados])
+    g = np.array([p.ganho for p in ordenados])
+    g0 = float(np.median(g[f <= 3.0 * f[0]]))
+    if g0 <= 0:
+        return None
+    db = 20.0 * np.log10(g / g0)
+
+    f3db = None
+    abaixo = np.flatnonzero(db <= LIMIAR_QUEDA_DB)
+    if abaixo.size and abaixo[0] > 0:
+        i = int(abaixo[0])
+        x0, x1 = math.log10(f[i - 1]), math.log10(f[i])
+        y0, y1 = float(db[i - 1]), float(db[i])
+        f3db = 10.0 ** (x0 + (LIMIAR_QUEDA_DB - y0) * (x1 - x0) / (y1 - y0))
+
+    inclinacao = None
+    atenuados = np.flatnonzero(db <= LIMIAR_INCLINACAO_DB)
+    if atenuados.size >= 3:
+        usados = atenuados[-PONTOS_INCLINACAO:]
+        inclinacao = float(np.polyfit(np.log2(f[usados]), db[usados], 1)[0])
+    return ResumoResposta(g0, f3db, inclinacao, float(f[-1]), float(db[-1]))

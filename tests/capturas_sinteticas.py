@@ -137,3 +137,46 @@ def criar_pasta_calibracao_1canal(pasta: Path, freqs=FREQS_CAL, canal: int = 3, 
     if com_referencia_externa:
         (pasta / "referencia_externa.csv").write_text("\n".join(linhas) + "\n", encoding="utf-8")
     return pasta
+
+
+def passa_baixa_2a_ordem(f, fc: float = 15e3):
+    """Magnitude (linear) de um Butterworth de 2ª ordem -- o filtro interno do ADS8688 (~15 kHz, datasheet 8.3.5)."""
+    return 1.0 / np.sqrt(1.0 + (np.asarray(f, dtype=np.float64) / fc) ** 4)
+
+
+def escrever_m_osciloscopio(caminho: Path, valores: np.ndarray, fs: float) -> Path:
+    """``.m`` no estilo de um osciloscópio: escalares do tempo + um vetor ``Y``."""
+    corpo = " ".join(f"{x:.9g}" for x in valores)
+    Path(caminho).write_text(f"% forma de onda sintetica\nTinterval = {1.0 / fs:.12g};\nTstart = 0;\nY = [{corpo}];\n", encoding="utf-8")
+    return Path(caminho)
+
+
+def criar_pasta_amplitude_conhecida(pasta: Path, freqs=FREQS_CAL, canal: int = 3, amplitudes=lambda f: "500mVpp",
+                                    fc: float = 15e3, fs_total: int = 200_000, dur_s: float = 0.5,
+                                    nome_sonda: str = "sonda_teste", metadados: bool = True, erro_gerador: float = 1.0,
+                                    nomes_livres: bool = False, osciloscopio: bool = False, ganho_nominal: float = 1.0) -> Path:
+    """Pasta de calibração com 1 canal, injetando uma senoide de amplitude CONHECIDA e medindo o conjunto
+    (passa-baixa de 2ª ordem em ``fc``). ``amplitudes(f)`` dá o texto ajustado no gerador (vai para ``ref: amp=``);
+    o que o gerador de fato entrega é ``erro_gerador`` vezes isso (o ADC e o osciloscópio veem o valor real, o
+    metadado guarda o valor do mostrador). ``osciloscopio`` grava ao lado de cada ``.bin`` um ``.m`` com o sinal real.
+    ``ganho_nominal``: o ADC mede ``V_real * H(f)`` e é isso que ``--ganho`` converte em grandeza física."""
+    from supraharmonicos.referencia import analisar_amplitude, formatar_referencia
+
+    pasta.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(7)
+    n = int(dur_s * fs_total)
+    for k, f in enumerate(freqs):
+        texto = amplitudes(f)
+        pico_real = analisar_amplitude(texto).pico * erro_gerador
+        f_real = f * (1 + rng.uniform(-0.004, 0.004))                  # o gerador nunca acerta a frequência do mostrador
+        fase = rng.uniform(0, 2 * np.pi)
+        t = np.arange(n) / fs_total
+        v_adc = pico_real * float(passa_baixa_2a_ordem(f_real, fc)) * np.sin(2 * np.pi * f_real * t + fase) + rng.normal(0, 5e-4, n)
+        nome = f"medicao_{k:02d}.bin" if nomes_livres else f"calibracao_{f}Hz_rep1.bin"
+        descricao = formatar_referencia(f, texto) if metadados else "sem metadados"
+        escrever_bin(pasta / nome, [v_adc], (canal,), (1,), (nome_sonda,), fs_total=fs_total, descricao=descricao)
+        if osciloscopio:
+            fs_osc = 200.0 * f_real                                       # 20 ciclos, 200 amostras por ciclo
+            v_osc = pico_real * np.sin(2 * np.pi * f_real * np.arange(4000) / fs_osc + fase) + rng.normal(0, 2e-3, 4000)
+            escrever_m_osciloscopio(pasta / (Path(nome).stem + ".m"), v_osc, fs_osc)
+    return pasta

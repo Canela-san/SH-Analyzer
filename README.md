@@ -1,8 +1,11 @@
 # SH-Analyzer
 
-**Analisador de supraharmônicos:** captura tensão e corrente da rede elétrica em alta taxa de amostragem (BeagleBone Black + ADC ADS8688) e analisa o espectro com ferramentas Python.
+**Analisador de supraharmônicos:** Um projeto de hardware e software embarcado de alto desempenho para a identificação e análise de supraharmônicos em redes e cargas elétricas, utilizando uma PCB customizada e o microcomputador industrial BeagleBone.
+
+Captura tensão e corrente da rede elétrica em alta taxa de amostragem (BeagleBone Black + ADC ADS8688) e analisa o espectro com ferramentas Python.
 
 [![CI](https://github.com/Canela-san/SH-Analyzer/actions/workflows/ci.yml/badge.svg)](https://github.com/Canela-san/SH-Analyzer/actions/workflows/ci.yml)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 ## 📖 O que é
@@ -116,7 +119,7 @@ As duas podem ser combinadas na mesma execução. A explicação completa, com o
 | 🧪 Validado com sinais sintéticos | Toda a análise espectral (`--fft`, `--welch`, bandas, picos), a correção de sondas e a geração de perfis |
 | ⏳ Pendente | **Validação quantitativa de exatidão:** medir amplitude e frequência de um sinal de referência calibrado, injetado em bancada (plano em [`docs/roteiro_laboratorio.md`](docs/roteiro_laboratorio.md)). Falta também calibrar uma sonda real e conferir o cabeçalho v2 numa captura real |
 
-**Atenção ao filtro do ADC:** o ADS8688 tem um filtro passa-baixa de 2ª ordem embutido em cada canal, com corte de cerca de 15 kHz (datasheet, seção 8.3.5). Na banda de supraharmônicos (2 a 150 kHz) o sinal chega ao conversor atenuado em dezenas de dB, e a correção por perfil devolve a amplitude mas amplifica o ruído na mesma proporção. Por isso o perfil deve cobrir a cadeia inteira (sonda, frontend e ADC) até 150 kHz.
+**Atenção ao filtro do ADC:** o ADS8688 tem um filtro passa-baixa de 2ª ordem embutido em cada canal, com corte de cerca de 15 kHz (datasheet, seção 8.3.5). Na banda de supraharmônicos (2 a 150 kHz) o sinal chega ao conversor atenuado em dezenas de dB, e a correção por perfil devolve a amplitude mas amplifica o ruído na mesma proporção. Por isso o perfil deve cobrir a cadeia inteira (sonda, frontend e ADC) até 150 kHz; neste projeto "sonda" designa esse conjunto, e a frequência de corte do filtro do ADC não precisa ser conhecida, porque aparece na curva medida. O perfil pode ser montado a partir de uma **senoide de amplitude conhecida** (`calibrar_sonda.sh --amplitude 500mVpp`, gravada nos metadados de cada captura), de um `.m` do osciloscópio, de leituras anotadas ou de um segundo canal do ADC: veja [`docs/guia_de_uso.md`](docs/guia_de_uso.md#sondas-de-corrente-calibração-e-correção).
 
 Limites conhecidos, como a ausência de controle de *overrun* nos buffers (risco cresce com a taxa de amostragem) e a correção de sonda só de magnitude, estão em [`docs/contexto_projeto.md`](docs/contexto_projeto.md) e [`docs/melhorias-propostas.md`](docs/melhorias-propostas.md).
 
@@ -126,7 +129,7 @@ Quem for modificar o código Python deve começar por [`docs/arquitetura_softwar
 
 ```bash
 uv run --extra dev ruff check .   # estilo e erros comuns
-uv run --extra dev pytest         # 331 testes, ~2 min (use -m "not e2e" para a versão rápida: 262 testes, ~10 s)
+uv run --extra dev pytest         # 483 testes, ~2 min (use -m "not e2e" para a versão rápida: 396 testes, ~10 s)
 ```
 
 Os testes também conferem que o firmware (C) e o Python concordam sobre o formato do cabeçalho: se você mudar um lado, o `pytest` avisa até o outro acompanhar.
