@@ -5,7 +5,6 @@
 Captura tensão e corrente da rede elétrica em alta taxa de amostragem (BeagleBone Black + ADC ADS8688) e analisa o espectro com ferramentas Python.
 
 [![CI](https://github.com/Canela-san/SH-Analyzer/actions/workflows/ci.yml/badge.svg)](https://github.com/Canela-san/SH-Analyzer/actions/workflows/ci.yml)
-
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 ## 📖 O que é
