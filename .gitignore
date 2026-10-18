@@ -64,3 +64,12 @@ Desktop.ini
 *.swp
 .vscode/
 git-commit.sh
+
+# Python: caches de teste/lint, instalação editável e lockfile do uv
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+uv.lock
+
+
+Prompts/

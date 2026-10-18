@@ -1,0 +1,159 @@
+"""Contexto de uma execução do ``adc_tool``: o que a captura É, resolvido uma vez.
+
+Junta, na hierarquia explícito (CLI) > cabeçalho da captura > padrão
+histórico, tudo o que os três modos (plotagem, conversão, exportação HDF5)
+precisam saber sobre o arquivo de entrada: cabeçalho, canais, calibração por
+canal, grandeza e sonda por canal.
+
+Camada de aplicação: recebe o ``argparse.Namespace`` produzido por
+``cli_adc_tool.montar_parser()`` (não importa o parser -- só lê os atributos).
+
+Depende de: ``cabecalho``, ``canais``, ``constantes``, ``sonda``.
+"""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass
+from pathlib import Path
+
+from .cabecalho import (
+    CABECALHO_TAMANHO_TOTAL,
+    CabecalhoArquivo,
+    conferir_consistencia_cabecalho,
+    contar_amostras_arquivo_bin,
+    imprimir_resumo_cabecalho,
+    ler_cabecalho,
+)
+from .canais import (
+    analisar_lista_calibracao,
+    analisar_lista_canais,
+    resolver_offsets_por_canal,
+    validar_subconjunto_canais,
+)
+from .constantes import CANAL_PADRAO, GRANDEZA_NAO_USADA, GRANDEZA_PADRAO
+from .sonda import (
+    SONDAS_DIR_PADRAO,
+    analisar_overrides_grandeza,
+    analisar_overrides_perfil,
+)
+
+
+@dataclass(frozen=True)
+class ContextoCaptura:
+    """Resultado de :func:`resolver_contexto` -- imutável, sem I/O além do que
+    já foi feito para resolvê-lo."""
+
+    caminho_entrada: Path | None
+    cabecalho: CabecalhoArquivo | None
+    offset_amostras: int                 # bytes a pular antes das amostras (0 sem cabeçalho)
+    canais: list[int]                    # ordem do ciclo round-robin do arquivo
+    canais_veio_do_cabecalho: bool
+    canais_exibir: list[int]             # subconjunto de 'canais' (padrão: todos)
+    faixas: list[float]                  # um por canal de 'canais', mesma ordem
+    ganhos: list[float]
+    offsets: list[float]
+    overrides_grandeza: dict[int, int]   # --grandeza (canal -> código)
+    overrides_perfil: dict[int, Path]    # --sonda-perfil (canal -> arquivo)
+    sondas_dir: Path
+
+    @property
+    def num_canais(self) -> int:
+        return len(self.canais)
+
+    def indice_no_ciclo(self, canal: int) -> int:
+        """Posição do canal no ciclo round-robin (= índice nas listas por canal)."""
+        return self.canais.index(canal)
+
+    def grandeza_do_canal(self, canal: int) -> int:
+        """--grandeza explícito > cabeçalho v2 > padrão histórico (tensão)."""
+        if canal in self.overrides_grandeza:
+            return self.overrides_grandeza[canal]
+        if self.cabecalho is not None and self.cabecalho.versao_cabecalho >= 2:
+            idx = self.indice_no_ciclo(canal)
+            if idx < len(self.cabecalho.grandeza_por_canal):
+                g = self.cabecalho.grandeza_por_canal[idx]
+                if g != GRANDEZA_NAO_USADA:
+                    return g
+        return GRANDEZA_PADRAO
+
+    def sonda_id_do_canal(self, canal: int) -> str:
+        """Id de sonda gravado no cabeçalho v2 ('' se não há)."""
+        if self.cabecalho is not None and self.cabecalho.versao_cabecalho >= 2:
+            idx = self.indice_no_ciclo(canal)
+            if idx < len(self.cabecalho.sonda_id_por_canal):
+                return self.cabecalho.sonda_id_por_canal[idx]
+        return ""
+
+
+def resolver_contexto(args: argparse.Namespace) -> ContextoCaptura:
+    """Detecta o cabeçalho e resolve canais/calibração/grandeza/sonda.
+
+    A detecção do cabeçalho vem ANTES de resolver --canais/-f, que podem cair
+    de volta nos metadados dele quando não informados. O arquivo de ENTRADA
+    muda conforme o modo: -c/--converter usa seu próprio caminho; plotagem e
+    --export-hdf5 usam o posicional 'arquivo'. Só um '.bin' pode ter o
+    cabeçalho -- um '.csv' nunca tem.
+
+    Levanta ErroSHAN para qualquer flag/arquivo inválido."""
+    caminho_entrada = args.converter if args.converter is not None else args.arquivo
+
+    cabecalho: CabecalhoArquivo | None = None
+    offset_amostras = 0
+    if caminho_entrada is not None and caminho_entrada.suffix.lower() == ".bin" and caminho_entrada.exists():
+        cabecalho = ler_cabecalho(caminho_entrada)
+        if cabecalho is not None:
+            offset_amostras = CABECALHO_TAMANHO_TOTAL
+
+    # --canais: explícito (CLI) > cabeçalho da captura > padrão histórico.
+    if args.canais is not None:
+        canais = analisar_lista_canais(args.canais, "--canais")
+        canais_veio_do_cabecalho = False
+    elif cabecalho is not None:
+        canais = list(cabecalho.lista_canais)
+        canais_veio_do_cabecalho = True
+    else:
+        canais = analisar_lista_canais(CANAL_PADRAO, "--canais")
+        canais_veio_do_cabecalho = False
+
+    if args.canais_exibir is not None:
+        canais_exibir = analisar_lista_canais(args.canais_exibir, "--canais-exibir")
+        validar_subconjunto_canais(canais_exibir, canais)
+    else:
+        canais_exibir = canais
+
+    faixas = analisar_lista_calibracao(args.faixa, len(canais), "--faixa")
+    ganhos = analisar_lista_calibracao(args.ganho, len(canais), "--ganho")
+    offsets = resolver_offsets_por_canal(args.offset, faixas, args.formato, len(canais))
+
+    # --grandeza/--sonda-perfil: mesma hierarquia de 3 níveis, mas resolvida
+    # por CANAL (não por posição), porque nem todo canal aparece nas flags.
+    overrides_grandeza = analisar_overrides_grandeza(args.grandeza) if args.grandeza is not None else {}
+    overrides_perfil = analisar_overrides_perfil(args.sonda_perfil) if args.sonda_perfil is not None else {}
+    sondas_dir = args.sondas_dir if args.sondas_dir is not None else SONDAS_DIR_PADRAO
+
+    return ContextoCaptura(
+        caminho_entrada=caminho_entrada,
+        cabecalho=cabecalho,
+        offset_amostras=offset_amostras,
+        canais=canais,
+        canais_veio_do_cabecalho=canais_veio_do_cabecalho,
+        canais_exibir=canais_exibir,
+        faixas=faixas,
+        ganhos=ganhos,
+        offsets=offsets,
+        overrides_grandeza=overrides_grandeza,
+        overrides_perfil=overrides_perfil,
+        sondas_dir=sondas_dir,
+    )
+
+
+def anunciar_cabecalho(ctx: ContextoCaptura, formato: str) -> None:
+    """Resumo do cabeçalho + conferência contra o arquivo (só se há cabeçalho)."""
+    if ctx.cabecalho is None:
+        return
+    imprimir_resumo_cabecalho(ctx.cabecalho)
+    n_amostras_arquivo = contar_amostras_arquivo_bin(ctx.caminho_entrada, formato, ctx.offset_amostras)
+    conferir_consistencia_cabecalho(
+        ctx.cabecalho, ctx.canais, ctx.canais_veio_do_cabecalho, n_amostras_arquivo, formato
+    )

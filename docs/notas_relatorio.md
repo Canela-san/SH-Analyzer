@@ -9,16 +9,20 @@
 > apresentado sem essas marcações provém diretamente do código-fonte e dos
 > testes já registrados, podendo ser utilizado com confiança.
 >
-> Última atualização: 23/09/2026 — cobre o período compreendido entre a
+> Última atualização: 16/10/2026 — cobre o período compreendido entre a
 > última apresentação (placa ainda sem Assembly, modo manual, sem
 > `adc_tool.py`, sem suporte multi-canal) e o estado atual do repositório:
 > cabeçalho de metadados com exportação para HDF5, migração completa para o
-> modo automático (AUTO_RST) do ADS8688, e a refatoração de `adc_tool.py`
+> modo automático (AUTO_RST) do ADS8688, a refatoração de `adc_tool.py`
 > orientada a DSP (método de Welch, normalização tom/ruído, bandas, extração
-> de picos — Marco 7, novo nesta atualização). Esta revisão também
-> reconciliou a cronologia com uma análise completa do repositório atual —
-> ver `docs/melhorias-propostas.md` para os achados de engenharia que não
-> são, em si, matéria de relatório (itens de robustez, higiene de código e
+> de picos — Marco 7), e, nesta atualização, o cabeçalho versão 2 com a
+> correção de sondas de corrente (Marco 9) a reorganização do código
+> Python em pacote, com testes automáticos e integração contínua (Marco 10),
+> e a preparação da validação em bancada: `medir_captura.py`, o achado do
+> filtro de 15 kHz do ADC e o roteiro de laboratório (Marco 11).
+> O trabalho pendente passou a ser o Marco 12. Ver
+> `docs/melhorias-propostas.md` para os achados de engenharia que não são,
+> em si, matéria de relatório (itens de robustez, higiene de código e
 > organização de repositório).
 
 ---
@@ -72,7 +76,12 @@
   ciclo-sincronizada (fundamental/harmônicos) e método de Welch com
   normalização tom/ruído, agrupamento em bandas e extração de picos
   (supraharmônicos, o próprio alvo científico do projeto) —, filtragem
-  digital, suporte multi-canal completo e exportação para o formato HDF5.
+  digital, suporte multi-canal completo e exportação para o formato HDF5;
+  rotulagem de grandeza e sonda por canal no cabeçalho (versão 2) e correção
+  em frequência de sondas de corrente (validada apenas com sinais
+  sintéticos); e código Python organizado em pacote, com 483 testes
+  automáticos e integração contínua, e preparação da validação em bancada
+  (ferramenta de métricas e roteiro de laboratório).
 
 ---
 
@@ -207,6 +216,11 @@ permanecer sempre em zero. Um script específico
 um **padrão de transição consistente**, característico de um problema de
 integridade de sinal (reflexão, ruído induzido ou assimetria nos tempos de
 subida/descida em algum ponto do caminho de sinal).
+
+> Observação: o firmware e o script de diagnóstico do preâmbulo **não fazem parte
+> do repositório atual** (nunca foram versionados). Se ainda existirem na máquina
+> de desenvolvimento, vale guardá-los junto das capturas da época: a saída do
+> script é a evidência quantitativa deste marco.
 
 **Causa raiz e correção:** os **jumpers longos** utilizados para conectar a
 placa de aquisição ao frontend analógico na bancada. O problema foi
@@ -476,7 +490,7 @@ proposital acima da Nyquist efetiva de um canal) e o round-trip
 resolução espectral (exemplo: 15.321,3 Hz injetado → 15.321,37 Hz
 encontrado por `--picos`). Essa validação confirma a correção
 matemática/numérica da implementação — não ainda a fidelidade do hardware
-de aquisição sobre um sinal real (ver Marco 9).
+de aquisição sobre um sinal real (ver Marco 12; o plano de testes está no Marco 11).
 
 **Relevância para o relatório e a apresentação:** este é, dos marcos de
 software, o mais diretamente ligado à pergunta de pesquisa do projeto. O
@@ -623,7 +637,192 @@ software.
       propriedade de memória constante, em espírito análogo ao gráfico do
       Marco 6.
 
-### Marco 9 — Trabalho Pendente
+### Marco 9 — Cabeçalho Versão 2 e Correção de Sondas de Corrente
+
+**Motivação:** o frontend de **tensão** tem ganho constante em frequência, de
+modo que um fator escalar (`--ganho`) basta. Uma **sonda de corrente**, ao
+contrário, atenua o sinal de forma diferente a cada frequência — e os
+supraharmônicos, justamente o conteúdo de interesse, ficam na região em que
+essa atenuação é maior. Sem correção, a amplitude medida de um componente
+de 40 kHz, por exemplo, sai cerca de 40 % abaixo do valor real (0,060 A em
+vez de 0,100 A, em teste sintético).
+
+**Decisão de projeto — rotular no ARM, corrigir no Python.** O `ler_adc`
+apenas **registra** o que cada canal mede (`--grandeza`) e qual sonda foi
+usada (`--sonda`); não abre nem interpreta nenhum arquivo de calibração. A
+curva de ganho vive num perfil `.json` no computador de análise, e o
+`adc_tool.py` o localiza pelo identificador gravado no cabeçalho. O
+cabeçalho passou para a **versão 2** (`grandeza_por_canal` e
+`sonda_id_por_canal`, 32 bytes por canal), mantendo 1024 bytes no total e a
+leitura de arquivos da versão 1. As flags são chaveadas pelo **número do
+canal**, e não pela ordem digitada — a mesma classe de bug de
+desalinhamento já encontrada ao migrar para o modo automático, em que o ADC
+reordena os canais em ordem crescente.
+
+**Ferramentas criadas:**
+
+1. `firmware/calibrar_sonda.sh` — coleta guiada na bancada (gerador de
+   sinal + resistor *shunt* de precisão): o operador informa a taxa de
+   amostragem, o canal da sonda e o número de pontos; por padrão a captura
+   usa **um canal só** (Nyquist = taxa ÷ 2, o que permite calibrar até a
+   banda de supraharmônicos) e a referência vem de uma senoide de
+   **amplitude conhecida**, gravada com a frequência nos metadados de cada
+   captura (`--amplitude 500mVpp`), ou de uma leitura do osciloscópio a
+   cada ponto (`--ref-externa`); o jeito de dois canais (um segundo canal do
+   ADC no *shunt*, Nyquist = taxa ÷ 4) continua disponível. O script escolhe
+   as frequências (escala
+   logarítmica até 80 % da Nyquist efetiva por canal), diz qual frequência
+   injetar, grava o cabeçalho, confere cada captura (saturação, nível,
+   frequência medida, CRC, tamanho) e permite refazer, pular, retomar uma
+   coleta interrompida, refinar e adensar pontos.
+2. `scripts/gerar_perfil_sonda.py` — mede amplitude e frequência de cada
+   captura (Welch com janela *flat-top* para localizar o tom e FFT única com janela
+   Kaiser para a amplitude e a frequência finais), calcula o ganho contra o que foi
+   injetado (amplitude conhecida nos metadados, forma de onda `.m` do osciloscópio,
+   leitura anotada ou canal de referência no shunt) e grava o perfil, com
+   validação antes de substituir um perfil existente. O perfil descreve o
+   **conjunto** sonda + frontend + ADC (inclusive o filtro passa-baixa de 2ª ordem
+   do ADS8688, de frequência de corte desconhecida: ela aparece na curva), e o
+   resumo da resposta (−3 dB, inclinação, amplificação de ruído) é impresso e
+   gravado no perfil. `scripts/medir_captura.py` compara o ADC com a amplitude
+   injetada e com o `.m` do osciloscópio, o que permite conferir a efetividade
+   do método numa única medição.
+3. Correção no `adc_tool.py` — divisão espectral com interpolação PCHIP sobre
+   (log da frequência, ganho em dB), aplicada antes de FFT/Welch/plotagem.
+
+**Auditoria independente do fluxo (`docs/auditoria_perfil_sonda.md`):** com
+capturas sintéticas de uma sonda de resposta conhecida, o gerador recuperou o
+ganho com erro de no máximo 0,02 % nos pontos medidos, e a correção
+restaurou a amplitude de tons de 2,5 a 40 kHz. A auditoria encontrou **sete
+bugs reais**, todos corrigidos e cobertos por teste — entre eles um erro
+silencioso de escala de 10× quando o `--ganho` de uso diferia do usado na
+calibração, e a leitura de um identificador de sonda capaz de escapar da
+pasta de perfis. (A conclusão de que o estimador de amplitude era exato
+valia para o modo de dois canais, em que o ganho é uma razão e o erro se
+cancela; ao simular os modos de um canal, em que a amplitude é absoluta, o
+erro chegou a 1,8 % e foi corrigido — ver o adendo em
+`docs/auditoria_perfil_sonda.md`.) Também registrou limites que o software não resolve: a
+correção é só de **magnitude** (não restaura a fase, o que inviabiliza
+análises V×I), e a confiabilidade física do perfil depende da bancada.
+
+**Estado de validação:** todo este fluxo foi validado apenas com sinais
+**sintéticos**. Não há ainda calibração de uma sonda real em bancada.
+
+**Relevância para o relatório:** é um bom exemplo de revisão crítica do
+próprio trabalho — a auditoria tratou o fluxo como um terceiro faria,
+procurou ativamente o que poderia dar errado e registrou, junto com as
+correções, os limites que permanecem. Registrar o que o método **não**
+garante é parte do rigor científico.
+
+- [ ] ⚠️ **Confirme com você mesmo:** datas aproximadas do desenvolvimento do
+      cabeçalho v2 e das ferramentas de calibração (`git log` ajuda).
+- [ ] Gráfico do `--plot` do `gerar_perfil_sonda.py` (curva de ganho do perfil)
+      — de preferência com uma sonda real, quando houver.
+- [ ] Comparativo do espectro de um sinal de corrente **com** e **sem**
+      `--sem-correcao-sonda` — mostra o efeito da correção.
+- [ ] Fotografia da bancada de calibração (gerador, *shunt*, sonda, placa).
+
+### Marco 10 — Qualidade e Manutenibilidade do Software: Pacote, Testes e Integração Contínua
+
+**Motivação:** o código de análise havia crescido num único arquivo
+(`adc_tool.py`, perto de 2950 linhas, com uma função `main()` de cerca de 400
+linhas), e o projeto será modificado por outras pessoas. Era preciso
+reduzir o custo de alterar o código sem quebrar o que já funciona.
+
+**O que foi feito:**
+
+1. **Pacote `scripts/supraharmonicos/`** — 22 módulos organizados em camadas
+   sem dependências circulares (regra verificada por teste). `adc_tool.py`,
+   `gerar_perfil_sonda.py` e `medir_captura.py` viraram entradas finas, de menos de 40 linhas.
+   Erros viram exceções (`ErroSHAN`) e mensagens passam por `logging`; só a
+   camada de linha de comando imprime e escolhe o código de saída.
+2. **Prova de que nada mudou:** antes de refatorar, 61 execuções de linha de
+   comando foram registradas e depois comparadas com a nova versão — 57
+   idênticas e 4 com diferença só no texto de mensagens de erro/aviso
+   padronizadas. Nomes de flags, saídas e códigos de saída foram preservados.
+3. **483 testes automáticos**, sem necessidade de hardware: unidades por
+   módulo, linha de comando, regras de arquitetura, dependências, o fluxo
+   completo de perfil de sonda e o script de coleta de calibração
+   (`calibrar_sonda.sh`, exercitado contra um `ler_adc` simulado). Um teste de **contrato C↔Python** lê o
+   `ler_adc.c` e confere que o formato do cabeçalho e as constantes
+   compartilhadas continuam iguais nos dois lados.
+4. **Integração contínua** (GitHub Actions): a cada *pull request*, roda o
+   `ruff` e a suíte de testes em Python 3.10 e 3.13.
+5. **Documentação:** `README.md` reescrito, guia de uso
+   (`docs/guia_de_uso.md`) e guia da arquitetura do software
+   (`docs/arquitetura_software.md`).
+
+**Relevância para o relatório:** mostra a preocupação com a
+reprodutibilidade e a manutenção do instrumento como software. O teste de
+contrato C↔Python é um bom exemplo de como substituir uma regra que dependia
+de disciplina manual ("manter os dois lados em sincronia") por uma verificação
+automática.
+
+- [ ] ⚠️ **Confirme com você mesmo:** datas aproximadas da refatoração (`git
+      log` do branch `refactor/modularize-sh-analyzer`).
+- [ ] Diagrama das camadas do pacote (em `docs/arquitetura_software.md`, seção 3).
+- [ ] Captura de tela da aba *Actions* do GitHub com a CI passando.
+
+### Marco 11 — Preparação da Validação em Bancada
+
+**Motivação:** até aqui, toda a validação numérica foi sintética. Antes de ir
+ao laboratório era preciso (a) ter uma ferramenta que transformasse uma
+captura em **números para o relatório** e (b) saber o que injetar, em que
+ordem e com que critério de aceitação.
+
+**O que foi feito:**
+
+1. **`scripts/medir_captura.py`** — mede uma ou mais capturas e imprime
+   (e grava em CSV, uma linha por canal): DC, RMS, ruído (nV/√Hz e LSB), tom,
+   THD, SINAD, SNR, ENOB, SFDR, **continuidade** (uma amostra perdida ou
+   duplicada aparece como um salto de fase de ~1 amostra no tom), diafonia e
+   atraso entre canais, e o erro contra um instrumento de referência
+   (`--referencia-rms`, `--referencia-freq`). Método: FFT única com janela
+   Kaiser (β = 14), cujo vazamento (≈ −112 dBc) não limita o ENOB de um ADC
+   de 16 bits; uma janela Blackman-Harris limitaria a ~14 bits. Validado com
+   sinais sintéticos de verdade conhecida (43 testes).
+2. **Leitura crítica do datasheet do ADS8688:** cada canal tem um **filtro
+   passa-baixa de 2ª ordem embutido, de ~15 kHz a −3 dB** (seção 8.3.5). Na
+   banda de supraharmônicos o sinal chega ao conversor atenuado em dezenas
+   de dB (estimativa: −33 a −40 dB em 150 kHz); a correção por perfil devolve
+   a amplitude, mas amplifica o ruído na mesma proporção, e o anti-aliasing
+   é fraco para componentes de 200 a 500 kHz (dobram para dentro da banda).
+   O perfil precisa, portanto, descrever a cadeia inteira.
+3. **Taxa de amostragem real:** o `ler_adc` calcula `ticks = 200 MHz ÷ taxa`
+   com divisão inteira. 102,4 kHz sai a 102 406,55 Hz (+64 ppm); 300 kHz,
+   +1001 ppm; 100, 200, 250, 400 e 500 kHz saem exatas. É uma hipótese a
+   confirmar em bancada.
+4. **`calibrar_sonda.sh` com um canal por padrão:** com dois canais, 500 kS/s
+   dá Nyquist de 125 kHz, que não cobre os 150 kHz da banda; com um canal e
+   400 kS/s, 200 kHz.
+5. **`docs/roteiro_laboratorio.md`** — 12 testes (T0 a T11): ruído em curto,
+   DC e linearidade, **resposta em frequência da cadeia**, taxa real,
+   THD/ENOB, diafonia, **integridade em taxas altas**, aliasing, sinais de
+   espectro conhecido (onda quadrada: harmônicos de amplitude `4A/(nπ)`),
+   **perfil da sonda com validação por frequências retidas** e um teste
+   ponta a ponta. Cada teste traz o sinal a injetar, os comandos, o que
+   anotar no osciloscópio de GS/s e um critério de aceitação.
+
+**Resultado do ensaio com dados sintéticos:** uma cadeia de dois polos com
+−3 dB em 15 kHz foi "calibrada" pelo fluxo do roteiro (24 pontos, 1 canal,
+referência externa): o perfil recuperou o ganho com erro de 0,001 %, e uma
+onda quadrada de 10 kHz, que sem correção mostrava a 15ª harmônica 31 dB
+abaixo da teoria, voltou à teoria em ±0,05 dB até 150 kHz. Esse ensaio
+revelou o erro de até 1,8 % do estimador de amplitude nos modos de um canal
+(Marco 9), corrigido.
+
+**Relevância para o relatório:** o roteiro e a ferramenta de métricas são o
+que transforma "o código funciona" em "o instrumento tem exatidão X, medida
+contra uma referência independente". A leitura do datasheet antes da
+bancada evitou calibrar o sistema com premissas erradas (banda plana até
+Nyquist).
+
+- [ ] ⚠️ **Confirme com você mesmo:** modelo, exatidão e data de calibração do
+      osciloscópio e do gerador usados nos testes (entram na tabela de
+      incertezas).
+- [ ] Tabela e figuras do roteiro, "Dados e figuras para o relatório".
+
+### Marco 12 — Trabalho Pendente
 
 Apresentar esta seção é tão importante quanto apresentar o que já foi
 realizado.
@@ -639,10 +838,26 @@ realizado.
   realizar a medição com o SH-Analyzer, e comparar o espectro medido (via
   `--welch`/`--agrupar-bandas`/`--picos`, Marco 7) com o sinal efetivamente
   injetado.
-- **Validação em hardware do cabeçalho de metadados (Marco 8):** a
-  implementação foi verificada por testes automatizados com arquivos
-  sintéticos (offsets de campo, round-trip de CRC, perfil de memória), mas
+- **Validação em hardware do cabeçalho de metadados (Marcos 8 e 9):** a
+  implementação (inclusive a versão 2, com grandeza e sonda por canal) foi
+  verificada por testes automatizados com arquivos sintéticos (offsets de
+  campo, round-trip de CRC, perfil de memória, contrato com o código C), mas
   ainda não exercitada numa captura real na BeagleBone.
+- **Calibração de uma sonda real em bancada (Marco 9):** exercitar o fluxo
+  `calibrar_sonda.sh` → `gerar_perfil_sonda.py` → `adc_tool.py` com uma sonda
+  real e conferir a exatidão do perfil contra uma referência independente.
+  Propostas de evolução (fase complexa, perfil absoluto, validação por
+  frequências retidas) estão em `docs/auditoria_perfil_sonda.md`, seção 4.
+- **`calibrar_sonda.sh` ainda não foi usado numa bancada real:** a reescrita
+  (que corrigiu, entre outros, a checagem de Nyquist pela taxa total em vez
+  da efetiva por canal) foi validada com 59 testes contra um `ler_adc`
+  simulado; falta exercitar a interação com o hardware (ver
+  `docs/melhorias-propostas.md`, item 2.10). Agora o padrão é um canal só,
+  com a corrente real lida no osciloscópio.
+- **Executar o `docs/roteiro_laboratorio.md`**, que cobre o item anterior e
+  confirma ou refuta as hipóteses do Marco 11: filtro de ~15 kHz do ADC
+  (T3), taxa de amostragem real (T4), diafonia (T6) e ausência de amostras
+  perdidas em taxas altas (T7).
 - As margens de tempo do sinal de CS (*chip-select*) associadas às
   transações SPI permanecem calibradas empiricamente, sem comparação
   formal com os tempos mínimos especificados no datasheet do ADS8688 —
@@ -697,9 +912,22 @@ clareza valorizada por qualquer orientador.
    CRC-32), e a exportação para HDF5, implementada com escrita em blocos
    sobre o arquivo mapeado em memória, foi validada quanto ao uso
    constante de memória por instrumentação com `tracemalloc`.
-9. A próxima etapa é a validação quantitativa mediante sinal conhecido
-   injetado em bancada controlada, incluindo a primeira validação em
-   hardware real do cabeçalho de metadados.
+9. O cabeçalho passou à versão 2 (grandeza e sonda por canal) e foi criado
+   um fluxo de calibração e correção em frequência de sondas de corrente;
+   a auditoria do fluxo encontrou e corrigiu sete bugs e registrou os
+   limites (correção só de magnitude; validação apenas sintética).
+10. O código Python foi reorganizado em pacote, com 483 testes automáticos
+    (inclusive um teste de contrato C↔Python) e integração contínua,
+    preservando o comportamento anterior (61 execuções comparadas).
+11. A próxima etapa (Marco 12) é a validação quantitativa mediante sinal conhecido
+    injetado em bancada controlada, incluindo a primeira validação em
+    hardware real do cabeçalho de metadados e a calibração de uma sonda
+    real.
+12. A preparação da bancada (Marco 11) acrescentou `medir_captura.py`
+    (métricas para o relatório), o achado do filtro de ~15 kHz do ADS8688 e
+    do arredondamento dos ticks da taxa de amostragem, e um roteiro de 12
+    testes com critérios de aceitação; o ensaio sintético dele corrigiu um
+    erro de até 1,8 % no estimador de amplitude do gerador de perfil.
 
 ---
 
@@ -731,6 +959,13 @@ clareza valorizada por qualquer orientador.
 - [ ] (Marco 8) Diagrama do layout de bytes do cabeçalho
 - [ ] (Marco 8) Captura do resumo do cabeçalho impresso por `adc_tool.py`
 - [ ] (Marco 8) Gráfico/tabela do teste de memória da exportação HDF5
+- [ ] (Marco 9) Gráfico do perfil de sonda (`--plot` do `gerar_perfil_sonda.py`)
+- [ ] (Marco 9) Espectro de corrente com e sem `--sem-correcao-sonda`
+- [ ] (Marco 9) Fotografia da bancada de calibração
+- [ ] (Marco 10) Aba *Actions* do GitHub com a CI passando
+- [ ] (Marco 11) Resposta em frequência da cadeia de tensão (T3), com a curva teórica do datasheet por cima
+- [ ] (Marco 11) Onda quadrada: teoria × ADC sem correção × ADC com perfil × osciloscópio (T9a)
+- [ ] (Marco 11) Tabela de continuidade por taxa de amostragem (T7)
 
 ---
 
@@ -762,11 +997,16 @@ caminho percorrido até ele:
    apresentado com menor profundidade que a etapa 4, por não envolver um
    processo de depuração de hardware; ênfase na motivação (rastreabilidade,
    interoperabilidade) e na verificação quantitativa de memória.
-6. **Próximos passos (5 min):** Marco 9 — validação quantitativa e
+6. **Próximos passos (5 min):** Marcos 11 e 12 — plano de validação em bancada, validação quantitativa e
    melhorias de desempenho identificadas, porém ainda não implementadas.
 7. **Perguntas (5 min).**
 
-> Nota: a distribuição de tempo acima já contempla os Marcos 7 e 8; caso o
+> Nota: os Marcos 9 e 10 (sondas de corrente; testes e integração contínua) não
+> estão na distribuição abaixo. Sugestão: o Marco 9 entra como um slide no item
+> 5 (ou no lugar do Marco 8, se for preciso cortar) e o Marco 10 cabe em um
+> único slide de qualidade de software.
+>
+> A distribuição de tempo acima já contempla os Marcos 7 e 8; caso o
 > tempo total disponível seja reduzido, o Marco 8 é o item mais adequado
 > para supressão ou tratamento em um único slide de transição — o Marco 7,
 > por estar diretamente ligado à pergunta de pesquisa, é candidato mais
@@ -789,12 +1029,13 @@ caminho percorrido até ele:
   fundamental/harmônicos vs. método de Welch com normalização tom/ruído
   para supraharmônicos sem relação de fase com a rede — Marco 7), e as
   decisões de formato do cabeçalho binário (compatibilidade C/Python,
-  verificação de integridade).
+  verificação de integridade), incluindo a rotulagem de grandeza/sonda por
+  canal e a correção em frequência de sondas de corrente (Marco 9).
 - **Validação e Resultados:** a validação multi-canal atual (de natureza
   qualitativa), a validação numérica do pipeline de análise espectral com
   sinais sintéticos (Marco 7), a verificação quantitativa do uso de memória
-  na exportação HDF5 e, quando disponível, a validação quantitativa com
-  sinal conhecido (Marco 9) — esta última seção constitui o núcleo
+  na exportação HDF5, a auditoria sintética do fluxo de sondas (Marco 9) e, quando disponível, a validação quantitativa com
+  sinal conhecido (Marcos 11 e 12) — esta última seção constitui o núcleo
   científico do relatório.
 - **Discussão e Limitações:** riscos e itens em aberto (ausência de
   backpressure no esquema ping-pong, margens de CS não comparadas
