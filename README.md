@@ -39,7 +39,7 @@ flowchart LR
 2. O **ARM** (o Linux) só copia os blocos prontos para um arquivo `.bin`. Nenhum processamento acontece durante a captura.
 3. A análise (FFT, Welch, supraharmônicos, calibração de sondas) acontece **depois**, no seu computador.
 
-Essa separação é proposital: o projeto prioriza a **integridade dos dados** sobre qualquer outra coisa. Cada `.bin` carrega um cabeçalho de 1024 bytes (frequência, canais, grandeza e sonda de cada canal, título, CRC-32), então o arquivo se descreve sozinho.
+Essa separação é proposital: o projeto prioriza a **integridade dos dados** sobre qualquer outra coisa. Cada `.bin` carrega um cabeçalho de 1024 bytes (frequência, canais, grandeza, sonda e faixa de entrada do ADC de cada canal, título, CRC-32), então o arquivo se descreve sozinho.
 
 ## 🚀 Início rápido
 
@@ -116,7 +116,7 @@ As duas podem ser combinadas na mesma execução. A explicação completa, com o
 |---|---|
 | ✅ Validado em hardware | Protocolo SPI do ADS8688 (32 ciclos de clock por amostra); handshake ARM↔PRU; varredura automática (AUTO_RST) com 1 e com 5 canais a 102,4 kHz totais (≈20,48 kHz por canal): canais ligados à rede mostram os 60 Hz, canais desconectados mostram só ruído |
 | 🧪 Validado com sinais sintéticos | Toda a análise espectral (`--fft`, `--welch`, bandas, picos), a correção de sondas e a geração de perfis |
-| ⏳ Pendente | **Validação quantitativa de exatidão:** medir amplitude e frequência de um sinal de referência calibrado, injetado em bancada (plano em [`docs/roteiro_laboratorio.md`](docs/roteiro_laboratorio.md)). Falta também calibrar uma sonda real e conferir o cabeçalho v2 numa captura real |
+| ⏳ Pendente | **Validação quantitativa de exatidão:** medir amplitude e frequência de um sinal de referência calibrado, injetado em bancada (plano em [`docs/roteiro_laboratorio.md`](docs/roteiro_laboratorio.md)). Falta também calibrar uma sonda real, compilar com `clpru` e testar a faixa de entrada do ADC por canal (`ler_adc --faixa-adc`, só simulada até aqui) e conferir o cabeçalho v3 numa captura real |
 
 **Atenção ao filtro do ADC:** o ADS8688 tem um filtro passa-baixa de 2ª ordem embutido em cada canal, com corte de cerca de 15 kHz (datasheet, seção 8.3.5). Na banda de supraharmônicos (2 a 150 kHz) o sinal chega ao conversor atenuado em dezenas de dB, e a correção por perfil devolve a amplitude mas amplifica o ruído na mesma proporção. Por isso o perfil deve cobrir a cadeia inteira (sonda, frontend e ADC) até 150 kHz; neste projeto "sonda" designa esse conjunto, e a frequência de corte do filtro do ADC não precisa ser conhecida, porque aparece na curva medida. O perfil pode ser montado a partir de uma **senoide de amplitude conhecida** (`calibrar_sonda.sh --amplitude 500mVpp`, gravada nos metadados de cada captura), de um `.m` do osciloscópio, de leituras anotadas ou de um segundo canal do ADC: veja [`docs/guia_de_uso.md`](docs/guia_de_uso.md#sondas-de-corrente-calibração-e-correção).
 

@@ -40,7 +40,7 @@ void lidar_interrupcao(int dummy) { manter_execucao = 0; }
 // -- ver docs/contexto_projeto.md para o item pendente de atualizar o lado
 // Python antes da próxima captura real.
 #define CABECALHO_MAGIC "SHAN"      // 4 bytes, sem terminador nulo armazenado
-#define CABECALHO_VERSAO 2u         // versão do FORMATO do cabeçalho (não do firmware/software) -- v2 adiciona grandeza_por_canal/sonda_id_por_canal (ver struct cabecalho_arquivo_campos); adc_tool.py já foi atualizado para ler esses campos (ver docs/proposta_correcao_sonda.md)
+#define CABECALHO_VERSAO 3u         // versão do FORMATO do cabeçalho (não do firmware/software) -- v2 adicionou grandeza_por_canal/sonda_id_por_canal; v3 adiciona faixa_adc_por_canal (ver struct cabecalho_arquivo_campos); adc_tool.py lê as três versões (ver docs/proposta_correcao_sonda.md)
 #define CABECALHO_TAMANHO_TOTAL 1024u
 
 // Tamanho FIXO (bytes, incluindo o terminador nulo) dos campos de texto
@@ -79,6 +79,23 @@ void lidar_interrupcao(int dummy) { manter_execucao = 0; }
 // explícito -- preserva o uso histórico deste programa (nenhuma flag nova
 // = tudo como antes, canal de tensão).
 #define GRANDEZA_PADRAO GRANDEZA_TENSAO
+
+// [FAIXA DE ENTRADA POR CANAL] Código de faixa de cada canal (registrador
+// RANGE_SELn do ADS8688, Range_CHn[3:0]) gravado em faixa_adc_por_canal no
+// cabeçalho v3 e enviado à PRU em shared_control->range_sel (ver
+// memoria_pru.h, que define ADS8688_FAIXA_*). Slots não usados do cabeçalho
+// ficam em FAIXA_ADC_NAO_USADA. Precisa ficar em sincronia manual com
+// supraharmonicos/constantes.py (FAIXAS_ADC_V) -- tests/test_contrato_firmware.py confere.
+#define FAIXA_ADC_NAO_USADA 0xFFu
+
+// Faixa assumida para um canal sem --faixa-adc: a de reset do ADS8688
+// (±2,5 × VREF), a mesma que o ADC já usava antes desta flag existir.
+#define FAIXA_ADC_PADRAO ADS8688_FAIXA_2_5_VREF
+
+// Faixa TOTAL (pico a pico, em volts) de cada código, com VREF = 4,096 V
+// (referência interna): é o valor que o Python chama de --faixa.
+static const double FAIXA_ADC_ESPAN_V[] = {20.48, 10.24, 5.12};
+#define FAIXA_ADC_NUM_CODIGOS 3
 
 // Clock da PRU usado para converter uma frequência em Hz para um número de
 // ciclos da PRU (sample_period_ticks, escrito em shared_control). Nomeado em
@@ -161,6 +178,7 @@ struct cabecalho_arquivo_campos {
     char     descricao[CABECALHO_DESCRICAO_TAMANHO]; // [RASTREABILIDADE] --descricao/-d, mesmas regras de titulo, só que maior -- espaço para uma frase completa sobre o objetivo/contexto do ensaio (ex.: local, o que estava sendo injetado/medido).
     uint8_t  grandeza_por_canal[ADS8688_MAX_CANAIS];             // [SONDA/GRANDEZA, v2] grandeza física de cada canal habilitado (GRANDEZA_TENSAO/CORRENTE/TEMPERATURA) -- mesma indexação de lista_canais (posição i descreve lista_canais[i]); slots não usados = GRANDEZA_NAO_USADA. Sem --grandeza na linha de comando, todo canal assume GRANDEZA_PADRAO (tensão), preservando o comportamento histórico.
     char     sonda_id_por_canal[ADS8688_MAX_CANAIS][CABECALHO_SONDA_ID_TAMANHO]; // [SONDA/GRANDEZA, v2] identificador ASCII da sonda usada em cada canal (--sonda), mesma indexação acima; string vazia = nenhuma sonda associada a este canal. Só a CHAVE de busca -- este programa não valida se o id corresponde a um arquivo de perfil real nem interpreta a curva de calibração; isso é feito inteiramente por adc_tool.py, que é onde os perfis de fato residem (ver docs/proposta_correcao_sonda.md).
+    uint8_t  faixa_adc_por_canal[ADS8688_MAX_CANAIS];            // [FAIXA DE ENTRADA, v3] código de faixa (0 = ±10,24 V, 1 = ±5,12 V, 2 = ±2,56 V) com que o ADS8688 converteu cada canal habilitado -- mesma indexação de lista_canais (posição i descreve lista_canais[i]); slots não usados = FAIXA_ADC_NAO_USADA. É o que o ADC realmente recebeu em RANGE_SELn (a PRU escreve o código de todo canal habilitado a cada captura), então o Python converte código -> volts sem depender de --faixa. Sem --faixa-adc, todo canal usa FAIXA_ADC_PADRAO.
     uint32_t header_crc32;             // CRC-32 (polinômio 0xEDB88320, o mesmo de zlib/PNG/Ethernet) de todo o cabeçalho, calculado com este próprio campo zerado -- permite a um leitor detectar um cabeçalho truncado/corrompido antes de confiar nos campos acima
 } __attribute__((packed));
 
@@ -317,6 +335,15 @@ static void imprimir_uso(const char *nome_programa) {
         "                    Gravado só como texto no cabeçalho -- este programa\n"
         "                    NÃO valida se o id corresponde a um perfil real; a\n"
         "                    correção em si é feita por adc_tool.py, na análise.\n"
+        "  --faixa-adc C:V[,...]  Opcional. Faixa de entrada do ADS8688 em cada canal, no\n"
+        "                    formato 'canal:volts', onde 'volts' é a faixa TOTAL (pico\n"
+        "                    a pico) -- o mesmo número do --faixa do adc_tool.py:\n"
+        "                    '20.48' (±10,24 V, padrão), '10.24' (±5,12 V) ou '5.12'\n"
+        "                    (±2,56 V). Faixa menor = degrau (LSB) menor e menos ruído\n"
+        "                    em volts, desde que o sinal no pino caiba nela (acima\n"
+        "                    dela o ADC satura). Ex.: '1:5.12'. Canal não citado usa\n"
+        "                    20.48. A faixa fica gravada no cabeçalho e o adc_tool.py a\n"
+        "                    usa sozinho.\n"
         "\n"
         "O arquivo gerado começa com um cabeçalho fixo de 1024 bytes (frequência,\n"
         "canais, timestamp, título/descrição, grandeza/sonda por canal e outros\n"
@@ -330,13 +357,14 @@ static void imprimir_uso(const char *nome_programa) {
         "  sudo %s 102400 --duracao 10m          # ~10 minutos de captura\n"
         "  sudo %s 102400 -o ensaio_bancada.bin  # nome de arquivo explícito\n"
         "  sudo %s 102400 -t \"Medição Condomínio X\" -d \"Busca por supraharmônicos\"\n"
-        "  sudo %s 102400 0,1 --grandeza 0:tensao,1:corrente --sonda 1:fluke_i30_01\n",
+        "  sudo %s 102400 0,1 --grandeza 0:tensao,1:corrente --sonda 1:fluke_i30_01\n"
+        "  sudo %s 100000 0,1 --faixa-adc 0:20.48,1:5.12   # canal 1 (sensor de corrente) em ±2,56 V\n",
         nome_programa, CANAL_PADRAO, BLOCOS_PADRAO,
         CABECALHO_TITULO_TAMANHO - 1u, CABECALHO_DESCRICAO_TAMANHO - 1u,
         CABECALHO_SONDA_ID_TAMANHO - 1u,
         nome_programa, BLOCOS_PADRAO, CANAL_PADRAO,
         nome_programa, nome_programa, nome_programa, nome_programa, nome_programa,
-        nome_programa);
+        nome_programa, nome_programa);
 }
 
 /*
@@ -620,6 +648,102 @@ static int analisar_lista_sondas(const char *texto, const int *canais, int num_c
 }
 
 /*
+ * [FAIXA DE ENTRADA POR CANAL] Interpreta --faixa-adc (ex.: "0:20.48,1:5.12"),
+ * mesma sintaxe "canal:valor" de --grandeza/--sonda. O valor é a faixa TOTAL
+ * (pico a pico) em volts -- a mesma convenção do --faixa do adc_tool.py --,
+ * e precisa ser uma das três faixas bipolares do ADS8688 com VREF = 4,096 V:
+ * 20.48 (código 0, ±10,24 V), 10.24 (código 1, ±5,12 V) ou 5.12 (código 2,
+ * ±2,56 V). Qualquer outro número é REJEITADO (não arredondado): gravar uma
+ * faixa diferente da que o ADC realmente usa corromperia todas as leituras.
+ *
+ * 'faixa_saida' tem a mesma indexação por POSIÇÃO de 'canais' que
+ * analisar_lista_grandezas (posição i descreve canais[i]) e vem preenchido
+ * com FAIXA_ADC_PADRAO nos slots usados. Referenciar um canal fora da
+ * captura é erro.
+ *
+ * Retorna 0 em sucesso, -1 em erro (já reportado em stderr).
+ */
+static int analisar_lista_faixas(const char *texto, const int *canais, int num_canais,
+                                  uint8_t *faixa_saida) {
+    char copia[512];
+    strncpy(copia, texto, sizeof(copia) - 1);
+    copia[sizeof(copia) - 1] = '\0';
+
+    char *cursor = copia;
+    char *token;
+    int ja_citado[ADS8688_MAX_CANAIS] = {0};    // canal repetido com faixas diferentes seria ambíguo
+    while ((token = strtok(cursor, ",")) != NULL) {
+        cursor = NULL;
+
+        char *dois_pontos = strchr(token, ':');
+        if (dois_pontos == NULL) {
+            fprintf(stderr, "Erro: '%s' em --faixa-adc precisa estar no "
+                             "formato 'canal:volts' (ex.: '1:5.12').\n", token);
+            return -1;
+        }
+        *dois_pontos = '\0';
+        const char *parte_canal = token;
+        const char *parte_faixa = dois_pontos + 1;
+
+        char *fim;
+        long canal = strtol(parte_canal, &fim, 10);
+        if (fim == parte_canal || *fim != '\0') {
+            fprintf(stderr, "Erro: '%s' não é um número de canal válido em "
+                             "--faixa-adc.\n", parte_canal);
+            return -1;
+        }
+
+        int posicao = posicao_do_canal(canais, num_canais, (int)canal);
+        if (posicao < 0) {
+            fprintf(stderr, "Erro: --faixa-adc referencia o canal %ld, que "
+                             "não faz parte da captura (canais selecionados: ",
+                    canal);
+            for (int i = 0; i < num_canais; i++) {
+                fprintf(stderr, "%d%s", canais[i], (i + 1 < num_canais) ? ", " : "");
+            }
+            fprintf(stderr, ").\n");
+            return -1;
+        }
+
+        if (ja_citado[posicao]) {
+            fprintf(stderr, "Erro: o canal %ld aparece mais de uma vez em "
+                             "--faixa-adc.\n", canal);
+            return -1;
+        }
+        ja_citado[posicao] = 1;
+
+        double volts = strtod(parte_faixa, &fim);
+        if (fim == parte_faixa || *fim != '\0') {
+            fprintf(stderr, "Erro: '%s' não é um número válido em --faixa-adc "
+                             "(canal %ld).\n", parte_faixa, canal);
+            return -1;
+        }
+
+        int codigo = -1;
+        for (int c = 0; c < FAIXA_ADC_NUM_CODIGOS; c++) {
+            double diferenca = volts - FAIXA_ADC_ESPAN_V[c];
+            if (diferenca < 0.0) {
+                diferenca = -diferenca;
+            }
+            if (diferenca < 0.005) {
+                codigo = c;
+                break;
+            }
+        }
+        if (codigo < 0) {
+            fprintf(stderr, "Erro: faixa '%s' (canal %ld) não é suportada em "
+                             "--faixa-adc -- use 20.48 (±10,24 V), 10.24 "
+                             "(±5,12 V) ou 5.12 (±2,56 V).\n", parte_faixa, canal);
+            return -1;
+        }
+
+        faixa_saida[posicao] = (uint8_t)codigo;
+    }
+
+    return 0;
+}
+
+/*
  * Interpreta uma duração de captura (--duracao) em segundos. Aceita um
  * sufixo de unidade opcional, sem distinguir maiúsculas/minúsculas: 's'
  * (segundos -- também o padrão quando nenhum sufixo é dado), 'm' (minutos)
@@ -760,7 +884,8 @@ static void imprimir_bloco_gravado(char rotulo, unsigned long long blocos_salvos
 // compartilhada em si NÃO é apagado por esse stop+start (só o contador de
 // programa e os registradores da PRU são resetados) -- irrelevante aqui,
 // porque TODOS os campos que a PRU lê antes do laço principal
-// (buffer_0_addr, buffer_1_addr, sample_period_ticks, auto_seq_mask) já
+// (buffer_0_addr, buffer_1_addr, sample_period_ticks, auto_seq_mask,
+// range_sel) já
 // são reescritos por este programa logo abaixo, incondicionalmente, antes
 // de sinalizar config_ready=1 de novo.
 //
@@ -844,6 +969,7 @@ int main(int argc, char *argv[]) {
     const char *descricao_texto = NULL;    // [CABECALHO/RASTREABILIDADE] valor de -d/--descricao, se passado
     const char *grandeza_texto = NULL;     // [SONDA/GRANDEZA] valor de --grandeza, se passado
     const char *sonda_texto = NULL;        // [SONDA/GRANDEZA] valor de --sonda, se passado
+    const char *faixa_adc_texto = NULL;    // [FAIXA DE ENTRADA] valor de --faixa-adc, se passado
 
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "--blocos") == 0) {
@@ -901,6 +1027,13 @@ int main(int argc, char *argv[]) {
                 return -1;
             }
             sonda_texto = argv[++i];
+        } else if (strcmp(argv[i], "--faixa-adc") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Erro: --faixa-adc precisa de um valor (ex.: "
+                                 "--faixa-adc 1:5.12).\n");
+                return -1;
+            }
+            faixa_adc_texto = argv[++i];
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "Erro: opção desconhecida '%s'.\n", argv[i]);
             imprimir_uso(argv[0]);
@@ -966,6 +1099,25 @@ int main(int argc, char *argv[]) {
         if (analisar_lista_sondas(sonda_texto, canais, num_canais, sonda_canais) < 0) {
             return -1; // erro já reportado em stderr por analisar_lista_sondas
         }
+    }
+
+    // [FAIXA DE ENTRADA POR CANAL] Mesma indexação por posição de grandeza_canais:
+    // FAIXA_ADC_NAO_USADA nos slots sem canal, FAIXA_ADC_PADRAO nos usados,
+    // --faixa-adc por cima. 'range_sel' é a mesma informação empacotada para a
+    // PRU (4 bits por canal, indexado pelo NÚMERO do canal, não pela posição).
+    uint8_t faixa_adc_canais[ADS8688_MAX_CANAIS];
+    memset(faixa_adc_canais, FAIXA_ADC_NAO_USADA, sizeof(faixa_adc_canais));
+    for (int i = 0; i < num_canais; i++) {
+        faixa_adc_canais[i] = FAIXA_ADC_PADRAO;
+    }
+    if (faixa_adc_texto != NULL) {
+        if (analisar_lista_faixas(faixa_adc_texto, canais, num_canais, faixa_adc_canais) < 0) {
+            return -1; // erro já reportado em stderr por analisar_lista_faixas
+        }
+    }
+    uint32_t range_sel = 0;
+    for (int i = 0; i < num_canais; i++) {
+        range_sel |= ((uint32_t)faixa_adc_canais[i] & 0xFu) << (4 * canais[i]);
     }
 
     // Resolve blocos_desejados cedo (antes de tocar em /dev/mem ou criar o
@@ -1121,6 +1273,11 @@ int main(int argc, char *argv[]) {
     // config_ready=1 (ver espera_configuracao em spi_core.asm).
     ctrl->auto_seq_mask = mascara_auto_seq;
 
+    // [FAIXA DE ENTRADA POR CANAL] Mesma ordenação: antes de config_ready=1.
+    // A PRU escreve este código em RANGE_SELn de todo canal habilitado
+    // (spi_core.asm), inclusive o padrão -- ver memoria_pru.h.
+    ctrl->range_sel = range_sel;
+
     ctrl->config_ready = 1;
 
     FILE *ficheiro_bin = fopen(nome_arquivo_saida, "wb");
@@ -1163,6 +1320,7 @@ int main(int argc, char *argv[]) {
     // só copiar para dentro da struct do cabeçalho.
     memcpy(cabecalho.campos.grandeza_por_canal, grandeza_canais, sizeof(grandeza_canais));
     memcpy(cabecalho.campos.sonda_id_por_canal, sonda_canais, sizeof(sonda_canais));
+    memcpy(cabecalho.campos.faixa_adc_por_canal, faixa_adc_canais, sizeof(faixa_adc_canais)); // [FAIXA DE ENTRADA, v3]
 
     cabecalho.campos.samples_per_buffer = (uint32_t)SAMPLES_PER_BUFFER;
     cabecalho.campos.bytes_por_amostra = (uint32_t)sizeof(uint16_t);
@@ -1234,10 +1392,13 @@ int main(int argc, char *argv[]) {
             case GRANDEZA_TEMPERATURA: nome_grandeza = "temperatura"; break;
             default:                   nome_grandeza = "desconhecida"; break;
         }
+        const double faixa_total_v = FAIXA_ADC_ESPAN_V[faixa_adc_canais[i]];
         if (sonda_canais[i][0] != '\0') {
-            printf("  Canal %d: %s (sonda: %s)\n", canais[i], nome_grandeza, sonda_canais[i]);
+            printf("  Canal %d: %s (sonda: %s) | faixa do ADC ±%.2f V (--faixa %.2f)\n",
+                   canais[i], nome_grandeza, sonda_canais[i], faixa_total_v / 2.0, faixa_total_v);
         } else {
-            printf("  Canal %d: %s\n", canais[i], nome_grandeza);
+            printf("  Canal %d: %s | faixa do ADC ±%.2f V (--faixa %.2f)\n",
+                   canais[i], nome_grandeza, faixa_total_v / 2.0, faixa_total_v);
         }
     }
 

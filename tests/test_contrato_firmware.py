@@ -122,16 +122,39 @@ def normalizar(campos: list[tuple[str, int]]) -> list[tuple[str, int]]:
     return saida
 
 
-def test_layout_da_struct_v2_bate_com_o_formato_python(fonte_c, defines):
+def test_layout_da_struct_v3_bate_com_o_formato_python(fonte_c, defines):
     c = normalizar(formato_struct_c(fonte_c, defines))
-    py = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V2))
+    py = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V3))
     assert c == py
 
 
 def test_tamanhos_derivados(fonte_c, defines):
     assert cab._TAMANHO_CAMPOS_V2 == struct.calcsize(cab._FORMATO_CABECALHO_V2) == 672
-    assert cab._TAMANHO_CAMPOS_V2 < inteiro_c(defines["CABECALHO_TAMANHO_TOTAL"])
-    assert cab._OFFSET_HEADER_CRC32_V2 == cab._TAMANHO_CAMPOS_V2 - 4          # o CRC é o ÚLTIMO campo
+    assert cab._TAMANHO_CAMPOS_V3 == struct.calcsize(cab._FORMATO_CABECALHO_V3) == 680
+    assert cab._TAMANHO_CAMPOS_V3 < inteiro_c(defines["CABECALHO_TAMANHO_TOTAL"])
+    assert cab._OFFSET_HEADER_CRC32_V2 == cab._TAMANHO_CAMPOS_V2 - 4 == 668   # o CRC é o ÚLTIMO campo
+    assert cab._OFFSET_HEADER_CRC32_V3 == cab._TAMANHO_CAMPOS_V3 - 4 == 676
+    assert sum(cab._CONTAGENS_CABECALHO_V3) == len(struct.unpack(cab._FORMATO_CABECALHO_V3, bytes(cab._TAMANHO_CAMPOS_V3)))
+
+
+def test_offsets_do_cabecalho_usados_por_calibrar_sonda_sh():
+    """calibrar_sonda.sh lê o cabeçalho por offsets fixos (od); precisam bater com o layout v3."""
+    sh = (FIRMWARE / "calibrar_sonda.sh").read_text(encoding="utf-8")
+    offs = {m.group(1): int(m.group(2)) for m in re.finditer(r"readonly (CAB_(?:OFF|TAM)_\w+)=(\d+)", sh)}
+    off_faixa = cab._TAMANHO_CAMPOS_V2 - 4                                   # logo depois de sonda_id_por_canal, antes do CRC
+    assert offs["CAB_OFF_CRC_V2"] == cab._OFFSET_HEADER_CRC32_V2
+    assert offs["CAB_OFF_FAIXA_ADC"] == off_faixa
+    assert offs["CAB_OFF_CRC_V3"] == cab._OFFSET_HEADER_CRC32_V3 == off_faixa + const.ADS8688_MAX_CANAIS
+    assert offs["CAB_OFF_SONDA_ID"] + const.ADS8688_MAX_CANAIS * cab.CABECALHO_SONDA_ID_TAMANHO == off_faixa
+    assert offs["CAB_OFF_GRANDEZA"] + const.ADS8688_MAX_CANAIS == offs["CAB_OFF_SONDA_ID"]
+    assert offs["CAB_TAM_SONDA_ID"] == cab.CABECALHO_SONDA_ID_TAMANHO
+
+
+def test_v2_e_o_prefixo_de_v3_sem_faixa_adc():
+    v2 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V2))
+    v3 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V3))
+    assert v3[:-1 - const.ADS8688_MAX_CANAIS] == v2[:-1] and v3[-1] == v2[-1] == ("I", 1)
+    assert v3[-1 - const.ADS8688_MAX_CANAIS:-1] == [("B", 1)] * const.ADS8688_MAX_CANAIS
 
 
 def test_v1_e_o_prefixo_de_v2_sem_grandeza_e_sonda():
@@ -143,3 +166,45 @@ def test_v1_e_o_prefixo_de_v2_sem_grandeza_e_sonda():
 
 def test_crc32_do_firmware_e_o_mesmo_polinomio_do_zlib(fonte_c):
     assert "0xEDB88320u" in fonte_c, "polinômio do CRC mudou no firmware -- o Python usa zlib.crc32 (0xEDB88320)"
+
+
+# ---------------------------------------------------------------------------
+# Faixa de entrada do ADC por canal (RANGE_SELn do ADS8688)
+# ---------------------------------------------------------------------------
+
+def _memoria_pru_sem_comentarios() -> str:
+    if not MEMORIA_PRU_H.exists():
+        pytest.skip("firmware/memoria_pru.h não encontrado neste checkout")
+    return sem_comentarios(MEMORIA_PRU_H.read_text(encoding="utf-8"))
+
+
+def test_codigos_de_faixa_do_adc(fonte_c, defines):
+    assert inteiro_c(defines["FAIXA_ADC_NAO_USADA"]) == const.FAIXA_ADC_NAO_USADA
+    m = re.search(r"FAIXA_ADC_ESPAN_V\[\]\s*=\s*\{([^}]*)\}", fonte_c)
+    assert m, "tabela FAIXA_ADC_ESPAN_V não encontrada em ler_adc.c"
+    espans_c = [float(v) for v in m.group(1).split(",")]
+    assert espans_c == [const.FAIXAS_ADC_TOTAL_V[c] for c in range(len(espans_c))]
+    assert inteiro_c(defines["FAIXA_ADC_NUM_CODIGOS"]) == len(const.FAIXAS_ADC_TOTAL_V) == len(espans_c)
+    assert defines["FAIXA_ADC_PADRAO"] == "ADS8688_FAIXA_2_5_VREF" and const.FAIXAS_ADC_TOTAL_V[0] == 20.48   # padrão = reset do ADC
+
+
+def test_faixas_do_adc_batem_com_a_definicao_do_ads8688():
+    """Código c -> ±2,5·VREF/2^c com VREF = 4,096 V: o fundo de escala TOTAL é 5·VREF/2^c."""
+    for codigo, total_v in const.FAIXAS_ADC_TOTAL_V.items():
+        assert total_v == pytest.approx(5 * 4.096 / 2 ** codigo)
+
+
+def test_codigos_de_faixa_em_memoria_pru_h():
+    h = _memoria_pru_sem_comentarios()
+    codigos = {m.group(1): inteiro_c(m.group(2)) for m in re.finditer(r"#\s*define\s+(ADS8688_FAIXA_\w+)\s+(\w+)", h)}
+    assert codigos == {"ADS8688_FAIXA_2_5_VREF": 0, "ADS8688_FAIXA_1_25_VREF": 1, "ADS8688_FAIXA_0_625_VREF": 2}
+    assert sorted(codigos.values()) == sorted(const.FAIXAS_ADC_TOTAL_V)
+
+
+def test_offsets_da_memoria_compartilhada_pru():
+    """spi_core.asm lê auto_seq_mask/range_sel por offset FIXO (LBBO); a struct tem de ter os campos lá."""
+    h = _memoria_pru_sem_comentarios()
+    corpo = re.search(r"struct\s+shared_control\s*\{(.*?)\}", h, re.S).group(1)
+    nomes = re.findall(r"uint32_t\s+(\w+)\s*;", corpo)
+    offsets = {nome: 4 * i for i, nome in enumerate(nomes)}
+    assert offsets["config_ready"] == 24 and offsets["auto_seq_mask"] == 28 and offsets["range_sel"] == 32

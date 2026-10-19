@@ -66,11 +66,36 @@ struct shared_control {
     // mascarados por segurança do lado da PRU (ver pru_main.c).
     //
     // Efeito colateral positivo desta simplificação: a struct caiu de 64
-    // para 32 bytes -- menos RAM compartilhada sincronizada manualmente
+    // para 32 bytes (hoje são 36, com range_sel abaixo) -- menos RAM compartilhada sincronizada manualmente
     // entre ARM e PRU, e um handshake de configuração inicial mais rápido
     // (uma palavra de 32 bits a menos para escrever antes de sinalizar
     // config_ready=1).
     volatile uint32_t auto_seq_mask;       // Offset 28
+
+    // --- [FAIXA DE ENTRADA POR CANAL] --------------------------------------
+    // Código de faixa (registrador RANGE_SELn do ADS8688, endereços 05h-0Ch)
+    // de cada canal, 4 bits por canal: o canal N ocupa os bits 4N+3..4N
+    // (canal 0 = nibble menos significativo). Escrito pelo ARM (ler_adc.c)
+    // ANTES de config_ready=1 e lido pela PRU uma única vez, na configuração
+    // inicial (spi_core.asm, junto de auto_seq_mask). Códigos aceitos
+    // (datasheet SBAS582C, tabela 3 e seção 8.5.2.3.3):
+    //     0 = ±2,5 × VREF   (±10,24 V com VREF = 4,096 V; padrão de reset do ADC)
+    //     1 = ±1,25 × VREF  (±5,12 V)
+    //     2 = ±0,625 × VREF (±2,56 V)
+    // As faixas unipolares (5 e 6) NÃO são suportadas: o lado Python assume
+    // saída binária com offset (meio da escala = 0 V). Valor 0 em todos os
+    // nibbles = comportamento histórico (nenhuma faixa pedida).
+    //
+    // A PRU escreve o código de TODO canal habilitado a cada captura (mesmo o
+    // 0): o ADS8688 não é reiniciado quando a PRU reinicia, então o registrador
+    // do ADC guardaria o valor da captura anterior. Nibbles de canais não
+    // habilitados são ignorados.
+    volatile uint32_t range_sel;           // Offset 32
 };
+
+// Códigos de faixa (Range_CHn[3:0]) aceitos em range_sel -- ver acima.
+#define ADS8688_FAIXA_2_5_VREF   0u   // ±10,24 V (reset do ADC)
+#define ADS8688_FAIXA_1_25_VREF  1u   // ±5,12 V
+#define ADS8688_FAIXA_0_625_VREF 2u   // ±2,56 V
 
 #endif

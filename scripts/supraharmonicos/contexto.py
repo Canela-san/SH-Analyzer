@@ -1,7 +1,8 @@
 """Contexto de uma execução do ``adc_tool``: o que a captura É, resolvido uma vez.
 
 Junta, na hierarquia explícito (CLI) > cabeçalho da captura > padrão
-histórico, tudo o que os três modos (plotagem, conversão, exportação HDF5)
+histórico (inclusive a faixa de entrada do ADC por canal, gravada no
+cabeçalho v3), tudo o que os três modos (plotagem, conversão, exportação HDF5)
 precisam saber sobre o arquivo de entrada: cabeçalho, canais, calibração por
 canal, grandeza e sonda por canal.
 
@@ -28,6 +29,7 @@ from .cabecalho import (
 from .canais import (
     analisar_lista_calibracao,
     analisar_lista_canais,
+    resolver_faixas,
     resolver_offsets_por_canal,
     validar_subconjunto_canais,
 )
@@ -53,6 +55,7 @@ class ContextoCaptura:
     faixas: list[float]                  # um por canal de 'canais', mesma ordem
     ganhos: list[float]
     offsets: list[float]
+    faixas_confiaveis: list[bool]        # faixas[i] coincide com a faixa REAL do ADC gravada no cabeçalho v3
     overrides_grandeza: dict[int, int]   # --grandeza (canal -> código)
     overrides_perfil: dict[int, Path]    # --sonda-perfil (canal -> arquivo)
     sondas_dir: Path
@@ -122,7 +125,15 @@ def resolver_contexto(args: argparse.Namespace) -> ContextoCaptura:
     else:
         canais_exibir = canais
 
-    faixas = analisar_lista_calibracao(args.faixa, len(canais), "--faixa")
+    # --faixa: digitada > faixa de entrada do ADC gravada no cabeçalho v3 > 10,24
+    # (padrão histórico, para capturas v1/v2). O cabeçalho é indexado pela
+    # POSIÇÃO no ciclo (mesma regra de grandeza_do_canal), então só vale se a
+    # contagem de canais bate -- se não bater, conferir_consistencia_cabecalho
+    # aborta mais adiante com a explicação.
+    faixas_cabecalho = None
+    if cabecalho is not None and len(cabecalho.lista_canais) == len(canais):
+        faixas_cabecalho = cabecalho.faixa_adc_total_v_por_canal
+    faixas, faixas_confiaveis = resolver_faixas(args.faixa, canais, args.formato, faixas_cabecalho)
     ganhos = analisar_lista_calibracao(args.ganho, len(canais), "--ganho")
     offsets = resolver_offsets_por_canal(args.offset, faixas, args.formato, len(canais))
 
@@ -142,6 +153,7 @@ def resolver_contexto(args: argparse.Namespace) -> ContextoCaptura:
         faixas=faixas,
         ganhos=ganhos,
         offsets=offsets,
+        faixas_confiaveis=faixas_confiaveis,
         overrides_grandeza=overrides_grandeza,
         overrides_perfil=overrides_perfil,
         sondas_dir=sondas_dir,

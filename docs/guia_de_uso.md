@@ -77,6 +77,7 @@ sudo ./ler_adc <frequencia_hz> [lista_de_canais] [opções]
 | `-d "descrição"` | Descrição gravada no cabeçalho (até 255 bytes). Texto maior que o limite é **erro**, não é truncado |
 | `--grandeza C:G[,...]` | Grandeza de cada canal: `tensao`, `corrente` ou `temperatura` (ex.: `0:tensao,1:corrente`). Canal não citado = `tensao` |
 | `--sonda C:ID[,...]` | Id da sonda usada em cada canal (ex.: `1:fluke_i30_01`), até 31 caracteres. É só um texto no cabeçalho; a correção é feita depois, no `adc_tool.py` |
+| `--faixa-adc C:V[,...]` | **Faixa de entrada do ADC** de cada canal, como fundo de escala total em Volts: `20.48` (±10,24 V, o padrão), `10.24` (±5,12 V) ou `5.12` (±2,56 V). Ex.: `0:20.48,1:5.12`. Canal não citado = `20.48`. Veja [Faixa de entrada do ADC](#faixa-de-entrada-do-adc) |
 
 Exemplos:
 
@@ -87,7 +88,23 @@ sudo ./ler_adc 102400 --blocos 0                        # indefinido, até Ctrl+
 sudo ./ler_adc 102400 --duracao 10m -o ensaio_bancada.bin \
     -t "Ensaio de bancada" -d "Sinal de 15 kHz injetado no canal 1"
 sudo ./ler_adc 102400 0,1 --grandeza 0:tensao,1:corrente --sonda 1:fluke_i30_01
+sudo ./ler_adc 100000 0,1 --faixa-adc 0:20.48,1:5.12   # canal 0 em ±10,24 V, canal 1 (sinal pequeno) em ±2,56 V
 ```
+
+### Faixa de entrada do ADC
+
+O ADS8688 converte cada canal em 16 bits dentro de uma **faixa de entrada** programável **por canal**. Quanto menor a faixa, menor o degrau de quantização (LSB) em Volts, e o mesmo sinal é medido com mais resolução:
+
+| `--faixa-adc` (fundo de escala total) | Faixa de entrada | LSB (16 bits) | Quando usar |
+|---|---|---|---|
+| `20.48` (padrão) | ±10,24 V | 312,5 µV | Sinais que chegam perto de 10 V de pico (o canal de tensão da rede, depois do divisor) |
+| `10.24` | ±5,12 V | 156,3 µV | Sinais de até ~4,5 V de pico |
+| `5.12` | ±2,56 V | 78,1 µV | Sinais de até ~2,2 V de pico: saída de sondas de corrente e sensores de mV |
+
+* **Escolha a menor faixa que comporta o pico do sinal, com 10 a 20% de margem.** Faixa maior que o necessário desperdiça resolução; faixa menor corta o sinal (o ADC satura em 0 ou 65535 e a captura perde a forma de onda). O erro de quantização cai exatamente na proporção da faixa (4x entre `20.48` e `5.12`); o ruído do próprio ADC cai menos, porque o SNR típico do datasheet também cai um pouco nas faixas menores (92, 91 e 89 dB). Meça o ganho real no passo T2 do [roteiro de laboratório](roteiro_laboratorio.md).
+* **O que o programa faz.** A PRU escreve a faixa de cada canal habilitado nos registradores `RANGE_SELn` do ADC **a cada captura** (o ADC guarda o valor entre capturas) e o `ler_adc` grava o código no cabeçalho (versão 3). Sem `--faixa-adc`, todos os canais ficam em `20.48`, o padrão de fábrica do ADC.
+* **Na análise, não precisa informar.** O `adc_tool.py`, o `medir_captura.py` e o `gerar_perfil_sonda.py` convertem cada canal em Volts com a faixa gravada no cabeçalho. Um `--faixa` digitado **vence**, mas avisa se divergir do cabeçalho. Capturas de versão 1 ou 2 do cabeçalho não registram a faixa: assumem `--faixa 10.24`, como sempre foi (confirme com um sinal de amplitude conhecida, passo T0 do roteiro).
+* As faixas unipolares do ADS8688 (0 a 5 V, 0 a 10 V) **não** são suportadas: o pós-processamento assume saída bipolar, com 0 V no meio da escala.
 
 ### Números úteis
 
@@ -146,14 +163,14 @@ Cada canal tem a sua própria análise espectral. `--layout-canais` aceita `sepa
 
 ### Converter amostras em unidades físicas
 
-Por padrão, o código de 16 bits do ADC vira Volts na entrada do ADC (`--formato uint16`, `--faixa 10.24`, `--ganho 1.0`, offset automático). Para ler a grandeza real, informe o ganho do frontend/sensor de cada canal, na ordem dos canais:
+Por padrão, o código de 16 bits do ADC vira Volts na entrada do ADC (`--formato uint16`, `--faixa` lida do cabeçalho da captura, ou 10.24 em capturas antigas, `--ganho 1.0`, offset automático). Para ler a grandeza real, informe o ganho do frontend/sensor de cada canal, na ordem dos canais:
 
 ```bash
 # Canal 0 = tensão (ganho 19.53), canal 1 = corrente (ganho 0.1)
 uv run scripts/adc_tool.py captura.bin --ganho 19.53,0.1 --fft
 ```
 
-`--faixa`, `--ganho` e `--offset` aceitam um valor (vale para todos os canais) ou uma lista (um por canal).
+`--faixa`, `--ganho` e `--offset` aceitam um valor (vale para todos os canais) ou uma lista (um por canal). `--faixa` é o **fundo de escala total** em Volts (`20.48` para ±10,24 V; `10.24` para ±5,12 V; `5.12` para ±2,56 V, com `--formato uint16`) e quase nunca precisa ser digitado: veja [Faixa de entrada do ADC](#faixa-de-entrada-do-adc).
 
 ### Filtros digitais
 
@@ -269,7 +286,12 @@ sudo ./calibrar_sonda.sh --taxa 400000 --canal-sonda 1 --pontos 24 --freq-max 16
 
 # Sem osciloscópio: segundo canal do ADC (canal 0) no shunt; Nyquist por canal = taxa/4
 sudo ./calibrar_sonda.sh --taxa 204800 --canal-sonda 1 --canal-referencia 0 --pontos 20 --sonda fluke_i30_sn0001
+
+# Sonda com saída de poucos mV: faixa de entrada do ADC de ±2,56 V no canal da sonda (mais resolução)
+sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 20 --sonda fluke_i30_sn0001 --amplitude 5mVpp --faixa-adc 5.12
 ```
+
+`--faixa-adc` (e `--faixa-adc-referencia`, para o canal de referência) escolhe a [faixa de entrada do ADC](#faixa-de-entrada-do-adc), vale para todo o plano (fica em `plano_coleta.txt`, e `--modo retomar` a reaproveita) e é conferida no cabeçalho de cada captura. Escolha a menor faixa que comporta o pico da saída da sonda, sem saturar nas amplitudes mais altas do plano.
 
 > Se aparecer `Permission denied`, o arquivo está sem permissão de execução: rode `chmod +x calibrar_sonda.sh` uma vez (ou use `sudo bash calibrar_sonda.sh`). Sem nenhuma opção, o script pergunta o que precisa. A taxa aceita `102400`, `102.4k` ou `102,4 kHz`.
 
@@ -360,7 +382,7 @@ uv run scripts/gerar_perfil_sonda.py capturas/fluke_i30_sn0001 --referencia-osci
 * `--ganho` é o fator tensão no pino do ADC → corrente (tipicamente 1 ÷ sensibilidade: sonda de 100 mV/A → `--ganho 10`). O perfil é **relativo** a ele: use o mesmo valor em produção. O script avisa se o ganho na menor frequência ficar fora de 0,7 a 1,3, o que indica um `--ganho` errado.
 * O script **mede** a frequência e a amplitude de cada captura (não confia no nome do arquivo; FFT única da captura inteira, com erro de amplitude < 0,01% em sinais sintéticos), descarta capturas com sinal fraco demais (SNR abaixo de 20 dB) e avisa se alguma repetição divergir mais de 10%.
 * `--plot` salva um PNG com a curva obtida.
-* Use os mesmos `--formato`, `--faixa` e `--ganho` que você usará no `adc_tool.py`; o `adc_tool.py` avisa se forem diferentes.
+* Use os mesmos `--formato` e `--ganho` que você usará no `adc_tool.py`; o `adc_tool.py` avisa se forem diferentes. A `--faixa` não precisa ser a mesma: a de cada captura vem do cabeçalho (`--faixa-adc`), e um perfil gerado assim vale para qualquer faixa. Capturas de cabeçalho v1/v2 (sem a faixa) assumem 10.24, e aí o `adc_tool.py` avisa se a `--faixa` de produção for outra.
 
 O resultado é `scripts/sondas/<id>.json`. Para ver o formato de um perfil, abra [`exemplo_sonda.json`](exemplo_sonda.json).
 
@@ -447,17 +469,18 @@ O cabeçalho começa com o texto `SHAN` e termina com um **CRC-32**; se o `adc_t
 
 | Campo | Descrição |
 |---|---|
-| `versao_cabecalho` | Versão do formato (hoje 2) |
+| `versao_cabecalho` | Versão do formato (hoje 3) |
 | `timestamp_unix` | Instante da captura (UTC) |
 | `frequencia_hz` | Frequência total de amostragem |
 | `lista_canais` | Canais capturados, em ordem crescente |
 | `grandeza_por_canal`, `sonda_id_por_canal` | Grandeza e sonda de cada canal (versão 2) |
+| `faixa_adc_por_canal` | Código da faixa de entrada do ADC de cada canal: 0 = ±10,24 V, 1 = ±5,12 V, 2 = ±2,56 V (versão 3) |
 | `samples_per_buffer`, `bytes_por_amostra` | Geometria dos blocos |
 | `blocos_gravados`, `total_amostras_gravadas` | Totais reais, preenchidos ao final da captura |
 | `titulo`, `descricao` | Texto livre (`-t`, até 63 bytes; `-d`, até 255 bytes). Convenção para calibração: um trecho `ref: f=1000Hz amp=500mVpp` na descrição registra a frequência e a amplitude injetadas, e o `gerar_perfil_sonda.py` o lê; texto livre antes ou depois é ignorado |
 | `header_crc32` | Detecta corrupção do cabeçalho |
 
-Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Capturas sem cabeçalho](#capturas-sem-cabeçalho-arquivos-antigos)), e os de versão 1 do cabeçalho também. A tabela completa, com os deslocamentos de cada campo, está em [`contexto_projeto.md`](contexto_projeto.md) (seção `formato_bin_v2`).
+Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Capturas sem cabeçalho](#capturas-sem-cabeçalho-arquivos-antigos)), e os de versão 1 e 2 do cabeçalho também. A tabela completa, com os deslocamentos de cada campo, está em [`contexto_projeto.md`](contexto_projeto.md) (seção `formato_bin_v2`, que descreve também a v3).
 
 ---
 

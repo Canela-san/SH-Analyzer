@@ -24,7 +24,7 @@
 | Status | Itens |
 |---|---|
 | ✅ **Concluído** | 1.5 (modo automático AUTO_RST, e o comentário obsoleto de `spi_core.asm` corrigido), 2.9 (`set_date.sh` sem senha no arquivo), 2.10 (`calibrar_sonda.sh` reescrito: Nyquist efetiva, conferência de cada captura, novos modos e testes), 1.8 (parcial: checagem de `fwrite()` + `--blocos`/`--duracao`), 1.9 (parte Python: mitigado por `tests/test_contrato_firmware.py`), 1.10 (parcial: causa raiz da saturação — jumpers), 2.1 (parcial: `backup pre-assembly/` removido), 2.2 (`.gitignore`), 2.3 (metadados — via cabeçalho embutido, não sidecar), 2.5 (parcial: lado Python — suíte `pytest` de 483 testes, `ruff` e CI no GitHub Actions), 2.7 (parcial: README, guia de uso, arquitetura do software e contexto), 2.8 (arquivo já se chama `adc_tool.py`) |
-| 🆕 **Novo** | Melhorias do fluxo de perfil de sonda vindas da auditoria (2.11); achados do datasheet e do código a confirmar em bancada: filtro de 15 kHz do ADS8688 e taxa de amostragem real (2.12); `medir_captura.py` e `docs/roteiro_laboratorio.md` (já entregues) |
+| 🆕 **Novo** | Melhorias do fluxo de perfil de sonda vindas da auditoria (2.11); achados do datasheet e do código a confirmar em bancada: filtro de 15 kHz do ADS8688 e taxa de amostragem real (2.12); `medir_captura.py` e `docs/roteiro_laboratorio.md` (já entregues); faixa de entrada do ADC por canal, `--faixa-adc` (2.13: implementada, falta bancada) |
 | 🔄 **Ainda aberto, com nota atualizada** | 1.1–1.4 (o "piso" antigo de ~48 kHz parece estar desatualizado — ver nota abaixo), 1.6, 1.7, 1.9 (revisado), 2.4, 2.5 (parte C/CI), 2.6, 2.7 (`licoes-aprendidas.md`), 2.11, 2.12 |
 
 ---
@@ -82,6 +82,14 @@ com o próprio osciloscópio que já está sendo usado para depurar timing. Isso
 resolve de vez a divergência entre a contagem estática (~5-7 us) e a antiga cifra empírica
 (~21 us) que não sobreviveu à reescrita do código-fonte.
 
+**Atualização (simulador, não é medição):** `tests/pru_sim.py` executa o `spi_core.asm` de verdade
+num modelo de 1 instrução por ciclo e conta os ciclos do laço principal: **1.379 ciclos por quadro
+(6,9 µs, no máximo ~145 kS/s)**, dos quais **800 (58%) são os três laços de espera do CS** (200 + 100
++ 100 iterações de 2 instruções). Os outros 579 ciclos são os 32 bits do quadro, a gravação na DDR e o controle do laço. Isso é compatível com
+os ~130 kS/s observados na bancada e **aponta o gargalo**, mas é só uma contagem: `LBBO`/`SBBO` custam
+mais que 1 ciclo na PRU real e o modelo ignora o acesso à DDR. A medição com pino e osciloscópio
+continua sendo a que vale; o roteiro (T7e) a usa para confirmar.
+
 **Impacto:** Alto (orienta todo o resto, e agora também resolve uma divergência real entre
 documentação e código). **Esforço:** Baixo. **Toca PRU asm:** sim (instrumentação
 temporária, não precisa ir para produção).
@@ -125,6 +133,11 @@ sair da especificação, principalmente porque o ADS8688 suporta SCLK de dezenas
 os atrasos atuais foram dimensionados com folga de segurança para fechar o bug de
 saturação original (item 1.10 — já resolvido pela causa raiz elétrica, jumpers longos),
 não necessariamente no valor mínimo válido.
+
+**Evidência do simulador (item 1.2):** os três laços somam 800 dos 1.379 ciclos do quadro, então reduzi-los
+é a alavanca óbvia: cortando, por exemplo, setup + hold + CS alto de 400 para 100 iterações, o quadro cairia
+a ~779 ciclos (3,9 µs, ~255 kS/s). **Não faça isso sem ler os mínimos de tempo do datasheet e sem osciloscópio**:
+os valores atuais fecharam o bug de saturação (1.10) e o modelo não diz se o ADC ainda converte certo.
 
 **Sugestão de processo:** documentar ao lado de cada `LDI r1, N` a que parâmetro do
 datasheet ele corresponde (nome do parâmetro + valor mínimo exigido + margem aplicada),
@@ -772,11 +785,37 @@ a decisão sobre o filtro externo depende do resultado do T8. **Toca PRU asm:** 
 
 ---
 
+### 2.13 🆕 Faixa de entrada do ADC por canal (`--faixa-adc`): implementada, falta bancada
+
+**O quê.** O ADS8688 tem uma faixa de entrada programável **por canal** (registradores `RANGE_SELn`): ±10,24 V
+(padrão de reset), ±5,12 V ou ±2,56 V. Até aqui o firmware nunca os escrevia, e os canais de sinal pequeno (a saída
+de uma sonda de corrente, de dezenas de mV a 1 V) ficavam com um degrau de 312,5 µV. Agora `ler_adc --faixa-adc
+0:20.48,1:5.12` escolhe a faixa de cada canal, a PRU a escreve no ADC a cada captura e o cabeçalho (v3) a registra;
+as ferramentas Python leem a faixa do cabeçalho (ver `docs/guia_de_uso.md`, "Faixa de entrada do ADC").
+
+**Ganho esperado.** O erro de quantização em Volts cai na proporção da faixa (4x de ±10,24 V para ±2,56 V). O ruído do
+próprio ADC cai menos (SNR típico 92, 91 e 89 dB nas três faixas, segundo o datasheet): meça no roteiro (T2).
+O canal de **tensão** da rede não melhora: com o divisor de 0,0516, 127 V RMS dão 9,3 V de pico, 91% de ±10,24 V.
+
+**O que ainda falta (nada disso foi executado em hardware):**
+
+1. Montar com `clpru` (`make` em `firmware/`) e carregar na PRU: o `spi_core.asm` foi validado só no simulador
+   `tests/pru_sim.py` (lógica; não a sintaxe do `clpru` nem a temporização). O `.asm` passou de 1.822 para 1.841
+   instruções (IMEM de 2.048): pouca folga.
+2. Roteiro T0 (faixa de reset e VREF reais), T2 (ruído em cada faixa) e T10 (sonda de corrente em ±2,56 V).
+3. Confirmar com o datasheet se a primeira conversão depois de trocar a faixa é válida (hoje nenhuma amostra é descartada).
+
+**Impacto:** Médio–Alto para canais de sinal pequeno. **Esforço:** feito (software); bancada pendente. **Toca PRU asm:** sim —
+só está pronto depois de compilado com `clpru` e validado no hardware.
+
+---
+
 ## Parte 3 — Priorização sugerida
 
 | # | Item | Impacto | Esforço | Toca PRU asm? | Status |
 |---|------|---------|---------|----------------|--------|
 | 2.11 | Fluxo de perfil de sonda: fase, perfil absoluto, hold-out | Alto (p/ corrente) | Variável | Não | 🆕 aberto (precisa de bancada) |
+| 2.13 | Faixa de entrada do ADC por canal (`--faixa-adc`): compilar com `clpru` e validar | Médio–Alto (canais de sinal pequeno) | Baixo (bancada) | Sim | 🆕 implementado, aguarda bancada |
 | 2.12 | Filtro de 15 kHz do ADS8688 e taxa real (ticks inteiros): medir e decidir | Alto (banda 50–150 kHz) | Baixo | Não | 🆕 aberto (precisa de bancada: T3, T4, T8) |
 | 1.6 | Detecção/backpressure de overrun no ping-pong | Alto | Baixo–Médio | Sim (versões mais completas) | Aberto |
 | 1.3 | Validar frequência pedida contra piso real | Alto | Baixo | Não | Aberto (depende de 1.2) |

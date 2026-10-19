@@ -1,4 +1,4 @@
-"""Cabeçalho "SHAN": v1, v2, CRC, magic e conferência de consistência."""
+"""Cabeçalho "SHAN": v1, v2, v3 (faixa de entrada do ADC por canal), CRC, magic e conferência de consistência."""
 
 import logging
 
@@ -11,7 +11,7 @@ from supraharmonicos.cabecalho import (
     contar_amostras_arquivo_bin,
     ler_cabecalho,
 )
-from supraharmonicos.constantes import GRANDEZA_CORRENTE, GRANDEZA_TENSAO
+from supraharmonicos.constantes import FAIXAS_ADC_TOTAL_V, GRANDEZA_CORRENTE, GRANDEZA_TENSAO
 
 T = np.arange(1000) / 200_000.0
 SINAL = [np.sin(2 * np.pi * 1000 * T), 0.5 * np.sin(2 * np.pi * 2000 * T)]
@@ -77,3 +77,75 @@ def test_consistencia_avisa_quando_canais_cli_divergem_do_cabecalho(tmp_path, ca
         assert avisos and esperado_aviso in avisos[0]
     else:
         assert not avisos
+
+
+# --------------------------------------------------------------------------------------
+# v3: faixa de entrada do ADC por canal
+# --------------------------------------------------------------------------------------
+def test_v3_le_a_faixa_de_cada_canal_e_o_crc(tmp_path):
+    p = escrever_bin(tmp_path / "v3.bin", SINAL, (0, 3), (GRANDEZA_TENSAO, GRANDEZA_CORRENTE), ("", "fluke_i30"),
+                     faixas_adc_total_v=(20.48, 5.12))
+    c = ler_cabecalho(p)
+    assert c is not None and c.versao_cabecalho == 3 and c.crc32_valido
+    assert c.faixa_adc_codigo_por_canal == (0, 2)
+    assert c.faixa_adc_total_v_por_canal == (20.48, 5.12)
+    assert list(c.lista_canais) == [0, 3] and c.sonda_id_por_canal[1] == "fluke_i30"    # os campos antigos seguem certos
+
+
+def test_v3_com_crc_errado_e_sinalizado(tmp_path):
+    p = escrever_bin(tmp_path / "v3.bin", SINAL, faixas_adc_total_v=10.24, crc_valido=False)
+    c = ler_cabecalho(p)
+    assert c is not None and c.versao_cabecalho == 3 and not c.crc32_valido
+
+
+@pytest.mark.parametrize("versao", [1, 2])
+def test_v1_e_v2_nao_sabem_a_faixa_do_adc(tmp_path, versao, caplog):
+    p = escrever_bin(tmp_path / "antigo.bin", SINAL, versao=versao)
+    with caplog.at_level(logging.WARNING):
+        c = ler_cabecalho(p)
+    assert c.faixa_adc_codigo_por_canal == () and c.faixa_adc_total_v_por_canal == (None, None)
+    assert not caplog.records, "versões conhecidas (v1, v2) não devem gerar aviso"
+    assert "faixa_adc_codigo_por_canal" not in c.para_attrs_hdf5()
+
+
+def test_v3_vai_para_os_atributos_hdf5(tmp_path):
+    p = escrever_bin(tmp_path / "v3.bin", SINAL, faixas_adc_total_v=(10.24, 5.12))
+    attrs = ler_cabecalho(p).para_attrs_hdf5()
+    assert list(attrs["faixa_adc_codigo_por_canal"]) == [1, 2]
+
+
+def test_codigo_de_faixa_desconhecido_vira_none_sem_quebrar(tmp_path):
+    from capturas_sinteticas import montar_cabecalho
+
+    bruto = montar_cabecalho(1000, (0, 1), (0, 1), ("", ""), 400_000, versao=3, codigos_faixa_adc=[0, 9])
+    p = tmp_path / "estranho.bin"
+    p.write_bytes(bruto)
+    c = ler_cabecalho(p)
+    assert c.faixa_adc_codigo_por_canal == (0, 9) and c.faixa_adc_total_v_por_canal == (20.48, None)
+
+
+def test_versao_futura_avisa_e_e_lida_como_v3(tmp_path, caplog):
+    from capturas_sinteticas import montar_cabecalho
+
+    bruto = bytearray(montar_cabecalho(1000, (0, 1), (0, 1), ("", ""), 400_000, versao=3))
+    bruto[4:8] = (4).to_bytes(4, "little")                      # "versão 4": formato que este código ainda não conhece
+    p = tmp_path / "futuro.bin"
+    p.write_bytes(bytes(bruto))
+    with caplog.at_level(logging.WARNING):
+        c = ler_cabecalho(p)
+    assert c.versao_cabecalho == 4 and c.faixa_adc_total_v_por_canal == (20.48, 20.48)
+    assert any("só conhece até a versão 3" in r.getMessage() for r in caplog.records)
+
+
+def test_resumo_mostra_a_faixa_por_canal(tmp_path, caplog):
+    from supraharmonicos.cabecalho import imprimir_resumo_cabecalho
+
+    p = escrever_bin(tmp_path / "v3.bin", SINAL, (0, 3), faixas_adc_total_v=(20.48, 5.12))
+    with caplog.at_level(logging.INFO):
+        imprimir_resumo_cabecalho(ler_cabecalho(p))
+    texto = " ".join(r.getMessage() for r in caplog.records)
+    assert "canal 0: ±10.24 V" in texto and "canal 3: ±2.56 V" in texto
+
+
+def test_tabela_de_faixas_cobre_os_tres_codigos_do_ads8688():
+    assert FAIXAS_ADC_TOTAL_V == {0: 20.48, 1: 10.24, 2: 5.12}

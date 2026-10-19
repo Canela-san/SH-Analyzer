@@ -329,7 +329,8 @@ def aplicar_correcao_sondas(args: argparse.Namespace, ctx: ContextoCaptura,
             )
             continue
         idx_canal = ctx.indice_no_ciclo(canal)
-        conferir_calibracao_perfil(perfil, canal, args.formato, ctx.faixas[idx_canal], ctx.ganhos[idx_canal])
+        conferir_calibracao_perfil(perfil, canal, args.formato, ctx.faixas[idx_canal], ctx.ganhos[idx_canal],
+                                   faixa_confiavel=ctx.faixas_confiaveis[idx_canal])
         por_canal_tensao[canal] = aplicar_correcao_sonda(por_canal_tensao[canal], fs_efetiva, perfil)
         log.info(f"{prefixo}correção de sonda aplicada (perfil '{perfil.id}', {perfil.caminho})")
     return grandeza_por_canal_exibir

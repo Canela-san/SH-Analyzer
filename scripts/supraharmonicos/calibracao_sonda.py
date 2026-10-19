@@ -66,7 +66,7 @@ import numpy as np
 
 from .amostras import carregar_amostras_bin, converter_para_tensao
 from .cabecalho import CABECALHO_TAMANHO_TOTAL, ler_cabecalho
-from .canais import analisar_lista_calibracao, desintercalar, resolver_offsets_por_canal
+from .canais import analisar_lista_calibracao, desintercalar, resolver_faixas, resolver_offsets_por_canal
 from .constantes import GRANDEZA_CORRENTE
 from .erros import ErroSHAN
 from .espectro import calcular_espectro_welch
@@ -301,6 +301,11 @@ class PontoMedido:
     amplitude_referencia: float | None  # idem, canal de referência; None se não foi lido (modos de 1 canal)
     referencia_pico: float | None = None  # modos de 1 canal: amplitude REAL do tom (pico), na grandeza física do canal da sonda; preenchida pelo CLI
     referencia_gravada: ReferenciaCaptura | None = None  # o que o cabeçalho da captura diz que foi injetado (ref: f=.. amp=..); preenchida pelo CLI
+    # --faixa efetivamente usada em cada papel (None = não lido) e se cada uma é a faixa REAL do ADC gravada
+    # no cabeçalho v3 da captura -- vira rastreabilidade no JSON do perfil (calibracao_adc.faixa_v[_confiavel]).
+    faixa_referencia: float | None = None
+    faixa_sonda: float | None = None
+    faixas_confiaveis: tuple[bool, bool] = (False, False)  # (referência, sonda)
 
 
 def resolver_canais(cabecalho, canal_referencia_cli: int | None, canal_sonda_cli: int | None,
@@ -364,7 +369,7 @@ def resolver_canais(cabecalho, canal_referencia_cli: int | None, canal_sonda_cli
 
 def processar_captura(caminho: Path, freq_alvo_hz: float, modo_referencia: str,
                        canal_referencia_cli: int | None, canal_sonda_cli: int | None,
-                       formato: str, faixa_texto: str, ganho_texto: str, offset_texto: str | None,
+                       formato: str, faixa_texto: str | None, ganho_texto: str, offset_texto: str | None,
                        tolerancia_pct: float, nome_janela: str, resolucao_hz: float,
                        sobreposicao: float, snr_minimo_db: float = SNR_MINIMO_DB_PADRAO,
                        frequencia_cli: float | None = None) -> PontoMedido | None:
@@ -410,7 +415,16 @@ def processar_captura(caminho: Path, freq_alvo_hz: float, modo_referencia: str,
     if ausentes:
         log.warning(f"pulando '{caminho.name}' -- canal(is) {ausentes} não está(ão) na lista de canais da captura {canais}.")
         return None
-    faixas = analisar_lista_calibracao(faixa_texto, 2, "--faixa")      # [referencia, sonda]
+    # --faixa por PAPEL [referencia, sonda]: digitada > faixa gravada no cabeçalho v3 (do canal que faz
+    # esse papel) > 10,24 (capturas v1/v2). Papel sem canal (1 canal lido) fica "desconhecido".
+    faixas_cabecalho_papel = None
+    if cabecalho is not None and cabecalho.faixa_adc_codigo_por_canal and len(cabecalho.lista_canais) >= len(canais):
+        total_por_canal = dict(zip(cabecalho.lista_canais, cabecalho.faixa_adc_total_v_por_canal))
+        faixas_cabecalho_papel = [total_por_canal.get(canal_ref) if canal_ref is not None else None,
+                                  total_por_canal.get(canal_sonda)]
+    faixas, faixas_confiaveis = resolver_faixas(
+        faixa_texto, [canal_ref if canal_ref is not None else canal_sonda, canal_sonda], formato,
+        faixas_cabecalho_papel)                                        # [referencia, sonda]
     ganhos = analisar_lista_calibracao(ganho_texto, 2, "--ganho")      # [referencia, sonda]
     offsets = resolver_offsets_por_canal(offset_texto, faixas, formato, 2)  # [referencia, sonda]
 
@@ -491,6 +505,8 @@ def processar_captura(caminho: Path, freq_alvo_hz: float, modo_referencia: str,
     return PontoMedido(
         arquivo=caminho, freq_alvo_hz=freq_alvo_hz, freq_medida_hz=freq_medida,
         amplitude_sonda=amplitude_sonda, amplitude_referencia=amplitude_referencia,
+        faixa_referencia=faixas[0] if usa_referencia else None, faixa_sonda=faixas[1],
+        faixas_confiaveis=(faixas_confiaveis[0] if usa_referencia else False, faixas_confiaveis[1]),
     )
 
 

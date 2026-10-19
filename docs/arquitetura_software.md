@@ -59,9 +59,9 @@ Camada = quem pode importar quem (um módulo só importa camadas **menores**).
 | 0 | `erros` | Hierarquia de exceções | `ErroSHAN`, `ErroUso` |
 | 0 | `constantes` | Constantes compartilhadas (inclusive as que espelham o firmware) | `FORMATOS_NUMPY`, `GRANDEZA_*`, `ADS8688_MAX_CANAIS`, defaults de Welch/filtro |
 | 0 | `registro` | Liga o `logging` ao console no formato histórico (stdout/stderr) | `configurar_logging_cli` |
-| 1 | `cabecalho` | Lê/valida o cabeçalho "SHAN" v1/v2 (magic, CRC-32, campos, consistência) | `ler_cabecalho`, `CabecalhoArquivo`, `conferir_consistencia_cabecalho` |
+| 1 | `cabecalho` | Lê/valida o cabeçalho "SHAN" v1/v2/v3 (magic, CRC-32, campos, faixa do ADC por canal, consistência) | `ler_cabecalho`, `CabecalhoArquivo`, `conferir_consistencia_cabecalho` |
 | 1 | `amostras` | Lê `.bin` (memmap) e `.csv`; código → volts | `carregar_amostras_bin`, `converter_para_tensao`, `selecionar_intervalo` |
-| 1 | `canais` | Listas de canais/calibração, desintercalação, offsets | `analisar_lista_canais`, `desintercalar`, `resolver_offsets_por_canal` |
+| 1 | `canais` | Listas de canais/calibração, desintercalação, offsets, `--faixa` por canal | `analisar_lista_canais`, `desintercalar`, `resolver_faixas`, `resolver_offsets_por_canal` |
 | 1 | `filtros` | Butterworth SOS, fase zero | `aplicar_filtro_digital`, `validar_corte_filtro` |
 | 1 | `fundamental` | Fundamental da rede, corte em ciclos inteiros, refino parabólico | `recortar_ciclos_inteiros`, `refinar_pico_parabolico` |
 | 1 | `sonda` | Perfil de sonda (JSON), interpolação PCHIP, correção em frequência | `PerfilSonda`, `carregar_perfil_sonda`, `resolver_perfil_canal`, `aplicar_correcao_sonda` |
@@ -96,7 +96,7 @@ A correção de sonda vem antes do filtro e do espectro para que nenhuma dessas 
 
 ### Hierarquia de resolução de parâmetros
 
-Para canais, calibração, grandeza e sonda vale sempre: **flag explícita na CLI > cabeçalho da captura (v2) > padrão histórico** (tensão, sem sonda). Quem implementa isso é `contexto.resolver_contexto` (não espalhe esse `if` em outros lugares).
+Para canais, calibração, grandeza e sonda vale sempre: **flag explícita na CLI > cabeçalho da captura (v2/v3) > padrão histórico** (tensão, sem sonda, `--faixa 10.24`). A faixa de entrada do ADC de cada canal vem do cabeçalho v3 (`canais.resolver_faixas`). Quem implementa isso é `contexto.resolver_contexto` (não espalhe esse `if` em outros lugares).
 
 ---
 
@@ -190,7 +190,7 @@ uv run --extra dev ruff check .
 | Arquivo | O que garante |
 |---|---|
 | `test_registro_e_erros.py` | formato stdout/stderr do logging; hierarquia de erros |
-| `test_cabecalho.py` | cabeçalho v1/v2, CRC, magic, conferência de consistência |
+| `test_cabecalho.py` | cabeçalho v1/v2/v3, CRC, magic, faixa do ADC por canal, conferência de consistência |
 | `test_canais_e_amostras.py` | listas de canais/calibração, desintercalação, código→volts, leitura de `.bin`/`.csv` |
 | `test_sonda.py` | validação do JSON (NaN, ids inseguros, faixa), interpolação, avisos, correção restaura amplitude |
 | `test_dsp.py` | filtros, fundamental, janelas, FFT/Welch, bandas, picos (com sinais de amplitude conhecida) |
@@ -200,15 +200,17 @@ uv run --extra dev ruff check .
 | `test_osciloscopio.py` | leitor de `.m`/`.mat`/`.csv` (variáveis, matriz tempo×valor, escalares de taxa, erros que listam o que foi achado) e ajuste de senoide por mínimos quadrados (amplitude, frequência, DC, poucos ciclos) |
 | `test_metricas_captura.py` | `medir_captura`: tom, ruído, THD/SINAD/ENOB/SFDR contra sinais de verdade conhecida, continuidade (amostra removida/duplicada), diafonia/atraso, CLI, CSV, correção de sonda e comparação com instrumento |
 | `test_cli_adc_tool.py` | CLI no mesmo processo: códigos de saída 0/1/2, stdout×stderr, arquivos gerados |
-| `test_contrato_firmware.py` | C ↔ Python: constantes e layout do cabeçalho |
+| `test_contrato_firmware.py` | C ↔ Python: constantes, layout do cabeçalho (v3), códigos de faixa do ADC e offsets da memória compartilhada da PRU |
+| `test_faixa_adc.py` | `--faixa` por canal: cabeçalho v3 > padrão, aviso se divergir, amplitude certa em cada faixa, perfil de sonda e `faixa_v_confiavel` |
+| `test_pru_asm.py` (+ `pru_sim.py`) | lógica do `firmware/spi_core.asm` num mini-simulador de PRU: palavras enviadas na configuração (`AUTO_SEQ_EN`, `RANGE_SELn`, `AUTO_RST`), ordem, ciclos de SCLK, laço gravando na DDR, IMEM e alcance dos desvios. Não substitui compilar com `clpru` nem testar no hardware |
 | `test_arquitetura.py` | camadas sem ciclo, sem `print`/`SystemExit` em biblioteca, matplotlib/h5py confinados, entradas finas |
 | `test_dependencias.py` | PEP 723 das entradas == `pyproject.toml` |
 | `test_calibrar_sonda.py` (+ `ler_adc_falso.py`) | `firmware/calibrar_sonda.sh` de ponta a ponta contra um `ler_adc` falso: plano de frequências, conferência de cada captura (saturação, nível, frequência, CRC, disco cheio), menu C/R/P/A, modos `retomar`/`refinar`/`adensar`/`refazer`/`resumo`, Ctrl+C, `--amplitude`/`--amplitude-por-ponto` (metadados `ref:` no `.bin`, manifesto, plano, menu interativo, perfil gerado sem flag), e que as constantes do cabeçalho e a gramática de amplitude batem com o firmware e o Python. Marcado `e2e` (usa `bash`; é pulado fora do Linux) |
 | `e2e/test_perfil_sonda_e2e.py` | fluxo completo por subprocess nas entradas reais: calibração → perfil → correção (inclui as 7 correções da auditoria) |
 
-**Testando um script de shell.** `tests/ler_adc_falso.py` imita a linha de comando do `ler_adc` e grava um `.bin` v2 sintético; o arquivo `cenario` (uma diretiva por chamada: `ok`, `sat_sonda`, `falha`, `truncar`, `travar`, ...) faz cada captura falhar de um jeito específico. É assim que se testa o tratamento de erros do `calibrar_sonda.sh` sem a BeagleBone.
+**Testando um script de shell.** `tests/ler_adc_falso.py` imita a linha de comando do `ler_adc` e grava um `.bin` v3 sintético (aceita `--faixa-adc`; `cab_v1`/`cab_v2` imitam firmware antigo); o arquivo `cenario` (uma diretiva por chamada: `ok`, `sat_sonda`, `falha`, `truncar`, `travar`, ...) faz cada captura falhar de um jeito específico. É assim que se testa o tratamento de erros do `calibrar_sonda.sh` sem a BeagleBone.
 
-**Escrevendo um teste novo.** `tests/capturas_sinteticas.py` monta `.bin` v1/v2 a partir de sinais em Volts (`escrever_bin`), uma sonda de resposta conhecida (`planta_h`) e pastas de calibração (`criar_pasta_calibracao`). A fixture `cli` (em `conftest.py`) roda `main([...])` no mesmo processo e devolve `(código, stdout, stderr)`. Nenhum teste precisa de hardware.
+**Escrevendo um teste novo.** `tests/capturas_sinteticas.py` monta `.bin` v1/v2/v3 a partir de sinais em Volts (`escrever_bin`; `faixas_adc_total_v=(20.48, 5.12)` dá cabeçalho v3 e codifica cada canal na sua faixa), uma sonda de resposta conhecida (`planta_h`) e pastas de calibração (`criar_pasta_calibracao`). A fixture `cli` (em `conftest.py`) roda `main([...])` no mesmo processo e devolve `(código, stdout, stderr)`. Nenhum teste precisa de hardware.
 
 **Mudança de comportamento intencional?** Teste que valida comportamento *antigo* deve ser atualizado no mesmo PR, com a razão no commit.
 

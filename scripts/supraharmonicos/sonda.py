@@ -356,14 +356,21 @@ def resolver_perfil_canal(canal: int, sonda_id: str, overrides_perfil: dict[int,
 
 
 def conferir_calibracao_perfil(perfil: PerfilSonda, canal: int, formato: str,
-                                faixa: float, ganho: float) -> None:
+                                faixa: float, ganho: float, faixa_confiavel: bool = False) -> None:
     """Avisa (nunca aborta) se o perfil foi gerado sob uma calibração de ADC
     diferente da usada AGORA para o canal. O ganho(f) de um perfil é
     RELATIVO ao --ganho (e depende de --faixa/--formato) com que foi medido
     (ver gerar_perfil_sonda.py, seção --ganho): usá-lo com outro --ganho
     multiplica toda a corrente corrigida, sem qualquer outro sintoma -- o
     erro seria silencioso. Só confere o que gerar_perfil_sonda.py grava em
-    'calibracao_adc'; perfil sem esse bloco (escrito à mão) não é conferido."""
+    'calibracao_adc'; perfil sem esse bloco (escrito à mão) não é conferido.
+
+    ``faixa_confiavel``: a ``faixa`` do canal AGORA é a faixa real do ADC
+    (veio do cabeçalho v3 da captura). Se o perfil também foi gerado assim
+    (``calibracao_adc.faixa_v_confiavel.sonda``), os dois já estão em Volts
+    reais do pino e uma faixa diferente (ex.: ±2,56 V na produção, ±10,24 V
+    na geração) NÃO muda a escala -- seria um falso alarme, então a
+    comparação de faixa é dispensada."""
     cal = perfil.calibracao_adc
     if not cal:
         return
@@ -377,7 +384,8 @@ def conferir_calibracao_perfil(perfil: PerfilSonda, canal: int, formato: str,
                 f"multiplicadas por {ganho / float(ganho_perfil):.4g}"
             )
         faixa_perfil = cal.get("faixa_v", {}).get("sonda")
-        if faixa_perfil is not None and not np.isclose(float(faixa_perfil), faixa, rtol=1e-3, atol=0.0):
+        ambas_reais = faixa_confiavel and bool(cal.get("faixa_v_confiavel", {}).get("sonda"))
+        if faixa_perfil is not None and not ambas_reais and not np.isclose(float(faixa_perfil), faixa, rtol=1e-3, atol=0.0):
             problemas.append(
                 f"--faixa do canal = {faixa:g} V, mas o perfil foi gerado com "
                 f"{float(faixa_perfil):g} V -- as amplitudes saem "

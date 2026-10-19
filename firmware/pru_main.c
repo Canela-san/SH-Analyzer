@@ -48,6 +48,11 @@ void main(void) {
         ctrl->auto_seq_mask = 0x02u; // canal 1 - padrão histórico
     }
 
+    // [FAIXA DE ENTRADA POR CANAL] Nada a sanear em ctrl->range_sel aqui: o
+    // valor que vale é o que o ARM escreve DEPOIS deste ponto (a PRU espera em
+    // espera_configuracao, spi_core.asm), e é o ler_adc.c que só grava códigos
+    // válidos (0, 1 ou 2 -- ver memoria_pru.h). Uma RAM compartilhada "fria"
+    // (tudo zero) já significa a faixa padrão do ADC.
     ctrl->config_ready = 0;
 
     ler_ads8688_asm(ctrl);

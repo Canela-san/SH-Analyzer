@@ -1,8 +1,9 @@
 """Cabeçalho binário do ``.bin`` (formato "SHAN").
 
 Interpreta e valida o cabeçalho fixo de 1024 bytes gravado por
-``firmware/ler_adc.c`` (``struct cabecalho_arquivo``): magic, versão (v1/v2),
-CRC-32, metadados da captura, grandeza e id de sonda por canal.
+``firmware/ler_adc.c`` (``struct cabecalho_arquivo``): magic, versão (v1/v2/v3),
+CRC-32, metadados da captura, grandeza, id de sonda e faixa de entrada do ADC
+por canal.
 
 Depende de: ``constantes``, ``erros``. Quem o consome: ``amostras``,
 ``conversao``, ``hdf5``, ``modos``, ``perfil_calibracao``."""
@@ -18,6 +19,7 @@ import numpy as np
 
 from .constantes import (
     ADS8688_MAX_CANAIS,
+    FAIXAS_ADC_TOTAL_V,
     FORMATOS_NUMPY,
     GRANDEZA_PADRAO,
     NOMES_GRANDEZA,
@@ -40,7 +42,7 @@ log = logging.getLogger(__name__)
 
 CABECALHO_MAGIC = b"SHAN"
 CABECALHO_TAMANHO_TOTAL = 1024
-CABECALHO_VERSAO_SUPORTADA = 2  # versão mais recente do FORMATO do cabeçalho que este script sabe interpretar
+CABECALHO_VERSAO_SUPORTADA = 3  # versão mais recente do FORMATO do cabeçalho que este script sabe interpretar
 
 # [SONDA/GRANDEZA] Tamanho fixo (bytes, incluindo terminador nulo) do id de
 # sonda por canal na v2 do cabeçalho -- precisa bater com
@@ -84,8 +86,16 @@ CABECALHO_SONDA_ID_TAMANHO = 32
 #   8B   grandeza_por_canal           (8x uint8_t -- GRANDEZA_TENSAO/CORRENTE/TEMPERATURA/NAO_USADA)
 #   32s * 8  sonda_id_por_canal       (8 strings de 32 bytes, uma por canal, terminadas em nulo)
 #   I    header_crc32
+#
+# v3 (mesmos campos da v2, mais faixa_adc_por_canal inserido ENTRE
+# sonda_id_por_canal e header_crc32):
+#   8B   faixa_adc_por_canal          (8x uint8_t -- código de faixa do ADS8688 que cada canal usou:
+#                                      0 = ±10,24 V, 1 = ±5,12 V, 2 = ±2,56 V; slot não usado = 0xFF.
+#                                      Mesma indexação de lista_canais.)
+#   I    header_crc32
 _FORMATO_CABECALHO_V1 = "<4sIIQIII8BIIIIIdQQ64s256sI"
 _FORMATO_CABECALHO_V2 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "I"
+_FORMATO_CABECALHO_V3 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "8BI"
 
 # Contagens de valores por campo, na mesma ordem do format string -- usadas
 # por _consumir() para dividir a tupla plana devolvida por struct.unpack.
@@ -98,11 +108,14 @@ _FORMATO_CABECALHO_V2 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CAN
 # sonda_id_por_canal).
 _CONTAGENS_CABECALHO_V1 = [1, 1, 1, 1, 1, 1, 1, 8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
 _CONTAGENS_CABECALHO_V2 = _CONTAGENS_CABECALHO_V1[:-1] + [8, ADS8688_MAX_CANAIS, 1]  # ...antes do header_crc32: +8 (grandeza) +8 (sonda) +1 (crc)
+_CONTAGENS_CABECALHO_V3 = _CONTAGENS_CABECALHO_V2[:-1] + [8, 1]  # v2 + 8 bytes de faixa_adc_por_canal antes do crc
 
 _TAMANHO_CAMPOS_V1 = struct.calcsize(_FORMATO_CABECALHO_V1)  # 408 bytes
 _TAMANHO_CAMPOS_V2 = struct.calcsize(_FORMATO_CABECALHO_V2)  # 408 + 8 + 8*32 = 672 bytes
+_TAMANHO_CAMPOS_V3 = struct.calcsize(_FORMATO_CABECALHO_V3)  # 672 + 8 = 680 bytes
 _OFFSET_HEADER_CRC32_V1 = _TAMANHO_CAMPOS_V1 - struct.calcsize("I")  # 404
 _OFFSET_HEADER_CRC32_V2 = _TAMANHO_CAMPOS_V2 - struct.calcsize("I")  # 668
+_OFFSET_HEADER_CRC32_V3 = _TAMANHO_CAMPOS_V3 - struct.calcsize("I")  # 676
 
 
 def _consumir(campos_tupla: tuple, contagens: list[int]) -> list:
@@ -160,6 +173,22 @@ class CabecalhoArquivo:
     # lista_canais: posição i descreve o canal lista_canais[i].
     grandeza_por_canal: tuple[int, ...]
     sonda_id_por_canal: tuple[str, ...]
+    # [FAIXA DE ENTRADA, v3] Código de faixa (RANGE_SELn do ADS8688) com que
+    # o ADC converteu cada canal -- mesma indexação de lista_canais. Em um
+    # '.bin' v1/v2 (anterior ao registro da faixa) fica VAZIO: a faixa real
+    # é desconhecida e quem usa deve cair no padrão histórico (ver
+    # canais.resolver_faixas). Use faixa_adc_total_v_por_canal para os Volts.
+    faixa_adc_codigo_por_canal: tuple[int, ...] = ()
+
+    @property
+    def faixa_adc_total_v_por_canal(self) -> tuple[float | None, ...]:
+        """Fundo de escala TOTAL (V, pico a pico) de cada canal, na ordem de
+        lista_canais -- o valor de ``--faixa`` com ``--formato uint16``.
+        None onde a faixa é desconhecida (cabeçalho v1/v2, ou código fora da
+        tabela de FAIXAS_ADC_TOTAL_V)."""
+        if not self.faixa_adc_codigo_por_canal:
+            return tuple(None for _ in self.lista_canais)
+        return tuple(FAIXAS_ADC_TOTAL_V.get(codigo) for codigo in self.faixa_adc_codigo_por_canal)
 
     @property
     def timestamp_iso_utc(self) -> str:
@@ -185,7 +214,7 @@ class CabecalhoArquivo:
         raiz do arquivo -- h5py aceita escalares (int/float/str/bool) e
         arrays numpy diretamente como valor de atributo; só lista_canais
         precisa virar um array explícito (h5py não aceita tuplas Python)."""
-        return {
+        attrs = {
             "cabecalho_versao": self.versao_cabecalho,
             "cabecalho_tamanho_bytes": self.tamanho_cabecalho,
             "timestamp_unix": self.timestamp_unix,
@@ -212,6 +241,9 @@ class CabecalhoArquivo:
             "grandeza_por_canal": np.array(self.grandeza_por_canal, dtype=np.uint8),
             "sonda_id_por_canal": np.array(self.sonda_id_por_canal, dtype="S32"),
         }
+        if self.faixa_adc_codigo_por_canal:  # só v3+: a faixa de v1/v2 é desconhecida, não vale gravar um valor inventado
+            attrs["faixa_adc_codigo_por_canal"] = np.array(self.faixa_adc_codigo_por_canal, dtype=np.uint8)
+        return attrs
 
 
 def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
@@ -234,13 +266,14 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
     [SONDA/GRANDEZA] A versão do formato (campo versao_cabecalho, os 4
     bytes logo após o magic) é lida ANTES do resto -- só ela decide qual
     format string de struct.unpack usar para o restante dos bytes. v1 (sem
-    grandeza_por_canal/sonda_id_por_canal) e v2 (com esses campos) têm
-    layouts diferentes a partir do byte 404; tentar sempre desempacotar com
-    o formato mais novo quebraria a leitura de um '.bin' v1 antigo (o
-    header_crc32 apareceria no lugar errado, entre muitas outras coisas).
-    Uma versão > 2 (formato futuro que este script ainda não conhece) é
-    tratada como v2 na tentativa de leitura -- mais provável de funcionar
-    parcialmente do que assumir v1 -- mas com aviso.
+    grandeza_por_canal/sonda_id_por_canal), v2 (com esses campos) e v3 (mais
+    faixa_adc_por_canal) têm layouts diferentes a partir do byte 404 (v1 x
+    v2) e do byte 668 (v2 x v3); tentar sempre desempacotar com o formato
+    mais novo quebraria a leitura de um '.bin' antigo (o header_crc32
+    apareceria no lugar errado, entre muitas outras coisas). Uma versão > 3
+    (formato futuro que este script ainda não conhece) é tratada como v3 na
+    tentativa de leitura -- mais provável de funcionar parcialmente do que
+    assumir uma versão antiga -- mas com aviso.
     """
     try:
         with open(caminho, "rb") as f:
@@ -260,14 +293,22 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
     if versao_cabecalho <= 1:
         formato, contagens, offset_crc = _FORMATO_CABECALHO_V1, _CONTAGENS_CABECALHO_V1, _OFFSET_HEADER_CRC32_V1
         tem_grandeza_sonda = False
-    else:
+        tem_faixa_adc = False
+    elif versao_cabecalho == 2:
         formato, contagens, offset_crc = _FORMATO_CABECALHO_V2, _CONTAGENS_CABECALHO_V2, _OFFSET_HEADER_CRC32_V2
         tem_grandeza_sonda = True
+        tem_faixa_adc = False
+    else:
+        formato, contagens, offset_crc = _FORMATO_CABECALHO_V3, _CONTAGENS_CABECALHO_V3, _OFFSET_HEADER_CRC32_V3
+        tem_grandeza_sonda = True
+        tem_faixa_adc = True
 
-    if versao_cabecalho != CABECALHO_VERSAO_SUPORTADA:
+    # Só versões MAIS NOVAS que a suportada são suspeitas: v1 e v2 são formatos
+    # conhecidos (lidos acima) e não merecem aviso.
+    if versao_cabecalho > CABECALHO_VERSAO_SUPORTADA:
         log.warning(
             f"cabeçalho de '{caminho}' está na versão "
-            f"{versao_cabecalho}, mas este script só foi testado com a "
+            f"{versao_cabecalho}, mas este script só conhece até a "
             f"versão {CABECALHO_VERSAO_SUPORTADA}. Os campos abaixo podem "
             f"estar incompletos ou incorretos se o formato mudou."
         )
@@ -275,7 +316,17 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
     tamanho_campos = struct.calcsize(formato)
     campos = struct.unpack(formato, bruto[:tamanho_campos])
 
-    if tem_grandeza_sonda:
+    faixa_adc_bytes = None
+    if tem_faixa_adc:
+        (
+            _magic, _versao, tamanho_cabecalho, timestamp_unix, frequencia_hz,
+            auto_seq_mask, num_canais, lista_canais_bytes, samples_per_buffer,
+            bytes_por_amostra, pru_clock_hz, sample_period_ticks,
+            primeira_amostra_descartada, duracao_pedida_segundos, blocos_gravados,
+            total_amostras_gravadas, titulo_bruto, descricao_bruto,
+            grandeza_bytes, sonda_id_bytes_lista, faixa_adc_bytes, header_crc32,
+        ) = _consumir(campos, contagens)
+    elif tem_grandeza_sonda:
         (
             _magic, _versao, tamanho_cabecalho, timestamp_unix, frequencia_hz,
             auto_seq_mask, num_canais, lista_canais_bytes, samples_per_buffer,
@@ -334,6 +385,11 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
         grandeza_por_canal = tuple(GRANDEZA_PADRAO for _ in range(num_canais))
         sonda_id_por_canal = tuple("" for _ in range(num_canais))
 
+    # [FAIXA DE ENTRADA, v3] v1/v2 não registram a faixa: tupla vazia =
+    # "desconhecida" (inventar um código aqui faria o Python afirmar uma faixa
+    # que ninguém garantiu).
+    faixa_adc_codigo_por_canal = tuple(faixa_adc_bytes[:num_canais]) if tem_faixa_adc else ()
+
     return CabecalhoArquivo(
         versao_cabecalho=versao_cabecalho,
         tamanho_cabecalho=tamanho_cabecalho,
@@ -356,6 +412,7 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
         crc32_valido=crc32_valido,
         grandeza_por_canal=grandeza_por_canal,
         sonda_id_por_canal=sonda_id_por_canal,
+        faixa_adc_codigo_por_canal=faixa_adc_codigo_por_canal,
     )
 
 
@@ -387,6 +444,14 @@ def imprimir_resumo_cabecalho(cabecalho: CabecalhoArquivo) -> None:
             nome = NOMES_GRANDEZA.get(grandeza, f"desconhecida ({grandeza})")
             partes.append(f"canal {canal}: {nome}" + (f" (sonda: {sonda_id})" if sonda_id else ""))
         log.info("  Grandeza/sonda por canal: " + " | ".join(partes))
+    if cabecalho.faixa_adc_codigo_por_canal:
+        partes = []
+        for canal, codigo, total_v in zip(
+            cabecalho.lista_canais, cabecalho.faixa_adc_codigo_por_canal, cabecalho.faixa_adc_total_v_por_canal
+        ):
+            partes.append(f"canal {canal}: ±{total_v / 2:g} V" if total_v is not None
+                          else f"canal {canal}: código {codigo} (desconhecido)")
+        log.info("  Faixa de entrada do ADC por canal: " + " | ".join(partes))
     if cabecalho.total_amostras_gravadas > 0:
         duracao_real = cabecalho.duracao_real_segundos
         texto_duracao = f"{duracao_real:.3f} s reais" if duracao_real is not None else "duração real desconhecida"

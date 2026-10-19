@@ -22,6 +22,7 @@ import numpy as np
 
 from .calibracao_sonda import PontoPerfil, ResumoResposta
 from .canais import analisar_lista_calibracao
+from .constantes import FAIXA_LEGADA_V
 from .erros import ErroSHAN
 from .sonda import PerfilSonda, carregar_perfil_sonda
 
@@ -69,7 +70,16 @@ def montar_perfil_json(pontos: list[PontoPerfil], args) -> dict:
     # Sem isso, nada impediria alguém de usar este perfil com um --ganho
     # de produção diferente do usado aqui, o que reintroduziria erro
     # sistemático de escala.
-    faixas = analisar_lista_calibracao(args.faixa, 2, "--faixa")
+    # --faixa: o que as capturas realmente usaram (preenchido por cli_gerar_perfil a
+    # partir do cabeçalho v3 / --faixa), ou o --faixa digitado / padrão histórico
+    # quando quem chama não resumiu isso. 'faixa_v_confiavel' = a faixa é a REAL do
+    # ADC (veio do cabeçalho), e então uma produção em OUTRA faixa não invalida o
+    # perfil (ver sonda.conferir_calibracao_perfil).
+    resumo_faixas = getattr(args, "faixas_resumo", None)
+    if resumo_faixas is not None:
+        faixas = [resumo_faixas["referencia"], resumo_faixas["sonda"]]
+    else:
+        faixas = analisar_lista_calibracao(args.faixa if args.faixa is not None else str(FAIXA_LEGADA_V), 2, "--faixa")
     ganhos = analisar_lista_calibracao(args.ganho, 2, "--ganho")
     calibracao_adc = {
         "formato": args.formato,
@@ -79,6 +89,9 @@ def montar_perfil_json(pontos: list[PontoPerfil], args) -> dict:
         "gerado_em": datetime.now(timezone.utc).isoformat(),
         "n_pontos": len(pontos_ordenados),
     }
+    if resumo_faixas is not None:
+        calibracao_adc["faixa_v_confiavel"] = {"referencia": resumo_faixas["referencia_confiavel"],
+                                               "sonda": resumo_faixas["sonda_confiavel"]}
     if args.modo_referencia == "shunt":
         calibracao_adc["resistencia_shunt_ohms"] = args.resistencia_shunt
     elif args.modo_referencia == "externa":

@@ -201,16 +201,18 @@ espera_configuracao:
     LBBO &r25, r14, 20, 4 ; r25 = buffer_1_addr
 
     ; ==========================================================================
-    ; [MODO AUTOMÁTICO] Sequência de configuração do ADS8688 — 2 transações
-    ; separadas, executadas uma única vez, ANTES do laço principal. Nenhum
+    ; [MODO AUTOMÁTICO] Sequência de configuração do ADS8688 — até 10 transações
+    ; separadas (AUTO_SEQ_EN, RANGE_SELn de cada canal habilitado e AUTO_RST),
+    ; executadas uma única vez, ANTES do laço principal. Nenhum
     ; resultado lido via SDO aqui é gravado na DDR (ver descarte da primeira
     ; amostra do lado ARM em ler_adc.c, que cobre qualquer resíduo que ainda
     ; escape para o primeiro quadro do laço principal).
     ;
     ; ⚠️ CORREÇÃO (após bug observado em hardware, captura multi-canal
     ; saindo com todos os "canais" idênticos -- sinal de que a varredura
-    ; automática nunca avançava de canal): as 2 transações NÃO têm a mesma
-    ; duração. Confirmado contra o driver oficial do ADS8688 no kernel Linux
+    ; automática nunca avançava de canal): a escrita de registrador de
+    ; programa e o comando AUTO_RST NÃO têm a mesma duração. Confirmado
+    ; contra o driver oficial do ADS8688 no kernel Linux
     ; (drivers/iio/adc/ti-ads8688.c, ADS8688_PROG_DONT_CARE_BITS=8) e por
     ; resposta de suporte da TI no fórum E2E:
     ;   - Escrita de REGISTRADOR DE PROGRAMA (AUTO_SEQ_EN, abaixo) usa 24
@@ -225,17 +227,66 @@ espera_configuracao:
     ;     usa 32 ciclos, igual sempre foi (16 de comando + 16 de leitura).
     ; ==========================================================================
 
-    ; --- Transação 1: escreve o registrador de programa AUTO_SEQ_EN
-    ; (endereço 0x01) com a máscara de canais vinda de ctrl->auto_seq_mask
-    ; (bit N ligado = canal N incluído na varredura). Formato do quadro de
-    ; 16 bits: bits [15:9] = endereço (7 bits), bit [8] = R/W (1 = escrita),
-    ; bits [7:0] = dado -- para o endereço 0x01 em modo de escrita, a parte
-    ; fixa (endereço<<9 | R/W<<8) vale 0x0300. 24 ciclos no total: 16
-    ; CMD_BIT (o comando de 16 bits) + 8 DATA_BIT (ciclos adicionais
-    ; exigidos pelo datasheet, dado descartado).
-    LBBO &r7, r14, 28, 4     ; r7 = ctrl->auto_seq_mask (0-255)
-    LDI r20, 0x0300
-    OR  r7, r7, r20          ; r7 = comando de 16 bits (0x0300 | máscara)
+    ; --- Transações de escrita de registrador de programa: AUTO_SEQ_EN
+    ; (estágio 0) e RANGE_SELn de cada canal habilitado (estágios 1 a 8).
+    ;
+    ; Formato do quadro de 16 bits: bits [15:9] = endereço (7 bits), bit [8]
+    ; = R/W (1 = escrita), bits [7:0] = dado. 24 ciclos no total: 16 CMD_BIT
+    ; (o comando de 16 bits) + 8 DATA_BIT (ciclos adicionais exigidos pelo
+    ; datasheet, dado descartado).
+    ;   - AUTO_SEQ_EN (endereço 0x01): parte fixa 0x0300; dado = máscara de
+    ;     canais vinda de ctrl->auto_seq_mask (bit N ligado = canal N incluído
+    ;     na varredura).
+    ;   - RANGE_SELn (endereços 0x05 a 0x0C = canais 0 a 7): parte fixa
+    ;     ((0x05 + n) << 9) | 0x100, ou seja, 0x0B00, 0x0D00, 0x0F00...;
+    ;     dado = código de faixa Range_CHn[3:0] (0 = ±2,5·VREF, 1 = ±1,25·VREF,
+    ;     2 = ±0,625·VREF), vindo de ctrl->range_sel (8 "nibbles" de 4 bits,
+    ;     canal N nos bits 4N+3..4N).
+    ;
+    ; [POR QUE ESCREVER A FAIXA SEMPRE] O ADS8688 NÃO é reiniciado quando
+    ; ler_adc reinicia a PRU: os registradores de programa do ADC guardam o
+    ; valor da captura anterior até o ADC ser desligado ou receber RST. Sem
+    ; escrever a faixa de TODO canal habilitado a cada captura (inclusive a
+    ; padrão, código 0), uma captura com --faixa-adc ficaria "grudada" na
+    ; seguinte e o cabeçalho do .bin descreveria uma escala diferente da real.
+    ;
+    ; Um único corpo de transação é reaproveitado nas até 9 escritas (laço
+    ; abaixo): a IMEM da PRU (2048 instruções) não comportaria 9 cópias dos 24
+    ; macros. Os desvios condicionais QB* só alcançam +-511 instruções, e o
+    ; corpo da transação tem ~500: por isso os saltos que o atravessam são
+    ; JMP (endereço absoluto). tests/test_pru_asm.py confere isso.
+    ;
+    ; Registradores do laço (livres: nada abaixo os usa depois da configuração):
+    ;   r6  = estágio (0 = AUTO_SEQ_EN; k = 1..8 -> RANGE_SEL do canal k-1)
+    ;   r7  = comando de 16 bits da transação em curso
+    ;   r8  = ctrl->auto_seq_mask       r9  = ctrl->range_sel
+    ;   r12 = máscara de canais, deslocada 1 bit por estágio (bit 0 = canal do estágio)
+    ;   r13 = nibbles de faixa, deslocados 4 bits por canal (nibble 0 = canal do estágio)
+    ;   r10 = parte fixa do comando do canal do estágio; r11 = passo (1 << 9) entre canais
+    LBBO &r8, r14, 28, 4     ; r8 = ctrl->auto_seq_mask (0-255)
+    LBBO &r9, r14, 32, 4     ; r9 = ctrl->range_sel (nibbles de faixa)
+    LSL r12, r8, 1           ; alinhada um estágio ATRÁS: o 1º LSR de cfg_canal a deixa com bit 0 = canal 0
+    MOV r13, r9
+    LDI r10, 0x0900          ; 0x0B00 (canal 0) - 0x0200: o 1º ADD de cfg_canal chega em 0x0B00
+    LDI r11, 0x0200
+    LDI r6, 0
+
+cfg_proximo_comando:
+    QBNE cfg_canal, r6, 0
+    LDI r7, 0x0300           ; estágio 0: AUTO_SEQ_EN
+    OR  r7, r7, r8           ; r7 = 0x0300 | máscara
+    QBA cfg_envia
+
+cfg_canal:
+    LSR r12, r12, 1
+    ADD r10, r10, r11
+    QBBS cfg_canal_habilitado, r12, 0
+    JMP cfg_comando_enviado  ; canal fora da varredura: não há o que escrever
+cfg_canal_habilitado:
+    AND r7, r13, 0x0F        ; código de faixa deste canal (4 bits)
+    OR  r7, r7, r10          ; r7 = ((0x05 + canal) << 9) | 0x100 | código
+
+cfg_envia:
     LSL r28, r7, 16          ; alinha aos bits 31..16 de r28, formato que
                               ; CMD_BIT espera
     LDI r23, 0
@@ -243,9 +294,9 @@ espera_configuracao:
     CLR r30, r30, 3          ; abaixa o CS
 
     LDI r1, 200
-delay_cs_setup_auto1:
+delay_cs_setup_cfg:
     SUB r1, r1, 1
-    QBNE delay_cs_setup_auto1, r1, 0
+    QBNE delay_cs_setup_cfg, r1, 0
 
     CMD_BIT
     CMD_BIT
@@ -276,18 +327,27 @@ delay_cs_setup_auto1:
     ; acima. r23 (dado lido) é descartado de propósito.
 
     LDI r1, 100
-delay_cs_hold_auto1:
+delay_cs_hold_cfg:
     SUB r1, r1, 1
-    QBNE delay_cs_hold_auto1, r1, 0
+    QBNE delay_cs_hold_cfg, r1, 0
 
     SET r30, r30, 3          ; levanta o CS
 
     LDI r1, 100
-delay_cs_high_auto1:
+delay_cs_high_cfg:
     SUB r1, r1, 1
-    QBNE delay_cs_high_auto1, r1, 0
+    QBNE delay_cs_high_cfg, r1, 0
 
-    ; --- Transação 2: envia o comando AUTO_RST (0xA000, registrador de
+cfg_comando_enviado:
+    QBEQ cfg_sem_nibble, r6, 0   ; estágio 0 (AUTO_SEQ_EN) não consome nibble
+    LSR r13, r13, 4              ; estágios 1-8: passa ao nibble do próximo canal (também quando o canal foi pulado)
+cfg_sem_nibble:
+    ADD r6, r6, 1
+    QBEQ cfg_fim, r6, 9
+    JMP cfg_proximo_comando
+cfg_fim:
+
+    ; --- Transação final: envia o comando AUTO_RST (0xA000, registrador de
     ; comando) -- inicia a varredura automática a partir do canal habilitado
     ; de menor número. Transação normal de 32 ciclos (16 CMD_BIT + 16
     ; DATA_BIT), igual a qualquer comando do registrador de comando.

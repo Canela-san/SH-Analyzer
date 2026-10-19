@@ -71,6 +71,24 @@ NOMES_GRANDEZA_CLI = {  # valores aceitos em --grandeza (sem acento, como no lad
     "temperatura": GRANDEZA_TEMPERATURA,
 }
 
+# [FAIXA DE ENTRADA POR CANAL, cabeçalho v3] Código de faixa do ADS8688
+# (registrador RANGE_SELn, Range_CHn[3:0]) -> fundo de escala TOTAL em Volts
+# (pico a pico: o dobro da faixa "±X V"), que é o que `--faixa` espera com
+# `--formato uint16` (o padrão). Precisa ficar em sincronia manual com
+# ADS8688_FAIXA_* em firmware/memoria_pru.h e FAIXA_ADC_ESPAN_V em
+# firmware/ler_adc.c -- tests/test_contrato_firmware.py confere.
+#     0 = ±2,5·VREF   (±10,24 V; padrão de reset do ADC)
+#     1 = ±1,25·VREF  (±5,12 V)
+#     2 = ±0,625·VREF (±2,56 V)
+FAIXAS_ADC_TOTAL_V = {0: 20.48, 1: 10.24, 2: 5.12}
+FAIXA_ADC_NAO_USADA = 0xFF  # slot de canal não habilitado em faixa_adc_por_canal
+# `--faixa` assumido quando nem a linha de comando nem o cabeçalho dizem a
+# faixa (capturas v1/v2, anteriores ao registro da faixa) -- mantém o
+# comportamento histórico das ferramentas.
+FAIXA_LEGADA_V = 10.24
+# Tolerância (V) ao comparar um --faixa digitado com a faixa do cabeçalho.
+TOLERANCIA_FAIXA_V = 0.005
+
 ORDEM_FILTRO_MINIMA = 4
 ORDEM_FILTRO_MAXIMA = 8
 ORDEM_FILTRO_PADRAO = 5

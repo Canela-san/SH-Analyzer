@@ -3,10 +3,11 @@
 Depende de: ``constantes``, ``erros``, ``registro`` (via ``logging``)."""
 
 import logging
+from collections.abc import Sequence
 
 import numpy as np
 
-from .constantes import ADS8688_MAX_CANAIS
+from .constantes import ADS8688_MAX_CANAIS, FAIXA_LEGADA_V, TOLERANCIA_FAIXA_V
 from .erros import ErroSHAN
 
 log = logging.getLogger(__name__)
@@ -67,6 +68,62 @@ def analisar_lista_calibracao(texto: str, num_canais: int, nome_flag: str) -> li
             f"{num_canais} canal(is). Passe 1 valor ou exatamente {num_canais}."
         )
     return valores
+
+
+def faixa_cli_do_total_v(total_v: float, formato: str) -> float:
+    """Converte o fundo de escala TOTAL do ADC (V pico a pico, o que o
+    cabeçalho v3 registra) no valor de ``--faixa`` do ``--formato``:
+    ``uint16`` usa o total (V = código·faixa/65536 − faixa/2); ``int16`` usa a
+    metade positiva (V = código·faixa/32768, ver amostras.converter_para_tensao)."""
+    return total_v / 2.0 if formato == "int16" else total_v
+
+
+def resolver_faixas(texto: str | None, canais: Sequence[int], formato: str,
+                    faixas_cabecalho_total_v: Sequence[float | None] | None = None,
+                    nome_flag: str = "--faixa") -> tuple[list[float], list[bool]]:
+    """Resolve ``--faixa`` por canal: **valor digitado > cabeçalho v3 > padrão histórico**.
+
+    - ``texto`` (``--faixa``) dado: vale para os canais (um valor para todos, ou
+      um por canal). Se o cabeçalho registra a faixa real de algum canal e o
+      valor digitado diverge dela, avisa -- o ADC converteu aquele canal com a
+      faixa do cabeçalho, então um ``--faixa`` diferente escala errado a
+      amplitude (e o erro seria silencioso).
+    - sem ``texto``: usa a faixa gravada no cabeçalho (v3) de cada canal; onde
+      ela é desconhecida (captura v1/v2, anterior ao registro), cai em
+      ``FAIXA_LEGADA_V`` -- o padrão histórico das ferramentas.
+
+    ``faixas_cabecalho_total_v``: fundo de escala total (V) por canal, na ordem
+    de ``canais`` (``CabecalhoArquivo.faixa_adc_total_v_por_canal``), ``None``
+    por canal desconhecido, ou ``None`` no todo se não há cabeçalho.
+
+    Devolve ``(faixas, confiaveis)``: ``confiaveis[i]`` é True quando a faixa
+    usada para o canal i coincide com a registrada no cabeçalho (ou seja,
+    é a faixa REAL do ADC, não uma suposição)."""
+    n = len(canais)
+    do_cabecalho: list[float | None] = [None] * n
+    if faixas_cabecalho_total_v is not None and len(faixas_cabecalho_total_v) == n:
+        do_cabecalho = [None if v is None else faixa_cli_do_total_v(v, formato) for v in faixas_cabecalho_total_v]
+
+    if texto is None:
+        faixas = [FAIXA_LEGADA_V if v is None else v for v in do_cabecalho]
+        return faixas, [v is not None for v in do_cabecalho]
+
+    faixas = analisar_lista_calibracao(texto, n, nome_flag)
+    confiaveis = []
+    for canal, digitada, real in zip(canais, faixas, do_cabecalho):
+        if real is None:
+            confiaveis.append(False)
+        elif abs(digitada - real) <= TOLERANCIA_FAIXA_V:
+            confiaveis.append(True)
+        else:
+            confiaveis.append(False)
+            log.warning(
+                f"canal {canal}: {nome_flag} {digitada:g}, mas o cabeçalho da captura registra que o ADC "
+                f"converteu esse canal com a faixa que corresponde a {nome_flag} {real:g} (--formato {formato}). "
+                f"Valores diferentes escalam a amplitude errado (fator {digitada / real:.4g}); "
+                f"omita {nome_flag} para usar a faixa do cabeçalho."
+            )
+    return faixas, confiaveis
 
 
 def desintercalar(amostras_brutas, canais: list[int],

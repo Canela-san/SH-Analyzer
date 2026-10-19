@@ -36,6 +36,7 @@ from .calibracao_sonda import (
     resumir_resposta,
 )
 from .canais import analisar_lista_calibracao
+from .constantes import FAIXA_LEGADA_V
 from .erros import ErroSHAN, ErroUso
 from .escrita_perfil import gerar_grafico, gravar_perfil_validado, montar_perfil_json
 from .osciloscopio import (
@@ -128,8 +129,10 @@ def montar_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--formato", choices=["int16", "uint16"], default="uint16",
                          help="Mesmo significado de adc_tool.py --formato (padrão: uint16).")
-    parser.add_argument("--faixa", type=str, default="10.24", metavar="V[,V]",
-                         help="Faixa do ADC em Volts -- 1 valor ou 'referencia,sonda' (padrão: 10.24).")
+    parser.add_argument("--faixa", type=str, default=None, metavar="V[,V]",
+                         help="Faixa (fundo de escala total) do ADC em Volts -- 1 valor ou 'referencia,sonda'. "
+                              "Padrão: a faixa gravada no cabeçalho de cada captura (ler_adc --faixa-adc, cabeçalho v3); "
+                              "capturas v1/v2, que não registram a faixa, assumem 10.24.")
     parser.add_argument("--ganho", type=str, default="1.0", metavar="G[,G]",
                          help="Ganho ADC->grandeza física -- 1 valor ou 'referencia,sonda' (padrão: 1.0). "
                               "Para o canal da sonda, ver docstring do módulo (--ganho ANTES da correção de frequência).")
@@ -345,6 +348,26 @@ def _resumir_referencia(args: argparse.Namespace, pontos: list[PontoMedido]) -> 
     return {"origem": "metadados", "amplitudes": textos}
 
 
+def _resumir_faixas(pontos: list[PontoMedido]) -> dict:
+    """``--faixa`` por papel que as capturas realmente usaram, para o bloco ``calibracao_adc`` do JSON.
+
+    Com ``ler_adc --faixa-adc`` (cabeçalho v3) cada captura traz a faixa real do ADC e as capturas de um
+    mesmo perfil PODEM diferir entre si (ex.: um tom fraco medido numa faixa menor) -- não é erro, porque
+    cada uma foi convertida em Volts reais. O JSON registra a faixa da primeira captura e só marca a faixa
+    como confiável se TODAS vieram do cabeçalho."""
+    resumo: dict = {}
+    for papel, campo, indice in (("referencia", "faixa_referencia", 0), ("sonda", "faixa_sonda", 1)):
+        usadas = [getattr(p, campo) for p in pontos if getattr(p, campo) is not None]
+        resumo[papel] = usadas[0] if usadas else FAIXA_LEGADA_V
+        resumo[f"{papel}_confiavel"] = bool(usadas) and all(p.faixas_confiaveis[indice] for p in pontos
+                                                            if getattr(p, campo) is not None)
+        distintas = sorted(set(usadas))
+        if len(distintas) > 1:
+            log.info(f"as capturas usaram {len(distintas)} faixas de ADC diferentes no canal de {papel} "
+                     f"({', '.join(f'{v:g} V' for v in distintas)}) -- ok quando vêm do cabeçalho (cada uma foi convertida em Volts reais).")
+    return resumo
+
+
 def _registrar_resumo_resposta(resumo: ResumoResposta | None) -> None:
     """Diz em palavras o que o perfil mostra do conjunto (queda de 3 dB, inclinação, ganho do ruído)."""
     if resumo is None:
@@ -398,6 +421,7 @@ def executar_geracao(args: argparse.Namespace) -> None:
 
     resumo = resumir_resposta(pontos_perfil)
     args.referencia_resumo = _resumir_referencia(args, pontos_medidos)
+    args.faixas_resumo = _resumir_faixas(pontos_medidos)
     args.resposta_resumo = resumo
     perfil_dict = montar_perfil_json(pontos_perfil, args)
     gravar_perfil_validado(perfil_dict, caminho_saida, len(pontos_perfil))

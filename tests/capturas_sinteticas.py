@@ -1,12 +1,17 @@
 """Gerador de capturas sintéticas (``.bin`` com cabeçalho "SHAN") para os testes.
 
 Não precisa de hardware: monta o ``.bin`` exatamente como ``firmware/ler_adc.c``
-gravaria (cabeçalho de 1024 B v1 ou v2 + amostras intercaladas), a partir de
+gravaria (cabeçalho de 1024 B v1, v2 ou v3 + amostras intercaladas), a partir de
 sinais em Volts no pino do ADC. Também sintetiza uma "sonda" de resposta em
 frequência CONHECIDA (passa-baixa de 1ª ordem, fc = 30 kHz) para os testes de
 calibração/correção.
 
 Convenção do ADC (a mesma de ``adc_tool``): ``uint16`` com offset = faixa/2.
+
+Faixa do ADC: por padrão o cabeçalho é v2 (que não registra a faixa) e as amostras são codificadas com
+``FAIXA`` = 10.24 V totais -- o padrão histórico das ferramentas. Com ``faixas_adc_total_v=(...)`` (um valor
+por canal: 20.48, 10.24 ou 5.12) o cabeçalho sai v3, com o código de faixa de cada canal, e cada canal é
+codificado com a SUA faixa, como o ADS8688 faria.
 """
 
 from __future__ import annotations
@@ -31,6 +36,8 @@ TONS_PRODUCAO = [(50.0, 10.0), (2500.0, 0.2), (9000.0, 0.1), (20000.0, 0.1), (40
 
 FMT_V1 = "<4sIIQIII8BIIIIIdQQ64s256sI"
 FMT_V2 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * 8 + "I"
+FMT_V3 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * 8 + "8BI"
+CODIGO_DA_FAIXA = {20.48: 0, 10.24: 1, 5.12: 2}   # fundo de escala total (V) -> código RANGE_SELn
 
 
 def planta_h(f, fc_lp: float = 30e3, fc_hp: float = 5.0):
@@ -39,16 +46,19 @@ def planta_h(f, fc_lp: float = 30e3, fc_hp: float = 5.0):
     return 1.0 / np.sqrt(1.0 + (f / fc_lp) ** 2) / np.sqrt(1.0 + (fc_hp / np.maximum(f, 1e-9)) ** 2)
 
 
-def volts_para_codigos(v: np.ndarray, formato: str = "uint16") -> np.ndarray:
+def volts_para_codigos(v: np.ndarray, formato: str = "uint16", faixa: float = FAIXA) -> np.ndarray:
     if formato == "uint16":
-        return np.clip(np.round((v + FAIXA / 2) / FAIXA * 65536), 0, 65535).astype("<u2")
-    return np.clip(np.round(v / FAIXA * 32768), -32768, 32767).astype("<i2")
+        return np.clip(np.round((v + faixa / 2) / faixa * 65536), 0, 65535).astype("<u2")
+    return np.clip(np.round(v / faixa * 32768), -32768, 32767).astype("<i2")
 
 
 def montar_cabecalho(n_por_canal: int, canais, grandezas, sondas, fs_total: int,
                      versao: int = 2, titulo: str = "teste", descricao: str = "sintetico",
-                     crc_valido: bool = True, total_amostras: int | None = None) -> bytes:
-    """Cabeçalho de 1024 bytes (v1 ou v2) com CRC-32 correto (ou propositalmente errado)."""
+                     crc_valido: bool = True, total_amostras: int | None = None,
+                     codigos_faixa_adc=None) -> bytes:
+    """Cabeçalho de 1024 bytes (v1, v2 ou v3) com CRC-32 correto (ou propositalmente errado).
+
+    ``codigos_faixa_adc`` (só v3): um código de faixa por canal (padrão: 0 = ±10,24 V em todos)."""
     k = len(canais)
     lista = list(canais) + [0xFF] * (8 - k)
     mascara = sum(1 << c for c in canais)
@@ -56,7 +66,12 @@ def montar_cabecalho(n_por_canal: int, canais, grandezas, sondas, fs_total: int,
     comuns = [b"SHAN", versao, 1024, 1_700_000_000, int(fs_total), mascara, k, *lista,
               1048576, 2, 200_000_000, 500, 0, n_por_canal / (fs_total / k), 1, total,
               titulo.encode("utf-8"), descricao.encode("utf-8")]
-    if versao >= 2:
+    if versao >= 3:
+        gr = list(grandezas) + [0xFF] * (8 - k)
+        ids = [s.encode("ascii") for s in sondas] + [b""] * (8 - k)
+        codigos = list(codigos_faixa_adc if codigos_faixa_adc is not None else [0] * k) + [0xFF] * (8 - k)
+        fmt, vals = FMT_V3, [*comuns, *gr, *ids, *codigos, 0]
+    elif versao >= 2:
         gr = list(grandezas) + [0xFF] * (8 - k)
         ids = [s.encode("ascii") for s in sondas] + [b""] * (8 - k)
         fmt, vals = FMT_V2, [*comuns, *gr, *ids, 0]
@@ -74,15 +89,23 @@ def montar_cabecalho(n_por_canal: int, canais, grandezas, sondas, fs_total: int,
 
 def escrever_bin(caminho: Path, canais_v, canais=(0, 1), grandezas=(0, 1), sondas=("", ""),
                  fs_total: int = FS_TOTAL_2CH, formato: str = "uint16", com_cabecalho: bool = True,
-                 **kw_cabecalho) -> Path:
-    """Grava um '.bin'. ``canais_v``: um array de Volts por canal, na ordem de ``canais``."""
+                 faixas_adc_total_v=None, **kw_cabecalho) -> Path:
+    """Grava um '.bin'. ``canais_v``: um array de Volts por canal, na ordem de ``canais``.
+
+    ``faixas_adc_total_v``: fundo de escala total (V) de cada canal -- 20.48, 10.24 ou 5.12 (um valor por canal,
+    ou um só para todos). Dá cabeçalho v3 e codifica cada canal com a sua faixa."""
     caminho = Path(caminho)
     k = len(canais)
     n = min(len(c) for c in canais_v)
-    v = np.empty(k * n)
+    if faixas_adc_total_v is not None:
+        faixas = [float(f) for f in (faixas_adc_total_v if hasattr(faixas_adc_total_v, "__len__") else [faixas_adc_total_v] * k)]
+        kw_cabecalho.setdefault("versao", 3)
+        kw_cabecalho.setdefault("codigos_faixa_adc", [CODIGO_DA_FAIXA[f] for f in faixas])
+    else:
+        faixas = [FAIXA] * k
+    codigos = np.empty(k * n, dtype="<u2" if formato == "uint16" else "<i2")
     for i, c in enumerate(canais_v):
-        v[i::k] = c[:n]
-    codigos = volts_para_codigos(v, formato)
+        codigos[i::k] = volts_para_codigos(np.asarray(c[:n], dtype=np.float64), formato, faixas[i])
     with open(caminho, "wb") as f:
         if com_cabecalho:
             f.write(montar_cabecalho(n, canais, grandezas, sondas, fs_total, **kw_cabecalho))

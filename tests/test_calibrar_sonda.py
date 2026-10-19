@@ -87,15 +87,23 @@ class Bancada:
         (self.sim / "chamadas.log").unlink(missing_ok=True)
 
     def rodar(self, *args, entradas: str = "", extra_env: dict | None = None, canais: bool = True,
-              eof: bool = False) -> tuple[int, str]:
+              eof: bool = False, faixa_adc: bool = True) -> tuple[int, str]:
         """Roda o script. ``entradas`` = respostas do operador (linhas); depois vêm só ENTERs
         (ou, com ``eof=True``, a entrada acaba logo após ``entradas``).
 
         ``canais=True`` acrescenta ``--canal-sonda 1 --canal-referencia 0`` (captura de 2 canais) quando
-        os argumentos não trazem ``--canal-sonda``; ``canais=False`` não acrescenta nada."""
+        os argumentos não trazem ``--canal-sonda``; ``canais=False`` não acrescenta nada.
+
+        ``faixa_adc=True`` acrescenta ``--faixa-adc 10.24`` (e ``--faixa-adc-referencia 10.24`` quando há canal de
+        referência) a quem não passou a sua: o operador escolheu ±5,12 V, a faixa em que os sinais de 1 V do
+        ``ler_adc`` falso têm uma fração de escala razoável (ver ``ler_adc_falso.py``)."""
         args = [str(a) for a in args]
         if canais and not {"--canal-sonda", "-c"} & set(args):
             args = ["--canal-sonda", "1", "--canal-referencia", "0", *args]
+        if faixa_adc and "--faixa-adc" not in args and "--modo" not in args:
+            args = [*args, "--faixa-adc", "10.24"]
+            if "--canal-referencia" in args and "--faixa-adc-referencia" not in args:
+                args += ["--faixa-adc-referencia", "10.24"]
         env = {
             **os.environ,
             "SIM_DIR": str(self.sim),
@@ -185,6 +193,9 @@ def test_offsets_do_cabecalho_no_script_batem_com_o_formato_do_python():
     for nome, valor in esperado.items():
         assert int(do_script[nome]) == valor, f"{nome}: script={do_script[nome]} esperado={valor}"
     assert cab._OFFSET_HEADER_CRC32_V2 == esperado["CAB_OFF_CRC_V2"]
+    # v3: 8 códigos de faixa do ADC entre o último id de sonda e o CRC, que passa a ser o último campo
+    assert int(do_script["CAB_OFF_FAIXA_ADC"]) == esperado["CAB_OFF_CRC_V2"]
+    assert int(do_script["CAB_OFF_CRC_V3"]) == cab._OFFSET_HEADER_CRC32_V3
 
 
 @pytest.mark.skipif(not LER_ADC_C.exists(), reason="firmware/ler_adc.c não encontrado")
@@ -259,7 +270,7 @@ def test_coleta_nova_grava_bins_validos_e_manifesto(coleta_base):
     assert (b.pasta() / "plano_coleta.txt").exists() and (b.pasta() / "ler_adc.log").exists()
     for nome in bins:
         h = cab.ler_cabecalho(b.pasta() / nome)
-        assert h.versao_cabecalho == 2 and h.crc32_valido
+        assert h.versao_cabecalho == 3 and h.crc32_valido and h.faixa_adc_total_v_por_canal == (10.24, 10.24)
         assert h.frequencia_hz == TAXA and list(h.lista_canais) == [0, 1]
         assert h.grandeza_por_canal == (0, 1) and h.sonda_id_por_canal == ("", SONDA)
         assert h.blocos_gravados == 1 and h.total_amostras_gravadas == SPB_TESTE
@@ -783,3 +794,99 @@ def test_script_e_python_aceitam_e_recusam_as_mesmas_amplitudes():
             assert float(pico) == pytest.approx(esperado.pico, rel=1e-9), entrada
             # o texto limpo que vai para os metadados é aceito pelo Python e vale o mesmo
             assert analisar_amplitude(texto).pico == pytest.approx(esperado.pico, rel=1e-9), entrada
+
+
+# --------------------------------------------------------------------------------------
+# Faixa de entrada do ADC (cabeçalho v3): --faixa-adc
+# --------------------------------------------------------------------------------------
+def _cabecalhos(b: Bancada) -> list:
+    return [cab.ler_cabecalho(b.pasta() / n) for n in b.bins()]
+
+
+@com_e2e
+def test_faixa_adc_e_repassada_ao_ler_adc_e_fica_no_cabecalho_de_cada_captura(bancada):
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", SONDA,
+                              "--faixa-adc", "5.12", "-y")
+    assert rc == 0, saida
+    assert "Faixa do ADC" in saida and "±2.56 V" in saida
+    assert all("--faixa-adc 1:5.12" in c for c in bancada.chamadas())
+    cabecalhos = _cabecalhos(bancada)
+    assert len(cabecalhos) == 2
+    assert all(c.crc32_valido and c.faixa_adc_total_v_por_canal == (5.12,) for c in cabecalhos)
+    assert "faixa_adc_sonda=5.12" in (bancada.pasta() / "plano_coleta.txt").read_text()
+
+
+@com_e2e
+def test_faixa_adc_por_papel_com_canal_de_referencia(bancada):
+    rc, saida = bancada.rodar("--taxa", TAXA, "--pontos", 2, "--sonda", SONDA,
+                              "--faixa-adc", "5.12", "--faixa-adc-referencia", "20.48", "-y")
+    assert rc == 0, saida
+    assert all("--faixa-adc 1:5.12,0:20.48" in c for c in bancada.chamadas())
+    assert all(c.faixa_adc_total_v_por_canal == (20.48, 5.12) for c in _cabecalhos(bancada))   # ordem do cabeçalho: canal 0, canal 1
+
+
+@com_e2e
+def test_sem_faixa_adc_o_ler_adc_nao_recebe_a_opcao(bancada):
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", SONDA, "-y", faixa_adc=False)
+    assert rc == 0, saida
+    assert not any("--faixa-adc" in c for c in bancada.chamadas())
+    assert "Faixa do ADC" not in saida
+
+
+@com_e2e
+@pytest.mark.parametrize("valor", ["7", "abc", "10", "5,2"])
+def test_faixa_adc_invalida_e_recusada_antes_de_capturar(bancada, valor):
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", SONDA,
+                              "--faixa-adc", valor, "-y")
+    assert rc != 0 and "inválida" in saida
+    assert bancada.chamadas() == []
+
+
+@com_e2e
+def test_faixa_adc_de_referencia_sem_canal_de_referencia_e_recusada(bancada):
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", SONDA,
+                              "--faixa-adc-referencia", "5.12", "-y")
+    assert rc != 0 and "só vale com --canal-referencia" in saida
+    assert bancada.chamadas() == []
+
+
+@com_e2e
+def test_cabecalho_com_faixa_diferente_da_pedida_e_detectado(bancada):
+    bancada.cenario("faixa_errada", "ok", "ok")
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", SONDA,
+                              "--faixa-adc", "5.12", "-y")
+    assert rc == 0 and "faixa do ADC no canal da sonda" in saida
+    assert len(bancada.chamadas()) == 3 and len(bancada.bins()) == 2
+    assert all(m["status"] == "ok" for m in bancada.manifesto())
+
+
+@com_e2e
+def test_firmware_antigo_sem_a_opcao_faixa_adc_falha_com_mensagem_do_ler_adc(bancada):
+    bancada.cenario("cab_v2", "ok")
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", SONDA,
+                              "--faixa-adc", "5.12", "-y")
+    assert rc == 0 and "terminou com código 255" in saida     # a 1ª tentativa falhou; a 2ª (firmware novo) passou
+    assert len(bancada.bins()) == 2
+
+
+@com_e2e
+def test_cabecalho_v2_do_firmware_antigo_continua_aceito_sem_faixa_adc(bancada):
+    bancada.cenario("cab_v2", "cab_v2")
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", SONDA, "-y", faixa_adc=False)
+    assert rc == 0, saida
+    # sem --faixa-adc o ADC fica em ±10,24 V e o tom de 1 V sai "fraco" (<10% da escala): só aviso, nunca erro de cabeçalho
+    assert all(m["status"].startswith("ok") and "crc" not in m["status"] for m in bancada.manifesto())
+    assert len(bancada.bins()) == 2
+    assert all(c.versao_cabecalho == 2 and c.crc32_valido for c in _cabecalhos(bancada))
+
+
+@com_e2e
+def test_refazer_herda_a_faixa_adc_do_plano(bancada):
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", SONDA,
+                              "--faixa-adc", "5.12", "-y")
+    assert rc == 0, saida
+    freq = bancada.bins()[0].split("_")[1].removesuffix("Hz")
+    bancada.cenario("ok")
+    rc, saida = bancada.rodar("--modo", "refazer", "--freqs", freq, "--sonda", SONDA, "-y", canais=False)
+    assert rc == 0, saida
+    assert len(bancada.chamadas()) == 1 and "--faixa-adc 1:5.12" in bancada.chamadas()[0]

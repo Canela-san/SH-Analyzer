@@ -176,7 +176,8 @@ readonly AMOSTRAS_ANALISE_RAPIDA=262144   # amostras brutas (todos os canais) ol
 readonly AMOSTRAS_IGNORADAS_INICIO=4096   # descarta o começo da captura (transitório do arranque)
 readonly SPB_PADRAO=1048576                # SAMPLES_PER_BUFFER (só para estimar tempo; o valor real vem do cabeçalho)
 
-# Layout do cabeçalho .bin v2 (firmware/ler_adc.c; conferido por tests/test_contrato_firmware.py).
+# Layout do cabeçalho .bin v2/v3 (firmware/ler_adc.c; conferido por tests/test_contrato_firmware.py).
+# A v3 acrescenta a faixa de entrada do ADC por canal (CAB_OFF_FAIXA_ADC) e, com isso, o CRC muda de lugar.
 readonly CAB_TAMANHO=1024
 readonly CAB_OFF_VERSAO=4
 readonly CAB_OFF_FREQUENCIA=20
@@ -190,6 +191,8 @@ readonly CAB_OFF_GRANDEZA=404
 readonly CAB_OFF_SONDA_ID=412
 readonly CAB_TAM_SONDA_ID=32
 readonly CAB_OFF_CRC_V2=668
+readonly CAB_OFF_FAIXA_ADC=668   # v3: 8 x uint8, um código por canal (0 = ±10,24 V, 1 = ±5,12 V, 2 = ±2,56 V)
+readonly CAB_OFF_CRC_V3=676
 readonly GRANDEZA_TENSAO=0
 readonly GRANDEZA_CORRENTE=1
 
@@ -209,6 +212,9 @@ REF_EXTERNA=0              # 1 = a cada ponto, anotar a leitura do osciloscópio
 AMPLITUDE=""               # --amplitude: amplitude (com unidade e tipo, ex.: 500mVpp) da senoide injetada, a mesma em todos os pontos
 AMPLITUDE_POR_PONTO=0      # 1 = perguntar a amplitude a cada frequência (--amplitude-por-ponto; --amplitude dá o valor inicial)
 LISTA_CANAIS=""            # "<sonda>" ou "<ref>,<sonda>", para o ler_adc
+FAIXA_ADC_SONDA=""         # --faixa-adc: fundo de escala TOTAL (V) do ADC no canal da sonda (20.48 | 10.24 | 5.12); vazio = padrão do ler_adc (±10,24 V)
+FAIXA_ADC_REFERENCIA=""    # --faixa-adc-referencia: idem, para o canal de referência
+ARGS_FAIXA_ADC=()          # montado por definir_canais: ("--faixa-adc" "canal:volts,...") ou vazio
 TAXA=""
 PONTOS=""
 SONDA_BRUTA=""
@@ -298,6 +304,12 @@ Principais:
                          No modo refinar: quantos pontos EXTRAS coletar.
   -s, --sonda ID         Identificador da sonda (ex.: fluke_i30_sn0001, até 31
                          caracteres: letras, números, '-' e '_').
+      --faixa-adc V      Faixa de entrada do ADC no canal da SONDA, como fundo de escala total em
+                         Volts: 20.48 (±10,24 V, padrão do ADC), 10.24 (±5,12 V) ou 5.12 (±2,56 V).
+                         Escolha a menor faixa que comporta o pico do sinal da sonda: a resolução e o
+                         ruído (em Volts) melhoram na mesma proporção. Vai para o cabeçalho de cada
+                         captura e o gerar_perfil_sonda.py/adc_tool.py usam sozinhos.
+      --faixa-adc-referencia V   O mesmo para o canal de referência (--canal-referencia).
 
 Plano de frequências:
       --freq-min HZ      Menor frequência (padrão ${PADRAO_FREQ_MIN} Hz).
@@ -339,6 +351,7 @@ Saída:
 Exemplos:
   sudo ./calibrar_sonda.sh --taxa 102400 --canal-sonda 1 --pontos 20 --sonda fluke_i30_sn0001 --ref-externa
   sudo ./calibrar_sonda.sh --taxa 102400 --canal-sonda 1 --pontos 20 --sonda minha_sonda --amplitude 500mVpp
+  sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 20 --sonda minha_sonda --amplitude 5mVpp --faixa-adc 5.12
   sudo ./calibrar_sonda.sh --taxa 400000 --canal-sonda 1 --pontos 24 --freq-max 160k --sonda minha_sonda
   sudo ./calibrar_sonda.sh --taxa 204800 --canal-sonda 1 --canal-referencia 0 --pontos 20 --sonda minha_sonda
   sudo ./calibrar_sonda.sh --modo retomar --sonda fluke_i30_sn0001
@@ -372,6 +385,8 @@ parse_args() {
             --canal-referencia) exigir_valor "$@"; CANAL_REFERENCIA="$2"; CANAL_REF_INFORMADO=1; shift 2 ;;
             -c|--canal-sonda)  exigir_valor "$@"; CANAL_SONDA="$2"; shift 2 ;;
             --ref-externa)     REF_EXTERNA=1; shift ;;
+            --faixa-adc)       exigir_valor "$@"; FAIXA_ADC_SONDA="${2//,/.}"; shift 2 ;;
+            --faixa-adc-referencia) exigir_valor "$@"; FAIXA_ADC_REFERENCIA="${2//,/.}"; shift 2 ;;
             --amplitude)       exigir_valor "$@"; AMPLITUDE="$2"; shift 2 ;;
             --amplitude-por-ponto) AMPLITUDE_POR_PONTO=1; shift ;;
             --pasta)           exigir_valor "$@"; PASTA_BASE="$2"; shift 2 ;;
@@ -741,6 +756,8 @@ salvar_plano() {
         echo "canal_sonda=${CANAL_SONDA}"
         echo "canal_referencia=${CANAL_REFERENCIA}"
         echo "ref_externa=${REF_EXTERNA}"
+        echo "faixa_adc_sonda=${FAIXA_ADC_SONDA}"
+        echo "faixa_adc_referencia=${FAIXA_ADC_REFERENCIA}"
         echo "amplitude=${AMPLITUDE}"
         echo "amplitude_por_ponto=${AMPLITUDE_POR_PONTO}"
         echo "repeticoes=${REPETICOES}"
@@ -770,6 +787,10 @@ carregar_plano() {
         [ "$usar" = "n" ] && { log_aviso "Cancelado."; exit 0; }
     fi
     v="$(valor_do_plano repeticoes)";       [ -z "$REPETICOES" ] && REPETICOES="$v"
+    # Faixa de entrada do ADC: a linha de comando vence; sem ela, herda a do plano (cada captura leva a
+    # sua própria faixa no cabeçalho, então mudar no meio não mistura nada).
+    v="$(valor_do_plano faixa_adc_sonda)";  [ -z "$FAIXA_ADC_SONDA" ] && FAIXA_ADC_SONDA="$v"
+    v="$(valor_do_plano faixa_adc_referencia)"; [ -z "$FAIXA_ADC_REFERENCIA" ] && FAIXA_ADC_REFERENCIA="$v"
     v="$(valor_do_plano blocos)";           [ -z "$BLOCOS" ] && BLOCOS="$v"
     # Canais: sem --canal-sonda na linha de comando, herda tudo do plano; com ele, a linha de
     # comando vence e qualquer diferença em relação ao plano pede confirmação (como a taxa).
@@ -889,13 +910,26 @@ ler_u8()  { od -An -tu1 -j "$2" -N 1 "$1" | tr -d ' \n'; }
 # Texto (ASCII/UTF-8) de $3 bytes a partir do offset $2, sem os '\0' de preenchimento.
 ler_texto() { head -c "$(($2 + $3))" "$1" | tail -c "$3" | tr -d '\0'; }
 
-# CRC-32 do cabeçalho v2: o do zlib/gzip sobre os 1024 bytes com o campo do CRC zerado
-# (o trailer do gzip guarda exatamente esse CRC-32, em little-endian).
+# Fundo de escala TOTAL (V) -> código de faixa do ADS8688 que o ler_adc grava no cabeçalho
+# (0 = ±10,24 V, 1 = ±5,12 V, 2 = ±2,56 V). Falha (sem imprimir nada) se o valor não for uma das três.
+codigo_faixa_adc() {
+    awk -v v="$1" 'BEGIN {
+        if (v !~ /^[0-9]+(\.[0-9]+)?$/) exit 1
+        d = v - 20.48; if (d < 0) d = -d; if (d < 0.005) { print 0; exit 0 }
+        d = v - 10.24; if (d < 0) d = -d; if (d < 0.005) { print 1; exit 0 }
+        d = v - 5.12;  if (d < 0) d = -d; if (d < 0.005) { print 2; exit 0 }
+        exit 1
+    }'
+}
+
+# CRC-32 do cabeçalho (v2 ou v3, conforme $2 = offset do campo do CRC): o do zlib/gzip sobre os
+# 1024 bytes com o campo do CRC zerado (o trailer do gzip guarda exatamente esse CRC-32, em little-endian).
 crc_cabecalho_calculado() {
+    local off="${2:-$CAB_OFF_CRC_V2}"
     {
-        head -c "$CAB_OFF_CRC_V2" "$1"
+        head -c "$off" "$1"
         printf '\0\0\0\0'
-        head -c "$CAB_TAMANHO" "$1" | tail -c +"$((CAB_OFF_CRC_V2 + 5))"
+        head -c "$CAB_TAMANHO" "$1" | tail -c +"$((off + 5))"
     } | gzip -1 -c | tail -c 8 | head -c 4 | od -An -tu4 | tr -d ' \n'
 }
 
@@ -921,13 +955,15 @@ validar_cabecalho() {
         qc_erro "cabeçalho versão ${versao}: não registra grandeza/sonda por canal. Recompile o firmware (make em firmware/)" cabecalho_v1
         return
     fi
-    if [ "$versao" -gt 2 ]; then
+    if [ "$versao" -gt 3 ]; then
         qc_aviso "cabeçalho versão ${versao}, mais nova que a conhecida por este script: não conferi grandeza/sonda" cabecalho_desconhecido
         return
     fi
 
-    crc_gravado="$(ler_u32 "$arq" "$CAB_OFF_CRC_V2")"
-    crc_calculado="$(crc_cabecalho_calculado "$arq")"
+    local off_crc="$CAB_OFF_CRC_V2"
+    [ "$versao" -ge 3 ] && off_crc="$CAB_OFF_CRC_V3"
+    crc_gravado="$(ler_u32 "$arq" "$off_crc")"
+    crc_calculado="$(crc_cabecalho_calculado "$arq" "$off_crc")"
     if [ "$crc_gravado" != "$crc_calculado" ]; then
         qc_erro "o CRC-32 do cabeçalho não confere (arquivo corrompido ou truncado)" crc
     fi
@@ -976,6 +1012,26 @@ validar_cabecalho() {
         fi
         if [ -n "$id_ref" ]; then
             qc_aviso "o canal de referência tem uma sonda registrada ('${id_ref}'), o que não era esperado" sonda_ref
+        fi
+    fi
+
+    # Faixa de entrada do ADC (só v3): o que foi PEDIDO tem de ser o que o ler_adc gravou. Sem pedido,
+    # o ler_adc usa o padrão do ADC (código 0) e não há o que conferir.
+    if [ -n "$FAIXA_ADC_SONDA" ] || [ -n "$FAIXA_ADC_REFERENCIA" ]; then
+        if [ "$versao" -lt 3 ]; then
+            qc_erro "cabeçalho versão ${versao}: não registra a faixa de entrada do ADC, mas --faixa-adc foi pedida. Recompile o firmware (make em firmware/)" faixa_adc_v2
+        else
+            local cod_pedido cod_gravado
+            if [ -n "$FAIXA_ADC_SONDA" ]; then
+                cod_pedido="$(codigo_faixa_adc "$FAIXA_ADC_SONDA")"
+                cod_gravado="$(ler_u8 "$arq" "$((CAB_OFF_FAIXA_ADC + pos_sonda))")"
+                [ "$cod_gravado" = "$cod_pedido" ] || qc_erro "faixa do ADC no canal da sonda: o cabeçalho registra o código ${cod_gravado}; o pedido (${FAIXA_ADC_SONDA} V) é o código ${cod_pedido}" faixa_adc
+            fi
+            if [ -n "$FAIXA_ADC_REFERENCIA" ] && [ "$pos_ref" -ge 0 ]; then
+                cod_pedido="$(codigo_faixa_adc "$FAIXA_ADC_REFERENCIA")"
+                cod_gravado="$(ler_u8 "$arq" "$((CAB_OFF_FAIXA_ADC + pos_ref))")"
+                [ "$cod_gravado" = "$cod_pedido" ] || qc_erro "faixa do ADC no canal de referência: o cabeçalho registra o código ${cod_gravado}; o pedido (${FAIXA_ADC_REFERENCIA} V) é o código ${cod_pedido}" faixa_adc_ref
+            fi
         fi
     fi
 
@@ -1234,17 +1290,17 @@ executar_captura() {
     limite="${SH_LER_ADC_TIMEOUT:-$(awk -v d="$duracao" 'BEGIN { printf "%d", d * 3 + 60 }')}"
     : >> "$log"
     LOG_LINHAS_ANTES="$(wc -l < "$log" | tr -d ' ')"
-    echo "=== $(date '+%Y-%m-%d %H:%M:%S') | ${LER_ADC##*/} ${TAXA} ${LISTA_CANAIS} --blocos ${BLOCOS} --grandeza ${CANAL_SONDA}:corrente --sonda ${CANAL_SONDA}:${SONDA_ID} -o ${destino##*/}${descricao:+ -d '${descricao}'}" >> "$log"
+    echo "=== $(date '+%Y-%m-%d %H:%M:%S') | ${LER_ADC##*/} ${TAXA} ${LISTA_CANAIS} --blocos ${BLOCOS} --grandeza ${CANAL_SONDA}:corrente --sonda ${CANAL_SONDA}:${SONDA_ID}${ARGS_FAIXA_ADC[*]:+ ${ARGS_FAIXA_ADC[*]}} -o ${destino##*/}${descricao:+ -d '${descricao}'}" >> "$log"
     log_info "Capturando (~${duracao} s)..."
     if [ "$VERBOSO" -eq 1 ]; then
         timeout --foreground "$limite" "$LER_ADC" "$TAXA" "$LISTA_CANAIS" \
             --blocos "$BLOCOS" --grandeza "${CANAL_SONDA}:corrente" --sonda "${CANAL_SONDA}:${SONDA_ID}" \
-            -o "$destino" -t "$titulo" "${extra[@]}" 2>&1 | tee -a "$log" >&2
+            "${ARGS_FAIXA_ADC[@]}" -o "$destino" -t "$titulo" "${extra[@]}" 2>&1 | tee -a "$log" >&2
         codigo="${PIPESTATUS[0]}"
     else
         timeout --foreground "$limite" "$LER_ADC" "$TAXA" "$LISTA_CANAIS" \
             --blocos "$BLOCOS" --grandeza "${CANAL_SONDA}:corrente" --sonda "${CANAL_SONDA}:${SONDA_ID}" \
-            -o "$destino" -t "$titulo" "${extra[@]}" >> "$log" 2>&1
+            "${ARGS_FAIXA_ADC[@]}" -o "$destino" -t "$titulo" "${extra[@]}" >> "$log" 2>&1
         codigo=$?
     fi
     return "$codigo"
@@ -1614,7 +1670,8 @@ proximos_passos() {
         saida "       uv run scripts/gerar_perfil_sonda.py capturas/${SONDA_ID} --amplitude-referencia <amplitude, ex.: 500mVpp ou 2Apk> --plot"
         saida "     Isso só vale se o sinal teve a MESMA amplitude em todas as frequências; se não, refaça com --amplitude-por-ponto (ou --ref-externa)."
     fi
-    saida "     Use os mesmos --faixa/--ganho/--formato que usará depois no adc_tool.py (com 1 canal, --ganho aceita um valor só)."
+    saida "     Use o mesmo --ganho/--formato que usará depois no adc_tool.py (com 1 canal, --ganho aceita um valor só). A --faixa não precisa: cada captura"
+    saida "     leva no cabeçalho a faixa de entrada do ADC com que foi medida (cabeçalho v3) e as ferramentas a usam sozinhas."
     local pendentes
     pendentes="$(pares_pendentes "${PLANO_FREQS[@]}" | grep -c . || true)"
     if [ "$pendentes" -gt 0 ]; then
@@ -1680,6 +1737,18 @@ coletar_extras() {
 # tem 1 canal (a sonda) e a Nyquist efetiva é taxa/2; com ele, 2 canais e taxa/4. Idempotente.
 definir_canais() {
     validar_inteiro_faixa "Canal da sonda (--canal-sonda)" "$CANAL_SONDA" 0 7
+    ARGS_FAIXA_ADC=()
+    local pares=""
+    if [ -n "$FAIXA_ADC_SONDA" ]; then
+        codigo_faixa_adc "$FAIXA_ADC_SONDA" > /dev/null || erro_fatal "--faixa-adc '${FAIXA_ADC_SONDA}' inválida: use 20.48 (±10,24 V), 10.24 (±5,12 V) ou 5.12 (±2,56 V)."
+        pares="${CANAL_SONDA}:${FAIXA_ADC_SONDA}"
+    fi
+    if [ -n "$FAIXA_ADC_REFERENCIA" ]; then
+        [ -n "$CANAL_REFERENCIA" ] || erro_fatal "--faixa-adc-referencia só vale com --canal-referencia."
+        codigo_faixa_adc "$FAIXA_ADC_REFERENCIA" > /dev/null || erro_fatal "--faixa-adc-referencia '${FAIXA_ADC_REFERENCIA}' inválida: use 20.48 (±10,24 V), 10.24 (±5,12 V) ou 5.12 (±2,56 V)."
+        pares="${pares:+${pares},}${CANAL_REFERENCIA}:${FAIXA_ADC_REFERENCIA}"
+    fi
+    [ -n "$pares" ] && ARGS_FAIXA_ADC=(--faixa-adc "$pares")
     if { [ -n "$AMPLITUDE" ] || [ "$AMPLITUDE_POR_PONTO" -eq 1 ]; } && { [ "$REF_EXTERNA" -eq 1 ] || [ -n "$CANAL_REFERENCIA" ]; }; then
         erro_fatal "--amplitude/--amplitude-por-ponto não combinam com --ref-externa nem com --canal-referencia: escolha UMA fonte para o que foi injetado na sonda."
     fi
@@ -1809,6 +1878,9 @@ mostrar_plano() {
     saida "Sonda:               ${SONDA_ID}"
     saida "Taxa total do ADC:   ${TAXA} Hz  (${NUM_CANAIS_CAPTURA} canal(is) -> $(awk -v t="$TAXA" -v n="$NUM_CANAIS_CAPTURA" 'BEGIN { printf "%.1f", t / n }') Hz por canal; Nyquist efetiva ${nyq} Hz)"
     descrever_bancada
+    if [ -n "$FAIXA_ADC_SONDA" ] || [ -n "$FAIXA_ADC_REFERENCIA" ]; then
+        saida "Faixa do ADC:        ${FAIXA_ADC_SONDA:+sonda ±$(awk -v v="$FAIXA_ADC_SONDA" 'BEGIN { printf "%g", v / 2 }') V }${FAIXA_ADC_REFERENCIA:+referência ±$(awk -v v="$FAIXA_ADC_REFERENCIA" 'BEGIN { printf "%g", v / 2 }') V}"
+    fi
     saida "Frequências:         ${#PLANO_FREQS[@]} pontos, de ${PLANO_FREQS[0]} a ${PLANO_FREQS[$((${#PLANO_FREQS[@]} - 1))]} Hz"
     saida "Repetições:          ${REPETICOES} por frequência -> ${total_caps} captura(s)"
     saida "Cada captura:        ${BLOCOS} bloco(s), ~${duracao} s"

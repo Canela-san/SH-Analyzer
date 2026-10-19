@@ -134,7 +134,8 @@ def montar_parser() -> argparse.ArgumentParser:
         "corrigir isso antes de --fft/--welch/plot (canal de corrente, ou "
         "de tensão com sonda registrada). A correção restaura a AMPLITUDE "
         "por frequência, não a fase. O perfil só vale com o mesmo --ganho/"
-        "--faixa/--formato da sua geração (conferido, com aviso). Ver "
+        "--formato da sua geração -- e com a mesma --faixa, a menos que "
+        "ambos venham da faixa gravada no cabeçalho v3 (conferido, com aviso). Ver "
         "docs/proposta_correcao_sonda.md e docs/auditoria_perfil_sonda.md.",
     )
     grupo_sonda.add_argument(
@@ -364,10 +365,12 @@ def montar_parser() -> argparse.ArgumentParser:
              "(unipolar 0..+faixa, padrão) ou 'int16' (bipolar -faixa..+faixa)."
     )
     parser.add_argument(
-        "--faixa", type=str, default="10.24", metavar="VOLTS",
-        help="Faixa de fundo de escala do ADC em Volts (padrão: 10.24). "
-             "Um valor único (todos os canais) ou lista por canal, na "
-             "ordem de --canais."
+        "--faixa", type=str, default=None, metavar="VOLTS",
+        help="Fundo de escala TOTAL do ADC em Volts (±10.24 V = 20.48; ±5.12 V = 10.24; ±2.56 V = 5.12, "
+             "com --formato uint16). Um valor único (todos os canais) ou lista por canal, na "
+             "ordem de --canais. Padrão: a faixa que o firmware gravou no cabeçalho da captura "
+             "(ler_adc --faixa-adc, cabeçalho v3), canal a canal; capturas mais antigas (v1/v2), "
+             "que não registram a faixa, assumem 10.24."
     )
     parser.add_argument(
         "--ganho", type=str, default="1.0", metavar="FATOR",
