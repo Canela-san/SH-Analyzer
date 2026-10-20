@@ -23,7 +23,7 @@
 
 | Status | Itens |
 |---|---|
-| ✅ **Concluído** | 1.5 (modo automático AUTO_RST, e o comentário obsoleto de `spi_core.asm` corrigido), 2.9 (`set_date.sh` sem senha no arquivo), 2.10 (`calibrar_sonda.sh` reescrito: Nyquist efetiva, conferência de cada captura, novos modos e testes), 1.8 (parcial: checagem de `fwrite()` + `--blocos`/`--duracao`), 1.9 (parte Python: mitigado por `tests/test_contrato_firmware.py`), 1.10 (parcial: causa raiz da saturação — jumpers), 2.1 (parcial: `backup pre-assembly/` removido), 2.2 (`.gitignore`), 2.3 (metadados — via cabeçalho embutido, não sidecar), 2.5 (parcial: lado Python — suíte `pytest` de 635 testes, `ruff` e CI no GitHub Actions), 2.7 (parcial: README, guia de uso, arquitetura do software e contexto), 2.8 (arquivo já se chama `adc_tool.py`) |
+| ✅ **Concluído** | 1.5 (modo automático AUTO_RST, e o comentário obsoleto de `spi_core.asm` corrigido), 2.9 (`set_date.sh` sem senha no arquivo), 2.10 (`calibrar_sonda.sh` reescrito: Nyquist efetiva, conferência de cada captura, novos modos e testes), 1.8 (parcial: checagem de `fwrite()` + `--blocos`/`--duracao`), 1.9 (parte Python: mitigado por `tests/test_contrato_firmware.py`), 1.10 (parcial: causa raiz da saturação — jumpers), 2.1 (parcial: `backup pre-assembly/` removido), 2.2 (`.gitignore`), 2.3 (metadados — via cabeçalho embutido, não sidecar), 2.5 (parcial: lado Python — suíte `pytest` de 651 testes, `ruff` e CI no GitHub Actions), 2.7 (parcial: README, guia de uso, arquitetura do software e contexto), 2.8 (arquivo já se chama `adc_tool.py`) |
 | 🆕 **Novo** | Melhorias do fluxo de perfil de sonda vindas da auditoria e do T3 (2.11: fase, subamostragem acima da Nyquist, repetições); achados do datasheet e do código a confirmar em bancada: filtro de 15 kHz do ADS8688 (**medido no T3: −3 dB em 17,3 kHz na cadeia de tensão**) e taxa de amostragem real (2.12); `medir_captura.py` e `docs/roteiro_laboratorio.md` (já entregues); faixa de entrada do ADC por canal, `--faixa-adc` (2.13: implementada, falta bancada) |
 | 🔄 **Ainda aberto, com nota atualizada** | 1.1–1.4 (o "piso" antigo de ~48 kHz parece estar desatualizado — ver nota abaixo), 1.6, 1.7, 1.9 (revisado), 2.4, 2.5 (parte C/CI), 2.6, 2.7 (`licoes-aprendidas.md`), 2.11, 2.12 |
 
@@ -504,7 +504,7 @@ Baixo. **Status:** ainda em aberto.
 ### 2.5 Testes e CI
 
 ✅ **Atualização de 2026-10 — lado Python concluído.** Existe uma suíte `pytest` versionada
-em `tests/` (635 testes; `-m "not e2e"`, 520 testes, roda em ~2 min), cobrindo unidades por módulo,
+em `tests/` (651 testes; `-m "not e2e"`, 536 testes, roda em ~2 min), cobrindo unidades por módulo,
 CLI, o contrato C↔Python (`test_contrato_firmware.py`), as regras de arquitetura
 (`test_arquitetura.py`), as dependências e o fluxo completo de perfil de sonda
 (`tests/e2e/`). O `ruff` cuida do estilo. O GitHub Actions (`.github/workflows/ci.yml`)

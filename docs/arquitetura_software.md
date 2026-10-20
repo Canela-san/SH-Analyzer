@@ -143,7 +143,7 @@ log.warning("--welch sem filtro")  # aviso → stderr, o handler põe "Aviso: " 
 * `matplotlib`: só em `plotagem.py` (topo) e dentro de `escrita_perfil.gerar_grafico` (para `--plot`). `modos` importa `plotagem` **dentro** de `executar_plotagem` — quem só converte `.bin`→`.csv` não paga o custo do matplotlib.
 * `h5py`: só dentro de `hdf5.exportar_hdf5`.
 * `rich` (interface do `compactar_amostras`): só em `cli_compactar`. O formato e a verificação (`compactacao`) não dependem dele.
-* Dependências novas: declare em **dois** lugares — `pyproject.toml` e os blocos PEP 723 das entradas (`tests/test_dependencias.py` falha se divergirem).
+* Dependências novas: declare em **dois** lugares — `pyproject.toml` e o bloco PEP 723 de cada script que a usa (`tests/test_dependencias.py` falha se faltar no bloco algo que o script importa ao carregar, ou se as versões divergirem).
 
 ### 4.4 Constantes que o firmware também tem
 
@@ -161,7 +161,7 @@ log.warning("--welch sem filtro")  # aviso → stderr, o handler põe "Aviso: " 
 
 | Quero… | Comando |
 |---|---|
-| Rodar uma ferramenta sem instalar nada | `uv run scripts/adc_tool.py captura.bin --welch ...` (usa o bloco PEP 723) |
+| Rodar uma ferramenta sem instalar nada | `uv run scripts/adc_tool.py captura.bin --welch ...` (usa o bloco PEP 723), ou direto `./scripts/adc_tool.py ...` (o shebang `#!/usr/bin/env -S uv run --script` chama o uv) |
 | Ambiente de desenvolvimento | `uv sync --extra dev` **ou** `pip install -e ".[dev]"` |
 | Usar o pacote em um notebook | `pip install -e .` e `from supraharmonicos.espectro import calcular_espectro_welch` |
 | Backend gráfico interativo (`plt.show()`) | extra `gui` (`PyQt6`); para salvar PNG (`-o`) não precisa |
@@ -189,8 +189,8 @@ O caminho quente é tudo que toca **todas** as amostras de uma captura (dezenas 
 ## 7. Testes
 
 ```bash
-uv run --extra dev pytest                 # tudo: 635 testes (alguns minutos)
-uv run --extra dev pytest -m "not e2e"    # rápido: 520 testes (~2 min) — use no dia a dia
+uv run --extra dev pytest                 # tudo: 651 testes (alguns minutos)
+uv run --extra dev pytest -m "not e2e"    # rápido: 536 testes (~2 min) — use no dia a dia
 uv run --extra dev pytest -m e2e          # só ponta a ponta: 115 testes (a maior parte do tempo)
 uv run --extra dev ruff check .
 ```
@@ -212,7 +212,7 @@ uv run --extra dev ruff check .
 | `test_faixa_adc.py` | `--faixa` por canal: cabeçalho v3 > padrão, aviso se divergir, amplitude certa em cada faixa, perfil de sonda e `faixa_v_confiavel` |
 | `test_pru_asm.py` (+ `pru_sim.py`) | lógica do `firmware/spi_core.asm` num mini-simulador de PRU: palavras enviadas na configuração (`AUTO_SEQ_EN`, `RANGE_SELn`, `AUTO_RST`), ordem, ciclos de SCLK, laço gravando na DDR, IMEM e alcance dos desvios. Não substitui compilar com `clpru` nem testar no hardware |
 | `test_arquitetura.py` | camadas sem ciclo, sem `print`/`SystemExit` em biblioteca, matplotlib/h5py confinados, entradas finas |
-| `test_dependencias.py` | PEP 723 das entradas == `pyproject.toml` |
+| `test_dependencias.py` | todo script com `if __name__ == "__main__"` (em `scripts/`, `relatorio/`, `tests/`, `firmware/`) roda com `uv run`: shebang do uv, permissão de execução, bloco PEP 723 com tudo o que ele importa ao carregar (seguindo o pacote e os módulos vizinhos) e versões iguais às do `pyproject.toml` |
 | `test_calibrar_sonda.py` (+ `ler_adc_falso.py`) | `firmware/calibrar_sonda.sh` de ponta a ponta contra um `ler_adc` falso: plano de frequências, conferência de cada captura (saturação, nível, frequência, CRC, disco cheio), menu C/R/P/A, modos `retomar`/`refinar`/`adensar`/`refazer`/`resumo`, Ctrl+C, `--amplitude`/`--amplitude-por-ponto` (metadados `ref:` no `.bin`, manifesto, plano, menu interativo, perfil gerado sem flag), `--grandeza tensao` (cabeçalho, textos, coluna `tensao_rms_V`, 2 canais, plano antigo = corrente), e que as constantes do cabeçalho e a gramática de amplitude batem com o firmware e o Python. Marcado `e2e` (usa `bash`; é pulado fora do Linux) |
 | `test_relatorio.py` | `relatorio/gerar_figuras.py`: o ajuste do passa-baixa recupera K, f0 e Q conhecidos (com e sem pesos medidos) e vence os outros modelos pelo BIC; f−3dB, polos e incerteza no formato do siunitx; a figura e as macros são geradas (sem LaTeX, para rodar no CI) |
 | `test_compactacao.py` | `compactar_amostras`: desentrelaçar e voltar é exato com cortes em qualquer byte; a receita do `LEIA-ME.txt` (só numpy) reconstrói o original; ida e volta devolve bytes, datas e permissões; peça corrompida é detectada e o arquivo estragado não é gravado; falha ou Ctrl+C no meio não deixa pacote nem temporários nem `zpaq` órfão; caminho malicioso no manifesto é recusado; `--remover-originais` só apaga o que continua idêntico; CLI. Os testes com o `zpaq` de verdade são `e2e` (pulados sem ele) |
@@ -242,6 +242,8 @@ Os testes não precisam de hardware nem de arquivos `.bin` do repositório (`*.b
 **Novo tipo de perfil de sonda** (ex.: `polinomio`/`tabela` para temperatura — hoje não implementado). Em `sonda.py`: acrescente o tipo em `TIPOS_PERFIL_SUPORTADOS`, valide os campos em `carregar_perfil_sonda`, trate-o em `PerfilSonda.ganho_em`, e decida em `modos.aplicar_correcao_sondas` a quais grandezas se aplica. Teste em `test_sonda.py`.
 
 **Novo campo no cabeçalho do `.bin`.** Firmware (`ler_adc.c`: struct + `CABECALHO_VERSAO`) → `cabecalho._FORMATO_CABECALHO_Vn` e `_CONTAGENS_...` → `CabecalhoArquivo` → fixture (`montar_cabecalho` em `tests/capturas_sinteticas.py`) → rode `test_contrato_firmware.py`, que aponta qualquer divergência de layout. Leitores **nunca** assumem a versão mais nova: o formato antigo continua suportado.
+
+**Novo script executável** (qualquer `.py` com `if __name__ == "__main__"`). Primeira linha `#!/usr/bin/env -S uv run --script`, logo abaixo o bloco PEP 723 (`# /// script` ... `# ///`) com as dependências e `chmod +x`; o `test_dependencias.py` acusa o que faltar. Assim `uv run arquivo.py` e `./arquivo.py` funcionam sem instalar nada. Se a lógica for de biblioteca, ela vai para o pacote e o script fica fino (como os de `scripts/`).
 
 **Novo módulo.** Escolha a camada pela regra "só importo camadas menores"; registre-o em `CAMADAS` (`tests/test_arquitetura.py`) e na tabela da seção 3; escreva o `"""docstring"""` dizendo de quem depende.
 

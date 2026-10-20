@@ -1,4 +1,10 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "numpy>=1.20",
+# ]
+# ///
 """``ler_adc`` FALSO, só para testar ``firmware/calibrar_sonda.sh`` sem hardware.
 
 Imita a interface de linha de comando do ``firmware/ler_adc.c`` (taxa, lista de canais,

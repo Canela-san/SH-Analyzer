@@ -59,7 +59,7 @@ O resultado é um arquivo `captura_AAAAMMDD_HHMMSS.bin`. Veja todas as opções 
 
 ### 2. Analisar (no seu computador)
 
-Copie o `.bin` para o computador (por exemplo, com `scp`) e instale o [`uv`](https://docs.astral.sh/uv/). Ele baixa as dependências Python sozinho na primeira execução, sem `pip install` nem ambiente virtual manual.
+Copie o `.bin` para o computador (por exemplo, com `scp`) e instale o [`uv`](https://docs.astral.sh/uv/). Ele baixa as dependências Python sozinho na primeira execução, sem `pip install` nem ambiente virtual manual. Todo script Python do projeto roda assim, com `uv run script.py` ou direto como `./script.py`.
 
 ```bash
 uv run scripts/adc_tool.py captura.bin --fft                # fundamental e harmônicos
@@ -138,7 +138,7 @@ Quem for modificar o código Python deve começar por [`docs/arquitetura_softwar
 
 ```bash
 uv run --extra dev ruff check .   # estilo e erros comuns
-uv run --extra dev pytest         # 635 testes, alguns minutos (use -m "not e2e" para a versão rápida: 520 testes, ~2 min)
+uv run --extra dev pytest         # 651 testes, alguns minutos (use -m "not e2e" para a versão rápida: 536 testes, ~2 min)
 ```
 
 Os testes também conferem que o firmware (C) e o Python concordam sobre o formato do cabeçalho: se você mudar um lado, o `pytest` avisa até o outro acompanhar.

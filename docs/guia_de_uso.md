@@ -19,7 +19,7 @@ Passo a passo para quem vai **operar** o SH-Analyzer: capturar na BeagleBone, an
 
 Indo ao laboratório validar o projeto inteiro? Siga o [`roteiro_laboratorio.md`](roteiro_laboratorio.md): testes numerados, sinal a injetar em cada um, comandos e o que anotar.
 
-> Os comandos `uv run scripts/...` deste guia são executados **a partir da raiz do repositório**, no computador. Os comandos `./setup.sh`, `./ler_adc` e `./calibrar_sonda.sh` são executados **na BeagleBone**, dentro da pasta `firmware/`.
+> Os comandos `uv run scripts/...` deste guia são executados **a partir da raiz do repositório**, no computador (`./scripts/adc_tool.py ...` também funciona: o próprio script chama o `uv`). Os comandos `./setup.sh`, `./ler_adc` e `./calibrar_sonda.sh` são executados **na BeagleBone**, dentro da pasta `firmware/`.
 
 ---
 
