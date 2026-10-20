@@ -514,3 +514,26 @@ class TestAmplitudeInjetadaEOsciloscopio:
         assert rc == 2 and "sem tipo" in err
         rc, _, err = cli(main, ambiente_ref / "um.bin", ambiente_ref / "rede.bin", "--osciloscopio", ambiente_ref / "um.m")
         assert rc == 2 and "uma captura só" in err
+
+
+def test_salto_numa_troca_de_buffer_aponta_o_bug_do_firmware_antigo(cli, tmp_path):
+    """Firmware anterior a out/2026: ~1400 ciclos perdidos a cada troca de buffer. Simula isso num tom estável
+    (v3 = firmware antigo) e confere que o medir_captura localiza o salto e explica a causa."""
+    from capturas_sinteticas import escrever_bin, regravar_crc
+    from supraharmonicos.cli_medir_captura import main
+
+    fs, f, spb = 100_000.0, 1_000.0, 1 << 18                     # 4 segmentos por buffer (o real tem 16)
+    n = 3 * spb
+    t = np.arange(n) / fs
+    t[spb:] += 7e-6                                              # 7 µs a mais a cada troca de buffer
+    t[2 * spb:] += 7e-6
+    v = 3.0 * np.sin(2 * np.pi * f * t)
+    p = escrever_bin(tmp_path / "antigo.bin", [v], canais=(1,), grandezas=(0,), sondas=("",), fs_total=int(fs),
+                     faixas_adc_total_v=20.48)
+    bruto = bytearray(p.read_bytes())
+    bruto[40:44] = spb.to_bytes(4, "little")                     # samples_per_buffer
+    p.write_bytes(bytes(bruto))
+    regravar_crc(p)
+    rc, out, err = cli(main, p, "--freq", "1000")
+    assert rc == 0, err
+    assert "DESCONTINUIDADE" in out and "troca de buffer da PRU: é o bug do firmware anterior" in out

@@ -2,11 +2,13 @@
 # Uso: make
 
 CC_ARM = gcc
-CFLAGS_ARM = -Wall -O3
+CFLAGS_ARM = -Wall -Wextra -O3
 
 CC_PRU = clpru
 CFLAGS_PRU = -O2 --silicon_version=3
 CMD_PRU = AM335x_PRU.cmd
+
+.PHONY: all arm pru clean
 
 all: arm pru
 

@@ -195,8 +195,9 @@ readonly AMOSTRAS_ANALISE_RAPIDA=262144   # amostras brutas (todos os canais) ol
 readonly AMOSTRAS_IGNORADAS_INICIO=4096   # descarta o começo da captura (transitório do arranque)
 readonly SPB_PADRAO=1048576                # SAMPLES_PER_BUFFER (só para estimar tempo; o valor real vem do cabeçalho)
 
-# Layout do cabeçalho .bin v2/v3 (firmware/ler_adc.c; conferido por tests/test_contrato_firmware.py).
-# A v3 acrescenta a faixa de entrada do ADC por canal (CAB_OFF_FAIXA_ADC) e, com isso, o CRC muda de lugar.
+# Layout do cabeçalho .bin v2/v3/v4 (firmware/ler_adc.c; conferido por tests/test_contrato_firmware.py).
+# A v3 acrescenta a faixa de entrada do ADC por canal (CAB_OFF_FAIXA_ADC); a v4, os contadores de integridade
+# que a PRU mede durante a captura. A cada versão o CRC (último campo) muda de lugar.
 readonly CAB_TAMANHO=1024
 readonly CAB_OFF_VERSAO=4
 readonly CAB_OFF_FREQUENCIA=20
@@ -212,6 +213,10 @@ readonly CAB_TAM_SONDA_ID=32
 readonly CAB_OFF_CRC_V2=668
 readonly CAB_OFF_FAIXA_ADC=668   # v3: 8 x uint8, um código por canal (0 = ±10,24 V, 1 = ±5,12 V, 2 = ±2,56 V)
 readonly CAB_OFF_CRC_V3=676
+readonly CAB_OFF_ATRASADAS=676      # v4: uint32, amostras tomadas depois do instante previsto (taxa não alcançada)
+readonly CAB_OFF_SOBRESCRITOS=680   # v4: uint32, buffers reescritos pela PRU antes de o ler_adc gravá-los
+readonly CAB_OFF_PREAMBULO=684      # v4: uint32, quadros SPI com ruído no SDO (preâmbulo != 0)
+readonly CAB_OFF_CRC_V4=700
 readonly GRANDEZA_TENSAO=0
 readonly GRANDEZA_CORRENTE=1
 
@@ -1031,17 +1036,30 @@ validar_cabecalho() {
         qc_erro "cabeçalho versão ${versao}: não registra grandeza/sonda por canal. Recompile o firmware (make em firmware/)" cabecalho_v1
         return
     fi
-    if [ "$versao" -gt 3 ]; then
+    if [ "$versao" -gt 4 ]; then
         qc_aviso "cabeçalho versão ${versao}, mais nova que a conhecida por este script: não conferi grandeza/sonda" cabecalho_desconhecido
         return
     fi
 
     local off_crc="$CAB_OFF_CRC_V2"
-    [ "$versao" -ge 3 ] && off_crc="$CAB_OFF_CRC_V3"
+    [ "$versao" -eq 3 ] && off_crc="$CAB_OFF_CRC_V3"
+    [ "$versao" -eq 4 ] && off_crc="$CAB_OFF_CRC_V4"
     crc_gravado="$(ler_u32 "$arq" "$off_crc")"
     crc_calculado="$(crc_cabecalho_calculado "$arq" "$off_crc")"
     if [ "$crc_gravado" != "$crc_calculado" ]; then
         qc_erro "o CRC-32 do cabeçalho não confere (arquivo corrompido ou truncado)" crc
+    fi
+
+    # Integridade medida pela PRU (só v4). Amostras perdidas ou fora do instante distorcem o ganho do ponto:
+    # erro (a captura é refeita). Ruído no SDO só avisa enquanto o preâmbulo não for validado em bancada.
+    if [ "$versao" -ge 4 ]; then
+        local sobrescritos atrasadas preambulo
+        sobrescritos="$(ler_u32 "$arq" "$CAB_OFF_SOBRESCRITOS")"
+        atrasadas="$(ler_u32 "$arq" "$CAB_OFF_ATRASADAS")"
+        preambulo="$(ler_u32 "$arq" "$CAB_OFF_PREAMBULO")"
+        [ "$sobrescritos" -gt 0 ] && qc_erro "${sobrescritos} buffer(s) sobrescrito(s) antes de gravados: há amostras perdidas (sistema sobrecarregado ou cartão SD lento?)" buffer_sobrescrito
+        [ "$atrasadas" -gt 0 ] && qc_erro "${atrasadas} amostra(s) fora do instante previsto: a PRU não acompanhou a taxa ${TAXA} Hz" amostras_atrasadas
+        [ "$preambulo" -gt 0 ] && qc_aviso "${preambulo} quadro(s) SPI com ruído na linha SDO: confira a ligação ADC <-> BeagleBone" preambulo
     fi
 
     local freq num_canais pos_ref pos_sonda c0 c1 esperado0 esperado1 achado esperado

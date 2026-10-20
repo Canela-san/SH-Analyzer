@@ -585,3 +585,21 @@ def test_plot_grava_o_grafico_de_diagnostico_ao_lado_do_json(cli, tmp_path):
     assert rc == 0, err
     png = tmp_path / "p.png"
     assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n" and "Gráfico de diagnóstico salvo" in out
+
+
+def test_captura_com_amostras_perdidas_ou_atrasadas_sai_do_perfil(cli, tmp_path, caplog):
+    """Cabeçalho v4: a PRU contou buffer sobrescrito (amostras perdidas) ou amostras fora do instante -- o ganho
+    medido nessa captura não vale. Ruído no SDO só avisa."""
+    pasta = criar_pasta_calibracao(tmp_path / "c", freqs=[470, 1000, 2200, 4700], reps=1)
+    for nome, integridade in (("calibracao_1000Hz_rep2.bin", (0, 1, 0)), ("calibracao_2200Hz_rep2.bin", (900, 0, 0)),
+                              ("calibracao_4700Hz_rep2.bin", (0, 0, 5))):
+        vr, vs = captura_calibracao(float(nome.split("_")[1][:-2]), seed=7)
+        escrever_bin(pasta / nome, [vr, vs], (0, 1), (0, 1), ("", "sonda_teste"), versao=4, integridade=integridade)
+    rc, _, err = cli(main, pasta, "--resistencia-shunt", R_SHUNT, "--ganho", "1,10", "--id", "x", "-o", tmp_path / "p.json")
+    assert rc == 0, err
+    assert "pulando 'calibracao_1000Hz_rep2.bin' -- 1 buffer(s) sobrescrito(s)" in err
+    assert "pulando 'calibracao_2200Hz_rep2.bin' -- 900 amostra(s)" in err
+    assert "'calibracao_4700Hz_rep2.bin': 5 quadro(s) SPI com ruído" in err
+    pontos = ler_json(tmp_path / "p.json")["pontos"]
+    n = {alvo: next(p["n"] for p in pontos if abs(p["freq_hz"] / alvo - 1) < 0.03) for alvo in (1000, 2200, 4700)}
+    assert n == {1000: 1, 2200: 1, 4700: 2}                 # as duas primeiras saíram do perfil, a 3ª ficou

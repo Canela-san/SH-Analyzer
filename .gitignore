@@ -73,3 +73,8 @@ uv.lock
 
 
 Prompts/
+
+# Cobertura de testes (pytest --cov)
+.coverage
+.coverage.*
+htmlcov/

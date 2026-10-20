@@ -277,7 +277,8 @@ def test_coleta_nova_grava_bins_validos_e_manifesto(coleta_base):
     assert (b.pasta() / "plano_coleta.txt").exists() and (b.pasta() / "ler_adc.log").exists()
     for nome in bins:
         h = cab.ler_cabecalho(b.pasta() / nome)
-        assert h.versao_cabecalho == 3 and h.crc32_valido and h.faixa_adc_total_v_por_canal == (10.24, 10.24)
+        assert h.versao_cabecalho == 4 and h.crc32_valido and h.faixa_adc_total_v_por_canal == (10.24, 10.24)
+        assert h.problemas_integridade == [] and h.atraso_cs_iteracoes == (200, 100, 100)
         assert h.frequencia_hz == TAXA and list(h.lista_canais) == [0, 1]
         assert h.grandeza_por_canal == (0, 1) and h.sonda_id_por_canal == ("", SONDA)
         assert h.blocos_gravados == 1 and h.total_amostras_gravadas == SPB_TESTE
@@ -334,6 +335,8 @@ def test_captura_saturada_e_refeita_ate_ficar_boa(bancada):
         ("sem_sinal_ref", "sem sinal no canal de referência"),
         ("sat_ref", "canal de referência (0) saturou"),
         ("freq_errada", "fora da planejada"),
+        ("sobrescrita", "buffer(s) sobrescrito(s) antes de gravados"),     # cabeçalho v4: a PRU contou
+        ("atrasada", "fora do instante previsto: a PRU não acompanhou"),
     ],
 )
 def test_cada_defeito_e_detectado_e_a_captura_ruim_nao_vira_ponto(bancada, diretiva, mensagem):
@@ -343,6 +346,18 @@ def test_cada_defeito_e_detectado_e_a_captura_ruim_nao_vira_ponto(bancada, diret
     assert mensagem in saida
     assert len(bancada.chamadas()) == 3
     assert len(bancada.bins()) == 2 and all(m["status"] == "ok" for m in bancada.manifesto())
+
+
+@com_e2e
+def test_ruido_no_sdo_e_firmware_v3_sao_aceitos(bancada):
+    """Preâmbulo != 0 só avisa (ainda não validado em bancada); um cabeçalho v3 (firmware anterior aos contadores)
+    continua valendo."""
+    bancada.cenario("preambulo", "cab_v3")
+    rc, saida = bancada.rodar("--taxa", TAXA, "--pontos", 2, "--sonda", SONDA, "-y")
+    assert rc == 0 and "3 quadro(s) SPI com ruído na linha SDO" in saida
+    assert len(bancada.chamadas()) == 2 and len(bancada.bins()) == 2
+    status = [m["status"] for m in bancada.manifesto()]
+    assert status[0].startswith("ok_com_aviso_preambulo") and status[1] == "ok"
 
 
 @com_e2e

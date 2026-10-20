@@ -1,17 +1,28 @@
 """Lógica do ``firmware/spi_core.asm``, conferida no mini-simulador ``pru_sim`` (sem BeagleBone, sem ``clpru``).
 
 O assembly da PRU não roda no CI. O simulador executa o fonte de verdade e registra cada palavra que sai pelo MOSI;
-estes testes conferem a CONFIGURAÇÃO do ADS8688 (ordem das transações, comandos de faixa por canal) e que o laço de
-amostragem continua gravando amostras. Não verificam temporização real nem a sintaxe do ``clpru`` -- compile
-(``make`` em ``firmware/``) e teste no BeagleBone depois de mexer no assembly.
+estes testes conferem a CONFIGURAÇÃO do ADS8688 (ordem das transações, comandos de faixa por canal), que o laço de
+amostragem grava amostras, a GRADE DE TEMPO das amostras (em ciclos de instrução: a troca de buffer e o rebase do
+contador não a deslocam) e os contadores de integridade (amostras atrasadas, buffers sobrescritos, preâmbulo).
+Não verificam a temporização real (latência de LBBO/SBBO) nem a sintaxe do ``clpru`` -- compile (``make`` em
+``firmware/``) e teste no BeagleBone depois de mexer no assembly.
 """
 
 from pathlib import Path
 
 import pytest
 from pru_sim import (
+    ENDERECO_CONTADOR_CICLOS,
+    ENDERECO_SHARED_RAM,
     INSTRUCOES_IMEM_PRU,
+    MASCARA32,
+    OFFSET_AMOSTRAS_ATRASADAS,
+    OFFSET_ATRASO_CS_SETUP,
     OFFSET_AUTO_SEQ_MASK,
+    OFFSET_BUFFER_0_READY,
+    OFFSET_BUFFER_1_READY,
+    OFFSET_BUFFERS_SOBRESCRITOS,
+    OFFSET_QUADROS_PREAMBULO_RUIM,
     OFFSET_RANGE_SEL,
     PRU,
     ModeloADC,
@@ -130,3 +141,123 @@ def test_cabe_na_imem_da_pru_com_folga_para_o_codigo_c():
 def test_nenhum_desvio_condicional_passa_do_alcance_do_qb():
     """QB* só alcança +-511 instruções; mais que isso exige JMP (o clpru recusa o resto na montagem)."""
     assert PRU(ASM, memoria_configurada(0b1)).violacoes_desvio == []
+
+
+# --------------------------------------------------------------------------------------
+# Laço principal: grade de tempo das amostras e detectores de integridade (revisão out/2026)
+# --------------------------------------------------------------------------------------
+CONFIG_1CANAL = 3               # transações de configuração com 1 canal: AUTO_SEQ_EN, RANGE_SEL e AUTO_RST
+PERIODO = 2000                  # 100 kS/s a 200 MHz
+
+
+def pru_laco(buffer: int = 4, periodo: int = PERIODO, adc: ModeloADC | None = None, atrasos=None) -> PRU:
+    """PRU com 1 canal e buffers de ``buffer`` amostras (o real tem 1.048.576: inviável de simular)."""
+    mem = memoria_configurada(0b10, 0, periodo_ticks=periodo)
+    if atrasos is not None:
+        for k, valor in enumerate(atrasos):
+            mem[ENDERECO_SHARED_RAM + OFFSET_ATRASO_CS_SETUP + 4 * k] = valor
+    pru = PRU(ASM, mem, adc)
+    for ins in pru.instrucoes:
+        if ins.mnemonico == "LDI" and ins.operandos[0].lower() == "r21.w0":
+            ins.operandos[1] = str(buffer & 0xFFFF)
+        elif ins.mnemonico == "LDI" and ins.operandos[0].lower() == "r21.w2":
+            ins.operandos[1] = str(buffer >> 16)
+    return pru
+
+
+def intervalos(pru: PRU) -> list[int]:
+    instantes = pru.instantes_cs[CONFIG_1CANAL:]
+    return [b - a for a, b in zip(instantes, instantes[1:])]
+
+
+def contador(pru: PRU, offset: int) -> int:
+    return pru.ler_mem(ENDERECO_SHARED_RAM + offset, 4)
+
+
+def test_grade_de_tempo_continua_na_troca_de_buffer_e_no_comeco():
+    """Antes, o contador de ciclos era zerado DEPOIS da transação da última amostra de cada buffer: a 1ª do buffer
+    seguinte saía ~1400 ciclos atrasada (+0,697 amostra a 100 kS/s, medido nas 57 trocas da captura T7c). E o
+    zero antes da configuração fazia as primeiras amostras de toda captura saírem mais rápido que o pedido."""
+    pru = pru_laco(buffer=4)
+    pru.executar(max_transacoes=CONFIG_1CANAL + 14)          # 3 trocas de buffer no meio
+    assert max(abs(d - PERIODO) for d in intervalos(pru)) <= 2, intervalos(pru)   # a espera tem passo de 3 instruções
+
+
+def test_rebase_do_contador_mantem_a_grade_e_evita_a_trava_em_2_elevado_a_32():
+    """O contador da PRU trava em 0xFFFFFFFF (~21,5 s). Simula uma captura já rodando há ~10,7 s: o rebase (−2^31
+    no contador e no alvo) acontece sem mexer no intervalo entre amostras. Antes, um buffer mais longo que 21,5 s
+    (taxa abaixo de ~48,8 kS/s) deixava o contador travar no meio dele."""
+    pru = pru_laco(buffer=1 << 20)
+    pru.executar(max_transacoes=CONFIG_1CANAL + 3)
+    salto = (1 << 31) - 5_000                                 # o contador e o alvo andam juntos, como no tempo real
+    pru.base_contador -= salto
+    pru.regs[17] = (pru.regs[17] + salto) & MASCARA32
+    pru.executar(max_transacoes=CONFIG_1CANAL + 12)
+    assert pru.ler_mem(ENDERECO_CONTADOR_CICLOS, 4) < 1 << 31, "o rebase não aconteceu"
+    assert max(abs(d - PERIODO) for d in intervalos(pru)) <= 2, intervalos(pru)
+
+
+def test_taxa_acima_do_que_o_laco_alcanca_conta_amostras_atrasadas_e_nao_trava():
+    pru = pru_laco(buffer=4, periodo=500)                     # 400 kS/s: a transação leva ~1400 ciclos
+    pru.executar(max_transacoes=CONFIG_1CANAL + 9)
+    assert contador(pru, OFFSET_AMOSTRAS_ATRASADAS) == 7      # publicado na troca depois da 8ª; a 1ª sai na hora
+    assert max(intervalos(pru)) < 1500                        # sai o mais rápido que dá, sem esperas absurdas
+
+
+def test_amostra_atrasada_por_pouco_volta_para_a_grade():
+    """Um atraso menor que 1 período (ex.: uma escrita na DDR que demorou) não desloca as amostras seguintes."""
+    pru = pru_laco(buffer=1 << 20)
+    pru.executar(max_transacoes=CONFIG_1CANAL + 3)
+    pru.base_contador -= 1_000                                # a PRU "perdeu" 1000 ciclos (meio período)
+    pru.executar(max_transacoes=CONFIG_1CANAL + 8)
+    assert contador(pru, OFFSET_AMOSTRAS_ATRASADAS) == 0      # só é publicado na troca de buffer...
+    assert pru.regs[6] == 1                                   # ...mas foi contada
+    d = intervalos(pru)
+    # a atrasada sai assim que a transação anterior acaba; a seguinte já cai no ponto da grade de antes
+    assert d[2] < PERIODO - 500 and d[2] + d[3] == pytest.approx(2 * PERIODO - 1_000, abs=3)
+    assert all(abs(x - PERIODO) <= 2 for x in d[4:]), d
+
+
+def test_buffer_que_o_arm_nao_esvaziou_conta_como_sobrescrito():
+    """Sem ninguém limpando buffer_N_ready (um ARM que parou), cada troca depois da 1ª reescreve dados não gravados."""
+    pru = pru_laco(buffer=4)
+    pru.executar(max_transacoes=CONFIG_1CANAL + 13)           # 3 trocas: 0->1 (o 1 nunca foi cheio), 1->0, 0->1
+    assert contador(pru, OFFSET_BUFFERS_SOBRESCRITOS) == 2
+
+
+def test_com_o_arm_esvaziando_os_buffers_nao_ha_sobrescrita():
+    pru = pru_laco(buffer=4)
+    for n in range(CONFIG_1CANAL + 1, CONFIG_1CANAL + 14):
+        pru.executar(max_transacoes=n)
+        for offset in (OFFSET_BUFFER_0_READY, OFFSET_BUFFER_1_READY):     # o ARM copiou e liberou
+            pru.escrever_mem(ENDERECO_SHARED_RAM + offset, 0, 4)
+    assert contador(pru, OFFSET_BUFFERS_SOBRESCRITOS) == 0 and contador(pru, OFFSET_AMOSTRAS_ATRASADAS) == 0
+
+
+def test_preambulo_diferente_de_zero_e_contado():
+    """O SDO fica em 0 nas 15 primeiras bordas (datasheet 8.4.1.1.4); um 1 ali é ruído na linha."""
+    adc = ModeloADC(0x1234, ruido_no_quadro={CONFIG_1CANAL + 1, CONFIG_1CANAL + 3})    # 2ª e 4ª amostras
+    pru = pru_laco(buffer=4, adc=adc)
+    pru.executar(max_transacoes=CONFIG_1CANAL + 5)
+    assert contador(pru, OFFSET_QUADROS_PREAMBULO_RUIM) == 2
+    assert all(v == 0x1234 for _, v in pru.escritas_ddr[:4])  # o dado é gravado do mesmo jeito (só é contado)
+
+
+def duracao_transacao(pru: PRU) -> int:
+    """Ciclos com o CS baixo numa transação do laço principal."""
+    return pru.instantes_cs_sobe[CONFIG_1CANAL + 1] - pru.instantes_cs[CONFIG_1CANAL + 1]
+
+
+def test_atrasos_de_cs_padrao_mantem_a_transacao_validada_em_hardware():
+    """0 no campo = o padrão (200/100/100): a transação tem a MESMA duração do firmware validado em bancada."""
+    for atrasos in (None, (0, 0, 0), (200, 100, 100)):
+        pru = pru_laco(atrasos=atrasos)
+        pru.executar(max_transacoes=CONFIG_1CANAL + 3)
+        assert duracao_transacao(pru) == 1166, atrasos        # o mesmo valor do spi_core.asm anterior (5,83 µs)
+
+
+def test_atrasos_de_cs_configuraveis_encurtam_a_transacao():
+    pru = pru_laco(atrasos=(20, 10, 10))
+    pru.executar(max_transacoes=CONFIG_1CANAL + 3)
+    assert duracao_transacao(pru) == 1166 - 2 * (180 + 90)    # setup e hold ficam com o CS baixo (2 ciclos/iteração)
+    assert max(abs(d - PERIODO) for d in intervalos(pru)) <= 2

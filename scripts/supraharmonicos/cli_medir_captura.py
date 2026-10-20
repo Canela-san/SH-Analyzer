@@ -293,6 +293,23 @@ def _formatar_canal(canal: int, unidade: str, grandeza: str, b: Basicas, e: Espe
     return linhas
 
 
+def _dica_troca_de_buffer(cont: Continuidade | None, ctx: ContextoCaptura, inicio: int) -> str:
+    """Se o maior salto cai numa troca de buffer da PRU, diz isso (e a causa conhecida, num firmware antigo)."""
+    cab = ctx.cabecalho
+    if cont is None or not cont.saltos_acima_do_limite or cab is None or cab.samples_per_buffer <= 0:
+        return ""
+    por_canal = cab.samples_per_buffer // ctx.num_canais
+    resto = (cont.indice_salto_max + max(inicio, 0)) % por_canal          # --inicio do medir_captura já é por canal
+    if min(resto, por_canal - resto) > cont.amostras_por_segmento:
+        return ""
+    if cab.versao_cabecalho <= 3:
+        return ("  -> o salto cai numa troca de buffer da PRU: é o bug do firmware anterior a out/2026, que zerava o "
+                "contador de ciclos ali e perdia ~7 µs a cada troca (~0,7 amostra a 100 kS/s). Recompile o firmware "
+                "(firmware/setup.sh).")
+    return ("  -> o salto cai numa troca de buffer da PRU: confira os contadores de integridade do cabeçalho "
+            "(buffers sobrescritos?) e o log do ler_adc.")
+
+
 def _formatar_acoplamento(acopl: list[Acoplamento], freq_hz: float) -> list[str]:
     linhas = [f"Acoplamento entre canais no tom de {freq_hz:.2f} Hz (agressor = canal de maior amplitude):"]
     for a in acopl:
@@ -468,6 +485,9 @@ def _medir_canal(canal: int, sinal: np.ndarray, corrigido: bool, saturacao: floa
     espectro = analisar_espectro(sinal, fs_canal, refs.freq_dica, args.harmonicos, fundo_escala, procurar_tom=not args.sem_tom)
     cont = verificar_continuidade(sinal, fs_canal, espectro.freq_tom_hz) if espectro.tem_tom else None
     linhas = _formatar_canal(canal, unidade, grandeza, basicas, espectro, saturacao, cont, lsb, fs_canal, not args.sem_tom)
+    dica = _dica_troca_de_buffer(cont, ctx, args.inicio)
+    if dica:
+        linhas.append(dica)
     comparacao: dict[str, str] = {}
     if espectro.tem_tom:
         extras, comparacao = _comparar_referencia(espectro, args, unidade, ctx.ganhos[i], refs)
@@ -531,6 +551,8 @@ def medir_arquivo(caminho: Path, args: argparse.Namespace) -> list[dict[str, str
     sinais, saturacao = _ler_canais(caminho, args, ctx, ctx.canais_exibir)
     titulo = ctx.cabecalho.titulo if ctx.cabecalho is not None else ""
     log.info(f"=== {caminho.name}" + (f" -- {titulo}" if titulo else "") + " ===")
+    for problema in (ctx.cabecalho.problemas_integridade if ctx.cabecalho is not None else []):
+        log.warning(f"{caminho.name}: integridade da captura: {problema}.")
     nominal = _anunciar_frequencias(args, ctx, fs_total, fs_pru)
 
     refs = carregar_referencias(caminho, args, ctx)

@@ -37,6 +37,7 @@ TONS_PRODUCAO = [(50.0, 10.0), (2500.0, 0.2), (9000.0, 0.1), (20000.0, 0.1), (40
 FMT_V1 = "<4sIIQIII8BIIIIIdQQ64s256sI"
 FMT_V2 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * 8 + "I"
 FMT_V3 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * 8 + "8BI"
+FMT_V4 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * 8 + "8BIII3II"
 CODIGO_DA_FAIXA = {20.48: 0, 10.24: 1, 5.12: 2}   # fundo de escala total (V) -> código RANGE_SELn
 
 
@@ -55,10 +56,12 @@ def volts_para_codigos(v: np.ndarray, formato: str = "uint16", faixa: float = FA
 def montar_cabecalho(n_por_canal: int, canais, grandezas, sondas, fs_total: int,
                      versao: int = 2, titulo: str = "teste", descricao: str = "sintetico",
                      crc_valido: bool = True, total_amostras: int | None = None,
-                     codigos_faixa_adc=None) -> bytes:
-    """Cabeçalho de 1024 bytes (v1, v2 ou v3) com CRC-32 correto (ou propositalmente errado).
+                     codigos_faixa_adc=None, integridade=(0, 0, 0), atrasos_cs=(200, 100, 100)) -> bytes:
+    """Cabeçalho de 1024 bytes (v1 a v4) com CRC-32 correto (ou propositalmente errado).
 
-    ``codigos_faixa_adc`` (só v3): um código de faixa por canal (padrão: 0 = ±10,24 V em todos)."""
+    ``codigos_faixa_adc`` (v3+): um código de faixa por canal (padrão: 0 = ±10,24 V em todos).
+    ``integridade`` (v4): (amostras_atrasadas, buffers_sobrescritos, quadros_preambulo_ruim); ``atrasos_cs`` (v4):
+    as iterações de setup/hold/alto do CS."""
     k = len(canais)
     lista = list(canais) + [0xFF] * (8 - k)
     mascara = sum(1 << c for c in canais)
@@ -70,7 +73,10 @@ def montar_cabecalho(n_por_canal: int, canais, grandezas, sondas, fs_total: int,
         gr = list(grandezas) + [0xFF] * (8 - k)
         ids = [s.encode("ascii") for s in sondas] + [b""] * (8 - k)
         codigos = list(codigos_faixa_adc if codigos_faixa_adc is not None else [0] * k) + [0xFF] * (8 - k)
-        fmt, vals = FMT_V3, [*comuns, *gr, *ids, *codigos, 0]
+        if versao >= 4:
+            fmt, vals = FMT_V4, [*comuns, *gr, *ids, *codigos, *integridade, *atrasos_cs, 0]
+        else:
+            fmt, vals = FMT_V3, [*comuns, *gr, *ids, *codigos, 0]
     elif versao >= 2:
         gr = list(grandezas) + [0xFF] * (8 - k)
         ids = [s.encode("ascii") for s in sondas] + [b""] * (8 - k)
@@ -92,7 +98,7 @@ def regravar_crc(caminho: Path) -> None:
     o teste confira só o efeito da edição -- e não o de um CRC quebrado."""
     bruto = bytearray(Path(caminho).read_bytes())
     versao = struct.unpack_from("<I", bruto, 4)[0]
-    fmt = FMT_V3 if versao >= 3 else FMT_V2 if versao == 2 else FMT_V1
+    fmt = FMT_V4 if versao >= 4 else FMT_V3 if versao == 3 else FMT_V2 if versao == 2 else FMT_V1
     deslocamento_crc = struct.calcsize(fmt) - 4
     struct.pack_into("<I", bruto, deslocamento_crc, 0)
     struct.pack_into("<I", bruto, deslocamento_crc, zlib.crc32(bytes(bruto[:1024])))

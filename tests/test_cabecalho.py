@@ -124,17 +124,55 @@ def test_codigo_de_faixa_desconhecido_vira_none_sem_quebrar(tmp_path):
     assert c.faixa_adc_codigo_por_canal == (0, 9) and c.faixa_adc_total_v_por_canal == (20.48, None)
 
 
-def test_versao_futura_avisa_e_e_lida_como_v3(tmp_path, caplog):
+def test_versao_futura_avisa_e_e_lida_como_v4(tmp_path, caplog):
     from capturas_sinteticas import montar_cabecalho
 
-    bruto = bytearray(montar_cabecalho(1000, (0, 1), (0, 1), ("", ""), 400_000, versao=3))
-    bruto[4:8] = (4).to_bytes(4, "little")                      # "versão 4": formato que este código ainda não conhece
+    bruto = bytearray(montar_cabecalho(1000, (0, 1), (0, 1), ("", ""), 400_000, versao=4))
+    bruto[4:8] = (5).to_bytes(4, "little")                      # "versão 5": formato que este código ainda não conhece
     p = tmp_path / "futuro.bin"
     p.write_bytes(bytes(bruto))
     with caplog.at_level(logging.WARNING):
         c = ler_cabecalho(p)
-    assert c.versao_cabecalho == 4 and c.faixa_adc_total_v_por_canal == (20.48, 20.48)
-    assert any("só conhece até a versão 3" in r.getMessage() for r in caplog.records)
+    assert c.versao_cabecalho == 5 and c.faixa_adc_total_v_por_canal == (20.48, 20.48) and c.buffers_sobrescritos == 0
+    assert any("só conhece até a versão 4" in r.getMessage() for r in caplog.records)
+
+
+# --------------------------------------------------------------------------------------
+# v4: integridade da captura (contada pela PRU) e atrasos de CS
+# --------------------------------------------------------------------------------------
+def test_v4_le_os_contadores_e_os_atrasos(tmp_path):
+    p = escrever_bin(tmp_path / "v4.bin", SINAL, (0, 3), versao=4, faixas_adc_total_v=(20.48, 5.12),
+                     integridade=(7, 1, 2), atrasos_cs=(20, 10, 10))
+    c = ler_cabecalho(p)
+    assert c.versao_cabecalho == 4 and c.crc32_valido and c.faixa_adc_codigo_por_canal == (0, 2)
+    assert (c.amostras_atrasadas, c.buffers_sobrescritos, c.quadros_preambulo_ruim) == (7, 1, 2)
+    assert c.atraso_cs_iteracoes == (20, 10, 10)
+    problemas = c.problemas_integridade
+    assert len(problemas) == 3 and "PERDIDAS" in problemas[0] and "MENOR" in problemas[1] and "SDO" in problemas[2]
+    attrs = c.para_attrs_hdf5()
+    assert attrs["buffers_sobrescritos"] == 1 and list(attrs["atraso_cs_iteracoes"]) == [20, 10, 10]
+
+
+def test_v4_sem_problemas_e_v3_desconhecido_nao_avisam(tmp_path, caplog):
+    from supraharmonicos.cabecalho import imprimir_resumo_cabecalho
+
+    v4 = ler_cabecalho(escrever_bin(tmp_path / "ok.bin", SINAL, versao=4))
+    v3 = ler_cabecalho(escrever_bin(tmp_path / "v3.bin", SINAL, faixas_adc_total_v=10.24))
+    assert v4.problemas_integridade == [] and v4.atraso_cs_iteracoes == (200, 100, 100)
+    assert v3.amostras_atrasadas is None and v3.problemas_integridade == []        # desconhecido, não zero
+    with caplog.at_level(logging.WARNING):
+        imprimir_resumo_cabecalho(v4)
+        imprimir_resumo_cabecalho(v3)
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def test_resumo_avisa_dos_problemas_de_integridade(tmp_path, caplog):
+    from supraharmonicos.cabecalho import imprimir_resumo_cabecalho
+
+    c = ler_cabecalho(escrever_bin(tmp_path / "ruim.bin", SINAL, versao=4, integridade=(0, 2, 0)))
+    with caplog.at_level(logging.WARNING):
+        imprimir_resumo_cabecalho(c)
+    assert any("2 buffer(s) sobrescrito(s)" in r.getMessage() for r in caplog.records)
 
 
 def test_resumo_mostra_a_faixa_por_canal(tmp_path, caplog):

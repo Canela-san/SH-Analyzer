@@ -7,6 +7,9 @@ Para que serve
     sem hardware, a **lógica**: quais palavras de 16 bits seguem pelo MOSI em cada transação SPI (configuração do
     ADS8688), em que ordem, com quantos ciclos de SCLK, e se o laço principal grava amostras.
 
+O contador de ciclos (``0x2200C``) TRAVA em 0xFFFFFFFF, como o da PRU de verdade (não dá a volta), e o instante de
+cada descida do CS fica em ``instantes_cs`` -- dá para conferir a grade de tempo das amostras.
+
 O que NÃO garante
     * Temporização real (cada instrução vale 1 ciclo; ``LBBO``/``SBBO`` custam mais na PRU de verdade).
     * Que o ``clpru`` aceita a sintaxe (o simulador é mais tolerante em alguns pontos). Compilar no BeagleBone
@@ -71,18 +74,24 @@ class Transacao:
 
 
 class ModeloADC:
-    """MISO mínimo: devolve, bit a bit, uma palavra fixa por quadro de dados (só para o laço principal rodar)."""
+    """MISO mínimo: devolve, bit a bit, uma palavra fixa por quadro de dados (só para o laço principal rodar).
 
-    def __init__(self, palavra: int = 0x8000) -> None:
+    Nas 16 primeiras bordas o SDO fica em 0, como o ADS8688 de verdade (datasheet 8.4.1.1.4); ``ruido_no_quadro``
+    (número do quadro, a partir de 0) põe um 1 nessa fase -- o que um reflexo na linha faria."""
+
+    def __init__(self, palavra: int = 0x8000, ruido_no_quadro: set[int] | None = None) -> None:
         self.palavra = palavra
+        self.ruido_no_quadro = ruido_no_quadro or set()
         self._indice = 0
+        self._quadro = -1
 
     def novo_quadro(self) -> None:
         self._indice = 0
+        self._quadro += 1
 
     def proximo_bit(self, clocks_no_quadro: int) -> int:
         if clocks_no_quadro < 16:
-            return 0
+            return 1 if self._quadro in self.ruido_no_quadro and clocks_no_quadro == 7 else 0
         indice = clocks_no_quadro - 16
         return (self.palavra >> (15 - indice)) & 1 if indice < 16 else 0
 
@@ -176,6 +185,8 @@ class PRU:
         self.base_contador = 0
         self.adc = adc or ModeloADC()
         self.transacoes: list[Transacao] = []
+        self.instantes_cs: list[int] = []               # ciclo de cada descida do CS (o instante da amostra)
+        self.instantes_cs_sobe: list[int] = []          # ciclo de cada subida do CS (fim da transação)
         self.escritas_ddr: list[tuple[int, int]] = []
         self._atual: Transacao | None = None
         self._r30_anterior = 0
@@ -232,7 +243,7 @@ class PRU:
     # -- memória -------------------------------------------------------------
     def ler_mem(self, endereco: int, n: int) -> int:
         if endereco == ENDERECO_CONTADOR_CICLOS:
-            return (self.ciclo - self.base_contador) & MASCARA32
+            return min(self.ciclo - self.base_contador, MASCARA32)     # trava em 0xFFFFFFFF, como na PRU
         return sum(self.memoria.get(endereco + i, 0) << (8 * i) for i in range(n))
 
     def escrever_mem(self, endereco: int, valor: int, n: int) -> None:
@@ -251,10 +262,12 @@ class PRU:
             cs_agora = (r30 >> PINO_CS) & 1
             if mudou & (1 << PINO_CS):
                 if cs_antes == 1 and cs_agora == 0:           # CS desceu: começa a transação
+                    self.instantes_cs.append(self.ciclo)
                     self._atual = Transacao()
                     self._clocks_quadro = 0
                     self.adc.novo_quadro()
                 elif cs_antes == 0 and cs_agora == 1 and self._atual is not None:
+                    self.instantes_cs_sobe.append(self.ciclo)
                     self.transacoes.append(self._atual)
                     self._atual = None
             if mudou & (1 << PINO_SCLK) and not (r30 >> PINO_SCLK) & 1 and self._atual is not None:
@@ -325,6 +338,12 @@ def _ex_lbbo(m: PRU, i: Instrucao):
     endereco = (m._ler(base) + int(deslocamento, 0)) & MASCARA32
     quantidade = int(n, 0)
     numero, inicio, _ = m._decodificar(destino)
+    if quantidade > 4:                                   # vários registradores seguidos (LBBO &r9, ..., 12)
+        if inicio or quantidade % 4:
+            raise ErroSimulacao(f"linha {i.linha}: LBBO de vários registradores precisa de registrador inteiro e n múltiplo de 4")
+        for k in range(quantidade // 4):
+            m.regs[numero + k] = m.ler_mem(endereco + 4 * k, 4)
+        return
     valor = m.ler_mem(endereco, quantidade)
     mascara = ((1 << (8 * quantidade)) - 1) << inicio
     m.regs[numero] = (m.regs[numero] & ~mascara & MASCARA32) | ((valor << inicio) & mascara)
@@ -337,6 +356,12 @@ def _ex_sbbo(m: PRU, i: Instrucao):
     endereco = (m._ler(base) + int(deslocamento, 0)) & MASCARA32
     quantidade = int(n, 0)
     numero, inicio, _ = m._decodificar(origem)
+    if quantidade > 4:                                   # vários registradores seguidos (SBBO &r6, ..., 12)
+        if inicio or quantidade % 4:
+            raise ErroSimulacao(f"linha {i.linha}: SBBO de vários registradores precisa de registrador inteiro e n múltiplo de 4")
+        for k in range(quantidade // 4):
+            m.escrever_mem(endereco + 4 * k, m.regs[numero + k], 4)
+        return
     valor = (m.regs[numero] >> inicio) & ((1 << (8 * quantidade)) - 1)
     m.escrever_mem(endereco, valor, quantidade)
     if endereco >= 0x90000000:
@@ -395,6 +420,12 @@ OFFSET_BUFFER_1_ADDR = 20
 OFFSET_CONFIG_READY = 24
 OFFSET_AUTO_SEQ_MASK = 28
 OFFSET_RANGE_SEL = 32
+OFFSET_AMOSTRAS_ATRASADAS = 36
+OFFSET_BUFFERS_SOBRESCRITOS = 40
+OFFSET_QUADROS_PREAMBULO_RUIM = 44
+OFFSET_ATRASO_CS_SETUP = 48     # + 4 = hold, + 8 = alto
+OFFSET_BUFFER_0_READY = 8
+OFFSET_BUFFER_1_READY = 12
 
 
 def memoria_configurada(mascara: int, range_sel: int | None = None, periodo_ticks: int = 2000) -> dict[int, int]:

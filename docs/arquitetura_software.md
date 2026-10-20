@@ -189,9 +189,9 @@ O caminho quente é tudo que toca **todas** as amostras de uma captura (dezenas 
 ## 7. Testes
 
 ```bash
-uv run --extra dev pytest                 # tudo: 663 testes (~1 min 40 s)
-uv run --extra dev pytest -m "not e2e"    # rápido: 548 testes (~30 s) — use no dia a dia
-uv run --extra dev pytest -m e2e          # só ponta a ponta: 115 testes (a maior parte do tempo)
+uv run --extra dev pytest                 # tudo: 682 testes (~1 min 40 s)
+uv run --extra dev pytest -m "not e2e"    # rápido: 564 testes (~30 s) — use no dia a dia
+uv run --extra dev pytest -m e2e          # só ponta a ponta: 118 testes (a maior parte do tempo)
 uv run --extra dev pytest -n0 tests/test_dsp.py::TestFiltros   # um teste só, sem paralelismo (pdb/breakpoint)
 uv run --extra dev pytest --cov=scripts/supraharmonicos --cov-report=term-missing   # cobertura (~90 %)
 uv run --extra dev ruff check .
@@ -218,9 +218,9 @@ Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `c
 | `test_osciloscopio.py` | leitor de `.m`/`.mat`/`.csv` (variáveis, matriz tempo×valor, escalares de taxa, erros que listam o que foi achado) e ajuste de senoide por mínimos quadrados (amplitude, frequência, DC, poucos ciclos) |
 | `test_metricas_captura.py` | `medir_captura`: tom, ruído, THD/SINAD/ENOB/SFDR contra sinais de verdade conhecida, continuidade (amostra removida/duplicada), diafonia/atraso, CLI, CSV, correção de sonda e comparação com instrumento |
 | `test_cli_adc_tool.py` | CLI no mesmo processo: códigos de saída 0/1/2, stdout×stderr, arquivos gerados (CSV conferido linha a linha); `--fft` em ciclos inteiros (f0 e harmônicos com amplitude exata); gráfico de eixo único (1 canal e `sobrepostos`); `--grandeza`/`--sonda-perfil` (formato, canal fora da captura) |
-| `test_contrato_firmware.py` | C ↔ Python: constantes, layout do cabeçalho (v3), códigos de faixa do ADC e offsets da memória compartilhada da PRU |
+| `test_contrato_firmware.py` | C ↔ Python: constantes, layout do cabeçalho (v4), códigos de faixa do ADC, offsets da memória compartilhada da PRU (inclusive os contadores e os atrasos de CS que o assembly lê/escreve em bloco) e os atrasos padrão iguais no C e no assembly |
 | `test_faixa_adc.py` | `--faixa` por canal: cabeçalho v3 > padrão, aviso se divergir, amplitude certa em cada faixa, perfil de sonda e `faixa_v_confiavel` |
-| `test_pru_asm.py` (+ `pru_sim.py`) | lógica do `firmware/spi_core.asm` num mini-simulador de PRU: palavras enviadas na configuração (`AUTO_SEQ_EN`, `RANGE_SELn`, `AUTO_RST`), ordem, ciclos de SCLK, laço gravando na DDR, IMEM e alcance dos desvios. Não substitui compilar com `clpru` nem testar no hardware |
+| `test_pru_asm.py` (+ `pru_sim.py`) | lógica do `firmware/spi_core.asm` num mini-simulador de PRU: palavras enviadas na configuração (`AUTO_SEQ_EN`, `RANGE_SELn`, `AUTO_RST`), ordem, ciclos de SCLK, laço gravando na DDR, IMEM e alcance dos desvios; a **grade de tempo** das amostras em ciclos (sem salto na troca de buffer nem no rebase do contador, que trava em 2³²; amostra atrasada volta à grade) e os contadores de integridade (atrasadas, buffers sobrescritos, preâmbulo); atrasos de CS configuráveis com o padrão igual ao validado (transação de 1.166 ciclos). Não substitui compilar com `clpru` nem testar no hardware |
 | `test_arquitetura.py` | camadas sem ciclo, sem `print`/`SystemExit` em biblioteca, matplotlib/h5py confinados, entradas finas |
 | `test_dependencias.py` | todo script com `if __name__ == "__main__"` (em `scripts/`, `relatorio/`, `tests/`, `firmware/`) roda com `uv run`: shebang do uv, permissão de execução, bloco PEP 723 com tudo o que ele importa ao carregar (seguindo o pacote e os módulos vizinhos) e versões iguais às do `pyproject.toml` |
 | `test_calibrar_sonda.py` (+ `ler_adc_falso.py`) | `firmware/calibrar_sonda.sh` de ponta a ponta contra um `ler_adc` falso: plano de frequências, conferência de cada captura (saturação, nível, frequência, CRC, disco cheio), menu C/R/P/A, modos `retomar`/`refinar`/`adensar`/`refazer`/`resumo`, Ctrl+C, `--amplitude`/`--amplitude-por-ponto` (metadados `ref:` no `.bin`, manifesto, plano, menu interativo, perfil gerado sem flag), `--grandeza tensao` (cabeçalho, textos, coluna `tensao_rms_V`, 2 canais, plano antigo = corrente), e que as constantes do cabeçalho e a gramática de amplitude batem com o firmware e o Python. Marcado `e2e` (usa `bash`; é pulado fora do Linux) |

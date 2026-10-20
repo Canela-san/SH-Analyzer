@@ -124,9 +124,9 @@ def normalizar(campos: list[tuple[str, int]]) -> list[tuple[str, int]]:
     return saida
 
 
-def test_layout_da_struct_v3_bate_com_o_formato_python(fonte_c, defines):
+def test_layout_da_struct_v4_bate_com_o_formato_python(fonte_c, defines):
     c = normalizar(formato_struct_c(fonte_c, defines))
-    py = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V3))
+    py = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V4))
     assert c == py
 
 
@@ -136,7 +136,18 @@ def test_tamanhos_derivados(fonte_c, defines):
     assert cab._TAMANHO_CAMPOS_V3 < inteiro_c(defines["CABECALHO_TAMANHO_TOTAL"])
     assert cab._OFFSET_HEADER_CRC32_V2 == cab._TAMANHO_CAMPOS_V2 - 4 == 668   # o CRC é o ÚLTIMO campo
     assert cab._OFFSET_HEADER_CRC32_V3 == cab._TAMANHO_CAMPOS_V3 - 4 == 676
-    assert sum(cab._CONTAGENS_CABECALHO_V3) == len(struct.unpack(cab._FORMATO_CABECALHO_V3, bytes(cab._TAMANHO_CAMPOS_V3)))
+    assert cab._TAMANHO_CAMPOS_V4 == struct.calcsize(cab._FORMATO_CABECALHO_V4) == 704
+    assert cab._OFFSET_HEADER_CRC32_V4 == cab._TAMANHO_CAMPOS_V4 - 4 == 700
+    assert cab._TAMANHO_CAMPOS_V4 < inteiro_c(defines["CABECALHO_TAMANHO_TOTAL"])
+    for fmt, contagens in ((cab._FORMATO_CABECALHO_V3, cab._CONTAGENS_CABECALHO_V3),
+                           (cab._FORMATO_CABECALHO_V4, cab._CONTAGENS_CABECALHO_V4)):
+        assert sum(contagens) == len(struct.unpack(fmt, bytes(struct.calcsize(fmt))))
+
+
+def test_v3_e_o_prefixo_de_v4_sem_a_integridade():
+    v3 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V3))
+    v4 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V4))
+    assert v4[:-7] == v3[:-1] and v4[-7:] == [("I", 1)] * 7      # 3 contadores + 3 atrasos + o CRC
 
 
 def test_offsets_do_cabecalho_usados_por_calibrar_sonda_sh():
@@ -147,6 +158,11 @@ def test_offsets_do_cabecalho_usados_por_calibrar_sonda_sh():
     assert offs["CAB_OFF_CRC_V2"] == cab._OFFSET_HEADER_CRC32_V2
     assert offs["CAB_OFF_FAIXA_ADC"] == off_faixa
     assert offs["CAB_OFF_CRC_V3"] == cab._OFFSET_HEADER_CRC32_V3 == off_faixa + const.ADS8688_MAX_CANAIS
+    # v4: contadores de integridade logo depois da faixa, onde ficava o CRC da v3
+    assert offs["CAB_OFF_ATRASADAS"] == cab._OFFSET_HEADER_CRC32_V3
+    assert offs["CAB_OFF_SOBRESCRITOS"] == offs["CAB_OFF_ATRASADAS"] + 4
+    assert offs["CAB_OFF_PREAMBULO"] == offs["CAB_OFF_ATRASADAS"] + 8
+    assert offs["CAB_OFF_CRC_V4"] == cab._OFFSET_HEADER_CRC32_V4
     assert offs["CAB_OFF_SONDA_ID"] + const.ADS8688_MAX_CANAIS * cab.CABECALHO_SONDA_ID_TAMANHO == off_faixa
     assert offs["CAB_OFF_GRANDEZA"] + const.ADS8688_MAX_CANAIS == offs["CAB_OFF_SONDA_ID"]
     assert offs["CAB_TAM_SONDA_ID"] == cab.CABECALHO_SONDA_ID_TAMANHO
@@ -208,3 +224,23 @@ def test_offsets_da_memoria_compartilhada_pru():
     nomes = re.findall(r"uint32_t\s+(\w+)\s*;", corpo)
     offsets = {nome: 4 * i for i, nome in enumerate(nomes)}
     assert offsets["config_ready"] == 24 and offsets["auto_seq_mask"] == 28 and offsets["range_sel"] == 32
+    # integridade (PRU -> ARM) e atrasos de CS (ARM -> PRU): o assembly os lê/escreve em bloco de 12 bytes
+    assert [offsets[n] for n in ("amostras_atrasadas", "buffers_sobrescritos", "quadros_preambulo_ruim")] == [36, 40, 44]
+    assert [offsets[n] for n in ("atraso_cs_setup", "atraso_cs_hold", "atraso_cs_alto")] == [48, 52, 56]
+    asm = sem_comentarios_asm((FIRMWARE / "spi_core.asm").read_text(encoding="utf-8"))
+    assert "SBBO &r6, r14, 36, 12" in asm and "LBBO &r9, r14, 48, 12" in asm
+
+
+def sem_comentarios_asm(texto: str) -> str:
+    return "\n".join(ln.split(";", 1)[0] for ln in texto.splitlines())
+
+
+def test_atrasos_de_cs_padrao_do_c_e_do_assembly_sao_os_mesmos():
+    """0 no campo = o padrão do assembly; o ler_adc grava o seu padrão: os dois têm de ser o mesmo (200/100/100)."""
+    h = _memoria_pru_sem_comentarios()
+    padrao_c = [inteiro_c(re.search(rf"#\s*define\s+ATRASO_CS_{n}_PADRAO\s+(\w+)", h).group(1))
+                for n in ("SETUP", "HOLD", "ALTO")]
+    asm = sem_comentarios_asm((FIRMWARE / "spi_core.asm").read_text(encoding="utf-8"))
+    padrao_asm = [int(re.search(rf"QBNE atraso_{n}_ok, r{r}, 0\s+LDI r{r}, (\d+)", asm).group(1))
+                  for n, r in (("setup", 9), ("hold", 10), ("alto", 11))]
+    assert padrao_c == padrao_asm == [200, 100, 100]

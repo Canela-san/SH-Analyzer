@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 
 CABECALHO_MAGIC = b"SHAN"
 CABECALHO_TAMANHO_TOTAL = 1024
-CABECALHO_VERSAO_SUPORTADA = 3  # versão mais recente do FORMATO do cabeçalho que este script sabe interpretar
+CABECALHO_VERSAO_SUPORTADA = 4  # versão mais recente do FORMATO do cabeçalho que este script sabe interpretar
 
 # [SONDA/GRANDEZA] Tamanho fixo (bytes, incluindo terminador nulo) do id de
 # sonda por canal na v2 do cabeçalho -- precisa bater com
@@ -93,9 +93,18 @@ CABECALHO_SONDA_ID_TAMANHO = 32
 #                                      0 = ±10,24 V, 1 = ±5,12 V, 2 = ±2,56 V; slot não usado = 0xFF.
 #                                      Mesma indexação de lista_canais.)
 #   I    header_crc32
+#
+# v4 (mesmos campos da v3, mais a integridade da captura ENTRE
+# faixa_adc_por_canal e header_crc32 -- ver memoria_pru.h):
+#   I    amostras_atrasadas           (a PRU não acompanhou a taxa pedida nessas amostras)
+#   I    buffers_sobrescritos         (o ARM não copiou o buffer a tempo: amostras perdidas)
+#   I    quadros_preambulo_ruim       (ruído na linha SDO durante o comando)
+#   3I   atraso_cs_iteracoes          (setup, hold, alto do laço da PRU, em iterações de 10 ns)
+#   I    header_crc32
 _FORMATO_CABECALHO_V1 = "<4sIIQIII8BIIIIIdQQ64s256sI"
 _FORMATO_CABECALHO_V2 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "I"
 _FORMATO_CABECALHO_V3 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "8BI"
+_FORMATO_CABECALHO_V4 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "8BIII3II"
 
 # Contagens de valores por campo, na mesma ordem do format string -- usadas
 # por _consumir() para dividir a tupla plana devolvida por struct.unpack.
@@ -109,13 +118,16 @@ _FORMATO_CABECALHO_V3 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CAN
 _CONTAGENS_CABECALHO_V1 = [1, 1, 1, 1, 1, 1, 1, 8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
 _CONTAGENS_CABECALHO_V2 = _CONTAGENS_CABECALHO_V1[:-1] + [8, ADS8688_MAX_CANAIS, 1]  # ...antes do header_crc32: +8 (grandeza) +8 (sonda) +1 (crc)
 _CONTAGENS_CABECALHO_V3 = _CONTAGENS_CABECALHO_V2[:-1] + [8, 1]  # v2 + 8 bytes de faixa_adc_por_canal antes do crc
+_CONTAGENS_CABECALHO_V4 = _CONTAGENS_CABECALHO_V3[:-1] + [1, 1, 1, 3, 1]  # v3 + 3 contadores + 3 atrasos antes do crc
 
 _TAMANHO_CAMPOS_V1 = struct.calcsize(_FORMATO_CABECALHO_V1)  # 408 bytes
 _TAMANHO_CAMPOS_V2 = struct.calcsize(_FORMATO_CABECALHO_V2)  # 408 + 8 + 8*32 = 672 bytes
 _TAMANHO_CAMPOS_V3 = struct.calcsize(_FORMATO_CABECALHO_V3)  # 672 + 8 = 680 bytes
+_TAMANHO_CAMPOS_V4 = struct.calcsize(_FORMATO_CABECALHO_V4)  # 680 + 24 = 704 bytes
 _OFFSET_HEADER_CRC32_V1 = _TAMANHO_CAMPOS_V1 - struct.calcsize("I")  # 404
 _OFFSET_HEADER_CRC32_V2 = _TAMANHO_CAMPOS_V2 - struct.calcsize("I")  # 668
 _OFFSET_HEADER_CRC32_V3 = _TAMANHO_CAMPOS_V3 - struct.calcsize("I")  # 676
+_OFFSET_HEADER_CRC32_V4 = _TAMANHO_CAMPOS_V4 - struct.calcsize("I")  # 700
 
 
 def _consumir(campos_tupla: tuple, contagens: list[int]) -> list:
@@ -179,6 +191,29 @@ class CabecalhoArquivo:
     # é desconhecida e quem usa deve cair no padrão histórico (ver
     # canais.resolver_faixas). Use faixa_adc_total_v_por_canal para os Volts.
     faixa_adc_codigo_por_canal: tuple[int, ...] = ()
+    # [INTEGRIDADE, v4] Contados pela PRU durante a captura (ver memoria_pru.h). None em v1-v3: o firmware antigo não
+    # media -- desconhecido, não "zero".
+    amostras_atrasadas: int | None = None
+    buffers_sobrescritos: int | None = None
+    quadros_preambulo_ruim: int | None = None
+    atraso_cs_iteracoes: tuple[int, ...] = ()       # (setup, hold, alto), iterações de 10 ns; () antes da v4
+
+    @property
+    def problemas_integridade(self) -> list[str]:
+        """Frases (sem prefixo) para o que a PRU contou de errado nesta captura; vazio = nada (ou v1-v3)."""
+        problemas = []
+        if self.buffers_sobrescritos:
+            problemas.append(f"{self.buffers_sobrescritos} buffer(s) sobrescrito(s) antes de gravados: a captura tem "
+                             "amostras PERDIDAS (descontinuidade a cada um) -- refaça a captura")
+        if self.amostras_atrasadas:
+            total = max(self.total_amostras_gravadas, 1)
+            problemas.append(f"{self.amostras_atrasadas} amostra(s) ({100 * self.amostras_atrasadas / total:.2g} %) saíram "
+                             "depois do instante previsto: a PRU não acompanhou a taxa pedida e a taxa real é MENOR "
+                             f"que os {self.frequencia_hz} Hz do cabeçalho")
+        if self.quadros_preambulo_ruim:
+            problemas.append(f"{self.quadros_preambulo_ruim} quadro(s) SPI com ruído na linha SDO: essas amostras são "
+                             "suspeitas -- confira a ligação ADC <-> BeagleBone")
+        return problemas
 
     @property
     def faixa_adc_total_v_por_canal(self) -> tuple[float | None, ...]:
@@ -246,6 +281,11 @@ class CabecalhoArquivo:
         }
         if self.faixa_adc_codigo_por_canal:  # só v3+: a faixa de v1/v2 é desconhecida, não vale gravar um valor inventado
             attrs["faixa_adc_codigo_por_canal"] = np.array(self.faixa_adc_codigo_por_canal, dtype=np.uint8)
+        if self.amostras_atrasadas is not None:  # só v4+: idem
+            attrs["amostras_atrasadas"] = self.amostras_atrasadas
+            attrs["buffers_sobrescritos"] = self.buffers_sobrescritos
+            attrs["quadros_preambulo_ruim"] = self.quadros_preambulo_ruim
+            attrs["atraso_cs_iteracoes"] = np.array(self.atraso_cs_iteracoes, dtype=np.uint32)
         return attrs
 
 
@@ -269,14 +309,15 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
     [SONDA/GRANDEZA] A versão do formato (campo versao_cabecalho, os 4
     bytes logo após o magic) é lida ANTES do resto -- só ela decide qual
     format string de struct.unpack usar para o restante dos bytes. v1 (sem
-    grandeza_por_canal/sonda_id_por_canal), v2 (com esses campos) e v3 (mais
-    faixa_adc_por_canal) têm layouts diferentes a partir do byte 404 (v1 x
-    v2) e do byte 668 (v2 x v3); tentar sempre desempacotar com o formato
-    mais novo quebraria a leitura de um '.bin' antigo (o header_crc32
-    apareceria no lugar errado, entre muitas outras coisas). Uma versão > 3
-    (formato futuro que este script ainda não conhece) é tratada como v3 na
-    tentativa de leitura -- mais provável de funcionar parcialmente do que
-    assumir uma versão antiga -- mas com aviso.
+    grandeza_por_canal/sonda_id_por_canal), v2 (com esses campos), v3 (mais
+    faixa_adc_por_canal) e v4 (mais os contadores de integridade e os atrasos
+    de CS) têm layouts diferentes a partir do byte 404 (v1 x v2), 668 (v2 x
+    v3) e 676 (v3 x v4); tentar sempre desempacotar com o formato mais novo
+    quebraria a leitura de um '.bin' antigo (o header_crc32 apareceria no
+    lugar errado, entre muitas outras coisas). Uma versão > 4 (formato futuro
+    que este script ainda não conhece) é tratada como v4 na tentativa de
+    leitura -- mais provável de funcionar parcialmente do que assumir uma
+    versão antiga -- mas com aviso.
     """
     try:
         with open(caminho, "rb") as f:
@@ -301,10 +342,15 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
         formato, contagens, offset_crc = _FORMATO_CABECALHO_V2, _CONTAGENS_CABECALHO_V2, _OFFSET_HEADER_CRC32_V2
         tem_grandeza_sonda = True
         tem_faixa_adc = False
-    else:
+    elif versao_cabecalho == 3:
         formato, contagens, offset_crc = _FORMATO_CABECALHO_V3, _CONTAGENS_CABECALHO_V3, _OFFSET_HEADER_CRC32_V3
         tem_grandeza_sonda = True
         tem_faixa_adc = True
+    else:
+        formato, contagens, offset_crc = _FORMATO_CABECALHO_V4, _CONTAGENS_CABECALHO_V4, _OFFSET_HEADER_CRC32_V4
+        tem_grandeza_sonda = True
+        tem_faixa_adc = True
+    tem_integridade = versao_cabecalho >= 4
 
     # Só versões MAIS NOVAS que a suportada são suspeitas: v1 e v2 são formatos
     # conhecidos (lidos acima) e não merecem aviso.
@@ -320,7 +366,19 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
     campos = struct.unpack(formato, bruto[:tamanho_campos])
 
     faixa_adc_bytes = None
-    if tem_faixa_adc:
+    integridade = (None, None, None, ())
+    if tem_integridade:
+        (
+            _magic, _versao, tamanho_cabecalho, timestamp_unix, frequencia_hz,
+            auto_seq_mask, num_canais, lista_canais_bytes, samples_per_buffer,
+            bytes_por_amostra, pru_clock_hz, sample_period_ticks,
+            primeira_amostra_descartada, duracao_pedida_segundos, blocos_gravados,
+            total_amostras_gravadas, titulo_bruto, descricao_bruto,
+            grandeza_bytes, sonda_id_bytes_lista, faixa_adc_bytes,
+            atrasadas, sobrescritos, preambulo, atrasos_cs, header_crc32,
+        ) = _consumir(campos, contagens)
+        integridade = (atrasadas, sobrescritos, preambulo, tuple(atrasos_cs))
+    elif tem_faixa_adc:
         (
             _magic, _versao, tamanho_cabecalho, timestamp_unix, frequencia_hz,
             auto_seq_mask, num_canais, lista_canais_bytes, samples_per_buffer,
@@ -416,6 +474,10 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
         grandeza_por_canal=grandeza_por_canal,
         sonda_id_por_canal=sonda_id_por_canal,
         faixa_adc_codigo_por_canal=faixa_adc_codigo_por_canal,
+        amostras_atrasadas=integridade[0],
+        buffers_sobrescritos=integridade[1],
+        quadros_preambulo_ruim=integridade[2],
+        atraso_cs_iteracoes=integridade[3],
     )
 
 
@@ -455,6 +517,11 @@ def imprimir_resumo_cabecalho(cabecalho: CabecalhoArquivo) -> None:
             partes.append(f"canal {canal}: ±{total_v / 2:g} V" if total_v is not None
                           else f"canal {canal}: código {codigo} (desconhecido)")
         log.info("  Faixa de entrada do ADC por canal: " + " | ".join(partes))
+    if cabecalho.atraso_cs_iteracoes and tuple(cabecalho.atraso_cs_iteracoes) != (200, 100, 100):
+        log.info("  Atrasos de CS da PRU: " + "/".join(str(a) for a in cabecalho.atraso_cs_iteracoes)
+                 + " iterações (o padrão validado é 200/100/100)")
+    for problema in cabecalho.problemas_integridade:
+        log.warning(f"integridade da captura: {problema}.")
     if cabecalho.total_amostras_gravadas > 0:
         duracao_real = cabecalho.duracao_real_segundos
         texto_duracao = f"{duracao_real:.3f} s reais" if duracao_real is not None else "duração real desconhecida"

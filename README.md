@@ -138,7 +138,7 @@ Quem for modificar o código Python deve começar por [`docs/arquitetura_softwar
 
 ```bash
 uv run --extra dev ruff check .   # estilo e erros comuns
-uv run --extra dev pytest         # 663 testes, ~1 min 40 s em paralelo (use -m "not e2e" para a versão rápida: 548 testes, ~30 s)
+uv run --extra dev pytest         # 682 testes, ~1 min 40 s em paralelo (use -m "not e2e" para a versão rápida: 564 testes, ~30 s)
 ```
 
 Os testes também conferem que o firmware (C) e o Python concordam sobre o formato do cabeçalho: se você mudar um lado, o `pytest` avisa até o outro acompanhar.

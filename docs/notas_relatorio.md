@@ -21,8 +21,10 @@
 > e a preparação da validação em bancada: `medir_captura.py`, o achado do
 > filtro de 15 kHz do ADC e o roteiro de laboratório (Marco 11), e a
 > primeira medição em bancada — a resposta em frequência da cadeia de tensão
-> (T3), com o script das figuras do relatório (Marco 12).
-> O trabalho pendente passou a ser o Marco 13. Ver
+> (T3), com o script das figuras do relatório (Marco 12), e a revisão do
+> firmware que achou e corrigiu um salto de tempo de ~7 µs a cada bloco e
+> passou a medir a integridade de cada captura (Marco 13).
+> O trabalho pendente passou a ser o Marco 14. Ver
 > `docs/melhorias-propostas.md` para os achados de engenharia que não são,
 > em si, matéria de relatório (itens de robustez, higiene de código e
 > organização de repositório).
@@ -81,7 +83,7 @@
   digital, suporte multi-canal completo e exportação para o formato HDF5;
   rotulagem de grandeza e sonda por canal no cabeçalho (versão 2) e correção
   em frequência de sondas de corrente (validada apenas com sinais
-  sintéticos); e código Python organizado em pacote, com 663 testes
+  sintéticos); e código Python organizado em pacote, com 682 testes
   automáticos e integração contínua, e preparação da validação em bancada
   (ferramenta de métricas e roteiro de laboratório); e a primeira medição em
   bancada: a resposta em frequência da cadeia de tensão (T3), com −3 dB em
@@ -494,7 +496,7 @@ proposital acima da Nyquist efetiva de um canal) e o round-trip
 resolução espectral (exemplo: 15.321,3 Hz injetado → 15.321,37 Hz
 encontrado por `--picos`). Essa validação confirma a correção
 matemática/numérica da implementação — não ainda a fidelidade do hardware
-de aquisição sobre um sinal real (ver Marco 13; o plano de testes está no Marco 11 e a primeira medição, no Marco 12).
+de aquisição sobre um sinal real (ver Marco 14; o plano de testes está no Marco 11 e a primeira medição, no Marco 12).
 
 **Relevância para o relatório e a apresentação:** este é, dos marcos de
 software, o mais diretamente ligado à pergunta de pesquisa do projeto. O
@@ -911,7 +913,69 @@ precisa desfazer (e o ruído que ela amplifica junto).
       padrão isso não prova que a PRU escreve `RANGE_SELn`).
 - [ ] Fotografia da montagem do T3.
 
-### Marco 13 — Trabalho Pendente
+### Marco 13 — Revisão do Firmware: Grade de Tempo e Integridade da Captura
+
+**Motivação:** o `medir_captura.py` acusava, na captura de 10 minutos do
+T7 (100 kS/s), uma "descontinuidade" de 0,7 amostra; e o risco do esquema
+ping-pong (Marco 3), de o ARM não esvaziar um buffer a tempo, nunca tinha
+sido medido. A pergunta era se dava para vigiar a captura sem piorar o
+gargalo de taxa, cuja origem também não estava isolada.
+
+**Achados (com as capturas reais e um simulador do assembly da PRU):**
+
+1. **Salto de ~7 µs a cada bloco.** Para não saturar o contador de ciclos
+   de 32 bits da PRU (Marco 2, problema 2), o firmware o zerava a cada troca
+   de buffer — mas depois da transação SPI da última amostra, de modo que a
+   primeira amostra do bloco seguinte saía ~1.394 ciclos (6,97 µs) além do
+   período. Medido em todas as 57 trocas da captura de 10 min: +0,697
+   amostra a 100 kS/s (desvio de ±0,002), +0,765 a 110 kS/s e +0,872 a
+   125 kS/s — exatamente a duração de uma transação. Abaixo de ~48,8 kS/s,
+   um bloco dura mais que 2³² ciclos e o contador ainda saturava no meio.
+   **Correção:** quando o contador passa de 2³¹ (~10,7 s), subtrai-se 2³¹
+   dele e do instante da próxima amostra ao mesmo tempo, sem perder tempo; o
+   bloco deixou de importar.
+2. **As primeiras amostras de cada captura saíam mais depressa que o
+   pedido**, porque o contador era zerado antes das ~10 transações de
+   configuração do ADC e a PRU "corria atrás". Agora ele é zerado logo antes
+   da primeira amostra.
+3. **O gargalo de taxa é o próprio quadro da PRU:** ~7 µs por amostra, dos
+   quais ~4 µs (57 %) são três esperas do CS calibradas empiricamente (2, 1
+   e 1 µs) contra 30, 10 e 30 ns pedidos pelo datasheet (tabela 7.6), e ~3 µs
+   são os 32 clocks do SPI feitos em software. O lado ARM tem ~10 s para
+   gravar cada bloco de 2 MB.
+
+**Integridade medida durante a captura, sem custo para a amostragem.** A
+PRU agenda cada amostra por instante absoluto e espera por ele; o que roda
+entre amostras cai nessa folga. Ela passou a contar, em registradores, as
+**amostras atrasadas** (taxa acima do alcançável), os **buffers
+sobrescritos** antes de o ARM gravá-los (o risco do ping-pong, agora
+detectado) e os **quadros com ruído na linha SDO** (o ADS8688 mantém essa
+linha em 0 durante o comando, §8.4.1.1.4 do datasheet — o mesmo sinal que o
+diagnóstico dos jumpers usava no Marco 4). Os contadores são publicados uma
+vez por bloco e gravados no cabeçalho (versão 4); o `ler_adc` também mede a
+taxa real pelo relógio do ARM. As esperas do CS ficaram configuráveis
+(`--atraso-cs`, padrão idêntico ao validado) para medir em bancada até onde
+a taxa sobe (T7e).
+
+**Como foi verificado:** um simulador do assembly (Python) executa o
+`spi_core.asm` de verdade; ele reproduz o defeito no firmware antigo
+(intervalos de 3.380 ciclos nas trocas, contra 2.000 pedidos) e confere, no
+novo, a grade de tempo, o rebase do contador e os três contadores, além de
+que a transação continua com os mesmos 1.166 ciclos do firmware validado.
+**Falta validar no hardware** (refazer a captura de 10 min do T7: a
+continuidade tem de sair sem saltos).
+
+**Relevância para o relatório:** é um exemplo de defeito de temporização
+que não aparece num bloco isolado (a análise espectral de 10 s não o
+enxerga), achado pela métrica de continuidade e explicado até a instrução;
+e da diferença entre *evitar* e *detectar* uma falha quando evitá-la (fazer
+a PRU esperar pelo ARM) mudaria justamente o instante das amostras.
+
+- [ ] Figura: intervalo entre amostras ao redor de uma troca de buffer,
+      antes e depois (simulador e captura real refeita).
+- [ ] Tabela: salto por taxa (100, 110, 125 kS/s) antes da correção.
+
+### Marco 14 — Trabalho Pendente
 
 Apresentar esta seção é tão importante quanto apresentar o que já foi
 realizado.
@@ -945,19 +1009,13 @@ realizado.
   amostragem real (T4), distorção (T5), diafonia (T6), ausência de amostras
   perdidas em taxas altas (T7) e *aliasing* (T8). Há leituras do T0 e do T2
   anotadas em `docs/Anotações - Teste de bancada.md`.
-- As margens de tempo do sinal de CS (*chip-select*) associadas às
-  transações SPI permanecem calibradas empiricamente, sem comparação
-  formal com os tempos mínimos especificados no datasheet do ADS8688 —
-  possível fonte de ganho de frequência máxima ainda não explorada. Um
-  ponto a favor de que ainda há margem real: a captura validada do Marco 6
-  já roda a 102,4 kHz, acima de uma estimativa antiga (e hoje considerada
-  desatualizada) do piso de velocidade da implementação — ver `docs/
-  melhorias-propostas.md`, itens 1.1–1.2, para o detalhamento.
-- Risco identificado e não mitigado: a troca de buffer no esquema
-  ping-pong não verifica se o processador principal concluiu o
-  processamento do buffer anterior antes de iniciar sua sobrescrita —
-  situação que pode ocasionar corrupção silenciosa de dados em frequências
-  de amostragem mais elevadas.
+- **Validar no hardware a revisão do Marco 13:** recompilar, refazer a
+  captura de 10 min (continuidade sem saltos nas trocas de buffer) e uma
+  abaixo de 48,8 kS/s com mais de 22 s.
+- **Medir até onde as esperas do CS podem cair** (T7e, método 4): os
+  mínimos do datasheet são 30/10/30 ns contra 2/1/1 µs hoje; só isso levaria
+  o teto de ~140 para ~330 kS/s, o necessário para cobrir mais da banda de
+  supraharmônicos.
 
 Encerrar a apresentação com esta seção, de forma objetiva, demonstra
 domínio preciso do estado atual do projeto e de seus próximos passos —
@@ -1006,7 +1064,7 @@ clareza valorizada por qualquer orientador.
 10. O código Python foi reorganizado em pacote, com 483 testes automáticos
     (inclusive um teste de contrato C↔Python) e integração contínua,
     preservando o comportamento anterior (61 execuções comparadas).
-11. A próxima etapa (Marco 13) é completar a validação quantitativa
+11. A próxima etapa (Marco 14) é completar a validação quantitativa
     mediante sinal conhecido injetado em bancada controlada (T4 a T11),
     incluindo a calibração da sonda de corrente.
 12. A preparação da bancada (Marco 11) acrescentou `medir_captura.py`
@@ -1020,6 +1078,12 @@ clareza valorizada por qualquer orientador.
     vez o fluxo de calibração e o cabeçalho v3 com hardware real; o
     `calibrar_sonda.sh` ganhou `--grandeza tensao`, e as figuras do relatório
     passaram a sair de um único script (`relatorio/gerar_figuras.py`).
+14. A revisão do firmware (Marco 13) achou, nas capturas reais, um salto de
+    6,97 µs a cada bloco de 1.048.576 amostras (o contador de ciclos era
+    zerado depois da última transação) e o corrigiu sem perder tempo; passou
+    a contar, sem custo para a amostragem, amostras atrasadas, buffers
+    sobrescritos e ruído na linha SDO (cabeçalho v4); e localizou o gargalo
+    de taxa nas esperas do CS (57 % do quadro, ~100× o mínimo do datasheet).
 
 ---
 

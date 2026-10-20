@@ -79,6 +79,7 @@ sudo ./ler_adc <frequencia_hz> [lista_de_canais] [opções]
 | `--grandeza C:G[,...]` | Grandeza de cada canal: `tensao`, `corrente` ou `temperatura` (ex.: `0:tensao,1:corrente`). Canal não citado = `tensao` |
 | `--sonda C:ID[,...]` | Id da sonda usada em cada canal (ex.: `1:fluke_i30_01`), até 31 caracteres. É só um texto no cabeçalho; a correção é feita depois, no `adc_tool.py` |
 | `--faixa-adc C:V[,...]` | **Faixa de entrada do ADC** de cada canal, como fundo de escala total em Volts: `20.48` (±10,24 V, o padrão), `10.24` (±5,12 V) ou `5.12` (±2,56 V). Ex.: `0:20.48,1:5.12`. Canal não citado = `20.48`. Veja [Faixa de entrada do ADC](#faixa-de-entrada-do-adc) |
+| `--atraso-cs S,H,A` | **Experimental.** Atrasos do CS em cada amostra, em passos de 10 ns: CS descendo → 1º clock, último clock → CS subindo, CS alto entre amostras. Padrão `200,100,100` (2/1/1 µs, os validados). Veja [Integridade e taxa máxima](#integridade-da-captura-e-taxa-máxima) |
 
 Exemplos:
 
@@ -106,6 +107,20 @@ O ADS8688 converte cada canal em 16 bits dentro de uma **faixa de entrada** prog
 * **O que o programa faz.** A PRU escreve a faixa de cada canal habilitado nos registradores `RANGE_SELn` do ADC **a cada captura** (o ADC guarda o valor entre capturas) e o `ler_adc` grava o código no cabeçalho (versão 3). Sem `--faixa-adc`, todos os canais ficam em `20.48`, o padrão de fábrica do ADC.
 * **Na análise, não precisa informar.** O `adc_tool.py`, o `medir_captura.py` e o `gerar_perfil_sonda.py` convertem cada canal em Volts com a faixa gravada no cabeçalho. Um `--faixa` digitado **vence**, mas avisa se divergir do cabeçalho. Capturas de versão 1 ou 2 do cabeçalho não registram a faixa: assumem `--faixa 10.24`, como sempre foi (confirme com um sinal de amplitude conhecida, passo T0 do roteiro).
 * As faixas unipolares do ADS8688 (0 a 5 V, 0 a 10 V) **não** são suportadas: o pós-processamento assume saída bipolar, com 0 V no meio da escala.
+
+### Integridade da captura e taxa máxima
+
+Enquanto captura, a PRU conta três coisas que indicariam dados ruins, sem custo para a amostragem (as contas ficam na folga entre uma amostra e a espera pela próxima, e só são publicadas a cada bloco). O `ler_adc` avisa a cada bloco, imprime um resumo no fim e grava os três no cabeçalho (versão 4):
+
+| Contador | O que significa | O que fazer |
+|---|---|---|
+| amostras atrasadas | A PRU chegou atrasada para tomar a amostra: a taxa pedida passou do que ela alcança (~140 kS/s com os atrasos padrão). A taxa real do arquivo é **menor** que a do cabeçalho | Peça uma taxa menor (até 100 kS/s é o seguro) |
+| buffers sobrescritos | A PRU começou a reescrever um bloco que o ARM ainda não tinha gravado: amostras **perdidas**. O `ler_adc` sai com código 3 | Refaça a captura; veja se o cartão SD está lento ou o sistema sobrecarregado |
+| quadros com ruído no SDO | O ADC mantém a linha de dados em 0 durante o comando de cada amostra; um 1 ali é ruído ou reflexo na ligação (o problema histórico dos jumpers longos) | Confira a ligação ADC ↔ BeagleBone; essas amostras são suspeitas |
+
+No fim, o `ler_adc` também mostra a **taxa real**, medida pelo relógio do ARM entre o primeiro e o último bloco (precisa de 2 blocos ou mais; incerteza ~0,02 %). O `adc_tool.py`, o `medir_captura.py` e o `gerar_perfil_sonda.py` avisam quando um contador do cabeçalho não é zero, e a calibração de sonda descarta a captura com amostras perdidas ou atrasadas.
+
+**O que limita a taxa.** Cada amostra leva ~7 µs na PRU: ~3 µs são os 32 clocks do SPI (feitos em software) e ~4 µs são três esperas do CS (2, 1 e 1 µs), calibradas na época do problema dos jumpers. O datasheet do ADS8688 pede só 30, 10 e 30 ns. Com `--atraso-cs` dá para medir em bancada até onde elas podem cair (teste T7e do [roteiro](roteiro_laboratorio.md)); só reduzi-las levaria o teto de ~140 para ~330 kS/s. Valores reduzidos são **experimentais**: confira o ruído, a distorção e a continuidade antes de usar uma captura feita assim.
 
 ### Números úteis
 
@@ -506,18 +521,22 @@ O cabeçalho começa com o texto `SHAN` e termina com um **CRC-32**; se o `adc_t
 
 | Campo | Descrição |
 |---|---|
-| `versao_cabecalho` | Versão do formato (hoje 3) |
+| `versao_cabecalho` | Versão do formato (hoje 4) |
 | `timestamp_unix` | Instante da captura (UTC) |
 | `frequencia_hz` | Frequência total de amostragem |
 | `lista_canais` | Canais capturados, em ordem crescente |
 | `grandeza_por_canal`, `sonda_id_por_canal` | Grandeza e sonda de cada canal (versão 2) |
 | `faixa_adc_por_canal` | Código da faixa de entrada do ADC de cada canal: 0 = ±10,24 V, 1 = ±5,12 V, 2 = ±2,56 V (versão 3) |
+| `amostras_atrasadas`, `buffers_sobrescritos`, `quadros_preambulo_ruim` | Integridade da captura, contada pela PRU (versão 4; veja [Integridade da captura](#integridade-da-captura-e-taxa-máxima)) |
+| `atraso_cs_iteracoes` | Atrasos do CS usados na captura (versão 4; `--atraso-cs`) |
 | `samples_per_buffer`, `bytes_por_amostra` | Geometria dos blocos |
 | `blocos_gravados`, `total_amostras_gravadas` | Totais reais, preenchidos ao final da captura |
 | `titulo`, `descricao` | Texto livre (`-t`, até 63 bytes; `-d`, até 255 bytes). Convenção para calibração: um trecho `ref: f=1000Hz amp=500mVpp` na descrição registra a frequência e a amplitude injetadas, e o `gerar_perfil_sonda.py` o lê; texto livre antes ou depois é ignorado |
 | `header_crc32` | Detecta corrupção do cabeçalho |
 
-Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Capturas sem cabeçalho](#capturas-sem-cabeçalho-arquivos-antigos)), e os de versão 1 e 2 do cabeçalho também. A tabela completa, com os deslocamentos de cada campo, está em [`contexto_projeto.md`](contexto_projeto.md) (seção `formato_bin_v2`, que descreve também a v3).
+Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Capturas sem cabeçalho](#capturas-sem-cabeçalho-arquivos-antigos)), e os de versão 1 a 3 do cabeçalho também. A tabela completa, com os deslocamentos de cada campo, está em [`contexto_projeto.md`](contexto_projeto.md) (seção `formato_bin_v2`, que descreve também a v3 e a v4).
+
+**Capturas feitas antes de out/2026** (cabeçalho versão 3 ou anterior) têm um salto de ~7 µs a cada bloco (~0,7 amostra a 100 kS/s), um defeito do firmware antigo já corrigido. Para análise espectral de um bloco só, ele não aparece; em análises de fase ou de continuidade que atravessam blocos, sim. O `medir_captura.py` o aponta (DESCONTINUIDADE "numa troca de buffer da PRU").
 
 ---
 
@@ -541,6 +560,9 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 | Aviso "CRC-32 do cabeçalho NÃO confere" | Cópia truncada ou arquivo corrompido | Copie o arquivo de novo e compare o tamanho. Os campos mostrados podem estar errados |
 | Aviso "canal N é de corrente mas não tem sonda/perfil resolvido" | A captura não registrou a sonda | Use `--sonda-perfil N:ARQUIVO.json` (ou refaça a captura com `--sonda`) |
 | `compactar_amostras.py`: "o zpaq não está instalado" | Falta o compressor | `sudo apt install zpaq`, ou `--rapido` (xz, pacote maior) |
+| `ler_adc`: "amostra(s) tomada(s) depois do instante previsto" | Taxa acima do que a PRU alcança (~140 kS/s) | Use até 100 kS/s; a taxa real foi menor que a gravada |
+| `ler_adc` sai com código 3, "buffer(s) sobrescrito(s)" | O ARM não gravou um bloco a tempo: amostras perdidas | Refaça; verifique o cartão SD e o que mais está rodando na BeagleBone |
+| `medir_captura`: DESCONTINUIDADE "numa troca de buffer da PRU" | Captura feita com o firmware anterior a out/2026 | Recompile o firmware (`./setup.sh`) e capture de novo |
 | A captura não termina e nenhuma linha `Bloco A gravado (...)` aparece | PRU parada ou presa | Confira `dmesg \| tail -n 20` e `cat /sys/class/remoteproc/remoteproc1/state`. Rode `./setup.sh` de novo |
 | Timestamp do cabeçalho errado | Relógio da BeagleBone desatualizado | Rode `scripts/set_date.sh` no computador |
 | `--fft` dá resultado estranho depois de aplicar passa-alta | Filtro removeu a fundamental | Veja o aviso em [FFT ou Welch?](#fft-ou-welch) e rode `--fft` e `--welch` separados |

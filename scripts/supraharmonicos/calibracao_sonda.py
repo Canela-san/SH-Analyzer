@@ -380,6 +380,13 @@ def processar_captura(caminho: Path, freq_alvo_hz: float, modo_referencia: str,
     derrubar o lote inteiro."""
     cabecalho = ler_cabecalho(caminho)
     offset_amostras = CABECALHO_TAMANHO_TOTAL if cabecalho is not None else 0
+    # [INTEGRIDADE, cabeçalho v4] Amostras perdidas ou fora do instante previsto distorcem o ganho medido: a captura
+    # sai do perfil, como uma saturada. Ruído no SDO só avisa (o preâmbulo ainda precisa ser validado em bancada).
+    if cabecalho is not None and (cabecalho.buffers_sobrescritos or cabecalho.amostras_atrasadas):
+        log.warning(f"pulando '{caminho.name}' -- {cabecalho.problemas_integridade[0]}.")
+        return None
+    if cabecalho is not None and cabecalho.quadros_preambulo_ruim:
+        log.warning(f"'{caminho.name}': {cabecalho.problemas_integridade[-1]}.")
 
     usa_referencia = modo_referencia == "shunt"
     try:
