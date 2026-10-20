@@ -9,7 +9,7 @@
 > apresentado sem essas marcações provém diretamente do código-fonte e dos
 > testes já registrados, podendo ser utilizado com confiança.
 >
-> Última atualização: 16/10/2026 — cobre o período compreendido entre a
+> Última atualização: 20/10/2026 — cobre o período compreendido entre a
 > última apresentação (placa ainda sem Assembly, modo manual, sem
 > `adc_tool.py`, sem suporte multi-canal) e o estado atual do repositório:
 > cabeçalho de metadados com exportação para HDF5, migração completa para o
@@ -19,8 +19,10 @@
 > correção de sondas de corrente (Marco 9) a reorganização do código
 > Python em pacote, com testes automáticos e integração contínua (Marco 10),
 > e a preparação da validação em bancada: `medir_captura.py`, o achado do
-> filtro de 15 kHz do ADC e o roteiro de laboratório (Marco 11).
-> O trabalho pendente passou a ser o Marco 12. Ver
+> filtro de 15 kHz do ADC e o roteiro de laboratório (Marco 11), e a
+> primeira medição em bancada — a resposta em frequência da cadeia de tensão
+> (T3), com o script das figuras do relatório (Marco 12).
+> O trabalho pendente passou a ser o Marco 13. Ver
 > `docs/melhorias-propostas.md` para os achados de engenharia que não são,
 > em si, matéria de relatório (itens de robustez, higiene de código e
 > organização de repositório).
@@ -79,9 +81,11 @@
   digital, suporte multi-canal completo e exportação para o formato HDF5;
   rotulagem de grandeza e sonda por canal no cabeçalho (versão 2) e correção
   em frequência de sondas de corrente (validada apenas com sinais
-  sintéticos); e código Python organizado em pacote, com 483 testes
+  sintéticos); e código Python organizado em pacote, com 572 testes
   automáticos e integração contínua, e preparação da validação em bancada
-  (ferramenta de métricas e roteiro de laboratório).
+  (ferramenta de métricas e roteiro de laboratório); e a primeira medição em
+  bancada: a resposta em frequência da cadeia de tensão (T3), com −3 dB em
+  17,3 kHz.
 
 ---
 
@@ -490,7 +494,7 @@ proposital acima da Nyquist efetiva de um canal) e o round-trip
 resolução espectral (exemplo: 15.321,3 Hz injetado → 15.321,37 Hz
 encontrado por `--picos`). Essa validação confirma a correção
 matemática/numérica da implementação — não ainda a fidelidade do hardware
-de aquisição sobre um sinal real (ver Marco 12; o plano de testes está no Marco 11).
+de aquisição sobre um sinal real (ver Marco 13; o plano de testes está no Marco 11 e a primeira medição, no Marco 12).
 
 **Relevância para o relatório e a apresentação:** este é, dos marcos de
 software, o mais diretamente ligado à pergunta de pesquisa do projeto. O
@@ -706,7 +710,7 @@ correção é só de **magnitude** (não restaura a fase, o que inviabiliza
 análises V×I), e a confiabilidade física do perfil depende da bancada.
 
 **Estado de validação:** todo este fluxo foi validado apenas com sinais
-**sintéticos**. Não há ainda calibração de uma sonda real em bancada.
+**sintéticos**. Não havia ainda calibração de uma sonda real em bancada (a primeira, da cadeia de tensão, veio no Marco 12).
 
 **Relevância para o relatório:** é um bom exemplo de revisão crítica do
 próprio trabalho — a auditoria tratou o fluxo como um terceiro faria,
@@ -822,7 +826,84 @@ Nyquist).
       incertezas).
 - [ ] Tabela e figuras do roteiro, "Dados e figuras para o relatório".
 
-### Marco 12 — Trabalho Pendente
+### Marco 12 — Primeira Medição em Bancada: Resposta em Frequência da Cadeia de Tensão (T3)
+
+**O que foi feito:** em 19/10/2026 foi executado o T3 do roteiro de
+laboratório — a primeira medição quantitativa do instrumento contra uma
+referência independente e o primeiro uso, com hardware real, do fluxo
+`calibrar_sonda.sh` → `gerar_perfil_sonda.py`. Configuração (registrada no
+commit do perfil): canal 1 (divisor de tensão), 100 kS/s, faixa de entrada
+de ±10,24 V lida do cabeçalho v3 de cada captura, 48 frequências de 50 Hz a
+45 kHz, referência = tensão RMS lida no osciloscópio no nó de entrada do
+divisor, `--ganho 19,357` (1 ÷ razão nominal do divisor). Resultado:
+`scripts/sondas/cadeia_tensao.json`. Os cabeçalhos v3 das capturas reais
+foram conferidos pelo `calibrar_sonda.sh` na coleta e lidos pelo gerador de
+perfil (faixa marcada como confiável no JSON).
+
+**Resultado:** ganho plano até alguns kHz e queda de 12,5 dB em 45 kHz. O
+ajuste por mínimos quadrados (em dB) de um passa-baixa de 2ª ordem,
+H(s) = K·ω0² / (s² + (ω0/Q)·s + ω0²), deu:
+
+| Parâmetro | Valor |
+|---|---|
+| K (ganho de baixa frequência, relativo ao divisor nominal) | 0,9969 ± 0,0028 (−0,03 dB) |
+| f0 | 24,06 ± 0,21 kHz |
+| Q | 0,540 ± 0,006 |
+| f−3dB | 17,26 ± 0,16 kHz |
+| Polos ÷ 2π | −22,3 ± j9,1 kHz (quase amortecimento crítico) |
+| Resíduo RMS | 0,13 dB |
+
+O critério BIC rejeita o modelo de 1ª ordem (ΔBIC = +142) e não justifica
+um polo real adicional, como uma capacitância parasita do divisor
+(ΔBIC = +3,9). A frequência de −3 dB é da cadeia inteira (divisor +
+ADS8688) e fica acima dos ~15 kHz estimados a partir do datasheet
+(seção 8.3.5) — confirma o filtro previsto no Marco 11 e dá o seu valor real.
+
+**Limitações (a declarar no texto):**
+1. **Só magnitude.** A fase não foi medida; H(s) supõe sistema de fase
+   mínima (válido para um filtro analógico sem atraso puro). A medição da
+   fase fica como trabalho futuro: osciloscópio na entrada do divisor e na
+   linha CS do ADS8688, que retém a amostra na borda de descida do CS
+   (datasheet, seção 8.4.1.1.1).
+2. **Uma leitura por frequência (n = 1).** A incerteza dos parâmetros foi
+   estimada pela dispersão dos resíduos, supondo o modelo correto. Os
+   resíduos entre 3 e 9 kHz (até +0,4 dB) são maiores que a dispersão em
+   baixa frequência (0,06 dB): repetir o T3 com `--repeticoes 3` dirá se é
+   leitura do osciloscópio ou desvio do modelo.
+3. **Faixa curta acima do corte.** Os pontos param em 2,6 × f−3dB, o que
+   correlaciona f0 e Q (−0,87). Medir |H| acima da Nyquist por
+   subamostragem de senoides puras estenderia a curva (exige mudanças nos
+   scripts; ver `docs/melhorias-propostas.md`, item 2.11).
+
+**Consequências no software:**
+- Os textos do `calibrar_sonda.sh` eram todos de corrente (o operador tinha
+  de ler "tensão RMS no shunt" como "tensão na entrada do divisor"). O
+  script ganhou `--grandeza tensao` (grava `--grandeza <canal>:tensao` no
+  cabeçalho, como em produção) e o `referencia_externa.csv` a coluna
+  `tensao_rms_V`, lida pelo gerador de perfil sem o truque de
+  `--resistencia-shunt 1`.
+- A revisão do script mostrou que, no modo de 2 canais, o filtro do ADC é
+  igual nos dois canais e se cancela na razão sonda/referência: o perfil
+  desse modo não corrige o filtro do ADC (documentado no script e no guia).
+- `relatorio/gerar_figuras.py` gera as figuras do relatório com estilo
+  único (PDF vetorial no tamanho final, texto composto pelo LaTeX, vírgula
+  decimal via siunitx) e grava os números citados no texto como macros
+  (`relatorio/figuras/perfil_cadeia_tensao.tex`). A primeira figura é a
+  curva do T3 com o ajuste e os resíduos.
+
+**Relevância para o relatório:** é o primeiro resultado medido do
+instrumento e o núcleo da seção de resultados sobre a banda de
+supraharmônicos de tensão: quantifica a atenuação que a correção por perfil
+precisa desfazer (e o ruído que ela amplifica junto).
+
+- [ ] ⚠️ **Confirme com você mesmo:** configuração do osciloscópio no T3
+      (medida de RMS usada, média, limite de banda, escala vertical), se o
+      gerador estava em *High-Z*, e se o firmware da PRU usado foi o novo,
+      montado com `clpru` (o `ler_adc` gravou cabeçalho v3, mas com a faixa
+      padrão isso não prova que a PRU escreve `RANGE_SELn`).
+- [ ] Fotografia da montagem do T3.
+
+### Marco 13 — Trabalho Pendente
 
 Apresentar esta seção é tão importante quanto apresentar o que já foi
 realizado.
@@ -838,26 +919,24 @@ realizado.
   realizar a medição com o SH-Analyzer, e comparar o espectro medido (via
   `--welch`/`--agrupar-bandas`/`--picos`, Marco 7) com o sinal efetivamente
   injetado.
-- **Validação em hardware do cabeçalho de metadados (Marcos 8 e 9):** a
-  implementação (inclusive a versão 2, com grandeza e sonda por canal) foi
-  verificada por testes automatizados com arquivos sintéticos (offsets de
-  campo, round-trip de CRC, perfil de memória, contrato com o código C), mas
-  ainda não exercitada numa captura real na BeagleBone.
-- **Calibração de uma sonda real em bancada (Marco 9):** exercitar o fluxo
-  `calibrar_sonda.sh` → `gerar_perfil_sonda.py` → `adc_tool.py` com uma sonda
-  real e conferir a exatidão do perfil contra uma referência independente.
+- **Cabeçalho de metadados em hardware (Marcos 8 e 9):** as capturas do T3
+  (Marco 12) saíram com o cabeçalho v3 e foram conferidas pelo
+  `calibrar_sonda.sh` e lidas pelo gerador de perfil. Falta exercitar as
+  faixas de entrada menores (±5,12 e ±2,56 V, `--faixa-adc`) e a sonda
+  registrada num canal de corrente.
+- **Calibração da sonda de corrente em bancada (Marco 9, T10 do roteiro):**
+  o fluxo `calibrar_sonda.sh` → `gerar_perfil_sonda.py` já rodou com
+  hardware real na cadeia de tensão (Marco 12); falta a sonda de corrente
+  (SCT013) e conferir a exatidão de um perfil contra uma referência
+  independente, em frequências que não entraram na calibração (*hold-out*).
   Propostas de evolução (fase complexa, perfil absoluto, validação por
   frequências retidas) estão em `docs/auditoria_perfil_sonda.md`, seção 4.
-- **`calibrar_sonda.sh` ainda não foi usado numa bancada real:** a reescrita
-  (que corrigiu, entre outros, a checagem de Nyquist pela taxa total em vez
-  da efetiva por canal) foi validada com 59 testes contra um `ler_adc`
-  simulado; falta exercitar a interação com o hardware (ver
-  `docs/melhorias-propostas.md`, item 2.10). Agora o padrão é um canal só,
-  com a corrente real lida no osciloscópio.
-- **Executar o `docs/roteiro_laboratorio.md`**, que cobre o item anterior e
-  confirma ou refuta as hipóteses do Marco 11: filtro de ~15 kHz do ADC
-  (T3), taxa de amostragem real (T4), diafonia (T6) e ausência de amostras
-  perdidas em taxas altas (T7).
+- **Completar o T3:** repetir com `--repeticoes 3` (incerteza por ponto e
+  ajuste ponderado) e, se possível, medir a fase (Marco 12, limitações).
+- **Executar o restante do `docs/roteiro_laboratorio.md`:** taxa de
+  amostragem real (T4), distorção (T5), diafonia (T6), ausência de amostras
+  perdidas em taxas altas (T7) e *aliasing* (T8). Há leituras do T0 e do T2
+  anotadas em `docs/Anotações - Teste de bancada.md`.
 - As margens de tempo do sinal de CS (*chip-select*) associadas às
   transações SPI permanecem calibradas empiricamente, sem comparação
   formal com os tempos mínimos especificados no datasheet do ADS8688 —
@@ -919,15 +998,20 @@ clareza valorizada por qualquer orientador.
 10. O código Python foi reorganizado em pacote, com 483 testes automáticos
     (inclusive um teste de contrato C↔Python) e integração contínua,
     preservando o comportamento anterior (61 execuções comparadas).
-11. A próxima etapa (Marco 12) é a validação quantitativa mediante sinal conhecido
-    injetado em bancada controlada, incluindo a primeira validação em
-    hardware real do cabeçalho de metadados e a calibração de uma sonda
-    real.
+11. A próxima etapa (Marco 13) é completar a validação quantitativa
+    mediante sinal conhecido injetado em bancada controlada (T4 a T11),
+    incluindo a calibração da sonda de corrente.
 12. A preparação da bancada (Marco 11) acrescentou `medir_captura.py`
     (métricas para o relatório), o achado do filtro de ~15 kHz do ADS8688 e
     do arredondamento dos ticks da taxa de amostragem, e um roteiro de 12
     testes com critérios de aceitação; o ensaio sintético dele corrigiu um
     erro de até 1,8 % no estimador de amplitude do gerador de perfil.
+13. A primeira medição em bancada (Marco 12) mediu a resposta da cadeia de
+    tensão de 50 Hz a 45 kHz: um passa-baixa de 2ª ordem com f0 = 24,1 kHz,
+    Q = 0,54 e −3 dB em 17,3 kHz (resíduo de 0,13 dB), usando pela primeira
+    vez o fluxo de calibração e o cabeçalho v3 com hardware real; o
+    `calibrar_sonda.sh` ganhou `--grandeza tensao`, e as figuras do relatório
+    passaram a sair de um único script (`relatorio/gerar_figuras.py`).
 
 ---
 
@@ -963,7 +1047,9 @@ clareza valorizada por qualquer orientador.
 - [ ] (Marco 9) Espectro de corrente com e sem `--sem-correcao-sonda`
 - [ ] (Marco 9) Fotografia da bancada de calibração
 - [ ] (Marco 10) Aba *Actions* do GitHub com a CI passando
-- [ ] (Marco 11) Resposta em frequência da cadeia de tensão (T3), com a curva teórica do datasheet por cima
+- [x] (Marco 12) Resposta em frequência da cadeia de tensão (T3): `relatorio/figuras/perfil_cadeia_tensao.pdf`, com o ajuste de 2ª ordem e os resíduos
+- [ ] (Marco 12) A mesma figura com a curva teórica do datasheet por cima (opcional)
+- [ ] (Marco 12) Fotografia da montagem do T3
 - [ ] (Marco 11) Onda quadrada: teoria × ADC sem correção × ADC com perfil × osciloscópio (T9a)
 - [ ] (Marco 11) Tabela de continuidade por taxa de amostragem (T7)
 
@@ -988,7 +1074,9 @@ caminho percorrido até ele:
    Vale complementar com uma análise `--welch`/`--picos` (Marco 7) sobre a
    mesma captura ou uma equivalente: o gráfico dos 5 canais mostra que a
    *aquisição* funciona; a extração de picos supraharmônicos mostra que a
-   *análise* — a pergunta de pesquisa em si — também funciona.
+   *análise* — a pergunta de pesquisa em si — também funciona. A curva do T3
+   (Marco 12) é o primeiro resultado *quantitativo*: entra aqui, com o
+   ajuste do passa-baixa e o valor medido de −3 dB.
 4. **Trajetória técnica — principais desafios e suas soluções (20 min):**
    cronologia detalhada (Marcos 2, 4 e 6), apresentada como um relato dos
    problemas reais de engenharia encontrados e de como cada um foi
@@ -997,8 +1085,8 @@ caminho percorrido até ele:
    apresentado com menor profundidade que a etapa 4, por não envolver um
    processo de depuração de hardware; ênfase na motivação (rastreabilidade,
    interoperabilidade) e na verificação quantitativa de memória.
-6. **Próximos passos (5 min):** Marcos 11 e 12 — plano de validação em bancada, validação quantitativa e
-   melhorias de desempenho identificadas, porém ainda não implementadas.
+6. **Próximos passos (5 min):** Marcos 11 e 13 — plano de validação em bancada, o que falta da validação
+   quantitativa e melhorias de desempenho identificadas, porém ainda não implementadas.
 7. **Perguntas (5 min).**
 
 > Nota: os Marcos 9 e 10 (sondas de corrente; testes e integração contínua) não
@@ -1035,12 +1123,14 @@ caminho percorrido até ele:
   qualitativa), a validação numérica do pipeline de análise espectral com
   sinais sintéticos (Marco 7), a verificação quantitativa do uso de memória
   na exportação HDF5, a auditoria sintética do fluxo de sondas (Marco 9) e, quando disponível, a validação quantitativa com
-  sinal conhecido (Marcos 11 e 12) — esta última seção constitui o núcleo
-  científico do relatório.
+  sinal conhecido (Marcos 11 a 13), começando pela resposta em frequência
+  da cadeia de tensão (T3, Marco 12: ajuste de um passa-baixa de 2ª ordem,
+  com as hipóteses declaradas) — esta última seção constitui o núcleo
+  científico do relatório. As figuras saem de `relatorio/gerar_figuras.py`.
 - **Discussão e Limitações:** riscos e itens em aberto (ausência de
   backpressure no esquema ping-pong, margens de CS não comparadas
-  formalmente ao datasheet, cabeçalho de metadados ainda não validado em
-  hardware real) — a explicitação dos limites do próprio trabalho é parte
+  formalmente ao datasheet, faixas de entrada menores do ADC ainda não
+  exercitadas em hardware, correção só de magnitude e fase não medida) — a explicitação dos limites do próprio trabalho é parte
   constitutiva de um relatório científico rigoroso.
 - **Conclusão e Trabalhos Futuros:** aumento da frequência de amostragem,
   diagnóstico de gargalos e expansão do uso da DDR reservada.

@@ -23,8 +23,8 @@
 
 | Status | Itens |
 |---|---|
-| ✅ **Concluído** | 1.5 (modo automático AUTO_RST, e o comentário obsoleto de `spi_core.asm` corrigido), 2.9 (`set_date.sh` sem senha no arquivo), 2.10 (`calibrar_sonda.sh` reescrito: Nyquist efetiva, conferência de cada captura, novos modos e testes), 1.8 (parcial: checagem de `fwrite()` + `--blocos`/`--duracao`), 1.9 (parte Python: mitigado por `tests/test_contrato_firmware.py`), 1.10 (parcial: causa raiz da saturação — jumpers), 2.1 (parcial: `backup pre-assembly/` removido), 2.2 (`.gitignore`), 2.3 (metadados — via cabeçalho embutido, não sidecar), 2.5 (parcial: lado Python — suíte `pytest` de 483 testes, `ruff` e CI no GitHub Actions), 2.7 (parcial: README, guia de uso, arquitetura do software e contexto), 2.8 (arquivo já se chama `adc_tool.py`) |
-| 🆕 **Novo** | Melhorias do fluxo de perfil de sonda vindas da auditoria (2.11); achados do datasheet e do código a confirmar em bancada: filtro de 15 kHz do ADS8688 e taxa de amostragem real (2.12); `medir_captura.py` e `docs/roteiro_laboratorio.md` (já entregues); faixa de entrada do ADC por canal, `--faixa-adc` (2.13: implementada, falta bancada) |
+| ✅ **Concluído** | 1.5 (modo automático AUTO_RST, e o comentário obsoleto de `spi_core.asm` corrigido), 2.9 (`set_date.sh` sem senha no arquivo), 2.10 (`calibrar_sonda.sh` reescrito: Nyquist efetiva, conferência de cada captura, novos modos e testes), 1.8 (parcial: checagem de `fwrite()` + `--blocos`/`--duracao`), 1.9 (parte Python: mitigado por `tests/test_contrato_firmware.py`), 1.10 (parcial: causa raiz da saturação — jumpers), 2.1 (parcial: `backup pre-assembly/` removido), 2.2 (`.gitignore`), 2.3 (metadados — via cabeçalho embutido, não sidecar), 2.5 (parcial: lado Python — suíte `pytest` de 572 testes, `ruff` e CI no GitHub Actions), 2.7 (parcial: README, guia de uso, arquitetura do software e contexto), 2.8 (arquivo já se chama `adc_tool.py`) |
+| 🆕 **Novo** | Melhorias do fluxo de perfil de sonda vindas da auditoria e do T3 (2.11: fase, subamostragem acima da Nyquist, repetições); achados do datasheet e do código a confirmar em bancada: filtro de 15 kHz do ADS8688 (**medido no T3: −3 dB em 17,3 kHz na cadeia de tensão**) e taxa de amostragem real (2.12); `medir_captura.py` e `docs/roteiro_laboratorio.md` (já entregues); faixa de entrada do ADC por canal, `--faixa-adc` (2.13: implementada, falta bancada) |
 | 🔄 **Ainda aberto, com nota atualizada** | 1.1–1.4 (o "piso" antigo de ~48 kHz parece estar desatualizado — ver nota abaixo), 1.6, 1.7, 1.9 (revisado), 2.4, 2.5 (parte C/CI), 2.6, 2.7 (`licoes-aprendidas.md`), 2.11, 2.12 |
 
 ---
@@ -504,7 +504,7 @@ Baixo. **Status:** ainda em aberto.
 ### 2.5 Testes e CI
 
 ✅ **Atualização de 2026-10 — lado Python concluído.** Existe uma suíte `pytest` versionada
-em `tests/` (483 testes, ~2 min; `-m "not e2e"` roda em ~10 s), cobrindo unidades por módulo,
+em `tests/` (572 testes; `-m "not e2e"`, 460 testes, roda em ~1 min), cobrindo unidades por módulo,
 CLI, o contrato C↔Python (`test_contrato_firmware.py`), as regras de arquitetura
 (`test_arquitetura.py`), as dependências e o fluxo completo de perfil de sonda
 (`tests/e2e/`). O `ruff` cuida do estilo. O GitHub Actions (`.github/workflows/ci.yml`)
@@ -739,10 +739,17 @@ imprime e grava a resposta do conjunto (−3 dB, inclinação, amplificação de
 impedância); a planura do gerador entra no perfil; injetar tensão no lugar da saída da sonda mede o frontend e
 o ADC, sem a sonda de corrente.
 
-**Ação que sobra:** o arquivo está sem permissão de execução no Git (`100644`); ao fazer o commit,
-use `git update-index --chmod=+x firmware/calibrar_sonda.sh` (ou `git add --chmod=+x`).
-**Ainda falta** rodar o script na bancada real: os testes usam um `ler_adc` falso, então o que
-não foi exercitado é a interação com o hardware (tempo real de captura, `/dev/mem`, PRU).
+**Atualização (2026-10-19/20, primeira bancada real e cadeia de tensão).** O script foi usado no T3
+(48 pontos, cadeia de tensão, `--ref-externa`): a interação com o hardware (tempo real de captura,
+`/dev/mem`, PRU, cabeçalho v3) funcionou. Os textos, porém, eram todos de corrente ("tensão RMS no shunt"),
+e o script ganhou `--grandeza corrente|tensao`: vai para o cabeçalho de cada captura, é conferida, fica no
+plano (plano antigo sem a chave = corrente) e troca as instruções; com `tensao` a leitura do osciloscópio vai
+para a coluna `tensao_rms_V`, que o gerador de perfil usa sem `--resistencia-shunt`. A revisão completa que
+acompanhou essa mudança corrigiu: a coleta nova sobre pasta existente que escolhia "retomar" usava as
+repetições e os blocos padrão em vez dos do plano; o `scp` sugerido copiava para o lugar errado; o tempo
+limite agora manda SIGINT ao `ler_adc` (que fecha o arquivo) e KILL 10 s depois; e o modo de 2 canais passou
+a avisar que o filtro do ADC, igual nos dois canais, se cancela na razão (o perfil desse modo não o corrige).
+O arquivo já está executável no Git (`100755`).
 
 ---
 
@@ -759,9 +766,13 @@ decisão de projeto ou de bancada. Resumo, com o status atual (nenhuma implement
 | Teto de ganho da correção — seção 4.4 | Evita "corrigir" ruído em frequências onde a sonda atenua muito | Baixo | Sim: altera o resultado |
 | Atributo HDF5 `correcao_sonda_aplicada` — seção 4.5 | Avisar quem abre o `.h5` fora do `adc_tool.py` | Baixo | Não |
 | Aviso de perfil velho (`data_calibracao`) | Lembrar de recalibrar | Baixo | Não |
+| **Medir a fase** da cadeia (vinda do T3) | Validar a função de transferência ajustada só pela magnitude (hoje sob hipótese de fase mínima) e preparar o ganho complexo. Método: osciloscópio na entrada da cadeia e na linha CS do ADS8688, que retém a amostra na borda de descida (datasheet 8.4.1.1.1); o difícil é saber qual borda do CS é a 1ª amostra gravada (contar os quadros de configuração da PRU, `tests/pru_sim.py`, ou marcá-la num GPIO) — errar por uma amostra (10 µs a 100 kS/s) é da ordem do atraso de grupo do filtro (~12 µs) | Médio | Não (o GPIO tocaria a PRU) |
+| **Subamostragem** para medir \|H\| acima da Nyquist (vinda do T3) | Uma senoide pura acima de fs/2 aparece em \|f − k·fs\| com a amplitude \|H(f)\|, porque o filtro age antes da amostragem: estende a curva à banda de supraharmônicos sem aumentar a taxa e separa f0 de Q no ajuste (hoje correlação −0,87 com dados só até 45 kHz). Exige que o `calibrar_sonda.sh` aceite f > Nyquist e que o gerador de perfil procure o tom na frequência dobrada | Médio | Não |
+| Repetições no T3 (`--repeticoes 3`) | Incerteza medida por ponto: o `relatorio/gerar_figuras.py` passa a fazer o ajuste ponderado e o χ² diz se o modelo explica os dados | Baixo (bancada) | Não |
 
-**Pré-requisito de tudo isso:** executar uma calibração real de sonda em bancada. Sem ela, a
-exatidão do perfil contra uma referência independente continua desconhecida (ver
+**Pré-requisito:** a primeira calibração real foi feita (cadeia de tensão, T3, 2026-10-19:
+`scripts/sondas/cadeia_tensao.json`). Falta a sonda de corrente (T10) e conferir a exatidão de um
+perfil contra uma referência independente, em frequências fora da calibração (ver
 `docs/contexto_projeto.md`, `status_validacao`).
 
 **Impacto:** Alto para quem for analisar corrente. **Esforço:** variável (tabela). **Toca PRU
@@ -772,7 +783,9 @@ asm:** não.
 ### 2.12 🆕 Achados do datasheet e do código que a bancada precisa confirmar
 
 Ao planejar o roteiro de laboratório (`docs/roteiro_laboratorio.md`), a leitura do datasheet do
-ADS8688 e do `ler_adc.c` levantou três pontos. Nenhum foi medido em hardware ainda.
+ADS8688 e do `ler_adc.c` levantou três pontos. O primeiro já foi medido (T3, 2026-10-19): na cadeia de
+tensão, um passa-baixa de 2ª ordem com f0 = 24,1 kHz, Q = 0,54 e **−3 dB em 17,3 kHz** (−12,5 dB em 45 kHz);
+os outros dois continuam sem medição.
 
 | Achado | Consequência | Proposta | Teste do roteiro |
 |---|---|---|---|
@@ -797,7 +810,8 @@ as ferramentas Python leem a faixa do cabeçalho (ver `docs/guia_de_uso.md`, "Fa
 próprio ADC cai menos (SNR típico 92, 91 e 89 dB nas três faixas, segundo o datasheet): meça no roteiro (T2).
 O canal de **tensão** da rede não melhora: com o divisor de 0,0516, 127 V RMS dão 9,3 V de pico, 91% de ±10,24 V.
 
-**O que ainda falta (nada disso foi executado em hardware):**
+**O que ainda falta.** As capturas do T3 (2026-10-19) já saíram com cabeçalho v3, mas na faixa padrão
+(±10,24 V), o que não prova que a PRU escreve `RANGE_SELn`; nenhuma captura registrada usou ±5,12 ou ±2,56 V:
 
 1. Montar com `clpru` (`make` em `firmware/`) e carregar na PRU: o `spi_core.asm` foi validado só no simulador
    `tests/pru_sim.py` (lógica; não a sintaxe do `clpru` nem a temporização). O `.asm` passou de 1.822 para 1.841
@@ -814,9 +828,9 @@ só está pronto depois de compilado com `clpru` e validado no hardware.
 
 | # | Item | Impacto | Esforço | Toca PRU asm? | Status |
 |---|------|---------|---------|----------------|--------|
-| 2.11 | Fluxo de perfil de sonda: fase, perfil absoluto, hold-out | Alto (p/ corrente) | Variável | Não | 🆕 aberto (precisa de bancada) |
+| 2.11 | Fluxo de perfil de sonda: fase, subamostragem, perfil absoluto, hold-out | Alto (p/ corrente) | Variável | Não | 🆕 aberto (1ª calibração real feita no T3) |
 | 2.13 | Faixa de entrada do ADC por canal (`--faixa-adc`): compilar com `clpru` e validar | Médio–Alto (canais de sinal pequeno) | Baixo (bancada) | Sim | 🆕 implementado, aguarda bancada |
-| 2.12 | Filtro de 15 kHz do ADS8688 e taxa real (ticks inteiros): medir e decidir | Alto (banda 50–150 kHz) | Baixo | Não | 🆕 aberto (precisa de bancada: T3, T4, T8) |
+| 2.12 | Filtro de 15 kHz do ADS8688 e taxa real (ticks inteiros): medir e decidir | Alto (banda 50–150 kHz) | Baixo | Não | 🆕 filtro medido (T3: −3 dB em 17,3 kHz); faltam T4 e T8 |
 | 1.6 | Detecção/backpressure de overrun no ping-pong | Alto | Baixo–Médio | Sim (versões mais completas) | Aberto |
 | 1.3 | Validar frequência pedida contra piso real | Alto | Baixo | Não | Aberto (depende de 1.2) |
 | 1.2 | Instrumentar e medir onde o tempo por transação vai | Alto | Baixo | Sim (temporário) | Aberto — mais urgente após achado do item 1.1 |
@@ -838,8 +852,8 @@ cabeçalho embutido, 2.8 — nome `adc_tool.py`, 2.9 — `set_date.sh` sem senha
 um pacote com testes e CI (2.5, parte Python), e o cabeçalho v2 com as ferramentas de
 calibração de sondas.
 
-**Sugestão de ordem de ataque:** comece por **rodar o `calibrar_sonda.sh` numa bancada real**
-(2.10 foi validado só com um `ler_adc` falso e é pré-requisito do 2.11). Em seguida, os itens
+**Sugestão de ordem de ataque:** o `calibrar_sonda.sh` já rodou numa bancada real (T3); o próximo
+passo do fluxo de sondas é a **sonda de corrente (T10)**, pré-requisito do 2.11. Em seguida, os itens
 puramente do lado ARM/C e de processo (1.8 restante, 1.3, 2.4–2.6) — baixo risco, ganho
 imediato de robustez e de apresentação do repositório. Em paralelo, confirmar o isolador
 contra o BOM (1.10) para fechar de vez esse item. Só depois disso partir para a medição

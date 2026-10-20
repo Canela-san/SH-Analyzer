@@ -41,6 +41,9 @@ scripts/
   sondas/*.json           perfis de sonda gerados (dados, não código); a pasta nasce no 1º perfil
   supraharmonicos/        ← TODA a lógica Python (seção 3)
 tests/                    pytest (seção 7)
+relatorio/gerar_figuras.py  figuras do relatório/artigo (estilo único, PDF vetorial + macros siunitx);
+                          importa o pacote, mas não faz parte dele (receita na seção 8)
+relatorio/figuras/        saída do script acima
 docs/                     contexto_projeto.md, auditoria_perfil_sonda.md, este arquivo...
 .github/workflows/ci.yml  testes automáticos no GitHub (seção 7.1)
 pyproject.toml            dependências, configuração de pytest e ruff
@@ -181,9 +184,9 @@ O caminho quente é tudo que toca **todas** as amostras de uma captura (dezenas 
 ## 7. Testes
 
 ```bash
-uv run --extra dev pytest                 # tudo: 483 testes (~2 min)
-uv run --extra dev pytest -m "not e2e"    # rápido: 396 testes (~10 s) — use no dia a dia
-uv run --extra dev pytest -m e2e          # só ponta a ponta: 87 testes (~1,5 min)
+uv run --extra dev pytest                 # tudo: 572 testes (alguns minutos)
+uv run --extra dev pytest -m "not e2e"    # rápido: 460 testes (~1 min) — use no dia a dia
+uv run --extra dev pytest -m e2e          # só ponta a ponta: 112 testes (a maior parte do tempo)
 uv run --extra dev ruff check .
 ```
 
@@ -206,6 +209,7 @@ uv run --extra dev ruff check .
 | `test_arquitetura.py` | camadas sem ciclo, sem `print`/`SystemExit` em biblioteca, matplotlib/h5py confinados, entradas finas |
 | `test_dependencias.py` | PEP 723 das entradas == `pyproject.toml` |
 | `test_calibrar_sonda.py` (+ `ler_adc_falso.py`) | `firmware/calibrar_sonda.sh` de ponta a ponta contra um `ler_adc` falso: plano de frequências, conferência de cada captura (saturação, nível, frequência, CRC, disco cheio), menu C/R/P/A, modos `retomar`/`refinar`/`adensar`/`refazer`/`resumo`, Ctrl+C, `--amplitude`/`--amplitude-por-ponto` (metadados `ref:` no `.bin`, manifesto, plano, menu interativo, perfil gerado sem flag), `--grandeza tensao` (cabeçalho, textos, coluna `tensao_rms_V`, 2 canais, plano antigo = corrente), e que as constantes do cabeçalho e a gramática de amplitude batem com o firmware e o Python. Marcado `e2e` (usa `bash`; é pulado fora do Linux) |
+| `test_relatorio.py` | `relatorio/gerar_figuras.py`: o ajuste do passa-baixa recupera K, f0 e Q conhecidos (com e sem pesos medidos) e vence os outros modelos pelo BIC; f−3dB, polos e incerteza no formato do siunitx; a figura e as macros são geradas (sem LaTeX, para rodar no CI) |
 | `e2e/test_perfil_sonda_e2e.py` | fluxo completo por subprocess nas entradas reais: calibração → perfil → correção (inclui as 7 correções da auditoria) |
 
 **Testando um script de shell.** `tests/ler_adc_falso.py` imita a linha de comando do `ler_adc` e grava um `.bin` v3 sintético (aceita `--faixa-adc`; `cab_v1`/`cab_v2` imitam firmware antigo); o arquivo `cenario` (uma diretiva por chamada: `ok`, `sat_sonda`, `falha`, `truncar`, `travar`, ...) faz cada captura falhar de um jeito específico. É assim que se testa o tratamento de erros do `calibrar_sonda.sh` sem a BeagleBone.
@@ -233,6 +237,8 @@ Os testes não precisam de hardware nem de arquivos `.bin` do repositório (`*.b
 **Novo campo no cabeçalho do `.bin`.** Firmware (`ler_adc.c`: struct + `CABECALHO_VERSAO`) → `cabecalho._FORMATO_CABECALHO_Vn` e `_CONTAGENS_...` → `CabecalhoArquivo` → fixture (`montar_cabecalho` em `tests/capturas_sinteticas.py`) → rode `test_contrato_firmware.py`, que aponta qualquer divergência de layout. Leitores **nunca** assumem a versão mais nova: o formato antigo continua suportado.
 
 **Novo módulo.** Escolha a camada pela regra "só importo camadas menores"; registre-o em `CAMADAS` (`tests/test_arquitetura.py`) e na tabela da seção 3; escreva o `"""docstring"""` dizendo de quem depende.
+
+**Nova figura do relatório.** Em `relatorio/gerar_figuras.py`, escreva uma função `nome(estilo) -> Resultado` com `@figura("nome", "descrição")`: crie a figura com `estilo.nova_figura(proporcao)`, use as cores de `COR` (o texto sempre em tinta, nunca na cor da série), os rótulos de `estilo.t(...)` (acrescente as chaves em `TEXTOS`, em `pt` e `en`) e formate números com `estilo.num`/`estilo.qty` (vírgula decimal em português). Os dados vêm do projeto (perfis, capturas, pacote), nunca copiados à mão; números que o texto vai citar voltam em `Resultado.macros` e viram `relatorio/figuras/nome.tex`. Teste a lógica (ajustes, contas) em `tests/test_relatorio.py`. O script fica fora do pacote de propósito: é código do relatório, não biblioteca, e por isso pode usar matplotlib à vontade (o logging vai pelo logger `supraharmonicos.relatorio`, que herda o formato do console).
 
 **Nova etapa no pipeline de plotagem.** Uma função `_nome_da_etapa` em `modos.py`, chamada na ordem certa em `executar_plotagem`; se mexe no sinal, pense onde ela entra em relação à correção de sonda e ao filtro.
 

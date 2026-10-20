@@ -417,7 +417,13 @@ Imprime o erro de amplitude em % (ADC contra instrumento): a atenuação da cade
 
 **Esperado.** Ganho plano (±0,1 dB) até ~2,5 kHz, **−3 dB perto de 15 kHz** e queda de 12 dB por oitava, chegando a algo entre −14 e −19 dB em 45 kHz. O `gerar_perfil_sonda.py` imprime o resumo da resposta (ganho de baixa frequência, frequência de −3 dB, inclinação final em dB/oitava e quanto a correção amplifica o ruído na maior frequência: ~+14 a +19 dB) e o grava no perfil (`calibracao_adc.resposta_conjunto`). Como o último ponto é 45 kHz, a inclinação final tem pouca excursão: a frequência de −3 dB é o resultado mais seguro. Se a curva mostrar ressonâncias ou picos, são do divisor ou da fiação: aumente a densidade de pontos ali (`--modo refinar`).
 
-**Para o relatório.** A curva de ganho (dB) × frequência (eixo logarítmico), com a frequência de −3 dB marcada e a curva teórica do datasheet por cima; tabela de ganho em 1, 5, 10, 15, 20, 30 e 45 kHz.
+**Para o relatório.** A curva de ganho (dB) × frequência (eixo logarítmico), com a frequência de −3 dB marcada e a curva teórica do datasheet por cima; tabela de ganho em 1, 5, 10, 15, 20, 30 e 45 kHz. A figura sai do script das figuras do relatório, que lê o perfil, ajusta um passa-baixa de 2ª ordem (em dB) e grava, além do PDF, as macros com K, f0, Q e f−3dB para o texto:
+
+```fish
+uv run relatorio/gerar_figuras.py perfil_cadeia_tensao --png
+```
+
+**Executado em 19/10/2026** (48 pontos de 50 Hz a 45 kHz, `--ref-externa`, sem repetições; `scripts/sondas/cadeia_tensao.json`): −3 dB em **17,3 kHz** e −12,5 dB em 45 kHz; o 2ª ordem ajusta com f0 = 24,1 kHz, Q = 0,54 e resíduo de 0,13 dB. Para a próxima rodada: `--grandeza tensao` (a coleta de 19/10 é anterior à opção e ficou marcada como corrente, o que não muda o perfil) e `--repeticoes 3`, para ter a incerteza de cada ponto (o ajuste passa a ser ponderado). A fase não foi medida: a função de transferência vale sob a hipótese de fase mínima (ver `docs/notas_relatorio.md`, Marco 12).
 
 ### T4: frequência de amostragem real
 
@@ -832,7 +838,7 @@ Mesmo critério do T11a, com o SNR por bin do T10 (cada tom precisa de ≥ 30 dB
 | Escala do ADC conferida nas três faixas (razão `media` ÷ `V_in × 0,05157`) | T0 |
 | Ruído em LSB, µV e nV/√Hz × taxa e nº de canais; **ruído × faixa de entrada**; PSD do curto; ruído equivalente na entrada de cada cadeia | T1 |
 | Razão real do divisor e offset; resíduo de linearidade em LSB | T2 |
-| **Perfil da cadeia de tensão** (dB × Hz, −3 dB) | T3 |
+| **Perfil da cadeia de tensão** (dB × Hz, −3 dB) e o ajuste do passa-baixa (K, f0, Q, resíduos): `relatorio/gerar_figuras.py` | T3 |
 | Erro da taxa de amostragem (ppm) × taxa pedida | T4 |
 | SINAD/ENOB × nível; THD, SINAD e SFDR × frequência; faixa dinâmica | T5 |
 | Diafonia e atraso entre canais | T6 |

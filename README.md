@@ -93,6 +93,7 @@ As duas podem ser combinadas na mesma execução. A explicação completa, com o
 ├── firmware/    # Código da BeagleBone: PRU (spi_core.asm, pru_main.c), ler_adc.c, Makefile, setup.sh, calibrar_sonda.sh
 ├── scripts/     # Python (adc_tool.py, gerar_perfil_sonda.py, medir_captura.py, pacote supraharmonicos/) e utilitários .sh
 ├── tests/       # Testes automáticos (pytest), sem precisar de hardware
+├── relatorio/   # gerar_figuras.py: todas as figuras do relatório, num estilo só, e as figuras geradas (figuras/)
 ├── hardware/    # Projeto da PCB no Altium Designer (DAQ_Module)
 └── docs/        # Documentação, proposta de IC, datasheets e imagens
 ```
@@ -109,16 +110,18 @@ As duas podem ser combinadas na mesma execução. A explicação completa, com o
 | [`docs/auditoria_perfil_sonda.md`](docs/auditoria_perfil_sonda.md) | Quem confia na **calibração de sondas** | Auditoria do perfil e da correção: evidências, bugs corrigidos, limites |
 | [`docs/proposta_correcao_sonda.md`](docs/proposta_correcao_sonda.md) | Quem quer saber **por que** foi feito assim | Raciocínio de projeto da correção de sondas (histórico) |
 | [`docs/notas_relatorio.md`](docs/notas_relatorio.md) | Quem escreve **relatório ou apresentação** | Notas cronológicas, com pontos a confirmar |
+| [`relatorio/gerar_figuras.py`](relatorio/gerar_figuras.py) | Quem escreve **relatório ou artigo** | Gera as figuras (PDF vetorial no tamanho final, texto pelo LaTeX) e os números citados como macros siunitx; o uso está no topo do arquivo |
 
 ## ✅ Estado de validação
 
 | Situação | O que |
 |---|---|
 | ✅ Validado em hardware | Protocolo SPI do ADS8688 (32 ciclos de clock por amostra); handshake ARM↔PRU; varredura automática (AUTO_RST) com 1 e com 5 canais a 102,4 kHz totais (≈20,48 kHz por canal): canais ligados à rede mostram os 60 Hz, canais desconectados mostram só ruído |
+| 📏 Medido em bancada | **Resposta em frequência da cadeia de tensão** (T3, 19/10/2026): 48 pontos de 50 Hz a 45 kHz contra o osciloscópio, com o fluxo `calibrar_sonda.sh` → `gerar_perfil_sonda.py` e o cabeçalho v3 em capturas reais. Passa-baixa de 2ª ordem com −3 dB em 17,3 kHz ([`scripts/sondas/cadeia_tensao.json`](scripts/sondas/cadeia_tensao.json); figura em [`relatorio/figuras/`](relatorio/figuras/)) |
 | 🧪 Validado com sinais sintéticos | Toda a análise espectral (`--fft`, `--welch`, bandas, picos), a correção de sondas e a geração de perfis |
-| ⏳ Pendente | **Validação quantitativa de exatidão:** medir amplitude e frequência de um sinal de referência calibrado, injetado em bancada (plano em [`docs/roteiro_laboratorio.md`](docs/roteiro_laboratorio.md)). Falta também calibrar uma sonda real, compilar com `clpru` e testar a faixa de entrada do ADC por canal (`ler_adc --faixa-adc`, só simulada até aqui) e conferir o cabeçalho v3 numa captura real |
+| ⏳ Pendente | **O resto da validação quantitativa** (T4 a T11 do [`docs/roteiro_laboratorio.md`](docs/roteiro_laboratorio.md)): taxa real, distorção, diafonia, integridade em taxa alta, *aliasing* e a calibração da sonda de corrente, com conferência contra uma referência independente. Falta também testar as faixas de entrada menores do ADC (`ler_adc --faixa-adc` em ±5,12 e ±2,56 V, só simuladas até aqui) e medir a fase da cadeia |
 
-**Atenção ao filtro do ADC:** o ADS8688 tem um filtro passa-baixa de 2ª ordem embutido em cada canal, com corte de cerca de 15 kHz (datasheet, seção 8.3.5). Na banda de supraharmônicos (2 a 150 kHz) o sinal chega ao conversor atenuado em dezenas de dB, e a correção por perfil devolve a amplitude mas amplifica o ruído na mesma proporção. Por isso o perfil deve cobrir a cadeia inteira (sonda, frontend e ADC) até 150 kHz; neste projeto "sonda" designa esse conjunto, e a frequência de corte do filtro do ADC não precisa ser conhecida, porque aparece na curva medida. O perfil pode ser montado a partir de uma **senoide de amplitude conhecida** (`calibrar_sonda.sh --amplitude 500mVpp`, gravada nos metadados de cada captura), de um `.m` do osciloscópio, de leituras anotadas ou de um segundo canal do ADC: veja [`docs/guia_de_uso.md`](docs/guia_de_uso.md#sondas-de-corrente-calibração-e-correção).
+**Atenção ao filtro do ADC:** o ADS8688 tem um filtro passa-baixa de 2ª ordem embutido em cada canal, com corte de cerca de 15 kHz (datasheet, seção 8.3.5); na cadeia de tensão completa, o T3 mediu −3 dB em 17,3 kHz e −12,5 dB em 45 kHz. Na banda de supraharmônicos (2 a 150 kHz) o sinal chega ao conversor atenuado em dezenas de dB, e a correção por perfil devolve a amplitude mas amplifica o ruído na mesma proporção. Por isso o perfil deve cobrir a cadeia inteira (sonda, frontend e ADC) até 150 kHz; neste projeto "sonda" designa esse conjunto, e a frequência de corte do filtro do ADC não precisa ser conhecida, porque aparece na curva medida. O mesmo fluxo calibra uma sonda de corrente ou a cadeia de um canal de tensão (`calibrar_sonda.sh --grandeza tensao`). O perfil pode ser montado a partir de uma **senoide de amplitude conhecida** (`calibrar_sonda.sh --amplitude 500mVpp`, gravada nos metadados de cada captura), de um `.m` do osciloscópio, de leituras anotadas ou de um segundo canal do ADC: veja [`docs/guia_de_uso.md`](docs/guia_de_uso.md#sondas-de-corrente-calibração-e-correção).
 
 Limites conhecidos, como a ausência de controle de *overrun* nos buffers (risco cresce com a taxa de amostragem) e a correção de sonda só de magnitude, estão em [`docs/contexto_projeto.md`](docs/contexto_projeto.md) e [`docs/melhorias-propostas.md`](docs/melhorias-propostas.md).
 
@@ -128,7 +131,7 @@ Quem for modificar o código Python deve começar por [`docs/arquitetura_softwar
 
 ```bash
 uv run --extra dev ruff check .   # estilo e erros comuns
-uv run --extra dev pytest         # 483 testes, ~2 min (use -m "not e2e" para a versão rápida: 396 testes, ~10 s)
+uv run --extra dev pytest         # 572 testes, alguns minutos (use -m "not e2e" para a versão rápida: 460 testes, ~1 min)
 ```
 
 Os testes também conferem que o firmware (C) e o Python concordam sobre o formato do cabeçalho: se você mudar um lado, o `pytest` avisa até o outro acompanhar.

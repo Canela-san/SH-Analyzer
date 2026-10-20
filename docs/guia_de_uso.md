@@ -502,6 +502,7 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 |---|---|---|
 | `scripts/set_date.sh` | Computador | Copia a data e hora do computador para a BeagleBone via SSH (como instante absoluto em UTC, então vale qualquer que seja o fuso dela). Padrão: `debian@192.168.6.2`; troque com `BBB_USER` e `BBB_IP`. **Nenhuma senha fica no arquivo:** use chave SSH (`ssh-copy-id debian@192.168.6.2`) ou deixe o `ssh`/`sudo` pedirem a senha no terminal. Se preferir não digitar, exporte `SSHPASS` (e tenha o `sshpass` instalado) |
 | `scripts/compactar_amostras.sh` | Computador | Compacta `.bin` e `.h5` de uma pasta num único arquivo, priorizando a taxa de compressão. Padrão: 7-Zip (LZMA2). `--max` usa `zpaq -m5`, mais lento e mais forte. Opções: `--dir PASTA`, `-o ARQUIVO` |
+| `relatorio/gerar_figuras.py` | Computador | Gera as figuras do relatório (PDF vetorial, já no tamanho final, com o texto composto pelo LaTeX) e um `.tex` com os números citados (macros siunitx). `uv run relatorio/gerar_figuras.py` gera todas; `--listar`, `--png` (prévia), `--formato artigo --idioma en` (coluna de artigo, em inglês), `--saida PASTA` (ex.: a pasta do projeto LaTeX). Inclua no documento sem `width=`, para as fontes baterem com as do texto |
 
 ---
 
