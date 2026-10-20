@@ -1937,9 +1937,10 @@ definir_canais() {
     ARGS_ATRASO_CS=()
     if [ -n "$ATRASO_CS" ]; then
         # A mesma regra do ler_adc (três inteiros de 1 a 10000), conferida aqui para falhar antes da 1ª captura.
-        [[ "$ATRASO_CS" =~ ^([1-9][0-9]{0,4}),([1-9][0-9]{0,4}),([1-9][0-9]{0,4})$ ]] \
-            && [ "${BASH_REMATCH[1]}" -le 10000 ] && [ "${BASH_REMATCH[2]}" -le 10000 ] && [ "${BASH_REMATCH[3]}" -le 10000 ] \
-            || erro_fatal "--atraso-cs '${ATRASO_CS}' inválido: use três inteiros de 1 a 10000 separados por vírgula (setup,hold,alto; padrão 200,100,100)."
+        if ! [[ "$ATRASO_CS" =~ ^([1-9][0-9]{0,4}),([1-9][0-9]{0,4}),([1-9][0-9]{0,4})$ ]] \
+            || [ "${BASH_REMATCH[1]}" -gt 10000 ] || [ "${BASH_REMATCH[2]}" -gt 10000 ] || [ "${BASH_REMATCH[3]}" -gt 10000 ]; then
+            erro_fatal "--atraso-cs '${ATRASO_CS}' inválido: use três inteiros de 1 a 10000 separados por vírgula (setup,hold,alto; padrão 200,100,100)."
+        fi
         ARGS_ATRASO_CS=(--atraso-cs "$ATRASO_CS")
     fi
     if { [ -n "$AMPLITUDE" ] || [ "$AMPLITUDE_POR_PONTO" -eq 1 ]; } && { [ "$REF_EXTERNA" -eq 1 ] || [ -n "$CANAL_REFERENCIA" ]; }; then

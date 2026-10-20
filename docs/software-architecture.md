@@ -42,6 +42,7 @@ scripts/
   compactar_amostras.py   entrada fina: arquivar/restaurar capturas sem perdas (pacote .zpaq.tar)
   sondas/*.json           perfis de sonda gerados (dados, não código); a pasta nasce no 1º perfil
   supraharmonicos/        ← TODA a lógica Python (seção 3)
+  ci.sh                   o que a CI roda, igual na sua máquina (seção 7.1)
 tests/                    pytest (seção 7)
 report/gerar_figuras.py   figuras do relatório/artigo (estilo único, PDF vetorial + macros siunitx);
                           importa o pacote, mas não faz parte dele (receita na seção 8)
@@ -251,10 +252,21 @@ Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `c
 
 ### 7.1 Integração contínua (GitHub Actions)
 
-`.github/workflows/ci.yml` tem dois jobs, a cada push na `main` e a cada pull request:
+**Rodar a CI na sua máquina:** `scripts/ci.sh`. O workflow chama esse mesmo script, então os comandos e as versões das ferramentas ficam num lugar só, e o que passa local passa no GitHub:
 
-* **testes:** instala o `zpaq` (para os testes do `compactar_amostras`; sem ele, esses testes são pulados) e roda o `ruff check .` e o `pytest` (suíte completa, com e2e) em duas versões do Python: **3.10** (o mínimo declarado em `requires-python`) e **3.13**. É o mesmo que `uv run --extra dev ruff check .` e `uv run --extra dev pytest` fazem na sua máquina — se passa local, passa no CI. Leva cerca de 1 a 2 minutos.
-* **firmware:** compila o `firmware/ler_adc.c` no x86 com `gcc -Wall -Wextra -Werror -fsyntax-only` (pega erros que só apareceriam no `make` da BeagleBone) e passa o `shellcheck` em `firmware/*.sh` e `scripts/*.sh`. Localmente: `gcc -std=gnu11 -Wall -Wextra -Werror -fsyntax-only firmware/ler_adc.c` e `uvx --from shellcheck-py shellcheck firmware/*.sh scripts/*.sh`. O `spi_core.asm` e o `pru_main.c` precisam do `clpru` (proprietário, da TI): ficam de fora, e o simulador `tests/pru_sim.py` cobre a lógica do assembly.
+```bash
+scripts/ci.sh                 # tudo: ruff + pytest em Python 3.10 e 3.13 (com e2e) + firmware (~6 min)
+scripts/ci.sh rapido          # ruff + pytest -m "not e2e" (3.13) + firmware: antes de cada commit (~40 s)
+scripts/ci.sh testes 3.10     # uma versão do Python, suíte completa
+scripts/ci.sh firmware        # gcc -Werror no ler_adc.c + shellcheck
+```
+
+Precisa do `uv` (ele baixa sozinho o Python 3.10 e o `shellcheck`) e do `gcc`. Sem o `zpaq`, os testes do `compactar_amostras` são pulados e o script avisa (a CI o instala).
+
+`.github/workflows/ci.yml` tem dois jobs, a cada push na `main` e a cada pull request, num Ubuntu de versão fixa (`ubuntu-24.04`, não `ubuntu-latest`, para que uma troca de imagem não mude as ferramentas sem aviso):
+
+* **testes:** instala o `uv` e o `zpaq` e roda `scripts/ci.sh testes <versão>` em duas versões do Python: **3.10** (o mínimo declarado em `requires-python`) e **3.13**. Leva cerca de 1 a 2 minutos.
+* **firmware:** `scripts/ci.sh firmware`: compila o `firmware/ler_adc.c` no x86 com `gcc -Wall -Wextra -Werror -fsyntax-only` (pega erros que só apareceriam no `make` da BeagleBone) e passa o `shellcheck` em `firmware/*.sh` e `scripts/*.sh`. O `shellcheck` vem numa **versão fixa** (`shellcheck-py`, pelo `uvx`): o do `apt` do Ubuntu era o 0.9, que acusava um `A && B || C` que o 0.11 local não via, e a CI falhou por isso. O `spi_core.asm` e o `pru_main.c` precisam do `clpru` (proprietário, da TI): ficam de fora, e o simulador `tests/pru_sim.py` cobre a lógica do assembly.
 
 Para o CI *impedir* um merge que quebra algo, o resultado precisa ser exigido nas configurações do repositório (**Settings → Rules → Rulesets** ou **Branches → Branch protection rule**, na branch `main`): marcar *Require a pull request before merging* e *Require status checks to pass before merging*, e escolher os checks `testes (Python 3.10)`, `testes (Python 3.13)` e `firmware (C do ARM e scripts de shell)` (eles só aparecem na lista depois da primeira execução do workflow).
 
@@ -284,7 +296,7 @@ Os testes não precisam de hardware nem de arquivos `.bin` do repositório (`*.b
 
 ## 9. Checklist de PR
 
-- [ ] `ruff check .` limpo e `pytest` verde (pelo menos `-m "not e2e"`; e2e se mexeu em sonda/calibração/CLI)
+- [ ] `scripts/ci.sh rapido` verde (e `scripts/ci.sh` completo se mexeu em sonda/calibração/CLI ou no firmware)
 - [ ] Sem `print`, sem `SystemExit`, sem importar camada superior
 - [ ] Caminho quente: sem laço por amostra, sem cópia desnecessária, sem materializar a captura
 - [ ] Teste novo para o comportamento novo/corrigido

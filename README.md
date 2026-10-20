@@ -101,7 +101,7 @@ As duas podem ser combinadas na mesma execução. A explicação completa, com o
 .
 ├── firmware/          # Código da BeagleBone: PRU (spi_core.asm, pru_main.c), ler_adc.c, Makefile, setup.sh, calibrar_sonda.sh
 ├── scripts/           # Python: entradas (adc_tool.py, gerar_perfil_sonda.py, medir_captura.py, compactar_amostras.py),
-│                      #   o pacote supraharmonicos/, os perfis de sonda (sondas/) e set_date.sh
+│                      #   o pacote supraharmonicos/, os perfis de sonda (sondas/), set_date.sh e ci.sh (a CI local)
 ├── tests/             # Testes automáticos (pytest), sem precisar de hardware
 ├── report/            # gerar_figuras.py: as figuras do relatório num estilo só (saída em report/figures/, não versionada)
 ├── hardware/          # Projeto da PCB no Altium Designer (DAQ_Module)
@@ -145,15 +145,14 @@ Limites conhecidos, como a taxa máxima (~140 kS/s, que cobre só parte da banda
 
 ## 🤝 Contribuindo
 
-Quem for modificar o código Python deve começar por [`docs/software-architecture.md`](docs/software-architecture.md). Para rodar os testes e a checagem de estilo (os mesmos que o GitHub roda em todo pull request):
+Quem for modificar o código Python deve começar por [`docs/software-architecture.md`](docs/software-architecture.md). A CI do GitHub roda o `scripts/ci.sh`, e você roda o mesmo script na sua máquina, com as mesmas versões das ferramentas:
 
 ```bash
-uv run --extra dev ruff check .            # estilo e erros comuns
-uv run --extra dev pytest                  # a suíte completa, em paralelo
-uv run --extra dev pytest -m "not e2e"     # a versão rápida, para o dia a dia
+scripts/ci.sh rapido      # antes de cada commit (~40 s): ruff, testes sem os e2e, gcc e shellcheck
+scripts/ci.sh             # tudo o que a CI roda (~6 min): Python 3.10 e 3.13, com os e2e, e o firmware
 ```
 
-Quantos testes, quanto tempo e o que cada arquivo cobre: [`docs/software-architecture.md`](docs/software-architecture.md#7-testes). A CI também compila o `ler_adc.c` e passa o `shellcheck` nos scripts de shell.
+Quantos testes, quanto tempo e o que cada arquivo cobre: [`docs/software-architecture.md`](docs/software-architecture.md#7-testes).
 
 Os testes também conferem que o firmware (C) e o Python concordam sobre o formato do cabeçalho: se você mudar um lado, o `pytest` avisa até o outro acompanhar.
 
