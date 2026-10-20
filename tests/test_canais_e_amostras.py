@@ -10,6 +10,7 @@ from supraharmonicos.amostras import (
     selecionar_intervalo,
 )
 from supraharmonicos.canais import (
+    alinhar_ao_ciclo,
     analisar_lista_calibracao,
     analisar_lista_canais,
     desintercalar,
@@ -110,3 +111,19 @@ class TestLeituraDeArquivos:
         assert (ini, fim, total) == (10, 20, 100) and len(trecho) == 10
         with pytest.raises(ErroSHAN):
             selecionar_intervalo(dados, 50, 10)
+
+
+class TestAlinhamentoAoCiclo:
+    def test_inicio_no_meio_do_ciclo_volta_ao_comeco_dele_com_aviso(self, caplog):
+        assert alinhar_ao_ciclo(7, 3) == 6
+        assert "cai no meio de um ciclo de 3 canais" in caplog.text
+
+    def test_inicio_alinhado_ou_um_canal_nao_muda_nada(self, caplog):
+        assert alinhar_ao_ciclo(8, 2) == 8 and alinhar_ao_ciclo(5, 1) == 5 and alinhar_ao_ciclo(-4, 2) == 0
+        assert caplog.text == ""
+
+
+@pytest.mark.parametrize("texto", ["nan", "1,inf", "-inf"])
+def test_calibracao_recusa_valores_nao_finitos(texto):
+    with pytest.raises(ErroSHAN, match="números finitos"):
+        analisar_lista_calibracao(texto, 2, "--ganho")

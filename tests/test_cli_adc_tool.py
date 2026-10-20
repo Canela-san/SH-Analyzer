@@ -102,3 +102,47 @@ def test_exportacao_avisa_que_ignora_flags_de_plotagem(cli, ambiente):
     pytest.importorskip("h5py")
     rc, _, err = cli(main, ambiente / "ok.bin", "--export-hdf5", ambiente / "y.h5", "--welch")
     assert rc == 0 and "Aviso: --export-hdf5 ignora --fft/--welch/--picos/--agrupar-bandas" in err
+
+
+def test_inicio_no_meio_do_ciclo_mantem_cada_canal_com_o_seu_rotulo(tmp_path):
+    from supraharmonicos.cli_adc_tool import montar_parser
+    from supraharmonicos.contexto import resolver_contexto
+    from supraharmonicos.modos import _carregar_sinal
+
+    p = escrever_bin(tmp_path / "dc.bin", [np.full(4000, 1.0), np.full(4000, -2.0)])   # canal 0 = +1 V, canal 1 = -2 V
+    args = montar_parser().parse_args([str(p), "--inicio", "101"])
+    sinal = _carregar_sinal(args, resolver_contexto(args))
+    assert sinal.idx_inicio == 100
+    assert np.mean(sinal.por_canal_tensao[0]) == pytest.approx(1.0, abs=1e-3)
+    assert np.mean(sinal.por_canal_tensao[1]) == pytest.approx(-2.0, abs=1e-3)
+
+
+@pytest.mark.parametrize("argv, trecho", [
+    (["-f", "0", "--welch"], "-f/--frequencia precisa ser um número positivo"),
+    (["-f", "nan", "--welch"], "-f/--frequencia precisa ser um número positivo"),
+    (["--tamanho-chunk", "0"], "--tamanho-chunk precisa ser >= 1"),
+    (["--welch", "--picos", "-40", "--distancia-minima-picos", "0"], "--distancia-minima-picos precisa ser positiva"),
+])
+def test_valores_numericos_invalidos_sao_erro_de_uso(cli, ambiente, argv, trecho):
+    rc, _, err = cli(main, ambiente / "ok.bin", *argv)
+    assert rc == 2 and trecho in err
+
+
+def test_cabecalho_com_lista_de_canais_corrompida_e_erro_claro(cli, tmp_path):
+    p = escrever_bin(tmp_path / "corrompido.bin", [np.zeros(1000), np.zeros(1000)])
+    bruto = bytearray(p.read_bytes())
+    bruto[33] = 0                     # lista_canais (offset 32) = [0, 0]: canal repetido, e o CRC deixa de conferir
+    p.write_bytes(bytes(bruto))
+    rc, _, err = cli(main, p, "--welch")
+    assert rc == 1 and "lista de canais do cabeçalho é inválida" in err and "CRC-32" in err
+
+
+def test_espectro_de_canal_de_corrente_e_rotulado_em_dba():
+    import argparse
+
+    from supraharmonicos.modos import _rotulo_espectro
+    tom = argparse.Namespace(agrupar_bandas=None, modo_espectro="tom")
+    assert _rotulo_espectro(tom, {1: 1}) == "Magnitude (dBA)"
+    assert _rotulo_espectro(tom, {0: 0}) == "Magnitude (dBV)"
+    assert _rotulo_espectro(argparse.Namespace(agrupar_bandas=200.0, modo_espectro="ruido"), {0: 0, 1: 1}) \
+        == "Nível RMS por banda de 200 Hz (dB re unidade do canal)"

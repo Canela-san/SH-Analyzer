@@ -39,14 +39,13 @@ THREADS="$(nproc)"
 # ------------------------------------------------------------------------------
 # 1. Interface visual
 # ------------------------------------------------------------------------------
-VERMELHO='\033[0;31m'
-VERDE='\033[0;32m'
-AZUL='\033[0;34m'
-AMARELO='\033[1;33m'
-CIANO='\033[0;36m'
-CINZA='\033[0;90m'
-NEGRITO='\033[1m'
-SEM_COR='\033[0m'
+# Cores só quando a saída é um terminal (redirecionada para um log, viram lixo de escape).
+if [ -t 1 ]; then
+    VERMELHO='\033[0;31m'; VERDE='\033[0;32m'; AZUL='\033[0;34m'; AMARELO='\033[1;33m'
+    CIANO='\033[0;36m';    CINZA='\033[0;90m'; NEGRITO='\033[1m';  SEM_COR='\033[0m'
+else
+    VERMELHO=''; VERDE=''; AZUL=''; AMARELO=''; CIANO=''; CINZA=''; NEGRITO=''; SEM_COR=''
+fi
 
 cabecalho() {
     echo
@@ -107,25 +106,38 @@ ARQUIVOS_TEMP_CALIBRACAO=()
 # (zpaq/7z) ficaria rodando "orfão" em segundo plano mesmo após a trap
 # disparar. Por isso a trap mata o PID do compressor explicitamente, em vez
 # de confiar só na propagação implícita do sinal pelo grupo de processos.
+#
+# [POR QUE 'EXIT' E NÃO 'ERR'] Com 'set -e', uma falha DENTRO de uma função (ex.: o 'wait' do
+# compressor que terminou com erro) encerra o script sem disparar a trap de ERR -- ela não é
+# herdada por funções sem 'set -E' --, e o arquivo de saída pela metade ficava no disco. A trap de
+# EXIT roda em TODA saída (erro, sinal ou fim normal); no fim normal não há nada a limpar, porque
+# ARQUIVO_SAIDA_EM_ANDAMENTO já foi zerado.
 limpar_e_sair() {
     local codigo=$?
-    trap - INT TERM ERR
-    echo
+    trap - EXIT INT TERM
     if [ -n "$PID_COMPRESSOR_ATIVO" ] && kill -0 "$PID_COMPRESSOR_ATIVO" 2>/dev/null; then
+        echo
         log_aviso "Interrompido -- encerrando o processo de compressão (PID ${PID_COMPRESSOR_ATIVO})..."
         kill -TERM "$PID_COMPRESSOR_ATIVO" 2>/dev/null || true
         wait "$PID_COMPRESSOR_ATIVO" 2>/dev/null || true
     fi
     if [ -n "$ARQUIVO_SAIDA_EM_ANDAMENTO" ] && [ -f "$ARQUIVO_SAIDA_EM_ANDAMENTO" ]; then
+        echo
         log_aviso "Removendo arquivo de saída incompleto '${ARQUIVO_SAIDA_EM_ANDAMENTO}'."
         rm -f "$ARQUIVO_SAIDA_EM_ANDAMENTO"
     fi
     if [ ${#ARQUIVOS_TEMP_CALIBRACAO[@]} -gt 0 ]; then
         rm -f "${ARQUIVOS_TEMP_CALIBRACAO[@]}"
     fi
+    if [ "$codigo" -ne 0 ] && [ -n "${ETAPA_ATUAL:-}" ]; then
+        log_erro "Falhou durante: ${ETAPA_ATUAL} (código ${codigo})."
+    fi
     exit "$codigo"
 }
-trap limpar_e_sair INT TERM ERR
+ETAPA_ATUAL=""
+trap limpar_e_sair EXIT
+trap 'exit 130' INT     # o código de saída convencional de Ctrl+C; a limpeza fica com a trap de EXIT
+trap 'exit 143' TERM
 
 # ------------------------------------------------------------------------------
 # 3. Dependências -- verifica e instala só o que falta, só quando necessário
@@ -170,17 +182,18 @@ coletar_arquivos_entrada() {
     for ext in "${EXTENSOES_ENTRADA[@]}"; do
         while IFS= read -r -d '' f; do
             encontrados+=("$f")
-        done < <(find "$DIRETORIO_ALVO" -maxdepth 1 -type f -iname "*.${ext}" -print0 2>/dev/null)
+        done < <(find "$DIRETORIO_ALVO" -maxdepth 1 -type f -iname "*.${ext}" -printf '%f\0' 2>/dev/null)
     done
     if [ ${#encontrados[@]} -gt 0 ]; then
         printf '%s\0' "${encontrados[@]}" | sort -z
     fi
 }
 
+# Nomes relativos a DIRETORIO_ALVO (como saem de coletar_arquivos_entrada).
 tamanho_total_bytes() {
     local total=0 f
     for f in "$@"; do
-        total=$(( total + $(stat -c%s "$f") ))
+        total=$(( total + $(stat -c%s "${DIRETORIO_ALVO}/$f") ))
     done
     echo "$total"
 }
@@ -192,6 +205,10 @@ tamanho_total_bytes() {
 # -bsp1 (LZMA2 é um algoritmo em stream: lê, comprime e grava de forma
 # incremental) -- não há motivo para reimplementar isso por fora, então
 # deixamos a saída nativa dele aparecer.
+# Os compressores rodam DENTRO de DIRETORIO_ALVO, com os nomes dos arquivos sem caminho: o zpaq
+# grava o caminho exatamente como recebe (um '/home/...' absoluto seria recriado na extração) e o
+# 7z guardaria subpastas relativas. Assim o arquivo final só tem 'captura.bin', 'captura.h5'...
+# (o caminho de saída é absoluto -- ver ARQUIVO_SAIDA no main).
 comprimir_7z() {
     local arquivo_saida="$1"; shift
     log_proc "Compactando com 7-Zip (LZMA2, ultra, bloco sólido, dicionário ${DICIONARIO_7Z}, ${THREADS} thread(s))..."
@@ -199,9 +216,9 @@ comprimir_7z() {
     # Em segundo plano (a saída nativa do 7z continua indo direto para o
     # terminal normalmente) só para que PID_COMPRESSOR_ATIVO fique
     # disponível para a trap de limpeza -- ver comentário grande junto a
-    # limpar_e_sair sobre por que isso é necessário.
-    7z a -t7z -mx=9 -m0=lzma2:d${DICIONARIO_7Z}:fb273 -ms=on -mmt="$THREADS" \
-        -bsp1 -bb1 "$arquivo_saida" "$@" &
+    # limpar_e_sair sobre por que isso é necessário. 'exec' faz o PID ser o do próprio 7z.
+    ( cd "$DIRETORIO_ALVO" && exec 7z a -t7z -mx=9 -m0=lzma2:d${DICIONARIO_7Z}:fb273 -ms=on -mmt="$THREADS" \
+        -bsp1 -bb1 "$arquivo_saida" "$@" ) &
     PID_COMPRESSOR_ATIVO=$!
     wait "$PID_COMPRESSOR_ATIVO"
     local status=$?
@@ -232,7 +249,7 @@ comprimir_7z() {
 # Por isso a barra é rotulada "estimado" e trava em 99% até o processo
 # encerrar de verdade.
 estimar_tempo_zpaq() {
-    local arquivo_referencia="$1" total_bytes="$2"
+    local arquivo_referencia="${DIRETORIO_ALVO}/$1" total_bytes="$2"
     local tam_disponivel tam_amostra
     tam_disponivel=$(stat -c%s "$arquivo_referencia")
     tam_amostra=$TAMANHO_AMOSTRA_CALIBRACAO
@@ -324,7 +341,7 @@ comprimir_zpaq() {
     if (( total_bytes < LIMIAR_PULAR_CALIBRACAO )); then
         log_info "Captura pequena (< $(formatar_tamanho "$LIMIAR_PULAR_CALIBRACAO")) -- pulando calibração, indicador indeterminado."
         echo
-        zpaq add "$arquivo_saida" "$@" -m5 -t"$THREADS" >/dev/null 2>&1 &
+        ( cd "$DIRETORIO_ALVO" && exec zpaq add "$arquivo_saida" "$@" -m5 -t"$THREADS" >/dev/null 2>&1 ) &
         PID_COMPRESSOR_ATIVO=$!
         executar_zpaq_com_spinner "$PID_COMPRESSOR_ATIVO"
         local status=$?
@@ -334,12 +351,17 @@ comprimir_zpaq() {
     fi
 
     log_info "Calibrando velocidade real do zpaq -m5 nesta máquina com uma amostra dos dados..."
-    local estimativa_s
-    estimativa_s=$(estimar_tempo_zpaq "$1" "$total_bytes")
+    local estimativa_s maior="" f
+    for f in "$@"; do   # a amostra sai do MAIOR arquivo (o mais representativo do tempo total)
+        if [ -z "$maior" ] || [ "$(stat -c%s "${DIRETORIO_ALVO}/$f")" -gt "$(stat -c%s "${DIRETORIO_ALVO}/$maior")" ]; then
+            maior="$f"
+        fi
+    done
+    estimativa_s=$(estimar_tempo_zpaq "$maior" "$total_bytes")
     log_info "Estimativa de duração total: ~$(formatar_duracao "$estimativa_s") (extrapolada da amostra; pode variar)."
     echo
 
-    zpaq add "$arquivo_saida" "$@" -m5 -t"$THREADS" >/dev/null 2>&1 &
+    ( cd "$DIRETORIO_ALVO" && exec zpaq add "$arquivo_saida" "$@" -m5 -t"$THREADS" >/dev/null 2>&1 ) &
     PID_COMPRESSOR_ATIVO=$!
     executar_zpaq_com_barra_estimada "$PID_COMPRESSOR_ATIVO" "$estimativa_s"
     local status=$?
@@ -424,7 +446,7 @@ fi
 TOTAL_ENTRADA=$(tamanho_total_bytes "${ARQUIVOS[@]}")
 log_ok "${#ARQUIVOS[@]} arquivo(s) encontrado(s), $(formatar_tamanho "$TOTAL_ENTRADA") no total:"
 for f in "${ARQUIVOS[@]}"; do
-    echo -e "    ${CINZA}•${SEM_COR} $f  ${CINZA}($(formatar_tamanho "$(stat -c%s "$f")"))${SEM_COR}"
+    echo -e "    ${CINZA}•${SEM_COR} $f  ${CINZA}($(formatar_tamanho "$(stat -c%s "${DIRETORIO_ALVO}/$f")"))${SEM_COR}"
 done
 
 verificar_dependencias
@@ -443,8 +465,13 @@ if [ -e "$ARQUIVO_SAIDA" ]; then
     log_erro "'${ARQUIVO_SAIDA}' já existe -- escolha outro nome com -o/--saida."
     exit 1
 fi
+# Absoluto: os compressores rodam dentro de DIRETORIO_ALVO (ver comprimir_7z), e um nome relativo
+# iria parar lá dentro em vez de onde o operador pediu.
+ARQUIVO_SAIDA="$(realpath -m -- "$ARQUIVO_SAIDA")"
+mkdir -p -- "$(dirname -- "$ARQUIVO_SAIDA")"
 
 ARQUIVO_SAIDA_EM_ANDAMENTO="$ARQUIVO_SAIDA"
+ETAPA_ATUAL="compressão de ${#ARQUIVOS[@]} arquivo(s) para '${ARQUIVO_SAIDA}'"
 INICIO_TOTAL=$(date +%s)
 
 if [ "$MODO" = "maxima" ]; then
@@ -454,6 +481,7 @@ else
 fi
 
 ARQUIVO_SAIDA_EM_ANDAMENTO=""   # sucesso -- não apagar mais em caso de sinal
+ETAPA_ATUAL=""
 DURACAO_TOTAL=$(( $(date +%s) - INICIO_TOTAL ))
 
 # ------------------------------------------------------------------------------

@@ -7,8 +7,10 @@ from supraharmonicos.espectro import (
     agrupar_em_bandas,
     calcular_espectro,
     calcular_espectro_welch,
+    enbw_bins,
     encontrar_picos_espectro,
     resolver_nome_janela,
+    tamanho_segmento_welch,
 )
 from supraharmonicos.filtros import aplicar_filtro_digital, validar_corte_filtro
 from supraharmonicos.fundamental import (
@@ -133,3 +135,38 @@ class TestEspectro:
         db[1500] = -50.0    # 15 kHz
         picos = encontrar_picos_espectro(freqs, db, 1000.0, 19_000.0, -60.0, 500.0)
         assert [round(p["frequencia_hz"]) for p in picos] == [5000, 15000]
+
+
+class TestNiveisPorBanda:
+    """--agrupar-bandas: o nível RMS de uma banda não pode depender da janela nem do modo de normalização."""
+
+    @pytest.mark.parametrize("janela", ["boxcar", "hann", "flattop", "blackmanharris"])
+    def test_tom_e_ruido_dao_o_rms_do_seno_com_qualquer_janela(self, janela):
+        fs, n, f0, amp = 100_000.0, 1 << 16, 5_013.7, 1.0      # tom fora do centro do bin, de propósito
+        t = np.arange(n) / fs
+        sinal = amp * np.sin(2 * np.pi * f0 * t)
+        esperado = 20 * np.log10(amp / np.sqrt(2))              # -3,01 dB: RMS de um seno de pico 1
+        for modo in ("tom", "ruido"):
+            freqs, db = calcular_espectro(sinal, fs, janela, 8.6, modo)
+            f_b, db_b = agrupar_em_bandas(freqs, db, 1000.0, modo, enbw=enbw_bins(janela, n, 8.6))
+            banda = int(np.argmin(np.abs(f_b - 5_500.0)))       # a banda [5 kHz, 6 kHz)
+            assert db_b[banda] == pytest.approx(esperado, abs=0.05), (janela, modo)
+
+    def test_welch_em_tom_tambem_bate_com_o_rms(self):
+        fs, f0 = 100_000.0, 12_345.0
+        t = np.arange(400_000) / fs
+        sinal = 0.5 * np.sin(2 * np.pi * f0 * t)
+        freqs, db, _ = calcular_espectro_welch(sinal, fs, "flattop", 8.6, 100.0, 0.5, "tom")
+        f_b, db_b = agrupar_em_bandas(freqs, db, 2000.0, "tom",
+                                      enbw=enbw_bins("flattop", tamanho_segmento_welch(fs, 100.0), 8.6))
+        banda = int(np.argmin(np.abs(f_b - 13_000.0)))
+        assert db_b[banda] == pytest.approx(20 * np.log10(0.5 / np.sqrt(2)), abs=0.05)
+
+    @pytest.mark.parametrize("n", [4096, 4097])
+    def test_psd_de_um_lado_fecha_parseval_com_n_par_e_impar(self, n):
+        """O último bin só deixa de dobrar quando é o de Nyquist (N par): com N ímpar ele tem par negativo."""
+        fs = 1000.0
+        sinal = np.random.default_rng(3).normal(0, 1.0, n)
+        freqs, db = calcular_espectro(sinal, fs, "boxcar", 8.6, "ruido")
+        potencia = np.sum(10 ** (db / 10)) * (freqs[1] - freqs[0])
+        assert potencia == pytest.approx(np.var(sinal), rel=1e-9)

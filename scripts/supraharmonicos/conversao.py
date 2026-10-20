@@ -97,6 +97,7 @@ def csv_para_bin(caminho_csv: Path, caminho_bin: Path, formato: str,
     usada, então nenhuma informação de --canais é necessária aqui (a ORDEM
     das linhas já preserva a intercalação original)."""
     dtype = FORMATOS_NUMPY[formato]
+    limites = np.iinfo(dtype)
     inicio = max(0, inicio)
 
     with open(caminho_csv, newline="") as f_in:
@@ -120,13 +121,29 @@ def csv_para_bin(caminho_csv: Path, caminho_bin: Path, formato: str,
         inconsistencias = 0
 
         n_convertidas = 0
-        with open(caminho_bin, "wb") as f_out:
+        try:
+            f_out = open(caminho_bin, "wb")
+        except OSError as e:
+            raise ErroSHAN(f"não consegui criar '{caminho_bin}': {e}") from e
+        with f_out:
             bloco = []
             for linha in linhas_dados:
                 if not linha.strip():
                     continue
                 campos = linha.rstrip("\n").split(",")
-                bloco.append(int(campos[indice_coluna]))
+                try:
+                    valor = int(campos[indice_coluna])
+                except (ValueError, IndexError):
+                    valor = None
+                if valor is None or not limites.min <= valor <= limites.max:
+                    f_out.close()
+                    caminho_bin.unlink(missing_ok=True)   # um '.bin' pela metade não pode sobrar como se fosse válido
+                    texto = campos[indice_coluna] if len(campos) > indice_coluna else "(ausente)"
+                    raise ErroSHAN(
+                        f"'{caminho_csv}', linha de dados {inicio + n_convertidas + 1}: valor_bruto '{texto}' "
+                        f"não é um inteiro de {formato} ({limites.min}..{limites.max}). Nada foi gravado."
+                    )
+                bloco.append(valor)
 
                 if indice_coluna_canal is not None:
                     canal_linha = campos[indice_coluna_canal]
@@ -163,6 +180,7 @@ def csv_para_bin(caminho_csv: Path, caminho_bin: Path, formato: str,
             )
 
     if n_convertidas == 0:
+        caminho_bin.unlink(missing_ok=True)
         raise ErroSHAN(f"nenhuma amostra convertida de '{caminho_csv}'.")
     return n_convertidas
 

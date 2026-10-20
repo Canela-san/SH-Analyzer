@@ -12,6 +12,7 @@ import numpy as np
 
 from .amostras import carregar_amostras_bin, converter_para_tensao, selecionar_intervalo
 from .cabecalho import CabecalhoArquivo
+from .canais import alinhar_ao_ciclo
 from .constantes import FORMATOS_NUMPY, TAMANHO_CHUNK_PADRAO
 from .erros import ErroSHAN
 
@@ -88,7 +89,8 @@ def exportar_hdf5(caminho_bin: Path, caminho_h5: Path, formato: str,
     num_canais = len(canais)
 
     amostras = carregar_amostras_bin(caminho_bin, formato, offset=offset_amostras)
-    _, inicio, fim, _total = selecionar_intervalo(amostras, inicio, fim)
+    # A coluna i do dataset é o canal canais[i]: o recorte precisa começar no início de um ciclo.
+    _, inicio, fim, _total = selecionar_intervalo(amostras, alinhar_ao_ciclo(inicio, num_canais), fim)
     n_disponivel = fim - inicio
 
     n_linhas_total = n_disponivel // num_canais

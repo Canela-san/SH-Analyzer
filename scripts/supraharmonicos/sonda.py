@@ -463,8 +463,8 @@ def aplicar_correcao_sonda(sinal: np.ndarray, fs: float, perfil: PerfilSonda) ->
             log.warning(
                 f"sonda '{perfil.id}': a correção amplifica o ruído do "
                 f"ADC em até {reforco_db:.1f} dB (em {freqs[i_min]:g} Hz, onde "
-                f"o ganho da sonda é {ganho[i_min]:.3g}). O piso de ruído em "
-                f"Amperes nessa região é correspondentemente maior -- "
+                f"o ganho da sonda é {ganho[i_min]:.3g}). O piso de ruído (na "
+                f"grandeza física do canal) nessa região é correspondentemente maior -- "
                 f"componentes fracas ali podem estar abaixo do que o "
                 f"espectro corrigido sugere."
             )

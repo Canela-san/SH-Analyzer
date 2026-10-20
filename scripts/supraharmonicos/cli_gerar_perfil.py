@@ -186,6 +186,12 @@ def _validar_e_completar_args(args: argparse.Namespace) -> None:
                       "use --osc-escala (1/R) e --osc-unidade A.")
     if args.resistencia_shunt is not None and args.resistencia_shunt <= 0:
         raise ErroUso("--resistencia-shunt precisa ser positiva.")
+    if args.resolucao_welch <= 0 or not 0.0 <= args.sobreposicao_welch < 1.0:
+        raise ErroUso("--resolucao-welch precisa ser positiva e --sobreposicao-welch estar em [0, 1).")
+    if args.tolerancia_freq_pct <= 0:
+        raise ErroUso("--tolerancia-freq-pct precisa ser positiva.")
+    if args.frequencia is not None and not (math.isfinite(args.frequencia) and args.frequencia > 0):
+        raise ErroUso("-f/--frequencia precisa ser um número positivo (Hz).")
 
     args.amplitude_constante = None
     if args.referencia_externa is not None:

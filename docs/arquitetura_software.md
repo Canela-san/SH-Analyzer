@@ -184,9 +184,9 @@ O caminho quente é tudo que toca **todas** as amostras de uma captura (dezenas 
 ## 7. Testes
 
 ```bash
-uv run --extra dev pytest                 # tudo: 572 testes (alguns minutos)
-uv run --extra dev pytest -m "not e2e"    # rápido: 460 testes (~1 min) — use no dia a dia
-uv run --extra dev pytest -m e2e          # só ponta a ponta: 112 testes (a maior parte do tempo)
+uv run --extra dev pytest                 # tudo: 603 testes (alguns minutos)
+uv run --extra dev pytest -m "not e2e"    # rápido: 487 testes (~1 min) — use no dia a dia
+uv run --extra dev pytest -m e2e          # só ponta a ponta: 116 testes (a maior parte do tempo)
 uv run --extra dev ruff check .
 ```
 
@@ -210,6 +210,7 @@ uv run --extra dev ruff check .
 | `test_dependencias.py` | PEP 723 das entradas == `pyproject.toml` |
 | `test_calibrar_sonda.py` (+ `ler_adc_falso.py`) | `firmware/calibrar_sonda.sh` de ponta a ponta contra um `ler_adc` falso: plano de frequências, conferência de cada captura (saturação, nível, frequência, CRC, disco cheio), menu C/R/P/A, modos `retomar`/`refinar`/`adensar`/`refazer`/`resumo`, Ctrl+C, `--amplitude`/`--amplitude-por-ponto` (metadados `ref:` no `.bin`, manifesto, plano, menu interativo, perfil gerado sem flag), `--grandeza tensao` (cabeçalho, textos, coluna `tensao_rms_V`, 2 canais, plano antigo = corrente), e que as constantes do cabeçalho e a gramática de amplitude batem com o firmware e o Python. Marcado `e2e` (usa `bash`; é pulado fora do Linux) |
 | `test_relatorio.py` | `relatorio/gerar_figuras.py`: o ajuste do passa-baixa recupera K, f0 e Q conhecidos (com e sem pesos medidos) e vence os outros modelos pelo BIC; f−3dB, polos e incerteza no formato do siunitx; a figura e as macros são geradas (sem LaTeX, para rodar no CI) |
+| `test_scripts_shell.py` | `scripts/compactar_amostras.sh` (7z e zpaq guardam só os nomes; uma falha do compressor apaga a saída pela metade) e `scripts/set_date.sh` (com `ssh`/`sudo`/`date` falsos: o tempo da senha do sudo é descontado). Marcado `e2e` |
 | `e2e/test_perfil_sonda_e2e.py` | fluxo completo por subprocess nas entradas reais: calibração → perfil → correção (inclui as 7 correções da auditoria) |
 
 **Testando um script de shell.** `tests/ler_adc_falso.py` imita a linha de comando do `ler_adc` e grava um `.bin` v3 sintético (aceita `--faixa-adc`; `cab_v1`/`cab_v2` imitam firmware antigo); o arquivo `cenario` (uma diretiva por chamada: `ok`, `sat_sonda`, `falha`, `truncar`, `travar`, ...) faz cada captura falhar de um jeito específico. É assim que se testa o tratamento de erros do `calibrar_sonda.sh` sem a BeagleBone.

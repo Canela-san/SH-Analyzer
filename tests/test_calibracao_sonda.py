@@ -245,6 +245,16 @@ class TestCli:
         rc, _, err = cli(main, pasta, "--resistencia-shunt", 0, "-o", tmp_path / "p.json")
         assert rc == 2 and "--resistencia-shunt precisa ser positiva" in err
 
+    @pytest.mark.parametrize("extra, trecho", [
+        (["--resolucao-welch", "0"], "--resolucao-welch precisa ser positiva"),
+        (["--sobreposicao-welch", "1"], "--sobreposicao-welch estar em [0, 1)"),
+        (["--tolerancia-freq-pct", "-5"], "--tolerancia-freq-pct precisa ser positiva"),
+        (["-f", "0"], "-f/--frequencia precisa ser um número positivo"),
+    ])
+    def test_parametros_numericos_invalidos_sao_erro_de_uso(self, cli, pasta, tmp_path, extra, trecho):
+        rc, _, err = cli(main, pasta, "--resistencia-shunt", R_SHUNT, *extra, "-o", tmp_path / "p.json")
+        assert rc == 2 and trecho in err
+
     def test_pasta_vazia_e_erro_de_dominio(self, cli, tmp_path):
         (tmp_path / "vazia").mkdir()
         rc, _, err = cli(main, tmp_path / "vazia", "--resistencia-shunt", R_SHUNT, "-o", tmp_path / "p.json")

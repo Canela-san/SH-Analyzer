@@ -5,8 +5,8 @@ Interpreta e valida o cabeçalho fixo de 1024 bytes gravado por
 CRC-32, metadados da captura, grandeza, id de sonda e faixa de entrada do ADC
 por canal.
 
-Depende de: ``constantes``, ``erros``. Quem o consome: ``amostras``,
-``conversao``, ``hdf5``, ``modos``, ``perfil_calibracao``."""
+Depende de: ``constantes``, ``erros``. Quem o consome: ``contexto``,
+``hdf5``, ``modos``, ``calibracao_sonda``, ``cli_medir_captura``."""
 
 import logging
 import struct
@@ -196,8 +196,11 @@ class CabecalhoArquivo:
         BeagleBone no instante da captura -- a maioria das BeagleBones não
         tem RTC com bateria, então sem sincronização de rede (NTP) no
         momento da captura este valor pode estar incorreto (ex.: próximo
-        de 1970)."""
-        return datetime.fromtimestamp(self.timestamp_unix, tz=timezone.utc).isoformat()
+        de 1970). Um valor impossível (cabeçalho corrompido) vira um texto, não uma exceção."""
+        try:
+            return datetime.fromtimestamp(self.timestamp_unix, tz=timezone.utc).isoformat()
+        except (OverflowError, OSError, ValueError):
+            return f"inválido ({self.timestamp_unix})"
 
     @property
     def duracao_real_segundos(self) -> float | None:

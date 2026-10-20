@@ -9,7 +9,7 @@ canal, grandeza e sonda por canal.
 Camada de aplicação: recebe o ``argparse.Namespace`` produzido por
 ``cli_adc_tool.montar_parser()`` (não importa o parser -- só lê os atributos).
 
-Depende de: ``cabecalho``, ``canais``, ``constantes``, ``sonda``.
+Depende de: ``cabecalho``, ``canais``, ``constantes``, ``erros``, ``sonda``.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ from .canais import (
     validar_subconjunto_canais,
 )
 from .constantes import CANAL_PADRAO, GRANDEZA_NAO_USADA, GRANDEZA_PADRAO
+from .erros import ErroSHAN
 from .sonda import (
     SONDAS_DIR_PADRAO,
     analisar_overrides_grandeza,
@@ -113,7 +114,7 @@ def resolver_contexto(args: argparse.Namespace) -> ContextoCaptura:
         canais = analisar_lista_canais(args.canais, "--canais")
         canais_veio_do_cabecalho = False
     elif cabecalho is not None:
-        canais = list(cabecalho.lista_canais)
+        canais = _canais_do_cabecalho(cabecalho)
         canais_veio_do_cabecalho = True
     else:
         canais = analisar_lista_canais(CANAL_PADRAO, "--canais")
@@ -158,6 +159,17 @@ def resolver_contexto(args: argparse.Namespace) -> ContextoCaptura:
         overrides_perfil=overrides_perfil,
         sondas_dir=sondas_dir,
     )
+
+
+def _canais_do_cabecalho(cabecalho: CabecalhoArquivo) -> list[int]:
+    """Lista de canais do cabeçalho, com as MESMAS regras de --canais (0-7, sem repetição, 1 a 8): um
+    cabeçalho corrompido (0 canais, 0xFF...) viraria uma divisão por zero ou um canal inexistente lá na
+    frente, em vez de uma mensagem."""
+    try:
+        return analisar_lista_canais(",".join(str(c) for c in cabecalho.lista_canais), "cabeçalho da captura")
+    except ErroSHAN as e:
+        crc = "" if cabecalho.crc32_valido else " O CRC-32 do cabeçalho também não confere: o arquivo deve estar corrompido."
+        raise ErroSHAN(f"a lista de canais do cabeçalho é inválida ({e}){crc} Informe --canais (e -f) explicitamente.") from e
 
 
 def anunciar_cabecalho(ctx: ContextoCaptura, formato: str) -> None:

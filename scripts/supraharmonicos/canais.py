@@ -3,6 +3,7 @@
 Depende de: ``constantes``, ``erros``, ``registro`` (via ``logging``)."""
 
 import logging
+import math
 from collections.abc import Sequence
 
 import numpy as np
@@ -60,6 +61,8 @@ def analisar_lista_calibracao(texto: str, num_canais: int, nome_flag: str) -> li
         valores = [float(p) for p in partes]
     except ValueError:
         raise ErroSHAN(f"valor inválido em {nome_flag}='{texto}'.")
+    if not all(math.isfinite(v) for v in valores):   # float() aceita 'nan'/'inf': viraria amplitude NaN em silêncio
+        raise ErroSHAN(f"{nome_flag}='{texto}' precisa ter só números finitos.")
     if len(valores) == 1:
         return valores * num_canais
     if len(valores) != num_canais:
@@ -124,6 +127,23 @@ def resolver_faixas(texto: str | None, canais: Sequence[int], formato: str,
                 f"omita {nome_flag} para usar a faixa do cabeçalho."
             )
     return faixas, confiaveis
+
+
+def alinhar_ao_ciclo(inicio: int, num_canais: int, nome_flag: str = "--inicio") -> int:
+    """Primeira amostra BRUTA a usar, arredondada para baixo até o começo de um ciclo de ``num_canais``.
+
+    As amostras de uma captura multi-canal são intercaladas (canal 0, canal 1, canal 0, ...) e
+    :func:`desintercalar` supõe que a primeira amostra do trecho é do primeiro canal do ciclo. Um
+    ``--inicio`` no meio do ciclo deslocaria TODOS os canais (com 2 canais, um viraria o outro) sem
+    nenhum outro sintoma -- por isso o início é alinhado, com aviso."""
+    inicio = max(0, inicio)
+    alinhado = inicio - inicio % num_canais
+    if alinhado != inicio:
+        log.warning(
+            f"{nome_flag} {inicio} cai no meio de um ciclo de {num_canais} canais intercalados: usando "
+            f"{alinhado} (início do ciclo), senão cada canal seria lido com o rótulo de outro."
+        )
+    return alinhado
 
 
 def desintercalar(amostras_brutas, canais: list[int],

@@ -61,6 +61,7 @@ def test_polos_e_incerteza_no_formato_do_siunitx(gf):
     assert gf.com_incerteza(24_061.9, 212.2, 1e3) == "24.06(21)"
     assert gf.com_incerteza(0.53996, 0.00627) == "0.5400(63)"
     assert gf.com_incerteza(-0.0270, 0.0248) == "-0.027(25)"
+    assert gf.com_incerteza(1.2345, 0.0996) == "1.23(10)"            # incerteza que arredonda para 100 vira 10
 
 
 def test_gera_a_figura_do_perfil_de_tensao_e_as_macros(gf, tmp_path):

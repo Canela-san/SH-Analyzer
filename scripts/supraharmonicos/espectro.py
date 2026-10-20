@@ -50,6 +50,19 @@ def obter_janela(nome_canonico: str, n: int, kaiser_beta: float) -> np.ndarray:
     return get_window(nome_canonico, n, fftbins=True)
 
 
+def enbw_bins(nome_canonico: str, n: int, kaiser_beta: float) -> float:
+    """Largura de banda equivalente de ruído da janela, em bins: ``N·Σw² / (Σw)²`` (1 para a retangular,
+    ~1,5 para a Hann, ~3,8 para a flat-top). Um tom espalha a sua potência por ~ENBW bins de um espectro
+    normalizado como 'tom' -- quem SOMA bins (bandas) precisa dividir por ela."""
+    janela = obter_janela(nome_canonico, n, kaiser_beta)
+    return float(n * np.sum(janela ** 2) / np.sum(janela) ** 2)
+
+
+def tamanho_segmento_welch(fs: float, resolucao_hz: float) -> int:
+    """Amostras por segmento do Welch para a resolução pedida (mínimo de 16)."""
+    return max(16, int(round(fs / resolucao_hz)))
+
+
 def rotulo_janela_completo(nome_canonico: str, kaiser_beta: float) -> str:
     rotulo = NOMES_EXIBICAO_JANELA[nome_canonico]
     if nome_canonico == "kaiser":
@@ -77,15 +90,20 @@ def _normalizar_espectro(potencia: np.ndarray, fs: float, tamanho_fft: int,
         que muda artificialmente com o tamanho da FFT/segmento, mesmo para o
         MESMO ruído físico.
     """
+    # Espectro de UM lado: cada bin soma o seu par de frequência negativa (fator 2), menos o DC e,
+    # com N par, o de Nyquist, que não têm par. (Com N ímpar o último bin TEM par e também dobra.)
+    um_lado = np.full(len(potencia), 2.0)
+    um_lado[0] = 1.0
+    if tamanho_fft % 2 == 0:
+        um_lado[-1] = 1.0
+
     if modo == "tom":
         ganho_coerente = np.mean(janela)
-        amplitude_linear = (2.0 / (tamanho_fft * ganho_coerente)) * np.sqrt(potencia)
-        amplitude_linear[0] /= 2.0
+        amplitude_linear = (um_lado / (tamanho_fft * ganho_coerente)) * np.sqrt(potencia)
         return 20 * np.log10(np.maximum(amplitude_linear, 1e-12))
 
     soma_quadrados_janela = np.sum(janela ** 2)
-    psd = potencia / (fs * soma_quadrados_janela)
-    psd[1:-1] *= 2.0
+    psd = um_lado * potencia / (fs * soma_quadrados_janela)
     return 10 * np.log10(np.maximum(psd, 1e-20))
 
 
@@ -125,7 +143,7 @@ def calcular_espectro_welch(sinal: np.ndarray, fs: float, nome_janela: str,
     desempenho (FFT vetorizada por lote) e memória (uma captura longa com
     50% de sobreposição pode gerar centenas de milhares de segmentos).
     """
-    tamanho_segmento = max(16, int(round(fs / resolucao_hz)))
+    tamanho_segmento = tamanho_segmento_welch(fs, resolucao_hz)
     passo = max(1, int(round(tamanho_segmento * (1.0 - sobreposicao))))
     n = len(sinal)
 
@@ -156,18 +174,22 @@ def calcular_espectro_welch(sinal: np.ndarray, fs: float, nome_janela: str,
 
 
 def agrupar_em_bandas(freqs: np.ndarray, amplitude_db: np.ndarray,
-                       largura_hz: float, modo: str):
+                       largura_hz: float, modo: str, enbw: float = 1.0):
     """Resume um espectro fino em bandas de largura fixa (ex.: 200 Hz --
     convenção da literatura de supraharmônicos para tornar o resultado
     comparável entre capturas com resoluções em frequência diferentes, ao
     contrário do valor bin a bin, que muda de significado só porque o
     tamanho da FFT/segmento mudou).
 
-    Cada banda reporta o nível RMS de tensão contido nela, em dBV: para
-    'tom' (bins em amplitude linear) é a soma das POTÊNCIAS dos bins; para
-    'ruido' (bins em densidade espectral de potência) é a integral da PSD
-    sobre a banda. As duas convergem para a mesma grandeza física (energia
-    contida na banda), o que torna o resultado comparável entre os modos.
+    Cada banda reporta o nível RMS contido nela (dB re 1 unidade do sinal, V
+    ou A): para 'ruido' (bins em densidade espectral de potência) é a integral
+    da PSD sobre a banda; para 'tom' (bins em amplitude de PICO, corrigida
+    pelo ganho coerente da janela) é a soma dos quadrados dos bins convertida
+    em RMS (÷2, menos no DC) e dividida pela ``enbw`` da janela, em bins (ver
+    :func:`enbw_bins`): com uma janela que não é a retangular, um tom ocupa
+    vários bins e a soma sem essa divisão o contaria ENBW vezes (+1,8 dB na
+    Hann, +5,8 dB na flat-top). Assim os dois modos dão o mesmo número para o
+    mesmo sinal.
     """
     largura_bin = freqs[1] - freqs[0]
     bordas = np.arange(freqs[0], freqs[-1], largura_hz)
@@ -175,9 +197,11 @@ def agrupar_em_bandas(freqs: np.ndarray, amplitude_db: np.ndarray,
         bordas = np.array([freqs[0]])
 
     if modo == "tom":
-        potencia_linear = 10 ** (amplitude_db / 10.0)          # |V|^2 por bin
+        potencia_linear = 10 ** (amplitude_db / 10.0)          # amplitude de pico² por bin
+        potencia_linear[1:] /= 2.0                             # pico² -> RMS² (o DC já é o próprio nível)
+        potencia_linear /= enbw
     else:
-        potencia_linear = (10 ** (amplitude_db / 10.0)) * largura_bin  # PSD * Hz = V^2 por bin
+        potencia_linear = (10 ** (amplitude_db / 10.0)) * largura_bin  # PSD * Hz = RMS² por bin
 
     centros, valores_db = [], []
     for inicio_banda in bordas:

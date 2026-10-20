@@ -16,6 +16,7 @@ atualize ``constantes`` e o teste de contrato.
 
 import argparse
 import logging
+import math
 from pathlib import Path
 
 from .constantes import (
@@ -165,8 +166,8 @@ def montar_parser() -> argparse.ArgumentParser:
     )
     grupo_sonda.add_argument(
         "--sem-correcao-sonda", action="store_true",
-        help="Desliga a correção por frequência em canais de corrente "
-             "(fica só a calibração --ganho escalar) -- útil para comparar "
+        help="Desliga a correção por frequência (canais de corrente, ou de "
+             "tensão com sonda registrada; fica só a calibração --ganho escalar) -- útil para comparar "
              "o espectro corrigido com o bruto, ou depurar um perfil "
              "suspeito."
     )
@@ -386,6 +387,17 @@ def montar_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _validar_flags_numericas(args: argparse.Namespace) -> None:
+    """Valores que o argparse aceita mas que derrubariam o programa com um traceback lá na frente
+    (divisão por zero, ``range`` com passo 0) ou dariam lixo em silêncio (NaN)."""
+    if args.frequencia is not None and not (math.isfinite(args.frequencia) and args.frequencia > 0):
+        raise ErroUso("-f/--frequencia precisa ser um número positivo (Hz).")
+    if args.tamanho_chunk < 1:
+        raise ErroUso("--tamanho-chunk precisa ser >= 1.")
+    if args.distancia_minima_picos <= 0:
+        raise ErroUso("--distancia-minima-picos precisa ser positiva.")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Ponto de entrada do ``adc_tool``. Devolve o código de saída do processo."""
     parser = montar_parser()
@@ -395,6 +407,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.export_hdf5 is not None and args.converter is not None:
             raise ErroUso("--export-hdf5 e -c/--converter não podem ser usados juntos -- escolha um modo.")
+        _validar_flags_numericas(args)
 
         ctx = resolver_contexto(args)
         anunciar_cabecalho(ctx, args.formato)

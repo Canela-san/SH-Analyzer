@@ -46,7 +46,8 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
                        titulo_arquivo: str, caminho_saida: Path | None,
                        layout: str, rotulo_espectro_y: str,
                        limite_inferior_db: float | None,
-                       grandeza_por_canal: dict[int, int] | None = None) -> None:
+                       grandeza_por_canal: dict[int, int] | None = None,
+                       idx_fim_arquivo: int | None = None) -> None:
     """Plota forma de onda e, se disponível, espectro(s) de 1+ canais. Um
     canal pode ter até 2 espectros simultâneos (--fft e --welch, chaves
     "ciclo"/"welch" em infos_espectro[canal]) -- plotados como curvas
@@ -56,7 +57,10 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
     'grandeza_por_canal' (opcional -- None mantém o rótulo histórico
     "Tensão (V)" para compatibilidade) rotula o eixo Y no tempo conforme a
     grandeza real de cada canal (tensão/corrente/temperatura), em vez de
-    assumir sempre tensão -- ver rotulo_eixo_grandeza()."""
+    assumir sempre tensão -- ver rotulo_eixo_grandeza().
+
+    'idx_inicio_arquivo'/'idx_fim_arquivo': o trecho, em amostras BRUTAS do arquivo (com N canais, N
+    amostras brutas por instante), só para os títulos. Sem o fim, ele é deduzido com 1 canal."""
     canais = list(tensoes_por_canal.keys())
     n_canais = len(canais)
     tem_espectro = infos_espectro is not None
@@ -64,6 +68,8 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
         grandeza_por_canal = {c: GRANDEZA_TENSAO for c in canais}
 
     n = len(tensoes_por_canal[canais[0]])
+    if idx_fim_arquivo is None:
+        idx_fim_arquivo = idx_inicio_arquivo + n
     fator_tempo, rotulo_tempo = escolher_unidade_tempo(n / fs_efetiva)
     tempo = (np.arange(n) / fs_efetiva) * fator_tempo
 
@@ -83,7 +89,7 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
             rotulo = None if n_canais == 1 else f"Canal {canal}"
             ax_tempo.plot(tempo, tensoes_por_canal[canal], color=cor_tempo, linewidth=1.0, label=rotulo)
 
-        titulo_base = f"Forma de onda -- amostras {idx_inicio_arquivo}..{idx_inicio_arquivo + n} de '{titulo_arquivo}'"
+        titulo_base = f"Forma de onda -- amostras {idx_inicio_arquivo}..{idx_fim_arquivo} de '{titulo_arquivo}'"
         ax_tempo.set_title(titulo_base if n_canais == 1 else f"{titulo_base} (canais {canais}, sobrepostos)")
         ax_tempo.set_xlabel(rotulo_tempo)
         ax_tempo.set_ylabel(rotulo_eixo_grandeza(canais, grandeza_por_canal))
@@ -152,7 +158,7 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
             cor = cores[i % len(cores)]
             ax_tempo = eixos[i, 0]
             ax_tempo.plot(tempo, tensoes_por_canal[canal], color=cor, linewidth=1.0)
-            ax_tempo.set_title(f"Canal {canal} -- amostras {idx_inicio_arquivo}..{idx_inicio_arquivo + n}")
+            ax_tempo.set_title(f"Canal {canal} -- amostras brutas {idx_inicio_arquivo}..{idx_fim_arquivo}")
             ax_tempo.set_xlabel(rotulo_tempo)
             ax_tempo.set_ylabel(rotulo_eixo_grandeza([canal], grandeza_por_canal))
             ax_tempo.grid(True, alpha=0.4)

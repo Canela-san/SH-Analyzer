@@ -34,8 +34,8 @@ from .amostras import (
     detectar_tipo_arquivo,
     selecionar_intervalo,
 )
-from .canais import desintercalar
-from .constantes import GRANDEZA_CORRENTE, GRANDEZA_TEMPERATURA
+from .canais import alinhar_ao_ciclo, desintercalar
+from .constantes import GRANDEZA_CORRENTE, GRANDEZA_TEMPERATURA, UNIDADE_GRANDEZA
 from .contexto import ContextoCaptura
 from .conversao import converter_arquivo
 from .erros import ErroSHAN, ErroUso
@@ -43,9 +43,11 @@ from .espectro import (
     agrupar_em_bandas,
     calcular_espectro,
     calcular_espectro_welch,
+    enbw_bins,
     encontrar_picos_espectro,
     resolver_nome_janela,
     rotulo_janela_completo,
+    tamanho_segmento_welch,
 )
 from .filtros import aplicar_filtro_digital, validar_corte_filtro
 from .fundamental import recortar_ciclos_inteiros
@@ -166,10 +168,7 @@ def executar_plotagem(args: argparse.Namespace, ctx: ContextoCaptura) -> None:
     if usa_welch:
         _analisar_welch(args, ctx, por_canal_tensao, fs_efetiva, params, infos_espectro)
 
-    if args.agrupar_bandas is not None:
-        rotulo_espectro_y = f"Nível por banda de {args.agrupar_bandas:g} Hz (dBV)"
-    else:
-        rotulo_espectro_y = "Magnitude (dBV)" if args.modo_espectro == "tom" else "PSD (dB re V²/Hz)"
+    rotulo_espectro_y = _rotulo_espectro(args, grandeza_por_canal_exibir)
     limite_inferior_db = -100.0 if (args.modo_espectro == "tom" and args.agrupar_bandas is None) else None
 
     # Título do cabeçalho da captura (--titulo no firmware) enriquece o título
@@ -181,11 +180,23 @@ def executar_plotagem(args: argparse.Namespace, ctx: ContextoCaptura) -> None:
         else args.arquivo.name
     )
 
+    n_por_canal = len(next(iter(por_canal_tensao.values())))
     plotagem.plotar_multicanal(
         por_canal_tensao, fs_efetiva, sinal.idx_inicio, infos_espectro, titulo_exibicao,
         args.saida, args.layout_canais, rotulo_espectro_y, limite_inferior_db,
-        grandeza_por_canal_exibir,
+        grandeza_por_canal_exibir, idx_fim_arquivo=sinal.idx_inicio + n_por_canal * ctx.num_canais,
     )
+
+
+def _rotulo_espectro(args: argparse.Namespace, grandeza_por_canal: dict[int, int]) -> str:
+    """Rótulo do eixo do espectro na unidade dos canais exibidos (dBV na tensão, dBA na corrente)."""
+    unidades = {UNIDADE_GRANDEZA.get(g, "V") for g in grandeza_por_canal.values()}
+    u = unidades.pop() if len(unidades) == 1 else None
+    if args.agrupar_bandas is not None:
+        return f"Nível RMS por banda de {args.agrupar_bandas:g} Hz " + (f"(dB{u})" if u else "(dB re unidade do canal)")
+    if args.modo_espectro == "tom":
+        return f"Magnitude (dB{u})" if u else "Magnitude (dB re unidade do canal)"
+    return f"PSD (dB re {u}²/Hz)" if u else "PSD (dB re unidade²/Hz)"
 
 
 def _resolver_frequencia(args: argparse.Namespace, ctx: ContextoCaptura) -> float:
@@ -274,7 +285,8 @@ def _carregar_sinal(args: argparse.Namespace, ctx: ContextoCaptura) -> SinalCarr
     """Carrega o trecho pedido (--inicio/--fim) e converte código -> volts, por canal exibido."""
     tipo_arquivo = detectar_tipo_arquivo(args.arquivo)
     amostras = carregar_amostras(args.arquivo, args.formato, offset=ctx.offset_amostras)
-    bruto, idx_inicio, idx_fim, total = selecionar_intervalo(amostras, args.inicio, args.fim)
+    inicio = alinhar_ao_ciclo(args.inicio, ctx.num_canais)
+    bruto, idx_inicio, idx_fim, total = selecionar_intervalo(amostras, inicio, args.fim)
 
     por_canal_bruto = desintercalar(bruto, ctx.canais, ctx.canais_exibir)
     por_canal_tensao: dict[int, np.ndarray] = {}
@@ -404,7 +416,10 @@ def _analisar_fft(args: argparse.Namespace, ctx: ContextoCaptura,
             _registrar_picos(canal, "ciclo", picos, ctx.num_canais)
 
         if args.agrupar_bandas is not None:
-            freqs, amplitude_db = agrupar_em_bandas(freqs, amplitude_db, args.agrupar_bandas, args.modo_espectro)
+            freqs, amplitude_db = agrupar_em_bandas(
+                freqs, amplitude_db, args.agrupar_bandas, args.modo_espectro,
+                enbw=enbw_bins(params.nome_janela, len(sinal_fft), args.kaiser_beta),
+            )
 
         if ctx.num_canais == 1:
             log.info(f"FFT (ciclo): f0 = {f0:.3f} Hz | {n_ciclos} ciclo(s) completo(s) | "
@@ -438,7 +453,11 @@ def _analisar_welch(args: argparse.Namespace, ctx: ContextoCaptura,
             _registrar_picos(canal, "welch", picos, ctx.num_canais)
 
         if args.agrupar_bandas is not None:
-            freqs, amplitude_db = agrupar_em_bandas(freqs, amplitude_db, args.agrupar_bandas, args.modo_espectro)
+            n_segmento = tamanho_segmento_welch(fs_efetiva, args.resolucao_welch)
+            freqs, amplitude_db = agrupar_em_bandas(
+                freqs, amplitude_db, args.agrupar_bandas, args.modo_espectro,
+                enbw=enbw_bins(params.nome_janela, n_segmento, args.kaiser_beta),
+            )
 
         prefixo = f"  Canal {canal} " if ctx.num_canais > 1 else ""
         log.info(f"{prefixo}Welch: {n_segmentos} segmento(s) médios | "

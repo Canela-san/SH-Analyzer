@@ -48,7 +48,7 @@ cd firmware
 ./setup.sh
 ```
 
-O `setup.sh` faz, nesta ordem: configura os pinos SPI (`config-pin`), recompila tudo (`make clean && make`, que gera `ler_adc` e `fw_pru.out`), copia o firmware para `/lib/firmware/am335x-pru0-fw` e reinicia a PRU pelo `remoteproc`. Para conferir se a PRU subiu sem reclamar:
+O `setup.sh` faz, nesta ordem: configura os pinos SPI (`config-pin`), recompila tudo (`make clean && make`, que gera `ler_adc` e `fw_pru.out`), copia o firmware para `/lib/firmware/am335x-pru0-fw` e reinicia a PRU pelo `remoteproc`. Ele para no primeiro erro (uma compilação que falha não carrega firmware velho na PRU) e, no fim, confere que a PRU ficou rodando; se não ficou, mostra as últimas mensagens do kernel. Para conferir à mão:
 
 ```bash
 dmesg | tail -n 20
@@ -150,6 +150,8 @@ uv run scripts/adc_tool.py captura.bin --fft -o grafico.png # salva em arquivo e
 uv run scripts/adc_tool.py captura.bin --inicio 50000 --fim 150000 --fft   # só um trecho (índices de amostra)
 ```
 
+Numa captura de vários canais, `--inicio` e `--fim` contam amostras **brutas** (com 2 canais, 2 por instante). Se `--inicio` cair no meio de um ciclo de canais, ele é arredondado para baixo até o começo do ciclo (com aviso): senão um canal seria lido com o rótulo do outro.
+
 Sem `-o`, abre uma janela interativa. Em um computador sem tela (por exemplo, via SSH), use sempre `-o`.
 
 ### Vários canais
@@ -186,8 +188,8 @@ uv run scripts/adc_tool.py captura.bin --filtro-passa-alta 20 --ordem-filtro 8 -
 | Flag | Para quê |
 |---|---|
 | `--modo-espectro tom` (padrão) | Amplitude de um tom discreto |
-| `--modo-espectro ruido` | Densidade espectral de potência (V²/Hz): correta para ruído de banda larga |
-| `--agrupar-bandas HZ` | Resume o espectro em bandas de largura fixa (ex.: 200 Hz). Facilita comparar capturas com resoluções diferentes |
+| `--modo-espectro ruido` | Densidade espectral de potência (V²/Hz; A²/Hz num canal de corrente): correta para ruído de banda larga |
+| `--agrupar-bandas HZ` | Resume o espectro em bandas de largura fixa (ex.: 200 Hz), com o nível **RMS** de cada banda. Facilita comparar capturas com resoluções diferentes; dá o mesmo valor em `tom` e em `ruido`, com qualquer janela |
 | `--picos LIMIAR_DB` | Lista no console a frequência e a amplitude dos picos acima do limiar (padrão: de 2 kHz até a Nyquist) |
 | `--janela NOME` | Janela espectral: `retangular` (padrão), `hann`, `blackmanharris`, `flattop`, `kaiser` |
 

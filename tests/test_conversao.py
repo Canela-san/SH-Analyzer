@@ -60,3 +60,25 @@ def test_exportacao_hdf5_grava_metadados_e_dados(tmp_path):
         assert list(f.attrs["canais_ordem"]) == [0, 1]
         assert list(f.attrs["grandeza_por_canal"]) == [0, 1]
         assert [s.decode() for s in f.attrs["sonda_id_por_canal"]] == ["", "sonda_x"]
+
+
+def test_exportacao_hdf5_com_inicio_no_meio_do_ciclo_nao_troca_os_canais(tmp_path):
+    h5py = pytest.importorskip("h5py")
+    p = escrever_bin(tmp_path / "dc.bin", [np.full(1000, 1.0), np.full(1000, -2.0)])   # canal 0 = +1 V, canal 1 = -2 V
+    destino = tmp_path / "dc.h5"
+    exportar_hdf5(p, destino, "uint16", [0, 1], ler_cabecalho(p), **{k: PAR[k] for k in ("faixas", "offsets")},
+                  ganhos=[1.0, 1.0], incluir_tensao=True, offset_amostras=CABECALHO_TAMANHO_TOTAL, inicio=1, fim=None)
+    with h5py.File(destino, "r") as f:
+        tensao = f["tensao_v"][()]
+    np.testing.assert_allclose(tensao[:, 0], 1.0, atol=1e-3)    # sem o alinhamento, a coluna 0 seria o canal 1
+    np.testing.assert_allclose(tensao[:, 1], -2.0, atol=1e-3)
+
+
+@pytest.mark.parametrize("valor", ["abc", "70000", "-1"])
+def test_csv_com_valor_invalido_e_erro_claro_e_nao_deixa_bin_pela_metade(tmp_path, valor):
+    csv = tmp_path / "x.csv"
+    csv.write_text("amostra,valor_bruto\n0,100\n1,200\n2," + valor + "\n", encoding="utf-8")
+    destino = tmp_path / "x.bin"
+    with pytest.raises(ErroSHAN, match="linha de dados 3"):
+        converter_arquivo(csv, destino, "uint16", 0, None, False, **PAR, tamanho_chunk=100)
+    assert not destino.exists()

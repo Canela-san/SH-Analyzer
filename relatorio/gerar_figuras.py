@@ -344,6 +344,9 @@ def com_incerteza(valor: float, sigma: float, escala: float = 1.0) -> str:
         return f"{valor:.6g}"
     casas = max(0, 1 - math.floor(math.log10(sigma)))
     digitos = round(sigma * 10 ** casas)
+    if digitos >= 100 and casas > 0:   # 0,0996 arredonda para "100": vira 0,10, com dois algarismos de novo
+        casas -= 1
+        digitos = round(sigma * 10 ** casas)
     return f"{valor:.{casas}f}({digitos})"
 
 
