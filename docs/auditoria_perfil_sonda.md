@@ -82,7 +82,7 @@ Estes determinam se o perfil é *fisicamente* correto; o software não consegue 
 ## 4. Limitações de projeto e melhorias propostas (decisão sua)
 
 > **Status em 2026-10:** nenhuma das propostas abaixo foi implementada. Elas estão resumidas,
-> com esforço e necessidade de decisão, em `docs/melhorias-propostas.md` (item 2.11).
+> com esforço e necessidade de decisão, em `docs/melhorias-propostas.md` (seção 8, itens S1–S8).
 
 ### 4.1 Correção só de magnitude (fase não corrigida) — impacto alto *se* houver análise V×I
 Medido: sonda passa-baixa causal de fc = 30 kHz, tons 2,5/9/20/40 kHz com amplitude restaurada exata, mas fase residual −4,8°/−16,7°/−33,7°/−53,1° e **erro RMS da forma de onda de 42 %** (o pico coincidiu por acaso). Hoje o pipeline só usa amplitude em dB, então é inofensivo; deixa de ser quando se calcular potência ativa, impedância ou direção de emissão em supraharmônicos.
@@ -106,7 +106,7 @@ A divisão espectral do registro inteiro trata o sinal como periódico; em regis
 
 ### 4.7 Menores
 - `gerar_perfil_sonda.py` não verifica estabilidade da amplitude *dentro* da captura (deriva do gerador durante os 2–3 s); comparar a 1ª e 2ª metade e avisar > 1–2 %.
-- `calibrar_sonda.sh` não foi alterado por esta auditoria; sem achados na revisão e nos testes anteriores (`bash -n` ok; `shellcheck` não disponível neste ambiente nesta sessão — rodar localmente). **Achado posterior (2026-10), já corrigido:** a checagem de Nyquist usava a taxa total em vez da efetiva por canal (`taxa/4` com 2 canais); o script foi reescrito (escolha automática de frequências, conferência de cada captura, novos modos) — ver `docs/melhorias-propostas.md`, item 2.10, e `docs/guia_de_uso.md`, "Passo 1". O texto desta auditoria descreve o script **como ele estava** na época.
+- `calibrar_sonda.sh` não foi alterado por esta auditoria; sem achados na revisão e nos testes anteriores (`bash -n` ok; `shellcheck` não disponível neste ambiente nesta sessão — rodar localmente). **Achado posterior (2026-10), já corrigido:** a checagem de Nyquist usava a taxa total em vez da efetiva por canal (`taxa/4` com 2 canais); o script foi reescrito (escolha automática de frequências, conferência de cada captura, novos modos) — ver o `git log` do script e `docs/guia_de_uso.md`, "Passo 1". O texto desta auditoria descreve o script **como ele estava** na época.
 - `ler_adc.c` não foi alterado. Por decisão do projeto não valida o id da sonda; a validação de caracteres ficou no Python. Se quiser defesa em profundidade, validar também no `--sonda` do C (exige recompilar e retestar no BeagleBone).
 
 ---
@@ -123,7 +123,7 @@ A divisão espectral do registro inteiro trata o sinal como periódico; em regis
 | `docs/auditoria_perfil_sonda.md` | **novo** — este documento |
 | `docs/contexto_projeto.md` | seções atualizadas (modelo de calibração, pipeline, geração de perfil, status, restrições) |
 
-Sem alteração (na época desta auditoria): `firmware/ler_adc.c`, `firmware/calibrar_sonda.sh`, `docs/exemplo_sonda.json`. O `calibrar_sonda.sh` foi reescrito depois (item 2.10 de `docs/melhorias-propostas.md`).
+Sem alteração (na época desta auditoria): `firmware/ler_adc.c`, `firmware/calibrar_sonda.sh`, `docs/exemplo_sonda.json`. O `calibrar_sonda.sh` foi reescrito depois (ver o `git log` do arquivo).
 
 ---
 

@@ -397,8 +397,8 @@ onda de 60 Hz esperada, ao passo que os canais 0, 2 e 4 apresentaram apenas
 ruído — confirmando que a varredura automática alterna corretamente entre
 os canais habilitados. A captura de validação rodou a 102,4 kHz totais
 (≈20,48 kHz efetivos por canal) — número que, cruzado com uma reanálise do
-código feita junto com esta atualização (ver `docs/melhorias-propostas.md`,
-item 1.1), já supera uma estimativa antiga de piso de velocidade da
+código feita junto com esta atualização (e, depois, pela contagem do
+simulador da PRU: ~7 µs por amostra, Marco 13), já supera uma estimativa antiga de piso de velocidade da
 implementação de bit-banging que não sobreviveu à reescrita para o modo
 automático — um indício indireto, mas concreto, de que a migração também
 trouxe ganho de desempenho, além da simplificação de código.
@@ -883,7 +883,7 @@ ADS8688) e fica acima dos ~15 kHz estimados a partir do datasheet
 3. **Faixa curta acima do corte.** Os pontos param em 2,6 × f−3dB, o que
    correlaciona f0 e Q (−0,87). Medir |H| acima da Nyquist por
    subamostragem de senoides puras estenderia a curva (exige mudanças nos
-   scripts; ver `docs/melhorias-propostas.md`, item 2.11).
+   scripts; ver `docs/melhorias-propostas.md`, item S4).
 
 **Consequências no software:**
 - Os textos do `calibrar_sonda.sh` eram todos de corrente (o operador tinha

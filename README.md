@@ -130,7 +130,7 @@ As duas podem ser combinadas na mesma execução. A explicação completa, com o
 
 **Atenção ao filtro do ADC:** o ADS8688 tem um filtro passa-baixa de 2ª ordem embutido em cada canal, com corte de cerca de 15 kHz (datasheet, seção 8.3.5); na cadeia de tensão completa, o T3 mediu −3 dB em 17,3 kHz e −12,5 dB em 45 kHz. Na banda de supraharmônicos (2 a 150 kHz) o sinal chega ao conversor atenuado em dezenas de dB, e a correção por perfil devolve a amplitude mas amplifica o ruído na mesma proporção. Por isso o perfil deve cobrir a cadeia inteira (sonda, frontend e ADC) até 150 kHz; neste projeto "sonda" designa esse conjunto, e a frequência de corte do filtro do ADC não precisa ser conhecida, porque aparece na curva medida. O mesmo fluxo calibra uma sonda de corrente ou a cadeia de um canal de tensão (`calibrar_sonda.sh --grandeza tensao`). O perfil pode ser montado a partir de uma **senoide de amplitude conhecida** (`calibrar_sonda.sh --amplitude 500mVpp`, gravada nos metadados de cada captura), de um `.m` do osciloscópio, de leituras anotadas ou de um segundo canal do ADC: veja [`docs/guia_de_uso.md`](docs/guia_de_uso.md#sondas-de-corrente-calibração-e-correção).
 
-Limites conhecidos, como a ausência de controle de *overrun* nos buffers (risco cresce com a taxa de amostragem) e a correção de sonda só de magnitude, estão em [`docs/contexto_projeto.md`](docs/contexto_projeto.md) e [`docs/melhorias-propostas.md`](docs/melhorias-propostas.md).
+Limites conhecidos, como a taxa máxima (~140 kS/s, que cobre só parte da banda de supraharmônicos) e a correção de sonda só de magnitude, estão em [`docs/contexto_projeto.md`](docs/contexto_projeto.md) e [`docs/melhorias-propostas.md`](docs/melhorias-propostas.md).
 
 ## 🤝 Contribuindo
 

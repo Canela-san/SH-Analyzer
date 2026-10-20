@@ -568,7 +568,7 @@ uv run scripts/medir_captura.py lab/2026-10-20/T7[abcd]*.bin --freq 10000 --sem-
 
 #### T7e: onde está o limite de taxa
 
-**Objetivo.** Saber **até onde** vai a taxa real e **qual parte** do projeto é o gargalo (a PRU/SPI, o ADC ou o lado ARM), em vez de supor. É o item 1.2 de [`melhorias-propostas.md`](melhorias-propostas.md#12-medir-antes-de-otimizar-isolar-onde-o-tempo-por-transação-está-indo), medido em bancada.
+**Objetivo.** Saber **até onde** vai a taxa real e **qual parte** do projeto é o gargalo (a PRU/SPI, o ADC ou o lado ARM), em vez de supor. São os itens F2 e F3 de [`melhorias-propostas.md`](melhorias-propostas.md#f2--medir-até-onde-as-esperas-do-cs-podem-cair), medidos em bancada.
 
 **Hipótese a testar** (confirmada no firmware em out/2026; falta a medida no CS). O ADS8688 precisa só de ~2 µs por amostra (500 kS/s), mas a PRU gasta bem mais: pela contagem estática do `spi_core.asm` (±10%), 32 bits de SCLK de ~16 a 19 ciclos cada (≈ 2,9 µs) mais os três laços de atraso do CS (200 + 100 + 100 iterações de 2 ciclos = 800 ciclos = **4,0 µs**) dão **~7 µs por quadro**, ou seja, ~140 kS/s no papel; o limite que você observou (130 kS/s) está nessa faixa. Executar o próprio `spi_core.asm` num simulador de PRU (`tests/pru_sim.py`, 1 ciclo por instrução, sem hardware) deu o mesmo resultado: **1379 ciclos = 6,9 µs por quadro (~145 kS/s)**, dos quais **800 ciclos (58%) são os três laços de atraso do CS**. É um teto de papel (acessos à memória externa podem somar ciclos): só o osciloscópio (método 2) confirma. Os mínimos do datasheet são 30/10/30 ns (tSU_CSCK, tD_CKCS, tPH_CS); reduza só pelo método 4, medindo. Se for isso, a taxa **real** satura em torno de 130 kS/s, **sem perder amostra**, qualquer que seja a taxa pedida. O lado ARM é improvável (130 kS/s = 260 kB/s; cada buffer de 2 MB demora ~8 s para encher).
 
@@ -607,9 +607,9 @@ Em cada captura, o `ler_adc` imprime a **taxa real medida** e o número de **amo
 
 | Observação | Gargalo provável | Melhoria (ver `melhorias-propostas.md`) |
 |---|---|---|
-| `fs_real` **satura** (~130 kS/s) e o período do CS para de diminuir; continuidade OK | Tempo fixo do quadro da PRU (atrasos do CS e bits do SPI) | 1.4 (revisar os atrasos com o datasheet) e 1.2 |
-| `fs_real` = pedida, mas aparecem eventos de continuidade, mais com disco ocupado | Escrita/CPU do ARM (buffers) | 1.6, 1.7, 1.8 |
-| `fs_real` = pedida, sem eventos, mas ruído sobe com a taxa | Acoplamento digital-analógico ou tempo de aquisição do ADC | 1.10 |
+| `fs_real` **satura** (~130 kS/s) e o período do CS para de diminuir; continuidade OK; o `ler_adc` acusa amostras atrasadas | Tempo fixo do quadro da PRU (atrasos do CS e bits do SPI) | F2 (atrasos do CS, método 4) e F3 (SPI) |
+| `fs_real` = pedida, mas o `ler_adc` acusa buffers sobrescritos, mais com disco ocupado | Escrita/CPU do ARM | R1 (cartão/disco) e F6 |
+| `fs_real` = pedida, sem eventos, mas ruído sobe com a taxa | Acoplamento digital-analógico ou tempo de aquisição do ADC | H1, H2 |
 
 **Anote.** Para cada taxa: `fs_real`, eventos, tudo o que o `ler_adc` escreveu no terminal (`T7e_saida_ler_adc.txt`) e o `dmesg`; a taxa a partir da qual o resultado deixa de ser confiável.
 
