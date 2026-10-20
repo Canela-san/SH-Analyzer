@@ -8,7 +8,8 @@ H = hardware, S = sondas) e as colunas: **ganho** (o que melhora), **esforço** 
 assembly só conta como feita depois de montada com `clpru` e validada no hardware.
 
 Revisado em 20/10/2026, depois da revisão do firmware (salto de 7 µs na troca de buffer corrigido, contadores de
-integridade, cabeçalho v4), da revisão dos testes e do novo `compactar_amostras.py`.
+integridade, cabeçalho v4), da revisão dos testes, do novo `compactar_amostras.py` e da análise das capturas de
+bancada de 19/10 (F9 e P6 vieram delas).
 
 ---
 
@@ -46,6 +47,8 @@ arquivamento sem perdas conferido bit a bit; a documentação cobre operação, 
 | **S1** | Calibrar a sonda de corrente (T10) com hold-out | Alto para corrente | Médio (bancada) | não | — |
 | **P1** | Gráfico com decimação por envoltória (mín/máx) | Alto: 10 min hoje = 26 s e 4,3 GB de RAM | Baixo | não | — |
 | **T1** | CI compilando o `ler_adc.c` e passando `shellcheck` | Médio | Baixo | não | — |
+| **P6** | Continuidade medida em tempo, com atenção às trocas de buffer | Médio: o salto de 7 µs passou como "OK" com 2 canais | Baixo | não | — |
+| **F9** | Descartar o transitório depois de trocar a faixa do ADC | Médio: dado certo desde a 1ª amostra | Baixo | sim (a) / não (b) | F1 |
 | **F3** | SPI mais rápido (SCLK até 17 MHz) | Alto: rumo a 300–500 kS/s | Médio | sim | F2 |
 | **F4** | `SAMPLES_PER_BUFFER` vindo do ARM, não duplicado no `.asm` | Médio: fim de uma sincronia manual | Baixo | sim | F1 |
 | **F5** | Hash do commit no cabeçalho | Médio: saber qual firmware gerou cada captura | Baixo | não | — |
@@ -53,7 +56,7 @@ arquivamento sem perdas conferido bit a bit; a documentação cobre operação, 
 | **R2–R4** | Binários fora do git, nomes sem espaço, números em um lugar só | Médio | Baixo | não | — |
 | **F6** | Gravar o bloco parcial no Ctrl+C e parar a PRU no fim | Médio | Baixo | sim (publicar a posição) | F1 |
 | **F7** | Conferência rápida do `calibrar_sonda.sh` mais leve na BeagleBone | Médio | Baixo | não | medir na BBB |
-| **P3–P5** | Correção de sonda fora de `modos`, taxa real da PRU, atributo HDF5 | Baixo–Médio | Baixo | não | P4: T4 |
+| **P3–P5** | Correção de sonda fora de `modos`, taxa real da PRU (confirmada no T4), atributo HDF5 | Baixo–Médio | Baixo | não | — |
 | **S2–S6** | Fase, subamostragem, perfil absoluto, teto de ganho | Alto para V×I | Médio–Alto | não | S1 |
 | **F8** | Endereço do canal no SDO (verificar a ordem dos canais a cada amostra) | Baixo–Médio | Médio | sim | F3 |
 | **H1–H2** | Isolador contra o BOM, pontos de teste na próxima PCB | Baixo–Médio | Baixo–Médio | não | — |
@@ -72,8 +75,10 @@ mas a latência real de `LBBO`/`SBBO` e a sintaxe do `clpru` só aparecem na Bea
 
 **Como validar.** `cd firmware && ./setup.sh` (compila e carrega); depois:
 
-1. 10 min a 100 kS/s com um tom estável (como o T7c) → `medir_captura.py` com **continuidade OK** (antes: 3
-   eventos de 0,699 amostra nas trocas) e o `ler_adc` terminando com "Integridade: ... tudo certo";
+1. 10 min a 100 kS/s com um tom estável (como o T7c) → `medir_captura.py` com **continuidade OK** e maior salto
+   na casa dos milésimos de amostra (antes: 0,697 nas 57 trocas) e o `ler_adc` terminando com "Integridade: ...
+   tudo certo". O T7a e o T7b também, mas com ≥ 3 blocos: uma captura de 1 bloco não tem troca de buffer, e com
+   2 canais o salto antigo valia só 0,35 amostra, abaixo do limite de 0,5 (P6);
 2. ≥ 25 s a 40 kS/s (um bloco > 21,5 s, que antes travava o contador) → continuidade OK;
 3. 200 kS/s → o `ler_adc` tem de acusar **amostras atrasadas** e a taxa real medida (~140 kS/s);
 4. se o `DELTA` do rebase (4 ciclos) estiver errado, aparece como salto de poucos ns a cada 10,7 s: invisível na
@@ -142,6 +147,22 @@ ao dado (registrador 03h, `SDO_FORMAT`): 3 bits a mais por quadro.
 conta quadros fora da sequência esperada (um quarto contador de integridade). Custa ~3 clocks por quadro: deixar
 desligado por padrão, ou ligar depois de F3.
 
+### F9 — Descartar o transitório depois de trocar a faixa
+
+**Por quê.** Nas capturas de 19/10 (roteiro, T0 e T1), toda vez que a faixa de um canal muda em relação à captura
+anterior, as ~6 primeiras amostras desse canal (60 µs a 100 kS/s) decaem de até ~1 V até o valor certo. É o ADC se
+acomodando à nova escala, com constante de tempo próxima à do passa-baixa interno. Sem troca de faixa, não há
+transitório. Hoje nada é descartado, e o ruído medido sem `--inicio 100` sai 7 a 8 vezes maior.
+
+**Proposta.** (a) Na PRU: depois de escrever os `RANGE_SELn` e o `AUTO_RST`, fazer ~16 quadros descartados (≥ 100 µs)
+antes de zerar o contador de ciclos e começar a gravar, reaproveitando o corpo da transação (a IMEM está em 91,7 %).
+O campo `primeira_amostra_descartada` do cabeçalho já existe para registrar isso. (b) Se a PRU não for mexida: o
+`medir_captura.py` e o `adc_tool.py` passam a pular, por padrão, as primeiras 16 amostras de cada canal (com
+`--inicio 0` para ver tudo) e avisam quando o começo destoa do resto.
+
+**Como saber que deu certo.** Repetir a sequência de faixas do T0 (20.48 → 10.24 → 5.12) e conferir que as
+primeiras amostras de cada captura já estão dentro do ruído (±3 LSB do valor final).
+
 ---
 
 ## 4. Software Python
@@ -177,7 +198,8 @@ com isso arrasta o módulo de HDF5 e a lógica de plotagem para o seu fecho de i
 **Por quê.** A PRU gera `200 MHz ÷ ticks` (inteiro): 102.400 Hz pedidos viram 102.406,55 Hz (+64 ppm); todas as
 frequências medidas se deslocam igual. Só o `medir_captura --fs-pru` usa a taxa real.
 
-**Proposta.** Depois do T4 confirmar, usar `pru_clock_hz ÷ sample_period_ticks` por padrão no `adc_tool` e no
+**Proposta.** O T4 de 19/10 confirmou a fórmula a 0,02 ppm (102,4 kS/s a −64,03 ppm e 110 kS/s a −99,98 ppm das
+taxas exatas). Usar `pru_clock_hz ÷ sample_period_ticks` por padrão no `adc_tool` e no
 gerador de perfil, com aviso quando difere da pedida. Recomendar taxas exatas (100, 200, 250 kHz) no guia.
 
 ### P5 — Atributos HDF5 da correção e da integridade
@@ -186,6 +208,20 @@ gerador de perfil, com aviso quando difere da pedida. Recomendar taxas exatas (1
 
 **Proposta.** Atributo `correcao_sonda_aplicada` (perfil e data) por canal. (Os contadores de integridade do
 cabeçalho v4 já vão para o HDF5.)
+
+### P6 — Continuidade medida em tempo
+
+**Por quê.** O `medir_captura.py` só acusa salto de fase acima de 0,5 amostra **do canal**. O defeito de 6,97 µs do
+firmware antigo vale 0,7 amostra com 1 canal a 100 kS/s, mas 0,35 com 2 canais e 0,09 com 8: nas capturas de 19/10
+com 2 canais (T6) ele saiu como "OK". Uma captura saudável dá 0,001 a 0,004 amostra.
+
+**Proposta.** Informar o salto também em µs e na taxa total (`salto_max_us` no CSV). Comparar o salto de cada troca
+de buffer (amostra `SAMPLES_PER_BUFFER ÷ nº de canais` e múltiplos) com o dos outros segmentos, e acusar quando as
+trocas destoam (por exemplo, acima de 10 vezes a mediana ou de 0,05 µs). Manter o limite de 0,5 amostra para amostra
+perdida ou duplicada.
+
+**Como saber que deu certo.** Nas capturas de 19/10, `T6a_10k_ch1.bin` e `T6b_1k.bin` passam a acusar o salto na
+troca de buffer, e o `T7a_fs_100000.bin` (1 bloco) continua OK.
 
 ---
 

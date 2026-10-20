@@ -6,22 +6,50 @@ Pré-requisito: [`guia_de_uso.md`](guia_de_uso.md) (capturar e analisar). Este r
 
 **Premissas desta versão** (todas conferidas nos testes indicados; se alguma falhar, o roteiro diz o que trocar):
 
-* **Taxa de trabalho: no máximo 100 kS/s no total.** O hardware sustenta ~130 kS/s e o ADC aceitaria 500 kS/s; taxas acima de 100 kS/s só aparecem para **documentar o limite** (T1, T4, T7e).
+* **Taxa de trabalho: no máximo 100 kS/s no total.** O firmware atual chega a ~140 kS/s (o gargalo está localizado: as três esperas do CS, ~57 % de cada amostra; veja o fato 1) e o ADC aceitaria 500 kS/s; taxas acima de 100 kS/s só aparecem para **documentar o limite** (T1, T4, T7e).
 * **Canal de tensão (canal 1 do ADC) = divisor resistivo de 5 resistores ligado direto ao ADS8688**, sem sonda. "Sonda de tensão", neste roteiro, é o **divisor + o filtro de ~15 kHz do ADC**, e o perfil dela corrige os dois.
 * **Canal de corrente (canal 0 do ADC) = SCT013 100A:50mA + resistor de 0,12 Ω + 2 resistores em série + ADC**, **com o capacitor de filtro removido** (o capacitor existente é um passa-baixa de frequência de corte baixíssima, incompatível com supraharmônicos).
-* **Faixa de entrada do ADC escolhida por canal** (`--faixa-adc`): **canal de tensão em ±10,24 V** (o padrão, `20.48`: o divisor já usa 91% dela com 127 V RMS) e **canal de corrente em ±2,56 V** (`--faixa-adc 0:5.12`: o sinal tem dezenas de µV e a faixa menor reduz o ruído em volts). O firmware escreve a faixa no ADC e a registra no cabeçalho, e as ferramentas de análise a leem de lá (nada de `--faixa` nos comandos). **A escala em si (referência de 4,096 V, mapeamento do código) é confirmada no T0, passo 6**; veja o fato 3.
+* **Faixa de entrada do ADC escolhida por canal** (`--faixa-adc`): **canal de tensão em ±10,24 V** (o padrão, `20.48`: o divisor já usa 91% dela com 127 V RMS) e **canal de corrente em ±2,56 V** (`--faixa-adc 0:5.12`: o sinal tem dezenas de µV e a faixa menor reduz o ruído em volts). O firmware escreve a faixa no ADC e a registra no cabeçalho, e as ferramentas de análise a leem de lá (nada de `--faixa` nos comandos). **A escala em si (referência de 4,096 V, mapeamento do código) foi confirmada nas três faixas no T0 de 19/10/2026**; veja o fato 3.
 
 **Índice**
 
-1. [Antes de ir: o que o datasheet e o código já dizem](#antes-de-ir-o-que-o-datasheet-e-o-código-já-dizem)
-2. [Equipamentos, segurança e boas práticas](#equipamentos-segurança-e-boas-práticas)
-3. [Convenções e a ferramenta `medir_captura.py`](#convenções-e-a-ferramenta-medir_capturapy)
-4. [Plano: ordem, tempo e prioridade](#plano-ordem-tempo-e-prioridade)
-5. [Os testes](#os-testes): [T0](#t0-preparação-e-sanidade) · [T1](#t1-piso-de-ruído-entrada-em-curto) · [T2](#t2-tensão-contínua-ganho-offset-e-linearidade) · [T3](#t3-resposta-em-frequência-da-cadeia-de-tensão) · [T4](#t4-frequência-de-amostragem-real) · [T5](#t5-distorção-e-faixa-dinâmica) · [T6](#t6-vários-canais-diafonia-e-atraso) · [T7](#t7-integridade-e-limite-de-taxa) · [T8](#t8-aliasing) · [T9](#t9-sinais-de-espectro-conhecido) · [T10](#t10-perfil-da-sonda-de-corrente) · [T11](#t11-ponta-a-ponta)
-6. [Dados e figuras para o relatório](#dados-e-figuras-para-o-relatório)
-7. [Critérios de aceitação](#critérios-de-aceitação)
-8. [Problemas de bancada](#problemas-de-bancada)
-9. [Checklist ao sair do laboratório](#checklist-ao-sair-do-laboratório)
+1. [Estado da campanha](#estado-da-campanha) (o que já foi medido e o que vem a seguir)
+2. [Antes de ir: o que o datasheet e o código já dizem](#antes-de-ir-o-que-o-datasheet-e-o-código-já-dizem)
+3. [Equipamentos, segurança e boas práticas](#equipamentos-segurança-e-boas-práticas)
+4. [Convenções e a ferramenta `medir_captura.py`](#convenções-e-a-ferramenta-medir_capturapy)
+5. [Plano: ordem, tempo e prioridade](#plano-ordem-tempo-e-prioridade)
+6. [Os testes](#os-testes): [T0](#t0-preparação-e-sanidade) · [T1](#t1-piso-de-ruído-entrada-em-curto) · [T2](#t2-tensão-contínua-ganho-offset-e-linearidade) · [T3](#t3-resposta-em-frequência-da-cadeia-de-tensão) · [T4](#t4-frequência-de-amostragem-real) · [T5](#t5-distorção-e-faixa-dinâmica) · [T6](#t6-vários-canais-diafonia-e-atraso) · [T7](#t7-integridade-e-limite-de-taxa) · [T8](#t8-aliasing) · [T9](#t9-sinais-de-espectro-conhecido) · [T10](#t10-perfil-da-sonda-de-corrente) · [T11](#t11-ponta-a-ponta)
+7. [Dados e figuras para o relatório](#dados-e-figuras-para-o-relatório)
+8. [Critérios de aceitação](#critérios-de-aceitação)
+9. [Problemas de bancada](#problemas-de-bancada)
+10. [Checklist ao sair do laboratório](#checklist-ao-sair-do-laboratório)
+
+---
+
+## Estado da campanha
+
+Atualize esta tabela a cada ida ao laboratório: ela é o resumo do avanço para a apresentação quinzenal ([`notas_relatorio.md`](notas_relatorio.md#7-apresentação-quinzenal-ao-orientador)) e diz o que já pode entrar no relatório. Os números vêm de `Collected_Data/lab/2026-10-19/resultados.csv`, gerado com os comandos de cada teste; o detalhe está no parágrafo **Executado em 19/10/2026** do teste.
+
+| Teste | Situação | Resultado principal | Falta |
+|---|---|---|---|
+| [T0](#t0-preparação-e-sanidade) | ✅ 19/10 | Escala do ADC **confirmada nas três faixas** (razão 0,9997; 0,9997; 0,9992). Achado: as ~6 primeiras amostras depois de uma troca de faixa são transitório | Refazer o −10 V (as capturas "−10 V" saíram com 0 V na entrada) |
+| [T1](#t1-piso-de-ruído-entrada-em-curto) | ✅ 19/10 | Ruído de 160 / 91 / 58 µV RMS nas faixas de ±10,24 / ±5,12 / ±2,56 V, igual ao datasheet (172 / 96 / 61 µV); não muda com a taxa nem com 2 canais. Offset do canal 1: +3,5 mV (canal 0: +0,05 mV) | Pino do canal 1 em curto direto (origem do offset) |
+| [T2](#t2-tensão-contínua-ganho-offset-e-linearidade) | ✅ 19/10 | Razão real do divisor 0,051554 (`$GV` medido = 19,397; −0,03 % do nominal com a carga do ADC); resíduo de linearidade ≤ 0,22 LSB | — |
+| [T3](#t3-resposta-em-frequência-da-cadeia-de-tensão) | ✅ 19/10 | −3 dB em 17,3 kHz; 2ª ordem com f0 = 24,1 kHz e Q = 0,54 | `--repeticoes 3`; fase |
+| [T4](#t4-frequência-de-amostragem-real) | 🟡 19/10 | Taxa = 200 MHz ÷ ticks confirmada (102,4 kS/s: −64,0 ppm; 110 kS/s: −100,0 ppm; as exatas concordam em 0,02 ppm) | Leitura do contador do osciloscópio (separa gerador e cristal: hoje, −43,2 ppm somados) |
+| [T5](#t5-distorção-e-faixa-dinâmica) | ⏳ | Prévia, das capturas do T4: SINAD 61 dB e ENOB 14,4 bits com o tom em −27,5 dBFS; THD −71,6 dB, limitado pelo gerador | Tudo |
+| [T6](#t6-vários-canais-diafonia-e-atraso) | 🟡 19/10 | Diafonia 1 → 0 de −94,7 dB em 10 kHz; atraso entre canais 9,954 µs (esperado 10,000) | Refazer o ponto de 40 kHz em **20 kHz** (com 2 canais a Nyquist é 25 kHz) |
+| [T7](#t7-integridade-e-limite-de-taxa) | 🟡 19/10, firmware antigo | T7c: salto de +0,697 amostra em **todas** as 57 trocas de buffer (defeito corrigido em out/2026); dentro de cada bloco, tom estável em 0,09 ppm e 0,01 % por 10 min | Recompilar e refazer T7a a T7c com ≥ 3 blocos; T7d; T7e |
+| [T8](#t8-aliasing) a [T11](#t11-ponta-a-ponta) | ⏳ | — | Tudo; o T10 é o objetivo central |
+
+**Próxima ida ao laboratório, por prioridade:**
+
+1. `./setup.sh` com o firmware de out/2026 e o T0, passo 2 (ver se o `ler_adc` imprime a linha `Integridade:`).
+2. **T7a, T7b e T7c refeitos** (agora com ≥ 3 blocos): continuidade sem salto nas trocas de buffer. É a validação em hardware da correção do firmware.
+3. **T7e**, métodos 1, 2 e 4: o limite de taxa e quanto as esperas do CS podem cair.
+4. **T10** (perfil da sonda de corrente), com o T10-0 antes.
+5. Pendências curtas: o contador no T4, o ponto de 20 kHz no T6a e o −10 V do T0.
+6. T5, T8, T9 e T11, nessa ordem.
 
 ---
 
@@ -29,10 +57,10 @@ Pré-requisito: [`guia_de_uso.md`](guia_de_uso.md) (capturar e analisar). Este r
 
 Oito fatos mudam o planejamento. Todos devem ser **confirmados** nos testes indicados.
 
-**1. O teto de trabalho é 100 kS/s no total, e a Nyquist de cada canal é a taxa ÷ nº de canais ÷ 2.** O ADS8688 aceita 500 kS/s, mas o projeto hoje só sustenta ~130 kS/s (o gargalo ainda não foi isolado: [T7e](#t7e-onde-está-o-limite-de-taxa)); trabalha-se em **100 kS/s**, que também é uma taxa exata da PRU (2000 ticks). Com **1 canal**, Nyquist = **50 kHz**; com **2 canais**, 50 kS/s cada, Nyquist = **25 kHz**. Consequências:
+**1. O teto de trabalho é 100 kS/s no total, e a Nyquist de cada canal é a taxa ÷ nº de canais ÷ 2.** O ADS8688 aceita 500 kS/s, mas o firmware hoje chega a ~140 kS/s. O gargalo foi localizado no próprio quadro SPI da PRU (~7 µs por amostra): ~4 µs são as três esperas do CS, calibradas empiricamente em 2/1/1 µs contra 30/10/30 ns do datasheet, e ~3 µs são os 32 clocks do SPI feitos em software. Quanto as esperas podem cair se mede no [T7e](#t7e-onde-está-o-limite-de-taxa). Trabalha-se em **100 kS/s**, que também é uma taxa exata da PRU (2000 ticks). Com **1 canal**, Nyquist = **50 kHz**; com **2 canais**, 50 kS/s cada, Nyquist = **25 kHz**. Consequências:
 
 * o perfil e as medições valem até **~45 kHz** (90% de Nyquist), e a calibração usa `--freq-max 45k`;
-* a banda de supraharmônicos (2 a 150 kHz) fica **só em parte coberta**. Cobrir até 150 kHz exigiria pelo menos 300 kS/s: **fica como sugestão de melhoria**, dependente de achar o gargalo (T7e);
+* a banda de supraharmônicos (2 a 150 kHz) fica **só em parte coberta**. Cobrir até 150 kHz exigiria pelo menos 300 kS/s: **fica como sugestão de melhoria**; só reduzir as esperas do CS levaria o teto a ~330 kS/s no papel (T7e, método 4);
 * componentes entre 50 e 150 kHz **dobram** para dentro de 0 a 50 kHz e não dá para separá-las depois ([T8](#t8-aliasing));
 * acima de 100 kS/s use taxas só nos testes que pedem (T1, T4, T7), para mostrar no relatório o limite real e o que acontece além dele.
 
@@ -57,7 +85,14 @@ Pelo datasheet, a cada passo o LSB cai exatamente pela metade, mas o ruído em v
 * **Canal 1 (tensão): fica em ±10,24 V.** 127 V RMS dão 9,28 V de pico no pino (91% da faixa) e +10% de tensão de rede (140 V RMS) já chega ao limite (±10,2 V). Não há como reduzir: ±5,12 V não comporta nem 127 V RMS.
 * **Canal 0 (corrente): ±2,56 V** (`--faixa-adc 0:5.12`). O sinal esperado é de dezenas de µV a poucos mV (fato 5): sobra mais de 99% da faixa, e ±2,56 V é a menor do ADC.
 
-**Hipóteses a confirmar no [T0](#t0-preparação-e-sanidade), passo 6 (e no T1):** (a) a referência é a interna de 4,096 V e o código sai em binário deslocado (o que as ferramentas assumem), (b) a escrita em `RANGE_SELn` pega em cada canal e a conversão vale desde a primeira amostra, (c) o ruído por faixa segue o datasheet. Capturas **antigas** (cabeçalho v1/v2, sem registro da faixa) são lidas com `--faixa 10.24`: se o ADC estava mesmo na faixa de reset de ±10,24 V, essas capturas saíram com **a metade do valor real**; reconverta-as com `--faixa 20.48`.
+**Hipóteses do [T0](#t0-preparação-e-sanidade), passo 6, e do T1, conferidas em 19/10/2026:**
+
+* (a) A referência é a interna de 4,096 V e o código sai em binário deslocado: **confirmada**.
+* (b) A escrita em `RANGE_SELn` pega em cada canal: **confirmada**, com a mesma tensão no pino nas três faixas (±0,08 %).
+* (b') A conversão vale desde a primeira amostra: **não**. Depois de **trocar a faixa** de um canal em relação à captura anterior, as ~6 primeiras amostras desse canal (60 µs a 100 kS/s) são um transitório de acomodação, de até ~1 V no pino. Sem troca de faixa, não há transitório. Nas análises, pule o começo (`--inicio 100`).
+* (c) O ruído por faixa segue o datasheet: **confirmada** (T1).
+
+Capturas **antigas** (cabeçalho v1/v2, sem registro da faixa) são lidas com `--faixa 10.24`. Como o ADC estava na faixa de reset de ±10,24 V, essas capturas saíram com **a metade do valor real**: reconverta-as com `--faixa 20.48`.
 
 **4. Cadeia de tensão: o divisor de 5 resistores.** Os resistores medidos (R1 a R5, em série; o ADC mede R5):
 
@@ -106,7 +141,7 @@ Ou seja: o canal funciona, mas só por causa do **ganho de processamento da FFT*
 | 200 000 | 1000 | 200 000 | 0 |
 | 500 000 | 400 | 500 000 | 0 |
 
-Isso desloca todas as frequências medidas pela mesma razão (um tom de 10 kHz aparece em 9 999,36 Hz a 102,4 kS/s). Além disso, o relógio de 200 MHz da PRU vem do cristal da BeagleBone, que tem erro de dezenas de ppm. É uma hipótese a confirmar no [T4](#t4-frequência-de-amostragem-real). **Recomendação: use 100 kS/s** (ou 50 kS/s) nos testes de exatidão.
+Isso desloca todas as frequências medidas pela mesma razão (um tom de 10 kHz aparece em 9 999,36 Hz a 102,4 kS/s). Além disso, o relógio de 200 MHz da PRU vem do cristal da BeagleBone, que tem erro de dezenas de ppm. O arredondamento foi **confirmado no [T4](#t4-frequência-de-amostragem-real)** em 19/10/2026 (−64,0 ppm a 102,4 kS/s e −100,0 ppm a 110 kS/s, como na tabela); falta separar o erro do cristal do erro do gerador. **Recomendação: use 100 kS/s** (ou 50 kS/s) nos testes de exatidão.
 
 **7. Os instrumentos têm incerteza própria (cite no relatório).** O osciloscópio **MSO46** converte com 8 bits a 6,25 GS/s, 12 bits a 3,125 GS/s e até 16 bits em modo Hi-Res a 125 MS/s, com exatidão de ganho DC de **±1%** (±1,5% em ganho variável; o datasheet da série 4 ainda deixa 0,1%/°C acima de 30 °C). Para sinais de até 100 kHz use taxa de amostragem baixa (≤ 125 MS/s), Hi-Res ou média, e limite de banda. A ponta de corrente **TCP0030A** tem exatidão garantida de ±3% (típica ±1%) de DC a 60 Hz e ±1,5% de 60 Hz a 5 kHz na faixa de 5 A; **acima de 5 kHz não há exatidão especificada** (banda nominal de 120 MHz), então ela é a melhor referência disponível, não uma verdade absoluta. O multímetro **Fluke 289** é a melhor referência de tensão AC em 60 Hz a 1 kHz (confira a tabela de exatidão do manual: piora acima disso); o CEM DT-989 não tem banda conhecida (não use para AC acima de 60 Hz). Orçamento de incerteza do relatório: algo entre 1 e 3% para a referência.
 
@@ -218,7 +253,7 @@ Opções que você vai usar muito:
 | `--fs-pru` | Usa a frequência que o PRU **de fato** gera (`clock ÷ ticks` do cabeçalho). Sem ela, a análise usa a pedida |
 | `--sem-correcao-sonda` | Não aplica o perfil da sonda/cadeia. **Use para caracterizar o ADC**; sem isso, ruído e ENOB de um canal corrigido não descrevem o ADC |
 | `--sondas-dir`, `--sonda-perfil C:ARQ` | Onde achar o perfil (padrão: `scripts/sondas/`) |
-| `--inicio N`, `--max-amostras N` | Janela de análise, por canal (padrão: as primeiras 4 194 304 amostras, ≈ 42 s a 100 kS/s) |
+| `--inicio N`, `--max-amostras N` | Janela de análise, por canal (padrão: as primeiras 4 194 304 amostras, ≈ 42 s a 100 kS/s). **Use `--inicio 100` em toda medida de ruído e de DC**: se a faixa de algum canal mudou desde a captura anterior, as ~6 primeiras amostras são transitório e inflam o `rms_ca` (2,5 LSB em vez de 0,6 LSB numa captura de 10 s, no T0) |
 
 **Limites do método** (para citar no relatório): usa uma FFT única sobre até 4 M amostras com janela Kaiser (β = 14), cujo vazamento limita o SINAD medido a ~110 dB (acima do ADC de 16 bits, com folga); um tom a menos de ~13 bins do DC (captura curta demais para tom muito grave) sai impreciso e a ferramenta avisa; só enxerga harmônicos que não coincidem entre si depois de dobrados.
 
@@ -252,7 +287,7 @@ Opções que você vai usar muito:
 **Objetivo.** Ter certeza de que firmware, relógio, cabeçalho **e a escala do ADC (nas três faixas)** estão certos antes de gastar tempo em medidas.
 
 1. No computador, com a BeagleBone por USB: `scripts/set_date.sh`. Na BeagleBone: `date` deve mostrar a data de hoje.
-2. Na BeagleBone: `cd firmware && ./setup.sh && dmesg | tail -n 20` (a PRU sobe sem reclamar). O `setup.sh` **recompila** o firmware (`make clean; make`): é preciso fazer isso depois de atualizar o repositório, porque a escrita da faixa do ADC está no `spi_core.asm` e no `ler_adc`. Se o `make` falhar, pare aqui e guarde a mensagem (o assembly da PRU foi validado só num simulador, nunca no `clpru`). Confira com `./ler_adc --help` que a opção `--faixa-adc` existe.
+2. Na BeagleBone: `cd firmware && ./setup.sh && dmesg | tail -n 20` (a PRU sobe sem reclamar). O `setup.sh` **recompila** o firmware (`make clean; make`): é preciso fazer isso depois de atualizar o repositório. A revisão de out/2026 (grade de tempo e contadores de integridade, cabeçalho v4) mexeu no `spi_core.asm` e só foi validada no simulador `tests/pru_sim.py`. Se o `make` falhar, pare aqui e guarde a mensagem. Confira com `./ler_adc --help` que as opções `--faixa-adc` e `--atraso-cs` existem, e, na captura do passo 5, que o `ler_adc` termina com a linha `Integridade: 0 amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído no SDO -- tudo certo` e que o resumo do cabeçalho diz `Versão de cabeçalho: 4`.
 3. Ligue o gerador, o osciloscópio, a ponta TCP0030A, o frontend e a BeagleBone **30 minutos antes** do T1.
 4. **Capacitor do canal de corrente:** com tudo desligado, meça o valor dele (Fluke ou LCR; o seu 63 mF parece impreciso) e fotografe a placa. Anote o valor, **remova-o** e confirme que os dois resistores em série (1,79 kΩ e 1,7929 kΩ) continuam no lugar.
 5. Entrada do canal de tensão em curto (a entrada do divisor ligada ao retorno). Capture:
@@ -263,7 +298,7 @@ ls -l T0_sanidade.bin        # 2098176 bytes = 1024 de cabeçalho + 1048576 amos
 ```
 
 ```fish
-uv run scripts/medir_captura.py lab/2026-10-20/T0_sanidade.bin --sem-tom --sem-correcao-sonda
+uv run scripts/medir_captura.py lab/2026-10-20/T0_sanidade.bin --sem-tom --sem-correcao-sonda --inicio 100
 ```
 
 6. **Escala do ADC nas três faixas (10 minutos).** Gerador em **DC** (forma de onda DC, *High-Z*) com **+10,000 V** no nó de entrada do divisor, o Fluke 289 no mesmo nó (anote a leitura `V_in`, com todos os dígitos). No pino do ADC isso é `V_in × 0,05157` ≈ 0,516 V, que cabe nas três faixas. Capture o canal de tensão **uma vez em cada faixa**:
@@ -277,7 +312,7 @@ sudo ./ler_adc 100000 1 --blocos 1 --faixa-adc 1:5.12  -o T0_dc_p10_f512.bin  -t
 ```fish
 # --ganho 1: o 'media' sai em volts NO PINO, na faixa que o cabeçalho de cada captura registra
 for f in 2048 1024 512
-    uv run scripts/medir_captura.py lab/2026-10-20/T0_dc_p10_f$f.bin --sem-tom --sem-correcao-sonda --ganho 1
+    uv run scripts/medir_captura.py lab/2026-10-20/T0_dc_p10_f$f.bin --sem-tom --sem-correcao-sonda --ganho 1 --inicio 100
 end
 ```
 
@@ -293,7 +328,19 @@ Cada saída mostra, no resumo do cabeçalho, `canal 1: ±10.24 V`, `±5.12 V` e 
 
 Repita com **−10,000 V** em pelo menos a faixa de ±2,56 V (o sinal da leitura confere, e `media` muda de sinal sem offset grande). O T2 refina o ganho do divisor; este passo só confirma a escala. Para as capturas **antigas** (anteriores a esta versão), compare a `media` delas (lidas com 10.24) com a de `T0_dc_p10_f2048.bin`: se a antiga der metade, ela estava mesmo em ±10,24 V e deve ser relida com `--faixa 20.48`.
 
-**Passou se:** o resumo do cabeçalho aparece sem "CRC-32 NÃO confere"; o tamanho do arquivo é o esperado; a saída do `medir_captura` não tem avisos; o DC (`media`) do curto é de poucos mV; **as três faixas dão a mesma tensão no pino (razão ≈ 1,00)**.
+**Passou se:** o resumo do cabeçalho aparece sem "CRC-32 NÃO confere"; o tamanho do arquivo é o esperado; a saída do `medir_captura` não tem avisos; o DC (`media`) do curto é de poucos mV; **as três faixas dão a mesma tensão no pino (razão ≈ 1,00)**. Para a razão ficar limpa, desconte de cada `media` o offset da mesma faixa (a `media` com 0 V na entrada): o canal 1 tem ~3 mV de offset, 0,7 % dos 0,515 V.
+
+**Executado em 19/10/2026** (firmware anterior à revisão de out/2026, cabeçalho v3; Fluke 289: `V_in` = 9,988 V):
+
+| Faixa | `media` com +10 V | `media` com 0 V (offset) | Razão, descontado o offset | Ruído (0 V) |
+|---|---|---|---|---|
+| ±10,24 V | 518,41 mV | 3,47 mV | **0,9997** | 0,51 LSB (160 µV) |
+| ±5,12 V | 517,40 mV | 2,46 mV | **0,9997** | 0,59 LSB (92 µV) |
+| ±2,56 V | 517,22 mV | 2,55 mV | **0,9992** | 0,74 LSB (58 µV) |
+
+* **Escala conferida:** referência de 4,096 V, escrita de `RANGE_SELn` e conversão código → volts certas nas três faixas, dentro de 0,08 %. As capturas antigas (v1/v2) têm, portanto, metade do valor real (fato 3).
+* **As capturas `T0_dc_n10_*` saíram com 0 V na entrada**, não −10 V: a `media` delas é igual à do curto. Serviram como medida do offset por faixa (a coluna do meio). O −10 V do T2 confere (−511,6 mV no pino); refaça só se quiser o sinal negativo nas faixas menores.
+* **Achado: transitório depois de trocar a faixa.** Em toda captura em que a faixa de um canal mudou desde a captura anterior, as ~6 primeiras amostras desse canal decaem de até ~1 V até o valor certo. No fim, a constante de tempo é de ~8 µs, próxima à do passa-baixa medido no T3 (polos em −22 kHz: 7 µs), o que sugere o filtro interno do ADC se acomodando à nova escala. Sem troca de faixa, não há transitório: são 15 capturas de 19/10, todas coerentes com essa regra. Na média de 10 s o efeito é desprezível (µV), mas no `rms_ca` ele domina (2,5 LSB em vez de 0,6 LSB): por isso o `--inicio 100` nos comandos. Para o relatório: "as primeiras 60 µs depois de mudar a faixa de entrada são descartadas".
 
 ### T1: piso de ruído (entrada em curto)
 
@@ -332,15 +379,32 @@ sudo ./ler_adc 100000 0,1 --faixa-adc 0:5.12 --blocos 1 -o T1_sonda_100k_2ch.bin
 Para ver o efeito da faixa no **mesmo** canal, faça também o canal 0 (corrente) em curto nas três faixas (`--faixa-adc 0:20.48`, `0:10.24` e `0:5.12`, um canal só): o ruído em volts deve cair com a faixa e o ruído em LSB, subir.
 
 ```fish
-uv run scripts/medir_captura.py lab/2026-10-20/T1_*.bin --sem-tom --sem-correcao-sonda --csv lab/2026-10-20/resultados.csv
-uv run scripts/adc_tool.py lab/2026-10-20/T1_curto_100k_1ch.bin --welch --modo-espectro ruido --sem-correcao-sonda -o lab/2026-10-20/fig_T1_psd.png
+uv run scripts/medir_captura.py lab/2026-10-20/T1_*.bin --sem-tom --sem-correcao-sonda --ganho 1 --inicio 100 --csv lab/2026-10-20/resultados.csv
+uv run scripts/adc_tool.py lab/2026-10-20/T1_curto_100k_1ch.bin --welch --modo-espectro ruido --sem-correcao-sonda --inicio 100 -o lab/2026-10-20/fig_T1_psd.png
 ```
+
+(`--inicio 100`: pula o transitório de troca de faixa do T0. Sem ele, o ruído das capturas de 19/10 que trocaram de faixa sai 7 a 8 vezes maior: 4,1 a 5,7 LSB em vez de 0,5 a 0,75 LSB.)
 
 **Anote.** Nada no osciloscópio (opcional: tensão de ruído na entrada, só para ver se há zumbido evidente).
 
 **Esperado.** Pelo datasheet (tom em −0,5 dBFS), o ruído no pino depende da faixa: **±10,24 V** (SNR de 90 a 92 dB): **~170 a 215 µV RMS**, ou **0,55 a 0,7 LSB** (1 LSB = 312,5 µV); **±5,12 V** (SNR típico de 91 dB, mínimo de 89 dB): **~96 a 121 µV** (0,6 a 0,8 LSB de 156 µV); **±2,56 V** (SNR típico de 89 dB, mínimo de 87,5 dB): **~61 a 72 µV** (0,8 a 0,9 LSB de 78 µV). Ou seja, reduzir a faixa diminui o ruído **em volts** (cerca de 1,8× e 2,8×), mas não na proporção da faixa: confira esses números, são a evidência de quanto a faixa menor ajuda. O offset deve ficar dentro de ±0,75 mV (típico ±0,5 mV) no pino do ADC. Ruído de 2 LSB ou mais indica problema de placa (cabo longo, terra, USB, alimentação): investigue antes de seguir. O espectro de ruído (PSD) deve ser plano, com poucos picos; **qualquer pico fixo** (60 Hz e harmônicos, relógio, 50 kHz) vai aparecer nos dados reais e precisa ser identificado. Para o relatório, converta o ruído para **a entrada de cada cadeia**: ÷ 0,051662 no canal de tensão (**~3,3 a 4,2 mV RMS** de banda larga) e ÷ 60 µV/A no de corrente (**~3 a 4 A RMS** equivalentes, com 1 espira): é a medida honesta da sensibilidade do projeto. Acima de 100 kS/s o ruído pode piorar (as margens de tempo do SPI): é o dado que se quer.
 
 **Para o relatório.** Tabela: taxa × nº de canais × (ruído em LSB, µV RMS, nV/√Hz, offset em mV, ruído equivalente na entrada). Tabela do ruído por **faixa de entrada** (±10,24; ±5,12 e ±2,56 V) em µV RMS e em LSB, contra o datasheet. Figura: a PSD do curto.
+
+**Executado em 19/10/2026** (curto na entrada, `--inicio 100`):
+
+| Captura | Canal e faixa | Ruído | Offset | Datasheet (típico) |
+|---|---|---|---|---|
+| 50, 100, 130, 200 e "500" kS/s, 1 canal | 1, ±10,24 V | **0,51 a 0,52 LSB** (159 a 161 µV) | +3,39 a +3,48 mV | 172 µV |
+| 100 kS/s, 1 canal | 1, ±5,12 V | **0,58 LSB** (91 µV) | +2,47 mV | 96 µV |
+| 100 kS/s, 1 canal | 1, ±2,56 V | **0,75 LSB** (58 µV) | +2,55 mV | 61 µV |
+| 100 kS/s, 2 canais | 0 (curto), ±2,56 V / 1, ±10,24 V | 0,71 LSB (56 µV) / 0,51 LSB (159 µV) | +0,05 mV / +3,44 mV | |
+| 100 kS/s, sonda ligada sem condutor (1 e 2 canais) | 0, ±2,56 V | 0,71 LSB (55 µV) | +0,12 mV | |
+
+* **O ruído segue o datasheet nas três faixas** (5 a 7 % abaixo do típico) e cai 1,8× e 2,8× em volts com a faixa, como previsto: a faixa menor ajuda o canal de corrente.
+* **Não depende da taxa nem do número de canais.** Acima de ~140 kS/s a taxa real é menor que a pedida (T7e); a densidade em nV/√Hz dessas capturas só vale com a taxa real.
+* **Sonda ligada = curto:** com 0,71 LSB nos dois casos, o SCT013 sem condutor não acrescenta ruído de ambiente mensurável em banda larga. Picos fixos (60 Hz, rádio), se houver, só aparecem na PSD: gere a `fig_T1_psd` também para `T1_sonda_100k_1ch.bin`.
+* **O offset do canal 1 (+2,5 a +3,5 mV no pino, 50 a 67 mV referidos à entrada do divisor) é de 10 a 70 vezes o do canal 0 (+0,05 a +0,21 mV) e passa do máximo do datasheet (±0,75 mV).** O canal 0 tem 0,12 Ω de impedância de fonte e o canal 1, 1,7 kΩ (o divisor). A hipótese é que o offset venha da ligação do divisor (retorno ou terra), e não do ADC. Para conferir, faça uma rodada com o pino do canal 1 (R5) em curto direto. Na banda de supraharmônicos ele não importa: o filtro passa-alta e a FFT o removem.
 
 ### T2: tensão contínua (ganho, offset e linearidade)
 
@@ -365,6 +429,18 @@ uv run scripts/medir_captura.py lab/2026-10-20/T2_dc_*.bin --sem-tom --sem-corre
 **Esperado (datasheet, faixa de ±2,5 × VREF).** Erro de ganho típico ±0,02% da faixa (máx. ±0,05%), offset típico ±0,5 mV (máx. ±0,75 mV), INL típica ±0,75 LSB (máx. ±2 LSB). Os resistores do divisor (medidos com multímetro) e o multímetro limitam o que você consegue provar: registre as incertezas.
 
 **Para o relatório.** Gráfico `media` × referência com a reta e o resíduo em LSB; razão real do divisor, offset e (se feita) linearidade em escala inteira.
+
+**Executado em 19/10/2026** (T2a, faixa de ±10,24 V; Fluke 289 no nó de entrada: +9,989; +4,9924; +0,0019; −4,9924 e −9,988 V):
+
+| Grandeza | Medido | Esperado |
+|---|---|---|
+| Inclinação (razão real do divisor com a carga do ADC) | **0,051554** | 0,05157 (−0,03 %); sem a carga, 0,051662 (−0,21 %, contra −0,17 % previstos) |
+| `$GV` = 1 ÷ inclinação | **19,397** | 19,357 nominal (+0,21 %, abaixo do limiar de 0,3 % para trocar) |
+| Intercepto (offset no pino) | +3,49 mV | o mesmo do T1 |
+| Resíduo de linearidade | ≤ 0,22 LSB nos 5 pontos | INL do datasheet ±0,75 LSB típica (só ±0,5 V do pino, 5 % da escala) |
+| Ruído em cada nível | 0,50 a 0,57 LSB | o do T1 (o gerador em DC não acrescenta ruído) |
+
+O `$GV` continua 19,357, como no perfil do T3: o ganho de baixa frequência do perfil (K = 0,9969) já absorve a carga do ADC, e 19,357 ÷ 0,9969 = 19,417 fica a 0,1 % do valor DC medido aqui.
 
 ### T3: resposta em frequência da cadeia de tensão
 
@@ -443,7 +519,7 @@ done
 
 ```fish
 for taxa in 50000 100000 102400 110000 125000
-    uv run scripts/medir_captura.py lab/2026-10-20/T4_fs_$taxa.bin --freq 10000 --referencia-freq 10000.02 --sem-correcao-sonda --csv lab/2026-10-20/resultados.csv
+    uv run scripts/medir_captura.py lab/2026-10-20/T4_fs_$taxa.bin --freq 10000 --referencia-freq 10000.02 --sem-correcao-sonda --inicio 100 --csv lab/2026-10-20/resultados.csv
 end
 ```
 
@@ -459,6 +535,20 @@ end
 **Esperado.** Cristal da BeagleBone na faixa de dezenas de ppm. Em frequências medidas, isso é um erro relativo de 0,00x%, desprezível para amplitude, mas relevante se você quiser separar tons muito próximos ou comparar a frequência com uma referência.
 
 **Para o relatório.** Tabela: taxa pedida × ticks × taxa gerada prevista × erro medido (ppm). Recomendação do uso de taxas exatas.
+
+**Executado em 19/10/2026** (10 kHz, 20 Vpp; **sem a leitura do contador**; firmware antigo, então só o primeiro bloco: `--inicio 100 --max-amostras 1048000`, porque o salto na troca de buffer desloca a frequência estimada nas capturas de 2 blocos):
+
+| Taxa pedida | Ticks | Tom medido | Diferença para as taxas exatas | Prevista pelos ticks |
+|---|---|---|---|---|
+| 50 000 | 4000 | 9 999,5681 Hz | 0 (referência) | 0 |
+| 100 000 | 2000 | 9 999,5682 Hz | +0,01 ppm | 0 |
+| 125 000 | 1600 | 9 999,5680 Hz | −0,01 ppm | 0 |
+| 102 400 | 1953 | 9 998,9279 Hz | **−64,03 ppm** | −64,0 ppm |
+| 110 000 | 1818 | 9 998,5684 Hz | **−99,98 ppm** | −100,0 ppm |
+
+* **A hipótese "taxa = 200 MHz ÷ ticks" vale:** as três taxas exatas concordam em 0,02 ppm (não há ciclo fixo a mais por amostra) e as outras duas erram exatamente o arredondamento. Com `--fs-pru`, 102,4 e 110 kS/s caem em 9 999,5679 e 9 999,5684 Hz, sobre as exatas.
+* **Erro comum de −43,2 ppm** (o tom aparece em 9 999,568 Hz): é o erro do cristal da BeagleBone **somado** ao do gerador. Só a leitura do contador do osciloscópio separa os dois; anote-a na próxima vez.
+* De quebra, as capturas dão a prévia do T5 a −27,5 dBFS (tom de 0,4316 V de pico): SINAD 60,5 a 61,5 dB, ENOB 14,3 a 14,5 bits e THD −71,6 dB, com a 3ª harmônica a −73 dBc. É o THD do **gerador** (fato 8), não o do ADC.
 
 ### T5: distorção e faixa dinâmica
 
@@ -497,21 +587,24 @@ uv run scripts/medir_captura.py lab/2026-10-20/T5*.bin --sem-correcao-sonda --ga
 
 **Para o relatório.** Figura: SINAD (e ENOB) × nível em dBFS; a faixa dinâmica é o nível em que o SINAD chega a 0 dB. Figura: THD, SINAD e SFDR × frequência. Tabela: valores medidos contra datasheet.
 
+**Prévia (capturas do T4, 19/10/2026):** 10 kHz a −27,5 dBFS sem filtro no gerador dá SINAD de 61 dB, ENOB de 14,4 bits e THD de −71,6 dB. O SINAD está no esperado para o nível (≥ 62 dB a −26 dBFS) e o THD é o do gerador: o T5 de verdade precisa do filtro ou da fonte de baixa distorção.
+
 ### T6: vários canais (diafonia e atraso)
 
 **Objetivo.** Quanto um canal vaza no outro, e se o intervalo de multiplexação entre canais é o esperado (importante para qualquer cálculo que combine tensão e corrente).
 
-**T6a: diafonia.** Capture 2 canais (0 e 1) a 100 kS/s (50 kS/s cada). **Canal 1** (tensão) recebe um tom de 10 kHz com **20 Vpp** (−26 dBFS no pino, o máximo pelo divisor); **canal 0** (corrente) com a entrada em curto. Repita com 40 kHz. Na varredura (0, 1, 0, 1, ...), o canal 0 é amostrado **logo depois** do 1, que é o pior caso para a "diafonia de memória". (O agressor no canal 0 não é possível: o resistor de 0,12 Ω da entrada de corrente curto-circuita o gerador. Só seria possível com acesso direto ao pino.) Para o pior caso global, capture 8 canais a 100 kS/s com o tom no canal 1 e os demais em curto, se as entradas forem acessíveis (o canal 2 é o amostrado logo depois do 1).
+**T6a: diafonia.** Capture 2 canais (0 e 1) a 100 kS/s (50 kS/s cada). **Canal 1** (tensão) recebe um tom de 10 kHz com **20 Vpp** (−26 dBFS no pino, o máximo pelo divisor); **canal 0** (corrente) com a entrada em curto. Repita com **20 kHz**: com 2 canais a Nyquist de cada um é **25 kHz**, e um tom de 40 kHz aparece dobrado em 10 kHz (foi o que aconteceu em 19/10). Na varredura (0, 1, 0, 1, ...), o canal 0 é amostrado **logo depois** do 1, que é o pior caso para a "diafonia de memória". (O agressor no canal 0 não é possível: o resistor de 0,12 Ω da entrada de corrente curto-circuita o gerador. Só seria possível com acesso direto ao pino.) Para o pior caso global, capture 8 canais a 100 kS/s com o tom no canal 1 e os demais em curto, se as entradas forem acessíveis (o canal 2 é o amostrado logo depois do 1).
 
 ```bash
 sudo ./ler_adc 100000 0,1 --faixa-adc 0:5.12 --blocos 2 -o T6a_10k_ch1.bin -t "T6a 10kHz ch1 agressor"
-sudo ./ler_adc 100000 0,1 --faixa-adc 0:5.12 --blocos 2 -o T6a_40k_ch1.bin -t "T6a 40kHz ch1 agressor"
+sudo ./ler_adc 100000 0,1 --faixa-adc 0:5.12 --blocos 2 -o T6a_20k_ch1.bin -t "T6a 20kHz ch1 agressor"
 ```
 
 **T6b: atraso entre canais.** Precisa do **mesmo sinal** nos dois canais, com o mesmo condicionamento. Se a placa tiver dois canais equivalentes (dois divisores, ou dois pinos acessíveis), ligue-os em paralelo com um conector T de BNC, cabos do mesmo comprimento, a 100 kS/s, em 1, 5 e 10 kHz. Senão, use o teste **V–I** (opcional): gerador → resistor de 10,92 Ω → **N espiras** no SCT013 → retorno; a tensão **no resistor** vai para o divisor (canal 1) e a corrente é a do SCT013 (canal 0), com o MSO46 medindo a mesma tensão (TPP0500B) e a corrente (TCP0030A) ao mesmo tempo. A diferença entre o atraso visto pelo ADC e o do osciloscópio é o atraso da cadeia (acrescido da fase do SCT013, que o perfil de amplitude **não** corrige). O sinal da corrente é fraco (T10-0): use 1 kHz e 4 blocos, e só confie no resultado se o `snr_db` do canal 0 (corrente) passar de 30 dB. Na varredura, o canal 0 é convertido **antes** do 1 (1/taxa total, 10 µs a 100 kS/s): esse atraso de conversão é o que entra no `atraso_esperado_us`, somado ao das cadeias.
 
 ```bash
-sudo ./ler_adc 100000 0,1 --faixa-adc 0:5.12 --blocos 4 -o T6b_1k.bin -t "T6b mesmo sinal 1kHz"
+sudo ./ler_adc 100000 1,2 --faixa-adc 1:5.12,2:5.12 --blocos 4 -o T6b_1k.bin -t "T6b mesmo sinal 1kHz"   # dois canais de tensão em paralelo (como em 19/10)
+sudo ./ler_adc 100000 0,1 --faixa-adc 0:5.12 --blocos 4 -o T6b_VI_1k.bin -t "T6b V-I 1kHz"                # ou o teste V-I
 ```
 
 ```fish
@@ -526,21 +619,32 @@ uv run scripts/medir_captura.py lab/2026-10-20/T6*.bin --sem-correcao-sonda --cs
 
 **Para o relatório.** Tabela de diafonia (frequência × par de canais); tabela de atraso medido contra esperado.
 
+**Executado em 19/10/2026** (firmware antigo; os dois canais em ±2,56 V; `--inicio 100`):
+
+| Captura | Resultado | Leitura |
+|---|---|---|
+| T6a, 10 kHz no canal 1 (−15,5 dBFS na faixa de ±2,56 V), canal 0 em curto | Diafonia **−94,7 dB** (5,6 µV RMS no canal 0, ~37 dB acima do ruído por bin) | Dentro da diafonia de memória do datasheet (90 dB, com o agressor em sobrecarga). É o canal convertido logo depois do agressor, o pior caso |
+| T6a, "40 kHz" | Tom em **10,0017 kHz** nos dois canais: o 40 kHz dobrou (Nyquist de 25 kHz com 2 canais); diafonia de −83,2 dB entre os tons dobrados | Não vale como ponto de 40 kHz. O comando passou a pedir 20 kHz |
+| T6b, 1 kHz nos canais 1 e 2 em paralelo | Atraso **9,954 µs** contra 10,000 µs (−0,46 %, dentro de ±2 %); amplitude do canal 2 0,48 % acima da do canal 1 | O atraso é a multiplexação, como a PRU configura. A diferença de amplitude é do condicionamento de cada canal: confirme o que estava ligado ao canal 2 |
+| T7b, 8 canais com o tom nos canais 1 e 2 | Canal 3 a −42 dB e canal 4 a −58 dB do tom; canais 5 a 7 sem tom | Entradas **abertas**, sem fonte que as segure: não é medida de diafonia, e o relatório não deve citá-la como tal |
+
+O SINAD de 22 a 42 dB que a ferramenta imprime nessas capturas é o salto do firmware antigo na troca de buffer, e não ruído (T7).
+
 ### T7: integridade e limite de taxa
 
 **Objetivo.** Provar que **nenhuma amostra é perdida ou duplicada** até 100 kS/s e sob carga na BeagleBone, que os dados chegam ao disco inteiros (requisito de desempenho do projeto), e **documentar onde está o limite real** e o que acontece acima dele.
 
 **Sinal.** Senoide de 10 kHz com 20 Vpp (−26 dBFS no pino), estável (a continuidade se verifica pela fase do tom: um tom estável é essencial). Canal 1 (tensão).
 
-**T7a: taxas até o limite recomendado.** 10 s em cada taxa, 1 canal.
+**T7a: taxas até o limite recomendado.** 1 canal, **3 blocos** em cada taxa (31 s a 100 kS/s). Tem de ser mais de 1 bloco: o que se quer ver são as **trocas de buffer** da PRU, e uma captura de 1 bloco (10 s a 100 kS/s) não tem nenhuma; as de 19/10 eram assim.
 
 ```bash
 for taxa in 50000 100000; do
-  sudo ./ler_adc $taxa 1 --duracao 10s -o T7a_fs_$taxa.bin -t "T7a $taxa"
+  sudo ./ler_adc $taxa 1 --blocos 3 -o T7a_fs_$taxa.bin -t "T7a $taxa"
 done
 ```
 
-**T7b: dois canais.** 2 canais a 100 kS/s (50 kS/s por canal), 10 s, tom de 10 kHz no canal 1 (tensão) e o canal 0 em curto; e, se as entradas forem acessíveis, 8 canais a 100 kS/s (12,5 kS/s por canal).
+**T7b: dois canais.** 2 canais a 100 kS/s (50 kS/s por canal), `--blocos 3`, tom de 10 kHz no canal 1 (tensão) e o canal 0 em curto; e, se as entradas forem acessíveis, 8 canais a 100 kS/s (12,5 kS/s por canal) com `--blocos 8`: com 8 canais, 1 bloco dá só 131 072 amostras por canal, pouco para a continuidade (a ferramenta responde "não verificada").
 
 **T7c: longa duração e deriva.** 10 minutos a 100 kS/s com o tom (≈ 120 MB; confira o espaço livre).
 
@@ -557,20 +661,32 @@ end
 **T7d: sob carga.** Repita o T7a a 100 kS/s **enquanto** outra janela copia um arquivo grande por `scp` e outra roda `top`. Mostra se o sistema de arquivos ou a CPU atrapalham a captura.
 
 ```fish
-uv run scripts/medir_captura.py lab/2026-10-20/T7[abcd]*.bin --freq 10000 --sem-correcao-sonda --csv lab/2026-10-20/resultados.csv
+uv run scripts/medir_captura.py lab/2026-10-20/T7[abcd]*.bin --freq 10000 --sem-correcao-sonda --inicio 100 --csv lab/2026-10-20/resultados.csv
 ```
 
-**Esperado.** Em cada captura: `continuidade : OK`, **0 eventos**, maior salto de fase **menor que 0,5 amostra** (um problema real dá ~1,0, ou múltiplos); tamanho do arquivo igual ao do cabeçalho (a ferramenta avisa se não for); amplitude do tom varia menos de ~0,1% entre segmentos. No T7c, o tom pode derivar um pouco pelo gerador: compare com a leitura do osciloscópio no início e no fim.
+**Esperado.** Em cada captura: `continuidade : OK`, **0 eventos**, maior salto de fase **de poucos milésimos de amostra** (0,001 a 0,004 nas capturas de 19/10 sem troca de buffer). Não basta o "OK": a ferramenta só acusa saltos acima de 0,5 amostra **do canal**, e o salto de 7 µs do firmware antigo vale 0,7 amostra com 1 canal a 100 kS/s, mas **0,35 com 2 canais** (passa como OK) e 0,09 com 8. Qualquer salto acima de ~0,02 amostra que caia numa troca de buffer (amostra 1 048 576 ÷ nº de canais, e múltiplos) é defeito; tamanho do arquivo igual ao do cabeçalho (a ferramenta avisa se não for); amplitude do tom varia menos de ~0,1% entre segmentos. No T7c, o tom pode derivar um pouco pelo gerador: compare com a leitura do osciloscópio no início e no fim.
 
 **Passou se:** zero eventos em todas as capturas de até 100 kS/s, inclusive T7b e T7d, e o `ler_adc` termina com `Integridade: 0 amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído no SDO -- tudo certo`. Um evento = anote em qual taxa, que amostra (`perto da amostra N`) e olhe a saída do terminal do `ler_adc` e o `dmesg` daquele instante.
 
-**Firmware anterior a out/2026.** As capturas de 19/10 (T7c, T4) mostram um salto de ~0,7 amostra (6,97 µs) **em cada troca de buffer** (amostras 1.048.576, 2.097.152...): o contador de ciclos da PRU era zerado ali depois da transação da última amostra. O `medir_captura.py` o aponta ("numa troca de buffer da PRU"). Depois de recompilar (`./setup.sh`), refaça o T7c: a continuidade tem de sair **OK** nos 10 min. É a validação em hardware da correção (o simulador já confere a lógica).
+**Executado em 19/10/2026, com o firmware anterior a out/2026** (canal 1, tom de 10 kHz, `--inicio 100`):
+
+| Captura | Blocos | Maior salto | Leitura |
+|---|---|---|---|
+| T7a, 50 e 100 kS/s, 1 canal | 1 | 0,003 a 0,004 amostra | OK, mas sem nenhuma troca de buffer dentro da captura |
+| T7b, 50 e 100 kS/s, 2 canais | 1 | 0,001 a 0,002 amostra | Idem |
+| T7b, 8 canais | 1 | não verificada | Curta demais por canal |
+| T4, 110 e 125 kS/s; T6a; T6b | 2 a 4 | **0,77 e 0,87**; 0,35 com 2 canais | Salto em toda troca de buffer |
+| **T7c, 10 min a 100 kS/s** | 58 | **+0,697 amostra (6,97 µs) em todas as 57 trocas**, desvio de ±0,002 | O defeito do firmware antigo (abaixo) |
+
+* **O defeito:** o contador de ciclos da PRU era zerado a cada troca de buffer **depois** da transação da última amostra, e a primeira amostra do bloco seguinte saía uma transação (~1 394 ciclos, 6,97 µs) atrasada. O salto, em amostras, cresce com a taxa (0,697 a 100 kS/s, 0,77 a 110 kS/s, 0,87 a 125 kS/s): é um tempo fixo. Nenhuma amostra se perdeu; a grade de tempo é que escorregou. O `medir_captura.py` o aponta ("numa troca de buffer da PRU"). A correção (out/2026) está no [Marco 13](notas_relatorio.md#marco-13--revisão-do-firmware-grade-de-tempo-e-integridade-da-captura) das notas.
+* **Dentro de cada bloco, o sistema é estável:** em 11 janelas de 1 bloco espalhadas pelos 10 min, o tom ficou em 9 999,5690 a 9 999,5699 Hz (0,09 ppm) e a amplitude em 0,304809 a 0,304836 V RMS (0,009 %).
+* **A refazer, com o firmware novo** (`./setup.sh`): T7a e T7b com ≥ 3 blocos e o T7c. O maior salto tem de cair para os milésimos em todas as trocas, e o `ler_adc` tem de terminar com a linha `Integridade: ... tudo certo`. É a validação em hardware da correção (o simulador já confere a lógica).
 
 #### T7e: onde está o limite de taxa
 
 **Objetivo.** Saber **até onde** vai a taxa real e **qual parte** do projeto é o gargalo (a PRU/SPI, o ADC ou o lado ARM), em vez de supor. São os itens F2 e F3 de [`melhorias-propostas.md`](melhorias-propostas.md#f2--medir-até-onde-as-esperas-do-cs-podem-cair), medidos em bancada.
 
-**Hipótese a testar** (confirmada no firmware em out/2026; falta a medida no CS). O ADS8688 precisa só de ~2 µs por amostra (500 kS/s), mas a PRU gasta bem mais: pela contagem estática do `spi_core.asm` (±10%), 32 bits de SCLK de ~16 a 19 ciclos cada (≈ 2,9 µs) mais os três laços de atraso do CS (200 + 100 + 100 iterações de 2 ciclos = 800 ciclos = **4,0 µs**) dão **~7 µs por quadro**, ou seja, ~140 kS/s no papel; o limite que você observou (130 kS/s) está nessa faixa. Executar o próprio `spi_core.asm` num simulador de PRU (`tests/pru_sim.py`, 1 ciclo por instrução, sem hardware) deu o mesmo resultado: **1379 ciclos = 6,9 µs por quadro (~145 kS/s)**, dos quais **800 ciclos (58%) são os três laços de atraso do CS**. É um teto de papel (acessos à memória externa podem somar ciclos): só o osciloscópio (método 2) confirma. Os mínimos do datasheet são 30/10/30 ns (tSU_CSCK, tD_CKCS, tPH_CS); reduza só pelo método 4, medindo. Se for isso, a taxa **real** satura em torno de 130 kS/s, **sem perder amostra**, qualquer que seja a taxa pedida. O lado ARM é improvável (130 kS/s = 260 kB/s; cada buffer de 2 MB demora ~8 s para encher).
+**Hipótese a testar** (confirmada na leitura do firmware e no simulador em out/2026; falta a medida no CS). O ADS8688 precisa só de ~2 µs por amostra (500 kS/s), mas a PRU gasta bem mais: pela contagem estática do `spi_core.asm` (±10%), 32 bits de SCLK de ~16 a 19 ciclos cada (≈ 2,9 µs) mais os três laços de atraso do CS (200 + 100 + 100 iterações de 2 ciclos = 800 ciclos = **4,0 µs**) dão **~7 µs por quadro**, ou seja, ~140 kS/s no papel; o limite que você observou (130 kS/s) está nessa faixa. Executar o próprio `spi_core.asm` num simulador de PRU (`tests/pru_sim.py`, 1 ciclo por instrução, sem hardware) deu o mesmo resultado: **1379 ciclos = 6,9 µs por quadro (~145 kS/s)**, dos quais **800 ciclos (58%) são os três laços de atraso do CS**. É um teto de papel (acessos à memória externa podem somar ciclos): só o osciloscópio (método 2) confirma. Os mínimos do datasheet são 30/10/30 ns (tSU_CSCK, tD_CKCS, tPH_CS); reduza só pelo método 4, medindo. Se for isso, a taxa **real** satura entre 130 e 145 kS/s, **sem perder amostra**, qualquer que seja a taxa pedida, e o firmware de out/2026 conta as **amostras atrasadas** a cada captura. O lado ARM é improvável (130 kS/s = 260 kB/s; cada buffer de 2 MB demora ~8 s para encher).
 
 **Método 1: pelo tom.** 10 s em cada taxa pedida, com a senoide de 10,000 kHz do T4 (anote a leitura do contador):
 
@@ -607,7 +723,7 @@ Em cada captura, o `ler_adc` imprime a **taxa real medida** e o número de **amo
 
 | Observação | Gargalo provável | Melhoria (ver `melhorias-propostas.md`) |
 |---|---|---|
-| `fs_real` **satura** (~130 kS/s) e o período do CS para de diminuir; continuidade OK; o `ler_adc` acusa amostras atrasadas | Tempo fixo do quadro da PRU (atrasos do CS e bits do SPI) | F2 (atrasos do CS, método 4) e F3 (SPI) |
+| `fs_real` **satura** (130 a 145 kS/s) e o período do CS para de diminuir; continuidade OK; o `ler_adc` acusa amostras atrasadas | Tempo fixo do quadro da PRU (atrasos do CS e bits do SPI) | F2 (atrasos do CS, método 4) e F3 (SPI) |
 | `fs_real` = pedida, mas o `ler_adc` acusa buffers sobrescritos, mais com disco ocupado | Escrita/CPU do ARM | R1 (cartão/disco) e F6 |
 | `fs_real` = pedida, sem eventos, mas ruído sobe com a taxa | Acoplamento digital-analógico ou tempo de aquisição do ADC | H1, H2 |
 
@@ -845,27 +961,29 @@ Mesmo critério do T11a, com o SNR por bin do T10 (cada tom precisa de ≥ 30 dB
 
 ## Dados e figuras para o relatório
 
-| Item | Origem |
-|---|---|
-| Foto da bancada e diagrama de ligações de cada teste; lista de instrumentos com modelo, exatidão e data da última calibração; valor do capacitor removido | Todos |
-| Escala do ADC conferida nas três faixas (razão `media` ÷ `V_in × 0,05157`) | T0 |
-| Ruído em LSB, µV e nV/√Hz × taxa e nº de canais; **ruído × faixa de entrada**; PSD do curto; ruído equivalente na entrada de cada cadeia | T1 |
-| Razão real do divisor e offset; resíduo de linearidade em LSB | T2 |
-| **Perfil da cadeia de tensão** (dB × Hz, −3 dB) e o ajuste do passa-baixa (K, f0, Q, resíduos): `relatorio/gerar_figuras.py` | T3 |
-| Erro da taxa de amostragem (ppm) × taxa pedida | T4 |
-| SINAD/ENOB × nível; THD, SINAD e SFDR × frequência; faixa dinâmica | T5 |
-| Diafonia e atraso entre canais | T6 |
-| Tabela de continuidade (eventos, salto máximo) por taxa e carga; deriva em 10 min | T7 |
-| **Taxa real × taxa pedida (limite de ~130 kS/s), período do CS, gargalo** | T7e |
-| Rejeição de aliasing × frequência (e o que sobra do 50–150 kHz) | T8 |
-| Quadrada: teoria × ADC × perfil × osciloscópio; menor tom detectável; resolução de dois tons | T9 |
-| **Perfil da sonda de corrente** (curva, pontos, desvios); validação hold-out (erro % com e sem correção); linearidade (amplitude e N); piso de detecção | T10 |
-| Tons compostos e carga real: ADC × osciloscópio | T11 |
-| `resultados.csv` de cada dia, os `.bin` (arquivar sem perdas com `uv run scripts/compactar_amostras.py PASTA_DO_DIA`: ~11 % do tamanho, conferido pelo SHA-256) e os prints do osciloscópio | Todos |
+A coluna "Situação" diz o que já existe (✅), o que existe mas tem de ser refeito (🟡) e o que falta (⏳).
+
+| Item | Origem | Situação |
+|---|---|---|
+| Foto da bancada e diagrama de ligações de cada teste; lista de instrumentos com modelo, exatidão e data da última calibração; valor do capacitor removido | Todos | ⏳ (a lista de instrumentos está em `Anotações - Teste de bancada.md`) |
+| Escala do ADC conferida nas três faixas (razão `media` ÷ `V_in × 0,05157`); transitório de troca de faixa | T0 | ✅ tabela no T0 |
+| Ruído em LSB, µV e nV/√Hz × taxa e nº de canais; **ruído × faixa de entrada**; PSD do curto; ruído equivalente na entrada de cada cadeia | T1 | ✅ tabela no T1; ⏳ PSD |
+| Razão real do divisor e offset; resíduo de linearidade em LSB | T2 | ✅ tabela no T2; ⏳ gráfico |
+| **Perfil da cadeia de tensão** (dB × Hz, −3 dB) e o ajuste do passa-baixa (K, f0, Q, resíduos): `relatorio/gerar_figuras.py` | T3 | ✅ `relatorio/figuras/` |
+| Erro da taxa de amostragem (ppm) × taxa pedida | T4 | 🟡 tabela no T4, sem o contador |
+| SINAD/ENOB × nível; THD, SINAD e SFDR × frequência; faixa dinâmica | T5 | ⏳ (prévia no T5) |
+| Diafonia e atraso entre canais | T6 | 🟡 tabela no T6; falta 20 kHz |
+| Tabela de continuidade (eventos, salto máximo) por taxa e carga; deriva em 10 min; **salto de 6,97 µs a cada bloco antes da correção** (figura: fase do tom × tempo ao redor de uma troca, antes e depois) | T7 | 🟡 tabela do firmware antigo no T7; falta o depois |
+| **Taxa real × taxa pedida (limite de ~140 kS/s), período do CS, gargalo; taxa máxima × atrasos do CS** | T7e | ⏳ |
+| Rejeição de aliasing × frequência (e o que sobra do 50–150 kHz) | T8 | ⏳ |
+| Quadrada: teoria × ADC × perfil × osciloscópio; menor tom detectável; resolução de dois tons | T9 | ⏳ |
+| **Perfil da sonda de corrente** (curva, pontos, desvios); validação hold-out (erro % com e sem correção); linearidade (amplitude e N); piso de detecção | T10 | ⏳ |
+| Tons compostos e carga real: ADC × osciloscópio | T11 | ⏳ |
+| `resultados.csv` de cada dia, os `.bin` (arquivar sem perdas com `uv run scripts/compactar_amostras.py PASTA_DO_DIA`: ~11 % do tamanho, conferido pelo SHA-256) e os prints do osciloscópio | Todos | 🟡 19/10: `.bin` e `resultados.csv`; faltam os prints |
 
 **Sugestão de estrutura:** uma tabela "requisito do projeto → teste → resultado → critério" com os testes T7 (não perder dados e limite de taxa), T10 (perfil da sonda), T3 (banda de supraharmônicos de tensão) e T11 (ponta a ponta).
 
-**Declare no relatório** as limitações que você encontrou: a taxa máxima de 100 kS/s (130 kS/s medido) e, com ela, a banda coberta (até 45 kHz de 150 kHz) e o aliasing do que está acima; o filtro de 15 kHz do ADC e sua correção (que amplifica o ruído); a baixa sensibilidade do canal de corrente (60 µV/A) e o piso de detecção resultante (mesmo na menor faixa do ADC, ±2,56 V); a faixa de ±10,24 V do canal de tensão, sem margem para reduzir (127 V RMS = 91%); o aliasing de componentes acima de Nyquist; a taxa de amostragem real; a exatidão do osciloscópio e da TCP0030A (sem especificação acima de 5 kHz); e o fato de a correção de sonda restaurar só a amplitude (não a fase). **Sugestões de melhoria** que saem daqui: resolver o gargalo da PRU (T7e) para chegar a ≥ 300 kS/s; mais ganho (ou carga maior) antes do ADC no canal de corrente; um anti-aliasing externo mais forte.
+**Declare no relatório** as limitações que você encontrou: a taxa de trabalho de 100 kS/s (teto de ~140 kS/s no firmware atual) e, com ela, a banda coberta (até 45 kHz de 150 kHz) e o aliasing do que está acima; o filtro de 15 kHz do ADC e sua correção (que amplifica o ruído); a baixa sensibilidade do canal de corrente (60 µV/A) e o piso de detecção resultante (mesmo na menor faixa do ADC, ±2,56 V); a faixa de ±10,24 V do canal de tensão, sem margem para reduzir (127 V RMS = 91%); o aliasing de componentes acima de Nyquist; a taxa de amostragem real; a exatidão do osciloscópio e da TCP0030A (sem especificação acima de 5 kHz); o fato de a correção de sonda restaurar só a amplitude (não a fase); o transitório de ~60 µs depois de trocar a faixa de um canal; e que as capturas de 19/10 têm o salto de 6,97 µs a cada bloco do firmware antigo (as análises de um bloco não são afetadas; as de fase e de continuidade, sim). **Sugestões de melhoria** que saem daqui: reduzir as esperas do CS e acelerar o SPI da PRU (T7e) para chegar a ≥ 300 kS/s; mais ganho (ou carga maior) antes do ADC no canal de corrente; um anti-aliasing externo mais forte.
 
 ---
 
@@ -904,23 +1022,32 @@ Os limites abaixo são **propostas** (baseadas no datasheet e em boas práticas)
 | Sinal de corrente nulo (só ruído) mesmo com N = 20 | SCT013 aberto ou fora da garra; fio fora do centro; resistor de 0,12 Ω ou resistores em série dessoldados; gerador desligado | Confira a ligação com a TCP0030A; meça a tensão sobre o 0,12 Ω com o osciloscópio |
 | Perfil de tensão com ganho de baixa frequência ~0,05 (em vez de ~1) | `--amplitude` em volts na **entrada** do divisor com `--ganho 19.357` | Informe a amplitude do **pino** (1,0332Vpp) ou use `--referencia-externa` |
 | `frequência medida fora da planejada` | Gerador mal ajustado, ou taxa pedida ≠ gerada | Confira o contador do osciloscópio; veja T4 |
-| O tom aparece em outra frequência acima de ~130 kS/s | A PRU não alcança a taxa pedida (T7e) | Calcule `fs_real` e use só taxas até 100 kS/s |
+| O tom aparece em outra frequência acima de ~140 kS/s | A PRU não alcança a taxa pedida (T7e) | Calcule `fs_real` e use só taxas até 100 kS/s |
 | Perfil com ganho de 1,0 em baixa frequência muito diferente (ex.: 0,1) | `--ganho` diferente de 1/sensibilidade | Use o ganho certo (divisor: 19,357; SCT013 sobre 0,12 Ω: 16 667) |
 | Perfil "dentes de serra" ou pontos fora da curva | Gerador instável; resistor aquecendo; ponta mal compensada; TCP0030A sem zero/DEGAUSS | Refaça os pontos (`R`); repita com `--repeticoes`; compense a ponta |
 | `ler_adc` trava | PRU parada | `dmesg`; `./setup.sh` |
+| `ler_adc` termina com código 3 e a linha `Integridade:` acusa **buffers sobrescritos** | O ARM não gravou um bloco antes de a PRU voltar a ele: amostras perdidas e um bloco misturado | Captura inválida. Grave em RAM (`-o /dev/shm/...`) ou num disco mais rápido; feche o que estiver usando o disco; T7e, método 3 |
+| A linha `Integridade:` acusa **amostras atrasadas** | A taxa pedida passou do que a PRU alcança (~140 kS/s com os atrasos de CS padrão) | A taxa real é menor que a do cabeçalho: use a que o `ler_adc` imprime ou fique em ≤ 100 kS/s. Esperado no T7e |
+| A linha `Integridade:` acusa **quadros com ruído no SDO** | Ruído ou reflexo na linha de dados (o problema dos jumpers longos) | Encurte e reforce as ligações entre a BeagleBone e a placa; as amostras desses quadros são suspeitas |
+| `DESCONTINUIDADE ... numa troca de buffer da PRU` (~0,7 amostra a 100 kS/s, ~0,35 com 2 canais) | Firmware anterior a out/2026 | `./setup.sh` e refaça a captura; nas antigas, analise um bloco por vez (`--inicio`/`--max-amostras`) |
+| Ruído do T1 de 4 a 6 LSB numa faixa nova, mas normal nas outras | Transitório das primeiras ~6 amostras depois de trocar a faixa | `--inicio 100` |
+| Tom em frequência inesperada com vários canais (ex.: 40 kHz aparece em 10 kHz) | Acima da Nyquist **do canal** (taxa ÷ nº de canais ÷ 2) | Reduza a frequência ou o número de canais |
 | Disco cheio | Capturas longas | `df -h`; copie e apague; `calibrar_sonda.sh` pausa abaixo de 50 MB |
 
 ---
 
 ## Checklist ao sair do laboratório
 
-- [ ] Todos os `.bin` copiados para o computador (e **também** em um segundo lugar) e o tamanho conferido.
+- [ ] Todos os `.bin` copiados para o computador (e **também** em um segundo lugar: `uv run scripts/compactar_amostras.py lab/AAAA-MM-DD`) e o tamanho conferido.
+- [ ] A saída de terminal do `ler_adc` de cada captura guardada (a linha `Integridade:` e a taxa real medida não ficam só no cabeçalho).
 - [ ] `resultados.csv` do dia salvo, com uma linha por canal medido.
 - [ ] Pastas `capturas/cadeia_tensao/` e `capturas/sct013_100a_sn001/` (incluem `referencia_externa.csv` e `plano_coleta.txt`) copiadas, junto com o `.m` do osciloscópio de cada ponto (mesmo nome da captura) e as leituras da TCP0030A.
 - [ ] Escala do ADC conferida no T0 (razões das três faixas) e a tabela de ruído por faixa do T1; os valores de `$GV` e `$GI` realmente usados nos perfis e a faixa de cada canal (`--faixa-adc`) anotados.
 - [ ] Perfis `scripts/sondas/cadeia_tensao.json` e `scripts/sondas/sct013_100a_sn001.json` gerados e validados (T3, T10), e os PNG das curvas.
 - [ ] Limite de taxa (T7e): tabela `fs_real` × taxa pedida, período do CS, saída do `ler_adc`.
+- [ ] Leitura do contador de frequência do osciloscópio anotada em cada teste com tom (sem ela o T4 não separa o cristal do gerador).
 - [ ] Fotos da bancada (e da placa antes de remover o capacitor) e prints do osciloscópio de cada teste (com a escala visível).
-- [ ] Caderno: instrumentos e ajustes, temperatura, anomalias, o que **ficou por fazer**.
+- [ ] Caderno: instrumentos e ajustes, temperatura, anomalias, o que **ficou por fazer**; o que estava ligado em cada canal (inclusive os que não são o 0 e o 1).
+- [ ] A tabela [Estado da campanha](#estado-da-campanha) atualizada.
 - [ ] Hipóteses confirmadas ou refutadas: escala e faixas do ADC (T0, T1), filtro de 15 kHz (T3), taxa real e ticks (T4), diafonia (T6), perda de amostras e gargalo (T7), sensibilidade de 60 µV/A (T10-0).
 - [ ] Se algo mudou (outro `--ganho`, outro canal, nova taxa, outro número de espiras), anote: o perfil só vale para a cadeia em que foi medido.

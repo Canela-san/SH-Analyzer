@@ -1,122 +1,85 @@
-# Notas para Apresentação e Relatório Final — SH-Analyzer
+# Notas para o Relatório e as Apresentações — SH-Analyzer
 
-> **Propósito deste documento:** registro cronológico do trabalho realizado
-> desde a última apresentação à equipe, destinado a preservar os detalhes
-> necessários tanto para a apresentação quanto para a redação do relatório
-> final. Não constitui o texto definitivo de nenhum dos dois — trata-se da
-> matéria-prima. Os itens marcados com `[ ]` e com "⚠️ confirme com você
-> mesmo" devem ser preenchidos com base na memória do autor; o conteúdo
-> apresentado sem essas marcações provém diretamente do código-fonte e dos
-> testes já registrados, podendo ser utilizado com confiança.
+> **Para que serve.** É a matéria-prima de dois produtos: o **relatório científico** da IC (FAPESP, processo 2025/22891-1; o 1º relatório, de 01/11/2025 a 30/06/2026, está em [`Proposta de IC/Relatório Parcial - IC.pdf`](Proposta%20de%20IC/Relat%C3%B3rio%20Parcial%20-%20IC.pdf)) e as **apresentações quinzenais** ao orientador (Prof. Dr. José Antenor Pomilio). Não é o texto final de nenhum dos dois.
 >
-> Última atualização: 20/10/2026 — cobre o período compreendido entre a
-> última apresentação (placa ainda sem Assembly, modo manual, sem
-> `adc_tool.py`, sem suporte multi-canal) e o estado atual do repositório:
-> cabeçalho de metadados com exportação para HDF5, migração completa para o
-> modo automático (AUTO_RST) do ADS8688, a refatoração de `adc_tool.py`
-> orientada a DSP (método de Welch, normalização tom/ruído, bandas, extração
-> de picos — Marco 7), e, nesta atualização, o cabeçalho versão 2 com a
-> correção de sondas de corrente (Marco 9) a reorganização do código
-> Python em pacote, com testes automáticos e integração contínua (Marco 10),
-> e a preparação da validação em bancada: `medir_captura.py`, o achado do
-> filtro de 15 kHz do ADC e o roteiro de laboratório (Marco 11), e a
-> primeira medição em bancada — a resposta em frequência da cadeia de tensão
-> (T3), com o script das figuras do relatório (Marco 12), e a revisão do
-> firmware que achou e corrigiu um salto de tempo de ~7 µs a cada bloco e
-> passou a medir a integridade de cada captura (Marco 13).
-> O trabalho pendente passou a ser o Marco 14. Ver
-> `docs/melhorias-propostas.md` para os achados de engenharia que não são,
-> em si, matéria de relatório (itens de robustez, higiene de código e
-> organização de repositório).
+> **Grau de confiança.** O que está sem marca vem do código, dos testes ou dos dados medidos e pode ser citado. O que tem ⚠️ depende da sua memória e precisa ser conferido. Os `[ ]` são imagens ou dados que ainda faltam.
+>
+> **Última atualização:** 20/10/2026. Cobre de jul/2026 (início do Assembly) até os resultados de bancada de 19/10 (Marcos 12 e 14) e a revisão do firmware (Marco 13). Os achados de engenharia que não são matéria de relatório (robustez, higiene de código, organização do repositório) estão em [`melhorias-propostas.md`](melhorias-propostas.md).
 
 ---
 
 ## 0. Como Usar Este Documento
 
-1. Leia a linha do tempo (seção 2) de ponta a ponta uma vez, apenas para
-   retomar o contexto geral.
-2. Preencha os itens marcados **⚠️ confirme com você mesmo** — são
-   informações que não podem ser inferidas com certeza a partir do código
-   ou dos registros disponíveis (datas exatas, observações feitas no
-   momento de um problema, capturas de tela ou fotografias).
-3. Execute `git log --oneline --all` no repositório: os commits, mesmo com
-   mensagens curtas, fornecem as datas reais de cada marco e ajudam a
-   reconstruir a ordem cronológica caso haja alguma imprecisão neste
-   documento.
-4. Marque os itens `[ ]` de imagens conforme cada captura de tela ou
-   fotografia for gerada — a seção 4 consolida a lista completa do que
-   ainda falta registrar.
-5. Utilize a seção 5 como roteiro para a apresentação e a seção 6 como
-   roteiro para o relatório final.
+| Para... | Use |
+|---|---|
+| **Escrever o relatório** | A [seção 6](#6-estrutura-sugerida-para-o-relatório-final) (capítulo a capítulo, com o que entra em cada um), a [seção 1.1](#11-ponte-com-o-relatório-parcial) (o que mudou desde o relatório parcial e o que ele afirmava que precisa ser corrigido) e a [seção 8](#8-números-para-citar) (os números, com a fonte de cada um) |
+| **Montar a apresentação quinzenal** | A [seção 7](#7-apresentação-quinzenal-ao-orientador) (modelo de slides e registro por quinzena) e a tabela [Estado da campanha](roteiro_laboratorio.md#estado-da-campanha) do roteiro |
+| **Uma apresentação longa (1 hora)** | A [seção 5](#5-estrutura-sugerida-para-uma-apresentação-longa-1-hora) |
+| **Retomar o contexto** | A linha do tempo ([seção 2](#2-linha-do-tempo-cronológica)), uma vez, de ponta a ponta; a [seção 3](#3-síntese-por-marco-revisão-rápida-antes-da-apresentação) é a versão de uma linha por marco |
+| **Saber o que falta** | O [Marco 15](#marco-15--trabalho-pendente) e a [seção 4](#4-checklist-consolidado-de-capturas-de-tela-e-imagens) |
+
+As datas dos marcos saem do `git log` (`git log --date=short --pretty='%ad %s'`). Preencha os ⚠️ com a sua memória e marque os `[ ]` à medida que gerar cada imagem.
 
 ---
 
 ## 1. Contexto Rápido
 
-- **Projeto:** o SH-Analyzer é um instrumento para a medição de
-  supraharmônicos (perturbações de dezenas de kHz) em redes elétricas,
-  componente espectral que os analisadores comerciais de Qualidade de
-  Energia Elétrica (QEE) não detectam adequadamente.
-- **Relevância:** a crescente presença de conversores eletrônicos de
-  potência (fontes chaveadas, inversores, etc.) na rede elétrica introduz
-  esse tipo de perturbação — um problema de qualidade de energia em
-  expansão e ainda pouco instrumentado.
-- **Escopo do trabalho:** o projeto e a validação do instrumento de
-  medição em si (hardware e firmware de aquisição), não a análise de
-  supraharmônicos propriamente dita, que constitui uma etapa posterior, a
-  ser conduzida sobre dados de bancada validados.
-- **Estado na apresentação anterior:** protótipo em C executado
-  diretamente no Linux da BeagleBone (sem uso da PRU), ADS8688 operando em
-  modo manual, captura restrita a 1 canal, sem ferramenta de análise
-  dedicada.
-- **Estado atual:** firmware reescrito em Assembly, executado na PRU
-  (determinístico, independente do escalonador do Linux); ADS8688 operando
-  em modo automático (varredura sem reenvio de comando a cada amostra);
-  captura multi-canal validada em hardware (5 canais testados); cada
-  captura acompanhada de um cabeçalho de metadados autodescritivo
-  (frequência, canais, timestamp, título/descrição, checksum de
-  integridade); e ferramenta própria de análise em Python (`adc_tool.py`),
-  com duas estratégias de análise espectral complementares — FFT
-  ciclo-sincronizada (fundamental/harmônicos) e método de Welch com
-  normalização tom/ruído, agrupamento em bandas e extração de picos
-  (supraharmônicos, o próprio alvo científico do projeto) —, filtragem
-  digital, suporte multi-canal completo e exportação para o formato HDF5;
-  rotulagem de grandeza e sonda por canal no cabeçalho (versão 2) e correção
-  em frequência de sondas de corrente (validada apenas com sinais
-  sintéticos); e código Python organizado em pacote, com 682 testes
-  automáticos e integração contínua, e preparação da validação em bancada
-  (ferramenta de métricas e roteiro de laboratório); e a primeira medição em
-  bancada: a resposta em frequência da cadeia de tensão (T3), com −3 dB em
-  17,3 kHz.
+- **Projeto:** o SH-Analyzer é um instrumento para medir supraharmônicos (componentes de 2 a 150 kHz, vindos do chaveamento de conversores eletrônicos de potência) em redes e cargas elétricas. Os analisadores de Qualidade de Energia Elétrica (QEE) que seguem a IEC 61000-4-7 e a 61000-4-30 filtram essa banda antes do ADC e não a enxergam.
+- **Escopo desta IC (a do hardware):** os objetivos do projeto de IC são (1) identificar sensores de tensão e de corrente com sensibilidade, fundo de escala, banda e conexão adequados; (2) desenvolver o condicionamento de sinais compatível com o ADC; (3) formação de recursos humanos. O registro, a visualização e a análise de supraharmônicos são o foco da IC 2. As ferramentas de análise deste repositório nasceram da necessidade de **validar** o hardware (Marco 5).
+- **Estado no relatório parcial (30/06/2026):**
+  - firmware da PRU em **C**, com SPI por *bit-banging*;
+  - amostragem estável até ~100 kS/s (102,4 kS/s); a 150 e 200 kS/s, pacotes corrompidos e amostras perdidas;
+  - buffer circular na Shared RAM;
+  - o ARM gravava CSV já convertido em volts, com um filtro AC digital;
+  - 1 canal, com um filtro RC de 3,5 kHz no canal de tensão;
+  - validação qualitativa, por FFT.
+- **Estado atual (20/10/2026):**
+  - **Firmware:** PRU em Assembly, ADS8688 em modo automático (até 8 canais) e *ping-pong* de 2 × 2 MB na DDR. O teto é de ~140 kS/s, com o gargalo localizado nas esperas do CS. Cada captura registra a própria integridade: amostras atrasadas, buffers sobrescritos e ruído na linha SDO (Marco 13).
+  - **Dados:** `.bin` com as amostras brutas e um cabeçalho autodescritivo (versão 4), com grandeza, sonda e faixa de entrada por canal. O arquivamento sem perdas fica em 11 % do tamanho.
+  - **Análise:** `adc_tool.py` faz FFT ciclo-sincronizada, Welch, bandas, picos e exporta HDF5. `medir_captura.py` calcula as métricas de bancada. `gerar_perfil_sonda.py` corrige a resposta em frequência da cadeia.
+  - **Bancada (19/10/2026), primeiros resultados quantitativos:** escala do ADC nas três faixas, ruído, razão do divisor, taxa de amostragem, diafonia e atraso entre canais, estabilidade em 10 min e a resposta em frequência da cadeia de tensão (−3 dB em 17,3 kHz). Ficou medido também o defeito de 6,97 µs a cada bloco do firmware antigo.
+  - **Software:** pacote Python com 682 testes automáticos e integração contínua.
+  - **Falta:** a sonda de corrente (T10), o limite de taxa (T7e), distorção, *aliasing*, os ensaios ponta a ponta e a validação em hardware do firmware revisado (Marco 15).
+
+### 1.1 Ponte com o Relatório Parcial
+
+O relatório final precisa dizer o que aconteceu com o plano do relatório parcial (seção 7 dele) e corrigir o que os dados de agora desmentem.
+
+| Plano do relatório parcial | O que aconteceu | Onde |
+|---|---|---|
+| **7.1** Reescrever as rotinas críticas da PRU em Assembly | Feito (jul/2026). Com o modo automático do ADC (set/2026), o teto passou de ~100 para 130 a 140 kS/s (130 observados na bancada; ~140 pela contagem do simulador; a medida fina é o T7e). O ganho foi menor que o esperado porque o gargalo não era o C: é o tempo fixo de cada quadro SPI, em que as esperas do CS somam 57 % | Marcos 2, 6 e 13 |
+| **7.2** Remover o filtro RC de 3,5 kHz e melhorar as ligações físicas | As placas foram ligadas direto, sem jumpers (Marco 4). O canal de tensão hoje é o divisor ligado direto ao ADC: o T3 mede −3 dB em 17,3 kHz, incompatível com um RC de 3,5 kHz. Achado novo: o ADS8688 tem um passa-baixa de 2ª ordem **interno** em cada canal, que não dá para remover. A solução foi corrigir a cadeia inteira por um perfil medido | Marcos 4, 11 e 12 |
+| **7.3** Correção dinâmica da taxa de amostragem (rastrear a rede e ajustar o período da PRU) | Não implementada, por decisão de método. A análise off-line dispensa janelas de ciclos inteiros na aquisição: corte em ciclos inteiros para a fundamental (Marco 5) e Welch para os supraharmônicos, que não têm relação de fase com a rede (Marco 7). A taxa da PRU ficou fixa e medida: 200 MHz ÷ ticks, com erro de dezenas de ppm (Marco 14) | Marcos 5, 7 e 14 |
+| Meta de 512 a 2048 kS/s | Revista. O ADS8688 converte no máximo 500 kS/s **no total**, divididos entre os canais. Cobrir 150 kHz exige ≥ 300 kS/s em 1 canal. O caminho conhecido acima de 140 kS/s é reduzir as esperas do CS (roteiro, T7e) | Marco 13 |
+
+- [ ] ⚠️ **Confirme com você mesmo:** quando o RC de 3,5 kHz do canal de tensão foi removido e se o capacitor do canal de corrente já saiu (roteiro, T0, passo 4, com a foto da placa antes).
+
+**Afirmações do relatório parcial que o relatório final deve corrigir ou qualificar:**
+
+1. *"O contador de ciclos sofre transbordo a cada ~21 s, protegido por coerção para int32."* O `CYCLE` da PRU **satura** em 0xFFFFFFFF e não volta a zero; por isso as capturas longas paravam (Marco 2). A correção da época zerava o contador a cada bloco, e foi ela que criou o salto de 6,97 µs a cada bloco, medido em 19/10 e corrigido em out/2026 com um rebase que não perde tempo (Marco 13).
+2. *"O ADS8688 opera com até 500 kSPS por canal."* São 500 kS/s **no total**, multiplexados: com N canais, 500/N cada.
+3. *"O limite de 100 kSPS vem do overhead do C e das impedâncias parasitas."* As duas causas existiam (Marcos 1 e 4), mas, removidas, o teto foi a ~140 kS/s e parou ali: o limite agora é o quadro SPI de ~7 µs (Marco 13).
+4. *"Margem de setup e hold de 25 ns."* O firmware atual usa esperas de 2/1/1 µs no CS, calibradas empiricamente: ~100 vezes os mínimos do datasheet (30/10/30 ns, tabela 7.6). Medir quanto dá para reduzir é o T7e.
+5. *"O ARM grava CSV já em volts, com filtro AC digital."* Hoje o ARM grava as amostras **brutas**, com cabeçalho; conversão, filtragem e correção são feitas na análise e o dado original nunca é alterado. É uma decisão de rastreabilidade.
 
 ---
 
 ## 2. Linha do Tempo Cronológica
 
-### Marco 1 — Motivação para o Abandono do Protótipo em C
+### Marco 1 — Ponto de Partida: a PRU Programada em C (até jun/2026)
 
-**Motivação:** o protótipo original, implementado em C, era executado
-diretamente no processador ARM sob Linux — um sistema operacional de
-propósito geral, sem garantias de tempo real (o código correspondente já
-foi removido do repositório, mas seu comportamento permanece documentado
-neste arquivo e em `docs/contexto_projeto.md`). Essa arquitetura limitava a
-taxa de amostragem estável a aproximadamente **102,4 kHz**, provavelmente
-em razão de *jitter* de escalonamento: o kernel podia interromper o laço de
-aquisição a qualquer momento para atender a outras tarefas do sistema.
+**Situação descrita no relatório parcial (seções 5.3 a 6.3):**
 
-**Decisão de projeto:** migrar o laço crítico de temporização (bit-banging
-SPI) para a **PRU** (Programmable Real-Time Unit) — um coprocessador
-dedicado, sem sistema operacional, capaz de executar instruções de forma
-totalmente determinística. Essa mudança exigiu a reescrita do núcleo de
-aquisição em **Assembly**, uma vez que a PRU não executa código C com
-eficiência suficiente para um bit-banging com restrições de tempo tão
-rígidas.
+* **Aquisição:** a PRU 0 executava o SPI por *bit-banging* escrito em **C** (compilado com o `clpru` e carregado pelo *remoteproc*), com a temporização ancorada no contador de ciclos.
+* **Transferência e gravação:** o ARM lia um buffer circular na Shared RAM por `/dev/mem` + `mmap()`, removia o DC com um filtro digital, convertia para volts e gravava CSV.
+* **Resultado:** amostragem estável até ~100 kS/s (102,4 kS/s). A 150 e 200 kS/s apareciam pacotes corrompidos e amostras perdidas, atribuídos ao *overhead* do C e às impedâncias parasitas das ligações.
 
-- [ ] ⚠️ **Confirme com você mesmo:** há alguma captura de tela do
-      protótipo em C que demonstre o limite de 102,4 kHz sendo excedido
-      (dados corrompidos acima dessa taxa)? Caso exista, trata-se de uma
-      evidência relevante para justificar a decisão de reescrita em
-      Assembly.
+**Decisão de projeto:** reescrever o laço crítico em **Assembly** (plano 7.1 do relatório parcial), para controlar cada ciclo do *bit-banging*. O código em C saiu do repositório.
+
+**O que se sabe hoje (para o relatório final):** das duas causas apontadas, as impedâncias parasitas eram reais (os jumpers, Marco 4). O *overhead* do C também, mas, eliminado, o teto foi a ~140 kS/s e parou ali. O que limita agora é o tempo fixo de cada quadro SPI (Marco 13).
+
+- [ ] ⚠️ **Confirme com você mesmo:** uma versão anterior destas notas dizia que o protótipo em C rodava no ARM, sob Linux. O relatório parcial diz que era a PRU programada em C; vale o relatório parcial, salvo se houve uma etapa ainda anterior no ARM.
+- [ ] As figuras 2 e 3 do relatório parcial (forma de onda e FFT a 100 kS/s) servem de "antes" para comparar com as figuras atuais.
 
 ### Marco 2 — Reescrita do Laço Crítico em Assembly (PRU)
 
@@ -152,8 +115,15 @@ problema:
 periódica desse contador, qualquer captura com duração superior a
 aproximadamente 21 segundos deixava de funcionar.
 
-**Correção:** o contador é reiniciado manualmente no início da aquisição e
-a cada troca de buffer (esquema ping-pong; ver Marco 3).
+**Correção (da época):** o contador é reiniciado manualmente no início da
+aquisição e a cada troca de buffer (esquema ping-pong; ver Marco 3). O
+relatório parcial descrevia o contador como "transbordando" e protegido por
+coerção para `int32`: ele não transborda, satura (é o que o *AM335x PRU-ICSS
+Reference Guide* descreve e o que as capturas interrompidas mostravam).
+Essa correção resolveu as capturas longas, mas, por zerar o contador
+**depois** da transação da última amostra, criou um salto de 6,97 µs a cada
+bloco, só descoberto em out/2026 e corrigido com um rebase que não perde
+tempo (Marco 13).
 
 **Problema 3 — restrição de memória de instruções (`PRU_IMEM`).** A PRU
 dispõe de apenas 8 KB de memória de instruções. Para controlar a velocidade
@@ -163,10 +133,11 @@ instruções `NOP` — um `NOP` por ciclo desperdiçado consome 1 instrução de
 código, enquanto um laço de atraso consome poucas instruções e pode
 representar qualquer número de ciclos de espera.
 
-- [ ] ⚠️ **Confirme com você mesmo:** qual foi a duração aproximada desta
-      etapa? Foi a mais demorada do projeto? Vale mencionar na apresentação
-      como o "custo" real da migração para Assembly, ainda que compensado
-      pelos resultados obtidos.
+- [ ] ⚠️ **Confirme com você mesmo:** pelo `git log`, o Assembly começou em
+      03/07/2026 e a primeira versão funcionando ("Assembly funcionando
+      V0.1") é de 11 e 12/07; o modo automático veio em 08/09. Foi a etapa
+      mais demorada do projeto? Vale citar na apresentação como o "custo"
+      real da migração.
 - [ ] Diagrama de temporização de `CMD_BIT`/`DATA_BIT` (comando vs.
       leitura, com o instante exato de amostragem do MISO) — bom recurso
       visual para um slide técnico.
@@ -198,6 +169,15 @@ as seguintes revisões ao longo do desenvolvimento:
    PRU deixou de precisar conhecer a ordem ou a quantidade de canais,
    apenas quais estão habilitados (a ordem de varredura é determinada pelo
    próprio ADC).
+4. **Configuração e diagnóstico** (out/2026): a struct voltou a crescer, para
+   60 bytes, com campos que não custam nada por amostra — a faixa de entrada
+   por canal (`range_sel`, Marco 14), os três contadores de integridade que a
+   PRU publica uma vez por bloco e as três esperas do CS configuráveis
+   (Marco 13).
+
+Antes de tudo isso, no relatório parcial, a troca de dados era um buffer
+circular na Shared RAM de 12 KB com um índice de escrita; o *ping-pong* na
+DDR reservada substituiu esse esquema.
 
 - [ ] ⚠️ **Confirme com você mesmo:** houve alguma revisão da struct entre
       as etapas (1) e (2) que não está documentada? Em caso afirmativo,
@@ -396,12 +376,10 @@ deliberadamente deixados desconectados, os canais 1 e 3 exibiram a forma de
 onda de 60 Hz esperada, ao passo que os canais 0, 2 e 4 apresentaram apenas
 ruído — confirmando que a varredura automática alterna corretamente entre
 os canais habilitados. A captura de validação rodou a 102,4 kHz totais
-(≈20,48 kHz efetivos por canal) — número que, cruzado com uma reanálise do
-código feita junto com esta atualização (e, depois, pela contagem do
-simulador da PRU: ~7 µs por amostra, Marco 13), já supera uma estimativa antiga de piso de velocidade da
-implementação de bit-banging que não sobreviveu à reescrita para o modo
-automático — um indício indireto, mas concreto, de que a migração também
-trouxe ganho de desempenho, além da simplificação de código.
+(≈20,48 kHz efetivos por canal). Com o comando fixo em `NO_OP`, o quadro
+SPI ficou em ~7 µs (contagem do simulador da PRU, Marco 13): teto de
+~140 kS/s, contra ~100 kS/s da versão em C do relatório parcial. A
+migração simplificou o código e não custou desempenho.
 
 **Relevância deste marco para o relatório e a apresentação:** reúne todos
 os elementos de um processo de engenharia e depuração bem conduzido —
@@ -429,14 +407,7 @@ Prof. Pomilio.
 
 ### Marco 7 — Refatoração de `adc_tool.py` Orientada a DSP: Welch, Normalização Tom/Ruído e Extração de Picos
 
-> ⚠️ **Confirme com você mesmo:** a ordem exata deste marco em relação ao
-> Marco 8 (cabeçalho de metadados/HDF5) não está totalmente certa a partir
-> dos registros disponíveis — os dois podem ter sido desenvolvidos em
-> paralelo ou em ordem inversa à apresentada aqui. O conteúdo técnico
-> abaixo (o que foi construído, por quê, e que já está validado com sinais
-> sintéticos) vem diretamente do estado atual do código e pode ser usado
-> com confiança; só a posição relativa exata na linha do tempo merece uma
-> conferência rápida antes da apresentação.
+> **Data:** 13/09/2026 (*pull request* #2, `refactor/analise-espectral-supraharmonicos`), um dia antes do cabeçalho de metadados do Marco 8 (14 e 15/09, *pull request* #3): a ordem dos dois marcos está certa.
 
 **Motivação:** a estratégia de FFT ciclo-sincronizada do Marco 5 resolve
 vazamento espectral para a fundamental e seus harmônicos, mas
@@ -496,7 +467,7 @@ proposital acima da Nyquist efetiva de um canal) e o round-trip
 resolução espectral (exemplo: 15.321,3 Hz injetado → 15.321,37 Hz
 encontrado por `--picos`). Essa validação confirma a correção
 matemática/numérica da implementação — não ainda a fidelidade do hardware
-de aquisição sobre um sinal real (ver Marco 14; o plano de testes está no Marco 11 e a primeira medição, no Marco 12).
+de aquisição sobre um sinal real: o plano de testes está no Marco 11, as medições nos Marcos 12 e 14 e o que falta no Marco 15.
 
 **Relevância para o relatório e a apresentação:** este é, dos marcos de
 software, o mais diretamente ligado à pergunta de pesquisa do projeto. O
@@ -720,8 +691,9 @@ procurou ativamente o que poderia dar errado e registrou, junto com as
 correções, os limites que permanecem. Registrar o que o método **não**
 garante é parte do rigor científico.
 
-- [ ] ⚠️ **Confirme com você mesmo:** datas aproximadas do desenvolvimento do
-      cabeçalho v2 e das ferramentas de calibração (`git log` ajuda).
+- **Data:** 10/10/2026 (*pull request* #4, `feat/probe-profiles-and-metadata`); o
+  `calibrar_sonda.sh` foi reescrito em 14/10 e ganhou a amplitude conhecida e o
+  `.m` do osciloscópio em 18/10.
 - [ ] Gráfico do `--plot` do `gerar_perfil_sonda.py` (curva de ganho do perfil)
       — de preferência com uma sonda real, quando houver.
 - [ ] Comparativo do espectro de um sinal de corrente **com** e **sem**
@@ -746,14 +718,14 @@ reduzir o custo de alterar o código sem quebrar o que já funciona.
    comando foram registradas e depois comparadas com a nova versão — 57
    idênticas e 4 com diferença só no texto de mensagens de erro/aviso
    padronizadas. Nomes de flags, saídas e códigos de saída foram preservados.
-3. **483 testes automáticos**, sem necessidade de hardware: unidades por
+3. **483 testes automáticos** na época (682 em out/2026), sem necessidade de hardware: unidades por
    módulo, linha de comando, regras de arquitetura, dependências, o fluxo
    completo de perfil de sonda e o script de coleta de calibração
    (`calibrar_sonda.sh`, exercitado contra um `ler_adc` simulado). Um teste de **contrato C↔Python** lê o
    `ler_adc.c` e confere que o formato do cabeçalho e as constantes
    compartilhadas continuam iguais nos dois lados.
-4. **Integração contínua** (GitHub Actions): a cada *pull request*, roda o
-   `ruff` e a suíte de testes em Python 3.10 e 3.13.
+4. **Integração contínua** (GitHub Actions): a cada *push* e *pull request*,
+   roda o `ruff` e a suíte de testes em Python 3.10 e 3.13.
 5. **Documentação:** `README.md` reescrito, guia de uso
    (`docs/guia_de_uso.md`) e guia da arquitetura do software
    (`docs/arquitetura_software.md`).
@@ -765,6 +737,15 @@ reduzir o custo de alterar o código sem quebrar o que já funciona.
    ruído do ADC limita qualquer compressor sem perdas a ~1,1–2,2 bits por
    amostra (de 16), e o zpaq chega perto disso; FLAC (~15 %) e um preditor
    linear antes do zpaq foram testados e descartados.
+7. **Revisão da suíte de testes e reprodutibilidade** (out/2026): a suíte
+   passou a rodar em paralelo (de ~6 min para ~1 min 40 s; ~30 s sem os
+   testes ponta a ponta), com cobertura de ~90 % do pacote. A revisão achou
+   asserções que passariam com o código errado e testes que se pulavam em
+   silêncio, e dois defeitos reais: um `--grandeza` com canal fora da
+   captura era ignorado, e figuras do matplotlib não eram fechadas. Todo
+   script executável roda com `uv run`, que instala sozinho as dependências
+   declaradas no próprio arquivo (PEP 723); um teste garante isso para os
+   scripts futuros.
 
 **Relevância para o relatório:** mostra a preocupação com a
 reprodutibilidade e a manutenção do instrumento como software. O teste de
@@ -772,8 +753,9 @@ contrato C↔Python é um bom exemplo de como substituir uma regra que dependia
 de disciplina manual ("manter os dois lados em sincronia") por uma verificação
 automática.
 
-- [ ] ⚠️ **Confirme com você mesmo:** datas aproximadas da refatoração (`git
-      log` do branch `refactor/modularize-sh-analyzer`).
+- **Data:** pacote criado em 11/10/2026 e incorporado em 18/10 (*pull request*
+  #5, `refactor/modularize-sh-analyzer`); arquivamento, `uv run` e revisão dos
+  testes em 20/10.
 - [ ] Diagrama das camadas do pacote (em `docs/arquitetura_software.md`, seção 3).
 - [ ] Captura de tela da aba *Actions* do GitHub com a CI passando.
 
@@ -804,8 +786,8 @@ ordem e com que critério de aceitação.
    O perfil precisa, portanto, descrever a cadeia inteira.
 3. **Taxa de amostragem real:** o `ler_adc` calcula `ticks = 200 MHz ÷ taxa`
    com divisão inteira. 102,4 kHz sai a 102 406,55 Hz (+64 ppm); 300 kHz,
-   +1001 ppm; 100, 200, 250, 400 e 500 kHz saem exatas. É uma hipótese a
-   confirmar em bancada.
+   +1001 ppm; 100, 200, 250, 400 e 500 kHz saem exatas. Era uma hipótese, e
+   a bancada a confirmou (Marco 14).
 4. **`calibrar_sonda.sh` com um canal por padrão:** com dois canais, 500 kS/s
    dá Nyquist de 125 kHz, que não cobre os 150 kHz da banda; com um canal e
    400 kS/s, 200 kHz.
@@ -907,10 +889,10 @@ supraharmônicos de tensão: quantifica a atenuação que a correção por perfi
 precisa desfazer (e o ruído que ela amplifica junto).
 
 - [ ] ⚠️ **Confirme com você mesmo:** configuração do osciloscópio no T3
-      (medida de RMS usada, média, limite de banda, escala vertical), se o
-      gerador estava em *High-Z*, e se o firmware da PRU usado foi o novo,
-      montado com `clpru` (o `ler_adc` gravou cabeçalho v3, mas com a faixa
-      padrão isso não prova que a PRU escreve `RANGE_SELn`).
+      (medida de RMS usada, média, limite de banda, escala vertical) e se o
+      gerador estava em *High-Z*. (O firmware era o da faixa por canal: no
+      mesmo dia, o T0 mediu as três faixas, o que só acontece se a PRU
+      escreve `RANGE_SELn`; Marco 14.)
 - [ ] Fotografia da montagem do T3.
 
 ### Marco 13 — Revisão do Firmware: Grade de Tempo e Integridade da Captura
@@ -973,236 +955,271 @@ a PRU esperar pelo ARM) mudaria justamente o instante das amostras.
 
 - [ ] Figura: intervalo entre amostras ao redor de uma troca de buffer,
       antes e depois (simulador e captura real refeita).
-- [ ] Tabela: salto por taxa (100, 110, 125 kS/s) antes da correção.
+- [x] Tabela: salto por taxa (100, 110, 125 kS/s) antes da correção: está
+      no Marco 14 e no T7 do roteiro.
 
-### Marco 14 — Trabalho Pendente
+### Marco 14 — Caracterização da Aquisição em Bancada (Dados de 19/10/2026)
 
-Apresentar esta seção é tão importante quanto apresentar o que já foi
-realizado.
+**O que foi feito:** no mesmo dia do T3 (Marco 12), foram capturados o T0, T1, T2, T4, T6 e T7 do roteiro. São 39 capturas, 217 MB, em `Collected_Data/lab/2026-10-19/`, feitas com o firmware anterior à revisão do Marco 13 (cabeçalho v3). A análise, de 20/10, usou o `medir_captura.py`. Os números estão em `resultados.csv`, na mesma pasta. Os comandos e o detalhe de cada teste estão nos parágrafos "Executado em 19/10/2026" do [roteiro](roteiro_laboratorio.md#estado-da-campanha).
 
-- **Validação quantitativa em bancada controlada:** a validação atual
-  (Marco 6) é de natureza **qualitativa** — confirma que os canais
-  apresentam comportamento distinto e plausível (sinal vs. ruído), e o
-  Marco 7 confirma a correção numérica do pipeline de análise sobre sinais
-  sintéticos — mas nenhum dos dois ainda confirma exatidão numérica de
-  amplitude e frequência sobre um sinal real passando pela cadeia analógica
-  completa (frontend + ADC + PRU). A próxima etapa consiste em gerar um
-  sinal/ruído de frequência e amplitude conhecidas em bancada controlada,
-  realizar a medição com o SH-Analyzer, e comparar o espectro medido (via
-  `--welch`/`--agrupar-bandas`/`--picos`, Marco 7) com o sinal efetivamente
-  injetado.
-- **Cabeçalho de metadados em hardware (Marcos 8 e 9):** as capturas do T3
-  (Marco 12) saíram com o cabeçalho v3 e foram conferidas pelo
-  `calibrar_sonda.sh` e lidas pelo gerador de perfil. Falta exercitar as
-  faixas de entrada menores (±5,12 e ±2,56 V, `--faixa-adc`) e a sonda
-  registrada num canal de corrente.
-- **Calibração da sonda de corrente em bancada (Marco 9, T10 do roteiro):**
-  o fluxo `calibrar_sonda.sh` → `gerar_perfil_sonda.py` já rodou com
-  hardware real na cadeia de tensão (Marco 12); falta a sonda de corrente
-  (SCT013) e conferir a exatidão de um perfil contra uma referência
-  independente, em frequências que não entraram na calibração (*hold-out*).
-  Propostas de evolução (fase complexa, perfil absoluto, validação por
-  frequências retidas) estão em `docs/auditoria_perfil_sonda.md`, seção 4.
-- **Completar o T3:** repetir com `--repeticoes 3` (incerteza por ponto e
-  ajuste ponderado) e, se possível, medir a fase (Marco 12, limitações).
-- **Executar o restante do `docs/roteiro_laboratorio.md`:** taxa de
-  amostragem real (T4), distorção (T5), diafonia (T6), ausência de amostras
-  perdidas em taxas altas (T7) e *aliasing* (T8). Há leituras do T0 e do T2
-  anotadas em `docs/Anotações - Teste de bancada.md`.
-- **Validar no hardware a revisão do Marco 13:** recompilar, refazer a
-  captura de 10 min (continuidade sem saltos nas trocas de buffer) e uma
-  abaixo de 48,8 kS/s com mais de 22 s.
-- **Medir até onde as esperas do CS podem cair** (T7e, método 4): os
-  mínimos do datasheet são 30/10/30 ns contra 2/1/1 µs hoje; só isso levaria
-  o teto de ~140 para ~330 kS/s, o necessário para cobrir mais da banda de
-  supraharmônicos.
+**Resultados:**
 
-Encerrar a apresentação com esta seção, de forma objetiva, demonstra
-domínio preciso do estado atual do projeto e de seus próximos passos —
-clareza valorizada por qualquer orientador.
+| Grandeza | Medido | Referência | Teste |
+|---|---|---|---|
+| Escala do ADC (tensão no pino ÷ a esperada) | **0,9997 / 0,9997 / 0,9992** nas faixas de ±10,24 / ±5,12 / ±2,56 V | 1 (referência interna de 4,096 V) | T0 |
+| Ruído com a entrada em curto | **160 / 91 / 58 µV RMS** (0,51 / 0,58 / 0,75 LSB) | 172 / 96 / 61 µV (datasheet, típico) | T1 |
+| Ruído × taxa (50 a 200 kS/s) e × nº de canais (1 ou 2) | constante: 0,51 a 0,52 LSB | — | T1 |
+| Offset no pino | canal 1: +2,5 a +3,5 mV; canal 0: +0,05 a +0,21 mV | ±0,75 mV (datasheet, máximo) | T1, T2 |
+| Razão do divisor, com a carga do ADC | **0,051554** (`$GV` = 19,397) | 0,05157 calculada (−0,03 %) | T2 |
+| Linearidade (±0,5 V no pino) | resíduo ≤ 0,22 LSB | INL de ±0,75 LSB (típica) | T2 |
+| Taxa de amostragem | = 200 MHz ÷ ticks: 102,4 kS/s a **−64,03 ppm** e 110 kS/s a **−99,98 ppm** das taxas exatas | previsto: −64,0 e −100,0 ppm | T4 |
+| Erro de frequência comum (cristal + gerador) | −43,2 ppm | dezenas de ppm | T4 |
+| SINAD e ENOB, 10 kHz a −27,5 dBFS | 61 dB; 14,4 bits | — | T4 (prévia do T5) |
+| Diafonia no canal convertido logo depois do agressor, 10 kHz | **−94,7 dB** | 90 dB (memória) e 110 dB (isolamento) | T6a |
+| Atraso entre canais consecutivos a 100 kS/s | **9,954 µs** | 10,000 µs (−0,46 %) | T6b |
+| Estabilidade em 10 min (janelas de 1 bloco) | frequência 0,09 ppm; amplitude 0,009 % | — | T7c |
+| Salto a cada troca de buffer (firmware antigo) | **+0,697 amostra (6,97 µs)** nas 57 trocas, ±0,002 | 0 | T7c |
+
+**Achados:**
+
+1. **A faixa de entrada por canal funciona em hardware.** Era a principal hipótese não testada do firmware de 19/10, até então só simulada. A tensão no pino é a mesma nas três faixas (±0,08 %), o que confirma a referência de 4,096 V, o código em binário deslocado e a escrita dos registradores `RANGE_SELn`. Consequência: as capturas antigas (v1/v2), lidas como ±5,12 V, têm metade do valor real.
+2. **Transitório ao trocar a faixa.** Quando a faixa de um canal muda em relação à captura anterior, as ~6 primeiras amostras desse canal (60 µs a 100 kS/s) decaem de até ~1 V até o valor certo. Sem troca, não há transitório, e as 15 capturas do dia seguem essa regra. A constante de tempo no fim (~8 µs) é próxima à do passa-baixa do T3 (7 µs). Sem descartar o começo, o ruído medido sai 7 a 8 vezes maior.
+3. **O ruído do ADC é o do datasheet**, e a faixa menor reduz o ruído em volts como previsto (1,8× e 2,8×). Fica confirmado o ganho de usar ±2,56 V no canal de corrente.
+4. **O offset do canal 1 não parece ser do ADC.** O canal 0, com 0,12 Ω de impedância de fonte, tem offset dentro do datasheet. O canal 1, com 1,7 kΩ (o divisor), tem de 10 a 70 vezes mais. A hipótese é a ligação do divisor; o teste que separa as causas está no roteiro (T1). É DC: não afeta os supraharmônicos.
+5. **A taxa de amostragem é exatamente a prevista pelos ticks**, sem ciclo extra por amostra. A hipótese do Marco 11 se confirmou a 0,02 ppm.
+6. **O defeito do Marco 13, medido.** O salto cresce com a taxa (0,697 amostra a 100 kS/s; 0,77 a 110 kS/s; 0,87 a 125 kS/s): é um tempo fixo, o de uma transação SPI. Nenhuma amostra se perdeu; a grade de tempo é que escorregou. Dentro de cada bloco, o sistema é estável a 0,09 ppm e 0,009 % ao longo de 10 min.
+7. **Três falhas do próprio roteiro, corrigidas:**
+   * o ponto de "40 kHz" do T6a, com 2 canais (Nyquist de 25 kHz por canal), apareceu dobrado em 10 kHz;
+   * o T7a e o T7b, de 1 bloco, não atravessavam nenhuma troca de buffer e não tinham como ver o defeito;
+   * o critério "salto < 0,5 amostra" deixava passar o salto de 7 µs com 2 canais (0,35 amostra do canal).
+
+**Limitações (a declarar):**
+
+* O firmware era o anterior à revisão do Marco 13.
+* O T4 não registrou a leitura do contador do osciloscópio: o erro do cristal e o do gerador ficam somados.
+* As capturas rotuladas "−10 V" do T0 saíram com 0 V na entrada; serviram para medir o offset de cada faixa.
+* O THD medido (−71,6 dB) é o do gerador, não o do ADC.
+* As entradas abertas do teste de 8 canais não medem diafonia.
+
+**Relevância para o relatório:** são os primeiros números do instrumento contra referências independentes (Fluke 289 e osciloscópio). Mostram que o ADC entrega o que o datasheet promete, o que delimita onde estão os problemas reais: a banda (o filtro interno, Marco 12), a taxa (Marco 13) e a sensibilidade do canal de corrente (T10).
+
+- [ ] Figura: o transitório de troca de faixa (as 10 primeiras amostras de `T0_dc_p10_f1024` e `f512`, em LSB, com a exponencial ajustada).
+- [ ] Figura: a PSD do curto (`fig_T1_psd`) e a tabela de ruído por faixa contra o datasheet.
+- [ ] Figura: a reta do T2, com o resíduo em LSB.
+- [ ] Figura: o salto de fase ao longo do T7c (um ponto por troca de buffer: 57 pontos em 0,697).
+- [ ] ⚠️ **Confirme com você mesmo:** o que estava ligado ao canal 2 no T6b (ele leu 0,48 % acima do canal 1) e aos canais 3 a 7 no teste de 8 canais.
+
+### Marco 15 — Trabalho Pendente
+
+Em ordem de prioridade, a mesma da tabela [Estado da campanha](roteiro_laboratorio.md#estado-da-campanha) do roteiro:
+
+1. **Validar no hardware a revisão do firmware (Marco 13).** Recompilar (`./setup.sh`) e refazer o T7a, o T7b e o T7c com pelo menos 3 blocos: o salto nas trocas de buffer tem de cair para os milésimos de amostra. Fazer também uma captura de mais de 22 s abaixo de 48,8 kS/s e conferir a linha `Integridade:` do `ler_adc`.
+2. **Limite de taxa (T7e).** Medir a taxa real contra a pedida, o período do CS no osciloscópio e quanto as esperas do CS podem cair (método 4). Só reduzi-las levaria o teto de ~140 para ~330 kS/s no papel, o necessário para cobrir mais da banda de supraharmônicos.
+3. **Calibração da sonda de corrente (T10)**, o objetivo central. O fluxo já rodou com hardware real na cadeia de tensão (Marco 12); falta o SCT013 e a validação em frequências que não entraram no perfil (*hold-out*). A sensibilidade de 60 µV/A sobre o resistor de carga é o maior risco (roteiro, fato 5).
+4. **Completar a caracterização:**
+   * o contador de frequência no T4;
+   * o ponto de 20 kHz no T6a;
+   * o T5, com uma fonte de baixa distorção;
+   * *aliasing* (T8), espectros conhecidos (T9) e os ensaios ponta a ponta (T11).
+5. **Completar o T3:** `--repeticoes 3`, para ter a incerteza de cada ponto, e, se possível, a fase.
+6. **Investigar o offset do canal 1** (com o pino em curto direto) e decidir onde descartar o transitório de troca de faixa: no firmware ou na análise ([`melhorias-propostas.md`](melhorias-propostas.md)).
+
+Fechar cada apresentação com esta lista, objetiva e com prioridade, mostra que o estado do projeto e os próximos passos estão claros.
 
 ---
 
 ## 3. Síntese por Marco (Revisão Rápida Antes da Apresentação)
 
-1. O protótipo em C limitava a taxa de amostragem a aproximadamente
-   102,4 kHz por ser executado sob um sistema operacional de propósito
-   geral.
-2. A reescrita em Assembly na PRU solucionou essa limitação, mas exigiu a
-   resolução de falhas de temporização em nível de bit (leitura travada em
-   fundo de escala) e de saturação de contador (interrupção de capturas
-   longas).
-3. A estrutura de memória compartilhada entre ARM e PRU passou por 3
-   revisões, cada uma mais simples que a anterior, acompanhando a evolução
-   do protocolo do ADC.
-4. Uma falha de saturação SPI foi rastreada, com o auxílio de uma
-   ferramenta de diagnóstico dedicada, até jumpers longos na bancada —
-   corrigida por meio da conexão direta entre as placas.
-5. Foi necessário o desenvolvimento de uma ferramenta própria de análise
-   em Python (`adc_tool.py`) para viabilizar a validação de hardware e
-   firmware; a ferramenta expandiu-se até incorporar FFT sem vazamento
-   espectral e suporte multi-canal completo.
-6. A migração para o modo automático do ADS8688 eliminou o reenvio de
-   comando por amostra, envolveu a identificação e correção de uma falha
-   real de protocolo (24 vs. 32 ciclos na escrita de registrador,
-   identificada por meio de fontes primárias) e foi validada em hardware
-   com 1 e com 5 canais simultâneos.
-7. `adc_tool.py` recebeu uma refatoração orientada a DSP especificamente
-   para supraharmônicos — método de Welch, normalização tom/ruído,
-   agrupamento em bandas e extração de picos — resolvendo a limitação do
-   Marco 5 (o corte em ciclos inteiros não ataca conteúdo sem relação de
-   fase com a rede), e validada com sinais sintéticos.
-8. O cabeçalho de metadados de 1024 bytes tornou cada captura
-   autodescritiva (frequência, canais, timestamp, título/descrição,
-   CRC-32), e a exportação para HDF5, implementada com escrita em blocos
-   sobre o arquivo mapeado em memória, foi validada quanto ao uso
-   constante de memória por instrumentação com `tracemalloc`.
-9. O cabeçalho passou à versão 2 (grandeza e sonda por canal) e foi criado
-   um fluxo de calibração e correção em frequência de sondas de corrente;
-   a auditoria do fluxo encontrou e corrigiu sete bugs e registrou os
-   limites (correção só de magnitude; validação apenas sintética).
-10. O código Python foi reorganizado em pacote, com 483 testes automáticos
-    (inclusive um teste de contrato C↔Python) e integração contínua,
-    preservando o comportamento anterior (61 execuções comparadas).
-11. A próxima etapa (Marco 14) é completar a validação quantitativa
-    mediante sinal conhecido injetado em bancada controlada (T4 a T11),
-    incluindo a calibração da sonda de corrente.
-12. A preparação da bancada (Marco 11) acrescentou `medir_captura.py`
-    (métricas para o relatório), o achado do filtro de ~15 kHz do ADS8688 e
-    do arredondamento dos ticks da taxa de amostragem, e um roteiro de 12
-    testes com critérios de aceitação; o ensaio sintético dele corrigiu um
-    erro de até 1,8 % no estimador de amplitude do gerador de perfil.
-13. A primeira medição em bancada (Marco 12) mediu a resposta da cadeia de
-    tensão de 50 Hz a 45 kHz: um passa-baixa de 2ª ordem com f0 = 24,1 kHz,
-    Q = 0,54 e −3 dB em 17,3 kHz (resíduo de 0,13 dB), usando pela primeira
-    vez o fluxo de calibração e o cabeçalho v3 com hardware real; o
-    `calibrar_sonda.sh` ganhou `--grandeza tensao`, e as figuras do relatório
-    passaram a sair de um único script (`relatorio/gerar_figuras.py`).
-14. A revisão do firmware (Marco 13) achou, nas capturas reais, um salto de
-    6,97 µs a cada bloco de 1.048.576 amostras (o contador de ciclos era
-    zerado depois da última transação) e o corrigiu sem perder tempo; passou
-    a contar, sem custo para a amostragem, amostras atrasadas, buffers
-    sobrescritos e ruído na linha SDO (cabeçalho v4); e localizou o gargalo
-    de taxa nas esperas do CS (57 % do quadro, ~100× o mínimo do datasheet).
+1. **Ponto de partida (relatório parcial):** PRU programada em C, ~100 kS/s estáveis e perda de amostras acima disso.
+2. **Assembly na PRU:** resolveu a leitura travada em fundo de escala (bit de comando com desvio, MISO lido no último instante seguro) e as capturas que paravam (o contador de ciclos satura em ~21,5 s). Os laços de atraso fazem o código caber nos 8 KB da IMEM.
+3. **Memória compartilhada:** do buffer circular na Shared RAM ao *ping-pong* de 2 × 2 MB na DDR. A struct de controle passou por quatro revisões: 64, 32 e hoje 60 bytes.
+4. **Integridade de sinal:** a saturação do SPI foi rastreada, com um firmware de diagnóstico do preâmbulo, até os jumpers longos, e corrigida ligando as placas direto.
+5. **`adc_tool.py`:** ferramenta de análise própria, criada para validar o hardware, com FFT sem vazamento por corte em ciclos inteiros.
+6. **Modo automático do ADS8688:** acabou o reenvio de comando a cada amostra. Uma falha real de protocolo (24 contra 32 ciclos) foi achada em fontes primárias, e a varredura foi validada com 1 e com 5 canais.
+7. **Welch, normalização tom/ruído, bandas e picos:** o caminho espectral próprio para supraharmônicos, validado com sinais sintéticos.
+8. **Cabeçalho de 1024 bytes com CRC-32:** capturas autodescritivas. A exportação para HDF5 roda com memória constante, medida com `tracemalloc`.
+9. **Cabeçalho v2 e correção de sondas:** grandeza e sonda por canal e o perfil de resposta em frequência. A auditoria achou e corrigiu sete bugs.
+10. **Qualidade de software:** pacote em camadas, 682 testes, contrato C↔Python, integração contínua, `uv run` e arquivamento sem perdas a 11 % do tamanho.
+11. **Preparação da bancada:** o `medir_captura.py`, a leitura crítica do datasheet (filtro interno de ~15 kHz e arredondamento dos ticks) e um roteiro de 12 testes com critérios de aceitação.
+12. **Primeira medição (T3):** a cadeia de tensão é um passa-baixa de 2ª ordem, com f0 = 24,1 kHz, Q = 0,54, −3 dB em 17,3 kHz e resíduo de 0,13 dB.
+13. **Revisão do firmware:** o salto de 6,97 µs a cada bloco foi achado e corrigido sem perder tempo. A integridade passou a ser medida sem custo para a amostragem (cabeçalho v4), e o gargalo de taxa foi localizado nas esperas do CS: 57 % do quadro, ~100× o mínimo do datasheet.
+14. **Caracterização em bancada (19/10):**
+    * escala certa nas três faixas, a 0,08 %;
+    * ruído igual ao do datasheet;
+    * divisor a 0,03 % do calculado;
+    * taxa = relógio ÷ ticks, a 0,02 ppm;
+    * diafonia de −94,7 dB e atraso entre canais a 0,5 % do previsto;
+    * estabilidade de 0,09 ppm em 10 min;
+    * um transitório de 60 µs ao trocar a faixa.
+15. **Pendente:** validar o firmware revisado, medir o limite de taxa, calibrar a sonda de corrente (o objetivo central) e completar a caracterização.
 
 ---
 
 ## 4. Checklist Consolidado de Capturas de Tela e Imagens
 
-- [ ] (Marco 1) Captura do protótipo em C evidenciando o limite de
-      102,4 kHz
+Os marcados "**dados já existem**" dá para gerar hoje, com as capturas de `Collected_Data/lab/2026-10-19/` e as ferramentas do repositório. As figuras do relatório saem de `uv run relatorio/gerar_figuras.py` (PDF vetorial no tamanho final; o PDF não é versionado, porque é gerável).
+
+**Prioridade alta (resultados do relatório)**
+
+- [x] (Marco 12) Resposta em frequência da cadeia de tensão (T3), com o ajuste de 2ª ordem e os resíduos: `gerar_figuras.py perfil_cadeia_tensao`
+- [ ] (Marco 14) Tabela de ruído por faixa contra o datasheet e a PSD do curto (T1) — **dados já existem**
+- [ ] (Marco 14) Escala do ADC nas três faixas (T0) e a reta do divisor com o resíduo em LSB (T2) — **dados já existem**
+- [ ] (Marco 13/14) Salto de fase a cada troca de buffer ao longo dos 10 min (T7c, antes da correção) — **dados já existem**; o "depois" exige refazer o T7c com o firmware novo
+- [ ] (Marco 14) Transitório de troca de faixa (as primeiras amostras, em LSB) — **dados já existem**
+- [ ] (Marco 14) Tabela de taxa pedida × ticks × erro medido (T4) — **dados já existem**
+- [ ] (Marco 13) Anatomia de um quadro SPI (esperas do CS, 32 clocks, folga), do simulador e, depois, do osciloscópio (T7e, método 2)
+- [ ] (Marco 7) Análise `--welch --agrupar-bandas --picos` sobre uma medição real, com supraharmônicos extraídos
+- [ ] (Marco 6) Gráfico dos 5 canais (2 com sinal, 3 com ruído) e a saída do terminal do `ler_adc`
+- [ ] (T10) Perfil da sonda de corrente e a tabela de validação *hold-out* (quando houver)
+- [ ] (T9a) Onda quadrada: teoria × ADC sem correção × ADC com perfil × osciloscópio (quando houver)
+
+**Fotografias** (não dá para gerar depois)
+
+- [ ] Bancada de cada teste, com o diagrama de ligações; placa antes de remover o capacitor do canal de corrente
+- [ ] (Marco 4) Setup com os jumpers longos e com as placas ligadas direto
+- [ ] (Marco 9/T10) Bancada de calibração da sonda (gerador, resistor, SCT013, TCP0030A)
+- [ ] (Marco 12) Montagem do T3
+
+**Apoio (apresentação ou apêndice)**
+
+- [ ] (Marco 1) As figuras 2 e 3 do relatório parcial, como "antes"
 - [ ] (Marco 2) Diagrama de temporização de `CMD_BIT`/`DATA_BIT`
-- [ ] (Marco 3) Diagrama comparativo das 3 versões da struct
-      `shared_control`
-- [ ] (Marco 4) Gráfico de saída de `analisar_preambulo.py`
-- [ ] (Marco 4) Fotografia do setup com jumpers longos vs. placas
-      conectadas diretamente
-- [ ] (Marco 4) Forma de onda saturada vs. forma de onda íntegra
-- [ ] (Marco 5) FFT limpa de uma medição real (60 Hz)
-- [ ] (Marco 5) Comparativo de FFT com/sem a técnica de corte em ciclos
-      inteiros
-- [ ] (Marco 6) **[PRIORIDADE ALTA]** Saída do terminal de `ler_adc` com 5
-      canais
-- [ ] (Marco 6) **[PRIORIDADE ALTA]** Gráfico dos 5 canais (2 com sinal, 3
-      com ruído)
-- [ ] (Marco 6) Gráfico da falha (5 canais idênticos), caso os dados ainda
-      estejam disponíveis
-- [ ] (Marco 6) Captura de tela do `.map` do `PRU_IMEM` (opcional)
-- [ ] (Marco 7) **[PRIORIDADE ALTA]** Análise `--welch --agrupar-bandas
-      --picos` sobre uma medição real, com supraharmônicos extraídos
-- [ ] (Marco 7) Comparativo `--fft` vs. `--welch` sobre o mesmo sinal
-      sintético com *dithering*
-- [ ] (Marco 8) Diagrama do layout de bytes do cabeçalho
-- [ ] (Marco 8) Captura do resumo do cabeçalho impresso por `adc_tool.py`
-- [ ] (Marco 8) Gráfico/tabela do teste de memória da exportação HDF5
-- [ ] (Marco 9) Gráfico do perfil de sonda (`--plot` do `gerar_perfil_sonda.py`)
+- [ ] (Marco 3) As versões da struct `shared_control` lado a lado
+- [ ] (Marco 4) Saída do `analisar_preambulo.py` (o script não está no repositório; ver o Marco 4) e a forma de onda saturada × íntegra
+- [ ] (Marco 5) FFT limpa de uma medição real (60 Hz), com e sem o corte em ciclos inteiros
+- [ ] (Marco 6) Os 5 canais idênticos da falha, se os dados ainda existirem; o `.map` da `PRU_IMEM` (opcional)
+- [ ] (Marco 7) `--fft` × `--welch` no mesmo sinal sintético com *dithering*
+- [ ] (Marco 8) Layout de bytes do cabeçalho; resumo do cabeçalho impresso pelo `adc_tool.py`; teste de memória do HDF5
 - [ ] (Marco 9) Espectro de corrente com e sem `--sem-correcao-sonda`
-- [ ] (Marco 9) Fotografia da bancada de calibração
-- [ ] (Marco 10) Aba *Actions* do GitHub com a CI passando
-- [x] (Marco 12) Resposta em frequência da cadeia de tensão (T3): `relatorio/figuras/perfil_cadeia_tensao.pdf`, com o ajuste de 2ª ordem e os resíduos
-- [ ] (Marco 12) A mesma figura com a curva teórica do datasheet por cima (opcional)
-- [ ] (Marco 12) Fotografia da montagem do T3
-- [ ] (Marco 11) Onda quadrada: teoria × ADC sem correção × ADC com perfil × osciloscópio (T9a)
-- [ ] (Marco 11) Tabela de continuidade por taxa de amostragem (T7)
+- [ ] (Marco 10) A aba *Actions* do GitHub com a CI passando; o diagrama de camadas (`arquitetura_software.md`, seção 3)
+- [ ] (Marco 12) A curva do T3 com a teórica do datasheet por cima (opcional)
 
 ---
 
-## 5. Estrutura Sugerida para a Apresentação (1 Hora)
+## 5. Estrutura Sugerida para uma Apresentação Longa (1 Hora)
 
-Uma apresentação estritamente cronológica tende a postergar o resultado
-mais relevante (a validação multi-canal) para o final, após aproximadamente
-50 minutos de detalhes de implementação. Recomenda-se uma estrutura que
-apresente o resultado logo no início e utilize a cronologia para explicar o
-caminho percorrido até ele:
+Comece pelo resultado e use a cronologia para explicar o caminho até ele. Numa ordem estritamente cronológica, os números só aparecem depois de 50 minutos de implementação.
 
-1. **Abertura (5 min):** situação do projeto na apresentação anterior e
-   situação atual, em uma frase cada.
-2. **Arquitetura atual (10 min):** PRU + ARM, esquema ping-pong, modo
-   automático, formato de captura com cabeçalho de metadados — o
-   funcionamento do sistema no estado atual, sem ainda abordar o histórico
-   de desenvolvimento.
-3. **Evidência de funcionamento (10 min):** o gráfico dos 5 canais (Marco
-   6) — apresentar precocemente, por se tratar do resultado mais robusto.
-   Vale complementar com uma análise `--welch`/`--picos` (Marco 7) sobre a
-   mesma captura ou uma equivalente: o gráfico dos 5 canais mostra que a
-   *aquisição* funciona; a extração de picos supraharmônicos mostra que a
-   *análise* — a pergunta de pesquisa em si — também funciona. A curva do T3
-   (Marco 12) é o primeiro resultado *quantitativo*: entra aqui, com o
-   ajuste do passa-baixa e o valor medido de −3 dB.
-4. **Trajetória técnica — principais desafios e suas soluções (20 min):**
-   cronologia detalhada (Marcos 2, 4 e 6), apresentada como um relato dos
-   problemas reais de engenharia encontrados e de como cada um foi
-   diagnosticado e resolvido, e não como uma simples enumeração de eventos.
-5. **Cabeçalho de metadados e exportação HDF5 (5 min):** Marco 8 —
-   apresentado com menor profundidade que a etapa 4, por não envolver um
-   processo de depuração de hardware; ênfase na motivação (rastreabilidade,
-   interoperabilidade) e na verificação quantitativa de memória.
-6. **Próximos passos (5 min):** Marcos 11 e 13 — plano de validação em bancada, o que falta da validação
-   quantitativa e melhorias de desempenho identificadas, porém ainda não implementadas.
+1. **Abertura (5 min):** o estado no relatório parcial e o estado de hoje, em uma frase cada (seção 1).
+2. **Arquitetura atual (10 min):** PRU + ARM, *ping-pong*, modo automático e o formato da captura, sem o histórico ainda.
+3. **Resultados (15 min):** primeiro os quantitativos do Marco 14 (escala, ruído, taxa e estabilidade, com a tabela da seção 8) e a curva do T3 (Marco 12). Depois, a evidência multi-canal (Marco 6) e uma análise de supraharmônicos (Marco 7): a aquisição funciona, e a análise também.
+4. **Três problemas de engenharia e como foram diagnosticados (15 min):** os jumpers longos (Marco 4), os 24 contra 32 ciclos do modo automático (Marco 6) e o salto de 7 µs a cada bloco (Marco 13). Cada um no formato sintoma → ferramenta de diagnóstico → hipótese → teste → correção.
+5. **Limitações e decisões (5 min):**
+   * a banda (filtro interno do ADC, teto de 140 kS/s e *aliasing*);
+   * a sensibilidade do canal de corrente;
+   * a meta de taxa revista;
+   * a correção dinâmica da taxa trocada por métodos off-line (seção 1.1).
+6. **Próximos passos (5 min):** o Marco 15.
 7. **Perguntas (5 min).**
 
-> Nota: os Marcos 9 e 10 (sondas de corrente; testes e integração contínua) não
-> estão na distribuição abaixo. Sugestão: o Marco 9 entra como um slide no item
-> 5 (ou no lugar do Marco 8, se for preciso cortar) e o Marco 10 cabe em um
-> único slide de qualidade de software.
->
-> A distribuição de tempo acima já contempla os Marcos 7 e 8; caso o
-> tempo total disponível seja reduzido, o Marco 8 é o item mais adequado
-> para supressão ou tratamento em um único slide de transição — o Marco 7,
-> por estar diretamente ligado à pergunta de pesquisa, é candidato mais
-> fraco a corte.
+Os Marcos 8 a 10 (formato da captura, sondas, qualidade de software) valem um slide cada; se faltar tempo, são os primeiros a ir para os slides de apoio.
 
 ---
 
-## 6. Estrutura Sugerida para o Relatório Final (Formato Artigo)
+## 6. Estrutura Sugerida para o Relatório Final
 
-- **Introdução:** contextualização dos supraharmônicos, lacuna existente
-  nos analisadores de QEE convencionais e objetivo do instrumento
-  desenvolvido.
-- **Arquitetura do sistema:** hardware (frontend analógico, isolamento
-  galvânico), firmware (PRU/ARM, esquema ping-pong, modo automático) e
-  formato de dados (cabeçalho de metadados, exportação HDF5).
-- **Metodologia:** decisões técnicas específicas e respectiva justificativa
-  — a opção pela PRU em detrimento do C puro, a opção pelo modo automático
-  em detrimento do modo manual, as duas estratégias de análise espectral
-  complementares e por que cada uma existe (FFT ciclo-sincronizada para a
-  fundamental/harmônicos vs. método de Welch com normalização tom/ruído
-  para supraharmônicos sem relação de fase com a rede — Marco 7), e as
-  decisões de formato do cabeçalho binário (compatibilidade C/Python,
-  verificação de integridade), incluindo a rotulagem de grandeza/sonda por
-  canal e a correção em frequência de sondas de corrente (Marco 9).
-- **Validação e Resultados:** a validação multi-canal atual (de natureza
-  qualitativa), a validação numérica do pipeline de análise espectral com
-  sinais sintéticos (Marco 7), a verificação quantitativa do uso de memória
-  na exportação HDF5, a auditoria sintética do fluxo de sondas (Marco 9) e, quando disponível, a validação quantitativa com
-  sinal conhecido (Marcos 11 a 13), começando pela resposta em frequência
-  da cadeia de tensão (T3, Marco 12: ajuste de um passa-baixa de 2ª ordem,
-  com as hipóteses declaradas) — esta última seção constitui o núcleo
-  científico do relatório. As figuras saem de `relatorio/gerar_figuras.py`.
-- **Discussão e Limitações:** riscos e itens em aberto (ausência de
-  backpressure no esquema ping-pong, margens de CS não comparadas
-  formalmente ao datasheet, faixas de entrada menores do ADC ainda não
-  exercitadas em hardware, correção só de magnitude e fase não medida) — a explicitação dos limites do próprio trabalho é parte
-  constitutiva de um relatório científico rigoroso.
-- **Conclusão e Trabalhos Futuros:** aumento da frequência de amostragem,
-  diagnóstico de gargalos e expansão do uso da DDR reservada.
+Sugestão: manter os capítulos do relatório parcial, para que o leitor da FAPESP compare os dois períodos lado a lado, e dizer logo no resumo o que mudou. Para cada capítulo, o que entra e de onde tirar.
+
+| Capítulo | Conteúdo | Fonte |
+|---|---|---|
+| **Resumo** | O que foi feito no período (Assembly, modo automático, caracterização em bancada) e os 4 ou 5 números principais | Seções 1 e 8 |
+| **Introdução** | Curta, remetendo ao relatório parcial; o objetivo do período: cumprir o plano 7.1 a 7.3 e passar da validação qualitativa à quantitativa | Seção 1.1 |
+| **Fundamentação** (só o que é novo) | O ADS8688 por dentro: multiplexação (500 kS/s no total), faixas de entrada, o passa-baixa interno de 2ª ordem. Estimação espectral: FFT ciclo-sincronizada × Welch, normalização tom/ruído, janelas. Métricas de conversor: SINAD, SNR, ENOB e SFDR | Marcos 7 e 11; roteiro, fatos 1 a 3 |
+| **Hardware e condicionamento** (objetivos 1 e 2 do projeto) | Cadeia de tensão: o divisor de 5 resistores, com a razão calculada e a medida. Cadeia de corrente: SCT013 sobre 0,12 Ω, 60 µV/A e o piso de detecção. A remoção dos filtros (plano 7.2), a faixa de entrada por canal e a ligação direta das placas | Roteiro, fatos 4 e 5; Marcos 4 e 14 |
+| **Firmware** (plano 7.1) | Assembly e os problemas resolvidos; memória e *ping-pong*; modo automático; cabeçalho autodescritivo; a revisão de out/2026: grade de tempo, rebase do contador, integridade medida sem custo e a anatomia do quadro (o gargalo) | Marcos 2, 3, 6, 8, 9 e 13 |
+| **Software de análise e método de validação** | Só o necessário para entender os resultados: `medir_captura.py` (o que mede e com que limites), a correção por perfil e a validação sintética (auditoria, testes, contrato C↔Python) | Marcos 5, 7, 9, 10 e 11 |
+| **Resultados** | Uma seção por grupo de testes: (1) caracterização do ADC (T0, T1, T2; T5 quando houver); (2) taxa de amostragem e integridade (T4, T7, o defeito e a correção; T7e quando houver); (3) multiplexação (T6); (4) resposta em frequência da cadeia de tensão (T3); (5) sonda de corrente (T10); (6) supraharmônicos medidos (T9, T11) | Marcos 12 e 14; roteiro, parágrafos "Executado em" |
+| **Discussão e limitações** | A lista abaixo | — |
+| **Conclusões e trabalhos futuros** | O que o instrumento mede hoje, e com que exatidão. Futuro: esperas do CS reduzidas (~330 kS/s no papel), anti-aliasing externo, ganho antes do ADC no canal de corrente, medição de fase | Marco 15; `melhorias-propostas.md` |
+| **Referências** | As do relatório parcial ([1] a [11]), mais: Welch (1967), sobre o método; Harris (1978), sobre janelas; IEEE Std 1241 (teste de ADCs: SINAD, ENOB) e IEEE Std 1057 (ajuste de senoide, usado com o `.m` do osciloscópio); o datasheet SBAS582C do ADS8688 e o *AM335x PRU-ICSS Reference Guide*, nas seções citadas | — |
+
+**Limitações a declarar** (a explicitação dos limites é parte do rigor do relatório):
+
+* **Banda:** 100 kS/s de trabalho cobrem até ~45 kHz dos 150 kHz da faixa de supraharmônicos. O que está acima de Nyquist dobra para dentro da banda (o filtro interno do ADC atenua pouco).
+* **O filtro interno do ADC** é corrigido pelo perfil, que amplifica o ruído na mesma proporção (+12,5 dB em 45 kHz na cadeia de tensão).
+* **Só magnitude:** a correção de sonda não restaura a fase, e a fase da cadeia não foi medida.
+* **Canal de corrente:** sensibilidade de 60 µV/A sobre a carga de 0,12 Ω, mesmo na menor faixa do ADC.
+* **Dados de 19/10:** feitos com o firmware anterior à correção do salto de 6,97 µs (as análises de um bloco não são afetadas).
+* **Transitório de 60 µs** depois de trocar a faixa de um canal.
+* **Offset de ~3 mV** no canal de tensão, de origem ainda não isolada (DC, fora da banda).
+* **Referências:** exatidão do osciloscópio (±1 %) e da TCP0030A (sem especificação acima de 5 kHz); o THD medido é o do gerador.
+* **Margens de tempo:** as esperas do CS foram calibradas empiricamente e não otimizadas.
+
+---
+
+## 7. Apresentação Quinzenal ao Orientador
+
+**Formato:** 6 a 8 slides, 10 a 15 minutos. Um resultado com número por slide. Sempre terminar com o plano da quinzena seguinte e com o que precisa de decisão do orientador.
+
+**Modelo de slides:**
+
+1. **Título e resumo:** a quinzena (datas) e uma frase com o principal avanço.
+2. **O que foi combinado na última reunião:** cada item com ✅, 🟡 ou ❌ e uma linha de explicação.
+3. **Resultados (2 ou 3 slides):** uma figura, o número que importa e o que ele significa para o instrumento. As figuras saem de `relatorio/gerar_figuras.py`, do `adc_tool.py -o` ou do `--plot` do `gerar_perfil_sonda.py`.
+4. **Problema ou achado:** sintoma → causa → o que foi feito → o que falta para fechar.
+5. **Próxima quinzena:** de 3 a 5 itens, com prioridade, e os riscos.
+6. **Decisões e pedidos:** o que depende do orientador (uma meta a rever, um ensaio na rede com supervisão, um componente a comprar, um horário de laboratório).
+
+**Preparação (15 minutos):**
+
+1. Atualize a tabela [Estado da campanha](roteiro_laboratorio.md#estado-da-campanha) do roteiro.
+2. Veja o que entrou no período com `git log --since=AAAA-MM-DD --date=short --pretty='%ad %s'`.
+3. Escolha 2 ou 3 figuras.
+4. Acrescente a linha da quinzena ao registro abaixo: ele vira, no fim, a linha do tempo do relatório.
+
+**Registro quinzenal.** As quinzenas anteriores foram reconstruídas pelo `git log` e contadas para trás a partir de 20/10/2026: ajuste-as às datas reais das reuniões.
+
+| Quinzena | O que foi feito | Resultado com número | Marcos |
+|---|---|---|---|
+| 01/07 a 14/07/2026 | Início do firmware em Assembly na PRU; entrega do relatório parcial; teste de preâmbulo; "Assembly funcionando V0.1" | — | 2, 4 |
+| 15/07 a 28/07 | (sem commits) ⚠️ | — | — |
+| 29/07 a 11/08 | `adc_tool.py`: conversão `.bin`↔`.csv`, janelas de FFT; captura multi-canal no firmware (modo manual) | — | 3, 5 |
+| 12/08 a 25/08 | Ajustes menores ⚠️ | — | — |
+| 26/08 a 08/09 | Migração para o modo automático do ADS8688, validada com 1 e 5 canais | 5 canais a 102,4 kS/s no total | 6 |
+| 09/09 a 22/09 | Amostragem contínua; Welch, bandas e picos; cabeçalho de metadados; primeiro compressor de amostras | Pico de 15 321,3 Hz recuperado em 15 321,37 Hz (sintético) | 7, 8 |
+| 23/09 a 06/10 | Proposta de atualização; capturas "60 kHz puro" e "ruído injetado" ⚠️ | — | — |
+| 07/10 a 20/10 | Cabeçalho v2 e perfis de sonda; pacote Python e testes; `medir_captura.py` e roteiro; faixa de entrada por canal; **primeiro dia de bancada** (19/10: T0 a T4, T6, T7); figuras do relatório; revisão do firmware | −3 dB em 17,3 kHz; ruído igual ao datasheet; taxa a 0,02 ppm do previsto; salto de 6,97 µs a cada bloco achado e corrigido | 9 a 14 |
+
+**Quinzena de 07/10 a 20/10/2026, pronta para os slides:**
+
+1. **Resumo:** "Primeiro dia de bancada: o ADC entrega o que o datasheet promete, a cadeia de tensão tem −3 dB em 17,3 kHz e achei e corrigi um defeito de tempo do firmware."
+2. **Resultado 1, resposta em frequência da cadeia de tensão:** a figura do T3. Passa-baixa de 2ª ordem com f0 = 24,1 kHz e Q = 0,54. Por que importa: em 45 kHz o sinal chega 12,5 dB atenuado, e o perfil corrige.
+3. **Resultado 2, o ADC confere:** a tabela de escala e ruído por faixa (Marco 14, linhas 1 e 2). Por que importa: valida a faixa de ±2,56 V para o canal de corrente.
+4. **Resultado 3, taxa de amostragem e estabilidade:** a tabela do T4 e os 0,09 ppm em 10 min. Por que importa: a taxa é conhecida a ppm, e as frequências medidas são confiáveis.
+5. **Achado, o salto de 7 µs a cada bloco:** a figura do salto no T7c. A causa estava no zeramento do contador de ciclos depois da última transação. Correção: rebase sem perda de tempo, verificada no simulador. Falta refazer o T7c no hardware.
+6. **Achado, o gargalo de taxa:** a anatomia do quadro de 7 µs, em que 57 % são esperas do CS, ~100× o mínimo do datasheet. É o caminho para ~330 kS/s (T7e).
+7. **Próxima quinzena:** recompilar e refazer o T7; o T7e; o T10-0 e o T10. Riscos: a sensibilidade do canal de corrente (60 µV/A) e o firmware novo não compilar no `clpru`.
+8. **Decisões:** a meta de taxa revista (500 kS/s é o teto do ADC; 150 kHz exige ≥ 300 kS/s em 1 canal); se a correção dinâmica da taxa (plano 7.3) pode ser substituída pelos métodos off-line; e quando fazer o ensaio com a rede (T2c, T11c), que exige supervisão.
+
+---
+
+## 8. Números para Citar
+
+Os números do projeto num lugar só, com a condição e a fonte. Os valores medidos referem-se ao canal 1 (divisor de tensão) e a 19/10/2026, salvo indicação.
+
+| Grandeza | Valor | Condição | Fonte |
+|---|---|---|---|
+| ADC | ADS8688, 16 bits, 8 canais, **500 kS/s no total** | multiplexado; N canais → 500/N cada | Datasheet SBAS582C |
+| Faixas de entrada usadas | ±10,24 V (tensão) e ±2,56 V (corrente); 1 LSB = 312,5 e 78,1 µV | `ler_adc --faixa-adc` | Roteiro, fato 3 |
+| Escala nas três faixas | 0,9997 / 0,9997 / 0,9992 | DC de +10 V, descontado o offset | T0; Marco 14 |
+| Ruído em curto | 160 / 91 / 58 µV RMS (0,51 / 0,58 / 0,75 LSB) | ±10,24 / ±5,12 / ±2,56 V; 100 kS/s | T1 |
+| Offset no pino | canal 1: +2,5 a +3,5 mV; canal 0: +0,05 a +0,21 mV | entrada em curto | T1, T2 |
+| Razão do divisor | 0,051554 medida; 0,05157 calculada com a carga do ADC; 0,051662 sem ela | Fluke 289, ±10 V | T2; roteiro, fato 4 |
+| Linearidade | resíduo ≤ 0,22 LSB | ±0,5 V no pino | T2 |
+| Sensibilidade do canal de corrente | 60 µV/A (`$GI` = 16 667 A/V) | SCT013 100A:50mA sobre 0,12 Ω; ainda não medida | Roteiro, fato 5 |
+| Resposta da cadeia de tensão | −3 dB em 17,26 ± 0,16 kHz; f0 = 24,06 ± 0,21 kHz; Q = 0,540 ± 0,006; K = 0,9969 ± 0,0028; −12,5 dB em 45 kHz; resíduo de 0,13 dB | 48 pontos, 50 Hz a 45 kHz, 100 kS/s | T3; Marco 12 |
+| Taxa de amostragem | = 200 MHz ÷ ticks a 0,02 ppm; erro comum de −43,2 ppm (cristal + gerador) | 50 a 125 kS/s | T4 |
+| SINAD / ENOB | 61 dB / 14,4 bits | 10 kHz a −27,5 dBFS, gerador sem filtro | T4 (prévia do T5) |
+| THD medido | −71,6 dB (limitado pelo gerador; ADC: −102 dB no datasheet) | 10 kHz | T4 |
+| Diafonia | −94,7 dB | 10 kHz, canal seguinte ao agressor | T6a |
+| Atraso entre canais | 9,954 µs (esperado: 10,000 µs) | 2 canais a 100 kS/s | T6b |
+| Estabilidade em 10 min | 0,09 ppm (frequência), 0,009 % (amplitude) | janelas de 1 bloco | T7c |
+| Salto a cada bloco (firmware antigo) | 6,97 µs = +0,697 amostra a 100 kS/s, nas 57 trocas, ±0,002 | corrigido em out/2026, falta validar no hardware | T7c; Marco 13 |
+| Transitório ao trocar a faixa | ~6 amostras (60 µs a 100 kS/s), até ~1 V no pino | só quando a faixa do canal muda | T0, T1; Marco 14 |
+| Quadro SPI da PRU | ~1 380 ciclos (6,9 µs; transação com o CS baixo: 1 166 ciclos), dos quais 800 (58 %) são as esperas do CS | simulador do `spi_core.asm` | Marco 13 |
+| Teto de taxa | ~130 kS/s observados e ~140 kS/s pelo simulador; ~330 kS/s no papel com as esperas mínimas do datasheet | a medir no T7e | Marco 13 |
+| Esperas do CS | 2,0 / 1,0 / 1,0 µs contra 30 / 10 / 30 ns do datasheet | tabela 7.6 do SBAS582C | Marco 13 |
+| Buffers | 2 × 1 048 576 amostras (2 × 2 MB) na DDR; ~10 s por bloco a 100 kS/s | — | Marco 3 |
+| Código da PRU | 1 878 instruções, 91,7 % da IMEM de 8 KB | `tests/pru_sim.py` | `contexto_projeto.md` |
+| Arquivamento sem perdas | 11,0 % do tamanho (407 MB → 44,9 MB); 7-Zip: 14,6 % | capturas até o T3 | Marco 10 |
+| Testes automáticos | 682 (564 rápidos), ~1 min 40 s em paralelo, ~90 % de cobertura | sem hardware | Marco 10 |
