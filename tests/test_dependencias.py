@@ -14,7 +14,7 @@ except ModuleNotFoundError:  # Python 3.10 (o mínimo suportado): tomllib só ex
 
 RAIZ = Path(__file__).resolve().parents[1]
 SCRIPTS = RAIZ / "scripts"
-ENTRADAS = ["adc_tool.py", "gerar_perfil_sonda.py", "medir_captura.py"]
+ENTRADAS = ["adc_tool.py", "gerar_perfil_sonda.py", "medir_captura.py", "compactar_amostras.py"]
 
 
 def nome_e_spec(requisito: str) -> tuple[str, str]:
@@ -50,7 +50,7 @@ def test_pacote_nao_importa_nada_fora_das_dependencias_declaradas(pyproject):
     import sys
 
     declaradas = {nome_e_spec(r)[0] for r in pyproject["project"]["dependencies"]}
-    permitidos = {"numpy", "scipy", "matplotlib", "h5py"}
+    permitidos = {"numpy", "scipy", "matplotlib", "h5py", "rich"}
     assert permitidos == declaradas
     for p in (SCRIPTS / "supraharmonicos").glob("*.py"):
         for no in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):

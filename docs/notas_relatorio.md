@@ -81,7 +81,7 @@
   digital, suporte multi-canal completo e exportação para o formato HDF5;
   rotulagem de grandeza e sonda por canal no cabeçalho (versão 2) e correção
   em frequência de sondas de corrente (validada apenas com sinais
-  sintéticos); e código Python organizado em pacote, com 603 testes
+  sintéticos); e código Python organizado em pacote, com 635 testes
   automáticos e integração contínua, e preparação da validação em bancada
   (ferramenta de métricas e roteiro de laboratório); e a primeira medição em
   bancada: a resposta em frequência da cadeia de tensão (T3), com −3 dB em
@@ -755,6 +755,14 @@ reduzir o custo de alterar o código sem quebrar o que já funciona.
 5. **Documentação:** `README.md` reescrito, guia de uso
    (`docs/guia_de_uso.md`) e guia da arquitetura do software
    (`docs/arquitetura_software.md`).
+6. **Arquivamento dos dados brutos sem perdas** (`compactar_amostras.py`,
+   out/2026): um pacote `tar` com peças zpaq -m5 e os canais desentrelaçados,
+   conferido bit a bit (SHA-256) antes de ficar pronto, com um `LEIA-ME`
+   que permite recuperar tudo sem o programa. Todas as capturas até o T3
+   (407 MB) couberam em 44,9 MB (11,0 %; o 7-Zip dava 14,6 %). Medido: o
+   ruído do ADC limita qualquer compressor sem perdas a ~1,1–2,2 bits por
+   amostra (de 16), e o zpaq chega perto disso; FLAC (~15 %) e um preditor
+   linear antes do zpaq foram testados e descartados.
 
 **Relevância para o relatório:** mostra a preocupação com a
 reprodutibilidade e a manutenção do instrumento como software. O teste de

@@ -1,8 +1,8 @@
 """SH-Analyzer -- pós-processamento das capturas do ADS8688 (BeagleBone Black + PRU).
 
 Este pacote contém TODA a lógica de análise; ``scripts/adc_tool.py``,
-``scripts/gerar_perfil_sonda.py`` e ``scripts/medir_captura.py`` são só entradas
-de linha de comando finas.
+``scripts/gerar_perfil_sonda.py``, ``scripts/medir_captura.py`` e
+``scripts/compactar_amostras.py`` são só entradas de linha de comando finas.
 Ver ``docs/arquitetura_software.md`` para o mapa dos módulos e as regras de
 dependência entre eles.
 """

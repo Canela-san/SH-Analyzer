@@ -8,13 +8,15 @@ version = "0.1.0"
 description = "Pós-processamento das capturas do SH-Analyzer (ADS8688 + BeagleBone Black/PRU): conversão, espectro (FFT/Welch), supraharmônicos e correção de sondas."
 readme = "README.md"
 requires-python = ">=3.10"
-# Estas dependências precisam ficar IGUAIS às dos blocos PEP 723 (# /// script)
-# de scripts/adc_tool.py, scripts/gerar_perfil_sonda.py e scripts/medir_captura.py -- tests/test_dependencias.py confere.
+# Estas dependências precisam ficar IGUAIS às dos blocos PEP 723 (# /// script) de scripts/adc_tool.py,
+# scripts/gerar_perfil_sonda.py, scripts/medir_captura.py e scripts/compactar_amostras.py -- tests/test_dependencias.py confere.
+# rich: a interface do compactar_amostras (tabelas, barras de progresso); só cli_compactar o importa.
 dependencies = [
     "numpy>=1.20",
     "scipy>=1.15.3",
     "matplotlib>=3.10.9",
     "h5py>=3.0",
+    "rich>=13.7",
 ]
 
 [project.optional-dependencies]
@@ -23,8 +25,8 @@ gui = ["PyQt6"]
 # tomli: leitor de TOML dos testes na Python 3.10 (a partir da 3.11 ele vem na biblioteca padrão).
 dev = ["pytest>=8", "ruff>=0.6", "tomli>=2; python_version < '3.11'"]
 
-# A lógica mora no pacote scripts/supraharmonicos; scripts/adc_tool.py,
-# scripts/gerar_perfil_sonda.py e scripts/medir_captura.py são só entradas de linha de comando. Para usar o
+# A lógica mora no pacote scripts/supraharmonicos; scripts/adc_tool.py, scripts/gerar_perfil_sonda.py,
+# scripts/medir_captura.py e scripts/compactar_amostras.py são só entradas de linha de comando. Para usar o
 # pacote como biblioteca (notebooks, outros scripts):  pip install -e .
 # (modo editável: a pasta padrão de perfis, scripts/sondas/, fica ao lado do pacote).
 [tool.setuptools.packages.find]

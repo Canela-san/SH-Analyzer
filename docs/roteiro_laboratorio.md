@@ -848,7 +848,7 @@ Mesmo critério do T11a, com o SNR por bin do T10 (cada tom precisa de ≥ 30 dB
 | Quadrada: teoria × ADC × perfil × osciloscópio; menor tom detectável; resolução de dois tons | T9 |
 | **Perfil da sonda de corrente** (curva, pontos, desvios); validação hold-out (erro % com e sem correção); linearidade (amplitude e N); piso de detecção | T10 |
 | Tons compostos e carga real: ADC × osciloscópio | T11 |
-| `resultados.csv` de cada dia, os `.bin` (compactar com `scripts/compactar_amostras.sh`) e os prints do osciloscópio | Todos |
+| `resultados.csv` de cada dia, os `.bin` (arquivar sem perdas com `uv run scripts/compactar_amostras.py PASTA_DO_DIA`: ~11 % do tamanho, conferido pelo SHA-256) e os prints do osciloscópio | Todos |
 
 **Sugestão de estrutura:** uma tabela "requisito do projeto → teste → resultado → critério" com os testes T7 (não perder dados e limite de taxa), T10 (perfil da sonda), T3 (banda de supraharmônicos de tensão) e T11 (ponta a ponta).
 

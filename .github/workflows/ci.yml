@@ -30,6 +30,10 @@ jobs:
       - name: Instalar o uv
         run: pipx install uv
 
+      # zpaq: o compressor do scripts/compactar_amostras.py (sem ele, os testes que o usam são pulados).
+      - name: Instalar o zpaq
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zpaq
+
       - name: Estilo e erros comuns (ruff)
         run: uv run --python ${{ matrix.python }} --extra dev ruff check .
 

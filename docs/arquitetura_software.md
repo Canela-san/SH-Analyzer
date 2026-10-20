@@ -17,9 +17,10 @@ scripts/gerar_perfil_sonda.py ──▶ scripts/sondas/<id>.json   (perfil de re
                                    │
 scripts/adc_tool.py captura.bin  ──▶ gráfico / espectro (FFT, Welch, picos, bandas) / .csv / .h5
 scripts/medir_captura.py captura.bin ──▶ números para o relatório (ruído, THD, SINAD, ENOB, SFDR, continuidade, diafonia) / .csv
+scripts/compactar_amostras.py pasta/ ──▶ pasta_<data>.zpaq.tar  (arquivamento sem perdas, conferido pelo SHA-256)
 ```
 
-Todo o código Python vive no **pacote `scripts/supraharmonicos/`**. Os três arquivos `scripts/adc_tool.py`, `scripts/gerar_perfil_sonda.py` e `scripts/medir_captura.py` são **entradas finas** (menos de 40 linhas): só chamam `main()` do pacote. Eles mantêm o bloco PEP 723 (`# /// script`), então `uv run scripts/adc_tool.py ...` continua funcionando sem instalar nada.
+Todo o código Python vive no **pacote `scripts/supraharmonicos/`**. Os quatro arquivos `scripts/adc_tool.py`, `scripts/gerar_perfil_sonda.py`, `scripts/medir_captura.py` e `scripts/compactar_amostras.py` são **entradas finas** (menos de 40 linhas): só chamam `main()` do pacote. Eles mantêm o bloco PEP 723 (`# /// script`), então `uv run scripts/adc_tool.py ...` continua funcionando sem instalar nada.
 
 Três ideias organizam tudo:
 
@@ -38,6 +39,7 @@ scripts/
   adc_tool.py             entrada fina: CLI de análise/conversão/exportação
   gerar_perfil_sonda.py   entrada fina: CLI do gerador de perfis de sonda
   medir_captura.py        entrada fina: CLI das métricas de captura (para o relatório)
+  compactar_amostras.py   entrada fina: arquivar/restaurar capturas sem perdas (pacote .zpaq.tar)
   sondas/*.json           perfis de sonda gerados (dados, não código); a pasta nasce no 1º perfil
   supraharmonicos/        ← TODA a lógica Python (seção 3)
 tests/                    pytest (seção 7)
@@ -75,11 +77,13 @@ Camada = quem pode importar quem (um módulo só importa camadas **menores**).
 | 2 | `conversao` | `.bin` ↔ `.csv` em blocos | `converter_arquivo` |
 | 2 | `hdf5` | `.bin` → `.h5` em blocos (`h5py` importado só ao usar) | `exportar_hdf5` |
 | 2 | `metricas_captura` | Métricas de uma captura, sem I/O: estatística, ruído, tom, THD/SINAD/SNR/ENOB/SFDR, continuidade, diafonia/atraso (FFT única, janela Kaiser β = 14) | `analisar_espectro`, `verificar_continuidade`, `calcular_acoplamento`, `calcular_basicas` |
+| 2 | `compactacao` | Pacote `.zpaq.tar` sem perdas: formato (tar + manifesto JSON + peças zpaq/xz independentes), desentrelaçamento reversível dos canais, compressores em paralelo (cabe na RAM livre), verificação por SHA-256, extração segura | `compactar`, `Pacote`, `descobrir_entradas`, `Desentrelacamento`, `remover_originais` |
 | 2 | `contexto` | "O que esta captura é": cabeçalho + canais + calibração + grandeza/sonda por canal, resolvidos uma vez | `ContextoCaptura`, `resolver_contexto` |
 | 3 | `modos` | Os 3 modos do `adc_tool` (plotagem, conversão, HDF5); a plotagem é um pipeline de etapas pequenas | `executar_plotagem`, `executar_conversao`, `executar_exportacao_hdf5` |
 | 3 | `calibracao_sonda` | Medir tons de calibração (Welch localiza, FFT única mede), ganho vs o que foi injetado (amplitude conhecida, osciloscópio, shunt), agregar repetições, resumir a resposta do conjunto | `medir_tom`, `processar_captura`, `agregar_por_frequencia`, `resumir_resposta` |
 | 4 | `escrita_perfil` | Monta o JSON do perfil, grava com segurança (`.tmp` → validação → `.bak` → troca), gráfico de diagnóstico | `montar_perfil_json`, `gravar_perfil_validado` |
 | 4 | `cli_adc_tool` | **Borda**: flags do `adc_tool` e `main()` | `montar_parser`, `main` |
+| 4 | `cli_compactar` | **Borda**: comandos `compactar`/`extrair`/`listar`/`verificar` e a interface (`rich`: tabelas, barras com estimativa de tempo, confirmações) | `montar_parser`, `main`, `Painel` |
 | 4 | `cli_medir_captura` | **Borda**: flags do `medir_captura`, saída em texto e CSV (`COLUNAS_CSV`) | `montar_parser`, `main`, `medir_arquivo` |
 | 5 | `cli_gerar_perfil` | **Borda**: flags do gerador e `main()` | `montar_parser`, `main`, `executar_geracao` |
 
@@ -138,6 +142,7 @@ log.warning("--welch sem filtro")  # aviso → stderr, o handler põe "Aviso: " 
 
 * `matplotlib`: só em `plotagem.py` (topo) e dentro de `escrita_perfil.gerar_grafico` (para `--plot`). `modos` importa `plotagem` **dentro** de `executar_plotagem` — quem só converte `.bin`→`.csv` não paga o custo do matplotlib.
 * `h5py`: só dentro de `hdf5.exportar_hdf5`.
+* `rich` (interface do `compactar_amostras`): só em `cli_compactar`. O formato e a verificação (`compactacao`) não dependem dele.
 * Dependências novas: declare em **dois** lugares — `pyproject.toml` e os blocos PEP 723 das entradas (`tests/test_dependencias.py` falha se divergirem).
 
 ### 4.4 Constantes que o firmware também tem
@@ -184,9 +189,9 @@ O caminho quente é tudo que toca **todas** as amostras de uma captura (dezenas 
 ## 7. Testes
 
 ```bash
-uv run --extra dev pytest                 # tudo: 603 testes (alguns minutos)
-uv run --extra dev pytest -m "not e2e"    # rápido: 487 testes (~1 min) — use no dia a dia
-uv run --extra dev pytest -m e2e          # só ponta a ponta: 116 testes (a maior parte do tempo)
+uv run --extra dev pytest                 # tudo: 635 testes (alguns minutos)
+uv run --extra dev pytest -m "not e2e"    # rápido: 520 testes (~2 min) — use no dia a dia
+uv run --extra dev pytest -m e2e          # só ponta a ponta: 115 testes (a maior parte do tempo)
 uv run --extra dev ruff check .
 ```
 
@@ -210,7 +215,8 @@ uv run --extra dev ruff check .
 | `test_dependencias.py` | PEP 723 das entradas == `pyproject.toml` |
 | `test_calibrar_sonda.py` (+ `ler_adc_falso.py`) | `firmware/calibrar_sonda.sh` de ponta a ponta contra um `ler_adc` falso: plano de frequências, conferência de cada captura (saturação, nível, frequência, CRC, disco cheio), menu C/R/P/A, modos `retomar`/`refinar`/`adensar`/`refazer`/`resumo`, Ctrl+C, `--amplitude`/`--amplitude-por-ponto` (metadados `ref:` no `.bin`, manifesto, plano, menu interativo, perfil gerado sem flag), `--grandeza tensao` (cabeçalho, textos, coluna `tensao_rms_V`, 2 canais, plano antigo = corrente), e que as constantes do cabeçalho e a gramática de amplitude batem com o firmware e o Python. Marcado `e2e` (usa `bash`; é pulado fora do Linux) |
 | `test_relatorio.py` | `relatorio/gerar_figuras.py`: o ajuste do passa-baixa recupera K, f0 e Q conhecidos (com e sem pesos medidos) e vence os outros modelos pelo BIC; f−3dB, polos e incerteza no formato do siunitx; a figura e as macros são geradas (sem LaTeX, para rodar no CI) |
-| `test_scripts_shell.py` | `scripts/compactar_amostras.sh` (7z e zpaq guardam só os nomes; uma falha do compressor apaga a saída pela metade) e `scripts/set_date.sh` (com `ssh`/`sudo`/`date` falsos: o tempo da senha do sudo é descontado). Marcado `e2e` |
+| `test_compactacao.py` | `compactar_amostras`: desentrelaçar e voltar é exato com cortes em qualquer byte; a receita do `LEIA-ME.txt` (só numpy) reconstrói o original; ida e volta devolve bytes, datas e permissões; peça corrompida é detectada e o arquivo estragado não é gravado; falha ou Ctrl+C no meio não deixa pacote nem temporários nem `zpaq` órfão; caminho malicioso no manifesto é recusado; `--remover-originais` só apaga o que continua idêntico; CLI. Os testes com o `zpaq` de verdade são `e2e` (pulados sem ele) |
+| `test_scripts_shell.py` | `scripts/set_date.sh` (com `ssh`/`sudo`/`date` falsos: o tempo da senha do sudo é descontado). Marcado `e2e` |
 | `e2e/test_perfil_sonda_e2e.py` | fluxo completo por subprocess nas entradas reais: calibração → perfil → correção (inclui as 7 correções da auditoria) |
 
 **Testando um script de shell.** `tests/ler_adc_falso.py` imita a linha de comando do `ler_adc` e grava um `.bin` v3 sintético (aceita `--faixa-adc`; `cab_v1`/`cab_v2` imitam firmware antigo); o arquivo `cenario` (uma diretiva por chamada: `ok`, `sat_sonda`, `falha`, `truncar`, `travar`, ...) faz cada captura falhar de um jeito específico. É assim que se testa o tratamento de erros do `calibrar_sonda.sh` sem a BeagleBone.
@@ -221,7 +227,7 @@ uv run --extra dev ruff check .
 
 ### 7.1 Integração contínua (GitHub Actions)
 
-`.github/workflows/ci.yml` roda o `ruff check .` e o `pytest` (suíte completa, com e2e) a cada push na `main` e a cada pull request, em duas versões do Python: **3.10** (o mínimo declarado em `requires-python`) e **3.13**. É o mesmo que `uv run --extra dev ruff check .` e `uv run --extra dev pytest` fazem na sua máquina — se passa local, passa no CI. Leva cerca de 1 a 2 minutos.
+`.github/workflows/ci.yml` instala o `zpaq` (para os testes do `compactar_amostras`; sem ele, esses testes são pulados) e roda o `ruff check .` e o `pytest` (suíte completa, com e2e) a cada push na `main` e a cada pull request, em duas versões do Python: **3.10** (o mínimo declarado em `requires-python`) e **3.13**. É o mesmo que `uv run --extra dev ruff check .` e `uv run --extra dev pytest` fazem na sua máquina — se passa local, passa no CI. Leva cerca de 1 a 2 minutos.
 
 Para o CI *impedir* um merge que quebra algo, o resultado precisa ser exigido nas configurações do repositório (**Settings → Rules → Rulesets** ou **Branches → Branch protection rule**, na branch `main`): marcar *Require a pull request before merging* e *Require status checks to pass before merging*, e escolher os checks `testes (Python 3.10)` e `testes (Python 3.13)` (eles só aparecem na lista depois da primeira execução do workflow).
 

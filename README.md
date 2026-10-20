@@ -75,7 +75,14 @@ Para **medir** a captura (ruído, THD, SINAD, ENOB, SFDR, amostras perdidas, dia
 uv run scripts/medir_captura.py captura.bin --csv resultados.csv
 ```
 
-Mais exemplos (multi-canal, filtros, conversão para CSV, calibração de sondas de corrente) estão no **[guia de uso](docs/guia_de_uso.md)**. Vai validar o projeto em bancada? Use o **[roteiro de laboratório](docs/roteiro_laboratorio.md)**.
+Para **guardar** as capturas sem perder nada (os `.bin` são amostras cruas, 2 bytes cada), `compactar_amostras.py` gera um pacote com ~11 % do tamanho e só o dá por pronto depois de conferir que cada arquivo volta idêntico, bit a bit. Precisa do `zpaq` (`sudo apt install zpaq`):
+
+```bash
+uv run scripts/compactar_amostras.py Collected_Data                     # → Collected_Data_<data>.zpaq.tar
+uv run scripts/compactar_amostras.py extrair Collected_Data_<data>.zpaq.tar T7c_10min.bin
+```
+
+Mais exemplos (multi-canal, filtros, conversão para CSV, calibração de sondas de corrente, arquivamento) estão no **[guia de uso](docs/guia_de_uso.md)**. Vai validar o projeto em bancada? Use o **[roteiro de laboratório](docs/roteiro_laboratorio.md)**.
 
 ## 📈 FFT ou Welch?
 
@@ -91,7 +98,7 @@ As duas podem ser combinadas na mesma execução. A explicação completa, com o
 ```text
 .
 ├── firmware/    # Código da BeagleBone: PRU (spi_core.asm, pru_main.c), ler_adc.c, Makefile, setup.sh, calibrar_sonda.sh
-├── scripts/     # Python (adc_tool.py, gerar_perfil_sonda.py, medir_captura.py, pacote supraharmonicos/) e utilitários .sh
+├── scripts/     # Python (adc_tool.py, gerar_perfil_sonda.py, medir_captura.py, compactar_amostras.py, pacote supraharmonicos/) e set_date.sh
 ├── tests/       # Testes automáticos (pytest), sem precisar de hardware
 ├── relatorio/   # gerar_figuras.py: todas as figuras do relatório, num estilo só, e as figuras geradas (figuras/)
 ├── hardware/    # Projeto da PCB no Altium Designer (DAQ_Module)
@@ -131,7 +138,7 @@ Quem for modificar o código Python deve começar por [`docs/arquitetura_softwar
 
 ```bash
 uv run --extra dev ruff check .   # estilo e erros comuns
-uv run --extra dev pytest         # 603 testes, alguns minutos (use -m "not e2e" para a versão rápida: 487 testes, ~1 min)
+uv run --extra dev pytest         # 635 testes, alguns minutos (use -m "not e2e" para a versão rápida: 520 testes, ~2 min)
 ```
 
 Os testes também conferem que o firmware (C) e o Python concordam sobre o formato do cabeçalho: se você mudar um lado, o `pytest` avisa até o outro acompanhar.

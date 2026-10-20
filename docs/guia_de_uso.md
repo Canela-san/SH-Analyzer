@@ -12,9 +12,10 @@ Passo a passo para quem vai **operar** o SH-Analyzer: capturar na BeagleBone, an
 6. [FFT ou Welch?](#fft-ou-welch)
 7. [Sondas de corrente: calibração e correção](#sondas-de-corrente-calibração-e-correção)
 8. [Medir uma captura para o relatório: `medir_captura.py`](#medir-uma-captura-para-o-relatório-medir_capturapy)
-9. [O arquivo `.bin`](#o-arquivo-bin)
-10. [Utilitários](#utilitários)
-11. [Problemas comuns](#problemas-comuns)
+9. [Guardar as capturas sem perdas: `compactar_amostras.py`](#guardar-as-capturas-sem-perdas-compactar_amostraspy)
+10. [O arquivo `.bin`](#o-arquivo-bin)
+11. [Utilitários](#utilitários)
+12. [Problemas comuns](#problemas-comuns)
 
 Indo ao laboratório validar o projeto inteiro? Siga o [`roteiro_laboratorio.md`](roteiro_laboratorio.md): testes numerados, sinal a injetar em cada um, comandos e o que anotar.
 
@@ -126,7 +127,7 @@ Qualquer cópia serve. Com `scp`:
 scp debian@<ip-da-beaglebone>:caminho/da/captura.bin .
 ```
 
-Os `.bin` são grandes e ficam fora do Git (estão no `.gitignore`). Para guardar muitas capturas, `scripts/compactar_amostras.sh` compacta tudo num único arquivo (veja [Utilitários](#utilitários)).
+Os `.bin` são grandes e ficam fora do Git (estão no `.gitignore`). Para guardar muitas capturas, o `compactar_amostras.py` as arquiva sem perdas num único pacote com ~11 % do tamanho (veja [Guardar as capturas sem perdas](#guardar-as-capturas-sem-perdas-compactar_amostraspy)).
 
 ---
 
@@ -475,6 +476,28 @@ Canais de corrente com sonda registrada no cabeçalho são corrigidos pelo perfi
 
 ---
 
+## Guardar as capturas sem perdas: `compactar_amostras.py`
+
+Um `.bin` guarda as amostras cruas, 2 bytes cada, sem compressão. O `compactar_amostras.py` junta pastas inteiras (as capturas e o que mais estiver nelas: `.csv`, logs, planos de coleta) num único **pacote** `.zpaq.tar` com cerca de 11 % do tamanho, e só o dá por pronto depois de relê-lo do disco, descomprimir tudo e conferir que cada arquivo volta **idêntico, bit a bit** (SHA-256). Precisa do `zpaq` (`sudo apt install zpaq`; se faltar, o script oferece instalar).
+
+```bash
+uv run scripts/compactar_amostras.py Collected_Data                         # → Collected_Data_<data>.zpaq.tar
+uv run scripts/compactar_amostras.py listar Collected_Data_<data>.zpaq.tar   # o que tem dentro (instantâneo)
+uv run scripts/compactar_amostras.py extrair Collected_Data_<data>.zpaq.tar                    # restaura tudo aqui
+uv run scripts/compactar_amostras.py extrair Collected_Data_<data>.zpaq.tar T7c_10min.bin -d /tmp/x   # só um
+uv run scripts/compactar_amostras.py verificar Collected_Data_<data>.zpaq.tar  # confere o pacote (de vez em quando)
+```
+
+* **O que entra.** Tudo o que houver nas pastas dadas, recursivamente, com o caminho a partir da pasta (como o `tar`): `compactar Collected_Data/lab` guarda `lab/2026-10-19/...`. `--excluir '*.png'` deixa algo de fora; links simbólicos não entram (o script avisa).
+* **O que ele usa da máquina.** Um compressor por núcleo, até o que couber em 70 % da memória livre (~800 MB cada; `--memoria GB` e `-j N` mudam isso), com prioridade baixa: o computador continua usável. A tela mostra o progresso e o tempo que falta. O zpaq -m5 é lento e simétrico: os 407 MB do `Collected_Data` levaram 15 min para comprimir e outros 15 para verificar (i7-7700HQ, 8 processos, ~0,07 MB/s cada). Um arquivo grande vira peças de 64 MiB e cada peça ocupa um processo do começo ao fim, então é a maior peça que costuma decidir o tempo total. `--rapido` usa o xz: ~20 vezes mais rápido, pacote ~40 % maior, não precisa do zpaq.
+* **Nada fica pela metade.** Até ser verificado, o pacote se chama `*.parcial`; um Ctrl+C ou erro apaga o parcial e os temporários. Se um original mudar durante a compactação, o script para e pede para rodar de novo.
+* **Liberar o espaço.** `--remover-originais` apaga os originais depois da verificação, só os que continuam idênticos ao que foi guardado (cada um é conferido de novo), e pede confirmação (`--sim` para não perguntar). Ainda assim, guarde o pacote em **dois lugares** (outro disco, nuvem): é a única cópia dos dados.
+* **Extrair.** Os arquivos voltam com a data e as permissões originais, cada um conferido pelo SHA-256 antes de ganhar o nome final. O padrão pode ser o nome do arquivo, um caminho, uma pasta (`lab/capturas`) ou um curinga (`'*100Hz*'`). Um arquivo que já existe no destino é pulado (`--sobrescrever` para substituir).
+
+**Por que zpaq, e o que tem dentro.** Medido nas capturas do projeto: o ruído do ADC limita qualquer compressor sem perdas a ~1,1–2,2 bits por amostra, e o zpaq -m5 (modelagem de contexto) é o que chega mais perto (~10 % do original; 7-Zip e xz ficam em ~14 %, FLAC em ~15 %). Antes de comprimir, as amostras de uma captura multicanal são **desentrelaçadas** (todas do canal 0, depois as do 1...), o que rende ~6 % numa captura de 8 canais. No `Collected_Data` inteiro (407 MB, 129 arquivos), o pacote ficou com **44,9 MB (11,0 %)**; o 7-Zip do script antigo dava 59,4 MB (14,6 %), e o `--max` dele (zpaq -m5 com tudo num arquivo só) 45,1 MB, sem verificação, sem extração de um arquivo isolado e com 4,7 GB de RAM. Ou seja: o zpaq já está perto do limite que o ruído do ADC permite, e o ganho deste script sobre aquele modo é a segurança, não o tamanho. O pacote é um `tar` comum com um `LEIA-ME.txt` que explica como recuperar tudo **sem este programa** (só `tar`, `zpaq` e, para as capturas multicanal, cinco linhas de numpy), um `manifesto.json` legível (caminhos, tamanhos, datas, SHA-256, resumo do cabeçalho de cada captura) e as peças `pecas/*.zpaq`, uma (ou mais, num arquivo grande) por arquivo. Uma peça corrompida estraga só o arquivo dela, e o `verificar` diz qual.
+
+---
+
 ## O arquivo `.bin`
 
 Um `.bin` é um **cabeçalho fixo de 1024 bytes** seguido das **amostras brutas** (2 bytes cada, intercaladas por canal: com N canais, a amostra `i` pertence ao canal `lista_canais[i % N]`).
@@ -503,7 +526,7 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 | Script | Onde roda | O que faz |
 |---|---|---|
 | `scripts/set_date.sh` | Computador | Copia a data e hora do computador para a BeagleBone via SSH (como instante absoluto em UTC, então vale qualquer que seja o fuso dela). Padrão: `debian@192.168.6.2`; troque com `BBB_USER` e `BBB_IP`. **Nenhuma senha fica no arquivo:** use chave SSH (`ssh-copy-id debian@192.168.6.2`) ou deixe o `ssh`/`sudo` pedirem a senha no terminal. Se preferir não digitar, exporte `SSHPASS` (e tenha o `sshpass` instalado) |
-| `scripts/compactar_amostras.sh` | Computador | Compacta `.bin` e `.h5` de uma pasta num único arquivo, priorizando a taxa de compressão. Padrão: 7-Zip (LZMA2). `--max` usa `zpaq -m5`, mais lento e mais forte. Opções: `--dir PASTA`, `-o ARQUIVO` |
+| `scripts/compactar_amostras.py` | Computador | Arquiva pastas de captura sem perdas num pacote `.zpaq.tar` (~11 % do tamanho), conferido bit a bit; também `listar`, `extrair` e `verificar`. Veja [Guardar as capturas sem perdas](#guardar-as-capturas-sem-perdas-compactar_amostraspy) |
 | `relatorio/gerar_figuras.py` | Computador | Gera as figuras do relatório (PDF vetorial, já no tamanho final, com o texto composto pelo LaTeX) e um `.tex` com os números citados (macros siunitx). `uv run relatorio/gerar_figuras.py` gera todas; `--listar`, `--png` (prévia), `--formato artigo --idioma en` (coluna de artigo, em inglês), `--saida PASTA` (ex.: a pasta do projeto LaTeX). Inclua no documento sem `width=`, para as fontes baterem com as do texto |
 
 ---
@@ -517,6 +540,7 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 | `-f/--frequencia é obrigatório no modo de plotagem` | Arquivo sem cabeçalho (captura antiga) | Informe `-f` (frequência total) e `--canais` |
 | Aviso "CRC-32 do cabeçalho NÃO confere" | Cópia truncada ou arquivo corrompido | Copie o arquivo de novo e compare o tamanho. Os campos mostrados podem estar errados |
 | Aviso "canal N é de corrente mas não tem sonda/perfil resolvido" | A captura não registrou a sonda | Use `--sonda-perfil N:ARQUIVO.json` (ou refaça a captura com `--sonda`) |
+| `compactar_amostras.py`: "o zpaq não está instalado" | Falta o compressor | `sudo apt install zpaq`, ou `--rapido` (xz, pacote maior) |
 | A captura não termina e nenhuma linha `Bloco A gravado (...)` aparece | PRU parada ou presa | Confira `dmesg \| tail -n 20` e `cat /sys/class/remoteproc/remoteproc1/state`. Rode `./setup.sh` de novo |
 | Timestamp do cabeçalho errado | Relógio da BeagleBone desatualizado | Rode `scripts/set_date.sh` no computador |
 | `--fft` dá resultado estranho depois de aplicar passa-alta | Filtro removeu a fundamental | Veja o aviso em [FFT ou Welch?](#fft-ou-welch) e rode `--fft` e `--welch` separados |
