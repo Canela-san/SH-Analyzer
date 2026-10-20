@@ -1,0 +1,21 @@
+% Gerado por relatorio/gerar_figuras.py (perfil_cadeia_tensao) -- não edite à mão: rode o script de novo.
+% Requer siunitx >= 3 (\qty, \num e incerteza entre parênteses).
+% Perfil: scripts/sondas/cadeia_tensao.json (cadeia_tensao; 48 pontos)
+% Modelo: |H(j2πf)| de H(s) = K ω0² / (s² + (ω0/Q) s + ω0²), mínimos quadrados em dB com pesos iguais (n = 1 por ponto: incertezas estimadas pela dispersão dos resíduos)
+% K = 0.996895 ± 0.002845; f0 = 24061.90 ± 212.22 Hz; Q = 0.53996 ± 0.00627; f-3dB = 17256.60 ± 164.67 Hz
+% Polos/(2π): -22281.3 ± j9084.0 Hz; corr(f0, Q) = -0.871
+% BIC: 1ª ordem -43.4; 2ª ordem -185.9; 2ª ordem + polo real -182.0
+% Fase NÃO medida: a função de transferência supõe sistema de fase mínima (sem atraso puro).
+\providecommand{\CadeiaTensaoNpontos}{}\renewcommand{\CadeiaTensaoNpontos}{48}
+\providecommand{\CadeiaTensaoFmin}{}\renewcommand{\CadeiaTensaoFmin}{\qty{50}{\hertz}}
+\providecommand{\CadeiaTensaoFmax}{}\renewcommand{\CadeiaTensaoFmax}{\qty{45.0}{\kilo\hertz}}
+\providecommand{\CadeiaTensaoK}{}\renewcommand{\CadeiaTensaoK}{\num{0.9969(28)}}
+\providecommand{\CadeiaTensaoKdB}{}\renewcommand{\CadeiaTensaoKdB}{\qty{-0.027(25)}{\decibel}}
+\providecommand{\CadeiaTensaoFzero}{}\renewcommand{\CadeiaTensaoFzero}{\qty{24.06(21)}{\kilo\hertz}}
+\providecommand{\CadeiaTensaoQ}{}\renewcommand{\CadeiaTensaoQ}{\num{0.5400(63)}}
+\providecommand{\CadeiaTensaoFcorte}{}\renewcommand{\CadeiaTensaoFcorte}{\qty{17.26(16)}{\kilo\hertz}}
+\providecommand{\CadeiaTensaoCorrFzeroQ}{}\renewcommand{\CadeiaTensaoCorrFzeroQ}{\num{-0.87}}
+\providecommand{\CadeiaTensaoResiduo}{}\renewcommand{\CadeiaTensaoResiduo}{\qty{0.13}{\decibel}}
+\providecommand{\CadeiaTensaoPoloReal}{}\renewcommand{\CadeiaTensaoPoloReal}{\qty{-22.28}{\kilo\hertz}}
+\providecommand{\CadeiaTensaoPoloImag}{}\renewcommand{\CadeiaTensaoPoloImag}{\qty{9.08}{\kilo\hertz}}
+\providecommand{\CadeiaTensaoH}{}\renewcommand{\CadeiaTensaoH}{\frac{K\,\omega_0^2}{s^2 + (\omega_0/Q)\,s + \omega_0^2}}
