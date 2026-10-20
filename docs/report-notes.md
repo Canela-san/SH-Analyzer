@@ -1216,7 +1216,7 @@ Os números do projeto num lugar só, com a condição e a fonte. Os valores med
 | Estabilidade em 10 min | 0,09 ppm (frequência), 0,009 % (amplitude) | janelas de 1 bloco | T7c |
 | Salto a cada bloco (firmware antigo) | 6,97 µs = +0,697 amostra a 100 kS/s, nas 57 trocas, ±0,002 | corrigido em out/2026, falta validar no hardware | T7c; Marco 13 |
 | Transitório ao trocar a faixa | ~6 amostras (60 µs a 100 kS/s), até ~1 V no pino | só quando a faixa do canal muda | T0, T1; Marco 14 |
-| Quadro SPI da PRU | ~1 380 ciclos (6,9 µs; transação com o CS baixo: 1 166 ciclos), dos quais 800 (58 %) são as esperas do CS | simulador do `spi_core.asm` | Marco 13 |
+| Quadro SPI da PRU | 1 395 ciclos (6,98 µs; transação com o CS baixo: 1 166 ciclos), dos quais 800 (57 %) são as esperas do CS; em geral, 595 + 2 × (S + H + A) ciclos | simulador do `spi_core.asm` | Marco 13; roteiro, T7e |
 | Teto de taxa | ~130 kS/s observados e ~140 kS/s pelo simulador; ~330 kS/s no papel com as esperas mínimas do datasheet | a medir no T7e | Marco 13 |
 | Esperas do CS | 2,0 / 1,0 / 1,0 µs contra 30 / 10 / 30 ns do datasheet | tabela 7.6 do SBAS582C | Marco 13 |
 | Buffers | 2 × 1 048 576 amostras (2 × 2 MB) na DDR; ~10 s por bloco a 100 kS/s | — | Marco 3 |

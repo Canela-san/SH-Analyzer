@@ -734,9 +734,9 @@ uv run scripts/medir_captura.py $DIA/T7[abcd]*.bin --freq 10000 --sem-correcao-s
 
 #### T7e: onde está o limite de taxa
 
-**Objetivo.** Saber **até onde** vai a taxa real e **qual parte** do projeto é o gargalo (a PRU/SPI, o ADC ou o lado ARM), em vez de supor. São os itens F2 e F3 de [`improvement-proposals.md`](improvement-proposals.md#f2--medir-até-onde-as-esperas-do-cs-podem-cair), medidos em bancada.
+**Objetivo.** Saber **até onde** vai a taxa real e **qual parte** do projeto é o gargalo (a PRU/SPI, o ADC ou o lado ARM), em vez de supor. **Ordem:** o método 2 (osciloscópio, 10 min), o método 1 com as esperas padrão, o **método 4** (a busca das esperas mínimas e do teto: é ele que decide a taxa de trabalho) e o método 3 só se aparecerem buffers sobrescritos. São os itens F2 e F3 de [`improvement-proposals.md`](improvement-proposals.md#f2--medir-até-onde-as-esperas-do-cs-podem-cair), medidos em bancada.
 
-**Hipótese a testar** (confirmada na leitura do firmware e no simulador em out/2026; falta a medida no CS). O ADS8688 precisa só de ~2 µs por amostra (500 kS/s), mas a PRU gasta bem mais: pela contagem estática do `spi_core.asm` (±10%), 32 bits de SCLK de ~16 a 19 ciclos cada (≈ 2,9 µs) mais os três laços de atraso do CS (200 + 100 + 100 iterações de 2 ciclos = 800 ciclos = **4,0 µs**) dão **~7 µs por quadro**, ou seja, ~140 kS/s no papel; o limite que você observou (130 kS/s) está nessa faixa. Executar o próprio `spi_core.asm` num simulador de PRU (`tests/pru_sim.py`, 1 ciclo por instrução, sem hardware) deu o mesmo resultado: **1379 ciclos = 6,9 µs por quadro (~145 kS/s)**, dos quais **800 ciclos (58%) são os três laços de atraso do CS**. É um teto de papel (acessos à memória externa podem somar ciclos): só o osciloscópio (método 2) confirma. Os mínimos do datasheet são 30/10/30 ns (tSU_CSCK, tD_CKCS, tPH_CS); reduza só pelo método 4, medindo. Se for isso, a taxa **real** satura entre 130 e 145 kS/s, **sem perder amostra**, qualquer que seja a taxa pedida, e o firmware de out/2026 conta as **amostras atrasadas** a cada captura. O lado ARM é improvável (130 kS/s = 260 kB/s; cada buffer de 2 MB demora ~8 s para encher).
+**Hipótese a testar** (confirmada na leitura do firmware e no simulador em out/2026; falta a medida no CS). O ADS8688 precisa só de ~2 µs por amostra (500 kS/s), mas a PRU gasta bem mais: pela contagem estática do `spi_core.asm` (±10%), 32 bits de SCLK de ~16 a 19 ciclos cada (≈ 2,9 µs) mais os três laços de atraso do CS (200 + 100 + 100 iterações de 2 ciclos = 800 ciclos = **4,0 µs**) dão **~7 µs por quadro**, ou seja, ~140 kS/s no papel; o limite que você observou (130 kS/s) está nessa faixa. Executar o próprio `spi_core.asm` num simulador de PRU (`tests/pru_sim.py`, 1 ciclo por instrução, sem hardware) deu o mesmo resultado: **1 395 ciclos = 6,98 µs por quadro (~143 kS/s)** no firmware de out/2026, dos quais **800 ciclos (57 %) são os três laços de atraso do CS** (em geral, 595 + 2 × (S + H + A) ciclos; ver o método 4). É um teto de papel (acessos à memória externa podem somar ciclos): só o osciloscópio (método 2) confirma. Os mínimos do datasheet são 30/10/30 ns (tSU_CSCK, tD_CKCS, tPH_CS); reduza só pelo método 4, medindo. Se for isso, a taxa **real** satura entre 130 e 145 kS/s, **sem perder amostra**, qualquer que seja a taxa pedida, e o firmware de out/2026 conta as **amostras atrasadas** a cada captura. O lado ARM é improvável (130 kS/s = 260 kB/s; cada buffer de 2 MB demora ~8 s para encher).
 
 **Método 1: pelo tom.** 10 s em cada taxa pedida, com a senoide de 10,000 kHz do T4 (anote a leitura do contador):
 
@@ -756,16 +756,106 @@ end
 
 **Método 2: pelo CS no osciloscópio (10 min, sem tocar no firmware).** Ponta do MSO46 no **CS** do ADS8688 (e, num segundo canal, no **SCLK**), terra curto, gatilho na borda de descida do CS. Para cada taxa pedida, meça o **período** do CS e a **largura** do nível baixo. A 100 kS/s o período é de 10,00 µs; a 130 kS/s, de 7,69 µs. Se, ao pedir 200 ou 500 kS/s, o período **para de diminuir** perto de ~7 a 8 µs, o limite é o quadro da PRU: anote quanto dura cada parte (CS baixo ≈ 2 µs de setup + ~2,9 µs de 32 bits de SCLK + 1 µs de hold; CS alto ≥ 1 µs; o datasheet pede tACQ ≥ 1,15 µs de CS alto e SCLK de até 17 MHz, ou seja, o ADC aguentaria um quadro de ~2 µs).
 
-**Método 4: reduzir os atrasos do CS (firmware de out/2026).** Os três atrasos (2/1/1 µs) são ~57 % de cada amostra; o datasheet pede 30/10/30 ns (tabela 7.6), e a conversão (≤ 850 ns) já termina durante os 16 bits de comando (1,6 µs). Com o mesmo tom de 10 kHz, compare a **qualidade** com os atrasos reduzidos na taxa de trabalho e depois o **limite**:
+**Método 4: buscar o extremo das esperas do CS (firmware de out/2026).** É o teste que decide a taxa de trabalho. As
+três esperas de cada amostra são dadas ao `ler_adc` em `--atraso-cs S,H,A`, em iterações de 10 ns:
+
+* **S (setup):** do CS descer ao 1º clock (datasheet: tSU_CSCK ≥ 30 ns);
+* **H (hold):** do último clock ao CS subir (tD_CKCS ≥ 10 ns);
+* **A (alto):** o CS em nível alto entre duas amostras (tPH_CS ≥ 30 ns).
+
+O padrão `200,100,100` (2/1/1 µs) foi calibrado empiricamente, na época dos jumpers longos. O piso do datasheet é
+**`3,1,3`** (30/10/30 ns, tabela 7.6): abaixo dele o ADC trabalha fora da especificação, mesmo que pareça funcionar,
+e a busca não desce além. A conversão (≤ 850 ns) não limita: ela termina durante os 16 bits de comando (1,6 µs),
+qualquer que seja o setup.
+
+**Quanto cada conjunto rende.** Pelo simulador da PRU, o quadro mínimo é de **595 + 2 × (S + H + A) ciclos** de 5 ns.
+Os 595 ciclos fixos (~3 µs) são os 32 clocks do SPI feitos em software, e por isso nenhuma espera passa de ~330 kS/s
+(para ir além, F3: SCLK mais rápido). A última coluna deixa ≥ 10 % de folga, porque o simulador conta 1 ciclo por
+instrução e o acesso real à DDR pode custar mais:
+
+| `--atraso-cs` | Quadro mínimo | Taxa máxima (papel) | Maior taxa exata com ≥ 10 % de folga |
+|---|---|---|---|
+| `200,100,100` (padrão) | 1 395 ciclos = 6,98 µs | 143 kS/s | 125 kS/s |
+| `100,50,50` | 995 ciclos = 4,98 µs | 201 kS/s | 160 kS/s |
+| `50,25,25` | 795 ciclos = 3,98 µs | 252 kS/s | 200 kS/s |
+| `20,10,10` | 675 ciclos = 3,38 µs | 296 kS/s | 250 kS/s |
+| `10,5,5` | 635 ciclos = 3,18 µs | 315 kS/s | 250 kS/s |
+| `6,2,6` | 623 ciclos = 3,12 µs | 321 kS/s | 250 kS/s |
+| `3,1,3` (piso do datasheet) | 609 ciclos = 3,05 µs | 328 kS/s | 250 kS/s |
+
+Ou seja: 250 kS/s é o teto prático com o SPI atual, e já `20,10,10` chega lá. A busca diz se o hardware aguenta.
+
+**Sinal:** o tom de 10,000 kHz do T4 (20 Vpp, canal 1, contador do osciloscópio anotado). Todas as capturas com
+`--blocos 3`, para ter a taxa medida pelo ARM e trocas de buffer dentro do arquivo.
+
+*Passo 1: a qualidade contra as esperas, a 100 kS/s.* A 100 kS/s todos os conjuntos cabem no período, então só a
+qualidade pode mudar. Na BeagleBone:
 
 ```bash
-for cs in 200,100,100 100,50,50 50,25,25 20,10,10 5,3,3; do
-  sudo ./ler_adc 100000 1 --duracao 20s --atraso-cs $cs -o T7e_cs_${cs//,/_}_100k.bin -t "T7e cs $cs 100k"
-  sudo ./ler_adc 250000 1 --duracao 20s --atraso-cs $cs -o T7e_cs_${cs//,/_}_250k.bin -t "T7e cs $cs 250k"
-done 2>&1 | tee -a T7e_saida_atraso_cs.txt
+for cs in 200,100,100 100,50,50 50,25,25 20,10,10 10,5,5 6,2,6 3,1,3; do
+  sudo ./ler_adc 100000 1 --blocos 3 --atraso-cs $cs -o T7e_cs_${cs//,/_}.bin -t "T7e cs $cs 100k"
+done 2>&1 | tee T7e_passo1.txt
+grep -E "Integridade|Taxa real" T7e_passo1.txt     # uma linha de cada por captura, na ordem do laço
 ```
 
-Em cada captura, o `ler_adc` imprime a **taxa real medida** e o número de **amostras atrasadas** (0 = a PRU acompanhou). Rode o `medir_captura.py` nas de 100 kS/s: ruído, SINAD/ENOB, THD e continuidade têm de ficar iguais aos de `200,100,100`. O menor conjunto que mantém tudo isso, com uma margem (o dobro, por exemplo), é o candidato a novo padrão; a 250 kS/s ele mostra o novo teto. Até ser validado assim, capturas com atrasos reduzidos são **experimentais**.
+No computador:
+
+```fish
+uv run scripts/medir_captura.py $DIA/T7e_cs_*.bin --freq 10000 --sem-correcao-sonda --inicio 100 --csv $DIA/T7e_cs.csv
+```
+
+Um conjunto **passa** se, comparado com o `200,100,100`:
+
+* o `ler_adc` termina com `Integridade: 0 amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído
+  no SDO -- tudo certo` (o ruído no SDO é o primeiro sinal de clock ou dado chegando fora de hora);
+* a amplitude do tom fica igual em ±0,02 %, e a frequência em ±0,01 ppm;
+* SINAD e SNR ficam em ±0,5 dB, THD em ±1 dB, densidade de ruído em ±5 % e DC (`media`) em ±0,1 mV;
+* a continuidade fica nos milésimos de amostra.
+
+Para pegar erro de bit que um tom pode esconder, repita os dois menores conjuntos que passaram com a **entrada em
+curto**: o ruído e o pico a pico têm de ser os do T1 (0,51 LSB).
+
+*Passo 2 (só se algum conjunto falhar): qual espera importa.* Volte ao último conjunto bom, fixe duas esperas nele e
+baixe só a terceira, uma de cada vez (por exemplo, se `10,5,5` passa e `6,2,6` falha: `6,5,5`, depois `10,2,5`, depois
+`10,5,6`). Assim se sabe qual tempo o hardware precisa de verdade (o isolador ADuM3150 atrasa os sinais nos dois
+sentidos) e qual pode ir ao piso.
+
+*Passo 3: escolher as esperas de trabalho.* Use o **dobro** do menor conjunto que passou em tudo, em iterações, e
+nunca menos que `6,2,6` (o dobro do piso). É a margem para temperatura, cabos e outro exemplar da placa. Exemplos:
+`3,1,3` passou → `6,2,6`; `10,5,5` foi o último bom → `20,10,10`.
+
+*Passo 4: o teto com as esperas escolhidas.* Suba pelas taxas exatas (fato 6). A de 312,5 kS/s deve falhar e mostra
+onde está a borda:
+
+```bash
+CS=20,10,10    # as escolhidas no passo 3
+for taxa in 125000 160000 200000 250000 312500; do
+  sudo ./ler_adc $taxa 1 --blocos 3 --atraso-cs $CS -o T7e_teto_${taxa}.bin -t "T7e teto $taxa cs $CS"
+done 2>&1 | tee T7e_passo4.txt
+grep -E "Integridade|Taxa real" T7e_passo4.txt
+```
+
+```fish
+uv run scripts/medir_captura.py $DIA/T7e_teto_*.bin --referencia-freq 10000.02 --sem-correcao-sonda --inicio 100 --csv $DIA/T7e_teto.csv
+```
+
+(sem `--freq`: se a PRU não alcançar a taxa, o tom aparece deslocado.) Uma taxa **passa** com:
+
+* `0 amostra(s) atrasada(s)`;
+* `Taxa real medida pelo ARM` igual à pedida (sem o aviso "DIFERENTE da pedida");
+* `erro_freq_ppm` igual ao das taxas exatas do T4 (o mesmo erro de cristal);
+* SINAD e ruído iguais aos do passo 1.
+
+A maior taxa que passa é o **teto medido**. A de trabalho é a maior que passa com ≥ 10 % de folga (a tabela acima).
+
+*Passo 5: confirmar no osciloscópio* (método 2), com as esperas escolhidas e a taxa de trabalho. O período do CS tem
+de ser 1/taxa; o CS baixo, (566 + 2 × (S + H)) × 5 ns (5,83 µs no padrão; 3,13 µs com `20,10,10`); o resto do
+período é o CS alto. Fotografe a tela, para a anatomia do quadro no relatório.
+
+*Passo 6: usar.* Até virarem o padrão do firmware (`ATRASO_CS_*_PADRAO` em `firmware/memoria_pru.h`, junto com os
+testes que fixam o padrão), passe `--atraso-cs` **em toda captura** na taxa nova, inclusive no
+`calibrar_sonda.sh --atraso-cs S,H,A`, que o repassa ao `ler_adc` e confere no cabeçalho de cada captura. O que
+refazer a partir daí está em [O que refazer com o firmware de out/2026](#o-que-refazer-com-o-firmware-de-out2026).
 
 **Método 3: separar o lado ARM.** Repita o ponto de 130 kS/s (e o de 100 kS/s) (a) gravando em disco, (b) gravando em RAM (`-o /dev/shm/T7e_ram.bin`, 2,6 MB) e (c) com o disco ocupado (`scp` grande em outra janela). Se só (c) gerar eventos de continuidade, o gargalo é de I/O do ARM; se (a), (b) e (c) derem o mesmo, não é o ARM.
 

@@ -216,6 +216,7 @@ readonly CAB_OFF_CRC_V3=676
 readonly CAB_OFF_ATRASADAS=676      # v4: uint32, amostras tomadas depois do instante previsto (taxa não alcançada)
 readonly CAB_OFF_SOBRESCRITOS=680   # v4: uint32, buffers reescritos pela PRU antes de o ler_adc gravá-los
 readonly CAB_OFF_PREAMBULO=684      # v4: uint32, quadros SPI com ruído no SDO (preâmbulo != 0)
+readonly CAB_OFF_ATRASO_CS=688      # v4: 3 x uint32, esperas do CS no laço da PRU (setup, hold, alto; iterações de 10 ns)
 readonly CAB_OFF_CRC_V4=700
 readonly GRANDEZA_TENSAO=0
 readonly GRANDEZA_CORRENTE=1
@@ -240,6 +241,8 @@ LISTA_CANAIS=""            # "<sonda>" ou "<ref>,<sonda>", para o ler_adc
 FAIXA_ADC_SONDA=""         # --faixa-adc: fundo de escala TOTAL (V) do ADC no canal da sonda (20.48 | 10.24 | 5.12); vazio = padrão do ler_adc (±10,24 V)
 FAIXA_ADC_REFERENCIA=""    # --faixa-adc-referencia: idem, para o canal de referência
 ARGS_FAIXA_ADC=()          # montado por definir_canais: ("--faixa-adc" "canal:volts,...") ou vazio
+ATRASO_CS=""               # --atraso-cs: "setup,hold,alto" (iterações de 10 ns) repassado ao ler_adc; vazio = padrão do firmware
+ARGS_ATRASO_CS=()          # montado por definir_canais: ("--atraso-cs" "S,H,A") ou vazio
 TAXA=""
 PONTOS=""
 SONDA_BRUTA=""
@@ -345,6 +348,10 @@ Principais:
                          ruído (em Volts) melhoram na mesma proporção. Vai para o cabeçalho de cada
                          captura e o gerar_perfil_sonda.py/adc_tool.py usam sozinhos.
       --faixa-adc-referencia V   O mesmo para o canal de referência (--canal-referencia).
+      --atraso-cs S,H,A  Esperas do CS no laço da PRU, repassadas ao ler_adc (iterações de 10 ns:
+                         setup,hold,alto; padrão do firmware 200,100,100). Só para calibrar numa
+                         taxa acima de ~140 kS/s, com os valores validados no T7e do roteiro de
+                         laboratório; cada captura é conferida (o cabeçalho tem de registrá-los).
 
 Plano de frequências:
       --freq-min HZ      Menor frequência (padrão ${PADRAO_FREQ_MIN} Hz).
@@ -428,6 +435,7 @@ parse_args() {
             --ref-externa)     REF_EXTERNA=1; shift ;;
             --faixa-adc)       exigir_valor "$@"; FAIXA_ADC_SONDA="${2//,/.}"; shift 2 ;;
             --faixa-adc-referencia) exigir_valor "$@"; FAIXA_ADC_REFERENCIA="${2//,/.}"; shift 2 ;;
+            --atraso-cs)       exigir_valor "$@"; ATRASO_CS="$2"; shift 2 ;;
             --amplitude)       exigir_valor "$@"; AMPLITUDE="$2"; shift 2 ;;
             --amplitude-por-ponto) AMPLITUDE_POR_PONTO=1; shift ;;
             --pasta)           exigir_valor "$@"; PASTA_BASE="$2"; shift 2 ;;
@@ -811,6 +819,7 @@ salvar_plano() {
         echo "ref_externa=${REF_EXTERNA}"
         echo "faixa_adc_sonda=${FAIXA_ADC_SONDA}"
         echo "faixa_adc_referencia=${FAIXA_ADC_REFERENCIA}"
+        echo "atraso_cs=${ATRASO_CS}"
         echo "amplitude=${AMPLITUDE}"
         echo "amplitude_por_ponto=${AMPLITUDE_POR_PONTO}"
         echo "repeticoes=${REPETICOES}"
@@ -852,6 +861,7 @@ carregar_plano() {
     # sua própria faixa no cabeçalho, então mudar no meio não mistura nada).
     v="$(valor_do_plano faixa_adc_sonda)";  [ -z "$FAIXA_ADC_SONDA" ] && FAIXA_ADC_SONDA="$v"
     v="$(valor_do_plano faixa_adc_referencia)"; [ -z "$FAIXA_ADC_REFERENCIA" ] && FAIXA_ADC_REFERENCIA="$v"
+    v="$(valor_do_plano atraso_cs)";        [ -z "$ATRASO_CS" ] && ATRASO_CS="$v"
     v="$(valor_do_plano blocos)";           [ -z "$BLOCOS" ] && BLOCOS="$v"
     # Canais: sem --canal-sonda na linha de comando, herda tudo do plano; com ele, a linha de
     # comando vence e qualquer diferença em relação ao plano pede confirmação (como a taxa).
@@ -1060,6 +1070,13 @@ validar_cabecalho() {
         [ "$sobrescritos" -gt 0 ] && qc_erro "${sobrescritos} buffer(s) sobrescrito(s) antes de gravados: há amostras perdidas (sistema sobrecarregado ou cartão SD lento?)" buffer_sobrescrito
         [ "$atrasadas" -gt 0 ] && qc_erro "${atrasadas} amostra(s) fora do instante previsto: a PRU não acompanhou a taxa ${TAXA} Hz" amostras_atrasadas
         [ "$preambulo" -gt 0 ] && qc_aviso "${preambulo} quadro(s) SPI com ruído na linha SDO: confira a ligação ADC <-> BeagleBone" preambulo
+        if [ -n "$ATRASO_CS" ]; then
+            local gravado
+            gravado="$(ler_u32 "$arq" "$CAB_OFF_ATRASO_CS"),$(ler_u32 "$arq" "$((CAB_OFF_ATRASO_CS + 4))"),$(ler_u32 "$arq" "$((CAB_OFF_ATRASO_CS + 8))")"
+            [ "$gravado" = "$ATRASO_CS" ] || qc_erro "esperas do CS: o cabeçalho registra ${gravado}, mas o pedido foi ${ATRASO_CS}" atraso_cs
+        fi
+    elif [ -n "$ATRASO_CS" ]; then
+        qc_erro "cabeçalho versão ${versao}: não registra as esperas do CS, mas --atraso-cs foi pedido. Recompile o firmware (./setup.sh)" atraso_cs_v3
     fi
 
     local freq num_canais pos_ref pos_sonda c0 c1 esperado0 esperado1 achado esperado
@@ -1392,7 +1409,7 @@ executar_captura() {
     local destino="$1" titulo="$2" descricao="${3:-}" duracao limite codigo log="${PASTA_SONDA}/${NOME_LOG}"
     local -a cmd=("$LER_ADC" "$TAXA" "$LISTA_CANAIS" --blocos "$BLOCOS"
                   --grandeza "${CANAL_SONDA}:${GRANDEZA}" --sonda "${CANAL_SONDA}:${SONDA_ID}"
-                  "${ARGS_FAIXA_ADC[@]}" -o "$destino" -t "$titulo")
+                  "${ARGS_FAIXA_ADC[@]}" "${ARGS_ATRASO_CS[@]}" -o "$destino" -t "$titulo")
     [ -n "$descricao" ] && cmd+=(-d "$descricao")   # metadados: frequência e amplitude injetadas (ref: f=.. amp=..)
     duracao="$(duracao_captura)"
     limite="${SH_LER_ADC_TIMEOUT:-$(awk -v d="$duracao" 'BEGIN { printf "%d", d * 3 + 60 }')}"
@@ -1917,6 +1934,14 @@ definir_canais() {
         pares="${pares:+${pares},}${CANAL_REFERENCIA}:${FAIXA_ADC_REFERENCIA}"
     fi
     [ -n "$pares" ] && ARGS_FAIXA_ADC=(--faixa-adc "$pares")
+    ARGS_ATRASO_CS=()
+    if [ -n "$ATRASO_CS" ]; then
+        # A mesma regra do ler_adc (três inteiros de 1 a 10000), conferida aqui para falhar antes da 1ª captura.
+        [[ "$ATRASO_CS" =~ ^([1-9][0-9]{0,4}),([1-9][0-9]{0,4}),([1-9][0-9]{0,4})$ ]] \
+            && [ "${BASH_REMATCH[1]}" -le 10000 ] && [ "${BASH_REMATCH[2]}" -le 10000 ] && [ "${BASH_REMATCH[3]}" -le 10000 ] \
+            || erro_fatal "--atraso-cs '${ATRASO_CS}' inválido: use três inteiros de 1 a 10000 separados por vírgula (setup,hold,alto; padrão 200,100,100)."
+        ARGS_ATRASO_CS=(--atraso-cs "$ATRASO_CS")
+    fi
     if { [ -n "$AMPLITUDE" ] || [ "$AMPLITUDE_POR_PONTO" -eq 1 ]; } && { [ "$REF_EXTERNA" -eq 1 ] || [ -n "$CANAL_REFERENCIA" ]; }; then
         erro_fatal "--amplitude/--amplitude-por-ponto não combinam com --ref-externa nem com --canal-referencia: escolha UMA fonte para o que foi injetado na sonda."
     fi
@@ -2074,6 +2099,7 @@ mostrar_plano() {
     if [ -n "$FAIXA_ADC_SONDA" ] || [ -n "$FAIXA_ADC_REFERENCIA" ]; then
         saida "Faixa do ADC:        ${FAIXA_ADC_SONDA:+sonda ±$(awk -v v="$FAIXA_ADC_SONDA" 'BEGIN { printf "%g", v / 2 }') V }${FAIXA_ADC_REFERENCIA:+referência ±$(awk -v v="$FAIXA_ADC_REFERENCIA" 'BEGIN { printf "%g", v / 2 }') V}"
     fi
+    [ -n "$ATRASO_CS" ] && saida "Esperas do CS:       ${ATRASO_CS} (setup,hold,alto; padrão do firmware 200,100,100)"
     saida "Frequências:         ${#PLANO_FREQS[@]} pontos, de ${PLANO_FREQS[0]} a ${PLANO_FREQS[$((${#PLANO_FREQS[@]} - 1))]} Hz"
     saida "Repetições:          ${REPETICOES} por frequência -> ${total_caps} captura(s)"
     saida "Cada captura:        ${BLOCOS} bloco(s), ~${duracao} s"

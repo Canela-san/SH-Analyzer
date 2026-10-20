@@ -121,7 +121,7 @@ Enquanto captura, a PRU conta três coisas que indicariam dados ruins, sem custo
 
 No fim, o `ler_adc` também mostra a **taxa real**, medida pelo relógio do ARM entre o primeiro e o último bloco (precisa de 2 blocos ou mais; incerteza ~0,02 %). O `adc_tool.py`, o `medir_captura.py` e o `gerar_perfil_sonda.py` avisam quando um contador do cabeçalho não é zero, e a calibração de sonda descarta a captura com amostras perdidas ou atrasadas.
 
-**O que limita a taxa.** Cada amostra leva ~7 µs na PRU: ~3 µs são os 32 clocks do SPI (feitos em software) e ~4 µs são três esperas do CS (2, 1 e 1 µs), calibradas na época do problema dos jumpers. O datasheet do ADS8688 pede só 30, 10 e 30 ns. Com `--atraso-cs` dá para medir em bancada até onde elas podem cair (teste T7e do [roteiro](lab-procedure.md)); só reduzi-las levaria o teto de ~140 para ~330 kS/s. Valores reduzidos são **experimentais**: confira o ruído, a distorção e a continuidade antes de usar uma captura feita assim.
+**O que limita a taxa.** Cada amostra leva ~7 µs na PRU: ~3 µs são os 32 clocks do SPI (feitos em software) e ~4 µs são três esperas do CS (2, 1 e 1 µs), calibradas na época do problema dos jumpers. O datasheet do ADS8688 pede só 30, 10 e 30 ns. Com `--atraso-cs` dá para medir em bancada até onde elas podem cair (teste T7e, método 4, do [roteiro](lab-procedure.md), com a tabela de quanto cada conjunto rende); só reduzi-las levaria o teto de ~140 para ~330 kS/s, e 250 kS/s é o teto prático com folga. Valores reduzidos são **experimentais**: confira o ruído, a distorção e a continuidade antes de usar uma captura feita assim.
 
 ### Números úteis
 
@@ -331,6 +331,8 @@ sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 20 --sonda fluke
 ```
 
 `--faixa-adc` (e `--faixa-adc-referencia`, para o canal de referência) escolhe a [faixa de entrada do ADC](#faixa-de-entrada-do-adc), vale para todo o plano (fica em `plano_coleta.txt`, e `--modo retomar` a reaproveita) e é conferida no cabeçalho de cada captura. Escolha a menor faixa que comporta o pico da saída da sonda, sem saturar nas amplitudes mais altas do plano.
+
+Para calibrar numa taxa acima de ~140 kS/s, passe também as esperas do CS validadas no T7e do [roteiro](lab-procedure.md) (`--atraso-cs 20,10,10`, por exemplo): o script as repassa ao `ler_adc`, guarda no plano e confere no cabeçalho de cada captura. Sem elas, a PRU não alcança a taxa e toda captura é recusada por amostras atrasadas.
 
 > Se aparecer `Permission denied`, o arquivo está sem permissão de execução: rode `chmod +x calibrar_sonda.sh` uma vez (ou use `sudo bash calibrar_sonda.sh`). Sem nenhuma opção, o script pergunta o que precisa. A taxa aceita `102400`, `102.4k` ou `102,4 kHz`.
 

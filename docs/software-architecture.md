@@ -203,9 +203,9 @@ O caminho quente é tudo que toca **todas** as amostras de uma captura (dezenas 
 ## 7. Testes
 
 ```bash
-uv run --extra dev pytest                 # tudo: 683 testes (~1 min 45 s)
+uv run --extra dev pytest                 # tudo: 692 testes (~1 min 55 s)
 uv run --extra dev pytest -m "not e2e"    # rápido: 565 testes (~30 s) — use no dia a dia
-uv run --extra dev pytest -m e2e          # só ponta a ponta: 118 testes (a maior parte do tempo)
+uv run --extra dev pytest -m e2e          # só ponta a ponta: 127 testes (a maior parte do tempo)
 uv run --extra dev pytest -n0 tests/test_dsp.py::TestFiltros   # um teste só, sem paralelismo (pdb/breakpoint)
 uv run --extra dev pytest --cov=scripts/supraharmonicos --cov-report=term-missing   # cobertura (~90 %)
 uv run --extra dev ruff check .

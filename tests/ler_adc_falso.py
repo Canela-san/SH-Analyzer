@@ -8,7 +8,7 @@
 """``ler_adc`` FALSO, só para testar ``firmware/calibrar_sonda.sh`` sem hardware.
 
 Imita a interface de linha de comando do ``firmware/ler_adc.c`` (taxa, lista de canais,
-``--blocos``, ``--grandeza``, ``--sonda``, ``--faixa-adc``, ``-o``, ``-t``, ``-d``) e grava um ``.bin`` v4
+``--blocos``, ``--grandeza``, ``--sonda``, ``--faixa-adc``, ``--atraso-cs``, ``-o``, ``-t``, ``-d``) e grava um ``.bin`` v4
 sintético com o mesmo formato (``capturas_sinteticas.montar_cabecalho``). A descrição (``-d``) vai para o cabeçalho
 e, se trouxer ``ref: amp=...``, a amplitude do tom injetado é essa (o gerador "obedeceu" ao operador). Quem usa é ``test_calibrar_sonda.py``,
 que o chama através de um pequeno wrapper ``sh`` (o script de calibração executa o binário direto).
@@ -38,6 +38,7 @@ Variáveis de ambiente:
     atrasada         cabeçalho v4 com 5000 amostras atrasadas (taxa acima do que a PRU alcança)
     sobrescrita      cabeçalho v4 com 1 buffer sobrescrito (amostras perdidas)
     preambulo        cabeçalho v4 com 3 quadros com ruído no SDO
+    atraso_errado    cabeçalho v4 com esperas do CS diferentes das pedidas em --atraso-cs
     faixa_errada     o cabeçalho registra uma faixa de ADC diferente da pedida em --faixa-adc
     sonda_errada     id da sonda diferente do pedido            grandeza_tensao   todos os canais marcados como tensão
     grandeza_corrente  todos os canais marcados como corrente   sem_cabecalho     só amostras, sem o cabeçalho "SHAN"
@@ -119,6 +120,10 @@ def main(argv: list[str]) -> int:
         print("Erro: faixa de ADC inválida (use 20.48, 10.24 ou 5.12).", file=sys.stderr)
         return 255
     codigos_faixa = [FAIXAS_VALIDAS[f] for f in faixas]
+    atrasos_cs = tuple(int(v) for v in opcoes["--atraso-cs"].split(",")) if "--atraso-cs" in opcoes else (200, 100, 100)
+    if "--atraso-cs" in opcoes and diretiva in ("cab_v1", "cab_v2", "cab_v3"):
+        print("Erro: opção desconhecida '--atraso-cs' (firmware antigo, simulado).", file=sys.stderr)
+        return 255
 
     if len(titulo.encode()) > 63:  # o ler_adc real REJEITA títulos acima de 63 bytes
         print(f"Erro: título com {len(titulo.encode())} bytes (máximo 63).", file=sys.stderr)
@@ -169,7 +174,8 @@ def main(argv: list[str]) -> int:
         codigos_faixa = [(c + 1) % 3 for c in codigos_faixa]           # o cabeçalho diz outra faixa que a pedida
     cabecalho = bytearray(montar_cabecalho(n_por_canal, canais, grandezas, sondas, taxa, versao=versao, titulo=titulo,
                                          descricao=descricao, codigos_faixa_adc=codigos_faixa,
-                                         integridade=INTEGRIDADE.get(diretiva, (0, 0, 0))))
+                                         integridade=INTEGRIDADE.get(diretiva, (0, 0, 0)),
+                                         atrasos_cs=(1, 1, 1) if diretiva == "atraso_errado" else atrasos_cs))
     struct.pack_into("<I", cabecalho, 40, spb)  # samples_per_buffer
     if versao >= 2:
         offset_crc = {2: OFFSET_CRC_V2, 3: OFFSET_CRC_V3}.get(versao, OFFSET_CRC_V4)

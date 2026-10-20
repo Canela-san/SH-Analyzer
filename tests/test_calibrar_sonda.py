@@ -916,6 +916,52 @@ def test_refazer_herda_a_faixa_adc_do_plano(bancada):
 
 
 # --------------------------------------------------------------------------------------
+# Esperas do CS (--atraso-cs): repassadas ao ler_adc para calibrar acima de ~140 kS/s
+# --------------------------------------------------------------------------------------
+@com_e2e
+def test_atraso_cs_e_repassado_ao_ler_adc_conferido_no_cabecalho_e_guardado_no_plano(bancada):
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", SONDA,
+                              "--atraso-cs", "50,25,25", "-y")
+    assert rc == 0, saida
+    assert "Esperas do CS:       50,25,25" in saida
+    assert all("--atraso-cs 50,25,25" in c for c in bancada.chamadas())
+    assert all(c.atraso_cs_iteracoes == (50, 25, 25) for c in _cabecalhos(bancada))
+    assert all(m["status"].startswith("ok") for m in bancada.manifesto())
+    assert "atraso_cs=50,25,25" in (bancada.pasta() / "plano_coleta.txt").read_text()
+    freq = bancada.bins()[0].split("_")[1].removesuffix("Hz")      # refazer um ponto herda as esperas do plano
+    bancada.cenario("ok")
+    rc, saida = bancada.rodar("--modo", "refazer", "--freqs", freq, "--sonda", SONDA, "-y", canais=False)
+    assert rc == 0, saida
+    assert "--atraso-cs 50,25,25" in bancada.chamadas()[-1]
+
+
+@com_e2e
+def test_sem_atraso_cs_o_ler_adc_nao_recebe_a_opcao(bancada):
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", SONDA, "-y")
+    assert rc == 0, saida
+    assert not any("--atraso-cs" in c for c in bancada.chamadas())
+    assert "Esperas do CS" not in saida
+
+
+@com_e2e
+@pytest.mark.parametrize("valor", ["0,1,1", "10001,1,1", "50,25", "50;25;25", "a,b,c", "50,25,25,1"])
+def test_atraso_cs_invalido_e_recusado_antes_de_capturar(bancada, valor):
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", SONDA,
+                              "--atraso-cs", valor, "-y")
+    assert rc != 0 and "--atraso-cs" in saida and "inválido" in saida
+    assert bancada.chamadas() == []
+
+
+@com_e2e
+def test_cabecalho_com_esperas_diferentes_das_pedidas_e_detectado(bancada):
+    bancada.cenario("atraso_errado", "ok", "ok")
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", SONDA,
+                              "--atraso-cs", "50,25,25", "-y")
+    assert rc == 0 and "esperas do CS: o cabeçalho registra 1,1,1" in saida
+    assert len(bancada.chamadas()) == 3 and len(bancada.bins()) == 2      # a captura errada foi refeita
+
+
+# --------------------------------------------------------------------------------------
 # Cadeia de tensão (--grandeza tensao): mesma coleta, cabeçalho e textos de tensão
 # --------------------------------------------------------------------------------------
 CADEIA = "cadeia_ci"
