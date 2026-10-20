@@ -176,7 +176,7 @@ set GI 16667       # --ganho do canal de corrente: 1 ÷ 60 µV/A (SCT013 100A:50
 
 * **Forma de onda do osciloscópio (`.m`).** Salve o arquivo de cada ponto com o **mesmo nome base da captura** (`calibracao_1000Hz_rep1.m` ao lado de `calibracao_1000Hz_rep1.bin`); o `gerar_perfil_sonda.py --referencia-osciloscopio` e o `medir_captura.py --osciloscopio` o encontram sozinhos. Anote o ajuste vertical e se a ponta é 10x (`--osc-escala`). Nesta versão, a variável salva pelo osciloscópio deve estar na **grandeza física** (tensão no nó de entrada do divisor; corrente da TCP0030A em A) e use `--osc-unidade A` (o nome é histórico: "A" aqui quer dizer "já está na grandeza física do canal, não multiplique pelo `--ganho`").
 * **"A sonda" = o conjunto.** Neste projeto, "sonda" e "perfil da sonda" designam o conjunto medido de ponta a ponta: no canal de tensão, o **divisor + o ADS8688**; no de corrente, o **SCT013 + resistores + o ADS8688**. A frequência de corte do filtro do ADC não precisa ser conhecida: aparece na curva medida.
-* **Rótulo "corrente" no perfil de tensão.** O `calibrar_sonda.sh` grava `--grandeza <canal>:corrente` em todas as capturas dele, mesmo na do divisor de tensão (é só um rótulo, exigido pelo gerador de perfil). Em produção, registre o canal de tensão com `--grandeza 1:tensao --sonda 1:cadeia_tensao`.
+* **Grandeza no perfil de tensão.** Com `--grandeza tensao`, o `calibrar_sonda.sh` grava `--grandeza <canal>:tensao` nas capturas do divisor, como em produção (`--grandeza 1:tensao --sonda 1:cadeia_tensao`), e os textos dele falam da tensão na entrada da cadeia em vez de "shunt". Coletas feitas antes dessa opção ficaram marcadas como `corrente`: é só um rótulo, que o gerador de perfil não usa nos modos de 1 canal.
 * **0 dBFS = metade do fundo de escala total** no pino do ADC: 10,24 V no canal 1 (tensão, ±10,24 V; 2,56 V no canal 0, corrente, em ±2,56 V). Amplitudes de pico no pino do canal 1: −0,5 dBFS = 9,67 V; −6 dBFS = 5,13 V; −20 dBFS = 1,024 V; −40 dBFS = 102 mV; −60 dBFS = 10,2 mV. **Pelo divisor** o gerador só chega a 0,517 V de pico (−26 dBFS): a tabela de gerador do [T5](#t5-distorção-e-faixa-dinâmica) já converte.
 
 Para copiar as capturas:
@@ -378,28 +378,28 @@ uv run scripts/medir_captura.py lab/2026-10-20/T2_dc_*.bin --sem-tom --sem-corre
 
 ```bash
 cd firmware
-sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45k --blocos 1 --sonda cadeia_tensao --ref-externa
+sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45k --blocos 1 --sonda cadeia_tensao --grandeza tensao --ref-externa
 ```
 
-* A pergunta "**tensão RMS no shunt**" significa, aqui, a **tensão RMS do nó de entrada do divisor** que você lê no osciloscópio/multímetro (ex.: `7.0712` para 20 Vpp). Ignore o texto de "corrente" e "shunt".
+* O script pede a "**tensão RMS na entrada da cadeia**": a do nó de entrada do divisor que você lê no osciloscópio/multímetro (ex.: `7.0712` para 20 Vpp; aceita também `7.0712 Vrms` ou `7071.2m`).
 * Leia o RMS **antes** de apertar ENTER para medir (com o sinal estável) e digite quando o script perguntar.
 * Em **todos** os pontos o script avisa "sinal fraco no canal da sonda" (o máximo é 5% da escala, e o limiar de aviso é 10%): é esperado, aceite com `C`. Em 45 kHz o nível cai para ~0,5% da escala; se algum ponto for recusado como "sem sinal" (abaixo de 0,2%), confira o gerador (20 Vpp, *High-Z*) e a ligação.
 
 **Variante com amplitude conhecida (nada a digitar a cada ponto).** Se o gerador mantém o nível (confira no osciloscópio em 3 ou 4 frequências), informe a amplitude que ajustou: o script a grava nos metadados de cada captura (`ref: f=.. amp=..`). **Atenção à convenção:** em volts, a amplitude é a tensão **no pino do ADC, antes do `--ganho`**, e não na entrada do divisor. Informe, portanto, o que o divisor nominal entrega ao pino: 20 Vpp no gerador (*High-Z*) × 0,051662 = **1,0332 Vpp**:
 
 ```bash
-sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45k --blocos 1 --sonda cadeia_tensao --amplitude 1.0332Vpp
+sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45k --blocos 1 --sonda cadeia_tensao --grandeza tensao --amplitude 1.0332Vpp
 ```
 
 (Se informar `20Vpp` junto com `--ganho 19.357`, o gerador de perfil entende 387 Vpp injetados e o ganho de baixa frequência sai ~0,05: o aviso "fora de [0,7; 1,3]" denuncia o erro.)
 
-No computador, com a leitura do osciloscópio digitada (o truque: com `--resistencia-shunt 1`, a "corrente" calculada é numericamente a tensão física em volts):
+No computador, com a leitura do osciloscópio digitada (coluna `tensao_rms_V`: a leitura já é a tensão física, sem shunt):
 
 ```fish
-uv run scripts/gerar_perfil_sonda.py capturas/cadeia_tensao --referencia-externa --resistencia-shunt 1 --ganho $GV --plot
+uv run scripts/gerar_perfil_sonda.py capturas/cadeia_tensao --referencia-externa --ganho $GV --plot
 ```
 
-Para a variante de amplitude conhecida, o mesmo comando **sem** `--referencia-externa` e `--resistencia-shunt` (a amplitude vem dos metadados). Para um `.m` por ponto (tensão na entrada do divisor, em V), troque por `--referencia-osciloscopio --osc-unidade A`. O resultado é `scripts/sondas/cadeia_tensao.json` e um PNG com a curva. O `$GV` usado aqui é o mesmo que vai em produção: o perfil sai **relativo a ele** (ganho de baixa frequência esperado ~0,998, a carga de 1 MΩ).
+Uma coleta feita antes de `--grandeza tensao` gravou a leitura na coluna `v_shunt_rms_V`: para ela, some `--resistencia-shunt 1` (com 1 Ω, a "corrente" calculada é numericamente a tensão em volts). Para a variante de amplitude conhecida, o mesmo comando **sem** `--referencia-externa` (a amplitude vem dos metadados). Para um `.m` por ponto (tensão na entrada do divisor, em V), troque por `--referencia-osciloscopio --osc-unidade A`. O resultado é `scripts/sondas/cadeia_tensao.json` e um PNG com a curva. O `$GV` usado aqui é o mesmo que vai em produção: o perfil sai **relativo a ele** (ganho de baixa frequência esperado ~0,998, a carga de 1 MΩ).
 
 **Verificação pontual, sem o assistente.** Para conferir a amplitude em uma frequência, sem gerar perfil:
 

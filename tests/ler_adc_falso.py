@@ -27,8 +27,11 @@ Variáveis de ambiente:
     crc_ruim         CRC-32 do cabeçalho errado                 cab_v1    cabeçalho versão 1
     cab_v2           cabeçalho versão 2 (firmware antigo: sem a faixa do ADC; ``--faixa-adc`` é recusada)
     faixa_errada     o cabeçalho registra uma faixa de ADC diferente da pedida em --faixa-adc
-    sonda_errada     id da sonda diferente do pedido            grandeza_tensao   sonda marcada como tensão
-    sem_cabecalho    só amostras, sem o cabeçalho "SHAN"
+    sonda_errada     id da sonda diferente do pedido            grandeza_tensao   todos os canais marcados como tensão
+    grandeza_corrente  todos os canais marcados como corrente   sem_cabecalho     só amostras, sem o cabeçalho "SHAN"
+
+O canal da SONDA (o que recebe ``planta_h(f)``) é o que tem id em ``--sonda``; sem nenhum id, o de grandeza corrente.
+Assim a mesma simulação vale para ``calibrar_sonda.sh --grandeza tensao`` (sonda marcada como tensão).
 
 Faixa do ADC: sem ``--faixa-adc`` todo canal usa o código 0 (±10,24 V, fundo de escala total 20,48 V), como o ADS8688 de
 verdade; com ela, cada canal usa a faixa pedida (``canal:volts``) e as amostras são codificadas com ela. As amplitudes
@@ -91,6 +94,7 @@ def main(argv: list[str]) -> int:
     sonda = dict(p.split(":") for p in opcoes["--sonda"].split(",")) if "--sonda" in opcoes else {}
     grandezas = [CODIGO_GRANDEZA[grandeza.get(str(c), "tensao")] for c in canais]
     sondas = [sonda.get(str(c), "") for c in canais]
+    eh_sonda = [bool(s) for s in sondas] if any(sondas) else [g == CODIGO_GRANDEZA["corrente"] for g in grandezas]
     if "--faixa-adc" in opcoes and diretiva == "cab_v2":
         print("Erro: opção desconhecida '--faixa-adc' (firmware antigo, simulado).", file=sys.stderr)
         return 255
@@ -133,15 +137,17 @@ def main(argv: list[str]) -> int:
     t = np.arange(n_por_canal) / (taxa / k)
     tom = np.sin(2 * np.pi * f * t + rng.uniform(0, 6.28))
     intercalado = np.empty(k * n_por_canal, dtype="<u2")
-    for i, g in enumerate(grandezas):
-        amplitude = amp_sonda if g == CODIGO_GRANDEZA["corrente"] else amp_ref
+    for i in range(k):
+        amplitude = amp_sonda if eh_sonda[i] else amp_ref
         intercalado[i::k] = volts_para_codigos(amplitude * tom + rng.normal(0, ruido, n_por_canal), faixa=faixas[i])
     amostras = intercalado.tobytes()
 
     if diretiva == "sonda_errada":
         sondas = [s and "outra_sonda" for s in sondas]
     if diretiva == "grandeza_tensao":
-        grandezas = [0] * k
+        grandezas = [CODIGO_GRANDEZA["tensao"]] * k
+    if diretiva == "grandeza_corrente":
+        grandezas = [CODIGO_GRANDEZA["corrente"]] * k
     versao = {"cab_v1": 1, "cab_v2": 2}.get(diretiva, 3)
     if diretiva == "faixa_errada":
         codigos_faixa = [(c + 1) % 3 for c in codigos_faixa]           # o cabeçalho diz outra faixa que a pedida

@@ -248,11 +248,13 @@ Para os detalhes de implementação (estimativa da fundamental, janelas, normali
 
 **Por quê:** o frontend de **tensão** tem ganho constante, então basta o `--ganho`. Uma **sonda de corrente**, ao contrário, atenua de forma diferente em cada frequência. Medir supraharmônicos de corrente sem corrigir isso dá amplitudes erradas. A solução é medir a resposta em frequência da sonda uma vez, guardar num **perfil** (`.json`) e deixar o `adc_tool.py` corrigir cada captura.
 
+O canal de **tensão** também passa pelo filtro de ~15 kHz do ADC (veja abaixo), então, para supraharmônicos de tensão, a cadeia de tensão (divisor + frontend + ADC) é calibrada com o **mesmo fluxo**, como se fosse uma sonda: `calibrar_sonda.sh --grandeza tensao`. O que muda é só a bancada (o gerador vai direto à entrada do divisor, sem shunt) e os textos do script; o perfil é aplicado ao canal de tensão em produção com `--sonda <canal>:<id>`.
+
 O fluxo tem três passos:
 
 ### Passo 1: coletar os pontos (na BeagleBone)
 
-> **O que é "a sonda" neste projeto.** O perfil descreve o **conjunto medido de ponta a ponta**: a sonda de corrente, o frontend/isolador e o ADS8688 (que tem um filtro passa-baixa interno de 2ª ordem em cada canal, corte de ~15 kHz). Tudo o que esse conjunto atenua ou realça entra no ganho por frequência do perfil, e a correção em produção o desfaz. Por isso a referência precisa ser **o que foi injetado na entrada do conjunto**, e a frequência de corte do filtro do ADC não precisa ser conhecida: ela aparece na curva medida.
+> **O que é "a sonda" neste projeto.** O perfil descreve o **conjunto medido de ponta a ponta**: a sonda de corrente (ou, com `--grandeza tensao`, o divisor/ponta do canal de tensão), o frontend/isolador e o ADS8688 (que tem um filtro passa-baixa interno de 2ª ordem em cada canal, corte de ~15 kHz). Tudo o que esse conjunto atenua ou realça entra no ganho por frequência do perfil, e a correção em produção o desfaz. Por isso a referência precisa ser **o que foi injetado na entrada do conjunto**, e a frequência de corte do filtro do ADC não precisa ser conhecida: ela aparece na curva medida.
 
 Para o perfil, o script precisa saber **o que foi injetado** em cada frequência. Há quatro jeitos (escolha um):
 
@@ -260,8 +262,10 @@ Para o perfil, o script precisa saber **o que foi injetado** em cada frequência
 |---|---|---|---|---|
 | **Amplitude conhecida** | `--amplitude 500mVpp` (ou `--amplitude-por-ponto`) | **1** (só a saída da sonda) | taxa ÷ 2 | O gerador injeta uma **senoide pura** de amplitude e frequência ajustáveis e você **sabe a amplitude** que ajustou. Nada é digitado a cada ponto: amplitude e frequência ficam gravadas nos **metadados** de cada captura, e várias frequências dão o perfil |
 | **Osciloscópio** | `--ref-externa` (leitura digitada) ou o `.m` do osciloscópio (veja abaixo) | **1** | taxa ÷ 2 | Chega até a banda inteira de supraharmônicos, e o osciloscópio mede o que o gerador **de fato** entregou (planura do gerador incluída) |
-| Segundo canal do ADC | `--canal-referencia N` | 2 (sonda e shunt) | taxa ÷ 4 | Sem instrumento externo. O shunt vai a um segundo canal; divide a taxa entre os dois |
+| Segundo canal do ADC | `--canal-referencia N` | 2 (sonda e shunt) | taxa ÷ 4 | Sem instrumento externo. O shunt (ou a entrada da cadeia de tensão) vai a um segundo canal; divide a taxa entre os dois. **O filtro de ~15 kHz do ADC é igual nos dois canais e se cancela na razão: o perfil sai sem ele** |
 | Amplitude constante, sem declarar | (nenhuma das anteriores) | 1 | taxa ÷ 2 | Você mantém a mesma amplitude em todas as frequências e a informa só depois, em `gerar_perfil_sonda.py --amplitude-referencia` (a deriva do gerador entra no perfil) |
+
+**Corrente ou tensão?** `--grandeza corrente` (o padrão) ou `--grandeza tensao`. Vai para o cabeçalho de cada captura (`ler_adc --grandeza`), fica no plano (`--modo retomar` a herda) e muda as instruções: com `tensao`, o osciloscópio mede a tensão **na entrada da cadeia** (não há shunt), a leitura vai para a coluna `tensao_rms_V` do `referencia_externa.csv` e o comando sugerido no fim não leva `--resistencia-shunt`. Sem a opção, o modo interativo pergunta. Coletas feitas antes dessa opção ficaram marcadas como corrente (é só um rótulo: nos modos de 1 canal o `gerar_perfil_sonda.py` não o usa).
 
 **Qual canal?** Por padrão a calibração usa **um canal só**, e o número dele é obrigatório: `--canal-sonda N` (0 a 7; se você esquecer, o script pergunta). É o canal onde a saída da sonda está ligada, o mesmo que você usará em produção: o perfil descreve a cadeia daquele canal.
 
@@ -270,7 +274,7 @@ Monte a bancada: gerador de sinal (com amplificador, se precisar de mais corrent
 **Amplitude conhecida (`--amplitude`).** Sinal injetado: uma **senoide pura** (a conversão entre pico a pico, pico e eficaz só vale para senoide) com amplitude e frequência reguláveis.
 
 * **Como escrever a amplitude:** número + unidade + tipo, sempre os três: `500mVpp` (pico a pico), `250mVpk` (pico), `176.8mVrms` (eficaz), `2Arms`. `500mV` sozinho é recusado de propósito: pico a pico, pico e eficaz diferem por um fator 2 ou 1,41, que viraria erro de ganho silencioso. Prefixos `n`, `u` (ou `µ`), `m` e `k`; espaços e vírgula decimal são aceitos.
-* **Em V ou em A.** Em **V**, é a tensão injetada no ponto onde o `--ganho` do canal é aplicado (a saída da sonda, antes do ganho); a grandeza física injetada é `V × ganho` (500 mVpp com `--ganho 10` são 2,5 A de pico). Em **A**, é a própria corrente. O ganho do perfil sai como (amplitude medida) ÷ (amplitude injetada), na mesma grandeza física.
+* **Em V ou em A.** Em **V**, é a tensão injetada no ponto onde o `--ganho` do canal é aplicado (a saída da sonda, antes do ganho); a grandeza física injetada é `V × ganho` (500 mVpp com `--ganho 10` são 2,5 A de pico). Em **A**, é a própria corrente. Na **cadeia de tensão** isso quer dizer a tensão **no pino do ADC**, não a da entrada do divisor: 20 Vpp na entrada × 0,051662 = `--amplitude 1.0332Vpp` (o script pergunta assim e recusa amplitude em A com `--grandeza tensao`). O ganho do perfil sai como (amplitude medida) ÷ (amplitude injetada), na mesma grandeza física.
 * **Metadados.** Cada captura sai do `ler_adc` com `ref: f=1000Hz amp=500mVpp` no campo `descricao` do cabeçalho (`-d`), e o `gerar_perfil_sonda.py` lê esse trecho: não há nada para digitar depois. Se a amplitude muda entre pontos (o gerador não mantém o nível, ou você a reduziu para não saturar), use `--amplitude-por-ponto`: o script pergunta a amplitude de cada frequência (ENTER mantém a anterior; `--amplitude` dá o valor inicial).
 * **Cuidados com o gerador.** (1) O "500 mVpp" do display de um gerador vale para carga de **50 Ω**; numa entrada de alta impedância a tensão real é o **dobro** (1 Vpp). Configure o gerador para *High-Z* ou confira com o osciloscópio. (2) A planura do gerador em função da frequência (décimos de dB, mais em frequência alta) entra no perfil como se fosse da sonda; por isso vale conferir alguns pontos com o osciloscópio (veja "Conferir o método"). (3) Se você injeta **tensão** no lugar da saída da sonda, o perfil mede o frontend e o ADC, **sem a sonda de corrente**; para incluí-la, injete **corrente** de verdade pela garra (amplitude em A, conhecida pela tensão no shunt ÷ R).
 
@@ -286,6 +290,9 @@ sudo ./calibrar_sonda.sh --taxa 400000 --canal-sonda 1 --pontos 24 --freq-max 16
 
 # Sem osciloscópio: segundo canal do ADC (canal 0) no shunt; Nyquist por canal = taxa/4
 sudo ./calibrar_sonda.sh --taxa 204800 --canal-sonda 1 --canal-referencia 0 --pontos 20 --sonda fluke_i30_sn0001
+
+# Cadeia de tensão (divisor no canal 1), referência no osciloscópio na entrada do divisor
+sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45k --sonda cadeia_tensao --grandeza tensao --ref-externa
 
 # Sonda com saída de poucos mV: faixa de entrada do ADC de ±2,56 V no canal da sonda (mais resolução)
 sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 20 --sonda fluke_i30_sn0001 --amplitude 5mVpp --faixa-adc 5.12
@@ -309,9 +316,9 @@ Ponto 4 de 20  |  129 Hz  |  repetição 1 de 1
   ENTER para medir  |  p = pular este ponto  |  a = abortar:
 ```
 
-Você ajusta o gerador e aperta ENTER. Com `--amplitude`, a instrução também diz a amplitude (`Ajuste o gerador para uma SENOIDE pura de 500mVpp`); com `--amplitude-por-ponto`, o script pergunta a amplitude que o gerador está injetando (`Amplitude da senoide no gerador (...) [anterior]`). Com `--ref-externa`, o script pede então a leitura do osciloscópio (`Osciloscópio: tensão RMS no shunt, em V (ex.: 0.1234 ou 123.4m)`); leia o **RMS de ciclos inteiros, com média**, e digite (ENTER sem valor deixa o ponto sem referência, e o gerador de perfil o descarta). A captura leva ~10 s (um bloco a 102,4 kHz). O script então confere a captura:
+Você ajusta o gerador e aperta ENTER. Com `--amplitude`, a instrução também diz a amplitude (`Ajuste o gerador para uma SENOIDE pura de 500mVpp`); com `--amplitude-por-ponto`, o script pergunta a amplitude que o gerador está injetando (`Amplitude da senoide no gerador (...) [anterior]`). Com `--ref-externa`, o script pede então a leitura do osciloscópio (`Osciloscópio: tensão RMS no shunt, em V (ex.: 0.7071 ou 707.1m)`; com `--grandeza tensao`, `tensão RMS na entrada da cadeia`); leia o **RMS de ciclos inteiros, com média**, e digite (ENTER sem valor deixa o ponto sem referência, e o gerador de perfil o descarta). A captura leva ~10 s (um bloco a 102,4 kHz). O script então confere a captura:
 
-* **cabeçalho**: taxa, canais, grandeza `corrente` no canal da sonda, id da sonda, CRC-32 e tamanho do arquivo (o `ler_adc` devolve sucesso mesmo quando o disco enche e a captura sai cortada, e só o tamanho revela isso);
+* **cabeçalho**: taxa, canais, a grandeza pedida no canal da sonda (`corrente` ou `tensão`), id da sonda, CRC-32 e tamanho do arquivo (o `ler_adc` devolve sucesso mesmo quando o disco enche e a captura sai cortada, e só o tamanho revela isso);
 * **saturação** do ADC (mais de 0,05% das amostras no fundo de escala, o mesmo critério que o `gerar_perfil_sonda.py` usa para descartar a captura);
 * **nível do sinal**: sem sinal (gerador desligado, sonda fora do condutor, menos de 0,2% da escala pico a pico) é erro; abaixo de 10% da escala é aviso de sinal fraco;
 * **frequência realmente injetada**: se ficou mais de 5% fora do planejado, avisa; mais de 10%, é erro (o gerador está ajustado errado).
@@ -345,9 +352,9 @@ Outras opções úteis: `--repeticoes N` (várias capturas por frequência: o `g
 | Arquivo | Conteúdo |
 |---|---|
 | `calibracao_<FREQ>Hz_rep<N>.bin` | As capturas aceitas, que o `gerar_perfil_sonda.py` lê. O campo `descricao` do cabeçalho leva o que foi injetado (`ref: f=1000Hz amp=500mVpp`; só `f=` se a amplitude não foi declarada) |
-| `referencia_externa.csv` | Só com `--ref-externa`: `arquivo,v_shunt_rms_V`, a tensão RMS que você digitou em cada ponto |
+| `referencia_externa.csv` | Só com `--ref-externa`: a tensão RMS que você digitou em cada ponto, na coluna `v_shunt_rms_V` (corrente: tensão no shunt) ou `tensao_rms_V` (tensão: entrada da cadeia) |
 | `pontos_coletados.csv` | Histórico de cada ponto: status (`ok`, `ok_com_aviso_...`, `aceito_com_erro_...`, `pulado`, `substituido`), métricas rápidas e a amplitude injetada (`amplitude_ref`) |
-| `plano_coleta.txt` | Taxa, canais, amplitude, repetições e frequências do plano (é o que o `--modo retomar` lê) |
+| `plano_coleta.txt` | Grandeza, taxa, canais, amplitude, repetições e frequências do plano (é o que o `--modo retomar` lê) |
 | `ler_adc.log` | Saída completa do `ler_adc` em cada tentativa |
 | `descartadas/` | Capturas substituídas pelo `--modo refazer` (nunca são apagadas) |
 
@@ -374,12 +381,17 @@ uv run scripts/gerar_perfil_sonda.py capturas/fluke_i30_sn0001 --amplitude-refer
 
 # A referência vem de um .m do osciloscópio por captura (calibracao_1000Hz_rep1.bin -> calibracao_1000Hz_rep1.m)
 uv run scripts/gerar_perfil_sonda.py capturas/fluke_i30_sn0001 --referencia-osciloscopio --ganho 10 --plot
+
+# Cadeia de tensão (--grandeza tensao --ref-externa): a leitura já é a tensão de entrada, não há shunt
+uv run scripts/gerar_perfil_sonda.py capturas/cadeia_tensao --referencia-externa --ganho 19.357 --plot
 ```
 
-* **De onde vem a referência.** Sem nenhuma flag de referência, se as capturas trazem `ref: amp=...` nos metadados, o script usa a amplitude de **cada captura** (modo `amplitude`; o perfil registra `modo_referencia: "amplitude"`). `--amplitude-referencia AMP` (`500mVpp`, `2Arms`; um número puro continua valendo como pico em A) vale para **todas** as capturas e, se os metadados dizem outra coisa, **vence com um aviso**. `--referencia-osciloscopio` usa um arquivo do osciloscópio por captura. `--referencia-externa [CSV]` lê o `referencia_externa.csv` da pasta (ou o arquivo que você indicar) e calcula a corrente de pico de cada ponto como `√2 × V_RMS ÷ R`; pontos sem leitura ficam de fora. Com `--resistencia-shunt` sozinho, a corrente vem do segundo canal da captura. As quatro fontes são exclusivas.
+Uma coleta de tensão feita antes de `--grandeza tensao` gravou a leitura na coluna `v_shunt_rms_V`; nesse caso some `--resistencia-shunt 1` (com 1 Ω, a "corrente" calculada é a própria tensão). Na cadeia de tensão com **2 canais**, os dois canais estão marcados como tensão: passe `--canal-referencia R --canal-sonda S --resistencia-shunt 1` (o script imprime o comando exato no fim).
+
+* **De onde vem a referência.** Sem nenhuma flag de referência, se as capturas trazem `ref: amp=...` nos metadados, o script usa a amplitude de **cada captura** (modo `amplitude`; o perfil registra `modo_referencia: "amplitude"`). `--amplitude-referencia AMP` (`500mVpp`, `2Arms`; um número puro continua valendo como pico em A) vale para **todas** as capturas e, se os metadados dizem outra coisa, **vence com um aviso**. `--referencia-osciloscopio` usa um arquivo do osciloscópio por captura. `--referencia-externa [CSV]` lê o `referencia_externa.csv` da pasta (ou o arquivo que você indicar) e calcula a corrente de pico de cada ponto como `√2 × V_RMS ÷ R` (coluna `v_shunt_rms_V`; com `corrente_rms_A` ou `tensao_rms_V` o valor já é a grandeza física e não precisa de `--resistencia-shunt`); pontos sem leitura ficam de fora. Com `--resistencia-shunt` sozinho, a corrente vem do segundo canal da captura. As quatro fontes são exclusivas.
 * **Amplitude em V ou A.** Em V, a amplitude é a tensão no ponto onde o `--ganho` é aplicado (grandeza física = V × `--ganho`); em A, já é a grandeza física. O ganho do perfil sai como amplitude medida ÷ amplitude injetada, na mesma grandeza.
 * **Resumo da resposta.** Ao final, o script imprime e grava no perfil (`calibracao_adc.resposta_conjunto`) o ganho de baixa frequência, a frequência da queda de 3 dB, a inclinação final (um passa-baixa de 2ª ordem cai 12 dB/oitava; o filtro de ~15 kHz do ADS8688 aparece aqui) e quanto a correção amplifica o ruído na maior frequência medida.
-* `--ganho` é o fator tensão no pino do ADC → corrente (tipicamente 1 ÷ sensibilidade: sonda de 100 mV/A → `--ganho 10`). O perfil é **relativo** a ele: use o mesmo valor em produção. O script avisa se o ganho na menor frequência ficar fora de 0,7 a 1,3, o que indica um `--ganho` errado.
+* `--ganho` é o fator tensão no pino do ADC → grandeza física (corrente: tipicamente 1 ÷ sensibilidade, sonda de 100 mV/A → `--ganho 10`; tensão: 1 ÷ razão do divisor, ex.: `19.357`). O perfil é **relativo** a ele: use o mesmo valor em produção. O script avisa se o ganho na menor frequência ficar fora de 0,7 a 1,3, o que indica um `--ganho` errado.
 * O script **mede** a frequência e a amplitude de cada captura (não confia no nome do arquivo; FFT única da captura inteira, com erro de amplitude < 0,01% em sinais sintéticos), descarta capturas com sinal fraco demais (SNR abaixo de 20 dB) e avisa se alguma repetição divergir mais de 10%.
 * `--plot` salva um PNG com a curva obtida.
 * Use os mesmos `--formato` e `--ganho` que você usará no `adc_tool.py`; o `adc_tool.py` avisa se forem diferentes. A `--faixa` não precisa ser a mesma: a de cada captura vem do cabeçalho (`--faixa-adc`), e um perfil gerado assim vale para qualquer faixa. Capturas de cabeçalho v1/v2 (sem a faixa) assumem 10.24, e aí o `adc_tool.py` avisa se a `--faixa` de produção for outra.

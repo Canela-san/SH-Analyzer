@@ -82,7 +82,8 @@ log = logging.getLogger(__name__)
 
 # Arquivo (na pasta de capturas) com as leituras do instrumento externo, uma linha por captura:
 # 'arquivo' + 'v_shunt_rms_V' (tensão RMS no shunt, em V -- precisa de --resistencia-shunt) OU
-# 'corrente_rms_A' (corrente RMS, em A). Escrito por firmware/calibrar_sonda.sh --ref-externa.
+# 'corrente_rms_A' (corrente RMS, em A) OU 'tensao_rms_V' (tensão RMS na entrada de uma cadeia de
+# tensão, em V). Escrito por firmware/calibrar_sonda.sh --ref-externa (a coluna depende de --grandeza).
 NOME_REFERENCIA_EXTERNA = "referencia_externa.csv"
 
 # Mesmo padrão de nome usado por firmware/calibrar_sonda.sh
@@ -515,10 +516,11 @@ def processar_captura(caminho: Path, freq_alvo_hz: float, modo_referencia: str,
 # ---------------------------------------------------------------------------
 
 def ler_referencia_externa(caminho: Path, resistencia_shunt: float | None) -> dict[str, float]:
-    """Lê ``referencia_externa.csv`` e devolve ``{nome_do_arquivo: corrente_RMS_em_A}``.
+    """Lê ``referencia_externa.csv`` e devolve ``{nome_do_arquivo: RMS_da_grandeza_física_injetada}``.
 
-    Colunas: ``arquivo`` e UMA entre ``corrente_rms_A`` (A, RMS) e ``v_shunt_rms_V``
-    (tensão RMS no shunt, em V -- convertida com ``resistencia_shunt``). Aceita ``,`` ou
+    Colunas: ``arquivo`` e UMA entre ``corrente_rms_A`` (A, RMS), ``tensao_rms_V`` (V, RMS: a tensão na
+    entrada de uma cadeia de tensão, usada como está) e ``v_shunt_rms_V`` (tensão RMS no shunt, em V --
+    convertida em corrente com ``resistencia_shunt``). Aceita ``,`` ou
     ``;`` como separador (planilhas em pt-BR salvam com ``;`` e vírgula decimal) e
     ignora linhas em branco e comentários (``#``). Se um arquivo aparece mais de uma
     vez, vale a ÚLTIMA linha (``calibrar_sonda.sh`` só acrescenta quando você refaz um
@@ -542,6 +544,8 @@ def ler_referencia_externa(caminho: Path, resistencia_shunt: float | None) -> di
         raise ErroSHAN(f"'{caminho.name}' precisa de uma coluna 'arquivo' (colunas encontradas: {colunas}).")
     if "corrente_rms_A" in colunas:
         coluna, converter = "corrente_rms_A", lambda v: v
+    elif "tensao_rms_V" in colunas:
+        coluna, converter = "tensao_rms_V", lambda v: v   # cadeia de tensão: a leitura já é a grandeza física
     elif "v_shunt_rms_V" in colunas:
         if resistencia_shunt is None or resistencia_shunt <= 0:
             raise ErroSHAN(
@@ -551,8 +555,9 @@ def ler_referencia_externa(caminho: Path, resistencia_shunt: float | None) -> di
         coluna, converter = "v_shunt_rms_V", lambda v: v / resistencia_shunt
     else:
         raise ErroSHAN(
-            f"'{caminho.name}' precisa de uma coluna 'v_shunt_rms_V' (tensão RMS no shunt, V) "
-            f"ou 'corrente_rms_A' (corrente RMS, A); encontradas: {colunas}."
+            f"'{caminho.name}' precisa de uma coluna 'v_shunt_rms_V' (tensão RMS no shunt, V), "
+            f"'corrente_rms_A' (corrente RMS, A) ou 'tensao_rms_V' (tensão RMS na entrada de uma cadeia "
+            f"de tensão, V); encontradas: {colunas}."
         )
 
     correntes: dict[str, float] = {}

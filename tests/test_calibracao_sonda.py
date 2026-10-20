@@ -141,6 +141,11 @@ class TestReferenciaExterna:
         p = self.escrever(tmp_path, "arquivo,corrente_rms_A\na.bin,0.25\n")
         assert ler_referencia_externa(p, None) == {"a.bin": 0.25}
 
+    def test_tensao_de_entrada_da_cadeia_vale_como_esta_e_ignora_o_shunt(self, tmp_path):
+        p = self.escrever(tmp_path, "arquivo,tensao_rms_V\na.bin,7.0712\n")
+        assert ler_referencia_externa(p, None) == {"a.bin": pytest.approx(7.0712)}
+        assert ler_referencia_externa(p, 0.5) == {"a.bin": pytest.approx(7.0712)}   # não é tensão de shunt: R não entra
+
     def test_ultima_linha_vale_e_comentarios_e_vazias_sao_ignorados(self, tmp_path):
         p = self.escrever(tmp_path, "# leituras\narquivo,v_shunt_rms_V\n\na.bin,0.1\nb.bin,\na.bin,0.3\n")
         assert ler_referencia_externa(p, 1.0) == {"a.bin": 0.3}   # b.bin sem valor = sem leitura

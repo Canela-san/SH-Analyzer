@@ -109,9 +109,10 @@ def montar_parser() -> argparse.ArgumentParser:
                                 "partir do canal de referência da captura (2 canais). Com --referencia-externa: converte a tensão "
                                 "RMS no shunt lida no osciloscópio em corrente.")
     grupo_ref.add_argument("--referencia-externa", nargs="?", const="@pasta", default=None, type=str, metavar="CSV",
-                           help=f"Corrente real lida num instrumento externo, anotada por captura em um CSV (colunas 'arquivo' e "
-                                f"'v_shunt_rms_V' -- ou 'corrente_rms_A'). Sem caminho: '{NOME_REFERENCIA_EXTERNA}' dentro da pasta "
-                                f"de capturas (escrito por 'calibrar_sonda.sh --ref-externa'). As capturas têm 1 canal só (o da sonda).")
+                           help=f"Grandeza real lida num instrumento externo, anotada por captura em um CSV (colunas 'arquivo' e "
+                                f"'v_shunt_rms_V' [tensão no shunt; precisa de --resistencia-shunt], 'corrente_rms_A' ou "
+                                f"'tensao_rms_V' [tensão na entrada de uma cadeia de tensão]). Sem caminho: '{NOME_REFERENCIA_EXTERNA}' "
+                                f"dentro da pasta de capturas (escrito por 'calibrar_sonda.sh --ref-externa'). As capturas têm 1 canal só (o da sonda).")
     adicionar_argumentos_osciloscopio(parser.add_argument_group(
         "Osciloscópio (com --referencia-osciloscopio)",
         "O leitor de .m/.mat/.csv é tolerante, mas não há formato único entre fabricantes: se ele não acertar a "

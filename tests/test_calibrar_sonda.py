@@ -240,6 +240,8 @@ def test_codigos_e_limites_do_script_batem_com_firmware_e_python():
         (["--taxa", "102400", "--sonda", "x", "--canal-sonda", "1", "--amplitude", "500mVpp", "--ref-externa"], "não combinam"),
         (["--taxa", "102400", "--sonda", "x", "--canal-sonda", "1", "--amplitude", "500mVpp", "--canal-referencia", "0"], "não combinam"),
         (["--taxa", "102400", "--sonda", "x", "--canal-sonda", "1", "--amplitude-por-ponto", "--ref-externa"], "não combinam"),
+        (["--taxa", "102400", "--sonda", "x", "--canal-sonda", "1", "--grandeza", "potencia"], "Valor inválido para --grandeza"),
+        (["--taxa", "102400", "--sonda", "x", "--canal-sonda", "1", "--grandeza", "tensao", "--amplitude", "2Arms"], "não em A"),
     ],
 )
 def test_argumentos_invalidos_sao_recusados_antes_de_medir(bancada, args, trecho):
@@ -576,9 +578,9 @@ def com_coleta_1canal(coleta_1canal, tmp_path):
 
 @com_e2e
 def test_sem_canal_da_sonda_o_script_pergunta(bancada):
-    # respostas: canal 2; referência: opção 2 (amplitude conhecida, 1 canal); ENTER = não declarar a amplitude agora
-    # (cai em "corrente constante": informada depois no gerar_perfil_sonda.py); depois só ENTERs
-    rc, saida = bancada.rodar("--taxa", TAXA, "--pontos", 2, "--sonda", SONDA, "-y", canais=False, entradas="2\n2\n")
+    # respostas: canal 2; grandeza: opção 1 (corrente); referência: opção 2 (amplitude conhecida, 1 canal); ENTER = não
+    # declarar a amplitude agora (cai em "amplitude constante": informada depois no gerar_perfil_sonda.py); depois só ENTERs
+    rc, saida = bancada.rodar("--taxa", TAXA, "--pontos", 2, "--sonda", SONDA, "-y", canais=False, entradas="2\n1\n2\n")
     assert rc == 0, saida
     assert "Como o script vai saber a corrente real" in saida  # (o prompt do read não aparece com stdin em pipe)
     h = cab.ler_cabecalho(bancada.pasta() / bancada.bins()[0])
@@ -652,8 +654,8 @@ def test_amplitude_constante_vai_para_os_metadados_o_manifesto_e_o_plano(coleta_
     assert "amplitude=2Vpp" in plano and "amplitude_por_ponto=0" in plano
     assert "Referência:          senoide de 2Vpp em todas as frequências" in b.saida
     assert "SENOIDE pura de 2Vpp" in b.saida and "ganho relativo à menor frequência (pela amplitude injetada)" in b.saida
-    # o comando sugerido não pede mais nada: a amplitude está nos arquivos
-    assert "gerar_perfil_sonda.py capturas/sonda_ci --plot" in b.saida
+    # o comando sugerido não pede referência nenhuma (a amplitude está nos arquivos), só o --ganho de produção
+    assert "gerar_perfil_sonda.py capturas/sonda_ci --ganho <G> --plot" in b.saida
     # e o ler_adc recebeu o -d
     assert all("-d ref: f=" in linha and " amp=2Vpp" in linha for linha in b.chamadas())
 
@@ -709,9 +711,9 @@ def test_amplitude_por_ponto_sem_valor_inicial_exige_a_primeira_amplitude(bancad
 
 @com_e2e
 def test_menu_interativo_amplitude_conhecida_e_igual_em_todos_os_pontos(bancada):
-    # canal 2; referência: opção 2 (amplitude); '500mV' (sem tipo: recusada); 4Vpp; mesma em todos os pontos (ENTER = sim)
+    # canal 2; corrente; referência: opção 2 (amplitude); '500mV' (sem tipo: recusada); 4Vpp; mesma em todos os pontos (ENTER = sim)
     rc, saida = bancada.rodar("--taxa", TAXA, "--pontos", 2, "--sonda", SONDA, "-y", canais=False,
-                              entradas="2\n2\n500mV\n4Vpp\n\n")
+                              entradas="2\n1\n2\n500mV\n4Vpp\n\n")
     assert rc == 0, saida
     assert "Amplitude inválida: '500mV' -- sem tipo" in saida
     assert {m["amplitude_ref"] for m in bancada.manifesto()} == {"4Vpp"}
@@ -720,9 +722,10 @@ def test_menu_interativo_amplitude_conhecida_e_igual_em_todos_os_pontos(bancada)
 
 @com_e2e
 def test_menu_interativo_amplitude_que_muda_vira_por_ponto(bancada):
-    # canal 2; opção 2; 4Vpp; "n" = muda entre os pontos; ponto 1: ENTER (medir), ENTER (mantém 4Vpp), ENTER; ponto 2: ENTER, 2Vpp, ENTER
+    # canal 2; corrente; opção 2; 4Vpp; "n" = muda entre os pontos; ponto 1: ENTER (medir), ENTER (mantém 4Vpp), ENTER;
+    # ponto 2: ENTER, 2Vpp, ENTER
     rc, saida = bancada.rodar("--taxa", TAXA, "--pontos", 2, "--sonda", SONDA, "-y", canais=False,
-                              entradas="2\n2\n4Vpp\nn\n" + "\n\n\n" + "\n2Vpp\n\n")
+                              entradas="2\n1\n2\n4Vpp\nn\n" + "\n\n\n" + "\n2Vpp\n\n")
     assert rc == 0, saida
     assert [m["amplitude_ref"] for m in bancada.manifesto()] == ["4Vpp", "2Vpp"]
 
@@ -890,3 +893,161 @@ def test_refazer_herda_a_faixa_adc_do_plano(bancada):
     rc, saida = bancada.rodar("--modo", "refazer", "--freqs", freq, "--sonda", SONDA, "-y", canais=False)
     assert rc == 0, saida
     assert len(bancada.chamadas()) == 1 and "--faixa-adc 1:5.12" in bancada.chamadas()[0]
+
+
+# --------------------------------------------------------------------------------------
+# Cadeia de tensão (--grandeza tensao): mesma coleta, cabeçalho e textos de tensão
+# --------------------------------------------------------------------------------------
+CADEIA = "cadeia_ci"
+
+
+@pytest.fixture(scope="module")
+def coleta_tensao(tmp_path_factory):
+    """1 canal (canal 1), 3 pontos, --grandeza tensao e a leitura do osciloscópio na entrada da cadeia (em formatos
+    diferentes: com 'Vrms', em mV e com vírgula decimal -- todas valem 0,7071 V RMS = 1 V de pico)."""
+    b = Bancada(tmp_path_factory.mktemp("coleta_tensao"))
+    entradas = "\n0.7071 Vrms\n\n" + "\n707.1 mV\n\n" + "\n0,7071\n\n"
+    rc, saida = b.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 3, "--sonda", CADEIA, "--grandeza", "Tensao",
+                        "--ref-externa", "-y", entradas=entradas)
+    assert rc == 0, saida
+    b.saida = saida
+    return b
+
+
+@com_e2e
+def test_tensao_marca_o_cabecalho_e_pede_a_tensao_na_entrada_da_cadeia(coleta_tensao):
+    b = coleta_tensao
+    assert [m["status"] for m in b.manifesto(CADEIA)] == ["ok"] * 3
+    for nome in b.bins(CADEIA):
+        h = cab.ler_cabecalho(b.pasta(CADEIA) / nome)
+        assert h.crc32_valido and h.num_canais == 1
+        assert h.grandeza_por_canal[0] == 0 and h.sonda_id_por_canal[0] == CADEIA   # 0 = tensão
+    assert all("--grandeza 1:tensao" in c for c in b.chamadas())
+    assert "Grandeza:            tensão" in b.saida and "Tensão real:" in b.saida
+    assert "Leitura do osciloscópio: 0.7071 V RMS na entrada da cadeia" in b.saida
+    assert "shunt" not in b.saida   # nenhuma instrução de corrente vazou para a coleta de tensão
+    linhas = (b.pasta(CADEIA) / "referencia_externa.csv").read_text().splitlines()
+    assert linhas[0] == "arquivo,tensao_rms_V" and [ln.split(",")[1] for ln in linhas[1:]] == ["0.7071"] * 3
+    assert "grandeza=tensao" in (b.pasta(CADEIA) / "plano_coleta.txt").read_text()
+
+
+@com_e2e
+def test_tensao_com_ref_externa_gera_o_perfil_sem_resistencia_de_shunt(coleta_tensao, tmp_path, cli):
+    assert "--referencia-externa --ganho <G> --plot" in coleta_tensao.saida   # o comando sugerido, sem o truque do 1 ohm
+    saida_json = tmp_path / "cadeia.json"
+    rc, _, err = cli(gerar_perfil, coleta_tensao.pasta(CADEIA), "--referencia-externa", "-o", saida_json)
+    assert rc == 0, err
+    pontos = json.loads(saida_json.read_text())["pontos"]
+    assert len(pontos) == 3
+    for p in pontos:
+        assert p["ganho"] == pytest.approx(float(planta_h(p["freq_hz"])), rel=0.02)
+
+
+@com_e2e
+def test_tensao_detecta_a_sonda_marcada_como_corrente(bancada):
+    bancada.cenario("grandeza_corrente", "ok", "ok")
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", CADEIA, "--grandeza", "tensao", "-y")
+    assert rc == 0, saida
+    assert "não está marcado como 'tensão'" in saida
+    assert len(bancada.chamadas()) == 3
+    assert len(bancada.bins(CADEIA)) == 2 and all(m["status"] == "ok" for m in bancada.manifesto(CADEIA))
+
+
+@com_e2e
+def test_tensao_com_dois_canais_marca_os_dois_e_sugere_os_canais_explicitos(bancada, tmp_path, cli):
+    rc, saida = bancada.rodar("--taxa", TAXA, "--pontos", 3, "--sonda", CADEIA, "--grandeza", "tensao", "-y")
+    assert rc == 0, saida
+    for nome in bancada.bins(CADEIA):
+        h = cab.ler_cabecalho(bancada.pasta(CADEIA) / nome)
+        assert h.grandeza_por_canal == (0, 0) and h.sonda_id_por_canal == ("", CADEIA)
+    assert "--canal-referencia 0 --canal-sonda 1 --resistencia-shunt 1" in saida
+    assert "se cancela" in saida   # o filtro do ADC é o mesmo nos dois canais: o perfil sai sem ele
+    saida_json = tmp_path / "cadeia2.json"
+    rc, _, err = cli(gerar_perfil, bancada.pasta(CADEIA), "--canal-referencia", 0, "--canal-sonda", 1,
+                     "--resistencia-shunt", 1, "-o", saida_json)
+    assert rc == 0, err
+    for p in json.loads(saida_json.read_text())["pontos"]:
+        assert p["ganho"] == pytest.approx(float(planta_h(p["freq_hz"])), rel=0.02)
+
+
+@com_e2e
+def test_retomar_herda_a_grandeza_do_plano(coleta_tensao, tmp_path):
+    b = Bancada(tmp_path)
+    shutil.copytree(coleta_tensao.capturas, b.capturas)
+    faltante = b.bins(CADEIA)[0]
+    (b.pasta(CADEIA) / faltante).unlink()
+    rc, saida = b.rodar("--modo", "retomar", "--sonda", CADEIA, "-y", canais=False, entradas="\n0.7071\n\n")
+    assert rc == 0, saida
+    assert "--grandeza 1:tensao" in b.chamadas()[0]
+    assert cab.ler_cabecalho(b.pasta(CADEIA) / faltante).grandeza_por_canal[0] == 0
+    assert (b.pasta(CADEIA) / "referencia_externa.csv").read_text().splitlines()[0] == "arquivo,tensao_rms_V"
+
+
+@com_e2e
+def test_plano_antigo_sem_grandeza_vale_corrente_e_a_linha_de_comando_so_avisa(coleta_1canal, tmp_path):
+    b = Bancada(tmp_path)
+    shutil.copytree(coleta_1canal.capturas, b.capturas)
+    plano = b.pasta() / "plano_coleta.txt"
+    plano.write_text("\n".join(ln for ln in plano.read_text().splitlines() if not ln.startswith("grandeza=")) + "\n")
+    (b.pasta() / b.bins()[0]).unlink()
+    rc, saida = b.rodar("--modo", "retomar", "--sonda", SONDA, "-y", canais=False, entradas="\n0.7071\n\n")
+    assert rc == 0, saida
+    assert "--grandeza 3:corrente" in b.chamadas()[-1]   # a versão antiga do script só calibrava corrente
+    (b.pasta() / b.bins()[0]).unlink()
+    rc, saida = b.rodar("--modo", "retomar", "--sonda", SONDA, "--grandeza", "tensao", "-y", canais=False,
+                        entradas="\n0.7071\n\n")
+    assert rc == 0, saida
+    assert "planejada como 'corrente'" in saida and "--grandeza 3:tensao" in b.chamadas()[-1]
+    assert "grandeza=tensao" in plano.read_text()
+    # o CSV começou com a coluna de shunt: continua com ela, e o comando sugerido usa 1 ohm para lê-la como tensão
+    assert (b.pasta() / "referencia_externa.csv").read_text().splitlines()[0] == "arquivo,v_shunt_rms_V"
+    assert "--referencia-externa --resistencia-shunt 1 --ganho <G>" in saida
+
+
+@com_e2e
+def test_retomar_coleta_de_ref_externa_com_amplitude_e_recusado(coleta_1canal):
+    antes = coleta_1canal.chamadas()
+    rc, saida = coleta_1canal.rodar("--modo", "retomar", "--sonda", SONDA, "--amplitude", "2Vpp", "-y", canais=False)
+    assert rc != 0 and "planejada com --ref-externa" in saida
+    assert coleta_1canal.chamadas() == antes
+
+
+@com_e2e
+def test_menu_interativo_pergunta_a_grandeza(bancada):
+    # canal 2; grandeza: opção 2 (tensão); referência: opção 1 (osciloscópio); em cada ponto: ENTER, leitura, ENTER
+    rc, saida = bancada.rodar("--taxa", TAXA, "--pontos", 2, "--sonda", CADEIA, "-y", canais=False,
+                              entradas="9\n2\n2\n1\n" + "\n0.7071\n\n" * 2)
+    assert rc == 0, saida
+    assert "Canal inválido: '9'" in saida   # um canal digitado errado é perguntado de novo (não aborta)
+    assert "Como o script vai saber a tensão real injetada na entrada da cadeia?" in saida
+    assert "Osciloscópio na entrada da cadeia" in saida
+    h = cab.ler_cabecalho(bancada.pasta(CADEIA) / bancada.bins(CADEIA)[0])
+    assert list(h.lista_canais[:1]) == [2] and h.grandeza_por_canal[0] == 0
+    assert (bancada.pasta(CADEIA) / "referencia_externa.csv").read_text().startswith("arquivo,tensao_rms_V")
+
+
+@com_e2e
+def test_amplitude_na_cadeia_de_tensao_e_no_pino_do_adc(bancada):
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", CADEIA, "--grandeza", "tensao",
+                              "--amplitude", "1Vpp", "-y")
+    assert rc == 0, saida
+    assert "no PINO DO ADC" in saida and "para o pino do ADC receber 1Vpp" in saida
+    assert all(d.endswith("amp=1Vpp") for d in descricoes(bancada, CADEIA).values())
+
+
+@com_e2e
+def test_refinar_com_pontos_invalido_e_recusado(com_coleta):
+    rc, saida = com_coleta.rodar("--modo", "refinar", "--pontos", "abc", "--sonda", SONDA, "-y")
+    assert rc != 0 and "Pontos extras (--pontos)" in saida
+    assert com_coleta.chamadas() == []
+
+
+@com_e2e
+def test_novo_sobre_pasta_existente_que_retoma_usa_as_repeticoes_do_plano(com_coleta):
+    plano = com_coleta.pasta() / "plano_coleta.txt"
+    plano.write_text(plano.read_text().replace("repeticoes=1", "repeticoes=2"))
+    # opção 1 (retomar) do menu de pasta existente; o resto, ENTERs (confirma e mede/aceita cada captura); 0 extras
+    rc, saida = com_coleta.rodar("--taxa", TAXA, "--pontos", 3, "--sonda", SONDA, entradas="1\n" + "\n" * 7 + "0\n")
+    assert rc == 0, saida
+    assert "Faltam 3 captura" in saida   # a rep2 de cada frequência (sem o bug, o padrão 1 do modo novo vencia o plano)
+    assert len(com_coleta.bins()) == 6
