@@ -1,6 +1,6 @@
 # SH-Analyzer — arquitetura do software de pós-processamento
 
-Guia para quem vai **modificar** o código Python do projeto. Cobre: onde cada coisa mora, as regras que mantêm a estrutura saudável, como rodar e escrever testes, e receitas para as mudanças mais comuns. O firmware (C/Assembly da BeagleBone) está fora do escopo — ver `docs/contexto_projeto.md`.
+Guia para quem vai **modificar** o código Python do projeto. Cobre: onde cada coisa mora, as regras que mantêm a estrutura saudável, como rodar e escrever testes, e receitas para as mudanças mais comuns. O firmware (C/Assembly da BeagleBone) está fora do escopo — ver `docs/project-context.md`.
 
 > Regra de ouro do projeto (instrução do repositório): o código deve ser otimizado para desempenho, para suportar altas taxas de amostragem sem sobrecarregar o hardware nem corromper os dados medidos. Veja a seção [Desempenho](#6-desempenho-regras-para-quem-mexe-no-caminho-quente).
 
@@ -43,13 +43,27 @@ scripts/
   sondas/*.json           perfis de sonda gerados (dados, não código); a pasta nasce no 1º perfil
   supraharmonicos/        ← TODA a lógica Python (seção 3)
 tests/                    pytest (seção 7)
-relatorio/gerar_figuras.py  figuras do relatório/artigo (estilo único, PDF vetorial + macros siunitx);
+report/gerar_figuras.py   figuras do relatório/artigo (estilo único, PDF vetorial + macros siunitx);
                           importa o pacote, mas não faz parte dele (receita na seção 8)
-relatorio/figuras/        saída do script acima
-docs/                     contexto_projeto.md, auditoria_perfil_sonda.md, este arquivo...
+report/figures/           saída do script acima (gerada, fora do git)
+docs/                     documentação (este arquivo, user-guide.md, lab-procedure.md, project-context.md...)
+                          e referências (datasheets/, fapesp/, images/)
+hardware/DAQ_Module/      projeto da PCB (Altium)
 .github/workflows/ci.yml  testes automáticos no GitHub (seção 7.1)
 pyproject.toml            dependências, configuração de pytest e ruff
+.gitattributes            fim de linha LF e binários marcados; .editorconfig: o mesmo estilo em qualquer editor
+CITATION.cff              como citar o projeto
 ```
+
+**Convenção de nomes.** Pastas e documentos: inglês, minúsculas, palavras separadas por hífen, sem espaço nem acento
+(`docs/lab-procedure.md`, `docs/images/`). Código (módulos, funções, comandos, opções de linha de comando) e o texto
+dos documentos: português sem acento nos identificadores, como no resto do projeto. Trocar o idioma do código
+quebraria todos os comandos do roteiro, os scripts já instalados na BeagleBone e os nomes gravados nos perfis.
+
+**Dados fora do repositório.** Capturas, `resultados.csv` e pacotes `.zpaq.tar` ficam numa pasta própria (no
+computador do projeto, `~/Documents/sh-analyzer-data`, variável `DADOS`; ver `docs/user-guide.md`). O `.gitignore`
+ainda recusa `*.bin` e `*.zpaq.tar`, mas só para que nada seja versionado por engano: dentro do repositório, um
+`git clean -xfd` apagaria os dados.
 
 **Por que `supraharmonicos`?** O nome do pacote é o que se escreve em `import`, então precisa ser um identificador Python (sem hífen) e não deve repetir o nome do repositório (`SH-Analyzer/`), para não haver duas coisas com o mesmo nome em níveis diferentes. Ele é o assunto do projeto, não o nome dele. Se um dia for trocado, o rename é mecânico: renomear a pasta, trocar o nome em `pyproject.toml` (`include`), nos testes e no `NOME_RAIZ` de `registro.py`. Um `grep -rn nome_antigo .` (fora de `firmware/`) acha o resto; os testes acusam qualquer import esquecido, mas `include` do `pyproject.toml` só aparece ao instalar o pacote.
 
@@ -99,7 +113,7 @@ _resolver_frequencia → _validar_parametros → _avisar_combinacoes_arriscadas
 → _resumir_dados → _analisar_fft / _analisar_welch → plotagem.plotar_multicanal
 ```
 
-A correção de sonda vem antes do filtro e do espectro para que nenhuma dessas etapas precise saber que existe uma sonda. Ela corrige só a **magnitude** (não a fase): serve para espectro/picos, **não** para potência ou impedância entre canais (`docs/auditoria_perfil_sonda.md`, §4.1).
+A correção de sonda vem antes do filtro e do espectro para que nenhuma dessas etapas precise saber que existe uma sonda. Ela corrige só a **magnitude** (não a fase): serve para espectro/picos, **não** para potência ou impedância entre canais (`docs/probe-profile-audit.md`, §4.1).
 
 ### Hierarquia de resolução de parâmetros
 
@@ -189,8 +203,8 @@ O caminho quente é tudo que toca **todas** as amostras de uma captura (dezenas 
 ## 7. Testes
 
 ```bash
-uv run --extra dev pytest                 # tudo: 682 testes (~1 min 40 s)
-uv run --extra dev pytest -m "not e2e"    # rápido: 564 testes (~30 s) — use no dia a dia
+uv run --extra dev pytest                 # tudo: 683 testes (~1 min 45 s)
+uv run --extra dev pytest -m "not e2e"    # rápido: 565 testes (~30 s) — use no dia a dia
 uv run --extra dev pytest -m e2e          # só ponta a ponta: 118 testes (a maior parte do tempo)
 uv run --extra dev pytest -n0 tests/test_dsp.py::TestFiltros   # um teste só, sem paralelismo (pdb/breakpoint)
 uv run --extra dev pytest --cov=scripts/supraharmonicos --cov-report=term-missing   # cobertura (~90 %)
@@ -224,7 +238,7 @@ Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `c
 | `test_arquitetura.py` | camadas sem ciclo, sem `print`/`SystemExit` em biblioteca, matplotlib/h5py confinados, entradas finas |
 | `test_dependencias.py` | todo script com `if __name__ == "__main__"` (em `scripts/`, `relatorio/`, `tests/`, `firmware/`) roda com `uv run`: shebang do uv, permissão de execução, bloco PEP 723 com tudo o que ele importa ao carregar (seguindo o pacote e os módulos vizinhos) e versões iguais às do `pyproject.toml` |
 | `test_calibrar_sonda.py` (+ `ler_adc_falso.py`) | `firmware/calibrar_sonda.sh` de ponta a ponta contra um `ler_adc` falso: plano de frequências, conferência de cada captura (saturação, nível, frequência, CRC, disco cheio), menu C/R/P/A, modos `retomar`/`refinar`/`adensar`/`refazer`/`resumo`, Ctrl+C, `--amplitude`/`--amplitude-por-ponto` (metadados `ref:` no `.bin`, manifesto, plano, menu interativo, perfil gerado sem flag), `--grandeza tensao` (cabeçalho, textos, coluna `tensao_rms_V`, 2 canais, plano antigo = corrente), e que as constantes do cabeçalho e a gramática de amplitude batem com o firmware e o Python. Marcado `e2e` (usa `bash`; é pulado fora do Linux) |
-| `test_relatorio.py` | `relatorio/gerar_figuras.py`: o ajuste do passa-baixa recupera K, f0 e Q conhecidos (com e sem pesos medidos) e vence os outros modelos pelo BIC; f−3dB, polos e incerteza no formato do siunitx; a figura e as macros são geradas (sem LaTeX, para rodar no CI) |
+| `test_relatorio.py` | `report/gerar_figuras.py`: o ajuste do passa-baixa recupera K, f0 e Q conhecidos (com e sem pesos medidos) e vence os outros modelos pelo BIC; f−3dB, polos e incerteza no formato do siunitx; a figura e as macros são geradas (sem LaTeX, para rodar no CI) |
 | `test_compactacao.py` | `compactar_amostras`: desentrelaçar e voltar é exato com cortes em qualquer byte; a receita do `LEIA-ME.txt` (só numpy) reconstrói o original; ida e volta devolve bytes, datas e permissões; peça corrompida é detectada e o arquivo estragado não é gravado; falha ou Ctrl+C no meio não deixa pacote nem temporários nem `zpaq` órfão; caminho malicioso no manifesto é recusado; `--remover-originais` só apaga o que continua idêntico; CLI. Os testes com o `zpaq` de verdade são `e2e` (pulados sem ele) |
 | `test_scripts_shell.py` | `scripts/set_date.sh` (com `ssh`/`sudo`/`date` falsos: o tempo da senha do sudo é descontado). Marcado `e2e` |
 | `e2e/test_perfil_sonda_e2e.py` | fluxo completo (o perfil base e a correção principal por subprocess nas entradas reais; o resto com `main()` no mesmo processo): calibração → perfil → correção (inclui as 7 correções da auditoria) |
@@ -237,9 +251,12 @@ Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `c
 
 ### 7.1 Integração contínua (GitHub Actions)
 
-`.github/workflows/ci.yml` instala o `zpaq` (para os testes do `compactar_amostras`; sem ele, esses testes são pulados) e roda o `ruff check .` e o `pytest` (suíte completa, com e2e) a cada push na `main` e a cada pull request, em duas versões do Python: **3.10** (o mínimo declarado em `requires-python`) e **3.13**. É o mesmo que `uv run --extra dev ruff check .` e `uv run --extra dev pytest` fazem na sua máquina — se passa local, passa no CI. Leva cerca de 1 a 2 minutos.
+`.github/workflows/ci.yml` tem dois jobs, a cada push na `main` e a cada pull request:
 
-Para o CI *impedir* um merge que quebra algo, o resultado precisa ser exigido nas configurações do repositório (**Settings → Rules → Rulesets** ou **Branches → Branch protection rule**, na branch `main`): marcar *Require a pull request before merging* e *Require status checks to pass before merging*, e escolher os checks `testes (Python 3.10)` e `testes (Python 3.13)` (eles só aparecem na lista depois da primeira execução do workflow).
+* **testes:** instala o `zpaq` (para os testes do `compactar_amostras`; sem ele, esses testes são pulados) e roda o `ruff check .` e o `pytest` (suíte completa, com e2e) em duas versões do Python: **3.10** (o mínimo declarado em `requires-python`) e **3.13**. É o mesmo que `uv run --extra dev ruff check .` e `uv run --extra dev pytest` fazem na sua máquina — se passa local, passa no CI. Leva cerca de 1 a 2 minutos.
+* **firmware:** compila o `firmware/ler_adc.c` no x86 com `gcc -Wall -Wextra -Werror -fsyntax-only` (pega erros que só apareceriam no `make` da BeagleBone) e passa o `shellcheck` em `firmware/*.sh` e `scripts/*.sh`. Localmente: `gcc -std=gnu11 -Wall -Wextra -Werror -fsyntax-only firmware/ler_adc.c` e `uvx --from shellcheck-py shellcheck firmware/*.sh scripts/*.sh`. O `spi_core.asm` e o `pru_main.c` precisam do `clpru` (proprietário, da TI): ficam de fora, e o simulador `tests/pru_sim.py` cobre a lógica do assembly.
+
+Para o CI *impedir* um merge que quebra algo, o resultado precisa ser exigido nas configurações do repositório (**Settings → Rules → Rulesets** ou **Branches → Branch protection rule**, na branch `main`): marcar *Require a pull request before merging* e *Require status checks to pass before merging*, e escolher os checks `testes (Python 3.10)`, `testes (Python 3.13)` e `firmware (C do ARM e scripts de shell)` (eles só aparecem na lista depois da primeira execução do workflow).
 
 Os testes não precisam de hardware nem de arquivos `.bin` do repositório (`*.bin` está no `.gitignore`): eles geram suas próprias capturas sintéticas.
 
@@ -247,7 +264,7 @@ Os testes não precisam de hardware nem de arquivos `.bin` do repositório (`*.b
 
 ## 8. Receitas
 
-**Adicionar uma flag ao `adc_tool`.** (1) `cli_adc_tool.montar_parser`: declare a flag; (2) leia-a em `modos.py` (ou em `contexto.resolver_contexto` se for sobre "o que é a captura"); (3) valide cedo — antes de abrir a captura — levantando `ErroSHAN`/`ErroUso`; (4) teste em `test_cli_adc_tool.py`; (5) documente em `docs/contexto_projeto.md` (`<pipeline_dsp_python>`).
+**Adicionar uma flag ao `adc_tool`.** (1) `cli_adc_tool.montar_parser`: declare a flag; (2) leia-a em `modos.py` (ou em `contexto.resolver_contexto` se for sobre "o que é a captura"); (3) valide cedo — antes de abrir a captura — levantando `ErroSHAN`/`ErroUso`; (4) teste em `test_cli_adc_tool.py`; (5) documente em `docs/project-context.md` (`<pipeline_dsp_python>`).
 
 **Novo tipo de perfil de sonda** (ex.: `polinomio`/`tabela` para temperatura — hoje não implementado). Em `sonda.py`: acrescente o tipo em `TIPOS_PERFIL_SUPORTADOS`, valide os campos em `carregar_perfil_sonda`, trate-o em `PerfilSonda.ganho_em`, e decida em `modos.aplicar_correcao_sondas` a quais grandezas se aplica. Teste em `test_sonda.py`.
 
@@ -257,7 +274,7 @@ Os testes não precisam de hardware nem de arquivos `.bin` do repositório (`*.b
 
 **Novo módulo.** Escolha a camada pela regra "só importo camadas menores"; registre-o em `CAMADAS` (`tests/test_arquitetura.py`) e na tabela da seção 3; escreva o `"""docstring"""` dizendo de quem depende.
 
-**Nova figura do relatório.** Em `relatorio/gerar_figuras.py`, escreva uma função `nome(estilo) -> Resultado` com `@figura("nome", "descrição")`: crie a figura com `estilo.nova_figura(proporcao)`, use as cores de `COR` (o texto sempre em tinta, nunca na cor da série), os rótulos de `estilo.t(...)` (acrescente as chaves em `TEXTOS`, em `pt` e `en`) e formate números com `estilo.num`/`estilo.qty` (vírgula decimal em português). Os dados vêm do projeto (perfis, capturas, pacote), nunca copiados à mão; números que o texto vai citar voltam em `Resultado.macros` e viram `relatorio/figuras/nome.tex`. Teste a lógica (ajustes, contas) em `tests/test_relatorio.py`. O script fica fora do pacote de propósito: é código do relatório, não biblioteca, e por isso pode usar matplotlib à vontade (o logging vai pelo logger `supraharmonicos.relatorio`, que herda o formato do console).
+**Nova figura do relatório.** Em `report/gerar_figuras.py`, escreva uma função `nome(estilo) -> Resultado` com `@figura("nome", "descrição")`: crie a figura com `estilo.nova_figura(proporcao)`, use as cores de `COR` (o texto sempre em tinta, nunca na cor da série), os rótulos de `estilo.t(...)` (acrescente as chaves em `TEXTOS`, em `pt` e `en`) e formate números com `estilo.num`/`estilo.qty` (vírgula decimal em português). Os dados vêm do projeto (perfis, capturas, pacote), nunca copiados à mão; números que o texto vai citar voltam em `Resultado.macros` e viram `report/figures/nome.tex`. Teste a lógica (ajustes, contas) em `tests/test_relatorio.py`. O script fica fora do pacote de propósito: é código do relatório, não biblioteca, e por isso pode usar matplotlib à vontade (o logging vai pelo logger `supraharmonicos.relatorio`, que herda o formato do console).
 
 **Nova etapa no pipeline de plotagem.** Uma função `_nome_da_etapa` em `modos.py`, chamada na ordem certa em `executar_plotagem`; se mexe no sinal, pense onde ela entra em relação à correção de sonda e ao filtro.
 
@@ -272,7 +289,7 @@ Os testes não precisam de hardware nem de arquivos `.bin` do repositório (`*.b
 - [ ] Caminho quente: sem laço por amostra, sem cópia desnecessária, sem materializar a captura
 - [ ] Teste novo para o comportamento novo/corrigido
 - [ ] Mudou formato do cabeçalho ou constante espelhada no firmware? Lado C e `test_contrato_firmware.py` no mesmo PR
-- [ ] Mudou flag ou comportamento visível? Atualize `docs/contexto_projeto.md`
+- [ ] Mudou flag ou comportamento visível? Atualize `docs/project-context.md`
 
 ---
 

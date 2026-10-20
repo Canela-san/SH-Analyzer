@@ -52,7 +52,7 @@ Pré-requisitos: `gcc` e o compilador `clpru` da Texas Instruments.
 ```bash
 cd firmware
 ./setup.sh                           # configura os pinos, compila e carrega o firmware na PRU
-sudo ./ler_adc 102400 --duracao 10s  # captura ~10 s a 102,4 kHz no canal 1
+sudo ./ler_adc 100000 --duracao 10s  # captura ~10 s a 100 kS/s no canal 1
 ```
 
 O resultado é um arquivo `captura_AAAAMMDD_HHMMSS.bin`. Veja todas as opções com `sudo ./ler_adc --help`.
@@ -75,14 +75,16 @@ Para **medir** a captura (ruído, THD, SINAD, ENOB, SFDR, amostras perdidas, dia
 uv run scripts/medir_captura.py captura.bin --csv resultados.csv
 ```
 
-Para **guardar** as capturas sem perder nada (os `.bin` são amostras cruas, 2 bytes cada), `compactar_amostras.py` gera um pacote com ~11 % do tamanho e só o dá por pronto depois de conferir que cada arquivo volta idêntico, bit a bit. Precisa do `zpaq` (`sudo apt install zpaq`):
+**Onde ficam os dados:** fora do repositório, numa pasta própria (no computador do projeto, `~/Documents/sh-analyzer-data`, apontada pela variável `DADOS`). Dentro dele, um `git clean` os apagaria. Veja [Onde guardar os dados](docs/user-guide.md#onde-guardar-os-dados).
+
+Para **arquivar** as capturas sem perder nada (os `.bin` são amostras cruas, 2 bytes cada), `compactar_amostras.py` gera um pacote com ~11 % do tamanho, ao lado da pasta, e só o dá por pronto depois de conferir que cada arquivo volta idêntico, bit a bit. Precisa do `zpaq` (`sudo apt install zpaq`):
 
 ```bash
-uv run scripts/compactar_amostras.py Collected_Data                     # → Collected_Data_<data>.zpaq.tar
-uv run scripts/compactar_amostras.py extrair Collected_Data_<data>.zpaq.tar T7c_10min.bin
+uv run scripts/compactar_amostras.py $DADOS/lab/2026-10-19                  # → $DADOS/lab/2026-10-19_<data>.zpaq.tar
+uv run scripts/compactar_amostras.py extrair $DADOS/lab/2026-10-19_<data>.zpaq.tar T7c_10min.bin
 ```
 
-Mais exemplos (multi-canal, filtros, conversão para CSV, calibração de sondas de corrente, arquivamento) estão no **[guia de uso](docs/guia_de_uso.md)**. Vai validar o projeto em bancada? Use o **[roteiro de laboratório](docs/roteiro_laboratorio.md)**.
+Mais exemplos (multi-canal, filtros, conversão para CSV, calibração de sondas de corrente, arquivamento) estão no **[guia de uso](docs/user-guide.md)**. Vai validar o projeto em bancada? Use o **[roteiro de laboratório](docs/lab-procedure.md)**.
 
 ## 📈 FFT ou Welch?
 
@@ -91,62 +93,73 @@ Mais exemplos (multi-canal, filtros, conversão para CSV, calibração de sondas
 | Fundamental (60 Hz) e harmônicos | `--fft` | Corta o sinal em ciclos inteiros da rede, o que elimina o vazamento espectral |
 | Supraharmônicos | `--welch` | Eles não têm relação de fase com a rede, e a frequência de chaveamento oscila. Média de vários segmentos dá um espectro estável |
 
-As duas podem ser combinadas na mesma execução. A explicação completa, com os cuidados de cada uma, está no [guia de uso](docs/guia_de_uso.md#fft-ou-welch).
+As duas podem ser combinadas na mesma execução. A explicação completa, com os cuidados de cada uma, está no [guia de uso](docs/user-guide.md#fft-ou-welch).
 
 ## 📂 Estrutura do repositório
 
 ```text
 .
-├── firmware/    # Código da BeagleBone: PRU (spi_core.asm, pru_main.c), ler_adc.c, Makefile, setup.sh, calibrar_sonda.sh
-├── scripts/     # Python (adc_tool.py, gerar_perfil_sonda.py, medir_captura.py, compactar_amostras.py, pacote supraharmonicos/) e set_date.sh
-├── tests/       # Testes automáticos (pytest), sem precisar de hardware
-├── relatorio/   # gerar_figuras.py: todas as figuras do relatório, num estilo só, e as figuras geradas (figuras/)
-├── hardware/    # Projeto da PCB no Altium Designer (DAQ_Module)
-└── docs/        # Documentação, proposta de IC, datasheets e imagens
+├── firmware/          # Código da BeagleBone: PRU (spi_core.asm, pru_main.c), ler_adc.c, Makefile, setup.sh, calibrar_sonda.sh
+├── scripts/           # Python: entradas (adc_tool.py, gerar_perfil_sonda.py, medir_captura.py, compactar_amostras.py),
+│                      #   o pacote supraharmonicos/, os perfis de sonda (sondas/) e set_date.sh
+├── tests/             # Testes automáticos (pytest), sem precisar de hardware
+├── report/            # gerar_figuras.py: as figuras do relatório num estilo só (saída em report/figures/, não versionada)
+├── hardware/          # Projeto da PCB no Altium Designer (DAQ_Module)
+├── docs/              # Documentação (tabela abaixo) e material de referência:
+│   ├── datasheets/    #   ADS8688, ADuM3150, LV 25-P
+│   ├── fapesp/        #   projeto de IC e relatório parcial
+│   └── images/        #   imagens para relatório e apresentações
+├── pyproject.toml     # dependências e configuração de pytest e ruff
+└── CITATION.cff       # como citar o projeto
 ```
+
+Pastas e documentos têm nomes em inglês, minúsculos e sem espaço; o código (módulos, comandos, opções) e o texto dos documentos continuam em português, como sempre foram.
 
 ## 📚 Documentação
 
 | Documento | Para quem | Conteúdo |
 |---|---|---|
-| [`docs/guia_de_uso.md`](docs/guia_de_uso.md) | Quem vai **usar** | Passo a passo: capturar, analisar, calibrar sondas, formato do `.bin`, problemas comuns |
-| [`docs/roteiro_laboratorio.md`](docs/roteiro_laboratorio.md) | Quem vai **testar em bancada** | Lista de testes (T0 a T11): sinal a injetar, comandos, o que anotar no osciloscópio, critérios de aceitação e dados para o relatório |
-| [`docs/arquitetura_software.md`](docs/arquitetura_software.md) | Quem vai **modificar o Python** | Módulos e camadas, convenções, testes, CI, receitas e checklist de PR |
-| [`docs/contexto_projeto.md`](docs/contexto_projeto.md) | Quem quer a **referência técnica completa** | Protocolo SPI, firmware, formato do cabeçalho, pipeline de análise, status e limites (texto denso, escrito também para ser lido por IA) |
-| [`docs/melhorias-propostas.md`](docs/melhorias-propostas.md) | Quem vai **evoluir o projeto** | Melhorias abertas, com prioridade e esforço |
-| [`docs/auditoria_perfil_sonda.md`](docs/auditoria_perfil_sonda.md) | Quem confia na **calibração de sondas** | Auditoria do perfil e da correção: evidências, bugs corrigidos, limites |
-| [`docs/proposta_correcao_sonda.md`](docs/proposta_correcao_sonda.md) | Quem quer saber **por que** foi feito assim | Raciocínio de projeto da correção de sondas (histórico) |
-| [`docs/notas_relatorio.md`](docs/notas_relatorio.md) | Quem escreve **relatório ou apresentação** | Notas cronológicas, com pontos a confirmar |
-| [`relatorio/gerar_figuras.py`](relatorio/gerar_figuras.py) | Quem escreve **relatório ou artigo** | Gera as figuras (PDF vetorial no tamanho final, texto pelo LaTeX) e os números citados como macros siunitx; o uso está no topo do arquivo |
+| [`docs/user-guide.md`](docs/user-guide.md) | Quem vai **usar** | Passo a passo: capturar, analisar, calibrar sondas, formato do `.bin`, problemas comuns |
+| [`docs/lab-procedure.md`](docs/lab-procedure.md) | Quem vai **testar em bancada** | Lista de testes (T0 a T11): sinal a injetar, comandos, o que anotar no osciloscópio, critérios de aceitação e dados para o relatório |
+| [`docs/software-architecture.md`](docs/software-architecture.md) | Quem vai **modificar o Python** | Módulos e camadas, convenções, testes, CI, receitas e checklist de PR |
+| [`docs/project-context.md`](docs/project-context.md) | Quem quer a **referência técnica completa** | Protocolo SPI, firmware, formato do cabeçalho, pipeline de análise, status e limites (texto denso, escrito também para ser lido por IA) |
+| [`docs/improvement-proposals.md`](docs/improvement-proposals.md) | Quem vai **evoluir o projeto** | Melhorias abertas, com prioridade e esforço |
+| [`docs/probe-profile-audit.md`](docs/probe-profile-audit.md) | Quem confia na **calibração de sondas** | Auditoria do perfil e da correção: evidências, bugs corrigidos, limites |
+| [`docs/probe-correction-design.md`](docs/probe-correction-design.md) | Quem quer saber **por que** foi feito assim | Raciocínio de projeto da correção de sondas (histórico) |
+| [`docs/report-notes.md`](docs/report-notes.md) | Quem escreve **relatório ou apresentação** | Notas cronológicas, com pontos a confirmar |
+| [`report/gerar_figuras.py`](report/gerar_figuras.py) | Quem escreve **relatório ou artigo** | Gera as figuras (PDF vetorial no tamanho final, texto pelo LaTeX) e os números citados como macros siunitx; o uso está no topo do arquivo |
 
 ## ✅ Estado de validação
 
 | Situação | O que |
 |---|---|
 | ✅ Validado em hardware | Protocolo SPI do ADS8688 (32 ciclos de clock por amostra); handshake ARM↔PRU; varredura automática (AUTO_RST) com 1 e com 5 canais a 102,4 kHz totais (≈20,48 kHz por canal): canais ligados à rede mostram os 60 Hz, canais desconectados mostram só ruído |
-| 📏 Medido em bancada (19/10/2026) | **Resposta em frequência da cadeia de tensão** (T3): passa-baixa de 2ª ordem com −3 dB em 17,3 kHz, em 48 pontos de 50 Hz a 45 kHz contra o osciloscópio ([`scripts/sondas/cadeia_tensao.json`](scripts/sondas/cadeia_tensao.json)). **ADC e aquisição** (T0 a T7): escala certa nas três faixas de entrada (±0,08 %); ruído de 160 / 91 / 58 µV RMS, igual ao datasheet; taxa de amostragem igual a 200 MHz ÷ ticks (0,02 ppm); diafonia de −94,7 dB; estabilidade de 0,09 ppm em 10 min. O resumo e o que falta estão no [Estado da campanha](docs/roteiro_laboratorio.md#estado-da-campanha) |
+| 📏 Medido em bancada (19/10/2026) | **Resposta em frequência da cadeia de tensão** (T3): passa-baixa de 2ª ordem com −3 dB em 17,3 kHz, em 48 pontos de 50 Hz a 45 kHz contra o osciloscópio ([`scripts/sondas/cadeia_tensao.json`](scripts/sondas/cadeia_tensao.json)). **ADC e aquisição** (T0 a T7): escala certa nas três faixas de entrada (±0,08 %); ruído de 160 / 91 / 58 µV RMS, igual ao datasheet; taxa de amostragem igual a 200 MHz ÷ ticks (0,02 ppm); diafonia de −94,7 dB; estabilidade de 0,09 ppm em 10 min. O resumo e o que falta estão no [Estado da campanha](docs/lab-procedure.md#estado-da-campanha) |
 | 🧪 Validado com sinais sintéticos | Toda a análise espectral (`--fft`, `--welch`, bandas, picos), a correção de sondas e a geração de perfis |
 | 🛠️ Corrigido, falta validar em hardware | O firmware anterior a out/2026 perdia 6,97 µs a cada bloco de 1.048.576 amostras (medido nas capturas de 19/10). A correção e a contagem de amostras atrasadas, buffers sobrescritos e ruído na linha SDO foram verificadas no simulador da PRU; falta recompilar e refazer o T7 |
 | ⏳ Pendente | O limite de taxa e o gargalo (T7e), a **calibração da sonda de corrente** (T10), distorção, *aliasing*, espectros conhecidos e ensaios ponta a ponta (T5, T8, T9, T11), e a fase da cadeia |
 
-**Atenção ao filtro do ADC:** o ADS8688 tem um filtro passa-baixa de 2ª ordem embutido em cada canal, com corte de cerca de 15 kHz (datasheet, seção 8.3.5); na cadeia de tensão completa, o T3 mediu −3 dB em 17,3 kHz e −12,5 dB em 45 kHz. Na banda de supraharmônicos (2 a 150 kHz) o sinal chega ao conversor atenuado em dezenas de dB, e a correção por perfil devolve a amplitude mas amplifica o ruído na mesma proporção. Por isso o perfil deve cobrir a cadeia inteira (sonda, frontend e ADC) até 150 kHz; neste projeto "sonda" designa esse conjunto, e a frequência de corte do filtro do ADC não precisa ser conhecida, porque aparece na curva medida. O mesmo fluxo calibra uma sonda de corrente ou a cadeia de um canal de tensão (`calibrar_sonda.sh --grandeza tensao`). O perfil pode ser montado a partir de uma **senoide de amplitude conhecida** (`calibrar_sonda.sh --amplitude 500mVpp`, gravada nos metadados de cada captura), de um `.m` do osciloscópio, de leituras anotadas ou de um segundo canal do ADC: veja [`docs/guia_de_uso.md`](docs/guia_de_uso.md#sondas-de-corrente-calibração-e-correção).
+**Atenção ao filtro do ADC:** o ADS8688 tem um filtro passa-baixa de 2ª ordem embutido em cada canal, com corte de cerca de 15 kHz (datasheet, seção 8.3.5); na cadeia de tensão completa, o T3 mediu −3 dB em 17,3 kHz e −12,5 dB em 45 kHz. Na banda de supraharmônicos (2 a 150 kHz) o sinal chega ao conversor atenuado em dezenas de dB, e a correção por perfil devolve a amplitude mas amplifica o ruído na mesma proporção. Por isso o perfil deve cobrir a cadeia inteira (sonda, frontend e ADC) até 150 kHz; neste projeto "sonda" designa esse conjunto, e a frequência de corte do filtro do ADC não precisa ser conhecida, porque aparece na curva medida. O mesmo fluxo calibra uma sonda de corrente ou a cadeia de um canal de tensão (`calibrar_sonda.sh --grandeza tensao`). O perfil pode ser montado a partir de uma **senoide de amplitude conhecida** (`calibrar_sonda.sh --amplitude 500mVpp`, gravada nos metadados de cada captura), de um `.m` do osciloscópio, de leituras anotadas ou de um segundo canal do ADC: veja [`docs/user-guide.md`](docs/user-guide.md#sondas-de-corrente-calibração-e-correção).
 
-Limites conhecidos, como a taxa máxima (~140 kS/s, que cobre só parte da banda de supraharmônicos) e a correção de sonda só de magnitude, estão em [`docs/contexto_projeto.md`](docs/contexto_projeto.md) e [`docs/melhorias-propostas.md`](docs/melhorias-propostas.md).
+Limites conhecidos, como a taxa máxima (~140 kS/s, que cobre só parte da banda de supraharmônicos) e a correção de sonda só de magnitude, estão em [`docs/project-context.md`](docs/project-context.md) e [`docs/improvement-proposals.md`](docs/improvement-proposals.md).
 
 ## 🤝 Contribuindo
 
-Quem for modificar o código Python deve começar por [`docs/arquitetura_software.md`](docs/arquitetura_software.md). Para rodar os testes e a checagem de estilo (os mesmos que o GitHub roda em todo pull request):
+Quem for modificar o código Python deve começar por [`docs/software-architecture.md`](docs/software-architecture.md). Para rodar os testes e a checagem de estilo (os mesmos que o GitHub roda em todo pull request):
 
 ```bash
-uv run --extra dev ruff check .   # estilo e erros comuns
-uv run --extra dev pytest         # 682 testes, ~1 min 40 s em paralelo (use -m "not e2e" para a versão rápida: 564 testes, ~30 s)
+uv run --extra dev ruff check .            # estilo e erros comuns
+uv run --extra dev pytest                  # a suíte completa, em paralelo
+uv run --extra dev pytest -m "not e2e"     # a versão rápida, para o dia a dia
 ```
+
+Quantos testes, quanto tempo e o que cada arquivo cobre: [`docs/software-architecture.md`](docs/software-architecture.md#7-testes). A CI também compila o `ler_adc.c` e passa o `shellcheck` nos scripts de shell.
 
 Os testes também conferem que o firmware (C) e o Python concordam sobre o formato do cabeçalho: se você mudar um lado, o `pytest` avisa até o outro acompanhar.
 
 ## 🎓 Contexto acadêmico
 
-Resultado prático de uma pesquisa de Iniciação Científica (IC), vinculada ao projeto "Sistema de identificação da presença de supraharmônicos em redes e cargas elétricas", desenvolvida no curso de Engenharia de Controle e Automação da Universidade Estadual de Campinas (Unicamp).
+Resultado prático de uma pesquisa de Iniciação Científica (IC), vinculada ao projeto "Sistema de identificação da presença de supraharmônicos em redes e cargas elétricas", desenvolvida no curso de Engenharia de Controle e Automação da Universidade Estadual de Campinas (Unicamp), com apoio da FAPESP (processo 2025/22891-1). Para citar o projeto, use o [`CITATION.cff`](CITATION.cff) (o GitHub mostra "Cite this repository").
 
 * **Orientação:** Prof. Dr. José Antenor Pomilio.
 * **Coorientação:** Dr. Mateus Pinheiro Dias.

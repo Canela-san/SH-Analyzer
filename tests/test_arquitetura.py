@@ -1,4 +1,4 @@
-"""Regras de arquitetura do pacote ``supraharmonicos`` -- ver docs/arquitetura_software.md.
+"""Regras de arquitetura do pacote ``supraharmonicos`` -- ver docs/software-architecture.md.
 
 Estes testes existem para que a estrutura continue sendo a que a documentação
 descreve, sem depender de revisão manual:
@@ -66,7 +66,7 @@ def importados_externos(modulo: str) -> set[str]:
 
 def test_todo_modulo_tem_camada_declarada():
     assert set(modulos_do_pacote()) == set(CAMADAS), (
-        "módulo novo/removido: atualize CAMADAS aqui e a tabela de docs/arquitetura_software.md"
+        "módulo novo/removido: atualize CAMADAS aqui e a tabela de docs/software-architecture.md"
     )
 
 

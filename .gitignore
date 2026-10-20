@@ -1,19 +1,24 @@
 # =====================================================================
-# Ambiente / dados coletados na BeagleBone
+# Dados de captura: ficam FORA do repositório (ver docs/user-guide.md,
+# "Onde guardar os dados"). Estas linhas só impedem versioná-los por
+# engano, caso algum arquivo de dados apareça aqui dentro.
 # =====================================================================
-BeagleBone/
-Collected_Data/
+*.bin
+*.bin.old
+*.zpaq.tar
+*.xz.tar
+*.parcial
+**/amostras_*.csv
+**/log.txt
 
 # =====================================================================
-# Altium Designer - arquivos temporários, histórico e saídas geradas
-# Usando padrões genéricos (**/) para pegar QUALQUER projeto/placa na
-# pasta /hardware, não só o DAQ_Module - evita ter que atualizar isso
-# de novo a cada placa nova.
+# Altium Designer: histórico local, logs e saídas geradas (padrões
+# genéricos, para qualquer placa em hardware/)
 # =====================================================================
 **/History/
 **/Project Logs for */
-**/*.OutJob
 **/Project Outputs for */
+**/*.OutJob
 **/*.PcbDoc.bak
 **/*.SchDoc.bak
 **/*~
@@ -24,36 +29,33 @@ Collected_Data/
 # =====================================================================
 # Artefatos de compilação do firmware (PRU + ARM)
 # =====================================================================
-firmware/*.out
-firmware/*.map
-firmware/*.obj
 firmware/ler_adc
 firmware/ler_adc_diagnostico
-firmware/fw_pru*.out
 *.out
 *.map
 *.obj
 
 # =====================================================================
-# Dados capturados / gerados em tempo de execução (pesados, não devem
-# ir para o repositório - o objetivo do repo é o código, não os dados
-# de cada teste)
+# Figuras geradas por report/gerar_figuras.py (regeneráveis)
 # =====================================================================
-*.bin
-*.bin.old
-**/log.txt
-**/diagnostico_preambulo.bin
-**/supraharmonicos_raw.bin
-**/amostras_*.csv
+report/figures/
 
 # =====================================================================
-# Python
+# Python: ambiente, caches, cobertura e o lockfile do uv (o projeto fixa
+# só limites mínimos de versão; ver docs/software-architecture.md)
 # =====================================================================
 __pycache__/
 *.pyc
 .venv/
 venv/
 .ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+uv.lock
+.coverage
+.coverage.*
+htmlcov/
 
 # =====================================================================
 # Sistema operacional / editor
@@ -63,18 +65,4 @@ Thumbs.db
 Desktop.ini
 *.swp
 .vscode/
-git-commit.sh
-
-# Python: caches de teste/lint, instalação editável e lockfile do uv
-.pytest_cache/
-.ruff_cache/
-*.egg-info/
-uv.lock
-
-
-Prompts/
-
-# Cobertura de testes (pytest --cov)
-.coverage
-.coverage.*
-htmlcov/
+.idea/

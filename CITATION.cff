@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "Se usar este software ou os dados dele num trabalho, cite-o assim."
+title: "SH-Analyzer: aquisição e análise de supraharmônicos com BeagleBone Black (PRU) e ADS8688"
+abstract: >-
+  Instrumento de baixo custo para medir supraharmônicos (2 a 150 kHz) em redes e cargas elétricas:
+  firmware de aquisição na PRU da BeagleBone Black com o ADC ADS8688, formato de captura autodescritivo
+  e ferramentas de análise espectral, de correção da resposta em frequência das sondas e de métricas de bancada.
+  Iniciação Científica na Unicamp (FAPESP, processo 2025/22891-1), orientada pelo Prof. Dr. José Antenor Pomilio.
+type: software
+authors:
+  - given-names: Gabriel
+    family-names: Canela
+license: MIT
+repository-code: "https://github.com/Canela-san/SH-Analyzer"
+version: 0.1.0
+keywords:
+  - supraharmonics
+  - power quality
+  - data acquisition
+  - ADS8688
+  - BeagleBone Black
+  - PRU

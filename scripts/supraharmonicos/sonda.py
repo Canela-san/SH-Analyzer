@@ -1,7 +1,7 @@
 """Perfis de sonda e correção dependente de frequência.
 
-Ver ``docs/proposta_correcao_sonda.md`` (racional) e
-``docs/auditoria_perfil_sonda.md`` (validações e limitações conhecidas).
+Ver ``docs/probe-correction-design.md`` (racional) e
+``docs/probe-profile-audit.md`` (validações e limitações conhecidas).
 
 Resumo: tensão usa ganho ESCALAR (``--ganho``); uma sonda de corrente atenua
 o sinal de forma diferente a cada frequência, então cada canal marcado como
@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # 2.1 Perfis de sonda e correção dependente de frequência
 # ---------------------------------------------------------------------------
-# Ver docs/proposta_correcao_sonda.md para o racional completo desta seção.
+# Ver docs/probe-correction-design.md para o racional completo desta seção.
 #
 # Resumo: tensão usa ganho ESCALAR fixo (--ganho, seção 2 acima) -- correto,
 # porque o frontend aplica um divisor/ganho constante independente de
@@ -75,7 +75,7 @@ class PerfilSonda:
     eles em escala log-frequência/dB (PCHIP, monotônica -- evita overshoot
     de uma spline cúbica comum entre pontos) e mantém constante (clamp) fora
     da faixa coberta pelos pontos -- nunca extrapola livremente, o que
-    poderia inverter a tendência real da curva (ver docs/proposta_correcao_sonda.md,
+    poderia inverter a tendência real da curva (ver docs/probe-correction-design.md,
     seção 6.2).
 
     'tipo' == "ganho_fixo": caso trivial (ganho único, sem dependência de
@@ -173,7 +173,7 @@ class PerfilSonda:
 
 def carregar_perfil_sonda(caminho: Path) -> PerfilSonda:
     """Lê e valida um arquivo de perfil de sonda (.json) -- ver
-    docs/proposta_correcao_sonda.md, seção 3, para o formato completo.
+    docs/probe-correction-design.md, seção 3, para o formato completo.
     Campos mínimos: 'id', 'tipo', e os campos específicos de 'tipo'
     ('pontos': lista de {"freq_hz": ..., "ganho": ...} para
     'resposta_frequencia'; 'ganho' escalar para 'ganho_fixo')."""
@@ -200,7 +200,7 @@ def carregar_perfil_sonda(caminho: Path) -> PerfilSonda:
             f"por esta versão de adc_tool.py -- tipos aceitos: "
             f"{', '.join(repr(t) for t in TIPOS_PERFIL_SUPORTADOS)}. (Tipos "
             f"como 'polinomio'/'tabela', para sensores de temperatura, "
-            f"ainda são trabalho futuro -- ver docs/proposta_correcao_sonda.md.)"
+            f"ainda são trabalho futuro -- ver docs/probe-correction-design.md.)"
         )
 
     faixa_freq_valida_hz = None
@@ -419,10 +419,10 @@ def aplicar_correcao_sonda(sinal: np.ndarray, fs: float, perfil: PerfilSonda) ->
     aplicação de um filtro de fase zero com exatamente a resposta desejada
     -- sem o trabalho extra de projetar um FIR (scipy.signal.firwin2) que
     aproximaria a mesma coisa. Reaproveita rfft/rfftfreq já usados no resto
-    do script (ver docs/proposta_correcao_sonda.md, seção 6.2, para a
+    do script (ver docs/probe-correction-design.md, seção 6.2, para a
     alternativa por FIR considerada e por que foi preterida aqui).
 
-    LIMITAÇÃO (medida na auditoria, ver docs/auditoria_perfil_sonda.md): a
+    LIMITAÇÃO (medida na auditoria, ver docs/probe-profile-audit.md): a
     correção restaura a AMPLITUDE de cada componente espectral (erro < 0.1%
     em tons de teste), mas NÃO a fase -- a fase da sonda real continua no
     sinal. A forma de onda no tempo do canal corrigido, portanto, não é a
@@ -438,7 +438,7 @@ def aplicar_correcao_sonda(sinal: np.ndarray, fs: float, perfil: PerfilSonda) ->
     carrega o trecho selecionado (--inicio/--fim) inteiro num ndarray antes
     de --fft/--welch/plot (só os modos de conversão e exportação HDF5
     processam em blocos, e nenhum dos dois aplica correção de sonda -- ver
-    seção 6 de docs/proposta_correcao_sonda.md para essa decisão de
+    seção 6 de docs/probe-correction-design.md para essa decisão de
     escopo)."""
     n = len(sinal)
     # Tamanho de FFT "rápido" (só fatores 2/3/5/7...): com N de fator primo

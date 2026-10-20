@@ -82,7 +82,7 @@ CABECALHO_SONDA_ID_TAMANHO = 32
 #   I    header_crc32                 (uint32_t, CRC-32/ISO-HDLC dos 1024 bytes com este campo zerado)
 #
 # v2 (mesmos campos acima, mais grandeza_por_canal/sonda_id_por_canal
-# inseridos ENTRE descricao e header_crc32 -- ver docs/proposta_correcao_sonda.md):
+# inseridos ENTRE descricao e header_crc32 -- ver docs/probe-correction-design.md):
 #   8B   grandeza_por_canal           (8x uint8_t -- GRANDEZA_TENSAO/CORRENTE/TEMPERATURA/NAO_USADA)
 #   32s * 8  sonda_id_por_canal       (8 strings de 32 bytes, uma por canal, terminadas em nulo)
 #   I    header_crc32

@@ -50,7 +50,7 @@ void lidar_interrupcao(int sinal) { (void)sinal; manter_execucao = 0; }
 
 // [SONDA/GRANDEZA] Tamanho FIXO (bytes, incluindo o terminador nulo) do
 // identificador de sonda por canal -- ver --sonda, sonda_id_por_canal na
-// struct abaixo, e docs/proposta_correcao_sonda.md para o racional
+// struct abaixo, e docs/probe-correction-design.md para o racional
 // completo. 32 bytes (31 úteis de texto ASCII) cobre confortavelmente um
 // código do tipo "fabricante_modelo_serial" sem precisar abreviar; o nome/
 // descrição completos da sonda ficam no arquivo de perfil correspondente,
@@ -173,7 +173,7 @@ struct cabecalho_arquivo_campos {
     char     titulo[CABECALHO_TITULO_TAMANHO];       // [RASTREABILIDADE] --titulo/-t, opcional, texto livre em UTF-8, terminado em '\0'. Não informado -> todos os bytes zerados (string vazia), não lixo -- ver memset(0) da struct inteira em main(). Rejeitado (não truncado) em main() se não couber -- ver comentário lá sobre por que truncar um UTF-8 num limite de bytes arbitrário é arriscado.
     char     descricao[CABECALHO_DESCRICAO_TAMANHO]; // [RASTREABILIDADE] --descricao/-d, mesmas regras de titulo, só que maior -- espaço para uma frase completa sobre o objetivo/contexto do ensaio (ex.: local, o que estava sendo injetado/medido).
     uint8_t  grandeza_por_canal[ADS8688_MAX_CANAIS];             // [SONDA/GRANDEZA, v2] grandeza física de cada canal habilitado (GRANDEZA_TENSAO/CORRENTE/TEMPERATURA) -- mesma indexação de lista_canais (posição i descreve lista_canais[i]); slots não usados = GRANDEZA_NAO_USADA. Sem --grandeza na linha de comando, todo canal assume GRANDEZA_PADRAO (tensão), preservando o comportamento histórico.
-    char     sonda_id_por_canal[ADS8688_MAX_CANAIS][CABECALHO_SONDA_ID_TAMANHO]; // [SONDA/GRANDEZA, v2] identificador ASCII da sonda usada em cada canal (--sonda), mesma indexação acima; string vazia = nenhuma sonda associada a este canal. Só a CHAVE de busca -- este programa não valida se o id corresponde a um arquivo de perfil real nem interpreta a curva de calibração; isso é feito inteiramente por adc_tool.py, que é onde os perfis de fato residem (ver docs/proposta_correcao_sonda.md).
+    char     sonda_id_por_canal[ADS8688_MAX_CANAIS][CABECALHO_SONDA_ID_TAMANHO]; // [SONDA/GRANDEZA, v2] identificador ASCII da sonda usada em cada canal (--sonda), mesma indexação acima; string vazia = nenhuma sonda associada a este canal. Só a CHAVE de busca -- este programa não valida se o id corresponde a um arquivo de perfil real nem interpreta a curva de calibração; isso é feito inteiramente por adc_tool.py, que é onde os perfis de fato residem (ver docs/probe-correction-design.md).
     uint8_t  faixa_adc_por_canal[ADS8688_MAX_CANAIS];            // [FAIXA DE ENTRADA, v3] código de faixa (0 = ±10,24 V, 1 = ±5,12 V, 2 = ±2,56 V) com que o ADS8688 converteu cada canal habilitado -- mesma indexação de lista_canais (posição i descreve lista_canais[i]); slots não usados = FAIXA_ADC_NAO_USADA. É o que o ADC realmente recebeu em RANGE_SELn (a PRU escreve o código de todo canal habilitado a cada captura), então o Python converte código -> volts sem depender de --faixa. Sem --faixa-adc, todo canal usa FAIXA_ADC_PADRAO.
     uint32_t amostras_atrasadas;       // [INTEGRIDADE, v4] amostras que a PRU tomou depois do instante previsto (a taxa pedida passou do que o laço alcança) -- com isso > 0, a taxa real é MENOR que frequencia_hz. Ver memoria_pru.h
     uint32_t buffers_sobrescritos;     // [INTEGRIDADE, v4] trocas de buffer em que o ARM ainda não tinha copiado o buffer que a PRU começou a reescrever: amostras perdidas. > 0 = captura comprometida (este programa sai com código 3)
@@ -584,7 +584,7 @@ static int analisar_lista_grandezas(const char *texto, const int *canais, int nu
  * lógica de correção em si, ficam inteiramente do lado Python
  * (adc_tool.py), que é onde os arquivos de perfil de fato existem -- aqui
  * só se grava a string, como uma chave de busca para o outro lado resolver
- * depois (ver docs/proposta_correcao_sonda.md).
+ * depois (ver docs/probe-correction-design.md).
  *
  * 'sonda_saida' precisa ter pelo menos ADS8688_MAX_CANAIS linhas de
  * CABECALHO_SONDA_ID_TAMANHO bytes cada, na mesma indexação por posição de

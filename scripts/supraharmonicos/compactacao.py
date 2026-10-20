@@ -100,7 +100,7 @@ class Metodo:
 
 METODOS = {
     # medido: 125 MB numa peça de 2 MB, 470 MB numa de 17 MB, ~740 MB numa de 64 MiB; 0,07 MB/s por processo
-    # com os 8 núcleos lógicos ocupados (Collected_Data, 407 MB: 15 min para comprimir e outros 15 para verificar)
+    # com os 8 núcleos lógicos ocupados (as capturas até out/2026, 407 MB: 15 min para comprimir e outros 15 para verificar)
     "max": Metodo("max", "zpaq", "5", "zpaq -m5 (modelagem de contexto, a mais forte)",
                   memoria_base=110 * 10**6, memoria_por_byte=22.0, memoria_teto=800 * 10**6, taxa_estimada=0.10e6),
     "rapido": Metodo("rapido", "xz", "9e", "xz -9e (LZMA2; ~40 % maior, ~20x mais rápido)",
@@ -277,7 +277,7 @@ def _nome_seguro(nome: str) -> str:
 def descobrir_entradas(caminhos: Iterable[Path], excluir: Iterable[str] = (),
                        ignorar: Iterable[Path] = ()) -> tuple[list[Entrada], list[str]]:
     """Todos os arquivos regulares sob ``caminhos`` (pastas recursivamente). O nome no pacote é relativo à
-    pasta MÃE de cada caminho dado -- ``compactar Collected_Data/lab`` guarda ``lab/...``, como o ``tar``.
+    pasta MÃE de cada caminho dado -- ``compactar $DADOS/lab`` guarda ``lab/...``, como o ``tar``.
     Devolve (entradas em ordem, avisos)."""
     excluir = list(excluir)
     ignorar = {p.resolve() for p in ignorar}

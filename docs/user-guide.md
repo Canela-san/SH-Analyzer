@@ -7,7 +7,7 @@ Passo a passo para quem vai **operar** o SH-Analyzer: capturar na BeagleBone, an
 1. [O fluxo em resumo](#o-fluxo-em-resumo)
 2. [Preparar a BeagleBone](#preparar-a-beaglebone)
 3. [Capturar com `ler_adc`](#capturar-com-ler_adc)
-4. [Levar a captura para o computador](#levar-a-captura-para-o-computador)
+4. [Levar a captura para o computador](#levar-a-captura-para-o-computador) e [onde guardar os dados](#onde-guardar-os-dados)
 5. [Analisar com `adc_tool.py`](#analisar-com-adc_toolpy)
 6. [FFT ou Welch?](#fft-ou-welch)
 7. [Sondas de corrente: calibração e correção](#sondas-de-corrente-calibração-e-correção)
@@ -17,7 +17,7 @@ Passo a passo para quem vai **operar** o SH-Analyzer: capturar na BeagleBone, an
 11. [Utilitários](#utilitários)
 12. [Problemas comuns](#problemas-comuns)
 
-Indo ao laboratório validar o projeto inteiro? Siga o [`roteiro_laboratorio.md`](roteiro_laboratorio.md): testes numerados, sinal a injetar em cada um, comandos e o que anotar.
+Indo ao laboratório validar o projeto inteiro? Siga o [`lab-procedure.md`](lab-procedure.md): testes numerados, sinal a injetar em cada um, comandos e o que anotar.
 
 > Os comandos `uv run scripts/...` deste guia são executados **a partir da raiz do repositório**, no computador (`./scripts/adc_tool.py ...` também funciona: o próprio script chama o `uv`). Os comandos `./setup.sh`, `./ler_adc` e `./calibrar_sonda.sh` são executados **na BeagleBone**, dentro da pasta `firmware/`.
 
@@ -103,7 +103,7 @@ O ADS8688 converte cada canal em 16 bits dentro de uma **faixa de entrada** prog
 | `10.24` | ±5,12 V | 156,3 µV | Sinais de até ~4,5 V de pico |
 | `5.12` | ±2,56 V | 78,1 µV | Sinais de até ~2,2 V de pico: saída de sondas de corrente e sensores de mV |
 
-* **Escolha a menor faixa que comporta o pico do sinal, com 10 a 20% de margem.** Faixa maior que o necessário desperdiça resolução; faixa menor corta o sinal (o ADC satura em 0 ou 65535 e a captura perde a forma de onda). O erro de quantização cai exatamente na proporção da faixa (4x entre `20.48` e `5.12`); o ruído do próprio ADC cai menos, porque o SNR típico do datasheet também cai um pouco nas faixas menores (92, 91 e 89 dB). Meça o ganho real no passo T2 do [roteiro de laboratório](roteiro_laboratorio.md).
+* **Escolha a menor faixa que comporta o pico do sinal, com 10 a 20% de margem.** Faixa maior que o necessário desperdiça resolução; faixa menor corta o sinal (o ADC satura em 0 ou 65535 e a captura perde a forma de onda). O erro de quantização cai exatamente na proporção da faixa (4x entre `20.48` e `5.12`); o ruído do próprio ADC cai menos, porque o SNR típico do datasheet também cai um pouco nas faixas menores (92, 91 e 89 dB). Meça o ganho real no passo T2 do [roteiro de laboratório](lab-procedure.md).
 * **O que o programa faz.** A PRU escreve a faixa de cada canal habilitado nos registradores `RANGE_SELn` do ADC **a cada captura** (o ADC guarda o valor entre capturas) e o `ler_adc` grava o código no cabeçalho (desde a versão 3). Sem `--faixa-adc`, todos os canais ficam em `20.48`, o padrão de fábrica do ADC. Conferido em bancada (19/10/2026): a tensão no pino sai a mesma nas três faixas, a 0,08 %.
 * **Ao trocar a faixa, descarte o começo.** Se a faixa de um canal mudou em relação à captura anterior, as ~6 primeiras amostras desse canal (60 µs a 100 kS/s) são um transitório de até ~1 V, enquanto o ADC se acomoda. Sem troca de faixa, não há transitório. Para medir ruído ou DC, use `--inicio 100`: sem isso, o ruído sai 7 a 8 vezes maior.
 * **Na análise, não precisa informar.** O `adc_tool.py`, o `medir_captura.py` e o `gerar_perfil_sonda.py` convertem cada canal em Volts com a faixa gravada no cabeçalho. Um `--faixa` digitado **vence**, mas avisa se divergir do cabeçalho. Capturas de versão 1 ou 2 do cabeçalho não registram a faixa: assumem `--faixa 10.24`, como sempre foi. O firmware dessa época nunca mudava a faixa, e o ADC estava na de ±10,24 V (conferido no T0 do roteiro): essas capturas saem com **metade** do valor real; leia-as com `--faixa 20.48`.
@@ -121,7 +121,7 @@ Enquanto captura, a PRU conta três coisas que indicariam dados ruins, sem custo
 
 No fim, o `ler_adc` também mostra a **taxa real**, medida pelo relógio do ARM entre o primeiro e o último bloco (precisa de 2 blocos ou mais; incerteza ~0,02 %). O `adc_tool.py`, o `medir_captura.py` e o `gerar_perfil_sonda.py` avisam quando um contador do cabeçalho não é zero, e a calibração de sonda descarta a captura com amostras perdidas ou atrasadas.
 
-**O que limita a taxa.** Cada amostra leva ~7 µs na PRU: ~3 µs são os 32 clocks do SPI (feitos em software) e ~4 µs são três esperas do CS (2, 1 e 1 µs), calibradas na época do problema dos jumpers. O datasheet do ADS8688 pede só 30, 10 e 30 ns. Com `--atraso-cs` dá para medir em bancada até onde elas podem cair (teste T7e do [roteiro](roteiro_laboratorio.md)); só reduzi-las levaria o teto de ~140 para ~330 kS/s. Valores reduzidos são **experimentais**: confira o ruído, a distorção e a continuidade antes de usar uma captura feita assim.
+**O que limita a taxa.** Cada amostra leva ~7 µs na PRU: ~3 µs são os 32 clocks do SPI (feitos em software) e ~4 µs são três esperas do CS (2, 1 e 1 µs), calibradas na época do problema dos jumpers. O datasheet do ADS8688 pede só 30, 10 e 30 ns. Com `--atraso-cs` dá para medir em bancada até onde elas podem cair (teste T7e do [roteiro](lab-procedure.md)); só reduzi-las levaria o teto de ~140 para ~330 kS/s. Valores reduzidos são **experimentais**: confira o ruído, a distorção e a continuidade antes de usar uma captura feita assim.
 
 ### Números úteis
 
@@ -137,13 +137,26 @@ O ADS8688 varre os canais habilitados **sempre em ordem crescente**, não na ord
 
 ## Levar a captura para o computador
 
-Qualquer cópia serve. Com `scp`:
+Qualquer cópia serve. Com `scp`, direto para a pasta de dados (abaixo):
 
-```bash
-scp debian@<ip-da-beaglebone>:caminho/da/captura.bin .
+```fish
+scp debian@<ip-da-beaglebone>:caminho/da/captura.bin $DADOS/lab/(date +%F)/
 ```
 
-Os `.bin` são grandes e ficam fora do Git (estão no `.gitignore`). Para guardar muitas capturas, o `compactar_amostras.py` as arquiva sem perdas num único pacote com ~11 % do tamanho (veja [Guardar as capturas sem perdas](#guardar-as-capturas-sem-perdas-compactar_amostraspy)).
+### Onde guardar os dados
+
+As capturas ficam **fora do repositório**, numa pasta própria. Dentro dele, mesmo ignoradas pelo `.gitignore`, um `git clean -xfd` (comum para "limpar" a cópia de trabalho) apagaria todas, sem aviso. Nada no código depende do caminho; os documentos usam a variável `DADOS` (no computador do projeto, `~/Documents/sh-analyzer-data`):
+
+```fish
+set -Ux DADOS ~/Documents/sh-analyzer-data    # uma vez: o fish guarda a variável
+```
+
+| Pasta | Conteúdo |
+|---|---|
+| `$DADOS/lab/AAAA-MM-DD/` | Um dia de bancada: os `.bin`, o `resultados.csv` do `medir_captura.py` e, em `capturas/<id>/`, as coletas do `calibrar_sonda.sh` |
+| `$DADOS/legacy/` | Capturas anteriores ao roteiro de laboratório (firmware antigo) |
+
+Os comandos `uv run scripts/...` continuam sendo executados na raiz do repositório, com os caminhos apontando para `$DADOS`. Os perfis de sonda gerados (`scripts/sondas/<id>.json`) são pequenos, fazem parte da configuração do instrumento e **ficam** no repositório. Para guardar um dia inteiro sem perdas e em pouco espaço, use o `compactar_amostras.py` (veja [Guardar as capturas sem perdas](#guardar-as-capturas-sem-perdas-compactar_amostraspy)) e mantenha o pacote em dois lugares.
 
 ---
 
@@ -259,7 +272,7 @@ uv run scripts/adc_tool.py captura.bin --welch --resolucao-welch 100 --filtro-pa
 
 > ⚠️ **Cuidado ao combinar `--fft` com filtro passa-alta.** Um `--filtro-passa-alta` igual ou maior que `--freq-min` remove a fundamental, e o `--fft` não consegue mais sincronizar o corte em ciclos. O `adc_tool.py` detecta isso e avisa. Nesse caso, rode `--fft` e `--welch`/`--picos` em comandos separados.
 
-Para os detalhes de implementação (estimativa da fundamental, janelas, normalização), veja a seção `pipeline_dsp_python` de [`contexto_projeto.md`](contexto_projeto.md).
+Para os detalhes de implementação (estimativa da fundamental, janelas, normalização), veja a seção `pipeline_dsp_python` de [`project-context.md`](project-context.md).
 
 ---
 
@@ -415,7 +428,7 @@ Uma coleta de tensão feita antes de `--grandeza tensao` gravou a leitura na col
 * `--plot` salva um PNG com a curva obtida.
 * Use os mesmos `--formato` e `--ganho` que você usará no `adc_tool.py`; o `adc_tool.py` avisa se forem diferentes. A `--faixa` não precisa ser a mesma: a de cada captura vem do cabeçalho (`--faixa-adc`), e um perfil gerado assim vale para qualquer faixa. Capturas de cabeçalho v1/v2 (sem a faixa) assumem 10.24, e aí o `adc_tool.py` avisa se a `--faixa` de produção for outra.
 
-O resultado é `scripts/sondas/<id>.json`. Para ver o formato de um perfil, abra [`exemplo_sonda.json`](exemplo_sonda.json).
+O resultado é `scripts/sondas/<id>.json`. Para ver o formato de um perfil, abra [`probe-profile-example.json`](probe-profile-example.json).
 
 ### Referência pelo osciloscópio (arquivo `.m`)
 
@@ -465,7 +478,7 @@ uv run scripts/adc_tool.py captura.bin --sem-correcao-sonda --welch
 * A confiabilidade física do perfil depende da bancada: tolerância e indutância parasita do shunt, qualidade do gerador, linearidade da sonda.
 * As exportações CSV/HDF5 não aplicam a correção.
 
-A análise completa dos limites está em [`auditoria_perfil_sonda.md`](auditoria_perfil_sonda.md).
+A análise completa dos limites está em [`probe-profile-audit.md`](probe-profile-audit.md).
 
 ---
 
@@ -488,7 +501,7 @@ O que ele mede, por canal:
 * **Acoplamento** (2 canais ou mais): diafonia (quanto do tom do canal mais forte aparece nos outros) e atraso entre canais, contra o esperado (`Δposição ÷ taxa total`).
 * **Comparação com instrumento**: `--referencia-rms` (RMS do tom lido no osciloscópio, na unidade do canal) e `--referencia-freq` (Hz, do contador) dão o erro em % e em ppm. `--amplitude-referencia` (a amplitude injetada, com unidade e tipo; padrão: a dos metadados) e `--osciloscopio` (o `.m` do mesmo sinal) comparam o ADC com a amplitude ajustada e com a medida do osciloscópio (veja "Conferir o método com o osciloscópio"). `--fs-pru` analisa com a taxa que a PRU de fato gera (`clock ÷ ticks`, que difere da pedida quando 200 MHz ÷ taxa não é inteiro).
 
-Canais de corrente com sonda registrada no cabeçalho são corrigidos pelo perfil antes das métricas, como no `adc_tool.py`. Nesse caso, ruído, SINAD e ENOB **não** descrevem o ADC: use `--sem-correcao-sonda` para caracterizá-lo. O método (FFT única, janela Kaiser β = 14, vazamento abaixo de −110 dBc) e os limites estão em [`arquitetura_software.md`](arquitetura_software.md) e no docstring de `supraharmonicos/metricas_captura.py`; os testes de laboratório que o usam, em [`roteiro_laboratorio.md`](roteiro_laboratorio.md).
+Canais de corrente com sonda registrada no cabeçalho são corrigidos pelo perfil antes das métricas, como no `adc_tool.py`. Nesse caso, ruído, SINAD e ENOB **não** descrevem o ADC: use `--sem-correcao-sonda` para caracterizá-lo. O método (FFT única, janela Kaiser β = 14, vazamento abaixo de −110 dBc) e os limites estão em [`software-architecture.md`](software-architecture.md) e no docstring de `supraharmonicos/metricas_captura.py`; os testes de laboratório que o usam, em [`lab-procedure.md`](lab-procedure.md).
 
 ---
 
@@ -496,21 +509,22 @@ Canais de corrente com sonda registrada no cabeçalho são corrigidos pelo perfi
 
 Um `.bin` guarda as amostras cruas, 2 bytes cada, sem compressão. O `compactar_amostras.py` junta pastas inteiras (as capturas e o que mais estiver nelas: `.csv`, logs, planos de coleta) num único **pacote** `.zpaq.tar` com cerca de 11 % do tamanho, e só o dá por pronto depois de relê-lo do disco, descomprimir tudo e conferir que cada arquivo volta **idêntico, bit a bit** (SHA-256). Precisa do `zpaq` (`sudo apt install zpaq`; se faltar, o script oferece instalar).
 
-```bash
-uv run scripts/compactar_amostras.py Collected_Data                         # → Collected_Data_<data>.zpaq.tar
-uv run scripts/compactar_amostras.py listar Collected_Data_<data>.zpaq.tar   # o que tem dentro (instantâneo)
-uv run scripts/compactar_amostras.py extrair Collected_Data_<data>.zpaq.tar                    # restaura tudo aqui
-uv run scripts/compactar_amostras.py extrair Collected_Data_<data>.zpaq.tar T7c_10min.bin -d /tmp/x   # só um
-uv run scripts/compactar_amostras.py verificar Collected_Data_<data>.zpaq.tar  # confere o pacote (de vez em quando)
+```fish
+set P $DADOS/lab/2026-10-19_<data>.zpaq.tar                    # o nome que o comando abaixo cria
+uv run scripts/compactar_amostras.py $DADOS/lab/2026-10-19      # → o pacote, ao lado da pasta
+uv run scripts/compactar_amostras.py listar $P                  # o que tem dentro (instantâneo)
+uv run scripts/compactar_amostras.py extrair $P                 # restaura tudo na pasta atual
+uv run scripts/compactar_amostras.py extrair $P T7c_10min.bin -d /tmp/x   # só um
+uv run scripts/compactar_amostras.py verificar $P               # confere o pacote (de vez em quando)
 ```
 
-* **O que entra.** Tudo o que houver nas pastas dadas, recursivamente, com o caminho a partir da pasta (como o `tar`): `compactar Collected_Data/lab` guarda `lab/2026-10-19/...`. `--excluir '*.png'` deixa algo de fora; links simbólicos não entram (o script avisa).
-* **O que ele usa da máquina.** Um compressor por núcleo, até o que couber em 70 % da memória livre (~800 MB cada; `--memoria GB` e `-j N` mudam isso), com prioridade baixa: o computador continua usável. A tela mostra o progresso e o tempo que falta. O zpaq -m5 é lento e simétrico: os 407 MB do `Collected_Data` levaram 15 min para comprimir e outros 15 para verificar (i7-7700HQ, 8 processos, ~0,07 MB/s cada). Um arquivo grande vira peças de 64 MiB e cada peça ocupa um processo do começo ao fim, então é a maior peça que costuma decidir o tempo total. `--rapido` usa o xz: ~20 vezes mais rápido, pacote ~40 % maior, não precisa do zpaq.
+* **O que entra.** Tudo o que houver nas pastas dadas, recursivamente, com o caminho a partir da pasta (como o `tar`): `compactar $DADOS/lab` guarda `lab/2026-10-19/...`. Sem `-o`, o pacote é criado **ao lado** da (primeira) pasta, nunca na pasta atual (que costuma ser o repositório). `--excluir '*.png'` deixa algo de fora; links simbólicos não entram (o script avisa).
+* **O que ele usa da máquina.** Um compressor por núcleo, até o que couber em 70 % da memória livre (~800 MB cada; `--memoria GB` e `-j N` mudam isso), com prioridade baixa: o computador continua usável. A tela mostra o progresso e o tempo que falta. O zpaq -m5 é lento e simétrico: os 407 MB das capturas até out/2026 levaram 15 min para comprimir e outros 15 para verificar (i7-7700HQ, 8 processos, ~0,07 MB/s cada). Um arquivo grande vira peças de 64 MiB e cada peça ocupa um processo do começo ao fim, então é a maior peça que costuma decidir o tempo total. `--rapido` usa o xz: ~20 vezes mais rápido, pacote ~40 % maior, não precisa do zpaq.
 * **Nada fica pela metade.** Até ser verificado, o pacote se chama `*.parcial`; um Ctrl+C ou erro apaga o parcial e os temporários. Se um original mudar durante a compactação, o script para e pede para rodar de novo.
 * **Liberar o espaço.** `--remover-originais` apaga os originais depois da verificação, só os que continuam idênticos ao que foi guardado (cada um é conferido de novo), e pede confirmação (`--sim` para não perguntar). Ainda assim, guarde o pacote em **dois lugares** (outro disco, nuvem): é a única cópia dos dados.
-* **Extrair.** Os arquivos voltam com a data e as permissões originais, cada um conferido pelo SHA-256 antes de ganhar o nome final. O padrão pode ser o nome do arquivo, um caminho, uma pasta (`lab/capturas`) ou um curinga (`'*100Hz*'`). Um arquivo que já existe no destino é pulado (`--sobrescrever` para substituir).
+* **Extrair.** Os arquivos voltam com a data e as permissões originais, cada um conferido pelo SHA-256 antes de ganhar o nome final. O padrão pode ser o nome do arquivo, um caminho, uma pasta (`2026-10-19/capturas`) ou um curinga (`'*100Hz*'`). Um arquivo que já existe no destino é pulado (`--sobrescrever` para substituir).
 
-**Por que zpaq, e o que tem dentro.** Medido nas capturas do projeto: o ruído do ADC limita qualquer compressor sem perdas a ~1,1–2,2 bits por amostra, e o zpaq -m5 (modelagem de contexto) é o que chega mais perto (~10 % do original; 7-Zip e xz ficam em ~14 %, FLAC em ~15 %). Antes de comprimir, as amostras de uma captura multicanal são **desentrelaçadas** (todas do canal 0, depois as do 1...), o que rende ~6 % numa captura de 8 canais. No `Collected_Data` inteiro (407 MB, 129 arquivos), o pacote ficou com **44,9 MB (11,0 %)**; o 7-Zip do script antigo dava 59,4 MB (14,6 %), e o `--max` dele (zpaq -m5 com tudo num arquivo só) 45,1 MB, sem verificação, sem extração de um arquivo isolado e com 4,7 GB de RAM. Ou seja: o zpaq já está perto do limite que o ruído do ADC permite, e o ganho deste script sobre aquele modo é a segurança, não o tamanho. O pacote é um `tar` comum com um `LEIA-ME.txt` que explica como recuperar tudo **sem este programa** (só `tar`, `zpaq` e, para as capturas multicanal, cinco linhas de numpy), um `manifesto.json` legível (caminhos, tamanhos, datas, SHA-256, resumo do cabeçalho de cada captura) e as peças `pecas/*.zpaq`, uma (ou mais, num arquivo grande) por arquivo. Uma peça corrompida estraga só o arquivo dela, e o `verificar` diz qual.
+**Por que zpaq, e o que tem dentro.** Medido nas capturas do projeto: o ruído do ADC limita qualquer compressor sem perdas a ~1,1–2,2 bits por amostra, e o zpaq -m5 (modelagem de contexto) é o que chega mais perto (~10 % do original; 7-Zip e xz ficam em ~14 %, FLAC em ~15 %). Antes de comprimir, as amostras de uma captura multicanal são **desentrelaçadas** (todas do canal 0, depois as do 1...), o que rende ~6 % numa captura de 8 canais. Nas capturas até out/2026 (407 MB, 129 arquivos), o pacote ficou com **44,9 MB (11,0 %)**; o 7-Zip do script antigo dava 59,4 MB (14,6 %), e o `--max` dele (zpaq -m5 com tudo num arquivo só) 45,1 MB, sem verificação, sem extração de um arquivo isolado e com 4,7 GB de RAM. Ou seja: o zpaq já está perto do limite que o ruído do ADC permite, e o ganho deste script sobre aquele modo é a segurança, não o tamanho. O pacote é um `tar` comum com um `LEIA-ME.txt` que explica como recuperar tudo **sem este programa** (só `tar`, `zpaq` e, para as capturas multicanal, cinco linhas de numpy), um `manifesto.json` legível (caminhos, tamanhos, datas, SHA-256, resumo do cabeçalho de cada captura) e as peças `pecas/*.zpaq`, uma (ou mais, num arquivo grande) por arquivo. Uma peça corrompida estraga só o arquivo dela, e o `verificar` diz qual.
 
 ---
 
@@ -535,7 +549,7 @@ O cabeçalho começa com o texto `SHAN` e termina com um **CRC-32**; se o `adc_t
 | `titulo`, `descricao` | Texto livre (`-t`, até 63 bytes; `-d`, até 255 bytes). Convenção para calibração: um trecho `ref: f=1000Hz amp=500mVpp` na descrição registra a frequência e a amplitude injetadas, e o `gerar_perfil_sonda.py` o lê; texto livre antes ou depois é ignorado |
 | `header_crc32` | Detecta corrupção do cabeçalho |
 
-Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Capturas sem cabeçalho](#capturas-sem-cabeçalho-arquivos-antigos)), e os de versão 1 a 3 do cabeçalho também. A tabela completa, com os deslocamentos de cada campo, está em [`contexto_projeto.md`](contexto_projeto.md) (seção `formato_bin_v2`, que descreve também a v3 e a v4).
+Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Capturas sem cabeçalho](#capturas-sem-cabeçalho-arquivos-antigos)), e os de versão 1 a 3 do cabeçalho também. A tabela completa, com os deslocamentos de cada campo, está em [`project-context.md`](project-context.md) (seção `formato_bin_v2`, que descreve também a v3 e a v4).
 
 **Capturas feitas antes de out/2026** (cabeçalho versão 3 ou anterior) têm um salto de ~7 µs a cada bloco (~0,7 amostra a 100 kS/s), um defeito do firmware antigo já corrigido. Para análise espectral de um bloco só, ele não aparece; em análises de fase ou de continuidade que atravessam blocos, sim. O `medir_captura.py` o aponta (DESCONTINUIDADE "numa troca de buffer da PRU").
 
@@ -547,7 +561,7 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 |---|---|---|
 | `scripts/set_date.sh` | Computador | Copia a data e hora do computador para a BeagleBone via SSH (como instante absoluto em UTC, então vale qualquer que seja o fuso dela). Padrão: `debian@192.168.6.2`; troque com `BBB_USER` e `BBB_IP`. **Nenhuma senha fica no arquivo:** use chave SSH (`ssh-copy-id debian@192.168.6.2`) ou deixe o `ssh`/`sudo` pedirem a senha no terminal. Se preferir não digitar, exporte `SSHPASS` (e tenha o `sshpass` instalado) |
 | `scripts/compactar_amostras.py` | Computador | Arquiva pastas de captura sem perdas num pacote `.zpaq.tar` (~11 % do tamanho), conferido bit a bit; também `listar`, `extrair` e `verificar`. Veja [Guardar as capturas sem perdas](#guardar-as-capturas-sem-perdas-compactar_amostraspy) |
-| `relatorio/gerar_figuras.py` | Computador | Gera as figuras do relatório (PDF vetorial, já no tamanho final, com o texto composto pelo LaTeX) e um `.tex` com os números citados (macros siunitx). `uv run relatorio/gerar_figuras.py` gera todas; `--listar`, `--png` (prévia), `--formato artigo --idioma en` (coluna de artigo, em inglês), `--saida PASTA` (ex.: a pasta do projeto LaTeX). Inclua no documento sem `width=`, para as fontes baterem com as do texto |
+| `report/gerar_figuras.py` | Computador | Gera as figuras do relatório (PDF vetorial, já no tamanho final, com o texto composto pelo LaTeX) e um `.tex` com os números citados (macros siunitx). `uv run report/gerar_figuras.py` gera todas; `--listar`, `--png` (prévia), `--formato artigo --idioma en` (coluna de artigo, em inglês), `--saida PASTA` (ex.: a pasta do projeto LaTeX). Inclua no documento sem `width=`, para as fontes baterem com as do texto |
 
 ---
 
@@ -582,4 +596,4 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 | `gerar_perfil_sonda.py`: "ADC/osciloscópio" ou "osciloscópio vs injetada" diverge mais de ~1% | O gerador não entregou a amplitude ajustada (carga de 50 Ω × alta impedância, planura em frequência alta) | Use o osciloscópio como referência (`--referencia-osciloscopio`) ou corrija o ajuste do gerador |
 | `gerar_perfil_sonda.py`: ganho na menor frequência fora de [0,7; 1,3] | `--ganho` diferente de 1 ÷ sensibilidade da sonda | Confira o `--ganho` (sonda de 100 mV/A → 10) e o `--resistencia-shunt` |
 
-Se o problema não está aqui, a referência técnica completa está em [`contexto_projeto.md`](contexto_projeto.md).
+Se o problema não está aqui, a referência técnica completa está em [`project-context.md`](project-context.md).

@@ -219,8 +219,8 @@ def montar_parser() -> argparse.ArgumentParser:
         description="Compactação SEM PERDAS das capturas do SH-Analyzer (.bin, .h5 e o que mais houver nas pastas) "
                     "num único pacote .zpaq.tar, com verificação bit a bit (SHA-256).",
         epilog="Exemplos:\n"
-               "  uv run scripts/compactar_amostras.py Collected_Data\n"
-               "  uv run scripts/compactar_amostras.py Collected_Data/lab -o lab_out2026.zpaq.tar --remover-originais\n"
+               "  uv run scripts/compactar_amostras.py $DADOS/lab/2026-10-19\n"
+               "  uv run scripts/compactar_amostras.py $DADOS/lab -o lab_out2026.zpaq.tar --remover-originais\n"
                "  uv run scripts/compactar_amostras.py listar lab_out2026.zpaq.tar\n"
                "  uv run scripts/compactar_amostras.py extrair lab_out2026.zpaq.tar T7c_10min.bin -d /tmp/x\n"
                "  uv run scripts/compactar_amostras.py verificar lab_out2026.zpaq.tar\n"
@@ -232,7 +232,7 @@ def montar_parser() -> argparse.ArgumentParser:
                        description="Compacta tudo o que houver nas pastas dadas (recursivamente) num pacote .zpaq.tar. "
                                    "O pacote é relido e conferido inteiro antes de ganhar o nome final.")
     c.add_argument("caminhos", nargs="+", type=Path, metavar="PASTA_OU_ARQUIVO")
-    c.add_argument("-o", "--saida", type=Path, help="pacote de saída (padrão: <pasta>_<data>.zpaq.tar aqui)")
+    c.add_argument("-o", "--saida", type=Path, help="pacote de saída (padrão: <pasta>_<data>.zpaq.tar, ao lado da pasta)")
     c.add_argument("--rapido", action="store_true",
                    help="xz -9e em vez de zpaq -m5: ~20x mais rápido, pacote ~40 %% maior; não precisa do zpaq")
     c.add_argument("--sem-verificar", action="store_true",
@@ -292,12 +292,15 @@ def _titulo(console: Console, subtitulo: str) -> None:
 
 
 def _saida_padrao(caminhos: list[Path], metodo: Metodo) -> Path:
-    base = caminhos[0].resolve().name if len(caminhos) == 1 else "capturas"
+    # Ao lado da (primeira) pasta compactada, e não na pasta atual: rodando da raiz do repositório, o pacote cairia
+    # dentro dele -- justamente o lugar de onde os dados saíram (um `git clean` o apagaria).
+    origem = caminhos[0].resolve()
+    base = origem.name if len(caminhos) == 1 else "capturas"
     data = datetime.now().strftime("%Y-%m-%d")
-    candidato = Path(f"{base}_{data}.{metodo.codec}.tar")
+    candidato = origem.parent / f"{base}_{data}.{metodo.codec}.tar"
     n = 2
     while candidato.exists() or candidato.with_name(candidato.name + SUFIXO_PARCIAL).exists():
-        candidato = Path(f"{base}_{data}_{n}.{metodo.codec}.tar")
+        candidato = origem.parent / f"{base}_{data}_{n}.{metodo.codec}.tar"
         n += 1
     return candidato
 
@@ -591,7 +594,7 @@ def _ajuda_inicial(console: Console) -> None:
     t.add_row("extrair PACOTE [ARQ]", "restaura tudo, ou só os arquivos pedidos (nome, pasta ou curinga)")
     t.add_row("verificar PACOTE", "descomprime tudo e confere o SHA-256 de cada arquivo")
     console.print(t)
-    console.print("\n[dim]Exemplo:[/] uv run scripts/compactar_amostras.py Collected_Data\n"
+    console.print("\n[dim]Exemplo:[/] uv run scripts/compactar_amostras.py $DADOS/lab/2026-10-19\n"
                   "[dim]Ajuda de um comando:[/] uv run scripts/compactar_amostras.py compactar -h")
 
 

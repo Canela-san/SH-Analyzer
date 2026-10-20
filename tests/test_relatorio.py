@@ -1,4 +1,4 @@
-"""Testes de ``relatorio/gerar_figuras.py``: o ajuste do passa-baixa recupera parâmetros conhecidos e as figuras
+"""Testes de ``report/gerar_figuras.py``: o ajuste do passa-baixa recupera parâmetros conhecidos e as figuras
 são geradas (sem LaTeX, para ser rápido e não depender dele no CI)."""
 
 import importlib.util
@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[1] / "relatorio" / "gerar_figuras.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "report" / "gerar_figuras.py"
 
 
 @pytest.fixture(scope="module")

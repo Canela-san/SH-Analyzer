@@ -13,8 +13,8 @@
 
 ## Status: do proposto ao implementado
 
-O que está valendo hoje é descrito em `docs/contexto_projeto.md` (seções `modelo_calibracao_sonda`,
-`pipeline_dsp_python` e `ferramenta_geracao_perfil`). Para usar, veja `docs/guia_de_uso.md`.
+O que está valendo hoje é descrito em `docs/project-context.md` (seções `modelo_calibracao_sonda`,
+`pipeline_dsp_python` e `ferramenta_geracao_perfil`). Para usar, veja `docs/user-guide.md`.
 A tabela mostra o que mudou entre esta proposta e o código.
 
 | Tema | Proposta | Como ficou |
@@ -27,7 +27,7 @@ A tabela mostra o que mudou entre esta proposta e o código.
 | Rótulo do eixo por grandeza | Dinâmico | Feito |
 | `--sem-correcao-sonda` e fallback para `--ganho` escalar | Propostos | Feitos, e há também `--sonda-perfil CANAL:ARQUIVO` e `--sondas-dir` |
 | Ferramenta de calibração (seção 7.1) | `scripts/calibrar_sonda.py` | Dividida em duas: `firmware/calibrar_sonda.sh` (coleta interativa, na BeagleBone) e `scripts/gerar_perfil_sonda.py` (análise, gera o `.json`) |
-| Validação por frequências retidas (seção 7) | Reservar pontos fora da malha | **Não implementada** (ver `docs/auditoria_perfil_sonda.md`, 4.3) |
+| Validação por frequências retidas (seção 7) | Reservar pontos fora da malha | **Não implementada** (ver `docs/probe-profile-audit.md`, 4.3) |
 | Fase (`fase_graus`) | Campo reservado | Campo reservado; a correção é só de **magnitude** (auditoria, 4.1) |
 | Exportação HDF5 (seção 6.3) | Gravar a curva usada | Grava grandeza e id da sonda como atributos, mas **não aplica** a correção nem grava a curva |
 | Entrada CSV de pontos (seção 8) | Alternativa ao JSON | Não implementada; o `gerar_perfil_sonda.py` gera o JSON direto das capturas |
@@ -143,7 +143,7 @@ padding disponíveis, espaço de sobra para os campos novos.
 |---|---|---|---|
 | `grandeza_por_canal` | `uint8_t[8]` | mesma posição de `lista_canais[i]` | `0`=tensão, `1`=corrente, `2`=temperatura, `0xFF`=slot não usado |
 | `sonda_id_por_canal` | `char[8][16]` | idem | id ASCII da sonda; string vazia quando não se aplica (tensão, temperatura sem sonda dedicada) |
-| `sonda_perfil_crc32_por_canal` | `uint32_t[8]` | idem | CRC-32 do arquivo de perfil usado no momento da captura — rastreabilidade, mesma ideia já sugerida para `firmware_git_hash` em `docs/melhorias-propostas.md` |
+| `sonda_perfil_crc32_por_canal` | `uint32_t[8]` | idem | CRC-32 do arquivo de perfil usado no momento da captura — rastreabilidade, mesma ideia já sugerida para `firmware_git_hash` em `docs/improvement-proposals.md` |
 
 **Indexação por posição, não por número de canal físico** — o mesmo padrão que
 `lista_canais[8]` já usa hoje (posição *i* descreve o *i*-ésimo canal habilitado, em
@@ -299,7 +299,7 @@ processo de calibração.
   desprezível em baixa frequência).
 - **CRC do perfil no cabeçalho** (`sonda_perfil_crc32_por_canal`) para detectar, na
   análise, se o perfil usado na captura foi editado/recalibrado depois — mesma filosofia
-  de rastreabilidade do `firmware_git_hash` já sugerido em `docs/melhorias-propostas.md`.
+  de rastreabilidade do `firmware_git_hash` já sugerido em `docs/improvement-proposals.md`.
 
 ## 9. Questões em aberto (decididas; ver a tabela de status no topo)
 
@@ -320,5 +320,5 @@ processo de calibração.
 
 ---
 
-*Documento de proposta — ver `docs/contexto_projeto.md` para o estado atual do projeto e
-`docs/melhorias-propostas.md` para outras sugestões de melhoria já registradas.*
+*Documento de proposta — ver `docs/project-context.md` para o estado atual do projeto e
+`docs/improvement-proposals.md` para outras sugestões de melhoria já registradas.*

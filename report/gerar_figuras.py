@@ -14,17 +14,17 @@ Cada figura é uma função registrada com ``@figura("nome")``. Todas passam pel
 entre si e já saem no tamanho final. No documento, inclua SEM escalar, senão as fontes deixam de bater
 com as do texto::
 
-    \includegraphics{figuras/perfil_cadeia_tensao.pdf}     % sem width=...
-    \input{figuras/perfil_cadeia_tensao.tex}                % macros com os números (siunitx >= 3)
+    \includegraphics{figures/perfil_cadeia_tensao.pdf}     % sem width=...
+    \input{figures/perfil_cadeia_tensao.tex}                % macros com os números (siunitx >= 3)
 
 Uso (na raiz do repositório)::
 
-    uv run relatorio/gerar_figuras.py                                  # todas as figuras
-    uv run relatorio/gerar_figuras.py perfil_cadeia_tensao --png       # uma só, com prévia PNG
-    uv run relatorio/gerar_figuras.py --formato artigo --idioma en     # coluna de artigo, em inglês
-    uv run relatorio/gerar_figuras.py --listar
+    uv run report/gerar_figuras.py                                  # todas as figuras
+    uv run report/gerar_figuras.py perfil_cadeia_tensao --png       # uma só, com prévia PNG
+    uv run report/gerar_figuras.py --formato artigo --idioma en     # coluna de artigo, em inglês
+    uv run report/gerar_figuras.py --listar
 
-Saída em ``relatorio/figuras/``: ``<nome>.pdf`` (vetorial) e, quando a figura calcula algo, ``<nome>.tex`` com
+Saída em ``report/figures/``: ``<nome>.pdf`` (vetorial) e, quando a figura calcula algo, ``<nome>.tex`` com
 os resultados como macros siunitx -- um número citado no texto nunca fica desatualizado em relação à figura.
 Os dados vêm do resto do projeto (perfis em ``scripts/sondas/``, capturas, pacote ``supraharmonicos``):
 nada é copiado à mão para cá.
@@ -64,7 +64,7 @@ from supraharmonicos.sonda import SONDAS_DIR_PADRAO, carregar_perfil_sonda  # no
 # Filho do logger do pacote: herda o formato de console de configurar_logging_cli (stdout/stderr, "Aviso: ").
 log = logging.getLogger("supraharmonicos.relatorio")
 
-PASTA_FIGURAS = Path(__file__).resolve().parent / "figuras"
+PASTA_FIGURAS = Path(__file__).resolve().parent / "figures"
 CM = 1 / 2.54   # polegadas por centímetro (o matplotlib mede figuras em polegadas)
 
 
@@ -467,7 +467,7 @@ def perfil_cadeia_tensao(estilo: Estilo) -> Resultado:
 # Linha de comando
 # =====================================================================================================
 def escrever_macros(caminho: Path, nome: str, resultado: Resultado) -> None:
-    linhas = [f"% Gerado por relatorio/gerar_figuras.py ({nome}) -- não edite à mão: rode o script de novo.",
+    linhas = [f"% Gerado por report/gerar_figuras.py ({nome}) -- não edite à mão: rode o script de novo.",
               r"% Requer siunitx >= 3 (\qty, \num e incerteza entre parênteses)."]
     linhas += [f"% {c}" for c in resultado.comentarios]
     linhas += [rf"\providecommand{{\{m}}}{{}}\renewcommand{{\{m}}}{{{v}}}" for m, v in resultado.macros.items()]
@@ -484,7 +484,7 @@ def montar_parser() -> argparse.ArgumentParser:
     p.add_argument("--sem-latex", action="store_true",
                    help="Não usa o LaTeX para o texto (mais rápido; fonte parecida, mas não idêntica à do documento).")
     p.add_argument("--png", action="store_true", help="Também salva uma prévia PNG (300 dpi) ao lado do PDF.")
-    p.add_argument("--saida", type=Path, default=PASTA_FIGURAS, help="Pasta de saída (padrão: relatorio/figuras/).")
+    p.add_argument("--saida", type=Path, default=PASTA_FIGURAS, help="Pasta de saída (padrão: report/figures/).")
     return p
 
 

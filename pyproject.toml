@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "Pós-processamento das capturas do SH-Analyzer (ADS8688 + BeagleBone Black/PRU): conversão, espectro (FFT/Welch), supraharmônicos e correção de sondas."
 readme = "README.md"
 requires-python = ">=3.10"
+authors = [{ name = "Gabriel Canela" }]
+license = { text = "MIT" }
 # Estas dependências precisam ficar IGUAIS às dos blocos PEP 723 (# /// script) de scripts/adc_tool.py,
 # scripts/gerar_perfil_sonda.py, scripts/medir_captura.py e scripts/compactar_amostras.py -- tests/test_dependencias.py confere.
 # rich: a interface do compactar_amostras (tabelas, barras de progresso); só cli_compactar o importa.
@@ -18,6 +20,10 @@ dependencies = [
     "h5py>=3.0",
     "rich>=13.7",
 ]
+
+[project.urls]
+Repository = "https://github.com/Canela-san/SH-Analyzer"
+Documentation = "https://github.com/Canela-san/SH-Analyzer/tree/main/docs"
 
 [project.optional-dependencies]
 # Backend gráfico interativo (plt.show() sem -o); não é necessário para salvar PNG.

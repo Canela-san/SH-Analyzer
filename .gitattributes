@@ -1,0 +1,23 @@
+# Texto sempre com LF no repositório e na cópia de trabalho (os scripts rodam na BeagleBone, em Linux).
+* text=auto eol=lf
+
+# Binários: sem conversão de fim de linha nem diff textual.
+*.pdf    binary
+*.PDF    binary
+*.png    binary
+*.jpg    binary
+*.webp   binary
+*.avif   binary
+*.bin    binary
+*.PcbDoc binary
+*.SchDoc binary
+
+# Projeto do Altium: arquivos como o Altium os grava (não normalizar).
+hardware/** -text
+
+# Desenhos SVG são texto, mas o diff deles não é legível.
+*.svg -diff
+
+# Material de referência de terceiros: fora das estatísticas de linguagem do GitHub.
+docs/datasheets/** linguist-vendored
+docs/fapesp/**     linguist-documentation

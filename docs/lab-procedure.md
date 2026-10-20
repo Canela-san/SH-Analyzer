@@ -2,7 +2,7 @@
 
 Lista de testes para validar o SH-Analyzer **de ponta a ponta** (ADC, firmware/PRU, divisor de tensão, sonda de corrente e software), com o sinal a injetar em cada um, os comandos exatos, o que anotar no osciloscópio e o que esperar. Feito para sair do laboratório com **dados que entram direto no relatório**.
 
-Pré-requisito: [`guia_de_uso.md`](guia_de_uso.md) (capturar e analisar). Este roteiro supõe que você já sabe rodar `ler_adc` e `adc_tool.py`.
+Pré-requisito: [`user-guide.md`](user-guide.md) (capturar e analisar). Este roteiro supõe que você já sabe rodar `ler_adc` e `adc_tool.py`.
 
 **Premissas desta versão** (todas conferidas nos testes indicados; se alguma falhar, o roteiro diz o que trocar):
 
@@ -28,7 +28,7 @@ Pré-requisito: [`guia_de_uso.md`](guia_de_uso.md) (capturar e analisar). Este r
 
 ## Estado da campanha
 
-Atualize esta tabela a cada ida ao laboratório: ela é o resumo do avanço para a apresentação quinzenal ([`notas_relatorio.md`](notas_relatorio.md#7-apresentação-quinzenal-ao-orientador)) e diz o que já pode entrar no relatório. Os números vêm de `Collected_Data/lab/2026-10-19/resultados.csv`, gerado com os comandos de cada teste; o detalhe está no parágrafo **Executado em 19/10/2026** do teste.
+Atualize esta tabela a cada ida ao laboratório: ela é o resumo do avanço para a apresentação quinzenal ([`report-notes.md`](report-notes.md#7-apresentação-quinzenal-ao-orientador)) e diz o que já pode entrar no relatório. Os números vêm de `$DADOS/lab/2026-10-19/resultados.csv`, gerado com os comandos de cada teste; o detalhe está no parágrafo **Executado em 19/10/2026** do teste.
 
 | Teste | Situação | Resultado principal | Falta |
 |---|---|---|---|
@@ -42,14 +42,60 @@ Atualize esta tabela a cada ida ao laboratório: ela é o resumo do avanço para
 | [T7](#t7-integridade-e-limite-de-taxa) | 🟡 19/10, firmware antigo | T7c: salto de +0,697 amostra em **todas** as 57 trocas de buffer (defeito corrigido em out/2026); dentro de cada bloco, tom estável em 0,09 ppm e 0,01 % por 10 min | Recompilar e refazer T7a a T7c com ≥ 3 blocos; T7d; T7e |
 | [T8](#t8-aliasing) a [T11](#t11-ponta-a-ponta) | ⏳ | — | Tudo; o T10 é o objetivo central |
 
-**Próxima ida ao laboratório, por prioridade:**
+### O que refazer com o firmware de out/2026
 
-1. `./setup.sh` com o firmware de out/2026 e o T0, passo 2 (ver se o `ler_adc` imprime a linha `Integridade:`).
-2. **T7a, T7b e T7c refeitos** (agora com ≥ 3 blocos): continuidade sem salto nas trocas de buffer. É a validação em hardware da correção do firmware.
-3. **T7e**, métodos 1, 2 e 4: o limite de taxa e quanto as esperas do CS podem cair.
-4. **T10** (perfil da sonda de corrente), com o T10-0 antes.
-5. Pendências curtas: o contador no T4, o ponto de 20 kHz no T6a e o −10 V do T0.
-6. T5, T8, T9 e T11, nessa ordem.
+**O que muda e o que não muda.** Com os atrasos de CS padrão (sem `--atraso-cs`), a transação SPI do firmware novo é
+idêntica à antiga: os mesmos 1 166 ciclos e os mesmos instantes de CS e SCLK, conferidos no simulador. Mudam só:
+
+* a grade de tempo nas trocas de buffer (o salto de 6,97 µs a cada bloco sumiu);
+* as ~10 primeiras amostras de cada captura (antes saíam adiantadas);
+* as capturas abaixo de 48,8 kS/s, em que um bloco dura mais de 21,5 s (o contador travava no meio dele);
+* o cabeçalho v4, com a integridade de cada captura.
+
+O ADC, o divisor, o filtro analógico interno do ADS8688, o ruído e a escala **não** dependem do firmware nem da taxa
+de amostragem. Uma medida feita dentro de um bloco, a 100 kS/s, vale com o firmware novo.
+
+**O que depende da taxa:** a banda que se mede. Um perfil (T3, T10) vale até 0,9 × Nyquist da taxa em que foi
+medido, com 1 canal. Acima disso, a correção mantém o ganho do último ponto, o que dá um valor errado (o
+`adc_tool.py` avisa). Também dependem da taxa o *aliasing* (T8) e os sinais de teste (T9, T11).
+
+| Teste | Se a taxa ficar em 100 kS/s | Se a taxa subir (esperas do CS reduzidas no T7e) |
+|---|---|---|
+| T0 | Só o passo 2 (sanidade do firmware novo) e o −10 V pendente | Idem: a escala não depende da taxa |
+| T1 | Não precisa | **Refazer** na taxa e nas esperas novas: é o que mostra se o quadro mais curto trouxe ruído (T7e, método 4) |
+| T2 | Não precisa | Não precisa (DC) |
+| T3 | Não precisa; só faltam as repetições (`--repeticoes 3`) | **Refazer inteiro** até 0,9 × Nyquist, com `--repeticoes 3`. Os pontos até 45 kHz continuariam valendo (o filtro é analógico), mas uma curva só, medida de uma vez, é melhor para o relatório |
+| T4 | Não precisa; falta a leitura do contador | **Refazer** nas taxas novas, com o contador (30 min) |
+| T5 | Fazer (nunca foi feito) | Fazer na taxa final |
+| T6 | Não precisa; falta o ponto de 20 kHz | **Refazer** com as esperas novas (a diafonia de memória pode mudar com quadros mais curtos) |
+| T7a a T7c | **Refazer**: é a validação da correção | Refazer na taxa final |
+| T7e | **Fazer**: decide a taxa | — |
+| T8, T9, T11 | Fazer | Fazer na taxa final |
+| T10 (sonda de corrente) | Fazer | Fazer **só depois do T7e**, na taxa final |
+
+**Quando vale subir a taxa.** Use só taxas que dividem 200 MHz exatamente: 125, 160, 200, 250 e 400 kS/s (fato 6).
+Com 1 canal, o perfil cobre até 45 kHz a 100 kS/s, 56 kHz a 125, 72 kHz a 160, 90 kHz a 200 e 112 kHz a 250 kS/s
+(150 kHz pedem ~333 kS/s).
+
+* **≥ 200 kS/s com integridade** (0 amostras atrasadas, 0 quadros com ruído no SDO, ruído e SINAD iguais aos do
+  padrão): a banda medida dobra. Vale refazer tudo o que vai para o relatório, na coluna da direita.
+* **125 a 160 kS/s:** ganho de 25 a 60 % na banda. Decida com o orientador; fique numa taxa exata.
+* **Abaixo disso:** fique em 100 kS/s; os dados de 19/10 (T0 a T4, T6) continuam valendo.
+
+Lembre que, em produção, tensão e corrente juntas dividem a taxa por 2 (os canais são multiplexados). Um perfil
+medido com 1 canal na taxa máxima vale para qualquer taxa menor por canal: calibre uma vez, na taxa mais alta que
+passar no T7e.
+
+**Próxima ida ao laboratório:**
+
+1. **Dia 1 (~3 h):** `./setup.sh` com o firmware de out/2026 e o T0, passo 2 (a linha `Integridade:`), depois o
+   T7a, o T7b e o T7c com ≥ 3 blocos (continuidade sem salto nas trocas de buffer) e o T7e, métodos 1, 2 e 4.
+   **No fim do dia, a taxa de trabalho está decidida.**
+2. **Se ficar em 100 kS/s:** o T10-0 e o T10 (a sonda de corrente), mais as pendências curtas: o contador no T4,
+   os 20 kHz no T6a, o −10 V do T0 e as repetições do T3. Depois, T5, T8, T9 e T11.
+3. **Se subir:** T1, T3 (inteiro, com repetições), T4 e T6 na taxa nova (~4 h); depois o T10-0 e o T10 (~4 h);
+   depois T5, T8, T9 e T11. Os resultados de 19/10 continuam no relatório como caracterização do ADC (T0, T2) e
+   como o "antes" da correção do firmware (T7c).
 
 ---
 
@@ -64,7 +110,7 @@ Oito fatos mudam o planejamento. Todos devem ser **confirmados** nos testes indi
 * componentes entre 50 e 150 kHz **dobram** para dentro de 0 a 50 kHz e não dá para separá-las depois ([T8](#t8-aliasing));
 * acima de 100 kS/s use taxas só nos testes que pedem (T1, T4, T7), para mostrar no relatório o limite real e o que acontece além dele.
 
-**2. O ADS8688 tem um filtro passa-baixa de 2ª ordem em cada canal, com corte de ~15 kHz.** Está no datasheet do repositório ([`Datasheets/ads8688.pdf`](Datasheets/ads8688.pdf), seção 8.3.5 e Figura 55; banda de pequenos sinais de **−3 dB em 15 kHz** e de −0,1 dB em 2,5 kHz). Não dá para desligar. Estimativa grosseira, entre um filtro de dois polos reais e um Butterworth de 2ª ordem:
+**2. O ADS8688 tem um filtro passa-baixa de 2ª ordem em cada canal, com corte de ~15 kHz.** Está no datasheet do repositório ([`datasheets/ads8688.pdf`](datasheets/ads8688.pdf), seção 8.3.5 e Figura 55; banda de pequenos sinais de **−3 dB em 15 kHz** e de −0,1 dB em 2,5 kHz). Não dá para desligar. Estimativa grosseira, entre um filtro de dois polos reais e um Butterworth de 2ª ordem:
 
 | Frequência | 10 kHz | 15 kHz | 30 kHz | 45 kHz | 60 kHz | 90 kHz | 130 kHz |
 |---|---|---|---|---|---|---|---|
@@ -147,7 +193,7 @@ Isso desloca todas as frequências medidas pela mesma razão (um tom de 10 kHz a
 
 **8. Um gerador de funções comum não serve para medir THD de um ADC de 16 bits.** O ADS8688 tem THD de −102 dB (típico, 1 kHz); geradores comuns têm −50 a −70 dBc, e o osciloscópio não enxerga abaixo de uns −60 dBc. O T5 explica o que fazer (filtro passa-faixa no gerador, ou fonte de baixa distorção).
 
-> **Fora do roteiro:** o `Datasheets/LV25-P.PDF` do repositório **não se aplica a esta placa**: o canal de tensão é um divisor resistivo, e não o transdutor LV 25-P.
+> **Fora do roteiro:** o `datasheets/lv25-p.pdf` do repositório **não se aplica a esta placa**: o canal de tensão é um divisor resistivo, e não o transdutor LV 25-P.
 
 ---
 
@@ -155,7 +201,7 @@ Isso desloca todas as frequências medidas pela mesma razão (um tom de 10 kHz a
 
 ### O que levar
 
-Equipamentos do seu levantamento (`Anotações - Teste de bancada.md`), com o que importa de cada um para o roteiro:
+Equipamentos do seu levantamento (`bench-notes.md`), com o que importa de cada um para o roteiro:
 
 | Item | Para quê |
 |---|---|
@@ -198,11 +244,14 @@ Equipamentos do seu levantamento (`Anotações - Teste de bancada.md`), com o qu
 ### Nomes e pastas
 
 * **Na BeagleBone** (`firmware/`): `T<n><letra>_<descrição>.bin`, por exemplo `T5a_1k_m40dBFS.bin`, e título curto no cabeçalho com `-t "T5a 1kHz -40dBFS"` (até 63 bytes).
-* **No computador:** copie tudo para `lab/AAAA-MM-DD/`. Todos os resultados numéricos vão para **um único** `lab/AAAA-MM-DD/resultados.csv`.
+* **No computador:** copie tudo para `$DADOS/lab/AAAA-MM-DD/` (a pasta do dia, `$DIA` nos comandos), **fora do repositório**: dentro dele, um `git clean` apagaria os dados. As coletas do `calibrar_sonda.sh` (`firmware/capturas/<id>/` na BeagleBone) vão para `$DIA/capturas/<id>/`. Todos os resultados numéricos vão para **um único** `$DIA/resultados.csv`.
 * **Canais desta bancada, em todos os testes: canal 1 = tensão (divisor) e canal 0 = corrente (SCT013).** Os comandos abaixo já usam essa atribuição (para mudá-la, troque o número do canal no `ler_adc`, em `--faixa-adc`, `--grandeza`, `--sonda` e `--canal-sonda`). Nos comandos de captura, o argumento depois da taxa é a lista de canais. **Com os dois canais, o ADS8688 varre sempre em ordem crescente: o canal 0 (corrente) é convertido primeiro e o canal 1 (tensão) 1/taxa total depois** (10 µs a 100 kS/s; veja o T6b).
-* **Variáveis do roteiro (fish, no computador).** Defina uma vez por sessão e use nos comandos de análise; assim, se o T2 ou o T10-0 mudarem um ganho, você troca só uma linha:
+* **Variáveis do roteiro (fish, no computador, na raiz do repositório).** Defina uma vez por sessão e use nos comandos de análise; assim, se o T2 ou o T10-0 mudarem um ganho, ou se você for analisar outro dia, troca só uma linha:
 
 ```fish
+set -q DADOS; or set -Ux DADOS ~/Documents/sh-analyzer-data   # a pasta de dados (fica salva no fish)
+set DIA $DADOS/lab/(date +%F)   # a pasta do dia de bancada; para outro dia: set DIA $DADOS/lab/2026-10-19
+mkdir -p $DIA
 set GV 19.357      # --ganho do canal de tensão: 1 ÷ razão do divisor (34,629 kΩ ÷ 1,789 kΩ)
 set GI 16667       # --ganho do canal de corrente: 1 ÷ 60 µV/A (SCT013 100A:50mA sobre 0,12 Ω)
 ```
@@ -214,10 +263,11 @@ set GI 16667       # --ganho do canal de corrente: 1 ÷ 60 µV/A (SCT013 100A:50
 * **Grandeza no perfil de tensão.** Com `--grandeza tensao`, o `calibrar_sonda.sh` grava `--grandeza <canal>:tensao` nas capturas do divisor, como em produção (`--grandeza 1:tensao --sonda 1:cadeia_tensao`), e os textos dele falam da tensão na entrada da cadeia em vez de "shunt". Coletas feitas antes dessa opção ficaram marcadas como `corrente`: é só um rótulo, que o gerador de perfil não usa nos modos de 1 canal.
 * **0 dBFS = metade do fundo de escala total** no pino do ADC: 10,24 V no canal 1 (tensão, ±10,24 V; 2,56 V no canal 0, corrente, em ±2,56 V). Amplitudes de pico no pino do canal 1: −0,5 dBFS = 9,67 V; −6 dBFS = 5,13 V; −20 dBFS = 1,024 V; −40 dBFS = 102 mV; −60 dBFS = 10,2 mV. **Pelo divisor** o gerador só chega a 0,517 V de pico (−26 dBFS): a tabela de gerador do [T5](#t5-distorção-e-faixa-dinâmica) já converte.
 
-Para copiar as capturas:
+Para copiar as capturas (e as coletas de calibração do dia):
 
-```bash
-scp 'debian@<ip-da-beaglebone>:caminho/firmware/T*.bin' lab/2026-10-20/
+```fish
+scp 'debian@<ip-da-beaglebone>:caminho/firmware/T*.bin' $DIA/
+scp -r 'debian@<ip-da-beaglebone>:caminho/firmware/capturas' $DIA/
 ```
 
 ### `medir_captura.py` em um minuto
@@ -225,7 +275,7 @@ scp 'debian@<ip-da-beaglebone>:caminho/firmware/T*.bin' lab/2026-10-20/
 Mede uma ou mais capturas e imprime **números com unidade**, prontos para uma tabela:
 
 ```fish
-uv run scripts/medir_captura.py lab/2026-10-20/T5a_*.bin --csv lab/2026-10-20/resultados.csv
+uv run scripts/medir_captura.py $DIA/T5a_*.bin --csv $DIA/resultados.csv
 ```
 
 Como o `adc_tool.py`, ele lê frequência, canais, sonda **e a faixa do ADC de cada canal** do cabeçalho (e aceita `-f`, `--canais`, `--faixa`, `--ganho`, `--offset`, `--formato`). **Atenção:** o cabeçalho **não** guarda o ganho; passe `--ganho $GV` no canal de tensão e `--ganho $GI` no de corrente, senão ele usa 1 (numa captura com os dois canais, `--ganho $GI,$GV`: um valor por canal, na ordem crescente dos canais, 0 e 1). `--faixa` só serve para sobrepor a do cabeçalho (ele avisa se divergir) ou para capturas antigas (v1/v2), que assumem 10.24. O que mede, por canal:
@@ -298,7 +348,7 @@ ls -l T0_sanidade.bin        # 2098176 bytes = 1024 de cabeçalho + 1048576 amos
 ```
 
 ```fish
-uv run scripts/medir_captura.py lab/2026-10-20/T0_sanidade.bin --sem-tom --sem-correcao-sonda --inicio 100
+uv run scripts/medir_captura.py $DIA/T0_sanidade.bin --sem-tom --sem-correcao-sonda --inicio 100
 ```
 
 6. **Escala do ADC nas três faixas (10 minutos).** Gerador em **DC** (forma de onda DC, *High-Z*) com **+10,000 V** no nó de entrada do divisor, o Fluke 289 no mesmo nó (anote a leitura `V_in`, com todos os dígitos). No pino do ADC isso é `V_in × 0,05157` ≈ 0,516 V, que cabe nas três faixas. Capture o canal de tensão **uma vez em cada faixa**:
@@ -312,7 +362,7 @@ sudo ./ler_adc 100000 1 --blocos 1 --faixa-adc 1:5.12  -o T0_dc_p10_f512.bin  -t
 ```fish
 # --ganho 1: o 'media' sai em volts NO PINO, na faixa que o cabeçalho de cada captura registra
 for f in 2048 1024 512
-    uv run scripts/medir_captura.py lab/2026-10-20/T0_dc_p10_f$f.bin --sem-tom --sem-correcao-sonda --ganho 1 --inicio 100
+    uv run scripts/medir_captura.py $DIA/T0_dc_p10_f$f.bin --sem-tom --sem-correcao-sonda --ganho 1 --inicio 100
 end
 ```
 
@@ -379,8 +429,8 @@ sudo ./ler_adc 100000 0,1 --faixa-adc 0:5.12 --blocos 1 -o T1_sonda_100k_2ch.bin
 Para ver o efeito da faixa no **mesmo** canal, faça também o canal 0 (corrente) em curto nas três faixas (`--faixa-adc 0:20.48`, `0:10.24` e `0:5.12`, um canal só): o ruído em volts deve cair com a faixa e o ruído em LSB, subir.
 
 ```fish
-uv run scripts/medir_captura.py lab/2026-10-20/T1_*.bin --sem-tom --sem-correcao-sonda --ganho 1 --inicio 100 --csv lab/2026-10-20/resultados.csv
-uv run scripts/adc_tool.py lab/2026-10-20/T1_curto_100k_1ch.bin --welch --modo-espectro ruido --sem-correcao-sonda --inicio 100 -o lab/2026-10-20/fig_T1_psd.png
+uv run scripts/medir_captura.py $DIA/T1_*.bin --sem-tom --sem-correcao-sonda --ganho 1 --inicio 100 --csv $DIA/resultados.csv
+uv run scripts/adc_tool.py $DIA/T1_curto_100k_1ch.bin --welch --modo-espectro ruido --sem-correcao-sonda --inicio 100 -o $DIA/fig_T1_psd.png
 ```
 
 (`--inicio 100`: pula o transitório de troca de faixa do T0. Sem ele, o ruído das capturas de 19/10 que trocaram de faixa sai 7 a 8 vezes maior: 4,1 a 5,7 LSB em vez de 0,5 a 0,75 LSB.)
@@ -417,7 +467,7 @@ sudo ./ler_adc 100000 1 --blocos 1 -o T2_dc_p5v.bin -t "T2 DC +5V"    # e assim 
 ```
 
 ```fish
-uv run scripts/medir_captura.py lab/2026-10-20/T2_dc_*.bin --sem-tom --sem-correcao-sonda --ganho 1 --csv lab/2026-10-20/resultados.csv
+uv run scripts/medir_captura.py $DIA/T2_dc_*.bin --sem-tom --sem-correcao-sonda --ganho 1 --csv $DIA/resultados.csv
 ```
 
 **Análise (planilha).** `media` (volts no pino) contra a leitura do multímetro na entrada: ajuste linear. A **inclinação é a razão real do divisor com a carga do ADC**: compare com 0,05157 (nominal com a carga de 1 MΩ; 0,051662 sem ela). Se for diferente por mais de ~0,3%, use `1 ÷ inclinação` como `$GV` (e se for perto de **metade** ou do **dobro**, a escala do T0 está errada). O intercepto é o offset (esperado ±0,75 mV no pino, ±15 mV referido à entrada); o resíduo, em LSB, é o erro de linearidade **na faixa de ±0,5 V do pino** (só 10% da escala).
@@ -472,7 +522,7 @@ sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45
 No computador, com a leitura do osciloscópio digitada (coluna `tensao_rms_V`: a leitura já é a tensão física, sem shunt):
 
 ```fish
-uv run scripts/gerar_perfil_sonda.py capturas/cadeia_tensao --referencia-externa --ganho $GV --plot
+uv run scripts/gerar_perfil_sonda.py $DIA/capturas/cadeia_tensao --referencia-externa --ganho $GV --plot
 ```
 
 Uma coleta feita antes de `--grandeza tensao` gravou a leitura na coluna `v_shunt_rms_V`: para ela, some `--resistencia-shunt 1` (com 1 Ω, a "corrente" calculada é numericamente a tensão em volts). Para a variante de amplitude conhecida, o mesmo comando **sem** `--referencia-externa` (a amplitude vem dos metadados). Para um `.m` por ponto (tensão na entrada do divisor, em V), troque por `--referencia-osciloscopio --osc-unidade A`. O resultado é `scripts/sondas/cadeia_tensao.json` e um PNG com a curva. O `$GV` usado aqui é o mesmo que vai em produção: o perfil sai **relativo a ele** (ganho de baixa frequência esperado ~0,998, a carga de 1 MΩ).
@@ -484,7 +534,7 @@ sudo ./ler_adc 100000 1 --blocos 2 -o T3_f40000.bin -t "T3 40 kHz"
 ```
 
 ```fish
-uv run scripts/medir_captura.py lab/2026-10-20/T3_f40000.bin --freq 40000 --referencia-rms 7.0712 --sem-correcao-sonda --ganho $GV --csv lab/2026-10-20/resultados.csv
+uv run scripts/medir_captura.py $DIA/T3_f40000.bin --freq 40000 --referencia-rms 7.0712 --sem-correcao-sonda --ganho $GV --csv $DIA/resultados.csv
 ```
 
 Imprime o erro de amplitude em % (ADC contra instrumento): a atenuação da cadeia nessa frequência.
@@ -496,10 +546,10 @@ Imprime o erro de amplitude em % (ADC contra instrumento): a atenuação da cade
 **Para o relatório.** A curva de ganho (dB) × frequência (eixo logarítmico), com a frequência de −3 dB marcada e a curva teórica do datasheet por cima; tabela de ganho em 1, 5, 10, 15, 20, 30 e 45 kHz. A figura sai do script das figuras do relatório, que lê o perfil, ajusta um passa-baixa de 2ª ordem (em dB) e grava, além do PDF, as macros com K, f0, Q e f−3dB para o texto:
 
 ```fish
-uv run relatorio/gerar_figuras.py perfil_cadeia_tensao --png
+uv run report/gerar_figuras.py perfil_cadeia_tensao --png
 ```
 
-**Executado em 19/10/2026** (48 pontos de 50 Hz a 45 kHz, `--ref-externa`, sem repetições; `scripts/sondas/cadeia_tensao.json`): −3 dB em **17,3 kHz** e −12,5 dB em 45 kHz; o 2ª ordem ajusta com f0 = 24,1 kHz, Q = 0,54 e resíduo de 0,13 dB. Para a próxima rodada: `--grandeza tensao` (a coleta de 19/10 é anterior à opção e ficou marcada como corrente, o que não muda o perfil) e `--repeticoes 3`, para ter a incerteza de cada ponto (o ajuste passa a ser ponderado). A fase não foi medida: a função de transferência vale sob a hipótese de fase mínima (ver `docs/notas_relatorio.md`, Marco 12).
+**Executado em 19/10/2026** (48 pontos de 50 Hz a 45 kHz, `--ref-externa`, sem repetições; `scripts/sondas/cadeia_tensao.json`): −3 dB em **17,3 kHz** e −12,5 dB em 45 kHz; o 2ª ordem ajusta com f0 = 24,1 kHz, Q = 0,54 e resíduo de 0,13 dB. Para a próxima rodada: `--grandeza tensao` (a coleta de 19/10 é anterior à opção e ficou marcada como corrente, o que não muda o perfil) e `--repeticoes 3`, para ter a incerteza de cada ponto (o ajuste passa a ser ponderado). A fase não foi medida: a função de transferência vale sob a hipótese de fase mínima (ver `docs/report-notes.md`, Marco 12).
 
 ### T4: frequência de amostragem real
 
@@ -519,7 +569,7 @@ done
 
 ```fish
 for taxa in 50000 100000 102400 110000 125000
-    uv run scripts/medir_captura.py lab/2026-10-20/T4_fs_$taxa.bin --freq 10000 --referencia-freq 10000.02 --sem-correcao-sonda --inicio 100 --csv lab/2026-10-20/resultados.csv
+    uv run scripts/medir_captura.py $DIA/T4_fs_$taxa.bin --freq 10000 --referencia-freq 10000.02 --sem-correcao-sonda --inicio 100 --csv $DIA/resultados.csv
 end
 ```
 
@@ -576,7 +626,7 @@ sudo ./ler_adc 100000 1 --blocos 2 -o T5a_1k_m40dBFS.bin -t "T5a 1kHz -40dBFS"  
 **T5b: varredura de frequência, −26 dBFS (20 Vpp).** 1, 5, 10, 20 e 40 kHz (**não** use 50 kHz: é a própria Nyquist).
 
 ```fish
-uv run scripts/medir_captura.py lab/2026-10-20/T5*.bin --sem-correcao-sonda --ganho 1 --harmonicos 9 --csv lab/2026-10-20/resultados.csv
+uv run scripts/medir_captura.py $DIA/T5*.bin --sem-correcao-sonda --ganho 1 --harmonicos 9 --csv $DIA/resultados.csv
 ```
 
 (`--ganho 1`: o ADC sozinho, em volts no pino.)
@@ -608,7 +658,7 @@ sudo ./ler_adc 100000 0,1 --faixa-adc 0:5.12 --blocos 4 -o T6b_VI_1k.bin -t "T6b
 ```
 
 ```fish
-uv run scripts/medir_captura.py lab/2026-10-20/T6*.bin --sem-correcao-sonda --csv lab/2026-10-20/resultados.csv
+uv run scripts/medir_captura.py $DIA/T6*.bin --sem-correcao-sonda --csv $DIA/resultados.csv
 ```
 
 (A diafonia é medida em volts no pino, então as faixas diferentes dos dois canais, lidas do cabeçalho, não atrapalham; o canal 0 em ±2,56 V tem menos ruído, e a diafonia mínima mensurável melhora na mesma medida.)
@@ -654,14 +704,14 @@ sudo ./ler_adc 100000 1 --duracao 10m -o T7c_10min.bin -t "T7c 10 min 100k"
 
 ```fish
 for ini in (seq 0 6000000 54000000)
-    uv run scripts/medir_captura.py lab/2026-10-20/T7c_10min.bin --freq 10000 --inicio $ini --max-amostras 4000000 --rotulo "T7c ini $ini" --sem-correcao-sonda --csv lab/2026-10-20/resultados.csv
+    uv run scripts/medir_captura.py $DIA/T7c_10min.bin --freq 10000 --inicio $ini --max-amostras 4000000 --rotulo "T7c ini $ini" --sem-correcao-sonda --csv $DIA/resultados.csv
 end
 ```
 
 **T7d: sob carga.** Repita o T7a a 100 kS/s **enquanto** outra janela copia um arquivo grande por `scp` e outra roda `top`. Mostra se o sistema de arquivos ou a CPU atrapalham a captura.
 
 ```fish
-uv run scripts/medir_captura.py lab/2026-10-20/T7[abcd]*.bin --freq 10000 --sem-correcao-sonda --inicio 100 --csv lab/2026-10-20/resultados.csv
+uv run scripts/medir_captura.py $DIA/T7[abcd]*.bin --freq 10000 --sem-correcao-sonda --inicio 100 --csv $DIA/resultados.csv
 ```
 
 **Esperado.** Em cada captura: `continuidade : OK`, **0 eventos**, maior salto de fase **de poucos milésimos de amostra** (0,001 a 0,004 nas capturas de 19/10 sem troca de buffer). Não basta o "OK": a ferramenta só acusa saltos acima de 0,5 amostra **do canal**, e o salto de 7 µs do firmware antigo vale 0,7 amostra com 1 canal a 100 kS/s, mas **0,35 com 2 canais** (passa como OK) e 0,09 com 8. Qualquer salto acima de ~0,02 amostra que caia numa troca de buffer (amostra 1 048 576 ÷ nº de canais, e múltiplos) é defeito; tamanho do arquivo igual ao do cabeçalho (a ferramenta avisa se não for); amplitude do tom varia menos de ~0,1% entre segmentos. No T7c, o tom pode derivar um pouco pelo gerador: compare com a leitura do osciloscópio no início e no fim.
@@ -678,13 +728,13 @@ uv run scripts/medir_captura.py lab/2026-10-20/T7[abcd]*.bin --freq 10000 --sem-
 | T4, 110 e 125 kS/s; T6a; T6b | 2 a 4 | **0,77 e 0,87**; 0,35 com 2 canais | Salto em toda troca de buffer |
 | **T7c, 10 min a 100 kS/s** | 58 | **+0,697 amostra (6,97 µs) em todas as 57 trocas**, desvio de ±0,002 | O defeito do firmware antigo (abaixo) |
 
-* **O defeito:** o contador de ciclos da PRU era zerado a cada troca de buffer **depois** da transação da última amostra, e a primeira amostra do bloco seguinte saía uma transação (~1 394 ciclos, 6,97 µs) atrasada. O salto, em amostras, cresce com a taxa (0,697 a 100 kS/s, 0,77 a 110 kS/s, 0,87 a 125 kS/s): é um tempo fixo. Nenhuma amostra se perdeu; a grade de tempo é que escorregou. O `medir_captura.py` o aponta ("numa troca de buffer da PRU"). A correção (out/2026) está no [Marco 13](notas_relatorio.md#marco-13--revisão-do-firmware-grade-de-tempo-e-integridade-da-captura) das notas.
+* **O defeito:** o contador de ciclos da PRU era zerado a cada troca de buffer **depois** da transação da última amostra, e a primeira amostra do bloco seguinte saía uma transação (~1 394 ciclos, 6,97 µs) atrasada. O salto, em amostras, cresce com a taxa (0,697 a 100 kS/s, 0,77 a 110 kS/s, 0,87 a 125 kS/s): é um tempo fixo. Nenhuma amostra se perdeu; a grade de tempo é que escorregou. O `medir_captura.py` o aponta ("numa troca de buffer da PRU"). A correção (out/2026) está no [Marco 13](report-notes.md#marco-13--revisão-do-firmware-grade-de-tempo-e-integridade-da-captura) das notas.
 * **Dentro de cada bloco, o sistema é estável:** em 11 janelas de 1 bloco espalhadas pelos 10 min, o tom ficou em 9 999,5690 a 9 999,5699 Hz (0,09 ppm) e a amplitude em 0,304809 a 0,304836 V RMS (0,009 %).
 * **A refazer, com o firmware novo** (`./setup.sh`): T7a e T7b com ≥ 3 blocos e o T7c. O maior salto tem de cair para os milésimos em todas as trocas, e o `ler_adc` tem de terminar com a linha `Integridade: ... tudo certo`. É a validação em hardware da correção (o simulador já confere a lógica).
 
 #### T7e: onde está o limite de taxa
 
-**Objetivo.** Saber **até onde** vai a taxa real e **qual parte** do projeto é o gargalo (a PRU/SPI, o ADC ou o lado ARM), em vez de supor. São os itens F2 e F3 de [`melhorias-propostas.md`](melhorias-propostas.md#f2--medir-até-onde-as-esperas-do-cs-podem-cair), medidos em bancada.
+**Objetivo.** Saber **até onde** vai a taxa real e **qual parte** do projeto é o gargalo (a PRU/SPI, o ADC ou o lado ARM), em vez de supor. São os itens F2 e F3 de [`improvement-proposals.md`](improvement-proposals.md#f2--medir-até-onde-as-esperas-do-cs-podem-cair), medidos em bancada.
 
 **Hipótese a testar** (confirmada na leitura do firmware e no simulador em out/2026; falta a medida no CS). O ADS8688 precisa só de ~2 µs por amostra (500 kS/s), mas a PRU gasta bem mais: pela contagem estática do `spi_core.asm` (±10%), 32 bits de SCLK de ~16 a 19 ciclos cada (≈ 2,9 µs) mais os três laços de atraso do CS (200 + 100 + 100 iterações de 2 ciclos = 800 ciclos = **4,0 µs**) dão **~7 µs por quadro**, ou seja, ~140 kS/s no papel; o limite que você observou (130 kS/s) está nessa faixa. Executar o próprio `spi_core.asm` num simulador de PRU (`tests/pru_sim.py`, 1 ciclo por instrução, sem hardware) deu o mesmo resultado: **1379 ciclos = 6,9 µs por quadro (~145 kS/s)**, dos quais **800 ciclos (58%) são os três laços de atraso do CS**. É um teto de papel (acessos à memória externa podem somar ciclos): só o osciloscópio (método 2) confirma. Os mínimos do datasheet são 30/10/30 ns (tSU_CSCK, tD_CKCS, tPH_CS); reduza só pelo método 4, medindo. Se for isso, a taxa **real** satura entre 130 e 145 kS/s, **sem perder amostra**, qualquer que seja a taxa pedida, e o firmware de out/2026 conta as **amostras atrasadas** a cada captura. O lado ARM é improvável (130 kS/s = 260 kB/s; cada buffer de 2 MB demora ~8 s para encher).
 
@@ -698,7 +748,7 @@ done
 
 ```fish
 for taxa in 100000 110000 120000 125000 130000 135000 140000 150000 200000 250000 500000
-    uv run scripts/medir_captura.py lab/2026-10-20/T7e_fs_$taxa.bin --referencia-freq 10000.02 --sem-correcao-sonda --rotulo "T7e fs $taxa" --csv lab/2026-10-20/resultados.csv
+    uv run scripts/medir_captura.py $DIA/T7e_fs_$taxa.bin --referencia-freq 10000.02 --sem-correcao-sonda --rotulo "T7e fs $taxa" --csv $DIA/resultados.csv
 end
 ```
 
@@ -721,7 +771,7 @@ Em cada captura, o `ler_adc` imprime a **taxa real medida** e o número de **amo
 
 **Como ler.**
 
-| Observação | Gargalo provável | Melhoria (ver `melhorias-propostas.md`) |
+| Observação | Gargalo provável | Melhoria (ver `improvement-proposals.md`) |
 |---|---|---|
 | `fs_real` **satura** (130 a 145 kS/s) e o período do CS para de diminuir; continuidade OK; o `ler_adc` acusa amostras atrasadas | Tempo fixo do quadro da PRU (atrasos do CS e bits do SPI) | F2 (atrasos do CS, método 4) e F3 (SPI) |
 | `fs_real` = pedida, mas o `ler_adc` acusa buffers sobrescritos, mais com disco ocupado | Escrita/CPU do ARM | R1 (cartão/disco) e F6 |
@@ -744,7 +794,7 @@ sudo ./ler_adc 100000 1 --blocos 2 -o T8_f120k.bin -t "T8 120kHz alias 20k"
 ```
 
 ```fish
-uv run scripts/medir_captura.py lab/2026-10-20/T8_f120k.bin --freq 20000 --referencia-rms 7.07 --sem-correcao-sonda --ganho $GV --csv lab/2026-10-20/resultados.csv
+uv run scripts/medir_captura.py $DIA/T8_f120k.bin --freq 20000 --referencia-rms 7.07 --sem-correcao-sonda --ganho $GV --csv $DIA/resultados.csv
 ```
 
 (`--freq` é a frequência **onde o tom aparece** depois do dobramento; `--referencia-rms` é a leitura do osciloscópio do tom real de 120 kHz, na entrada do divisor.)
@@ -775,9 +825,9 @@ sudo ./ler_adc 100000 1 --blocos 4 -o T9a_quadrada_2k.bin -t "T9a quadrada 2k" -
 
 ```fish
 # sem correção da cadeia (o que o ADC "vê") e com a correção do perfil do T3
-uv run scripts/medir_captura.py lab/2026-10-20/T9a_quadrada_2k.bin --freq 2000 --harmonicos 15 --sem-correcao-sonda --ganho $GV --rotulo "T9a sem correcao" --csv lab/2026-10-20/resultados.csv
-uv run scripts/medir_captura.py lab/2026-10-20/T9a_quadrada_2k.bin --freq 2000 --harmonicos 15 --ganho $GV --rotulo "T9a com perfil" --csv lab/2026-10-20/resultados.csv
-uv run scripts/adc_tool.py lab/2026-10-20/T9a_quadrada_2k.bin --welch --picos -70 --filtro-passa-alta 500 --ganho $GV -o lab/2026-10-20/fig_T9a.png
+uv run scripts/medir_captura.py $DIA/T9a_quadrada_2k.bin --freq 2000 --harmonicos 15 --sem-correcao-sonda --ganho $GV --rotulo "T9a sem correcao" --csv $DIA/resultados.csv
+uv run scripts/medir_captura.py $DIA/T9a_quadrada_2k.bin --freq 2000 --harmonicos 15 --ganho $GV --rotulo "T9a com perfil" --csv $DIA/resultados.csv
+uv run scripts/adc_tool.py $DIA/T9a_quadrada_2k.bin --welch --picos -70 --filtro-passa-alta 500 --ganho $GV -o $DIA/fig_T9a.png
 ```
 
 **Esperado.** Sem correção, os harmônicos altos saem **bem abaixo** da teoria (o filtro: a 15ª, em 30 kHz, ~−9 a −12 dB abaixo do que seria). Com o perfil do T3, os níveis relativos devem bater com a teoria em ~1 dB até a 15ª harmônica (30 kHz). É a demonstração mais convincente de que o perfil funciona. Compare com a FFT do osciloscópio (mesma janela de tempo).
@@ -787,8 +837,8 @@ uv run scripts/adc_tool.py lab/2026-10-20/T9a_quadrada_2k.bin --welch --picos -7
 **T9c: fundamental forte e supraharmônicos fracos.** O caso real: **60 Hz** a ~9 V de pico no gerador (18 Vpp; 0,47 V no pino) somado a 9 kHz em −60 dBc (9 mV de pico), 25 kHz em −50 dBc (28 mV) e 40 kHz em −40 dBc (90 mV). Gerador arbitrário de 2 canais ou dois geradores com somador resistivo. Os tons fracos têm 1,5 a 15 LSB de pico no pino (9 a 90 mV de pico na entrada do divisor, onde 1 LSB vale 6 mV): só aparecem na FFT porque o ganho de processamento deixa o ruído por bin em ~7 µV na entrada. **Meça cada fonte sozinha** no osciloscópio (em amplitude maior) para saber os níveis reais; depois some. O DAC do gerador tem 14 bits (1,2 mV de passo em 20 Vpp): confira que a soma não distorce.
 
 ```fish
-uv run scripts/adc_tool.py lab/2026-10-20/T9c.bin --welch --janela hann --filtro-passa-alta 2000 --picos -100 --ganho $GV -o lab/2026-10-20/fig_T9c_welch.png
-uv run scripts/adc_tool.py lab/2026-10-20/T9c.bin --fft --janela hann --ganho $GV -o lab/2026-10-20/fig_T9c_fft.png
+uv run scripts/adc_tool.py $DIA/T9c.bin --welch --janela hann --filtro-passa-alta 2000 --picos -100 --ganho $GV -o $DIA/fig_T9c_welch.png
+uv run scripts/adc_tool.py $DIA/T9c.bin --fft --janela hann --ganho $GV -o $DIA/fig_T9c_fft.png
 ```
 
 **Esperado.** Os três tons são vistos acima do piso; sem a correção da cadeia, o de 40 kHz sai ~12 a 17 dB abaixo do injetado. Anote o **menor tom detectável** (10 dB acima do piso) em cada frequência: é o limite de detecção do sistema.
@@ -834,7 +884,7 @@ sudo ./ler_adc 100000 0 --faixa-adc 0:5.12 --blocos 2 -o T10_0_1k_N10.bin -t "T1
 
 ```fish
 # --referencia-rms = N x I_rms da TCP0030A. Exemplo: N=10, 116 mA -> 1.16
-uv run scripts/medir_captura.py lab/2026-10-20/T10_0_1k_N10.bin --sem-correcao-sonda --ganho $GI --freq 1000 --referencia-rms 1.16
+uv run scripts/medir_captura.py $DIA/T10_0_1k_N10.bin --sem-correcao-sonda --ganho $GI --freq 1000 --referencia-rms 1.16
 ```
 
 **Esperado.**
@@ -857,7 +907,7 @@ sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 0 --pontos 24 --freq-max 45
 O `--faixa-adc 5.12` coloca o canal da sonda em ±2,56 V; vale para todo o plano (fica em `plano_coleta.txt`) e o script confere, em cada captura, se o cabeçalho registrou o código pedido. Em cada ponto: ajuste a frequência no gerador (20 Vpp, High-Z), espere estabilizar, **leia o RMS da corrente na TCP0030A** (A, RMS de ciclos inteiros, com média), aperte ENTER para medir e digite o valor **em ampères, da ponta (uma passada)** quando o script perguntar (ex.: `0.1162` ou `116.2m`; o script escreve "tensão no shunt, em V": aqui é a corrente em A, e o N entra depois, em `--resistencia-shunt`).
 
 * **O script vai dizer "praticamente sem sinal no canal da sonda" em todos os pontos.** O limiar dele é 0,2% da escala (~10 mV pico a pico em ±2,56 V; ~41 mV em ±10,24 V) e o seu sinal tem dezenas de µV: é esperado e **não** invalida a captura. **Digite `C`** para aceitar (a sugestão do menu, neste caso, é `R`: apertar só ENTER refaz o ponto). A captura fica registrada com `aceito_com_erro_qc_sem_sinal_sonda` no manifesto e o `gerar_perfil_sonda.py` a usa normalmente (ele mede a frequência e a amplitude por FFT, que enxerga tons abaixo de 1 LSB). Os campos "frequência medida" e "ganho relativo" que o script mostra, calculados por métodos rápidos sobre ruído, **não valem** aqui.
-* O script confere cabeçalho, CRC e tamanho do arquivo, que valem sim. Depois da primeira rodada, use `--modo refinar --pontos 4` para acrescentar pontos onde o ganho mais varia (ressonâncias do SCT013 em alta frequência) e `--modo adensar` se a curva for acidentada. Mais detalhes em [`guia_de_uso.md`](guia_de_uso.md#sondas-de-corrente-calibração-e-correção).
+* O script confere cabeçalho, CRC e tamanho do arquivo, que valem sim. Depois da primeira rodada, use `--modo refinar --pontos 4` para acrescentar pontos onde o ganho mais varia (ressonâncias do SCT013 em alta frequência) e `--modo adensar` se a curva for acidentada. Mais detalhes em [`user-guide.md`](user-guide.md#sondas-de-corrente-calibração-e-correção).
 
 **Quanto sinal sobra (ordem de grandeza, ruído branco do ADC, N = 10 e 116 mA RMS, faixa de ±2,56 V).** Tom de 70 µV em 1 kHz: ~55 a 57 dB acima do ruído por bin com 10 s (erro de amplitude por ruído ~0,2%); em 20 kHz (−4 dB do filtro): ~51 dB (0,3%); em 40 kHz (−17 dB): ~38 a 40 dB (1%); com 4 blocos (42 s) cada ponto ganha ~6 dB (em 40 kHz: ~0,6%). Em ±10,24 V seriam 9 dB a menos (46 a 48; 42; 29 a 31 dB; erros de 0,5%; 0,8%; 3%). Interferência real (60 Hz e harmônicos, rádio) vai piorar isso: o `gerar_perfil_sonda.py` avisa quando o tom de um ponto não passa 20 dB acima do piso por bin; refaça esses pontos com mais blocos ou mais espiras.
 
@@ -869,7 +919,7 @@ O `--faixa-adc 5.12` coloca o canal da sonda em ±2,56 V; vale para todo o plano
 
 ```fish
 # SEM correção: ADC/osciloscópio mostra o ganho do conjunto nessa frequência, com a corrente real vinda do .m da TCP0030A (A)
-uv run scripts/medir_captura.py captura.bin --sem-correcao-sonda --osciloscopio captura.m --osc-unidade A --osc-escala 10 --ganho $GI --rotulo "metodo 12kHz" --csv lab/2026-10-20/resultados.csv
+uv run scripts/medir_captura.py captura.bin --sem-correcao-sonda --osciloscopio captura.m --osc-unidade A --osc-escala 10 --ganho $GI --rotulo "metodo 12kHz" --csv $DIA/resultados.csv
 ```
 
 (`--osc-escala 10` = N espiras: o valor do osciloscópio é multiplicado por 10.) Com o perfil pronto, repita **com** a correção: ADC ÷ osciloscópio deve dar ~1 numa frequência que não entrou na calibração.
@@ -878,10 +928,10 @@ uv run scripts/medir_captura.py captura.bin --sem-correcao-sonda --osciloscopio 
 
 **Ponto de 60 Hz com a corrente da rede (opcional, com supervisão).** Com transformador de isolamento, **127 V** sobre os **dois resistores de 22,12 Ω em série** (44,24 Ω) dá **2,87 A RMS** (cada resistor com 63,5 V e 182 W, dentro dos 93 V e 400 W). Fio **uma só vez** (N = 1, a configuração de produção) pela TCP0030A (ainda na faixa de 5 A, exatidão de ±1% a 60 Hz) e pelo SCT013: o sinal é de 172 µV RMS (0,55 LSB), ~55 dB acima do ruído por bin. É o melhor ponto de ancoragem do ganho em baixa frequência. **Nunca 220 V** (110 V por resistor, acima dos 93 V) e confira o aquecimento.
 
-**Passo 2: gerar o perfil (no computador).** Copie `capturas/sct013_100a_sn001/` (e os `.m` do osciloscópio, se houver) e rode:
+**Passo 2: gerar o perfil (no computador).** Copie `capturas/sct013_100a_sn001/` para `$DIA/capturas/` (com os `.m` do osciloscópio, se houver) e rode:
 
 ```fish
-uv run scripts/gerar_perfil_sonda.py capturas/sct013_100a_sn001 --referencia-externa \
+uv run scripts/gerar_perfil_sonda.py $DIA/capturas/sct013_100a_sn001 --referencia-externa \
     --resistencia-shunt 0.1 --ganho $GI --formato uint16 \
     --fabricante "YHDC" --modelo "SCT013 100A:50mA" --numero-serie "SN001" --plot
 ```
@@ -896,12 +946,12 @@ sudo ./ler_adc 100000 0 --faixa-adc 0:5.12 --duracao 40s -o H_27kHz.bin -t "H 27
 
 ```fish
 # --referencia-rms = N x I_rms da TCP0030A. Exemplo: N=10 e 112 mA -> 1.12
-uv run scripts/medir_captura.py lab/2026-10-20/H_27kHz.bin --ganho $GI --freq 27000 --referencia-rms 1.12 --rotulo "H 27kHz" --csv lab/2026-10-20/resultados.csv
+uv run scripts/medir_captura.py $DIA/H_27kHz.bin --ganho $GI --freq 27000 --referencia-rms 1.12 --rotulo "H 27kHz" --csv $DIA/resultados.csv
 ```
 
 O `erro_amplitude_pct` do CSV é o erro do **sistema corrigido** contra a TCP0030A, nas frequências de validação. Repita com `--sem-correcao-sonda` para mostrar o quanto a correção melhora.
 
-**Esperado.** Sem correção, o erro em 40 kHz será de dezenas de % (filtro do ADC mais a banda do SCT013). Com correção, deve cair para **poucos %**, limitado por: exatidão da TCP0030A (±1,5% até 5 kHz e **sem especificação** acima: some a incerteza do osciloscópio de ±1%), SNR (~0,2% até 20 kHz e ~1% em 40 kHz em ±2,56 V), interpolação entre pontos (0,17% com 18 pontos, 0,06% com 25, para curvas suaves; ver [`auditoria_perfil_sonda.md`](auditoria_perfil_sonda.md)) e repetibilidade (o desvio entre repetições aparece no próprio perfil). A correção restaura a **amplitude**, não a fase: não use o canal corrigido para potência por componente.
+**Esperado.** Sem correção, o erro em 40 kHz será de dezenas de % (filtro do ADC mais a banda do SCT013). Com correção, deve cair para **poucos %**, limitado por: exatidão da TCP0030A (±1,5% até 5 kHz e **sem especificação** acima: some a incerteza do osciloscópio de ±1%), SNR (~0,2% até 20 kHz e ~1% em 40 kHz em ±2,56 V), interpolação entre pontos (0,17% com 18 pontos, 0,06% com 25, para curvas suaves; ver [`probe-profile-audit.md`](probe-profile-audit.md)) e repetibilidade (o desvio entre repetições aparece no próprio perfil). A correção restaura a **amplitude**, não a fase: não use o canal corrigido para potência por componente.
 
 **Comparar as referências (para o relatório).** Gere o perfil pela leitura digitada e pelo `.m` (`-o scripts/sondas/x_digitado.json` e `-o scripts/sondas/x_osc.json`) e compare os ganhos ponto a ponto: a diferença em dB por frequência é a incerteza de leitura do RMS do painel. Para o **perfil de tensão** (T3), compare também a amplitude conhecida (1,0332 Vpp) com o osciloscópio: a diferença é a planura do gerador somada ao erro de amplitude do painel, ou seja, o quanto a "amplitude conhecida" é confiável sem osciloscópio.
 
@@ -925,14 +975,14 @@ sudo ./ler_adc 100000 1 --blocos 4 -o T11a.bin -t "T11a tensao composta" --grand
 
 ```fish
 # Espectro com a correção da cadeia de tensão (picos até -90 dB)
-uv run scripts/adc_tool.py lab/2026-10-20/T11a.bin --welch --janela hann --filtro-passa-alta 20 --picos -90 --ganho $GV -o lab/2026-10-20/fig_T11a.png
+uv run scripts/adc_tool.py $DIA/T11a.bin --welch --janela hann --filtro-passa-alta 20 --picos -90 --ganho $GV -o $DIA/fig_T11a.png
 
 # Um comando por tom: --freq escolhe o tom (busca em ±10%) e --referencia-rms é o RMS medido SOZINHO (V no nó de entrada)
-uv run scripts/medir_captura.py lab/2026-10-20/T11a.bin --freq 60    --referencia-rms 4.24  --ganho $GV --rotulo "T11a 60Hz"  --csv lab/2026-10-20/resultados.csv
-uv run scripts/medir_captura.py lab/2026-10-20/T11a.bin --freq 2000  --referencia-rms 1.06  --ganho $GV --rotulo "T11a 2kHz"  --csv lab/2026-10-20/resultados.csv
-uv run scripts/medir_captura.py lab/2026-10-20/T11a.bin --freq 9000  --referencia-rms 0.354 --ganho $GV --rotulo "T11a 9kHz"  --csv lab/2026-10-20/resultados.csv
-uv run scripts/medir_captura.py lab/2026-10-20/T11a.bin --freq 20000 --referencia-rms 0.106 --ganho $GV --rotulo "T11a 20kHz" --csv lab/2026-10-20/resultados.csv
-uv run scripts/medir_captura.py lab/2026-10-20/T11a.bin --freq 40000 --referencia-rms 0.035 --ganho $GV --rotulo "T11a 40kHz" --csv lab/2026-10-20/resultados.csv
+uv run scripts/medir_captura.py $DIA/T11a.bin --freq 60    --referencia-rms 4.24  --ganho $GV --rotulo "T11a 60Hz"  --csv $DIA/resultados.csv
+uv run scripts/medir_captura.py $DIA/T11a.bin --freq 2000  --referencia-rms 1.06  --ganho $GV --rotulo "T11a 2kHz"  --csv $DIA/resultados.csv
+uv run scripts/medir_captura.py $DIA/T11a.bin --freq 9000  --referencia-rms 0.354 --ganho $GV --rotulo "T11a 9kHz"  --csv $DIA/resultados.csv
+uv run scripts/medir_captura.py $DIA/T11a.bin --freq 20000 --referencia-rms 0.106 --ganho $GV --rotulo "T11a 20kHz" --csv $DIA/resultados.csv
+uv run scripts/medir_captura.py $DIA/T11a.bin --freq 40000 --referencia-rms 0.035 --ganho $GV --rotulo "T11a 40kHz" --csv $DIA/resultados.csv
 ```
 
 (Confira que a coluna `correcao_sonda` do CSV está `sim`: se estiver vazia, o perfil `cadeia_tensao` não foi achado em `scripts/sondas/` ou a captura não registrou `--sonda 1:cadeia_tensao`. Rode também com `--sem-correcao-sonda` para mostrar o efeito da correção.)
@@ -947,8 +997,8 @@ sudo ./ler_adc 100000 0 --faixa-adc 0:5.12 --blocos 4 -o T11b.bin -t "T11b corre
 
 ```fish
 # --referencia-rms = N x I_rms do tom medido sozinho (aqui N=10: 70 mA -> 0.70 e 46 mA -> 0.46)
-uv run scripts/medir_captura.py lab/2026-10-20/T11b.bin --freq 1000  --referencia-rms 0.70 --ganho $GI --rotulo "T11b 1kHz"  --csv lab/2026-10-20/resultados.csv
-uv run scripts/medir_captura.py lab/2026-10-20/T11b.bin --freq 20000 --referencia-rms 0.46 --ganho $GI --rotulo "T11b 20kHz" --csv lab/2026-10-20/resultados.csv
+uv run scripts/medir_captura.py $DIA/T11b.bin --freq 1000  --referencia-rms 0.70 --ganho $GI --rotulo "T11b 1kHz"  --csv $DIA/resultados.csv
+uv run scripts/medir_captura.py $DIA/T11b.bin --freq 20000 --referencia-rms 0.46 --ganho $GI --rotulo "T11b 20kHz" --csv $DIA/resultados.csv
 ```
 
 Mesmo critério do T11a, com o SNR por bin do T10 (cada tom precisa de ≥ 30 dB acima do piso). Aqui N = 10 serve só para ter sinal: com N = 1 (o uso real) os tons ficam 20 dB mais fracos (veja o piso de detecção do T10).
@@ -965,11 +1015,11 @@ A coluna "Situação" diz o que já existe (✅), o que existe mas tem de ser re
 
 | Item | Origem | Situação |
 |---|---|---|
-| Foto da bancada e diagrama de ligações de cada teste; lista de instrumentos com modelo, exatidão e data da última calibração; valor do capacitor removido | Todos | ⏳ (a lista de instrumentos está em `Anotações - Teste de bancada.md`) |
+| Foto da bancada e diagrama de ligações de cada teste; lista de instrumentos com modelo, exatidão e data da última calibração; valor do capacitor removido | Todos | ⏳ (a lista de instrumentos está em `bench-notes.md`) |
 | Escala do ADC conferida nas três faixas (razão `media` ÷ `V_in × 0,05157`); transitório de troca de faixa | T0 | ✅ tabela no T0 |
 | Ruído em LSB, µV e nV/√Hz × taxa e nº de canais; **ruído × faixa de entrada**; PSD do curto; ruído equivalente na entrada de cada cadeia | T1 | ✅ tabela no T1; ⏳ PSD |
 | Razão real do divisor e offset; resíduo de linearidade em LSB | T2 | ✅ tabela no T2; ⏳ gráfico |
-| **Perfil da cadeia de tensão** (dB × Hz, −3 dB) e o ajuste do passa-baixa (K, f0, Q, resíduos): `relatorio/gerar_figuras.py` | T3 | ✅ `relatorio/figuras/` |
+| **Perfil da cadeia de tensão** (dB × Hz, −3 dB) e o ajuste do passa-baixa (K, f0, Q, resíduos): `report/gerar_figuras.py` | T3 | ✅ `report/figures/` |
 | Erro da taxa de amostragem (ppm) × taxa pedida | T4 | 🟡 tabela no T4, sem o contador |
 | SINAD/ENOB × nível; THD, SINAD e SFDR × frequência; faixa dinâmica | T5 | ⏳ (prévia no T5) |
 | Diafonia e atraso entre canais | T6 | 🟡 tabela no T6; falta 20 kHz |
@@ -1013,7 +1063,7 @@ Os limites abaixo são **propostas** (baseadas no datasheet e em boas práticas)
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
 | Pico forte de 60 Hz e harmônicos no curto | Laço de terra (USB/rede, gerador e osciloscópio em tomadas diferentes) | Um só ponto de terra; notebook com bateria; cabos de sinal curtos e trançados; ferrite |
-| Ruído muito acima de 1 LSB | Jumper longo entre a placa de aquisição e o frontend; fonte ruidosa; USB | Veja "Preparar a BeagleBone" no [guia](guia_de_uso.md); desligue o que não precisa |
+| Ruído muito acima de 1 LSB | Jumper longo entre a placa de aquisição e o frontend; fonte ruidosa; USB | Veja "Preparar a BeagleBone" no [guia](user-guide.md); desligue o que não precisa |
 | Tensão lida pela **metade** (ou o dobro) do que o Fluke mostra | `--faixa` digitado diferente da do cabeçalho (a ferramenta avisa), captura antiga (v1/v2, assume 10.24), ou escala-base do ADC diferente da suposta | Omita `--faixa` (vale a do cabeçalho); para capturas antigas use `--faixa 20.48`; refaça o T0, passo 6 |
 | Amplitude no ADC o dobro (ou a metade) do esperado, só com o gerador | Gerador em 50 Ω com carga High-Z (ou o contrário) | Ajuste a carga do gerador (High-Z) e **leia o osciloscópio**, não o painel |
 | `saturou o ADC` | Amplitude acima da faixa pedida (rede de 220 V; `--faixa-adc 1:10.24` com 127 V; ou o canal de corrente em ±2,56 V com sinal alto) | Reduza o sinal ou aumente a faixa (`--faixa-adc`); no canal de tensão, ±10,24 V cobre até 140 V RMS |
@@ -1038,10 +1088,10 @@ Os limites abaixo são **propostas** (baseadas no datasheet e em boas práticas)
 
 ## Checklist ao sair do laboratório
 
-- [ ] Todos os `.bin` copiados para o computador (e **também** em um segundo lugar: `uv run scripts/compactar_amostras.py lab/AAAA-MM-DD`) e o tamanho conferido.
+- [ ] Todos os `.bin` copiados para o computador (e **também** em um segundo lugar: `uv run scripts/compactar_amostras.py $DIA`, e o pacote em dois lugares) e o tamanho conferido.
 - [ ] A saída de terminal do `ler_adc` de cada captura guardada (a linha `Integridade:` e a taxa real medida não ficam só no cabeçalho).
 - [ ] `resultados.csv` do dia salvo, com uma linha por canal medido.
-- [ ] Pastas `capturas/cadeia_tensao/` e `capturas/sct013_100a_sn001/` (incluem `referencia_externa.csv` e `plano_coleta.txt`) copiadas, junto com o `.m` do osciloscópio de cada ponto (mesmo nome da captura) e as leituras da TCP0030A.
+- [ ] Pastas `capturas/cadeia_tensao/` e `capturas/sct013_100a_sn001/` em `$DIA/capturas/` (incluem `referencia_externa.csv` e `plano_coleta.txt`) copiadas, junto com o `.m` do osciloscópio de cada ponto (mesmo nome da captura) e as leituras da TCP0030A.
 - [ ] Escala do ADC conferida no T0 (razões das três faixas) e a tabela de ruído por faixa do T1; os valores de `$GV` e `$GI` realmente usados nos perfis e a faixa de cada canal (`--faixa-adc`) anotados.
 - [ ] Perfis `scripts/sondas/cadeia_tensao.json` e `scripts/sondas/sct013_100a_sn001.json` gerados e validados (T3, T10), e os PNG das curvas.
 - [ ] Limite de taxa (T7e): tabela `fs_real` × taxa pedida, período do CS, saída do `ler_adc`.

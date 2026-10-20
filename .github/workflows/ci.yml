@@ -1,5 +1,7 @@
 # Integração contínua: a cada push na main e a cada pull request, roda o ruff e a suíte
-# de testes (tests/) no menor e no maior Python suportados. Detalhes em docs/arquitetura_software.md.
+# de testes (tests/) no menor e no maior Python suportados, e confere o firmware que dá para
+# conferir fora da BeagleBone (o C do ARM e os scripts de shell; o clpru da PRU é proprietário
+# e fica de fora). Detalhes em docs/software-architecture.md.
 name: CI
 
 on:
@@ -39,3 +41,18 @@ jobs:
 
       - name: Testes (pytest)
         run: uv run --python ${{ matrix.python }} --extra dev pytest
+
+  firmware:
+    name: firmware (C do ARM e scripts de shell)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # O ler_adc roda num Cortex-A8, mas o código é C/POSIX portável: compilar no x86 já pega
+      # erro de sintaxe, de tipo e aviso que só apareceriam no `make` da BeagleBone.
+      - name: Compilar o ler_adc.c (gcc, avisos viram erro)
+        run: gcc -std=gnu11 -Wall -Wextra -Werror -fsyntax-only firmware/ler_adc.c
+
+      - name: Scripts de shell (shellcheck)
+        run: shellcheck firmware/*.sh scripts/*.sh

@@ -14,7 +14,7 @@ de capturas do SH-Analyzer (ADS8688 via BeagleBone).
 
 Este arquivo é só a ENTRADA de linha de comando; a lógica mora no pacote
 ``supraharmonicos`` (ao lado deste arquivo). Rode com ``--help`` para a referência
-completa de flags e consulte ``docs/arquitetura_software.md`` para o mapa do
+completa de flags e consulte ``docs/software-architecture.md`` para o mapa do
 código.
 
     uv run scripts/adc_tool.py captura.bin --welch --filtro-passa-alta 2000

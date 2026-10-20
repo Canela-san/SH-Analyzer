@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 from capturas_sinteticas import escrever_bin
 from supraharmonicos import compactacao as cp
-from supraharmonicos.cli_compactar import main
+from supraharmonicos.cli_compactar import _saida_padrao, main
 from supraharmonicos.erros import ErroSHAN, ErroUso
 
 RAIZ = Path(__file__).resolve().parents[1]
@@ -425,3 +425,15 @@ def test_ctrl_c_no_meio_nao_deixa_nada_nem_zpaq_orfao(tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["grande"]
     vivos = subprocess.run(["pgrep", "-f", f"zpaq add {tmp_path}"], capture_output=True, text=True).stdout
     assert vivos == ""
+
+
+def test_pacote_padrao_fica_ao_lado_da_pasta_e_nao_na_pasta_atual(tmp_path, monkeypatch):
+    """Rodando da raiz do repositório, o pacote não pode cair dentro dele (de onde os dados saíram)."""
+    dia = tmp_path / "dados" / "lab" / "2026-10-19"
+    dia.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    saida = _saida_padrao([dia], cp.METODOS["max"])
+    assert saida.parent == dia.parent
+    assert saida.name.startswith("2026-10-19_") and saida.name.endswith(".zpaq.tar")
+    saida.write_bytes(b"")                                          # já existe: o próximo ganha um sufixo
+    assert _saida_padrao([dia], cp.METODOS["max"]).name.endswith("_2.zpaq.tar")

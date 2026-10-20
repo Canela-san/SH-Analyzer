@@ -66,6 +66,7 @@ COMANDO_ROOT='t1=$(cut -d" " -f1 /proc/uptime); novo=$(awk -v e="$1" -v a="$2" -
 # Sessão remota: guarda o uptime ANTES do sudo e passa hora e uptime como argumentos (não como
 # variáveis de ambiente, que o sudo poderia filtrar). %q protege o comando para o shell remoto.
 montar_comando_remoto() {   # $1 = opções extras do sudo
+    # shellcheck disable=SC2016  # o $(...) e o $t0 são do shell REMOTO
     printf 't0=$(cut -d" " -f1 /proc/uptime); sudo %s bash -c %q _ %q "$t0"' "$1" "$COMANDO_ROOT" "$AGORA_EPOCH"
 }
 

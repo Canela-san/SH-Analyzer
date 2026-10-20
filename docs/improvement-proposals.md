@@ -1,7 +1,7 @@
 # SH-Analyzer — Propostas de melhoria
 
 Lista **só do que ainda está por fazer**, com o motivo medido, a proposta e como saber que deu certo. O que já foi
-feito sai daqui: a história fica no `git log` e, para o relatório, em [`notas_relatorio.md`](notas_relatorio.md).
+feito sai daqui: a história fica no `git log` e, para o relatório, em [`report-notes.md`](report-notes.md).
 
 Cada item tem um código (F = firmware/aquisição, P = Python, T = testes/CI, R = repositório/dados/documentação,
 H = hardware, S = sondas) e as colunas: **ganho** (o que melhora), **esforço** e se **toca a PRU** — mudança no
@@ -9,7 +9,10 @@ assembly só conta como feita depois de montada com `clpru` e validada no hardwa
 
 Revisado em 20/10/2026, depois da revisão do firmware (salto de 7 µs na troca de buffer corrigido, contadores de
 integridade, cabeçalho v4), da revisão dos testes, do novo `compactar_amostras.py` e da análise das capturas de
-bancada de 19/10 (F9 e P6 vieram delas).
+bancada de 19/10 (F9 e P6 vieram delas). Depois, no mesmo dia, saíram daqui R1 a R4 e T1: dados fora do
+repositório, pastas e documentos com nomes em inglês sem espaço nem acento, contagem de testes num lugar só,
+backups do Altium fora do git, `.gitattributes`/`.editorconfig`/`CITATION.cff` e a CI compilando o C e passando o
+`shellcheck`.
 
 ---
 
@@ -17,7 +20,7 @@ bancada de 19/10 (F9 e P6 vieram delas).
 
 **O que está bem resolvido** (manter): o Python é um pacote em camadas cujas regras são conferidas por teste
 (`test_arquitetura.py`); as entradas em `scripts/` são finas e rodam com `uv run`; há CI, contrato automático
-C ↔ Python, um simulador do assembly da PRU, testes rápidos (~30 s) e completos (~1 min 40 s) em paralelo; cada
+C ↔ Python, um simulador do assembly da PRU, testes em paralelo; cada
 `.bin` se descreve sozinho (cabeçalho com CRC, faixa do ADC, integridade da captura); os dados brutos têm um
 arquivamento sem perdas conferido bit a bit; a documentação cobre operação, arquitetura, laboratório e relatório.
 
@@ -27,12 +30,9 @@ arquivamento sem perdas conferido bit a bit; a documentação cobre operação, 
    antigo, com o salto de ~0,7 amostra a cada bloco.
 2. **A taxa máxima (~140 kS/s) cobre só até ~45–70 kHz da banda de supraharmônicos (2–150 kHz).** O gargalo está
    localizado (F2, F3): esperas do CS 100× maiores que o datasheet pede e SPI em ~10 MHz.
-3. **Os dados medidos moram dentro da pasta do repositório** (`Collected_Data/`, ignorada pelo git): um
-   `git clean -xfd` apaga todos sem aviso (R1).
-4. **O repositório carrega 104 MB de binários** (imagens, PCB, datasheets) e nomes com espaço e acento (R2, R3).
-5. **Documentação redundante:** os mesmos números (contagem de testes, offsets, limites) se repetem em 4 a 6
-   arquivos, e cada mudança exige caçá-los (R4).
-6. **Abrir uma captura longa é lento e caro** (P1, P2): o gráfico da captura de 10 min leva 26 s e 4,3 GB de RAM,
+3. **O histórico do git ainda carrega ~45 MB de dados antigos** (CSVs e `.bin` apagados da árvore há meses, a
+   lixeira de uma pasta montada por sshfs, backups do Altium): o `.git` tem ~90 MB, para uma árvore de ~45 MB (R2).
+4. **Abrir uma captura longa é lento e caro** (P1, P2): o gráfico da captura de 10 min leva 26 s e 4,3 GB de RAM,
    e só importar o `adc_tool` leva ~2–3 s.
 
 ---
@@ -42,18 +42,16 @@ arquivamento sem perdas conferido bit a bit; a documentação cobre operação, 
 | Código | Item | Ganho | Esforço | PRU? | Depende de |
 |---|---|---|---|---|---|
 | **F1** | Validar no hardware a revisão do firmware (grade de tempo, contadores) | Alto: corrige dado de toda captura longa | Baixo (bancada) | sim | — |
-| **R1** | Tirar os dados de dentro do repositório | Alto: evita perda total por um comando | Baixo | não | — |
 | **F2** | Medir até onde as esperas do CS podem cair (`--atraso-cs`) | Alto: teto de ~140 → ~330 kS/s | Baixo (bancada) | não (já configurável) | F1 |
 | **S1** | Calibrar a sonda de corrente (T10) com hold-out | Alto para corrente | Médio (bancada) | não | — |
 | **P1** | Gráfico com decimação por envoltória (mín/máx) | Alto: 10 min hoje = 26 s e 4,3 GB de RAM | Baixo | não | — |
-| **T1** | CI compilando o `ler_adc.c` e passando `shellcheck` | Médio | Baixo | não | — |
 | **P6** | Continuidade medida em tempo, com atenção às trocas de buffer | Médio: o salto de 7 µs passou como "OK" com 2 canais | Baixo | não | — |
 | **F9** | Descartar o transitório depois de trocar a faixa do ADC | Médio: dado certo desde a 1ª amostra | Baixo | sim (a) / não (b) | F1 |
 | **F3** | SPI mais rápido (SCLK até 17 MHz) | Alto: rumo a 300–500 kS/s | Médio | sim | F2 |
 | **F4** | `SAMPLES_PER_BUFFER` vindo do ARM, não duplicado no `.asm` | Médio: fim de uma sincronia manual | Baixo | sim | F1 |
 | **F5** | Hash do commit no cabeçalho | Médio: saber qual firmware gerou cada captura | Baixo | não | — |
 | **P2** | Importações sob demanda (scipy/matplotlib) | Médio: CLI ~2 s mais rápida | Baixo | não | — |
-| **R2–R4** | Binários fora do git, nomes sem espaço, números em um lugar só | Médio | Baixo | não | — |
+| **R2** | Limpar o histórico do git (dados antigos) | Médio: `.git` de ~90 para ~45 MB | Baixo, mas reescreve o histórico | não | decisão do dono |
 | **F6** | Gravar o bloco parcial no Ctrl+C e parar a PRU no fim | Médio | Baixo | sim (publicar a posição) | F1 |
 | **F7** | Conferência rápida do `calibrar_sonda.sh` mais leve na BeagleBone | Médio | Baixo | não | medir na BBB |
 | **P3–P5** | Correção de sonda fora de `modos`, taxa real da PRU (confirmada no T4), atributo HDF5 | Baixo–Médio | Baixo | não | — |
@@ -227,13 +225,6 @@ troca de buffer, e o `T7a_fs_100000.bin` (1 bloco) continua OK.
 
 ## 5. Testes e CI
 
-### T1 — CI compilando o C e conferindo os scripts de shell
-
-**Por quê.** Um erro de sintaxe no `ler_adc.c` ou no `calibrar_sonda.sh` só aparece na BeagleBone.
-
-**Proposta.** No `ci.yml`: `gcc -Wall -Wextra -Werror -fsyntax-only firmware/ler_adc.c` (compila no x86) e
-`shellcheck firmware/*.sh scripts/*.sh`. O `clpru` (proprietário) continua fora da CI — limite a declarar.
-
 ### T2 — Testes de host do C
 
 **Por quê.** As funções de parsing do `ler_adc.c` (`analisar_lista_canais`, `--faixa-adc`, `--atraso-cs`) são
@@ -251,48 +242,23 @@ importa (contas) já está coberto; vale cobrir a decimação de P1 quando ela e
 
 ## 6. Repositório, dados e documentação
 
-### R1 — Tirar os dados de dentro do repositório
+### R2 — Limpar o histórico do git
 
-**Por quê.** `Collected_Data/` (407 MB) está na pasta do repositório, protegida só pelo `.gitignore`. Um
-`git clean -xfd` (comum para "limpar o repositório") apaga tudo, e nada no projeto avisa.
+**Por quê.** A árvore atual tem ~45 MB, mas o `.git` tem ~90 MB: o resto são arquivos que já saíram do projeto e
+continuam em cada clone — `scripts/amostras_100kHz.csv` (47 MB), `amostras_102kHz.csv` (35 MB), outros CSVs e
+`.bin` de captura, a lixeira (`.Trash-1000/`) da antiga pasta `BeagleBone/` e os backups do Altium
+(`hardware/DAQ_Module/History/`).
 
-**Proposta.** Mover para fora (ex.: `~/SH-Analyzer-dados/`) e citar o caminho no guia; arquivar cada campanha com
-`compactar_amostras.py` (pacote conferido, ~11 % do tamanho) e guardar o pacote em **dois** lugares. A pasta
-`BeagleBone/` (só um `.c9` de IDE) pode ser apagada.
-
-### R2 — Binários grandes fora do histórico do git
-
-**Por quê.** O `.git` tem 104 MB: imagens de apresentação (26 MB, inclusive `.webp`), o projeto Altium (15 MB) e
-datasheets (4,8 MB). Cada versão nova de uma imagem soma o arquivo inteiro de novo.
-
-**Proposta.** Git LFS para `*.png *.webp *.svg *.pdf *.PcbDoc *.SchDoc` daqui em diante (o histórico atual só
-encolhe reescrevendo-o — não vale o risco). Figuras geradas (`relatorio/figuras/`) inteiras no `.gitignore`: hoje os
-PDFs saíram do git mas o PNG continua.
-
-### R3 — Nomes sem espaço nem acento
-
-**Por quê.** `docs/Imagens para relatório e apresentação/`, `docs/Proposta de IC/`, `docs/Anotações - Teste de
-bancada.md` e `docs/Contexto do Projeto.pdf` exigem aspas em todo comando e viram `%20`/escapes em links e na CI.
-
-**Proposta.** `docs/imagens/`, `docs/proposta_ic/`, `docs/referencias/` (datasheets e PDFs), `docs/anotacoes_bancada.md`;
-atualizar os links (um `grep` acha todos). Conferir se `Contexto do Projeto.pdf` ainda é necessário ao lado de
-`contexto_projeto.md`.
-
-### R4 — Cada número num lugar só
-
-**Por quê.** A contagem de testes está em 6 arquivos; offsets do cabeçalho, limites de taxa e tempos do CS se
-repetem entre `contexto_projeto.md`, `guia_de_uso.md`, `roteiro_laboratorio.md` e `notas_relatorio.md` — e já
-divergiram (os atrasos do CS estavam descritos como 1/0,5/0,5 µs em vez de 2/1/1 µs).
-
-**Proposta.** Uma fonte por assunto (formato do `.bin` e memória compartilhada: `contexto_projeto.md`; testes:
-`arquitetura_software.md`; operação: `guia_de_uso.md`) e links nos outros. Tirar contagens de testes do README e
-do contexto. `contexto_projeto.md` (72 kB) pode encolher para referência técnica, deixando o passo a passo no guia.
+**Proposta.** `git filter-repo --invert-paths` com esses caminhos, `git gc --aggressive` e um *force push* da
+`main`. Reescreve **todos** os hashes de commit: links para commits antigos e os PRs fechados do GitHub passam a
+apontar para commits que não existem mais na `main`, e todo clone existente precisa ser refeito. Só vale se o
+tamanho do clone incomodar; para imagens novas, prefira PNG/SVG pequenos (ou Git LFS, se o volume crescer).
 
 ### R5 — Diagrama ARM ↔ PRU ↔ ADC e lições aprendidas
 
 Um diagrama de sequência (configuração, laço, troca de buffer com os contadores, rebase do contador) em
-`arquitetura_software.md` ou num `docs/firmware.md`, e um recorte por tema (tempo do SPI, integridade de sinal,
-formato de arquivo) das lições hoje espalhadas em comentários e em `notas_relatorio.md`. Ganho de portfólio.
+`software-architecture.md` ou num `docs/firmware.md`, e um recorte por tema (tempo do SPI, integridade de sinal,
+formato de arquivo) das lições hoje espalhadas em comentários e em `report-notes.md`. Ganho de portfólio.
 
 ---
 
@@ -313,7 +279,7 @@ gravada — útil para medir a fase, S2). Desacoplamento de baixo ESR junto ao A
 
 ## 8. Fluxo de sondas
 
-Propostas da [`auditoria_perfil_sonda.md`](auditoria_perfil_sonda.md) (seção 4) e do T3. A primeira calibração
+Propostas da [`probe-profile-audit.md`](probe-profile-audit.md) (seção 4) e do T3. A primeira calibração
 real (cadeia de tensão, `scripts/sondas/cadeia_tensao.json`) já foi feita.
 
 | Código | Proposta | Para quê | Esforço | Decisão de projeto? |

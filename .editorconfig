@@ -1,0 +1,20 @@
+# https://editorconfig.org -- o mesmo estilo em qualquer editor.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# Markdown: dois espaços no fim da linha são quebra de linha.
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{yml,yaml,json,cff,toml}]
+indent_size = 2
+
+[Makefile]
+indent_style = tab

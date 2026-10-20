@@ -355,7 +355,7 @@ Plano de frequências:
 
 Modo:
   -m, --modo MODO        novo (padrão) | retomar | refinar | adensar | refazer | resumo
-                         (veja o cabeçalho deste script ou o docs/guia_de_uso.md).
+                         (veja o cabeçalho deste script ou o docs/user-guide.md).
   -f, --freqs LISTA      Frequências a medir de novo (modo refazer), ex.: "200,1000".
 
 Referência (como o perfil vai saber o que foi injetado na entrada; escolha UMA):
@@ -1808,7 +1808,7 @@ proximos_passos() {
     elif [ -n "$AMPLITUDE" ] || [ "$AMPLITUDE_POR_PONTO" -eq 1 ]; then
         saida "       ${perfil} --ganho <G> --plot"
         saida "     A amplitude injetada de cada captura está nos metadados (ref: f=.. amp=..) e é lida sozinha. Em V ela é a tensão no"
-        saida "     pino do ADC, que o gerar_perfil_sonda.py multiplica pelo --ganho (ver docs/guia_de_uso.md); para conferir o método,"
+        saida "     pino do ADC, que o gerar_perfil_sonda.py multiplica pelo --ganho (ver docs/user-guide.md); para conferir o método,"
         saida "     meça alguns pontos também no osciloscópio e use --referencia-osciloscopio (um .m por captura, com o nome dela)."
     else
         saida "       ${perfil} --amplitude-referencia <amplitude, ex.: ${EXEMPLOS_AMPLITUDE%%,*}> --ganho <G> --plot"

@@ -6,7 +6,7 @@ Não precisa de hardware: as capturas '.bin' v2 (cabeçalho "SHAN") são sinteti
 partir de uma "sonda" de resposta em frequência CONHECIDA (passa-baixa de 1ª ordem,
 fc = 30 kHz). Confere, com tolerâncias numéricas, que o perfil gerado recupera a curva
 verdadeira e que a correção devolve a amplitude real dos tons -- e que cada falha
-encontrada na auditoria (docs/auditoria_perfil_sonda.md) continua corrigida.
+encontrada na auditoria (docs/probe-profile-audit.md) continua corrigida.
 
 O perfil base e a correção principal passam pelas ENTRADAS reais de ``scripts/`` (subprocess, como o
 operador roda). Os outros casos chamam o mesmo ``main()`` no processo do pytest: é o mesmo código, sem pagar

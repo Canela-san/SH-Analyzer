@@ -3,7 +3,7 @@
 Este pacote contém TODA a lógica de análise; ``scripts/adc_tool.py``,
 ``scripts/gerar_perfil_sonda.py``, ``scripts/medir_captura.py`` e
 ``scripts/compactar_amostras.py`` são só entradas de linha de comando finas.
-Ver ``docs/arquitetura_software.md`` para o mapa dos módulos e as regras de
+Ver ``docs/software-architecture.md`` para o mapa dos módulos e as regras de
 dependência entre eles.
 """
 

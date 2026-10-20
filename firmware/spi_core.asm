@@ -26,7 +26,7 @@
 ; ✅ VALIDADO EM HARDWARE: a varredura automática (AUTO_RST) foi testada na PRU
 ; física com 1 canal e com 5 canais a 102,4 kHz de taxa total (≈20,48 kHz por
 ; canal): canais ligados à rede mostram os 60 Hz, canais desconectados mostram
-; só ruído (ver docs/contexto_projeto.md e o README). Ainda falta a validação
+; só ruído (ver docs/project-context.md e o README). Ainda falta a validação
 ; QUANTITATIVA de exatidão (amplitude e frequência de um sinal de referência
 ; calibrado, injetado em bancada).
 ;

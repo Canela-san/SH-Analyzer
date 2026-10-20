@@ -1,7 +1,7 @@
 """Escrita do perfil de sonda: montagem do JSON, gravação segura e gráfico de diagnóstico.
 
 Formato de saída: o consumido por ``sonda.carregar_perfil_sonda`` -- ver
-``docs/proposta_correcao_sonda.md``. ``montar_perfil_json`` lê os atributos de
+``docs/probe-correction-design.md``. ``montar_perfil_json`` lê os atributos de
 metadados do ``argparse.Namespace`` de ``cli_gerar_perfil.montar_parser``
 (``id``, ``fabricante``, ``faixa``, ``ganho``, ``modo_referencia``...) e, quando existem, os
 resumos preenchidos pelo ``cli_gerar_perfil``: ``referencia_resumo`` (de onde veio a grandeza

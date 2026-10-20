@@ -12,9 +12,9 @@
 Este arquivo é só a ENTRADA de linha de comando; a lógica mora no pacote ``supraharmonicos``
 (``compactacao`` e ``cli_compactar``). Precisa do ``zpaq`` (``sudo apt install zpaq``), exceto com ``--rapido``.
 
-    uv run scripts/compactar_amostras.py Collected_Data              # compacta (e confere) a pasta
-    uv run scripts/compactar_amostras.py listar Collected_Data_2026-10-20.zpaq.tar
-    uv run scripts/compactar_amostras.py extrair Collected_Data_2026-10-20.zpaq.tar T7c_10min.bin
+    uv run scripts/compactar_amostras.py $DADOS/lab/2026-10-19      # compacta (e confere) a pasta
+    uv run scripts/compactar_amostras.py listar 2026-10-19_2026-10-20.zpaq.tar
+    uv run scripts/compactar_amostras.py extrair 2026-10-19_2026-10-20.zpaq.tar T7c_10min.bin
 """
 
 from supraharmonicos.cli_compactar import main

@@ -41,7 +41,7 @@ def exportar_hdf5(caminho_bin: Path, caminho_h5: Path, formato: str,
     (aplicar_correcao_sonda(), seção 2.1) não é aplicada aqui -- só no modo
     de plotagem. /tensao_v continua sendo a calibração --faixa/--ganho/
     --offset pura, sem correção de sonda, para qualquer canal. Ver
-    docs/proposta_correcao_sonda.md, seção 6.3, para essa decisão de
+    docs/probe-correction-design.md, seção 6.3, para essa decisão de
     escopo (aplicar a correção também aqui exigiria repetir, em streaming
     por blocos, a mesma divisão espectral que hoje opera sobre o sinal
     inteiro de uma vez -- deixado como trabalho futuro).

@@ -137,7 +137,7 @@ def montar_parser() -> argparse.ArgumentParser:
         "por frequência, não a fase. O perfil só vale com o mesmo --ganho/"
         "--formato da sua geração -- e com a mesma --faixa, a menos que "
         "ambos venham da faixa gravada no cabeçalho v3 (conferido, com aviso). Ver "
-        "docs/proposta_correcao_sonda.md e docs/auditoria_perfil_sonda.md.",
+        "docs/probe-correction-design.md e docs/probe-profile-audit.md.",
     )
     grupo_sonda.add_argument(
         "--grandeza", type=str, default=None, metavar="C:G[,...]",

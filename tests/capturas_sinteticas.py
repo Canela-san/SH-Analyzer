@@ -29,7 +29,7 @@ SENS_NOMINAL = 0.1       # V/A (sonda 100 mV/A -> --ganho 10)
 
 # 19 pontos ~log-espaçados: com poucos pontos o erro de INTERPOLAÇÃO (PCHIP)
 # domina -- medido na auditoria para esta sonda de 1 polo: 7 pts -> 1,9 %,
-# 12 -> 0,6 %, 18 -> 0,17 %, 25 -> 0,06 % (docs/auditoria_perfil_sonda.md).
+# 12 -> 0,6 %, 18 -> 0,17 %, 25 -> 0,06 % (docs/probe-profile-audit.md).
 FREQS_CAL = [100, 150, 220, 330, 470, 680, 1000, 1500, 2200, 3300, 4700, 6800,
              10000, 15000, 22000, 33000, 47000, 68000, 80000]
 TONS_PRODUCAO = [(50.0, 10.0), (2500.0, 0.2), (9000.0, 0.1), (20000.0, 0.1), (40000.0, 0.1)]

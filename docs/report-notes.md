@@ -1,10 +1,10 @@
 # Notas para o Relatório e as Apresentações — SH-Analyzer
 
-> **Para que serve.** É a matéria-prima de dois produtos: o **relatório científico** da IC (FAPESP, processo 2025/22891-1; o 1º relatório, de 01/11/2025 a 30/06/2026, está em [`Proposta de IC/Relatório Parcial - IC.pdf`](Proposta%20de%20IC/Relat%C3%B3rio%20Parcial%20-%20IC.pdf)) e as **apresentações quinzenais** ao orientador (Prof. Dr. José Antenor Pomilio). Não é o texto final de nenhum dos dois.
+> **Para que serve.** É a matéria-prima de dois produtos: o **relatório científico** da IC (FAPESP, processo 2025/22891-1; o 1º relatório, de 01/11/2025 a 30/06/2026, está em [`fapesp/partial-report-2026-06.pdf`](fapesp/partial-report-2026-06.pdf)) e as **apresentações quinzenais** ao orientador (Prof. Dr. José Antenor Pomilio). Não é o texto final de nenhum dos dois.
 >
 > **Grau de confiança.** O que está sem marca vem do código, dos testes ou dos dados medidos e pode ser citado. O que tem ⚠️ depende da sua memória e precisa ser conferido. Os `[ ]` são imagens ou dados que ainda faltam.
 >
-> **Última atualização:** 20/10/2026. Cobre de jul/2026 (início do Assembly) até os resultados de bancada de 19/10 (Marcos 12 e 14) e a revisão do firmware (Marco 13). Os achados de engenharia que não são matéria de relatório (robustez, higiene de código, organização do repositório) estão em [`melhorias-propostas.md`](melhorias-propostas.md).
+> **Última atualização:** 20/10/2026. Cobre de jul/2026 (início do Assembly) até os resultados de bancada de 19/10 (Marcos 12 e 14) e a revisão do firmware (Marco 13). Os achados de engenharia que não são matéria de relatório (robustez, higiene de código, organização do repositório) estão em [`improvement-proposals.md`](improvement-proposals.md).
 
 ---
 
@@ -13,7 +13,7 @@
 | Para... | Use |
 |---|---|
 | **Escrever o relatório** | A [seção 6](#6-estrutura-sugerida-para-o-relatório-final) (capítulo a capítulo, com o que entra em cada um), a [seção 1.1](#11-ponte-com-o-relatório-parcial) (o que mudou desde o relatório parcial e o que ele afirmava que precisa ser corrigido) e a [seção 8](#8-números-para-citar) (os números, com a fonte de cada um) |
-| **Montar a apresentação quinzenal** | A [seção 7](#7-apresentação-quinzenal-ao-orientador) (modelo de slides e registro por quinzena) e a tabela [Estado da campanha](roteiro_laboratorio.md#estado-da-campanha) do roteiro |
+| **Montar a apresentação quinzenal** | A [seção 7](#7-apresentação-quinzenal-ao-orientador) (modelo de slides e registro por quinzena) e a tabela [Estado da campanha](lab-procedure.md#estado-da-campanha) do roteiro |
 | **Uma apresentação longa (1 hora)** | A [seção 5](#5-estrutura-sugerida-para-uma-apresentação-longa-1-hora) |
 | **Retomar o contexto** | A linha do tempo ([seção 2](#2-linha-do-tempo-cronológica)), uma vez, de ponta a ponta; a [seção 3](#3-síntese-por-marco-revisão-rápida-antes-da-apresentação) é a versão de uma linha por marco |
 | **Saber o que falta** | O [Marco 15](#marco-15--trabalho-pendente) e a [seção 4](#4-checklist-consolidado-de-capturas-de-tela-e-imagens) |
@@ -38,7 +38,7 @@ As datas dos marcos saem do `git log` (`git log --date=short --pretty='%ad %s'`)
   - **Dados:** `.bin` com as amostras brutas e um cabeçalho autodescritivo (versão 4), com grandeza, sonda e faixa de entrada por canal. O arquivamento sem perdas fica em 11 % do tamanho.
   - **Análise:** `adc_tool.py` faz FFT ciclo-sincronizada, Welch, bandas, picos e exporta HDF5. `medir_captura.py` calcula as métricas de bancada. `gerar_perfil_sonda.py` corrige a resposta em frequência da cadeia.
   - **Bancada (19/10/2026), primeiros resultados quantitativos:** escala do ADC nas três faixas, ruído, razão do divisor, taxa de amostragem, diafonia e atraso entre canais, estabilidade em 10 min e a resposta em frequência da cadeia de tensão (−3 dB em 17,3 kHz). Ficou medido também o defeito de 6,97 µs a cada bloco do firmware antigo.
-  - **Software:** pacote Python com 682 testes automáticos e integração contínua.
+  - **Software:** pacote Python com ~680 testes automáticos e integração contínua.
   - **Falta:** a sonda de corrente (T10), o limite de taxa (T7e), distorção, *aliasing*, os ensaios ponta a ponta e a validação em hardware do firmware revisado (Marco 15).
 
 ### 1.1 Ponte com o Relatório Parcial
@@ -212,7 +212,7 @@ subida/descida em algum ponto do caminho de sinal).
 placa de aquisição ao frontend analógico na bancada. O problema foi
 resolvido eliminando-se os jumpers e conectando as placas diretamente. Essa
 correção permanece em vigor no estado atual do projeto — `docs/
-contexto_projeto.md` lista a integridade de sinal entre as duas placas como
+project-context.md` lista a integridade de sinal entre as duas placas como
 item validado em hardware, e o isolador galvânico documentado hoje
 (Analog Devices ADuM3150) já é um isolador digital dedicado, não um
 optoacoplador simples — reforçando que a causa do problema original era
@@ -667,7 +667,7 @@ reordena os canais em ordem crescente.
 3. Correção no `adc_tool.py` — divisão espectral com interpolação PCHIP sobre
    (log da frequência, ganho em dB), aplicada antes de FFT/Welch/plotagem.
 
-**Auditoria independente do fluxo (`docs/auditoria_perfil_sonda.md`):** com
+**Auditoria independente do fluxo (`docs/probe-profile-audit.md`):** com
 capturas sintéticas de uma sonda de resposta conhecida, o gerador recuperou o
 ganho com erro de no máximo 0,02 % nos pontos medidos, e a correção
 restaurou a amplitude de tons de 2,5 a 40 kHz. A auditoria encontrou **sete
@@ -678,7 +678,7 @@ pasta de perfis. (A conclusão de que o estimador de amplitude era exato
 valia para o modo de dois canais, em que o ganho é uma razão e o erro se
 cancela; ao simular os modos de um canal, em que a amplitude é absoluta, o
 erro chegou a 1,8 % e foi corrigido — ver o adendo em
-`docs/auditoria_perfil_sonda.md`.) Também registrou limites que o software não resolve: a
+`docs/probe-profile-audit.md`.) Também registrou limites que o software não resolve: a
 correção é só de **magnitude** (não restaura a fase, o que inviabiliza
 análises V×I), e a confiabilidade física do perfil depende da bancada.
 
@@ -718,7 +718,7 @@ reduzir o custo de alterar o código sem quebrar o que já funciona.
    comando foram registradas e depois comparadas com a nova versão — 57
    idênticas e 4 com diferença só no texto de mensagens de erro/aviso
    padronizadas. Nomes de flags, saídas e códigos de saída foram preservados.
-3. **483 testes automáticos** na época (682 em out/2026), sem necessidade de hardware: unidades por
+3. **483 testes automáticos** na época (~680 em out/2026), sem necessidade de hardware: unidades por
    módulo, linha de comando, regras de arquitetura, dependências, o fluxo
    completo de perfil de sonda e o script de coleta de calibração
    (`calibrar_sonda.sh`, exercitado contra um `ler_adc` simulado). Um teste de **contrato C↔Python** lê o
@@ -727,8 +727,8 @@ reduzir o custo de alterar o código sem quebrar o que já funciona.
 4. **Integração contínua** (GitHub Actions): a cada *push* e *pull request*,
    roda o `ruff` e a suíte de testes em Python 3.10 e 3.13.
 5. **Documentação:** `README.md` reescrito, guia de uso
-   (`docs/guia_de_uso.md`) e guia da arquitetura do software
-   (`docs/arquitetura_software.md`).
+   (`docs/user-guide.md`) e guia da arquitetura do software
+   (`docs/software-architecture.md`).
 6. **Arquivamento dos dados brutos sem perdas** (`compactar_amostras.py`,
    out/2026): um pacote `tar` com peças zpaq -m5 e os canais desentrelaçados,
    conferido bit a bit (SHA-256) antes de ficar pronto, com um `LEIA-ME`
@@ -756,7 +756,7 @@ automática.
 - **Data:** pacote criado em 11/10/2026 e incorporado em 18/10 (*pull request*
   #5, `refactor/modularize-sh-analyzer`); arquivamento, `uv run` e revisão dos
   testes em 20/10.
-- [ ] Diagrama das camadas do pacote (em `docs/arquitetura_software.md`, seção 3).
+- [ ] Diagrama das camadas do pacote (em `docs/software-architecture.md`, seção 3).
 - [ ] Captura de tela da aba *Actions* do GitHub com a CI passando.
 
 ### Marco 11 — Preparação da Validação em Bancada
@@ -791,7 +791,7 @@ ordem e com que critério de aceitação.
 4. **`calibrar_sonda.sh` com um canal por padrão:** com dois canais, 500 kS/s
    dá Nyquist de 125 kHz, que não cobre os 150 kHz da banda; com um canal e
    400 kS/s, 200 kHz.
-5. **`docs/roteiro_laboratorio.md`** — 12 testes (T0 a T11): ruído em curto,
+5. **`docs/lab-procedure.md`** — 12 testes (T0 a T11): ruído em curto,
    DC e linearidade, **resposta em frequência da cadeia**, taxa real,
    THD/ENOB, diafonia, **integridade em taxas altas**, aliasing, sinais de
    espectro conhecido (onda quadrada: harmônicos de amplitude `4A/(nπ)`),
@@ -865,7 +865,7 @@ ADS8688) e fica acima dos ~15 kHz estimados a partir do datasheet
 3. **Faixa curta acima do corte.** Os pontos param em 2,6 × f−3dB, o que
    correlaciona f0 e Q (−0,87). Medir |H| acima da Nyquist por
    subamostragem de senoides puras estenderia a curva (exige mudanças nos
-   scripts; ver `docs/melhorias-propostas.md`, item S4).
+   scripts; ver `docs/improvement-proposals.md`, item S4).
 
 **Consequências no software:**
 - Os textos do `calibrar_sonda.sh` eram todos de corrente (o operador tinha
@@ -877,10 +877,10 @@ ADS8688) e fica acima dos ~15 kHz estimados a partir do datasheet
 - A revisão do script mostrou que, no modo de 2 canais, o filtro do ADC é
   igual nos dois canais e se cancela na razão sonda/referência: o perfil
   desse modo não corrige o filtro do ADC (documentado no script e no guia).
-- `relatorio/gerar_figuras.py` gera as figuras do relatório com estilo
+- `report/gerar_figuras.py` gera as figuras do relatório com estilo
   único (PDF vetorial no tamanho final, texto composto pelo LaTeX, vírgula
   decimal via siunitx) e grava os números citados no texto como macros
-  (`relatorio/figuras/perfil_cadeia_tensao.tex`). A primeira figura é a
+  (`report/figures/perfil_cadeia_tensao.tex`). A primeira figura é a
   curva do T3 com o ajuste e os resíduos.
 
 **Relevância para o relatório:** é o primeiro resultado medido do
@@ -960,7 +960,7 @@ a PRU esperar pelo ARM) mudaria justamente o instante das amostras.
 
 ### Marco 14 — Caracterização da Aquisição em Bancada (Dados de 19/10/2026)
 
-**O que foi feito:** no mesmo dia do T3 (Marco 12), foram capturados o T0, T1, T2, T4, T6 e T7 do roteiro. São 39 capturas, 217 MB, em `Collected_Data/lab/2026-10-19/`, feitas com o firmware anterior à revisão do Marco 13 (cabeçalho v3). A análise, de 20/10, usou o `medir_captura.py`. Os números estão em `resultados.csv`, na mesma pasta. Os comandos e o detalhe de cada teste estão nos parágrafos "Executado em 19/10/2026" do [roteiro](roteiro_laboratorio.md#estado-da-campanha).
+**O que foi feito:** no mesmo dia do T3 (Marco 12), foram capturados o T0, T1, T2, T4, T6 e T7 do roteiro. São 39 capturas, 217 MB, em `$DADOS/lab/2026-10-19/` (a pasta de dados fica fora do repositório; ver [user-guide.md](user-guide.md#onde-guardar-os-dados)), feitas com o firmware anterior à revisão do Marco 13 (cabeçalho v3). A análise, de 20/10, usou o `medir_captura.py`. Os números estão em `resultados.csv`, na mesma pasta. Os comandos e o detalhe de cada teste estão nos parágrafos "Executado em 19/10/2026" do [roteiro](lab-procedure.md#estado-da-campanha).
 
 **Resultados:**
 
@@ -1011,18 +1011,18 @@ a PRU esperar pelo ARM) mudaria justamente o instante das amostras.
 
 ### Marco 15 — Trabalho Pendente
 
-Em ordem de prioridade, a mesma da tabela [Estado da campanha](roteiro_laboratorio.md#estado-da-campanha) do roteiro:
+Em ordem de prioridade, a mesma da tabela [Estado da campanha](lab-procedure.md#estado-da-campanha) do roteiro:
 
 1. **Validar no hardware a revisão do firmware (Marco 13).** Recompilar (`./setup.sh`) e refazer o T7a, o T7b e o T7c com pelo menos 3 blocos: o salto nas trocas de buffer tem de cair para os milésimos de amostra. Fazer também uma captura de mais de 22 s abaixo de 48,8 kS/s e conferir a linha `Integridade:` do `ler_adc`.
-2. **Limite de taxa (T7e).** Medir a taxa real contra a pedida, o período do CS no osciloscópio e quanto as esperas do CS podem cair (método 4). Só reduzi-las levaria o teto de ~140 para ~330 kS/s no papel, o necessário para cobrir mais da banda de supraharmônicos.
-3. **Calibração da sonda de corrente (T10)**, o objetivo central. O fluxo já rodou com hardware real na cadeia de tensão (Marco 12); falta o SCT013 e a validação em frequências que não entraram no perfil (*hold-out*). A sensibilidade de 60 µV/A sobre o resistor de carga é o maior risco (roteiro, fato 5).
+2. **Limite de taxa (T7e).** Medir a taxa real contra a pedida, o período do CS no osciloscópio e quanto as esperas do CS podem cair (método 4). Só reduzi-las levaria o teto de ~140 para ~330 kS/s no papel, o necessário para cobrir mais da banda de supraharmônicos. **A taxa decidida aqui define o que refazer** (T1, T3, T4, T6 e todo o resto na taxa nova, se ela passar de ~200 kS/s): a tabela está no roteiro, em [O que refazer com o firmware de out/2026](lab-procedure.md#o-que-refazer-com-o-firmware-de-out2026).
+3. **Calibração da sonda de corrente (T10)**, o objetivo central, **depois** do T7e: o perfil vale até 0,9 × Nyquist da taxa em que é medido. O fluxo já rodou com hardware real na cadeia de tensão (Marco 12); falta o SCT013 e a validação em frequências que não entraram no perfil (*hold-out*). A sensibilidade de 60 µV/A sobre o resistor de carga é o maior risco (roteiro, fato 5).
 4. **Completar a caracterização:**
    * o contador de frequência no T4;
    * o ponto de 20 kHz no T6a;
    * o T5, com uma fonte de baixa distorção;
    * *aliasing* (T8), espectros conhecidos (T9) e os ensaios ponta a ponta (T11).
 5. **Completar o T3:** `--repeticoes 3`, para ter a incerteza de cada ponto, e, se possível, a fase.
-6. **Investigar o offset do canal 1** (com o pino em curto direto) e decidir onde descartar o transitório de troca de faixa: no firmware ou na análise ([`melhorias-propostas.md`](melhorias-propostas.md)).
+6. **Investigar o offset do canal 1** (com o pino em curto direto) e decidir onde descartar o transitório de troca de faixa: no firmware ou na análise ([`improvement-proposals.md`](improvement-proposals.md)).
 
 Fechar cada apresentação com esta lista, objetiva e com prioridade, mostra que o estado do projeto e os próximos passos estão claros.
 
@@ -1039,7 +1039,7 @@ Fechar cada apresentação com esta lista, objetiva e com prioridade, mostra que
 7. **Welch, normalização tom/ruído, bandas e picos:** o caminho espectral próprio para supraharmônicos, validado com sinais sintéticos.
 8. **Cabeçalho de 1024 bytes com CRC-32:** capturas autodescritivas. A exportação para HDF5 roda com memória constante, medida com `tracemalloc`.
 9. **Cabeçalho v2 e correção de sondas:** grandeza e sonda por canal e o perfil de resposta em frequência. A auditoria achou e corrigiu sete bugs.
-10. **Qualidade de software:** pacote em camadas, 682 testes, contrato C↔Python, integração contínua, `uv run` e arquivamento sem perdas a 11 % do tamanho.
+10. **Qualidade de software:** pacote em camadas, ~680 testes, contrato C↔Python, integração contínua, `uv run` e arquivamento sem perdas a 11 % do tamanho.
 11. **Preparação da bancada:** o `medir_captura.py`, a leitura crítica do datasheet (filtro interno de ~15 kHz e arredondamento dos ticks) e um roteiro de 12 testes com critérios de aceitação.
 12. **Primeira medição (T3):** a cadeia de tensão é um passa-baixa de 2ª ordem, com f0 = 24,1 kHz, Q = 0,54, −3 dB em 17,3 kHz e resíduo de 0,13 dB.
 13. **Revisão do firmware:** o salto de 6,97 µs a cada bloco foi achado e corrigido sem perder tempo. A integridade passou a ser medida sem custo para a amostragem (cabeçalho v4), e o gargalo de taxa foi localizado nas esperas do CS: 57 % do quadro, ~100× o mínimo do datasheet.
@@ -1057,7 +1057,7 @@ Fechar cada apresentação com esta lista, objetiva e com prioridade, mostra que
 
 ## 4. Checklist Consolidado de Capturas de Tela e Imagens
 
-Os marcados "**dados já existem**" dá para gerar hoje, com as capturas de `Collected_Data/lab/2026-10-19/` e as ferramentas do repositório. As figuras do relatório saem de `uv run relatorio/gerar_figuras.py` (PDF vetorial no tamanho final; o PDF não é versionado, porque é gerável).
+Os marcados "**dados já existem**" dá para gerar hoje, com as capturas de `$DADOS/lab/2026-10-19/` e as ferramentas do repositório. As figuras do relatório saem de `uv run report/gerar_figuras.py` (PDF vetorial no tamanho final; o PDF não é versionado, porque é gerável).
 
 **Prioridade alta (resultados do relatório)**
 
@@ -1091,7 +1091,7 @@ Os marcados "**dados já existem**" dá para gerar hoje, com as capturas de `Col
 - [ ] (Marco 7) `--fft` × `--welch` no mesmo sinal sintético com *dithering*
 - [ ] (Marco 8) Layout de bytes do cabeçalho; resumo do cabeçalho impresso pelo `adc_tool.py`; teste de memória do HDF5
 - [ ] (Marco 9) Espectro de corrente com e sem `--sem-correcao-sonda`
-- [ ] (Marco 10) A aba *Actions* do GitHub com a CI passando; o diagrama de camadas (`arquitetura_software.md`, seção 3)
+- [ ] (Marco 10) A aba *Actions* do GitHub com a CI passando; o diagrama de camadas (`software-architecture.md`, seção 3)
 - [ ] (Marco 12) A curva do T3 com a teórica do datasheet por cima (opcional)
 
 ---
@@ -1130,7 +1130,7 @@ Sugestão: manter os capítulos do relatório parcial, para que o leitor da FAPE
 | **Software de análise e método de validação** | Só o necessário para entender os resultados: `medir_captura.py` (o que mede e com que limites), a correção por perfil e a validação sintética (auditoria, testes, contrato C↔Python) | Marcos 5, 7, 9, 10 e 11 |
 | **Resultados** | Uma seção por grupo de testes: (1) caracterização do ADC (T0, T1, T2; T5 quando houver); (2) taxa de amostragem e integridade (T4, T7, o defeito e a correção; T7e quando houver); (3) multiplexação (T6); (4) resposta em frequência da cadeia de tensão (T3); (5) sonda de corrente (T10); (6) supraharmônicos medidos (T9, T11) | Marcos 12 e 14; roteiro, parágrafos "Executado em" |
 | **Discussão e limitações** | A lista abaixo | — |
-| **Conclusões e trabalhos futuros** | O que o instrumento mede hoje, e com que exatidão. Futuro: esperas do CS reduzidas (~330 kS/s no papel), anti-aliasing externo, ganho antes do ADC no canal de corrente, medição de fase | Marco 15; `melhorias-propostas.md` |
+| **Conclusões e trabalhos futuros** | O que o instrumento mede hoje, e com que exatidão. Futuro: esperas do CS reduzidas (~330 kS/s no papel), anti-aliasing externo, ganho antes do ADC no canal de corrente, medição de fase | Marco 15; `improvement-proposals.md` |
 | **Referências** | As do relatório parcial ([1] a [11]), mais: Welch (1967), sobre o método; Harris (1978), sobre janelas; IEEE Std 1241 (teste de ADCs: SINAD, ENOB) e IEEE Std 1057 (ajuste de senoide, usado com o `.m` do osciloscópio); o datasheet SBAS582C do ADS8688 e o *AM335x PRU-ICSS Reference Guide*, nas seções citadas | — |
 
 **Limitações a declarar** (a explicitação dos limites é parte do rigor do relatório):
@@ -1155,14 +1155,14 @@ Sugestão: manter os capítulos do relatório parcial, para que o leitor da FAPE
 
 1. **Título e resumo:** a quinzena (datas) e uma frase com o principal avanço.
 2. **O que foi combinado na última reunião:** cada item com ✅, 🟡 ou ❌ e uma linha de explicação.
-3. **Resultados (2 ou 3 slides):** uma figura, o número que importa e o que ele significa para o instrumento. As figuras saem de `relatorio/gerar_figuras.py`, do `adc_tool.py -o` ou do `--plot` do `gerar_perfil_sonda.py`.
+3. **Resultados (2 ou 3 slides):** uma figura, o número que importa e o que ele significa para o instrumento. As figuras saem de `report/gerar_figuras.py`, do `adc_tool.py -o` ou do `--plot` do `gerar_perfil_sonda.py`.
 4. **Problema ou achado:** sintoma → causa → o que foi feito → o que falta para fechar.
 5. **Próxima quinzena:** de 3 a 5 itens, com prioridade, e os riscos.
 6. **Decisões e pedidos:** o que depende do orientador (uma meta a rever, um ensaio na rede com supervisão, um componente a comprar, um horário de laboratório).
 
 **Preparação (15 minutos):**
 
-1. Atualize a tabela [Estado da campanha](roteiro_laboratorio.md#estado-da-campanha) do roteiro.
+1. Atualize a tabela [Estado da campanha](lab-procedure.md#estado-da-campanha) do roteiro.
 2. Veja o que entrou no período com `git log --since=AAAA-MM-DD --date=short --pretty='%ad %s'`.
 3. Escolha 2 ou 3 figuras.
 4. Acrescente a linha da quinzena ao registro abaixo: ele vira, no fim, a linha do tempo do relatório.
@@ -1220,6 +1220,6 @@ Os números do projeto num lugar só, com a condição e a fonte. Os valores med
 | Teto de taxa | ~130 kS/s observados e ~140 kS/s pelo simulador; ~330 kS/s no papel com as esperas mínimas do datasheet | a medir no T7e | Marco 13 |
 | Esperas do CS | 2,0 / 1,0 / 1,0 µs contra 30 / 10 / 30 ns do datasheet | tabela 7.6 do SBAS582C | Marco 13 |
 | Buffers | 2 × 1 048 576 amostras (2 × 2 MB) na DDR; ~10 s por bloco a 100 kS/s | — | Marco 3 |
-| Código da PRU | 1 878 instruções, 91,7 % da IMEM de 8 KB | `tests/pru_sim.py` | `contexto_projeto.md` |
+| Código da PRU | 1 878 instruções, 91,7 % da IMEM de 8 KB | `tests/pru_sim.py` | `project-context.md` |
 | Arquivamento sem perdas | 11,0 % do tamanho (407 MB → 44,9 MB); 7-Zip: 14,6 % | capturas até o T3 | Marco 10 |
-| Testes automáticos | 682 (564 rápidos), ~1 min 40 s em paralelo, ~90 % de cobertura | sem hardware | Marco 10 |
+| Testes automáticos | ~680, ~1 min 40 s em paralelo, ~90 % de cobertura (a contagem exata do dia: `software-architecture.md`, seção 7) | sem hardware | Marco 10 |

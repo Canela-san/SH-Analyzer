@@ -2,7 +2,7 @@
 
 **Escopo:** `calibrar_sonda.sh` → `gerar_perfil_sonda.py` → `scripts/sondas/<id>.json` → `adc_tool.py` (cabeçalho v2 gravado por `ler_adc.c`).
 **Método:** leitura do código + experimentos com capturas **sintéticas** de uma sonda de resposta conhecida (passa-baixa de 1ª ordem, fc = 30 kHz; shunt 0,1 Ω; ruído de 0,5 mV no ADC). Nada foi testado em hardware real — as conclusões abaixo valem para o *software*; a exatidão física depende da bancada (seção 3).
-**Reprodução:** `uv run --extra dev pytest tests/e2e` (12 testes, ~30 s; a suíte nasceu como `scripts/test_perfil_sonda.py` e foi migrada para pytest quando o código Python virou o pacote `scripts/supraharmonicos/` — ver `docs/arquitetura_software.md`). Os nomes de função citados abaixo (`ler_cabecalho`, `aplicar_correcao_sonda`, `carregar_perfil_sonda`...) continuam os mesmos; só mudaram de arquivo, do antigo `adc_tool.py` para os módulos do pacote.
+**Reprodução:** `uv run --extra dev pytest tests/e2e` (12 testes, ~30 s; a suíte nasceu como `scripts/test_perfil_sonda.py` e foi migrada para pytest quando o código Python virou o pacote `scripts/supraharmonicos/` — ver `docs/software-architecture.md`). Os nomes de função citados abaixo (`ler_cabecalho`, `aplicar_correcao_sonda`, `carregar_perfil_sonda`...) continuam os mesmos; só mudaram de arquivo, do antigo `adc_tool.py` para os módulos do pacote.
 
 ---
 
@@ -75,14 +75,14 @@ Estes determinam se o perfil é *fisicamente* correto; o software não consegue 
 
    15–25 pontos bastam para curva suave. **Ressonâncias estreitas só são vistas se um ponto cair nelas** — o erro quase não cai com mais pontos igualmente espaçados. Use o modo "Expandir" onde o gráfico (`--plot`) mostrar joelho ou onde o datasheet indicar ressonância.
 6. **Envelhecimento/temperatura:** `data_calibracao` existe mas nada avisa perfil velho.
-7. **Sem validação em hardware**, como já registrado em `docs/contexto_projeto.md`.
+7. **Sem validação em hardware**, como já registrado em `docs/project-context.md`.
 
 ---
 
 ## 4. Limitações de projeto e melhorias propostas (decisão sua)
 
 > **Status em 2026-10:** nenhuma das propostas abaixo foi implementada. Elas estão resumidas,
-> com esforço e necessidade de decisão, em `docs/melhorias-propostas.md` (seção 8, itens S1–S8).
+> com esforço e necessidade de decisão, em `docs/improvement-proposals.md` (seção 8, itens S1–S8).
 
 ### 4.1 Correção só de magnitude (fase não corrigida) — impacto alto *se* houver análise V×I
 Medido: sonda passa-baixa causal de fc = 30 kHz, tons 2,5/9/20/40 kHz com amplitude restaurada exata, mas fase residual −4,8°/−16,7°/−33,7°/−53,1° e **erro RMS da forma de onda de 42 %** (o pico coincidiu por acaso). Hoje o pipeline só usa amplitude em dB, então é inofensivo; deixa de ser quando se calcular potência ativa, impedância ou direção de emissão em supraharmônicos.
@@ -106,7 +106,7 @@ A divisão espectral do registro inteiro trata o sinal como periódico; em regis
 
 ### 4.7 Menores
 - `gerar_perfil_sonda.py` não verifica estabilidade da amplitude *dentro* da captura (deriva do gerador durante os 2–3 s); comparar a 1ª e 2ª metade e avisar > 1–2 %.
-- `calibrar_sonda.sh` não foi alterado por esta auditoria; sem achados na revisão e nos testes anteriores (`bash -n` ok; `shellcheck` não disponível neste ambiente nesta sessão — rodar localmente). **Achado posterior (2026-10), já corrigido:** a checagem de Nyquist usava a taxa total em vez da efetiva por canal (`taxa/4` com 2 canais); o script foi reescrito (escolha automática de frequências, conferência de cada captura, novos modos) — ver o `git log` do script e `docs/guia_de_uso.md`, "Passo 1". O texto desta auditoria descreve o script **como ele estava** na época.
+- `calibrar_sonda.sh` não foi alterado por esta auditoria; sem achados na revisão e nos testes anteriores (`bash -n` ok; `shellcheck` não disponível neste ambiente nesta sessão — rodar localmente). **Achado posterior (2026-10), já corrigido:** a checagem de Nyquist usava a taxa total em vez da efetiva por canal (`taxa/4` com 2 canais); o script foi reescrito (escolha automática de frequências, conferência de cada captura, novos modos) — ver o `git log` do script e `docs/user-guide.md`, "Passo 1". O texto desta auditoria descreve o script **como ele estava** na época.
 - `ler_adc.c` não foi alterado. Por decisão do projeto não valida o id da sonda; a validação de caracteres ficou no Python. Se quiser defesa em profundidade, validar também no `--sonda` do C (exige recompilar e retestar no BeagleBone).
 
 ---
@@ -120,10 +120,10 @@ A divisão espectral do registro inteiro trata o sinal como periódico; em regis
 | `scripts/adc_tool.py` | bugs 1–5; `next_fast_len`; avisos de ruído e id; textos de ajuda |
 | `scripts/gerar_perfil_sonda.py` | bugs 6–7; `n`/`desvio_pct` nos pontos |
 | `scripts/test_perfil_sonda.py` (hoje `tests/e2e/test_perfil_sonda_e2e.py`) | **novo** — suíte sintética de regressão (11 testes; 12 após a migração para pytest) |
-| `docs/auditoria_perfil_sonda.md` | **novo** — este documento |
-| `docs/contexto_projeto.md` | seções atualizadas (modelo de calibração, pipeline, geração de perfil, status, restrições) |
+| `docs/probe-profile-audit.md` | **novo** — este documento |
+| `docs/project-context.md` | seções atualizadas (modelo de calibração, pipeline, geração de perfil, status, restrições) |
 
-Sem alteração (na época desta auditoria): `firmware/ler_adc.c`, `firmware/calibrar_sonda.sh`, `docs/exemplo_sonda.json`. O `calibrar_sonda.sh` foi reescrito depois (ver o `git log` do arquivo).
+Sem alteração (na época desta auditoria): `firmware/ler_adc.c`, `firmware/calibrar_sonda.sh`, `docs/probe-profile-example.json`. O `calibrar_sonda.sh` foi reescrito depois (ver o `git log` do arquivo).
 
 ---
 

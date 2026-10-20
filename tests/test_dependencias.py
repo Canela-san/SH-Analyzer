@@ -33,7 +33,7 @@ DISTRIBUICAO = {"PyQt6": "pyqt6"}
 
 def _executaveis() -> list[Path]:
     achados = []
-    for pasta in (SCRIPTS, RAIZ / "relatorio", RAIZ / "tests", RAIZ / "firmware"):
+    for pasta in (SCRIPTS, RAIZ / "report", RAIZ / "tests", RAIZ / "firmware"):
         for p in sorted(pasta.glob("*.py")):
             if re.search(r"""^if __name__ == ["']__main__["']:""", p.read_text(encoding="utf-8"), re.M):
                 achados.append(p)
