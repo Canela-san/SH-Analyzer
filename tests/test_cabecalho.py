@@ -57,8 +57,8 @@ def test_crc_errado_e_sinalizado_com_aviso(tmp_path, caplog):
 
 def test_arquivo_menor_que_o_cabecalho_nao_quebra(tmp_path):
     p = tmp_path / "curto.bin"
-    p.write_bytes(b"SHAN" + b"\x00" * 10)
-    assert ler_cabecalho(p) is None or not ler_cabecalho(p).crc32_valido
+    p.write_bytes(b"SHAN" + b"\x00" * 10)          # tem o magic, mas não cabe um cabeçalho inteiro
+    assert ler_cabecalho(p) is None
 
 
 def test_contagem_de_amostras_pula_o_cabecalho(tmp_path):

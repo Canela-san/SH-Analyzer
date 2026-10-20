@@ -25,6 +25,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import zlib
 from pathlib import Path
 
 import pytest
@@ -55,7 +56,6 @@ def _bash_ok() -> bool:
     return len(versao) == 2 and (int(versao[0]), int(versao[1])) >= (4, 4)
 
 
-pytestmark = pytest.mark.skipif(not SCRIPT.exists(), reason="firmware/calibrar_sonda.sh não encontrado")
 e2e = [pytest.mark.e2e, pytest.mark.skipif(not _bash_ok(), reason="precisa de Linux com bash >= 4.4")]
 
 
@@ -79,6 +79,7 @@ class Bancada:
         self.wrapper = base / "ler_adc_falso"
         self.wrapper.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{FALSO}" "$@"\n')
         self.wrapper.chmod(0o755)
+        self.rodadas = 0
 
     def cenario(self, *diretivas: str) -> None:
         """Define o que cada chamada do ler_adc falso faz (a partir da 1ª). Reinicia o contador."""
@@ -104,10 +105,15 @@ class Bancada:
             args = [*args, "--faixa-adc", "10.24"]
             if "--canal-referencia" in args and "--faixa-adc-referencia" not in args:
                 args += ["--faixa-adc-referencia", "10.24"]
+        # Semente do ruído do ler_adc falso: o nome da pasta (o do teste, estável entre execuções) e o número da
+        # rodada. Assim cada bancada e cada rodada têm capturas diferentes -- uma refeita não sai idêntica à da
+        # coleta base -- e a mesma suíte se repete igual, inclusive quando um teste falha.
+        self.rodadas += 1
         env = {
             **os.environ,
             "SIM_DIR": str(self.sim),
             "SIM_SPB": str(SPB_TESTE),
+            "SIM_SEMENTE": str(zlib.crc32(self.base.name.encode()) * 1000 + self.rodadas),
             "SH_LER_ADC": str(self.wrapper),
             "SH_PULAR_VERIFICACAO_ROOT": "1",
             **(extra_env or {}),
@@ -198,7 +204,6 @@ def test_offsets_do_cabecalho_no_script_batem_com_o_formato_do_python():
     assert int(do_script["CAB_OFF_CRC_V3"]) == cab._OFFSET_HEADER_CRC32_V3
 
 
-@pytest.mark.skipif(not LER_ADC_C.exists(), reason="firmware/ler_adc.c não encontrado")
 def test_codigos_e_limites_do_script_batem_com_firmware_e_python():
     do_script = constantes_do_script()
     fonte_c = LER_ADC_C.read_text(encoding="utf-8")

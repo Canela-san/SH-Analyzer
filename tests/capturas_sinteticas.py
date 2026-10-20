@@ -87,6 +87,18 @@ def montar_cabecalho(n_por_canal: int, canais, grandezas, sondas, fs_total: int,
     return bytes(bruto)
 
 
+def regravar_crc(caminho: Path) -> None:
+    """Recalcula o CRC-32 do cabeçalho depois de um teste editar um campo dele (título, descrição...), para que
+    o teste confira só o efeito da edição -- e não o de um CRC quebrado."""
+    bruto = bytearray(Path(caminho).read_bytes())
+    versao = struct.unpack_from("<I", bruto, 4)[0]
+    fmt = FMT_V3 if versao >= 3 else FMT_V2 if versao == 2 else FMT_V1
+    deslocamento_crc = struct.calcsize(fmt) - 4
+    struct.pack_into("<I", bruto, deslocamento_crc, 0)
+    struct.pack_into("<I", bruto, deslocamento_crc, zlib.crc32(bytes(bruto[:1024])))
+    Path(caminho).write_bytes(bytes(bruto))
+
+
 def escrever_bin(caminho: Path, canais_v, canais=(0, 1), grandezas=(0, 1), sondas=("", ""),
                  fs_total: int = FS_TOTAL_2CH, formato: str = "uint16", com_cabecalho: bool = True,
                  faixas_adc_total_v=None, **kw_cabecalho) -> Path:

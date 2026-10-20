@@ -20,7 +20,6 @@ from pru_sim import (
 
 ASM = Path(__file__).resolve().parents[1] / "firmware" / "spi_core.asm"
 
-pytestmark = pytest.mark.skipif(not ASM.exists(), reason="firmware/spi_core.asm não encontrado neste checkout")
 
 CMD_AUTO_SEQ_EN = 0x0300          # escrita no registrador 01h (AUTO_SEQ_EN)
 CMD_AUTO_RST = 0xA000             # comando AUTO_RST (varredura automática)

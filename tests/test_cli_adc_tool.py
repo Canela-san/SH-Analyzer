@@ -1,6 +1,8 @@
 """CLI do adc_tool rodando no mesmo processo: códigos de saída, stdout/stderr e arquivos gerados."""
 
+import csv
 import json
+import re
 
 import numpy as np
 import pytest
@@ -83,15 +85,20 @@ def test_captura_legada_sem_cabecalho_exige_frequencia(cli, tmp_path):
 
 
 def test_modo_conversao_bin_para_csv(cli, ambiente):
-    csv = ambiente / "saida.csv"
-    rc, out, err = cli(main, "-c", ambiente / "ok.bin", "-o", csv, "--incluir-tensao", "--ganho", "1,10")
+    destino = ambiente / "saida.csv"
+    rc, out, err = cli(main, "-c", ambiente / "ok.bin", "-o", destino, "--incluir-tensao", "--ganho", "1,10")
     assert rc == 0, err
     assert "Convertido:" in out and "(.bin) -> " in out
-    assert csv.read_text(encoding="utf-8").splitlines()[0].startswith("canal") or csv.stat().st_size > 0
+    with open(destino, newline="", encoding="utf-8") as f:
+        linhas = list(csv.DictReader(f))
+    assert list(linhas[0]) == ["amostra", "canal", "valor_bruto", "tensao_v"]
+    assert len(linhas) == 2 * 60_000                                     # 0,3 s x 200 kHz por canal, 2 canais
+    assert [ln["canal"] for ln in linhas[:4]] == ["0", "1", "0", "1"]    # intercalado, na ordem do cabeçalho
+    v0 = [float(ln["tensao_v"]) for ln in linhas[0::2]]                  # canal 0: 3,25 V de pico a 50 Hz
+    assert max(v0) == pytest.approx(3.25, abs=0.01) and min(v0) == pytest.approx(-3.25, abs=0.01)
 
 
 def test_modo_exportacao_hdf5(cli, ambiente):
-    pytest.importorskip("h5py")
     destino = ambiente / "saida.h5"
     rc, out, err = cli(main, ambiente / "ok.bin", "--export-hdf5", destino, "--ganho", "1,10", "--incluir-tensao")
     assert rc == 0, err
@@ -99,7 +106,6 @@ def test_modo_exportacao_hdf5(cli, ambiente):
 
 
 def test_exportacao_avisa_que_ignora_flags_de_plotagem(cli, ambiente):
-    pytest.importorskip("h5py")
     rc, _, err = cli(main, ambiente / "ok.bin", "--export-hdf5", ambiente / "y.h5", "--welch")
     assert rc == 0 and "Aviso: --export-hdf5 ignora --fft/--welch/--picos/--agrupar-bandas" in err
 
@@ -146,3 +152,56 @@ def test_espectro_de_canal_de_corrente_e_rotulado_em_dba():
     assert _rotulo_espectro(tom, {0: 0}) == "Magnitude (dBV)"
     assert _rotulo_espectro(argparse.Namespace(agrupar_bandas=200.0, modo_espectro="ruido"), {0: 0, 1: 1}) \
         == "Nível RMS por banda de 200 Hz (dB re unidade do canal)"
+
+
+# --------------------------------------------------------------------------------------
+# --fft (ciclos inteiros), gráfico de eixo único e --grandeza/--sonda-perfil
+# --------------------------------------------------------------------------------------
+def _captura_rede(caminho, canais=(1,), fs_total=100_000):
+    """60 Hz (3 V) + 3º harmônico (0,3 V) + 5º (0,15 V): o que a --fft em ciclos inteiros foi feita para medir."""
+    k = len(canais)
+    t = np.arange(50_000 // k) / (fs_total / k)
+    v = 3.0 * np.sin(2 * np.pi * 60 * t) + 0.3 * np.sin(2 * np.pi * 180 * t) + 0.15 * np.sin(2 * np.pi * 300 * t)
+    return escrever_bin(caminho, [v] * k, canais=canais, grandezas=(0,) * k, sondas=("",) * k, fs_total=fs_total)
+
+
+def test_fft_em_ciclos_inteiros_mede_a_fundamental_e_os_harmonicos(cli, tmp_path):
+    p = _captura_rede(tmp_path / "rede.bin")
+    rc, out, err = cli(main, p, "--fft", "--picos", "-60", "--freq-min-picos", "100", "-o", tmp_path / "g.png")
+    assert rc == 0, err
+    assert re.search(r"FFT \(ciclo\): f0 = 60\.00\d Hz \| 28 ciclo\(s\) completo\(s\)", out), out
+    picos = {round(float(f)): 10 ** (float(db) / 20) for f, db in re.findall(r"\[ciclo\] pico: ([\d.]+) Hz @ (-?[\d.]+) dB", out)}
+    assert set(picos) == {180, 300}
+    assert picos[180] == pytest.approx(0.3, rel=2e-3) and picos[300] == pytest.approx(0.15, rel=2e-3)
+    assert (tmp_path / "g.png").stat().st_size > 1000
+
+
+@pytest.mark.parametrize("canais, extra", [((1,), ()), ((0, 1), ("--layout-canais", "sobrepostos"))])
+def test_grafico_de_eixo_unico_com_fft_e_welch(cli, tmp_path, canais, extra):
+    """1 canal, ou vários com --layout-canais sobrepostos: tempo e espectro num eixo só, as duas análises juntas."""
+    p = _captura_rede(tmp_path / "rede.bin", canais=canais)
+    rc, out, err = cli(main, p, "--fft", "--welch", "--resolucao-welch", "50", *extra, "-o", tmp_path / "g.png")
+    assert rc == 0, err
+    assert "Gráfico salvo em" in out and (tmp_path / "g.png").stat().st_size > 1000
+
+
+def test_grandeza_por_flag_vence_o_cabecalho(cli, ambiente):
+    """O cabeçalho diz corrente com sonda no canal 1; --grandeza 1:temperatura manda, e temperatura não se corrige
+    em frequência (com tensão a sonda REGISTRADA ainda seria aplicada -- ver modos.aplicar_correcao_sondas)."""
+    rc, out, err = cli(main, ambiente / "ok.bin", "--grandeza", "1:temperatura", "--ganho", "1,10", "--sondas-dir",
+                       ambiente / "sondas", "--welch", "--fim", "20000", "-o", ambiente / "g3.png")
+    assert rc == 0, err
+    assert "canal 1 é de temperatura" in err and "correção de sonda aplicada" not in out
+
+
+@pytest.mark.parametrize("flag, valor, trecho", [
+    ("--grandeza", "1:xyz", "grandeza 'xyz' desconhecida"),
+    ("--grandeza", "1corrente", "precisa estar no formato 'canal:valor'"),
+    ("--grandeza", "x:corrente", "'x' não é um canal válido"),
+    ("--grandeza", "5:corrente", "--grandeza: canal 5 não está na captura (canais: 0, 1)"),
+    ("--sonda-perfil", "7:qualquer.json", "--sonda-perfil: canal 7 não está na captura"),
+    ("--sonda-perfil", "1:/nao/existe.json", "não encontrado"),
+])
+def test_grandeza_e_sonda_perfil_invalidos_dao_erro_claro(cli, ambiente, flag, valor, trecho):
+    rc, _, err = cli(main, ambiente / "ok.bin", flag, valor, "--welch", "-o", ambiente / "g4.png")
+    assert rc == 1 and trecho in err, err

@@ -20,6 +20,8 @@ Variáveis de ambiente:
     SIM_SPB   amostras BRUTAS por bloco (padrão 1048576, o SAMPLES_PER_BUFFER real). Os testes usam
               um valor menor para ficarem rápidos; o cabeçalho registra o valor usado, então o
               script confere tamanho e totais do mesmo jeito.
+    SIM_SEMENTE  semente do ruído e da fase (padrão 0), combinada com o número da chamada: cada captura é
+              diferente, e a mesma execução se repete idêntica.
 
 ``cenario``: linha N = diretiva da N-ésima chamada (linhas ausentes ou vazias = ``ok``):
     ok               captura normal
@@ -139,7 +141,9 @@ def main(argv: list[str]) -> int:
 
     k = len(canais)
     n_por_canal = blocos * spb // k
-    rng = np.random.default_rng()  # sem semente: cada captura é diferente, como no hardware
+    # Cada captura tem fase e ruído diferentes (como no hardware), mas reproduzíveis: a semente é o número da
+    # chamada (+ SIM_SEMENTE). Sem semente, um teste que falhasse por azar do ruído não falharia de novo.
+    rng = np.random.default_rng([int(os.environ.get("SIM_SEMENTE", "0")), n])
     t = np.arange(n_por_canal) / (taxa / k)
     tom = np.sin(2 * np.pi * f * t + rng.uniform(0, 6.28))
     intercalado = np.empty(k * n_por_canal, dtype="<u2")

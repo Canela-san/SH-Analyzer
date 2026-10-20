@@ -1,5 +1,6 @@
 """Conversão .bin <-> .csv e exportação HDF5 (sempre em blocos)."""
 
+import h5py
 import numpy as np
 import pytest
 from capturas_sinteticas import escrever_bin
@@ -41,7 +42,6 @@ def test_extensao_desconhecida_e_erro_de_dominio(tmp_path):
 
 
 def test_exportacao_hdf5_grava_metadados_e_dados(tmp_path):
-    h5py = pytest.importorskip("h5py")
     p = bin_de_teste(tmp_path)
     cab = ler_cabecalho(p)
     destino = tmp_path / "c.h5"
@@ -63,7 +63,6 @@ def test_exportacao_hdf5_grava_metadados_e_dados(tmp_path):
 
 
 def test_exportacao_hdf5_com_inicio_no_meio_do_ciclo_nao_troca_os_canais(tmp_path):
-    h5py = pytest.importorskip("h5py")
     p = escrever_bin(tmp_path / "dc.bin", [np.full(1000, 1.0), np.full(1000, -2.0)])   # canal 0 = +1 V, canal 1 = -2 V
     destino = tmp_path / "dc.h5"
     exportar_hdf5(p, destino, "uint16", [0, 1], ler_cabecalho(p), **{k: PAR[k] for k in ("faixas", "offsets")},

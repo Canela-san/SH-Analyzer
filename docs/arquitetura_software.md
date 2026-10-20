@@ -189,11 +189,21 @@ O caminho quente é tudo que toca **todas** as amostras de uma captura (dezenas 
 ## 7. Testes
 
 ```bash
-uv run --extra dev pytest                 # tudo: 651 testes (alguns minutos)
-uv run --extra dev pytest -m "not e2e"    # rápido: 536 testes (~2 min) — use no dia a dia
+uv run --extra dev pytest                 # tudo: 663 testes (~1 min 40 s)
+uv run --extra dev pytest -m "not e2e"    # rápido: 548 testes (~30 s) — use no dia a dia
 uv run --extra dev pytest -m e2e          # só ponta a ponta: 115 testes (a maior parte do tempo)
+uv run --extra dev pytest -n0 tests/test_dsp.py::TestFiltros   # um teste só, sem paralelismo (pdb/breakpoint)
+uv run --extra dev pytest --cov=scripts/supraharmonicos --cov-report=term-missing   # cobertura (~90 %)
 uv run --extra dev ruff check .
 ```
+
+A suíte roda **em paralelo** (`pytest-xdist`, `-n auto --dist worksteal` em `pyproject.toml`): um processo por núcleo; o tempo cai de ~6 min para ~1 min 40 s (i7 de 4 núcleos/8 threads). Por isso cada teste precisa ser independente: nada de estado em arquivo fora do `tmp_path`, nem de ordem entre testes. Para onde vai o tempo que sobra:
+
+* **Coleta** (~6 s por processo): os módulos de teste importam o pacote, e `import scipy.signal` sozinho custa ~2 s (a SciPy recente puxa `scipy.stats` e a camada de "array API").
+* **`test_calibrar_sonda.py`** (102 testes de ~1 s cada, em série): o script bash de verdade, um `ler_adc` falso por captura (~0,35 s de Python + numpy) e a conferência rápida de cada captura, em awk (~0,7 s no PC).
+* **`e2e/test_perfil_sonda_e2e.py`**: só o perfil base e a correção principal passam pelas entradas reais via subprocess (cada um paga ~1–3 s de importações); os outros casos chamam `main()` no mesmo processo, com capturas e pastas de calibração menores onde a precisão do perfil não é o que se testa.
+
+Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `cli`) a subprocess, e capturas curtas (`--fim`, `dur_s`) quando o que se confere é um aviso ou um erro. Ruído sintético sempre com semente (`np.random.default_rng(semente)`); o `ler_adc` falso usa o nome da pasta do teste e o número da rodada (`SIM_SEMENTE`).
 
 | Arquivo | O que garante |
 |---|---|
@@ -207,7 +217,7 @@ uv run --extra dev ruff check .
 | `test_referencia.py` | amplitude com unidades (pp/pico/rms, prefixos, entradas ambíguas recusadas), frequência, `ref:` dos metadados (ida e volta, texto livre ao redor) |
 | `test_osciloscopio.py` | leitor de `.m`/`.mat`/`.csv` (variáveis, matriz tempo×valor, escalares de taxa, erros que listam o que foi achado) e ajuste de senoide por mínimos quadrados (amplitude, frequência, DC, poucos ciclos) |
 | `test_metricas_captura.py` | `medir_captura`: tom, ruído, THD/SINAD/ENOB/SFDR contra sinais de verdade conhecida, continuidade (amostra removida/duplicada), diafonia/atraso, CLI, CSV, correção de sonda e comparação com instrumento |
-| `test_cli_adc_tool.py` | CLI no mesmo processo: códigos de saída 0/1/2, stdout×stderr, arquivos gerados |
+| `test_cli_adc_tool.py` | CLI no mesmo processo: códigos de saída 0/1/2, stdout×stderr, arquivos gerados (CSV conferido linha a linha); `--fft` em ciclos inteiros (f0 e harmônicos com amplitude exata); gráfico de eixo único (1 canal e `sobrepostos`); `--grandeza`/`--sonda-perfil` (formato, canal fora da captura) |
 | `test_contrato_firmware.py` | C ↔ Python: constantes, layout do cabeçalho (v3), códigos de faixa do ADC e offsets da memória compartilhada da PRU |
 | `test_faixa_adc.py` | `--faixa` por canal: cabeçalho v3 > padrão, aviso se divergir, amplitude certa em cada faixa, perfil de sonda e `faixa_v_confiavel` |
 | `test_pru_asm.py` (+ `pru_sim.py`) | lógica do `firmware/spi_core.asm` num mini-simulador de PRU: palavras enviadas na configuração (`AUTO_SEQ_EN`, `RANGE_SELn`, `AUTO_RST`), ordem, ciclos de SCLK, laço gravando na DDR, IMEM e alcance dos desvios. Não substitui compilar com `clpru` nem testar no hardware |
@@ -217,7 +227,7 @@ uv run --extra dev ruff check .
 | `test_relatorio.py` | `relatorio/gerar_figuras.py`: o ajuste do passa-baixa recupera K, f0 e Q conhecidos (com e sem pesos medidos) e vence os outros modelos pelo BIC; f−3dB, polos e incerteza no formato do siunitx; a figura e as macros são geradas (sem LaTeX, para rodar no CI) |
 | `test_compactacao.py` | `compactar_amostras`: desentrelaçar e voltar é exato com cortes em qualquer byte; a receita do `LEIA-ME.txt` (só numpy) reconstrói o original; ida e volta devolve bytes, datas e permissões; peça corrompida é detectada e o arquivo estragado não é gravado; falha ou Ctrl+C no meio não deixa pacote nem temporários nem `zpaq` órfão; caminho malicioso no manifesto é recusado; `--remover-originais` só apaga o que continua idêntico; CLI. Os testes com o `zpaq` de verdade são `e2e` (pulados sem ele) |
 | `test_scripts_shell.py` | `scripts/set_date.sh` (com `ssh`/`sudo`/`date` falsos: o tempo da senha do sudo é descontado). Marcado `e2e` |
-| `e2e/test_perfil_sonda_e2e.py` | fluxo completo por subprocess nas entradas reais: calibração → perfil → correção (inclui as 7 correções da auditoria) |
+| `e2e/test_perfil_sonda_e2e.py` | fluxo completo (o perfil base e a correção principal por subprocess nas entradas reais; o resto com `main()` no mesmo processo): calibração → perfil → correção (inclui as 7 correções da auditoria) |
 
 **Testando um script de shell.** `tests/ler_adc_falso.py` imita a linha de comando do `ler_adc` e grava um `.bin` v3 sintético (aceita `--faixa-adc`; `cab_v1`/`cab_v2` imitam firmware antigo); o arquivo `cenario` (uma diretiva por chamada: `ok`, `sat_sonda`, `falha`, `truncar`, `travar`, ...) faz cada captura falhar de um jeito específico. É assim que se testa o tratamento de erros do `calibrar_sonda.sh` sem a BeagleBone.
 

@@ -15,6 +15,7 @@ from capturas_sinteticas import (
     escrever_bin,
     passa_baixa_2a_ordem,
     planta_h,
+    regravar_crc,
 )
 from supraharmonicos.cabecalho import ler_cabecalho
 from supraharmonicos.calibracao_sonda import (
@@ -496,9 +497,10 @@ class TestCliAmplitudeConhecida:
         dados = errado.read_bytes()
         dados = dados.replace(b"f=2000Hz", b"f=2100Hz")                                 # metadado diz 2100, a captura é 2000
         errado.write_bytes(dados)
+        regravar_crc(errado)
         rc, _, err = cli(main, pasta, "--id", "x", "-o", tmp_path / "p.json")
-        assert rc == 0 or "CRC" in err
-        assert "o gerador estava em 2100 Hz" in err
+        assert rc == 0, err
+        assert "o gerador estava em 2100 Hz" in err and "CRC" not in err
 
     @pytest.mark.parametrize("valor,trecho", [("500mV", "sem tipo"), ("abc", "não entendida"), ("0Vpp", "positivo")])
     def test_amplitude_invalida_e_erro_de_uso(self, cli, pasta_meta, tmp_path, valor, trecho):
@@ -574,3 +576,12 @@ class TestCliOsciloscopio:
     def test_osciloscopio_nao_combina_com_resistencia_shunt(self, cli, pasta_osc, tmp_path):
         rc, _, err = cli(main, pasta_osc, "--referencia-osciloscopio", "--resistencia-shunt", "0.1", "-o", tmp_path / "p.json")
         assert rc == 2 and "--osc-escala" in err
+
+
+def test_plot_grava_o_grafico_de_diagnostico_ao_lado_do_json(cli, tmp_path):
+    pasta = criar_pasta_calibracao(tmp_path / "c", freqs=[470, 1000, 2200, 4700], reps=1)
+    rc, out, err = cli(main, pasta, "--resistencia-shunt", R_SHUNT, "--ganho", "1,10", "--id", "x",
+                       "-o", tmp_path / "p.json", "--plot")
+    assert rc == 0, err
+    png = tmp_path / "p.png"
+    assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n" and "Gráfico de diagnóstico salvo" in out

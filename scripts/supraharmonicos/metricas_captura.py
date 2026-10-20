@@ -39,6 +39,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
+from functools import lru_cache
 
 import numpy as np
 from scipy.fft import prev_fast_len, rfft
@@ -62,8 +63,21 @@ _CHUNK_PROJECAO = 1 << 20
 _TINY = 1e-300
 
 
+_JANELA_MAX_EM_CACHE = 1 << 23    # 8 Mi pontos (64 MB): acima disso a janela é refeita, para não prender memória
+
+
+@lru_cache(maxsize=4)
+def _janela_em_cache(n: int) -> np.ndarray:
+    janela = kaiser(n, BETA_KAISER, sym=False)
+    janela.setflags(write=False)
+    return janela
+
+
 def _janela(n: int) -> np.ndarray:
-    return kaiser(n, BETA_KAISER, sym=False)
+    """Kaiser β = 14 de ``n`` pontos, só leitura. A conta (uma função de Bessel por ponto) leva ~20 ms para 100 mil
+    pontos, e gerar um perfil pede a MESMA janela dezenas de vezes (cada captura, cada canal): sem o cache, era
+    quase metade do tempo do ``gerar_perfil_sonda.py``."""
+    return _janela_em_cache(n) if n <= _JANELA_MAX_EM_CACHE else kaiser(n, BETA_KAISER, sym=False)
 
 
 def _db(razao: float) -> float:

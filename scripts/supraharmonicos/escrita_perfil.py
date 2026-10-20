@@ -180,4 +180,5 @@ def gerar_grafico(pontos: list[PontoPerfil], perfil_dict: dict, caminho_saida: P
     ax.legend()
     fig.tight_layout()
     fig.savefig(caminho_saida, dpi=150)
+    plt.close(fig)     # o pyplot guarda toda figura aberta até ser fechada
     log.info(f"Gráfico de diagnóstico salvo em '{caminho_saida}'.")

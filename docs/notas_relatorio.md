@@ -81,7 +81,7 @@
   digital, suporte multi-canal completo e exportação para o formato HDF5;
   rotulagem de grandeza e sonda por canal no cabeçalho (versão 2) e correção
   em frequência de sondas de corrente (validada apenas com sinais
-  sintéticos); e código Python organizado em pacote, com 651 testes
+  sintéticos); e código Python organizado em pacote, com 663 testes
   automáticos e integração contínua, e preparação da validação em bancada
   (ferramenta de métricas e roteiro de laboratório); e a primeira medição em
   bancada: a resposta em frequência da cadeia de tensão (T3), com −3 dB em

@@ -23,7 +23,8 @@ dependencies = [
 # Backend gráfico interativo (plt.show() sem -o); não é necessário para salvar PNG.
 gui = ["PyQt6"]
 # tomli: leitor de TOML dos testes na Python 3.10 (a partir da 3.11 ele vem na biblioteca padrão).
-dev = ["pytest>=8", "ruff>=0.6", "tomli>=2; python_version < '3.11'"]
+# pytest-xdist: a suíte roda em paralelo (-n auto, em addopts); pytest-cov: cobertura (--cov=scripts/supraharmonicos).
+dev = ["pytest>=8", "pytest-xdist>=3.5", "pytest-cov>=5", "ruff>=0.6", "tomli>=2; python_version < '3.11'"]
 
 # A lógica mora no pacote scripts/supraharmonicos; scripts/adc_tool.py, scripts/gerar_perfil_sonda.py,
 # scripts/medir_captura.py e scripts/compactar_amostras.py são só entradas de linha de comando. Para usar o
@@ -36,7 +37,10 @@ include = ["supraharmonicos*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["scripts", "tests"]
-addopts = "-ra"
+# -n auto: um processo por núcleo (6 min -> ~1 min na máquina de desenvolvimento). worksteal: quem termina antes
+# rouba testes de quem está atrasado (os da calibração e do perfil levam segundos cada). Para depurar um teste
+# com breakpoint/pdb, desligue o paralelismo: pytest -n0 tests/test_x.py::test_y
+addopts = "-ra -n auto --dist worksteal"
 markers = [
     "e2e: roda os scripts de ponta a ponta via subprocess (lento, dezenas de segundos)",
 ]

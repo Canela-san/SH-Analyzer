@@ -100,7 +100,9 @@ class TestResolverPerfilDoCanal:
         assert resolver_perfil_canal(1, "minha_sonda", {}, tmp_path).id == "minha_sonda"
 
     def test_sonda_perfil_explicito_tem_prioridade_e_pode_ficar_fora_de_sondas_dir(self, tmp_path):
-        fora = escrever_perfil(tmp_path / "fora" / "x.json") if (tmp_path / "fora").mkdir() is None else None
+        (tmp_path / "fora").mkdir()
+        fora = escrever_perfil(tmp_path / "fora" / "x.json")
+        # o id do cabeçalho seria recusado ('../'), mas o --sonda-perfil do operador vem antes e não é validado
         assert resolver_perfil_canal(1, "../ignorado", {1: fora}, tmp_path / "sondas").id == "x"
 
     def test_sem_id_e_sem_override_devolve_none(self, tmp_path):
@@ -169,8 +171,11 @@ class TestCorrecaoEmFrequencia:
         assert any("amplifica o ruído" in r.getMessage() for r in caplog.records)
 
 
-def test_perfil_sonda_pode_ser_construido_direto_em_memoria(tmp_path):
+def test_perfil_sonda_pode_ser_construido_direto_em_memoria(tmp_path, caplog):
     perfil = PerfilSonda(id="mem", tipo="resposta_frequencia", caminho=tmp_path / "mem.json",
                          pontos_freq_hz=np.array([100.0, 1000.0]), pontos_ganho=np.array([1.0, 0.5]))
     assert perfil.ganho_em(np.array([100.0]))[0] == pytest.approx(1.0)
     perfil.silenciar_aviso_fora_da_faixa()
+    with caplog.at_level(logging.WARNING):
+        perfil.ganho_em(np.array([10.0, 5000.0]))          # fora da faixa, mas o aviso foi silenciado
+    assert not caplog.records

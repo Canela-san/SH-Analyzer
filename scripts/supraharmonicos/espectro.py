@@ -3,6 +3,7 @@
 Depende de: ``constantes``, ``fundamental``, ``erros``."""
 
 import unicodedata
+from functools import lru_cache
 
 import numpy as np
 from scipy.fft import rfft, rfftfreq
@@ -41,13 +42,32 @@ def resolver_nome_janela(nome: str) -> str:
     return ALIASES_JANELA[chave]
 
 
+_JANELA_MAX_EM_CACHE = 1 << 23    # 8 Mi pontos (64 MB): acima disso a janela é refeita, para não prender memória
+
+
 def obter_janela(nome_canonico: str, n: int, kaiser_beta: float) -> np.ndarray:
     """fftbins=True (variante periódica) -- a recomendada para análise
     espectral por FFT, evita a amostra final redundante da variante
-    simétrica (mais apropriada para filtragem no tempo)."""
+    simétrica (mais apropriada para filtragem no tempo).
+
+    Só leitura e em cache: o Welch, a ENBW e cada canal pedem a mesma janela de novo, e a Kaiser (uma função de
+    Bessel por ponto) é cara."""
+    if n <= _JANELA_MAX_EM_CACHE:
+        return _janela_em_cache(nome_canonico, n, kaiser_beta if nome_canonico == "kaiser" else 0.0)
+    return _calcular_janela(nome_canonico, n, kaiser_beta)
+
+
+def _calcular_janela(nome_canonico: str, n: int, kaiser_beta: float) -> np.ndarray:
     if nome_canonico == "kaiser":
         return get_window(("kaiser", kaiser_beta), n, fftbins=True)
     return get_window(nome_canonico, n, fftbins=True)
+
+
+@lru_cache(maxsize=8)
+def _janela_em_cache(nome_canonico: str, n: int, kaiser_beta: float) -> np.ndarray:
+    janela = _calcular_janela(nome_canonico, n, kaiser_beta)
+    janela.setflags(write=False)
+    return janela
 
 
 def enbw_bins(nome_canonico: str, n: int, kaiser_beta: float) -> float:

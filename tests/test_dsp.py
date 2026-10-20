@@ -67,7 +67,7 @@ class TestFundamental:
     def test_corte_em_ciclos_inteiros(self):
         sinal, i0, i1, f0, n = recortar_ciclos_inteiros(self.sinal_50hz(), FS, 40, 70, 10)
         assert n == 10 and f0 == pytest.approx(50.0, abs=0.01)
-        assert len(sinal) == i1 - i0 + 1 or len(sinal) == i1 - i0
+        assert len(sinal) == i1 - i0                      # sinal[i0:i1]: o fim é exclusivo
         assert len(sinal) / FS == pytest.approx(10 / f0, rel=1e-3)
 
     def test_poucos_dados_viram_erro_de_dominio(self):

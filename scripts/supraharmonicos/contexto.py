@@ -142,6 +142,13 @@ def resolver_contexto(args: argparse.Namespace) -> ContextoCaptura:
     # por CANAL (não por posição), porque nem todo canal aparece nas flags.
     overrides_grandeza = analisar_overrides_grandeza(args.grandeza) if args.grandeza is not None else {}
     overrides_perfil = analisar_overrides_perfil(args.sonda_perfil) if args.sonda_perfil is not None else {}
+    # Um canal que não está na captura era IGNORADO: '--sonda-perfil 5:...' numa captura dos canais 1 e 2 (erro
+    # de digitação) saía sem correção nenhuma e sem aviso -- o resultado errado em silêncio.
+    for flag, overrides in (("--grandeza", overrides_grandeza), ("--sonda-perfil", overrides_perfil)):
+        fora = sorted(set(overrides) - set(canais))
+        if fora:
+            raise ErroSHAN(f"{flag}: canal {', '.join(map(str, fora))} não está na captura (canais: "
+                           f"{', '.join(map(str, canais))}). Confira o número do canal.")
     sondas_dir = args.sondas_dir if args.sondas_dir is not None else SONDAS_DIR_PADRAO
 
     return ContextoCaptura(

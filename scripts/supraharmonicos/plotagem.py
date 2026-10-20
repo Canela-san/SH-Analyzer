@@ -201,3 +201,4 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
         log.info(f"Gráfico salvo em '{caminho_saida}'.")
     else:
         plt.show()
+    plt.close(fig)     # o pyplot guarda toda figura aberta: sem isto, quem chama várias vezes (notebook, testes) acumula memória

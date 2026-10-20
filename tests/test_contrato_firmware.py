@@ -21,7 +21,12 @@ FIRMWARE = RAIZ / "firmware"
 LER_ADC_C = FIRMWARE / "ler_adc.c"
 MEMORIA_PRU_H = FIRMWARE / "memoria_pru.h"
 
-pytestmark = pytest.mark.skipif(not LER_ADC_C.exists(), reason="firmware/ler_adc.c não encontrado neste checkout")
+
+def test_os_fontes_do_firmware_estao_no_repositorio():
+    """Estes testes leem os fontes C. Antes eles eram PULADOS sem o arquivo -- um renome em firmware/ fazia o
+    contrato C <-> Python sumir da suíte em silêncio. Agora a falta é uma falha."""
+    for arquivo in (LER_ADC_C, MEMORIA_PRU_H):
+        assert arquivo.is_file(), f"{arquivo.relative_to(RAIZ)} sumiu: atualize os testes de contrato junto com o renome"
 
 
 def sem_comentarios(texto: str) -> str:
@@ -45,8 +50,6 @@ def inteiro_c(texto: str) -> int:
 
 
 def max_canais_c() -> int | None:
-    if not MEMORIA_PRU_H.exists():
-        return None
     m = re.search(r"#\s*define\s+ADS8688_MAX_CANAIS\s+\(?(\d+)", MEMORIA_PRU_H.read_text(encoding="utf-8"))
     return int(m.group(1)) if m else None
 
@@ -68,8 +71,7 @@ def test_codigos_de_grandeza(defines):
 
 def test_max_canais_bate_com_memoria_pru_h():
     esperado = max_canais_c()
-    if esperado is None:
-        pytest.skip("firmware/memoria_pru.h (ADS8688_MAX_CANAIS) não encontrado neste checkout")
+    assert esperado is not None, "#define ADS8688_MAX_CANAIS não encontrado em firmware/memoria_pru.h"
     assert const.ADS8688_MAX_CANAIS == esperado
 
 
@@ -173,8 +175,6 @@ def test_crc32_do_firmware_e_o_mesmo_polinomio_do_zlib(fonte_c):
 # ---------------------------------------------------------------------------
 
 def _memoria_pru_sem_comentarios() -> str:
-    if not MEMORIA_PRU_H.exists():
-        pytest.skip("firmware/memoria_pru.h não encontrado neste checkout")
     return sem_comentarios(MEMORIA_PRU_H.read_text(encoding="utf-8"))
 
 
