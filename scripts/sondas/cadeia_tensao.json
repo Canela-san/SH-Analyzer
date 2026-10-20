@@ -1,0 +1,325 @@
+{
+  "id": "cadeia_tensao",
+  "tipo": "resposta_frequencia",
+  "data_calibracao": "2026-10-19",
+  "pontos": [
+    {
+      "freq_hz": 49.998,
+      "ganho": 0.993842,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 59.998,
+      "ganho": 0.993772,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 70.997,
+      "ganho": 0.999902,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 83.996,
+      "ganho": 0.998932,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 99.996,
+      "ganho": 0.9939,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 119.995,
+      "ganho": 0.979286,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 141.994,
+      "ganho": 0.98152,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 169.993,
+      "ganho": 0.983215,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 201.991,
+      "ganho": 0.997934,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 239.99,
+      "ganho": 0.989169,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 285.987,
+      "ganho": 0.996525,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 340.985,
+      "ganho": 0.98444,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 404.982,
+      "ganho": 0.999605,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 482.979,
+      "ganho": 0.980394,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 574.975,
+      "ganho": 0.980222,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 683.97,
+      "ganho": 0.984501,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 814.965,
+      "ganho": 1.001131,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 969.958,
+      "ganho": 0.986611,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 1149.95,
+      "ganho": 0.986721,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 1369.941,
+      "ganho": 0.998606,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 1639.929,
+      "ganho": 0.994016,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 1949.916,
+      "ganho": 0.990274,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 2319.9,
+      "ganho": 0.987211,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 2759.881,
+      "ganho": 0.975482,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 3289.858,
+      "ganho": 0.996318,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 3909.831,
+      "ganho": 0.990916,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 4659.798,
+      "ganho": 0.983235,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 5549.76,
+      "ganho": 0.983543,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 6609.714,
+      "ganho": 0.965916,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 7869.66,
+      "ganho": 0.967979,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 8579.629,
+      "ganho": 0.931854,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 9359.595,
+      "ganho": 0.898492,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 11099.52,
+      "ganho": 0.878559,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 12199.473,
+      "ganho": 0.835043,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 13299.424,
+      "ganho": 0.795501,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 15799.317,
+      "ganho": 0.758615,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 17199.257,
+      "ganho": 0.699272,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 18799.187,
+      "ganho": 0.64844,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 20499.113,
+      "ganho": 0.62314,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 22399.031,
+      "ganho": 0.570934,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 24498.941,
+      "ganho": 0.517549,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 26698.844,
+      "ganho": 0.48176,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 29098.742,
+      "ganho": 0.426859,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 31698.629,
+      "ganho": 0.396982,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 34598.503,
+      "ganho": 0.345781,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 37798.366,
+      "ganho": 0.301848,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 41198.218,
+      "ganho": 0.274566,
+      "n": 1,
+      "desvio_pct": 0.0
+    },
+    {
+      "freq_hz": 44998.055,
+      "ganho": 0.236677,
+      "n": 1,
+      "desvio_pct": 0.0
+    }
+  ],
+  "faixa_freq_valida_hz": [
+    49.998,
+    44998.055
+  ],
+  "calibrado_com": "cadeia completa SH-Analyzer (sonda + isolador + ADS8688)",
+  "calibracao_adc": {
+    "formato": "uint16",
+    "faixa_v": {
+      "referencia": 10.24,
+      "sonda": 20.48
+    },
+    "ganho": {
+      "referencia": 19.357,
+      "sonda": 19.357
+    },
+    "modo_referencia": "externa",
+    "gerado_em": "2026-10-19T13:13:37.428550+00:00",
+    "n_pontos": 48,
+    "faixa_v_confiavel": {
+      "referencia": false,
+      "sonda": true
+    },
+    "resistencia_shunt_ohms": 1.0,
+    "resposta_conjunto": {
+      "ganho_baixa_frequencia": 0.993842,
+      "freq_menos3db_hz": 17089.3,
+      "inclinacao_db_por_oitava": -8.48,
+      "ganho_na_maior_frequencia_db": -12.46
+    }
+  }
+}
