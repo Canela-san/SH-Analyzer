@@ -259,6 +259,19 @@ class TestCli:
         assert float(linha["ruido_rms_lsb"]) == pytest.approx(5e-4 / (FAIXA / 65536), rel=0.1)
         assert linha["diafonia_db"] == ""                                  # 1 canal só: não há acoplamento
 
+    def test_varias_capturas_terminam_com_uma_tabela_resumo(self, cli, pasta):
+        rc, out, err = cli(main, pasta / "um_canal.bin", pasta / "dois_canais.bin")
+        assert rc == 0, err
+        resumo = out[out.index("Resumo (3 canais medidos"):].splitlines()
+        assert "SINAD dB" in resumo[1] and "salto (amostras)" in resumo[1]
+        assert [linha.split()[:2] for linha in resumo[2:5]] == [["um_canal.bin", "3"], ["dois_canais.bin", "0"],
+                                                                ["dois_canais.bin", "1"]]
+        assert "12345.6" in resumo[2]                                       # o tom, com 4 casas
+
+    def test_uma_captura_so_nao_tem_tabela_resumo(self, cli, pasta):
+        rc, out, _ = cli(main, pasta / "um_canal.bin")
+        assert rc == 0 and "Resumo (" not in out
+
     def test_csv_acumula_linhas_com_um_unico_cabecalho(self, cli, pasta, tmp_path):
         saida = tmp_path / "r.csv"
         for rotulo in ("A", "B"):

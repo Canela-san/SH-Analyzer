@@ -491,6 +491,7 @@ O `adc_tool.py` mostra o sinal; o `medir_captura.py` o **mede** e imprime númer
 ```bash
 uv run scripts/medir_captura.py captura.bin                          # tudo sobre o maior tom
 uv run scripts/medir_captura.py curto_*.bin --sem-tom --csv res.csv  # só ruído; uma linha de CSV por canal
+# com várias capturas, a saída termina com uma tabela-resumo (uma linha por canal) para comparar de relance
 uv run scripts/medir_captura.py t.bin --freq 10000 --referencia-rms 1.7654 --referencia-freq 10000.02
 ```
 

@@ -86,9 +86,30 @@ Lembre que, em produção, tensão e corrente juntas dividem a taxa por 2 (os ca
 medido com 1 canal na taxa máxima vale para qualquer taxa menor por canal: calibre uma vez, na taxa mais alta que
 passar no T7e.
 
+### Antes de sair e ao chegar: levar o firmware novo à BeagleBone
+
+O firmware de out/2026 só foi conferido no simulador. Guarde o de 19/10, que funcionou, **antes** de copiar o novo:
+se o `make` falhar ou o firmware novo se comportar mal, você volta a ele em 2 minutos e o dia não se perde. No
+computador, na raiz do repositório:
+
+```fish
+set BBB debian@192.168.7.2          # usuário e IP da placa (pelo USB costuma ser 192.168.7.2)
+set FW caminho/firmware             # onde fica a pasta firmware/ na BeagleBone
+ssh $BBB "cp -a $FW $FW-2026-10-19"  # PLANO B: o firmware de 19/10, já compilado
+scp firmware/* $BBB:$FW/            # o firmware novo (só o código; capturas e capturas/ não são tocadas)
+```
+
+Na BeagleBone: `cd caminho/firmware && ./setup.sh` e o T0, passo 2. **Plano B**, se o `make` falhar ou o T0
+mostrar algo estranho: guarde a mensagem de erro e a saída do `dmesg`, rode `cd caminho/firmware-2026-10-19 &&
+./setup.sh` e siga o dia com o firmware antigo. O T7 não valida nada com ele (o salto continua), mas o T10 e as
+pendências curtas sim; as ferramentas leem o cabeçalho v3 normalmente.
+
+Leve também: o tom de 10,000 kHz e o **contador de frequência** do osciloscópio (anote a leitura: faltou em 19/10);
+pelo menos 500 MB livres na BeagleBone (`df -h`); e, no computador, as variáveis `DADOS` e `DIA` (Convenções).
+
 **Próxima ida ao laboratório:**
 
-1. **Dia 1 (~3 h):** `./setup.sh` com o firmware de out/2026 e o T0, passo 2 (a linha `Integridade:`), depois o
+1. **Dia 1 (~3 h):** o firmware novo na BeagleBone (acima, com o plano B guardado), `./setup.sh` e o T0, passo 2 (a linha `Integridade:`), depois o
    T7a, o T7b e o T7c com ≥ 3 blocos (continuidade sem salto nas trocas de buffer) e o T7e, métodos 1, 2 e 4.
    **No fim do dia, a taxa de trabalho está decidida.**
 2. **Se ficar em 100 kS/s:** o T10-0 e o T10 (a sonda de corrente), mais as pendências curtas: o contador no T4,
@@ -337,7 +358,7 @@ Opções que você vai usar muito:
 **Objetivo.** Ter certeza de que firmware, relógio, cabeçalho **e a escala do ADC (nas três faixas)** estão certos antes de gastar tempo em medidas.
 
 1. No computador, com a BeagleBone por USB: `scripts/set_date.sh`. Na BeagleBone: `date` deve mostrar a data de hoje.
-2. Na BeagleBone: `cd firmware && ./setup.sh && dmesg | tail -n 20` (a PRU sobe sem reclamar). O `setup.sh` **recompila** o firmware (`make clean; make`): é preciso fazer isso depois de atualizar o repositório. A revisão de out/2026 (grade de tempo e contadores de integridade, cabeçalho v4) mexeu no `spi_core.asm` e só foi validada no simulador `tests/pru_sim.py`. Se o `make` falhar, pare aqui e guarde a mensagem. Confira com `./ler_adc --help` que as opções `--faixa-adc` e `--atraso-cs` existem, e, na captura do passo 5, que o `ler_adc` termina com a linha `Integridade: 0 amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído no SDO -- tudo certo` e que o resumo do cabeçalho diz `Versão de cabeçalho: 4`.
+2. Na BeagleBone: `cd firmware && ./setup.sh && dmesg | tail -n 20` (a PRU sobe sem reclamar). O `setup.sh` **recompila** o firmware (`make clean; make`): é preciso fazer isso depois de atualizar o repositório. A revisão de out/2026 (grade de tempo e contadores de integridade, cabeçalho v4) mexeu no `spi_core.asm` e só foi validada no simulador `tests/pru_sim.py`. Se o `make` falhar, guarde a mensagem e use o plano B ([Antes de sair e ao chegar](#antes-de-sair-e-ao-chegar-levar-o-firmware-novo-à-beaglebone)). Confira com `./ler_adc --help` que as opções `--faixa-adc` e `--atraso-cs` existem, e, na captura do passo 5, que o `ler_adc` termina com a linha `Integridade: 0 amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído no SDO -- tudo certo` e que o resumo do cabeçalho diz `Versão de cabeçalho: 4`.
 3. Ligue o gerador, o osciloscópio, a ponta TCP0030A, o frontend e a BeagleBone **30 minutos antes** do T1.
 4. **Capacitor do canal de corrente:** com tudo desligado, meça o valor dele (Fluke ou LCR; o seu 63 mF parece impreciso) e fotografe a placa. Anote o valor, **remova-o** e confirme que os dois resistores em série (1,79 kΩ e 1,7929 kΩ) continuam no lugar.
 5. Entrada do canal de tensão em curto (a entrada do divisor ligada ao retorno). Capture:
@@ -803,6 +824,9 @@ No computador:
 ```fish
 uv run scripts/medir_captura.py $DIA/T7e_cs_*.bin --freq 10000 --sem-correcao-sonda --inicio 100 --csv $DIA/T7e_cs.csv
 ```
+
+Com várias capturas, o `medir_captura.py` termina com uma **tabela-resumo**, uma linha por captura: tom, amplitude,
+SINAD, SNR, THD, ruído em LSB, DC e maior salto, lado a lado. É nela que se comparam os conjuntos.
 
 Um conjunto **passa** se, comparado com o `200,100,100`:
 

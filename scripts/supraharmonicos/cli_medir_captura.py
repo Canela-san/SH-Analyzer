@@ -356,6 +356,37 @@ def _linha_csv(arquivo: Path, rotulo: str, fs_nominal: float, fs_pru: float | No
     return {coluna: linha.get(coluna, "") for coluna in COLUNAS_CSV}
 
 
+# Tabela-resumo ao fim de uma medição com várias capturas: (cabeçalho, coluna do CSV, formato).
+_COLUNAS_RESUMO = (
+    ("tom (Hz)", "freq_tom_hz", "{:.4f}"),
+    ("amplitude RMS", "amplitude_rms", "{:.6g}"),
+    ("SINAD dB", "sinad_db", "{:.1f}"),
+    ("SNR dB", "snr_db", "{:.1f}"),
+    ("THD dB", "thd_db", "{:.1f}"),
+    ("ruído LSB", "ruido_rms_lsb", "{:.2f}"),
+    ("DC", "media", "{:.6g}"),
+    ("salto (amostras)", "salto_max_amostras", "{:.3f}"),
+)
+
+
+def _tabela_resumo(linhas: list[dict[str, str]]) -> list[str]:
+    """Uma linha por canal medido, para comparar várias capturas de relance (T4, T7e...) sem abrir o CSV."""
+    def formatar(valor: str, formato: str) -> str:
+        try:
+            return formato.format(float(valor))
+        except ValueError:
+            return valor or "—"
+    cabecalho = ["arquivo", "canal", *(nome for nome, _, _ in _COLUNAS_RESUMO)]
+    corpo = [[linha["arquivo"], linha["canal"], *(formatar(linha[col], fmt) for _, col, fmt in _COLUNAS_RESUMO)]
+             for linha in linhas]
+    larguras = [max(len(campo) for campo in coluna) for coluna in zip(cabecalho, *corpo)]
+
+    def alinhar(campos: list[str]) -> str:
+        return "  ".join(c.ljust(w) if i < 2 else c.rjust(w) for i, (c, w) in enumerate(zip(campos, larguras)))
+    return ["", f"Resumo ({len(linhas)} canais medidos; o detalhe de cada um está acima):", alinhar(cabecalho),
+            *(alinhar(c) for c in corpo)]
+
+
 def _acrescentar_csv(caminho: Path, linhas: list[dict[str, str]]) -> None:
     existe = caminho.exists() and caminho.stat().st_size > 0
     if existe:
@@ -604,6 +635,9 @@ def main(argv: list[str] | None = None) -> int:
             except ErroSHAN as e:
                 log.error(f"{caminho}: {e}")
                 falhas += 1
+        if len(linhas) >= 2:
+            for texto in _tabela_resumo(linhas):
+                log.info(texto)
         if args.csv is not None and linhas:
             _acrescentar_csv(args.csv, linhas)
             log.info(f"{len(linhas)} linha(s) acrescentada(s) a {args.csv}")
