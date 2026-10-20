@@ -6,8 +6,6 @@ import unicodedata
 from functools import lru_cache
 
 import numpy as np
-from scipy.fft import rfft, rfftfreq
-from scipy.signal import find_peaks, get_window
 
 from .constantes import ALIASES_JANELA, NOMES_EXIBICAO_JANELA, TAMANHO_LOTE_WELCH_PADRAO
 from .erros import ErroSHAN
@@ -58,6 +56,7 @@ def obter_janela(nome_canonico: str, n: int, kaiser_beta: float) -> np.ndarray:
 
 
 def _calcular_janela(nome_canonico: str, n: int, kaiser_beta: float) -> np.ndarray:
+    from scipy.signal import get_window  # sob demanda: só quem calcula paga o SciPy
     if nome_canonico == "kaiser":
         return get_window(("kaiser", kaiser_beta), n, fftbins=True)
     return get_window(nome_canonico, n, fftbins=True)
@@ -112,7 +111,7 @@ def _normalizar_espectro(potencia: np.ndarray, fs: float, tamanho_fft: int,
     """
     # Espectro de UM lado: cada bin soma o seu par de frequência negativa (fator 2), menos o DC e,
     # com N par, o de Nyquist, que não têm par. (Com N ímpar o último bin TEM par e também dobra.)
-    um_lado = np.full(len(potencia), 2.0)
+    um_lado = np.full(np.shape(potencia)[-1], 2.0)      # a última dimensão é a frequência (1 ou vários segmentos)
     um_lado[0] = 1.0
     if tamanho_fft % 2 == 0:
         um_lado[-1] = 1.0
@@ -133,6 +132,7 @@ def calcular_espectro(sinal: np.ndarray, fs: float, nome_janela: str,
     caminho com múltiplos segmentos médios. 'modo' escolhe a normalização
     (ver _normalizar_espectro)."""
     n = len(sinal)
+    from scipy.fft import rfft, rfftfreq  # sob demanda: só quem calcula paga o SciPy
     janela = obter_janela(nome_janela, n, kaiser_beta)
     sinal_janelado = (sinal - np.mean(sinal)) * janela
     espectro = rfft(sinal_janelado)
@@ -163,6 +163,7 @@ def calcular_espectro_welch(sinal: np.ndarray, fs: float, nome_janela: str,
     desempenho (FFT vetorizada por lote) e memória (uma captura longa com
     50% de sobreposição pode gerar centenas de milhares de segmentos).
     """
+    from scipy.fft import rfft, rfftfreq  # sob demanda: só quem calcula paga o SciPy
     tamanho_segmento = tamanho_segmento_welch(fs, resolucao_hz)
     passo = max(1, int(round(tamanho_segmento * (1.0 - sobreposicao))))
     n = len(sinal)
@@ -191,6 +192,47 @@ def calcular_espectro_welch(sinal: np.ndarray, fs: float, nome_janela: str,
     potencia_media = acumulador / n_segmentos
     amplitude_db = _normalizar_espectro(potencia_media, fs, tamanho_segmento, janela, modo)
     return freqs, amplitude_db, n_segmentos
+
+
+def calcular_espectrograma(sinal: np.ndarray, fs: float, nome_janela: str, kaiser_beta: float,
+                           resolucao_hz: float, sobreposicao: float, modo: str = "tom",
+                           max_colunas: int = 600) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Espectro ao longo do tempo (STFT): os mesmos segmentos do Welch, mas sem tirar a média de todos.
+
+    Numa captura longa há centenas de milhares de segmentos (10 min a 100 kS/s com 200 Hz de resolução: 243 mil),
+    mais do que uma tela ou um arquivo comportam. Por isso os segmentos consecutivos são reunidos em até
+    ``max_colunas`` colunas, e cada coluna é a MÉDIA da potência dos seus segmentos (um Welch curto). O tempo de
+    cada coluna é o centro dos segmentos que ela reúne.
+
+    Devolve ``(tempos_s, freqs_hz, matriz_db)``, com ``matriz_db`` de forma (colunas, frequências), na mesma
+    normalização de :func:`calcular_espectro_welch` (``modo`` 'tom' ou 'ruido')."""
+    from scipy.fft import rfft, rfftfreq  # sob demanda: só quem calcula paga o SciPy
+    tamanho_segmento = tamanho_segmento_welch(fs, resolucao_hz)
+    passo = max(1, int(round(tamanho_segmento * (1.0 - sobreposicao))))
+    n = len(sinal)
+    if n < tamanho_segmento:
+        raise ErroSHAN(f"sinal com {n} amostras insuficiente para 1 segmento de {tamanho_segmento} amostras "
+                       f"(--resolucao-welch {resolucao_hz:g} Hz).")
+    n_segmentos = (n - tamanho_segmento) // passo + 1
+    por_coluna = -(-n_segmentos // max(1, max_colunas))             # teto
+    n_colunas = -(-n_segmentos // por_coluna)
+    janela = obter_janela(nome_janela, tamanho_segmento, kaiser_beta)
+    freqs = rfftfreq(tamanho_segmento, 1.0 / fs)
+    acumulado = np.zeros((n_colunas, len(freqs)))
+    contagem = np.zeros(n_colunas)
+    deslizante = np.lib.stride_tricks.sliding_window_view(sinal, tamanho_segmento)
+    for inicio_lote in range(0, n_segmentos, TAMANHO_LOTE_WELCH_PADRAO):
+        indices = np.arange(inicio_lote, min(inicio_lote + TAMANHO_LOTE_WELCH_PADRAO, n_segmentos))
+        lote = deslizante[indices * passo]
+        potencia = np.abs(rfft((lote - lote.mean(axis=1, keepdims=True)) * janela, axis=1)) ** 2
+        colunas = indices // por_coluna
+        np.add.at(acumulado, colunas, potencia)
+        np.add.at(contagem, colunas, 1)
+    matriz_db = _normalizar_espectro(acumulado / contagem[:, None], fs, tamanho_segmento, janela, modo)
+    primeiro = np.arange(n_colunas) * por_coluna
+    ultimo = np.minimum(primeiro + por_coluna, n_segmentos) - 1
+    tempos = ((primeiro + ultimo) / 2.0 * passo + tamanho_segmento / 2.0) / fs
+    return tempos, freqs, matriz_db
 
 
 def agrupar_em_bandas(freqs: np.ndarray, amplitude_db: np.ndarray,
@@ -225,7 +267,8 @@ def agrupar_em_bandas(freqs: np.ndarray, amplitude_db: np.ndarray,
 
     centros, valores_db = [], []
     for inicio_banda in bordas:
-        mascara = (freqs >= inicio_banda) & (freqs < inicio_banda + largura_hz)
+        # (início, fim]: a convenção da IEC 61000-4-7, anexo B (banda b = b-95 Hz..b+100 Hz em bins de 5 Hz).
+        mascara = (freqs > inicio_banda) & (freqs <= inicio_banda + largura_hz)
         if not np.any(mascara):
             continue
         energia = np.sum(potencia_linear[mascara])
@@ -251,6 +294,7 @@ def encontrar_picos_espectro(freqs: np.ndarray, amplitude_db: np.ndarray,
     largura_bin = freqs[1] - freqs[0]
     distancia_bins = max(1, int(round(distancia_minima_hz / largura_bin)))
 
+    from scipy.signal import find_peaks  # sob demanda: só quem calcula paga o SciPy
     sub_espectro = amplitude_db[indices_banda]
     indices_locais, _ = find_peaks(sub_espectro, height=limiar_db, distance=distancia_bins)
 

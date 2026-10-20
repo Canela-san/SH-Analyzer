@@ -126,8 +126,8 @@ def resolver_contexto(args: argparse.Namespace) -> ContextoCaptura:
     else:
         canais_exibir = canais
 
-    # --faixa: digitada > faixa de entrada do ADC gravada no cabeçalho v3 > 10,24
-    # (padrão histórico, para capturas v1/v2). O cabeçalho é indexado pela
+    # --faixa: digitada > faixa de entrada do ADC gravada no cabeçalho v3 > 20.48
+    # (a de reset do ADC, para capturas v1/v2). O cabeçalho é indexado pela
     # POSIÇÃO no ciclo (mesma regra de grandeza_do_canal), então só vale se a
     # contagem de canais bate -- se não bater, conferir_consistencia_cabecalho
     # aborta mais adiante com a explicação.

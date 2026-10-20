@@ -1,6 +1,6 @@
 """Faixa de entrada do ADC por canal (cabeçalho v3): como as ferramentas Python a resolvem e usam.
 
-Regra: ``--faixa`` digitado > faixa gravada no cabeçalho v3 > 10.24 (padrão histórico, capturas v1/v2).
+Regra: ``--faixa`` digitado > faixa gravada no cabeçalho v3 > 20.48 (a faixa de reset do ADC, capturas v1/v2).
 O ``ler_adc --faixa-adc`` escolhe a faixa de cada canal (menor faixa = menor LSB e menos ruído em Volts); o
 cabeçalho a registra e estas ferramentas a aplicam sozinhas -- sem isso, um ``--faixa`` esquecido escalaria a
 amplitude errado em silêncio.
@@ -34,13 +34,13 @@ def senoide(amplitude_v: float, freq_hz: float = 1000.0) -> np.ndarray:
 # --------------------------------------------------------------------------------------
 class TestResolverFaixas:
     def test_sem_nada_vale_o_padrao_historico_e_nao_e_confiavel(self):
-        assert resolver_faixas(None, [0, 1], "uint16", None) == ([10.24, 10.24], [False, False])
+        assert resolver_faixas(None, [0, 1], "uint16", None) == ([20.48, 20.48], [False, False])
 
     def test_sem_texto_usa_a_faixa_do_cabecalho_de_cada_canal(self):
         assert resolver_faixas(None, [0, 3], "uint16", (20.48, 5.12)) == ([20.48, 5.12], [True, True])
 
     def test_canal_de_faixa_desconhecida_cai_no_padrao(self):
-        assert resolver_faixas(None, [0, 3], "uint16", (None, 5.12)) == ([10.24, 5.12], [False, True])
+        assert resolver_faixas(None, [0, 3], "uint16", (None, 5.12)) == ([20.48, 5.12], [False, True])
 
     def test_int16_usa_a_metade_positiva(self):
         """int16: V = código·faixa/32768 (faixa = +fundo de escala), uint16: V = código·faixa/65536 − faixa/2."""
@@ -63,7 +63,7 @@ class TestResolverFaixas:
         assert len(avisos) == 2 and "canal 0" in avisos[0] and "20.48" in avisos[0] and "canal 3" in avisos[1]
 
     def test_cabecalho_com_outra_quantidade_de_canais_e_ignorado(self):
-        assert resolver_faixas(None, [0, 1, 2], "uint16", (20.48, 5.12)) == ([10.24] * 3, [False] * 3)
+        assert resolver_faixas(None, [0, 1, 2], "uint16", (20.48, 5.12)) == ([20.48] * 3, [False] * 3)
 
     def test_valor_invalido_e_erro_de_uso(self):
         from supraharmonicos.erros import ErroSHAN
@@ -102,7 +102,7 @@ def test_amplitude_em_volts_correta_em_cada_faixa(tmp_path):
 def test_captura_v2_continua_com_o_padrao_historico(tmp_path):
     p = escrever_bin(tmp_path / "v2.bin", [senoide(1.0), senoide(1.0)])
     ctx = contexto(p)
-    assert ctx.faixas == [10.24, 10.24] and ctx.faixas_confiaveis == [False, False]
+    assert ctx.faixas == [20.48, 20.48] and ctx.faixas_confiaveis == [False, False]
 
 
 def test_faixa_digitada_errada_avisa_e_vence(tmp_path, caplog):
@@ -148,11 +148,11 @@ def test_processar_captura_mede_a_amplitude_certa_em_qualquer_faixa(tmp_path):
         assert pt.faixa_sonda == total_v and pt.faixas_confiaveis == (False, True)
 
 
-def test_processar_captura_v2_assume_10_24_e_nao_e_confiavel(tmp_path):
+def test_processar_captura_v2_assume_a_faixa_de_reset_e_nao_e_confiavel(tmp_path):
     p = escrever_bin(tmp_path / "v2.bin", [senoide(0.2)], (3,), (1,), ("x",), fs_total=int(FS))
     pt = ponto(p)
     assert pt.amplitude_sonda == pytest.approx(0.2, rel=2e-3)
-    assert pt.faixa_sonda == 10.24 and pt.faixas_confiaveis == (False, False)
+    assert pt.faixa_sonda == 20.48 and pt.faixas_confiaveis == (False, False)
 
 
 def test_gerar_perfil_registra_a_faixa_e_se_ela_e_confiavel(tmp_path):

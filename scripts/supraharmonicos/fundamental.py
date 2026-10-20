@@ -5,8 +5,6 @@ Depende de: ``filtros``, ``erros``."""
 import logging
 
 import numpy as np
-from scipy.fft import rfft, rfftfreq
-from scipy.signal import butter, sosfiltfilt
 
 from .erros import ErroSHAN
 
@@ -47,6 +45,7 @@ def estimar_frequencia_fundamental(sinal: np.ndarray, fs: float,
     if n < 16:
         raise ErroSHAN("poucos dados para estimar a frequência fundamental.")
 
+    from scipy.fft import rfft, rfftfreq  # sob demanda: só quem calcula paga o SciPy
     janela = np.hanning(n)
     espectro_db = 20 * np.log10(np.maximum(np.abs(rfft((sinal - np.mean(sinal)) * janela)), 1e-12))
     freqs = rfftfreq(n, 1.0 / fs)
@@ -138,6 +137,7 @@ def recortar_ciclos_inteiros(sinal: np.ndarray, fs: float, freq_min: float,
     # (b, a): fs/f0 é extremo aqui (dezenas de milhares para 1) e a forma
     # polinomial clássica perde precisão numérica nesse regime.
     corte = min(freq_estimada * 2.5, 0.45 * fs)
+    from scipy.signal import butter, sosfiltfilt  # sob demanda: só quem calcula paga o SciPy
     sos = butter(4, corte / (fs / 2.0), btype="low", output="sos")
     sinal_filtrado = sosfiltfilt(sos, sinal_centrado)
 
@@ -150,6 +150,16 @@ def recortar_ciclos_inteiros(sinal: np.ndarray, fs: float, freq_min: float,
 
     periodo_s, n_ciclos_disponiveis = refinar_periodo_fundamental(posicoes_cruzamento, fs)
     f0 = 1.0 / periodo_s
+    # Os cruzamentos por zero só medem a fundamental se ela existe no trecho. Sem ela (um --filtro-passa-alta acima
+    # dela, um tom de teste sem 60 Hz), sobram cruzamentos de ruído e o "período" sai qualquer coisa: antes, a
+    # análise seguia com f0 = 0,3 Hz e uma tabela de harmônicos sem sentido.
+    if not (0.9 * freq_min <= f0 <= 1.1 * freq_max):
+        raise ErroSHAN(
+            f"a fundamental medida pelos cruzamentos por zero ({f0:.4g} Hz) está fora da busca "
+            f"({freq_min:g} a {freq_max:g} Hz): o trecho não tem uma fundamental nesse intervalo (um "
+            f"--filtro-passa-alta acima dela? um sinal de teste sem a rede?). Ajuste --freq-min/--freq-max, ou use "
+            f"--welch, que não precisa de fundamental."
+        )
 
     if n_ciclos_pedido is None or n_ciclos_pedido <= 0:
         n_ciclos_usados = n_ciclos_disponiveis

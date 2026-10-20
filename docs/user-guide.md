@@ -106,7 +106,7 @@ O ADS8688 converte cada canal em 16 bits dentro de uma **faixa de entrada** prog
 * **Escolha a menor faixa que comporta o pico do sinal, com 10 a 20% de margem.** Faixa maior que o necessário desperdiça resolução; faixa menor corta o sinal (o ADC satura em 0 ou 65535 e a captura perde a forma de onda). O erro de quantização cai exatamente na proporção da faixa (4x entre `20.48` e `5.12`); o ruído do próprio ADC cai menos, porque o SNR típico do datasheet também cai um pouco nas faixas menores (92, 91 e 89 dB). Meça o ganho real no passo T2 do [roteiro de laboratório](lab-procedure.md).
 * **O que o programa faz.** A PRU escreve a faixa de cada canal habilitado nos registradores `RANGE_SELn` do ADC **a cada captura** (o ADC guarda o valor entre capturas) e o `ler_adc` grava o código no cabeçalho (desde a versão 3). Sem `--faixa-adc`, todos os canais ficam em `20.48`, o padrão de fábrica do ADC. Conferido em bancada (19/10/2026): a tensão no pino sai a mesma nas três faixas, a 0,08 %.
 * **Ao trocar a faixa, descarte o começo.** Se a faixa de um canal mudou em relação à captura anterior, as ~6 primeiras amostras desse canal (60 µs a 100 kS/s) são um transitório de até ~1 V, enquanto o ADC se acomoda. Sem troca de faixa, não há transitório. Para medir ruído ou DC, use `--inicio 100`: sem isso, o ruído sai 7 a 8 vezes maior.
-* **Na análise, não precisa informar.** O `adc_tool.py`, o `medir_captura.py` e o `gerar_perfil_sonda.py` convertem cada canal em Volts com a faixa gravada no cabeçalho. Um `--faixa` digitado **vence**, mas avisa se divergir do cabeçalho. Capturas de versão 1 ou 2 do cabeçalho não registram a faixa: assumem `--faixa 10.24`, como sempre foi. O firmware dessa época nunca mudava a faixa, e o ADC estava na de ±10,24 V (conferido no T0 do roteiro): essas capturas saem com **metade** do valor real; leia-as com `--faixa 20.48`.
+* **Na análise, não precisa informar.** O `adc_tool.py`, o `medir_captura.py` e o `gerar_perfil_sonda.py` convertem cada canal em Volts com a faixa gravada no cabeçalho. Um `--faixa` digitado **vence**, mas avisa se divergir do cabeçalho. Capturas de versão 1 ou 2 do cabeçalho não registram a faixa. O firmware dessa época nunca a mudava, então as ferramentas assumem a faixa de reset do ADC, ±10,24 V (`--faixa 20.48`), conferida no T0. Até out/2026 assumiam 10.24, o que as lia com **metade** do valor: números antigos tirados dessas capturas precisam ser refeitos.
 * As faixas unipolares do ADS8688 (0 a 5 V, 0 a 10 V) **não** são suportadas: o pós-processamento assume saída bipolar, com 0 V no meio da escala.
 
 ### Integridade da captura e taxa máxima
@@ -169,6 +169,20 @@ uv run scripts/adc_tool.py captura.bin [opções]
 O `uv` instala as dependências na primeira execução. Quando o `.bin` tem cabeçalho (todas as capturas feitas com o `ler_adc` atual têm), a frequência, os canais, a grandeza de cada canal e a sonda vêm de lá, e um resumo da captura é impresso antes da análise. O que você passar na linha de comando sempre tem prioridade sobre o cabeçalho.
 
 A ferramenta tem três modos: **plotagem** (padrão), **conversão** `.bin` ↔ `.csv` e **exportação HDF5**. A referência completa de flags está em `uv run scripts/adc_tool.py --help`.
+
+**Uma ferramenta, vários subcomandos.** O `adc_tool.py` é a porta de entrada de todas as ferramentas do computador:
+
+| Comando | O que faz |
+|---|---|
+| `adc_tool.py captura.bin ...` ou `adc_tool.py analisar captura.bin ...` | A análise (esta seção): forma de onda, FFT, Welch, harmônicos, bandas IEC, espectrograma, picos, exportação |
+| `adc_tool.py info *.bin [--estatisticas]` | O que cada captura é: cabeçalho, canais, faixa, integridade, CRC e, com `--estatisticas`, média, RMS, extremos, fator de crista e saturação por canal. Instantâneo, sem análise espectral |
+| `adc_tool.py medir ...` | As métricas de bancada (o mesmo que `medir_captura.py`) |
+| `adc_tool.py perfil ...` | O perfil de uma sonda (o mesmo que `gerar_perfil_sonda.py`) |
+| `adc_tool.py compactar ...` | O arquivamento sem perdas (o mesmo que `compactar_amostras.py`) |
+
+Os scripts separados continuam funcionando, e os comandos do roteiro de laboratório não mudam. Cada comando carrega só as bibliotecas que usa: o `--help` e o `info` não carregam o SciPy nem o matplotlib, e a análise sem gráfico não carrega o matplotlib.
+
+**Sem gráfico.** `--sem-grafico` deixa só os números (no terminal e nas exportações), sem carregar o matplotlib: é o modo para processar muitas capturas, por SSH ou num servidor. Sem tela e sem `-o`, o gráfico é pulado sozinho, com um aviso. Numa captura longa, a forma de onda é desenhada como envoltória mín/máx (como o modo de pico de um osciloscópio): nenhum pico some, e o gráfico de 10 min caiu de 26 s e 4,3 GB de RAM para 6 s e 1,6 GB.
 
 ### Plotagem
 
@@ -260,7 +274,8 @@ A FFT assume que o trecho analisado se repete infinitamente. Quando a "emenda" e
 | **Serve para** | Fundamental e harmônicos | Supraharmônicos |
 | **Ideia** | Corta o sinal em um número inteiro de ciclos da rede, o que elimina o vazamento na origem | Divide o sinal em segmentos, calcula o espectro de cada um e tira a **média** |
 | **Por que** | Fundamental e harmônicos têm fase travada na rede, então dá para sincronizar o corte | Supraharmônicos vêm de conversores chaveados e **não têm relação de fase com a rede**. Além disso, a frequência de chaveamento costuma oscilar (*dithering*), o que uma FFT longa borraria |
-| **Custo** | Precisa da fundamental na faixa `--freq-min`/`--freq-max` (padrão 45–65 Hz) | Resolução fixa em frequência, definida por `--resolucao-welch` (padrão 200 Hz) |
+| **Custo** | Precisa da fundamental na faixa `--freq-min`/`--freq-max` (padrão 45–65 Hz); sem ela, a análise para com erro em vez de inventar uma | Resolução fixa em frequência, definida por `--resolucao-welch` (padrão 200 Hz) |
+| **Janela padrão** | Retangular (o trecho é síncrono: não vaza para os harmônicos, como na IEC 61000-4-7) | Hann (o segmento não é síncrono com nada). `--janela` muda as duas |
 
 Você pode usar as duas na mesma execução: cada uma desenha a sua curva.
 
@@ -273,6 +288,27 @@ uv run scripts/adc_tool.py captura.bin --welch --resolucao-welch 100 --filtro-pa
 > ⚠️ **Cuidado ao combinar `--fft` com filtro passa-alta.** Um `--filtro-passa-alta` igual ou maior que `--freq-min` remove a fundamental, e o `--fft` não consegue mais sincronizar o corte em ciclos. O `adc_tool.py` detecta isso e avisa. Nesse caso, rode `--fft` e `--welch`/`--picos` em comandos separados.
 
 Para os detalhes de implementação (estimativa da fundamental, janelas, normalização), veja a seção `pipeline_dsp_python` de [`project-context.md`](project-context.md).
+
+### Análise para pesquisa: harmônicos, bandas IEC, espectrograma e exportação
+
+Ferramentas para quem vai publicar ou comparar com a literatura de qualidade de energia. Todas trabalham sobre o sinal já calibrado, corrigido pela sonda e filtrado, e podem ser combinadas numa só execução:
+
+```fish
+uv run scripts/adc_tool.py captura.bin --ganho 19.357 --fft --harmonicos 40 --welch --picos -70 \
+    --bandas-iec --espectrograma --exportar resultados/rede --exportar-mat resultados/rede.mat -o resultados/rede.png
+```
+
+| Opção | O que dá | Método |
+|---|---|---|
+| `--harmonicos N` (com `--fft`) | Tabela dos harmônicos 1..N: frequência, RMS da **componente** e do **grupo harmônico**, % da fundamental e **fase** relativa à fundamental; THD e THDG | FFT retangular sobre ciclos inteiros: o harmônico h cai exatamente no bin h·n. O grupo soma o conteúdo até a metade do caminho para os vizinhos, com metade da potência nos bins de borda (IEC 61000-4-7). A fase está no referencial seno, `v(t) = Σ √2·V_h·sin(h·ω·t + θ_h)` com θ₁ = 0, e não depende de onde o trecho começa |
+| `--bandas-iec` | Bandas de 200 Hz (centros 2100, 2300... Hz) **ao longo do tempo**, com o RMS das janelas, o máximo, o percentil 95 (CP95) e o mínimo de cada banda; figura com as estatísticas e o mapa tempo × banda | IEC 61000-4-7, anexo B (e IEC 61000-4-30, anexo C): janelas de 200 ms sem lacunas, retangular, bins de 5 Hz, banda b = (b − 100, b + 100] Hz. `--bandas-iec-min`/`--bandas-iec-max` limitam a faixa (a norma de 2 a 9 kHz para em 9000 Hz) |
+| `--espectrograma` | O espectro ao longo do tempo: quando cada supraharmônico aparece, some ou muda de frequência | Os segmentos do Welch (`--resolucao-welch`, `--sobreposicao-welch`, janela Hann), sem a média de todos: são reunidos em até 600 colunas, cada uma a média dos seus segmentos |
+| `--exportar PREFIXO` | Um CSV por resultado e por canal (`PREFIXO_canal1_welch.csv`, `..._harmonicos.csv`, `..._bandas_iec.csv` e `..._bandas_iec_serie.csv`, `..._espectrograma.csv`, `PREFIXO_picos.csv`) e `PREFIXO_metadados.json` | Os metadados dizem tudo o que produziu o número: arquivo e cabeçalho da captura, calibração e sonda de cada canal, janela, resolução, ENBW, filtros, versão do código (commit), Python/NumPy/SciPy e o comando exato |
+| `--exportar-mat ARQ.mat` | Os mesmos resultados no MATLAB/Octave: `load('ARQ.mat')`, depois `sh.canal1.welch.f`, `sh.canal1.harmonicos.thd_pct`, `sh.canal1.bandas_iec.niveis`, `sh.metadados` | Formato `.mat` v5 (scipy.io) |
+
+Diferenças em relação às normas, a declarar num trabalho: a janela de 200 ms do `--bandas-iec` é fixa, não sincronizada à fundamental (com a rede a 60 Hz ± 0,1 Hz, a diferença é de até 0,2 %); a agregação de 3 s e 10 min da IEC 61000-4-30 não é feita (as estatísticas são sobre o trecho analisado; a série completa sai em `--exportar`); e a correção de sonda é só de amplitude, então a fase dos harmônicos de um canal corrigido inclui a fase da sonda.
+
+Com `-o grafico.png`, as figuras extras saem ao lado: `grafico_espectrograma.png` e `grafico_bandas_iec.png`.
 
 ---
 
@@ -428,7 +464,7 @@ Uma coleta de tensão feita antes de `--grandeza tensao` gravou a leitura na col
 * `--ganho` é o fator tensão no pino do ADC → grandeza física (corrente: tipicamente 1 ÷ sensibilidade, sonda de 100 mV/A → `--ganho 10`; tensão: 1 ÷ razão do divisor, ex.: `19.357`). O perfil é **relativo** a ele: use o mesmo valor em produção. O script avisa se o ganho na menor frequência ficar fora de 0,7 a 1,3, o que indica um `--ganho` errado.
 * O script **mede** a frequência e a amplitude de cada captura (não confia no nome do arquivo; FFT única da captura inteira, com erro de amplitude < 0,01% em sinais sintéticos), descarta capturas com sinal fraco demais (SNR abaixo de 20 dB) e avisa se alguma repetição divergir mais de 10%.
 * `--plot` salva um PNG com a curva obtida.
-* Use os mesmos `--formato` e `--ganho` que você usará no `adc_tool.py`; o `adc_tool.py` avisa se forem diferentes. A `--faixa` não precisa ser a mesma: a de cada captura vem do cabeçalho (`--faixa-adc`), e um perfil gerado assim vale para qualquer faixa. Capturas de cabeçalho v1/v2 (sem a faixa) assumem 10.24, e aí o `adc_tool.py` avisa se a `--faixa` de produção for outra.
+* Use os mesmos `--formato` e `--ganho` que você usará no `adc_tool.py`; o `adc_tool.py` avisa se forem diferentes. A `--faixa` não precisa ser a mesma: a de cada captura vem do cabeçalho (`--faixa-adc`), e um perfil gerado assim vale para qualquer faixa. Capturas de cabeçalho v1/v2 (sem a faixa) assumem 20.48, a de reset do ADC, e aí o `adc_tool.py` avisa se a `--faixa` de produção for outra.
 
 O resultado é `scripts/sondas/<id>.json`. Para ver o formato de um perfil, abra [`probe-profile-example.json`](probe-profile-example.json).
 
@@ -563,7 +599,7 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 | Script | Onde roda | O que faz |
 |---|---|---|
 | `scripts/set_date.sh` | Computador | Copia a data e hora do computador para a BeagleBone via SSH (como instante absoluto em UTC, então vale qualquer que seja o fuso dela). Padrão: `debian@192.168.6.2`; troque com `BBB_USER` e `BBB_IP`. **Nenhuma senha fica no arquivo:** use chave SSH (`ssh-copy-id debian@192.168.6.2`) ou deixe o `ssh`/`sudo` pedirem a senha no terminal. Se preferir não digitar, exporte `SSHPASS` (e tenha o `sshpass` instalado) |
-| `scripts/compactar_amostras.py` | Computador | Arquiva pastas de captura sem perdas num pacote `.zpaq.tar` (~11 % do tamanho), conferido bit a bit; também `listar`, `extrair` e `verificar`. Veja [Guardar as capturas sem perdas](#guardar-as-capturas-sem-perdas-compactar_amostraspy) |
+| `scripts/compactar_amostras.py` | Computador | (ou `adc_tool.py compactar`) Arquiva pastas de captura sem perdas num pacote `.zpaq.tar` (~11 % do tamanho), conferido bit a bit; também `listar`, `extrair` e `verificar`. Veja [Guardar as capturas sem perdas](#guardar-as-capturas-sem-perdas-compactar_amostraspy) |
 | `report/gerar_figuras.py` | Computador | Gera as figuras do relatório (PDF vetorial, já no tamanho final, com o texto composto pelo LaTeX) e um `.tex` com os números citados (macros siunitx). `uv run report/gerar_figuras.py` gera todas; `--listar`, `--png` (prévia), `--formato artigo --idioma en` (coluna de artigo, em inglês), `--saida PASTA` (ex.: a pasta do projeto LaTeX). Inclua no documento sem `width=`, para as fontes baterem com as do texto |
 
 ---

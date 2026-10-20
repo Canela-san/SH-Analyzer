@@ -9,7 +9,8 @@ assembly só conta como feita depois de montada com `clpru` e validada no hardwa
 
 Revisado em 20/10/2026, depois da revisão do firmware (salto de 7 µs na troca de buffer corrigido, contadores de
 integridade, cabeçalho v4), da revisão dos testes, do novo `compactar_amostras.py` e da análise das capturas de
-bancada de 19/10 (F9 e P6 vieram delas). Depois, no mesmo dia, saíram daqui R1 a R4 e T1: dados fora do
+bancada de 19/10 (F9 e P6 vieram delas). Depois, a revisão do `adc_tool` fechou o P2 (importações sob demanda) e a
+parte do gráfico do P1, e trouxe o P7 e o P8. Depois, no mesmo dia, saíram daqui R1 a R4 e T1: dados fora do
 repositório, pastas e documentos com nomes em inglês sem espaço nem acento, contagem de testes num lugar só,
 backups do Altium fora do git, `.gitattributes`/`.editorconfig`/`CITATION.cff` e a CI compilando o C e passando o
 `shellcheck`.
@@ -32,8 +33,8 @@ arquivamento sem perdas conferido bit a bit; a documentação cobre operação, 
    localizado (F2, F3): esperas do CS 100× maiores que o datasheet pede e SPI em ~10 MHz.
 3. **O histórico do git ainda carrega ~45 MB de dados antigos** (CSVs e `.bin` apagados da árvore há meses, a
    lixeira de uma pasta montada por sshfs, backups do Altium): o `.git` tem ~90 MB, para uma árvore de ~45 MB (R2).
-4. **Abrir uma captura longa é lento e caro** (P1, P2): o gráfico da captura de 10 min leva 26 s e 4,3 GB de RAM,
-   e só importar o `adc_tool` leva ~2–3 s.
+4. **Converter uma captura longa para Volts ainda usa o sinal inteiro em float64** (8 bytes por amostra): a análise
+   de 10 min (60 milhões de amostras) pede ~1,6 GB de RAM; uma captura de 1 h não caberia (P1).
 
 ---
 
@@ -44,13 +45,14 @@ arquivamento sem perdas conferido bit a bit; a documentação cobre operação, 
 | **F1** | Validar no hardware a revisão do firmware (grade de tempo, contadores) | Alto: corrige dado de toda captura longa | Baixo (bancada) | sim | — |
 | **F2** | Medir até onde as esperas do CS podem cair (`--atraso-cs`) | Alto: teto de ~140 → ~330 kS/s | Baixo (bancada) | não (já configurável) | F1 |
 | **S1** | Calibrar a sonda de corrente (T10) com hold-out | Alto para corrente | Médio (bancada) | não | — |
-| **P1** | Gráfico com decimação por envoltória (mín/máx) | Alto: 10 min hoje = 26 s e 4,3 GB de RAM | Baixo | não | — |
+| **P1** | Análise de capturas longas por blocos (sem o sinal inteiro em float64) | Médio: 10 min = 1,6 GB; 1 h não cabe | Médio | não | — |
+| **P7** | Janelas de 200 ms sincronizadas à fundamental e agregação de 3 s/10 min (IEC 61000-4-30) no `--bandas-iec` | Médio: conformidade plena com a norma | Médio | não | — |
+| **P8** | Potência, impedância e transferência V/I por frequência | Alto para pesquisa de emissão | Médio | não | S3 |
 | **P6** | Continuidade medida em tempo, com atenção às trocas de buffer | Médio: o salto de 7 µs passou como "OK" com 2 canais | Baixo | não | — |
 | **F9** | Descartar o transitório depois de trocar a faixa do ADC | Médio: dado certo desde a 1ª amostra | Baixo | sim (a) / não (b) | F1 |
 | **F3** | SPI mais rápido (SCLK até 17 MHz) | Alto: rumo a 300–500 kS/s | Médio | sim | F2 |
 | **F4** | `SAMPLES_PER_BUFFER` vindo do ARM, não duplicado no `.asm` | Médio: fim de uma sincronia manual | Baixo | sim | F1 |
 | **F5** | Hash do commit no cabeçalho | Médio: saber qual firmware gerou cada captura | Baixo | não | — |
-| **P2** | Importações sob demanda (scipy/matplotlib) | Médio: CLI ~2 s mais rápida | Baixo | não | — |
 | **R2** | Limpar o histórico do git (dados antigos) | Médio: `.git` de ~90 para ~45 MB | Baixo, mas reescreve o histórico | não | decisão do dono |
 | **F6** | Gravar o bloco parcial no Ctrl+C e parar a PRU no fim | Médio | Baixo | sim (publicar a posição) | F1 |
 | **F7** | Conferência rápida do `calibrar_sonda.sh` mais leve na BeagleBone | Médio | Baixo | não | medir na BBB |
@@ -165,24 +167,36 @@ primeiras amostras de cada captura já estão dentro do ruído (±3 LSB do valor
 
 ## 4. Software Python
 
-### P1 — Gráfico com decimação por envoltória
+### P1 — Análise de capturas longas por blocos
 
-**Por quê.** O `adc_tool` desenha cada amostra. Medido em 20/10/2026: `adc_tool.py T7c_10min.bin --welch -o g.png`
-(60,8 milhões de amostras) leva **25,7 s e 4,3 GB de RAM**; uma captura de 1 h não caberia na memória. Numa captura
-curta, só traçar 200 mil pontos já custa 1,2 s.
+**Por quê.** O gráfico já desenha a envoltória mín/máx (o da captura de 10 min caiu de 26 s e 4,3 GB para 6 s e
+1,6 GB, out/2026), mas a análise ainda converte o trecho inteiro para Volts em float64 antes de tudo: 60 milhões de
+amostras são ~0,5 GB por cópia, e o filtro e a correção de sonda fazem cópias. Uma captura de 1 h a 100 kS/s não
+caberia em 16 GB.
 
-**Proposta.** Em `plotagem.py`, acima de ~4× a largura do gráfico em pixels, traçar o mínimo e o máximo de cada
-fatia (o desenho é o mesmo a olho, e nenhum pico some); espectros já são curtos. A conversão para Volts em float64
-do sinal inteiro (8 bytes por amostra) também pode ir por blocos, como já faz a exportação HDF5. Teste: a envoltória
-contém todos os extremos do sinal; RAM e tempo medidos de novo na T7c.
+**Proposta.** O Welch, o espectrograma e as bandas IEC já processam por segmentos: levar a conversão a Volts (e o
+filtro, com `sosfilt` + estado entre blocos, ou `sosfiltfilt` por blocos sobrepostos) para dentro do laço, lendo do
+memmap. A FFT única da `--fft` continua precisando do trecho inteiro (limitar a `--fft N` ciclos em capturas longas).
 
-### P2 — Importações sob demanda
+### P7 — Bandas IEC com sincronismo e agregação da IEC 61000-4-30
 
-**Por quê.** `import scipy.signal` custa ~2 s (a SciPy recente puxa `scipy.stats`); com o matplotlib, o
-`adc_tool --help` e a conversão `.bin`→`.csv` pagam ~2–3 s sem usar nada disso.
+**Por quê.** O `--bandas-iec` usa janelas de 200 ms fixas e resume a captura inteira; a IEC 61000-4-30 (classe A)
+sincroniza a janela de 10/12 ciclos com a fundamental e agrega os valores em 150/180 ciclos (~3 s) e em 10 min, que é
+como os limites de emissão são comparados.
 
-**Proposta.** Importar `scipy.signal`/`scipy.interpolate` dentro das funções que os usam (como já é feito com o
-matplotlib e o h5py) e medir o `--help` antes/depois. `test_arquitetura.py` pode passar a exigir isso.
+**Proposta.** Medir a fundamental por janela (os cruzamentos por zero do `fundamental.py`), usar 12 ciclos medidos em
+vez de 200 ms e acrescentar as séries agregadas de 3 s e 10 min (RMS das janelas do intervalo) na exportação.
+
+### P8 — Potência, impedância e transferência V/I por frequência
+
+**Por quê.** Com tensão e corrente na mesma captura, a pesquisa de emissão quer a potência por componente, a
+impedância vista pela carga e a direção da emissão, por frequência. Hoje a correção de sonda é só de magnitude (S3),
+e os canais são amostrados com 1/taxa de diferença.
+
+**Proposta.** Depois do S3 (ganho complexo no perfil): compensar o atraso de multiplexação (fase 2π·f·Δt, Δt
+conhecido do cabeçalho) e a fase de cada sonda, e calcular, por harmônico e por banda, P, Q, a impedância V/I e a
+coerência entre os canais (que diz se a relação é confiável naquela frequência). Antes disso, qualquer número de
+potência acima de poucos harmônicos seria enganoso.
 
 ### P3 — Correção de sonda fora de `modos`
 

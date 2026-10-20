@@ -117,7 +117,7 @@ def montar_parser() -> argparse.ArgumentParser:
                         help="Código do ADC: 'uint16' (unipolar, padrão) ou 'int16' (bipolar).")
     parser.add_argument("--faixa", type=str, default=None, metavar="VOLTS",
                         help="Faixa (fundo de escala pico a pico) do ADC em V; valor único ou lista por canal. "
-                             "Padrão: a gravada no cabeçalho da captura (ler_adc --faixa-adc, v3); sem ela (v1/v2), 10.24.")
+                             "Padrão: a gravada no cabeçalho da captura (ler_adc --faixa-adc, v3); sem ela (v1/v2), a de reset do ADC, 20.48 (±10,24 V).")
     parser.add_argument("--ganho", type=str, default="1.0", metavar="FATOR",
                         help="Ganho do sensor/PCB (padrão 1.0); valor único ou lista por canal.")
     parser.add_argument("--offset", type=str, default=None, metavar="VOLTS",

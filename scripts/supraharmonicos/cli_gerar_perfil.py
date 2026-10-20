@@ -133,7 +133,7 @@ def montar_parser() -> argparse.ArgumentParser:
     parser.add_argument("--faixa", type=str, default=None, metavar="V[,V]",
                          help="Faixa (fundo de escala total) do ADC em Volts -- 1 valor ou 'referencia,sonda'. "
                               "Padrão: a faixa gravada no cabeçalho de cada captura (ler_adc --faixa-adc, cabeçalho v3); "
-                              "capturas v1/v2, que não registram a faixa, assumem 10.24.")
+                              "capturas v1/v2, que não registram a faixa, usam a de reset do ADC, 20.48 (±10,24 V).")
     parser.add_argument("--ganho", type=str, default="1.0", metavar="G[,G]",
                          help="Ganho ADC->grandeza física -- 1 valor ou 'referencia,sonda' (padrão: 1.0). "
                               "Para o canal da sonda, ver docstring do módulo (--ganho ANTES da correção de frequência).")

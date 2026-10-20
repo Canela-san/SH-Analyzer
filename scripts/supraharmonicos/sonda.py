@@ -18,8 +18,6 @@ import re
 from pathlib import Path
 
 import numpy as np
-from scipy.fft import irfft, next_fast_len, rfft, rfftfreq
-from scipy.interpolate import PchipInterpolator
 
 from .constantes import NOMES_GRANDEZA_CLI
 from .erros import ErroSHAN
@@ -109,6 +107,7 @@ class PerfilSonda:
             # ANTES de chamar o interpolador (ver abaixo), então NaN nunca
             # deveria aparecer na prática -- extrapolate=False aqui é só
             # uma segunda trava de segurança.
+            from scipy.interpolate import PchipInterpolator  # sob demanda: só quem calcula paga o SciPy
             self._interpolador_db = PchipInterpolator(
                 np.log10(self._freqs_pontos), ganhos_db, extrapolate=False
             )
@@ -447,6 +446,7 @@ def aplicar_correcao_sonda(sinal: np.ndarray, fs: float, perfil: PerfilSonda) ->
     # 1.74 s vs 0.20 s; N já "rápido" não muda). O sinal é
     # completado com zeros até esse tamanho e o resultado recortado de volta
     # a N -- a divisão por ganho(f) acontece na grade do tamanho maior.
+    from scipy.fft import irfft, next_fast_len, rfft, rfftfreq  # sob demanda: só quem calcula paga o SciPy
     n_fft = next_fast_len(n, real=True)
     espectro = rfft(sinal, n=n_fft)
     freqs = rfftfreq(n_fft, 1.0 / fs)

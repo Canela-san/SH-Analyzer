@@ -3,7 +3,7 @@
 import h5py
 import numpy as np
 import pytest
-from capturas_sinteticas import escrever_bin
+from capturas_sinteticas import FAIXA, escrever_bin
 from supraharmonicos.cabecalho import CABECALHO_TAMANHO_TOTAL, ler_cabecalho
 from supraharmonicos.conversao import converter_arquivo
 from supraharmonicos.erros import ErroSHAN
@@ -11,7 +11,7 @@ from supraharmonicos.hdf5 import exportar_hdf5
 
 T = np.arange(5000) / 200_000.0
 SINAL = [3.0 * np.sin(2 * np.pi * 1000 * T), 1.5 * np.sin(2 * np.pi * 2000 * T)]
-PAR = dict(canais=[0, 1], faixas=[10.24, 10.24], ganhos=[1.0, 10.0], offsets=[5.12, 5.12])
+PAR = dict(canais=[0, 1], faixas=[FAIXA, FAIXA], ganhos=[1.0, 10.0], offsets=[FAIXA / 2, FAIXA / 2])
 
 
 def bin_de_teste(tmp_path):
@@ -54,7 +54,7 @@ def test_exportacao_hdf5_grava_metadados_e_dados(tmp_path):
         assert bruto.shape == (5000, 2)
         np.testing.assert_array_equal(bruto.ravel(), np.fromfile(p, dtype="<u2", offset=CABECALHO_TAMANHO_TOTAL))
         # tensao_v = (codigo/65536*faixa - offset) * ganho, por canal
-        esperado = (bruto / 65536.0 * 10.24 - 5.12) * np.array([1.0, 10.0])
+        esperado = (bruto / 65536.0 * FAIXA - FAIXA / 2) * np.array([1.0, 10.0])
         np.testing.assert_allclose(f["tensao_v"][()], esperado, atol=1e-4)
         assert f.attrs["cabecalho_versao"] == 2 and f.attrs["frequencia_hz"] == 400_000
         assert list(f.attrs["canais_ordem"]) == [0, 1]

@@ -159,7 +159,7 @@ Pelo datasheet, a cada passo o LSB cai exatamente pela metade, mas o ruído em v
 * (b') A conversão vale desde a primeira amostra: **não**. Depois de **trocar a faixa** de um canal em relação à captura anterior, as ~6 primeiras amostras desse canal (60 µs a 100 kS/s) são um transitório de acomodação, de até ~1 V no pino. Sem troca de faixa, não há transitório. Nas análises, pule o começo (`--inicio 100`).
 * (c) O ruído por faixa segue o datasheet: **confirmada** (T1).
 
-Capturas **antigas** (cabeçalho v1/v2, sem registro da faixa) são lidas com `--faixa 10.24`. Como o ADC estava na faixa de reset de ±10,24 V, essas capturas saíram com **a metade do valor real**: reconverta-as com `--faixa 20.48`.
+Capturas **antigas** (cabeçalho v1/v2, sem registro da faixa): o ADC estava na faixa de reset de ±10,24 V, e desde out/2026 as ferramentas as leem assim (`--faixa 20.48`). Até então elas assumiam 10.24, o que dava **a metade do valor real**: números antigos tirados dessas capturas precisam ser refeitos.
 
 **4. Cadeia de tensão: o divisor de 5 resistores.** Os resistores medidos (R1 a R5, em série; o ADC mede R5):
 
@@ -277,7 +277,7 @@ set GV 19.357      # --ganho do canal de tensão: 1 ÷ razão do divisor (34,629
 set GI 16667       # --ganho do canal de corrente: 1 ÷ 60 µV/A (SCT013 100A:50mA sobre 0,12 Ω)
 ```
 
-* **Faixa do ADC nos comandos.** Na **captura** (BeagleBone), o canal de tensão usa o padrão (nada a passar, ±10,24 V) e o de corrente leva `--faixa-adc 0:5.12` (±2,56 V). Na **análise** (computador), **não** se passa `--faixa`: ela vem do cabeçalho de cada captura (a primeira linha da saída mostra `canal 0: ±10.24 V` e `canal 1: ±2.56 V`). Se a captura for de um `ler_adc` antigo (sem faixa no cabeçalho), as ferramentas usam 10.24 e avisam.
+* **Faixa do ADC nos comandos.** Na **captura** (BeagleBone), o canal de tensão usa o padrão (nada a passar, ±10,24 V) e o de corrente leva `--faixa-adc 0:5.12` (±2,56 V). Na **análise** (computador), **não** se passa `--faixa`: ela vem do cabeçalho de cada captura (a primeira linha da saída mostra `canal 0: ±10.24 V` e `canal 1: ±2.56 V`). Se a captura for de um `ler_adc` antigo (sem faixa no cabeçalho), as ferramentas usam a faixa de reset, 20.48 (±10,24 V), e avisam.
 
 * **Forma de onda do osciloscópio (`.m`).** Salve o arquivo de cada ponto com o **mesmo nome base da captura** (`calibracao_1000Hz_rep1.m` ao lado de `calibracao_1000Hz_rep1.bin`); o `gerar_perfil_sonda.py --referencia-osciloscopio` e o `medir_captura.py --osciloscopio` o encontram sozinhos. Anote o ajuste vertical e se a ponta é 10x (`--osc-escala`). Nesta versão, a variável salva pelo osciloscópio deve estar na **grandeza física** (tensão no nó de entrada do divisor; corrente da TCP0030A em A) e use `--osc-unidade A` (o nome é histórico: "A" aqui quer dizer "já está na grandeza física do canal, não multiplique pelo `--ganho`").
 * **"A sonda" = o conjunto.** Neste projeto, "sonda" e "perfil da sonda" designam o conjunto medido de ponta a ponta: no canal de tensão, o **divisor + o ADS8688**; no de corrente, o **SCT013 + resistores + o ADS8688**. A frequência de corte do filtro do ADC não precisa ser conhecida: aparece na curva medida.
@@ -299,7 +299,7 @@ Mede uma ou mais capturas e imprime **números com unidade**, prontos para uma t
 uv run scripts/medir_captura.py $DIA/T5a_*.bin --csv $DIA/resultados.csv
 ```
 
-Como o `adc_tool.py`, ele lê frequência, canais, sonda **e a faixa do ADC de cada canal** do cabeçalho (e aceita `-f`, `--canais`, `--faixa`, `--ganho`, `--offset`, `--formato`). **Atenção:** o cabeçalho **não** guarda o ganho; passe `--ganho $GV` no canal de tensão e `--ganho $GI` no de corrente, senão ele usa 1 (numa captura com os dois canais, `--ganho $GI,$GV`: um valor por canal, na ordem crescente dos canais, 0 e 1). `--faixa` só serve para sobrepor a do cabeçalho (ele avisa se divergir) ou para capturas antigas (v1/v2), que assumem 10.24. O que mede, por canal:
+Como o `adc_tool.py`, ele lê frequência, canais, sonda **e a faixa do ADC de cada canal** do cabeçalho (e aceita `-f`, `--canais`, `--faixa`, `--ganho`, `--offset`, `--formato`). **Atenção:** o cabeçalho **não** guarda o ganho; passe `--ganho $GV` no canal de tensão e `--ganho $GI` no de corrente, senão ele usa 1 (numa captura com os dois canais, `--ganho $GI,$GV`: um valor por canal, na ordem crescente dos canais, 0 e 1). `--faixa` só serve para sobrepor a do cabeçalho (ele avisa se divergir) ou para capturas antigas (v1/v2), que assumem a faixa de reset, 20.48. O que mede, por canal:
 
 | Grandeza | Significado | Onde aparece |
 |---|---|---|
@@ -397,7 +397,7 @@ Cada saída mostra, no resumo do cabeçalho, `canal 1: ±10.24 V`, `±5.12 V` e 
 | ≈ 0,50 | ≈ 0,50 | ≈ 0,50 | A escala-base é o **dobro** da suposta |
 | Outra combinação | | | Pare e investigue (ganho no frontend, referência externa, `RANGE_SEL` escrito por outra rotina, ADC saturando) antes de seguir |
 
-Repita com **−10,000 V** em pelo menos a faixa de ±2,56 V (o sinal da leitura confere, e `media` muda de sinal sem offset grande). O T2 refina o ganho do divisor; este passo só confirma a escala. Para as capturas **antigas** (anteriores a esta versão), compare a `media` delas (lidas com 10.24) com a de `T0_dc_p10_f2048.bin`: se a antiga der metade, ela estava mesmo em ±10,24 V e deve ser relida com `--faixa 20.48`.
+Repita com **−10,000 V** em pelo menos a faixa de ±2,56 V (o sinal da leitura confere, e `media` muda de sinal sem offset grande). O T2 refina o ganho do divisor; este passo só confirma a escala. As capturas **antigas** (anteriores à faixa por canal) já são lidas com ±10,24 V pelas ferramentas desde out/2026; a `media` delas tem de bater com a de `T0_dc_p10_f2048.bin` para o mesmo sinal.
 
 **Passou se:** o resumo do cabeçalho aparece sem "CRC-32 NÃO confere"; o tamanho do arquivo é o esperado; a saída do `medir_captura` não tem avisos; o DC (`media`) do curto é de poucos mV; **as três faixas dão a mesma tensão no pino (razão ≈ 1,00)**. Para a razão ficar limpa, desconte de cada `media` o offset da mesma faixa (a `media` com 0 V na entrada): o canal 1 tem ~3 mV de offset, 0,7 % dos 0,515 V.
 
@@ -409,7 +409,7 @@ Repita com **−10,000 V** em pelo menos a faixa de ±2,56 V (o sinal da leitura
 | ±5,12 V | 517,40 mV | 2,46 mV | **0,9997** | 0,59 LSB (92 µV) |
 | ±2,56 V | 517,22 mV | 2,55 mV | **0,9992** | 0,74 LSB (58 µV) |
 
-* **Escala conferida:** referência de 4,096 V, escrita de `RANGE_SELn` e conversão código → volts certas nas três faixas, dentro de 0,08 %. As capturas antigas (v1/v2) têm, portanto, metade do valor real (fato 3).
+* **Escala conferida:** referência de 4,096 V, escrita de `RANGE_SELn` e conversão código → volts certas nas três faixas, dentro de 0,08 %. As capturas antigas (v1/v2) eram lidas com metade do valor real (fato 3); as ferramentas foram corrigidas em out/2026.
 * **As capturas `T0_dc_n10_*` saíram com 0 V na entrada**, não −10 V: a `media` delas é igual à do curto. Serviram como medida do offset por faixa (a coluna do meio). O −10 V do T2 confere (−511,6 mV no pino); refaça só se quiser o sinal negativo nas faixas menores.
 * **Achado: transitório depois de trocar a faixa.** Em toda captura em que a faixa de um canal mudou desde a captura anterior, as ~6 primeiras amostras desse canal decaem de até ~1 V até o valor certo. No fim, a constante de tempo é de ~8 µs, próxima à do passa-baixa medido no T3 (polos em −22 kHz: 7 µs), o que sugere o filtro interno do ADC se acomodando à nova escala. Sem troca de faixa, não há transitório: são 15 capturas de 19/10, todas coerentes com essa regra. Na média de 10 s o efeito é desprezível (µV), mas no `rms_ca` ele domina (2,5 LSB em vez de 0,6 LSB): por isso o `--inicio 100` nos comandos. Para o relatório: "as primeiras 60 µs depois de mudar a faixa de entrada são descartadas".
 
@@ -1178,7 +1178,7 @@ Os limites abaixo são **propostas** (baseadas no datasheet e em boas práticas)
 |---|---|---|
 | Pico forte de 60 Hz e harmônicos no curto | Laço de terra (USB/rede, gerador e osciloscópio em tomadas diferentes) | Um só ponto de terra; notebook com bateria; cabos de sinal curtos e trançados; ferrite |
 | Ruído muito acima de 1 LSB | Jumper longo entre a placa de aquisição e o frontend; fonte ruidosa; USB | Veja "Preparar a BeagleBone" no [guia](user-guide.md); desligue o que não precisa |
-| Tensão lida pela **metade** (ou o dobro) do que o Fluke mostra | `--faixa` digitado diferente da do cabeçalho (a ferramenta avisa), captura antiga (v1/v2, assume 10.24), ou escala-base do ADC diferente da suposta | Omita `--faixa` (vale a do cabeçalho); para capturas antigas use `--faixa 20.48`; refaça o T0, passo 6 |
+| Tensão lida pela **metade** (ou o dobro) do que o Fluke mostra | `--faixa` digitado diferente da do cabeçalho (a ferramenta avisa), ferramentas anteriores a out/2026 numa captura antiga (v1/v2: liam 10.24), ou escala-base do ADC diferente da suposta | Omita `--faixa` (vale a do cabeçalho; nas v1/v2, a faixa de reset, 20.48); atualize o repositório; refaça o T0, passo 6 |
 | Amplitude no ADC o dobro (ou a metade) do esperado, só com o gerador | Gerador em 50 Ω com carga High-Z (ou o contrário) | Ajuste a carga do gerador (High-Z) e **leia o osciloscópio**, não o painel |
 | `saturou o ADC` | Amplitude acima da faixa pedida (rede de 220 V; `--faixa-adc 1:10.24` com 127 V; ou o canal de corrente em ±2,56 V com sinal alto) | Reduza o sinal ou aumente a faixa (`--faixa-adc`); no canal de tensão, ±10,24 V cobre até 140 V RMS |
 | `sinal fraco` em todo ponto do canal de tensão | Máximo de 5% da escala pelo divisor | Esperado; aceite com `C` |

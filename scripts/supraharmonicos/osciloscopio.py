@@ -32,7 +32,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from scipy.optimize import minimize_scalar
 
 from .erros import ErroSHAN
 
@@ -472,6 +471,7 @@ def medir_senoide(valores: np.ndarray, fs: float, freq_dica: float | None = None
     t = (indices - indices.mean()) / fs                     # centrado: desacopla fase e frequência
     duracao = amostras * passo / fs
     largura = 1.0 / duracao                                 # ±1 bin da duração analisada
+    from scipy.optimize import minimize_scalar  # sob demanda: só quem calcula paga o SciPy
     resultado = minimize_scalar(lambda f: _ajuste_linear(ys, t, 2 * math.pi * f)[3],
                                 bounds=(max(f0 - largura, 1e-9), min(f0 + largura, fs / 2.0)),
                                 method="bounded", options={"xatol": 1e-6 * largura})

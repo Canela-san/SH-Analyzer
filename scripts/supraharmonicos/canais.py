@@ -93,7 +93,7 @@ def resolver_faixas(texto: str | None, canais: Sequence[int], formato: str,
       amplitude (e o erro seria silencioso).
     - sem ``texto``: usa a faixa gravada no cabeçalho (v3) de cada canal; onde
       ela é desconhecida (captura v1/v2, anterior ao registro), cai em
-      ``FAIXA_LEGADA_V`` -- o padrão histórico das ferramentas.
+      ``FAIXA_LEGADA_V`` -- a faixa de reset do ADC (±10,24 V), que o firmware antigo nunca mudava.
 
     ``faixas_cabecalho_total_v``: fundo de escala total (V) por canal, na ordem
     de ``canais`` (``CabecalhoArquivo.faixa_adc_total_v_por_canal``), ``None``
@@ -108,7 +108,13 @@ def resolver_faixas(texto: str | None, canais: Sequence[int], formato: str,
         do_cabecalho = [None if v is None else faixa_cli_do_total_v(v, formato) for v in faixas_cabecalho_total_v]
 
     if texto is None:
-        faixas = [FAIXA_LEGADA_V if v is None else v for v in do_cabecalho]
+        legada = faixa_cli_do_total_v(FAIXA_LEGADA_V, formato)
+        sem_registro = [c for c, v in zip(canais, do_cabecalho) if v is None]
+        if sem_registro:
+            log.info(f"canal(is) {sem_registro}: a captura não registra a faixa do ADC (cabeçalho v1/v2 ou sem "
+                     f"cabeçalho); usando a de reset do ADS8688, ±10,24 V ({nome_flag} {legada:g}), conferida em "
+                     f"bancada. Até out/2026 as ferramentas assumiam 10.24, a metade.")
+        faixas = [legada if v is None else v for v in do_cabecalho]
         return faixas, [v is not None for v in do_cabecalho]
 
     faixas = analisar_lista_calibracao(texto, n, nome_flag)

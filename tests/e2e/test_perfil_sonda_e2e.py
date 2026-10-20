@@ -194,7 +194,7 @@ def test_calibracao_divergente_avisa(e, cli):
     rc, out, err = e.adc_aqui(cli, e.prod / "ok.bin", *CURTA, ganho="1,1")
     assert rc == 0 and "--ganho do canal = 1, mas o perfil foi gerado com 10" in err and "0.1" in err
     rc, out, err = e.adc_aqui(cli, e.prod / "ok.bin", *CURTA, "--faixa", "5.12")
-    assert rc == 0 and "--faixa do canal = 5.12 V, mas o perfil foi gerado com 10.24" in err
+    assert rc == 0 and "--faixa do canal = 5.12 V, mas o perfil foi gerado com 20.48" in err
     rc, out, err = e.adc_aqui(cli, e.prod / "ok.bin", *CURTA, "--formato", "int16")
     assert rc == 0 and "--formato = int16, mas o perfil foi gerado com uint16" in err
 

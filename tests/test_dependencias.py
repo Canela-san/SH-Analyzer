@@ -139,10 +139,12 @@ def test_versoes_do_script_batem_com_o_pyproject(pyproject, script):
 
 
 def test_detector_de_imports_enxerga_o_pacote_e_ignora_imports_sob_demanda():
-    """Sanidade do próprio teste: o fecho do adc_tool passa pelo pacote (scipy vem de lá, não da entrada) e não
-    inclui o matplotlib, que só é importado dentro de uma função."""
-    externos = _externos_ao_carregar(SCRIPTS / "adc_tool.py")
-    assert {"numpy", "scipy"} <= externos and "matplotlib" not in externos
+    """Sanidade do próprio teste: o fecho do adc_tool passa pelo pacote (o numpy vem de lá, não da entrada) e não
+    inclui o que só é importado dentro de uma função -- SciPy, matplotlib e h5py são carregados sob demanda."""
+    assert "numpy" in _externos_ao_carregar(SCRIPTS / "medir_captura.py")      # o detector segue o pacote
+    for script in ("adc_tool.py", "medir_captura.py", "gerar_perfil_sonda.py"):
+        externos = _externos_ao_carregar(SCRIPTS / script)
+        assert not externos & {"scipy", "matplotlib", "h5py", "rich"}, (script, externos)
 
 
 def test_pacote_nao_importa_nada_fora_das_dependencias_declaradas(pyproject):

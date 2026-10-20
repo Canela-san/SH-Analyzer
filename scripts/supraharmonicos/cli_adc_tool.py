@@ -23,7 +23,8 @@ from .constantes import (
     CANAL_PADRAO,
     CORTE_SUPRAHARMONICOS_PADRAO,
     DISTANCIA_MINIMA_PICOS_PADRAO,
-    JANELA_PADRAO,
+    JANELA_PADRAO_FFT,
+    JANELA_PADRAO_WELCH,
     ORDEM_FILTRO_MAXIMA,
     ORDEM_FILTRO_MINIMA,
     ORDEM_FILTRO_PADRAO,
@@ -244,6 +245,11 @@ def montar_parser() -> argparse.ArgumentParser:
              "em vez de abrir a janela interativa (opcional)."
     )
     parser.add_argument(
+        "--sem-grafico", action="store_true",
+        help="[PLOTAGEM] Só os números (console e exportações), sem gráfico e sem carregar o matplotlib: para "
+             "análise em lote, por SSH ou num servidor. Sem tela e sem -o, o gráfico é pulado sozinho (com aviso)."
+    )
+    parser.add_argument(
         "--inicio", type=int, default=0, metavar="N",
         help="Primeira amostra a usar, 0-based (padrão: 0)."
     )
@@ -268,10 +274,11 @@ def montar_parser() -> argparse.ArgumentParser:
         help="[--fft] Limite superior de busca da fundamental (padrão: 65)."
     )
     parser.add_argument(
-        "--janela", type=str, default=JANELA_PADRAO, metavar="NOME",
-        help="[--fft/--welch] Janela espectral: 'retangular'/'boxcar' "
-             "(padrão -- sem atenuação, mas mais sensível a vazamento fora "
-             "do corte em ciclos inteiros), 'hann'/'hanning', "
+        "--janela", type=str, default=None, metavar="NOME",
+        help=f"[--fft/--welch] Janela espectral. Padrão: '{JANELA_PADRAO_FFT}' na --fft (sincronizada em ciclos "
+             f"inteiros, não vaza para a fundamental e os harmônicos, como na IEC 61000-4-7) e '{JANELA_PADRAO_WELCH}' "
+             "no --welch (o segmento não é síncrono com nada). Dada, vale para os dois. Opções: 'retangular'/'boxcar', "
+             "'hann'/'hanning', "
              "'blackmanharris'/'blackman-harris' (lóbulos laterais muito "
              "baixos, útil para separar um supraharmônico fraco perto de "
              "uma fundamental forte), 'flattop'/'flat-top' (melhor exatidão "
@@ -360,10 +367,55 @@ def montar_parser() -> argparse.ArgumentParser:
              f"{DISTANCIA_MINIMA_PICOS_PADRAO:g} Hz)."
     )
 
+    grupo_pesquisa = parser.add_argument_group(
+        "Análise para pesquisa e exportação",
+        "Ferramentas de análise de qualidade de energia e de supraharmônicos, e a exportação de todo resultado com os "
+        "parâmetros que o produziram (para reproduzir, publicar ou continuar no MATLAB/Python). Todas trabalham sobre o "
+        "sinal já calibrado, corrigido pela sonda e filtrado, como o resto da análise.",
+    )
+    grupo_pesquisa.add_argument(
+        "--harmonicos", type=int, default=None, metavar="N",
+        help="[--fft] Tabela dos harmônicos 1..N: frequência, valor RMS da componente e do grupo harmônico "
+             "(IEC 61000-4-7), %% da fundamental e fase relativa à fundamental (referencial seno), mais THD e THDG. "
+             "Usa o trecho sincronizado em ciclos inteiros da --fft (sem vazamento entre harmônicos)."
+    )
+    grupo_pesquisa.add_argument(
+        "--bandas-iec", action="store_true",
+        help="Bandas de supraharmônicos pelo método da IEC 61000-4-7, anexo B (e IEC 61000-4-30, anexo C): janelas "
+             "de 200 ms sem lacunas, bins de 5 Hz, bandas de 200 Hz centradas em 2100, 2300... Hz. Para cada banda, "
+             "a série no tempo e as estatísticas: RMS das janelas, máximo, percentil 95 (CP95) e mínimo."
+    )
+    grupo_pesquisa.add_argument(
+        "--bandas-iec-min", type=float, default=2000.0, metavar="HZ",
+        help="[--bandas-iec] Início da primeira banda (padrão: 2000 Hz, a primeira centrada em 2100 Hz)."
+    )
+    grupo_pesquisa.add_argument(
+        "--bandas-iec-max", type=float, default=None, metavar="HZ",
+        help="[--bandas-iec] Fim da última banda (padrão: a Nyquist do canal; a norma de 2 a 9 kHz para em 9000)."
+    )
+    grupo_pesquisa.add_argument(
+        "--espectrograma", action="store_true",
+        help="Espectro ao longo do tempo (STFT), com os segmentos do Welch (--resolucao-welch, --sobreposicao-welch, "
+             "janela Hann por padrão) reunidos em até 600 colunas: mostra quando cada supraharmônico aparece, "
+             "some ou muda de frequência. Figura à parte (com -o: <saida>_espectrograma.png)."
+    )
+    grupo_pesquisa.add_argument(
+        "--exportar", type=Path, default=None, metavar="PREFIXO",
+        help="Grava os resultados em CSV (um arquivo por resultado e por canal: PREFIXO_canal1_welch.csv, "
+             "..._harmonicos.csv, ..._bandas_iec.csv, ..._espectrograma.csv, PREFIXO_picos.csv) e os metadados em "
+             "PREFIXO_metadados.json: captura, calibração de cada canal, janela, resolução, ENBW, filtros, correção de "
+             "sonda, versões e o comando exato."
+    )
+    grupo_pesquisa.add_argument(
+        "--exportar-mat", type=Path, default=None, metavar="ARQUIVO.mat",
+        help="Os mesmos resultados numa estrutura 'sh' do MATLAB/Octave (load('ARQUIVO.mat'); sh.canal1.welch.f, "
+             "sh.canal1.harmonicos.thd_pct, sh.metadados...)."
+    )
+
     parser.add_argument(
         "--formato", choices=["int16", "uint16"], default="uint16",
-        help="Como interpretar o código de 16 bits do ADC: 'uint16' "
-             "(unipolar 0..+faixa, padrão) ou 'int16' (bipolar -faixa..+faixa)."
+        help="Como interpretar o código de 16 bits do ADC: 'uint16' (padrão; binário deslocado, o que o "
+             "ADS8688 entrega: 0 = -fundo de escala, 32768 = 0 V) ou 'int16' (complemento de dois)."
     )
     parser.add_argument(
         "--faixa", type=str, default=None, metavar="VOLTS",
@@ -371,7 +423,7 @@ def montar_parser() -> argparse.ArgumentParser:
              "com --formato uint16). Um valor único (todos os canais) ou lista por canal, na "
              "ordem de --canais. Padrão: a faixa que o firmware gravou no cabeçalho da captura "
              "(ler_adc --faixa-adc, cabeçalho v3), canal a canal; capturas mais antigas (v1/v2), "
-             "que não registram a faixa, assumem 10.24."
+             "que não registram a faixa, usam a de reset do ADC, 20.48 (±10,24 V)."
     )
     parser.add_argument(
         "--ganho", type=str, default="1.0", metavar="FATOR",

@@ -4,7 +4,6 @@ Depende de: ``erros``."""
 
 
 import numpy as np
-from scipy.signal import butter, sosfiltfilt
 
 from .erros import ErroSHAN
 
@@ -35,6 +34,7 @@ def aplicar_filtro_digital(sinal: np.ndarray, fs: float, tipo: str,
     zero usados no corte em ciclos inteiros e distorceria a forma de onda no
     tempo, ao custo de dobrar a ordem efetiva (magnitude ao quadrado)."""
     nyquist = fs / 2.0
+    from scipy.signal import butter, sosfiltfilt  # sob demanda: só quem calcula paga o SciPy
     sos = butter(ordem, corte / nyquist, btype=tipo, output="sos")
     try:
         return sosfiltfilt(sos, sinal)

@@ -9,7 +9,7 @@ calibração/correção.
 Convenção do ADC (a mesma de ``adc_tool``): ``uint16`` com offset = faixa/2.
 
 Faixa do ADC: por padrão o cabeçalho é v2 (que não registra a faixa) e as amostras são codificadas com
-``FAIXA`` = 10.24 V totais -- o padrão histórico das ferramentas. Com ``faixas_adc_total_v=(...)`` (um valor
+``FAIXA`` = 20.48 V totais -- a faixa de reset do ADC, que as ferramentas assumem sem cabeçalho v3. Com ``faixas_adc_total_v=(...)`` (um valor
 por canal: 20.48, 10.24 ou 5.12) o cabeçalho sai v3, com o código de faixa de cada canal, e cada canal é
 codificado com a SUA faixa, como o ADS8688 faria.
 """
@@ -22,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
-FAIXA = 10.24            # V (ADS8688 +-FAIXA/2 em uint16)
+FAIXA = 20.48            # V (ADS8688 +-FAIXA/2 em uint16): a faixa de reset, a que as ferramentas assumem sem cabeçalho v3
 FS_TOTAL_2CH = 400_000   # Hz, total -> 200 kHz por canal com 2 canais
 R_SHUNT = 0.1            # ohm
 SENS_NOMINAL = 0.1       # V/A (sonda 100 mV/A -> --ganho 10)

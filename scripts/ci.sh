@@ -2,8 +2,8 @@
 # Roda localmente EXATAMENTE o que a CI do GitHub roda: o .github/workflows/ci.yml chama este script, então os
 # comandos e as versões das ferramentas vivem num lugar só. Rode da raiz do repositório (ou de qualquer lugar).
 #
-#   scripts/ci.sh                  tudo: ruff + pytest em Python 3.10 e 3.13, e o firmware (~6 min)
-#   scripts/ci.sh rapido           ruff + pytest sem os e2e (Python 3.13) + firmware: antes de cada commit (~40 s)
+#   scripts/ci.sh                  tudo: ruff + pytest em Python 3.10 e 3.13, e o firmware (~3 min)
+#   scripts/ci.sh rapido           ruff + pytest sem os e2e (Python 3.13) + firmware: antes de cada commit (~30 s)
 #   scripts/ci.sh testes [VERSAO]  ruff + pytest completo numa versão do Python (padrão 3.13)
 #   scripts/ci.sh firmware         gcc -Werror no ler_adc.c e shellcheck nos scripts de shell
 #

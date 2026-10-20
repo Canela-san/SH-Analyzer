@@ -87,20 +87,25 @@ Camada = quem pode importar quem (um módulo só importa camadas **menores**).
 | 1 | `sonda` | Perfil de sonda (JSON), interpolação PCHIP, correção em frequência | `PerfilSonda`, `carregar_perfil_sonda`, `resolver_perfil_canal`, `aplicar_correcao_sonda` |
 | 1 | `plotagem` | Gráficos (único módulo que importa `matplotlib` no topo) | `plotar_multicanal` |
 | 1 | `referencia` | O que foi injetado numa calibração: amplitude com unidade e tipo (`500mVpp`), frequência e o marcador `ref: f=.. amp=..` dos metadados | `analisar_amplitude`, `pico_fisico`, `extrair_referencia`, `formatar_referencia` |
+| 1 | `harmonicos` | Tabela de harmônicos sobre ciclos inteiros: componente e grupo (IEC 61000-4-7), % da fundamental, fase no referencial seno, THD/THDG (só numpy) | `calcular_harmonicos`, `TabelaHarmonicos` |
+| 1 | `bandas_iec` | Bandas de 200 Hz em janelas de 200 ms sem lacunas (IEC 61000-4-7, anexo B), com série no tempo e estatísticas (RMS, máximo, P95, mínimo) (só numpy) | `calcular_bandas_iec`, `BandasIEC` |
 | 1 | `osciloscopio` | Forma de onda do osciloscópio (`.m`/`.mat`/`.csv`) e medida da senoide por mínimos quadrados | `ler_forma_de_onda`, `medir_senoide`, `localizar_arquivo_osciloscopio` |
-| 2 | `espectro` | Janelas, FFT única, Welch, bandas, picos | `calcular_espectro`, `calcular_espectro_welch`, `agrupar_em_bandas`, `encontrar_picos_espectro` |
+| 2 | `espectro` | Janelas, FFT única, Welch, espectrograma, bandas, picos | `calcular_espectro`, `calcular_espectro_welch`, `calcular_espectrograma`, `agrupar_em_bandas`, `encontrar_picos_espectro` |
+| 2 | `exportacao` | Resultados da análise em CSV + JSON de metadados (`--exportar`) e em `.mat` do MATLAB/Octave (`--exportar-mat`; scipy.io só ao usar) | `exportar_csv`, `exportar_mat` |
 | 2 | `conversao` | `.bin` ↔ `.csv` em blocos | `converter_arquivo` |
 | 2 | `hdf5` | `.bin` → `.h5` em blocos (`h5py` importado só ao usar) | `exportar_hdf5` |
 | 2 | `metricas_captura` | Métricas de uma captura, sem I/O: estatística, ruído, tom, THD/SINAD/SNR/ENOB/SFDR, continuidade, diafonia/atraso (FFT única, janela Kaiser β = 14) | `analisar_espectro`, `verificar_continuidade`, `calcular_acoplamento`, `calcular_basicas` |
 | 2 | `compactacao` | Pacote `.zpaq.tar` sem perdas: formato (tar + manifesto JSON + peças zpaq/xz independentes), desentrelaçamento reversível dos canais, compressores em paralelo (cabe na RAM livre), verificação por SHA-256, extração segura | `compactar`, `Pacote`, `descobrir_entradas`, `Desentrelacamento`, `remover_originais` |
 | 2 | `contexto` | "O que esta captura é": cabeçalho + canais + calibração + grandeza/sonda por canal, resolvidos uma vez | `ContextoCaptura`, `resolver_contexto` |
-| 3 | `modos` | Os 3 modos do `adc_tool` (plotagem, conversão, HDF5); a plotagem é um pipeline de etapas pequenas | `executar_plotagem`, `executar_conversao`, `executar_exportacao_hdf5` |
+| 3 | `modos` | Os 3 modos do `adc_tool` (plotagem, conversão, HDF5); a plotagem é um pipeline de etapas pequenas (espectros, harmônicos, bandas IEC, espectrograma, exportação, gráficos) | `executar_plotagem`, `executar_conversao`, `executar_exportacao_hdf5`, `montar_metadados` |
 | 3 | `calibracao_sonda` | Medir tons de calibração (Welch localiza, FFT única mede), ganho vs o que foi injetado (amplitude conhecida, osciloscópio, shunt), agregar repetições, resumir a resposta do conjunto | `medir_tom`, `processar_captura`, `agregar_por_frequencia`, `resumir_resposta` |
 | 4 | `escrita_perfil` | Monta o JSON do perfil, grava com segurança (`.tmp` → validação → `.bak` → troca), gráfico de diagnóstico | `montar_perfil_json`, `gravar_perfil_validado` |
 | 4 | `cli_adc_tool` | **Borda**: flags do `adc_tool` e `main()` | `montar_parser`, `main` |
+| 4 | `cli_info` | **Borda**: `adc_tool.py info`, o resumo de cada captura e as estatísticas por canal em blocos (só numpy) | `montar_parser`, `main` |
 | 4 | `cli_compactar` | **Borda**: comandos `compactar`/`extrair`/`listar`/`verificar` e a interface (`rich`: tabelas, barras com estimativa de tempo, confirmações) | `montar_parser`, `main`, `Painel` |
 | 4 | `cli_medir_captura` | **Borda**: flags do `medir_captura`, saída em texto e CSV (`COLUNAS_CSV`) | `montar_parser`, `main`, `medir_arquivo` |
 | 5 | `cli_gerar_perfil` | **Borda**: flags do gerador e `main()` | `montar_parser`, `main`, `executar_geracao` |
+| 6 | `cli_principal` | **Porta de entrada** do `adc_tool.py`: escolhe o subcomando (`analisar`, `info`, `medir`, `perfil`, `compactar`) e importa a CLI dele só nessa hora; sem subcomando, a análise. Único módulo que pode importar as outras CLIs | `main`, `SUBCOMANDOS` |
 
 ### Pipeline do modo de plotagem (`modos.executar_plotagem`)
 
@@ -111,14 +116,19 @@ _resolver_frequencia → _validar_parametros → _avisar_combinacoes_arriscadas
 → _carregar_sinal (memmap → volts por canal)
 → aplicar_correcao_sondas   ← ANTES de tudo que é espectral
 → _aplicar_filtros_usuario   (Butterworth opcional)
-→ _resumir_dados → _analisar_fft / _analisar_welch → plotagem.plotar_multicanal
+→ _resumir_dados → _analisar_fft (+ harmônicos) / _analisar_welch
+→ _analisar_bandas_iec / _analisar_espectrograma
+→ _exportar (CSV/JSON/MAT, com montar_metadados)
+→ plotagem.plotar_multicanal (+ plotar_espectrogramas, plotar_bandas_iec), se houver onde desenhar
 ```
+
+Os resultados de cada etapa vão para um dicionário `resultados` (por canal: `fft`, `welch`, `*_bandas`, `harmonicos`, `bandas_iec`, `espectrograma`, mais os `picos`), que a exportação grava e os gráficos desenham. A exportação vem antes do gráfico: os arquivos ficam prontos mesmo que a janela do gráfico fique aberta.
 
 A correção de sonda vem antes do filtro e do espectro para que nenhuma dessas etapas precise saber que existe uma sonda. Ela corrige só a **magnitude** (não a fase): serve para espectro/picos, **não** para potência ou impedância entre canais (`docs/probe-profile-audit.md`, §4.1).
 
 ### Hierarquia de resolução de parâmetros
 
-Para canais, calibração, grandeza e sonda vale sempre: **flag explícita na CLI > cabeçalho da captura (v2 em diante) > padrão histórico** (tensão, sem sonda, `--faixa 10.24`). A faixa de entrada do ADC de cada canal vem do cabeçalho (v3 em diante; `canais.resolver_faixas`). Quem implementa isso é `contexto.resolver_contexto` (não espalhe esse `if` em outros lugares).
+Para canais, calibração, grandeza e sonda vale sempre: **flag explícita na CLI > cabeçalho da captura (v2 em diante) > padrão histórico** (tensão, sem sonda, `--faixa 20.48`, a faixa de reset do ADC). A faixa de entrada do ADC de cada canal vem do cabeçalho (v3 em diante; `canais.resolver_faixas`). Quem implementa isso é `contexto.resolver_contexto` (não espalhe esse `if` em outros lugares).
 
 ---
 
@@ -153,9 +163,13 @@ log.warning("--welch sem filtro")  # aviso → stderr, o handler põe "Aviso: " 
 * Só `cli_*.main` chama `registro.configurar_logging_cli()`. Usado como biblioteca (notebook, teste), o pacote fica **silencioso** até você configurar o `logging` como quiser.
 * Testes capturam avisos com `caplog` (ver `tests/test_sonda.py`).
 
-### 4.3 Dependências pesadas
+### 4.3 Dependências pesadas: importadas só quando usadas
 
-* `matplotlib`: só em `plotagem.py` (topo) e dentro de `escrita_perfil.gerar_grafico` (para `--plot`). `modos` importa `plotagem` **dentro** de `executar_plotagem` — quem só converte `.bin`→`.csv` não paga o custo do matplotlib.
+Cada comando carrega só o que usa. Antes desta regra, `adc_tool.py --help` levava 2,5 s, quase tudo para importar o SciPy; hoje leva 0,4 s, e o `info`, a conversão, o HDF5 e a análise sem espectro não carregam nem o SciPy nem o matplotlib. `tests/test_analise_pesquisa.py` confere isso num processo limpo, comando a comando.
+
+* **SciPy:** nunca no topo de um módulo (`tests/test_arquitetura.py` confere). Cada função importa a parte que usa, na primeira linha que precisa dela: `from scipy.signal import butter, sosfiltfilt  # sob demanda`. O Python guarda o módulo depois da primeira importação, então chamar a função de novo não custa nada.
+* `matplotlib`: só em `plotagem.py` (topo) e dentro de `escrita_perfil.gerar_grafico` (para `--plot`). `modos` importa `plotagem` **dentro** de `executar_plotagem`, e só quando vai desenhar (há `-o` ou uma tela, e não há `--sem-grafico`).
+* As CLIs: `cli_principal` importa a de cada subcomando dentro de uma função, só quando ele é pedido.
 * `h5py`: só dentro de `hdf5.exportar_hdf5`.
 * `rich` (interface do `compactar_amostras`): só em `cli_compactar`. O formato e a verificação (`compactacao`) não dependem dele.
 * Dependências novas: declare em **dois** lugares — `pyproject.toml` e o bloco PEP 723 de cada script que a usa (`tests/test_dependencias.py` falha se faltar no bloco algo que o script importa ao carregar, ou se as versões divergirem).
@@ -204,15 +218,15 @@ O caminho quente é tudo que toca **todas** as amostras de uma captura (dezenas 
 ## 7. Testes
 
 ```bash
-uv run --extra dev pytest                 # tudo: 694 testes (~1 min 55 s)
-uv run --extra dev pytest -m "not e2e"    # rápido: 567 testes (~30 s) — use no dia a dia
+uv run --extra dev pytest                 # tudo: 724 testes (~1 min 15 s)
+uv run --extra dev pytest -m "not e2e"    # rápido: 597 testes (~20 s) — use no dia a dia
 uv run --extra dev pytest -m e2e          # só ponta a ponta: 127 testes (a maior parte do tempo)
 uv run --extra dev pytest -n0 tests/test_dsp.py::TestFiltros   # um teste só, sem paralelismo (pdb/breakpoint)
 uv run --extra dev pytest --cov=scripts/supraharmonicos --cov-report=term-missing   # cobertura (~90 %)
 uv run --extra dev ruff check .
 ```
 
-A suíte roda **em paralelo** (`pytest-xdist`, `-n auto --dist worksteal` em `pyproject.toml`): um processo por núcleo; o tempo cai de ~6 min para ~1 min 40 s (i7 de 4 núcleos/8 threads). Por isso cada teste precisa ser independente: nada de estado em arquivo fora do `tmp_path`, nem de ordem entre testes. Para onde vai o tempo que sobra:
+A suíte roda **em paralelo** (`pytest-xdist`, `-n auto --dist worksteal` em `pyproject.toml`): um processo por núcleo; o tempo cai de ~6 min para ~1 min 15 s (i7 de 4 núcleos/8 threads; ~1 min 40 s antes de o SciPy passar a ser importado sob demanda, porque cada processo o carregava na largada). Por isso cada teste precisa ser independente: nada de estado em arquivo fora do `tmp_path`, nem de ordem entre testes. Para onde vai o tempo que sobra:
 
 * **Coleta** (~6 s por processo): os módulos de teste importam o pacote, e `import scipy.signal` sozinho custa ~2 s (a SciPy recente puxa `scipy.stats` e a camada de "array API").
 * **`test_calibrar_sonda.py`** (102 testes de ~1 s cada, em série): o script bash de verdade, um `ler_adc` falso por captura (~0,35 s de Python + numpy) e a conferência rápida de cada captura, em awk (~0,7 s no PC).
@@ -240,6 +254,7 @@ Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `c
 | `test_dependencias.py` | todo script com `if __name__ == "__main__"` (em `scripts/`, `relatorio/`, `tests/`, `firmware/`) roda com `uv run`: shebang do uv, permissão de execução, bloco PEP 723 com tudo o que ele importa ao carregar (seguindo o pacote e os módulos vizinhos) e versões iguais às do `pyproject.toml` |
 | `test_calibrar_sonda.py` (+ `ler_adc_falso.py`) | `firmware/calibrar_sonda.sh` de ponta a ponta contra um `ler_adc` falso: plano de frequências, conferência de cada captura (saturação, nível, frequência, CRC, disco cheio), menu C/R/P/A, modos `retomar`/`refinar`/`adensar`/`refazer`/`resumo`, Ctrl+C, `--amplitude`/`--amplitude-por-ponto` (metadados `ref:` no `.bin`, manifesto, plano, menu interativo, perfil gerado sem flag), `--grandeza tensao` (cabeçalho, textos, coluna `tensao_rms_V`, 2 canais, plano antigo = corrente), e que as constantes do cabeçalho e a gramática de amplitude batem com o firmware e o Python. Marcado `e2e` (usa `bash`; é pulado fora do Linux) |
 | `test_relatorio.py` | `report/gerar_figuras.py`: o ajuste do passa-baixa recupera K, f0 e Q conhecidos (com e sem pesos medidos) e vence os outros modelos pelo BIC; f−3dB, polos e incerteza no formato do siunitx; a figura e as macros são geradas (sem LaTeX, para rodar no CI) |
+| `test_analise_pesquisa.py` | As ferramentas para pesquisa: harmônicos (amplitudes, fases no referencial seno em qualquer início, THD, grupo com inter-harmônico, Nyquist, erro sem fundamental e com f0 fora da busca), bandas IEC (centros e bordas da norma, estatísticas de um tom que liga no meio), espectrograma (quando o tom liga, mesmo nível do Welch), exportação CSV/JSON/MAT (lida de volta com `loadmat`), a análise completa pela CLI, as figuras extras, os subcomandos e o que cada comando carrega (SciPy, matplotlib, h5py, rich) num processo limpo |
 | `test_compactacao.py` | `compactar_amostras`: desentrelaçar e voltar é exato com cortes em qualquer byte; a receita do `LEIA-ME.txt` (só numpy) reconstrói o original; ida e volta devolve bytes, datas e permissões; peça corrompida é detectada e o arquivo estragado não é gravado; falha ou Ctrl+C no meio não deixa pacote nem temporários nem `zpaq` órfão; caminho malicioso no manifesto é recusado; `--remover-originais` só apaga o que continua idêntico; CLI. Os testes com o `zpaq` de verdade são `e2e` (pulados sem ele) |
 | `test_scripts_shell.py` | `scripts/set_date.sh` (com `ssh`/`sudo`/`date` falsos: o tempo da senha do sudo é descontado). Marcado `e2e` |
 | `e2e/test_perfil_sonda_e2e.py` | fluxo completo (o perfil base e a correção principal por subprocess nas entradas reais; o resto com `main()` no mesmo processo): calibração → perfil → correção (inclui as 7 correções da auditoria) |
@@ -255,8 +270,8 @@ Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `c
 **Rodar a CI na sua máquina:** `scripts/ci.sh`. O workflow chama esse mesmo script, então os comandos e as versões das ferramentas ficam num lugar só, e o que passa local passa no GitHub:
 
 ```bash
-scripts/ci.sh                 # tudo: ruff + pytest em Python 3.10 e 3.13 (com e2e) + firmware (~6 min)
-scripts/ci.sh rapido          # ruff + pytest -m "not e2e" (3.13) + firmware: antes de cada commit (~40 s)
+scripts/ci.sh                 # tudo: ruff + pytest em Python 3.10 e 3.13 (com e2e) + firmware (~3 min)
+scripts/ci.sh rapido          # ruff + pytest -m "not e2e" (3.13) + firmware: antes de cada commit (~30 s)
 scripts/ci.sh testes 3.10     # uma versão do Python, suíte completa
 scripts/ci.sh firmware        # gcc -Werror no ler_adc.c + shellcheck
 ```
@@ -285,6 +300,8 @@ Os testes não precisam de hardware nem de arquivos `.bin` do repositório (`*.b
 **Novo script executável** (qualquer `.py` com `if __name__ == "__main__"`). Primeira linha `#!/usr/bin/env -S uv run --script`, logo abaixo o bloco PEP 723 (`# /// script` ... `# ///`) com as dependências e `chmod +x`; o `test_dependencias.py` acusa o que faltar. Assim `uv run arquivo.py` e `./arquivo.py` funcionam sem instalar nada. Se a lógica for de biblioteca, ela vai para o pacote e o script fica fino (como os de `scripts/`).
 
 **Novo módulo.** Escolha a camada pela regra "só importo camadas menores"; registre-o em `CAMADAS` (`tests/test_arquitetura.py`) e na tabela da seção 3; escreva o `"""docstring"""` dizendo de quem depende.
+
+**Nova ferramenta de análise** (como `--harmonicos` ou `--bandas-iec`). O cálculo vai num módulo de camada 1 ou 2, sem I/O nem impressão, com um resultado em dataclass (ver `harmonicos.py`). Em `modos`: uma função `_analisar_x(args, ctx, por_canal_tensao, fs_efetiva, resultados)` que guarda o resultado em `resultados["canais"][canal]["x"]` e imprime o resumo por `log.info`; a validação das flags em `_validar_parametros`. Em `exportacao`: o CSV (`exportar_csv`) e a conversão para o `.mat` (`_para_mat`). Em `cli_adc_tool`: a flag, no grupo "Análise para pesquisa e exportação". Teste com um sinal sintético de resposta conhecida e um teste pela CLI em `tests/test_analise_pesquisa.py`.
 
 **Nova figura do relatório.** Em `report/gerar_figuras.py`, escreva uma função `nome(estilo) -> Resultado` com `@figura("nome", "descrição")`: crie a figura com `estilo.nova_figura(proporcao)`, use as cores de `COR` (o texto sempre em tinta, nunca na cor da série), os rótulos de `estilo.t(...)` (acrescente as chaves em `TEXTOS`, em `pt` e `en`) e formate números com `estilo.num`/`estilo.qty` (vírgula decimal em português). Os dados vêm do projeto (perfis, capturas, pacote), nunca copiados à mão; números que o texto vai citar voltam em `Resultado.macros` e viram `report/figures/nome.tex`. Teste a lógica (ajustes, contas) em `tests/test_relatorio.py`. O script fica fora do pacote de propósito: é código do relatório, não biblioteca, e por isso pode usar matplotlib à vontade (o logging vai pelo logger `supraharmonicos.relatorio`, que herda o formato do console).
 

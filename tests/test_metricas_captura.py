@@ -237,7 +237,7 @@ def pasta(tmp_path_factory):
                  fs_total=int(2 * FS))
     escrever_bin(base / "sem_cabecalho.bin", [um[:1 << 18]], canais=(1,), grandezas=(0,), sondas=("",),
                  com_cabecalho=False)
-    escrever_bin(base / "ceifado.bin", [np.clip(seno(f0, 6.0, n=1 << 18), -FAIXA / 2, FAIXA / 2 - 1e-3)], canais=(1,),
+    escrever_bin(base / "ceifado.bin", [np.clip(seno(f0, 0.6 * FAIXA, n=1 << 18), -FAIXA / 2, FAIXA / 2 - 1e-3)], canais=(1,),
                  grandezas=(0,), sondas=("",), fs_total=int(FS))
     return base
 

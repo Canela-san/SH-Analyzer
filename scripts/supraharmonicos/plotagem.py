@@ -20,6 +20,35 @@ log = logging.getLogger(__name__)
 # 8. Plotagem
 # ---------------------------------------------------------------------------
 
+# Acima disto a forma de onda vira envoltória mín/máx: uma tela tem ~2000 colunas, e desenhar 60 milhões de pontos
+# (10 min a 100 kS/s) levava 26 s e 4,3 GB de RAM sem mostrar nada a mais.
+MAX_PONTOS_TEMPO = 20_000
+
+
+def pontos_para_plot(y: np.ndarray, fs: float, fator_tempo: float,
+                     max_pontos: int = MAX_PONTOS_TEMPO) -> tuple[np.ndarray, np.ndarray]:
+    """(tempo, valores) para desenhar ``y``. Até ``max_pontos``, o próprio sinal. Acima, a envoltória: o sinal é
+    dividido em ``max_pontos // 2`` colunas e cada uma vira dois pontos, o mínimo e o máximo, ligados por uma linha.
+    Visualmente é o mesmo traço (nenhum pico some, como no modo de pico de um osciloscópio), sem criar o vetor de
+    tempo inteiro. As amostras que sobram no fim (menos que uma coluna) entram numa última coluna."""
+    n = len(y)
+    if n <= max_pontos:
+        return np.arange(n) / fs * fator_tempo, y
+    colunas = max_pontos // 2
+    por_coluna = n // colunas
+    cheias = y[: colunas * por_coluna].reshape(colunas, por_coluna)
+    minimos, maximos = cheias.min(axis=1), cheias.max(axis=1)
+    inicios = np.arange(colunas) * por_coluna
+    if colunas * por_coluna < n:
+        resto = y[colunas * por_coluna:]
+        minimos, maximos = np.append(minimos, resto.min()), np.append(maximos, resto.max())
+        inicios = np.append(inicios, colunas * por_coluna)
+    tempo = np.repeat(inicios / fs * fator_tempo, 2)
+    valores = np.empty(2 * len(minimos), dtype=y.dtype)
+    valores[0::2], valores[1::2] = minimos, maximos
+    return tempo, valores
+
+
 def escolher_unidade_tempo(duracao_s: float):
     if duracao_s < 2.0:
         return 1000.0, "Tempo (ms)"
@@ -71,7 +100,9 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
     if idx_fim_arquivo is None:
         idx_fim_arquivo = idx_inicio_arquivo + n
     fator_tempo, rotulo_tempo = escolher_unidade_tempo(n / fs_efetiva)
-    tempo = (np.arange(n) / fs_efetiva) * fator_tempo
+    if n > MAX_PONTOS_TEMPO:
+        log.info(f"Forma de onda: {n} amostras por canal desenhadas como envoltória mín/máx em "
+                 f"{MAX_PONTOS_TEMPO // 2} colunas (nenhum pico some; para ver amostra a amostra, use --inicio/--fim).")
 
     cores = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     usar_eixo_unico = (n_canais == 1) or (layout == "sobrepostos")
@@ -87,7 +118,8 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
         for i, canal in enumerate(canais):
             cor_tempo = "tab:green" if n_canais == 1 else cores[i % len(cores)]
             rotulo = None if n_canais == 1 else f"Canal {canal}"
-            ax_tempo.plot(tempo, tensoes_por_canal[canal], color=cor_tempo, linewidth=1.0, label=rotulo)
+            ax_tempo.plot(*pontos_para_plot(tensoes_por_canal[canal], fs_efetiva, fator_tempo),
+                          color=cor_tempo, linewidth=1.0, label=rotulo)
 
         titulo_base = f"Forma de onda -- amostras {idx_inicio_arquivo}..{idx_fim_arquivo} de '{titulo_arquivo}'"
         ax_tempo.set_title(titulo_base if n_canais == 1 else f"{titulo_base} (canais {canais}, sobrepostos)")
@@ -157,7 +189,7 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
         for i, canal in enumerate(canais):
             cor = cores[i % len(cores)]
             ax_tempo = eixos[i, 0]
-            ax_tempo.plot(tempo, tensoes_por_canal[canal], color=cor, linewidth=1.0)
+            ax_tempo.plot(*pontos_para_plot(tensoes_por_canal[canal], fs_efetiva, fator_tempo), color=cor, linewidth=1.0)
             ax_tempo.set_title(f"Canal {canal} -- amostras brutas {idx_inicio_arquivo}..{idx_fim_arquivo}")
             ax_tempo.set_xlabel(rotulo_tempo)
             ax_tempo.set_ylabel(rotulo_eixo_grandeza([canal], grandeza_por_canal))
@@ -202,3 +234,65 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
     else:
         plt.show()
     plt.close(fig)     # o pyplot guarda toda figura aberta: sem isto, quem chama várias vezes (notebook, testes) acumula memória
+
+
+def _salvar_ou_mostrar(fig, caminho_saida: Path | None) -> None:
+    if caminho_saida is not None:
+        fig.savefig(caminho_saida, dpi=150)
+        log.info(f"Gráfico salvo em '{caminho_saida}'.")
+    else:
+        plt.show()
+    plt.close(fig)
+
+
+def plotar_espectrogramas(dados_por_canal: dict[int, dict], titulo_arquivo: str, caminho_saida: Path | None,
+                          rotulo_nivel: str, rotulo_janela: str | None) -> None:
+    """Um espectrograma por canal (tempo × frequência, cor = nível em dB), um abaixo do outro."""
+    canais = list(dados_por_canal)
+    fig, eixos = plt.subplots(len(canais), 1, figsize=(11, 3.6 * len(canais)), squeeze=False)
+    for ax, canal in zip(eixos[:, 0], canais):
+        d = dados_por_canal[canal]
+        nivel = d["db"]
+        piso = np.percentile(nivel, 5)                                      # o piso de ruído não vira uma cor saturada
+        malha = ax.pcolormesh(d["t"], d["f"] / 1000.0, nivel.T, shading="nearest", cmap="viridis",
+                              vmin=piso, vmax=float(nivel.max()), rasterized=True)
+        fig.colorbar(malha, ax=ax, label=rotulo_nivel)
+        ax.set_ylabel("Frequência (kHz)")
+        ax.set_title(f"Canal {canal}" if len(canais) > 1 else f"Espectrograma -- '{titulo_arquivo}'")
+    eixos[-1, 0].set_xlabel("Tempo (s)")
+    if len(canais) > 1:
+        fig.suptitle(f"Espectrograma -- '{titulo_arquivo}'" + (f" | janela {rotulo_janela}" if rotulo_janela else ""))
+    plt.tight_layout()
+    _salvar_ou_mostrar(fig, caminho_saida)
+
+
+def plotar_bandas_iec(bandas_por_canal: dict, unidade_por_canal: dict[int, str], titulo_arquivo: str,
+                      caminho_saida: Path | None) -> None:
+    """Para cada canal: o máximo, o P95 e o RMS de cada banda de 200 Hz (dB re 1 unidade, RMS), e a série no tempo
+    das bandas como mapa de cor."""
+    canais = list(bandas_por_canal)
+    fig, eixos = plt.subplots(len(canais), 2, figsize=(13, 3.8 * len(canais)), squeeze=False)
+    for (ax_est, ax_tempo), canal in zip(eixos, canais):
+        b = bandas_por_canal[canal]
+        u = unidade_por_canal[canal]
+        est = b.estatisticas()
+        db = {k: 20 * np.log10(np.maximum(v, 1e-12)) for k, v in est.items()}
+        ax_est.step(b.centros_hz / 1000.0, db["maximo"], where="mid", label="máximo", color="tab:red")
+        ax_est.step(b.centros_hz / 1000.0, db["p95"], where="mid", label="P95", color="tab:orange")
+        ax_est.step(b.centros_hz / 1000.0, db["rms"], where="mid", label="RMS das janelas", color="tab:blue")
+        ax_est.set_xlabel("Centro da banda (kHz)")
+        ax_est.set_ylabel(f"Nível por banda (dB{u}, RMS)")
+        ax_est.grid(True, alpha=0.4)
+        ax_est.legend(fontsize=8)
+        ax_est.set_title(f"Canal {canal}: bandas de {b.largura_hz:g} Hz, {len(b.tempos_s)} janelas de "
+                         f"{b.duracao_janela_s * 1000:g} ms")
+        nivel = 20 * np.log10(np.maximum(b.niveis, 1e-12))
+        malha = ax_tempo.pcolormesh(b.tempos_s, b.centros_hz / 1000.0, nivel.T, shading="nearest", cmap="viridis",
+                                    vmin=np.percentile(nivel, 5), vmax=float(nivel.max()), rasterized=True)
+        fig.colorbar(malha, ax=ax_tempo, label=f"dB{u}")
+        ax_tempo.set_xlabel("Tempo (s)")
+        ax_tempo.set_ylabel("Centro da banda (kHz)")
+        ax_tempo.set_title("Série no tempo")
+    fig.suptitle(f"Bandas IEC 61000-4-7 (anexo B) -- '{titulo_arquivo}'")
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    _salvar_ou_mostrar(fig, caminho_saida)

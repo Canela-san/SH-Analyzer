@@ -62,12 +62,14 @@ O resultado é um arquivo `captura_AAAAMMDD_HHMMSS.bin`. Veja todas as opções 
 Copie o `.bin` para o computador (por exemplo, com `scp`) e instale o [`uv`](https://docs.astral.sh/uv/). Ele baixa as dependências Python sozinho na primeira execução, sem `pip install` nem ambiente virtual manual. Todo script Python do projeto roda assim, com `uv run script.py` ou direto como `./script.py`.
 
 ```bash
-uv run scripts/adc_tool.py captura.bin --fft                # fundamental e harmônicos
-uv run scripts/adc_tool.py captura.bin --welch --picos -60  # supraharmônicos: espectro médio e lista de picos
+uv run scripts/adc_tool.py info captura.bin --estatisticas      # o que a captura é: cabeçalho, canais, integridade
+uv run scripts/adc_tool.py captura.bin --fft --harmonicos 40    # fundamental, harmônicos (IEC 61000-4-7), THD
+uv run scripts/adc_tool.py captura.bin --welch --picos -60      # supraharmônicos: espectro médio e lista de picos
+uv run scripts/adc_tool.py captura.bin --bandas-iec --espectrograma --exportar res/x --exportar-mat res/x.mat
 uv run scripts/adc_tool.py captura.bin --export-hdf5 captura.h5 --incluir-tensao
 ```
 
-Frequência e canais vêm do cabeçalho da captura, então não é preciso informá-los. Ajuda completa: `uv run scripts/adc_tool.py --help`.
+Frequência e canais vêm do cabeçalho da captura, então não é preciso informá-los. O `adc_tool.py` é a porta de entrada de todas as ferramentas do computador (`info`, `medir`, `perfil`, `compactar`; sem subcomando, a análise) e carrega só as bibliotecas que cada comando usa. Para pesquisa: tabela de harmônicos com grupos e fases, bandas de 200 Hz da IEC 61000-4-7 no tempo com estatísticas (P95), espectrograma, e exportação de todo resultado para CSV, JSON com os metadados que o produziram, e MATLAB. Ajuda completa: `uv run scripts/adc_tool.py --help`; o guia está em [Análise para pesquisa](docs/user-guide.md#análise-para-pesquisa-harmônicos-bandas-iec-espectrograma-e-exportação).
 
 Para **medir** a captura (ruído, THD, SINAD, ENOB, SFDR, amostras perdidas, diafonia, comparação com um osciloscópio) e gerar uma tabela de números para o relatório:
 
@@ -148,8 +150,8 @@ Limites conhecidos, como a taxa máxima (~140 kS/s, que cobre só parte da banda
 Quem for modificar o código Python deve começar por [`docs/software-architecture.md`](docs/software-architecture.md). A CI do GitHub roda o `scripts/ci.sh`, e você roda o mesmo script na sua máquina, com as mesmas versões das ferramentas:
 
 ```bash
-scripts/ci.sh rapido      # antes de cada commit (~40 s): ruff, testes sem os e2e, gcc e shellcheck
-scripts/ci.sh             # tudo o que a CI roda (~6 min): Python 3.10 e 3.13, com os e2e, e o firmware
+scripts/ci.sh rapido      # antes de cada commit (~30 s): ruff, testes sem os e2e, gcc e shellcheck
+scripts/ci.sh             # tudo o que a CI roda (~3 min): Python 3.10 e 3.13, com os e2e, e o firmware
 ```
 
 Quantos testes, quanto tempo e o que cada arquivo cobre: [`docs/software-architecture.md`](docs/software-architecture.md#7-testes).

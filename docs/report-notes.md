@@ -478,6 +478,32 @@ defensável — a escolha de Welch em vez de uma FFT longa única, e a
 distinção tom/ruído, são exatamente o tipo de decisão de método que um
 relatório científico precisa justificar explicitamente, não só aplicar.
 
+**Adendo (out/2026): ferramentas para pesquisa.** A revisão do `adc_tool`
+acrescentou o que um trabalho de qualidade de energia normalmente reporta, com
+o método declarado:
+
+* **Tabela de harmônicos** sobre o trecho síncrono da FFT: componente e grupo
+  harmônico da IEC 61000-4-7, porcentagem da fundamental, fase relativa à
+  fundamental (referencial seno) e THD/THDG. Conferida com um sinal de
+  harmônicos conhecidos: amplitudes e fases exatas em qualquer instante de
+  início.
+* **Bandas de 200 Hz pelo anexo B da IEC 61000-4-7** (janelas de 200 ms sem
+  lacunas, bins de 5 Hz, centros em 2100, 2300... Hz), com a série no tempo e
+  as estatísticas que os limites de emissão usam (RMS, máximo, percentil 95).
+* **Espectrograma**, para ver quando cada supraharmônico aparece ou muda de
+  frequência.
+* **Exportação** de todo resultado para CSV e MATLAB, com um JSON de
+  metadados (captura, calibração, janela, resolução, ENBW, filtros, versão do
+  código e o comando exato): o que permite a outro pesquisador reproduzir
+  cada número.
+
+A mesma revisão corrigiu dois pontos de método: o Welch usava a janela
+retangular por padrão (agora a Hann, a da literatura; a FFT síncrona continua
+retangular), e as bandas passaram a seguir a convenção de bordas da norma
+((b − 100, b + 100] Hz). As diferenças que restam em relação às normas
+(janela de 200 ms fixa, sem a agregação de 3 s/10 min da IEC 61000-4-30) estão
+no guia de uso e entram nas limitações do relatório.
+
 - [ ] Captura de uma análise `--welch --agrupar-bandas --picos` sobre uma
       medição real, mostrando supraharmônicos extraídos com frequência e
       amplitude — provável candidato a imagem central da seção de
@@ -982,7 +1008,7 @@ a PRU esperar pelo ARM) mudaria justamente o instante das amostras.
 
 **Achados:**
 
-1. **A faixa de entrada por canal funciona em hardware.** Era a principal hipótese não testada do firmware de 19/10, até então só simulada. A tensão no pino é a mesma nas três faixas (±0,08 %), o que confirma a referência de 4,096 V, o código em binário deslocado e a escrita dos registradores `RANGE_SELn`. Consequência: as capturas antigas (v1/v2), lidas como ±5,12 V, têm metade do valor real.
+1. **A faixa de entrada por canal funciona em hardware.** Era a principal hipótese não testada do firmware de 19/10, até então só simulada. A tensão no pino é a mesma nas três faixas (±0,08 %), o que confirma a referência de 4,096 V, o código em binário deslocado e a escrita dos registradores `RANGE_SELn`. Consequência: as capturas antigas (v1/v2), que as ferramentas liam como ±5,12 V, tinham metade do valor real; desde out/2026 elas assumem ±10,24 V.
 2. **Transitório ao trocar a faixa.** Quando a faixa de um canal muda em relação à captura anterior, as ~6 primeiras amostras desse canal (60 µs a 100 kS/s) decaem de até ~1 V até o valor certo. Sem troca, não há transitório, e as 15 capturas do dia seguem essa regra. A constante de tempo no fim (~8 µs) é próxima à do passa-baixa do T3 (7 µs). Sem descartar o começo, o ruído medido sai 7 a 8 vezes maior.
 3. **O ruído do ADC é o do datasheet**, e a faixa menor reduz o ruído em volts como previsto (1,8× e 2,8×). Fica confirmado o ganho de usar ±2,56 V no canal de corrente.
 4. **O offset do canal 1 não parece ser do ADC.** O canal 0, com 0,12 Ω de impedância de fonte, tem offset dentro do datasheet. O canal 1, com 1,7 kΩ (o divisor), tem de 10 a 70 vezes mais. A hipótese é a ligação do divisor; o teste que separa as causas está no roteiro (T1). É DC: não afeta os supraharmônicos.
