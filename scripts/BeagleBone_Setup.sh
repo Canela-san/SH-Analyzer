@@ -108,7 +108,7 @@ uso() {
            [--simular]           ${F}só mostra o que faria${R}
     ${N}setup${R}                       pinos, compilação e carga da PRU (o setup.sh, lá)
     ${N}ssh${R} [comando]               terminal na pasta do firmware, sudo sem senha; com comando, só o roda
-    ${N}trazer${R} [padrão] [destino]   copia capturas ${F}(padrão '*.bin'; destino \$DIA ou a pasta atual)${R}
+    ${N}trazer${R} [padrão] [destino]   copia capturas e pastas ${F}(padrão '*.bin'; destino \$DIA ou a pasta atual)${R}
     ${N}montar${R} [pasta] [--forcar]   monta o home da BeagleBone no computador ${F}(sshfs; padrão ~/BeagleBone)${R}
     ${N}desmontar${R} [pasta] [--forcar] desmonta ${F}(--forcar: mesmo com arquivos abertos)${R}
     ${N}configurar${R}                  grava IP, usuário e senha para não informar de novo
@@ -432,7 +432,7 @@ cmd_trazer() {
     [ -d "$destino" ] || mkdir -p -- "$destino" || falha "não consegui criar ${destino}."
     conectar
     info "de ${ALVO}:~/${PASTA}/ para ${destino/#$HOME/\~}/"
-    scp -p "${SSH_OPCOES[@]}" "${ALVO}:${PASTA}/${padrao}" "${destino}/" \
+    scp -rp "${SSH_OPCOES[@]}" "${ALVO}:${PASTA}/${padrao}" "${destino}/" \
         || falha "a cópia falhou (nenhum arquivo com '${padrao}' em ~/${PASTA}?)."
     ok "copiado para ${destino/#$HOME/\~}"
 }

@@ -357,3 +357,85 @@ def test_makefile_nao_usa_o_usr_include_do_linux(tmp_path, com_make):
     r = _make_pru(tmp_path, usr / "bin" / "clpru", PRU_CGT=str(ti))   # a do ambiente vale primeiro
     assert f"--include_path={ti}/include" in r.stdout and f"-i{ti}/lib" in r.stdout
     assert "não foi achada" not in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# firmware/varrer_taxa.sh: o T7e inteiro numa tacada
+# ---------------------------------------------------------------------------
+
+LER_ADC_FALSO = r'''#!/bin/bash
+# ler_adc falso: a PRU alcança 200 MHz / (595 + 2 (S + H + A)); acima disso, conta amostras atrasadas.
+taxa=$1; canais=$2; shift 2
+while [ $# -gt 0 ]; do
+    case "$1" in -o) saida=$2; shift ;; --atraso-cs) cs=$2; shift ;; --blocos) blocos=$2; shift ;; esac
+    shift
+done
+IFS=, read -r s h a <<< "$cs"
+maximo=$((200000000 / (595 + 2 * (s + h + a))))
+atrasadas=0; real=$taxa
+if [ "$taxa" -gt "$maximo" ]; then atrasadas=123; real=$maximo; fi
+echo "taxa=$taxa canais=$canais blocos=$blocos cs=$cs" > "$saida"
+if [ "$blocos" -ge 2 ]; then
+    printf 'Taxa real medida pelo ARM: %d Hz (pedida %d Hz, %+.2f %%)\n' "$real" "$taxa" \
+        "$(awk -v r="$real" -v t="$taxa" 'BEGIN { print 100 * (r / t - 1) }')"
+fi
+printf 'Integridade: %d amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído no SDO\n' "$atrasadas"
+'''
+
+
+@pytest.fixture
+def varredura(tmp_path):
+    pasta = tmp_path / "firmware"
+    pasta.mkdir()
+    shutil.copy2(RAIZ / "firmware" / "varrer_taxa.sh", pasta / "varrer_taxa.sh")
+    (pasta / "VERSAO").write_text("v9.9\n")
+    _executavel(pasta / "ler_adc", LER_ADC_FALSO)
+    falsos = tmp_path / "falsos"
+    falsos.mkdir()
+    _executavel(falsos / "sudo", '#!/bin/bash\nwhile [[ "${1:-}" == -* ]]; do shift; done\n'
+                                 '[ $# -gt 0 ] || exit 0\nexec "$@"\n')
+
+    def rodar(*args, entrada=""):
+        env = {k: v for k, v in os.environ.items() if k != "SUDO_ASKPASS"}
+        env.update({"PATH": f"{falsos}:{os.environ['PATH']}", "LC_ALL": "C", "NO_COLOR": "1"})
+        r = subprocess.run(["bash", str(pasta / "varrer_taxa.sh"), *args], cwd=tmp_path, env=env, input=entrada,
+                           capture_output=True, text=True, timeout=120)
+        resultados = sorted(pasta.glob("T7e_*"))
+        return r, (resultados[-1] if resultados else None)
+
+    return rodar
+
+
+def _resumo(pasta: Path) -> list[dict]:
+    import csv
+    with open(pasta / "resumo.csv", newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def test_varrer_taxa_captura_o_plano_inteiro_e_resume(varredura):
+    r, pasta = varredura(entrada="\np\n")                    # D: feita; C: pulada ("p")
+    assert r.returncode == 0, r.stdout + r.stderr
+    linhas = _resumo(pasta)
+    partes = [linha["parte"] for linha in linhas]
+    assert partes.count("A") == 26 and partes.count("B") == 53 and partes.count("D") == 5 and "C" not in partes
+    por_nome = {linha["arquivo"]: linha for linha in linhas}
+    assert por_nome["A_cs200-100-100_100000_tom.bin"]["amostras_atrasadas"] == "0"
+    lento = por_nome["B_cs200-100-100_500000_tom.bin"]                   # o padrão não chega a 500 kS/s
+    assert lento["amostras_atrasadas"] == "123" and int(lento["taxa_arm_hz"]) < 150000
+    assert por_nome["B_cs3-1-3_250000_tom.bin"]["amostras_atrasadas"] == "0"
+    dois = pasta / "D_cs20-10-10_250000_tom_2canais.bin"
+    assert dois.read_text().split() == ["taxa=250000", "canais=0,1", "blocos=3", "cs=20,10,10"]
+    log = (pasta / "log.txt").read_text()
+    assert "firmware v9.9" in log and "pausa" in log and "Integridade" in log
+    assert "Pronto" in r.stdout and "trazer 'T7e_*'" in r.stdout
+
+
+def test_varrer_taxa_curto_com_1_bloco_e_simular(varredura):
+    r, pasta = varredura("--simular")
+    assert r.returncode == 0 and "102 capturas" in r.stdout and pasta is None   # nada capturado
+    r, pasta = varredura("--partes", "C", entrada="\n")
+    assert r.returncode == 0, r.stdout + r.stderr
+    linhas = _resumo(pasta)
+    assert len(linhas) == 18 and {linha["entrada"] for linha in linhas} == {"curto"}
+    assert all(linha["taxa_arm_hz"] == "?" for linha in linhas)          # 1 bloco: o ARM não mede a taxa
+    assert "blocos=1" in (pasta / "C_cs3-1-3_100000_curto.bin").read_text()

@@ -57,7 +57,7 @@ scripts/BeagleBone_Setup.sh ssh          # terminal na pasta do firmware, com o 
 | `enviar [--setup] [--forcar] [--simular]` | Leva `firmware/` com a versão e um plano B do firmware que estava lá (abaixo) |
 | `setup` | Roda o `setup.sh` lá: pinos, compilação e carga da PRU, sem pedir a senha do sudo |
 | `ssh [comando]` | Abre um terminal na pasta do firmware, com `sudo` sem senha (para o `sudo ./ler_adc`); com um comando, só o roda lá (`ssh 'sudo ./ler_adc 100000 1 --blocos 3'`) |
-| `trazer [padrão] [destino]` | Copia capturas da pasta do firmware (padrão `'*.bin'`) para o computador (padrão `$DIA`, ou a pasta atual) |
+| `trazer [padrão] [destino]` | Copia capturas (e pastas, como a `T7e_*` do `varrer_taxa.sh`) da pasta do firmware (padrão `'*.bin'`) para o computador (padrão `$DIA`, ou a pasta atual) |
 | `montar [pasta]` / `desmontar` | Monta o home da BeagleBone numa pasta do computador por `sshfs` (padrão `~/BeagleBone`; `sudo apt install sshfs`). Ele recusa uma pasta dentro do repositório: lá, um `git clean -xfd` apagaria arquivos **da placa** pela montagem |
 | `configurar` | Grava IP, usuário, senha e as pastas em `~/.config/sh-analyzer/beaglebone.conf` (só você lê), para não informar de novo |
 
@@ -631,6 +631,7 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 
 | Script | Onde roda | O que faz |
 |---|---|---|
+| `firmware/varrer_taxa.sh` | BeagleBone | O T7e de uma vez: captura as esperas do CS (do padrão ao piso do datasheet), a taxa de 125 a 500 kS/s, 2 canais e a entrada em curto, com o log e um `resumo.csv`; `--simular` mostra o plano, `--partes` escolhe partes. Veja o [roteiro de laboratório](lab-procedure.md#passo-a-passo-da-próxima-ida-firmware-novo-e-taxa-máxima) |
 | `scripts/BeagleBone_Setup.sh` | Computador | A interface com a BeagleBone: `status`, `preparar`, `hora`, `enviar`, `setup`, `ssh`, `trazer`, `montar`/`desmontar` e `configurar`. Veja [Preparar a BeagleBone](#preparar-a-beaglebone) |
 | `scripts/compactar_amostras.py` | Computador | (ou `adc_tool.py compactar`) Arquiva pastas de captura sem perdas num pacote `.zpaq.tar` (~11 % do tamanho), conferido bit a bit; também `listar`, `extrair` e `verificar`. Veja [Guardar as capturas sem perdas](#guardar-as-capturas-sem-perdas-compactar_amostraspy) |
 | `report/gerar_figuras.py` | Computador | Gera as figuras do relatório (PDF vetorial, já no tamanho final, com o texto composto pelo LaTeX) e um `.tex` com os números citados (macros siunitx). `uv run report/gerar_figuras.py` gera todas; `--listar`, `--png` (prévia), `--formato artigo --idioma en` (coluna de artigo, em inglês), `--saida PASTA` (ex.: a pasta do projeto LaTeX). Inclua no documento sem `width=`, para as fontes baterem com as do texto. As figuras `readme_*` são as do README: SVG transparente, gravado direto em `docs/images/` |

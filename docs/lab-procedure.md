@@ -79,7 +79,7 @@ O `setup.sh` termina com `PRU0 rodando o firmware novo.`, e o painel do fim most
 uma vez com o `configurar`). **Se o `make` falhar**, veja a [etapa 8](#8-quando-parar-e-ir-para-casa).
 
 **1. A bancada sem interferência da rede (10 min).** O `teste.bin` de 21/10 tinha faixas laterais a ±120 e ±240 Hz do
-tom, a −51 dBc (modulação pela rede elétrica, que 19/10 não tinha). Com ela, as etapas 4 e 5 comparariam a
+tom, a −51 dBc (modulação pela rede elétrica, que 19/10 não tinha). Com ela, a varredura da etapa 4 compararia a
 interferência, não as esperas. Na BeagleBone, com o tom:
 
 ```bash
@@ -95,7 +95,7 @@ uv run scripts/medir_captura.py $DIA/T7_bancada.bin --freq 10000 --sem-correcao-
 interferência:** o maior espúrio fica a 120 Hz do tom (10 120 ou 9 880 Hz). Tente, uma coisa de cada vez, repetindo a
 captura depois de cada uma: o notebook na bateria (sem o carregador), a BeagleBone por outra fonte ou outra porta USB,
 os terras do gerador e do osciloscópio num ponto só, cabos mais curtos. Anote o que resolveu (ou não). Se não sumir em
-20 minutos, siga e anote: as etapas 4 e 5 comparam os conjuntos entre si, na mesma bancada, e a análise desconta a
+20 minutos, siga e anote: a varredura compara os conjuntos entre si, na mesma bancada, e a análise desconta a
 interferência.
 
 **2. A correção do salto, em hardware (10 min; T0 passo 2 e [T7a](#t7-integridade-e-limite-de-taxa)).** Na
@@ -120,59 +120,62 @@ uv run scripts/medir_captura.py $DIA/T7a_fs_*.bin --freq 10000 --sem-correcao-so
 **Passou:** `continuidade : OK` e `trocas de buffer : OK`, com o salto nas trocas nos milésimos de amostra, como fora
 delas (em 19/10: `DESTOAM`, 6,96 µs). **Se aparecer `DESTOAM`**, veja a [etapa 8](#8-quando-parar-e-ir-para-casa).
 
-**3. O "antes", com as esperas padrão (15 min; [T7e](#t7e-onde-está-o-limite-de-taxa), métodos 2 e 1).** Para o
-relatório: mostra onde o firmware para hoje.
-
-* Método 2: ponta do osciloscópio no **CS** e no **SCLK** enquanto roda
-  `sudo ./ler_adc 100000 1 --duracao 2m --faixa-adc 1:5.12 -o T7e_osc_padrao.bin -t "T7e osc padrao"`. Esperado:
-  período de 10,00 µs e CS baixo de 5,83 µs. Meça o período, o CS baixo e o CS alto, anote na tabela do
-  `anotacoes.md` e **fotografe a tela** (`$DIA/fotos/cs_padrao_100k.png`, com a base de tempo visível).
-* Método 1: o [laço de taxas do T7e](#t7e-onde-está-o-limite-de-taxa), de 100 a 500 kS/s com as esperas padrão
-  (~5 min). Acima de ~140 kS/s, o `ler_adc` deve acusar amostras atrasadas e a `Taxa real medida pelo ARM` deve
-  parar de subir: é a "joelheira" da figura do relatório.
-
-**4. As esperas mínimas, a 100 kS/s (30 min; T7e, método 4, passo 1).** Os 7 conjuntos de `--atraso-cs`, do padrão ao
-piso do datasheet (o laço do T7e, que grava `T7e_passo1.txt`), e o `medir_captura.py` com a tabela-resumo. Um
-conjunto **passa** com `Integridade: ... tudo certo` e com amplitude, frequência, SINAD, ruído e DC iguais aos do
-padrão (critérios no T7e). Depois, os dois menores conjuntos que passaram, com a **entrada em curto** (gerador fora da
-entrada), contra o padrão:
+**3. O "antes" no osciloscópio (10 min; [T7e](#t7e-onde-está-o-limite-de-taxa), método 2).** Ponta do osciloscópio
+no **CS** e no **SCLK** enquanto roda:
 
 ```bash
-for cs in 200,100,100 MENOR SEGUNDO_MENOR; do     # troque pelos dois menores que passaram (ex.: 3,1,3 6,2,6)
-  sudo ./ler_adc 100000 1 --blocos 3 --atraso-cs $cs --faixa-adc 1:5.12 -o T7e_curto_${cs//,/_}.bin -t "T7e curto cs $cs"
-done 2>&1 | tee T7e_curto.txt
+sudo ./ler_adc 100000 1 --duracao 2m --faixa-adc 1:5.12 -o T7e_osc_padrao.bin -t "T7e osc padrao"
 ```
+
+Esperado: período de 10,00 µs e CS baixo de 5,83 µs. Meça o período, o CS baixo e o CS alto, anote na tabela do
+`anotacoes.md` e **fotografe a tela** (`$DIA/fotos/cs_padrao_100k.png`, com a base de tempo visível).
+
+**4. A varredura das esperas e da taxa (~40 min; T7e, métodos 1 e 4, sem decisões no meio).** Um comando captura
+tudo o que a escolha precisa e grava cada saída do `ler_adc`:
+
+```bash
+./varrer_taxa.sh --simular     # o plano: ~100 capturas, ~40 min e ~650 MB (confira o disco)
+./varrer_taxa.sh               # a varredura
+```
+
+Ele faz, com o tom e na faixa de ±2,56 V, 3 blocos por captura:
+
+* **A:** as esperas a 100 kS/s, do padrão `200,100,100` ao piso do datasheet `3,1,3` em 14 passos, e o S e o H
+  sozinhos (a 100 kS/s o A não conta: o CS fica alto até a próxima amostra);
+* **B:** a taxa de 125 a 500 kS/s para sete conjuntos de esperas (o padrão entre eles: é o "antes" do relatório), e o
+  A sozinho a 250 kS/s;
+* **D** (ele para e pede): o canal 0 em curto e o tom no canal 1, com 2 canais, para a diafonia;
+* **C** (ele para e pede): o gerador fora e a entrada do canal 1 em curto, o ruído de cada conjunto (1 bloco).
+
+A cada captura ele mostra os contadores e a taxa medida pelo ARM: um `!` com amostras atrasadas nas taxas altas é
+esperado (é onde a PRU para). Tudo vai para `T7e_<data>_<hora>/`, com o `log.txt` (a saída inteira do `ler_adc`) e o
+`resumo.csv`. `Ctrl+C` para no meio e guarda o que já foi feito; `--partes AB` roda só algumas partes. No computador:
 
 ```fish
-scripts/BeagleBone_Setup.sh trazer 'T7e_c*' $DIA
-uv run scripts/medir_captura.py $DIA/T7e_curto_*.bin --sem-tom --sem-correcao-sonda --inicio 100 --csv $DIA/T7e_cs.csv
+scripts/BeagleBone_Setup.sh trazer 'T7e_*' $DIA
 ```
 
-O ruído (`ruido_rms_lsb`) e o pico a pico têm de ser os do padrão (~0,74 LSB, 58 µV RMS em ±2,56 V, como no T1). Se
-algum conjunto falhar, o passo 2 do T7e diz qual espera importa (capturas `T7e_passo2_*.bin`).
+**5. A escolha: me mande a pasta (~15 min).** Diga "analise `$DIA/T7e_...`". A análise mede cada captura
+(amplitude, frequência, SINAD, ruído, DC, continuidade, diafonia), aplica os critérios do T7e e devolve as esperas de
+trabalho (o dobro do menor conjunto que passou, nunca menos que `6,2,6`), o teto medido e a taxa de trabalho (a maior
+com ≥ 10 % de folga, 250 kS/s se o hardware aguentar). Se você não puder esperar no laboratório, as etapas 6 e 7
+ficam para a próxima ida.
 
-**5. As esperas de trabalho e o teto (20 min; T7e, passos 3 e 4).** Esperas de trabalho = o **dobro** do menor
-conjunto que passou, nunca menos que `6,2,6`. Com elas, o laço de taxas exatas até 312,5 kS/s. A espera **A** (CS
-alto) só é posta à prova aqui: a 100 kS/s o CS fica alto até a próxima amostra, por mais de 4 µs, qualquer que seja o
-A. Uma taxa passa com `0 amostra(s) atrasada(s)`, a taxa medida pelo ARM igual à pedida e o SINAD e o ruído iguais
-aos da etapa 4. A maior que passa com ≥ 10 % de folga é a **taxa de trabalho** (250 kS/s, se o hardware aguentar).
-Anote no `anotacoes.md` as esperas de trabalho, o teto medido e a taxa de trabalho.
-
-**6. Na taxa de trabalho, o que o resto do roteiro precisa (25 min).** São as medidas que a recalibração do T1, do
-T6 e do T10 usa, e o T7c na configuração final. Na BeagleBone:
+**6. Na configuração escolhida (15 min).** O T7c, 10 min seguidos na configuração final (~300 MB a 250 kS/s). E, só se
+a configuração escolhida não estiver entre as das partes D e C da varredura, o 2 canais e o curto nela. Na
+BeagleBone:
 
 ```bash
 CS=20,10,10; R=250000     # as esperas e a taxa de trabalho da etapa 5
-# a) 2 canais, tom no canal 1 e canal 0 em curto: diafonia e atraso entre canais (o T10 e a produção usam os dois)
-sudo ./ler_adc $R 0,1 --blocos 3 --atraso-cs $CS --faixa-adc 0:5.12,1:5.12 -o T6a_trabalho.bin -t "T6a 2 canais $R cs $CS"
-# b) entrada do canal 1 em curto (gerador fora): o ruído na taxa e nas esperas novas (o T1 rápido)
-sudo ./ler_adc $R 1 --blocos 3 --atraso-cs $CS --faixa-adc 1:5.12 -o T1_trabalho.bin -t "T1 curto $R cs $CS"
-# c) o tom de volta: 10 min seguidos, o T7c na configuração final (~300 MB a 250 kS/s: confira o disco no painel)
+# o tom de volta no canal 1
 sudo ./ler_adc $R 1 --duracao 10m --atraso-cs $CS --faixa-adc 1:5.12 -o T7c_trabalho.bin -t "T7c 10 min $R cs $CS"
+# só se a análise pedir: 2 canais (canal 0 em curto) e a entrada do canal 1 em curto
+sudo ./ler_adc $R 0,1 --blocos 3 --atraso-cs $CS --faixa-adc 0:5.12,1:5.12 -o T6a_trabalho.bin -t "T6a 2 canais $R cs $CS"
+sudo ./ler_adc $R 1 --blocos 3 --atraso-cs $CS --faixa-adc 1:5.12 -o T1_trabalho.bin -t "T1 curto $R cs $CS"
 ```
 
-Cada uma termina com `Integridade: ... tudo certo`; a de 10 min, também com a `Taxa real medida pelo ARM` igual à
-pedida. Anote a leitura do contador no começo e no fim do T7c.
+O T7c termina com `Integridade: ... tudo certo` e com a `Taxa real medida pelo ARM` igual à pedida. Anote a leitura
+do contador no começo e no fim dele.
 
 **7. Confirmar no osciloscópio (durante os 10 min do T7c; T7e, passo 5).** Com as esperas e a taxa de trabalho: o
 período do CS é 1/taxa, e o CS baixo dura (566 + 2 × (S + H)) × 5 ns (3,13 µs com `20,10,10`). Meça os três tempos,
@@ -184,7 +187,7 @@ anote e **fotografe a tela** (`$DIA/fotos/cs_trabalho.png`): é o "depois" da fo
 |---|---|---|
 | O `make` falha (pelo `preparar` e também à mão, no terminal da placa) | Firmware ou compilador | Volte ao firmware de 19/10 ([plano B](#antes-de-sair-e-ao-chegar-levar-o-firmware-novo-à-beaglebone)); traga a mensagem e o `dmesg \| tail -n 20`. A taxa fica para outra ida; o dia segue com o T10 a 100 kS/s |
 | `DESTOAM` na etapa 2, ou amostras atrasadas ou "DIFERENTE da pedida" a 100 kS/s com as esperas padrão | A correção do firmware não funciona no hardware | **Pare e vá para casa** com as capturas e o `terminal_bbb.txt`: o firmware precisa de correção antes de qualquer outro teste |
-| Quadros com ruído no SDO, ou SINAD pior, com esperas menores | Limite do hardware (isolador ADuM3150, fiação), não do firmware | Siga: é o que a etapa 4 mede, e a 5 usa o dobro do menor conjunto bom |
+| Quadros com ruído no SDO, ou SINAD pior, com esperas menores | Limite do hardware (isolador ADuM3150, fiação), não do firmware | Siga: é o que a varredura (etapa 4) mede, e a escolha (etapa 5) usa o dobro do menor conjunto bom |
 | Amostras atrasadas numa taxa que cabe pela tabela do T7e | O quadro real é mais longo que o do simulador | Siga com a maior taxa que passar; meça o período e o CS baixo no osciloscópio e anote |
 | Buffers sobrescritos | O ARM ou o cartão não acompanham | Rode o método 3 do T7e (gravar em `/dev/shm`) e siga numa taxa menor |
 | Nenhuma espera menor que o padrão passa | As esperas não sobem a taxa nesta placa | Taxa de trabalho de 125 kS/s com as esperas padrão (a maior exata com folga); faça a etapa 6 com ela |
@@ -202,17 +205,16 @@ uv run scripts/adc_tool.py info $DIA/*.bin 2>&1 | grep -iE "===|CRC|aviso|erro" 
 ls $DIA $DIA/fotos
 ```
 
-No `info`, cada captura boa é só a linha `===`. Avisos de amostras atrasadas são esperados nas `T7e_fs_*` acima de
-~140 kS/s e nas `T7e_teto_*` acima do teto; em qualquer outra captura, ou um "CRC-32 NÃO confere", refaça-a antes de
-sair.
+No `info`, cada captura boa é só a linha `===` (as da varredura estão em `$DIA/T7e_*/`, e o `resumo.csv` já tem os
+contadores delas). Um "CRC-32 NÃO confere", ou amostras atrasadas fora da varredura, pede para refazer a captura antes
+de sair.
 
 Confira, item a item:
 
-- [ ] **Capturas:** `T7_bancada`; `T7a_fs_50000` e `T7a_fs_100000`; `T7e_osc_padrao`; `T7e_fs_*` (11, de 100 a
-  500 kS/s); `T7e_cs_*` (7); `T7e_curto_*` (3); `T7e_passo2_*` (se houve); `T7e_teto_*` (5); `T6a_trabalho`;
-  `T1_trabalho`; `T7c_trabalho`.
-- [ ] **Saídas do terminal:** `terminal_bbb.txt` e os `.txt` dos laços (`T7e_saida_ler_adc.txt`, `T7e_passo1.txt`,
-  `T7e_curto.txt`, `T7e_passo4.txt`).
+- [ ] **Capturas:** `T7_bancada`; `T7a_fs_50000` e `T7a_fs_100000`; `T7e_osc_padrao`; a pasta `T7e_<data>_<hora>/`
+  da varredura inteira (com o `log.txt` e o `resumo.csv`); `T7c_trabalho`; e `T6a_trabalho` e `T1_trabalho`, se a
+  análise pediu.
+- [ ] **Saídas do terminal:** `terminal_bbb.txt`.
 - [ ] **Fotos:** CS e SCLK com as esperas padrão a 100 kS/s; com as esperas e a taxa de trabalho; a bancada montada
   (como a placa, o gerador e o osciloscópio estão ligados e alimentados).
 - [ ] **`anotacoes.md` preenchido:** a bancada (alimentação da placa, notebook na bateria ou no carregador, gerador e
@@ -943,7 +945,7 @@ uv run scripts/medir_captura.py $DIA/T7[abcd]*.bin --freq 10000 --sem-correcao-s
 
 #### T7e: onde está o limite de taxa
 
-**Objetivo.** Saber **até onde** vai a taxa real e **qual parte** do projeto é o gargalo (a PRU/SPI, o ADC ou o lado ARM), em vez de supor. **Ordem:** o método 2 (osciloscópio, 10 min), o método 1 com as esperas padrão, o **método 4** (a busca das esperas mínimas e do teto: é ele que decide a taxa de trabalho) e o método 3 só se aparecerem buffers sobrescritos. São os itens F2 e F3 de [`improvement-proposals.md`](improvement-proposals.md#f2--medir-até-onde-as-esperas-do-cs-podem-cair), medidos em bancada.
+**Objetivo.** Saber **até onde** vai a taxa real e **qual parte** do projeto é o gargalo (a PRU/SPI, o ADC ou o lado ARM), em vez de supor. **Ordem:** o método 2 (osciloscópio, 10 min), o método 1 com as esperas padrão, o **método 4** (a busca das esperas mínimas e do teto: é ele que decide a taxa de trabalho) e o método 3 só se aparecerem buffers sobrescritos. **Atalho:** o `firmware/varrer_taxa.sh` faz os métodos 1 e 4 (e a diafonia e o ruído em curto de cada conjunto) de uma vez, sem decisões no meio; a escolha sai da análise das capturas ([etapas 4 e 5 do passo a passo](#passo-a-passo-da-próxima-ida-firmware-novo-e-taxa-máxima)). São os itens F2 e F3 de [`improvement-proposals.md`](improvement-proposals.md#f2--medir-até-onde-as-esperas-do-cs-podem-cair), medidos em bancada.
 
 **Hipótese a testar** (confirmada na leitura do firmware e no simulador em out/2026; falta a medida no CS). O ADS8688 precisa só de ~2 µs por amostra (500 kS/s), mas a PRU gasta bem mais: pela contagem estática do `spi_core.asm` (±10%), 32 bits de SCLK de ~16 a 19 ciclos cada (≈ 2,9 µs) mais os três laços de atraso do CS (200 + 100 + 100 iterações de 2 ciclos = 800 ciclos = **4,0 µs**) dão **~7 µs por quadro**, ou seja, ~140 kS/s no papel; o limite que você observou (130 kS/s) está nessa faixa. Executar o próprio `spi_core.asm` num simulador de PRU (`tests/pru_sim.py`, 1 ciclo por instrução, sem hardware) deu o mesmo resultado: **1 395 ciclos = 6,98 µs por quadro (~143 kS/s)** no firmware de out/2026, dos quais **800 ciclos (57 %) são os três laços de atraso do CS** (em geral, 595 + 2 × (S + H + A) ciclos; ver o método 4). É um teto de papel (acessos à memória externa podem somar ciclos): só o osciloscópio (método 2) confirma. Os mínimos do datasheet são 30/10/30 ns (tSU_CSCK, tD_CKCS, tPH_CS); reduza só pelo método 4, medindo. Se for isso, a taxa **real** satura entre 130 e 145 kS/s, **sem perder amostra**, qualquer que seja a taxa pedida, e o firmware de out/2026 conta as **amostras atrasadas** a cada captura. O lado ARM é improvável (130 kS/s = 260 kB/s; cada buffer de 2 MB demora ~8 s para encher).
 
