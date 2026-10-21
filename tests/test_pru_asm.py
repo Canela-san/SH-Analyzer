@@ -208,8 +208,10 @@ def test_taxa_acima_do_que_o_laco_alcanca_conta_amostras_atrasadas_e_nao_trava()
 
 
 def test_amostra_atrasada_por_pouco_volta_para_a_grade():
-    """Um atraso menor que 1 período (ex.: uma escrita na DDR que demorou) não desloca as amostras seguintes."""
-    pru = pru_laco(buffer=1 << 20)
+    """Um atraso menor que 1 período (ex.: uma escrita na DDR que demorou) não desloca as amostras seguintes. Com o
+    quadro de 1395 ciclos das esperas 200/100/100, perder 1000 ciclos num período de 2000 atrasa a amostra (com o
+    padrão de 3/1/3, o quadro de 609 deixaria folga para absorvê-los)."""
+    pru = pru_laco(buffer=1 << 20, atrasos=(200, 100, 100))
     pru.executar(max_transacoes=CONFIG_1CANAL + 3)
     pru.base_contador -= 1_000                                # a PRU "perdeu" 1000 ciclos (meio período)
     pru.executar(max_transacoes=CONFIG_1CANAL + 8)
@@ -251,12 +253,20 @@ def duracao_transacao(pru: PRU) -> int:
     return pru.instantes_cs_sobe[CONFIG_1CANAL + 1] - pru.instantes_cs[CONFIG_1CANAL + 1]
 
 
-def test_atrasos_de_cs_padrao_mantem_a_transacao_validada_em_hardware():
-    """0 no campo = o padrão (200/100/100): a transação tem a MESMA duração do firmware validado em bancada."""
-    for atrasos in (None, (0, 0, 0), (200, 100, 100)):
+def test_atrasos_de_cs_padrao_sao_o_minimo_do_datasheet():
+    """0 no campo = o padrão, 3/1/3 desde 21/10/2026 (30/10/30 ns): CS baixo de 566 + 2·(3+1) = 574 ciclos."""
+    for atrasos in (None, (0, 0, 0), (3, 1, 3)):
         pru = pru_laco(atrasos=atrasos)
         pru.executar(max_transacoes=CONFIG_1CANAL + 3)
-        assert duracao_transacao(pru) == 1166, atrasos        # o mesmo valor do spi_core.asm anterior (5,83 µs)
+        assert duracao_transacao(pru) == 574, atrasos
+        assert max(abs(d - PERIODO) for d in intervalos(pru)) <= 2
+
+
+def test_atrasos_de_cs_antigos_mantem_a_transacao_validada_em_hardware():
+    """200/100/100, o padrão até 21/10/2026: a transação tem a MESMA duração do firmware validado em bancada."""
+    pru = pru_laco(atrasos=(200, 100, 100))
+    pru.executar(max_transacoes=CONFIG_1CANAL + 3)
+    assert duracao_transacao(pru) == 1166                     # o mesmo valor do spi_core.asm anterior (5,83 µs)
 
 
 def test_atrasos_de_cs_configuraveis_encurtam_a_transacao():

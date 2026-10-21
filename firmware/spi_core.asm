@@ -51,11 +51,12 @@
 ;     volta ao estourar 32 bits, ~21,47 s a 200 MHz) -- mas ver a revisão de
 ;     out/2026 abaixo: não é mais zerado na troca de buffer.
 ;   - Margens de tempo em torno do CS (setup, hold, tempo mínimo em nível
-;     alto) mantidas com os mesmos valores calibrados empiricamente
-;     (200/100/100 iterações de 2 ciclos = 2/1/1 µs). O datasheet (SBAS582C,
-;     tabela 7.6) pede só 30/10/30 ns: são ~4 µs dos ~7 µs de cada amostra e o
-;     que limita a taxa a ~140 kS/s. Configuráveis desde out/2026 (ler_adc
-;     --atraso-cs) para medir em bancada até onde dá para reduzi-los.
+;     alto): até out/2026, os valores calibrados empiricamente (200/100/100
+;     iterações de 2 ciclos = 2/1/1 µs), ~4 µs dos ~7 µs de cada amostra e o
+;     que limitava a taxa a ~143 kS/s. Configuráveis desde out/2026 (ler_adc
+;     --atraso-cs); desde 21/10/2026 o padrão é o mínimo do datasheet (SBAS582C,
+;     tabela 7.6), 30/10/30 ns = 3/1/3: a varredura T7e não achou diferença de
+;     qualidade até ele, e o teto subiu para ~326 kS/s.
 ;
 ; --- O QUE MUDOU (removido nesta versão) ------------------------------------
 ;   - Modo manual (MAN_Ch_x) completamente removido, por pedido explícito:
@@ -90,8 +91,9 @@
 ;     folga entre a amostra e a espera pela próxima: não muda o instante de
 ;     nenhuma amostra; só perto da taxa máxima custa ~0,3 % dela.
 ;   - Atrasos de CS do laço principal lidos de shared_control (ler_adc
-;     --atraso-cs); com o padrão (0 = 200/100/100), a transação tem os mesmos
-;     1166 ciclos do firmware validado (tests/test_pru_asm.py confere).
+;     --atraso-cs); com 200/100/100, a transação tem os mesmos 1166 ciclos do
+;     firmware validado (tests/test_pru_asm.py confere). O padrão (0) é 3/1/3
+;     desde 21/10/2026: 574 ciclos de CS baixo, quadro mínimo de 609.
 ;   Tudo isso foi conferido no simulador (tests/pru_sim.py); falta validar
 ;   no hardware: make + uma captura longa com um tom estável e o
 ;   medir_captura.py (continuidade sem saltos nas trocas de buffer).
@@ -443,15 +445,15 @@ delay_cs_high_auto2:
     ;         a cada troca de buffer -- ver memoria_pru.h)
     ;   r9  = atraso CS setup  r10 = atraso CS hold  r11 = atraso CS alto (iterações; 0 = padrão)
     ;   r5  = os 16 bits lidos no SDO durante o comando (preâmbulo), zerado a cada quadro
-    LBBO &r9, r14, 48, 12    ; r9, r10, r11 = ctrl->atraso_cs_setup/hold/alto
+    LBBO &r9, r14, 48, 12    ; r9, r10, r11 = ctrl->atraso_cs_setup/hold/alto (0 = o padrão, 3/1/3)
     QBNE atraso_setup_ok, r9, 0
-    LDI r9, 200
+    LDI r9, 3
 atraso_setup_ok:
     QBNE atraso_hold_ok, r10, 0
-    LDI r10, 100
+    LDI r10, 1
 atraso_hold_ok:
     QBNE atraso_alto_ok, r11, 0
-    LDI r11, 100
+    LDI r11, 3
 atraso_alto_ok:
 
     LDI r6, 0
@@ -504,7 +506,7 @@ transacao_spi:
     ; --- TRANSAÇÃO SPI (32 CICLOS) ---
     CLR r30, r30, 3         ; Abaixa o CS
 
-    MOV r1, r9               ; atraso CS setup (padrão 200 iterações = 2,0 µs; o datasheet pede 30 ns)
+    MOV r1, r9               ; atraso CS setup (padrão 3 iterações = 30 ns, o mínimo do datasheet)
 delay_cs_setup:
     SUB r1, r1, 1
     QBNE delay_cs_setup, r1, 0
@@ -554,7 +556,7 @@ delay_cs_setup:
     DATA_BIT
     DATA_BIT
 
-    MOV r1, r10              ; atraso CS hold (padrão 100 = 1,0 µs; o datasheet pede 10 ns)
+    MOV r1, r10              ; atraso CS hold (padrão 1 iteração = 10 ns, o mínimo do datasheet)
 delay_cs_hold:
     SUB r1, r1, 1
     QBNE delay_cs_hold, r1, 0
@@ -563,7 +565,7 @@ delay_cs_hold:
 
     ; Tempo mínimo de CS alto entre transações (recarga do capacitor interno
     ; de amostragem do ADS8688), independente da frequência configurada.
-    MOV r1, r11              ; atraso CS alto (padrão 100 = 1,0 µs; o datasheet pede 30 ns)
+    MOV r1, r11              ; atraso CS alto (padrão 3 iterações = 30 ns, o mínimo do datasheet)
 delay_cs_high_minimo:
     SUB r1, r1, 1
     QBNE delay_cs_high_minimo, r1, 0

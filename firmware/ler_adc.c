@@ -28,6 +28,11 @@ void lidar_interrupcao(int sinal) { (void)sinal; manter_execucao = 0; }
 // multi-canal também, se o usuário não passar nada.
 #define CANAL_PADRAO 1
 
+// Taxa TOTAL usada quando a frequência não é passada (ver main()): 200 MHz ÷ 640, exata, a primeira acima de
+// 300 kS/s -- a Nyquist de 156 kHz cobre a banda de supraharmônicos (até 150 kHz) com 1 canal. Com as esperas do
+// CS padrão (3/1/3), o quadro mais curto da PRU dá ~326 kS/s (varredura T7e de 21/10/2026): ~4 % de folga.
+#define FREQUENCIA_PADRAO_HZ 312500u
+
 // ============================================================================
 // [CABECALHO DO ARQUIVO .bin]
 // ============================================================================
@@ -196,7 +201,7 @@ struct cabecalho_arquivo_campos {
     uint32_t amostras_atrasadas;       // [INTEGRIDADE, v4] amostras que a PRU tomou depois do instante previsto (a taxa pedida passou do que o laço alcança) -- com isso > 0, a taxa real é MENOR que frequencia_hz. Ver memoria_pru.h
     uint32_t buffers_sobrescritos;     // [INTEGRIDADE, v4] trocas de buffer em que o ARM ainda não tinha copiado o buffer que a PRU começou a reescrever: amostras perdidas. > 0 = captura comprometida (este programa sai com código 3)
     uint32_t quadros_preambulo_ruim;   // [INTEGRIDADE, v4] quadros SPI com algum 1 nos 16 bits de preâmbulo (o SDO tem de ficar em 0 durante o comando, datasheet 8.4.1.1.4): ruído/reflexo na linha SDO
-    uint32_t atraso_cs_iteracoes[3];   // [INTEGRIDADE, v4] atrasos de CS usados no laço da PRU (setup, hold, alto), em iterações de 2 ciclos (10 ns) -- 200/100/100 é o padrão validado em hardware. Ver --atraso-cs
+    uint32_t atraso_cs_iteracoes[3];   // [INTEGRIDADE, v4] atrasos de CS usados no laço da PRU (setup, hold, alto), em iterações de 2 ciclos (10 ns) -- 3/1/3 é o padrão desde 21/10/2026 (200/100/100 antes). Ver --atraso-cs
     char     versao_firmware[CABECALHO_VERSAO_FIRMWARE_TAMANHO]; // [VERSÃO, v5] VERSAO_FIRMWARE deste build (git describe), terminado em '\0'
     double   taxa_medida_hz;           // [INTEGRIDADE, v5] taxa total medida pelo relógio do ARM entre o 1º e o último bloco (incerteza ~0,02 % num bloco de ~10 s); 0.0 = não medida (menos de 2 blocos). Com amostras_atrasadas > 0 é a melhor estimativa da taxa real
     uint32_t buffers_ping_pong;        // [GEOMETRIA, v5] BUFFERS_PING_PONG: quantos buffers de samples_per_buffer amostras a PRU alterna na DDR
@@ -324,9 +329,13 @@ static void gerar_nome_arquivo_automatico(time_t instante, char *buffer, size_t 
 
 static void imprimir_uso(const char *nome_programa) {
     fprintf(stderr,
-        "Uso: sudo %s <frequencia_hz> [lista_de_canais] [--blocos N | --duracao T] [-o ARQUIVO] [opções]\n"
+        "Uso: sudo %s [frequencia_hz [lista_de_canais]] [--blocos N | --duracao T] [-o ARQUIVO] [opções]\n"
         "\n"
-        "  frequencia_hz     Frequência TOTAL de transação SPI, em Hz (1-500000).\n"
+        "  frequencia_hz     Frequência TOTAL de transação SPI, em Hz (1-500000). Sem ela\n"
+        "                    (o 1º argumento é uma opção, ou não há nenhum): %u Hz, o\n"
+        "                    padrão (200 MHz ÷ 640, exata; com as esperas do CS padrão,\n"
+        "                    a PRU alcança ~326 kS/s). Prefira taxas que dividem 200 MHz.\n"
+        "                    A lista de canais só vem depois da frequência.\n"
         "  lista_de_canais   Opcional. Canais do ADS8688, separados por vírgula\n"
         "                    sem espaços (ex.: '0,1,3'). Padrão: só o canal %d.\n"
         "  --blocos N        Opcional. Captura exatamente N blocos e para. N=0\n"
@@ -359,9 +368,10 @@ static void imprimir_uso(const char *nome_programa) {
         "  --atraso-cs S,H,A Opcional. Atrasos de CS do laço da PRU, em iterações de\n"
         "                    10 ns: CS descendo -> 1º SCLK, último SCLK -> CS subindo e\n"
         "                    CS alto entre amostras (1-10000 cada). Padrão: %u,%u,%u\n"
-        "                    (2/1/1 µs, os validados em hardware; o datasheet pede só\n"
-        "                    30/10/30 ns). São ~57%% do tempo de cada amostra: reduzi-los\n"
-        "                    sobe a taxa máxima. EXPERIMENTAL -- valide a captura.\n"
+        "                    (30/10/30 ns, o mínimo do datasheet: a varredura T7e de\n"
+        "                    21/10/2026 não achou diferença nenhuma de 2/1/1 µs, o padrão\n"
+        "                    antigo, até ele). Esperas maiores só deixam o quadro mais\n"
+        "                    longo e baixam a taxa máxima (200,100,100: ~143 kS/s).\n"
         "  --faixa-adc C:V[,...]  Opcional. Faixa de entrada do ADS8688 em cada canal, no\n"
         "                    formato 'canal:volts', onde 'volts' é a faixa TOTAL (pico\n"
         "                    a pico) -- o mesmo número do --faixa do adc_tool.py:\n"
@@ -384,7 +394,9 @@ static void imprimir_uso(const char *nome_programa) {
         "perdidas: refaça a captura).\n"
         "\n"
         "Exemplos:\n"
-        "  sudo %s 102400                        # %d bloco(s), canal %d, nome automático\n"
+        "  sudo %s                               # %u Hz, %d bloco(s), canal %d, nome automático\n"
+        "  sudo %s --duracao 10m                 # o mesmo, por ~10 minutos\n"
+        "  sudo %s 102400                        # outra taxa\n"
         "  sudo %s 102400 0,1,3 --blocos 5       # 5 blocos, 3 canais\n"
         "  sudo %s 102400 --blocos 0             # indefinido, até Ctrl+C\n"
         "  sudo %s 102400 --duracao 10m          # ~10 minutos de captura\n"
@@ -392,11 +404,11 @@ static void imprimir_uso(const char *nome_programa) {
         "  sudo %s 102400 -t \"Medição Condomínio X\" -d \"Busca por supraharmônicos\"\n"
         "  sudo %s 102400 0,1 --grandeza 0:tensao,1:corrente --sonda 1:fluke_i30_01\n"
         "  sudo %s 100000 0,1 --faixa-adc 0:20.48,1:5.12   # canal 1 (sensor de corrente) em ±2,56 V\n",
-        nome_programa, CANAL_PADRAO, BLOCOS_PADRAO,
+        nome_programa, FREQUENCIA_PADRAO_HZ, CANAL_PADRAO, BLOCOS_PADRAO,
         CABECALHO_TITULO_TAMANHO - 1u, CABECALHO_DESCRICAO_TAMANHO - 1u,
         CABECALHO_SONDA_ID_TAMANHO - 1u,
         ATRASO_CS_SETUP_PADRAO, ATRASO_CS_HOLD_PADRAO, ATRASO_CS_ALTO_PADRAO,
-        nome_programa, BLOCOS_PADRAO, CANAL_PADRAO,
+        nome_programa, FREQUENCIA_PADRAO_HZ, BLOCOS_PADRAO, CANAL_PADRAO, nome_programa, nome_programa,
         nome_programa, nome_programa, nome_programa, nome_programa, nome_programa,
         nome_programa, nome_programa);
 }
@@ -803,7 +815,7 @@ static int analisar_atrasos_cs(const char *texto, uint32_t atrasos[3]) {
         long valor = strtol(p, &fim, 10);
         if (fim == p || valor < 1 || valor > 10000 || (k < 2 && *fim != ',') || (k == 2 && *fim != '\0')) {
             fprintf(stderr, "Erro: --atraso-cs espera três inteiros de 1 a 10000 separados por vírgula "
-                             "(setup,hold,alto -- ex.: 200,100,100, o padrão), recebeu '%s'.\n", texto);
+                             "(setup,hold,alto -- ex.: 3,1,3, o padrão), recebeu '%s'.\n", texto);
             return -1;
         }
         atrasos[k] = (uint32_t)valor;
@@ -1043,14 +1055,18 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    uint32_t frequencia_desejada = 30000;
-    if (argc > 1) {
+    // [TAXA PADRÃO] Sem a frequência (nenhum argumento, ou o 1º já é uma opção), FREQUENCIA_PADRAO_HZ. A lista de
+    // canais, quando existe, vem sempre depois da frequência.
+    uint32_t frequencia_desejada = FREQUENCIA_PADRAO_HZ;
+    int primeiro_opcional = 1;
+    if (argc > 1 && argv[1][0] != '-') {
         frequencia_desejada = (uint32_t)atoi(argv[1]);
         if (frequencia_desejada == 0 || frequencia_desejada > 500000) {
             fprintf(stderr, "Erro: frequência inválida. Use um valor entre 1 e 500000 Hz.\n");
             imprimir_uso(argv[0]);
             return -1;
         }
+        primeiro_opcional = 2;
     }
 
     // argv[2] em diante: um argumento posicional opcional (a lista de
@@ -1069,7 +1085,7 @@ int main(int argc, char *argv[]) {
     const char *faixa_adc_texto = NULL;    // [FAIXA DE ENTRADA] valor de --faixa-adc, se passado
     const char *atraso_cs_texto = NULL;    // [ATRASOS DO CS] valor de --atraso-cs, se passado
 
-    for (int i = 2; i < argc; i++) {
+    for (int i = primeiro_opcional; i < argc; i++) {
         if (strcmp(argv[i], "--blocos") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "Erro: --blocos precisa de um valor (ex.: "
@@ -1135,7 +1151,7 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--atraso-cs") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "Erro: --atraso-cs precisa de um valor (ex.: "
-                                 "--atraso-cs 200,100,100).\n");
+                                 "--atraso-cs 6,2,6).\n");
                 return -1;
             }
             atraso_cs_texto = argv[++i];
@@ -1230,7 +1246,7 @@ int main(int argc, char *argv[]) {
         if (analisar_atrasos_cs(atraso_cs_texto, atrasos_cs) < 0) {
             return -1;
         }
-        printf("Atrasos de CS: %u/%u/%u iterações (%.2f/%.2f/%.2f µs) -- EXPERIMENTAL; o padrão validado é %u/%u/%u.\n",
+        printf("Atrasos de CS: %u/%u/%u iterações (%.2f/%.2f/%.2f µs); o padrão é %u/%u/%u.\n",
                atrasos_cs[0], atrasos_cs[1], atrasos_cs[2],
                atrasos_cs[0] * 0.01, atrasos_cs[1] * 0.01, atrasos_cs[2] * 0.01,
                ATRASO_CS_SETUP_PADRAO, ATRASO_CS_HOLD_PADRAO, ATRASO_CS_ALTO_PADRAO);

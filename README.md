@@ -92,7 +92,7 @@ O primeiro dia de bancada (19/10/2026) caracterizou o ADC e a cadeia de tensão 
 | Cadeia de tensão | −3 dB em 17,3 kHz; −12,5 dB em 45 kHz |
 
 > [!IMPORTANT]
-> O ADS8688 tem um filtro passa-baixa de 2ª ordem embutido em cada canal (corte de ~15 kHz, pelo datasheet), que não dá para desligar: é ele que derruba a curva acima. Na banda dos supraharmônicos, o sinal chega ao conversor atenuado em dezenas de dB, e a correção por perfil devolve a amplitude, mas amplifica o ruído na mesma proporção. Por isso o perfil de cada canal é medido sobre a cadeia inteira (sonda, frontend e ADC). Além disso, a taxa de amostragem de hoje (até ~140 kS/s) cobre só parte da banda. Os detalhes estão em [Sondas: calibração e correção](docs/user-guide.md#sondas-de-corrente-calibração-e-correção) e nos [limites conhecidos](docs/project-context.md).
+> O ADS8688 tem um filtro passa-baixa de 2ª ordem embutido em cada canal (corte de ~15 kHz, pelo datasheet), que não dá para desligar: é ele que derruba a curva acima. Na banda dos supraharmônicos, o sinal chega ao conversor atenuado em dezenas de dB, e a correção por perfil devolve a amplitude, mas amplifica o ruído na mesma proporção. Por isso o perfil de cada canal é medido sobre a cadeia inteira (sonda, frontend e ADC). Além disso, a taxa máxima de hoje (~326 kS/s, com o padrão em 312,5 kS/s) põe a Nyquist em ~156 kHz: a banda inteira cabe, mas no limite. Os detalhes estão em [Sondas: calibração e correção](docs/user-guide.md#sondas-de-corrente-calibração-e-correção) e nos [limites conhecidos](docs/project-context.md).
 
 ## 🚀 Início rápido
 
@@ -113,10 +113,10 @@ scripts/BeagleBone_Setup.sh ssh
 ```
 
 ```bash
-sudo ./ler_adc 100000 --duracao 10s
+sudo ./ler_adc --duracao 10s
 ```
 
-O resultado é um `captura_AAAAMMDD_HHMMSS.bin`: cerca de 10 s a 100 kS/s no canal 1. Todas as opções estão em `sudo ./ler_adc --help`.
+O resultado é um `captura_AAAAMMDD_HHMMSS.bin`: cerca de 10 s a 312,5 kS/s (a taxa padrão) no canal 1. Todas as opções estão em `sudo ./ler_adc --help`.
 
 ### 2. Analisar
 

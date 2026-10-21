@@ -374,7 +374,7 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
-IFS=, read -r s h a <<< "$cs"
+IFS=, read -r s h a <<< "${cs:-3,1,3}"         # sem --atraso-cs: o padrão do firmware
 sleep "${LER_ADC_DEMORA:-0}"
 maximo=$((200000000 / (595 + 2 * (s + h + a))))
 atrasadas=0; real=$taxa
@@ -511,7 +511,7 @@ def test_varrer_taxa_validar_roda_so_a_parte_e_numa_pasta_sem_varredura_anterior
     assert r.returncode == 0, r.stdout + r.stderr
     assert [linha["parte"] for linha in _resumo(pasta)] == ["E"] * 4
     r, _ = varredura("--partes", "EX")
-    assert r.returncode == 1 and "letras A, B, C, D e E" in r.stderr
+    assert r.returncode == 1 and "aceita as letras" in r.stderr
 
 
 def test_varrer_taxa_validar_recusa_o_firmware_sem_a_correcao(varredura):
@@ -530,3 +530,24 @@ def test_varrer_taxa_validar_recusa_o_firmware_sem_a_correcao(varredura):
     r, pasta = varredura("--validar")
     assert r.returncode == 0, r.stdout + r.stderr
     assert len(_resumo(pasta)) == 4
+
+
+def test_varrer_taxa_limite_varre_os_ticks_um_a_um_e_usa_o_padrao_do_firmware(varredura):
+    """--limite: 303 a 333 kS/s em passos de 1 tick (5 ns) para 3,1,3 e 6,2,6, 60 s perto do limite, 10 min no padrão
+    (sem --atraso-cs), 2 canais e o curto."""
+    r, pasta = varredura("--limite", "--simular")
+    assert "132 capturas" in r.stdout and "L: 122" in r.stdout
+    r, pasta = varredura("--limite", entrada="\n\n")
+    assert r.returncode == 0, r.stdout + r.stderr
+    linhas = _resumo(pasta)
+    por_parte = {p: [linha for linha in linhas if linha["parte"] == p] for p in "LMNQR"}
+    assert [len(por_parte[p]) for p in "LMNQR"] == [122, 6, 1, 1, 2]
+    taxas = [int(linha["taxa_pedida_hz"]) for linha in por_parte["L"][:61]]
+    assert [200_000_000 // t for t in taxas] == list(range(660, 599, -1))   # cada taxa é exatamente 1 tick a mais
+    acima = [linha for linha in por_parte["L"] if linha["esperas_cs"] == "3,1,3" and linha["amostras_atrasadas"] != "0"]
+    assert acima and min(200_000_000 // int(linha["taxa_pedida_hz"]) for linha in acima) == 600
+    assert max(200_000_000 // int(linha["taxa_pedida_hz"]) for linha in acima) == 608   # o quadro de 609 do falso
+    longa = (pasta / "N_cspadrao_312500_tom_600s.bin").read_text().split()
+    assert longa == ["taxa=312500", "canais=1", "blocos=9", "cs=", "duracao=600s"]       # sem --atraso-cs
+    assert "blocos=2" in (pasta / por_parte["L"][0]["arquivo"]).read_text()
+    assert por_parte["Q"][0]["canais"] == "0,1" and {linha["entrada"] for linha in por_parte["R"]} == {"curto"}

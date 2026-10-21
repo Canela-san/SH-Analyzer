@@ -81,7 +81,7 @@ sudo ./ler_adc <frequencia_hz> [lista_de_canais] [opções]
 
 | Argumento | O que faz |
 |---|---|
-| `frequencia_hz` | Frequência **total** de amostragem, de 1 a 500000 Hz. Com mais de um canal, ela é dividida entre eles |
+| `frequencia_hz` | Frequência **total** de amostragem, de 1 a 500000 Hz. Com mais de um canal, ela é dividida entre eles. **Opcional:** sem ela (nenhum argumento, ou o primeiro já é uma opção), **312500** (200 MHz ÷ 640, exata, o padrão desde 21/10/2026). A lista de canais só vem depois dela |
 | `lista_de_canais` | Canais do ADS8688 separados por vírgula, sem espaços (ex.: `0,1,3`). Sem ela, captura só o **canal 1** |
 | `--blocos N` | Captura exatamente N blocos e para. `N=0` captura até você apertar `Ctrl+C`. Padrão: 1 bloco |
 | `--duracao T` | Alternativa a `--blocos`: captura por um tempo (`600`, `10m`, `1.5h`; sem sufixo = segundos). As duas flags são mutuamente exclusivas |
@@ -91,7 +91,7 @@ sudo ./ler_adc <frequencia_hz> [lista_de_canais] [opções]
 | `--grandeza C:G[,...]` | Grandeza de cada canal: `tensao`, `corrente` ou `temperatura` (ex.: `0:tensao,1:corrente`). Canal não citado = `tensao` |
 | `--sonda C:ID[,...]` | Id da sonda usada em cada canal (ex.: `1:fluke_i30_01`), até 31 caracteres. É só um texto no cabeçalho; a correção é feita depois, no `adc_tool.py` |
 | `--faixa-adc C:V[,...]` | **Faixa de entrada do ADC** de cada canal, como fundo de escala total em Volts: `20.48` (±10,24 V, o padrão), `10.24` (±5,12 V) ou `5.12` (±2,56 V). Ex.: `0:20.48,1:5.12`. Canal não citado = `20.48`. Veja [Faixa de entrada do ADC](#faixa-de-entrada-do-adc) |
-| `--atraso-cs S,H,A` | **Experimental.** Atrasos do CS em cada amostra, em passos de 10 ns: CS descendo → 1º clock, último clock → CS subindo, CS alto entre amostras. Padrão `200,100,100` (2/1/1 µs, os validados). Veja [Integridade e taxa máxima](#integridade-da-captura-e-taxa-máxima) |
+| `--atraso-cs S,H,A` | Atrasos do CS em cada amostra, em passos de 10 ns: CS descendo → 1º clock, último clock → CS subindo, CS alto entre amostras. Padrão `3,1,3` (30/10/30 ns, o mínimo do datasheet, desde 21/10/2026; era `200,100,100`, 2/1/1 µs). Esperas maiores só alongam o quadro e baixam a taxa máxima. Veja [Integridade e taxa máxima](#integridade-da-captura-e-taxa-máxima) |
 
 Exemplos:
 
@@ -127,7 +127,7 @@ Enquanto captura, a PRU conta três coisas que indicariam dados ruins, sem custo
 
 | Contador | O que significa | O que fazer |
 |---|---|---|
-| amostras atrasadas | A PRU chegou atrasada para tomar a amostra: a taxa pedida passou do que ela alcança (~140 kS/s com os atrasos padrão). A taxa real do arquivo é **menor** que a do cabeçalho | Peça uma taxa menor (até 100 kS/s é o seguro) |
+| amostras atrasadas | A PRU chegou atrasada para tomar a amostra: a taxa pedida passou do que ela alcança (~326 kS/s com as esperas padrão, 3,1,3; ~143 kS/s com as antigas, 200,100,100). A taxa real do arquivo é **menor** que a do cabeçalho | Peça uma taxa menor (o padrão, 312,5 kS/s, ou uma exata abaixo dele) |
 | buffers sobrescritos | A PRU começou a reescrever um bloco que o ARM ainda não tinha gravado: amostras **perdidas**. O `ler_adc` sai com código 3 | Refaça a captura; veja se o cartão SD está lento ou o sistema sobrecarregado |
 | quadros com ruído no SDO | O ADC mantém a linha de dados em 0 durante o comando de cada amostra; um 1 ali é ruído ou reflexo na ligação (o problema histórico dos jumpers longos) | Confira a ligação ADC ↔ BeagleBone; essas amostras são suspeitas |
 
@@ -395,7 +395,7 @@ sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 20 --sonda fluke
 
 `--faixa-adc` (e `--faixa-adc-referencia`, para o canal de referência) escolhe a [faixa de entrada do ADC](#faixa-de-entrada-do-adc), vale para todo o plano (fica em `plano_coleta.txt`, e `--modo retomar` a reaproveita) e é conferida no cabeçalho de cada captura. Escolha a menor faixa que comporta o pico da saída da sonda, sem saturar nas amplitudes mais altas do plano.
 
-Para calibrar numa taxa acima de ~140 kS/s, passe também as esperas do CS validadas no T7e do [roteiro](lab-procedure.md) (`--atraso-cs 20,10,10`, por exemplo): o script as repassa ao `ler_adc`, guarda no plano e confere no cabeçalho de cada captura. Sem elas, a PRU não alcança a taxa e toda captura é recusada por amostras atrasadas.
+Desde 21/10/2026 as esperas padrão do firmware (3,1,3) alcançam ~326 kS/s, então dá para calibrar a 312,5 kS/s sem nada a mais. Com outras esperas (`--atraso-cs`), o script as repassa ao `ler_adc`, guarda no plano e confere no cabeçalho de cada captura; com as antigas (`200,100,100`), a PRU não passa de ~143 kS/s e toda captura acima disso é recusada por amostras atrasadas.
 
 > Se aparecer `Permission denied`, o arquivo está sem permissão de execução: rode `chmod +x calibrar_sonda.sh` uma vez (ou use `sudo bash calibrar_sonda.sh`). Sem nenhuma opção, o script pergunta o que precisa. A taxa aceita `102400`, `102.4k` ou `102,4 kHz`.
 
@@ -631,7 +631,7 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 
 | Script | Onde roda | O que faz |
 |---|---|---|
-| `firmware/varrer_taxa.sh` | BeagleBone | O T7e de uma vez: captura as esperas do CS (do padrão ao piso do datasheet), a taxa de 125 a 500 kS/s, 2 canais e a entrada em curto, com o log e um `resumo.csv`; `--simular` mostra o plano, `--partes` escolhe partes, `--continuar` retoma a última varredura (se a conexão cair, ela para na pausa seguinte, com tudo salvo), `--validar` roda só a validação do firmware corrigido em 21/10 (capturas de 35 s e 10 min). Veja o [roteiro de laboratório](lab-procedure.md#passo-a-passo-da-próxima-ida-firmware-novo-e-taxa-máxima) |
+| `firmware/varrer_taxa.sh` | BeagleBone | O T7e de uma vez: captura as esperas do CS (do padrão ao piso do datasheet), a taxa de 125 a 500 kS/s, 2 canais e a entrada em curto, com o log e um `resumo.csv`; `--simular` mostra o plano, `--partes` escolhe partes, `--continuar` retoma a última varredura (se a conexão cair, ela para na pausa seguinte, com tudo salvo), `--validar` roda só a validação do firmware corrigido em 21/10 (capturas de 35 s e 10 min), `--limite` a campanha do limite com o padrão novo (303 a 333 kS/s em passos de 1 tick, 60 s perto do limite, 10 min no padrão, 2 canais e curto). Veja o [roteiro de laboratório](lab-procedure.md#passo-a-passo-da-próxima-ida-firmware-novo-e-taxa-máxima) |
 | `scripts/BeagleBone_Setup.sh` | Computador | A interface com a BeagleBone: `status`, `preparar`, `hora`, `enviar`, `setup`, `ssh`, `trazer`, `montar`/`desmontar` e `configurar`. Veja [Preparar a BeagleBone](#preparar-a-beaglebone) |
 | `scripts/compactar_amostras.py` | Computador | (ou `adc_tool.py compactar`) Arquiva pastas de captura sem perdas num pacote `.zpaq.tar` (~11 % do tamanho), conferido bit a bit; também `listar`, `extrair` e `verificar`. Veja [Guardar as capturas sem perdas](#guardar-as-capturas-sem-perdas-compactar_amostraspy) |
 | `report/gerar_figuras.py` | Computador | Gera as figuras do relatório (PDF vetorial, já no tamanho final, com o texto composto pelo LaTeX) e um `.tex` com os números citados (macros siunitx). `uv run report/gerar_figuras.py` gera todas; `--listar`, `--png` (prévia), `--formato artigo --idioma en` (coluna de artigo, em inglês), `--saida PASTA` (ex.: a pasta do projeto LaTeX). Inclua no documento sem `width=`, para as fontes baterem com as do texto. As figuras `readme_*` são as do README: SVG transparente, gravado direto em `docs/images/` |
@@ -648,7 +648,7 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 | Aviso "CRC-32 do cabeçalho NÃO confere" | Cópia truncada ou arquivo corrompido | Copie o arquivo de novo e compare o tamanho. Os campos mostrados podem estar errados |
 | Aviso "canal N é de corrente mas não tem sonda/perfil resolvido" | A captura não registrou a sonda | Use `--sonda-perfil N:ARQUIVO.json` (ou refaça a captura com `--sonda`) |
 | `compactar_amostras.py`: "o zpaq não está instalado" | Falta o compressor | `sudo apt install zpaq`, ou `--rapido` (xz, pacote maior) |
-| `ler_adc`: "amostra(s) tomada(s) depois do instante previsto" | Taxa acima do que a PRU alcança (~140 kS/s) | Use até 100 kS/s; a taxa real foi menor que a gravada |
+| `ler_adc`: "amostra(s) tomada(s) depois do instante previsto" | Taxa acima do que a PRU alcança (~326 kS/s com as esperas padrão) | Use o padrão (312,5 kS/s) ou uma taxa exata menor; a taxa real foi menor que a gravada |
 | `ler_adc` sai com código 3, "buffer(s) sobrescrito(s)" | O ARM não gravou um bloco a tempo: amostras perdidas | Refaça; verifique o cartão SD e o que mais está rodando na BeagleBone |
 | `medir_captura`: DESCONTINUIDADE "numa troca de buffer da PRU" | Captura feita com o firmware anterior a out/2026 | Recompile o firmware (`./setup.sh`) e capture de novo |
 | A captura não termina e nenhuma linha `Bloco A gravado (...)` aparece | PRU parada ou presa | Confira `dmesg \| tail -n 20` e `cat /sys/class/remoteproc/remoteproc1/state`. Rode `./setup.sh` de novo |

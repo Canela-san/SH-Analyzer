@@ -6,7 +6,7 @@ Pré-requisito: [`user-guide.md`](user-guide.md) (capturar e analisar). Este rot
 
 **Premissas desta versão** (todas conferidas nos testes indicados; se alguma falhar, o roteiro diz o que trocar):
 
-* **Taxa de trabalho: no máximo 100 kS/s no total.** O firmware atual chega a ~140 kS/s (o gargalo está localizado: as três esperas do CS, ~57 % de cada amostra; veja o fato 1) e o ADC aceitaria 500 kS/s; taxas acima de 100 kS/s só aparecem para **documentar o limite** (T1, T4, T7e).
+* **Taxa: o padrão do firmware é 312,5 kS/s desde 21/10/2026**, com as esperas do CS no mínimo do datasheet (3,1,3); o teto medido é ~326 kS/s ([T7e](#t7e-onde-está-o-limite-de-taxa)). Os comandos deste roteiro que ainda dizem `100000` são de antes da mudança: valem como estão (a banda fica em 45 kHz) e serão recalibrados para 312,5 kS/s depois da [campanha do limite](#passo-a-passo-da-próxima-ida-a-campanha-do-limite-3125-kss).
 * **Canal de tensão (canal 1 do ADC) = divisor resistivo de 5 resistores ligado direto ao ADS8688**, sem sonda. "Sonda de tensão", neste roteiro, é o **divisor + o filtro de ~15 kHz do ADC**, e o perfil dela corrige os dois.
 * **Canal de corrente (canal 0 do ADC) = SCT013 100A:50mA + resistor de 0,12 Ω + 2 resistores em série + ADC**, **com o capacitor de filtro removido** (o capacitor existente é um passa-baixa de frequência de corte baixíssima, incompatível com supraharmônicos).
 * **Faixa de entrada do ADC escolhida por canal** (`--faixa-adc`): **canal de tensão em ±10,24 V** (o padrão, `20.48`: o divisor já usa 91% dela com 127 V RMS) e **canal de corrente em ±2,56 V** (`--faixa-adc 0:5.12`: o sinal tem dezenas de µV e a faixa menor reduz o ruído em volts). O firmware escreve a faixa no ADC e a registra no cabeçalho, e as ferramentas de análise a leem de lá (nada de `--faixa` nos comandos). **A escala em si (referência de 4,096 V, mapeamento do código) foi confirmada nas três faixas no T0 de 19/10/2026**; veja o fato 3.
@@ -39,10 +39,75 @@ Atualize esta tabela a cada ida ao laboratório: ela é o resumo do avanço para
 | [T4](#t4-frequência-de-amostragem-real) | 🟡 19/10 | Taxa = 200 MHz ÷ ticks confirmada (102,4 kS/s: −64,0 ppm; 110 kS/s: −100,0 ppm; as exatas concordam em 0,02 ppm) | Leitura do contador do osciloscópio (separa gerador e cristal: hoje, −43,2 ppm somados) |
 | [T5](#t5-distorção-e-faixa-dinâmica) | ⏳ | Prévia, das capturas do T4: SINAD 61 dB e ENOB 14,4 bits com o tom em −27,5 dBFS; THD −71,6 dB, limitado pelo gerador | Tudo |
 | [T6](#t6-vários-canais-diafonia-e-atraso) | 🟡 19/10 | Diafonia 1 → 0 de −94,7 dB em 10 kHz; atraso entre canais 9,954 µs (esperado 10,000) | Refazer o ponto de 40 kHz em **20 kHz** (com 2 canais a Nyquist é 25 kHz) |
-| [T7](#t7-integridade-e-limite-de-taxa) | 🟡 21/10 | O salto de 7 µs nas trocas de buffer sumiu (≤ 0,06 µs). [T7e](#t7e-onde-está-o-limite-de-taxa): as esperas do CS descem ao piso do datasheet (`3,1,3`) sem perda nenhuma; teto de 326 kS/s; **trabalho: `6,2,6` a 250 kS/s**. Achado: degrau de 5 a 13 µs a cada 10,74 s (o rebase do contador), corrigido no firmware | **Validar a correção:** `enviar --setup` e `./varrer_taxa.sh --validar` (~12 min, com o T7c de 10 min a 250 kS/s); T7d |
+| [T7](#t7-integridade-e-limite-de-taxa) | 🟡 21/10 | O salto de 7 µs nas trocas de buffer sumiu (≤ 0,06 µs). [T7e](#t7e-onde-está-o-limite-de-taxa): as esperas do CS descem ao piso do datasheet (`3,1,3`) sem perda nenhuma; teto de 326 kS/s; **trabalho proposto: `6,2,6` a 250 kS/s; o padrão ficou em `3,1,3` a 312,5 kS/s**. Achado: degrau de 5 a 13 µs a cada 10,74 s (o rebase do contador), corrigido no firmware | **A campanha do limite** ([passo a passo](#passo-a-passo-da-próxima-ida-a-campanha-do-limite-3125-kss)): o padrão novo (312,5 kS/s, `3,1,3`), o limite em passos de 1 tick, 10 min no padrão (a validação do rebase); T7d |
 | [T8](#t8-aliasing) a [T11](#t11-ponta-a-ponta) | ⏳ | — | Tudo; o T10 é o objetivo central |
 
+### Passo a passo da próxima ida: a campanha do limite (312,5 kS/s)
+
+Desde 21/10/2026, o padrão do firmware é **312,5 kS/s** (200 MHz ÷ 640, a primeira taxa exata acima de 300 kS/s:
+Nyquist de 156 kHz com 1 canal) com as esperas do CS no **mínimo do datasheet** (`3,1,3`), e o rebase do contador
+foi corrigido (o degrau de 10,74 s do [T7e](#t7e-onde-está-o-limite-de-taxa)). Esta ida valida as duas coisas e
+mede o limite de taxa com precisão, para o relatório: em passos de 1 tick (5 ns), de 303 a 333 kS/s. São ~35 min
+de captura, sem decisões no meio, mais ~20 min de preparação.
+
+**1. Firmware de 21/10 (10 min).** No computador:
+
+```fish
+set DIA $DADOS/lab/(date +%F); mkdir -p $DIA/fotos              # a pasta do dia
+cp docs/lab-notes-template.md $DIA/anotacoes.md                 # o caderno da sessão: preencha durante
+scripts/BeagleBone_Setup.sh preparar                            # relógio, firmware de 21/10, compilação e PRU
+script -a $DIA/terminal_bbb.txt -c "scripts/BeagleBone_Setup.sh ssh"   # o terminal da placa, gravado inteiro
+```
+
+No terminal da placa, `./ler_adc --help | head -8` tem de dizer `312500 Hz, o padrão`. Se a compilação pelo
+`preparar` falhar, rode `./setup.sh` no terminal da placa (e me mande o erro).
+
+**2. A bancada (10 min).** O mesmo sinal de 21/10: senoide de 10,000 kHz, 20 Vpp, High-Z, no canal 1, com o
+contador de frequência do osciloscópio no mesmo sinal (anote a leitura no começo e no fim). Confira a interferência
+da rede como na [etapa 1 do passo a passo de 21/10](#passo-a-passo-da-próxima-ida-firmware-novo-e-taxa-máxima),
+agora na taxa padrão: `sudo ./ler_adc --blocos 1 --faixa-adc 1:5.12 -o T7_bancada.bin -t "T7 bancada"`.
+
+**3. A campanha (~35 min).** Na BeagleBone:
+
+```bash
+./varrer_taxa.sh --limite --simular   # 132 capturas, ~35 min, ~1,2 GB: confira o espaço livre e o tempo de cada parte
+./varrer_taxa.sh --limite
+```
+
+| Parte | O que captura (tom de 10 kHz em ±2,56 V) | Para quê |
+|---|---|---|
+| L | De 303 a 333 kS/s em passos de **1 tick** (61 taxas), com `3,1,3` e com `6,2,6`, 2 blocos cada | O limite exato de cada conjunto e a zona de transição: a partir de que taxa aparecem amostras atrasadas, e com que frequência |
+| M | 60 s a 312,5, 315, 317,5 e 320 kS/s com `3,1,3`; a 312,5 e 307,7 kS/s com `6,2,6` | A folga perto do limite, em capturas longas que cruzam 2^31 ciclos 5 vezes |
+| N | 10 min no padrão (312,5 kS/s, **sem** `--atraso-cs`) | O T7c da configuração nova: a estabilidade, a validação do rebase (55 vezes) e do padrão como uma captura qualquer o usa |
+| Q | Ele para e pede: o canal 0 em curto. 2 canais no padrão (156 kS/s por canal) | A diafonia e o atraso entre canais na taxa nova |
+| R | Ele para e pede: o gerador fora e o canal 1 em curto. O ruído no padrão e com `6,2,6` | O piso de ruído na taxa nova (o T1 rápido) |
+
+Se o espaço livre não bastar, o `--simular` mostra o tamanho de cada parte: rode `--partes L`, traga as capturas
+para o computador, apague-as da placa (`rm -r T7e_*`) e rode `--partes MNQR`. Se a conexão cair, a varredura para
+na pausa seguinte com tudo salvo: `./varrer_taxa.sh --continuar`. Opcional, se sobrar tempo: `./varrer_taxa.sh
+--validar` (a configuração `6,2,6` a 250 kS/s em 10 min, ~12 min).
+
+**4. O osciloscópio (durante os 10 min da parte N).** CS e SCLK no padrão: o período do CS é de 3,20 µs, o CS baixo
+dura (566 + 2 × (3 + 1)) × 5 ns = 2,87 µs, e o CS alto, ~0,33 µs. Meça os três, anote e **fotografe a tela**
+(`$DIA/fotos/cs_padrao_312k.png`, com a base de tempo visível): é a anatomia do quadro no relatório.
+
+**5. Antes de sair.** Saia do terminal da placa com `exit` e, no computador:
+
+```fish
+scripts/BeagleBone_Setup.sh trazer 'T7*' $DIA
+```
+
+O pacote é a pasta `T7e_*` (as capturas, o `log.txt` e o `resumo.csv`), o `T7_bancada.bin`, o `terminal_bbb.txt`,
+as fotos e o `anotacoes.md` preenchido (a bancada, o contador, a tabela do CS). Com ele, a análise dá, para o
+relatório: o quadro real em ciclos e o teto de cada conjunto de esperas, a zona de transição (a taxa a partir da qual
+aparece a primeira amostra atrasada, e com que frequência), a qualidade em cada taxa até o limite, a estabilidade de
+10 min, a validação do rebase e a margem da taxa padrão. Depois, os comandos do resto do roteiro passam para
+312,5 kS/s.
+
 ### Passo a passo da próxima ida: firmware novo e taxa máxima
+
+> **Executado em 21/10/2026** (a varredura T7e: os resultados estão no [T7e](#t7e-onde-está-o-limite-de-taxa)).
+> Fica como referência: as etapas de bancada (interferência, osciloscópio, o pacote) valem para qualquer ida.
 
 O dia tem um objetivo: validar o firmware de out/2026 e **decidir a taxa de trabalho**, antes de calibrar a sonda
 (T10) e de refazer o que depende da banda. Cada etapa diz o que conferir e quando parar. O resultado é o

@@ -261,11 +261,19 @@ def sem_comentarios_asm(texto: str) -> str:
 
 
 def test_atrasos_de_cs_padrao_do_c_e_do_assembly_sao_os_mesmos():
-    """0 no campo = o padrão do assembly; o ler_adc grava o seu padrão: os dois têm de ser o mesmo (200/100/100)."""
+    """0 no campo = o padrão do assembly; o ler_adc grava o seu padrão: os dois têm de ser o mesmo (3/1/3, o mínimo do
+    datasheet, desde 21/10/2026; era 200/100/100)."""
     h = _memoria_pru_sem_comentarios()
     padrao_c = [inteiro_c(re.search(rf"#\s*define\s+ATRASO_CS_{n}_PADRAO\s+(\w+)", h).group(1))
                 for n in ("SETUP", "HOLD", "ALTO")]
     asm = sem_comentarios_asm((FIRMWARE / "spi_core.asm").read_text(encoding="utf-8"))
     padrao_asm = [int(re.search(rf"QBNE atraso_{n}_ok, r{r}, 0\s+LDI r{r}, (\d+)", asm).group(1))
                   for n, r in (("setup", 9), ("hold", 10), ("alto", 11))]
-    assert padrao_c == padrao_asm == [200, 100, 100]
+    assert padrao_c == padrao_asm == [3, 1, 3]
+
+
+def test_taxa_padrao_do_ler_adc_divide_200_mhz_e_passa_de_300_ks(fonte_c):
+    """Sem a frequência, o ler_adc usa FREQUENCIA_PADRAO_HZ: exata (o arredondamento dos ticks não a desloca) e acima
+    de 300 kS/s (Nyquist acima de 150 kHz com 1 canal)."""
+    padrao = inteiro_c(re.search(r"#\s*define\s+FREQUENCIA_PADRAO_HZ\s+(\w+)", fonte_c).group(1))
+    assert 200_000_000 % padrao == 0 and padrao >= 300_000

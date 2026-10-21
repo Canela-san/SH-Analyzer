@@ -67,6 +67,14 @@ CURTO_RAPIDO="200,100,100:125000 20,10,10:250000 6,2,6:250000 3,1,3:250000"
 # esperas:taxa:duração em s. Cruzam 2^31 ciclos (10,74 s) 3 vezes (35 s) e 55 vezes (10 min).
 LONGAS="200,100,100:100000:35 6,2,6:100000:35 6,2,6:250000:35 6,2,6:250000:600"
 
+# A campanha do limite (--limite), com o padrão de 21/10/2026 (esperas 3,1,3 e 312,5 kS/s). As taxas vêm em ticks
+# inteiros de 5 ns (taxa = 200 MHz ÷ ticks: sempre a que a PRU gera, sem arredondamento); "padrao" = sem --atraso-cs.
+LIMITE_ESPERAS="3,1,3 6,2,6"
+LIMITE_TICKS_DE=660                 # 303,0 kS/s
+LIMITE_TICKS_ATE=600                # 333,3 kS/s (acima do teto medido em 21/10: 326 kS/s com 3,1,3)
+PERTO_DO_LIMITE="3,1,3:640 3,1,3:635 3,1,3:630 3,1,3:625 6,2,6:640 6,2,6:650"   # esperas:ticks, 60 s cada
+TAXA_PADRAO=312500
+
 PARTES=ABDC
 SIMULAR=0
 CONTINUAR=''
@@ -74,6 +82,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --simular) SIMULAR=1 ;;
         --validar) PARTES=E ;;
+        --limite) PARTES=LMNQR ;;
         --continuar)
             if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then CONTINUAR=${2%/}; shift; else CONTINUAR=ultima; fi ;;
         --partes) [ $# -ge 2 ] || { echo "Erro: --partes precisa de letras (ex.: AB)." >&2; exit 1; }; PARTES=$2; shift ;;
@@ -106,11 +115,30 @@ if tem E; then
         PLANO+=("E|$cs|$taxa|1|tom|$segundos")
     done
 fi
+if tem L; then
+    for cs in $LIMITE_ESPERAS; do
+        for ((t = LIMITE_TICKS_DE; t >= LIMITE_TICKS_ATE; t--)); do PLANO+=("L|$cs|$((200000000 / t))|1|tom"); done
+    done
+fi
+if tem M; then
+    for par in $PERTO_DO_LIMITE; do PLANO+=("M|${par%%:*}|$((200000000 / ${par##*:}))|1|tom|60"); done
+fi
+if tem N; then PLANO+=("N|padrao|$TAXA_PADRAO|1|tom|600"); fi
+if tem Q; then PLANO+=("Q|padrao|$TAXA_PADRAO|0,1|tom"); fi
+if tem R; then PLANO+=("R|padrao|$TAXA_PADRAO|1|curto" "R|6,2,6|$TAXA_PADRAO|1|curto"); fi
 case "$PARTES" in
-    *[!ABCDE]*|'') echo "Erro: --partes aceita as letras A, B, C, D e E (ex.: AB; a validação: --validar)." >&2; exit 1 ;;
+    *[!ABCDELMNQR]*|'')
+        echo "Erro: --partes aceita as letras A, B, C, D, E, L, M, N, Q e R (ex.: AB; atalhos: --validar, --limite)." >&2
+        exit 1 ;;
 esac
 
-blocos_da_parte() { if [ "$1" = C ]; then echo 1; else echo "$BLOCOS"; fi; }
+blocos_da_parte() {
+    case "$1" in
+        C|R) echo 1 ;;      # só o ruído
+        L) echo 2 ;;        # 1 troca de buffer e a taxa medida pelo ARM, em ~7 s por ponto
+        *) echo "$BLOCOS" ;;
+    esac
+}
 nome_da_captura() {   # $1 = item do plano
     local parte cs taxa canais entrada segundos
     IFS='|' read -r parte cs taxa canais entrada segundos <<< "$1"
@@ -141,32 +169,49 @@ done
 
 # Duração prevista de uma captura: a taxa que a PRU alcança com essas esperas (o quadro mínimo é de
 # 595 + 2 × (S + H + A) ciclos de 5 ns, pelo simulador) e ~2 s de preparação.
-duracao_s() {   # $1 = esperas, $2 = taxa, $3 = blocos
+duracao_s() {   # $1 = esperas ("padrao" = 3,1,3), $2 = taxa, $3 = blocos
     local s h a
-    IFS=, read -r s h a <<< "$1"
+    IFS=, read -r s h a <<< "${1/#padrao/3,1,3}"
     awk -v t="$2" -v q=$((595 + 2 * (s + h + a))) -v clk=$CLOCK_PRU -v n=$(($3 * AMOSTRAS_POR_BLOCO)) \
         'BEGIN { m = clk / q; r = (t < m) ? t : m; printf "%.0f\n", n / r + 2 }'
 }
 
 TOTAL_S=0
 MB_TOTAL=0
+declare -A N_PARTE=() S_PARTE=() MB_PARTE=()
+ORDEM_PARTES=''
 for item in "${PLANO[@]}"; do
     [ -z "${FEITA[$(nome_da_captura "$item")]:-}" ] || continue
     IFS='|' read -r parte cs taxa _ _ segundos <<< "$item"
     if [ -n "$segundos" ]; then
-        TOTAL_S=$((TOTAL_S + segundos + 2))
-        MB_TOTAL=$((MB_TOTAL + taxa * segundos * 2 / 1048576 + 1))
-        continue
+        s_item=$((segundos + 2))
+        mb_item=$((taxa * segundos * 2 / 1048576 + 1))
+    else
+        b=$(blocos_da_parte "$parte")
+        s_item=$(duracao_s "$cs" "$taxa" "$b")    # o bloco é de amostras brutas: a duração só depende da taxa total
+        mb_item=$((b * AMOSTRAS_POR_BLOCO * 2 / 1048576 + 1))
     fi
-    b=$(blocos_da_parte "$parte")
-    TOTAL_S=$((TOTAL_S + $(duracao_s "$cs" "$taxa" "$b")))
-    MB_TOTAL=$((MB_TOTAL + b * AMOSTRAS_POR_BLOCO * 2 / 1048576 + 1))
+    TOTAL_S=$((TOTAL_S + s_item))
+    MB_TOTAL=$((MB_TOTAL + mb_item))
+    [ -n "${N_PARTE[$parte]:-}" ] || ORDEM_PARTES+=$parte
+    N_PARTE[$parte]=$(( ${N_PARTE[$parte]:-0} + 1 ))
+    S_PARTE[$parte]=$(( ${S_PARTE[$parte]:-0} + s_item ))
+    MB_PARTE[$parte]=$(( ${MB_PARTE[$parte]:-0} + mb_item ))
 done
+por_parte() {   # "L: 122 capturas, ~17 min, ~490 MB · M: ..."
+    local p linha=''
+    for ((k = 0; k < ${#ORDEM_PARTES}; k++)); do
+        p=${ORDEM_PARTES:k:1}
+        linha+="${linha:+ · }$p: ${N_PARTE[$p]}, ~$(( (S_PARTE[$p] + 59) / 60 )) min, ~${MB_PARTE[$p]} MB"
+    done
+    echo "$linha"
+}
 LIVRE_MB=$(( $(df -Pk . | awk 'NR == 2 { print $4 }') / 1024 ))
 
 if [ -t 1 ]; then N=$'\e[1m' F=$'\e[2m' R=$'\e[0m' V=$'\e[32m' AM=$'\e[33m' VM=$'\e[31m'; else N='' F='' R='' V='' AM='' VM=''; fi
 printf '\n  %s◆ T7e: esperas do CS e taxa de amostragem%s\n' "$N" "$R"
 printf '    partes %s · %d capturas · ~%d min · ~%d MB (livres: %d MB)\n' "$PARTES" "$FALTAM" $(( (TOTAL_S + 59) / 60 )) "$MB_TOTAL" "$LIVRE_MB"
+[ "${#ORDEM_PARTES}" -lt 2 ] || printf '    %s(%s)%s\n' "$F" "$(por_parte)" "$R"
 if [ -n "$CONTINUAR" ]; then
     printf '    continuando %s: %d de %d já feitas\n' "$CONTINUAR" $(( ${#PLANO[@]} - FALTAM )) "${#PLANO[@]}"
 fi
@@ -186,14 +231,29 @@ if [ "$SIMULAR" -eq 1 ]; then
 fi
 if [ "$LIVRE_MB" -lt $(( MB_TOTAL + 100 )) ]; then
     printf '  %sErro: faltam %d MB livres aqui. Traga as capturas antigas para o computador e apague-as daqui, ou\n' "$VM" $(( MB_TOTAL + 100 - LIVRE_MB ))
-    printf '  rode menos partes (--partes A, depois --partes B...).%s\n' "$R"
+    printf '  rode menos partes de cada vez, trazendo (e apagando daqui) as capturas entre uma e outra:\n'
+    printf '  %s.%s\n' "$(por_parte)" "$R"
+    printf '  Ex.: --partes L; no computador, trazer; aqui, rm -r T7e_*; depois --partes MNQR.\n'
+    echo "  O que já foi feito numa pasta não se perde: --continuar retoma (veja --help)."
     exit 1
 fi
 [ -x "$LER_ADC" ] || { echo "Erro: $LER_ADC não existe aqui: rode ./setup.sh antes." >&2; exit 1; }
 
-# A parte E valida a correção do rebase do contador (21/10/2026): rodá-la com o firmware antigo gasta 12 min à toa.
-# Confere o código desta pasta, que ele foi compilado depois da última mudança e que é ele que está na PRU.
-if tem E; then
+# As partes E, L, M, N, Q e R pedem o firmware de 21/10/2026 (a correção do rebase do contador e, para N, Q e R, o
+# padrão de 3,1,3): rodá-las com o antigo gasta o tempo à toa. Confere o código desta pasta, que ele foi compilado
+# depois da última mudança e que é ele que está na PRU.
+if tem N || tem Q || tem R; then
+    if [ -f memoria_pru.h ] && ! grep -Eq 'define ATRASO_CS_SETUP_PADRAO +3u' memoria_pru.h; then
+        echo "Erro: o firmware desta pasta não tem o padrão de esperas 3,1,3 (21/10/2026)." >&2
+        echo "No computador:  scripts/BeagleBone_Setup.sh enviar --setup" >&2
+        exit 1
+    fi
+    if [ -f ler_adc.c ] && [ -f ler_adc ] && { [ ler_adc -ot ler_adc.c ] || [ ler_adc -ot memoria_pru.h ]; }; then
+        echo "Erro: o ler_adc é mais antigo que o código dele: compile antes (./setup.sh)." >&2
+        exit 1
+    fi
+fi
+if tem E || tem L || tem M || tem N || tem Q || tem R; then
     if [ -f spi_core.asm ] && ! grep -q 'CORRIGIDO em 21/10/2026' spi_core.asm; then
         echo "Erro: o spi_core.asm desta pasta não tem a correção do rebase do contador (21/10/2026)." >&2
         echo "No computador:  scripts/BeagleBone_Setup.sh enviar --setup" >&2
@@ -264,9 +324,12 @@ for item in "${PLANO[@]}"; do
             A) printf '\n  %s▸ A: as esperas a 100 kS/s, com o tom%s\n' "$N" "$R" ;;
             B) printf '\n  %s▸ B: a taxa contra as esperas, com o tom%s\n' "$N" "$R" ;;
             E) printf '\n  %s▸ E: capturas longas, com o tom (cruzam 2^31 ciclos da PRU várias vezes)%s\n' "$N" "$R" ;;
-            D) pausa "tom de 10 kHz no canal 1 (como até agora) e a entrada do canal 0 em CURTO." || resposta=$?
+            L) printf '\n  %s▸ L: o limite, de 303 a 333 kS/s em passos de 1 tick (5 ns), com o tom%s\n' "$N" "$R" ;;
+            M) printf '\n  %s▸ M: 60 s perto do limite, com o tom%s\n' "$N" "$R" ;;
+            N) printf '\n  %s▸ N: 10 min no padrão (312,5 kS/s, esperas 3,1,3), com o tom%s\n' "$N" "$R" ;;
+            D|Q) pausa "tom de 10 kHz no canal 1 (como até agora) e a entrada do canal 0 em CURTO." || resposta=$?
                printf '\n  %s▸ D: 2 canais%s\n' "$N" "$R" ;;
-            C) pausa "gerador FORA e a entrada do canal 1 em CURTO (o divisor ligado ao retorno)." || resposta=$?
+            C|R) pausa "gerador FORA e a entrada do canal 1 em CURTO (o divisor ligado ao retorno)." || resposta=$?
                printf '\n  %s▸ C: a entrada em curto%s\n' "$N" "$R" ;;
         esac
         case "$resposta" in
@@ -281,8 +344,10 @@ for item in "${PLANO[@]}"; do
     printf '    %s[%3d/%d]%s cs %-12s %7s Hz %-9s ' "$F" "$i" "${#PLANO[@]}" "$R" "$cs" "$taxa" "$( [ "$canais" = 1 ] || echo '2 canais')"
     echo "== [$i/${#PLANO[@]}] $nome" >> "$LOG"
     if [ -n "$segundos" ]; then tamanho=(--duracao "${segundos}s"); else tamanho=(--blocos "$(blocos_da_parte "$parte")"); fi
+    esperas=(--atraso-cs "$cs")
+    [ "$cs" != padrao ] || esperas=()      # o padrão do firmware, como numa captura qualquer
     # shellcheck disable=SC2086  # $faixa são duas palavras de propósito
-    saida=$(sudo "$LER_ADC" "$taxa" "$canais" "${tamanho[@]}" --atraso-cs "$cs" $faixa -o "$PASTA/$nome" \
+    saida=$(sudo "$LER_ADC" "$taxa" "$canais" "${tamanho[@]}" "${esperas[@]}" $faixa -o "$PASTA/$nome" \
                  -t "T7e $parte cs $cs $taxa $entrada${segundos:+ ${segundos}s}" 2>&1 </dev/null)
     codigo=$?
     printf '%s\n' "$saida" >> "$LOG"

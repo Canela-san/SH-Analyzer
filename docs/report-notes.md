@@ -1068,8 +1068,8 @@ estas ferramentas.
 
 Em ordem de prioridade, a mesma da tabela [Estado da campanha](lab-procedure.md#estado-da-campanha) do roteiro:
 
-1. **Validar no hardware a correção do rebase do contador (Marco 15).** `scripts/BeagleBone_Setup.sh enviar --setup` e `./varrer_taxa.sh --validar` (~12 min): capturas de 35 s e de 10 min (o T7c, com `6,2,6` a 250 kS/s) que cruzam 2^31 ciclos várias vezes, sem degrau. Depois, tornar `6,2,6` o padrão do firmware.
-2. **Refazer na taxa de trabalho (250 kS/s)** o que depende da banda: T1, T3 (inteiro, com `--repeticoes 3`), T4 e T6, como manda a tabela [O que refazer com o firmware de out/2026](lab-procedure.md#o-que-refazer-com-o-firmware-de-out2026). O teto (326 kS/s) e a escolha (`6,2,6` a 250 kS/s) estão no Marco 15; falta fotografar o CS no osciloscópio (a anatomia do quadro).
+1. **A campanha do limite (Marco 15).** O padrão do firmware passou a 312,5 kS/s com as esperas no mínimo do datasheet (`3,1,3`), para a Nyquist passar de 150 kHz. `./varrer_taxa.sh --limite` (~35 min) valida o padrão e a correção do rebase (10 min no padrão) e mede o limite em passos de 1 tick (5 ns), de 303 a 333 kS/s, com `3,1,3` e `6,2,6`: o teto, a zona de transição (a primeira amostra atrasada) e a qualidade até ele, para descrever o hardware com precisão no relatório.
+2. **Refazer na taxa padrão (312,5 kS/s)** o que depende da banda: T1, T3 (inteiro, com `--repeticoes 3`), T4 e T6, como manda a tabela [O que refazer com o firmware de out/2026](lab-procedure.md#o-que-refazer-com-o-firmware-de-out2026). O teto (326 kS/s) está no Marco 15; falta fotografar o CS no osciloscópio (a anatomia do quadro).
 3. **Calibração da sonda de corrente (T10)**, o objetivo central, **depois** do T7e: o perfil vale até 0,9 × Nyquist da taxa em que é medido. O fluxo já rodou com hardware real na cadeia de tensão (Marco 12); falta o SCT013 e a validação em frequências que não entraram no perfil (*hold-out*). A sensibilidade de 60 µV/A sobre o resistor de carga é o maior risco (roteiro, fato 5).
 4. **Completar a caracterização:**
    * o contador de frequência no T4;

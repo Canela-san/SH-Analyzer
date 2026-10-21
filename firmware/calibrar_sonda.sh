@@ -352,7 +352,7 @@ Principais:
                          captura e o gerar_perfil_sonda.py/adc_tool.py usam sozinhos.
       --faixa-adc-referencia V   O mesmo para o canal de referência (--canal-referencia).
       --atraso-cs S,H,A  Esperas do CS no laço da PRU, repassadas ao ler_adc (iterações de 10 ns:
-                         setup,hold,alto; padrão do firmware 200,100,100). Só para calibrar numa
+                         setup,hold,alto; padrão do firmware 3,1,3). Só para calibrar numa
                          taxa acima de ~140 kS/s, com os valores validados no T7e do roteiro de
                          laboratório; cada captura é conferida (o cabeçalho tem de registrá-los).
 
@@ -1943,7 +1943,7 @@ definir_canais() {
         # A mesma regra do ler_adc (três inteiros de 1 a 10000), conferida aqui para falhar antes da 1ª captura.
         if ! [[ "$ATRASO_CS" =~ ^([1-9][0-9]{0,4}),([1-9][0-9]{0,4}),([1-9][0-9]{0,4})$ ]] \
             || [ "${BASH_REMATCH[1]}" -gt 10000 ] || [ "${BASH_REMATCH[2]}" -gt 10000 ] || [ "${BASH_REMATCH[3]}" -gt 10000 ]; then
-            erro_fatal "--atraso-cs '${ATRASO_CS}' inválido: use três inteiros de 1 a 10000 separados por vírgula (setup,hold,alto; padrão 200,100,100)."
+            erro_fatal "--atraso-cs '${ATRASO_CS}' inválido: use três inteiros de 1 a 10000 separados por vírgula (setup,hold,alto; padrão 3,1,3)."
         fi
         ARGS_ATRASO_CS=(--atraso-cs "$ATRASO_CS")
     fi
@@ -2104,7 +2104,7 @@ mostrar_plano() {
     if [ -n "$FAIXA_ADC_SONDA" ] || [ -n "$FAIXA_ADC_REFERENCIA" ]; then
         saida "Faixa do ADC:        ${FAIXA_ADC_SONDA:+sonda ±$(awk -v v="$FAIXA_ADC_SONDA" 'BEGIN { printf "%g", v / 2 }') V }${FAIXA_ADC_REFERENCIA:+referência ±$(awk -v v="$FAIXA_ADC_REFERENCIA" 'BEGIN { printf "%g", v / 2 }') V}"
     fi
-    [ -n "$ATRASO_CS" ] && saida "Esperas do CS:       ${ATRASO_CS} (setup,hold,alto; padrão do firmware 200,100,100)"
+    [ -n "$ATRASO_CS" ] && saida "Esperas do CS:       ${ATRASO_CS} (setup,hold,alto; padrão do firmware 3,1,3)"
     saida "Frequências:         ${#PLANO_FREQS[@]} pontos, de ${PLANO_FREQS[0]} a ${PLANO_FREQS[$((${#PLANO_FREQS[@]} - 1))]} Hz"
     saida "Repetições:          ${REPETICOES} por frequência -> ${total_caps} captura(s)"
     saida "Cada captura:        ${BLOCOS} bloco(s), ~${duracao} s"
