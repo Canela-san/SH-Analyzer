@@ -45,36 +45,66 @@ Atualize esta tabela a cada ida ao laboratório: ela é o resumo do avanço para
 ### Passo a passo da próxima ida: firmware novo e taxa máxima
 
 O dia tem um objetivo: validar o firmware de out/2026 e **decidir a taxa de trabalho**, antes de calibrar a sonda
-(T10) e de refazer o que depende da banda. Cada etapa diz o que conferir e quando parar; o detalhe de cada uma está
-no teste indicado. São ~2 h 30 min. Os blocos `bash` rodam na BeagleBone, no terminal do `scripts/BeagleBone_Setup.sh ssh`; os
-`fish`, no computador, na raiz do repositório, com as [variáveis do roteiro](#nomes-e-pastas) (`DIA`).
+(T10) e de refazer o que depende da banda. Cada etapa diz o que conferir e quando parar. O resultado é o
+**[pacote da etapa 9](#9-antes-de-sair-o-pacote-para-a-análise)**: com ele completo, a análise confirma a correção
+do firmware, torna as esperas de trabalho o padrão dele, recalibra os comandos do resto do roteiro para a taxa nova e
+escreve o T7 e o T7e do relatório, **sem outra ida ao laboratório para isso**. São ~3 h.
 
-**Sinal do dia todo:** senoide de **10,000 kHz, 20 Vpp, High-Z** no nó de entrada do divisor (canal 1), com o
-**contador de frequência** do osciloscópio no mesmo sinal. Anote a leitura (ex.: 10 000,02 Hz): ela entra no
-`--referencia-freq`. Ligue tudo 30 minutos antes da etapa 4.
+* **Dois terminais no computador:** um com a BeagleBone (aberto na etapa 0, com tudo gravado em
+  `$DIA/terminal_bbb.txt`), onde rodam os blocos `bash`; outro na raiz do repositório, onde rodam os blocos `fish`.
+* **Sinal do dia todo:** senoide de **10,000 kHz, 20 Vpp, High-Z** no nó de entrada do divisor (canal 1), com o
+  **contador de frequência** do osciloscópio no mesmo sinal. Anote a leitura no começo e no fim (ex.: 10 000,02 Hz):
+  ela entra no `--referencia-freq`. Ligue tudo 30 minutos antes da etapa 4.
+* **Faixa do dia toda: ±2,56 V** (`--faixa-adc 1:5.12`, já nos comandos). O tom (0,43 V de pico no pino) cabe nela, o
+  ruído é 2,8 vezes menor que em ±10,24 V (uma piora com esperas menores aparece antes) e o T7a, o T7b e o T6a de
+  19/10 foram nela: a comparação é direta. (O `teste.bin` de 21/10 foi em ±10,24 V.)
+* **Anote tudo em `$DIA/anotacoes.md`** (o modelo vem na etapa 0) e salve as fotos em `$DIA/fotos/`.
 
-**1. Firmware novo na BeagleBone e compilação (10 min).** No computador ([detalhes e plano B](#antes-de-sair-e-ao-chegar-levar-o-firmware-novo-à-beaglebone)):
+**0. Preparação (15 min).** No computador:
 
 ```fish
-scripts/BeagleBone_Setup.sh                    # o painel: a placa responde? relógio, firmware, PRU, disco
-scripts/BeagleBone_Setup.sh enviar --simular   # confira a versão (v0.6-...) e a lista de arquivos
-scripts/BeagleBone_Setup.sh preparar           # acerta o relógio, guarda o plano B, copia, compila e carrega a PRU
+set DIA $DADOS/lab/(date +%F); mkdir -p $DIA/fotos              # a pasta do dia
+cp docs/lab-notes-template.md $DIA/anotacoes.md                 # o caderno da sessão: preencha durante
+scripts/BeagleBone_Setup.sh                                     # o painel: a placa responde? relógio, firmware, PRU, disco
+scripts/BeagleBone_Setup.sh enviar --simular                    # confira a versão (v0.6-...) e a lista de arquivos
+scripts/BeagleBone_Setup.sh preparar                            # relógio, plano B, firmware novo, compilação e PRU
+git tag bancada-(date +%F)                                      # marca o commit que foi para a bancada (git push --tags)
+script -a $DIA/terminal_bbb.txt -c "scripts/BeagleBone_Setup.sh ssh"   # o terminal da placa, gravado inteiro
 ```
 
-Se o firmware não ficar em `~/firmware` na placa, acrescente `--pasta caminho/firmware` (ou grave-a uma vez com o
-`configurar`). Confira: o `setup.sh` termina com `PRU0 rodando o firmware novo.` e o painel do fim mostra a versão
-nova e a PRU0 rodando. Os comandos da BeagleBone abaixo rodam num terminal aberto com
-`scripts/BeagleBone_Setup.sh ssh` (já na pasta do firmware, com o sudo sem senha). **Se o `make` falhar**, guarde a mensagem e o
-`dmesg | tail -n 20` e volte ao firmware de 19/10 (plano B, no link acima): o dia segue com o T10 e as pendências
-curtas, e a taxa fica para outra ida.
+O `setup.sh` termina com `PRU0 rodando o firmware novo.`, e o painel do fim mostra a versão nova e a PRU0 rodando. A
+última linha abre o terminal da BeagleBone, na pasta do firmware e com o sudo sem senha; tudo o que aparece nele
+(`Integridade`, `Taxa real`, avisos) fica em `$DIA/terminal_bbb.txt`. Se ele fechar, rode a mesma linha de novo (o
+`-a` acrescenta). Se o firmware não ficar em `~/firmware` na placa, acrescente `--pasta caminho/firmware` (ou grave-a
+uma vez com o `configurar`). **Se o `make` falhar**, veja a [etapa 8](#8-quando-parar-e-ir-para-casa).
+
+**1. A bancada sem interferência da rede (10 min).** O `teste.bin` de 21/10 tinha faixas laterais a ±120 e ±240 Hz do
+tom, a −51 dBc (modulação pela rede elétrica, que 19/10 não tinha). Com ela, as etapas 4 e 5 comparariam a
+interferência, não as esperas. Na BeagleBone, com o tom:
+
+```bash
+sudo ./ler_adc 100000 1 --blocos 1 --faixa-adc 1:5.12 -o T7_bancada.bin -t "T7 bancada"
+```
+
+```fish
+scripts/BeagleBone_Setup.sh trazer 'T7_bancada.bin' $DIA
+uv run scripts/medir_captura.py $DIA/T7_bancada.bin --freq 10000 --sem-correcao-sonda --inicio 100
+```
+
+**Limpo:** `SFDR` de ~70 dBc ou mais, com o maior espúrio no H3 (29 999 Hz), como em 19/10 (73 dBc). **Com
+interferência:** o maior espúrio fica a 120 Hz do tom (10 120 ou 9 880 Hz). Tente, uma coisa de cada vez, repetindo a
+captura depois de cada uma: o notebook na bateria (sem o carregador), a BeagleBone por outra fonte ou outra porta USB,
+os terras do gerador e do osciloscópio num ponto só, cabos mais curtos. Anote o que resolveu (ou não). Se não sumir em
+20 minutos, siga e anote: as etapas 4 e 5 comparam os conjuntos entre si, na mesma bancada, e a análise desconta a
+interferência.
 
 **2. A correção do salto, em hardware (10 min; T0 passo 2 e [T7a](#t7-integridade-e-limite-de-taxa)).** Na
 BeagleBone, com o tom:
 
 ```bash
 ./ler_adc --help | grep -E -- "--atraso-cs|--faixa-adc"   # as duas opções existem
-sudo ./ler_adc 100000 1 --blocos 3 -o T7a_fs_100000.bin -t "T7a 100000"
-sudo ./ler_adc 50000 1 --blocos 3 -o T7a_fs_50000.bin -t "T7a 50000"
+sudo ./ler_adc 100000 1 --blocos 3 --faixa-adc 1:5.12 -o T7a_fs_100000.bin -t "T7a 100000"
+sudo ./ler_adc 50000 1 --blocos 3 --faixa-adc 1:5.12 -o T7a_fs_50000.bin -t "T7a 50000"
 ```
 
 No terminal de cada captura: `Firmware: v0.6-...`, `Taxa real medida pelo ARM: ...` **sem** "DIFERENTE da pedida"
@@ -88,56 +118,113 @@ uv run scripts/medir_captura.py $DIA/T7a_fs_*.bin --freq 10000 --sem-correcao-so
 ```
 
 **Passou:** `continuidade : OK` e `trocas de buffer : OK`, com o salto nas trocas nos milésimos de amostra, como fora
-delas (em 19/10: `DESTOAM`, 6,96 µs). **Se aparecer `DESTOAM`**, a correção não funcionou no hardware: pare, guarde as
-capturas e a saída do terminal e siga com o plano B. Subir a taxa num firmware com a grade errada não vale a pena.
+delas (em 19/10: `DESTOAM`, 6,96 µs). **Se aparecer `DESTOAM`**, veja a [etapa 8](#8-quando-parar-e-ir-para-casa).
 
 **3. O "antes", com as esperas padrão (15 min; [T7e](#t7e-onde-está-o-limite-de-taxa), métodos 2 e 1).** Para o
-relatório: mostra onde o firmware para hoje. Se o tempo apertar, pule o método 1 e faça só a foto.
+relatório: mostra onde o firmware para hoje.
 
 * Método 2: ponta do osciloscópio no **CS** e no **SCLK** enquanto roda
-  `sudo ./ler_adc 100000 1 --duracao 2m -o T7e_osc_padrao.bin -t "T7e osc padrao"`. Esperado: período de 10,00 µs e
-  CS baixo de 5,83 µs. **Fotografe a tela.**
-* Método 1: o laço de taxas do T7e, de 100 a 500 kS/s com as esperas padrão. Acima de ~140 kS/s, o `ler_adc` deve
-  acusar amostras atrasadas e a `Taxa real medida pelo ARM` deve parar de subir.
+  `sudo ./ler_adc 100000 1 --duracao 2m --faixa-adc 1:5.12 -o T7e_osc_padrao.bin -t "T7e osc padrao"`. Esperado:
+  período de 10,00 µs e CS baixo de 5,83 µs. Meça o período, o CS baixo e o CS alto, anote na tabela do
+  `anotacoes.md` e **fotografe a tela** (`$DIA/fotos/cs_padrao_100k.png`, com a base de tempo visível).
+* Método 1: o [laço de taxas do T7e](#t7e-onde-está-o-limite-de-taxa), de 100 a 500 kS/s com as esperas padrão
+  (~5 min). Acima de ~140 kS/s, o `ler_adc` deve acusar amostras atrasadas e a `Taxa real medida pelo ARM` deve
+  parar de subir: é a "joelheira" da figura do relatório.
 
 **4. As esperas mínimas, a 100 kS/s (30 min; T7e, método 4, passo 1).** Os 7 conjuntos de `--atraso-cs`, do padrão ao
-piso do datasheet, e o `medir_captura.py` com a tabela-resumo. Um conjunto **passa** com `Integridade: ... tudo certo`
-e com amplitude, frequência, SINAD, ruído e DC iguais aos do padrão (critérios no T7e). Depois, os dois menores
-conjuntos que passaram, com a **entrada em curto** (gerador fora da entrada), contra o padrão:
+piso do datasheet (o laço do T7e, que grava `T7e_passo1.txt`), e o `medir_captura.py` com a tabela-resumo. Um
+conjunto **passa** com `Integridade: ... tudo certo` e com amplitude, frequência, SINAD, ruído e DC iguais aos do
+padrão (critérios no T7e). Depois, os dois menores conjuntos que passaram, com a **entrada em curto** (gerador fora da
+entrada), contra o padrão:
 
 ```bash
 for cs in 200,100,100 MENOR SEGUNDO_MENOR; do     # troque pelos dois menores que passaram (ex.: 3,1,3 6,2,6)
-  sudo ./ler_adc 100000 1 --blocos 3 --atraso-cs $cs -o T7e_curto_${cs//,/_}.bin -t "T7e curto cs $cs"
+  sudo ./ler_adc 100000 1 --blocos 3 --atraso-cs $cs --faixa-adc 1:5.12 -o T7e_curto_${cs//,/_}.bin -t "T7e curto cs $cs"
 done 2>&1 | tee T7e_curto.txt
 ```
 
 ```fish
+scripts/BeagleBone_Setup.sh trazer 'T7e_c*' $DIA
 uv run scripts/medir_captura.py $DIA/T7e_curto_*.bin --sem-tom --sem-correcao-sonda --inicio 100 --csv $DIA/T7e_cs.csv
 ```
 
-O ruído (`ruido_rms_lsb`) e o pico a pico têm de ser os do padrão (~0,51 LSB, como no T1). Se algum conjunto falhar,
-o passo 2 do T7e diz qual espera importa.
+O ruído (`ruido_rms_lsb`) e o pico a pico têm de ser os do padrão (~0,74 LSB, 58 µV RMS em ±2,56 V, como no T1). Se
+algum conjunto falhar, o passo 2 do T7e diz qual espera importa (capturas `T7e_passo2_*.bin`).
 
 **5. As esperas de trabalho e o teto (20 min; T7e, passos 3 e 4).** Esperas de trabalho = o **dobro** do menor
 conjunto que passou, nunca menos que `6,2,6`. Com elas, o laço de taxas exatas até 312,5 kS/s. A espera **A** (CS
 alto) só é posta à prova aqui: a 100 kS/s o CS fica alto até a próxima amostra, por mais de 4 µs, qualquer que seja o
 A. Uma taxa passa com `0 amostra(s) atrasada(s)`, a taxa medida pelo ARM igual à pedida e o SINAD e o ruído iguais
 aos da etapa 4. A maior que passa com ≥ 10 % de folga é a **taxa de trabalho** (250 kS/s, se o hardware aguentar).
+Anote no `anotacoes.md` as esperas de trabalho, o teto medido e a taxa de trabalho.
 
-**6. Confirmar no osciloscópio (10 min; T7e, passo 5).** Com as esperas e a taxa de trabalho: o período do CS é
-1/taxa, e o CS baixo dura (566 + 2 × (S + H)) × 5 ns (3,13 µs com `20,10,10`). **Fotografe a tela**: é o "depois" da
-foto da etapa 3.
+**6. Na taxa de trabalho, o que o resto do roteiro precisa (25 min).** São as medidas que a recalibração do T1, do
+T6 e do T10 usa, e o T7c na configuração final. Na BeagleBone:
 
-**7. Decidir e registrar.** Anote na tabela acima a taxa e as esperas de trabalho. Até elas virarem o padrão do
-firmware (`ATRASO_CS_*_PADRAO` em `firmware/memoria_pru.h`, com os testes que fixam o padrão), passe `--atraso-cs` em
-**toda** captura, inclusive no `calibrar_sonda.sh`. Depois:
+```bash
+CS=20,10,10; R=250000     # as esperas e a taxa de trabalho da etapa 5
+# a) 2 canais, tom no canal 1 e canal 0 em curto: diafonia e atraso entre canais (o T10 e a produção usam os dois)
+sudo ./ler_adc $R 0,1 --blocos 3 --atraso-cs $CS --faixa-adc 0:5.12,1:5.12 -o T6a_trabalho.bin -t "T6a 2 canais $R cs $CS"
+# b) entrada do canal 1 em curto (gerador fora): o ruído na taxa e nas esperas novas (o T1 rápido)
+sudo ./ler_adc $R 1 --blocos 3 --atraso-cs $CS --faixa-adc 1:5.12 -o T1_trabalho.bin -t "T1 curto $R cs $CS"
+# c) o tom de volta: 10 min seguidos, o T7c na configuração final (~300 MB a 250 kS/s: confira o disco no painel)
+sudo ./ler_adc $R 1 --duracao 10m --atraso-cs $CS --faixa-adc 1:5.12 -o T7c_trabalho.bin -t "T7c 10 min $R cs $CS"
+```
 
-* **Se a taxa subiu:** o T1 na taxa e nas esperas novas (o quadro mais curto trouxe ruído?), o T7a, o T7b e o T7c
-  (10 min) na taxa final, e então o T10-0 e o T10. Na sequência, o T3 inteiro (com `--repeticoes 3`), o T4 e o T6
-  na taxa nova; por último, T5, T8, T9 e T11. A tabela [O que refazer](#o-que-refazer-com-o-firmware-de-out2026)
-  diz o porquê de cada um.
-* **Se ficou em 100 kS/s:** o T7b e o T7c, o T10-0 e o T10, e as pendências curtas (o contador no T4, os 20 kHz no
-  T6a, o −10 V do T0, as repetições do T3). Depois, T5, T8, T9 e T11.
+Cada uma termina com `Integridade: ... tudo certo`; a de 10 min, também com a `Taxa real medida pelo ARM` igual à
+pedida. Anote a leitura do contador no começo e no fim do T7c.
+
+**7. Confirmar no osciloscópio (durante os 10 min do T7c; T7e, passo 5).** Com as esperas e a taxa de trabalho: o
+período do CS é 1/taxa, e o CS baixo dura (566 + 2 × (S + H)) × 5 ns (3,13 µs com `20,10,10`). Meça os três tempos,
+anote e **fotografe a tela** (`$DIA/fotos/cs_trabalho.png`): é o "depois" da foto da etapa 3.
+
+#### 8. Quando parar e ir para casa
+
+| O que apareceu | O que quer dizer | O que fazer |
+|---|---|---|
+| O `make` falha (pelo `preparar` e também à mão, no terminal da placa) | Firmware ou compilador | Volte ao firmware de 19/10 ([plano B](#antes-de-sair-e-ao-chegar-levar-o-firmware-novo-à-beaglebone)); traga a mensagem e o `dmesg \| tail -n 20`. A taxa fica para outra ida; o dia segue com o T10 a 100 kS/s |
+| `DESTOAM` na etapa 2, ou amostras atrasadas ou "DIFERENTE da pedida" a 100 kS/s com as esperas padrão | A correção do firmware não funciona no hardware | **Pare e vá para casa** com as capturas e o `terminal_bbb.txt`: o firmware precisa de correção antes de qualquer outro teste |
+| Quadros com ruído no SDO, ou SINAD pior, com esperas menores | Limite do hardware (isolador ADuM3150, fiação), não do firmware | Siga: é o que a etapa 4 mede, e a 5 usa o dobro do menor conjunto bom |
+| Amostras atrasadas numa taxa que cabe pela tabela do T7e | O quadro real é mais longo que o do simulador | Siga com a maior taxa que passar; meça o período e o CS baixo no osciloscópio e anote |
+| Buffers sobrescritos | O ARM ou o cartão não acompanham | Rode o método 3 do T7e (gravar em `/dev/shm`) e siga numa taxa menor |
+| Nenhuma espera menor que o padrão passa | As esperas não sobem a taxa nesta placa | Taxa de trabalho de 125 kS/s com as esperas padrão (a maior exata com folga); faça a etapa 6 com ela |
+
+Em todos os outros casos, o firmware de hoje serve: as esperas de trabalho viram o padrão dele depois, em casa, e até
+lá basta passar `--atraso-cs` em toda captura, inclusive no `calibrar_sonda.sh`.
+
+#### 9. Antes de sair: o pacote para a análise
+
+Saia do terminal da placa com `exit` (fecha o `terminal_bbb.txt`) e, no computador:
+
+```fish
+scripts/BeagleBone_Setup.sh trazer 'T*' $DIA                   # todas as capturas e os .txt dos laços (tee)
+uv run scripts/adc_tool.py info $DIA/*.bin 2>&1 | grep -iE "===|CRC|aviso|erro"   # nada corrompido?
+ls $DIA $DIA/fotos
+```
+
+No `info`, cada captura boa é só a linha `===`. Avisos de amostras atrasadas são esperados nas `T7e_fs_*` acima de
+~140 kS/s e nas `T7e_teto_*` acima do teto; em qualquer outra captura, ou um "CRC-32 NÃO confere", refaça-a antes de
+sair.
+
+Confira, item a item:
+
+- [ ] **Capturas:** `T7_bancada`; `T7a_fs_50000` e `T7a_fs_100000`; `T7e_osc_padrao`; `T7e_fs_*` (11, de 100 a
+  500 kS/s); `T7e_cs_*` (7); `T7e_curto_*` (3); `T7e_passo2_*` (se houve); `T7e_teto_*` (5); `T6a_trabalho`;
+  `T1_trabalho`; `T7c_trabalho`.
+- [ ] **Saídas do terminal:** `terminal_bbb.txt` e os `.txt` dos laços (`T7e_saida_ler_adc.txt`, `T7e_passo1.txt`,
+  `T7e_curto.txt`, `T7e_passo4.txt`).
+- [ ] **Fotos:** CS e SCLK com as esperas padrão a 100 kS/s; com as esperas e a taxa de trabalho; a bancada montada
+  (como a placa, o gerador e o osciloscópio estão ligados e alimentados).
+- [ ] **`anotacoes.md` preenchido:** a bancada (alimentação da placa, notebook na bateria ou no carregador, gerador e
+  ponta), o que limpou a interferência, o contador (começo, fim e o do T7c), a tabela do CS, as esperas de trabalho,
+  o teto e a taxa de trabalho, e todo problema com a hora em que aconteceu.
+- [ ] **Na BeagleBone, nada apagado** até a análise confirmar que o pacote está completo.
+
+Com ele, a análise faz, sem outra ida: a validação da correção em hardware (T7a, T7c) para o relatório; as esperas de
+trabalho como padrão do firmware (`ATRASO_CS_*_PADRAO`, com os testes); os comandos do T1, T3, T4, T5, T6, T8, T9,
+T10 e T11 recalibrados para a taxa de trabalho (taxas exatas, `--freq-max` a 0,9 × Nyquist, número de pontos, 2
+canais); as figuras e tabelas do T7e (taxa real × pedida, qualidade × esperas, a anatomia do quadro, o teto); e o
+aviso, se for o caso, de que o firmware precisa de outra correção antes da próxima ida.
 
 ### O que refazer com o firmware de out/2026
 
@@ -812,7 +899,7 @@ O SINAD de 22 a 42 dB que a ferramenta imprime nessas capturas é o salto do fir
 
 ```bash
 for taxa in 50000 100000; do
-  sudo ./ler_adc $taxa 1 --blocos 3 -o T7a_fs_$taxa.bin -t "T7a $taxa"
+  sudo ./ler_adc $taxa 1 --blocos 3 --faixa-adc 1:5.12 -o T7a_fs_$taxa.bin -t "T7a $taxa"
 done
 ```
 
@@ -865,7 +952,7 @@ arquivo; ~20 a 30 s cada), com a senoide de 10,000 kHz do T4 (anote a leitura do
 
 ```bash
 for taxa in 100000 110000 120000 125000 130000 135000 140000 150000 200000 250000 500000; do
-  sudo ./ler_adc $taxa 1 --blocos 3 -o T7e_fs_$taxa.bin -t "T7e fs $taxa" 2>&1 | tee -a T7e_saida_ler_adc.txt
+  sudo ./ler_adc $taxa 1 --blocos 3 --faixa-adc 1:5.12 -o T7e_fs_$taxa.bin -t "T7e fs $taxa" 2>&1 | tee -a T7e_saida_ler_adc.txt
 done
 grep -E "Integridade|Taxa real" T7e_saida_ler_adc.txt     # uma linha de cada por taxa, na ordem do laço
 ```
@@ -919,7 +1006,7 @@ quadro enche o período. Na BeagleBone:
 
 ```bash
 for cs in 200,100,100 100,50,50 50,25,25 20,10,10 10,5,5 6,2,6 3,1,3; do
-  sudo ./ler_adc 100000 1 --blocos 3 --atraso-cs $cs -o T7e_cs_${cs//,/_}.bin -t "T7e cs $cs 100k"
+  sudo ./ler_adc 100000 1 --blocos 3 --atraso-cs $cs --faixa-adc 1:5.12 -o T7e_cs_${cs//,/_}.bin -t "T7e cs $cs 100k"
 done 2>&1 | tee T7e_passo1.txt
 grep -E "Integridade|Taxa real" T7e_passo1.txt     # uma linha de cada por captura, na ordem do laço
 ```
@@ -937,12 +1024,13 @@ Um conjunto **passa** se, comparado com o `200,100,100`:
 
 * o `ler_adc` termina com `Integridade: 0 amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído
   no SDO -- tudo certo` (o ruído no SDO é o primeiro sinal de clock ou dado chegando fora de hora);
-* a amplitude do tom fica igual em ±0,02 %, e a frequência em ±0,01 ppm;
+* a amplitude do tom fica igual em ±0,02 %, e a frequência em ±0,1 ppm (o gerador sozinho deriva ~0,09 ppm em 10 min;
+  uma amostra fora de hora apareceria nos contadores do `ler_adc`, não só na frequência);
 * SINAD e SNR ficam em ±0,5 dB, THD em ±1 dB, densidade de ruído em ±5 % e DC (`media`) em ±0,1 mV;
 * a continuidade fica nos milésimos de amostra.
 
 Para pegar erro de bit que um tom pode esconder, repita os dois menores conjuntos que passaram com a **entrada em
-curto**: o ruído e o pico a pico têm de ser os do T1 (0,51 LSB).
+curto**: o ruído e o pico a pico têm de ser os do T1 na mesma faixa (±2,56 V: 58 µV RMS, 0,74 LSB).
 
 *Passo 2 (só se algum conjunto falhar): qual espera importa.* Volte ao último conjunto bom, fixe duas esperas nele e
 baixe só a terceira, uma de cada vez (por exemplo, se `10,5,5` passa e `6,2,6` falha: `6,5,5`, depois `10,2,5`, depois
@@ -959,7 +1047,7 @@ onde está a borda:
 ```bash
 CS=20,10,10    # as escolhidas no passo 3
 for taxa in 125000 160000 200000 250000 312500; do
-  sudo ./ler_adc $taxa 1 --blocos 3 --atraso-cs $CS -o T7e_teto_${taxa}.bin -t "T7e teto $taxa cs $CS"
+  sudo ./ler_adc $taxa 1 --blocos 3 --atraso-cs $CS --faixa-adc 1:5.12 -o T7e_teto_${taxa}.bin -t "T7e teto $taxa cs $CS"
 done 2>&1 | tee T7e_passo4.txt
 grep -E "Integridade|Taxa real" T7e_passo4.txt
 ```
