@@ -280,12 +280,16 @@ def plotar_bandas_iec(bandas_por_canal: dict, unidade_por_canal: dict[int, str],
         ax_est.step(b.centros_hz / 1000.0, db["maximo"], where="mid", label="máximo", color="tab:red")
         ax_est.step(b.centros_hz / 1000.0, db["p95"], where="mid", label="P95", color="tab:orange")
         ax_est.step(b.centros_hz / 1000.0, db["rms"], where="mid", label="RMS das janelas", color="tab:blue")
+        for nome, estilo in (("3s", "--"), ("10min", ":")):
+            if nome in b.agregados:
+                p95 = 20 * np.log10(np.maximum(b.estatisticas(nome)["p95"], 1e-12))
+                ax_est.step(b.centros_hz / 1000.0, p95, where="mid", label=f"P95 dos valores de {nome}",
+                            color="tab:purple", linestyle=estilo)
         ax_est.set_xlabel("Centro da banda (kHz)")
         ax_est.set_ylabel(f"Nível por banda (dB{u}, RMS)")
         ax_est.grid(True, alpha=0.4)
         ax_est.legend(fontsize=8)
-        ax_est.set_title(f"Canal {canal}: bandas de {b.largura_hz:g} Hz, {len(b.tempos_s)} janelas de "
-                         f"{b.duracao_janela_s * 1000:g} ms")
+        ax_est.set_title(f"Canal {canal}: bandas de {b.largura_hz:g} Hz, {b.descricao_janelas()}", fontsize=9)
         nivel = 20 * np.log10(np.maximum(b.niveis, 1e-12))
         malha = ax_tempo.pcolormesh(b.tempos_s, b.centros_hz / 1000.0, nivel.T, shading="nearest", cmap="viridis",
                                     vmin=np.percentile(nivel, 5), vmax=float(nivel.max()), rasterized=True)

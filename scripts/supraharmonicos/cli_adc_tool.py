@@ -394,6 +394,20 @@ def montar_parser() -> argparse.ArgumentParser:
         help="[--bandas-iec] Fim da última banda (padrão: a Nyquist do canal; a norma de 2 a 9 kHz para em 9000)."
     )
     grupo_pesquisa.add_argument(
+        "--bandas-iec-sincronizar", action="store_true",
+        help="[--bandas-iec, extra] Janelas de 10 ciclos (rede de 50 Hz) ou 12 ciclos (60 Hz) da fundamental MEDIDA, "
+             "como na IEC 61000-4-30 classe A, em vez de 200 ms fixos. Com a rede fora da frequência nominal, a "
+             "janela fixa não tem ciclos inteiros e a fundamental vaza para as bandas (com a rede a 60,1 Hz, ~46 mV "
+             "numa banda vazia de 2,5 kHz; sincronizada, ~1,7 mV). A referência é o primeiro canal de tensão; "
+             "precisa da fundamental no sinal (sem --filtro-passa-alta acima dela)."
+    )
+    grupo_pesquisa.add_argument(
+        "--bandas-iec-agregar", action="store_true",
+        help="[--bandas-iec, extra] Também as séries agregadas da IEC 61000-4-30: 150/180 ciclos (15 janelas, ~3 s) "
+             "e 10 min (só com 10 min de captura ou mais), cada valor o RMS das janelas do intervalo, com as mesmas "
+             "estatísticas (o P95 dos valores de 3 s ou de 10 min é como limites de emissão costumam ser avaliados)."
+    )
+    grupo_pesquisa.add_argument(
         "--espectrograma", action="store_true",
         help="Espectro ao longo do tempo (STFT), com os segmentos do Welch (--resolucao-welch, --sobreposicao-welch, "
              "janela Hann por padrão) reunidos em até 600 colunas: mostra quando cada supraharmônico aparece, "

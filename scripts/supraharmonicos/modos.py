@@ -37,7 +37,13 @@ from .amostras import (
     detectar_tipo_arquivo,
     selecionar_intervalo,
 )
-from .bandas_iec import LARGURA_BANDA_IEC_HZ, calcular_bandas_iec
+from .bandas_iec import (
+    LARGURA_BANDA_IEC_HZ,
+    agregar_iec,
+    calcular_bandas_iec,
+    ciclos_por_janela_iec,
+    janelas_dos_cruzamentos,
+)
 from .canais import alinhar_ao_ciclo, desintercalar
 from .constantes import (
     GRANDEZA_CORRENTE,
@@ -63,7 +69,7 @@ from .espectro import (
 )
 from .exportacao import exportar_csv, exportar_mat
 from .filtros import aplicar_filtro_digital, validar_corte_filtro
-from .fundamental import recortar_ciclos_inteiros
+from .fundamental import cruzamentos_da_fundamental, recortar_ciclos_inteiros
 from .harmonicos import calcular_harmonicos
 from .hdf5 import exportar_hdf5
 from .sonda import (
@@ -342,6 +348,8 @@ def _validar_parametros(args: argparse.Namespace, fs_efetiva: float,
         if args.bandas_iec_min < 0 or maximo - args.bandas_iec_min < LARGURA_BANDA_IEC_HZ:
             raise ErroUso(f"--bandas-iec: nenhuma banda de {LARGURA_BANDA_IEC_HZ:g} Hz cabe entre "
                           f"{args.bandas_iec_min:g} e {maximo:g} Hz (Nyquist do canal: {nyquist:g} Hz).")
+    if (args.bandas_iec_sincronizar or args.bandas_iec_agregar) and not args.bandas_iec:
+        raise ErroUso("--bandas-iec-sincronizar e --bandas-iec-agregar são extras do --bandas-iec: use-o junto.")
     if args.exportar_mat is not None and args.exportar_mat.suffix.lower() != ".mat":
         raise ErroUso("--exportar-mat espera um arquivo terminado em .mat.")
 
@@ -587,11 +595,44 @@ def _registrar_picos(canal: int, metodo: str, picos: list[dict], num_canais: int
         log.info(f"{prefixo}[{metodo}] pico: {pico['frequencia_hz']:.2f} Hz @ {pico['amplitude_db']:.2f} dB")
 
 
+def _janelas_sincronizadas(args: argparse.Namespace, ctx: ContextoCaptura,
+                           por_canal_tensao: dict[int, np.ndarray], fs_efetiva: float,
+                           resultados: dict) -> tuple[np.ndarray, int, float]:
+    """--bandas-iec-sincronizar: bordas de janelas de 10/12 ciclos da fundamental (IEC 61000-4-30), as mesmas para
+    todos os canais (amostrados juntos). A referência é o primeiro canal de tensão exibido (a tensão da rede é estável
+    e sempre tem a fundamental; numa corrente, a fundamental pode faltar), ou o primeiro canal."""
+    tensao = [c for c in ctx.canais_exibir if resultados["canais"][c]["unidade"] == "V"]
+    referencia = (tensao or ctx.canais_exibir)[0]
+    cruzamentos, f0 = cruzamentos_da_fundamental(por_canal_tensao[referencia], fs_efetiva, args.freq_min, args.freq_max)
+    ciclos = ciclos_por_janela_iec(f0)
+    janelas, descartadas = janelas_dos_cruzamentos(cruzamentos, ciclos)
+    if len(janelas) < 1:
+        raise ErroSHAN(f"--bandas-iec-sincronizar precisa de pelo menos {ciclos} ciclos completos e estáveis da "
+                       f"fundamental no trecho; há {len(cruzamentos) - 1} ciclo(s).")
+    log.info(f"Bandas IEC sincronizadas pela fundamental do canal {referencia}: {f0:.4f} Hz, {ciclos} ciclos por janela "
+             f"({len(janelas)} janelas; as amostras antes do 1º cruzamento por zero ficam de fora).")
+    if descartadas:
+        log.warning(f"--bandas-iec-sincronizar: {descartadas} janela(s) descartada(s) por não terem {ciclos} ciclos "
+                    f"dentro de ±0,03 % (a borda do trecho, onde o filtro distorce a fase, ou um salto de fase ou "
+                    f"falta de tensão no meio da captura; a IEC 61000-4-30 manda sinalizar esses intervalos).")
+    return janelas, ciclos, f0
+
+
 def _analisar_bandas_iec(args: argparse.Namespace, ctx: ContextoCaptura,
                          por_canal_tensao: dict[int, np.ndarray], fs_efetiva: float, resultados: dict) -> None:
-    """--bandas-iec: bandas de 200 Hz em janelas de 200 ms sem lacunas (IEC 61000-4-7, anexo B), com estatísticas."""
+    """--bandas-iec: bandas de 200 Hz em janelas sem lacunas (IEC 61000-4-7, anexo B), com estatísticas. Por padrão,
+    janelas fixas de 200 ms; --bandas-iec-sincronizar e --bandas-iec-agregar são extras (IEC 61000-4-30)."""
+    limites, ciclos, f0 = (None, None, None)
+    if args.bandas_iec_sincronizar:
+        limites, ciclos, f0 = _janelas_sincronizadas(args, ctx, por_canal_tensao, fs_efetiva, resultados)
     for canal in ctx.canais_exibir:
-        bandas = calcular_bandas_iec(por_canal_tensao[canal], fs_efetiva, args.bandas_iec_min, args.bandas_iec_max)
+        bandas = calcular_bandas_iec(por_canal_tensao[canal], fs_efetiva, args.bandas_iec_min, args.bandas_iec_max,
+                                     limites=limites, ciclos_por_janela=ciclos, f0_hz=f0)
+        if args.bandas_iec_agregar:
+            bandas = agregar_iec(bandas)
+            if not bandas.agregados and canal == ctx.canais_exibir[0]:
+                log.warning(f"--bandas-iec-agregar: o trecho tem {len(bandas.tempos_s)} janela(s); um intervalo de "
+                            f"150/180 ciclos (~3 s) precisa de 15. Nenhuma série agregada.")
         resultado = resultados["canais"][canal]
         resultado["bandas_iec"] = bandas
         if ctx.num_canais > 1:
@@ -714,6 +755,11 @@ def montar_metadados(args: argparse.Namespace, ctx: ContextoCaptura, sinal: Sina
             "metodo": "IEC 61000-4-7 anexo B: janelas de 200 ms sem lacunas, retangular, bins de 5 Hz, "
                       "bandas de 200 Hz (b-95..b+100 Hz)",
             "freq_min_hz": args.bandas_iec_min, "freq_max_hz": args.bandas_iec_max,
-            "estatisticas": "rms das janelas, máximo, percentil 95, mínimo"},
+            "janelas": ("10/12 ciclos sincronizados à fundamental (IEC 61000-4-30), bordas arredondadas à amostra"
+                        if args.bandas_iec_sincronizar else "200 ms fixos"),
+            "agregacao": ("150/180 ciclos (~3 s) e 10 min (a partir do início do trecho, não alinhados ao UTC); "
+                          "cada valor = RMS das janelas do intervalo; só intervalos completos"
+                          if args.bandas_iec_agregar else None),
+            "estatisticas": "rms das janelas, máximo, percentil 95, mínimo (e das séries agregadas, se houver)"},
         "resultados_por_canal": por_canal,
     }

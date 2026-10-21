@@ -92,6 +92,17 @@ def exportar_csv(prefixo: Path, resultados: dict, metadados: dict) -> list[Path]
                 Path(f"{base}_bandas_iec_serie.csv"),
                 ["inicio_janela_s", *(f"banda_{c:g}hz_{unidade}" for c in iec.centros_hz)],
                 ((_num(t), *(_num(v) for v in linha)) for t, linha in zip(iec.tempos_s, iec.niveis))))
+            for nome, serie in iec.agregados.items():
+                est_ag = serie.estatisticas()
+                escritos.append(_escrever_csv(
+                    Path(f"{base}_bandas_iec_{nome}.csv"),
+                    ["centro_hz", f"rms_{unidade}", f"maximo_{unidade}", f"p95_{unidade}", f"minimo_{unidade}"],
+                    ((_num(c), _num(est_ag["rms"][i]), _num(est_ag["maximo"][i]), _num(est_ag["p95"][i]),
+                      _num(est_ag["minimo"][i])) for i, c in enumerate(iec.centros_hz))))
+                escritos.append(_escrever_csv(
+                    Path(f"{base}_bandas_iec_serie_{nome}.csv"),
+                    ["inicio_intervalo_s", *(f"banda_{c:g}hz_{unidade}" for c in iec.centros_hz)],
+                    ((_num(t), *(_num(v) for v in linha)) for t, linha in zip(serie.tempos_s, serie.niveis))))
         esp = r.get("espectrograma")
         if esp is not None:
             escritos.append(_escrever_csv(
@@ -140,8 +151,13 @@ def _para_mat(valor):
                 "fase_graus": np.array([x.fase_graus for x in h])}
     if isinstance(valor, BandasIEC):
         est = valor.estatisticas()
+        agregados = {f"agregado_{nome}": {"tempos_s": serie.tempos_s, "niveis": serie.niveis,
+                                          "descricao": serie.descricao, **serie.estatisticas()}
+                     for nome, serie in valor.agregados.items()}
         return {"centros_hz": valor.centros_hz, "tempos_s": valor.tempos_s, "niveis": valor.niveis,
-                "largura_hz": valor.largura_hz, "duracao_janela_s": valor.duracao_janela_s, **est}
+                "largura_hz": valor.largura_hz, "duracao_janela_s": valor.duracao_janela_s,
+                "sincronizada": int(valor.sincronizada), "ciclos_por_janela": valor.ciclos_por_janela or 0,
+                "f0_hz": valor.f0_hz if valor.f0_hz is not None else np.array([]), **est, **agregados}
     if isinstance(valor, dict):
         return {(f"canal{k}" if isinstance(k, int) else str(k)): _para_mat(v) for k, v in valor.items()}
     if isinstance(valor, (list, tuple)):

@@ -14,13 +14,20 @@ from pathlib import Path
 import numpy as np
 import pytest
 from capturas_sinteticas import escrever_bin
-from supraharmonicos.bandas_iec import calcular_bandas_iec, centros_das_bandas
+from supraharmonicos.bandas_iec import (
+    BandasIEC,
+    agregar_iec,
+    calcular_bandas_iec,
+    centros_das_bandas,
+    ciclos_por_janela_iec,
+    janelas_dos_cruzamentos,
+)
 from supraharmonicos.cli_principal import SUBCOMANDOS
 from supraharmonicos.cli_principal import main as principal
 from supraharmonicos.erros import ErroSHAN
 from supraharmonicos.espectro import calcular_espectro_welch, calcular_espectrograma
 from supraharmonicos.exportacao import exportar_csv, exportar_mat
-from supraharmonicos.fundamental import recortar_ciclos_inteiros
+from supraharmonicos.fundamental import cruzamentos_da_fundamental, recortar_ciclos_inteiros
 from supraharmonicos.harmonicos import calcular_harmonicos
 
 RAIZ = Path(__file__).resolve().parents[1]
@@ -103,6 +110,57 @@ class TestBandasIEC:
     def test_trecho_mais_curto_que_uma_janela_e_erro(self):
         with pytest.raises(ErroSHAN, match="200 ms"):
             calcular_bandas_iec(np.zeros(1000), FS)
+
+
+class TestBandasIECSincronizadasEAgregadas:
+    """O P7: janelas de 10/12 ciclos medidos e agregação de 3 s/10 min (IEC 61000-4-30), como extras."""
+
+    def _rede_fora_do_nominal(self, segundos=4.0, f=60.1):
+        t = np.arange(int(segundos * FS)) / FS
+        return np.sqrt(2) * (127 * np.sin(2 * np.pi * f * t) + 1.0 * np.sin(2 * np.pi * 35 * f * t))   # 35º: 1 V
+
+    def test_com_a_rede_fora_do_nominal_a_janela_sincronizada_nao_vaza(self):
+        x = self._rede_fora_do_nominal()
+        fixa = calcular_bandas_iec(x, FS, freq_max=3000)
+        cruzamentos, f0 = cruzamentos_da_fundamental(x, FS, 45.0, 65.0)
+        ciclos = ciclos_por_janela_iec(f0)
+        janelas, _ = janelas_dos_cruzamentos(cruzamentos, ciclos)
+        sinc = calcular_bandas_iec(x, FS, freq_max=3000, limites=janelas, ciclos_por_janela=ciclos, f0_hz=f0)
+        i35 = list(sinc.centros_hz).index(2100)                   # 35 x 60,1 = 2103,5 Hz
+        vazia = list(sinc.centros_hz).index(2500)
+        assert f0 == pytest.approx(60.1, abs=0.01) and ciclos == 12 and sinc.sincronizada
+        assert sinc.estatisticas()["rms"][i35] == pytest.approx(1.0, abs=1e-4)
+        assert fixa.estatisticas()["rms"][vazia] > 10 * sinc.estatisticas()["rms"][vazia]   # 46 mV contra ~2 mV
+        assert sinc.duracao_janela_s == pytest.approx(12 / 60.1, rel=1e-4)
+
+    def test_rede_de_50_hz_usa_10_ciclos(self):
+        assert ciclos_por_janela_iec(50.02) == 10 and ciclos_por_janela_iec(59.9) == 12
+
+    def test_janela_com_salto_de_fase_ou_na_borda_e_descartada(self):
+        cruzamentos = np.arange(0, 121) * (FS / 60.0)              # 120 ciclos perfeitos = 10 janelas de 12
+        cruzamentos[60:] += 7.0                                    # salto de 7 amostras (0,04 %) entre o ciclo 59 e o 60
+        janelas, descartadas = janelas_dos_cruzamentos(cruzamentos, 12)
+        assert descartadas == 1 and len(janelas) == 9
+        assert all(abs((b - a) - 20_000) <= 1 for a, b in janelas)   # as que ficaram têm os 12 ciclos
+
+    def test_agregacao_de_3_s_e_10_min_confere_a_mao(self):
+        n = 6000                                                   # 6000 janelas de 200 ms = 20 min
+        niveis = np.where(np.arange(n) % 2 == 0, 1.0, 3.0)[:, None] * np.ones((1, 2))
+        bandas = agregar_iec(BandasIEC(np.array([2100.0, 2300.0]), np.arange(n) * 0.2, niveis, 200.0, 0.2))
+        tres = bandas.agregados["3s"]
+        assert tres.niveis.shape == (n // 15, 2) and tres.tempos_s[1] == pytest.approx(3.0)
+        # 15 janelas: 8 de 1 e 7 de 3 na 1ª -> RMS = sqrt((8 + 63) / 15)
+        assert tres.niveis[0, 0] == pytest.approx(math.sqrt(71 / 15))
+        dez = bandas.agregados["10min"]
+        assert dez.niveis.shape == (2, 2) and list(dez.tempos_s) == [0.0, 600.0]
+        assert dez.niveis[0, 0] == pytest.approx(math.sqrt(5.0))   # metade 1, metade 3
+        # a 2ª começa numa janela ímpar: 8 de 3 e 7 de 1. A série alterna, e o P95 é o valor maior
+        assert tres.niveis[1, 0] == pytest.approx(math.sqrt(79 / 15))
+        assert bandas.estatisticas("3s")["p95"][0] == pytest.approx(math.sqrt(79 / 15))
+
+    def test_sem_10_min_de_captura_nao_ha_serie_de_10_min(self):
+        bandas = agregar_iec(BandasIEC(np.array([2100.0]), np.arange(100) * 0.2, np.ones((100, 1)), 200.0, 0.2))
+        assert set(bandas.agregados) == {"3s"}
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -190,6 +248,44 @@ def test_analise_completa_sem_grafico_exporta_tudo(cli, captura, tmp_path):
     assert float(banda[9100]["maximo_V"]) == pytest.approx(0.01 * 19.357, rel=0.02)     # 9050 Hz em (9000, 9200]
     assert float(banda[9100]["minimo_V"]) < 0.001                                       # desligado no 1º segundo
     assert (tmp_path / "r.mat").exists() and (tmp_path / "r_picos.csv").exists()
+
+
+def test_sincronizar_e_agregar_sao_extras_e_o_padrao_nao_muda(cli, tmp_path):
+    t = np.arange(int(4 * FS)) / FS                                 # 4 s: cabe um intervalo de 3 s (15 janelas)
+    captura = escrever_bin(tmp_path / "rede4s.bin", [_rede(t) / 19.357], canais=(1,), grandezas=(0,), sondas=("",),
+                           fs_total=int(FS), faixas_adc_total_v=20.48, titulo="rede 4 s")
+    rc, out, err = cli(principal, captura, "--ganho", "19.357", "--sem-grafico", "--bandas-iec", "--bandas-iec-max",
+                       "10000", "--exportar", tmp_path / "padrao")
+    assert rc == 0, err
+    assert "janelas de 200 ms" in out and "agregação" not in out and "sincronizadas" not in out
+    meta = json.loads((tmp_path / "padrao_metadados.json").read_text(encoding="utf-8"))
+    assert meta["bandas_iec"]["janelas"] == "200 ms fixos" and meta["bandas_iec"]["agregacao"] is None
+    rc, out, err = cli(principal, captura, "--ganho", "19.357", "--sem-grafico", "--bandas-iec", "--bandas-iec-max",
+                       "10000", "--bandas-iec-sincronizar", "--bandas-iec-agregar", "--exportar", tmp_path / "p7",
+                       "--exportar-mat", tmp_path / "p7.mat")
+    assert rc == 0, err
+    assert "12 ciclos por janela" in out and "agregação 3s" in out and "P95 3s" in out
+    assert (tmp_path / "p7_canal1_bandas_iec_3s.csv").exists() and (tmp_path / "p7_canal1_bandas_iec_serie_3s.csv").exists()
+    from scipy.io import loadmat
+    sh = loadmat(tmp_path / "p7.mat", squeeze_me=True, struct_as_record=False)["sh"]
+    assert sh.canal1.bandas_iec.sincronizada == 1 and sh.canal1.bandas_iec.ciclos_por_janela == 12
+    assert np.atleast_2d(sh.canal1.bandas_iec.agregado_3s.niveis).shape[1] == len(sh.canal1.bandas_iec.centros_hz)
+
+
+def test_agregar_num_trecho_curto_avisa(cli, captura):
+    rc, _, err = cli(principal, captura, "--sem-grafico", "--bandas-iec", "--bandas-iec-agregar")
+    assert rc == 0 and "precisa de 15" in err
+
+
+def test_extras_das_bandas_sem_bandas_iec_e_erro_de_uso(cli, captura):
+    rc, _, err = cli(principal, captura, "--sem-grafico", "--bandas-iec-agregar")
+    assert rc == 2 and "extras do --bandas-iec" in err
+
+
+def test_sincronizar_sem_fundamental_e_erro_claro(cli, captura):
+    rc, _, err = cli(principal, captura, "--sem-grafico", "--bandas-iec", "--bandas-iec-sincronizar",
+                     "--filtro-passa-alta", "2000")
+    assert rc == 1 and "fora da busca" in err
 
 
 def test_harmonicos_sem_fft_e_erro_de_uso(cli, captura):

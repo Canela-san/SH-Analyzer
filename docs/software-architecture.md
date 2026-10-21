@@ -83,12 +83,12 @@ Camada = quem pode importar quem (um módulo só importa camadas **menores**).
 | 1 | `amostras` | Lê `.bin` (memmap) e `.csv`; código → volts | `carregar_amostras_bin`, `converter_para_tensao`, `selecionar_intervalo` |
 | 1 | `canais` | Listas de canais/calibração, desintercalação, offsets, `--faixa` por canal | `analisar_lista_canais`, `desintercalar`, `resolver_faixas`, `resolver_offsets_por_canal` |
 | 1 | `filtros` | Butterworth SOS, fase zero | `aplicar_filtro_digital`, `validar_corte_filtro` |
-| 1 | `fundamental` | Fundamental da rede, corte em ciclos inteiros, refino parabólico | `recortar_ciclos_inteiros`, `refinar_pico_parabolico` |
+| 1 | `fundamental` | Fundamental da rede: cruzamentos por zero (base da `--fft` e das janelas sincronizadas), corte em ciclos inteiros, refino parabólico | `cruzamentos_da_fundamental`, `recortar_ciclos_inteiros`, `refinar_pico_parabolico` |
 | 1 | `sonda` | Perfil de sonda (JSON), interpolação PCHIP, correção em frequência | `PerfilSonda`, `carregar_perfil_sonda`, `resolver_perfil_canal`, `aplicar_correcao_sonda` |
 | 1 | `plotagem` | Gráficos (único módulo que importa `matplotlib` no topo) | `plotar_multicanal` |
 | 1 | `referencia` | O que foi injetado numa calibração: amplitude com unidade e tipo (`500mVpp`), frequência e o marcador `ref: f=.. amp=..` dos metadados | `analisar_amplitude`, `pico_fisico`, `extrair_referencia`, `formatar_referencia` |
 | 1 | `harmonicos` | Tabela de harmônicos sobre ciclos inteiros: componente e grupo (IEC 61000-4-7), % da fundamental, fase no referencial seno, THD/THDG (só numpy) | `calcular_harmonicos`, `TabelaHarmonicos` |
-| 1 | `bandas_iec` | Bandas de 200 Hz em janelas de 200 ms sem lacunas (IEC 61000-4-7, anexo B), com série no tempo e estatísticas (RMS, máximo, P95, mínimo) (só numpy) | `calcular_bandas_iec`, `BandasIEC` |
+| 1 | `bandas_iec` | Bandas de 200 Hz em janelas sem lacunas (IEC 61000-4-7, anexo B): 200 ms fixos ou, como extra, 10/12 ciclos sincronizados (as janelas vêm de quem chama); série no tempo, estatísticas (RMS, máximo, P95, mínimo) e, como extra, a agregação de 3 s/10 min da IEC 61000-4-30 (só numpy) | `calcular_bandas_iec`, `BandasIEC`, `janelas_dos_cruzamentos`, `agregar_iec` |
 | 1 | `osciloscopio` | Forma de onda do osciloscópio (`.m`/`.mat`/`.csv`) e medida da senoide por mínimos quadrados | `ler_forma_de_onda`, `medir_senoide`, `localizar_arquivo_osciloscopio` |
 | 2 | `espectro` | Janelas, FFT única, Welch, espectrograma, bandas, picos | `calcular_espectro`, `calcular_espectro_welch`, `calcular_espectrograma`, `agrupar_em_bandas`, `encontrar_picos_espectro` |
 | 2 | `exportacao` | Resultados da análise em CSV + JSON de metadados (`--exportar`) e em `.mat` do MATLAB/Octave (`--exportar-mat`; scipy.io só ao usar) | `exportar_csv`, `exportar_mat` |
@@ -218,8 +218,8 @@ O caminho quente é tudo que toca **todas** as amostras de uma captura (dezenas 
 ## 7. Testes
 
 ```bash
-uv run --extra dev pytest                 # tudo: 724 testes (~1 min 15 s)
-uv run --extra dev pytest -m "not e2e"    # rápido: 597 testes (~20 s) — use no dia a dia
+uv run --extra dev pytest                 # tudo: 733 testes (~1 min 15 s)
+uv run --extra dev pytest -m "not e2e"    # rápido: 606 testes (~20 s) — use no dia a dia
 uv run --extra dev pytest -m e2e          # só ponta a ponta: 127 testes (a maior parte do tempo)
 uv run --extra dev pytest -n0 tests/test_dsp.py::TestFiltros   # um teste só, sem paralelismo (pdb/breakpoint)
 uv run --extra dev pytest --cov=scripts/supraharmonicos --cov-report=term-missing   # cobertura (~90 %)

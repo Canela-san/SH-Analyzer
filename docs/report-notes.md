@@ -500,9 +500,12 @@ o método declarado:
 A mesma revisão corrigiu dois pontos de método: o Welch usava a janela
 retangular por padrão (agora a Hann, a da literatura; a FFT síncrona continua
 retangular), e as bandas passaram a seguir a convenção de bordas da norma
-((b − 100, b + 100] Hz). As diferenças que restam em relação às normas
-(janela de 200 ms fixa, sem a agregação de 3 s/10 min da IEC 61000-4-30) estão
-no guia de uso e entram nas limitações do relatório.
+((b − 100, b + 100] Hz). Como extras, as janelas sincronizadas a 10/12 ciclos e a agregação de 3 s e
+10 min da IEC 61000-4-30 (com a rede a 60,1 Hz, a janela sincronizada reduz o
+vazamento da fundamental numa banda vazia de 46 para 1,7 mV). As diferenças
+que restam em relação às normas (bordas arredondadas à amostra, intervalos
+de 10 min não alinhados ao UTC) estão no guia de uso e entram nas limitações
+do relatório.
 
 - [ ] Captura de uma análise `--welch --agrupar-bandas --picos` sobre uma
       medição real, mostrando supraharmônicos extraídos com frequência e
@@ -1157,7 +1160,7 @@ Sugestão: manter os capítulos do relatório parcial, para que o leitor da FAPE
 | **Resultados** | Uma seção por grupo de testes: (1) caracterização do ADC (T0, T1, T2; T5 quando houver); (2) taxa de amostragem e integridade (T4, T7, o defeito e a correção; T7e quando houver); (3) multiplexação (T6); (4) resposta em frequência da cadeia de tensão (T3); (5) sonda de corrente (T10); (6) supraharmônicos medidos (T9, T11) | Marcos 12 e 14; roteiro, parágrafos "Executado em" |
 | **Discussão e limitações** | A lista abaixo | — |
 | **Conclusões e trabalhos futuros** | O que o instrumento mede hoje, e com que exatidão. Futuro: esperas do CS reduzidas (~330 kS/s no papel), anti-aliasing externo, ganho antes do ADC no canal de corrente, medição de fase | Marco 15; `improvement-proposals.md` |
-| **Referências** | As do relatório parcial ([1] a [11]), mais: Welch (1967), sobre o método; Harris (1978), sobre janelas; IEEE Std 1241 (teste de ADCs: SINAD, ENOB) e IEEE Std 1057 (ajuste de senoide, usado com o `.m` do osciloscópio); o datasheet SBAS582C do ADS8688 e o *AM335x PRU-ICSS Reference Guide*, nas seções citadas | — |
+| **Referências** | As do relatório parcial ([1] a [11]), mais: a ABNT NBR IEC 61000-4-30 (2023, a edição brasileira da IEC 61000-4-30) e o PRODIST, Módulo 8, da ANEEL (a regulação brasileira de qualidade de energia; confira as revisões vigentes); a IEC 61000-4-7 (harmônicos e bandas de 2 a 9 kHz); Welch (1967), sobre o método; Harris (1978), sobre janelas; IEEE Std 1241 (teste de ADCs: SINAD, ENOB) e IEEE Std 1057 (ajuste de senoide, usado com o `.m` do osciloscópio); o datasheet SBAS582C do ADS8688 e o *AM335x PRU-ICSS Reference Guide*, nas seções citadas | — |
 
 **Limitações a declarar** (a explicitação dos limites é parte do rigor do relatório):
 

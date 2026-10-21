@@ -7,13 +7,15 @@ Cada item tem um código (F = firmware/aquisição, P = Python, T = testes/CI, R
 H = hardware, S = sondas) e as colunas: **ganho** (o que melhora), **esforço** e se **toca a PRU** — mudança no
 assembly só conta como feita depois de montada com `clpru` e validada no hardware.
 
-Revisado em 20/10/2026, depois da revisão do firmware (salto de 7 µs na troca de buffer corrigido, contadores de
-integridade, cabeçalho v4), da revisão dos testes, do novo `compactar_amostras.py` e da análise das capturas de
-bancada de 19/10 (F9 e P6 vieram delas). Depois, a revisão do `adc_tool` fechou o P2 (importações sob demanda) e a
-parte do gráfico do P1, e trouxe o P7 e o P8. Depois, no mesmo dia, saíram daqui R1 a R4 e T1: dados fora do
-repositório, pastas e documentos com nomes em inglês sem espaço nem acento, contagem de testes num lugar só,
-backups do Altium fora do git, `.gitattributes`/`.editorconfig`/`CITATION.cff` e a CI compilando o C e passando o
-`shellcheck`.
+Revisado em 20/10/2026. Saíram daqui, nesta ordem:
+
+* a revisão do firmware (salto de 7 µs na troca de buffer, contadores de integridade, cabeçalho v4), a revisão dos
+  testes e o novo `compactar_amostras.py`; a análise das capturas de bancada de 19/10 trouxe o F9 e o P6;
+* R1 a R4 e T1: dados fora do repositório, nomes em inglês sem espaço nem acento, contagem de testes num lugar só,
+  backups do Altium fora do git, `.gitattributes`/`.editorconfig`/`CITATION.cff` e a CI compilando o C e passando o
+  `shellcheck`;
+* a revisão do `adc_tool`: o P2 (importações sob demanda) e a parte do gráfico do P1; trouxe o P8;
+* o P7, como opções extras do `--bandas-iec`: janelas sincronizadas e agregação de 3 s/10 min da IEC 61000-4-30.
 
 ---
 
@@ -46,7 +48,6 @@ arquivamento sem perdas conferido bit a bit; a documentação cobre operação, 
 | **F2** | Medir até onde as esperas do CS podem cair (`--atraso-cs`) | Alto: teto de ~140 → ~330 kS/s | Baixo (bancada) | não (já configurável) | F1 |
 | **S1** | Calibrar a sonda de corrente (T10) com hold-out | Alto para corrente | Médio (bancada) | não | — |
 | **P1** | Análise de capturas longas por blocos (sem o sinal inteiro em float64) | Médio: 10 min = 1,6 GB; 1 h não cabe | Médio | não | — |
-| **P7** | Janelas de 200 ms sincronizadas à fundamental e agregação de 3 s/10 min (IEC 61000-4-30) no `--bandas-iec` | Médio: conformidade plena com a norma | Médio | não | — |
 | **P8** | Potência, impedância e transferência V/I por frequência | Alto para pesquisa de emissão | Médio | não | S3 |
 | **P6** | Continuidade medida em tempo, com atenção às trocas de buffer | Médio: o salto de 7 µs passou como "OK" com 2 canais | Baixo | não | — |
 | **F9** | Descartar o transitório depois de trocar a faixa do ADC | Médio: dado certo desde a 1ª amostra | Baixo | sim (a) / não (b) | F1 |
@@ -177,15 +178,6 @@ caberia em 16 GB.
 **Proposta.** O Welch, o espectrograma e as bandas IEC já processam por segmentos: levar a conversão a Volts (e o
 filtro, com `sosfilt` + estado entre blocos, ou `sosfiltfilt` por blocos sobrepostos) para dentro do laço, lendo do
 memmap. A FFT única da `--fft` continua precisando do trecho inteiro (limitar a `--fft N` ciclos em capturas longas).
-
-### P7 — Bandas IEC com sincronismo e agregação da IEC 61000-4-30
-
-**Por quê.** O `--bandas-iec` usa janelas de 200 ms fixas e resume a captura inteira; a IEC 61000-4-30 (classe A)
-sincroniza a janela de 10/12 ciclos com a fundamental e agrega os valores em 150/180 ciclos (~3 s) e em 10 min, que é
-como os limites de emissão são comparados.
-
-**Proposta.** Medir a fundamental por janela (os cruzamentos por zero do `fundamental.py`), usar 12 ciclos medidos em
-vez de 200 ms e acrescentar as séries agregadas de 3 s e 10 min (RMS das janelas do intervalo) na exportação.
 
 ### P8 — Potência, impedância e transferência V/I por frequência
 

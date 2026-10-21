@@ -103,6 +103,52 @@ def estimar_amostras_para_n_ciclos(n_ciclos: int, fs: float, freq_min: float,
     return int(np.ceil((n_ciclos + margem_ciclos) * amostras_por_ciclo_pior_caso))
 
 
+def cruzamentos_da_fundamental(sinal: np.ndarray, fs: float, freq_min: float,
+                               freq_max: float) -> tuple[np.ndarray, float]:
+    """Instantes (em amostras, com fração) dos cruzamentos por zero ascendentes da FUNDAMENTAL de ``sinal``, e a
+    frequência média medida por eles. O sinal é centrado e passa por um passa-baixa abaixo do 3º harmônico antes da
+    detecção, para que ruído e supraharmônicos não criem cruzamentos falsos. Erro se não há uma fundamental em
+    [freq_min, freq_max] (um --filtro-passa-alta acima dela, um sinal de teste sem a rede).
+
+    É a base de :func:`recortar_ciclos_inteiros` (``--fft``) e das janelas sincronizadas do ``--bandas-iec``."""
+    freq_estimada = estimar_frequencia_fundamental(sinal, fs, freq_min, freq_max)
+
+    # Remove nível DC antes de filtrar/detectar cruzamentos: sem isso, um
+    # sinal com offset residual poderia nunca cruzar o zero literal.
+    sinal_centrado = sinal - np.mean(sinal)
+
+    # Corte do passa-baixa: acima o bastante da fundamental para não
+    # atenuá-la, abaixo do 3º harmônico para eliminar ruído/supraharmônicos
+    # que atrapalhariam a detecção de cruzamento por zero. SOS em vez de
+    # (b, a): fs/f0 é extremo aqui (dezenas de milhares para 1) e a forma
+    # polinomial clássica perde precisão numérica nesse regime.
+    corte = min(freq_estimada * 2.5, 0.45 * fs)
+    from scipy.signal import butter, sosfiltfilt  # sob demanda: só quem calcula paga o SciPy
+    sos = butter(4, corte / (fs / 2.0), btype="low", output="sos")
+    sinal_filtrado = sosfiltfilt(sos, sinal_centrado)
+
+    posicoes_cruzamento = detectar_cruzamentos_por_zero(sinal_filtrado)
+    if len(posicoes_cruzamento) < 2:
+        raise ErroSHAN(
+            "não foi possível encontrar ciclos completos na janela "
+            "selecionada. Tente aumentar --inicio/--fim."
+        )
+
+    periodo_s, _ = refinar_periodo_fundamental(posicoes_cruzamento, fs)
+    f0 = 1.0 / periodo_s
+    # Os cruzamentos por zero só medem a fundamental se ela existe no trecho. Sem ela (um --filtro-passa-alta acima
+    # dela, um tom de teste sem 60 Hz), sobram cruzamentos de ruído e o "período" sai qualquer coisa: antes, a
+    # análise seguia com f0 = 0,3 Hz e uma tabela de harmônicos sem sentido.
+    if not (0.9 * freq_min <= f0 <= 1.1 * freq_max):
+        raise ErroSHAN(
+            f"a fundamental medida pelos cruzamentos por zero ({f0:.4g} Hz) está fora da busca "
+            f"({freq_min:g} a {freq_max:g} Hz): o trecho não tem uma fundamental nesse intervalo (um "
+            f"--filtro-passa-alta acima dela? um sinal de teste sem a rede?). Ajuste --freq-min/--freq-max, ou use "
+            f"--welch, que não precisa de fundamental."
+        )
+    return posicoes_cruzamento, f0
+
+
 def recortar_ciclos_inteiros(sinal: np.ndarray, fs: float, freq_min: float,
                               freq_max: float, n_ciclos_pedido: int | None):
     """Recorta 'sinal' para um número inteiro de ciclos da fundamental,
@@ -125,41 +171,8 @@ def recortar_ciclos_inteiros(sinal: np.ndarray, fs: float, freq_min: float,
         if limite < len(sinal_analise):
             sinal_analise = sinal_analise[:limite]
 
-    freq_estimada = estimar_frequencia_fundamental(sinal_analise, fs, freq_min, freq_max)
-
-    # Remove nível DC antes de filtrar/detectar cruzamentos: sem isso, um
-    # sinal com offset residual poderia nunca cruzar o zero literal.
-    sinal_centrado = sinal_analise - np.mean(sinal_analise)
-
-    # Corte do passa-baixa: acima o bastante da fundamental para não
-    # atenuá-la, abaixo do 3º harmônico para eliminar ruído/supraharmônicos
-    # que atrapalhariam a detecção de cruzamento por zero. SOS em vez de
-    # (b, a): fs/f0 é extremo aqui (dezenas de milhares para 1) e a forma
-    # polinomial clássica perde precisão numérica nesse regime.
-    corte = min(freq_estimada * 2.5, 0.45 * fs)
-    from scipy.signal import butter, sosfiltfilt  # sob demanda: só quem calcula paga o SciPy
-    sos = butter(4, corte / (fs / 2.0), btype="low", output="sos")
-    sinal_filtrado = sosfiltfilt(sos, sinal_centrado)
-
-    posicoes_cruzamento = detectar_cruzamentos_por_zero(sinal_filtrado)
-    if len(posicoes_cruzamento) < 2:
-        raise ErroSHAN(
-            "não foi possível encontrar ciclos completos na janela "
-            "selecionada. Tente aumentar --inicio/--fim."
-        )
-
-    periodo_s, n_ciclos_disponiveis = refinar_periodo_fundamental(posicoes_cruzamento, fs)
-    f0 = 1.0 / periodo_s
-    # Os cruzamentos por zero só medem a fundamental se ela existe no trecho. Sem ela (um --filtro-passa-alta acima
-    # dela, um tom de teste sem 60 Hz), sobram cruzamentos de ruído e o "período" sai qualquer coisa: antes, a
-    # análise seguia com f0 = 0,3 Hz e uma tabela de harmônicos sem sentido.
-    if not (0.9 * freq_min <= f0 <= 1.1 * freq_max):
-        raise ErroSHAN(
-            f"a fundamental medida pelos cruzamentos por zero ({f0:.4g} Hz) está fora da busca "
-            f"({freq_min:g} a {freq_max:g} Hz): o trecho não tem uma fundamental nesse intervalo (um "
-            f"--filtro-passa-alta acima dela? um sinal de teste sem a rede?). Ajuste --freq-min/--freq-max, ou use "
-            f"--welch, que não precisa de fundamental."
-        )
+    posicoes_cruzamento, f0 = cruzamentos_da_fundamental(sinal_analise, fs, freq_min, freq_max)
+    n_ciclos_disponiveis = len(posicoes_cruzamento) - 1
 
     if n_ciclos_pedido is None or n_ciclos_pedido <= 0:
         n_ciclos_usados = n_ciclos_disponiveis
