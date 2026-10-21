@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sh-analyzer"
-version = "0.1.0"
+version = "0.6.0"
 description = "Pós-processamento das capturas do SH-Analyzer (ADS8688 + BeagleBone Black/PRU): conversão, espectro (FFT/Welch), supraharmônicos e correção de sondas."
 readme = "README.md"
 requires-python = ">=3.10"
