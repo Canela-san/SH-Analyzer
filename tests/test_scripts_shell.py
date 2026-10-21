@@ -502,3 +502,31 @@ def test_varrer_taxa_parte_e_valida_o_firmware_com_capturas_longas(varredura):
     assert nomes == ["E_cs200-100-100_100000_tom_35s.bin", "E_cs6-2-6_100000_tom_35s.bin",
                      "E_cs6-2-6_250000_tom_35s.bin", "E_cs6-2-6_250000_tom_600s.bin"]
     assert (pasta / nomes[-1]).read_text().split()[-1] == "duracao=600s"
+
+
+def test_varrer_taxa_validar_roda_so_a_parte_e_numa_pasta_sem_varredura_anterior(varredura):
+    """As capturas antigas foram para o computador: --validar não precisa de nenhuma pasta T7e_* anterior."""
+    assert not list(varredura.pasta.glob("T7e_*"))
+    r, pasta = varredura("--validar")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert [linha["parte"] for linha in _resumo(pasta)] == ["E"] * 4
+    r, _ = varredura("--partes", "EX")
+    assert r.returncode == 1 and "letras A, B, C, D e E" in r.stderr
+
+
+def test_varrer_taxa_validar_recusa_o_firmware_sem_a_correcao(varredura):
+    """Validar com o firmware antigo gastaria 12 min à toa: confere o código, a compilação e (na BeagleBone) a PRU."""
+    asm = varredura.pasta / "spi_core.asm"
+    fw = varredura.pasta / "fw_pru.out"
+    asm.write_text("; rebase antigo: SUB r22, r22, r12\n")
+    r, pasta = varredura("--validar")
+    assert r.returncode == 1 and "não tem a correção" in r.stderr and pasta is None
+    asm.write_text("; [CORRIGIDO em 21/10/2026] o rebase zera o contador\n")
+    fw.write_bytes(b"\x00")
+    os.utime(fw, (1_000_000_000, 1_000_000_000))                       # compilado antes da última mudança
+    r, pasta = varredura("--validar")
+    assert r.returncode == 1 and "mais antigo" in r.stderr and pasta is None
+    os.utime(fw, None)                                                  # compilado agora
+    r, pasta = varredura("--validar")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert len(_resumo(pasta)) == 4

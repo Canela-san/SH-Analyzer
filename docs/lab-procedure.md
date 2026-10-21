@@ -39,7 +39,7 @@ Atualize esta tabela a cada ida ao laboratório: ela é o resumo do avanço para
 | [T4](#t4-frequência-de-amostragem-real) | 🟡 19/10 | Taxa = 200 MHz ÷ ticks confirmada (102,4 kS/s: −64,0 ppm; 110 kS/s: −100,0 ppm; as exatas concordam em 0,02 ppm) | Leitura do contador do osciloscópio (separa gerador e cristal: hoje, −43,2 ppm somados) |
 | [T5](#t5-distorção-e-faixa-dinâmica) | ⏳ | Prévia, das capturas do T4: SINAD 61 dB e ENOB 14,4 bits com o tom em −27,5 dBFS; THD −71,6 dB, limitado pelo gerador | Tudo |
 | [T6](#t6-vários-canais-diafonia-e-atraso) | 🟡 19/10 | Diafonia 1 → 0 de −94,7 dB em 10 kHz; atraso entre canais 9,954 µs (esperado 10,000) | Refazer o ponto de 40 kHz em **20 kHz** (com 2 canais a Nyquist é 25 kHz) |
-| [T7](#t7-integridade-e-limite-de-taxa) | 🟡 21/10 | O salto de 7 µs nas trocas de buffer sumiu (≤ 0,06 µs). [T7e](#t7e-onde-está-o-limite-de-taxa): as esperas do CS descem ao piso do datasheet (`3,1,3`) sem perda nenhuma; teto de 326 kS/s; **trabalho: `6,2,6` a 250 kS/s**. Achado: degrau de 5 a 13 µs a cada 10,74 s (o rebase do contador), corrigido no firmware | **Validar a correção:** `enviar --setup` e `./varrer_taxa.sh --partes E` (~12 min, com o T7c de 10 min a 250 kS/s); T7d |
+| [T7](#t7-integridade-e-limite-de-taxa) | 🟡 21/10 | O salto de 7 µs nas trocas de buffer sumiu (≤ 0,06 µs). [T7e](#t7e-onde-está-o-limite-de-taxa): as esperas do CS descem ao piso do datasheet (`3,1,3`) sem perda nenhuma; teto de 326 kS/s; **trabalho: `6,2,6` a 250 kS/s**. Achado: degrau de 5 a 13 µs a cada 10,74 s (o rebase do contador), corrigido no firmware | **Validar a correção:** `enviar --setup` e `./varrer_taxa.sh --validar` (~12 min, com o T7c de 10 min a 250 kS/s); T7d |
 | [T8](#t8-aliasing) a [T11](#t11-ponta-a-ponta) | ⏳ | — | Tudo; o T10 é o objetivo central |
 
 ### Passo a passo da próxima ida: firmware novo e taxa máxima
@@ -1123,8 +1123,9 @@ refazer a partir daí está em [O que refazer com o firmware de out/2026](#o-que
   contadores. Numa captura de 31 s, isso derrubava o SINAD de 63 para 24 dB. Causa: com a PRU rodando, uma escrita no
   contador de ciclos o **zera**, e o rebase escrevia `CYCLE − 2^31`. Corrigido em 21/10 (o rebase zera o contador e
   recua o instante da próxima amostra o mesmo tanto); o simulador passou a zerar o contador em toda escrita, e o
-  `medir_captura.py` reconhece o degrau ("cai em múltiplos de 10,74 s"). **Falta validar no hardware:** a parte E
-  da varredura.
+  `medir_captura.py` reconhece o degrau ("cai em múltiplos de 10,74 s"). **Falta validar no hardware:** no computador,
+  `scripts/BeagleBone_Setup.sh enviar --setup`; na BeagleBone, com o tom, `./varrer_taxa.sh --validar` (~12 min, numa
+  pasta nova: não precisa da varredura anterior). Ele recusa rodar se o firmware na PRU não for o corrigido.
 * **Decisão:** esperas de trabalho **`6,2,6`** (60/20/60 ns, o dobro do piso do datasheet, que passou em tudo);
   taxa de trabalho **250 kS/s** (o quadro de 3,12 µs deixa 22 % de folga no período de 4 µs; a 312,5 kS/s a folga é de
   2,7 %, e já houve 1 amostra atrasada).

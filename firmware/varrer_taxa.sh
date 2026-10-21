@@ -30,7 +30,8 @@
 #   ./varrer_taxa.sh              # tudo, com as pausas para mudar a bancada
 #   ./varrer_taxa.sh --simular    # só mostra o plano, o tempo e o espaço
 #   ./varrer_taxa.sh --partes AB  # só algumas partes (A, B, D e C, nesta ordem; E só se pedida)
-#   ./varrer_taxa.sh --partes E   # a validação do firmware corrigido (capturas longas)
+#   ./varrer_taxa.sh --validar    # só a validação do firmware corrigido (a parte E): numa pasta nova, sem
+#                                 # precisar de nenhuma varredura anterior (= --partes E)
 #   ./varrer_taxa.sh --continuar  # retoma a última varredura (ou --continuar T7e_...): pula o que já foi feito
 #
 # SE A CONEXÃO CAIR: cada captura e a linha dela no resumo.csv são gravadas assim que ela termina, e a varredura
@@ -72,6 +73,7 @@ CONTINUAR=''
 while [ $# -gt 0 ]; do
     case "$1" in
         --simular) SIMULAR=1 ;;
+        --validar) PARTES=E ;;
         --continuar)
             if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then CONTINUAR=${2%/}; shift; else CONTINUAR=ultima; fi ;;
         --partes) [ $# -ge 2 ] || { echo "Erro: --partes precisa de letras (ex.: AB)." >&2; exit 1; }; PARTES=$2; shift ;;
@@ -104,7 +106,9 @@ if tem E; then
         PLANO+=("E|$cs|$taxa|1|tom|$segundos")
     done
 fi
-[ "${#PLANO[@]}" -gt 0 ] || { echo "Erro: nenhuma parte escolhida (use A, B, D e/ou C)." >&2; exit 1; }
+case "$PARTES" in
+    *[!ABCDE]*|'') echo "Erro: --partes aceita as letras A, B, C, D e E (ex.: AB; a validação: --validar)." >&2; exit 1 ;;
+esac
 
 blocos_da_parte() { if [ "$1" = C ]; then echo 1; else echo "$BLOCOS"; fi; }
 nome_da_captura() {   # $1 = item do plano
@@ -186,6 +190,24 @@ if [ "$LIVRE_MB" -lt $(( MB_TOTAL + 100 )) ]; then
     exit 1
 fi
 [ -x "$LER_ADC" ] || { echo "Erro: $LER_ADC não existe aqui: rode ./setup.sh antes." >&2; exit 1; }
+
+# A parte E valida a correção do rebase do contador (21/10/2026): rodá-la com o firmware antigo gasta 12 min à toa.
+# Confere o código desta pasta, que ele foi compilado depois da última mudança e que é ele que está na PRU.
+if tem E; then
+    if [ -f spi_core.asm ] && ! grep -q 'CORRIGIDO em 21/10/2026' spi_core.asm; then
+        echo "Erro: o spi_core.asm desta pasta não tem a correção do rebase do contador (21/10/2026)." >&2
+        echo "No computador:  scripts/BeagleBone_Setup.sh enviar --setup" >&2
+        exit 1
+    fi
+    if [ -f spi_core.asm ] && { [ ! -f fw_pru.out ] || [ fw_pru.out -ot spi_core.asm ]; }; then
+        echo "Erro: o fw_pru.out é mais antigo que o spi_core.asm: compile e carregue antes (./setup.sh)." >&2
+        exit 1
+    fi
+    if [ -f /lib/firmware/am335x-pru0-fw ] && [ -f fw_pru.out ] && ! cmp -s fw_pru.out /lib/firmware/am335x-pru0-fw; then
+        echo "Erro: a PRU está com outro firmware, não o fw_pru.out desta pasta: rode ./setup.sh antes." >&2
+        exit 1
+    fi
+fi
 
 # No terminal do 'scripts/BeagleBone_Setup.sh ssh', o SUDO_ASKPASS tem a senha: o sudo não pergunta. Sem ele, a
 # senha é pedida agora, uma vez, e não no meio da varredura.
