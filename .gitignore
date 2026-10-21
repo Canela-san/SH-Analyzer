@@ -10,7 +10,7 @@
 *.parcial
 **/amostras_*.csv
 **/log.txt
-
+report/relatorio/
 # =====================================================================
 # Altium Designer: histórico local, logs e saídas geradas (padrões
 # genéricos, para qualquer placa em hardware/)
