@@ -42,14 +42,23 @@ Indo ao laboratório validar o projeto inteiro? Siga o [`lab-procedure.md`](lab-
 
 **Pré-requisitos na BeagleBone:** `gcc` e o compilador `clpru` da Texas Instruments.
 
-**Primeira vez, e depois de qualquer mudança no firmware:**
+**O que vai para a BeagleBone: só a pasta `firmware/`.** Ela compila e roda o `ler_adc`, o código da PRU, o `setup.sh` e o `calibrar_sonda.sh` (bash puro); a análise é toda no computador. O repositório inteiro e o `.git` só ocupariam o espaço das capturas. Leve-a sempre com o script, no **computador**:
+
+```bash
+scripts/enviar_firmware.sh            # debian@192.168.6.2, pasta ~/firmware (BBB_IP, BBB_USER, BBB_PASTA mudam)
+scripts/enviar_firmware.sh --setup    # e já compila e carrega a PRU lá
+```
+
+Ele recusa enviar se `firmware/` tem mudanças não commitadas (`--forcar` envia, marcando a versão com `-dirty`); escreve em `firmware/VERSAO` o `git describe` (é a versão que o `ler_adc` grava em cada captura, já que na BeagleBone não há `.git`); guarda o firmware que estava lá, **só o código**, em `~/firmware-anteriores/<data>_<versão>/` (o plano B); e copia os arquivos versionados de `firmware/` mais o `VERSAO`, numa conexão SSH só. Nada na BeagleBone é apagado, e capturas que estejam na pasta do firmware não são copiadas para o plano B. `--simular` mostra o que faria.
+
+**Primeira vez, e depois de qualquer mudança no firmware** (na BeagleBone; ou `--setup` acima):
 
 ```bash
 cd firmware
 ./setup.sh
 ```
 
-O `setup.sh` faz, nesta ordem: configura os pinos SPI (`config-pin`), recompila tudo (`make clean && make`, que gera `ler_adc` e `fw_pru.out`), copia o firmware para `/lib/firmware/am335x-pru0-fw` e reinicia a PRU pelo `remoteproc`. Ele para no primeiro erro (uma compilação que falha não carrega firmware velho na PRU) e, no fim, confere que a PRU ficou rodando; se não ficou, mostra as últimas mensagens do kernel. Para conferir à mão:
+O `setup.sh` faz, nesta ordem: configura os pinos SPI (`config-pin`), mostra a versão que vai compilar, recompila tudo (`make clean && make`, que gera `ler_adc` e `fw_pru.out`), copia o firmware para `/lib/firmware/am335x-pru0-fw` e reinicia a PRU pelo `remoteproc`. Ele para no primeiro erro (uma compilação que falha não carrega firmware velho na PRU) e, no fim, confere que a PRU ficou rodando; se não ficou, mostra as últimas mensagens do kernel. Para conferir à mão:
 
 ```bash
 dmesg | tail -n 20
@@ -252,7 +261,12 @@ uv run scripts/adc_tool.py -c captura.csv -o captura_volta.bin                  
 uv run scripts/adc_tool.py captura.bin --export-hdf5 captura.h5 --incluir-tensao # HDF5
 ```
 
-* O **HDF5** tem `/amostras` (códigos brutos, matriz amostras × canais), opcionalmente `/tensao_v` (em Volts) e todos os metadados do cabeçalho como atributos, mais a taxa que a PRU gera (`frequencia_pru_hz`), o trecho exportado, a versão do código e `correcao_sonda_aplicada_por_canal` (sempre 0: quem abre o arquivo em outra ferramenta sabe que `/tensao_v` não foi corrigida pela sonda). O arquivo é escrito em blocos, então funciona mesmo com capturas de dezenas de GB.
+* O **HDF5** tem `/amostras` (códigos brutos, matriz amostras × canais) e, com `--incluir-tensao`, `/tensao_v` (em Volts). Junto, sem mexer nesses dados:
+  * todos os campos do cabeçalho como atributos da raiz, mais a taxa que a PRU gera (`frequencia_pru_hz`), o trecho exportado, a versão do código e `correcao_sonda_aplicada_por_canal` (sempre 0: `/tensao_v` não é corrigida pela sonda);
+  * `/cabecalho_bruto`: os 1024 bytes do cabeçalho do `.bin`, como gravados (nada do `.bin` se perde, nem um campo que esta versão não conheça);
+  * `/sondas/canalN`, para cada canal com sonda registrada (no cabeçalho ou por `--sonda-perfil`; `--sondas-dir` diz onde procurar): o JSON do perfil, inteiro (`perfil_json`), os pontos (`freq_hz`, `ganho`), a data de calibração, o SHA-256 do arquivo e, em `como_aplicar`, a receita da correção. Com isso, quem tem só o `.h5` aplica a correção no MATLAB ou no Python sem procurar o arquivo de sonda. Perfil não encontrado: o HDF5 sai sem ele, com aviso.
+
+  No MATLAB: `h5read('c.h5','/amostras')`, `h5readatt('c.h5','/','frequencia_pru_hz')`, `jsondecode(h5readatt('c.h5','/sondas/canal1','perfil_json'))`. O arquivo é escrito em blocos, então funciona mesmo com capturas de dezenas de GB.
 * O **CSV** guarda só os valores brutos. O cabeçalho não sobrevive à ida e volta.
 * Nenhuma das duas exportações aplica a [correção de sonda](#sondas-de-corrente-calibração-e-correção).
 
@@ -594,7 +608,8 @@ O cabeçalho começa com o texto `SHAN` e termina com um **CRC-32**; se o `adc_t
 | `versao_firmware` | Qual build do `ler_adc` gravou a captura: o `git describe` do repositório (versão 5) |
 | `taxa_medida_hz` | Taxa total medida pelo relógio do ARM, 0 se a captura teve 1 bloco (versão 5) |
 | `pru_clock_hz`, `sample_period_ticks` | O relógio da PRU e o período em ciclos: `clock ÷ ticks` é a taxa que a análise usa |
-| `samples_per_buffer`, `bytes_por_amostra` | Geometria dos blocos |
+| `samples_per_buffer`, `bytes_por_amostra` | Geometria dos blocos: o tamanho de cada buffer do ping-pong em amostras **brutas** (1 048 576 = 2 MiB, ~10,5 s a 100 kS/s), gravado desde a versão 1 |
+| `buffers_ping_pong` | Quantos buffers a PRU alterna na DDR (2; versão 5). O `adc_tool.py info` mostra a geometria inteira: `Ping-pong: 2 buffers de 1048576 amostras brutas (2.0 MiB cada; ... por canal; cada bloco dura ... s)` |
 | `blocos_gravados`, `total_amostras_gravadas` | Totais reais, preenchidos ao final da captura |
 | `titulo`, `descricao` | Texto livre (`-t`, até 63 bytes; `-d`, até 255 bytes). Convenção para calibração: um trecho `ref: f=1000Hz amp=500mVpp` na descrição registra a frequência e a amplitude injetadas, e o `gerar_perfil_sonda.py` o lê; texto livre antes ou depois é ignorado |
 | `header_crc32` | Detecta corrupção do cabeçalho |
@@ -609,6 +624,7 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 
 | Script | Onde roda | O que faz |
 |---|---|---|
+| `scripts/enviar_firmware.sh` | Computador | Leva `firmware/` para a BeagleBone com a versão (`VERSAO`) e um plano B só do código; `--setup` compila e carrega lá, `--simular` só mostra. Veja [Preparar a BeagleBone](#preparar-a-beaglebone) |
 | `scripts/set_date.sh` | Computador | Copia a data e hora do computador para a BeagleBone via SSH (como instante absoluto em UTC, então vale qualquer que seja o fuso dela). Padrão: `debian@192.168.6.2`; troque com `BBB_USER` e `BBB_IP`. **Nenhuma senha fica no arquivo:** use chave SSH (`ssh-copy-id debian@192.168.6.2`) ou deixe o `ssh`/`sudo` pedirem a senha no terminal. Se preferir não digitar, exporte `SSHPASS` (e tenha o `sshpass` instalado) |
 | `scripts/compactar_amostras.py` | Computador | (ou `adc_tool.py compactar`) Arquiva pastas de captura sem perdas num pacote `.zpaq.tar` (~11 % do tamanho), conferido bit a bit; também `listar`, `extrair` e `verificar`. Veja [Guardar as capturas sem perdas](#guardar-as-capturas-sem-perdas-compactar_amostraspy) |
 | `report/gerar_figuras.py` | Computador | Gera as figuras do relatório (PDF vetorial, já no tamanho final, com o texto composto pelo LaTeX) e um `.tex` com os números citados (macros siunitx). `uv run report/gerar_figuras.py` gera todas; `--listar`, `--png` (prévia), `--formato artigo --idioma en` (coluna de artigo, em inglês), `--saida PASTA` (ex.: a pasta do projeto LaTeX). Inclua no documento sem `width=`, para as fontes baterem com as do texto |

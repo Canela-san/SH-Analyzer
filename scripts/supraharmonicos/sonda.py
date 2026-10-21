@@ -97,6 +97,7 @@ class PerfilSonda:
         self.caminho = caminho
         self.faixa_freq_valida_hz = faixa_freq_valida_hz
         self.data_calibracao = data_calibracao      # None: perfil sem data (escrito à mão) ou com data ilegível
+        self.texto_json: str | None = None          # o arquivo como foi lido (carregar_perfil_sonda): vai para o HDF5
         # Metadado gravado por gerar_perfil_sonda.py (formato/faixa/--ganho de
         # cada canal NA CALIBRAÇÃO) -- usado só por conferir_calibracao_perfil(),
         # nunca na matemática da correção. None em perfis escritos à mão.
@@ -107,20 +108,20 @@ class PerfilSonda:
             ordem = np.argsort(pontos_freq_hz)
             self._freqs_pontos = np.asarray(pontos_freq_hz, dtype=np.float64)[ordem]
             ganhos_ordenados = np.asarray(pontos_ganho, dtype=np.float64)[ordem]
-            ganhos_db = 20.0 * np.log10(ganhos_ordenados)
-            # extrapolate=False -> PchipInterpolator devolve NaN fora do
-            # domínio dos pontos; ganho_em() faz o clamp explicitamente
-            # ANTES de chamar o interpolador (ver abaixo), então NaN nunca
-            # deveria aparecer na prática -- extrapolate=False aqui é só
-            # uma segunda trava de segurança.
-            from scipy.interpolate import PchipInterpolator  # sob demanda: só quem calcula paga o SciPy
-            self._interpolador_db = PchipInterpolator(
-                np.log10(self._freqs_pontos), ganhos_db, extrapolate=False
-            )
+            self._ganhos_pontos = ganhos_ordenados
+            self._interpolador_db = None    # PCHIP montado no 1º ganho_em(): carregar o perfil não paga o SciPy
             self._freq_min_pontos = float(self._freqs_pontos[0])
             self._freq_max_pontos = float(self._freqs_pontos[-1])
         else:  # "ganho_fixo"
             self._ganho_fixo = float(pontos_ganho[0])
+
+    @property
+    def pontos(self) -> tuple[np.ndarray, np.ndarray]:
+        """(freq_hz, ganho linear) dos pontos de calibração, em ordem crescente de frequência; para 'ganho_fixo',
+        um ponto só em 1 Hz (o ganho vale para toda frequência). Cópias: mexer nelas não muda o perfil."""
+        if self.tipo == "ganho_fixo":
+            return np.array([1.0]), np.array([self._ganho_fixo])
+        return self._freqs_pontos.copy(), self._ganhos_pontos.copy()
 
     def silenciar_aviso_fora_da_faixa(self) -> None:
         """Para quem só DESENHA a curva (ex.: gráfico de diagnóstico do gerador de
@@ -172,6 +173,13 @@ class PerfilSonda:
                 )
                 self._avisou_fora_da_faixa = True
 
+        if self._interpolador_db is None:
+            # extrapolate=False -> PchipInterpolator devolve NaN fora do domínio dos pontos; o clamp acima já
+            # garante que nada sai dele, então é só uma segunda trava de segurança.
+            from scipy.interpolate import PchipInterpolator  # sob demanda: só quem calcula paga o SciPy
+            self._interpolador_db = PchipInterpolator(
+                np.log10(self._freqs_pontos), 20.0 * np.log10(self._ganhos_pontos), extrapolate=False
+            )
         ganho_db = self._interpolador_db(np.log10(freqs_clampadas))
         return 10.0 ** (ganho_db / 20.0)
 
@@ -184,7 +192,8 @@ def carregar_perfil_sonda(caminho: Path) -> PerfilSonda:
     'resposta_frequencia'; 'ganho' escalar para 'ganho_fixo')."""
     try:
         with open(caminho, encoding="utf-8") as f:
-            dados = json.load(f)
+            texto = f.read()
+        dados = json.loads(texto)
     except FileNotFoundError:
         raise ErroSHAN(f"arquivo de perfil de sonda '{caminho}' não encontrado.")
     except json.JSONDecodeError as e:
@@ -259,13 +268,15 @@ def carregar_perfil_sonda(caminho: Path) -> PerfilSonda:
     if not isinstance(calibracao_adc, dict):
         calibracao_adc = None  # ausente (perfil escrito à mão) ou malformado: a conferência em main() simplesmente não acontece
 
-    return PerfilSonda(
+    perfil = PerfilSonda(
         id=dados["id"], tipo=tipo, caminho=caminho,
         pontos_freq_hz=freqs, pontos_ganho=ganhos,
         faixa_freq_valida_hz=faixa_freq_valida_hz,
         calibracao_adc=calibracao_adc,
         data_calibracao=_data_iso(dados.get("data_calibracao")),
     )
+    perfil.texto_json = texto
+    return perfil
 
 
 def _data_iso(valor) -> datetime.date | None:

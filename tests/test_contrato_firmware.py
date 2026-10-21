@@ -134,7 +134,15 @@ def test_layout_da_struct_v5_bate_com_o_formato_python(fonte_c, defines):
 def test_v4_e_o_prefixo_de_v5_sem_a_versao_do_firmware():
     v4 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V4))
     v5 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V5))
-    assert v5[:-3] == v4[:-1] and v5[-3:] == [("s", cab.CABECALHO_VERSAO_FIRMWARE_TAMANHO), ("d", 1), ("I", 1)]
+    assert v5[:-4] == v4[:-1]
+    assert v5[-4:] == [("s", cab.CABECALHO_VERSAO_FIRMWARE_TAMANHO), ("d", 1), ("I", 1), ("I", 1)]   # + nº de buffers e o CRC
+
+
+def test_buffers_ping_pong_do_cabecalho_e_o_que_o_ler_adc_mapeia(defines):
+    """O nº de buffers gravado é o mesmo que o ler_adc usa para mapear a DDR (nenhum '* 2' solto)."""
+    assert inteiro_c(defines["BUFFERS_PING_PONG"]) == 2
+    fonte = LER_ADC_C.read_text(encoding="utf-8")
+    assert "bytes_por_buffer * 2" not in fonte and fonte.count("bytes_por_buffer * BUFFERS_PING_PONG") >= 2
 
 
 def test_o_makefile_passa_a_versao_do_firmware():
@@ -151,8 +159,8 @@ def test_tamanhos_derivados(fonte_c, defines):
     assert cab._OFFSET_HEADER_CRC32_V3 == cab._TAMANHO_CAMPOS_V3 - 4 == 676
     assert cab._TAMANHO_CAMPOS_V4 == struct.calcsize(cab._FORMATO_CABECALHO_V4) == 704
     assert cab._OFFSET_HEADER_CRC32_V4 == cab._TAMANHO_CAMPOS_V4 - 4 == 700
-    assert cab._TAMANHO_CAMPOS_V5 == struct.calcsize(cab._FORMATO_CABECALHO_V5) == 744
-    assert cab._OFFSET_HEADER_CRC32_V5 == cab._TAMANHO_CAMPOS_V5 - 4 == 740
+    assert cab._TAMANHO_CAMPOS_V5 == struct.calcsize(cab._FORMATO_CABECALHO_V5) == 748
+    assert cab._OFFSET_HEADER_CRC32_V5 == cab._TAMANHO_CAMPOS_V5 - 4 == 744
     assert cab._TAMANHO_CAMPOS_V5 < inteiro_c(defines["CABECALHO_TAMANHO_TOTAL"])
     for fmt, contagens in ((cab._FORMATO_CABECALHO_V3, cab._CONTAGENS_CABECALHO_V3),
                            (cab._FORMATO_CABECALHO_V4, cab._CONTAGENS_CABECALHO_V4),

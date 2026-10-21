@@ -38,7 +38,7 @@ FMT_V1 = "<4sIIQIII8BIIIIIdQQ64s256sI"
 FMT_V2 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * 8 + "I"
 FMT_V3 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * 8 + "8BI"
 FMT_V4 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * 8 + "8BIII3II"
-FMT_V5 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * 8 + "8BIII3I32sdI"
+FMT_V5 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * 8 + "8BIII3I32sdII"
 CODIGO_DA_FAIXA = {20.48: 0, 10.24: 1, 5.12: 2}   # fundo de escala total (V) -> código RANGE_SELn
 
 
@@ -80,7 +80,7 @@ def montar_cabecalho(n_por_canal: int, canais, grandezas, sondas, fs_total: int,
         codigos = list(codigos_faixa_adc if codigos_faixa_adc is not None else [0] * k) + [0xFF] * (8 - k)
         if versao >= 5:
             fmt, vals = FMT_V5, [*comuns, *gr, *ids, *codigos, *integridade, *atrasos_cs,
-                                 versao_firmware.encode("ascii"), float(taxa_medida_hz), 0]
+                                 versao_firmware.encode("ascii"), float(taxa_medida_hz), 2, 0]
         elif versao >= 4:
             fmt, vals = FMT_V4, [*comuns, *gr, *ids, *codigos, *integridade, *atrasos_cs, 0]
         else:

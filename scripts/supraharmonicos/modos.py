@@ -71,6 +71,7 @@ from .filtros import aplicar_filtro_digital, validar_corte_filtro
 from .fundamental import cruzamentos_da_fundamental, recortar_ciclos_inteiros
 from .harmonicos import calcular_harmonicos
 from .hdf5 import exportar_hdf5
+from .sonda import PerfilSonda, resolver_perfil_canal
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +79,26 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Modo: exportação HDF5
 # ---------------------------------------------------------------------------
+
+def _perfis_para_o_hdf5(ctx: ContextoCaptura) -> dict[int, PerfilSonda]:
+    """O perfil de cada canal com sonda registrada (cabeçalho ou --sonda-perfil), resolvido como na plotagem.
+    Um perfil que não se acha ou não se lê só fica de fora, com aviso: a exportação dos dados continua."""
+    perfis = {}
+    for canal in ctx.canais:
+        sonda_id = ctx.sonda_id_do_canal(canal)
+        if not sonda_id and canal not in ctx.overrides_perfil:
+            continue
+        try:
+            perfil = resolver_perfil_canal(canal, sonda_id, ctx.overrides_perfil, ctx.sondas_dir)
+        except ErroSHAN as e:
+            log.warning(f"o HDF5 vai sem o perfil da sonda do canal {canal}: {e}")
+            continue
+        if perfil is not None:
+            perfis[canal] = perfil
+            log.info(f"  Canal {canal}: perfil '{perfil.id}' ({perfil.caminho}) incluído em /sondas/canal{canal} "
+                     f"(não aplicado a /tensao_v)")
+    return perfis
+
 
 def executar_exportacao_hdf5(args: argparse.Namespace, ctx: ContextoCaptura) -> None:
     if args.arquivo is None:
@@ -105,6 +126,7 @@ def executar_exportacao_hdf5(args: argparse.Namespace, ctx: ContextoCaptura) -> 
         grandeza_por_canal=[ctx.grandeza_do_canal(c) for c in ctx.canais],
         sonda_id_por_canal=[ctx.sonda_id_do_canal(c) for c in ctx.canais],
         versao_codigo=_versao_do_codigo(),
+        perfis_por_canal=_perfis_para_o_hdf5(ctx),
     )
     extra_tensao = " + tensao_v calibrada" if args.incluir_tensao else ""
     log.info(

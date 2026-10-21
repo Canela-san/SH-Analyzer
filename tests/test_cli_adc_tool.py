@@ -105,6 +105,21 @@ def test_modo_exportacao_hdf5(cli, ambiente):
     assert destino.exists() and "Exportado:" in out and "+ tensao_v calibrada" in out
 
 
+def test_hdf5_inclui_o_perfil_da_sonda_registrada(cli, ambiente, tmp_path):
+    import h5py
+    destino = tmp_path / "com_sonda.h5"
+    rc, out, err = cli(main, ambiente / "ok.bin", "--export-hdf5", destino, "--sondas-dir", ambiente / "sondas")
+    assert rc == 0, err
+    assert "perfil 'sonda_teste'" in out and "incluído em /sondas/canal1" in out
+    with h5py.File(destino, "r") as f:
+        assert f["sondas/canal1"].attrs["id"] == "sonda_teste" and len(f["sondas/canal1/freq_hz"]) > 2
+    # sem o arquivo do perfil, o HDF5 sai assim mesmo, sem o grupo, e avisa
+    rc, _, err = cli(main, ambiente / "ok.bin", "--export-hdf5", tmp_path / "sem.h5", "--sondas-dir", tmp_path)
+    assert rc == 0 and "vai sem o perfil da sonda do canal 1" in err
+    with h5py.File(tmp_path / "sem.h5", "r") as f:
+        assert "sondas" not in f and "amostras" in f
+
+
 def test_exportacao_avisa_que_ignora_flags_de_plotagem(cli, ambiente):
     rc, _, err = cli(main, ambiente / "ok.bin", "--export-hdf5", ambiente / "y.h5", "--welch")
     assert rc == 0 and "Aviso: --export-hdf5 ignora --fft/--welch/--picos/--agrupar-bandas" in err

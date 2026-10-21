@@ -3,8 +3,14 @@
 ``h5py`` é importado só quando a exportação é de fato usada (dependência
 pesada e opcional para os demais modos).
 
-Depende de: ``amostras``, ``canais``, ``cabecalho``, ``constantes``, ``erros``."""
+Além das amostras, o arquivo leva tudo o que é preciso para usá-las sem o ``.bin`` nem este programa: os campos do
+cabeçalho como atributos, o próprio cabeçalho de 1024 bytes (``/cabecalho_bruto``) e o perfil de cada sonda
+registrada (``/sondas/canalN``: o JSON integral, os pontos e o hash do arquivo). Nada disso mexe nos datasets
+de amostras: cada coisa é um atributo ou um dataset à parte.
 
+Depende de: ``amostras``, ``canais``, ``cabecalho``, ``constantes``, ``erros``, ``sonda``."""
+
+import hashlib
 import logging
 from pathlib import Path
 
@@ -15,6 +21,7 @@ from .cabecalho import CabecalhoArquivo
 from .canais import alinhar_ao_ciclo
 from .constantes import FORMATOS_NUMPY, TAMANHO_CHUNK_PADRAO
 from .erros import ErroSHAN
+from .sonda import PerfilSonda
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +38,8 @@ def exportar_hdf5(caminho_bin: Path, caminho_h5: Path, formato: str,
                    tamanho_chunk: int = TAMANHO_CHUNK_PADRAO,
                    grandeza_por_canal: list[int] | None = None,
                    sonda_id_por_canal: list[str] | None = None,
-                   versao_codigo: str | None = None) -> tuple[int, int]:
+                   versao_codigo: str | None = None,
+                   perfis_por_canal: dict[int, PerfilSonda] | None = None) -> tuple[int, int]:
     """Converte 'caminho_bin' para HDF5 em 'caminho_h5'.
 
     'grandeza_por_canal'/'sonda_id_por_canal' (opcionais, na mesma ordem de
@@ -75,6 +83,13 @@ def exportar_hdf5(caminho_bin: Path, caminho_h5: Path, formato: str,
                   do código) + 'correcao_sonda_aplicada_por_canal' (sempre
                   0: quem abre o .h5 fora do adc_tool sabe que /tensao_v
                   NÃO foi corrigida pelo perfil da sonda).
+      /cabecalho_bruto  [só com cabeçalho] os 1024 bytes do cabeçalho do
+                  .bin, como gravados (relê-se com a mesma especificação,
+                  inclusive campos que esta versão não conheça).
+      /sondas/canalN  [um grupo por canal com perfil resolvido, ver
+                  'perfis_por_canal'] o JSON integral do perfil (atributo
+                  'perfil_json'), os pontos (datasets freq_hz e ganho), o
+                  SHA-256 do arquivo e como aplicar a correção.
 
     Retorna (n_amostras_por_canal_exportadas, num_canais).
     """
@@ -136,6 +151,17 @@ def exportar_hdf5(caminho_bin: Path, caminho_h5: Path, formato: str,
             f5.attrs["grandeza_por_canal"] = np.array(grandeza_por_canal, dtype=np.uint8)
         if sonda_id_por_canal is not None:
             f5.attrs["sonda_id_por_canal"] = np.array(sonda_id_por_canal, dtype="S32")
+
+        if cabecalho is not None and offset_amostras > 0:
+            with open(caminho_bin, "rb") as f:
+                bruto_cabecalho = np.frombuffer(f.read(offset_amostras), dtype=np.uint8)
+            dataset_cabecalho = f5.create_dataset("cabecalho_bruto", data=bruto_cabecalho)
+            dataset_cabecalho.attrs["descricao"] = (
+                "Os bytes do cabeçalho do .bin de origem, como gravados pelo ler_adc (little-endian, "
+                "formato em docs/project-context.md, versão no atributo 'cabecalho_versao')."
+            )
+        for canal, perfil in sorted((perfis_por_canal or {}).items()):
+            _gravar_perfil(f5, canal, perfil)
 
         dataset_bruto = f5.create_dataset(
             "amostras", shape=(n_linhas_total, num_canais), dtype=dtype, chunks=True,
@@ -203,3 +229,32 @@ def exportar_hdf5(caminho_bin: Path, caminho_h5: Path, formato: str,
         )
 
     return n_linhas_total, num_canais
+
+
+def _gravar_perfil(f5, canal: int, perfil: PerfilSonda) -> None:
+    """``/sondas/canalN``: o perfil inteiro, para quem abre o .h5 em outra ferramenta poder aplicar (ou auditar) a
+    correção sem procurar o arquivo de sonda. Não aplicado a /tensao_v (atributo 'aplicado_em_tensao_v' = 0)."""
+    grupo = f5.require_group("sondas").create_group(f"canal{canal}")
+    grupo.attrs["id"] = perfil.id
+    grupo.attrs["tipo"] = perfil.tipo
+    grupo.attrs["arquivo_origem"] = str(perfil.caminho)
+    grupo.attrs["aplicado_em_tensao_v"] = 0
+    if perfil.data_calibracao is not None:
+        grupo.attrs["data_calibracao"] = perfil.data_calibracao.isoformat()
+    if perfil.texto_json is not None:
+        grupo.attrs["perfil_json"] = perfil.texto_json
+        grupo.attrs["sha256"] = hashlib.sha256(perfil.texto_json.encode("utf-8")).hexdigest()
+    freqs, ganhos = perfil.pontos
+    if perfil.tipo == "resposta_frequencia":
+        grupo.create_dataset("freq_hz", data=freqs)
+        grupo.create_dataset("ganho", data=ganhos)
+        if perfil.faixa_freq_valida_hz is not None:
+            grupo.attrs["faixa_freq_valida_hz"] = np.array(perfil.faixa_freq_valida_hz, dtype=np.float64)
+        grupo.attrs["como_aplicar"] = (
+            "FFT do sinal inteiro em Volts; cada componente de frequência f dividida por ganho(f); IFFT. "
+            "ganho(f): PCHIP sobre (log10(freq_hz), 20*log10(ganho)), constante fora de [min, max] de freq_hz. "
+            "Corrige só a amplitude, não a fase."
+        )
+    else:
+        grupo.attrs["ganho"] = float(ganhos[0])
+        grupo.attrs["como_aplicar"] = "sinal em Volts dividido por 'ganho'."

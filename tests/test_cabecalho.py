@@ -145,13 +145,14 @@ def test_v5_le_a_versao_do_firmware_e_a_taxa_medida(tmp_path, caplog):
                      taxa_medida_hz=399_990.0)
     c = ler_cabecalho(p)
     assert c.crc32_valido and c.versao_cabecalho == 5
-    assert c.versao_firmware == "v0.6-3-g1234abc-dirty" and c.taxa_medida_hz == 399_990.0
+    assert c.versao_firmware == "v0.6-3-g1234abc-dirty" and c.taxa_medida_hz == 399_990.0 and c.buffers_ping_pong == 2
     attrs = c.para_attrs_hdf5()
     assert attrs["versao_firmware"] == "v0.6-3-g1234abc-dirty" and attrs["taxa_medida_hz"] == 399_990.0
     with caplog.at_level(logging.INFO):
         imprimir_resumo_cabecalho(c)
     texto = "\n".join(r.getMessage() for r in caplog.records)
     assert "Firmware: v0.6-3-g1234abc-dirty" in texto and "Taxa medida pelo ARM: 399990 Hz (-0.003 %" in texto
+    assert "Ping-pong: 2 buffers de 1048576 amostras brutas (2.0 MiB cada; 524288 por canal; cada bloco dura 2.621 s)" in texto
 
 
 def test_v5_sem_taxa_medida_e_v4_sem_versao(tmp_path):
@@ -159,6 +160,7 @@ def test_v5_sem_taxa_medida_e_v4_sem_versao(tmp_path):
     assert v5.taxa_medida_hz is None and v5.para_attrs_hdf5()["taxa_medida_hz"] == -1.0
     v4 = ler_cabecalho(escrever_bin(tmp_path / "v4.bin", SINAL, versao=4))
     assert v4.versao_firmware == "" and v4.taxa_medida_hz is None and "versao_firmware" not in v4.para_attrs_hdf5()
+    assert v4.buffers_ping_pong is None and v5.para_attrs_hdf5()["buffers_ping_pong"] == 2
 
 
 # --------------------------------------------------------------------------------------

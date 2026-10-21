@@ -88,3 +88,36 @@ def test_csv_com_valor_invalido_e_erro_claro_e_nao_deixa_bin_pela_metade(tmp_pat
     with pytest.raises(ErroSHAN, match="linha de dados 3"):
         converter_arquivo(csv, destino, "uint16", 0, None, False, **PAR, tamanho_chunk=100)
     assert not destino.exists()
+
+
+
+def test_hdf5_leva_o_perfil_da_sonda_e_o_cabecalho_bruto_sem_mexer_nas_amostras(tmp_path):
+    """O perfil vai inteiro para /sondas/canalN e o cabeçalho de 1024 bytes para /cabecalho_bruto; /amostras continua
+    idêntico ao .bin."""
+    import hashlib
+    import json
+
+    from supraharmonicos.sonda import carregar_perfil_sonda
+    p = bin_de_teste(tmp_path)
+    perfil_json = tmp_path / "sonda_x.json"
+    perfil_json.write_text(json.dumps({"id": "sonda_x", "tipo": "resposta_frequencia", "data_calibracao": "2026-10-19",
+                                       "faixa_freq_valida_hz": [100, 20000],
+                                       "pontos": [{"freq_hz": 1000, "ganho": 0.9}, {"freq_hz": 100, "ganho": 1.0},
+                                                  {"freq_hz": 20000, "ganho": 0.5}]}, indent=2), encoding="utf-8")
+    perfil = carregar_perfil_sonda(perfil_json)
+    destino = tmp_path / "s.h5"
+    exportar_hdf5(p, destino, "uint16", [0, 1], ler_cabecalho(p), PAR["faixas"], PAR["ganhos"], PAR["offsets"],
+                  True, CABECALHO_TAMANHO_TOTAL, 0, None, tamanho_chunk=999, perfis_por_canal={1: perfil})
+    with h5py.File(destino, "r") as f:
+        np.testing.assert_array_equal(f["amostras"][()].ravel(),
+                                      np.fromfile(p, dtype="<u2", offset=CABECALHO_TAMANHO_TOTAL))
+        assert f["cabecalho_bruto"][()].tobytes() == p.read_bytes()[:CABECALHO_TAMANHO_TOTAL]
+        g = f["sondas/canal1"]
+        assert g.attrs["id"] == "sonda_x" and g.attrs["tipo"] == "resposta_frequencia"
+        assert g.attrs["aplicado_em_tensao_v"] == 0 and g.attrs["data_calibracao"] == "2026-10-19"
+        assert g.attrs["perfil_json"] == perfil_json.read_text(encoding="utf-8")       # o arquivo, como estava
+        assert g.attrs["sha256"] == hashlib.sha256(perfil_json.read_bytes()).hexdigest()
+        np.testing.assert_array_equal(g["freq_hz"][()], [100, 1000, 20000])           # em ordem de frequência
+        np.testing.assert_array_equal(g["ganho"][()], [1.0, 0.9, 0.5])
+        assert list(g.attrs["faixa_freq_valida_hz"]) == [100, 20000] and "PCHIP" in g.attrs["como_aplicar"]
+        assert "sondas/canal0" not in f

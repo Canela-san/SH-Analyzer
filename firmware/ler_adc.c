@@ -69,6 +69,13 @@ void lidar_interrupcao(int sinal) { (void)sinal; manter_execucao = 0; }
 #define VERSAO_FIRMWARE "desconhecida"
 #endif
 
+// Buffers do esquema ping-pong na DDR: a PRU enche um enquanto o ARM grava o
+// outro (SAMPLES_PER_BUFFER amostras cada, ver memoria_pru.h). Gravado no
+// cabeçalho v5 junto com samples_per_buffer, para o arquivo descrever sozinho
+// a geometria da captura (as trocas de buffer caem a cada SAMPLES_PER_BUFFER
+// amostras brutas).
+#define BUFFERS_PING_PONG 2u
+
 // [SONDA/GRANDEZA] Valores possíveis para grandeza_por_canal na struct
 // abaixo -- a grandeza física que cada canal habilitado está medindo.
 // Mesma indexação de lista_canais (posição i descreve o canal
@@ -192,6 +199,7 @@ struct cabecalho_arquivo_campos {
     uint32_t atraso_cs_iteracoes[3];   // [INTEGRIDADE, v4] atrasos de CS usados no laço da PRU (setup, hold, alto), em iterações de 2 ciclos (10 ns) -- 200/100/100 é o padrão validado em hardware. Ver --atraso-cs
     char     versao_firmware[CABECALHO_VERSAO_FIRMWARE_TAMANHO]; // [VERSÃO, v5] VERSAO_FIRMWARE deste build (git describe), terminado em '\0'
     double   taxa_medida_hz;           // [INTEGRIDADE, v5] taxa total medida pelo relógio do ARM entre o 1º e o último bloco (incerteza ~0,02 % num bloco de ~10 s); 0.0 = não medida (menos de 2 blocos). Com amostras_atrasadas > 0 é a melhor estimativa da taxa real
+    uint32_t buffers_ping_pong;        // [GEOMETRIA, v5] BUFFERS_PING_PONG: quantos buffers de samples_per_buffer amostras a PRU alterna na DDR
     uint32_t header_crc32;             // CRC-32 (polinômio 0xEDB88320, o mesmo de zlib/PNG/Ethernet) de todo o cabeçalho, calculado com este próprio campo zerado -- permite a um leitor detectar um cabeçalho truncado/corrompido antes de confiar nos campos acima
 } __attribute__((packed));
 
@@ -1358,7 +1366,7 @@ int main(int argc, char *argv[]) {
     // canal) -- ver o comentário grande dentro do laço de captura, mais
     // abaixo, para como a posição de cada amostra mapeia para o seu canal.
     size_t bytes_por_buffer = (size_t)SAMPLES_PER_BUFFER * sizeof(uint16_t);
-    void *ddr_map = mmap(0, bytes_por_buffer * 2, PROT_READ, MAP_SHARED, mem_fd, DDR_RESERVED_PHYS);
+    void *ddr_map = mmap(0, bytes_por_buffer * BUFFERS_PING_PONG, PROT_READ, MAP_SHARED, mem_fd, DDR_RESERVED_PHYS);
     if (ddr_map == MAP_FAILED) {
         perror("Erro ao mapear a região DDR reservada");
         munmap(ctrl_map, 4096);
@@ -1400,7 +1408,7 @@ int main(int argc, char *argv[]) {
     FILE *ficheiro_bin = fopen(nome_arquivo_saida, "wb");
     if (!ficheiro_bin) {
         fprintf(stderr, "Erro ao criar '%s': %s\n", nome_arquivo_saida, strerror(errno));
-        munmap(ddr_map, bytes_por_buffer * 2);
+        munmap(ddr_map, bytes_por_buffer * BUFFERS_PING_PONG);
         munmap(ctrl_map, 4096);
         close(mem_fd);
         return -1;
@@ -1448,6 +1456,7 @@ int main(int argc, char *argv[]) {
     }
 
     cabecalho.campos.samples_per_buffer = (uint32_t)SAMPLES_PER_BUFFER;
+    cabecalho.campos.buffers_ping_pong = BUFFERS_PING_PONG;                                // [GEOMETRIA, v5]
     cabecalho.campos.bytes_por_amostra = (uint32_t)sizeof(uint16_t);
     cabecalho.campos.pru_clock_hz = PRU_CLOCK_HZ;
     cabecalho.campos.sample_period_ticks = ctrl->sample_period_ticks;
@@ -1482,7 +1491,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Erro: falha ao gravar o cabeçalho (%zu bytes) em "
                          "'%s'.\n", sizeof(cabecalho), nome_arquivo_saida);
         fclose(ficheiro_bin);
-        munmap(ddr_map, bytes_por_buffer * 2);
+        munmap(ddr_map, bytes_por_buffer * BUFFERS_PING_PONG);
         munmap(ctrl_map, 4096);
         close(mem_fd);
         return -1;
@@ -1711,7 +1720,7 @@ int main(int argc, char *argv[]) {
     }
 
     fclose(ficheiro_bin);
-    munmap(ddr_map, bytes_por_buffer * 2);
+    munmap(ddr_map, bytes_por_buffer * BUFFERS_PING_PONG);
     munmap(ctrl_map, 4096);
     close(mem_fd);
     if (integridade.buffers_sobrescritos > 0) {

@@ -89,25 +89,28 @@ passar no T7e.
 ### Antes de sair e ao chegar: levar o firmware novo à BeagleBone
 
 O firmware de out/2026 só foi conferido no simulador. Guarde o de 19/10, que funcionou, **antes** de copiar o novo:
-se o `make` falhar ou o firmware novo se comportar mal, você volta a ele em 2 minutos e o dia não se perde. No
-computador, na raiz do repositório:
+se o `make` falhar ou o firmware novo se comportar mal, você volta a ele em 2 minutos e o dia não se perde. Vai
+**só a pasta `firmware/`** (o repositório e o `.git` não fazem falta lá). No computador, com tudo commitado:
 
 ```fish
-set BBB debian@192.168.7.2          # usuário e IP da placa (pelo USB costuma ser 192.168.7.2)
-set FW caminho/firmware             # onde fica a pasta firmware/ na BeagleBone
-ssh $BBB "cp -a $FW $FW-2026-10-19"  # PLANO B: o firmware de 19/10, já compilado
-git describe --always --dirty > firmware/VERSAO   # a versão que o ler_adc grava em cada captura (lá não há git)
-scp firmware/* $BBB:$FW/            # o firmware novo (só o código; capturas e capturas/ não são tocadas)
-git tag bancada-(date +%F)           # marca o commit que foi para a bancada (depois: git push --tags)
+set -x BBB_IP 192.168.6.2              # o IP da placa (o mesmo do set_date.sh); BBB_USER, se não for debian
+set -x BBB_PASTA caminho/firmware      # onde fica a pasta do firmware na BeagleBone (relativa ao home)
+scripts/enviar_firmware.sh --simular   # confira a versão e a lista de arquivos
+scripts/enviar_firmware.sh             # plano B guardado + firmware novo copiado, numa conexão só
+git tag bancada-(date +%F)             # marca o commit que foi para a bancada (depois: git push --tags)
 ```
 
-O `ler_adc` novo grava essa versão no cabeçalho (v5) e a imprime na largada (`Firmware: v0.5-...`); o `adc_tool.py
-info` a mostra de cada captura. Sem o arquivo `VERSAO`, sai `desconhecida`. Um `-dirty` no fim quer dizer que havia
-mudanças não commitadas: commite antes de copiar, para a versão apontar para um código que existe.
+O script guarda o firmware que estava lá, **só o código e os binários** (não as capturas: o antigo `cp -a` da pasta
+inteira as duplicava), em `caminho/firmware-anteriores/<data>_<versão>/`. Para o firmware de 19/10, que não tinha
+`VERSAO`, o nome termina em `sem-versao`. Ele também escreve em `firmware/VERSAO` o `git describe`, que o `ler_adc`
+novo grava no cabeçalho (v5) e imprime na largada (`Firmware: v0.5-...`); o `adc_tool.py info` a mostra de cada
+captura. Ele recusa enviar com mudanças não commitadas em `firmware/` (a versão apontaria para um código que não
+existe); `--forcar` envia assim mesmo, com `-dirty` na versão.
 
-Na BeagleBone: `cd caminho/firmware && ./setup.sh` e o T0, passo 2. **Plano B**, se o `make` falhar ou o T0
-mostrar algo estranho: guarde a mensagem de erro e a saída do `dmesg`, rode `cd caminho/firmware-2026-10-19 &&
-./setup.sh` e siga o dia com o firmware antigo. O T7 não valida nada com ele (o salto continua), mas o T10 e as
+Na BeagleBone: `cd caminho/firmware && ./setup.sh` (ou `scripts/enviar_firmware.sh --setup` já faz) e o T0, passo 2.
+**Plano B**, se o `make` falhar ou o T0 mostrar algo estranho: guarde a mensagem de erro e a saída do `dmesg`, rode
+`cd caminho/firmware-anteriores/<data>_sem-versao && ./setup.sh` e siga o dia com o firmware antigo (as capturas
+continuam na pasta de sempre; só os comandos rodam da pasta do plano B). O T7 não valida nada com ele (o salto continua), mas o T10 e as
 pendências curtas sim; as ferramentas leem o cabeçalho v3 normalmente.
 
 Leve também: o tom de 10,000 kHz e o **contador de frequência** do osciloscópio (anote a leitura: faltou em 19/10);

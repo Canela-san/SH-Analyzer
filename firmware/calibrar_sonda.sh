@@ -197,7 +197,8 @@ readonly SPB_PADRAO=1048576                # SAMPLES_PER_BUFFER (só para estima
 
 # Layout do cabeçalho .bin v2 a v5 (firmware/ler_adc.c; conferido por tests/test_contrato_firmware.py).
 # A v3 acrescenta a faixa de entrada do ADC por canal (CAB_OFF_FAIXA_ADC); a v4, os contadores de integridade
-# que a PRU mede durante a captura; a v5, a versão do firmware e a taxa medida pelo ARM (este script não as lê).
+# que a PRU mede durante a captura; a v5, a versão do firmware, a taxa medida pelo ARM e o nº de buffers (este
+# script não os lê).
 # A cada versão o CRC (último campo) muda de lugar.
 readonly CAB_TAMANHO=1024
 readonly CAB_OFF_VERSAO=4
@@ -219,7 +220,7 @@ readonly CAB_OFF_SOBRESCRITOS=680   # v4: uint32, buffers reescritos pela PRU an
 readonly CAB_OFF_PREAMBULO=684      # v4: uint32, quadros SPI com ruído no SDO (preâmbulo != 0)
 readonly CAB_OFF_ATRASO_CS=688      # v4: 3 x uint32, esperas do CS no laço da PRU (setup, hold, alto; iterações de 10 ns)
 readonly CAB_OFF_CRC_V4=700
-readonly CAB_OFF_CRC_V5=740
+readonly CAB_OFF_CRC_V5=744
 readonly GRANDEZA_TENSAO=0
 readonly GRANDEZA_CORRENTE=1
 
