@@ -39,7 +39,7 @@ Atualize esta tabela a cada ida ao laboratório: ela é o resumo do avanço para
 | [T4](#t4-frequência-de-amostragem-real) | 🟡 19/10 | Taxa = 200 MHz ÷ ticks confirmada (102,4 kS/s: −64,0 ppm; 110 kS/s: −100,0 ppm; as exatas concordam em 0,02 ppm) | Leitura do contador do osciloscópio (separa gerador e cristal: hoje, −43,2 ppm somados) |
 | [T5](#t5-distorção-e-faixa-dinâmica) | ⏳ | Prévia, das capturas do T4: SINAD 61 dB e ENOB 14,4 bits com o tom em −27,5 dBFS; THD −71,6 dB, limitado pelo gerador | Tudo |
 | [T6](#t6-vários-canais-diafonia-e-atraso) | 🟡 19/10 | Diafonia 1 → 0 de −94,7 dB em 10 kHz; atraso entre canais 9,954 µs (esperado 10,000) | Refazer o ponto de 40 kHz em **20 kHz** (com 2 canais a Nyquist é 25 kHz) |
-| [T7](#t7-integridade-e-limite-de-taxa) | 🟡 19/10, firmware antigo | T7c: salto de +0,697 amostra em **todas** as 57 trocas de buffer (defeito corrigido em out/2026); dentro de cada bloco, tom estável em 0,09 ppm e 0,01 % por 10 min | Recompilar e refazer T7a a T7c com ≥ 3 blocos; T7d; T7e |
+| [T7](#t7-integridade-e-limite-de-taxa) | 🟡 21/10 | O salto de 7 µs nas trocas de buffer sumiu (≤ 0,06 µs). [T7e](#t7e-onde-está-o-limite-de-taxa): as esperas do CS descem ao piso do datasheet (`3,1,3`) sem perda nenhuma; teto de 326 kS/s; **trabalho: `6,2,6` a 250 kS/s**. Achado: degrau de 5 a 13 µs a cada 10,74 s (o rebase do contador), corrigido no firmware | **Validar a correção:** `enviar --setup` e `./varrer_taxa.sh --partes E` (~12 min, com o T7c de 10 min a 250 kS/s); T7d |
 | [T8](#t8-aliasing) a [T11](#t11-ponta-a-ponta) | ⏳ | — | Tudo; o T10 é o objetivo central |
 
 ### Passo a passo da próxima ida: firmware novo e taxa máxima
@@ -1094,6 +1094,40 @@ refazer a partir daí está em [O que refazer com o firmware de out/2026](#o-que
 **Anote.** Para cada taxa: `fs_real`, eventos, tudo o que o `ler_adc` escreveu no terminal (`T7e_saida_ler_adc.txt`) e o `dmesg`; a taxa a partir da qual o resultado deixa de ser confiável.
 
 **Para o relatório.** Figura: `fs_real` × taxa pedida (a "joelheira" no limite); tabela de eventos por taxa e por condição de carga; o período do CS e a anatomia do quadro; a conclusão sobre o gargalo e a taxa que seria necessária (≥ 300 kS/s) para cobrir a banda até 150 kHz.
+
+**Executado em 21/10/2026** (firmware v0.6-11, `firmware/varrer_taxa.sh`, 101 capturas com o tom de 10 kHz em
+±2,56 V; `$DADOS/lab/2026-10-21/T7e_2026-10-21_1731/`):
+
+* **Integridade:** 0 quadros com ruído no SDO e 0 buffers sobrescritos em todas as capturas; amostras atrasadas só
+  acima do teto de cada conjunto.
+* **O teto de cada conjunto** (taxa medida pelo ARM) fica ~0,6 % abaixo do simulador (a escrita na DDR):
+
+| `--atraso-cs` | Teto medido | Simulador |
+|---|---|---|
+| `200,100,100` (padrão) | 142,8 kS/s | 143,3 kS/s |
+| `100,50,50` | 199,8 kS/s | 201 kS/s |
+| `50,25,25` | 250,0 kS/s | 252 kS/s |
+| `20,10,10` | 294,5 kS/s | 296 kS/s |
+| `10,5,5` | 313 kS/s | 315 kS/s |
+| `6,2,6` | 319 kS/s (1 amostra atrasada a 312,5) | 321 kS/s |
+| `3,1,3` (piso do datasheet) | 326 kS/s | 328 kS/s |
+
+* **A qualidade não depende das esperas** (medida antes de 10,7 s, por causa do defeito abaixo): em todos os
+  conjuntos, até `3,1,3` e até 250 kS/s, SINAD de 62,1 a 63,7 dB, THD de −71,6 a −72,0 dB, ruído com o tom de 2,4 a
+  2,9 LSB, amplitude em ±0,02 % e DC em ±0,05 mV; com a entrada em curto, 0,74 a 0,76 LSB (o mesmo do T1); com 2
+  canais a 250 kS/s, diafonia de −94,1 a −95,1 dB (o mesmo de 19/10). As diferenças seguem a hora da captura (a deriva
+  do gerador), não as esperas.
+* **A correção do salto de 7 µs funciona:** nas trocas de buffer, o salto ficou em 0,0003 a 0,06 µs (era 6,97 µs).
+* **Defeito novo, do firmware de out/2026:** a cada 2^31 ciclos da PRU (10,74 s desde o começo da captura), a grade
+  atrasava de 5 a 13 µs de uma vez (~1 quadro mais o que já tinha passado de 2^31), sem amostra atrasada nos
+  contadores. Numa captura de 31 s, isso derrubava o SINAD de 63 para 24 dB. Causa: com a PRU rodando, uma escrita no
+  contador de ciclos o **zera**, e o rebase escrevia `CYCLE − 2^31`. Corrigido em 21/10 (o rebase zera o contador e
+  recua o instante da próxima amostra o mesmo tanto); o simulador passou a zerar o contador em toda escrita, e o
+  `medir_captura.py` reconhece o degrau ("cai em múltiplos de 10,74 s"). **Falta validar no hardware:** a parte E
+  da varredura.
+* **Decisão:** esperas de trabalho **`6,2,6`** (60/20/60 ns, o dobro do piso do datasheet, que passou em tudo);
+  taxa de trabalho **250 kS/s** (o quadro de 3,12 µs deixa 22 % de folga no período de 4 µs; a 312,5 kS/s a folga é de
+  2,7 %, e já houve 1 amostra atrasada).
 
 **Para o relatório (geral do T7).** Tabela taxa × canais × duração × nº de eventos × maior salto. É a evidência do requisito de "não corromper os dados medidos".
 

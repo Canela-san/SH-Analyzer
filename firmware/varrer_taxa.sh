@@ -22,11 +22,15 @@
 #      250 kS/s. Pede para você mudar a bancada; dá para pular.
 #   Todas com 3 blocos (2 trocas de buffer e a taxa medida pelo ARM), menos as da C (1 bloco: só o ruído).
 #   ~100 capturas, ~40 min e ~650 MB (o script confere o espaço antes de começar).
+#   E. (só com --partes E) a validação do firmware corrigido em 21/10/2026: capturas longas, com o tom, que cruzam
+#      2^31 ciclos da PRU (10,74 s) várias vezes -- 35 s com as esperas padrão e com 6,2,6 a 100 kS/s, 35 s com
+#      6,2,6 a 250 kS/s e 10 min com 6,2,6 a 250 kS/s (o T7c). ~12 min e ~330 MB.
 #
 # USO (na BeagleBone, na pasta do firmware; de preferência no terminal do 'scripts/BeagleBone_Setup.sh ssh'):
 #   ./varrer_taxa.sh              # tudo, com as pausas para mudar a bancada
 #   ./varrer_taxa.sh --simular    # só mostra o plano, o tempo e o espaço
-#   ./varrer_taxa.sh --partes AB  # só algumas partes (A, B, D e C, nesta ordem)
+#   ./varrer_taxa.sh --partes AB  # só algumas partes (A, B, D e C, nesta ordem; E só se pedida)
+#   ./varrer_taxa.sh --partes E   # a validação do firmware corrigido (capturas longas)
 #   ./varrer_taxa.sh --continuar  # retoma a última varredura (ou --continuar T7e_...): pula o que já foi feito
 #
 # SE A CONEXÃO CAIR: cada captura e a linha dela no resumo.csv são gravadas assim que ela termina, e a varredura
@@ -59,6 +63,8 @@ TAXAS="125000 160000 200000 250000 312500 400000 500000"                     # t
 SO_A_250K="20,10,20 20,10,5 20,10,3"         # A sozinho, a 250 kS/s (o 20,10,10 já está na varredura da taxa)
 DOIS_CANAIS="200,100,100:100000 20,10,10:200000 20,10,10:250000 6,2,6:250000 3,1,3:250000"
 CURTO_RAPIDO="200,100,100:125000 20,10,10:250000 6,2,6:250000 3,1,3:250000"
+# esperas:taxa:duração em s. Cruzam 2^31 ciclos (10,74 s) 3 vezes (35 s) e 55 vezes (10 min).
+LONGAS="200,100,100:100000:35 6,2,6:100000:35 6,2,6:250000:35 6,2,6:250000:600"
 
 PARTES=ABDC
 SIMULAR=0
@@ -75,7 +81,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-# Uma captura por linha: parte|esperas|taxa|canais|entrada
+# Uma captura por linha: parte|esperas|taxa|canais|entrada|duração em s (vazia = blocos)
 PLANO=()
 tem() { case "$PARTES" in *"$1"*) return 0 ;; esac; return 1; }
 if tem A; then
@@ -92,13 +98,19 @@ if tem C; then
     for cs in $ESPERAS; do PLANO+=("C|$cs|100000|1|curto"); done
     for par in $CURTO_RAPIDO; do PLANO+=("C|${par%%:*}|${par##*:}|1|curto"); done
 fi
+if tem E; then
+    for trio in $LONGAS; do
+        IFS=: read -r cs taxa segundos <<< "$trio"
+        PLANO+=("E|$cs|$taxa|1|tom|$segundos")
+    done
+fi
 [ "${#PLANO[@]}" -gt 0 ] || { echo "Erro: nenhuma parte escolhida (use A, B, D e/ou C)." >&2; exit 1; }
 
 blocos_da_parte() { if [ "$1" = C ]; then echo 1; else echo "$BLOCOS"; fi; }
 nome_da_captura() {   # $1 = item do plano
-    local parte cs taxa canais entrada
-    IFS='|' read -r parte cs taxa canais entrada <<< "$1"
-    echo "${parte}_cs${cs//,/-}_${taxa}_${entrada}$( [ "$canais" = 1 ] || echo _2canais ).bin"
+    local parte cs taxa canais entrada segundos
+    IFS='|' read -r parte cs taxa canais entrada segundos <<< "$1"
+    echo "${parte}_cs${cs//,/-}_${taxa}_${entrada}$( [ "$canais" = 1 ] || echo _2canais )${segundos:+_${segundos}s}.bin"
 }
 
 # --continuar: a mesma pasta; feita = com linha no resumo.csv e com os contadores lidos (uma que o ler_adc não
@@ -136,7 +148,12 @@ TOTAL_S=0
 MB_TOTAL=0
 for item in "${PLANO[@]}"; do
     [ -z "${FEITA[$(nome_da_captura "$item")]:-}" ] || continue
-    IFS='|' read -r parte cs taxa _ _ <<< "$item"
+    IFS='|' read -r parte cs taxa _ _ segundos <<< "$item"
+    if [ -n "$segundos" ]; then
+        TOTAL_S=$((TOTAL_S + segundos + 2))
+        MB_TOTAL=$((MB_TOTAL + taxa * segundos * 2 / 1048576 + 1))
+        continue
+    fi
     b=$(blocos_da_parte "$parte")
     TOTAL_S=$((TOTAL_S + $(duracao_s "$cs" "$taxa" "$b")))
     MB_TOTAL=$((MB_TOTAL + b * AMOSTRAS_POR_BLOCO * 2 / 1048576 + 1))
@@ -157,8 +174,8 @@ if [ "$SIMULAR" -eq 1 ]; then
     printf '\n'
     for item in "${PLANO[@]}"; do
         [ -z "${FEITA[$(nome_da_captura "$item")]:-}" ] || continue
-        IFS='|' read -r parte cs taxa canais entrada <<< "$item"
-        printf '    %s  cs %-12s %7s Hz  canais %-4s %s\n' "$parte" "$cs" "$taxa" "$canais" "$entrada"
+        IFS='|' read -r parte cs taxa canais entrada segundos <<< "$item"
+        printf '    %s  cs %-12s %7s Hz  canais %-4s %s%s\n' "$parte" "$cs" "$taxa" "$canais" "$entrada" "${segundos:+, $segundos s}"
     done
     printf '\n    (--simular: nada foi capturado)\n\n'
     exit 0
@@ -216,7 +233,7 @@ for item in "${PLANO[@]}"; do
     i=$((i + 1))
     nome=$(nome_da_captura "$item")
     [ -z "${FEITA[$nome]:-}" ] || continue
-    IFS='|' read -r parte cs taxa canais entrada <<< "$item"
+    IFS='|' read -r parte cs taxa canais entrada segundos <<< "$item"
     if [ "$parte" != "$parte_anterior" ]; then
         parte_anterior=$parte
         pular_parte=''
@@ -224,6 +241,7 @@ for item in "${PLANO[@]}"; do
         case "$parte" in
             A) printf '\n  %s▸ A: as esperas a 100 kS/s, com o tom%s\n' "$N" "$R" ;;
             B) printf '\n  %s▸ B: a taxa contra as esperas, com o tom%s\n' "$N" "$R" ;;
+            E) printf '\n  %s▸ E: capturas longas, com o tom (cruzam 2^31 ciclos da PRU várias vezes)%s\n' "$N" "$R" ;;
             D) pausa "tom de 10 kHz no canal 1 (como até agora) e a entrada do canal 0 em CURTO." || resposta=$?
                printf '\n  %s▸ D: 2 canais%s\n' "$N" "$R" ;;
             C) pausa "gerador FORA e a entrada do canal 1 em CURTO (o divisor ligado ao retorno)." || resposta=$?
@@ -240,9 +258,10 @@ for item in "${PLANO[@]}"; do
     [ "$canais" = 1 ] || faixa=$FAIXA_2CANAIS
     printf '    %s[%3d/%d]%s cs %-12s %7s Hz %-9s ' "$F" "$i" "${#PLANO[@]}" "$R" "$cs" "$taxa" "$( [ "$canais" = 1 ] || echo '2 canais')"
     echo "== [$i/${#PLANO[@]}] $nome" >> "$LOG"
+    if [ -n "$segundos" ]; then tamanho=(--duracao "${segundos}s"); else tamanho=(--blocos "$(blocos_da_parte "$parte")"); fi
     # shellcheck disable=SC2086  # $faixa são duas palavras de propósito
-    saida=$(sudo "$LER_ADC" "$taxa" "$canais" --blocos "$(blocos_da_parte "$parte")" --atraso-cs "$cs" $faixa -o "$PASTA/$nome" \
-                 -t "T7e $parte cs $cs $taxa $entrada" 2>&1 </dev/null)
+    saida=$(sudo "$LER_ADC" "$taxa" "$canais" "${tamanho[@]}" --atraso-cs "$cs" $faixa -o "$PASTA/$nome" \
+                 -t "T7e $parte cs $cs $taxa $entrada${segundos:+ ${segundos}s}" 2>&1 </dev/null)
     codigo=$?
     printf '%s\n' "$saida" >> "$LOG"
 

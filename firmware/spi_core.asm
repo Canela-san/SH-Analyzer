@@ -442,7 +442,6 @@ delay_cs_high_auto2:
     ;         (os três vão para ctrl->amostras_atrasadas/buffers_sobrescritos/quadros_preambulo_ruim
     ;         a cada troca de buffer -- ver memoria_pru.h)
     ;   r9  = atraso CS setup  r10 = atraso CS hold  r11 = atraso CS alto (iterações; 0 = padrão)
-    ;   r12 = 2^31, o passo do rebase do contador de ciclos (ver rebase_contador)
     ;   r5  = os 16 bits lidos no SDO durante o comando (preâmbulo), zerado a cada quadro
     LBBO &r9, r14, 48, 12    ; r9, r10, r11 = ctrl->atraso_cs_setup/hold/alto
     QBNE atraso_setup_ok, r9, 0
@@ -459,8 +458,6 @@ atraso_alto_ok:
     LDI r7, 0
     LDI r8, 0
     SBBO &r6, r14, 36, 12    ; contadores publicados zerados
-    LDI r12.w0, 0x0000
-    LDI r12.w2, 0x8000       ; r12 = 0x80000000
 
     MOV r19, r24
     LDI r15, 0
@@ -628,15 +625,18 @@ continua:
     JMP laco_principal
 
     ; [REBASE SEM PERDA] O contador de ciclos da PRU não dá a volta: trava em 0xFFFFFFFF (~21,47 s a 200 MHz).
-    ; Antes disso, subtrai 2^31 do contador E do instante da próxima amostra: a diferença entre os dois -- que é o
-    ; que a espera usa -- não muda, e a grade de tempo continua exatamente a mesma. Os ciclos que passam entre a
-    ; leitura e a escrita do contador (DELTA, abaixo) são somados de volta; um erro de 1-2 ciclos aqui vale 5-10 ns
-    ; uma vez a cada 10,7 s (o antigo zero na troca de buffer perdia ~7 µs a cada buffer). Roda na folga entre
-    ; amostras (o instante da próxima é r17, que só é deslocado junto com o contador).
+    ; Antes disso, o contador é ZERADO e o instante da próxima amostra recua o mesmo tanto (o valor lido mais os
+    ; ciclos entre a leitura e o zero, DELTA): a diferença entre os dois -- que é o que a espera usa -- não muda,
+    ; e a grade de tempo continua a mesma. Um erro de 1-2 ciclos em DELTA vale 5-10 ns, uma vez a cada 10,7 s.
+    ; [CORRIGIDO em 21/10/2026] Com a PRU rodando, uma escrita no contador o ZERA, qualquer que seja o valor: a
+    ; versão anterior escrevia CYCLE - 2^31 e, na BeagleBone, o contador ia a 0 -- a grade atrasava ~1 quadro mais
+    ; o que já tinha passado de 2^31 (5 a 13 µs) a cada 10,74 s, sem amostra atrasada nos contadores (medido na
+    ; varredura T7e de 21/10). Zerar é o que sempre funcionou (o firmware de 19/10 zerava a cada buffer).
+    ; Roda na folga entre amostras (o instante da próxima é r17, que só é deslocado junto com o contador).
 rebase_contador:
+    LDI r20, 0
     LBBO &r22, r18, 0, 4     ; CYCLE agora
-    SUB r22, r22, r12        ; - 2^31
-    ADD r22, r22, 4          ; DELTA: as 3 instruções até a escrita + a latência da leitura
-    SBBO &r22, r18, 0, 4     ; CYCLE = CYCLE - 2^31 (sem perder os ciclos do meio)
-    SUB r17, r17, r12        ; mesma grade: o instante da próxima amostra anda junto
+    SBBO &r20, r18, 0, 4     ; CYCLE = 0
+    ADD r22, r22, 2          ; DELTA: da leitura até o zero valer (1 a 4 ciclos na PRU de verdade; erro de ±2 = ±10 ns)
+    SUB r17, r17, r22        ; o instante da próxima amostra, no referencial novo
     JMP laco_principal

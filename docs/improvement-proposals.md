@@ -83,7 +83,7 @@ mas a latência real de `LBBO`/`SBBO` e a sintaxe do `clpru` só aparecem na Bea
    cabeçalho: 5` e `Firmware: ...`. O T7a e o T7b também, com ≥ 3 blocos: uma captura de 1 bloco não tem troca;
 2. ≥ 25 s a 40 kS/s (um bloco > 21,5 s, que antes travava o contador) → continuidade OK;
 3. 200 kS/s → o `ler_adc` tem de acusar **amostras atrasadas** e a taxa real medida (~140 kS/s);
-4. se o `DELTA` do rebase (4 ciclos) estiver errado, aparece como salto de poucos ns a cada 10,7 s: invisível na
+4. se o `DELTA` do rebase (2 ciclos) estiver errado, aparece como salto de poucos ns a cada 10,7 s: invisível na
    continuidade (< 0,01 amostra), mas dá para ver comparando o tom ao longo de 10 min.
 
 ### F2 — Medir até onde as esperas do CS podem cair

@@ -368,7 +368,10 @@ LER_ADC_FALSO = r'''#!/bin/bash
 # ler_adc falso: a PRU alcança 200 MHz / (595 + 2 (S + H + A)); acima disso, conta amostras atrasadas.
 taxa=$1; canais=$2; shift 2
 while [ $# -gt 0 ]; do
-    case "$1" in -o) saida=$2; shift ;; --atraso-cs) cs=$2; shift ;; --blocos) blocos=$2; shift ;; esac
+    case "$1" in
+        -o) saida=$2; shift ;; --atraso-cs) cs=$2; shift ;; --blocos) blocos=$2; shift ;;
+        --duracao) duracao=$2; blocos=9; shift ;;
+    esac
     shift
 done
 IFS=, read -r s h a <<< "$cs"
@@ -376,7 +379,7 @@ sleep "${LER_ADC_DEMORA:-0}"
 maximo=$((200000000 / (595 + 2 * (s + h + a))))
 atrasadas=0; real=$taxa
 if [ "$taxa" -gt "$maximo" ]; then atrasadas=123; real=$maximo; fi
-echo "taxa=$taxa canais=$canais blocos=$blocos cs=$cs" > "$saida"
+echo "taxa=$taxa canais=$canais blocos=$blocos cs=$cs${duracao:+ duracao=$duracao}" > "$saida"
 if [ "$blocos" -ge 2 ]; then
     printf 'Taxa real medida pelo ARM: %d Hz (pedida %d Hz, %+.2f %%)\n' "$real" "$taxa" \
         "$(awk -v r="$real" -v t="$taxa" 'BEGIN { print 100 * (r / t - 1) }')"
@@ -487,3 +490,15 @@ def test_varrer_taxa_nao_morre_com_a_queda_da_conexao(varredura):
     assert proc.returncode == 0
     (pasta,) = varredura.pasta.glob("T7e_*")
     assert len(_resumo(pasta)) == 26
+
+
+def test_varrer_taxa_parte_e_valida_o_firmware_com_capturas_longas(varredura):
+    """A parte E (só quando pedida): capturas que cruzam 2^31 ciclos da PRU várias vezes, com --duracao."""
+    r, pasta = varredura("--simular")
+    assert "E " not in r.stdout.replace("partes", "")                    # fora do padrão (ABDC)
+    r, pasta = varredura("--partes", "E")
+    assert r.returncode == 0, r.stdout + r.stderr
+    nomes = [linha["arquivo"] for linha in _resumo(pasta)]
+    assert nomes == ["E_cs200-100-100_100000_tom_35s.bin", "E_cs6-2-6_100000_tom_35s.bin",
+                     "E_cs6-2-6_250000_tom_35s.bin", "E_cs6-2-6_250000_tom_600s.bin"]
+    assert (pasta / nomes[-1]).read_text().split()[-1] == "duracao=600s"

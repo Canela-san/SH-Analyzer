@@ -7,8 +7,10 @@ Para que serve
     sem hardware, a **lógica**: quais palavras de 16 bits seguem pelo MOSI em cada transação SPI (configuração do
     ADS8688), em que ordem, com quantos ciclos de SCLK, e se o laço principal grava amostras.
 
-O contador de ciclos (``0x2200C``) TRAVA em 0xFFFFFFFF, como o da PRU de verdade (não dá a volta), e o instante de
-cada descida do CS fica em ``instantes_cs`` -- dá para conferir a grade de tempo das amostras.
+O contador de ciclos (``0x2200C``) TRAVA em 0xFFFFFFFF, como o da PRU de verdade (não dá a volta), e uma escrita
+nele o ZERA, qualquer que seja o valor escrito, como na BeagleBone com a PRU rodando (medido em 21/10/2026: o firmware
+que escrevia CYCLE - 2^31 atrasava a grade em 5 a 13 µs a cada 10,74 s; até então o simulador gravava o valor e não
+via o defeito). O instante de cada descida do CS fica em ``instantes_cs`` -- dá para conferir a grade de tempo.
 
 O que NÃO garante
     * Temporização real (cada instrução vale 1 ciclo; ``LBBO``/``SBBO`` custam mais na PRU de verdade).
@@ -248,7 +250,7 @@ class PRU:
 
     def escrever_mem(self, endereco: int, valor: int, n: int) -> None:
         if endereco == ENDERECO_CONTADOR_CICLOS:
-            self.base_contador = self.ciclo - (valor & MASCARA32)
+            self.base_contador = self.ciclo           # zera, qualquer que seja o valor (ver o topo do módulo)
             return
         for i in range(n):
             self.memoria[endereco + i] = (valor >> (8 * i)) & 0xFF

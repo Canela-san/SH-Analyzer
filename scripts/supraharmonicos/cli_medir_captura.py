@@ -361,9 +361,42 @@ def _trocas_do_canal(cont: Continuidade | None, ctx: ContextoCaptura, inicio: in
     return comparar_trocas_de_buffer(cont, fs_canal, posicoes)
 
 
-def _dica_troca_de_buffer(cont: Continuidade | None, trocas: TrocasBuffer | None, ctx: ContextoCaptura) -> str:
-    """Quando as trocas de buffer saltam mais que o resto, diz a causa provável (a conhecida, num firmware antigo)."""
-    if cont is None or trocas is None or not trocas.destoam:
+def _degraus_no_rebase_do_contador(cont: Continuidade | None, ctx: ContextoCaptura, inicio: int, fs_canal: float) -> bool:
+    """Os saltos de fase caem todos perto de múltiplos de 2^31 ciclos da PRU (10,74 s a 200 MHz) desde o começo?
+
+    É a marca do rebase do contador do firmware de out/2026 até 21/10/2026: a cada 2^31 ciclos, a grade atrasava
+    5 a 13 µs, sem amostra atrasada nos contadores (na BeagleBone, a escrita no contador o zerava). Perto da troca de
+    buffer de 10,49 s (a 100 kS/s) ele parece um salto na troca; mas o salto de troca aparece em TODA troca, e este
+    só nos múltiplos de 10,74 s."""
+    cab = ctx.cabecalho
+    if cont is None or len(cont.passos_amostras) < 3 or cab is None or cab.versao_cabecalho < 4 or cab.pru_clock_hz <= 0:
+        return False
+    passos = np.asarray(cont.passos_amostras, dtype=np.float64)
+    desvio = np.abs(passos - np.median(passos))
+    marcados = np.flatnonzero(desvio > max(0.05e-6 * fs_canal, 5 * float(np.median(desvio))))
+    if marcados.size == 0:
+        return False
+    periodo = 2**31 / cab.pru_clock_hz
+    segmento = cont.amostras_por_segmento / fs_canal
+    tempos = (max(inicio, 0) + (marcados + 1) * cont.amostras_por_segmento) / fs_canal
+    k = np.round(tempos / periodo)
+    return bool(np.all(k >= 1) and np.all(np.abs(tempos - k * periodo) <= 1.5 * segmento))
+
+
+def _dica_troca_de_buffer(cont: Continuidade | None, trocas: TrocasBuffer | None, ctx: ContextoCaptura,
+                          inicio: int = 0, fs_canal: float = 0.0) -> str:
+    """Quando há salto de fase, diz a causa provável: o rebase do contador a cada 2^31 ciclos (firmware de out/2026
+    até 21/10/2026) ou, nas trocas de buffer, o zero do contador do firmware anterior a out/2026."""
+    if cont is None:
+        return ""
+    # Sempre: a 50 kS/s o degrau (8,8 µs = 0,44 amostra) passa no limite de 0,5 da continuidade e só uma das trocas o
+    # pega, então nem a continuidade nem as trocas o acusariam.
+    if fs_canal > 0 and _degraus_no_rebase_do_contador(cont, ctx, inicio, fs_canal):
+        return ("  -> o salto não é da troca de buffer: cai em múltiplos de 10,74 s (2^31 ciclos da PRU) desde o começo "
+                "da captura. É o defeito do rebase do contador do firmware de out/2026 até 21/10/2026 (a grade atrasava "
+                "5 a 13 µs a cada 10,74 s). Recompile o firmware (firmware/setup.sh); nesta captura, meça só até 10,7 s "
+                "(--max-amostras).")
+    if trocas is None or not trocas.destoam:
         return ""
     if ctx.cabecalho is not None and ctx.cabecalho.versao_cabecalho <= 3:
         return ("  -> o salto está nas trocas de buffer da PRU: é o defeito do firmware anterior a out/2026, que zerava "
@@ -592,7 +625,7 @@ def _medir_canal(canal: int, sinal: np.ndarray, corrigido: bool, saturacao: floa
     por_canal = ctx.cabecalho.samples_per_buffer / ctx.num_canais if ctx.cabecalho is not None else 0.0
     linhas = _formatar_canal(canal, unidade, grandeza, basicas, espectro, saturacao, cont, trocas, lsb, fs_canal,
                              ctx.num_canais, por_canal, not args.sem_tom)
-    dica = _dica_troca_de_buffer(cont, trocas, ctx)
+    dica = _dica_troca_de_buffer(cont, trocas, ctx, inicio, fs_canal)
     if dica:
         linhas.append(dica)
     comparacao: dict[str, str] = {}

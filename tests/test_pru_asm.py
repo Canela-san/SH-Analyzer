@@ -184,9 +184,12 @@ def test_grade_de_tempo_continua_na_troca_de_buffer_e_no_comeco():
 
 
 def test_rebase_do_contador_mantem_a_grade_e_evita_a_trava_em_2_elevado_a_32():
-    """O contador da PRU trava em 0xFFFFFFFF (~21,5 s). Simula uma captura já rodando há ~10,7 s: o rebase (−2^31
-    no contador e no alvo) acontece sem mexer no intervalo entre amostras. Antes, um buffer mais longo que 21,5 s
-    (taxa abaixo de ~48,8 kS/s) deixava o contador travar no meio dele."""
+    """O contador da PRU trava em 0xFFFFFFFF (~21,5 s). Simula uma captura já rodando há ~10,7 s: o rebase (o
+    contador zerado e o alvo recuado o mesmo tanto) acontece sem mexer no intervalo entre amostras.
+
+    Com a escrita que ZERA o contador (como na BeagleBone), a versão que escrevia CYCLE - 2^31 falhava aqui: a grade
+    atrasava ~1 quadro mais o que já tinha passado de 2^31, como os degraus de 5 a 13 µs a cada 10,74 s medidos na
+    varredura T7e de 21/10/2026."""
     pru = pru_laco(buffer=1 << 20)
     pru.executar(max_transacoes=CONFIG_1CANAL + 3)
     salto = (1 << 31) - 5_000                                 # o contador e o alvo andam juntos, como no tempo real

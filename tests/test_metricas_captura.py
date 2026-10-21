@@ -350,6 +350,21 @@ class TestCli:
         assert "confira os contadores de integridade" in out                          # versão 4: outra causa
         assert "esta captura não testa a troca" in out
 
+    def test_degrau_a_cada_2_elevado_a_31_ciclos_nao_e_culpa_da_troca_de_buffer(self, cli, tmp_path):
+        """O firmware de out/2026 até 21/10/2026 atrasava a grade 5 a 13 µs a cada 2^31 ciclos (10,74 s), e a 100 kS/s
+        o degrau caía no segmento depois da troca de 10,49 s: o medir_captura o atribuía à troca. Aqui, a 50 kS/s com
+        buffers de 5,24 s, o degrau de 10,74 s cai perto da 2ª troca, mas só ele salta."""
+        fs, n, buffer = 50_000.0, 1 << 20, 1 << 18
+        t = np.arange(n) / fs
+        atraso = np.where(t >= 2**31 / 200e6, 8.8e-6, 0.0)
+        sinal = 2.0 * np.sin(2 * np.pi * 1000.0 * (t - atraso)) + np.random.default_rng(3).normal(0, 5e-4, n)
+        caminho = tmp_path / "rebase.bin"
+        escrever_bin(caminho, [sinal], canais=(1,), grandezas=(0,), sondas=("",), fs_total=int(fs), versao=5,
+                     amostras_por_buffer=buffer)
+        rc, out, err = cli(main, caminho, "--freq", "1000")
+        assert rc == 0, err
+        assert "2^31 ciclos da PRU" in out and "confira os contadores de integridade" not in out
+
     def test_pula_o_transitorio_de_troca_de_faixa_por_padrao(self, cli, tmp_path):
         """F9(b): o medir_captura começa depois de 200 µs; --inicio 0 mede desde a 1ª amostra, e avisa."""
         from test_canais_e_amostras import transitorio_de_troca_de_faixa

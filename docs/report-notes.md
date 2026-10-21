@@ -4,7 +4,7 @@
 >
 > **Grau de confiança.** O que está sem marca vem do código, dos testes ou dos dados medidos e pode ser citado. O que tem ⚠️ depende da sua memória e precisa ser conferido. Os `[ ]` são imagens ou dados que ainda faltam.
 >
-> **Última atualização:** 20/10/2026. Cobre de jul/2026 (início do Assembly) até os resultados de bancada de 19/10 (Marcos 12 e 14) e a revisão do firmware (Marco 13). Os achados de engenharia que não são matéria de relatório (robustez, higiene de código, organização do repositório) estão em [`improvement-proposals.md`](improvement-proposals.md).
+> **Última atualização:** 21/10/2026. Cobre de jul/2026 (início do Assembly) até os resultados de bancada de 19/10 (Marcos 12 e 14), a revisão do firmware (Marco 13) e a varredura das esperas do CS e da taxa de 21/10 (Marco 15). Os achados de engenharia que não são matéria de relatório (robustez, higiene de código, organização do repositório) estão em [`improvement-proposals.md`](improvement-proposals.md).
 
 ---
 
@@ -16,7 +16,7 @@
 | **Montar a apresentação quinzenal** | A [seção 7](#7-apresentação-quinzenal-ao-orientador) (modelo de slides e registro por quinzena) e a tabela [Estado da campanha](lab-procedure.md#estado-da-campanha) do roteiro |
 | **Uma apresentação longa (1 hora)** | A [seção 5](#5-estrutura-sugerida-para-uma-apresentação-longa-1-hora) |
 | **Retomar o contexto** | A linha do tempo ([seção 2](#2-linha-do-tempo-cronológica)), uma vez, de ponta a ponta; a [seção 3](#3-síntese-por-marco-revisão-rápida-antes-da-apresentação) é a versão de uma linha por marco |
-| **Saber o que falta** | O [Marco 15](#marco-15--trabalho-pendente) e a [seção 4](#4-checklist-consolidado-de-capturas-de-tela-e-imagens) |
+| **Saber o que falta** | O [Marco 16](#marco-16--trabalho-pendente) e a [seção 4](#4-checklist-consolidado-de-capturas-de-tela-e-imagens) |
 
 As datas dos marcos saem do `git log` (`git log --date=short --pretty='%ad %s'`). Preencha os ⚠️ com a sua memória e marque os `[ ]` à medida que gerar cada imagem.
 
@@ -39,7 +39,7 @@ As datas dos marcos saem do `git log` (`git log --date=short --pretty='%ad %s'`)
   - **Análise:** `adc_tool.py` faz FFT ciclo-sincronizada, Welch, bandas, picos e exporta HDF5. `medir_captura.py` calcula as métricas de bancada. `gerar_perfil_sonda.py` corrige a resposta em frequência da cadeia.
   - **Bancada (19/10/2026), primeiros resultados quantitativos:** escala do ADC nas três faixas, ruído, razão do divisor, taxa de amostragem, diafonia e atraso entre canais, estabilidade em 10 min e a resposta em frequência da cadeia de tensão (−3 dB em 17,3 kHz). Ficou medido também o defeito de 6,97 µs a cada bloco do firmware antigo.
   - **Software:** pacote Python com ~680 testes automáticos e integração contínua.
-  - **Falta:** a sonda de corrente (T10), o limite de taxa (T7e), distorção, *aliasing*, os ensaios ponta a ponta e a validação em hardware do firmware revisado (Marco 15).
+  - **Falta:** a sonda de corrente (T10), o limite de taxa (T7e), distorção, *aliasing*, os ensaios ponta a ponta e a validação em hardware do firmware revisado (Marco 16).
 
 ### 1.1 Ponte com o Relatório Parcial
 
@@ -467,7 +467,7 @@ proposital acima da Nyquist efetiva de um canal) e o round-trip
 resolução espectral (exemplo: 15.321,3 Hz injetado → 15.321,37 Hz
 encontrado por `--picos`). Essa validação confirma a correção
 matemática/numérica da implementação — não ainda a fidelidade do hardware
-de aquisição sobre um sinal real: o plano de testes está no Marco 11, as medições nos Marcos 12 e 14 e o que falta no Marco 15.
+de aquisição sobre um sinal real: o plano de testes está no Marco 11, as medições nos Marcos 12 e 14 e o que falta no Marco 16.
 
 **Relevância para o relatório e a apresentação:** este é, dos marcos de
 software, o mais diretamente ligado à pergunta de pesquisa do projeto. O
@@ -1051,12 +1051,25 @@ estas ferramentas.
 - [ ] Figura: o salto de fase ao longo do T7c (um ponto por troca de buffer: 57 pontos em 0,697).
 - [ ] ⚠️ **Confirme com você mesmo:** o que estava ligado ao canal 2 no T6b (ele leu 0,48 % acima do canal 1) e aos canais 3 a 7 no teste de 8 canais.
 
-### Marco 15 — Trabalho Pendente
+### Marco 15 — Esperas do CS e Taxa Máxima (T7e, 21/10/2026)
+
+**O que foi feito:** com o firmware revisado (Marco 13) compilado na BeagleBone, um script (`firmware/varrer_taxa.sh`) fez o T7e inteiro sem decisões no meio: 101 capturas com o tom de 10 kHz em ±2,56 V. Ele variou as esperas do CS do padrão (2/1/1 µs) ao piso do datasheet (30/10/30 ns) em 14 passos, e cada espera sozinha; a taxa de 125 a 500 kS/s para sete conjuntos; 2 canais; e a entrada em curto. Os dados estão em `$DADOS/lab/2026-10-21/T7e_2026-10-21_1731/`, e o detalhe, no parágrafo "Executado em 21/10/2026" do [T7e no roteiro](lab-procedure.md#t7e-onde-está-o-limite-de-taxa).
+
+**Resultados:**
+
+1. **As esperas do CS não limitam a qualidade.** Até o piso do datasheet e até 250 kS/s, todos os conjuntos dão o mesmo resultado: SINAD de 62,1 a 63,7 dB, THD de −72 dB, ruído em curto de 0,74 a 0,76 LSB, diafonia de −94 a −95 dB e nenhum quadro com ruído no SDO. São os números do padrão e de 19/10.
+2. **O teto sobe de 143 para 326 kS/s** (com o piso do datasheet), ~0,6 % abaixo da contagem do simulador (a escrita na DDR). Esperas de trabalho: `6,2,6` (o dobro do piso). Taxa de trabalho: **250 kS/s**, com 22 % de folga no quadro. Com 1 canal, a banda medida passa de 45 kHz para 112 kHz (0,9 × Nyquist).
+3. **A correção do salto de 7 µs (Marco 13) funcionou:** nas trocas de buffer, o salto ficou abaixo de 0,06 µs.
+4. **Um defeito novo, achado e corrigido.** Numa captura de 31 s, o SINAD caía de 63 para 24 dB. Os degraus de fase, de 5 a 13 µs, caíam sempre no mesmo **instante** (10,737 s e 21,47 s desde o começo), em todas as taxas, e não na mesma amostra: 10,737 s são 2^31 ciclos da PRU, o ponto em que o firmware faz o rebase do contador de ciclos. O tamanho de cada degrau bateu com a hipótese de que, com a PRU rodando, escrever no contador o **zera** (previsto 12,74 µs, medido 12,77 µs, a 125 kS/s). O rebase escrevia `CYCLE − 2^31`; agora ele zera o contador e recua o instante da próxima amostra o mesmo tanto. O simulador assumia que a escrita gravava o valor (por isso o defeito passou); ele passou a zerar o contador, e o teste do rebase pega a versão antiga (salto de 4 385 ciclos). Os contadores de integridade não o viam: nenhuma amostra saía atrasada, a grade é que andava.
+
+**Relevância para o relatório:** é o resultado que mais muda o instrumento: a taxa e a banda mais que dobram, sem perda nenhuma de qualidade, e o limite passa a ser o datasheet do ADC e o SPI em software, não as esperas calibradas na época dos jumpers longos. O defeito do contador é um bom exemplo do ciclo sintoma → ferramenta → hipótese → teste: o sintoma (o SINAD) parecia vir das esperas ou das trocas de buffer, e foi a posição dos degraus no tempo que apontou o contador.
+
+### Marco 16 — Trabalho Pendente
 
 Em ordem de prioridade, a mesma da tabela [Estado da campanha](lab-procedure.md#estado-da-campanha) do roteiro:
 
-1. **Validar no hardware a revisão do firmware (Marco 13).** Recompilar (`./setup.sh`) e refazer o T7a, o T7b e o T7c com pelo menos 3 blocos: o salto nas trocas de buffer tem de cair para os milésimos de amostra. Fazer também uma captura de mais de 22 s abaixo de 48,8 kS/s e conferir a linha `Integridade:` do `ler_adc`.
-2. **Limite de taxa (T7e).** Medir a taxa real contra a pedida, o período do CS no osciloscópio e quanto as esperas do CS podem cair (método 4). Só reduzi-las levaria o teto de ~140 para ~330 kS/s no papel, o necessário para cobrir mais da banda de supraharmônicos. **A taxa decidida aqui define o que refazer** (T1, T3, T4, T6 e todo o resto na taxa nova, se ela passar de ~200 kS/s): a tabela está no roteiro, em [O que refazer com o firmware de out/2026](lab-procedure.md#o-que-refazer-com-o-firmware-de-out2026).
+1. **Validar no hardware a correção do rebase do contador (Marco 15).** `scripts/BeagleBone_Setup.sh enviar --setup` e `./varrer_taxa.sh --partes E` (~12 min): capturas de 35 s e de 10 min (o T7c, com `6,2,6` a 250 kS/s) que cruzam 2^31 ciclos várias vezes, sem degrau. Depois, tornar `6,2,6` o padrão do firmware.
+2. **Refazer na taxa de trabalho (250 kS/s)** o que depende da banda: T1, T3 (inteiro, com `--repeticoes 3`), T4 e T6, como manda a tabela [O que refazer com o firmware de out/2026](lab-procedure.md#o-que-refazer-com-o-firmware-de-out2026). O teto (326 kS/s) e a escolha (`6,2,6` a 250 kS/s) estão no Marco 15; falta fotografar o CS no osciloscópio (a anatomia do quadro).
 3. **Calibração da sonda de corrente (T10)**, o objetivo central, **depois** do T7e: o perfil vale até 0,9 × Nyquist da taxa em que é medido. O fluxo já rodou com hardware real na cadeia de tensão (Marco 12); falta o SCT013 e a validação em frequências que não entraram no perfil (*hold-out*). A sensibilidade de 60 µV/A sobre o resistor de carga é o maior risco (roteiro, fato 5).
 4. **Completar a caracterização:**
    * o contador de frequência no T4;
@@ -1151,7 +1164,7 @@ Comece pelo resultado e use a cronologia para explicar o caminho até ele. Numa 
    * a sensibilidade do canal de corrente;
    * a meta de taxa revista;
    * a correção dinâmica da taxa trocada por métodos off-line (seção 1.1).
-6. **Próximos passos (5 min):** o Marco 15.
+6. **Próximos passos (5 min):** o Marco 16.
 7. **Perguntas (5 min).**
 
 Os Marcos 8 a 10 (formato da captura, sondas, qualidade de software) valem um slide cada; se faltar tempo, são os primeiros a ir para os slides de apoio.
@@ -1172,7 +1185,7 @@ Sugestão: manter os capítulos do relatório parcial, para que o leitor da FAPE
 | **Software de análise e método de validação** | Só o necessário para entender os resultados: `medir_captura.py` (o que mede e com que limites), a correção por perfil e a validação sintética (auditoria, testes, contrato C↔Python) | Marcos 5, 7, 9, 10 e 11 |
 | **Resultados** | Uma seção por grupo de testes: (1) caracterização do ADC (T0, T1, T2; T5 quando houver); (2) taxa de amostragem e integridade (T4, T7, o defeito e a correção; T7e quando houver); (3) multiplexação (T6); (4) resposta em frequência da cadeia de tensão (T3); (5) sonda de corrente (T10); (6) supraharmônicos medidos (T9, T11) | Marcos 12 e 14; roteiro, parágrafos "Executado em" |
 | **Discussão e limitações** | A lista abaixo | — |
-| **Conclusões e trabalhos futuros** | O que o instrumento mede hoje, e com que exatidão. Futuro: esperas do CS reduzidas (~330 kS/s no papel), anti-aliasing externo, ganho antes do ADC no canal de corrente, medição de fase | Marco 15; `improvement-proposals.md` |
+| **Conclusões e trabalhos futuros** | O que o instrumento mede hoje, e com que exatidão. Futuro: esperas do CS reduzidas (~330 kS/s no papel), anti-aliasing externo, ganho antes do ADC no canal de corrente, medição de fase | Marco 16; `improvement-proposals.md` |
 | **Referências** | As do relatório parcial ([1] a [11]), mais: a ABNT NBR IEC 61000-4-30 (2023, a edição brasileira da IEC 61000-4-30) e o PRODIST, Módulo 8, da ANEEL (a regulação brasileira de qualidade de energia; confira as revisões vigentes); a IEC 61000-4-7 (harmônicos e bandas de 2 a 9 kHz); Welch (1967), sobre o método; Harris (1978), sobre janelas; IEEE Std 1241 (teste de ADCs: SINAD, ENOB) e IEEE Std 1057 (ajuste de senoide, usado com o `.m` do osciloscópio); o datasheet SBAS582C do ADS8688 e o *AM335x PRU-ICSS Reference Guide*, nas seções citadas | — |
 
 **Limitações a declarar** (a explicitação dos limites é parte do rigor do relatório):
