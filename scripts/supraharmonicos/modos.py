@@ -35,6 +35,7 @@ from .amostras import (
     carregar_amostras,
     converter_para_tensao,
     detectar_tipo_arquivo,
+    detectar_transitorio_inicial,
     selecionar_intervalo,
 )
 from .bandas_iec import (
@@ -46,14 +47,12 @@ from .bandas_iec import (
 )
 from .canais import alinhar_ao_ciclo, desintercalar
 from .constantes import (
-    GRANDEZA_CORRENTE,
-    GRANDEZA_TEMPERATURA,
     JANELA_PADRAO_FFT,
     JANELA_PADRAO_WELCH,
     NOMES_GRANDEZA,
     UNIDADE_GRANDEZA,
 )
-from .contexto import ContextoCaptura
+from .contexto import ContextoCaptura, aplicar_correcao_sondas
 from .conversao import converter_arquivo
 from .erros import ErroSHAN, ErroUso
 from .espectro import (
@@ -72,11 +71,6 @@ from .filtros import aplicar_filtro_digital, validar_corte_filtro
 from .fundamental import cruzamentos_da_fundamental, recortar_ciclos_inteiros
 from .harmonicos import calcular_harmonicos
 from .hdf5 import exportar_hdf5
-from .sonda import (
-    aplicar_correcao_sonda,
-    conferir_calibracao_perfil,
-    resolver_perfil_canal,
-)
 
 log = logging.getLogger(__name__)
 
@@ -110,6 +104,7 @@ def executar_exportacao_hdf5(args: argparse.Namespace, ctx: ContextoCaptura) -> 
         args.inicio, args.fim, args.tamanho_chunk,
         grandeza_por_canal=[ctx.grandeza_do_canal(c) for c in ctx.canais],
         sonda_id_por_canal=[ctx.sonda_id_do_canal(c) for c in ctx.canais],
+        versao_codigo=_versao_do_codigo(),
     )
     extra_tensao = " + tensao_v calibrada" if args.incluir_tensao else ""
     log.info(
@@ -277,13 +272,24 @@ def _rotulo_espectro(args: argparse.Namespace, grandeza_por_canal: dict[int, int
 
 
 def _resolver_frequencia(args: argparse.Namespace, ctx: ContextoCaptura) -> float:
-    """-f/--frequencia: explícita (CLI) > cabeçalho da captura > obrigatória."""
+    """-f/--frequencia: explícita (CLI) > a taxa que a PRU gera (clock ÷ ticks do cabeçalho; --fs-pedida pula) >
+    a pedida (frequencia_hz do cabeçalho) > obrigatória."""
     if args.frequencia is not None:
         return args.frequencia
-    if ctx.cabecalho is not None and ctx.cabecalho.frequencia_hz > 0:
-        frequencia_total = float(ctx.cabecalho.frequencia_hz)
-        log.info(f"usando a frequência: {frequencia_total:g} Hz")
-        return frequencia_total
+    cab = ctx.cabecalho
+    if cab is not None and cab.frequencia_hz > 0:
+        pedida, gerada = float(cab.frequencia_hz), cab.frequencia_pru_hz
+        if gerada is None or gerada == pedida:
+            log.info(f"usando a frequência: {pedida:g} Hz")
+            return pedida
+        ppm = (gerada / pedida - 1) * 1e6
+        if args.fs_pedida:
+            log.info(f"usando a frequência: {pedida:g} Hz (a pedida, por --fs-pedida; a PRU gera {gerada:.2f} Hz, "
+                     f"{ppm:+.1f} ppm)")
+            return pedida
+        log.info(f"usando a frequência: {gerada:.2f} Hz (a que a PRU gera, clock ÷ {cab.sample_period_ticks} ticks; "
+                 f"a pedida era {pedida:g} Hz, {ppm:+.1f} ppm; --fs-pedida usa a pedida)")
+        return gerada
     raise ErroUso(
         "-f/--frequencia é obrigatório no modo de plotagem (nenhum "
         "cabeçalho com essa informação foi encontrado em 'arquivo')."
@@ -392,6 +398,7 @@ def _carregar_sinal(args: argparse.Namespace, ctx: ContextoCaptura) -> SinalCarr
     por_canal_bruto = desintercalar(bruto, ctx.canais, ctx.canais_exibir)
     por_canal_tensao: dict[int, np.ndarray] = {}
     for canal in ctx.canais_exibir:
+        _avisar_transitorio(canal, por_canal_bruto[canal], idx_inicio, ctx.num_canais)
         idx = ctx.indice_no_ciclo(canal)
         por_canal_tensao[canal] = converter_para_tensao(
             por_canal_bruto[canal], ctx.faixas[idx], ctx.ganhos[idx], args.formato, ctx.offsets[idx]
@@ -399,54 +406,15 @@ def _carregar_sinal(args: argparse.Namespace, ctx: ContextoCaptura) -> SinalCarr
     return SinalCarregado(por_canal_tensao, idx_inicio, idx_fim, total, tipo_arquivo)
 
 
-def aplicar_correcao_sondas(args: argparse.Namespace, ctx: ContextoCaptura,
-                            por_canal_tensao: dict[int, np.ndarray],
-                            fs_efetiva: float) -> dict[int, int]:
-    """Correção dependente de frequência, canal a canal (modifica 'por_canal_tensao').
-
-    Aplicada ANTES do filtro Butterworth opcional do usuário e de qualquer
-    análise espectral, para que --fft/--welch/--picos/plot já operem sobre o
-    sinal corrigido (ver sonda.aplicar_correcao_sonda). Devolve a grandeza de
-    cada canal exibido (o gráfico usa para rotular os eixos)."""
-    grandeza_por_canal_exibir = {canal: ctx.grandeza_do_canal(canal) for canal in ctx.canais_exibir}
-    for canal in ctx.canais_exibir:
-        grandeza = grandeza_por_canal_exibir[canal]
-        sonda_id = ctx.sonda_id_do_canal(canal)
-        # Uma sonda REGISTRADA (id no cabeçalho ou --sonda-perfil) vale para
-        # qualquer grandeza de frequência (corrente, e também tensão -- ex.:
-        # divisor/ponta com banda limitada). Corrente SEM sonda só avisa.
-        sonda_registrada = bool(sonda_id) or canal in ctx.overrides_perfil
-        if grandeza == GRANDEZA_TEMPERATURA:
-            if sonda_registrada:
-                log.warning(
-                    f"canal {canal} é de temperatura -- a sonda "
-                    f"registrada ('{sonda_id or ctx.overrides_perfil[canal]}') "
-                    f"não é aplicada (correção por frequência não se aplica "
-                    f"a temperatura; perfis 'polinomio'/'tabela' ainda não "
-                    f"existem)."
-                )
-            continue
-        if grandeza != GRANDEZA_CORRENTE and not sonda_registrada:
-            continue
-        prefixo = f"  Canal {canal}: " if ctx.num_canais > 1 else "  "
-        if args.sem_correcao_sonda:
-            log.info(f"{prefixo}--sem-correcao-sonda ativo -- usando só --ganho escalar (sem correção por frequência).")
-            continue
-        perfil = resolver_perfil_canal(canal, sonda_id, ctx.overrides_perfil, ctx.sondas_dir)
-        if perfil is None:
-            log.warning(
-                f"canal {canal} é de corrente mas não tem sonda/perfil resolvido -- "
-                f"usando só --ganho escalar (sem correção por frequência). "
-                f"Registre a sonda na captura (--sonda em ler_adc) ou use "
-                f"--sonda-perfil {canal}:ARQUIVO."
-            )
-            continue
-        idx_canal = ctx.indice_no_ciclo(canal)
-        conferir_calibracao_perfil(perfil, canal, args.formato, ctx.faixas[idx_canal], ctx.ganhos[idx_canal],
-                                   faixa_confiavel=ctx.faixas_confiaveis[idx_canal])
-        por_canal_tensao[canal] = aplicar_correcao_sonda(por_canal_tensao[canal], fs_efetiva, perfil)
-        log.info(f"{prefixo}correção de sonda aplicada (perfil '{perfil.id}', {perfil.caminho})")
-    return grandeza_por_canal_exibir
+def _avisar_transitorio(canal: int, codigos: np.ndarray, idx_inicio: int, num_canais: int) -> None:
+    """Avisa (sem descartar nada: o adc_tool também converte) quando o começo do trecho foge do resto -- o transitório
+    de uma troca de faixa do ADC (F9), que infla DC, RMS e ruído. O ``medir_captura`` já pula esse começo sozinho."""
+    n, desvio = detectar_transitorio_inicial(codigos)
+    if n:
+        sugestao = alinhar_ao_ciclo(idx_inicio + num_canais * max(100, 2 * n), num_canais)
+        log.warning(f"canal {canal}: as {n} primeiras amostras do trecho fogem do resto, até {desvio:.0f} LSB -- é o "
+                    f"jeito do transitório de uma troca de faixa do ADC. Para medir DC, RMS ou ruído, comece depois "
+                    f"dele: --inicio {sugestao}.")
 
 
 def _aplicar_filtros_usuario(args: argparse.Namespace, ctx: ContextoCaptura,
@@ -723,6 +691,10 @@ def montar_metadados(args: argparse.Namespace, ctx: ContextoCaptura, sinal: Sina
             "descricao": cab.descricao if cab else "", "versao_cabecalho": cab.versao_cabecalho if cab else None,
             "timestamp_unix": cab.timestamp_unix if cab else None, "canais": ctx.canais,
             "frequencia_total_hz": frequencia_total, "frequencia_por_canal_hz": fs_efetiva,
+            "frequencia_pedida_hz": cab.frequencia_hz if cab else None,
+            "frequencia_pru_hz": cab.frequencia_pru_hz if cab else None,
+            "origem_da_frequencia": ("-f" if args.frequencia is not None else "pedida (--fs-pedida)" if args.fs_pedida
+                                     else "PRU (clock ÷ ticks)" if cab and cab.frequencia_pru_hz else "pedida"),
             "integridade": cab.problemas_integridade if cab else None,
         },
         "trecho": {"inicio_amostra_bruta": sinal.idx_inicio, "fim_amostra_bruta": sinal.idx_fim,

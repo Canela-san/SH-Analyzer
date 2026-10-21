@@ -187,7 +187,7 @@ def test_grafico_de_eixo_unico_com_fft_e_welch(cli, tmp_path, canais, extra):
 
 def test_grandeza_por_flag_vence_o_cabecalho(cli, ambiente):
     """O cabeçalho diz corrente com sonda no canal 1; --grandeza 1:temperatura manda, e temperatura não se corrige
-    em frequência (com tensão a sonda REGISTRADA ainda seria aplicada -- ver modos.aplicar_correcao_sondas)."""
+    em frequência (com tensão a sonda REGISTRADA ainda seria aplicada -- ver contexto.aplicar_correcao_sondas)."""
     rc, out, err = cli(main, ambiente / "ok.bin", "--grandeza", "1:temperatura", "--ganho", "1,10", "--sondas-dir",
                        ambiente / "sondas", "--welch", "--fim", "20000", "-o", ambiente / "g3.png")
     assert rc == 0, err
@@ -205,3 +205,32 @@ def test_grandeza_por_flag_vence_o_cabecalho(cli, ambiente):
 def test_grandeza_e_sonda_perfil_invalidos_dao_erro_claro(cli, ambiente, flag, valor, trecho):
     rc, _, err = cli(main, ambiente / "ok.bin", flag, valor, "--welch", "-o", ambiente / "g4.png")
     assert rc == 1 and trecho in err, err
+
+
+def test_avisa_o_transitorio_de_troca_de_faixa_sem_descartar_nada(cli, tmp_path):
+    """F9(b): o adc_tool (que também converte) não pula amostras sozinho; só avisa e diz de onde começar."""
+    from capturas_sinteticas import montar_cabecalho
+    from test_canais_e_amostras import transitorio_de_troca_de_faixa
+    codigos = transitorio_de_troca_de_faixa(n=1 << 15)
+    caminho = tmp_path / "troca_de_faixa.bin"
+    caminho.write_bytes(montar_cabecalho(len(codigos), (1,), (0,), ("",), 100_000, versao=3) + codigos.tobytes())
+    rc, out, err = cli(main, caminho, "--sem-grafico")
+    assert rc == 0, err
+    assert "fogem do resto" in err and "--inicio 100" in err
+    assert "amostras 0.." in out                            # o trecho começa na 1ª amostra, como sempre
+    rc, _, err = cli(main, caminho, "--sem-grafico", "--inicio", "100")
+    assert rc == 0 and "fogem do resto" not in err
+
+
+def test_frequencia_padrao_e_a_que_a_pru_gera(cli, tmp_path):
+    """P4: o adc_tool analisa com clock ÷ ticks; --fs-pedida volta à taxa pedida."""
+    import numpy as np
+    from capturas_sinteticas import escrever_bin
+    t = np.arange(1 << 16) / (200e6 / 1953)
+    caminho = escrever_bin(tmp_path / "f102k.bin", [np.sin(2 * np.pi * 10_000.0 * t)], canais=(1,), grandezas=(0,),
+                           sondas=("",), fs_total=102_400)
+    rc, out, err = cli(main, caminho, "--sem-grafico")
+    assert rc == 0, err
+    assert "usando a frequência: 102406.55 Hz (a que a PRU gera, clock ÷ 1953 ticks" in out
+    rc, out, _ = cli(main, caminho, "--sem-grafico", "--fs-pedida")
+    assert rc == 0 and "usando a frequência: 102400 Hz (a pedida, por --fs-pedida" in out

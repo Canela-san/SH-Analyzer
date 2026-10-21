@@ -79,12 +79,12 @@ Camada = quem pode importar quem (um módulo só importa camadas **menores**).
 | 0 | `erros` | Hierarquia de exceções | `ErroSHAN`, `ErroUso` |
 | 0 | `constantes` | Constantes compartilhadas (inclusive as que espelham o firmware) | `FORMATOS_NUMPY`, `GRANDEZA_*`, `ADS8688_MAX_CANAIS`, defaults de Welch/filtro |
 | 0 | `registro` | Liga o `logging` ao console no formato histórico (stdout/stderr) | `configurar_logging_cli` |
-| 1 | `cabecalho` | Lê/valida o cabeçalho "SHAN" v1 a v4 (magic, CRC-32, campos, faixa do ADC por canal, contadores de integridade, consistência) | `ler_cabecalho`, `CabecalhoArquivo`, `conferir_consistencia_cabecalho` |
-| 1 | `amostras` | Lê `.bin` (memmap) e `.csv`; código → volts | `carregar_amostras_bin`, `converter_para_tensao`, `selecionar_intervalo` |
+| 1 | `cabecalho` | Lê/valida o cabeçalho "SHAN" v1 a v5 (magic, CRC-32, campos, faixa do ADC por canal, contadores de integridade, versão do firmware, taxa medida pelo ARM, consistência); a taxa que a PRU gera (`frequencia_pru_hz` = clock ÷ ticks) | `ler_cabecalho`, `CabecalhoArquivo`, `conferir_consistencia_cabecalho` |
+| 1 | `amostras` | Lê `.bin` (memmap) e `.csv`; código → volts; acha o transitório de uma troca de faixa no começo de um canal | `carregar_amostras_bin`, `converter_para_tensao`, `selecionar_intervalo`, `detectar_transitorio_inicial` |
 | 1 | `canais` | Listas de canais/calibração, desintercalação, offsets, `--faixa` por canal | `analisar_lista_canais`, `desintercalar`, `resolver_faixas`, `resolver_offsets_por_canal` |
 | 1 | `filtros` | Butterworth SOS, fase zero | `aplicar_filtro_digital`, `validar_corte_filtro` |
 | 1 | `fundamental` | Fundamental da rede: cruzamentos por zero (base da `--fft` e das janelas sincronizadas), corte em ciclos inteiros, refino parabólico | `cruzamentos_da_fundamental`, `recortar_ciclos_inteiros`, `refinar_pico_parabolico` |
-| 1 | `sonda` | Perfil de sonda (JSON), interpolação PCHIP, correção em frequência | `PerfilSonda`, `carregar_perfil_sonda`, `resolver_perfil_canal`, `aplicar_correcao_sonda` |
+| 1 | `sonda` | Perfil de sonda (JSON), interpolação PCHIP, correção em frequência, idade do perfil | `PerfilSonda`, `carregar_perfil_sonda`, `resolver_perfil_canal`, `aplicar_correcao_sonda`, `conferir_idade_perfil` |
 | 1 | `plotagem` | Gráficos (único módulo que importa `matplotlib` no topo) | `plotar_multicanal` |
 | 1 | `referencia` | O que foi injetado numa calibração: amplitude com unidade e tipo (`500mVpp`), frequência e o marcador `ref: f=.. amp=..` dos metadados | `analisar_amplitude`, `pico_fisico`, `extrair_referencia`, `formatar_referencia` |
 | 1 | `harmonicos` | Tabela de harmônicos sobre ciclos inteiros: componente e grupo (IEC 61000-4-7), % da fundamental, fase no referencial seno, THD/THDG (só numpy) | `calcular_harmonicos`, `TabelaHarmonicos` |
@@ -94,9 +94,9 @@ Camada = quem pode importar quem (um módulo só importa camadas **menores**).
 | 2 | `exportacao` | Resultados da análise em CSV + JSON de metadados (`--exportar`) e em `.mat` do MATLAB/Octave (`--exportar-mat`; scipy.io só ao usar) | `exportar_csv`, `exportar_mat` |
 | 2 | `conversao` | `.bin` ↔ `.csv` em blocos | `converter_arquivo` |
 | 2 | `hdf5` | `.bin` → `.h5` em blocos (`h5py` importado só ao usar) | `exportar_hdf5` |
-| 2 | `metricas_captura` | Métricas de uma captura, sem I/O: estatística, ruído, tom, THD/SINAD/SNR/ENOB/SFDR, continuidade, diafonia/atraso (FFT única, janela Kaiser β = 14) | `analisar_espectro`, `verificar_continuidade`, `calcular_acoplamento`, `calcular_basicas` |
+| 2 | `metricas_captura` | Métricas de uma captura, sem I/O: estatística, ruído, tom, THD/SINAD/SNR/ENOB/SFDR, continuidade, salto nas trocas de buffer, diafonia/atraso (FFT única, janela Kaiser β = 14) | `analisar_espectro`, `verificar_continuidade`, `comparar_trocas_de_buffer`, `calcular_acoplamento`, `calcular_basicas` |
 | 2 | `compactacao` | Pacote `.zpaq.tar` sem perdas: formato (tar + manifesto JSON + peças zpaq/xz independentes), desentrelaçamento reversível dos canais, compressores em paralelo (cabe na RAM livre), verificação por SHA-256, extração segura | `compactar`, `Pacote`, `descobrir_entradas`, `Desentrelacamento`, `remover_originais` |
-| 2 | `contexto` | "O que esta captura é": cabeçalho + canais + calibração + grandeza/sonda por canal, resolvidos uma vez | `ContextoCaptura`, `resolver_contexto` |
+| 2 | `contexto` | "O que esta captura é": cabeçalho + canais + calibração + grandeza/sonda por canal, resolvidos uma vez; a correção de cada canal pelo perfil da sua sonda (usada pelo `adc_tool` e pelo `medir_captura`) | `ContextoCaptura`, `resolver_contexto`, `aplicar_correcao_sondas` |
 | 3 | `modos` | Os 3 modos do `adc_tool` (plotagem, conversão, HDF5); a plotagem é um pipeline de etapas pequenas (espectros, harmônicos, bandas IEC, espectrograma, exportação, gráficos) | `executar_plotagem`, `executar_conversao`, `executar_exportacao_hdf5`, `montar_metadados` |
 | 3 | `calibracao_sonda` | Medir tons de calibração (Welch localiza, FFT única mede), ganho vs o que foi injetado (amplitude conhecida, osciloscópio, shunt), agregar repetições, resumir a resposta do conjunto | `medir_tom`, `processar_captura`, `agregar_por_frequencia`, `resumir_resposta` |
 | 4 | `escrita_perfil` | Monta o JSON do perfil, grava com segurança (`.tmp` → validação → `.bak` → troca), gráfico de diagnóstico | `montar_perfil_json`, `gravar_perfil_validado` |
@@ -218,8 +218,8 @@ O caminho quente é tudo que toca **todas** as amostras de uma captura (dezenas 
 ## 7. Testes
 
 ```bash
-uv run --extra dev pytest                 # tudo: 733 testes (~1 min 15 s)
-uv run --extra dev pytest -m "not e2e"    # rápido: 606 testes (~20 s) — use no dia a dia
+uv run --extra dev pytest                 # tudo: 762 testes (~1 min 20 s)
+uv run --extra dev pytest -m "not e2e"    # rápido: 635 testes (~30 s) — use no dia a dia
 uv run --extra dev pytest -m e2e          # só ponta a ponta: 127 testes (a maior parte do tempo)
 uv run --extra dev pytest -n0 tests/test_dsp.py::TestFiltros   # um teste só, sem paralelismo (pdb/breakpoint)
 uv run --extra dev pytest --cov=scripts/supraharmonicos --cov-report=term-missing   # cobertura (~90 %)
@@ -237,7 +237,7 @@ Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `c
 | Arquivo | O que garante |
 |---|---|
 | `test_registro_e_erros.py` | formato stdout/stderr do logging; hierarquia de erros |
-| `test_cabecalho.py` | cabeçalho v1 a v4, CRC, magic, faixa do ADC por canal, contadores de integridade, conferência de consistência |
+| `test_cabecalho.py` | cabeçalho v1 a v5, CRC, magic, faixa do ADC por canal, contadores de integridade, versão do firmware e taxa medida, conferência de consistência |
 | `test_canais_e_amostras.py` | listas de canais/calibração, desintercalação, código→volts, leitura de `.bin`/`.csv` |
 | `test_sonda.py` | validação do JSON (NaN, ids inseguros, faixa), interpolação, avisos, correção restaura amplitude |
 | `test_dsp.py` | filtros, fundamental, janelas, FFT/Welch, bandas, picos (com sinais de amplitude conhecida) |
@@ -245,9 +245,9 @@ Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `c
 | `test_calibracao_sonda.py` | `medir_tom` (amplitude exata com o tom em qualquer posição do bin), resolução de canais, agregação, resumo da resposta, CLI do gerador (os quatro modos de referência: `amplitude` por metadados/constante, `osciloscopio`, `externa`, `shunt`) |
 | `test_referencia.py` | amplitude com unidades (pp/pico/rms, prefixos, entradas ambíguas recusadas), frequência, `ref:` dos metadados (ida e volta, texto livre ao redor) |
 | `test_osciloscopio.py` | leitor de `.m`/`.mat`/`.csv` (variáveis, matriz tempo×valor, escalares de taxa, erros que listam o que foi achado) e ajuste de senoide por mínimos quadrados (amplitude, frequência, DC, poucos ciclos) |
-| `test_metricas_captura.py` | `medir_captura`: tom, ruído, THD/SINAD/ENOB/SFDR contra sinais de verdade conhecida, continuidade (amostra removida/duplicada), diafonia/atraso, CLI, CSV, correção de sonda e comparação com instrumento |
+| `test_metricas_captura.py` | `medir_captura`: tom, ruído, THD/SINAD/ENOB/SFDR contra sinais de verdade conhecida, continuidade (amostra removida/duplicada), atraso fixo nas trocas de buffer (1, 2 e 8 canais), transitório do começo, taxa da PRU × pedida, diafonia/atraso, CLI, CSV, correção de sonda e comparação com instrumento |
 | `test_cli_adc_tool.py` | CLI no mesmo processo: códigos de saída 0/1/2, stdout×stderr, arquivos gerados (CSV conferido linha a linha); `--fft` em ciclos inteiros (f0 e harmônicos com amplitude exata); gráfico de eixo único (1 canal e `sobrepostos`); `--grandeza`/`--sonda-perfil` (formato, canal fora da captura) |
-| `test_contrato_firmware.py` | C ↔ Python: constantes, layout do cabeçalho (v4), códigos de faixa do ADC, offsets da memória compartilhada da PRU (inclusive os contadores e os atrasos de CS que o assembly lê/escreve em bloco) e os atrasos padrão iguais no C e no assembly |
+| `test_contrato_firmware.py` | C ↔ Python: constantes, layout do cabeçalho (v5) e a versão do firmware passada pelo `Makefile`, códigos de faixa do ADC, offsets da memória compartilhada da PRU (inclusive os contadores e os atrasos de CS que o assembly lê/escreve em bloco) e os atrasos padrão iguais no C e no assembly |
 | `test_faixa_adc.py` | `--faixa` por canal: cabeçalho (v3+) > padrão, aviso se divergir, amplitude certa em cada faixa, perfil de sonda e `faixa_v_confiavel` |
 | `test_pru_asm.py` (+ `pru_sim.py`) | lógica do `firmware/spi_core.asm` num mini-simulador de PRU: palavras enviadas na configuração (`AUTO_SEQ_EN`, `RANGE_SELn`, `AUTO_RST`), ordem, ciclos de SCLK, laço gravando na DDR, IMEM e alcance dos desvios; a **grade de tempo** das amostras em ciclos (sem salto na troca de buffer nem no rebase do contador, que trava em 2³²; amostra atrasada volta à grade) e os contadores de integridade (atrasadas, buffers sobrescritos, preâmbulo); atrasos de CS configuráveis com o padrão igual ao validado (transação de 1.166 ciclos). Não substitui compilar com `clpru` nem testar no hardware |
 | `test_arquitetura.py` | camadas sem ciclo, sem `print`/`SystemExit` em biblioteca, matplotlib/h5py confinados, entradas finas |
@@ -259,9 +259,9 @@ Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `c
 | `test_scripts_shell.py` | `scripts/set_date.sh` (com `ssh`/`sudo`/`date` falsos: o tempo da senha do sudo é descontado). Marcado `e2e` |
 | `e2e/test_perfil_sonda_e2e.py` | fluxo completo (o perfil base e a correção principal por subprocess nas entradas reais; o resto com `main()` no mesmo processo): calibração → perfil → correção (inclui as 7 correções da auditoria) |
 
-**Testando um script de shell.** `tests/ler_adc_falso.py` imita a linha de comando do `ler_adc` e grava um `.bin` v4 sintético (aceita `--faixa-adc`; `cab_v1`/`cab_v2`/`cab_v3` imitam firmware antigo e `atrasada`/`sobrescrita`/`preambulo` gravam contadores de integridade não nulos); o arquivo `cenario` (uma diretiva por chamada: `ok`, `sat_sonda`, `falha`, `truncar`, `travar`, ...) faz cada captura falhar de um jeito específico. É assim que se testa o tratamento de erros do `calibrar_sonda.sh` sem a BeagleBone.
+**Testando um script de shell.** `tests/ler_adc_falso.py` imita a linha de comando do `ler_adc` e grava um `.bin` v5 sintético (aceita `--faixa-adc`; `cab_v1` a `cab_v4` imitam firmware antigo e `atrasada`/`sobrescrita`/`preambulo` gravam contadores de integridade não nulos); o arquivo `cenario` (uma diretiva por chamada: `ok`, `sat_sonda`, `falha`, `truncar`, `travar`, ...) faz cada captura falhar de um jeito específico. É assim que se testa o tratamento de erros do `calibrar_sonda.sh` sem a BeagleBone.
 
-**Escrevendo um teste novo.** `tests/capturas_sinteticas.py` monta `.bin` v1 a v4 a partir de sinais em Volts (`escrever_bin`; `faixas_adc_total_v=(20.48, 5.12)` dá cabeçalho v3 e codifica cada canal na sua faixa; `versao=4` com `integridade=` e `atrasos_cs=` preenche os campos v4), uma sonda de resposta conhecida (`planta_h`) e pastas de calibração (`criar_pasta_calibracao`). A fixture `cli` (em `conftest.py`) roda `main([...])` no mesmo processo e devolve `(código, stdout, stderr)`. Nenhum teste precisa de hardware.
+**Escrevendo um teste novo.** `tests/capturas_sinteticas.py` monta `.bin` v1 a v5 a partir de sinais em Volts (`escrever_bin`; `faixas_adc_total_v=(20.48, 5.12)` dá cabeçalho v3 e codifica cada canal na sua faixa; `versao=4` com `integridade=` e `atrasos_cs=` preenche os campos v4; `versao=5` com `versao_firmware=` e `taxa_medida_hz=`, os da v5; `amostras_por_buffer=` encolhe o bloco para uma captura curta ter trocas de buffer; os ticks saem de `200 MHz ÷ fs_total`, como no `ler_adc`), uma sonda de resposta conhecida (`planta_h`) e pastas de calibração (`criar_pasta_calibracao`). A fixture `cli` (em `conftest.py`) roda `main([...])` no mesmo processo e devolve `(código, stdout, stderr)`. Nenhum teste precisa de hardware.
 
 **Mudança de comportamento intencional?** Teste que valida comportamento *antigo* deve ser atualizado no mesmo PR, com a razão no commit.
 
@@ -293,7 +293,7 @@ Os testes não precisam de hardware nem de arquivos `.bin` do repositório (`*.b
 
 **Adicionar uma flag ao `adc_tool`.** (1) `cli_adc_tool.montar_parser`: declare a flag; (2) leia-a em `modos.py` (ou em `contexto.resolver_contexto` se for sobre "o que é a captura"); (3) valide cedo — antes de abrir a captura — levantando `ErroSHAN`/`ErroUso`; (4) teste em `test_cli_adc_tool.py`; (5) documente em `docs/project-context.md` (`<pipeline_dsp_python>`).
 
-**Novo tipo de perfil de sonda** (ex.: `polinomio`/`tabela` para temperatura — hoje não implementado). Em `sonda.py`: acrescente o tipo em `TIPOS_PERFIL_SUPORTADOS`, valide os campos em `carregar_perfil_sonda`, trate-o em `PerfilSonda.ganho_em`, e decida em `modos.aplicar_correcao_sondas` a quais grandezas se aplica. Teste em `test_sonda.py`.
+**Novo tipo de perfil de sonda** (ex.: `polinomio`/`tabela` para temperatura — hoje não implementado). Em `sonda.py`: acrescente o tipo em `TIPOS_PERFIL_SUPORTADOS`, valide os campos em `carregar_perfil_sonda`, trate-o em `PerfilSonda.ganho_em`, e decida em `contexto.aplicar_correcao_sondas` a quais grandezas se aplica. Teste em `test_sonda.py`.
 
 **Novo campo no cabeçalho do `.bin`.** Firmware (`ler_adc.c`: struct + `CABECALHO_VERSAO`) → `cabecalho._FORMATO_CABECALHO_Vn` e `_CONTAGENS_...` → `CabecalhoArquivo` → fixture (`montar_cabecalho` em `tests/capturas_sinteticas.py`) → rode `test_contrato_firmware.py`, que aponta qualquer divergência de layout. Leitores **nunca** assumem a versão mais nova: o formato antigo continua suportado.
 

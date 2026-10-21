@@ -9,14 +9,22 @@ canal, grandeza e sonda por canal.
 Camada de aplicação: recebe o ``argparse.Namespace`` produzido por
 ``cli_adc_tool.montar_parser()`` (não importa o parser -- só lê os atributos).
 
+Aqui também mora :func:`aplicar_correcao_sondas`: corrigir cada canal pelo perfil da sua sonda é aplicar o que o
+contexto resolveu (grandeza, sonda, faixa e ganho de cada canal), e o ``adc_tool`` e o ``medir_captura`` a usam
+igual -- sem que o segundo precise importar os modos do primeiro.
+
 Depende de: ``cabecalho``, ``canais``, ``constantes``, ``erros``, ``sonda``.
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime
+import logging
 from dataclasses import dataclass
 from pathlib import Path
+
+import numpy as np
 
 from .cabecalho import (
     CABECALHO_TAMANHO_TOTAL,
@@ -33,13 +41,19 @@ from .canais import (
     resolver_offsets_por_canal,
     validar_subconjunto_canais,
 )
-from .constantes import CANAL_PADRAO, GRANDEZA_NAO_USADA, GRANDEZA_PADRAO
+from .constantes import CANAL_PADRAO, GRANDEZA_CORRENTE, GRANDEZA_NAO_USADA, GRANDEZA_PADRAO, GRANDEZA_TEMPERATURA
 from .erros import ErroSHAN
 from .sonda import (
     SONDAS_DIR_PADRAO,
     analisar_overrides_grandeza,
     analisar_overrides_perfil,
+    aplicar_correcao_sonda,
+    conferir_calibracao_perfil,
+    conferir_idade_perfil,
+    resolver_perfil_canal,
 )
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -188,3 +202,61 @@ def anunciar_cabecalho(ctx: ContextoCaptura, formato: str) -> None:
     conferir_consistencia_cabecalho(
         ctx.cabecalho, ctx.canais, ctx.canais_veio_do_cabecalho, n_amostras_arquivo, formato
     )
+
+
+def aplicar_correcao_sondas(args: argparse.Namespace, ctx: ContextoCaptura,
+                            por_canal_tensao: dict[int, np.ndarray],
+                            fs_efetiva: float) -> dict[int, int]:
+    """Correção dependente de frequência, canal a canal (modifica 'por_canal_tensao').
+
+    Aplicada ANTES do filtro Butterworth opcional do usuário e de qualquer
+    análise espectral, para que --fft/--welch/--picos/plot já operem sobre o
+    sinal corrigido (ver sonda.aplicar_correcao_sonda). Devolve a grandeza de
+    cada canal exibido (o gráfico usa para rotular os eixos)."""
+    grandeza_por_canal_exibir = {canal: ctx.grandeza_do_canal(canal) for canal in ctx.canais_exibir}
+    for canal in ctx.canais_exibir:
+        grandeza = grandeza_por_canal_exibir[canal]
+        sonda_id = ctx.sonda_id_do_canal(canal)
+        # Uma sonda REGISTRADA (id no cabeçalho ou --sonda-perfil) vale para
+        # qualquer grandeza de frequência (corrente, e também tensão -- ex.:
+        # divisor/ponta com banda limitada). Corrente SEM sonda só avisa.
+        sonda_registrada = bool(sonda_id) or canal in ctx.overrides_perfil
+        if grandeza == GRANDEZA_TEMPERATURA:
+            if sonda_registrada:
+                log.warning(
+                    f"canal {canal} é de temperatura -- a sonda "
+                    f"registrada ('{sonda_id or ctx.overrides_perfil[canal]}') "
+                    f"não é aplicada (correção por frequência não se aplica "
+                    f"a temperatura; perfis 'polinomio'/'tabela' ainda não "
+                    f"existem)."
+                )
+            continue
+        if grandeza != GRANDEZA_CORRENTE and not sonda_registrada:
+            continue
+        prefixo = f"  Canal {canal}: " if ctx.num_canais > 1 else "  "
+        if args.sem_correcao_sonda:
+            log.info(f"{prefixo}--sem-correcao-sonda ativo -- usando só --ganho escalar (sem correção por frequência).")
+            continue
+        perfil = resolver_perfil_canal(canal, sonda_id, ctx.overrides_perfil, ctx.sondas_dir)
+        if perfil is None:
+            log.warning(
+                f"canal {canal} é de corrente mas não tem sonda/perfil resolvido -- "
+                f"usando só --ganho escalar (sem correção por frequência). "
+                f"Registre a sonda na captura (--sonda em ler_adc) ou use "
+                f"--sonda-perfil {canal}:ARQUIVO."
+            )
+            continue
+        idx_canal = ctx.indice_no_ciclo(canal)
+        conferir_calibracao_perfil(perfil, canal, args.formato, ctx.faixas[idx_canal], ctx.ganhos[idx_canal],
+                                   faixa_confiavel=ctx.faixas_confiaveis[idx_canal])
+        conferir_idade_perfil(perfil, canal, _data_da_captura(ctx))
+        por_canal_tensao[canal] = aplicar_correcao_sonda(por_canal_tensao[canal], fs_efetiva, perfil)
+        log.info(f"{prefixo}correção de sonda aplicada (perfil '{perfil.id}', {perfil.caminho})")
+    return grandeza_por_canal_exibir
+
+
+def _data_da_captura(ctx: ContextoCaptura) -> datetime.date | None:
+    """Data (UTC) gravada no cabeçalho, para medir a idade do perfil de sonda na hora da captura (S8)."""
+    if ctx.cabecalho is None or ctx.cabecalho.timestamp_unix <= 0:
+        return None
+    return datetime.datetime.fromtimestamp(ctx.cabecalho.timestamp_unix, datetime.timezone.utc).date()

@@ -373,7 +373,7 @@ def processar_captura(caminho: Path, freq_alvo_hz: float, modo_referencia: str,
                        formato: str, faixa_texto: str | None, ganho_texto: str, offset_texto: str | None,
                        tolerancia_pct: float, nome_janela: str, resolucao_hz: float,
                        sobreposicao: float, snr_minimo_db: float = SNR_MINIMO_DB_PADRAO,
-                       frequencia_cli: float | None = None) -> PontoMedido | None:
+                       frequencia_cli: float | None = None, fs_pedida: bool = False) -> PontoMedido | None:
     """Carrega 'caminho', calibra o(s) canal(is) em Volts/Amperes e mede o
     tom em cada um (sonda e, no modo ``shunt``, referência). Devolve None (com
     aviso já impresso) em vez de lançar exceção, para um arquivo ruim não
@@ -443,10 +443,12 @@ def processar_captura(caminho: Path, freq_alvo_hz: float, modo_referencia: str,
         return None
 
     por_canal_bruto = desintercalar(amostras, canais, [c for _, c in papeis])
-    # Frequência TOTAL de amostragem: cabeçalho (sempre, quando existe) >
-    # -f/--frequencia (captura legada sem cabeçalho) > erro claro. Mesma
-    # hierarquia de adc_tool.py.
-    if cabecalho is not None and cabecalho.frequencia_hz > 0:
+    # Frequência TOTAL de amostragem: cabeçalho (sempre, quando existe: a
+    # taxa que a PRU gera, clock ÷ ticks, ou a pedida com fs_pedida) >
+    # -f/--frequencia (captura legada sem cabeçalho) > erro claro.
+    if cabecalho is not None and cabecalho.frequencia_pru_hz is not None and not fs_pedida:
+        fs_total = cabecalho.frequencia_pru_hz
+    elif cabecalho is not None and cabecalho.frequencia_hz > 0:
         fs_total = float(cabecalho.frequencia_hz)
     elif frequencia_cli is not None:
         fs_total = frequencia_cli

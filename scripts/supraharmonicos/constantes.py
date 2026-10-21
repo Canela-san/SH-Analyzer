@@ -94,6 +94,12 @@ FAIXA_LEGADA_V = 20.48
 # Tolerância (V) ao comparar um --faixa digitado com a faixa do cabeçalho.
 TOLERANCIA_FAIXA_V = 0.005
 
+# Transitório depois de trocar a faixa de um canal (F9): nas capturas de 19/10, o começo decai de até ~4600 LSB a menos
+# de 1 LSB em ~80 µs (constante de tempo de ~8 µs no fim; o mesmo TEMPO com 1 e 2 canais: é analógico). 200 µs dá
+# folga de 2x. O medir_captura pula esse tempo por padrão; o adc_tool só avisa (é também conversor, e não descarta
+# dado sem pedir).
+DURACAO_TRANSITORIO_FAIXA_S = 200e-6
+
 ORDEM_FILTRO_MINIMA = 4
 ORDEM_FILTRO_MAXIMA = 8
 ORDEM_FILTRO_PADRAO = 5

@@ -16,6 +16,7 @@ from capturas_sinteticas import (
     SENS_NOMINAL,
     escrever_bin,
     escrever_m_osciloscopio,
+    montar_cabecalho,
     planta_h,
     volts_para_codigos,
 )
@@ -25,7 +26,9 @@ from supraharmonicos.metricas_captura import (
     analisar_espectro,
     calcular_acoplamento,
     calcular_basicas,
+    comparar_trocas_de_buffer,
     fracao_saturada,
+    posicoes_das_trocas,
     projetar_tom,
     verificar_continuidade,
 )
@@ -184,6 +187,68 @@ class TestContinuidade:
         assert c.amostras_por_segmento >= 10 * FS / 50.0
 
 
+def seno_com_atraso_nas_trocas(f, amplitude, atraso_s, a_cada, n=N, fs=FS, primeira=None):
+    """Senoide em que cada troca de buffer (a cada ``a_cada`` amostras, a 1ª em ``primeira``) atrasa o resto da
+    captura de ``atraso_s``: o defeito do firmware antigo (6,97 µs por troca), sem perder nem duplicar amostra."""
+    primeira = a_cada if primeira is None else primeira
+    indices = np.arange(n)
+    trocas_antes = np.where(indices >= primeira, (indices - primeira) // a_cada + 1, 0)
+    return amplitude * np.sin(2 * np.pi * f * (indices / fs - trocas_antes * atraso_s))
+
+
+class TestTrocasDeBuffer:
+    """P6: o salto em cada troca de buffer contra o dos outros segmentos, para pegar um atraso fixo menor que 1 amostra."""
+
+    def test_posicoes_das_trocas_contam_do_inicio_do_trecho(self):
+        assert posicoes_das_trocas(1_048_576, 1, 0, 3_000_000) == [1_048_576, 2_097_152]
+        assert posicoes_das_trocas(1_048_576, 2, 100, 1_100_000) == [524_288 - 100, 1_048_576 - 100]
+        assert posicoes_das_trocas(1_048_576, 1, 1_048_576, 1_048_576) == []           # a troca no começo não é fronteira
+        tres = posicoes_das_trocas(1_048_576, 3, 0, 700_000)                           # 3 canais: a troca cai no meio do ciclo
+        assert tres == pytest.approx([1_048_576 / 3, 2 * 1_048_576 / 3])
+        assert posicoes_das_trocas(0, 1, 0, 10) == []
+
+    @pytest.mark.parametrize("canais", [1, 2, 8])
+    def test_atraso_fixo_a_cada_troca_destoa_mesmo_abaixo_de_meia_amostra(self, rng, canais):
+        fs_canal, a_cada = 100_000.0 / canais, 131_072
+        sinal = seno_com_atraso_nas_trocas(1000.0, 2.0, 6.97e-6, a_cada, fs=fs_canal) + rng.normal(0, 1e-3, N)
+        c = verificar_continuidade(sinal, fs_canal, 1000.0)
+        t = comparar_trocas_de_buffer(c, fs_canal, posicoes_das_trocas(a_cada * canais, canais, 0, N))
+        esperado = 6.97e-6 * fs_canal                                                  # 0,697 / 0,349 / 0,087 amostra
+        assert t.trocas == 7 and t.destoam
+        assert t.salto_mediano_amostras == pytest.approx(esperado, rel=0.02)
+        assert t.salto_tipico_amostras < esperado / 20
+        assert (c.saltos_acima_do_limite == 0) == (esperado < 0.5)                    # o critério antigo só pega 1 canal
+
+    def test_troca_no_meio_do_segmento_mede_o_salto_inteiro(self, rng):
+        primeira = 300_000                                                             # longe de uma fronteira de 65536
+        sinal = seno_com_atraso_nas_trocas(10_000.0, 2.0, 6.97e-6, 1 << 30, primeira=primeira) + rng.normal(0, 1e-3, N)
+        c = verificar_continuidade(sinal, FS, 10_000.0)
+        t = comparar_trocas_de_buffer(c, FS, [float(primeira)])
+        assert t.trocas == 1 and t.destoam
+        assert t.salto_mediano_amostras == pytest.approx(6.97e-6 * FS, rel=0.02)
+
+    def test_captura_saudavel_nao_destoa(self, rng):
+        sinal = seno(10_000.0, 2.0) + rng.normal(0, 1e-3, N)
+        c = verificar_continuidade(sinal, FS, 10_000.0)
+        t = comparar_trocas_de_buffer(c, FS, posicoes_das_trocas(131_072, 1, 0, N))
+        assert t.trocas == 7 and not t.destoam
+        assert t.salto_mediano_amostras < 0.01 and t.salto_tipico_amostras < 0.01
+
+    def test_sem_trocas_no_trecho(self, rng):
+        c = verificar_continuidade(seno(1000.0, 2.0) + rng.normal(0, 1e-3, N), FS, 1000.0)
+        t = comparar_trocas_de_buffer(c, FS, [])
+        assert t.trocas == 0 and not t.destoam and math.isnan(t.salto_mediano_amostras)
+
+    def test_sem_fronteiras_limpas_so_destoa_acima_de_meia_amostra(self, rng):
+        n = 4 * 65_536                                       # 3 fronteiras, 2 delas a menos de 1 segmento de uma troca
+        posicoes = [1.5 * 65_536, 2.5 * 65_536]
+        for atraso, destoa in ((6.97e-6, True), (0.5e-6, False)):                     # 2,8 e 0,2 amostra a 400 kS/s
+            sinal = seno_com_atraso_nas_trocas(1000.0, 2.0, atraso, 65_536, n=n, primeira=int(posicoes[0]))
+            c = verificar_continuidade(sinal + rng.normal(0, 1e-3, n), FS, 1000.0)
+            t = comparar_trocas_de_buffer(c, FS, posicoes)
+            assert t.trocas == 2 and math.isnan(t.salto_tipico_amostras) and t.destoam == destoa
+
+
 class TestAcoplamento:
     def test_projecao_recupera_amplitude_e_fase(self):
         amplitude, fase = projetar_tom(seno(10_000.0, 1.5, fase=0.7), FS, 10_000.0)
@@ -237,6 +302,14 @@ def pasta(tmp_path_factory):
                  fs_total=int(2 * FS))
     escrever_bin(base / "sem_cabecalho.bin", [um[:1 << 18]], canais=(1,), grandezas=(0,), sondas=("",),
                  com_cabecalho=False)
+    # trocas de buffer a cada 262.144 amostras com o defeito do firmware antigo: 6,97 µs = 2,8 amostras a 400 kS/s
+    # (versão 3) e 0,35 amostra, abaixo do limite de 0,5, a 50 kS/s (como 2 canais a 100 kS/s)
+    atrasada = seno_com_atraso_nas_trocas(10_000.0, 2.0, 6.97e-6, 1 << 18) + rng.normal(0, 5e-4, N)
+    escrever_bin(base / "trocas_400k.bin", [atrasada], canais=(1,), grandezas=(0,), sondas=("",), fs_total=int(FS),
+                 versao=3, amostras_por_buffer=1 << 18)
+    lenta = seno_com_atraso_nas_trocas(1000.0, 2.0, 6.97e-6, 1 << 18, fs=50_000.0) + rng.normal(0, 5e-4, N)
+    escrever_bin(base / "trocas_50k.bin", [lenta], canais=(1,), grandezas=(0,), sondas=("",), fs_total=50_000,
+                 versao=4, amostras_por_buffer=1 << 18)
     escrever_bin(base / "ceifado.bin", [np.clip(seno(f0, 0.6 * FAIXA, n=1 << 18), -FAIXA / 2, FAIXA / 2 - 1e-3)], canais=(1,),
                  grandezas=(0,), sondas=("",), fs_total=int(FS))
     return base
@@ -259,6 +332,42 @@ class TestCli:
         assert float(linha["ruido_rms_lsb"]) == pytest.approx(5e-4 / (FAIXA / 65536), rel=0.1)
         assert linha["diafonia_db"] == ""                                  # 1 canal só: não há acoplamento
 
+    def test_salto_nas_trocas_de_buffer_e_acusado_em_us(self, cli, pasta, tmp_path):
+        saida = tmp_path / "trocas.csv"
+        rc, out, err = cli(main, pasta / "trocas_50k.bin", pasta / "trocas_400k.bin", pasta / "um_canal.bin", "--csv", saida)
+        assert rc == 0, err
+        lenta, rapida, limpa = ler_csv(saida)
+        # 50 kS/s: 0,35 amostra passa no limite de 0,5, mas as trocas destoam do resto
+        assert lenta["saltos_acima_do_limite"] == "0" and lenta["trocas_destoam"] == "sim"
+        assert lenta["trocas_buffer"] == "3"
+        assert float(lenta["salto_trocas_us"]) == pytest.approx(6.97, rel=0.02)
+        assert float(lenta["salto_trocas_amostras"]) == pytest.approx(0.3485, rel=0.02)
+        assert float(rapida["salto_max_us"]) == pytest.approx(6.97, rel=0.02) and rapida["trocas_destoam"] == "sim"
+        # a captura limpa tem 1 bloco só (o buffer de 1.048.576 = a captura inteira): diz que não testou a troca
+        assert limpa["trocas_buffer"] == "0" and limpa["trocas_destoam"] == ""
+        assert "SALTO NAS TROCAS DE BUFFER" in out and "DESTOAM" in out
+        assert "contador de ciclos ali" in out                                        # versão 3: a causa conhecida
+        assert "confira os contadores de integridade" in out                          # versão 4: outra causa
+        assert "esta captura não testa a troca" in out
+
+    def test_pula_o_transitorio_de_troca_de_faixa_por_padrao(self, cli, tmp_path):
+        """F9(b): o medir_captura começa depois de 200 µs; --inicio 0 mede desde a 1ª amostra, e avisa."""
+        from test_canais_e_amostras import transitorio_de_troca_de_faixa
+        codigos = transitorio_de_troca_de_faixa(n=1 << 16)
+        caminho = tmp_path / "troca_de_faixa.bin"
+        caminho.write_bytes(montar_cabecalho(len(codigos), (1,), (0,), ("",), 100_000, versao=3) + codigos.tobytes())
+        saida = tmp_path / "f9.csv"
+        rc, out, err = cli(main, caminho, "--sem-tom", "--csv", saida)
+        assert rc == 0, err
+        assert "a partir da amostra 20 de cada canal" in out and "fogem do resto" not in err
+        rc, out, err = cli(main, caminho, "--sem-tom", "--inicio", "0", "--csv", saida)
+        assert rc == 0 and "fogem do resto, até 46" in err and "--inicio 100" in err
+        padrao, tudo = ler_csv(saida)
+        assert (padrao["inicio_por_canal"], tudo["inicio_por_canal"]) == ("20", "0")
+        lsb = FAIXA / 65536
+        assert float(padrao["rms_ca"]) / lsb == pytest.approx(0.7, rel=0.1)
+        assert float(tudo["rms_ca"]) > 5 * float(padrao["rms_ca"])         # o RMS CA é o que o começo infla
+
     def test_varias_capturas_terminam_com_uma_tabela_resumo(self, cli, pasta):
         rc, out, err = cli(main, pasta / "um_canal.bin", pasta / "dois_canais.bin")
         assert rc == 0, err
@@ -266,7 +375,7 @@ class TestCli:
         assert "SINAD dB" in resumo[1] and "salto (amostras)" in resumo[1]
         assert [linha.split()[:2] for linha in resumo[2:5]] == [["um_canal.bin", "3"], ["dois_canais.bin", "0"],
                                                                 ["dois_canais.bin", "1"]]
-        assert "12345.6" in resumo[2]                                       # o tom, com 4 casas
+        assert float(resumo[2].split()[2]) == pytest.approx(12_345.6, abs=0.01)    # o tom, com 4 casas
 
     def test_uma_captura_so_nao_tem_tabela_resumo(self, cli, pasta):
         rc, out, _ = cli(main, pasta / "um_canal.bin")
@@ -309,18 +418,27 @@ class TestCli:
         rc, out, _ = cli(main, pasta / "sem_cabecalho.bin", "-f", int(FS))
         assert rc == 0 and "Canal 1" in out
 
-    def test_fs_pru_usa_os_ticks_do_cabecalho(self, cli, pasta, tmp_path):
-        # o cabeçalho sintético grava sample_period_ticks = 500 (200 MHz/500 = 400 kHz) -- o cabeçalho de
-        # 'um_canal.bin' pede 400 kHz, então as duas frequências coincidem; num arquivo que PEDE outra, divergem:
+    def test_a_taxa_padrao_e_a_que_a_pru_gera(self, cli, tmp_path):
+        """P4: 102.400 Hz pedidos viram 200 MHz ÷ 1953 ticks = 102.406,55 Hz; um tom de 10 kHz amostrado nessa taxa
+        sai em 10 kHz com o padrão e 64 ppm abaixo com --fs-pedida (o que o T4 de 19/10 mediu)."""
+        fs_pru = 200e6 / (200_000_000 // 102_400)
         n = 1 << 18
-        base = escrever_bin(tmp_path / "pedida_100k.bin", [seno(5_000.0, 1.0, n=n, fs=100_000.0)], canais=(1,),
-                            grandezas=(0,), sondas=("",), fs_total=100_000)
-        _, out_nominal, _ = cli(main, base)
-        assert "o PRU gera 400000.00 Hz = +3000000.0 ppm" in out_nominal
+        base = escrever_bin(tmp_path / "pedida_102k.bin", [seno(10_000.0, 1.0, n=n, fs=fs_pru)], canais=(1,),
+                            grandezas=(0,), sondas=("",), fs_total=102_400)
         saida = tmp_path / "pru.csv"
-        rc, out, _ = cli(main, base, "--fs-pru", "--freq", "20000", "--csv", saida)
-        assert rc == 0 and "a gerada pelo PRU" in out
-        assert float(ler_csv(saida)[0]["freq_tom_hz"]) == pytest.approx(5_000.0 * 4, abs=0.5)
+        rc, out, err = cli(main, base, "--csv", saida)
+        assert rc == 0, err
+        assert "102406.55 Hz (a que a PRU gera, clock ÷ ticks; a pedida era 102400 Hz, +64.0 ppm" in out
+        rc, out, _ = cli(main, base, "--fs-pedida", "--csv", saida)
+        assert rc == 0 and "102400 Hz (a pedida; a PRU gera 102406.55 Hz = +64.0 ppm)" in out
+        rc, _, _ = cli(main, base, "--fs-pru", "--csv", saida)                  # a opção antiga continua aceita
+        assert rc == 0
+        padrao, pedida, antiga = ler_csv(saida)
+        assert float(padrao["freq_tom_hz"]) == pytest.approx(10_000.0, abs=0.01)
+        assert float(antiga["freq_tom_hz"]) == pytest.approx(10_000.0, abs=0.01)
+        assert (float(pedida["freq_tom_hz"]) / 10_000.0 - 1) * 1e6 == pytest.approx(-64.0, abs=0.5)
+        assert float(padrao["fs_pru_hz"]) == pytest.approx(fs_pru) and padrao["fs_nominal_hz"] == "102400"
+        assert cli(main, base, "--fs-pru", "--fs-pedida")[0] == 2
 
     def test_captura_saturada_avisa_no_stderr(self, cli, pasta):
         rc, out, err = cli(main, pasta / "ceifado.bin")
@@ -549,4 +667,4 @@ def test_salto_numa_troca_de_buffer_aponta_o_bug_do_firmware_antigo(cli, tmp_pat
     regravar_crc(p)
     rc, out, err = cli(main, p, "--freq", "1000")
     assert rc == 0, err
-    assert "DESCONTINUIDADE" in out and "troca de buffer da PRU: é o bug do firmware anterior" in out
+    assert "DESCONTINUIDADE" in out and "trocas de buffer da PRU: é o defeito do firmware anterior" in out

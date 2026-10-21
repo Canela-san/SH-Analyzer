@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 
 CABECALHO_MAGIC = b"SHAN"
 CABECALHO_TAMANHO_TOTAL = 1024
-CABECALHO_VERSAO_SUPORTADA = 4  # versão mais recente do FORMATO do cabeçalho que este script sabe interpretar
+CABECALHO_VERSAO_SUPORTADA = 5  # versão mais recente do FORMATO do cabeçalho que este script sabe interpretar
 
 # [SONDA/GRANDEZA] Tamanho fixo (bytes, incluindo terminador nulo) do id de
 # sonda por canal na v2 do cabeçalho -- precisa bater com
@@ -50,6 +50,7 @@ CABECALHO_VERSAO_SUPORTADA = 4  # versão mais recente do FORMATO do cabeçalho 
 # ADS8688_MAX_CANAIS: sincronia manual, sem arquivo de constantes
 # compartilhado entre C e Python).
 CABECALHO_SONDA_ID_TAMANHO = 32
+CABECALHO_VERSAO_FIRMWARE_TAMANHO = 32   # [v5] CABECALHO_VERSAO_FIRMWARE_TAMANHO em firmware/ler_adc.c
 
 # Format strings para struct.unpack, campo a campo -- espelham EXATAMENTE
 # 'struct cabecalho_arquivo_campos' em firmware/ler_adc.c (packed, sem
@@ -101,10 +102,17 @@ CABECALHO_SONDA_ID_TAMANHO = 32
 #   I    quadros_preambulo_ruim       (ruído na linha SDO durante o comando)
 #   3I   atraso_cs_iteracoes          (setup, hold, alto do laço da PRU, em iterações de 10 ns)
 #   I    header_crc32
+#
+# v5 (mesmos campos da v4, mais ENTRE atraso_cs_iteracoes e header_crc32):
+#   32s  versao_firmware              (git describe do build do ler_adc, terminado em nulo)
+#   d    taxa_medida_hz               (taxa total medida pelo relógio do ARM; 0 = não medida, < 2 blocos)
+#   I    header_crc32
 _FORMATO_CABECALHO_V1 = "<4sIIQIII8BIIIIIdQQ64s256sI"
 _FORMATO_CABECALHO_V2 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "I"
 _FORMATO_CABECALHO_V3 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "8BI"
 _FORMATO_CABECALHO_V4 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "8BIII3II"
+_FORMATO_CABECALHO_V5 = ("<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "8BIII3I"
+                         + f"{CABECALHO_VERSAO_FIRMWARE_TAMANHO}sdI")
 
 # Contagens de valores por campo, na mesma ordem do format string -- usadas
 # por _consumir() para dividir a tupla plana devolvida por struct.unpack.
@@ -119,15 +127,18 @@ _CONTAGENS_CABECALHO_V1 = [1, 1, 1, 1, 1, 1, 1, 8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
 _CONTAGENS_CABECALHO_V2 = _CONTAGENS_CABECALHO_V1[:-1] + [8, ADS8688_MAX_CANAIS, 1]  # ...antes do header_crc32: +8 (grandeza) +8 (sonda) +1 (crc)
 _CONTAGENS_CABECALHO_V3 = _CONTAGENS_CABECALHO_V2[:-1] + [8, 1]  # v2 + 8 bytes de faixa_adc_por_canal antes do crc
 _CONTAGENS_CABECALHO_V4 = _CONTAGENS_CABECALHO_V3[:-1] + [1, 1, 1, 3, 1]  # v3 + 3 contadores + 3 atrasos antes do crc
+_CONTAGENS_CABECALHO_V5 = _CONTAGENS_CABECALHO_V4[:-1] + [1, 1, 1]  # v4 + versão do firmware + taxa medida antes do crc
 
 _TAMANHO_CAMPOS_V1 = struct.calcsize(_FORMATO_CABECALHO_V1)  # 408 bytes
 _TAMANHO_CAMPOS_V2 = struct.calcsize(_FORMATO_CABECALHO_V2)  # 408 + 8 + 8*32 = 672 bytes
 _TAMANHO_CAMPOS_V3 = struct.calcsize(_FORMATO_CABECALHO_V3)  # 672 + 8 = 680 bytes
 _TAMANHO_CAMPOS_V4 = struct.calcsize(_FORMATO_CABECALHO_V4)  # 680 + 24 = 704 bytes
+_TAMANHO_CAMPOS_V5 = struct.calcsize(_FORMATO_CABECALHO_V5)  # 704 + 32 + 8 = 744 bytes
 _OFFSET_HEADER_CRC32_V1 = _TAMANHO_CAMPOS_V1 - struct.calcsize("I")  # 404
 _OFFSET_HEADER_CRC32_V2 = _TAMANHO_CAMPOS_V2 - struct.calcsize("I")  # 668
 _OFFSET_HEADER_CRC32_V3 = _TAMANHO_CAMPOS_V3 - struct.calcsize("I")  # 676
 _OFFSET_HEADER_CRC32_V4 = _TAMANHO_CAMPOS_V4 - struct.calcsize("I")  # 700
+_OFFSET_HEADER_CRC32_V5 = _TAMANHO_CAMPOS_V5 - struct.calcsize("I")  # 740
 
 
 def _consumir(campos_tupla: tuple, contagens: list[int]) -> list:
@@ -197,6 +208,10 @@ class CabecalhoArquivo:
     buffers_sobrescritos: int | None = None
     quadros_preambulo_ruim: int | None = None
     atraso_cs_iteracoes: tuple[int, ...] = ()       # (setup, hold, alto), iterações de 10 ns; () antes da v4
+    # [v5] Qual build do ler_adc gravou ("" antes da v5: desconhecido) e a taxa total medida pelo relógio do ARM
+    # (None antes da v5 ou se a captura teve menos de 2 blocos).
+    versao_firmware: str = ""
+    taxa_medida_hz: float | None = None
 
     @property
     def problemas_integridade(self) -> list[str]:
@@ -236,6 +251,15 @@ class CabecalhoArquivo:
             return datetime.fromtimestamp(self.timestamp_unix, tz=timezone.utc).isoformat()
         except (OverflowError, OSError, ValueError):
             return f"inválido ({self.timestamp_unix})"
+
+    @property
+    def frequencia_pru_hz(self) -> float | None:
+        """A taxa TOTAL que a PRU de fato gera: ``pru_clock_hz ÷ sample_period_ticks``. O ``ler_adc`` arredonda os
+        ticks para inteiro, então ela difere da pedida quando 200 MHz ÷ taxa não é inteiro (102.400 Hz pedidos viram
+        102.406,55 Hz, +64 ppm); confirmado em bancada a 0,02 ppm (T4, 19/10/2026). None sem os dois campos."""
+        if self.pru_clock_hz <= 0 or self.sample_period_ticks <= 0:
+            return None
+        return self.pru_clock_hz / self.sample_period_ticks
 
     @property
     def duracao_real_segundos(self) -> float | None:
@@ -286,6 +310,9 @@ class CabecalhoArquivo:
             attrs["buffers_sobrescritos"] = self.buffers_sobrescritos
             attrs["quadros_preambulo_ruim"] = self.quadros_preambulo_ruim
             attrs["atraso_cs_iteracoes"] = np.array(self.atraso_cs_iteracoes, dtype=np.uint32)
+        if self.versao_cabecalho >= 5:  # só v5+
+            attrs["versao_firmware"] = self.versao_firmware
+            attrs["taxa_medida_hz"] = self.taxa_medida_hz if self.taxa_medida_hz is not None else -1.0
         return attrs
 
 
@@ -314,10 +341,11 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
     de CS) têm layouts diferentes a partir do byte 404 (v1 x v2), 668 (v2 x
     v3) e 676 (v3 x v4); tentar sempre desempacotar com o formato mais novo
     quebraria a leitura de um '.bin' antigo (o header_crc32 apareceria no
-    lugar errado, entre muitas outras coisas). Uma versão > 4 (formato futuro
-    que este script ainda não conhece) é tratada como v4 na tentativa de
-    leitura -- mais provável de funcionar parcialmente do que assumir uma
-    versão antiga -- mas com aviso.
+    lugar errado, entre muitas outras coisas). A v5 acrescenta a versão do
+    firmware e a taxa medida pelo ARM no lugar do CRC da v4 (byte 700). Uma
+    versão > 5 (formato futuro que este script ainda não conhece) é tratada
+    como v5 na tentativa de leitura -- mais provável de funcionar
+    parcialmente do que assumir uma versão antiga -- mas com aviso.
     """
     try:
         with open(caminho, "rb") as f:
@@ -346,11 +374,16 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
         formato, contagens, offset_crc = _FORMATO_CABECALHO_V3, _CONTAGENS_CABECALHO_V3, _OFFSET_HEADER_CRC32_V3
         tem_grandeza_sonda = True
         tem_faixa_adc = True
-    else:
+    elif versao_cabecalho == 4:
         formato, contagens, offset_crc = _FORMATO_CABECALHO_V4, _CONTAGENS_CABECALHO_V4, _OFFSET_HEADER_CRC32_V4
         tem_grandeza_sonda = True
         tem_faixa_adc = True
+    else:
+        formato, contagens, offset_crc = _FORMATO_CABECALHO_V5, _CONTAGENS_CABECALHO_V5, _OFFSET_HEADER_CRC32_V5
+        tem_grandeza_sonda = True
+        tem_faixa_adc = True
     tem_integridade = versao_cabecalho >= 4
+    tem_versao_firmware = versao_cabecalho >= 5
 
     # Só versões MAIS NOVAS que a suportada são suspeitas: v1 e v2 são formatos
     # conhecidos (lidos acima) e não merecem aviso.
@@ -367,7 +400,21 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
 
     faixa_adc_bytes = None
     integridade = (None, None, None, ())
-    if tem_integridade:
+    versao_firmware, taxa_medida_hz = "", None
+    if tem_versao_firmware:
+        (
+            _magic, _versao, tamanho_cabecalho, timestamp_unix, frequencia_hz,
+            auto_seq_mask, num_canais, lista_canais_bytes, samples_per_buffer,
+            bytes_por_amostra, pru_clock_hz, sample_period_ticks,
+            primeira_amostra_descartada, duracao_pedida_segundos, blocos_gravados,
+            total_amostras_gravadas, titulo_bruto, descricao_bruto,
+            grandeza_bytes, sonda_id_bytes_lista, faixa_adc_bytes,
+            atrasadas, sobrescritos, preambulo, atrasos_cs, versao_bruta, taxa_medida, header_crc32,
+        ) = _consumir(campos, contagens)
+        integridade = (atrasadas, sobrescritos, preambulo, tuple(atrasos_cs))
+        versao_firmware = versao_bruta.split(b"\x00", 1)[0].decode("ascii", errors="replace")
+        taxa_medida_hz = float(taxa_medida) if taxa_medida > 0 else None
+    elif tem_integridade:
         (
             _magic, _versao, tamanho_cabecalho, timestamp_unix, frequencia_hz,
             auto_seq_mask, num_canais, lista_canais_bytes, samples_per_buffer,
@@ -478,6 +525,8 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
         buffers_sobrescritos=integridade[1],
         quadros_preambulo_ruim=integridade[2],
         atraso_cs_iteracoes=integridade[3],
+        versao_firmware=versao_firmware,
+        taxa_medida_hz=taxa_medida_hz,
     )
 
 
@@ -492,6 +541,8 @@ def imprimir_resumo_cabecalho(cabecalho: CabecalhoArquivo) -> None:
             "estar corrompidos/incompletos. Considere passar -f/--canais "
             "manualmente se algum valor parecer estranho."
         )
+    if cabecalho.versao_firmware:
+        log.info(f"  Firmware: {cabecalho.versao_firmware}")
     if cabecalho.titulo:
         log.info(f"  Título: {cabecalho.titulo}")
     if cabecalho.descricao:
@@ -500,7 +551,15 @@ def imprimir_resumo_cabecalho(cabecalho: CabecalhoArquivo) -> None:
         f"  Capturado em: {cabecalho.timestamp_iso_utc} "
         f"(epoch {cabecalho.timestamp_unix})"
     )
-    log.info(f"  Frequência: {cabecalho.frequencia_hz} Hz total | canais: {list(cabecalho.lista_canais)}")
+    fs_pru = cabecalho.frequencia_pru_hz
+    gerada = ""
+    if fs_pru is not None and cabecalho.frequencia_hz > 0 and fs_pru != cabecalho.frequencia_hz:
+        gerada = (f" (a PRU gera {fs_pru:.2f} Hz = {cabecalho.sample_period_ticks} ticks, "
+                  f"{(fs_pru / cabecalho.frequencia_hz - 1) * 1e6:+.1f} ppm)")
+    log.info(f"  Frequência: {cabecalho.frequencia_hz} Hz total{gerada} | canais: {list(cabecalho.lista_canais)}")
+    if cabecalho.taxa_medida_hz is not None and fs_pru:
+        log.info(f"  Taxa medida pelo ARM: {cabecalho.taxa_medida_hz:.0f} Hz "
+                 f"({(cabecalho.taxa_medida_hz / fs_pru - 1) * 100:+.3f} % da que a PRU gera; incerteza ~0,02 %)")
     if cabecalho.versao_cabecalho >= 2:
         partes = []
         for canal, grandeza, sonda_id in zip(

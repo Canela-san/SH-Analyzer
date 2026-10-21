@@ -124,10 +124,23 @@ def normalizar(campos: list[tuple[str, int]]) -> list[tuple[str, int]]:
     return saida
 
 
-def test_layout_da_struct_v4_bate_com_o_formato_python(fonte_c, defines):
+def test_layout_da_struct_v5_bate_com_o_formato_python(fonte_c, defines):
     c = normalizar(formato_struct_c(fonte_c, defines))
-    py = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V4))
+    py = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V5))
     assert c == py
+    assert inteiro_c(defines["CABECALHO_VERSAO_FIRMWARE_TAMANHO"]) == cab.CABECALHO_VERSAO_FIRMWARE_TAMANHO
+
+
+def test_v4_e_o_prefixo_de_v5_sem_a_versao_do_firmware():
+    v4 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V4))
+    v5 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V5))
+    assert v5[:-3] == v4[:-1] and v5[-3:] == [("s", cab.CABECALHO_VERSAO_FIRMWARE_TAMANHO), ("d", 1), ("I", 1)]
+
+
+def test_o_makefile_passa_a_versao_do_firmware():
+    """O ler_adc grava VERSAO_FIRMWARE no cabeçalho: sem o -D do Makefile, toda captura sairia 'desconhecida'."""
+    makefile = (FIRMWARE / "Makefile").read_text(encoding="utf-8")
+    assert "-DVERSAO_FIRMWARE=" in makefile and "git describe" in makefile and "VERSAO" in makefile
 
 
 def test_tamanhos_derivados(fonte_c, defines):
@@ -138,9 +151,12 @@ def test_tamanhos_derivados(fonte_c, defines):
     assert cab._OFFSET_HEADER_CRC32_V3 == cab._TAMANHO_CAMPOS_V3 - 4 == 676
     assert cab._TAMANHO_CAMPOS_V4 == struct.calcsize(cab._FORMATO_CABECALHO_V4) == 704
     assert cab._OFFSET_HEADER_CRC32_V4 == cab._TAMANHO_CAMPOS_V4 - 4 == 700
-    assert cab._TAMANHO_CAMPOS_V4 < inteiro_c(defines["CABECALHO_TAMANHO_TOTAL"])
+    assert cab._TAMANHO_CAMPOS_V5 == struct.calcsize(cab._FORMATO_CABECALHO_V5) == 744
+    assert cab._OFFSET_HEADER_CRC32_V5 == cab._TAMANHO_CAMPOS_V5 - 4 == 740
+    assert cab._TAMANHO_CAMPOS_V5 < inteiro_c(defines["CABECALHO_TAMANHO_TOTAL"])
     for fmt, contagens in ((cab._FORMATO_CABECALHO_V3, cab._CONTAGENS_CABECALHO_V3),
-                           (cab._FORMATO_CABECALHO_V4, cab._CONTAGENS_CABECALHO_V4)):
+                           (cab._FORMATO_CABECALHO_V4, cab._CONTAGENS_CABECALHO_V4),
+                           (cab._FORMATO_CABECALHO_V5, cab._CONTAGENS_CABECALHO_V5)):
         assert sum(contagens) == len(struct.unpack(fmt, bytes(struct.calcsize(fmt))))
 
 
@@ -163,6 +179,7 @@ def test_offsets_do_cabecalho_usados_por_calibrar_sonda_sh():
     assert offs["CAB_OFF_SOBRESCRITOS"] == offs["CAB_OFF_ATRASADAS"] + 4
     assert offs["CAB_OFF_PREAMBULO"] == offs["CAB_OFF_ATRASADAS"] + 8
     assert offs["CAB_OFF_CRC_V4"] == cab._OFFSET_HEADER_CRC32_V4
+    assert offs["CAB_OFF_CRC_V5"] == cab._OFFSET_HEADER_CRC32_V5
     assert offs["CAB_OFF_SONDA_ID"] + const.ADS8688_MAX_CANAIS * cab.CABECALHO_SONDA_ID_TAMANHO == off_faixa
     assert offs["CAB_OFF_GRANDEZA"] + const.ADS8688_MAX_CANAIS == offs["CAB_OFF_SONDA_ID"]
     assert offs["CAB_TAM_SONDA_ID"] == cab.CABECALHO_SONDA_ID_TAMANHO

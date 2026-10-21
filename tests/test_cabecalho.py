@@ -9,6 +9,7 @@ from supraharmonicos.cabecalho import (
     CABECALHO_TAMANHO_TOTAL,
     conferir_consistencia_cabecalho,
     contar_amostras_arquivo_bin,
+    imprimir_resumo_cabecalho,
     ler_cabecalho,
 )
 from supraharmonicos.constantes import FAIXAS_ADC_TOTAL_V, GRANDEZA_CORRENTE, GRANDEZA_TENSAO
@@ -46,8 +47,6 @@ def test_sem_magic_devolve_none_arquivo_legado(tmp_path):
 def test_crc_errado_e_sinalizado_com_aviso(tmp_path, caplog):
     p = escrever_bin(tmp_path / "crc.bin", SINAL, crc_valido=False)
     with caplog.at_level(logging.INFO):
-        from supraharmonicos.cabecalho import imprimir_resumo_cabecalho
-
         c = ler_cabecalho(p)
         imprimir_resumo_cabecalho(c)
     assert c is not None and not c.crc32_valido
@@ -124,17 +123,42 @@ def test_codigo_de_faixa_desconhecido_vira_none_sem_quebrar(tmp_path):
     assert c.faixa_adc_codigo_por_canal == (0, 9) and c.faixa_adc_total_v_por_canal == (20.48, None)
 
 
-def test_versao_futura_avisa_e_e_lida_como_v4(tmp_path, caplog):
+def test_versao_futura_avisa_e_e_lida_como_v5(tmp_path, caplog):
     from capturas_sinteticas import montar_cabecalho
 
-    bruto = bytearray(montar_cabecalho(1000, (0, 1), (0, 1), ("", ""), 400_000, versao=4))
-    bruto[4:8] = (5).to_bytes(4, "little")                      # "versão 5": formato que este código ainda não conhece
+    bruto = bytearray(montar_cabecalho(1000, (0, 1), (0, 1), ("", ""), 400_000, versao=5, versao_firmware="v9"))
+    bruto[4:8] = (6).to_bytes(4, "little")                      # "versão 6": formato que este código ainda não conhece
     p = tmp_path / "futuro.bin"
     p.write_bytes(bytes(bruto))
     with caplog.at_level(logging.WARNING):
         c = ler_cabecalho(p)
-    assert c.versao_cabecalho == 5 and c.faixa_adc_total_v_por_canal == (20.48, 20.48) and c.buffers_sobrescritos == 0
-    assert any("só conhece até a versão 4" in r.getMessage() for r in caplog.records)
+    assert c.versao_cabecalho == 6 and c.faixa_adc_total_v_por_canal == (20.48, 20.48) and c.buffers_sobrescritos == 0
+    assert c.versao_firmware == "v9"
+    assert any("só conhece até a versão 5" in r.getMessage() for r in caplog.records)
+
+
+# --------------------------------------------------------------------------------------
+# v5: versão do firmware e taxa medida pelo ARM (F5)
+# --------------------------------------------------------------------------------------
+def test_v5_le_a_versao_do_firmware_e_a_taxa_medida(tmp_path, caplog):
+    p = escrever_bin(tmp_path / "v5.bin", SINAL, versao=5, versao_firmware="v0.6-3-g1234abc-dirty",
+                     taxa_medida_hz=399_990.0)
+    c = ler_cabecalho(p)
+    assert c.crc32_valido and c.versao_cabecalho == 5
+    assert c.versao_firmware == "v0.6-3-g1234abc-dirty" and c.taxa_medida_hz == 399_990.0
+    attrs = c.para_attrs_hdf5()
+    assert attrs["versao_firmware"] == "v0.6-3-g1234abc-dirty" and attrs["taxa_medida_hz"] == 399_990.0
+    with caplog.at_level(logging.INFO):
+        imprimir_resumo_cabecalho(c)
+    texto = "\n".join(r.getMessage() for r in caplog.records)
+    assert "Firmware: v0.6-3-g1234abc-dirty" in texto and "Taxa medida pelo ARM: 399990 Hz (-0.003 %" in texto
+
+
+def test_v5_sem_taxa_medida_e_v4_sem_versao(tmp_path):
+    v5 = ler_cabecalho(escrever_bin(tmp_path / "um_bloco.bin", SINAL, versao=5))       # 1 bloco: o ARM não mede
+    assert v5.taxa_medida_hz is None and v5.para_attrs_hdf5()["taxa_medida_hz"] == -1.0
+    v4 = ler_cabecalho(escrever_bin(tmp_path / "v4.bin", SINAL, versao=4))
+    assert v4.versao_firmware == "" and v4.taxa_medida_hz is None and "versao_firmware" not in v4.para_attrs_hdf5()
 
 
 # --------------------------------------------------------------------------------------
@@ -154,8 +178,6 @@ def test_v4_le_os_contadores_e_os_atrasos(tmp_path):
 
 
 def test_v4_sem_problemas_e_v3_desconhecido_nao_avisam(tmp_path, caplog):
-    from supraharmonicos.cabecalho import imprimir_resumo_cabecalho
-
     v4 = ler_cabecalho(escrever_bin(tmp_path / "ok.bin", SINAL, versao=4))
     v3 = ler_cabecalho(escrever_bin(tmp_path / "v3.bin", SINAL, faixas_adc_total_v=10.24))
     assert v4.problemas_integridade == [] and v4.atraso_cs_iteracoes == (200, 100, 100)
@@ -167,8 +189,6 @@ def test_v4_sem_problemas_e_v3_desconhecido_nao_avisam(tmp_path, caplog):
 
 
 def test_resumo_avisa_dos_problemas_de_integridade(tmp_path, caplog):
-    from supraharmonicos.cabecalho import imprimir_resumo_cabecalho
-
     c = ler_cabecalho(escrever_bin(tmp_path / "ruim.bin", SINAL, versao=4, integridade=(0, 2, 0)))
     with caplog.at_level(logging.WARNING):
         imprimir_resumo_cabecalho(c)
@@ -176,8 +196,6 @@ def test_resumo_avisa_dos_problemas_de_integridade(tmp_path, caplog):
 
 
 def test_resumo_mostra_a_faixa_por_canal(tmp_path, caplog):
-    from supraharmonicos.cabecalho import imprimir_resumo_cabecalho
-
     p = escrever_bin(tmp_path / "v3.bin", SINAL, (0, 3), faixas_adc_total_v=(20.48, 5.12))
     with caplog.at_level(logging.INFO):
         imprimir_resumo_cabecalho(ler_cabecalho(p))

@@ -36,7 +36,7 @@ void lidar_interrupcao(int sinal) { (void)sinal; manter_execucao = 0; }
 // (scripts/supraharmonicos/cabecalho.py) leem todas as versões, e também os
 // '.bin' antigos, sem cabeçalho.
 #define CABECALHO_MAGIC "SHAN"      // 4 bytes, sem terminador nulo armazenado
-#define CABECALHO_VERSAO 4u         // versão do FORMATO do cabeçalho (não do firmware/software) -- v2 adicionou grandeza_por_canal/sonda_id_por_canal; v3, faixa_adc_por_canal; v4, os contadores de integridade da captura e os atrasos de CS (ver struct cabecalho_arquivo_campos)
+#define CABECALHO_VERSAO 5u         // versão do FORMATO do cabeçalho (não do firmware/software) -- v2 adicionou grandeza_por_canal/sonda_id_por_canal; v3, faixa_adc_por_canal; v4, os contadores de integridade da captura e os atrasos de CS; v5, a versão do firmware e a taxa medida pelo ARM (ver struct cabecalho_arquivo_campos)
 #define CABECALHO_TAMANHO_TOTAL 1024u
 
 // Tamanho FIXO (bytes, incluindo o terminador nulo) dos campos de texto
@@ -57,6 +57,17 @@ void lidar_interrupcao(int sinal) { (void)sinal; manter_execucao = 0; }
 // do lado Python -- este campo é só a CHAVE de busca desse arquivo, não o
 // perfil em si.
 #define CABECALHO_SONDA_ID_TAMANHO 32u
+
+// [VERSÃO DO FIRMWARE, v5] O Makefile passa o 'git describe' do repositório
+// (ou o arquivo VERSAO, escrito no PC antes de copiar a pasta para a
+// BeagleBone, onde não há git) em -DVERSAO_FIRMWARE. Gravado em cada captura
+// para saber, meses depois, qual build gerou um '.bin' -- o firmware muda
+// entre campanhas de bancada. 32 bytes com o '\0': um describe como
+// "v0.4-12-gabcdef1-dirty" tem ~22; o que passar disso é cortado.
+#define CABECALHO_VERSAO_FIRMWARE_TAMANHO 32u
+#ifndef VERSAO_FIRMWARE
+#define VERSAO_FIRMWARE "desconhecida"
+#endif
 
 // [SONDA/GRANDEZA] Valores possíveis para grandeza_por_canal na struct
 // abaixo -- a grandeza física que cada canal habilitado está medindo.
@@ -179,6 +190,8 @@ struct cabecalho_arquivo_campos {
     uint32_t buffers_sobrescritos;     // [INTEGRIDADE, v4] trocas de buffer em que o ARM ainda não tinha copiado o buffer que a PRU começou a reescrever: amostras perdidas. > 0 = captura comprometida (este programa sai com código 3)
     uint32_t quadros_preambulo_ruim;   // [INTEGRIDADE, v4] quadros SPI com algum 1 nos 16 bits de preâmbulo (o SDO tem de ficar em 0 durante o comando, datasheet 8.4.1.1.4): ruído/reflexo na linha SDO
     uint32_t atraso_cs_iteracoes[3];   // [INTEGRIDADE, v4] atrasos de CS usados no laço da PRU (setup, hold, alto), em iterações de 2 ciclos (10 ns) -- 200/100/100 é o padrão validado em hardware. Ver --atraso-cs
+    char     versao_firmware[CABECALHO_VERSAO_FIRMWARE_TAMANHO]; // [VERSÃO, v5] VERSAO_FIRMWARE deste build (git describe), terminado em '\0'
+    double   taxa_medida_hz;           // [INTEGRIDADE, v5] taxa total medida pelo relógio do ARM entre o 1º e o último bloco (incerteza ~0,02 % num bloco de ~10 s); 0.0 = não medida (menos de 2 blocos). Com amostras_atrasadas > 0 é a melhor estimativa da taxa real
     uint32_t header_crc32;             // CRC-32 (polinômio 0xEDB88320, o mesmo de zlib/PNG/Ethernet) de todo o cabeçalho, calculado com este próprio campo zerado -- permite a um leitor detectar um cabeçalho truncado/corrompido antes de confiar nos campos acima
 } __attribute__((packed));
 
@@ -1426,6 +1439,13 @@ int main(int argc, char *argv[]) {
     memcpy(cabecalho.campos.sonda_id_por_canal, sonda_canais, sizeof(sonda_canais));
     memcpy(cabecalho.campos.faixa_adc_por_canal, faixa_adc_canais, sizeof(faixa_adc_canais)); // [FAIXA DE ENTRADA, v3]
     memcpy(cabecalho.campos.atraso_cs_iteracoes, atrasos_cs, sizeof(atrasos_cs));          // [INTEGRIDADE, v4] (os contadores entram no cabeçalho final)
+    {   // [VERSÃO, v5] cortada em 31 bytes se for maior; o resto do campo já está zerado pelo memset acima
+        size_t n = strlen(VERSAO_FIRMWARE);
+        if (n >= sizeof(cabecalho.campos.versao_firmware)) {
+            n = sizeof(cabecalho.campos.versao_firmware) - 1;
+        }
+        memcpy(cabecalho.campos.versao_firmware, VERSAO_FIRMWARE, n);
+    }
 
     cabecalho.campos.samples_per_buffer = (uint32_t)SAMPLES_PER_BUFFER;
     cabecalho.campos.bytes_por_amostra = (uint32_t)sizeof(uint16_t);
@@ -1474,6 +1494,7 @@ int main(int argc, char *argv[]) {
            cabecalho.campos.versao_cabecalho,
            (unsigned long long)cabecalho.campos.timestamp_unix,
            cabecalho.campos.header_crc32);
+    printf("  Firmware: %s\n", cabecalho.campos.versao_firmware);
     printf("  Título: %s\n", (titulo_texto != NULL) ? cabecalho.campos.titulo : "(não informado)");
     printf("  Descrição: %s\n", (descricao_texto != NULL) ? cabecalho.campos.descricao : "(não informada)");
 
@@ -1637,9 +1658,10 @@ int main(int argc, char *argv[]) {
     // que dá ~0,02 % de incerteza num bloco de ~10 s). Uma conferência
     // independente dos contadores da PRU, sem custo nenhum para ela.
     conferir_integridade(ctrl, &integridade);
+    double taxa_medida = 0.0;   // [v5] vai para o cabeçalho final; 0 = não medida
     if (blocos_salvos >= 2 && instante_ultimo_bloco > instante_primeiro_bloco) {
-        double taxa_medida = (double)(blocos_salvos - 1) * SAMPLES_PER_BUFFER
-                           / (instante_ultimo_bloco - instante_primeiro_bloco);
+        taxa_medida = (double)(blocos_salvos - 1) * SAMPLES_PER_BUFFER
+                    / (instante_ultimo_bloco - instante_primeiro_bloco);
         double desvio_pct = 100.0 * (taxa_medida / frequencia_desejada - 1.0);
         printf("Taxa real medida pelo ARM: %.0f Hz (pedida %u Hz, %+.2f %%)%s\n", taxa_medida,
                frequencia_desejada, desvio_pct,
@@ -1665,6 +1687,7 @@ int main(int argc, char *argv[]) {
     cabecalho.campos.amostras_atrasadas = integridade.amostras_atrasadas;
     cabecalho.campos.buffers_sobrescritos = integridade.buffers_sobrescritos;
     cabecalho.campos.quadros_preambulo_ruim = integridade.quadros_preambulo_ruim;
+    cabecalho.campos.taxa_medida_hz = taxa_medida;
     cabecalho.campos.header_crc32 = 0;
     cabecalho.campos.header_crc32 = calcular_crc32(&cabecalho, sizeof(cabecalho));
 

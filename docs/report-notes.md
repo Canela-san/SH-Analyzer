@@ -982,6 +982,13 @@ enxerga), achado pela métrica de continuidade e explicado até a instrução;
 e da diferença entre *evitar* e *detectar* uma falha quando evitá-la (fazer
 a PRU esperar pelo ARM) mudaria justamente o instante das amostras.
 
+**Rastreabilidade do firmware (cabeçalho v5, 21/10).** Como o firmware
+passa a mudar entre campanhas, cada captura grava a versão que a gerou (o
+`git describe` do repositório, levado à BeagleBone num arquivo `VERSAO`) e a
+taxa medida pelo relógio do ARM, que antes só aparecia no console. Cada ida
+à bancada ganha também uma etiqueta no git (`bancada-AAAA-MM-DD`). Um `.bin`
+passa a dizer, sozinho, com que código foi feito.
+
 - [ ] Figura: intervalo entre amostras ao redor de uma troca de buffer,
       antes e depois (simulador e captura real refeita).
 - [x] Tabela: salto por taxa (100, 110, 125 kS/s) antes da correção: está
@@ -1012,11 +1019,11 @@ a PRU esperar pelo ARM) mudaria justamente o instante das amostras.
 **Achados:**
 
 1. **A faixa de entrada por canal funciona em hardware.** Era a principal hipótese não testada do firmware de 19/10, até então só simulada. A tensão no pino é a mesma nas três faixas (±0,08 %), o que confirma a referência de 4,096 V, o código em binário deslocado e a escrita dos registradores `RANGE_SELn`. Consequência: as capturas antigas (v1/v2), que as ferramentas liam como ±5,12 V, tinham metade do valor real; desde out/2026 elas assumem ±10,24 V.
-2. **Transitório ao trocar a faixa.** Quando a faixa de um canal muda em relação à captura anterior, as ~6 primeiras amostras desse canal (60 µs a 100 kS/s) decaem de até ~1 V até o valor certo. Sem troca, não há transitório, e as 15 capturas do dia seguem essa regra. A constante de tempo no fim (~8 µs) é próxima à do passa-baixa do T3 (7 µs). Sem descartar o começo, o ruído medido sai 7 a 8 vezes maior.
+2. **Transitório ao trocar a faixa.** Quando a faixa de um canal muda em relação à captura anterior, o começo desse canal decai de até ~1 V (~4 600 LSB) até o valor certo: ~6 amostras acima de 20 LSB e menos de 1 LSB em ~80 µs, o mesmo **tempo** com 1 e 2 canais (é analógico, não uma contagem de amostras). Sem troca, não há transitório, e as 15 capturas do dia seguem essa regra. A constante de tempo no fim (~8 µs) é próxima à do passa-baixa do T3 (7 µs). Sem descartar o começo, o ruído medido sai 7 a 8 vezes maior. Desde 21/10 o `medir_captura.py` pula os primeiros 200 µs sozinho, e as duas ferramentas avisam se o começo de um trecho destoa do resto.
 3. **O ruído do ADC é o do datasheet**, e a faixa menor reduz o ruído em volts como previsto (1,8× e 2,8×). Fica confirmado o ganho de usar ±2,56 V no canal de corrente.
 4. **O offset do canal 1 não parece ser do ADC.** O canal 0, com 0,12 Ω de impedância de fonte, tem offset dentro do datasheet. O canal 1, com 1,7 kΩ (o divisor), tem de 10 a 70 vezes mais. A hipótese é a ligação do divisor; o teste que separa as causas está no roteiro (T1). É DC: não afeta os supraharmônicos.
 5. **A taxa de amostragem é exatamente a prevista pelos ticks**, sem ciclo extra por amostra. A hipótese do Marco 11 se confirmou a 0,02 ppm.
-6. **O defeito do Marco 13, medido.** O salto cresce com a taxa (0,697 amostra a 100 kS/s; 0,77 a 110 kS/s; 0,87 a 125 kS/s): é um tempo fixo, o de uma transação SPI. Nenhuma amostra se perdeu; a grade de tempo é que escorregou. Dentro de cada bloco, o sistema é estável a 0,09 ppm e 0,009 % ao longo de 10 min.
+6. **O defeito do Marco 13, medido.** O salto cresce com a taxa (0,697 amostra a 100 kS/s; 0,77 a 110 kS/s; 0,87 a 125 kS/s): é um tempo fixo, o de uma transação SPI. Nenhuma amostra se perdeu; a grade de tempo é que escorregou. Dentro de cada bloco, o sistema é estável a 0,09 ppm e 0,009 % ao longo de 10 min. **O que ele estraga numa análise que atravessa blocos** (medido em 21/10 nas mesmas capturas): o SINAD de uma FFT única cai de 63 dB (1 bloco, T7a) para ~22 dB (4 blocos, T7c), e a frequência e a amplitude do tom se deslocam em +1,5 ppm e −0,3 % numa captura de 2 blocos (T4 a 125 kS/s). Por isso o T4 foi medido só no primeiro bloco. A métrica de continuidade passou a comparar o salto em cada troca de buffer com o dos outros segmentos: 6,96 µs nas trocas contra 0,01 a 0,04 µs fora delas, o que pega o defeito com qualquer nº de canais.
 7. **Três falhas do próprio roteiro, corrigidas:**
    * o ponto de "40 kHz" do T6a, com 2 canais (Nyquist de 25 kHz por canal), apareceu dobrado em 10 kHz;
    * o T7a e o T7b, de 1 bloco, não atravessavam nenhuma troca de buffer e não tinham como ver o defeito;
@@ -1051,7 +1058,7 @@ Em ordem de prioridade, a mesma da tabela [Estado da campanha](lab-procedure.md#
    * o T5, com uma fonte de baixa distorção;
    * *aliasing* (T8), espectros conhecidos (T9) e os ensaios ponta a ponta (T11).
 5. **Completar o T3:** `--repeticoes 3`, para ter a incerteza de cada ponto, e, se possível, a fase.
-6. **Investigar o offset do canal 1** (com o pino em curto direto) e decidir onde descartar o transitório de troca de faixa: no firmware ou na análise ([`improvement-proposals.md`](improvement-proposals.md)).
+6. **Investigar o offset do canal 1** (com o pino em curto direto). O transitório de troca de faixa já é descartado na análise (o `medir_captura.py` pula 200 µs); descartá-lo também no firmware fica como opção ([`improvement-proposals.md`](improvement-proposals.md), F9).
 
 Fechar cada apresentação com esta lista, objetiva e com prioridade, mostra que o estado do projeto e os próximos passos estão claros.
 
@@ -1244,11 +1251,13 @@ Os números do projeto num lugar só, com a condição e a fonte. Os valores med
 | Atraso entre canais | 9,954 µs (esperado: 10,000 µs) | 2 canais a 100 kS/s | T6b |
 | Estabilidade em 10 min | 0,09 ppm (frequência), 0,009 % (amplitude) | janelas de 1 bloco | T7c |
 | Salto a cada bloco (firmware antigo) | 6,97 µs = +0,697 amostra a 100 kS/s, nas 57 trocas, ±0,002 | corrigido em out/2026, falta validar no hardware | T7c; Marco 13 |
-| Transitório ao trocar a faixa | ~6 amostras (60 µs a 100 kS/s), até ~1 V no pino | só quando a faixa do canal muda | T0, T1; Marco 14 |
+| Transitório ao trocar a faixa | até ~1 V no pino; < 1 LSB em ~80 µs (~8 amostras a 100 kS/s), o mesmo tempo com 1 e 2 canais | só quando a faixa do canal muda; o `medir_captura.py` pula 200 µs | T0, T1; Marco 14 |
+| Efeito do salto a cada bloco numa FFT de vários blocos | SINAD de 63 → ~22 dB (1 → 4 blocos); +1,5 ppm na frequência e −0,3 % na amplitude (2 blocos) | firmware antigo, 10 kHz | T4, T7; Marco 14 |
+| Salto medido nas trocas × fora delas | 6,96 µs × 0,01 a 0,04 µs (critério: 10 vezes e 0,05 µs) | `medir_captura.py`, 1 a 8 canais | T6, T7; Marco 14 |
 | Quadro SPI da PRU | 1 395 ciclos (6,98 µs; transação com o CS baixo: 1 166 ciclos), dos quais 800 (57 %) são as esperas do CS; em geral, 595 + 2 × (S + H + A) ciclos | simulador do `spi_core.asm` | Marco 13; roteiro, T7e |
 | Teto de taxa | ~130 kS/s observados e ~140 kS/s pelo simulador; ~330 kS/s no papel com as esperas mínimas do datasheet | a medir no T7e | Marco 13 |
 | Esperas do CS | 2,0 / 1,0 / 1,0 µs contra 30 / 10 / 30 ns do datasheet | tabela 7.6 do SBAS582C | Marco 13 |
 | Buffers | 2 × 1 048 576 amostras (2 × 2 MB) na DDR; ~10 s por bloco a 100 kS/s | — | Marco 3 |
 | Código da PRU | 1 878 instruções, 91,7 % da IMEM de 8 KB | `tests/pru_sim.py` | `project-context.md` |
 | Arquivamento sem perdas | 11,0 % do tamanho (407 MB → 44,9 MB); 7-Zip: 14,6 % | capturas até o T3 | Marco 10 |
-| Testes automáticos | ~680, ~1 min 40 s em paralelo, ~90 % de cobertura (a contagem exata do dia: `software-architecture.md`, seção 7) | sem hardware | Marco 10 |
+| Testes automáticos | ~760, ~1 min 20 s em paralelo, ~90 % de cobertura (a contagem exata do dia: `software-architecture.md`, seção 7) | sem hardware | Marco 10 |

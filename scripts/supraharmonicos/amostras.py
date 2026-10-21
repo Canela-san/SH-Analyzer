@@ -112,6 +112,28 @@ def selecionar_intervalo(amostras, inicio: int, fim: int | None):
     return np.asarray(amostras[inicio:fim]), inicio, fim, total
 
 
+def detectar_transitorio_inicial(codigos: np.ndarray, procurar: int = 64, referencia: int = 4096,
+                                 limite_lsb: float = 8.0) -> tuple[int, float]:
+    """(quantas amostras do começo destoam do resto, maior desvio em LSB), num canal em códigos brutos (F9).
+
+    Compara as ``procurar`` primeiras amostras com a mediana das ``referencia`` seguintes: destoa a que se afasta
+    mais de 8 desvios robustos (1,4826·MAD) e de ``limite_lsb``. Um tom não dispara o aviso (o desvio robusto de uma
+    senoide é ~1,05 vez a amplitude, e nenhuma amostra passa de 1 amplitude); o que dispara é um começo que foge do
+    resto, como a acomodação do ADC depois de trocar a faixa de um canal, que importa justamente em medidas de
+    ruído e de DC."""
+    if len(codigos) < procurar + 256:
+        return 0, 0.0
+    resto = np.asarray(codigos[procurar:procurar + referencia], dtype=np.float64)
+    mediana = float(np.median(resto))
+    desvio_robusto = 1.4826 * float(np.median(np.abs(resto - mediana)))
+    limiar = max(limite_lsb, 8.0 * desvio_robusto)
+    desvios = np.abs(np.asarray(codigos[:procurar], dtype=np.float64) - mediana)
+    acima = np.flatnonzero(desvios > limiar)
+    if acima.size == 0:
+        return 0, 0.0
+    return int(acima[-1]) + 1, float(np.max(desvios))
+
+
 def converter_para_tensao(codigos: np.ndarray, faixa: float, ganho: float,
                            formato: str, offset: float) -> np.ndarray:
     """codigo -> Volts: unipolar (uint16, 0..+faixa) ou bipolar (int16,

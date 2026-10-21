@@ -96,8 +96,14 @@ computador, na raiz do repositório:
 set BBB debian@192.168.7.2          # usuário e IP da placa (pelo USB costuma ser 192.168.7.2)
 set FW caminho/firmware             # onde fica a pasta firmware/ na BeagleBone
 ssh $BBB "cp -a $FW $FW-2026-10-19"  # PLANO B: o firmware de 19/10, já compilado
+git describe --always --dirty > firmware/VERSAO   # a versão que o ler_adc grava em cada captura (lá não há git)
 scp firmware/* $BBB:$FW/            # o firmware novo (só o código; capturas e capturas/ não são tocadas)
+git tag bancada-(date +%F)           # marca o commit que foi para a bancada (depois: git push --tags)
 ```
+
+O `ler_adc` novo grava essa versão no cabeçalho (v5) e a imprime na largada (`Firmware: v0.5-...`); o `adc_tool.py
+info` a mostra de cada captura. Sem o arquivo `VERSAO`, sai `desconhecida`. Um `-dirty` no fim quer dizer que havia
+mudanças não commitadas: commite antes de copiar, para a versão apontar para um código que existe.
 
 Na BeagleBone: `cd caminho/firmware && ./setup.sh` e o T0, passo 2. **Plano B**, se o `make` falhar ou o T0
 mostrar algo estranho: guarde a mensagem de erro e a saída do `dmesg`, rode `cd caminho/firmware-2026-10-19 &&
@@ -309,7 +315,8 @@ Como o `adc_tool.py`, ele lê frequência, canais, sonda **e a faixa do ADC de c
 | Harmônicos e THD | Soma das potências dos harmônicos (até `--harmonicos`, padrão 9) sobre a fundamental, em dB. Harmônicos acima de Nyquist são medidos na frequência **dobrada** (marcados `[alias]`) | `thd_db`, `thd_pct` |
 | SINAD, SNR, ENOB | Sinal ÷ (ruído + distorção); sinal ÷ ruído; bits efetivos, **corrigidos** para um tom abaixo do fundo de escala | `sinad_db`, `snr_db`, `enob_bits` |
 | SFDR | Fundamental ÷ maior espúrio, em dBc, com a frequência do espúrio e se ele é um harmônico | `sfdr_dbc`, `freq_espurio_hz`, `ordem_espurio` |
-| Continuidade | Maior salto de fase do tom entre segmentos, em **amostras equivalentes**. Uma amostra perdida ou duplicada vale ~1,0 | `salto_max_amostras`, `saltos_acima_do_limite`, `variacao_amplitude_pct` (variação da amplitude do tom entre segmentos) |
+| Continuidade | Maior salto de fase do tom entre segmentos, em **amostras equivalentes** e em µs. Uma amostra perdida ou duplicada vale ~1,0 | `salto_max_amostras`, `salto_max_us`, `saltos_acima_do_limite`, `variacao_amplitude_pct` (variação da amplitude do tom entre segmentos) |
+| Trocas de buffer | O salto **em cada troca de buffer da PRU** (a cada 1 048 576 amostras brutas) contra o típico dos outros segmentos. "DESTOAM" quando a mediana das trocas passa de 10 vezes o típico e de 0,05 µs: pega um atraso fixo menor que meia amostra, que a continuidade sozinha não acusa (o de 7 µs com 2 canais). Uma captura de 1 bloco não tem troca ("esta captura não testa a troca") | `trocas_buffer`, `salto_trocas_amostras`, `salto_trocas_us`, `salto_tipico_amostras`, `trocas_destoam` |
 | Acoplamento (≥ 2 canais) | Amplitude de cada canal no tom do canal mais forte (diafonia, dB) e atraso entre canais (µs) | `diafonia_db`, `atraso_medido_us`, `atraso_esperado_us` |
 | Comparação com instrumento | `--referencia-rms` (RMS lido, **na unidade física do canal**: V no nó de entrada do divisor; A no condutor, vezes o número de espiras) e `--referencia-freq` (Hz): erro em % e em ppm. `--amplitude-referencia` (`500mVpp`; padrão: a dos metadados; em V é a tensão **no pino**, antes do `--ganho`) e `--osciloscopio` (o `.m`): ADC ÷ injetado, ADC ÷ osciloscópio e osciloscópio ÷ injetado | `erro_amplitude_pct`, `erro_freq_ppm`, `razao_vs_amplitude_ref`, `razao_vs_osc`, `osc_vs_amplitude_ref_pct` |
 
@@ -321,10 +328,10 @@ Opções que você vai usar muito:
 | `--sem-tom` | Só ruído e estatística (entrada em curto) |
 | `--canais-medir 1` | Mede só um dos canais da captura |
 | `--rotulo "texto"` | Nome do teste no CSV (padrão: título do cabeçalho) |
-| `--fs-pru` | Usa a frequência que o PRU **de fato** gera (`clock ÷ ticks` do cabeçalho). Sem ela, a análise usa a pedida |
+| `--fs-pedida` | Analisa com a taxa **pedida**. O padrão (desde out/2026) é a que a PRU de fato gera, `clock ÷ ticks` do cabeçalho; as duas só diferem quando 200 MHz ÷ taxa não é inteiro (102,4 kS/s: +64 ppm). Serve para repetir o T4. (O antigo `--fs-pru` ainda é aceito e não muda nada) |
 | `--sem-correcao-sonda` | Não aplica o perfil da sonda/cadeia. **Use para caracterizar o ADC**; sem isso, ruído e ENOB de um canal corrigido não descrevem o ADC |
 | `--sondas-dir`, `--sonda-perfil C:ARQ` | Onde achar o perfil (padrão: `scripts/sondas/`) |
-| `--inicio N`, `--max-amostras N` | Janela de análise, por canal (padrão: as primeiras 4 194 304 amostras, ≈ 42 s a 100 kS/s). **Use `--inicio 100` em toda medida de ruído e de DC**: se a faixa de algum canal mudou desde a captura anterior, as ~6 primeiras amostras são transitório e inflam o `rms_ca` (2,5 LSB em vez de 0,6 LSB numa captura de 10 s, no T0) |
+| `--inicio N`, `--max-amostras N` | Janela de análise, por canal (padrão: 4 194 304 amostras, ≈ 42 s a 100 kS/s, depois de pular os primeiros **200 µs**, 20 amostras a 100 kS/s). O pulo é o transitório de uma troca de faixa: se a faixa de algum canal mudou desde a captura anterior, as primeiras amostras decaem de até ~1 V e inflam o `rms_ca` (2,5 LSB em vez de 0,6 LSB numa captura de 10 s, no T0). Com `--inicio 0` mede tudo, e a ferramenta avisa quando o começo foge do resto. Os comandos deste roteiro continuam com `--inicio 100` (1 ms), que sobra; a coluna `inicio_por_canal` do CSV registra o usado |
 
 **Limites do método** (para citar no relatório): usa uma FFT única sobre até 4 M amostras com janela Kaiser (β = 14), cujo vazamento limita o SINAD medido a ~110 dB (acima do ADC de 16 bits, com folga); um tom a menos de ~13 bins do DC (captura curta demais para tom muito grave) sai impreciso e a ferramenta avisa; só enxerga harmônicos que não coincidem entre si depois de dobrados.
 
@@ -358,7 +365,7 @@ Opções que você vai usar muito:
 **Objetivo.** Ter certeza de que firmware, relógio, cabeçalho **e a escala do ADC (nas três faixas)** estão certos antes de gastar tempo em medidas.
 
 1. No computador, com a BeagleBone por USB: `scripts/set_date.sh`. Na BeagleBone: `date` deve mostrar a data de hoje.
-2. Na BeagleBone: `cd firmware && ./setup.sh && dmesg | tail -n 20` (a PRU sobe sem reclamar). O `setup.sh` **recompila** o firmware (`make clean; make`): é preciso fazer isso depois de atualizar o repositório. A revisão de out/2026 (grade de tempo e contadores de integridade, cabeçalho v4) mexeu no `spi_core.asm` e só foi validada no simulador `tests/pru_sim.py`. Se o `make` falhar, guarde a mensagem e use o plano B ([Antes de sair e ao chegar](#antes-de-sair-e-ao-chegar-levar-o-firmware-novo-à-beaglebone)). Confira com `./ler_adc --help` que as opções `--faixa-adc` e `--atraso-cs` existem, e, na captura do passo 5, que o `ler_adc` termina com a linha `Integridade: 0 amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído no SDO -- tudo certo` e que o resumo do cabeçalho diz `Versão de cabeçalho: 4`.
+2. Na BeagleBone: `cd firmware && ./setup.sh && dmesg | tail -n 20` (a PRU sobe sem reclamar). O `setup.sh` **recompila** o firmware (`make clean; make`): é preciso fazer isso depois de atualizar o repositório. A revisão de out/2026 (grade de tempo e contadores de integridade, cabeçalho v4) mexeu no `spi_core.asm` e só foi validada no simulador `tests/pru_sim.py`. Se o `make` falhar, guarde a mensagem e use o plano B ([Antes de sair e ao chegar](#antes-de-sair-e-ao-chegar-levar-o-firmware-novo-à-beaglebone)). Confira com `./ler_adc --help` que as opções `--faixa-adc` e `--atraso-cs` existem, e, na captura do passo 5, que o `ler_adc` termina com a linha `Integridade: 0 amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído no SDO -- tudo certo` e que o resumo do cabeçalho diz `Versão de cabeçalho: 5` e `Firmware:` com a versão que você copiou.
 3. Ligue o gerador, o osciloscópio, a ponta TCP0030A, o frontend e a BeagleBone **30 minutos antes** do T1.
 4. **Capacitor do canal de corrente:** com tudo desligado, meça o valor dele (Fluke ou LCR; o seu 63 mF parece impreciso) e fotografe a placa. Anote o valor, **remova-o** e confirme que os dois resistores em série (1,79 kΩ e 1,7929 kΩ) continuam no lugar.
 5. Entrada do canal de tensão em curto (a entrada do divisor ligada ao retorno). Capture:
@@ -596,12 +603,12 @@ end
 
 (As taxas acima de 125 kS/s ficam no [T7e](#t7e-onde-está-o-limite-de-taxa): lá a taxa real pode nem acompanhar a pedida.)
 
-**Como ler.** Sem `--fs-pru`, a análise supõe a taxa pedida. Se a taxa real da PRU for `fs_real = fs_pedida × (1 + δ)`, o tom aparece na frequência errada e o `erro_freq_ppm` do CSV é `−δ × 10⁶` (frequência medida menos a do contador, em ppm; usa-se o valor do contador como verdade, então o erro do gerador não entra). A primeira linha da saída de cada captura informa o que o firmware **deveria** gerar pelos ticks: `o PRU gera 102406.55 Hz = +64.0 ppm`; a coluna `fs_pru_hz` do CSV guarda esse valor. Compare:
+**Como ler.** Desde out/2026, o `medir_captura.py` (e o `adc_tool.py` e o `gerar_perfil_sonda.py`) analisa com a taxa que a PRU **gera**, `200 MHz ÷ ticks`, gravada no cabeçalho: a primeira linha de cada captura diz `102406.55 Hz (a que a PRU gera, clock ÷ ticks; a pedida era 102400 Hz, +64.0 ppm ...)`, e a coluna `fs_pru_hz` do CSV guarda esse valor. Com ela, **todas as taxas devem dar o mesmo `erro_freq_ppm`**: é o erro do cristal da PRU (δ_cristal), comum a todas (frequência medida menos a do contador, em ppm; o contador é a verdade, então o erro do gerador não entra). Para ver o arredondamento dos ticks, rode de novo com `--fs-pedida` (a análise supõe a taxa pedida, como antes):
 
-* Taxas que dividem 200 MHz (50, 100, 125 kS/s) devem dar **todas o mesmo `erro_freq_ppm`**: é o erro do cristal da PRU (δ_cristal), comum a todas.
-* 102,4 kS/s deve dar `−(δ_cristal + 64 ppm)` e 110 kS/s, `−(δ_cristal + 100 ppm)`: a diferença para as taxas exatas é o arredondamento dos ticks.
+* Taxas que dividem 200 MHz (50, 100, 125 kS/s) dão o mesmo valor com e sem `--fs-pedida`.
+* Com `--fs-pedida`, 102,4 kS/s deve dar `−(δ_cristal + 64 ppm)` e 110 kS/s, `−(δ_cristal + 100 ppm)`: a diferença para as taxas exatas é o arredondamento dos ticks.
 * Se as taxas exatas **não** derem o mesmo valor, o laço da PRU tem um número de ciclos fixo a mais por amostra (a hipótese "taxa = clock ÷ ticks" está errada): isso também vai para o relatório.
-* Repita com `--fs-pru` em 102,4 kS/s: o `erro_freq_ppm` deve cair para o mesmo valor das taxas exatas (a análise passa a usar a taxa que o PRU gera).
+* Use o trecho inteiro só com o firmware novo. Com o antigo, o salto na troca de buffer puxa a frequência medida em ~+1,5 ppm e a amplitude em −0,3 % numa captura de 2 blocos: por isso as capturas de 19/10 foram medidas no primeiro bloco (`--max-amostras 1048000`).
 
 **Esperado.** Cristal da BeagleBone na faixa de dezenas de ppm. Em frequências medidas, isso é um erro relativo de 0,00x%, desprezível para amplitude, mas relevante se você quiser separar tons muito próximos ou comparar a frequência com uma referência.
 
@@ -617,7 +624,7 @@ end
 | 102 400 | 1953 | 9 998,9279 Hz | **−64,03 ppm** | −64,0 ppm |
 | 110 000 | 1818 | 9 998,5684 Hz | **−99,98 ppm** | −100,0 ppm |
 
-* **A hipótese "taxa = 200 MHz ÷ ticks" vale:** as três taxas exatas concordam em 0,02 ppm (não há ciclo fixo a mais por amostra) e as outras duas erram exatamente o arredondamento. Com `--fs-pru`, 102,4 e 110 kS/s caem em 9 999,5679 e 9 999,5684 Hz, sobre as exatas.
+* **A hipótese "taxa = 200 MHz ÷ ticks" vale:** as três taxas exatas concordam em 0,02 ppm (não há ciclo fixo a mais por amostra) e as outras duas erram exatamente o arredondamento. Com a taxa da PRU (hoje o padrão; na época, `--fs-pru`), 102,4 e 110 kS/s caem em 9 999,5679 e 9 999,5684 Hz, sobre as exatas. A tabela acima é a do `--fs-pedida`.
 * **Erro comum de −43,2 ppm** (o tom aparece em 9 999,568 Hz): é o erro do cristal da BeagleBone **somado** ao do gerador. Só a leitura do contador do osciloscópio separa os dois; anote-a na próxima vez.
 * De quebra, as capturas dão a prévia do T5 a −27,5 dBFS (tom de 0,4316 V de pico): SINAD 60,5 a 61,5 dB, ENOB 14,3 a 14,5 bits e THD −71,6 dB, com a 3ª harmônica a −73 dBc. É o THD do **gerador** (fato 8), não o do ADC.
 
@@ -735,9 +742,9 @@ end
 uv run scripts/medir_captura.py $DIA/T7[abcd]*.bin --freq 10000 --sem-correcao-sonda --inicio 100 --csv $DIA/resultados.csv
 ```
 
-**Esperado.** Em cada captura: `continuidade : OK`, **0 eventos**, maior salto de fase **de poucos milésimos de amostra** (0,001 a 0,004 nas capturas de 19/10 sem troca de buffer). Não basta o "OK": a ferramenta só acusa saltos acima de 0,5 amostra **do canal**, e o salto de 7 µs do firmware antigo vale 0,7 amostra com 1 canal a 100 kS/s, mas **0,35 com 2 canais** (passa como OK) e 0,09 com 8. Qualquer salto acima de ~0,02 amostra que caia numa troca de buffer (amostra 1 048 576 ÷ nº de canais, e múltiplos) é defeito; tamanho do arquivo igual ao do cabeçalho (a ferramenta avisa se não for); amplitude do tom varia menos de ~0,1% entre segmentos. No T7c, o tom pode derivar um pouco pelo gerador: compare com a leitura do osciloscópio no início e no fim.
+**Esperado.** Em cada captura: `continuidade : OK`, **0 eventos**, maior salto de fase **de poucos milésimos de amostra** (0,001 a 0,004 nas capturas de 19/10 sem troca de buffer, 0,01 a 0,04 µs), e a linha `trocas de buffer : OK -- N no trecho, salto mediano 0.00x amostra(s) (0.0x µs ...) contra 0.00x ... longe delas`: o salto nas trocas igual ao dos outros segmentos. O critério de 0,5 amostra **do canal** não basta sozinho: o salto de 7 µs do firmware antigo vale 0,7 amostra com 1 canal a 100 kS/s, mas 0,35 com 2 canais e 0,09 com 8. É a linha das trocas que o pega em qualquer nº de canais (nas capturas de 19/10: `DESTOAM -- ... 6.96 µs ... contra 0.0229 µs`). Tamanho do arquivo igual ao do cabeçalho (a ferramenta avisa se não for); amplitude do tom varia menos de ~0,1% entre segmentos. No T7c, o tom pode derivar um pouco pelo gerador: compare com a leitura do osciloscópio no início e no fim.
 
-**Passou se:** zero eventos em todas as capturas de até 100 kS/s, inclusive T7b e T7d, e o `ler_adc` termina com `Integridade: 0 amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído no SDO -- tudo certo`. Um evento = anote em qual taxa, que amostra (`perto da amostra N`) e olhe a saída do terminal do `ler_adc` e o `dmesg` daquele instante.
+**Passou se:** zero eventos e `trocas de buffer : OK` em todas as capturas de até 100 kS/s, inclusive T7b e T7d, e o `ler_adc` termina com `Integridade: 0 amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído no SDO -- tudo certo`. Um evento = anote em qual taxa, que amostra (`perto da amostra N`) e olhe a saída do terminal do `ler_adc` e o `dmesg` daquele instante.
 
 **Executado em 19/10/2026, com o firmware anterior a out/2026** (canal 1, tom de 10 kHz, `--inicio 100`):
 

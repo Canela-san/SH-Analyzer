@@ -12,6 +12,7 @@ dessas etapas precisa saber que existe uma sonda.
 
 Depende de: ``constantes``, ``erros``."""
 
+import datetime
 import json
 import logging
 import re
@@ -60,6 +61,10 @@ PADRAO_SONDA_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 # Acima deste reforço (dB) sobre o ruído do ADC, aplicar_correcao_sonda()
 # avisa que a correção está amplificando muito o ruído de fundo.
 AVISO_AMPLIFICACAO_RUIDO_DB = 20.0
+# Um perfil calibrado há mais que isso (contado até a data da captura) ganha um aviso para recalibrar (S8): 1 ano é o
+# intervalo usual de calibração de sondas e pontas de prova, e a resposta de uma bobina ou de um divisor muda com a
+# temperatura, o envelhecimento e qualquer troca de cabo ou de conector.
+IDADE_MAXIMA_PERFIL_DIAS = 365
 
 
 class PerfilSonda:
@@ -86,11 +91,12 @@ class PerfilSonda:
     def __init__(self, id: str, tipo: str, caminho: Path,
                  pontos_freq_hz: np.ndarray, pontos_ganho: np.ndarray,
                  faixa_freq_valida_hz: tuple[float, float] | None = None,
-                 calibracao_adc: dict | None = None):
+                 calibracao_adc: dict | None = None, data_calibracao: datetime.date | None = None):
         self.id = id
         self.tipo = tipo
         self.caminho = caminho
         self.faixa_freq_valida_hz = faixa_freq_valida_hz
+        self.data_calibracao = data_calibracao      # None: perfil sem data (escrito à mão) ou com data ilegível
         # Metadado gravado por gerar_perfil_sonda.py (formato/faixa/--ganho de
         # cada canal NA CALIBRAÇÃO) -- usado só por conferir_calibracao_perfil(),
         # nunca na matemática da correção. None em perfis escritos à mão.
@@ -258,7 +264,35 @@ def carregar_perfil_sonda(caminho: Path) -> PerfilSonda:
         pontos_freq_hz=freqs, pontos_ganho=ganhos,
         faixa_freq_valida_hz=faixa_freq_valida_hz,
         calibracao_adc=calibracao_adc,
+        data_calibracao=_data_iso(dados.get("data_calibracao")),
     )
+
+
+def _data_iso(valor) -> datetime.date | None:
+    """'AAAA-MM-DD' (o que o gerar_perfil_sonda grava) -> date; qualquer outra coisa (ausente, número, o modelo
+    'AAAA-MM-DD' do exemplo) -> None. O formato é conferido aqui porque o ``fromisoformat`` do Python 3.11+ aceita
+    mais formas que o do 3.10."""
+    if not isinstance(valor, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", valor):
+        return None
+    try:
+        return datetime.date.fromisoformat(valor)
+    except ValueError:
+        return None
+
+
+def conferir_idade_perfil(perfil: PerfilSonda, canal: int, data_captura: datetime.date | None = None,
+                          limite_dias: int = IDADE_MAXIMA_PERFIL_DIAS) -> int | None:
+    """Avisa (nunca aborta) se o perfil foi calibrado mais de ``limite_dias`` antes da captura (ou de hoje, sem a
+    data da captura). Devolve a idade em dias, ou None se o perfil não diz quando foi calibrado."""
+    if perfil.data_calibracao is None:
+        return None
+    referencia = data_captura or datetime.date.today()
+    idade = (referencia - perfil.data_calibracao).days
+    if idade > limite_dias:
+        log.warning(f"canal {canal}: o perfil '{perfil.id}' foi calibrado em {perfil.data_calibracao.isoformat()}, "
+                    f"{idade} dias antes da captura (mais de {limite_dias}): a sonda pode ter mudado; recalibre "
+                    f"(roteiro, T10) antes de usar o resultado num trabalho.")
+    return idade
 
 
 def analisar_overrides_por_canal(texto: str, nome_flag: str) -> dict[int, str]:

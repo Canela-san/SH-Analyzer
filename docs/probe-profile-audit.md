@@ -82,7 +82,7 @@ Estes determinam se o perfil é *fisicamente* correto; o software não consegue 
 ## 4. Limitações de projeto e melhorias propostas (decisão sua)
 
 > **Status em 2026-10:** nenhuma das propostas abaixo foi implementada. Elas estão resumidas,
-> com esforço e necessidade de decisão, em `docs/improvement-proposals.md` (seção 8, itens S1–S8).
+> com esforço e necessidade de decisão, em `docs/improvement-proposals.md` (seção 8, itens S1–S7; o S8, aviso de perfil antigo, já foi feito).
 
 ### 4.1 Correção só de magnitude (fase não corrigida) — impacto alto *se* houver análise V×I
 Medido: sonda passa-baixa causal de fc = 30 kHz, tons 2,5/9/20/40 kHz com amplitude restaurada exata, mas fase residual −4,8°/−16,7°/−33,7°/−53,1° e **erro RMS da forma de onda de 42 %** (o pico coincidiu por acaso). Hoje o pipeline só usa amplitude em dB, então é inofensivo; deixa de ser quando se calcular potência ativa, impedância ou direção de emissão em supraharmônicos.

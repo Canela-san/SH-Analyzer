@@ -8,7 +8,7 @@
 """``ler_adc`` FALSO, só para testar ``firmware/calibrar_sonda.sh`` sem hardware.
 
 Imita a interface de linha de comando do ``firmware/ler_adc.c`` (taxa, lista de canais,
-``--blocos``, ``--grandeza``, ``--sonda``, ``--faixa-adc``, ``--atraso-cs``, ``-o``, ``-t``, ``-d``) e grava um ``.bin`` v4
+``--blocos``, ``--grandeza``, ``--sonda``, ``--faixa-adc``, ``--atraso-cs``, ``-o``, ``-t``, ``-d``) e grava um ``.bin`` v5
 sintético com o mesmo formato (``capturas_sinteticas.montar_cabecalho``). A descrição (``-d``) vai para o cabeçalho
 e, se trouxer ``ref: amp=...``, a amplitude do tom injetado é essa (o gerador "obedeceu" ao operador). Quem usa é ``test_calibrar_sonda.py``,
 que o chama através de um pequeno wrapper ``sh`` (o script de calibração executa o binário direto).
@@ -35,6 +35,7 @@ Variáveis de ambiente:
     crc_ruim         CRC-32 do cabeçalho errado                 cab_v1    cabeçalho versão 1
     cab_v2           cabeçalho versão 2 (firmware antigo: sem a faixa do ADC; ``--faixa-adc`` é recusada)
     cab_v3           cabeçalho versão 3 (firmware anterior aos contadores de integridade)
+    cab_v4           cabeçalho versão 4 (firmware anterior à versão do firmware no cabeçalho)
     atrasada         cabeçalho v4 com 5000 amostras atrasadas (taxa acima do que a PRU alcança)
     sobrescrita      cabeçalho v4 com 1 buffer sobrescrito (amostras perdidas)
     preambulo        cabeçalho v4 com 3 quadros com ruído no SDO
@@ -76,6 +77,7 @@ OFFSET_BLOCOS = 68
 OFFSET_CRC_V2 = 668
 OFFSET_CRC_V3 = 676
 OFFSET_CRC_V4 = 700
+OFFSET_CRC_V5 = 740
 INTEGRIDADE = {"atrasada": (5000, 0, 0), "sobrescrita": (0, 1, 0), "preambulo": (0, 0, 3)}   # diretiva -> contadores v4
 FAIXAS_VALIDAS = {20.48: 0, 10.24: 1, 5.12: 2}   # fundo de escala total (V) -> código de faixa
 CODIGO_GRANDEZA = {"tensao": 0, "corrente": 1, "temperatura": 2}
@@ -169,7 +171,7 @@ def main(argv: list[str]) -> int:
         grandezas = [CODIGO_GRANDEZA["tensao"]] * k
     if diretiva == "grandeza_corrente":
         grandezas = [CODIGO_GRANDEZA["corrente"]] * k
-    versao = {"cab_v1": 1, "cab_v2": 2, "cab_v3": 3}.get(diretiva, 4)
+    versao = {"cab_v1": 1, "cab_v2": 2, "cab_v3": 3, "cab_v4": 4}.get(diretiva, 5)
     if diretiva == "faixa_errada":
         codigos_faixa = [(c + 1) % 3 for c in codigos_faixa]           # o cabeçalho diz outra faixa que a pedida
     cabecalho = bytearray(montar_cabecalho(n_por_canal, canais, grandezas, sondas, taxa, versao=versao, titulo=titulo,
@@ -178,7 +180,7 @@ def main(argv: list[str]) -> int:
                                          atrasos_cs=(1, 1, 1) if diretiva == "atraso_errado" else atrasos_cs))
     struct.pack_into("<I", cabecalho, 40, spb)  # samples_per_buffer
     if versao >= 2:
-        offset_crc = {2: OFFSET_CRC_V2, 3: OFFSET_CRC_V3}.get(versao, OFFSET_CRC_V4)
+        offset_crc = {2: OFFSET_CRC_V2, 3: OFFSET_CRC_V3, 4: OFFSET_CRC_V4}.get(versao, OFFSET_CRC_V5)
         struct.pack_into("<Q", cabecalho, OFFSET_BLOCOS, 0 if diretiva == "cab_zero" else blocos)
         struct.pack_into("<I", cabecalho, offset_crc, 0)
         crc = zlib.crc32(bytes(cabecalho))

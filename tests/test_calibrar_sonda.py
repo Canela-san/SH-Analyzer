@@ -277,7 +277,7 @@ def test_coleta_nova_grava_bins_validos_e_manifesto(coleta_base):
     assert (b.pasta() / "plano_coleta.txt").exists() and (b.pasta() / "ler_adc.log").exists()
     for nome in bins:
         h = cab.ler_cabecalho(b.pasta() / nome)
-        assert h.versao_cabecalho == 4 and h.crc32_valido and h.faixa_adc_total_v_por_canal == (10.24, 10.24)
+        assert h.versao_cabecalho == 5 and h.crc32_valido and h.faixa_adc_total_v_por_canal == (10.24, 10.24)
         assert h.problemas_integridade == [] and h.atraso_cs_iteracoes == (200, 100, 100)
         assert h.frequencia_hz == TAXA and list(h.lista_canais) == [0, 1]
         assert h.grandeza_por_canal == (0, 1) and h.sonda_id_por_canal == ("", SONDA)

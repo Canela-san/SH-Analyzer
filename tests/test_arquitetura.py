@@ -151,3 +151,9 @@ def test_entradas_em_scripts_sao_finas(entrada):
     assert len(texto.splitlines()) < 40
     assert len(codigo) <= 2, "a lógica mora em scripts/supraharmonicos; a entrada só chama main()"
     assert "SystemExit(main())" in texto and "from supraharmonicos." in texto
+
+
+def test_medir_captura_nao_depende_dos_modos_do_adc_tool():
+    """P3: a correção de sonda mora em ``contexto``; o ``medir_captura`` não arrasta os modos do ``adc_tool``."""
+    assert "modos" not in importados_internos("cli_medir_captura")
+    assert "aplicar_correcao_sondas" in (PACOTE / "contexto.py").read_text(encoding="utf-8")

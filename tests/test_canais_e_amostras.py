@@ -7,6 +7,7 @@ from supraharmonicos.amostras import (
     carregar_amostras_csv,
     converter_para_tensao,
     detectar_tipo_arquivo,
+    detectar_transitorio_inicial,
     selecionar_intervalo,
 )
 from supraharmonicos.canais import (
@@ -127,3 +128,35 @@ class TestAlinhamentoAoCiclo:
 def test_calibracao_recusa_valores_nao_finitos(texto):
     with pytest.raises(ErroSHAN, match="números finitos"):
         analisar_lista_calibracao(texto, 2, "--ganho")
+
+
+def transitorio_de_troca_de_faixa(n=10_000, fs=100_000.0, tau_s=16e-6, degrau_lsb=4600.0, ruido_lsb=0.7, seed=3):
+    """Códigos de um canal em curto logo depois de trocar a faixa. Uma exponencial só, de τ = 16 µs: mais lenta que a
+    das capturas de 19/10 (< 1 LSB em ~80 µs), de propósito, para o teste do tempo padrão ter margem."""
+    rng = np.random.default_rng(seed)
+    t = np.arange(n) / fs
+    return np.round(32768 + degrau_lsb * np.exp(-t / tau_s) + rng.normal(0, ruido_lsb, n)).astype("<u2")
+
+
+class TestTransitorioInicial:
+    """F9: o começo de uma captura logo depois de trocar a faixa de um canal decai até o valor certo."""
+
+    def test_acha_o_transitorio_de_uma_troca_de_faixa(self):
+        n, desvio = detectar_transitorio_inicial(transitorio_de_troca_de_faixa())
+        assert 5 <= n <= 12                                        # τ = 16 µs: ~11 amostras a 100 kS/s até 8 LSB
+        assert desvio == pytest.approx(4600, rel=0.01)
+
+    def test_depois_do_tempo_padrao_nao_sobra_transitorio(self):
+        from supraharmonicos.constantes import DURACAO_TRANSITORIO_FAIXA_S
+        codigos = transitorio_de_troca_de_faixa()
+        assert detectar_transitorio_inicial(codigos[round(DURACAO_TRANSITORIO_FAIXA_S * 100_000):]) == (0, 0.0)
+
+    @pytest.mark.parametrize("amplitude_lsb", [5.0, 3000.0, 30_000.0])
+    def test_tom_e_ruido_nao_disparam(self, amplitude_lsb):
+        rng = np.random.default_rng(1)
+        t = np.arange(20_000) / 100_000.0
+        codigos = np.round(32768 + amplitude_lsb * np.sin(2 * np.pi * 1000.0 * t + 0.3) + rng.normal(0, 0.7, t.size))
+        assert detectar_transitorio_inicial(codigos.astype("<u2")) == (0, 0.0)
+
+    def test_captura_curta_nao_e_examinada(self):
+        assert detectar_transitorio_inicial(transitorio_de_troca_de_faixa(n=200)) == (0, 0.0)

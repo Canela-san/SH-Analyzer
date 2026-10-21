@@ -25,11 +25,11 @@ from pathlib import Path
 
 import numpy as np
 
-from .amostras import carregar_amostras_bin, converter_para_tensao
+from .amostras import carregar_amostras_bin, converter_para_tensao, detectar_transitorio_inicial
 from .cabecalho import CabecalhoArquivo, conferir_consistencia_cabecalho, contar_amostras_arquivo_bin
 from .canais import analisar_lista_canais, desintercalar, validar_subconjunto_canais
-from .constantes import NOMES_GRANDEZA, UNIDADE_GRANDEZA
-from .contexto import ContextoCaptura, resolver_contexto
+from .constantes import DURACAO_TRANSITORIO_FAIXA_S, NOMES_GRANDEZA, UNIDADE_GRANDEZA
+from .contexto import ContextoCaptura, aplicar_correcao_sondas, resolver_contexto
 from .erros import ErroSHAN, ErroUso
 from .metricas_captura import (
     HARMONICOS_PADRAO,
@@ -37,14 +37,16 @@ from .metricas_captura import (
     Basicas,
     Continuidade,
     Espectro,
+    TrocasBuffer,
     analisar_espectro,
     calcular_acoplamento,
     calcular_basicas,
+    comparar_trocas_de_buffer,
     fracao_saturada,
+    posicoes_das_trocas,
     projetar_tom,
     verificar_continuidade,
 )
-from .modos import aplicar_correcao_sondas
 from .osciloscopio import (
     TomMedido,
     adicionar_argumentos_osciloscopio,
@@ -62,10 +64,11 @@ SATURACAO_AVISO = 5e-4                 # fração de amostras no fundo de escala
 
 COLUNAS_CSV = [
     "arquivo", "rotulo", "canal", "grandeza", "unidade", "fs_nominal_hz", "fs_pru_hz", "fs_canal_hz",
-    "amostras_por_canal", "duracao_s", "media", "rms_ca", "pico_a_pico", "minimo", "maximo", "saturacao_pct",
+    "amostras_por_canal", "inicio_por_canal", "duracao_s", "media", "rms_ca", "pico_a_pico", "minimo", "maximo", "saturacao_pct",
     "ruido_rms_lsb", "densidade_ruido_por_rthz", "freq_tom_hz", "amplitude_pico", "amplitude_rms",
     "thd_db", "thd_pct", "sinad_db", "snr_db", "enob_bits", "sfdr_dbc", "freq_espurio_hz", "ordem_espurio",
     "salto_max_amostras", "saltos_acima_do_limite", "variacao_amplitude_pct",
+    "salto_max_us", "trocas_buffer", "salto_trocas_amostras", "salto_trocas_us", "salto_tipico_amostras", "trocas_destoam",
     "diafonia_db", "atraso_medido_us", "atraso_esperado_us",
     "correcao_sonda", "referencia_rms", "erro_amplitude_pct", "referencia_freq_hz", "erro_freq_ppm",
     "ref_amplitude_texto", "ref_amplitude_pico", "razao_vs_amplitude_ref",
@@ -104,10 +107,13 @@ def montar_parser() -> argparse.ArgumentParser:
         help="Frequência de amostragem TOTAL (Hz). Sem a flag: a do cabeçalho do .bin (obrigatória sem cabeçalho)."
     )
     parser.add_argument(
+        "--fs-pedida", action="store_true",
+        help="Analisa com a taxa PEDIDA (frequencia_hz do cabeçalho) em vez da que a PRU gera (clock ÷ ticks, o padrão). "
+             "Elas só diferem quando 200 MHz ÷ taxa não é inteiro (102,4 kS/s: +64 ppm); serve para repetir o T4.",
+    )
+    parser.add_argument(
         "--fs-pru", action="store_true",
-        help="Usa como frequência de amostragem a que o PRU de fato gera, pru_clock/sample_period_ticks "
-             "(gravados no cabeçalho), em vez da pedida. Difere dela porque os ticks são inteiros "
-             "(ex.: 200 MHz/102400 = 1953,125 -> 1953 ticks -> +64 ppm)."
+        help=argparse.SUPPRESS,             # a taxa da PRU virou o padrão (P4, out/2026); aceita para comandos antigos
     )
     parser.add_argument("--canais", type=str, default=None, metavar="LISTA",
                         help="Canais no arquivo (padrão: os do cabeçalho; sem cabeçalho, '1').")
@@ -130,7 +136,10 @@ def montar_parser() -> argparse.ArgumentParser:
     parser.add_argument("--harmonicos", type=int, default=HARMONICOS_PADRAO, metavar="N",
                         help=f"Até que ordem somar harmônicos no THD (padrão {HARMONICOS_PADRAO}). "
                              "Os que passam de Nyquist são medidos na frequência dobrada (alias).")
-    parser.add_argument("--inicio", type=int, default=0, metavar="N", help="Primeira amostra POR CANAL a analisar (padrão 0).")
+    parser.add_argument("--inicio", type=int, default=None, metavar="N",
+                        help=f"Primeira amostra POR CANAL a analisar (padrão: a primeira depois de "
+                             f"{DURACAO_TRANSITORIO_FAIXA_S * 1e6:.0f} µs, o transitório de uma troca de faixa do ADC; "
+                             f"0 = desde a 1ª amostra).")
     parser.add_argument("--max-amostras", type=int, default=MAX_AMOSTRAS_PADRAO, metavar="N",
                         help=f"Amostras por canal a analisar (padrão {MAX_AMOSTRAS_PADRAO}); limita a memória.")
     grupo_sonda = parser.add_argument_group(
@@ -187,38 +196,56 @@ def montar_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 def _frequencias(args: argparse.Namespace, cabecalho: CabecalhoArquivo | None) -> tuple[float, float | None]:
-    """(fs_total usada, fs_total do PRU ou None). Hierarquia: --frequencia > cabeçalho; --fs-pru escolhe a do PRU."""
-    fs_pru = None
-    if cabecalho is not None and cabecalho.sample_period_ticks > 0 and cabecalho.pru_clock_hz > 0:
-        fs_pru = cabecalho.pru_clock_hz / cabecalho.sample_period_ticks
-    if args.fs_pru:
-        if fs_pru is None:
-            raise ErroSHAN("--fs-pru precisa do cabeçalho da captura (pru_clock e sample_period_ticks).")
-        return fs_pru, fs_pru
+    """(fs_total usada, fs_total da PRU ou None). Hierarquia: --frequencia > a taxa que a PRU gera (clock ÷ ticks do
+    cabeçalho) > a pedida (frequencia_hz do cabeçalho); --fs-pedida pula a da PRU."""
+    fs_pru = cabecalho.frequencia_pru_hz if cabecalho is not None else None
+    if args.fs_pru and fs_pru is None:
+        raise ErroSHAN("--fs-pru precisa do cabeçalho da captura (pru_clock e sample_period_ticks).")
     if args.frequencia is not None:
         return args.frequencia, fs_pru
+    if fs_pru is not None and not args.fs_pedida:
+        return fs_pru, fs_pru
     if cabecalho is not None and cabecalho.frequencia_hz > 0:
         return float(cabecalho.frequencia_hz), fs_pru
     raise ErroSHAN("sem cabeçalho com a frequência de amostragem: informe -f/--frequencia (Hz, total).")
 
 
-def _ler_canais(caminho: Path, args: argparse.Namespace, ctx: ContextoCaptura,
-                canais_medir: list[int]) -> tuple[dict[int, np.ndarray], dict[int, float]]:
-    """({canal: sinal na unidade física}, {canal: fração saturada}) das amostras pedidas (--inicio/--max-amostras)."""
+def _inicio_por_canal(args: argparse.Namespace, fs_canal: float) -> int:
+    """``--inicio``, ou o padrão: pular o transitório de uma troca de faixa (F9), que dura um tempo, e não um nº de
+    amostras (com 1 canal a 100 kS/s são 20 amostras; com 8 canais, 3)."""
+    return args.inicio if args.inicio is not None else math.ceil(DURACAO_TRANSITORIO_FAIXA_S * fs_canal)
+
+
+def _ler_canais(caminho: Path, args: argparse.Namespace, ctx: ContextoCaptura, canais_medir: list[int],
+                inicio: int) -> tuple[dict[int, np.ndarray], dict[int, float], dict[int, tuple[int, float]]]:
+    """({canal: sinal na unidade física}, {canal: fração saturada}, {canal: transitório no começo do trecho}) das
+    amostras pedidas (``inicio`` por canal e --max-amostras); o transitório é o de ``detectar_transitorio_inicial``."""
     amostras = carregar_amostras_bin(caminho, args.formato, offset=ctx.offset_amostras)
     k = ctx.num_canais
-    ini = max(0, args.inicio) * k
+    ini = inicio * k
     fim = min(len(amostras), ini + args.max_amostras * k)
     if fim - ini < k:
-        raise ErroSHAN(f"--inicio {args.inicio} está além do fim da captura ({len(amostras) // k} amostras por canal).")
+        raise ErroSHAN(f"--inicio {inicio} está além do fim da captura ({len(amostras) // k} amostras por canal).")
     bruto = np.asarray(amostras[ini:fim])
     por_canal = desintercalar(bruto, ctx.canais, canais_medir)
-    sinais, saturacao = {}, {}
+    sinais, saturacao, transitorios = {}, {}, {}
     for canal in canais_medir:
         i = ctx.indice_no_ciclo(canal)
         saturacao[canal] = fracao_saturada(por_canal[canal], args.formato)
+        transitorios[canal] = detectar_transitorio_inicial(por_canal[canal])
         sinais[canal] = converter_para_tensao(por_canal[canal], ctx.faixas[i], ctx.ganhos[i], args.formato, ctx.offsets[i])
-    return sinais, saturacao
+    return sinais, saturacao, transitorios
+
+
+def _avisar_transitorios(transitorios: dict[int, tuple[int, float]], inicio: int, explicito: bool) -> None:
+    for canal, (n, desvio) in transitorios.items():
+        if not n:
+            continue
+        sugestao = max(100, inicio + 2 * n)
+        log.warning(f"canal {canal}: as {n} primeiras amostras do trecho (a partir da {inicio}) fogem do resto, até "
+                    f"{desvio:.0f} LSB -- é o jeito do transitório de uma troca de faixa do ADC. DC, RMS e ruído saem "
+                    f"inflados; comece depois dele (--inicio {sugestao})"
+                    + ("." if explicito else ", ou veja se a captura começou com outro sinal."))
 
 
 @dataclass
@@ -232,7 +259,9 @@ class ResultadoCanal:
     basicas: Basicas
     espectro: Espectro
     continuidade: Continuidade | None
+    trocas: TrocasBuffer | None         # None sem continuidade ou sem o tamanho do buffer (captura sem cabeçalho)
     comparacao: dict[str, str]          # colunas do CSV da comparação com o osciloscópio ({} sem --referencia-*)
+    inicio: int                         # 1ª amostra do canal medida (--inicio, ou o padrão que pula o transitório)
 
 
 # ---------------------------------------------------------------------------
@@ -247,8 +276,28 @@ def _campo(nome: str, valor: str) -> str:
     return f"  {nome:<22}: {valor}"
 
 
+def _us(amostras: float, fs_canal: float) -> str:
+    return f"{amostras / fs_canal * 1e6:.3g} µs"
+
+
+def _formatar_trocas(trocas: TrocasBuffer | None, cont: Continuidade, fs_canal: float, por_canal: float) -> str | None:
+    if trocas is None:
+        return None
+    if trocas.trocas == 0:
+        return _campo("trocas de buffer", f"nenhuma no trecho (o buffer é de {por_canal:.0f} amostras por canal): esta "
+                                          f"captura não testa a troca -- para isso, capture >= 3 blocos")
+    texto = (f"{trocas.trocas} no trecho, salto mediano {trocas.salto_mediano_amostras:.3f} amostra(s) "
+             f"({_us(trocas.salto_mediano_amostras, fs_canal)}; maior {trocas.salto_max_amostras:.3f})")
+    if math.isnan(trocas.salto_tipico_amostras):
+        return _campo("trocas de buffer", texto + f"; poucos segmentos longe das trocas para comparar ({cont.segmentos} segmentos)")
+    veredito = "DESTOAM" if trocas.destoam else "OK"
+    return _campo("trocas de buffer", f"{veredito} -- {texto} contra {trocas.salto_tipico_amostras:.3f} "
+                                      f"({_us(trocas.salto_tipico_amostras, fs_canal)}) longe delas")
+
+
 def _formatar_canal(canal: int, unidade: str, grandeza: str, b: Basicas, e: Espectro, saturacao: float,
-                    cont: Continuidade | None, lsb: float, fs_canal: float, procurou_tom: bool) -> list[str]:
+                    cont: Continuidade | None, trocas: TrocasBuffer | None, lsb: float, fs_canal: float,
+                    num_canais: int, por_canal: float, procurou_tom: bool) -> list[str]:
     linhas = [
         f"Canal {canal} ({grandeza}, {unidade}) -- {b.n_amostras} amostras ({b.duracao_s:.3f} s), "
         f"fs do canal {fs_canal:g} Hz, resolução espectral {e.resolucao_hz:.4g} Hz",
@@ -283,30 +332,44 @@ def _formatar_canal(canal: int, unidade: str, grandeza: str, b: Basicas, e: Espe
         if e.tem_tom:
             linhas.append(_campo("continuidade", "não verificada (captura curta demais para 4 segmentos)"))
     else:
-        veredito = "OK" if cont.saltos_acima_do_limite == 0 else f"DESCONTINUIDADE ({cont.saltos_acima_do_limite} evento(s))"
+        if cont.saltos_acima_do_limite:
+            veredito = f"DESCONTINUIDADE ({cont.saltos_acima_do_limite} evento(s))"
+        elif trocas is not None and trocas.destoam:
+            veredito = "SALTO NAS TROCAS DE BUFFER (abaixo de 1 amostra, ver abaixo)"
+        else:
+            veredito = "OK"
+        total = f", {cont.salto_max_amostras * num_canais:.3f} na taxa total" if num_canais > 1 else ""
         linhas.append(_campo(
             "continuidade",
-            f"{veredito} -- maior salto de fase {cont.salto_max_amostras:.3f} amostra(s) (perto da amostra "
-            f"{cont.indice_salto_max}); {cont.segmentos} segmentos de {cont.amostras_por_segmento}; "
-            f"amplitude varia {cont.variacao_amplitude_pct:.3f} %",
+            f"{veredito} -- maior salto de fase {cont.salto_max_amostras:.3f} amostra(s) "
+            f"({_us(cont.salto_max_amostras, fs_canal)}{total}; perto da amostra {cont.indice_salto_max}); "
+            f"{cont.segmentos} segmentos de {cont.amostras_por_segmento}; amplitude varia {cont.variacao_amplitude_pct:.3f} %",
         ))
+        linha_trocas = _formatar_trocas(trocas, cont, fs_canal, por_canal)
+        if linha_trocas:
+            linhas.append(linha_trocas)
     return linhas
 
 
-def _dica_troca_de_buffer(cont: Continuidade | None, ctx: ContextoCaptura, inicio: int) -> str:
-    """Se o maior salto cai numa troca de buffer da PRU, diz isso (e a causa conhecida, num firmware antigo)."""
+def _trocas_do_canal(cont: Continuidade | None, ctx: ContextoCaptura, inicio: int, fs_canal: float) -> TrocasBuffer | None:
+    """Saltos nas trocas de buffer do trecho medido (``--inicio`` do medir_captura já é por canal)."""
     cab = ctx.cabecalho
-    if cont is None or not cont.saltos_acima_do_limite or cab is None or cab.samples_per_buffer <= 0:
+    if cont is None or cab is None or cab.samples_per_buffer <= 0:
+        return None
+    n = cont.segmentos * cont.amostras_por_segmento
+    posicoes = posicoes_das_trocas(cab.samples_per_buffer, ctx.num_canais, max(inicio, 0), n)
+    return comparar_trocas_de_buffer(cont, fs_canal, posicoes)
+
+
+def _dica_troca_de_buffer(cont: Continuidade | None, trocas: TrocasBuffer | None, ctx: ContextoCaptura) -> str:
+    """Quando as trocas de buffer saltam mais que o resto, diz a causa provável (a conhecida, num firmware antigo)."""
+    if cont is None or trocas is None or not trocas.destoam:
         return ""
-    por_canal = cab.samples_per_buffer // ctx.num_canais
-    resto = (cont.indice_salto_max + max(inicio, 0)) % por_canal          # --inicio do medir_captura já é por canal
-    if min(resto, por_canal - resto) > cont.amostras_por_segmento:
-        return ""
-    if cab.versao_cabecalho <= 3:
-        return ("  -> o salto cai numa troca de buffer da PRU: é o bug do firmware anterior a out/2026, que zerava o "
-                "contador de ciclos ali e perdia ~7 µs a cada troca (~0,7 amostra a 100 kS/s). Recompile o firmware "
-                "(firmware/setup.sh).")
-    return ("  -> o salto cai numa troca de buffer da PRU: confira os contadores de integridade do cabeçalho "
+    if ctx.cabecalho is not None and ctx.cabecalho.versao_cabecalho <= 3:
+        return ("  -> o salto está nas trocas de buffer da PRU: é o defeito do firmware anterior a out/2026, que zerava "
+                "o contador de ciclos ali e perdia ~7 µs a cada troca (~0,7 amostra a 100 kS/s com 1 canal; 0,35 com 2). "
+                "Recompile o firmware (firmware/setup.sh).")
+    return ("  -> o salto está nas trocas de buffer da PRU: confira os contadores de integridade do cabeçalho "
             "(buffers sobrescritos?) e o log do ler_adc.")
 
 
@@ -333,7 +396,7 @@ def _linha_csv(arquivo: Path, rotulo: str, fs_nominal: float, fs_pru: float | No
     linha = {
         "arquivo": arquivo.name, "rotulo": rotulo, "canal": str(r.canal), "grandeza": r.grandeza, "unidade": r.unidade,
         "fs_nominal_hz": _num(fs_nominal), "fs_pru_hz": _num(fs_pru), "fs_canal_hz": _num(fs_canal),
-        "amostras_por_canal": str(b.n_amostras), "duracao_s": _num(b.duracao_s), "media": _num(b.media),
+        "amostras_por_canal": str(b.n_amostras), "inicio_por_canal": str(r.inicio), "duracao_s": _num(b.duracao_s), "media": _num(b.media),
         "rms_ca": _num(b.rms_ac), "pico_a_pico": _num(b.pico_a_pico), "minimo": _num(b.minimo), "maximo": _num(b.maximo),
         "saturacao_pct": _num(r.saturacao * 100.0), "ruido_rms_lsb": _num(e.ruido_rms / r.lsb),
         "densidade_ruido_por_rthz": _num(e.densidade_ruido), "correcao_sonda": "sim" if r.corrigido else "",
@@ -349,7 +412,16 @@ def _linha_csv(arquivo: Path, rotulo: str, fs_nominal: float, fs_pru: float | No
     if cont is not None:
         linha.update({"salto_max_amostras": _num(cont.salto_max_amostras),
                       "saltos_acima_do_limite": str(cont.saltos_acima_do_limite),
-                      "variacao_amplitude_pct": _num(cont.variacao_amplitude_pct)})
+                      "variacao_amplitude_pct": _num(cont.variacao_amplitude_pct),
+                      "salto_max_us": _num(cont.salto_max_amostras / fs_canal * 1e6)})
+    trocas = r.trocas
+    if trocas is not None:
+        linha["trocas_buffer"] = str(trocas.trocas)
+        if trocas.trocas:
+            linha.update({"salto_trocas_amostras": _num(trocas.salto_mediano_amostras),
+                          "salto_trocas_us": _num(trocas.salto_mediano_amostras / fs_canal * 1e6),
+                          "salto_tipico_amostras": _num(trocas.salto_tipico_amostras),
+                          "trocas_destoam": "sim" if trocas.destoam else ""})
     if acopl is not None:
         linha.update({"diafonia_db": _num(acopl.diafonia_db), "atraso_medido_us": _num(acopl.atraso_medido_us),
                       "atraso_esperado_us": _num(acopl.atraso_esperado_us)})
@@ -366,6 +438,7 @@ _COLUNAS_RESUMO = (
     ("ruído LSB", "ruido_rms_lsb", "{:.2f}"),
     ("DC", "media", "{:.6g}"),
     ("salto (amostras)", "salto_max_amostras", "{:.3f}"),
+    ("salto trocas µs", "salto_trocas_us", "{:.3g}"),
 )
 
 
@@ -503,7 +576,7 @@ def _comparar_referencia(e: Espectro, args: argparse.Namespace, unidade: str, ga
 
 
 def _medir_canal(canal: int, sinal: np.ndarray, corrigido: bool, saturacao: float, args: argparse.Namespace,
-                 ctx: ContextoCaptura, fs_canal: float, refs: Referencias) -> ResultadoCanal:
+                 ctx: ContextoCaptura, fs_canal: float, refs: Referencias, inicio: int) -> ResultadoCanal:
     i = ctx.indice_no_ciclo(canal)
     codigo = ctx.grandeza_do_canal(canal)
     grandeza, unidade = NOMES_GRANDEZA.get(codigo, "tensão"), UNIDADE_GRANDEZA.get(codigo, "V")
@@ -515,8 +588,11 @@ def _medir_canal(canal: int, sinal: np.ndarray, corrigido: bool, saturacao: floa
     basicas = calcular_basicas(sinal, fs_canal, lsb)
     espectro = analisar_espectro(sinal, fs_canal, refs.freq_dica, args.harmonicos, fundo_escala, procurar_tom=not args.sem_tom)
     cont = verificar_continuidade(sinal, fs_canal, espectro.freq_tom_hz) if espectro.tem_tom else None
-    linhas = _formatar_canal(canal, unidade, grandeza, basicas, espectro, saturacao, cont, lsb, fs_canal, not args.sem_tom)
-    dica = _dica_troca_de_buffer(cont, ctx, args.inicio)
+    trocas = _trocas_do_canal(cont, ctx, inicio, fs_canal)
+    por_canal = ctx.cabecalho.samples_per_buffer / ctx.num_canais if ctx.cabecalho is not None else 0.0
+    linhas = _formatar_canal(canal, unidade, grandeza, basicas, espectro, saturacao, cont, trocas, lsb, fs_canal,
+                             ctx.num_canais, por_canal, not args.sem_tom)
+    dica = _dica_troca_de_buffer(cont, trocas, ctx)
     if dica:
         linhas.append(dica)
     comparacao: dict[str, str] = {}
@@ -530,20 +606,26 @@ def _medir_canal(canal: int, sinal: np.ndarray, corrigido: bool, saturacao: floa
                       "para isso, meça com --sem-correcao-sonda)")
     for linha in linhas:
         log.info(linha)
-    return ResultadoCanal(canal, grandeza, unidade, lsb, saturacao, corrigido, basicas, espectro, cont, comparacao)
+    return ResultadoCanal(canal, grandeza, unidade, lsb, saturacao, corrigido, basicas, espectro, cont, trocas, comparacao,
+                          inicio)
 
 
-def _anunciar_frequencias(args: argparse.Namespace, ctx: ContextoCaptura, fs_total: float, fs_pru: float | None) -> float:
+def _anunciar_frequencias(args: argparse.Namespace, ctx: ContextoCaptura, fs_total: float, fs_pru: float | None,
+                          inicio: int) -> float:
     """Imprime a linha de frequências e devolve a frequência total PEDIDA (a do cabeçalho)."""
     nominal = float(ctx.cabecalho.frequencia_hz) if ctx.cabecalho is not None and ctx.cabecalho.frequencia_hz else fs_total
-    if fs_pru is None:
+    if args.frequencia is not None:
+        origem = f"{fs_total:g} Hz (-f)"
+    elif fs_pru is None or fs_pru == nominal:
         origem = f"{fs_total:g} Hz"
-    elif args.fs_pru:
-        origem = f"{fs_total:.2f} Hz (a gerada pelo PRU; a pedida era {nominal:g} Hz)"
+    elif fs_total == fs_pru:
+        origem = (f"{fs_total:.2f} Hz (a que a PRU gera, clock ÷ ticks; a pedida era {nominal:g} Hz, "
+                  f"{(fs_pru / nominal - 1) * 1e6:+.1f} ppm; --fs-pedida analisa com ela)")
     else:
-        origem = (f"{fs_total:g} Hz (o PRU gera {fs_pru:.2f} Hz = {(fs_pru - fs_total) / fs_total * 1e6:+.1f} ppm; "
-                  f"--fs-pru analisa com ela)")
-    log.info(f"canais {ctx.canais} | fs total {origem} | Nyquist por canal {fs_total / ctx.num_canais / 2:g} Hz")
+        origem = f"{fs_total:g} Hz (a pedida; a PRU gera {fs_pru:.2f} Hz = {(fs_pru / nominal - 1) * 1e6:+.1f} ppm)"
+    padrao = " (pula o transitório de troca de faixa; --inicio 0 mede tudo)" if args.inicio is None and inicio else ""
+    log.info(f"canais {ctx.canais} | fs total {origem} | Nyquist por canal {fs_total / ctx.num_canais / 2:g} Hz | "
+             f"a partir da amostra {inicio} de cada canal{padrao}")
     return nominal
 
 
@@ -567,7 +649,7 @@ def medir_arquivo(caminho: Path, args: argparse.Namespace) -> list[dict[str, str
         raise ErroSHAN(f"'{caminho}': só capturas '.bin' (com ou sem cabeçalho).")
     if not caminho.exists():
         raise ErroSHAN(f"arquivo '{caminho}' não encontrado.")
-    if args.inicio < 0 or args.max_amostras < 1 or args.harmonicos < 2:
+    if (args.inicio is not None and args.inicio < 0) or args.max_amostras < 1 or args.harmonicos < 2:
         raise ErroUso("--inicio >= 0, --max-amostras >= 1 e --harmonicos >= 2.")
 
     ctx = resolver_contexto(argparse.Namespace(**vars(args), converter=None, arquivo=caminho,
@@ -579,22 +661,29 @@ def medir_arquivo(caminho: Path, args: argparse.Namespace) -> list[dict[str, str
         )
     fs_total, fs_pru = _frequencias(args, ctx.cabecalho)
     fs_canal = fs_total / ctx.num_canais
-    sinais, saturacao = _ler_canais(caminho, args, ctx, ctx.canais_exibir)
+    inicio = _inicio_por_canal(args, fs_canal)
+    sinais, saturacao, transitorios = _ler_canais(caminho, args, ctx, ctx.canais_exibir, inicio)
     titulo = ctx.cabecalho.titulo if ctx.cabecalho is not None else ""
     log.info(f"=== {caminho.name}" + (f" -- {titulo}" if titulo else "") + " ===")
     for problema in (ctx.cabecalho.problemas_integridade if ctx.cabecalho is not None else []):
         log.warning(f"{caminho.name}: integridade da captura: {problema}.")
-    nominal = _anunciar_frequencias(args, ctx, fs_total, fs_pru)
+    nominal = _anunciar_frequencias(args, ctx, fs_total, fs_pru, inicio)
+    _avisar_transitorios(transitorios, inicio, args.inicio is not None)
 
     refs = carregar_referencias(caminho, args, ctx)
     antes = dict(sinais)
     aplicar_correcao_sondas(args, ctx, sinais, fs_canal)
-    resultados = [_medir_canal(c, sinais[c], sinais[c] is not antes[c], saturacao[c], args, ctx, fs_canal, refs)
+    resultados = [_medir_canal(c, sinais[c], sinais[c] is not antes[c], saturacao[c], args, ctx, fs_canal, refs, inicio)
                   for c in ctx.canais_exibir]
     acoplamentos = _medir_acoplamento(sinais, resultados, ctx, fs_canal, fs_total)
 
     rotulo = args.rotulo if args.rotulo is not None else titulo
     return [_linha_csv(caminho, rotulo, nominal, fs_pru, fs_canal, r, acoplamentos.get(r.canal)) for r in resultados]
+
+
+def _validar_frequencias(args: argparse.Namespace) -> None:
+    if args.fs_pru and args.fs_pedida:
+        raise ErroUso("--fs-pru e --fs-pedida se excluem (a taxa da PRU já é o padrão).")
 
 
 def _validar_referencias(args: argparse.Namespace) -> None:
@@ -622,6 +711,7 @@ def main(argv: list[str] | None = None) -> int:
     linhas: list[dict[str, str]] = []
     falhas = 0
     try:
+        _validar_frequencias(args)
         _validar_referencias(args)
         if args.canais is not None:
             validar = analisar_lista_canais(args.canais, "--canais")

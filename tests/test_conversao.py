@@ -47,7 +47,8 @@ def test_exportacao_hdf5_grava_metadados_e_dados(tmp_path):
     destino = tmp_path / "c.h5"
     n_linhas, n_canais = exportar_hdf5(p, destino, "uint16", [0, 1], cab, PAR["faixas"], PAR["ganhos"], PAR["offsets"],
                                        True, CABECALHO_TAMANHO_TOTAL, 0, None, tamanho_chunk=999,
-                                       grandeza_por_canal=[0, 1], sonda_id_por_canal=["", "sonda_x"])
+                                       grandeza_por_canal=[0, 1], sonda_id_por_canal=["", "sonda_x"],
+                                       versao_codigo="v1.2-3-gabc")
     assert (n_linhas, n_canais) == (5000, 2)
     with h5py.File(destino, "r") as f:
         bruto = f["amostras"][()]
@@ -60,6 +61,12 @@ def test_exportacao_hdf5_grava_metadados_e_dados(tmp_path):
         assert list(f.attrs["canais_ordem"]) == [0, 1]
         assert list(f.attrs["grandeza_por_canal"]) == [0, 1]
         assert [s.decode() for s in f.attrs["sonda_id_por_canal"]] == ["", "sonda_x"]
+        # P5: quem abre o .h5 fora do adc_tool sabe que /tensao_v não foi corrigida pela sonda, e de onde ela veio
+        assert list(f.attrs["correcao_sonda_aplicada_por_canal"]) == [0, 0]
+        assert f["tensao_v"].attrs["correcao_sonda"] == "nenhuma"
+        assert f.attrs["frequencia_pru_hz"] == pytest.approx(400_000.0)
+        assert (f.attrs["trecho_inicio_amostra_bruta"], f.attrs["trecho_fim_amostra_bruta"]) == (0, 10_000)
+        assert f.attrs["versao_codigo"] == "v1.2-3-gabc"
 
 
 def test_exportacao_hdf5_com_inicio_no_meio_do_ciclo_nao_troca_os_canais(tmp_path):

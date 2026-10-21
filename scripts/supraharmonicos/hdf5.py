@@ -30,7 +30,8 @@ def exportar_hdf5(caminho_bin: Path, caminho_h5: Path, formato: str,
                    inicio: int, fim: int | None,
                    tamanho_chunk: int = TAMANHO_CHUNK_PADRAO,
                    grandeza_por_canal: list[int] | None = None,
-                   sonda_id_por_canal: list[str] | None = None) -> tuple[int, int]:
+                   sonda_id_por_canal: list[str] | None = None,
+                   versao_codigo: str | None = None) -> tuple[int, int]:
     """Converte 'caminho_bin' para HDF5 em 'caminho_h5'.
 
     'grandeza_por_canal'/'sonda_id_por_canal' (opcionais, na mesma ordem de
@@ -67,9 +68,13 @@ def exportar_hdf5(caminho_bin: Path, caminho_h5: Path, formato: str,
                   float32, já calibrado em Volts (mesmo cálculo de
                   converter_para_tensao usado no resto do script).
       attrs (raiz) metadados do cabeçalho da captura (se disponível, via
-                  CabecalhoArquivo.para_attrs_hdf5) + parâmetros de
-                  calibração usados (faixa/ganho/offset por canal) +
-                  proveniência (arquivo de origem, --formato).
+                  CabecalhoArquivo.para_attrs_hdf5, com a taxa que a PRU
+                  gera em 'frequencia_pru_hz') + parâmetros de calibração
+                  usados (faixa/ganho/offset por canal) + proveniência
+                  (arquivo de origem, --formato, trecho exportado, versão
+                  do código) + 'correcao_sonda_aplicada_por_canal' (sempre
+                  0: quem abre o .h5 fora do adc_tool sabe que /tensao_v
+                  NÃO foi corrigida pelo perfil da sonda).
 
     Retorna (n_amostras_por_canal_exportadas, num_canais).
     """
@@ -113,7 +118,14 @@ def exportar_hdf5(caminho_bin: Path, caminho_h5: Path, formato: str,
         if cabecalho is not None:
             for chave, valor in cabecalho.para_attrs_hdf5().items():
                 f5.attrs[chave] = valor
+            if cabecalho.frequencia_pru_hz is not None:
+                f5.attrs["frequencia_pru_hz"] = cabecalho.frequencia_pru_hz
         f5.attrs["arquivo_origem"] = caminho_bin.name
+        f5.attrs["trecho_inicio_amostra_bruta"] = inicio
+        f5.attrs["trecho_fim_amostra_bruta"] = inicio + n_truncado
+        if versao_codigo:
+            f5.attrs["versao_codigo"] = versao_codigo
+        f5.attrs["correcao_sonda_aplicada_por_canal"] = np.zeros(num_canais, dtype=np.uint8)
         f5.attrs["offset_amostras_bytes"] = offset_amostras
         f5.attrs["formato_amostra"] = formato
         f5.attrs["canais_ordem"] = np.array(canais, dtype=np.uint8)
@@ -142,8 +154,11 @@ def exportar_hdf5(caminho_bin: Path, caminho_h5: Path, formato: str,
             dataset_tensao.attrs["descricao"] = (
                 "Amostras calibradas em Volts (faixa/ganho/offset por canal "
                 "-- ver atributos 'faixa_v_por_canal'/'ganho_por_canal'/"
-                "'offset_v_por_canal' na raiz). float32."
+                "'offset_v_por_canal' na raiz). float32. SEM correção de "
+                "sonda por frequência (ver 'correcao_sonda_aplicada_por_canal' "
+                "e 'sonda_id_por_canal' na raiz)."
             )
+            dataset_tensao.attrs["correcao_sonda"] = "nenhuma"
 
         # Tamanho de bloco em LINHAS (amostras/canal) derivado do tamanho de
         # bloco em amostras BRUTAS (mesma unidade de --tamanho-chunk usada

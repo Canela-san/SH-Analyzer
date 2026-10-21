@@ -13,7 +13,10 @@ conhecido injetado por um gerador:
   caem acima de Nyquist), THD, SINAD, SNR, ENOB e SFDR;
 * continuidade: salto de fase da fundamental entre segmentos consecutivos,
   convertido em "amostras equivalentes" -- uma amostra perdida/duplicada pelo
-  PRU ou pelo disco aparece como um salto de ~1 amostra;
+  PRU ou pelo disco aparece como um salto de ~1 amostra -- e, à parte, o salto
+  em cada troca de buffer da PRU comparado com o dos outros segmentos (um atraso
+  fixo a cada troca, como os 6,97 µs do firmware antigo, fica abaixo de 1 amostra
+  com vários canais e só aparece nessa comparação);
 * acoplamento entre canais: diafonia e atraso de amostragem (o ADS8688
   multiplexa: o canal na posição ``j`` do ciclo é amostrado ``j/fs_total``
   depois do primeiro).
@@ -56,6 +59,8 @@ HARMONICOS_PADRAO = 9
 AMOSTRAS_MINIMAS = 4096
 AMOSTRAS_POR_SEGMENTO_PADRAO = 65536
 LIMITE_SALTO_AMOSTRAS = 0.5     # salto de fase acima disso (em amostras equivalentes) = descontinuidade
+RAZAO_TROCA_DESTOA = 10.0       # o salto numa troca de buffer destoa acima de 10x o típico dos outros segmentos...
+LIMITE_TROCA_US = 0.05          # ... e de 0,05 µs (capturas saudáveis de 19/10: 0,01 a 0,04 µs; o defeito antigo: 6,97 µs)
 CICLOS_MINIMOS_POR_SEGMENTO = 10
 _CHUNK_PROJECAO = 1 << 20
 _TINY = 1e-300
@@ -320,6 +325,8 @@ class Continuidade:
     indice_salto_max: int              # índice (por canal) do começo do segmento em que o salto aparece
     saltos_acima_do_limite: int        # eventos (passos vizinhos contam como um só)
     variacao_amplitude_pct: float      # (máx-mín)/média da amplitude por segmento
+    passos_amostras: tuple[float, ...] = ()   # avanço de fase entre segmentos vizinhos, em amostras (com a deriva); o
+                                              # i-ésimo é o da fronteira na amostra (i+1)·amostras_por_segmento
 
 
 def verificar_continuidade(sinal: np.ndarray, fs: float, freq_hz: float,
@@ -357,7 +364,70 @@ def verificar_continuidade(sinal: np.ndarray, fs: float, freq_hz: float,
         segmentos=n_seg, amostras_por_segmento=segmento, salto_max_amostras=float(saltos[i_max]),
         indice_salto_max=(i_max + 1) * segmento, saltos_acima_do_limite=eventos,
         variacao_amplitude_pct=100.0 * float((np.max(amplitudes) - np.min(amplitudes)) / np.mean(amplitudes)),
+        passos_amostras=tuple(float(x) for x in passos / omega),
     )
+
+
+def posicoes_das_trocas(amostras_por_buffer: int, num_canais: int, inicio: int, n_amostras: int) -> list[float]:
+    """Onde caem as trocas de buffer da PRU dentro de um trecho, em amostras DO CANAL contadas do início do trecho.
+
+    A PRU troca de buffer a cada ``amostras_por_buffer`` amostras brutas (todos os canais) desde a 1ª amostra do
+    arquivo; o trecho começa na amostra ``inicio`` do canal e tem ``n_amostras``. Com um nº de canais que não divide o
+    buffer, a troca cai no meio de um ciclo, e a posição sai fracionária."""
+    if amostras_por_buffer <= 0 or num_canais <= 0:
+        return []
+    por_canal = amostras_por_buffer / num_canais
+    primeira = math.floor(inicio / por_canal) + 1
+    posicoes = []
+    m = primeira
+    while m * por_canal - inicio < n_amostras:
+        posicoes.append(m * por_canal - inicio)
+        m += 1
+    return posicoes
+
+
+@dataclass(frozen=True)
+class TrocasBuffer:
+    trocas: int                        # trocas de buffer dentro do trecho analisado
+    salto_mediano_amostras: float      # mediana, entre as trocas, do salto medido em cada uma (nan sem trocas)
+    salto_max_amostras: float          # o maior deles (nan sem trocas)
+    salto_tipico_amostras: float       # mediana dos saltos nas fronteiras longe das trocas (nan se sobram menos de 3)
+    destoam: bool                      # as trocas saltam mais que o resto (ver comparar_trocas_de_buffer)
+
+
+def comparar_trocas_de_buffer(cont: Continuidade, fs: float, posicoes: list[float],
+                              limite_amostras: float = LIMITE_SALTO_AMOSTRAS) -> TrocasBuffer:
+    """Compara o salto de fase nas trocas de buffer com o das outras fronteiras de segmento (P6).
+
+    Uma troca em ``p`` só mexe no passo das fronteiras a menos de 1 segmento dela (os dois segmentos vizinhos da
+    fronteira contêm ``p``); no meio de um segmento, ela se reparte entre as duas, e a soma das duas a recompõe. As
+    outras fronteiras dão a deriva (mediana dos passos) e o salto típico (mediana do desvio). Com 8 canais o buffer
+    tem só 2 segmentos, e é por isso que a conta é feita sobre os passos, e não sobre os saltos de
+    ``verificar_continuidade`` (que somam vizinhos e espalhariam cada troca para as fronteiras limpas).
+
+    As trocas destoam quando a MEDIANA delas passa de ``RAZAO_TROCA_DESTOA`` vezes o típico e de ``LIMITE_TROCA_US``:
+    um defeito sistemático aparece em todas, um acaso em uma só. Sem 3 fronteiras limpas para comparar, destoam se a
+    mediana passa de ``limite_amostras`` (o critério de amostra perdida)."""
+    nan = math.nan
+    passos = np.asarray(cont.passos_amostras, dtype=np.float64)
+    if not posicoes or passos.size == 0:
+        return TrocasBuffer(0, nan, nan, nan, False)
+    fronteiras = (np.arange(passos.size) + 1.0) * cont.amostras_por_segmento
+    distancias = np.abs(fronteiras[None, :] - np.asarray(posicoes, dtype=np.float64)[:, None])
+    afetadas = distancias < cont.amostras_por_segmento                 # [troca, fronteira]
+    limpas = ~np.any(afetadas, axis=0)
+    deriva = float(np.median(passos[limpas])) if np.count_nonzero(limpas) >= 3 else float(np.median(passos))
+    desvio = passos - deriva
+    em_troca = [abs(float(np.sum(desvio[linha]))) for linha in afetadas if np.any(linha)]
+    if not em_troca:
+        return TrocasBuffer(0, nan, nan, nan, False)
+    mediana = float(np.median(em_troca))
+    if np.count_nonzero(limpas) >= 3:
+        tipico = float(np.median(np.abs(desvio[limpas])))
+        destoam = mediana > RAZAO_TROCA_DESTOA * tipico and mediana / fs * 1e6 > LIMITE_TROCA_US
+    else:
+        tipico, destoam = nan, mediana > limite_amostras
+    return TrocasBuffer(len(em_troca), mediana, float(np.max(em_troca)), tipico, destoam)
 
 
 # ---------------------------------------------------------------------------

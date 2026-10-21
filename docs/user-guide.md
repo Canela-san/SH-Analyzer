@@ -105,7 +105,7 @@ O ADS8688 converte cada canal em 16 bits dentro de uma **faixa de entrada** prog
 
 * **Escolha a menor faixa que comporta o pico do sinal, com 10 a 20% de margem.** Faixa maior que o necessário desperdiça resolução; faixa menor corta o sinal (o ADC satura em 0 ou 65535 e a captura perde a forma de onda). O erro de quantização cai exatamente na proporção da faixa (4x entre `20.48` e `5.12`); o ruído do próprio ADC cai menos, porque o SNR típico do datasheet também cai um pouco nas faixas menores (92, 91 e 89 dB). Meça o ganho real no passo T2 do [roteiro de laboratório](lab-procedure.md).
 * **O que o programa faz.** A PRU escreve a faixa de cada canal habilitado nos registradores `RANGE_SELn` do ADC **a cada captura** (o ADC guarda o valor entre capturas) e o `ler_adc` grava o código no cabeçalho (desde a versão 3). Sem `--faixa-adc`, todos os canais ficam em `20.48`, o padrão de fábrica do ADC. Conferido em bancada (19/10/2026): a tensão no pino sai a mesma nas três faixas, a 0,08 %.
-* **Ao trocar a faixa, descarte o começo.** Se a faixa de um canal mudou em relação à captura anterior, as ~6 primeiras amostras desse canal (60 µs a 100 kS/s) são um transitório de até ~1 V, enquanto o ADC se acomoda. Sem troca de faixa, não há transitório. Para medir ruído ou DC, use `--inicio 100`: sem isso, o ruído sai 7 a 8 vezes maior.
+* **Ao trocar a faixa, descarte o começo.** Se a faixa de um canal mudou em relação à captura anterior, o começo desse canal é um transitório de até ~1 V enquanto o ADC se acomoda: cai abaixo de 1 LSB em ~80 µs (as primeiras ~8 amostras a 100 kS/s; é um tempo, o mesmo com 1 e 2 canais). Sem troca de faixa, não há transitório. O `medir_captura.py` pula os primeiros 200 µs sozinho (`--inicio 0` mede tudo). O `adc_tool.py`, que também converte e exporta, não descarta nada, mas avisa quando o começo foge do resto e diz de onde começar (`--inicio N`). Sem isso, o ruído medido sai 7 a 8 vezes maior.
 * **Na análise, não precisa informar.** O `adc_tool.py`, o `medir_captura.py` e o `gerar_perfil_sonda.py` convertem cada canal em Volts com a faixa gravada no cabeçalho. Um `--faixa` digitado **vence**, mas avisa se divergir do cabeçalho. Capturas de versão 1 ou 2 do cabeçalho não registram a faixa. O firmware dessa época nunca a mudava, então as ferramentas assumem a faixa de reset do ADC, ±10,24 V (`--faixa 20.48`), conferida no T0. Até out/2026 assumiam 10.24, o que as lia com **metade** do valor: números antigos tirados dessas capturas precisam ser refeitos.
 * As faixas unipolares do ADS8688 (0 a 5 V, 0 a 10 V) **não** são suportadas: o pós-processamento assume saída bipolar, com 0 V no meio da escala.
 
@@ -119,7 +119,7 @@ Enquanto captura, a PRU conta três coisas que indicariam dados ruins, sem custo
 | buffers sobrescritos | A PRU começou a reescrever um bloco que o ARM ainda não tinha gravado: amostras **perdidas**. O `ler_adc` sai com código 3 | Refaça a captura; veja se o cartão SD está lento ou o sistema sobrecarregado |
 | quadros com ruído no SDO | O ADC mantém a linha de dados em 0 durante o comando de cada amostra; um 1 ali é ruído ou reflexo na ligação (o problema histórico dos jumpers longos) | Confira a ligação ADC ↔ BeagleBone; essas amostras são suspeitas |
 
-No fim, o `ler_adc` também mostra a **taxa real**, medida pelo relógio do ARM entre o primeiro e o último bloco (precisa de 2 blocos ou mais; incerteza ~0,02 %). O `adc_tool.py`, o `medir_captura.py` e o `gerar_perfil_sonda.py` avisam quando um contador do cabeçalho não é zero, e a calibração de sonda descarta a captura com amostras perdidas ou atrasadas.
+No fim, o `ler_adc` também mostra a **taxa real**, medida pelo relógio do ARM entre o primeiro e o último bloco (precisa de 2 blocos ou mais; incerteza ~0,02 %), e a grava no cabeçalho (versão 5, com a versão do firmware que fez a captura; o `adc_tool.py info` mostra as duas). O `adc_tool.py`, o `medir_captura.py` e o `gerar_perfil_sonda.py` avisam quando um contador do cabeçalho não é zero, e a calibração de sonda descarta a captura com amostras perdidas ou atrasadas.
 
 **O que limita a taxa.** Cada amostra leva ~7 µs na PRU: ~3 µs são os 32 clocks do SPI (feitos em software) e ~4 µs são três esperas do CS (2, 1 e 1 µs), calibradas na época do problema dos jumpers. O datasheet do ADS8688 pede só 30, 10 e 30 ns. Com `--atraso-cs` dá para medir em bancada até onde elas podem cair (teste T7e, método 4, do [roteiro](lab-procedure.md), com a tabela de quanto cada conjunto rende); só reduzi-las levaria o teto de ~140 para ~330 kS/s, e 250 kS/s é o teto prático com folga. Valores reduzidos são **experimentais**: confira o ruído, a distorção e a continuidade antes de usar uma captura feita assim.
 
@@ -196,6 +196,8 @@ uv run scripts/adc_tool.py captura.bin --inicio 50000 --fim 150000 --fft   # só
 
 Numa captura de vários canais, `--inicio` e `--fim` contam amostras **brutas** (com 2 canais, 2 por instante). Se `--inicio` cair no meio de um ciclo de canais, ele é arredondado para baixo até o começo do ciclo (com aviso): senão um canal seria lido com o rótulo do outro.
 
+**A taxa de amostragem usada é a que a PRU gera**, `200 MHz ÷ ticks` do cabeçalho, e não a pedida: as duas só diferem quando 200 MHz ÷ taxa não é inteiro (102,4 kS/s pedidos viram 102 406,55 Hz, +64 ppm), e a da PRU foi confirmada em bancada a 0,02 ppm (T4). A linha `usando a frequência:` diz qual foi usada. `--fs-pedida` volta à taxa pedida (o comportamento de antes de out/2026); `-f` vence as duas. O mesmo vale para o `medir_captura.py` e o `gerar_perfil_sonda.py`. Prefira taxas que dividem 200 MHz (100, 125, 200, 250 kS/s).
+
 Sem `-o`, abre uma janela interativa. Em um computador sem tela (por exemplo, via SSH), use sempre `-o`.
 
 ### Vários canais
@@ -250,7 +252,7 @@ uv run scripts/adc_tool.py -c captura.csv -o captura_volta.bin                  
 uv run scripts/adc_tool.py captura.bin --export-hdf5 captura.h5 --incluir-tensao # HDF5
 ```
 
-* O **HDF5** tem `/amostras` (códigos brutos, matriz amostras × canais), opcionalmente `/tensao_v` (em Volts) e todos os metadados do cabeçalho como atributos. O arquivo é escrito em blocos, então funciona mesmo com capturas de dezenas de GB.
+* O **HDF5** tem `/amostras` (códigos brutos, matriz amostras × canais), opcionalmente `/tensao_v` (em Volts) e todos os metadados do cabeçalho como atributos, mais a taxa que a PRU gera (`frequencia_pru_hz`), o trecho exportado, a versão do código e `correcao_sonda_aplicada_por_canal` (sempre 0: quem abre o arquivo em outra ferramenta sabe que `/tensao_v` não foi corrigida pela sonda). O arquivo é escrito em blocos, então funciona mesmo com capturas de dezenas de GB.
 * O **CSV** guarda só os valores brutos. O cabeçalho não sobrevive à ida e volta.
 * Nenhuma das duas exportações aplica a [correção de sonda](#sondas-de-corrente-calibração-e-correção).
 
@@ -516,7 +518,7 @@ uv run scripts/adc_tool.py captura.bin --sem-correcao-sonda --welch
 ### O que a correção não faz
 
 * Corrige a **amplitude** por frequência, **não a fase**. Não use para análises que dependam da fase relativa entre tensão e corrente (potência por componente, por exemplo).
-* O perfil descreve a **sonda e a cadeia de aquisição juntas** (ADC, isolador, frontend). Se o frontend mudar, recalibre.
+* O perfil descreve a **sonda e a cadeia de aquisição juntas** (ADC, isolador, frontend). Se o frontend mudar, recalibre. Um perfil calibrado mais de 1 ano antes da captura (`data_calibracao` do perfil contra a data do cabeçalho) gera um aviso para recalibrar.
 * A confiabilidade física do perfil depende da bancada: tolerância e indutância parasita do shunt, qualidade do gerador, linearidade da sonda.
 * As exportações CSV/HDF5 não aplicam a correção.
 
@@ -540,9 +542,11 @@ O que ele mede, por canal:
 * **Estatística**: DC, RMS CA, pico a pico, saturação (acima de 0,05% das amostras no fundo de escala, ele avisa).
 * **Ruído**: densidade (nV/√Hz, pela mediana do espectro) e ruído RMS em LSB.
 * **Tom e distorção**: frequência e amplitude (pico e RMS) do maior pico, THD (até o harmônico `--harmonicos`, padrão 9; os que passam de Nyquist são medidos dobrados e marcados `[alias]`), SINAD, SNR, ENOB (corrigido para um tom abaixo do fundo de escala) e SFDR.
-* **Continuidade**: salto de fase do tom entre segmentos, em amostras equivalentes. Uma amostra perdida ou duplicada vale ~1,0; acima de 0,5 é descontinuidade.
+* **Continuidade**: salto de fase do tom entre segmentos, em amostras equivalentes e em µs. Uma amostra perdida ou duplicada vale ~1,0; acima de 0,5 é descontinuidade.
+* **Trocas de buffer**: o salto em cada troca de buffer da PRU contra o típico dos outros segmentos. Um atraso fixo a cada troca, como os 6,97 µs do firmware antigo, vale menos de meia amostra com 2 canais ou mais e passaria pela continuidade; aqui ele aparece como `DESTOAM` (mediana das trocas acima de 10 vezes o típico e de 0,05 µs). Uma captura de 1 bloco não tem troca, e a ferramenta diz isso.
+* **Começo da captura**: por padrão, pula os primeiros 200 µs de cada canal (o transitório de uma troca de faixa; `--inicio 0` mede tudo e avisa se o começo destoar).
 * **Acoplamento** (2 canais ou mais): diafonia (quanto do tom do canal mais forte aparece nos outros) e atraso entre canais, contra o esperado (`Δposição ÷ taxa total`).
-* **Comparação com instrumento**: `--referencia-rms` (RMS do tom lido no osciloscópio, na unidade do canal) e `--referencia-freq` (Hz, do contador) dão o erro em % e em ppm. `--amplitude-referencia` (a amplitude injetada, com unidade e tipo; padrão: a dos metadados) e `--osciloscopio` (o `.m` do mesmo sinal) comparam o ADC com a amplitude ajustada e com a medida do osciloscópio (veja "Conferir o método com o osciloscópio"). `--fs-pru` analisa com a taxa que a PRU de fato gera (`clock ÷ ticks`, que difere da pedida quando 200 MHz ÷ taxa não é inteiro).
+* **Comparação com instrumento**: `--referencia-rms` (RMS do tom lido no osciloscópio, na unidade do canal) e `--referencia-freq` (Hz, do contador) dão o erro em % e em ppm. `--amplitude-referencia` (a amplitude injetada, com unidade e tipo; padrão: a dos metadados) e `--osciloscopio` (o `.m` do mesmo sinal) comparam o ADC com a amplitude ajustada e com a medida do osciloscópio (veja "Conferir o método com o osciloscópio"). A análise usa a taxa que a PRU de fato gera (`clock ÷ ticks`; veja [Plotagem](#plotagem)); `--fs-pedida` usa a pedida.
 
 Canais de corrente com sonda registrada no cabeçalho são corrigidos pelo perfil antes das métricas, como no `adc_tool.py`. Nesse caso, ruído, SINAD e ENOB **não** descrevem o ADC: use `--sem-correcao-sonda` para caracterizá-lo. O método (FFT única, janela Kaiser β = 14, vazamento abaixo de −110 dBc) e os limites estão em [`software-architecture.md`](software-architecture.md) e no docstring de `supraharmonicos/metricas_captura.py`; os testes de laboratório que o usam, em [`lab-procedure.md`](lab-procedure.md).
 
@@ -579,7 +583,7 @@ O cabeçalho começa com o texto `SHAN` e termina com um **CRC-32**; se o `adc_t
 
 | Campo | Descrição |
 |---|---|
-| `versao_cabecalho` | Versão do formato (hoje 4) |
+| `versao_cabecalho` | Versão do formato (hoje 5) |
 | `timestamp_unix` | Instante da captura (UTC) |
 | `frequencia_hz` | Frequência total de amostragem |
 | `lista_canais` | Canais capturados, em ordem crescente |
@@ -587,14 +591,17 @@ O cabeçalho começa com o texto `SHAN` e termina com um **CRC-32**; se o `adc_t
 | `faixa_adc_por_canal` | Código da faixa de entrada do ADC de cada canal: 0 = ±10,24 V, 1 = ±5,12 V, 2 = ±2,56 V (versão 3) |
 | `amostras_atrasadas`, `buffers_sobrescritos`, `quadros_preambulo_ruim` | Integridade da captura, contada pela PRU (versão 4; veja [Integridade da captura](#integridade-da-captura-e-taxa-máxima)) |
 | `atraso_cs_iteracoes` | Atrasos do CS usados na captura (versão 4; `--atraso-cs`) |
+| `versao_firmware` | Qual build do `ler_adc` gravou a captura: o `git describe` do repositório (versão 5) |
+| `taxa_medida_hz` | Taxa total medida pelo relógio do ARM, 0 se a captura teve 1 bloco (versão 5) |
+| `pru_clock_hz`, `sample_period_ticks` | O relógio da PRU e o período em ciclos: `clock ÷ ticks` é a taxa que a análise usa |
 | `samples_per_buffer`, `bytes_por_amostra` | Geometria dos blocos |
 | `blocos_gravados`, `total_amostras_gravadas` | Totais reais, preenchidos ao final da captura |
 | `titulo`, `descricao` | Texto livre (`-t`, até 63 bytes; `-d`, até 255 bytes). Convenção para calibração: um trecho `ref: f=1000Hz amp=500mVpp` na descrição registra a frequência e a amplitude injetadas, e o `gerar_perfil_sonda.py` o lê; texto livre antes ou depois é ignorado |
 | `header_crc32` | Detecta corrupção do cabeçalho |
 
-Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Capturas sem cabeçalho](#capturas-sem-cabeçalho-arquivos-antigos)), e os de versão 1 a 3 do cabeçalho também. A tabela completa, com os deslocamentos de cada campo, está em [`project-context.md`](project-context.md) (seção `formato_bin_v2`, que descreve também a v3 e a v4).
+Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Capturas sem cabeçalho](#capturas-sem-cabeçalho-arquivos-antigos)), e os de versão 1 a 4 do cabeçalho também. A tabela completa, com os deslocamentos de cada campo, está em [`project-context.md`](project-context.md) (seção `formato_bin_v2`, que descreve também a v3 a v5).
 
-**Capturas feitas antes de out/2026** (cabeçalho versão 3 ou anterior) têm um salto de ~7 µs a cada bloco (~0,7 amostra a 100 kS/s), um defeito do firmware antigo já corrigido. Para análise espectral de um bloco só, ele não aparece; em análises de fase ou de continuidade que atravessam blocos, sim. O `medir_captura.py` o aponta (DESCONTINUIDADE "numa troca de buffer da PRU").
+**Capturas feitas antes de out/2026** (cabeçalho versão 3 ou anterior) têm um salto de ~7 µs a cada bloco (~0,7 amostra a 100 kS/s), um defeito do firmware antigo já corrigido. Numa análise de um bloco só, ele não aparece; numa que atravessa blocos, sim: além da fase e da continuidade, ele derruba o SINAD de uma FFT única (de 63 dB num bloco para ~22 dB em 4 blocos, no T7) e puxa a frequência e a amplitude medidas (+1,5 ppm e −0,3 % em 2 blocos, no T4). O `medir_captura.py` o aponta em qualquer nº de canais (`trocas de buffer : DESTOAM`). Para medir essas capturas, fique dentro do primeiro bloco (`--max-amostras` menor que 1 048 576 ÷ nº de canais).
 
 ---
 

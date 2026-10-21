@@ -250,6 +250,11 @@ def montar_parser() -> argparse.ArgumentParser:
              "análise em lote, por SSH ou num servidor. Sem tela e sem -o, o gráfico é pulado sozinho (com aviso)."
     )
     parser.add_argument(
+        "--fs-pedida", action="store_true",
+        help="Analisa com a taxa PEDIDA (frequencia_hz do cabeçalho) em vez da que a PRU gera (clock ÷ ticks, o "
+             "padrão). Só diferem quando 200 MHz ÷ taxa não é inteiro (102,4 kS/s: +64 ppm)."
+    )
+    parser.add_argument(
         "--inicio", type=int, default=0, metavar="N",
         help="Primeira amostra a usar, 0-based (padrão: 0)."
     )

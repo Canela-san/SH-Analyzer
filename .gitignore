@@ -31,6 +31,8 @@
 # =====================================================================
 firmware/ler_adc
 firmware/ler_adc_diagnostico
+# versão do firmware escrita no PC antes de copiar firmware/ para a BeagleBone (lá não há git; ver o Makefile)
+firmware/VERSAO
 *.out
 *.map
 *.obj

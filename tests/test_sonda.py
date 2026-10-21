@@ -12,6 +12,7 @@ from supraharmonicos.sonda import (
     aplicar_correcao_sonda,
     carregar_perfil_sonda,
     conferir_calibracao_perfil,
+    conferir_idade_perfil,
     resolver_perfil_canal,
 )
 
@@ -134,6 +135,34 @@ class TestCalibracaoDoPerfil:
         with caplog.at_level(logging.WARNING):
             conferir_calibracao_perfil(self.perfil(tmp_path), 1, formato, faixa, ganho)
         assert any(trecho in r.getMessage() for r in caplog.records)
+
+
+class TestIdadeDoPerfil:
+    """S8: um perfil calibrado há mais de 1 ano (contado até a captura) pede recalibração."""
+
+    def test_perfil_recente_nao_avisa(self, tmp_path, caplog):
+        import datetime
+        perfil = carregar_perfil_sonda(escrever_perfil(tmp_path / "p.json", data_calibracao="2026-10-19"))
+        with caplog.at_level(logging.WARNING):
+            assert conferir_idade_perfil(perfil, 1, datetime.date(2026, 10, 21)) == 2
+        assert not caplog.records
+
+    def test_perfil_velho_avisa_com_a_data(self, tmp_path, caplog):
+        import datetime
+        perfil = carregar_perfil_sonda(escrever_perfil(tmp_path / "p.json", data_calibracao="2025-09-01"))
+        with caplog.at_level(logging.WARNING):
+            assert conferir_idade_perfil(perfil, 3, datetime.date(2026, 10, 21)) == 415
+        (registro,) = caplog.records
+        assert "canal 3" in registro.getMessage() and "2025-09-01, 415 dias antes da captura" in registro.getMessage()
+
+    @pytest.mark.parametrize("valor", [None, "AAAA-MM-DD", "ontem", 20261019])
+    def test_sem_data_legivel_nao_ha_idade(self, tmp_path, caplog, valor):
+        extra = {} if valor is None else {"data_calibracao": valor}
+        perfil = carregar_perfil_sonda(escrever_perfil(tmp_path / "p.json", **extra))
+        assert perfil.data_calibracao is None
+        with caplog.at_level(logging.WARNING):
+            assert conferir_idade_perfil(perfil, 1) is None
+        assert not caplog.records
 
 
 class TestCorrecaoEmFrequencia:

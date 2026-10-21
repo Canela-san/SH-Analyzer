@@ -33,7 +33,7 @@ config-pin P9_29 pruout   # pr1_pru0_pru_r30_1 -> SDI/MOSI
 config-pin P9_30 pruin    # pr1_pru0_pru_r31_2 <- SDO/MISO
 config-pin P9_28 pruout   # pr1_pru0_pru_r30_3 -> CS
 
-passo "Compilação (ler_adc + fw_pru.out)"
+passo "Compilação (ler_adc + fw_pru.out), versão $(make -s versao)"
 make clean
 make
 [ -f fw_pru.out ] || falha "o make terminou sem gerar fw_pru.out."

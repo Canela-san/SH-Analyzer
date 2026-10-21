@@ -149,6 +149,9 @@ def montar_parser() -> argparse.ArgumentParser:
                               f"Abaixo disso o arquivo é pulado -- evita gravar no perfil o 'pico' de um canal só com ruído (ex.: sonda desconectada).")
     parser.add_argument("-f", "--frequencia", type=float, default=None, metavar="HZ",
                          help="Frequência de amostragem TOTAL, só p/ capturas legadas SEM cabeçalho (mesmo significado de adc_tool.py -f).")
+    parser.add_argument("--fs-pedida", action="store_true",
+                         help="Mede com a taxa PEDIDA (frequencia_hz do cabeçalho) em vez da que a PRU gera (clock ÷ ticks, o "
+                              "padrão desde out/2026). Só diferem quando 200 MHz ÷ taxa não é inteiro.")
     parser.add_argument("--sobreposicao-welch", type=float, default=SOBREPOSICAO_WELCH_CALIBRACAO_PADRAO, metavar="FRACAO",
                          help=f"Sobreposição entre segmentos do Welch (padrão: {SOBREPOSICAO_WELCH_CALIBRACAO_PADRAO:g}).")
     parser.add_argument("--janela", type=str, default=JANELA_CALIBRACAO_PADRAO, metavar="NOME",
@@ -307,7 +310,7 @@ def _medir_capturas(args: argparse.Namespace, arquivos: list[Path], status_manif
             args.canal_referencia, args.canal_sonda,
             args.formato, args.faixa, args.ganho, args.offset,
             args.tolerancia_freq_pct, args.janela, args.resolucao_welch, args.sobreposicao_welch,
-            args.snr_minimo_db, args.frequencia,
+            args.snr_minimo_db, args.frequencia, args.fs_pedida,
         )
         if resultado is None:
             continue
