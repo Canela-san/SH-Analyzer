@@ -29,6 +29,12 @@ os resultados como macros siunitx -- um número citado no texto nunca fica desat
 Os dados vêm do resto do projeto (perfis em ``scripts/sondas/``, capturas, pacote ``supraharmonicos``):
 nada é copiado à mão para cá.
 
+As figuras ``readme_*`` são de TELA, não de documento: SVG de fundo transparente, legível no tema claro e no
+escuro do GitHub, gravado direto em ``docs/images/`` (o ``--formato`` e o ``--idioma`` não se aplicam). Refaça-as
+quando os dados mudarem (por exemplo, um T3 novo) e commite o SVG::
+
+    uv run report/gerar_figuras.py readme_cadeia_tensao
+
 Para acrescentar uma figura: escreva ``def minha_figura(estilo) -> Resultado`` com ``@figura("nome")``,
 crie a figura com ``estilo.nova_figura(...)``, use as cores de ``COR`` e os textos de ``estilo.t(...)``
 (acrescente as chaves em ``TEXTOS``, nos dois idiomas) e formate números com ``estilo.num``/``estilo.qty``.
@@ -43,6 +49,7 @@ import math
 import shutil
 import sys
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -52,7 +59,15 @@ matplotlib.use("Agg")  # só arquivos, nunca janela
 
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
-from matplotlib.ticker import FuncFormatter, LogFormatterMathtext, LogLocator, MaxNLocator, MultipleLocator  # noqa: E402
+from matplotlib.ticker import (  # noqa: E402
+    FixedLocator,
+    FuncFormatter,
+    LogFormatterMathtext,
+    LogLocator,
+    MaxNLocator,
+    MultipleLocator,
+    NullFormatter,
+)
 from scipy.optimize import curve_fit  # noqa: E402
 
 RAIZ = Path(__file__).resolve().parents[1]
@@ -229,6 +244,10 @@ class Resultado:
     figura: plt.Figure
     macros: dict[str, str] = field(default_factory=dict)        # nome da macro LaTeX -> conteúdo
     comentarios: list[str] = field(default_factory=list)        # vão no topo do .tex (rastreabilidade)
+    # Figura de TELA (README), não de documento: vai para este arquivo fixo, fora do --formato/--idioma, e é salva
+    # com estes rcParams sobre os padrões do matplotlib (os rótulos dos eixos só são criados no savefig).
+    destino: Path | None = None
+    rc: dict = field(default_factory=dict)
 
 
 FIGURAS: dict[str, tuple[Callable[[Estilo], Resultado], str]] = {}
@@ -239,6 +258,15 @@ def figura(nome: str, descricao: str):
         FIGURAS[nome] = (funcao, descricao)
         return funcao
     return registrar
+
+
+@contextmanager
+def rc_sobre_padroes(rc: dict):
+    """rcParams ``rc`` sobre os padrões do matplotlib (não sobre o Estilo do documento), só dentro do bloco."""
+    with plt.rc_context():
+        plt.rcdefaults()
+        plt.rcParams.update(rc)
+        yield
 
 
 # =====================================================================================================
@@ -356,8 +384,8 @@ def com_incerteza(valor: float, sigma: float, escala: float = 1.0) -> str:
 PERFIL_CADEIA_TENSAO = SONDAS_DIR_PADRAO / "cadeia_tensao.json"
 
 
-@figura("perfil_cadeia_tensao", "Resposta em frequência da cadeia de tensão (T3) com o ajuste de um passa-baixa de 2ª ordem")
-def perfil_cadeia_tensao(estilo: Estilo) -> Resultado:
+def _cadeia_tensao():
+    """Pontos do perfil da cadeia de tensão e os ajustes de passa-baixa: (perfil, f, ganho, ajustes)."""
     perfil = carregar_perfil_sonda(PERFIL_CADEIA_TENSAO)          # valida o arquivo como o adc_tool.py faria
     dados = json.loads(PERFIL_CADEIA_TENSAO.read_text(encoding="utf-8"))
     pontos = sorted(dados["pontos"], key=lambda p: p["freq_hz"])
@@ -369,8 +397,12 @@ def perfil_cadeia_tensao(estilo: Estilo) -> Resultado:
     n = np.array([p.get("n", 1) for p in pontos], dtype=float)
     cv = np.array([p.get("desvio_pct", 0.0) for p in pontos], dtype=float) / 100
     sigma_db = DB_POR_NEPER * cv / np.sqrt(n) if np.all(n > 1) and np.all(cv > 0) else None
+    return perfil, f, g, ajustar_passa_baixa(f, g, sigma_db)
 
-    ajustes = ajustar_passa_baixa(f, g, sigma_db)
+
+@figura("perfil_cadeia_tensao", "Resposta em frequência da cadeia de tensão (T3) com o ajuste de um passa-baixa de 2ª ordem")
+def perfil_cadeia_tensao(estilo: Estilo) -> Resultado:
+    perfil, f, g, ajustes = _cadeia_tensao()
     aj = ajustes["ordem2"]
     k, f0, q = aj.parametros
     sk, sf0, sq = aj.incertezas
@@ -463,9 +495,111 @@ def perfil_cadeia_tensao(estilo: Estilo) -> Resultado:
     return Resultado(fig, macros, comentarios)
 
 
+# ---- figuras de tela (README) ---------------------------------------------------------------------------
+# O GitHub mostra o README claro ou escuro conforme o visitante: fundo transparente e só cores legíveis nos dois
+# (contraste >= 3:1 contra o branco e contra o #0d1117 do tema escuro; laranja e azul separáveis também para
+# daltônicos). Texto em sans-serif convertido em curvas: o SVG fica igual em qualquer navegador.
+README_COR = {"texto": "#7d8590", "grade": (0.49, 0.52, 0.56, 0.28), "medido": "#e36209", "modelo": "#388bfd"}
+README_RC = {
+    "text.usetex": False,
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Fira Sans", "DejaVu Sans"],
+    "font.size": 13,
+    "axes.labelsize": 13,
+    "xtick.labelsize": 11.5,
+    "ytick.labelsize": 11.5,
+    "legend.fontsize": 11.5,
+    "axes.unicode_minus": True,
+    "text.color": README_COR["texto"],
+    "axes.labelcolor": README_COR["texto"],
+    "axes.edgecolor": README_COR["texto"],
+    "xtick.color": README_COR["texto"],
+    "ytick.color": README_COR["texto"],
+    "axes.linewidth": 1.0,
+    "axes.grid": True,
+    "axes.axisbelow": True,
+    "grid.color": README_COR["grade"],
+    "grid.linewidth": 0.8,
+    "axes.facecolor": "none",
+    "figure.facecolor": "none",
+    "savefig.facecolor": "none",
+    "svg.fonttype": "path",
+    "svg.hashsalt": "sh-analyzer",      # ids fixos: gerar de novo, com os mesmos dados, não muda o arquivo
+}
+PASTA_IMAGENS_README = RAIZ / "docs" / "images"
+
+
+def _virgula(casas: int) -> FuncFormatter:
+    return FuncFormatter(lambda v, _p: f"{0.0 if abs(v) < 1e-12 else v:.{casas}f}".replace(".", ",").replace("-", "−"))
+
+
+def _hz(valor: float, _pos=None) -> str:
+    return f"{valor:.0f} Hz" if valor < 1e3 else f"{valor / 1e3:.0f} kHz"
+
+
+@figura("readme_cadeia_tensao", "A mesma resposta da cadeia de tensão, para o README (SVG transparente, tema claro e escuro)")
+def readme_cadeia_tensao(_estilo: Estilo) -> Resultado:
+    """Mesmos dados e ajuste de ``perfil_cadeia_tensao``, desenhados para a tela (não usa o Estilo do documento)."""
+    _, f, g, ajustes = _cadeia_tensao()
+    aj = ajustes["ordem2"]
+    k, f0, q = aj.parametros
+    f3 = freq_menos_3db(f0, q)
+    y3 = 20 * math.log10(k) - 3
+    y = 20 * np.log10(g)
+    xmin, xmax = f.min() / 1.25, f.max() * 1.12
+    fm = np.geomspace(xmin, xmax, 600)
+    ym = mag_db_ordem2(fm, *aj.parametros)
+    cor = README_COR
+
+    with rc_sobre_padroes(README_RC):
+        fig = plt.figure(figsize=(9, 5.4), layout="constrained")
+        fig.get_layout_engine().set(w_pad=0.25, h_pad=0.2)
+        eixo, eixo_res = fig.subplots(2, 1, sharex=True, gridspec_kw={"height_ratios": [3.2, 1]})
+        for ax in (eixo, eixo_res):
+            ax.spines[["top", "right"]].set_visible(False)
+
+        curva, = eixo.plot(fm, ym, color=cor["modelo"], linewidth=2.2, zorder=2, label="Ajuste: passa-baixa de 2ª ordem")
+        medidos, = eixo.plot(f, y, linestyle="none", marker="o", markersize=7, markeredgewidth=0, color=cor["medido"],
+                             zorder=3, label=f"Medido ({len(f)} pontos)")
+        eixo.plot([f3, f3], [-100, y3], color=cor["texto"], linewidth=1, linestyle=(0, (1.5, 2.5)), zorder=1)
+        eixo.plot([f3], [y3], marker="o", markersize=8, markerfacecolor="none", markeredgecolor=cor["modelo"],
+                  markeredgewidth=1.8, linestyle="none", zorder=4)
+        eixo.annotate(f"−3 dB em {f3 / 1e3:.1f} kHz".replace(".", ","), xy=(f3, y3), xytext=(-12, -6),
+                      textcoords="offset points", ha="right", va="top", fontsize=12)
+        eixo.set_ylim(min(y.min(), ym.min()) - 0.8, 1.0)
+        eixo.yaxis.set_major_locator(MultipleLocator(3))
+        eixo.yaxis.set_major_formatter(_virgula(0))
+        eixo.set_ylabel("Ganho normalizado (dB)")
+        legenda = eixo.legend(handles=[medidos, curva], loc="lower left", borderpad=0.6, fancybox=False)
+        legenda.get_frame().set(facecolor="none", edgecolor=cor["grade"], linewidth=0.8)
+
+        lim = max(0.3, 1.25 * float(np.max(np.abs(aj.residuos_db))))
+        eixo_res.axhline(0, color=cor["modelo"], linewidth=1.4, alpha=0.8, zorder=2)
+        eixo_res.plot(f, aj.residuos_db, linestyle="none", marker="o", markersize=5.5, markeredgewidth=0,
+                      color=cor["medido"], zorder=3)
+        eixo_res.set_ylim(-lim, lim)
+        eixo_res.yaxis.set_major_locator(MaxNLocator(nbins=3, symmetric=True, steps=[1, 2, 2.5, 5, 10]))
+        eixo_res.yaxis.set_major_formatter(_virgula(1))
+        eixo_res.set_ylabel("Resíduo (dB)")
+
+        eixo_res.set_xscale("log")
+        eixo_res.set_xlim(xmin, xmax)
+        eixo_res.xaxis.set_major_locator(FixedLocator([10, 100, 1e3, 1e4, 1e5]))
+        eixo_res.xaxis.set_major_formatter(FuncFormatter(_hz))
+        eixo_res.xaxis.set_minor_locator(LogLocator(base=10, subs=np.arange(2, 10)))
+        eixo_res.xaxis.set_minor_formatter(NullFormatter())
+        eixo_res.set_xlabel("Frequência")
+        fig.align_ylabels([eixo, eixo_res])
+    return Resultado(fig, destino=PASTA_IMAGENS_README / "voltage-chain-response.svg", rc=README_RC)
+
+
 # =====================================================================================================
 # Linha de comando
 # =====================================================================================================
+def _relativo(caminho: Path) -> Path:
+    return caminho.relative_to(RAIZ) if caminho.is_relative_to(RAIZ) else caminho
+
+
 def escrever_macros(caminho: Path, nome: str, resultado: Resultado) -> None:
     linhas = [f"% Gerado por report/gerar_figuras.py ({nome}) -- não edite à mão: rode o script de novo.",
               r"% Requer siunitx >= 3 (\qty, \num e incerteza entre parênteses)."]
@@ -484,7 +618,8 @@ def montar_parser() -> argparse.ArgumentParser:
     p.add_argument("--sem-latex", action="store_true",
                    help="Não usa o LaTeX para o texto (mais rápido; fonte parecida, mas não idêntica à do documento).")
     p.add_argument("--png", action="store_true", help="Também salva uma prévia PNG (300 dpi) ao lado do PDF.")
-    p.add_argument("--saida", type=Path, default=PASTA_FIGURAS, help="Pasta de saída (padrão: report/figures/).")
+    p.add_argument("--saida", type=Path, default=None,
+                   help="Pasta de saída (padrão: report/figures/; as figuras do README vão direto para docs/images/).")
     return p
 
 
@@ -505,21 +640,30 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("'latex' não encontrado: o texto das figuras sai com a fonte interna do matplotlib.")
     estilo = Estilo(FORMATOS[args.formato], args.idioma, usar_latex)
     estilo.aplicar()
-    args.saida.mkdir(parents=True, exist_ok=True)
+    saida = args.saida or PASTA_FIGURAS
     sufixo = "" if (args.formato, args.idioma) == ("relatorio", "pt") else f"_{args.formato}_{args.idioma}"
 
     for nome in args.nomes or list(FIGURAS):
         funcao, _ = FIGURAS[nome]
         log.info(f"{nome}:")
         resultado = funcao(estilo)
-        base = args.saida / f"{nome}{sufixo}"
+        if resultado.destino is not None:       # figura do README: arquivo fixo, sem data (não muda à toa no git)
+            destino = args.saida / resultado.destino.name if args.saida else resultado.destino
+            destino.parent.mkdir(parents=True, exist_ok=True)
+            with rc_sobre_padroes(resultado.rc):
+                resultado.figura.savefig(destino, metadata={"Date": None})
+            plt.close(resultado.figura)
+            log.info(f"  -> {_relativo(destino)}")
+            continue
+        saida.mkdir(parents=True, exist_ok=True)
+        base = saida / f"{nome}{sufixo}"
         resultado.figura.savefig(base.with_suffix(".pdf"))
         if args.png:
             resultado.figura.savefig(base.with_suffix(".png"))
         plt.close(resultado.figura)
         if resultado.macros:
             escrever_macros(base.with_suffix(".tex"), nome, resultado)
-        log.info(f"  -> {base.with_suffix('.pdf').relative_to(RAIZ) if base.is_relative_to(RAIZ) else base.with_suffix('.pdf')}")
+        log.info(f"  -> {_relativo(base.with_suffix('.pdf'))}")
     return 0
 
 

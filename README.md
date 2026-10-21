@@ -77,9 +77,9 @@ Essa separação é proposital: o projeto põe a **integridade dos dados** acima
 O primeiro dia de bancada (19/10/2026) caracterizou o ADC e a cadeia de tensão contra um osciloscópio:
 
 <p align="center">
-  <img src="docs/images/voltage-chain-response.png" alt="Resposta em frequência da cadeia de tensão: ganho plano até alguns kHz, −3 dB em 17,3 kHz, ajustada a um passa-baixa de 2ª ordem; resíduo do ajuste dentro de ±0,5 dB" width="720">
+  <img src="docs/images/voltage-chain-response.svg" alt="Resposta em frequência da cadeia de tensão: ganho plano até alguns kHz, −3 dB em 17,3 kHz, ajustada a um passa-baixa de 2ª ordem; resíduo do ajuste dentro de ±0,5 dB" width="800">
   <br>
-  <sub>Resposta em frequência da cadeia de tensão (T3): 48 pontos de 50 Hz a 45 kHz, ajustados a um passa-baixa de 2ª ordem (f<sub>0</sub> = 24,1 kHz, Q = 0,54). Figura gerada por <a href="report/gerar_figuras.py"><code>report/gerar_figuras.py</code></a>.</sub>
+  <sub>Resposta em frequência da cadeia de tensão (T3): 48 pontos de 50 Hz a 45 kHz, ajustados a um passa-baixa de 2ª ordem (f<sub>0</sub> = 24,1 kHz, Q = 0,54). Figura gerada por <a href="report/gerar_figuras.py"><code>report/gerar_figuras.py</code></a> (<code>readme_cadeia_tensao</code>).</sub>
 </p>
 
 | Medida | Resultado |

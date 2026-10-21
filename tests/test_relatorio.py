@@ -81,3 +81,13 @@ def test_formato_de_artigo_em_ingles_vai_para_outro_arquivo(gf, tmp_path):
 
 def test_figura_desconhecida_e_recusada(gf, tmp_path):
     assert gf.main(["nao_existe", "--saida", str(tmp_path)]) == 2
+
+
+def test_figura_do_readme_sai_em_svg_transparente_e_igual_a_cada_execucao(gf, tmp_path):
+    # Com --saida, a figura do README vai para a pasta pedida (sem ela, iria para docs/images/).
+    assert gf.main(["readme_cadeia_tensao", "--sem-latex", "--saida", str(tmp_path / "a")]) == 0
+    assert gf.main(["readme_cadeia_tensao", "--sem-latex", "--saida", str(tmp_path / "b")]) == 0
+    svg = (tmp_path / "a" / "voltage-chain-response.svg").read_bytes()
+    assert svg == (tmp_path / "b" / "voltage-chain-response.svg").read_bytes()   # nada de data nem ids aleatórios
+    assert b"<dc:date>" not in svg and b"<text" not in svg                       # texto em curvas
+    assert not (tmp_path / "a" / "readme_cadeia_tensao.pdf").exists()
