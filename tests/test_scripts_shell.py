@@ -284,3 +284,27 @@ def test_preparar_acerta_a_hora_envia_e_roda_o_setup(bancada):
                    "senha do sudo pelo askpass: temppwd", "Pronto."):
         assert trecho in r.stdout, trecho
     assert _senhas_na_ram(bancada) == []
+
+
+# ---------------------------------------------------------------------------
+# firmware/Makefile: o clpru acha o stdint.h mesmo sem a variável do shell interativo
+# ---------------------------------------------------------------------------
+
+def test_makefile_acha_os_cabecalhos_do_clpru_num_comando_por_ssh(tmp_path):
+    """Num 'ssh comando' (o BeagleBone_Setup.sh setup), a PRU_C_DIR do shell interativo da BeagleBone não existe; o
+    caminho tem de sair da instalação do clpru (o /usr/bin/clpru é um link para <instalação>/bin/clpru)."""
+    if shutil.which("make") is None:
+        pytest.skip("precisa do make")
+    instalacao = tmp_path / "ti" / "cgt-pru"
+    (instalacao / "bin").mkdir(parents=True)
+    _executavel(instalacao / "bin" / "clpru", "#!/bin/sh\n")
+    usr_bin = tmp_path / "usr_bin"
+    usr_bin.mkdir()
+    (usr_bin / "clpru").symlink_to(instalacao / "bin" / "clpru")
+    env = {k: v for k, v in os.environ.items() if k not in ("PRU_CGT", "PRU_C_DIR", "C_DIR")}
+    env["PATH"] = f"{usr_bin}:{env['PATH']}"
+    r = subprocess.run(["make", "-n", "pru"], cwd=RAIZ / "firmware", env=env, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    real = instalacao.resolve()
+    assert f"--include_path={real}/include pru_main.c" in r.stdout
+    assert f"-z -i{real}/lib -i{real}/include AM335x_PRU.cmd" in r.stdout

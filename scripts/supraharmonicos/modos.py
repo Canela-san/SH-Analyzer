@@ -237,6 +237,7 @@ def executar_plotagem(args: argparse.Namespace, ctx: ContextoCaptura) -> None:
         por_canal_tensao, fs_efetiva, sinal.idx_inicio, infos_espectro, titulo_exibicao,
         args.saida, args.layout_canais, rotulo_espectro_y, limite_inferior_db,
         grandeza_por_canal_exibir, idx_fim_arquivo=sinal.idx_inicio + n_por_canal * ctx.num_canais,
+        max_pontos=args.max_pontos or (plotagem.MAX_PONTOS_TEMPO if args.simplificar else None),
     )
     if args.espectrograma:
         plotagem.plotar_espectrogramas(

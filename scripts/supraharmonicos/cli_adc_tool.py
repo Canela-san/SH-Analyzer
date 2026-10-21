@@ -250,6 +250,16 @@ def montar_parser() -> argparse.ArgumentParser:
              "análise em lote, por SSH ou num servidor. Sem tela e sem -o, o gráfico é pulado sozinho (com aviso)."
     )
     parser.add_argument(
+        "--simplificar", action="store_true",
+        help="[PLOTAGEM] Desenha a forma de onda como envoltória mín/máx (20 000 pontos por canal, como o modo de "
+             "pico de um osciloscópio: nenhum pico some) em vez de todas as amostras, o padrão. Para capturas longas: "
+             "10 min a 100 kS/s são 60 milhões de amostras. Na janela, o zoom continua mostrando as amostras."
+    )
+    parser.add_argument(
+        "--max-pontos", type=int, default=None, metavar="N",
+        help="[PLOTAGEM] Como --simplificar, com N pontos por canal na envoltória (N >= 2)."
+    )
+    parser.add_argument(
         "--fs-pedida", action="store_true",
         help="Analisa com a taxa PEDIDA (frequencia_hz do cabeçalho) em vez da que a PRU gera (clock ÷ ticks, o "
              "padrão). Só diferem quando 200 MHz ÷ taxa não é inteiro (102,4 kS/s: +64 ppm)."
@@ -465,6 +475,8 @@ def _validar_flags_numericas(args: argparse.Namespace) -> None:
         raise ErroUso("-f/--frequencia precisa ser um número positivo (Hz).")
     if args.tamanho_chunk < 1:
         raise ErroUso("--tamanho-chunk precisa ser >= 1.")
+    if args.max_pontos is not None and args.max_pontos < 2:
+        raise ErroUso("--max-pontos precisa ser >= 2 (o mínimo e o máximo de uma coluna).")
     if args.distancia_minima_picos <= 0:
         raise ErroUso("--distancia-minima-picos precisa ser positiva.")
 

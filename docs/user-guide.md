@@ -196,7 +196,7 @@ A ferramenta tem três modos: **plotagem** (padrão), **conversão** `.bin` ↔ 
 
 Os scripts separados continuam funcionando, e os comandos do roteiro de laboratório não mudam. Cada comando carrega só as bibliotecas que usa: o `--help` e o `info` não carregam o SciPy nem o matplotlib, e a análise sem gráfico não carrega o matplotlib.
 
-**Sem gráfico.** `--sem-grafico` deixa só os números (no terminal e nas exportações), sem carregar o matplotlib: é o modo para processar muitas capturas, por SSH ou num servidor. Sem tela e sem `-o`, o gráfico é pulado sozinho, com um aviso. Numa captura longa, a forma de onda é desenhada como envoltória mín/máx (como o modo de pico de um osciloscópio): nenhum pico some, e o gráfico de 10 min caiu de 26 s e 4,3 GB de RAM para 6 s e 1,6 GB.
+**Sem gráfico.** `--sem-grafico` deixa só os números (no terminal e nas exportações), sem carregar o matplotlib: é o modo para processar muitas capturas, por SSH ou num servidor. Sem tela e sem `-o`, o gráfico é pulado sozinho, com um aviso. Numa captura longa, `--simplificar` desenha a forma de onda como envoltória mín/máx (veja [Plotagem](#plotagem)): o gráfico de 10 min cai de 26 s e 4,3 GB de RAM para 6 s e 1,6 GB.
 
 ### Plotagem
 
@@ -213,6 +213,8 @@ Numa captura de vários canais, `--inicio` e `--fim` contam amostras **brutas** 
 **A taxa de amostragem usada é a que a PRU gera**, `200 MHz ÷ ticks` do cabeçalho, e não a pedida: as duas só diferem quando 200 MHz ÷ taxa não é inteiro (102,4 kS/s pedidos viram 102 406,55 Hz, +64 ppm), e a da PRU foi confirmada em bancada a 0,02 ppm (T4). A linha `usando a frequência:` diz qual foi usada. `--fs-pedida` volta à taxa pedida (o comportamento de antes de out/2026); `-f` vence as duas. O mesmo vale para o `medir_captura.py` e o `gerar_perfil_sonda.py`. Prefira taxas que dividem 200 MHz (100, 125, 200, 250 kS/s).
 
 Sem `-o`, abre uma janela interativa. Em um computador sem tela (por exemplo, via SSH), use sempre `-o`.
+
+**A forma de onda mostra todas as amostras do intervalo.** Com poucas amostras visíveis (até 400, num zoom ou num `--inicio`/`--fim` curto), cada uma ganha um marcador. Repare que as retas entre elas não são o sinal: um tom de 10 kHz a 100 kS/s tem só 10 amostras por ciclo, e as retas desenham um polígono, não a senoide, que está nas amostras (o espectro e o `medir_captura.py` a medem). Para uma captura longa (10 min a 100 kS/s são 60 milhões de amostras, ~30 s e ~4 GB de RAM para desenhar), `--simplificar` desenha a envoltória mín/máx de 20 000 pontos, como o modo de pico de um osciloscópio (nenhum pico some), e `--max-pontos N` escolhe outro tanto. Na janela, o zoom refaz o trecho visível: ampliada, a envoltória dá lugar às amostras de verdade. (Sem isso, ela viraria um zigue-zague com pontos só no máximo e no mínimo, parecido com uma onda triangular: foi o que aconteceu antes de out/2026, quando a envoltória era o padrão.)
 
 ### Vários canais
 

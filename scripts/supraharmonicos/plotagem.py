@@ -20,21 +20,33 @@ log = logging.getLogger(__name__)
 # 8. Plotagem
 # ---------------------------------------------------------------------------
 
-# Acima disto a forma de onda vira envoltória mín/máx: uma tela tem ~2000 colunas, e desenhar 60 milhões de pontos
-# (10 min a 100 kS/s) levava 26 s e 4,3 GB de RAM sem mostrar nada a mais.
+# A forma de onda mostra TODAS as amostras do intervalo, por padrão. Só com --simplificar (ou --max-pontos N) ela
+# vira a envoltória mín/máx de MAX_PONTOS_TEMPO pontos, que desenha uma captura de 10 min a 100 kS/s (60 milhões de
+# amostras) em segundos, em vez de ~30 s e ~4 GB de RAM. Acima de AVISO_PONTOS amostras por canal, o adc_tool lembra
+# dessa opção.
 MAX_PONTOS_TEMPO = 20_000
+AVISO_PONTOS = 5_000_000
+
+# Com até tantas amostras visíveis, cada uma ganha um marcador: dá para ver onde o sinal foi amostrado (com 10
+# amostras por ciclo, um tom de 10 kHz a 100 kS/s, as retas entre elas parecem um polígono, não a senoide).
+MAX_PONTOS_COM_MARCADOR = 400
+
+# O Agg desenha um caminho longo em pedaços: sem isso, uma linha de milhões de pontos pode estourar o limite dele
+# ("Exceeded cell block limit"). Não muda o traço.
+plt.rcParams["agg.path.chunksize"] = 20_000
 
 
 def pontos_para_plot(y: np.ndarray, fs: float, fator_tempo: float,
-                     max_pontos: int = MAX_PONTOS_TEMPO) -> tuple[np.ndarray, np.ndarray]:
-    """(tempo, valores) para desenhar ``y``. Até ``max_pontos``, o próprio sinal. Acima, a envoltória: o sinal é
-    dividido em ``max_pontos // 2`` colunas e cada uma vira dois pontos, o mínimo e o máximo, ligados por uma linha.
-    Visualmente é o mesmo traço (nenhum pico some, como no modo de pico de um osciloscópio), sem criar o vetor de
-    tempo inteiro. As amostras que sobram no fim (menos que uma coluna) entram numa última coluna."""
+                     max_pontos: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """(tempo, valores) para desenhar ``y``. Sem ``max_pontos``, ou até ele, o próprio sinal. Acima, a envoltória: o
+    sinal é dividido em ``max_pontos // 2`` colunas e cada uma vira dois pontos, o mínimo e o máximo, ligados por uma
+    linha (como no modo de pico de um osciloscópio: nenhum pico some). As amostras que sobram no fim (menos que uma
+    coluna) entram numa última coluna. Ampliada, a envoltória é um zigue-zague entre os extremos, não as amostras:
+    por isso :func:`desenhar_forma_de_onda` refaz o trecho visível a cada zoom."""
     n = len(y)
-    if n <= max_pontos:
+    if max_pontos is None or n <= max_pontos:
         return np.arange(n) / fs * fator_tempo, y
-    colunas = max_pontos // 2
+    colunas = max(max_pontos // 2, 1)
     por_coluna = n // colunas
     cheias = y[: colunas * por_coluna].reshape(colunas, por_coluna)
     minimos, maximos = cheias.min(axis=1), cheias.max(axis=1)
@@ -47,6 +59,39 @@ def pontos_para_plot(y: np.ndarray, fs: float, fator_tempo: float,
     valores = np.empty(2 * len(minimos), dtype=y.dtype)
     valores[0::2], valores[1::2] = minimos, maximos
     return tempo, valores
+
+
+def trecho_visivel(n: int, fs: float, fator_tempo: float, x0: float, x1: float) -> tuple[int, int]:
+    """Índices [i0, i1) das amostras entre os instantes ``x0`` e ``x1`` (na unidade do eixo), com uma amostra de
+    margem de cada lado, para a linha chegar às bordas."""
+    i0 = max(int(np.floor(x0 * fs / fator_tempo)) - 1, 0)
+    i1 = min(int(np.ceil(x1 * fs / fator_tempo)) + 2, n)
+    return i0, max(i1, i0)
+
+
+def desenhar_forma_de_onda(ax, y: np.ndarray, fs: float, fator_tempo: float, max_pontos: int | None = None,
+                           **estilo):
+    """Desenha ``y`` em ``ax`` (todas as amostras, ou a envoltória com ``max_pontos``) e liga o zoom da janela ao
+    trecho visível. A cada mudança dos limites do eixo X (zoom, arrasto, "casa"): com a envoltória, o trecho é
+    refeito, com as amostras de verdade quando cabem em ``max_pontos``; e, com até MAX_PONTOS_COM_MARCADOR amostras
+    visíveis, cada uma ganha um marcador (numa linha à parte, só com elas: marcar milhões de pontos seria lento)."""
+    linha, = ax.plot(*pontos_para_plot(y, fs, fator_tempo, max_pontos), **estilo)
+    marcas, = ax.plot([], [], linestyle="none", marker="o", markersize=3, color=linha.get_color(),
+                      label="_nolegend_")
+    envoltoria = max_pontos is not None and len(y) > max_pontos
+
+    def redesenhar(eixo):
+        i0, i1 = trecho_visivel(len(y), fs, fator_tempo, *eixo.get_xlim())
+        if envoltoria:
+            tempo, valores = pontos_para_plot(y[i0:i1], fs, fator_tempo, max_pontos)
+            linha.set_data(tempo + i0 / fs * fator_tempo, valores)
+        if 0 < i1 - i0 <= MAX_PONTOS_COM_MARCADOR:
+            marcas.set_data(np.arange(i0, i1) / fs * fator_tempo, y[i0:i1])
+        else:
+            marcas.set_data([], [])
+
+    ax.callbacks.connect("xlim_changed", redesenhar)
+    return linha
 
 
 def escolher_unidade_tempo(duracao_s: float):
@@ -76,7 +121,7 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
                        layout: str, rotulo_espectro_y: str,
                        limite_inferior_db: float | None,
                        grandeza_por_canal: dict[int, int] | None = None,
-                       idx_fim_arquivo: int | None = None) -> None:
+                       idx_fim_arquivo: int | None = None, max_pontos: int | None = None) -> None:
     """Plota forma de onda e, se disponível, espectro(s) de 1+ canais. Um
     canal pode ter até 2 espectros simultâneos (--fft e --welch, chaves
     "ciclo"/"welch" em infos_espectro[canal]) -- plotados como curvas
@@ -89,7 +134,10 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
     assumir sempre tensão -- ver rotulo_eixo_grandeza().
 
     'idx_inicio_arquivo'/'idx_fim_arquivo': o trecho, em amostras BRUTAS do arquivo (com N canais, N
-    amostras brutas por instante), só para os títulos. Sem o fim, ele é deduzido com 1 canal."""
+    amostras brutas por instante), só para os títulos. Sem o fim, ele é deduzido com 1 canal.
+
+    'max_pontos': None (padrão) desenha todas as amostras; um número, a envoltória mín/máx com esse tanto de pontos
+    por canal (--simplificar, --max-pontos)."""
     canais = list(tensoes_por_canal.keys())
     n_canais = len(canais)
     tem_espectro = infos_espectro is not None
@@ -100,9 +148,13 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
     if idx_fim_arquivo is None:
         idx_fim_arquivo = idx_inicio_arquivo + n
     fator_tempo, rotulo_tempo = escolher_unidade_tempo(n / fs_efetiva)
-    if n > MAX_PONTOS_TEMPO:
-        log.info(f"Forma de onda: {n} amostras por canal desenhadas como envoltória mín/máx em "
-                 f"{MAX_PONTOS_TEMPO // 2} colunas (nenhum pico some; para ver amostra a amostra, use --inicio/--fim).")
+    if max_pontos is not None and n > max_pontos:
+        log.info(f"Forma de onda: {n} amostras por canal desenhadas como envoltória mín/máx de {max_pontos} pontos "
+                 f"(nenhum pico some). Na janela, o zoom mostra as amostras de verdade; sem --simplificar/--max-pontos, "
+                 f"todas são desenhadas.")
+    elif n > AVISO_PONTOS:
+        log.info(f"Forma de onda: desenhando todas as {n} amostras por canal, o que pode demorar e usar muita memória; "
+                 f"--simplificar desenha a envoltória mín/máx (rápida, nenhum pico some).")
 
     cores = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     usar_eixo_unico = (n_canais == 1) or (layout == "sobrepostos")
@@ -118,8 +170,8 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
         for i, canal in enumerate(canais):
             cor_tempo = "tab:green" if n_canais == 1 else cores[i % len(cores)]
             rotulo = None if n_canais == 1 else f"Canal {canal}"
-            ax_tempo.plot(*pontos_para_plot(tensoes_por_canal[canal], fs_efetiva, fator_tempo),
-                          color=cor_tempo, linewidth=1.0, label=rotulo)
+            desenhar_forma_de_onda(ax_tempo, tensoes_por_canal[canal], fs_efetiva, fator_tempo, max_pontos,
+                                   color=cor_tempo, linewidth=1.0, label=rotulo)
 
         titulo_base = f"Forma de onda -- amostras {idx_inicio_arquivo}..{idx_fim_arquivo} de '{titulo_arquivo}'"
         ax_tempo.set_title(titulo_base if n_canais == 1 else f"{titulo_base} (canais {canais}, sobrepostos)")
@@ -189,7 +241,8 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
         for i, canal in enumerate(canais):
             cor = cores[i % len(cores)]
             ax_tempo = eixos[i, 0]
-            ax_tempo.plot(*pontos_para_plot(tensoes_por_canal[canal], fs_efetiva, fator_tempo), color=cor, linewidth=1.0)
+            desenhar_forma_de_onda(ax_tempo, tensoes_por_canal[canal], fs_efetiva, fator_tempo, max_pontos,
+                                   color=cor, linewidth=1.0)
             ax_tempo.set_title(f"Canal {canal} -- amostras brutas {idx_inicio_arquivo}..{idx_fim_arquivo}")
             ax_tempo.set_xlabel(rotulo_tempo)
             ax_tempo.set_ylabel(rotulo_eixo_grandeza([canal], grandeza_por_canal))

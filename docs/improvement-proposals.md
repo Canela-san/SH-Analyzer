@@ -166,8 +166,8 @@ primeiras amostras de cada captura já estão dentro do ruído (±3 LSB do valor
 
 ### P1 — Análise de capturas longas por blocos
 
-**Por quê.** O gráfico já desenha a envoltória mín/máx (o da captura de 10 min caiu de 26 s e 4,3 GB para 6 s e
-1,6 GB, out/2026), mas a análise ainda converte o trecho inteiro para Volts em float64 antes de tudo: 60 milhões de
+**Por quê.** O gráfico desenha a envoltória mín/máx quando pedido (`--simplificar`: o da captura de 10 min cai de
+26 s e 4,3 GB para 6 s e 1,6 GB), mas a análise ainda converte o trecho inteiro para Volts em float64 antes de tudo: 60 milhões de
 amostras são ~0,5 GB por cópia, e o filtro e a correção de sonda fazem cópias. Uma captura de 1 h a 100 kS/s não
 caberia em 16 GB.
 
