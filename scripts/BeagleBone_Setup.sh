@@ -329,9 +329,9 @@ cmd_enviar() {
     arquivos+=(VERSAO)
     carimbo="$(date +%Y-%m-%d_%H%M%S)"   # o relógio do PC: o da BeagleBone pode estar errado (sem RTC)
 
-    info "versão ${N}${versao}${R} -> ${ALVO}:~/${PASTA}"
-    info "${#arquivos[@]} arquivos: ${F}${arquivos[*]}${R}"
+    info "versão ${N}${versao}${R} → ${ALVO}:~/${PASTA} ${F}(${#arquivos[@]} arquivos)${R}"
     if [ "$simular" -eq 1 ]; then
+        info "arquivos: ${F}${arquivos[*]}${R}"
         info "--simular: nada foi escrito nem enviado (o plano B iria para ~/${PASTA}-anteriores/${carimbo}_<versão antiga>/)"
         return 0
     fi
@@ -464,6 +464,10 @@ cmd_montar() {
     command -v sshfs >/dev/null 2>&1 || falha "'sshfs' não encontrado. Instale com: sudo apt install sshfs"
     if montado "$ponto"; then
         ok "já está montado em ${ponto/#$HOME/\~}"
+        case "$ponto/" in
+            "$RAIZ"/*) aviso "a montagem fica dentro do repositório: um 'git clean -xfd' apagaria arquivos da placa."
+                       dica "Prefira uma pasta fora dele: $NOME desmontar ${ponto/#$HOME/\~} && $NOME montar" ;;
+        esac
         return 0
     fi
     # Dentro do repositório, um 'git clean -xfd' entraria na montagem e apagaria arquivos DA PLACA (as
@@ -599,36 +603,34 @@ cmd_status() {
     else
         local sentido=adiantado
         awk -v e="$diferenca" 'BEGIN { exit !(e < 0) }' && sentido=atrasado
-        campo "Relógio" "${AMARELO}!${R} ${hora_placa} ${AMARELO}$(duracao "$diferenca") ${sentido}${R} ${F}→ $NOME hora${R}"
+        campo "Relógio" "${AMARELO}!${R} ${hora_placa} ${AMARELO}$(duracao "$diferenca") ${sentido}${R} ${F}→${R} ${N}hora${R}"
     fi
 
     # Firmware: o que está na placa contra o que o 'enviar' mandaria agora.
     local local_versao=''
     local_versao=$(git -C "$RAIZ" describe --always 2>/dev/null || true)
     if [ "$pasta" != 1 ]; then
-        campo "Firmware" "${AMARELO}!${R} ~/${PASTA} não existe ${F}→ $NOME enviar --setup${R}"
+        campo "Firmware" "${AMARELO}!${R} ~/${PASTA} não existe ${F}→${R} ${N}enviar --setup${R}"
     elif [ -z "$versao" ]; then
-        campo "Firmware" "${AMARELO}!${R} sem VERSAO (anterior ao envio padronizado) ${F}→ $NOME enviar --setup${R}"
+        campo "Firmware" "${AMARELO}!${R} sem VERSAO (anterior ao envio padronizado) ${F}→${R} ${N}enviar --setup${R}"
     elif [ -n "$local_versao" ] && [ "$versao" != "$local_versao" ]; then
-        local muda=''
         if git -C "$RAIZ" rev-parse -q --verify "${versao%-dirty}^{commit}" >/dev/null 2>&1 \
             && git -C "$RAIZ" diff --quiet "${versao%-dirty}" HEAD -- firmware 2>/dev/null; then
-            muda="${F}(o firmware é o mesmo do repositório, ${local_versao})${R}"
+            campo "Firmware" "${VERDE}✓${R} ${versao} ${F}(o firmware é o mesmo do repositório, ${local_versao})${R}"
         else
-            muda="${AMARELO}o repositório tem outro: ${local_versao}${R} ${F}→ $NOME enviar --setup${R}"
+            campo "Firmware" "${AMARELO}!${R} ${versao} ${AMARELO}(o repositório tem outro: ${local_versao})${R} ${F}→${R} ${N}enviar --setup${R}"
         fi
-        campo "Firmware" "${VERDE}✓${R} ${versao} ${muda}"
     else
         campo "Firmware" "${VERDE}✓${R} ${versao} ${F}(o mesmo do repositório)${R}"
     fi
     if [ "$pasta" = 1 ] && [ "$compilado" != 1 ]; then
-        campo "" "${AMARELO}!${R} ler_adc não compilado ${F}→ $NOME setup${R}"
+        campo "" "${AMARELO}!${R} ler_adc não compilado ${F}→${R} ${N}setup${R}"
     fi
 
     case "$pru" in
         running) campo "PRU0" "${VERDE}✓${R} rodando" ;;
         desconhecido) campo "PRU0" "${AMARELO}!${R} sem remoteproc1 (o overlay da PRU está ativo?)" ;;
-        *) campo "PRU0" "${AMARELO}!${R} ${pru} ${F}→ $NOME setup${R}" ;;
+        *) campo "PRU0" "${AMARELO}!${R} ${pru} ${F}→${R} ${N}setup${R}" ;;
     esac
 
     local livre_txt
@@ -640,7 +642,7 @@ cmd_status() {
         campo "Disco" "${VERDE}✓${R} ${livre_txt} ${F}(~$(duracao $(( livre_kb * 60 / 11719 ))) de captura a 100 kS/s)${R}"
     fi
     if [ "$capturas" -gt 0 ]; then
-        campo "Capturas" "${capturas} arquivo(s) .bin em ~/${PASTA} ($(kb_legivel "$capturas_kb")) ${F}→ $NOME trazer${R}"
+        campo "Capturas" "${capturas} arquivo(s) .bin em ~/${PASTA} ($(kb_legivel "$capturas_kb")) ${F}→${R} ${N}trazer${R}"
     else
         campo "Capturas" "${F}nenhum .bin em ~/${PASTA}${R}"
     fi
@@ -650,7 +652,7 @@ cmd_status() {
     if montado "$ponto"; then
         campo "Montagem" "${VERDE}✓${R} ${ponto/#$HOME/\~}"
     else
-        campo "Montagem" "${F}não montada → $NOME montar${R}"
+        campo "Montagem" "${F}não montada →${R} ${N}montar${R}"
     fi
     printf '\n'
 }
