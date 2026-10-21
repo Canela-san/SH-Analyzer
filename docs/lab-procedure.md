@@ -149,7 +149,10 @@ Ele faz, com o tom e na faixa de ±2,56 V, 3 blocos por captura:
 
 A cada captura ele mostra os contadores e a taxa medida pelo ARM: um `!` com amostras atrasadas nas taxas altas é
 esperado (é onde a PRU para). Tudo vai para `T7e_<data>_<hora>/`, com o `log.txt` (a saída inteira do `ler_adc`) e o
-`resumo.csv`. `Ctrl+C` para no meio e guarda o que já foi feito; `--partes AB` roda só algumas partes. No computador:
+`resumo.csv`. `Ctrl+C` para no meio e guarda o que já foi feito; `--partes AB` roda só algumas partes. **Se a conexão
+cair**, as capturas seguem até a próxima pausa e a varredura para ali (cada captura já está salva, com a linha dela no
+`resumo.csv`): reconecte e rode `./varrer_taxa.sh --continuar`, que retoma a última pasta, pula o que foi feito e
+volta à pausa em que parou. No computador:
 
 ```fish
 scripts/BeagleBone_Setup.sh trazer 'T7e_*' $DIA

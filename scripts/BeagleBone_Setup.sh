@@ -166,7 +166,7 @@ ALVO="${USUARIO}@${IP}"
 # ------------------------------------------------------------------------------
 CONTROLE="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/sh-analyzer-ssh-%C"
 SSH_BASE=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 -o NumberOfPasswordPrompts=1
-          -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o LogLevel=ERROR)
+          -o ServerAliveInterval=15 -o ServerAliveCountMax=8 -o LogLevel=ERROR)   # 2 min sem resposta para desistir
 SSH_OPCOES=("${SSH_BASE[@]}" -o ControlMaster=auto -o "ControlPath=$CONTROLE" -o ControlPersist=120)
 if [ -x "$SCRIPT" ]; then
     export SSH_ASKPASS="$SCRIPT" SSH_ASKPASS_REQUIRE=force _SH_ANALYZER_ASKPASS=1 _SH_ANALYZER_SENHA="$SENHA"

@@ -27,6 +27,10 @@
 #   ./varrer_taxa.sh              # tudo, com as pausas para mudar a bancada
 #   ./varrer_taxa.sh --simular    # só mostra o plano, o tempo e o espaço
 #   ./varrer_taxa.sh --partes AB  # só algumas partes (A, B, D e C, nesta ordem)
+#   ./varrer_taxa.sh --continuar  # retoma a última varredura (ou --continuar T7e_...): pula o que já foi feito
+#
+# SE A CONEXÃO CAIR: cada captura e a linha dela no resumo.csv são gravadas assim que ela termina, e a varredura
+# não morre com o ssh: segue até a próxima pausa (ou até o fim) e para ali. Reconecte e rode --continuar.
 #
 # SAÍDA: a pasta T7e_<data>_<hora>/ com as capturas (<parte>_cs<S>-<H>-<A>_<taxa>_<entrada>.bin), o log.txt (tudo o
 # que o ler_adc escreveu) e o resumo.csv (uma linha por captura: contadores de integridade e taxa medida pelo ARM).
@@ -52,15 +56,18 @@ SO_S="100,100,100 50,100,100 20,100,100 10,100,100 6,100,100 3,100,100"       # 
 SO_H="200,50,100 200,20,100 200,10,100 200,5,100 200,2,100 200,1,100"         # H sozinho
 ESPERAS_TAXA="200,100,100 100,50,50 50,25,25 20,10,10 10,5,5 6,2,6 3,1,3"
 TAXAS="125000 160000 200000 250000 312500 400000 500000"                     # todas dividem 200 MHz
-SO_A_250K="20,10,20 20,10,10 20,10,5 20,10,3"                                   # A sozinho, a 250 kS/s
+SO_A_250K="20,10,20 20,10,5 20,10,3"         # A sozinho, a 250 kS/s (o 20,10,10 já está na varredura da taxa)
 DOIS_CANAIS="200,100,100:100000 20,10,10:200000 20,10,10:250000 6,2,6:250000 3,1,3:250000"
 CURTO_RAPIDO="200,100,100:125000 20,10,10:250000 6,2,6:250000 3,1,3:250000"
 
 PARTES=ABDC
 SIMULAR=0
+CONTINUAR=''
 while [ $# -gt 0 ]; do
     case "$1" in
         --simular) SIMULAR=1 ;;
+        --continuar)
+            if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then CONTINUAR=${2%/}; shift; else CONTINUAR=ultima; fi ;;
         --partes) [ $# -ge 2 ] || { echo "Erro: --partes precisa de letras (ex.: AB)." >&2; exit 1; }; PARTES=$2; shift ;;
         -h|--help) sed -n '/^# PARA QUE/,/^# ====/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
         *) echo "Erro: opção desconhecida: '$1' (veja --help)." >&2; exit 1 ;;
@@ -88,6 +95,33 @@ fi
 [ "${#PLANO[@]}" -gt 0 ] || { echo "Erro: nenhuma parte escolhida (use A, B, D e/ou C)." >&2; exit 1; }
 
 blocos_da_parte() { if [ "$1" = C ]; then echo 1; else echo "$BLOCOS"; fi; }
+nome_da_captura() {   # $1 = item do plano
+    local parte cs taxa canais entrada
+    IFS='|' read -r parte cs taxa canais entrada <<< "$1"
+    echo "${parte}_cs${cs//,/-}_${taxa}_${entrada}$( [ "$canais" = 1 ] || echo _2canais ).bin"
+}
+
+# --continuar: a mesma pasta; feita = com linha no resumo.csv e com os contadores lidos (uma que o ler_adc não
+# terminou, ou que foi cortada no meio, é refeita).
+declare -A FEITA=()
+if [ -n "$CONTINUAR" ]; then
+    if [ "$CONTINUAR" = ultima ]; then
+        CONTINUAR=$(find . -maxdepth 1 -type d -name 'T7e_*' | sort | tail -n 1)
+        CONTINUAR=${CONTINUAR#./}
+    fi
+    [ -n "$CONTINUAR" ] && [ -f "$CONTINUAR/resumo.csv" ] \
+        || { echo "Erro: não achei a varredura a continuar (${CONTINUAR:-nenhuma pasta T7e_* aqui})." >&2; exit 1; }
+    while read -r arquivo atrasadas; do
+        if [ "$atrasadas" != "?" ]; then FEITA[$arquivo]=1; fi
+    done < <(awk -F, 'NR > 1 { print $2, $(NF - 5) }' "$CONTINUAR/resumo.csv")
+fi
+declare -A FALTAM_NA_PARTE=()
+FALTAM=0
+for item in "${PLANO[@]}"; do
+    [ -z "${FEITA[$(nome_da_captura "$item")]:-}" ] || continue
+    FALTAM=$((FALTAM + 1))
+    FALTAM_NA_PARTE[${item%%|*}]=$(( ${FALTAM_NA_PARTE[${item%%|*}]:-0} + 1 ))
+done
 
 # Duração prevista de uma captura: a taxa que a PRU alcança com essas esperas (o quadro mínimo é de
 # 595 + 2 × (S + H + A) ciclos de 5 ns, pelo simulador) e ~2 s de preparação.
@@ -101,6 +135,7 @@ duracao_s() {   # $1 = esperas, $2 = taxa, $3 = blocos
 TOTAL_S=0
 MB_TOTAL=0
 for item in "${PLANO[@]}"; do
+    [ -z "${FEITA[$(nome_da_captura "$item")]:-}" ] || continue
     IFS='|' read -r parte cs taxa _ _ <<< "$item"
     b=$(blocos_da_parte "$parte")
     TOTAL_S=$((TOTAL_S + $(duracao_s "$cs" "$taxa" "$b")))
@@ -110,10 +145,18 @@ LIVRE_MB=$(( $(df -Pk . | awk 'NR == 2 { print $4 }') / 1024 ))
 
 if [ -t 1 ]; then N=$'\e[1m' F=$'\e[2m' R=$'\e[0m' V=$'\e[32m' AM=$'\e[33m' VM=$'\e[31m'; else N='' F='' R='' V='' AM='' VM=''; fi
 printf '\n  %s◆ T7e: esperas do CS e taxa de amostragem%s\n' "$N" "$R"
-printf '    partes %s · %d capturas · ~%d min · ~%d MB (livres: %d MB)\n' "$PARTES" "${#PLANO[@]}" $(( (TOTAL_S + 59) / 60 )) "$MB_TOTAL" "$LIVRE_MB"
+printf '    partes %s · %d capturas · ~%d min · ~%d MB (livres: %d MB)\n' "$PARTES" "$FALTAM" $(( (TOTAL_S + 59) / 60 )) "$MB_TOTAL" "$LIVRE_MB"
+if [ -n "$CONTINUAR" ]; then
+    printf '    continuando %s: %d de %d já feitas\n' "$CONTINUAR" $(( ${#PLANO[@]} - FALTAM )) "${#PLANO[@]}"
+fi
+if [ "$FALTAM" -eq 0 ]; then
+    printf '\n    Nada a fazer: todas as capturas do plano já estão feitas.\n\n'
+    exit 0
+fi
 if [ "$SIMULAR" -eq 1 ]; then
     printf '\n'
     for item in "${PLANO[@]}"; do
+        [ -z "${FEITA[$(nome_da_captura "$item")]:-}" ] || continue
         IFS='|' read -r parte cs taxa canais entrada <<< "$item"
         printf '    %s  cs %-12s %7s Hz  canais %-4s %s\n' "$parte" "$cs" "$taxa" "$canais" "$entrada"
     done
@@ -134,51 +177,65 @@ if [ -n "${SUDO_ASKPASS:-}" ]; then
 fi
 sudo -v || { echo "Erro: o sudo não aceitou a senha." >&2; exit 1; }
 
-PASTA="T7e_$(date +%Y-%m-%d_%H%M)"
+PASTA=${CONTINUAR:-T7e_$(date +%Y-%m-%d_%H%M)}
 mkdir -p "$PASTA"
 LOG="$PASTA/log.txt"
 RESUMO="$PASTA/resumo.csv"
-echo "parte,arquivo,esperas_cs,taxa_pedida_hz,canais,entrada,amostras_atrasadas,buffers_sobrescritos,quadros_sdo_ruido,taxa_arm_hz,desvio_arm_pct,codigo_saida" > "$RESUMO"
+if [ -z "$CONTINUAR" ]; then
+    echo "parte,arquivo,esperas_cs,taxa_pedida_hz,canais,entrada,amostras_atrasadas,buffers_sobrescritos,quadros_sdo_ruido,taxa_arm_hz,desvio_arm_pct,codigo_saida" > "$RESUMO"
+fi
 {
-    echo "== $(date '+%Y-%m-%d %H:%M:%S %Z') · $(uname -n) · firmware $(cat VERSAO 2>/dev/null || echo '?')"
-    echo "== partes $PARTES, ${#PLANO[@]} capturas, $BLOCOS blocos cada (1 na parte C), faixa: $FAIXA"
+    echo "== $(date '+%Y-%m-%d %H:%M:%S %Z') · $(uname -n) · firmware $(cat VERSAO 2>/dev/null || echo '?')$( [ -z "$CONTINUAR" ] || echo ' · CONTINUAÇÃO')"
+    echo "== partes $PARTES, $FALTAM de ${#PLANO[@]} capturas, $BLOCOS blocos cada (1 na parte C), faixa: $FAIXA"
 } >> "$LOG"
 printf '    pasta: %s\n' "$PASTA"
 
-interrompido=0
-trap 'interrompido=1' INT
+# Ctrl+C para (e guarda o que já foi feito). A queda da conexão (SIGHUP) não: as capturas seguem até a próxima
+# pausa, onde a falta do terminal faz a varredura parar (o ler_adc herda o HUP ignorado e termina a captura dele).
+interrompido=''
+trap 'interrompido="com Ctrl+C"' INT
+trap '' HUP
 
-pausa() {   # $1 = o que mudar na bancada; devolve 1 se a parte deve ser pulada
+pausa() {   # $1 = o que mudar na bancada. Devolve 0 = seguir, 1 = pular a parte, 2 = sem terminal (parar)
     printf '\n  %s▸ Mude a bancada:%s %s\n' "$N$AM" "$R" "$1"
     printf '    Enter quando estiver pronto, ou p e Enter para pular esta parte: '
     local resposta=''
-    read -r resposta || true
+    if ! read -r resposta; then
+        echo "== pausa: $1 -> sem terminal (a conexão caiu?): parado aqui" >> "$LOG"
+        return 2
+    fi
     echo "== pausa: $1 -> '${resposta}'" >> "$LOG"
-    [ "$resposta" != p ]
+    [ "$resposta" != p ] || return 1
 }
 
 pular_parte=''
 parte_anterior=''
 i=0
 for item in "${PLANO[@]}"; do
-    [ "$interrompido" -eq 0 ] || break
+    [ -z "$interrompido" ] || break
     i=$((i + 1))
+    nome=$(nome_da_captura "$item")
+    [ -z "${FEITA[$nome]:-}" ] || continue
     IFS='|' read -r parte cs taxa canais entrada <<< "$item"
     if [ "$parte" != "$parte_anterior" ]; then
         parte_anterior=$parte
         pular_parte=''
+        resposta=0
         case "$parte" in
             A) printf '\n  %s▸ A: as esperas a 100 kS/s, com o tom%s\n' "$N" "$R" ;;
             B) printf '\n  %s▸ B: a taxa contra as esperas, com o tom%s\n' "$N" "$R" ;;
-            D) pausa "tom de 10 kHz no canal 1 (como até agora) e a entrada do canal 0 em CURTO." || pular_parte=$parte
+            D) pausa "tom de 10 kHz no canal 1 (como até agora) e a entrada do canal 0 em CURTO." || resposta=$?
                printf '\n  %s▸ D: 2 canais%s\n' "$N" "$R" ;;
-            C) pausa "gerador FORA e a entrada do canal 1 em CURTO (o divisor ligado ao retorno)." || pular_parte=$parte
+            C) pausa "gerador FORA e a entrada do canal 1 em CURTO (o divisor ligado ao retorno)." || resposta=$?
                printf '\n  %s▸ C: a entrada em curto%s\n' "$N" "$R" ;;
+        esac
+        case "$resposta" in
+            1) pular_parte=$parte ;;
+            2) interrompido="sem terminal na pausa da parte $parte"; break ;;
         esac
     fi
     if [ "$pular_parte" = "$parte" ]; then continue; fi
 
-    nome="${parte}_cs${cs//,/-}_${taxa}_${entrada}$( [ "$canais" = 1 ] || echo _2canais ).bin"
     faixa=$FAIXA
     [ "$canais" = 1 ] || faixa=$FAIXA_2CANAIS
     printf '    %s[%3d/%d]%s cs %-12s %7s Hz %-9s ' "$F" "$i" "${#PLANO[@]}" "$R" "$cs" "$taxa" "$( [ "$canais" = 1 ] || echo '2 canais')"
@@ -204,9 +261,12 @@ for item in "${PLANO[@]}"; do
     fi
 done
 
-{
-    echo "== fim $(date '+%Y-%m-%d %H:%M:%S %Z')$( [ "$interrompido" -eq 0 ] || echo ' (interrompido com Ctrl+C)')"
-} >> "$LOG"
-printf '\n  %s◆ Pronto%s%s: %s\n' "$N" "$R" "$( [ "$interrompido" -eq 0 ] || echo ' (interrompido)')" "$PASTA"
+echo "== fim $(date '+%Y-%m-%d %H:%M:%S %Z')${interrompido:+ (parado: $interrompido)}" >> "$LOG"
+if [ -n "$interrompido" ]; then
+    printf '\n  %s◆ Parado%s (%s): %s\n' "$N$AM" "$R" "$interrompido" "$PASTA"
+    echo "    O que foi feito está salvo. Para seguir daqui:  ./varrer_taxa.sh --continuar"
+else
+    printf '\n  %s◆ Pronto%s: %s\n' "$N" "$R" "$PASTA"
+fi
 echo "    No computador:  scripts/BeagleBone_Setup.sh trazer 'T7e_*' \$DIA"
 echo

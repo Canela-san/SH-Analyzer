@@ -8,6 +8,7 @@ Rodam o script de verdade (bash), com programas FALSOS no PATH onde o real não 
 import glob
 import os
 import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -371,6 +372,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 IFS=, read -r s h a <<< "$cs"
+sleep "${LER_ADC_DEMORA:-0}"
 maximo=$((200000000 / (595 + 2 * (s + h + a))))
 atrasadas=0; real=$taxa
 if [ "$taxa" -gt "$maximo" ]; then atrasadas=123; real=$maximo; fi
@@ -395,14 +397,16 @@ def varredura(tmp_path):
     _executavel(falsos / "sudo", '#!/bin/bash\nwhile [[ "${1:-}" == -* ]]; do shift; done\n'
                                  '[ $# -gt 0 ] || exit 0\nexec "$@"\n')
 
+    env = {k: v for k, v in os.environ.items() if k != "SUDO_ASKPASS"}
+    env.update({"PATH": f"{falsos}:{os.environ['PATH']}", "LC_ALL": "C", "NO_COLOR": "1"})
+
     def rodar(*args, entrada=""):
-        env = {k: v for k, v in os.environ.items() if k != "SUDO_ASKPASS"}
-        env.update({"PATH": f"{falsos}:{os.environ['PATH']}", "LC_ALL": "C", "NO_COLOR": "1"})
         r = subprocess.run(["bash", str(pasta / "varrer_taxa.sh"), *args], cwd=tmp_path, env=env, input=entrada,
                            capture_output=True, text=True, timeout=120)
         resultados = sorted(pasta.glob("T7e_*"))
         return r, (resultados[-1] if resultados else None)
 
+    rodar.pasta, rodar.env = pasta, env
     return rodar
 
 
@@ -417,7 +421,8 @@ def test_varrer_taxa_captura_o_plano_inteiro_e_resume(varredura):
     assert r.returncode == 0, r.stdout + r.stderr
     linhas = _resumo(pasta)
     partes = [linha["parte"] for linha in linhas]
-    assert partes.count("A") == 26 and partes.count("B") == 53 and partes.count("D") == 5 and "C" not in partes
+    assert partes.count("A") == 26 and partes.count("B") == 52 and partes.count("D") == 5 and "C" not in partes
+    assert len({linha["arquivo"] for linha in linhas}) == len(linhas)          # nenhuma captura repetida no plano
     por_nome = {linha["arquivo"]: linha for linha in linhas}
     assert por_nome["A_cs200-100-100_100000_tom.bin"]["amostras_atrasadas"] == "0"
     lento = por_nome["B_cs200-100-100_500000_tom.bin"]                   # o padrão não chega a 500 kS/s
@@ -432,10 +437,53 @@ def test_varrer_taxa_captura_o_plano_inteiro_e_resume(varredura):
 
 def test_varrer_taxa_curto_com_1_bloco_e_simular(varredura):
     r, pasta = varredura("--simular")
-    assert r.returncode == 0 and "102 capturas" in r.stdout and pasta is None   # nada capturado
+    assert r.returncode == 0 and "101 capturas" in r.stdout and pasta is None   # nada capturado
     r, pasta = varredura("--partes", "C", entrada="\n")
     assert r.returncode == 0, r.stdout + r.stderr
     linhas = _resumo(pasta)
     assert len(linhas) == 18 and {linha["entrada"] for linha in linhas} == {"curto"}
     assert all(linha["taxa_arm_hz"] == "?" for linha in linhas)          # 1 bloco: o ARM não mede a taxa
     assert "blocos=1" in (pasta / "C_cs3-1-3_100000_curto.bin").read_text()
+
+
+def test_varrer_taxa_para_sem_terminal_na_pausa_e_continua_de_onde_parou(varredura):
+    """Como em 21/10: a conexão caiu na pausa da parte D. Sem terminal, a varredura para ali, com o que
+    foi feito salvo; --continuar pula o que tem linha no resumo e refaz a que o ler_adc não terminou."""
+    r, pasta = varredura(entrada="")                          # sem terminal: o read da pausa falha
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Parado" in r.stdout and "--continuar" in r.stdout
+    linhas = _resumo(pasta)
+    assert len(linhas) == 78 and {linha["parte"] for linha in linhas} == {"A", "B"}
+    assert "sem terminal" in (pasta / "log.txt").read_text()
+
+    texto = (pasta / "resumo.csv").read_text().splitlines()   # uma captura que o ler_adc não terminou: refeita
+    cortada = texto[5].split(",")
+    cortada[-6] = "?"
+    texto[5] = ",".join(cortada)
+    (pasta / "resumo.csv").write_text("\n".join(texto) + "\n")
+
+    r, continuada = varredura("--continuar", entrada="\n\n")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert continuada == pasta                                # a mesma pasta, não uma nova
+    assert "77 de 101 já feitas" in r.stdout and "[ 79/101]" in r.stdout and "[  1/101]" not in r.stdout
+    linhas = _resumo(pasta)
+    nomes = [linha["arquivo"] for linha in linhas]
+    assert len(set(nomes)) == 101 and nomes.count(cortada[1]) == 2
+    assert "CONTINUAÇÃO" in (pasta / "log.txt").read_text()
+    r, _ = varredura("--continuar")
+    assert "Nada a fazer" in r.stdout
+
+
+def test_varrer_taxa_nao_morre_com_a_queda_da_conexao(varredura):
+    """SIGHUP (o ssh caiu) no meio das capturas: elas seguem até o fim da parte."""
+    env = {**varredura.env, "LER_ADC_DEMORA": "0.05"}
+    proc = subprocess.Popen(["bash", str(varredura.pasta / "varrer_taxa.sh"), "--partes", "A"],
+                            cwd=varredura.pasta.parent, env=env, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    import time
+    time.sleep(0.6)
+    proc.send_signal(signal.SIGHUP)
+    proc.communicate(timeout=120)
+    assert proc.returncode == 0
+    (pasta,) = varredura.pasta.glob("T7e_*")
+    assert len(_resumo(pasta)) == 26
