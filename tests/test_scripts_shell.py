@@ -52,7 +52,8 @@ def bancada(tmp_path):
     (repo / "firmware" / "Makefile").write_text("all:\n")
     _executavel(repo / "firmware" / "setup.sh",
                 '#!/bin/bash\necho "setup rodou em $(basename "$PWD")"\n'
-                'echo "senha do sudo pelo askpass: $("$SUDO_ASKPASS")"\n')
+                'echo "senha do sudo pelo askpass: $("$SUDO_ASKPASS")"\n'
+                'echo "PRU_C_DIR=${PRU_C_DIR:-}"\n')
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     subprocess.run([*GIT, "add", "-A"], cwd=repo, check=True)
     subprocess.run([*GIT, "commit", "-q", "-m", "inicial"], cwd=repo, check=True)
@@ -217,6 +218,18 @@ def test_pasta_com_til_e_setup_com_a_senha_do_sudo(bancada):
     assert _senhas_na_ram(bancada) == []
 
 
+def test_setup_traz_as_variaveis_do_compilador_do_shell_interativo(bancada):
+    """A imagem da BeagleBone define o caminho do compilador da PRU só no shell interativo (~/.bashrc, depois do teste
+    de interativo): o 'ssh comando' do setup não o via, e o clpru não achava o stdint.h."""
+    (bancada.home / ".bashrc").write_text('case $- in *i*) ;; *) return ;; esac\n'
+                                          'echo "bem-vindo à BeagleBone"\n'
+                                          'export PRU_C_DIR="/usr/share/ti/cgt-pru/include;/usr/share/ti/cgt-pru/lib"\n')
+    r = bancada.rodar("enviar", "--setup", HOME=str(bancada.home))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "PRU_C_DIR=/usr/share/ti/cgt-pru/include;/usr/share/ti/cgt-pru/lib" in r.stdout
+    assert "bem-vindo" not in r.stdout                                          # o que o .bashrc imprime não atrapalha
+
+
 def test_setup_sem_firmware_la_diz_para_enviar(bancada):
     r = bancada.rodar("setup")
     assert r.returncode == 1 and "envie o firmware antes" in r.stdout + r.stderr
@@ -290,21 +303,57 @@ def test_preparar_acerta_a_hora_envia_e_roda_o_setup(bancada):
 # firmware/Makefile: o clpru acha o stdint.h mesmo sem a variável do shell interativo
 # ---------------------------------------------------------------------------
 
-def test_makefile_acha_os_cabecalhos_do_clpru_num_comando_por_ssh(tmp_path):
-    """Num 'ssh comando' (o BeagleBone_Setup.sh setup), a PRU_C_DIR do shell interativo da BeagleBone não existe; o
-    caminho tem de sair da instalação do clpru (o /usr/bin/clpru é um link para <instalação>/bin/clpru)."""
+def _make_pru(tmp_path, clpru_em: Path, **env_extra) -> subprocess.CompletedProcess:
+    """'make -n pru' com um clpru falso em ``clpru_em`` (no PATH) e sem as variáveis do shell interativo."""
+    usr_bin = tmp_path / "path"
+    usr_bin.mkdir(exist_ok=True)
+    if not (usr_bin / "clpru").exists():
+        (usr_bin / "clpru").symlink_to(clpru_em)
+    env = {k: v for k, v in os.environ.items() if k not in ("PRU_CGT", "PRU_C_DIR", "C_DIR")}
+    env.update({"PATH": f"{usr_bin}:{env['PATH']}", **env_extra})
+    return subprocess.run(["make", "-n", "pru"], cwd=RAIZ / "firmware", env=env, capture_output=True, text=True,
+                          timeout=30)
+
+
+def _instalacao_ti(raiz: Path) -> Path:
+    """Uma instalação de brinquedo do compilador da TI: bin/clpru, include/stdint.h e lib/rtspruv3_le.lib."""
+    for sub in ("bin", "include", "lib"):
+        (raiz / sub).mkdir(parents=True)
+    _executavel(raiz / "bin" / "clpru", "#!/bin/sh\n")
+    (raiz / "include" / "stdint.h").write_text("/* da PRU */\n")
+    (raiz / "lib" / "rtspruv3_le.lib").write_bytes(b"")
+    return raiz.resolve()
+
+
+@pytest.fixture
+def com_make():
     if shutil.which("make") is None:
         pytest.skip("precisa do make")
-    instalacao = tmp_path / "ti" / "cgt-pru"
-    (instalacao / "bin").mkdir(parents=True)
-    _executavel(instalacao / "bin" / "clpru", "#!/bin/sh\n")
-    usr_bin = tmp_path / "usr_bin"
-    usr_bin.mkdir()
-    (usr_bin / "clpru").symlink_to(instalacao / "bin" / "clpru")
-    env = {k: v for k, v in os.environ.items() if k not in ("PRU_CGT", "PRU_C_DIR", "C_DIR")}
-    env["PATH"] = f"{usr_bin}:{env['PATH']}"
-    r = subprocess.run(["make", "-n", "pru"], cwd=RAIZ / "firmware", env=env, capture_output=True, text=True, timeout=30)
+
+
+def test_makefile_acha_a_instalacao_ti_pelo_link_do_clpru(tmp_path, com_make):
+    """Num 'ssh comando' (o BeagleBone_Setup.sh setup), a PRU_C_DIR do shell interativo não existe."""
+    ti = _instalacao_ti(tmp_path / "ti" / "cgt-pru")
+    r = _make_pru(tmp_path, ti / "bin" / "clpru")
     assert r.returncode == 0, r.stderr
-    real = instalacao.resolve()
-    assert f"--include_path={real}/include pru_main.c" in r.stdout
-    assert f"-z -i{real}/lib -i{real}/include AM335x_PRU.cmd" in r.stdout
+    assert f"--include_path={ti}/include pru_main.c" in r.stdout
+    assert f"-z -i{ti}/lib -i{ti}/include AM335x_PRU.cmd" in r.stdout
+
+
+def test_makefile_nao_usa_o_usr_include_do_linux(tmp_path, com_make):
+    """O clpru da imagem da BeagleBone fica em /usr/bin, e o /usr/include ao lado tem o stdint.h da glibc (o clpru
+    parava em "bits/libc-header-start.h"): sem a biblioteca rtspru em lib/, a pasta não é a da TI."""
+    usr = tmp_path / "usr"
+    (usr / "bin").mkdir(parents=True)
+    (usr / "include").mkdir()
+    (usr / "include" / "stdint.h").write_text("/* da glibc */\n")
+    _executavel(usr / "bin" / "clpru", "#!/bin/sh\n")
+    r = _make_pru(tmp_path, usr / "bin" / "clpru")
+    if "--include_path=" in r.stdout:                     # uma instalação da TI de verdade nesta máquina
+        assert str(usr.resolve()) not in r.stdout
+    else:
+        assert "não foi achada" in r.stderr and "PRU_CGT" in r.stderr
+    ti = _instalacao_ti(tmp_path / "opt" / "ti-cgt-pru")
+    r = _make_pru(tmp_path, usr / "bin" / "clpru", PRU_CGT=str(ti))   # a do ambiente vale primeiro
+    assert f"--include_path={ti}/include" in r.stdout and f"-i{ti}/lib" in r.stdout
+    assert "não foi achada" not in r.stderr

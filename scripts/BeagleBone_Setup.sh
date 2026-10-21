@@ -352,11 +352,24 @@ cmd_enviar() {
 # ==============================================================================
 # setup: o setup.sh na BeagleBone (pinos, compilação, carga da PRU), sem pedir senha
 # ==============================================================================
-# shellcheck disable=SC2016
-SETUP_REMOTO='d=$1; export SUDO_ASKPASS="$d/askpass"; trap '\''rm -rf "$d"'\'' EXIT
-cd -- "$2" 2>/dev/null || { echo "a pasta ~/$2 não existe: envie o firmware antes" >&2; exit 1; }
-[ -x ./setup.sh ] || { echo "~/$2/setup.sh não existe: envie o firmware antes" >&2; exit 1; }
-./setup.sh'
+# O ambiente do terminal do ssh, onde a compilação funciona: um "ssh comando" não lê o /etc/profile, o ~/.profile nem o
+# ~/.bashrc, e a imagem da BeagleBone põe num deles o caminho do compilador da PRU (PRU_CGT, PRU_C_DIR ou C_DIR). Os
+# perfis são lidos aqui; as variáveis que só o shell interativo define vêm de um 'bash -i' sem terminal (a linha
+# marcada separa o valor de qualquer coisa que o ~/.bashrc imprima). O Makefile também procura a instalação sozinho.
+SETUP_REMOTO=$(cat <<'FIM'
+d=$1; pasta=$2; export SUDO_ASKPASS="$d/askpass"; trap 'rm -rf "$d"' EXIT
+for f in /etc/profile "$HOME/.profile"; do if [ -r "$f" ]; then . "$f" >/dev/null 2>&1; fi; done
+linha=$(bash -ic 'printf "\nSH-ANALYZER|%s|%s|%s\n" "${PRU_CGT:-}" "${PRU_C_DIR:-}" "${C_DIR:-}"' 2>/dev/null </dev/null \
+        | grep '^SH-ANALYZER|' | tail -n 1)
+IFS='|' read -r _ i_cgt i_cdir i_c <<< "$linha"
+if [ -z "${PRU_CGT:-}" ] && [ -n "$i_cgt" ]; then export PRU_CGT="$i_cgt"; fi
+if [ -z "${PRU_C_DIR:-}" ] && [ -n "$i_cdir" ]; then export PRU_C_DIR="$i_cdir"; fi
+if [ -z "${C_DIR:-}" ] && [ -n "$i_c" ]; then export C_DIR="$i_c"; fi
+cd -- "$pasta" 2>/dev/null || { echo "a pasta ~/$pasta não existe: envie o firmware antes" >&2; exit 1; }
+[ -x ./setup.sh ] || { echo "~/$pasta/setup.sh não existe: envie o firmware antes" >&2; exit 1; }
+./setup.sh
+FIM
+)
 
 cmd_setup() {
     etapa "Compilação e PRU ${F}(setup.sh)${R}"
