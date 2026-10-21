@@ -4,12 +4,18 @@
 # firmware (ler_adc + fw_pru.out) e (re)carga do firmware na PRU0.
 #
 # Uso (na BeagleBone, de dentro de firmware/):   ./setup.sh
+# Ou, do computador:  scripts/BeagleBone_Setup.sh setup   (ele passa a senha do sudo; ninguém digita nada)
 # Rode de novo sempre que mudar o firmware ou a PRU parar de responder.
 # Os passos que precisam de root usam 'sudo' (pode pedir a senha).
 # ==============================================================================
 
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"   # o Makefile e o fw_pru.out são relativos a esta pasta
+
+# Com SUDO_ASKPASS (o BeagleBone_Setup.sh a deixa num arquivo temporário), o sudo lê a senha dele sem perguntar.
+if [ -n "${SUDO_ASKPASS:-}" ]; then
+    sudo() { command sudo -A "$@"; }
+fi
 
 # PRU0 nas imagens Debian da BeagleBone (remoteproc0 é o Cortex-M3 de energia). O ler_adc usa o
 # mesmo caminho (REMOTEPROC_PRU0_ESTADO em ler_adc.c) para reiniciar a PRU a cada captura.

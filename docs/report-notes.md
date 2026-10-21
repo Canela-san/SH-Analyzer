@@ -989,7 +989,7 @@ taxa medida pelo relógio do ARM, que antes só aparecia no console. Cada ida
 à bancada ganha também uma etiqueta no git (`bancada-AAAA-MM-DD`). Um `.bin`
 passa a dizer, sozinho, com que código foi feito, e também a geometria do
 ping-pong (2 buffers de 1.048.576 amostras). O envio para a BeagleBone foi
-padronizado num script (`scripts/enviar_firmware.sh`): vai só `firmware/`,
+padronizado num script (`scripts/enviar_firmware.sh`, hoje o `enviar` do `scripts/BeagleBone_Setup.sh`): vai só `firmware/`,
 com a versão, e o firmware anterior fica guardado, só o código, como plano B.
 O HDF5 exportado passou a levar o cabeçalho original inteiro e o perfil de
 cada sonda, para os dados poderem ser usados e auditados sem o `.bin` e sem

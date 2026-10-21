@@ -11,6 +11,7 @@
 **/amostras_*.csv
 **/log.txt
 report/relatorio/
+BeagleBone/
 # =====================================================================
 # Altium Designer: histórico local, logs e saídas geradas (padrões
 # genéricos, para qualquer placa em hardware/)
@@ -68,3 +69,6 @@ Desktop.ini
 *.swp
 .vscode/
 .idea/
+
+# Montagem da BeagleBone (scripts/BeagleBone_Setup.sh montar --forcar dentro do repositório): nunca versionar
+/BeagleBone/

@@ -494,7 +494,7 @@ verificar_relogio() {
     local ano
     ano="$(date +%Y)"
     if [ "$ano" -lt 2024 ]; then
-        log_aviso "O relógio da BeagleBone marca ${ano}: o timestamp gravado no cabeçalho das capturas ficará errado. No computador, rode scripts/set_date.sh para acertá-lo (ou continue se isso não importar)."
+        log_aviso "O relógio da BeagleBone marca ${ano}: o timestamp gravado no cabeçalho das capturas ficará errado. No computador, rode scripts/BeagleBone_Setup.sh hora para acertá-lo (ou continue se isso não importar)."
     fi
 }
 

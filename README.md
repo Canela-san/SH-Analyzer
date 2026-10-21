@@ -100,16 +100,19 @@ Você precisa de duas máquinas: a **BeagleBone** (captura) e o **seu computador
 
 ### 1. Capturar
 
-No computador, leve o firmware para a BeagleBone e compile lá. Ela precisa do `gcc` e do compilador `clpru` da Texas Instruments.
+Com a BeagleBone ligada por USB, o `BeagleBone_Setup.sh` faz tudo do computador: acerta o relógio dela, leva o firmware, compila e carrega a PRU. Ela precisa do `gcc` e do compilador `clpru` da Texas Instruments.
 
 ```bash
-scripts/enviar_firmware.sh --setup
+scripts/BeagleBone_Setup.sh preparar
 ```
 
-Na BeagleBone:
+Depois, abra um terminal na pasta do firmware (o sudo já vem liberado) e capture:
 
 ```bash
-cd firmware
+scripts/BeagleBone_Setup.sh ssh
+```
+
+```bash
 sudo ./ler_adc 100000 --duracao 10s
 ```
 
@@ -117,7 +120,7 @@ O resultado é um `captura_AAAAMMDD_HHMMSS.bin`: cerca de 10 s a 100 kS/s no can
 
 ### 2. Analisar
 
-Copie o `.bin` para o computador (com `scp`, por exemplo) e instale o [`uv`](https://docs.astral.sh/uv/). Ele baixa as dependências Python na primeira execução, sem `pip install` nem ambiente virtual manual.
+Traga o `.bin` para o computador (`scripts/BeagleBone_Setup.sh trazer`) e instale o [`uv`](https://docs.astral.sh/uv/). Ele baixa as dependências Python na primeira execução, sem `pip install` nem ambiente virtual manual.
 
 ```bash
 uv run scripts/adc_tool.py info captura.bin                      # o que é a captura: cabeçalho, canais, integridade
@@ -166,7 +169,7 @@ O andamento, teste a teste, está no [Estado da campanha](docs/lab-procedure.md#
 .
 ├── firmware/          # BeagleBone: PRU (spi_core.asm, pru_main.c), ler_adc.c, Makefile, setup.sh, calibrar_sonda.sh
 ├── scripts/           # Computador: adc_tool.py e as outras entradas, o pacote supraharmonicos/, os perfis de sonda
-│                      #   (sondas/), enviar_firmware.sh, set_date.sh e ci.sh (a CI local)
+│                      #   (sondas/), BeagleBone_Setup.sh (a interface com a placa) e ci.sh (a CI local)
 ├── tests/             # Testes automáticos (pytest), sem precisar de hardware, e o simulador da PRU
 ├── report/            # gerar_figuras.py: as figuras do relatório num estilo só
 ├── hardware/          # Projeto da PCB no Altium Designer (DAQ_Module)

@@ -46,8 +46,8 @@ Atualize esta tabela a cada ida ao laboratório: ela é o resumo do avanço para
 
 O dia tem um objetivo: validar o firmware de out/2026 e **decidir a taxa de trabalho**, antes de calibrar a sonda
 (T10) e de refazer o que depende da banda. Cada etapa diz o que conferir e quando parar; o detalhe de cada uma está
-no teste indicado. São ~2 h 30 min. Nos blocos `bash` (BeagleBone), troque `caminho/firmware` pela pasta de lá; nos
-`fish` (computador, na raiz do repositório), use as [variáveis do roteiro](#nomes-e-pastas) (`DIA`).
+no teste indicado. São ~2 h 30 min. Os blocos `bash` rodam na BeagleBone, no terminal do `scripts/BeagleBone_Setup.sh ssh`; os
+`fish`, no computador, na raiz do repositório, com as [variáveis do roteiro](#nomes-e-pastas) (`DIA`).
 
 **Sinal do dia todo:** senoide de **10,000 kHz, 20 Vpp, High-Z** no nó de entrada do divisor (canal 1), com o
 **contador de frequência** do osciloscópio no mesmo sinal. Anote a leitura (ex.: 10 000,02 Hz): ela entra no
@@ -56,13 +56,15 @@ no teste indicado. São ~2 h 30 min. Nos blocos `bash` (BeagleBone), troque `cam
 **1. Firmware novo na BeagleBone e compilação (10 min).** No computador ([detalhes e plano B](#antes-de-sair-e-ao-chegar-levar-o-firmware-novo-à-beaglebone)):
 
 ```fish
-set -x BBB_PASTA caminho/firmware      # a pasta do firmware na BeagleBone, relativa ao home
-scripts/set_date.sh                    # acerta o relógio da BeagleBone (ela não tem RTC)
-scripts/enviar_firmware.sh --simular   # confira a versão (v0.6-...) e a lista de arquivos
-scripts/enviar_firmware.sh --setup     # guarda o plano B, copia, compila e carrega a PRU (pede a senha do sudo)
+scripts/BeagleBone_Setup.sh                    # o painel: a placa responde? relógio, firmware, PRU, disco
+scripts/BeagleBone_Setup.sh enviar --simular   # confira a versão (v0.6-...) e a lista de arquivos
+scripts/BeagleBone_Setup.sh preparar           # acerta o relógio, guarda o plano B, copia, compila e carrega a PRU
 ```
 
-Confira: o `setup.sh` termina com `PRU0 rodando o firmware novo.` **Se o `make` falhar**, guarde a mensagem e o
+Se o firmware não ficar em `~/firmware` na placa, acrescente `--pasta caminho/firmware` (ou grave-a uma vez com o
+`configurar`). Confira: o `setup.sh` termina com `PRU0 rodando o firmware novo.` e o painel do fim mostra a versão
+nova e a PRU0 rodando. Os comandos da BeagleBone abaixo rodam num terminal aberto com
+`scripts/BeagleBone_Setup.sh ssh` (já na pasta do firmware, com o sudo sem senha). **Se o `make` falhar**, guarde a mensagem e o
 `dmesg | tail -n 20` e volte ao firmware de 19/10 (plano B, no link acima): o dia segue com o T10 e as pendências
 curtas, e a taxa fica para outra ida.
 
@@ -70,7 +72,6 @@ curtas, e a taxa fica para outra ida.
 BeagleBone, com o tom:
 
 ```bash
-cd caminho/firmware
 ./ler_adc --help | grep -E -- "--atraso-cs|--faixa-adc"   # as duas opções existem
 sudo ./ler_adc 100000 1 --blocos 3 -o T7a_fs_100000.bin -t "T7a 100000"
 sudo ./ler_adc 50000 1 --blocos 3 -o T7a_fs_50000.bin -t "T7a 50000"
@@ -81,7 +82,7 @@ e `Integridade: 0 amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s
 No computador:
 
 ```fish
-scp 'debian@192.168.6.2:caminho/firmware/T*.bin' $DIA/
+scripts/BeagleBone_Setup.sh trazer 'T7a*.bin' $DIA
 uv run scripts/adc_tool.py info $DIA/T7a_fs_100000.bin     # Versão de cabeçalho: 5; Firmware; sem "CRC-32 NÃO confere"
 uv run scripts/medir_captura.py $DIA/T7a_fs_*.bin --freq 10000 --sem-correcao-sonda --inicio 100 --csv $DIA/resultados.csv
 ```
@@ -189,23 +190,24 @@ se o `make` falhar ou o firmware novo se comportar mal, você volta a ele em 2 m
 **só a pasta `firmware/`** (o repositório e o `.git` não fazem falta lá). No computador, com tudo commitado:
 
 ```fish
-set -x BBB_IP 192.168.6.2              # o IP da placa (o mesmo do set_date.sh); BBB_USER, se não for debian
-set -x BBB_PASTA caminho/firmware      # onde fica a pasta do firmware na BeagleBone (relativa ao home)
-scripts/enviar_firmware.sh --simular   # confira a versão e a lista de arquivos
-scripts/enviar_firmware.sh             # plano B guardado + firmware novo copiado, numa conexão só
-git tag bancada-(date +%F)             # marca o commit que foi para a bancada (depois: git push --tags)
+scripts/BeagleBone_Setup.sh configurar         # uma vez: IP, usuário, senha e a pasta do firmware lá
+scripts/BeagleBone_Setup.sh enviar --simular   # confira a versão e a lista de arquivos
+scripts/BeagleBone_Setup.sh preparar           # relógio + plano B guardado + firmware novo + setup.sh
+git tag bancada-(date +%F)                     # marca o commit que foi para a bancada (depois: git push --tags)
 ```
 
-O script guarda o firmware que estava lá, **só o código e os binários** (não as capturas: o antigo `cp -a` da pasta
-inteira as duplicava), em `caminho/firmware-anteriores/<data>_<versão>/`. Para o firmware de 19/10, que não tinha
+Sem o `configurar`, valem os padrões da imagem Debian (`debian@192.168.6.2`, senha `temppwd`, pasta `~/firmware`);
+`--ip`, `--pasta` e as variáveis `BBB_*` mudam um valor só naquele comando ([guia de uso](user-guide.md#preparar-a-beaglebone)).
+O `enviar` guarda o firmware que estava lá, **só o código e os binários** (não as capturas: o antigo `cp -a` da pasta
+inteira as duplicava), em `~/firmware-anteriores/<data>_<versão>/`. Para o firmware de 19/10, que não tinha
 `VERSAO`, o nome termina em `sem-versao`. Ele também escreve em `firmware/VERSAO` o `git describe`, que o `ler_adc`
 novo grava no cabeçalho (v5) e imprime na largada (`Firmware: v0.6-...`); o `adc_tool.py info` a mostra de cada
 captura. Ele recusa enviar com mudanças não commitadas em `firmware/` (a versão apontaria para um código que não
 existe); `--forcar` envia assim mesmo, com `-dirty` na versão.
 
-Na BeagleBone: `cd caminho/firmware && ./setup.sh` (ou `scripts/enviar_firmware.sh --setup` já faz) e o T0, passo 2.
+Depois do `preparar` (que já roda o `setup.sh` lá), o T0, passo 2.
 **Plano B**, se o `make` falhar ou o T0 mostrar algo estranho: guarde a mensagem de erro e a saída do `dmesg`, rode
-`cd caminho/firmware-anteriores/<data>_sem-versao && ./setup.sh` e siga o dia com o firmware antigo (as capturas
+`cd ~/firmware-anteriores/<data>_sem-versao && ./setup.sh` (no terminal do `ssh`) e siga o dia com o firmware antigo (as capturas
 continuam na pasta de sempre; só os comandos rodam da pasta do plano B). O T7 não valida nada com ele (o salto continua), mas o T10 e as
 pendências curtas sim; as ferramentas leem o cabeçalho v3 normalmente.
 
@@ -385,8 +387,8 @@ set GI 16667       # --ganho do canal de corrente: 1 ÷ 60 µV/A (SCT013 100A:50
 Para copiar as capturas (e as coletas de calibração do dia):
 
 ```fish
-scp 'debian@<ip-da-beaglebone>:caminho/firmware/T*.bin' $DIA/
-scp -r 'debian@<ip-da-beaglebone>:caminho/firmware/capturas' $DIA/
+scripts/BeagleBone_Setup.sh trazer 'T*.bin' $DIA
+scp -r 'debian@192.168.6.2:firmware/capturas' $DIA/     # as coletas do calibrar_sonda.sh (uma pasta inteira)
 ```
 
 ### `medir_captura.py` em um minuto
@@ -456,7 +458,7 @@ Opções que você vai usar muito:
 
 **Objetivo.** Ter certeza de que firmware, relógio, cabeçalho **e a escala do ADC (nas três faixas)** estão certos antes de gastar tempo em medidas.
 
-1. No computador, com a BeagleBone por USB: `scripts/set_date.sh`. Na BeagleBone: `date` deve mostrar a data de hoje.
+1. No computador, com a BeagleBone por USB: `scripts/BeagleBone_Setup.sh hora` (o `preparar` já faz). O painel (`scripts/BeagleBone_Setup.sh`) mostra o relógio dela com `(certo)`.
 2. Na BeagleBone: `cd firmware && ./setup.sh && dmesg | tail -n 20` (a PRU sobe sem reclamar). O `setup.sh` **recompila** o firmware (`make clean; make`): é preciso fazer isso depois de atualizar o repositório. A revisão de out/2026 (grade de tempo e contadores de integridade, cabeçalho v4) mexeu no `spi_core.asm` e só foi validada no simulador `tests/pru_sim.py`. Se o `make` falhar, guarde a mensagem e use o plano B ([Antes de sair e ao chegar](#antes-de-sair-e-ao-chegar-levar-o-firmware-novo-à-beaglebone)). Confira com `./ler_adc --help` que as opções `--faixa-adc` e `--atraso-cs` existem, e, na captura do passo 5, que o `ler_adc` termina com a linha `Integridade: 0 amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído no SDO -- tudo certo` e que o resumo do cabeçalho diz `Versão de cabeçalho: 5` e `Firmware:` com a versão que você copiou.
 3. Ligue o gerador, o osciloscópio, a ponta TCP0030A, o frontend e a BeagleBone **30 minutos antes** do T1.
 4. **Capacitor do canal de corrente:** com tudo desligado, meça o valor dele (Fluke ou LCR; o seu 63 mF parece impreciso) e fotografe a placa. Anote o valor, **remova-o** e confirme que os dois resistores em série (1,79 kΩ e 1,7929 kΩ) continuam no lugar.

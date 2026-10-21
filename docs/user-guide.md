@@ -27,9 +27,9 @@ Indo ao laboratório validar o projeto inteiro? Siga o [`lab-procedure.md`](lab-
 
 | Etapa | Onde | Ferramenta | Resultado |
 |---|---|---|---|
-| 1. Preparar | BeagleBone | `firmware/setup.sh` | Pinos configurados, firmware da PRU carregado, `ler_adc` compilado |
+| 1. Preparar | Computador → BeagleBone | `scripts/BeagleBone_Setup.sh preparar` | Relógio certo, firmware enviado, pinos configurados, firmware da PRU carregado, `ler_adc` compilado |
 | 2. Capturar | BeagleBone | `firmware/ler_adc` | Arquivo `.bin` autodescritivo |
-| 3. Transferir | — | `scp` (ou similar) | `.bin` no seu computador |
+| 3. Transferir | Computador | `scripts/BeagleBone_Setup.sh trazer` (ou `scp`, ou a pasta do `montar`) | `.bin` no seu computador |
 | 4. Analisar | Computador | `scripts/adc_tool.py` | Gráficos, lista de picos, CSV ou HDF5 |
 | (extra) Calibrar sonda | BeagleBone + computador | `firmware/calibrar_sonda.sh` → `scripts/gerar_perfil_sonda.py` | Perfil `.json` que corrige a resposta em frequência da sonda |
 | (extra) Medir para o relatório | Computador | `scripts/medir_captura.py` | Números com unidade (ruído, THD, SINAD, ENOB, SFDR, continuidade, diafonia) e uma linha de CSV por canal |
@@ -42,29 +42,32 @@ Indo ao laboratório validar o projeto inteiro? Siga o [`lab-procedure.md`](lab-
 
 **Pré-requisitos na BeagleBone:** `gcc` e o compilador `clpru` da Texas Instruments.
 
-**O que vai para a BeagleBone: só a pasta `firmware/`.** Ela compila e roda o `ler_adc`, o código da PRU, o `setup.sh` e o `calibrar_sonda.sh` (bash puro); a análise é toda no computador. O repositório inteiro e o `.git` só ocupariam o espaço das capturas. Leve-a sempre com o script, no **computador**:
+**Tudo o que se faz com a placa, do computador: `scripts/BeagleBone_Setup.sh`.** Rode-o sem argumentos para ver o estado dela (conexão, relógio, firmware lá × repositório, PRU, disco, capturas) e com `ajuda` para a lista de comandos. Para começar o dia, com a BeagleBone ligada por USB:
 
 ```bash
-scripts/enviar_firmware.sh            # debian@192.168.6.2, pasta ~/firmware (BBB_IP, BBB_USER, BBB_PASTA mudam)
-scripts/enviar_firmware.sh --setup    # e já compila e carrega a PRU lá
+scripts/BeagleBone_Setup.sh preparar     # acerta o relógio, leva o firmware, compila e carrega a PRU
+scripts/BeagleBone_Setup.sh ssh          # terminal na pasta do firmware, com o sudo liberado
 ```
 
-Ele recusa enviar se `firmware/` tem mudanças não commitadas (`--forcar` envia, marcando a versão com `-dirty`); escreve em `firmware/VERSAO` o `git describe` (é a versão que o `ler_adc` grava em cada captura, já que na BeagleBone não há `.git`); guarda o firmware que estava lá, **só o código**, em `~/firmware-anteriores/<data>_<versão>/` (o plano B); e copia os arquivos versionados de `firmware/` mais o `VERSAO`, numa conexão SSH só. Nada na BeagleBone é apagado, e capturas que estejam na pasta do firmware não são copiadas para o plano B. `--simular` mostra o que faria.
+| Comando | O que faz |
+|---|---|
+| `status` (o padrão) | O painel: conexão, relógio da placa contra o do computador, versão do firmware lá contra a do repositório, PRU0, espaço livre (em minutos de captura) e capturas na pasta do firmware |
+| `preparar` | `hora`, `enviar` e `setup`, nessa ordem, e o `status` no fim |
+| `hora` | Acerta o relógio da BeagleBone pelo do computador (o antigo `set_date.sh`) |
+| `enviar [--setup] [--forcar] [--simular]` | Leva `firmware/` com a versão e um plano B do firmware que estava lá (abaixo) |
+| `setup` | Roda o `setup.sh` lá: pinos, compilação e carga da PRU, sem pedir a senha do sudo |
+| `ssh [comando]` | Abre um terminal na pasta do firmware, com `sudo` sem senha (para o `sudo ./ler_adc`); com um comando, só o roda lá (`ssh 'sudo ./ler_adc 100000 1 --blocos 3'`) |
+| `trazer [padrão] [destino]` | Copia capturas da pasta do firmware (padrão `'*.bin'`) para o computador (padrão `$DIA`, ou a pasta atual) |
+| `montar [pasta]` / `desmontar` | Monta o home da BeagleBone numa pasta do computador por `sshfs` (padrão `~/BeagleBone`; `sudo apt install sshfs`). Ele recusa uma pasta dentro do repositório: lá, um `git clean -xfd` apagaria arquivos **da placa** pela montagem |
+| `configurar` | Grava IP, usuário, senha e as pastas em `~/.config/sh-analyzer/beaglebone.conf` (só você lê), para não informar de novo |
 
-**Primeira vez, e depois de qualquer mudança no firmware** (na BeagleBone; ou `--setup` acima):
+**Acesso, informado uma vez.** Padrões da imagem Debian da BeagleBone: `debian@192.168.6.2`, senha `temppwd` (também a do sudo). Em alguns sistemas a placa aparece em `192.168.7.2`: `--ip 192.168.7.2`. Para outros valores, `configurar` (grava), as variáveis `BBB_IP`, `BBB_USER`, `BBB_SENHA`, `BBB_SENHA_SUDO`, `BBB_PASTA`, `BBB_MONTAGEM` (valem sobre o arquivo) ou as opções `--ip`, `--usuario`, `--pasta` (valem sobre tudo). A senha nunca vai na linha de comando, onde `ps` a mostraria: o login SSH a recebe do próprio script (`SSH_ASKPASS`) e o sudo, de um arquivo em `/dev/shm` (RAM, só do usuário) que é apagado no fim de cada comando ou sessão. Com uma chave SSH autorizada (`ssh-copy-id debian@192.168.6.2`), o login nem usa senha. Uma conexão é reaproveitada pelos comandos seguintes por 2 minutos, porque a placa demora para abrir conexões.
 
-```bash
-cd firmware
-./setup.sh
-```
+**O que vai para a BeagleBone: só a pasta `firmware/`** (o `enviar`). Ela compila e roda o `ler_adc`, o código da PRU, o `setup.sh` e o `calibrar_sonda.sh` (bash puro); a análise é toda no computador. O repositório inteiro e o `.git` só ocupariam o espaço das capturas. O `enviar` recusa se `firmware/` tem mudanças não commitadas (`--forcar` envia, marcando a versão com `-dirty`); escreve em `firmware/VERSAO` o `git describe` (é a versão que o `ler_adc` grava em cada captura, já que na BeagleBone não há `.git`); guarda o firmware que estava lá, **só o código**, em `~/firmware-anteriores/<data>_<versão>/` (o plano B); e copia os arquivos versionados de `firmware/` mais o `VERSAO`, numa conexão SSH só. Nada na BeagleBone é apagado, e capturas que estejam na pasta do firmware não são copiadas para o plano B. `--simular` mostra o que faria.
 
-O `setup.sh` faz, nesta ordem: configura os pinos SPI (`config-pin`), mostra a versão que vai compilar, recompila tudo (`make clean && make`, que gera `ler_adc` e `fw_pru.out`), copia o firmware para `/lib/firmware/am335x-pru0-fw` e reinicia a PRU pelo `remoteproc`. Ele para no primeiro erro (uma compilação que falha não carrega firmware velho na PRU) e, no fim, confere que a PRU ficou rodando; se não ficou, mostra as últimas mensagens do kernel. Para conferir à mão:
+**O `setup.sh`** (o `setup`, ou `./setup.sh` lá, na pasta do firmware) faz, nesta ordem: configura os pinos SPI (`config-pin`), mostra a versão que vai compilar, recompila tudo (`make clean && make`, que gera `ler_adc` e `fw_pru.out`), copia o firmware para `/lib/firmware/am335x-pru0-fw` e reinicia a PRU pelo `remoteproc`. Ele para no primeiro erro (uma compilação que falha não carrega firmware velho na PRU) e, no fim, confere que a PRU ficou rodando; se não ficou, mostra as últimas mensagens do kernel (à mão: `dmesg | tail -n 20`). Rode-o de novo depois de cada reboot da placa e de cada mudança no firmware.
 
-```bash
-dmesg | tail -n 20
-```
-
-**Acerte o relógio.** A BeagleBone não tem bateria de RTC, então depois de ligada ela pode estar com a data errada, e o `timestamp` gravado no cabeçalho de cada captura sairia errado. No **computador**, com a BeagleBone conectada por USB, o script `scripts/set_date.sh` copia a data e hora do computador para ela (veja [Utilitários](#utilitários)). O `calibrar_sonda.sh` avisa quando o relógio marca um ano antes de 2024.
+**Acerte o relógio** (o `hora`, que o `preparar` já faz). A BeagleBone não tem bateria de RTC, então depois de ligada ela pode estar com a data errada, e o `timestamp` gravado no cabeçalho de cada captura sairia errado. O `hora` envia o instante do computador em UTC (vale qualquer que seja o fuso dela), desconta o tempo que o sudo levou e diz quanto o relógio estava errado. O `calibrar_sonda.sh` avisa quando o relógio marca um ano antes de 2024.
 
 ---
 
@@ -146,11 +149,13 @@ O ADS8688 varre os canais habilitados **sempre em ordem crescente**, não na ord
 
 ## Levar a captura para o computador
 
-Qualquer cópia serve. Com `scp`, direto para a pasta de dados (abaixo):
+Qualquer cópia serve. O `trazer` copia da pasta do firmware, direto para a pasta de dados (abaixo):
 
 ```fish
-scp debian@<ip-da-beaglebone>:caminho/da/captura.bin $DADOS/lab/(date +%F)/
+scripts/BeagleBone_Setup.sh trazer 'T7*.bin' $DADOS/lab/(date +%F)
 ```
+
+Com a placa montada (`scripts/BeagleBone_Setup.sh montar`), as capturas também aparecem em `~/BeagleBone/firmware/`: copie de lá. Analise sempre a cópia no computador, não o arquivo na montagem: pela rede, o `adc_tool.py` leria uma captura longa muito mais devagar, e a cópia é o seu backup.
 
 ### Onde guardar os dados
 
@@ -624,8 +629,7 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 
 | Script | Onde roda | O que faz |
 |---|---|---|
-| `scripts/enviar_firmware.sh` | Computador | Leva `firmware/` para a BeagleBone com a versão (`VERSAO`) e um plano B só do código; `--setup` compila e carrega lá, `--simular` só mostra. Veja [Preparar a BeagleBone](#preparar-a-beaglebone) |
-| `scripts/set_date.sh` | Computador | Copia a data e hora do computador para a BeagleBone via SSH (como instante absoluto em UTC, então vale qualquer que seja o fuso dela). Padrão: `debian@192.168.6.2`; troque com `BBB_USER` e `BBB_IP`. **Nenhuma senha fica no arquivo:** use chave SSH (`ssh-copy-id debian@192.168.6.2`) ou deixe o `ssh`/`sudo` pedirem a senha no terminal. Se preferir não digitar, exporte `SSHPASS` (e tenha o `sshpass` instalado) |
+| `scripts/BeagleBone_Setup.sh` | Computador | A interface com a BeagleBone: `status`, `preparar`, `hora`, `enviar`, `setup`, `ssh`, `trazer`, `montar`/`desmontar` e `configurar`. Veja [Preparar a BeagleBone](#preparar-a-beaglebone) |
 | `scripts/compactar_amostras.py` | Computador | (ou `adc_tool.py compactar`) Arquiva pastas de captura sem perdas num pacote `.zpaq.tar` (~11 % do tamanho), conferido bit a bit; também `listar`, `extrair` e `verificar`. Veja [Guardar as capturas sem perdas](#guardar-as-capturas-sem-perdas-compactar_amostraspy) |
 | `report/gerar_figuras.py` | Computador | Gera as figuras do relatório (PDF vetorial, já no tamanho final, com o texto composto pelo LaTeX) e um `.tex` com os números citados (macros siunitx). `uv run report/gerar_figuras.py` gera todas; `--listar`, `--png` (prévia), `--formato artigo --idioma en` (coluna de artigo, em inglês), `--saida PASTA` (ex.: a pasta do projeto LaTeX). Inclua no documento sem `width=`, para as fontes baterem com as do texto. As figuras `readme_*` são as do README: SVG transparente, gravado direto em `docs/images/` |
 
@@ -645,7 +649,7 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 | `ler_adc` sai com código 3, "buffer(s) sobrescrito(s)" | O ARM não gravou um bloco a tempo: amostras perdidas | Refaça; verifique o cartão SD e o que mais está rodando na BeagleBone |
 | `medir_captura`: DESCONTINUIDADE "numa troca de buffer da PRU" | Captura feita com o firmware anterior a out/2026 | Recompile o firmware (`./setup.sh`) e capture de novo |
 | A captura não termina e nenhuma linha `Bloco A gravado (...)` aparece | PRU parada ou presa | Confira `dmesg \| tail -n 20` e `cat /sys/class/remoteproc/remoteproc1/state`. Rode `./setup.sh` de novo |
-| Timestamp do cabeçalho errado | Relógio da BeagleBone desatualizado | Rode `scripts/set_date.sh` no computador |
+| Timestamp do cabeçalho errado | Relógio da BeagleBone desatualizado | Rode `scripts/BeagleBone_Setup.sh hora` no computador |
 | `--fft` dá resultado estranho depois de aplicar passa-alta | Filtro removeu a fundamental | Veja o aviso em [FFT ou Welch?](#fft-ou-welch) e rode `--fft` e `--welch` separados |
 | `ler_adc` recusa o `-t` ou o `-d` com erro | Título acima de 63 bytes ou descrição acima de 255 (o texto não é truncado) | Encurte o texto (letras acentuadas ocupam 2 bytes) |
 | Canais parecem trocados | Você digitou os canais fora de ordem | O ADC sempre varre em ordem crescente. Deixe a ordem vir do cabeçalho (não passe `--canais`) |
