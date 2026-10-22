@@ -382,8 +382,16 @@ ser conhecida. A quadrada já traz isso de fábrica, com todos os pontos numa ca
 **Estado (22/10/2026): a ferramenta e a coleta estão prontas, falta a bancada.** O `scripts/medir_fase.py` mede fase,
 magnitude e duty por harmônico, descarta o que o aliasing ou um nulo do duty estragam, ajusta o 2ª ordem pela
 magnitude, pela fase e pelas duas (a comparação é o teste da fase mínima) e grava o perfil com `fase_rad` por ponto.
-O `./varrer_taxa.sh --fase` coleta 3 quadradas (1280, 6400 e 256 Hz) a 312,5 e a 400 kS/s. Depois: o S3 (usar a fase
-na correção).
+O `./varrer_taxa.sh --fase` coleta 7 quadradas (256 a 20736 Hz, múltiplos ímpares de 256 Hz), 30 s cada, a 312,5 e a
+400 kS/s, e variantes de amplitude e offset (1280 Hz em 10 Vpp; 6912 e 20736 Hz em 16 Vpp com ±2 V). A análise:
+
+* é por blocos, com a incerteza medida;
+* costura as capturas por regressão sobre os harmônicos em comum;
+* combina tudo numa grade ponderada;
+* confere a coerência entre capturas e entre as duas taxas.
+
+O limite é o INL do ADC: em cada frequência, ele faz o mesmo erro para qualquer f₁. As variantes o revelam e,
+na média, o reduzem; a dispersão entre elas vira o piso de incerteza. Depois: o S3 (usar a fase na correção).
 
 ### Buffers da DDR (avaliação de 22/10/2026)
 

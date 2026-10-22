@@ -53,9 +53,15 @@
 # A FASE DA CADEIA (--fase, o T3f; pede o firmware com o SPI rápido). Uma ONDA QUADRADA no canal 1, no lugar do tom
 # (o script para e pede cada frequência). Os harmônicos ímpares de uma quadrada simétrica têm fase conhecida entre si:
 # a fase de cada um menos n vezes a da fundamental é a fase da cadeia, sem osciloscópio (scripts/medir_fase.py, S2).
-#   F. 10 s com cada f₁ (1280, 6400 e 256 Hz) a 312,5 kS/s (SPI padrão) e a 400 kS/s (SPI rápido). Essas f₁ não deixam
-#      o aliasing cair sobre nenhum harmônico ímpar nas duas taxas, e cada uma serve às duas: 3 trocas no gerador.
-#   6 capturas, ~1,5 min de captura (mais as 3 trocas) e ~110 MB.
+#   F. 30 s com cada f₁ (256, 768, 1280, 2304, 6400, 6912 e 20736 Hz, 20 Vpp) a 312,5 kS/s (SPI padrão) e a 400 kS/s
+#      (SPI rápido). Todas são múltiplos ímpares de 256 Hz: a quadrada de 256 Hz mede a fase e o ganho na fundamental
+#      de cada outra (a costura não depende do modelo). As f₁ altas dão harmônicos fortes em alta frequência; as
+#      baixas, muitos pontos em baixa. Nenhuma deixa o aliasing cair sobre um harmônico ímpar, a 312,5 nem a 400 kS/s.
+#      E as VARIANTES: 1280 Hz em 10 Vpp, e 6912 e 20736 Hz em 16 Vpp com offset de +2 e de −2 V. O INL do ADC faz,
+#      em cada frequência, o mesmo erro para qualquer f₁ (não se vê comparando f₁, nem some com captura mais longa);
+#      mudar os códigos que as bordas atravessam o revela, e a média das variantes o reduz (simulado: de ~0,2° a
+#      ~0,05° a 150 kHz). O medir_fase.py mede a dispersão entre elas e a usa como incerteza.
+#   24 capturas, ~12 min de captura (mais 12 trocas no gerador) e ~520 MB.
 #
 # USO (na BeagleBone, na pasta do firmware; de preferência no terminal do 'scripts/BeagleBone_Setup.sh ssh'):
 #   ./varrer_taxa.sh              # tudo, com as pausas para mudar a bancada
@@ -124,11 +130,12 @@ SPI_LONGAS="400000:60"                             # parte S: 1 e 2 canais
 SPI_TICKS_DE=520                                   # parte T: 384,6 kS/s...
 SPI_TICKS_ATE=460                                  # ... a 434,8 kS/s (o teto previsto é ~418)
 
-# A fase da cadeia por ondas quadradas (--fase): f₁ da quadrada (Hz) e, para cada uma, taxa:SPI ('' = o padrão).
-# Nessas f₁, nenhum alias de harmônico cai sobre um harmônico ímpar, a 312,5 e a 400 kS/s.
-FASE_F1="1280 6400 256"
+# A fase da cadeia por ondas quadradas (--fase): f₁ da quadrada (Hz; 20 Vpp e offset 0, ou f₁:Vpp ou f₁:Vpp:offset em
+# V) e, para cada uma, taxa:SPI ('' = o padrão). Todas múltiplos ímpares de 256 Hz; em nenhuma um alias de harmônico
+# cai sobre um harmônico ímpar. Com 16 Vpp e ±2 V, o gerador fica dentro dos ±10 V.
+FASE_F1="256 768 1280 2304 6400 6912 20736 1280:10 6912:16:+2 6912:16:-2 20736:16:+2 20736:16:-2"
 FASE_TAXAS="312500: 400000:rapido"
-FASE_SEGUNDOS=10
+FASE_SEGUNDOS=30
 
 PARTES=ABDC
 PARTES_PEDIDAS=0
@@ -221,8 +228,12 @@ if tem T; then
 fi
 if tem U; then PLANO+=("U|padrao|$TAXA_PADRAO|1|curto||padrao" "U|padrao|${SPI_LONGAS%%:*}|1|curto||rapido"); fi
 if tem F; then
-    for f1 in $FASE_F1; do
-        for par in $FASE_TAXAS; do PLANO+=("F|padrao|${par%%:*}|1|quadrada${f1}Hz|$FASE_SEGUNDOS|${par##*:}"); done
+    for item_f1 in $FASE_F1; do
+        IFS=: read -r f1 vpp off <<< "$item_f1"
+        variante="${vpp:+${vpp}Vpp}${off:+${off}V}"
+        for par in $FASE_TAXAS; do
+            PLANO+=("F|padrao|${par%%:*}|1|quadrada${f1}Hz${variante}|$FASE_SEGUNDOS|${par##*:}")
+        done
     done
 fi
 case "$PARTES" in
@@ -483,7 +494,7 @@ for item in "${PLANO[@]}"; do
             T) printf '\n  %s▸ T: o teto do SPI rápido, de 384,6 a 434,8 kS/s, 1 tick por vez%s\n' "$N" "$R" ;;
             U) pausa "gerador FORA e a entrada do canal 1 em CURTO (o divisor ligado ao retorno)." || resposta=$?
                printf '\n  %s▸ U: a entrada em curto, com o SPI padrão e o rápido%s\n' "$N" "$R" ;;
-            F) printf '\n  %s▸ F: a fase da cadeia, 10 s com cada quadrada a 312,5 kS/s e a 400 kS/s (SPI rápido)%s\n' \
+            F) printf '\n  %s▸ F: a fase da cadeia, 30 s com cada quadrada a 312,5 kS/s e a 400 kS/s (SPI rápido)%s\n' \
                    "$N" "$R" ;;
             D|Q) pausa "tom de 10 kHz no canal 1 (como até agora) e a entrada do canal 0 em CURTO." || resposta=$?
                printf '\n  %s▸ D: 2 canais%s\n' "$N" "$R" ;;
@@ -502,12 +513,18 @@ for item in "${PLANO[@]}"; do
         case "$entrada" in
             quadrada*)
                 f1=${entrada#quadrada}
+                f1=${f1%%Hz*}
+                resto=${entrada#*Hz}
+                vpp=''
+                off=''
+                case "$resto" in *Vpp*) vpp=${resto%%Vpp*}; off=${resto#*Vpp} ;; esac
+                off=${off%V}
                 resposta=0
-                pausa "gerador: ONDA QUADRADA de ${f1%Hz} Hz, 20 Vpp, High-Z, offset 0, duty 50 % (simetria), no canal 1." \
+                pausa "gerador: ONDA QUADRADA de $f1 Hz, ${vpp:-20} Vpp, High-Z, offset ${off:-0} V, duty 50 % (simetria), no canal 1." \
                     || resposta=$?
                 case "$resposta" in
                     1) pular_parte=$parte; continue ;;
-                    2) interrompido="sem terminal na pausa da quadrada de ${f1%Hz} Hz"; break ;;
+                    2) interrompido="sem terminal na pausa da quadrada de $f1 Hz"; break ;;
                 esac ;;
         esac
     fi

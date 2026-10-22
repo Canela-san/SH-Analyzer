@@ -632,25 +632,30 @@ def test_varrer_taxa_spi_compara_os_modos_e_mede_o_teto_do_rapido(varredura):
 
 
 def test_varrer_taxa_fase_pede_cada_quadrada_e_captura_nas_duas_taxas(varredura):
-    """--fase (T3f): 3 quadradas (1280, 6400 e 256 Hz), cada uma a 312,5 kS/s (SPI padrão) e a 400 kS/s (rápido), com
-    UMA pausa por quadrada para trocar a frequência do gerador; a f₁ vai na descrição, para o medir_fase.py."""
+    """--fase (T3f): 7 quadradas (múltiplos ímpares de 256 Hz) e as variantes (1280 Hz em 10 Vpp; 6912 e 20736 Hz em
+    16 Vpp com ±2 V), cada uma a 312,5 kS/s (SPI padrão) e a 400 kS/s (rápido), 30 s, com UMA pausa por quadrada para
+    trocar o gerador; a f₁ vai na descrição."""
     r, _ = varredura("--fase", "--simular")
-    assert r.returncode == 0 and "T3f" in r.stdout and "6 capturas" in r.stdout
-    r, _ = varredura("--fase", entrada="\n\n\n")
+    assert r.returncode == 0 and "T3f" in r.stdout and "24 capturas" in r.stdout
+    r, _ = varredura("--fase", entrada="\n" * 12)
     assert r.returncode == 0, r.stdout + r.stderr
     (pasta,) = varredura.pasta.glob("T3f_*")
-    assert [linha["spi"] for linha in _resumo(pasta)] == ["padrao", "rapido"] * 3
-    assert r.stdout.count("ONDA QUADRADA de") == 3 and "ONDA QUADRADA de 6400 Hz" in r.stdout
-    padrao = (pasta / "F_cspadrao_312500_quadrada1280Hz_10s.bin").read_text()
-    rapido = (pasta / "F_cspadrao_400000_quadrada1280Hz_10s_spirapido.bin").read_text()
+    assert [linha["spi"] for linha in _resumo(pasta)] == ["padrao", "rapido"] * 12
+    assert r.stdout.count("ONDA QUADRADA de") == 12 and "ONDA QUADRADA de 20736 Hz, 20 Vpp, High-Z, offset 0 V" in r.stdout
+    assert "ONDA QUADRADA de 1280 Hz, 10 Vpp, High-Z, offset 0 V" in r.stdout
+    assert "ONDA QUADRADA de 6912 Hz, 16 Vpp, High-Z, offset -2 V" in r.stdout
+    assert (pasta / "F_cspadrao_400000_quadrada20736Hz16Vpp+2V_30s_spirapido.bin").exists()
+    padrao = (pasta / "F_cspadrao_312500_quadrada1280Hz_30s.bin").read_text()
+    rapido = (pasta / "F_cspadrao_400000_quadrada1280Hz_30s_spirapido.bin").read_text()
+    meia = (pasta / "F_cspadrao_312500_quadrada1280Hz10Vpp_30s.bin").read_text()
     assert "d=quadrada f=1280Hz" in padrao and "spi=" not in padrao
-    assert "spi=rapido" in rapido and "duracao=10s" in rapido
+    assert "spi=rapido" in rapido and "duracao=30s" in rapido and "d=quadrada f=1280Hz10Vpp" in meia
     assert "medir_fase.py" in r.stdout
 
 
 def test_varrer_taxa_fase_para_na_pausa_sem_terminal(varredura):
     r, _ = varredura("--fase", entrada="")
-    assert r.returncode == 0 and "sem terminal na pausa da quadrada de 1280 Hz" in r.stdout
+    assert r.returncode == 0 and "sem terminal na pausa da quadrada de 256 Hz" in r.stdout
     (pasta,) = varredura.pasta.glob("T3f_*")
     assert _resumo(pasta) == []
 

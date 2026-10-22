@@ -561,8 +561,14 @@ cossenos em fase. Numa captura que começou num instante qualquer, a fase de cad
 fundamental é a fase da cadeia (a menos de um atraso puro, que não se separa sem uma referência externa). A magnitude
 de cada harmônico, dividida pelo 1/n teórico, dá a resposta relativa à fundamental, sem instrumento de referência.
 
-**Na bancada:** `./varrer_taxa.sh --fase` (6 capturas, 3 trocas de frequência no gerador). Ele pede uma quadrada de
-1280, 6400 e 256 Hz, 20 Vpp, High-Z, no canal 1, e captura 10 s de cada uma a 312,5 kS/s e a 400 kS/s (SPI rápido).
+**Na bancada:** `./varrer_taxa.sh --fase`: 24 capturas de 30 s e 12 trocas no gerador, ~30 min. Ele pede
+quadradas de 256, 768, 1280, 2304, 6400, 6912 e 20736 Hz (20 Vpp, High-Z, no canal 1), todas múltiplos ímpares de
+256 Hz, e as variantes:
+
+* 1280 Hz em 10 Vpp;
+* 6912 e 20736 Hz em 16 Vpp com offset de +2 V e de −2 V.
+
+Cada uma é capturada a 312,5 kS/s e a 400 kS/s (SPI rápido).
 
 **No computador:**
 
@@ -576,6 +582,32 @@ Para cada captura, ele mostra:
 * quantos harmônicos entraram e por que os outros saíram: aliasing sobre eles, SNR abaixo de 30 dB ou um nulo do
   duty.
 
+**Como as capturas viram uma curva só.** Cada captura é dividida em blocos de ~3 s. A média coerente deles dá a
+medida, e a dispersão entre eles, a incerteza. Somam-se a ela:
+
+* um piso por harmônico, `--piso-sistematico` (padrão 0,02 LSB, o INL do ADC): um harmônico fraco pesa pouco;
+* o erro do duty.
+
+Depois, a **costura**. A quadrada de 256 Hz mede o ganho e a fase na fundamental de cada uma das outras (todas são
+múltiplos ímpares dela), e cada captura é posta na mesma escala por essa medida, não pelo modelo. Por fim, uma
+**grade** de 20 faixas por década: em cada faixa, a média ponderada de todos os harmônicos que caem nela. O que
+domina cada faixa é a quadrada que tem ali os harmônicos mais fortes: as de f₁ alta em alta frequência.
+
+**O que limita a medida é o INL do ADC, não o ruído.** Em cada borda da quadrada, o INL faz um erro cujo espectro é
+o mesmo qualquer que seja a f₁. Numa dada frequência, o erro relativo é o mesmo em todas as capturas: comparar f₁
+diferentes não o mostra, e captura mais longa não o reduz. O que o revela é mudar os códigos que as bordas
+atravessam, isto é, a amplitude e o offset (as variantes). A média das variantes o reduz: na simulação, com um INL
+de 0,4 LSB, de ~0,2° para ~0,05° a 150 kHz. A dispersão entre as variantes vira o piso de incerteza por harmônico:
+quando ela passa do `--piso-sistematico`, a análise passa a usá-la (`--piso-fixo` impede).
+
+No fim, três conferências:
+
+* o χ² mediano das faixas: ~1 quer dizer que as capturas concordam dentro das incertezas;
+* a diferença entre as curvas de 312,5 e de 400 kS/s, que deveria ser só ruído;
+* a dispersão entre as variantes de cada quadrada (o INL).
+
+O `--csv` grava os harmônicos e, ao lado, a grade (`_grade.csv`).
+
 Depois, o ajuste do passa-baixa de 2ª ordem de três jeitos: pela magnitude e pela fase juntas, só pela magnitude e
 só pela fase. Se os três dão o mesmo f0 e Q (a ±3 σ), a cadeia é um 2ª ordem de **fase mínima**, e a função de
 transferência do relatório fica confirmada pela fase. Se não, ele avisa: a fase medida é a que vale.
@@ -586,9 +618,13 @@ mediana do perfil base abaixo de 1 kHz, ou `--ganho-baixa-frequencia 0.99795` (o
 ganha `fase_rad`. O perfil continua corrigindo a magnitude como sempre.
 
 **Escolha da f₁:** a taxa dividida por f₁ não pode ficar perto de um inteiro par, senão o aliasing dos harmônicos
-altos cai em cima dos ímpares (o `medir_fase.py` acusa e descarta). As três da `--fase` servem às duas taxas. A f₁
-baixa dá muitos pontos e a alta dá mais sinal por harmônico; um erro de duty pesa nos harmônicos altos da f₁ baixa
-(eles são descartados perto do nulo).
+altos cai em cima dos ímpares (o `medir_fase.py` acusa e descarta). As da `--fase` servem às duas taxas. A f₁ baixa
+dá muitos pontos e a alta, mais sinal por harmônico: num harmônico de ordem n, a amplitude é 1/n da fundamental. Um
+erro de duty pesa nos harmônicos altos da f₁ baixa, e os perto do nulo são descartados.
+
+**Precisa refazer o perfil por senoides (`calibrar_sonda.sh`)?** Não. A quadrada mede a magnitude relativa sem
+instrumento de referência; na senoide, a referência é o osciloscópio, e ele foi a dúvida do T3 de 22/10. O ganho
+absoluto vem do K: o T2, em DC, com o Fluke. Uma varredura por senoides só serviria de conferência independente.
 
 ---
 

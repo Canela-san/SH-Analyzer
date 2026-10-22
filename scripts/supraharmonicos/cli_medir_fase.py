@@ -23,11 +23,17 @@ from .calibracao_sonda import PontoPerfil, resumir_resposta
 from .erros import ErroSHAN, ErroUso
 from .escrita_perfil import gerar_grafico_bode, gravar_perfil_validado
 from .fase_quadrada import (
+    AMOSTRAS_POR_BLOCO,
     F0_PADRAO_HZ,
+    PISO_SISTEMATICO_LSB,
     Q_PADRAO,
     AjusteFase,
+    PontosAbsolutos,
+    RespostaCombinada,
     RespostaQuadrada,
     ajustar_segunda_ordem,
+    combinar_em_grade,
+    costurar,
     fase_absoluta,
     h_segunda_ordem,
     medir_quadrada,
@@ -38,8 +44,12 @@ from .sonda import carregar_perfil_sonda
 log = logging.getLogger(__name__)
 
 INICIO_PADRAO_MS = 0.2          # o transitório de troca de faixa do ADC (T0): ~80 µs
-COLUNAS_CSV = ["arquivo", "fs_hz", "f1_hz", "duty_desvio", "n", "freq_hz", "ganho_rel", "ganho_rel_db", "sigma_db",
-               "fase_rel_graus", "fase_min_graus", "sigma_graus", "snr_db", "contaminacao_db", "usado", "motivo"]
+COLUNAS_CSV = ["arquivo", "fs_hz", "f1_hz", "duty_desvio", "blocos", "n", "freq_hz", "amplitude_lsb", "ganho_rel",
+               "ganho_rel_db", "sigma_db", "fase_rel_graus", "fase_min_graus", "sigma_graus", "snr_db", "contaminacao_db",
+               "usado", "motivo"]
+COLUNAS_CSV_GRADE = ["freq_hz", "ganho_db", "sigma_db", "fase_graus", "sigma_graus", "harmonicos", "chi2_ganho",
+                     "chi2_fase"]
+CHI2_INCOERENTE = 3.0           # χ² mediano das faixas acima disso: as capturas discordam além das incertezas
 _RE_F1_NA_DESCRICAO = re.compile(r"quadrada\s+f=([0-9.]+)\s*Hz", re.IGNORECASE)
 
 
@@ -61,6 +71,15 @@ def montar_parser() -> argparse.ArgumentParser:
                    help=f"Pula o começo da captura (padrão: {INICIO_PADRAO_MS} ms, o transitório de troca de faixa).")
     p.add_argument("--max-segundos", type=float, help="Usa só os primeiros N segundos de cada captura.")
     p.add_argument("--freq-max", type=float, metavar="HZ", help="Maior frequência medida (padrão: 95 %% da Nyquist).")
+    p.add_argument("--amostras-por-bloco", type=int, default=AMOSTRAS_POR_BLOCO,
+                   help="Amostras de cada bloco da média coerente (padrão: %(default)s; capturas curtas: 4 blocos).")
+    p.add_argument("--piso-sistematico", type=float, default=PISO_SISTEMATICO_LSB, metavar="LSB",
+                   help="Piso de erro por harmônico, em LSB (o INL do ADC; padrão: %(default)s). Pesa os harmônicos "
+                        "fracos; o χ² entre capturas, no fim, diz se ele está certo (~1).")
+    p.add_argument("--piso-fixo", action="store_true",
+                   help="Não sobe o --piso-sistematico para o que as variantes de amplitude/offset mostram.")
+    p.add_argument("--por-decada", type=int, default=20,
+                   help="Faixas por década da grade combinada (a do perfil e do gráfico; padrão: %(default)s).")
     p.add_argument("--modelo-inicial", default=f"{F0_PADRAO_HZ:g},{Q_PADRAO:g}", metavar="F0,Q",
                    help="2ª ordem de partida, só para desenrolar a fase e prever o aliasing (padrão: o do T3, "
                         "%(default)s).")
@@ -114,8 +133,9 @@ def ler_quadrada(caminho: Path, args: argparse.Namespace) -> tuple[np.ndarray, f
     return np.asarray(sinal[inicio:fim], dtype=np.float64), fs, dica, rotulo
 
 
-def _medir_todas(entradas, f0: float, q: float, freq_max: float | None) -> list[RespostaQuadrada]:
-    return [medir_quadrada(sinal, fs, dica, f0, q, freq_max) for sinal, fs, dica, _ in entradas]
+def _medir_todas(entradas, f0: float, q: float, args: argparse.Namespace) -> list[RespostaQuadrada]:
+    return [medir_quadrada(sinal, fs, dica, f0, q, args.freq_max, args.amostras_por_bloco, args.piso_sistematico)
+            for sinal, fs, dica, _ in entradas]
 
 
 def _freq_menos_3db(f0: float, q: float) -> float:
@@ -126,9 +146,10 @@ def _freq_menos_3db(f0: float, q: float) -> float:
 def _relatar(caminhos: list[Path], rotulos: list[str], medidas: list[RespostaQuadrada], ajustes: list[AjusteFase]) -> None:
     for caminho, rotulo, r in zip(caminhos, rotulos, medidas):
         fora = [f"{int(n)}: {m}" for n, m in zip(r.n, r.motivo) if m]
-        log.info(f"{caminho.name} ({rotulo}): f₁ = {r.f1_hz:.4f} Hz, duty 50 ± {100 * r.duty_desvio:.3f} %, "
-                 f"{int(r.usado.sum())} de {len(r)} harmônicos ímpares até {r.freq_hz[-1] / 1e3:.1f} kHz; SNR de "
-                 f"{np.min(r.snr_db[r.usado]):.0f} a {np.max(r.snr_db[r.usado]):.0f} dB"
+        log.info(f"{caminho.name} ({rotulo}): f₁ = {r.f1_hz:.4f} Hz, duty 50 ± {100 * r.duty_desvio:.4f} % "
+                 f"(± {100 * r.sigma_duty:.4f}), {r.blocos} blocos, {int(r.usado.sum())} de {len(r)} harmônicos ímpares "
+                 f"até {r.freq_hz[-1] / 1e3:.1f} kHz; SNR de {np.min(r.snr_db[r.usado]):.0f} a "
+                 f"{np.max(r.snr_db[r.usado]):.0f} dB"
                  + (f"; fora: {', '.join(fora[:6])}{' ...' if len(fora) > 6 else ''}" if fora else ""))
     log.info("Ajuste do passa-baixa de 2ª ordem H(s) = K ω0² / (s² + (ω0/Q) s + ω0²):")
     for a in ajustes:
@@ -147,6 +168,99 @@ def _relatar(caminhos: list[Path], rotulos: list[str], medidas: list[RespostaQua
                     "medida, não a do modelo.")
 
 
+def _residuos_da_grade(c: RespostaCombinada, f0: float, q: float) -> tuple[np.ndarray, np.ndarray]:
+    modelo = h_segunda_ordem(c.freq_hz, f0, q)
+    return (c.ln_ganho - np.log(np.abs(modelo)),
+            c.fase_rad + np.arctan2(c.freq_hz / f0 / q, 1 - (c.freq_hz / f0) ** 2))
+
+
+def _relatar_coerencia(absolutos: list[PontosAbsolutos], combinada: RespostaCombinada,
+                       f0: float, q: float, por_decada: int, piso_usado: float) -> None:
+    """Três conferências: os pontos de cada faixa concordam (χ²)? as duas taxas dão a mesma curva? a mesma f₁ em
+    amplitudes diferentes dá a mesma resposta (linearidade: o INL do ADC pesaria na menor)?"""
+    chi_ln, chi_fa = np.nanmedian(combinada.chi2_ln), np.nanmedian(combinada.chi2_fase)
+    texto = (f"Grade combinada: {len(combinada.freq_hz)} faixas de {combinada.freq_hz[0]:.0f} Hz a "
+             f"{combinada.freq_hz[-1] / 1e3:.1f} kHz; incerteza mediana {8.6859 * np.median(combinada.sigma_ln):.4f} dB e "
+             f"{math.degrees(np.median(combinada.sigma_fase)):.3f}°; χ² mediano entre as capturas {chi_ln:.2f} "
+             f"(ganho) e {chi_fa:.2f} (fase)")
+    if max(chi_ln, chi_fa) > CHI2_INCOERENTE:
+        log.warning(texto + ": as capturas discordam além das incertezas. Suba o --piso-sistematico, ou confira o "
+                    "duty e a linearidade (abaixo).")
+    else:
+        log.info(texto)
+    grupos: dict[float, list[PontosAbsolutos]] = {}
+    for a in absolutos:
+        grupos.setdefault(round(a.medida.fs_hz), []).append(a)
+    if len(grupos) == 2:
+        (fs_a, ga), (fs_b, gb) = sorted(grupos.items())
+        ca, cb = combinar_em_grade(ga, f0, q, por_decada), combinar_em_grade(gb, f0, q, por_decada)
+        lo, hi = max(ca.freq_hz[0], cb.freq_hz[0]), min(ca.freq_hz[-1], cb.freq_hz[-1])
+        sel = (ca.freq_hz >= lo) & (ca.freq_hz <= hi)
+        if np.sum(sel) >= 3:
+            ra_ln, ra_fa = _residuos_da_grade(ca, f0, q)
+            rb_ln, rb_fa = _residuos_da_grade(cb, f0, q)
+            d_ln = ra_ln[sel] - np.interp(np.log(ca.freq_hz[sel]), np.log(cb.freq_hz), rb_ln)
+            d_fa = ra_fa[sel] - np.interp(np.log(ca.freq_hz[sel]), np.log(cb.freq_hz), rb_fa)
+            log.info(f"{fs_a / 1e3:g} kS/s × {fs_b / 1e3:g} kS/s: diferença rms de {8.6859 * np.sqrt(np.mean(d_ln ** 2)):.4f} "
+                     f"dB e {math.degrees(np.sqrt(np.mean(d_fa ** 2))):.3f}° em {int(np.sum(sel))} faixas em comum "
+                     "(a taxa e o SPI não mudam a cadeia analógica: deveria ser só o ruído)")
+    # As variantes da mesma quadrada (f₁ e taxa iguais, com outra amplitude ou outro offset): a resposta não pode mudar.
+    # O que muda é o INL do ADC, que as bordas atravessam em outros códigos: o erro que ele faz numa frequência é o
+    # mesmo para qualquer f₁ (não se vê comparando f₁ diferentes, nem some com captura mais longa); só a variação de
+    # amplitude/offset o revela, e a média das variantes o reduz.
+    grupos_var: dict[tuple[int, float], list[RespostaQuadrada]] = {}
+    for a in absolutos:
+        grupos_var.setdefault((round(a.medida.fs_hz), round(a.medida.f1_hz, 1)), []).append(a.medida)
+    for (fs, f1), membros in sorted(grupos_var.items()):
+        if len(membros) < 2:
+            continue
+        comum = np.logical_and.reduce([m.usado for m in membros]) & (membros[0].n > 1)
+        if np.sum(comum) < 2:
+            continue
+        ln = np.array([np.log(m.ganho_rel[comum]) for m in membros])
+        fa = np.array([m.fase_rel_rad[comum] for m in membros])
+        d_ln, d_fa = ln - ln.mean(axis=0), fa - fa.mean(axis=0)
+        amp = np.array([m.amplitude[comum] for m in membros])
+        piso = float(np.sqrt(np.mean((d_fa * amp) ** 2)) * math.sqrt(len(membros) / (len(membros) - 1)))
+        variantes = ", ".join(f"{m.amplitude[0]:.0f} LSB em {m.nivel_medio - 32768:+.0f}" for m in membros)
+        log.info(f"Variantes de f₁ = {f1:.1f} Hz a {fs / 1e3:g} kS/s ({variantes}): dispersão rms "
+                 f"{8.6859 * np.sqrt(np.mean(d_ln ** 2)):.4f} dB e {math.degrees(np.sqrt(np.mean(d_fa ** 2))):.3f}° "
+                 f"({int(np.sum(comum))} harmônicos); como piso por harmônico, ~{piso:.3f} LSB "
+                 f"(o --piso-sistematico usado é {piso_usado:g})")
+
+
+def _piso_das_variantes(medidas: list[RespostaQuadrada]) -> float:
+    """O piso por harmônico (LSB) que a dispersão entre variantes da mesma quadrada (f₁ e taxa iguais, outra amplitude
+    ou outro offset) mostra: o maior entre os grupos; 0 sem variantes."""
+    grupos: dict[tuple[int, float], list[RespostaQuadrada]] = {}
+    for m in medidas:
+        grupos.setdefault((round(m.fs_hz), round(m.f1_hz, 1)), []).append(m)
+    maior = 0.0
+    for membros in grupos.values():
+        if len(membros) < 2:
+            continue
+        comum = np.logical_and.reduce([m.usado for m in membros]) & (membros[0].n > 1)
+        if np.sum(comum) < 2:
+            continue
+        fa = np.array([m.fase_rel_rad[comum] for m in membros])
+        amp = np.array([m.amplitude[comum] for m in membros])
+        d = (fa - fa.mean(axis=0)) * amp
+        maior = max(maior, float(np.sqrt(np.mean(d ** 2)) * math.sqrt(len(membros) / (len(membros) - 1))))
+    return maior
+
+
+def _gravar_csv_grade(caminho: Path, c: RespostaCombinada) -> None:
+    with open(caminho, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=COLUNAS_CSV_GRADE)
+        w.writeheader()
+        for i in range(len(c.freq_hz)):
+            w.writerow({"freq_hz": f"{c.freq_hz[i]:.3f}", "ganho_db": f"{8.685889638 * c.ln_ganho[i]:.5f}",
+                        "sigma_db": f"{8.685889638 * c.sigma_ln[i]:.5f}", "fase_graus": f"{math.degrees(c.fase_rad[i]):.4f}",
+                        "sigma_graus": f"{math.degrees(c.sigma_fase[i]):.4f}", "harmonicos": int(c.pontos[i]),
+                        "chi2_ganho": f"{c.chi2_ln[i]:.3f}", "chi2_fase": f"{c.chi2_fase[i]:.3f}"})
+    log.info(f"Grade combinada ({len(c.freq_hz)} faixas, K = 1) gravada em {caminho}")
+
+
 def _gravar_csv(caminho_csv: Path, caminhos: list[Path], medidas: list[RespostaQuadrada], f0: float, q: float) -> None:
     caminho_csv.parent.mkdir(parents=True, exist_ok=True)
     with open(caminho_csv, "w", newline="", encoding="utf-8") as f:
@@ -157,7 +271,8 @@ def _gravar_csv(caminho_csv: Path, caminhos: list[Path], medidas: list[RespostaQ
             for i in range(len(r)):
                 w.writerow({
                     "arquivo": caminho.name, "fs_hz": f"{r.fs_hz:.3f}", "f1_hz": f"{r.f1_hz:.6f}",
-                    "duty_desvio": f"{r.duty_desvio:.6f}", "n": int(r.n[i]), "freq_hz": f"{r.freq_hz[i]:.4f}",
+                    "duty_desvio": f"{r.duty_desvio:.6f}", "blocos": r.blocos, "n": int(r.n[i]),
+                    "freq_hz": f"{r.freq_hz[i]:.4f}", "amplitude_lsb": f"{r.amplitude[i]:.4f}",
                     "ganho_rel": f"{r.ganho_rel[i]:.8f}", "ganho_rel_db": f"{20 * math.log10(r.ganho_rel[i]):.5f}",
                     "sigma_db": f"{8.685889638 * r.sigma_ln_ganho[i]:.5f}",
                     "fase_rel_graus": f"{math.degrees(r.fase_rel_rad[i]):.4f}",
@@ -169,30 +284,19 @@ def _gravar_csv(caminho_csv: Path, caminhos: list[Path], medidas: list[RespostaQ
     log.info(f"{sum(len(r) for r in medidas)} harmônico(s) gravado(s) em {caminho_csv}")
 
 
-def montar_perfil_com_fase(base: dict, medidas: list[RespostaQuadrada], caminhos: list[Path], ajuste: AjusteFase,
-                           k_baixa: float, ident: str) -> dict:
-    """Perfil de sonda no formato de sempre (``pontos`` com ``freq_hz``/``ganho``), cada ponto com ``fase_rad`` e
-    ``sigma_fase_rad``, e o bloco ``resposta_fase``. A magnitude é a relativa da quadrada escalada por K (a quadrada
-    não mede o ganho absoluto); abaixo da menor frequência medida, os pontos do perfil base, com a fase do modelo."""
+def montar_perfil_com_fase(base: dict, combinada: RespostaCombinada, medidas: list[RespostaQuadrada],
+                           caminhos: list[Path], ajuste: AjusteFase, k_baixa: float, ident: str) -> dict:
+    """Perfil de sonda no formato de sempre (``pontos`` com ``freq_hz``/``ganho``), um ponto por faixa da grade
+    combinada (a média ponderada de todas as capturas), cada um com ``fase_rad`` e ``sigma_fase_rad``, e o bloco
+    ``resposta_fase``. A magnitude é a da grade (K = 1) vezes K, o ganho em baixa frequência, que a quadrada não mede;
+    abaixo da menor frequência medida, os pontos do perfil base, com a fase do modelo."""
     f0, q = ajuste.f0_hz, ajuste.q
-    candidatos = []                                   # (freq, ganho, fase, sigma_ln, sigma_fase)
-    for r in medidas:
-        a1 = abs(h_segunda_ordem(r.f1_hz, f0, q))
-        absoluta = fase_absoluta(r, f0, q)
-        for i in np.flatnonzero(r.usado):
-            candidatos.append((float(r.freq_hz[i]), k_baixa * a1 * float(r.ganho_rel[i]), float(absoluta[i]),
-                               float(r.sigma_ln_ganho[i]), float(r.sigma_fase_rad[i])))
-    candidatos.sort()
-    pontos: list[tuple] = []
-    for c in candidatos:                              # frequências a menos de 0,3 % uma da outra: fica a mais exata
-        if pontos and c[0] < pontos[-1][0] * 1.003:
-            if c[4] < pontos[-1][4]:
-                pontos[-1] = c
-        else:
-            pontos.append(c)
+    pontos = [(float(f), k_baixa * math.exp(float(ln)), float(fa), float(s_ln), float(s_fa))
+              for f, ln, fa, s_ln, s_fa in zip(combinada.freq_hz, combinada.ln_ganho, combinada.fase_rad,
+                                               combinada.sigma_ln, combinada.sigma_fase)]
     menor = pontos[0][0]
     for p in sorted(base.get("pontos", []), key=lambda p: p["freq_hz"]):
-        if p["freq_hz"] < menor / 1.003:
+        if p["freq_hz"] < menor / 1.05:
             fase = float(np.angle(h_segunda_ordem(p["freq_hz"], f0, q)))
             pontos.append((float(p["freq_hz"]), float(p["ganho"]), fase, 0.01 * float(p.get("desvio_pct", 0.0)), math.nan))
     pontos.sort()
@@ -201,8 +305,8 @@ def montar_perfil_com_fase(base: dict, medidas: list[RespostaQuadrada], caminhos
     perfil["id"] = ident
     perfil["data_calibracao"] = date.today().isoformat()
     perfil["pontos"] = [
-        {"freq_hz": round(f, 4), "ganho": round(g, 6), "n": 1, "desvio_pct": round(100 * s_ln, 4),
-         "fase_rad": round(fase, 6), **({} if not math.isfinite(s_fase) else {"sigma_fase_rad": round(s_fase, 6)})}
+        {"freq_hz": round(f, 4), "ganho": round(g, 7), "n": 1, "desvio_pct": round(100 * s_ln, 5),
+         "fase_rad": round(fase, 7), **({} if not math.isfinite(s_fase) else {"sigma_fase_rad": round(s_fase, 7)})}
         for f, g, fase, s_ln, s_fase in pontos]
     perfil["faixa_freq_valida_hz"] = [pontos[0][0], pontos[-1][0]]
     adc = dict(perfil.get("calibracao_adc", {}))
@@ -218,15 +322,17 @@ def montar_perfil_com_fase(base: dict, medidas: list[RespostaQuadrada], caminhos
         }
     perfil["calibracao_adc"] = adc
     perfil["resposta_fase"] = {
-        "metodo": "onda quadrada: arg X_n − n·arg X_1 dos harmônicos ímpares (scripts/medir_fase.py)",
+        "metodo": "ondas quadradas: arg X_n − n·arg X_1 dos harmônicos ímpares, média coerente por blocos, capturas "
+                  "costuradas pela de f1 mais baixa e combinadas numa grade logarítmica (scripts/medir_fase.py)",
         "fase": "a menos de um atraso puro, supondo fase mínima (nenhum atraso puro na cadeia analógica)",
-        "ganho": f"relativo a f1, escalado por K = {k_baixa:g}",
+        "ganho": f"relativo ao ganho em baixa frequência, escalado por K = {k_baixa:g}",
         "capturas": [{"arquivo": c.name, "fs_hz": round(r.fs_hz, 3), "f1_hz": round(r.f1_hz, 6),
-                      "duty_desvio": round(r.duty_desvio, 6), "harmonicos_usados": int(r.usado.sum())}
+                      "duty_desvio": round(r.duty_desvio, 7), "blocos": r.blocos,
+                      "harmonicos_usados": int(r.usado.sum()), "amplitude_fundamental_lsb": round(float(r.amplitude[0]), 1)}
                      for c, r in zip(caminhos, medidas)],
         "segunda_ordem": {"f0_hz": round(f0, 2), "sigma_f0_hz": round(ajuste.sigma_f0_hz, 2), "q": round(q, 5),
                           "sigma_q": round(ajuste.sigma_q, 5), "residuo_db": round(ajuste.residuo_db, 4),
-                          "residuo_graus": round(ajuste.residuo_graus, 4)},
+                          "residuo_graus": round(ajuste.residuo_graus, 4), "chi2_reduzido": round(ajuste.chi2_reduzido, 3)},
     }
     return perfil
 
@@ -246,18 +352,28 @@ def main(argv: list[str] | None = None) -> int:
             caminhos.append(caminho)
             rotulos.append(rotulo)
         # 1ª passada com o modelo de partida; a 2ª, com o ajustado (desenrolar a fase, prever o aliasing e o duty)
-        medidas = _medir_todas(entradas, f0, q, args.freq_max)
+        medidas = _medir_todas(entradas, f0, q, args)
         conjunto = ajustar_segunda_ordem(medidas, f0_inicial=f0, q_inicial=q)
-        medidas = _medir_todas(entradas, conjunto.f0_hz, conjunto.q, args.freq_max)
+        medidas = _medir_todas(entradas, conjunto.f0_hz, conjunto.q, args)
+        piso = _piso_das_variantes(medidas)
+        if piso > args.piso_sistematico and not args.piso_fixo:
+            log.info(f"As variantes de amplitude/offset mostram um piso de ~{piso:.3f} LSB por harmônico, acima do "
+                     f"--piso-sistematico ({args.piso_sistematico:g}): a análise usa {piso:.3f} (--piso-fixo mantém o dado).")
+            args.piso_sistematico = piso
+            medidas = _medir_todas(entradas, conjunto.f0_hz, conjunto.q, args)
         ajustes = [ajustar_segunda_ordem(medidas, True, True, conjunto.f0_hz, conjunto.q),
                    ajustar_segunda_ordem(medidas, True, False, conjunto.f0_hz, conjunto.q),
                    ajustar_segunda_ordem(medidas, False, True, conjunto.f0_hz, conjunto.q)]
         _relatar(caminhos, rotulos, medidas, ajustes)
         melhor = ajustes[0]
+        absolutos = costurar(medidas, melhor.f0_hz, melhor.q)
+        combinada = combinar_em_grade(absolutos, melhor.f0_hz, melhor.q, args.por_decada)
+        _relatar_coerencia(absolutos, combinada, melhor.f0_hz, melhor.q, args.por_decada, args.piso_sistematico)
         if args.csv is not None:
             _gravar_csv(args.csv, caminhos, medidas, melhor.f0_hz, melhor.q)
+            _gravar_csv_grade(args.csv.with_name(args.csv.stem + "_grade.csv"), combinada)
         if args.plot is not None:
-            gerar_grafico_bode(medidas, rotulos, melhor.f0_hz, melhor.q, args.plot)
+            gerar_grafico_bode(absolutos, combinada, rotulos, melhor.f0_hz, melhor.q, args.plot)
         if args.saida_perfil is not None:
             base = json.loads(args.perfil_base.read_text(encoding="utf-8"))
             carregar_perfil_sonda(args.perfil_base)          # valida o base
@@ -270,7 +386,7 @@ def main(argv: list[str] | None = None) -> int:
                 log.info(f"K (ganho em baixa frequência) = {k:.5f}: a mediana de {len(baixos)} ponto(s) do perfil base "
                          "abaixo de 1 kHz.")
             ident = args.id or args.saida_perfil.stem
-            perfil = montar_perfil_com_fase(base, medidas, caminhos, melhor, k, ident)
+            perfil = montar_perfil_com_fase(base, combinada, medidas, caminhos, melhor, k, ident)
             gravar_perfil_validado(perfil, args.saida_perfil, len(perfil["pontos"]))
     except ErroUso as e:
         parser.error(str(e))

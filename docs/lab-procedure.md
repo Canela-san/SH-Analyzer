@@ -101,13 +101,18 @@ ainda vale, é a margem de um lado só) e a folga de ~160 ciclos. Depois, a camp
 Cada captura mostra `✓ folga N ciclos · divergências A x, C y`. Se a conferência mostrar o dado errado (o SINAD
 desaba, ou `Integridade` com quadros ruins), pule a campanha e traga a captura: o padrão continua valendo.
 
-**5. A fase da cadeia (~5 min).** Troque o tom por uma **onda quadrada** no mesmo canal (20 Vpp, High-Z, offset 0,
+**5. A fase da cadeia (~30 min).** Troque o tom por uma **onda quadrada** no mesmo canal (20 Vpp, High-Z, offset 0,
 duty 50 %: confira no menu do gerador que é a quadrada simétrica, não um pulso). Os harmônicos ímpares dela têm fase
 conhecida entre si, e a fase de cada um menos n vezes a da fundamental é a fase da cadeia, sem osciloscópio:
 
 ```bash
-./varrer_taxa.sh --fase    # 6 capturas: ele pede 1280, 6400 e 256 Hz, e captura cada uma a 312,5 e a 400 kS/s
+./varrer_taxa.sh --fase    # 24 capturas de 30 s: 7 quadradas (256 a 20736 Hz) e as variantes, nas duas taxas
 ```
+
+Ele para a cada troca no gerador (12 vezes) e diz a frequência, a amplitude e o offset. Ajuste a frequência com todos
+os dígitos (ex.: `20736`). As variantes (1280 Hz em 10 Vpp; 6912 e 20736 Hz em 16 Vpp com offset de +2 e −2 V)
+medem o erro do INL do ADC e o reduzem na média. Se o espaço na placa não bastar (~520 MB), traga as capturas
+anteriores antes.
 
 No computador, depois: `uv run scripts/medir_fase.py $DIA/T3f_*/F_*.bin --csv $DIA/fase.csv --plot $DIA/bode.png`. A
 mesma medida também confere a magnitude do T3 de 22/10 sem o osciloscópio (a referência dele caiu 14 % até 140 kHz).

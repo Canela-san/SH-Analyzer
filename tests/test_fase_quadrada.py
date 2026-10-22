@@ -98,6 +98,27 @@ def test_fase_absoluta_supondo_fase_minima_e_a_do_filtro():
     assert np.max(np.abs(np.degrees(psi - verdade)[r.usado])) < 0.3
 
 
+def test_a_costura_nao_depende_do_modelo_e_a_grade_e_coerente():
+    """1280 Hz é o 5º harmônico de 256 Hz: a quadrada de 256 Hz mede |H| e ψ na fundamental da de 1280 Hz, e a costura
+    usa isso, e não o modelo. Com um modelo errado (f0 5 % abaixo), as duas capturas continuam emendadas: onde as duas
+    medem (múltiplos ímpares de 1280 Hz), dão o mesmo ganho e a mesma fase."""
+    medidas = [medir(f1=256.0, dur=0.5, seed=11), medir(f1=1280.0, seed=12)]
+    for f0 in (F0, 0.95 * F0):
+        base, rapida = fq.costurar(medidas, f0, Q)
+        assert base.ancora == "modelo" and rapida.ancora.startswith("f₁ = 256")
+        comuns = np.intersect1d(np.round(base.freq_hz, 3), np.round(rapida.freq_hz, 3))
+        assert len(comuns) >= 15
+        ib = np.isin(np.round(base.freq_hz, 3), comuns)
+        ir = np.isin(np.round(rapida.freq_hz, 3), comuns)
+        baixo = base.freq_hz[ib] < 60e3                      # onde os dois têm sinal de sobra
+        assert np.max(np.abs(base.ln_ganho[ib] - rapida.ln_ganho[ir])[baixo]) * 8.686 < 0.05
+        assert np.max(np.abs(np.degrees(base.fase_rad[ib] - rapida.fase_rad[ir]))[baixo]) < 0.3
+    grade = fq.combinar_em_grade(fq.costurar(medidas, F0, Q), F0, Q)
+    assert np.nanmedian(grade.chi2_fase) < 3 and np.nanmedian(grade.chi2_ln) < 3
+    verdade = np.unwrap(np.angle(fq.h_segunda_ordem(grade.freq_hz, F0, Q)))
+    assert np.max(np.abs(np.degrees(grade.fase_rad - verdade))) < 0.3
+
+
 def test_quadrada_rapida_demais_e_recusada():
     with pytest.raises(fq.ErroSHAN, match="harmônico"):
         fq.medir_quadrada(quadrada_pela_cadeia(FS, 60_000.0, 0.05).astype(float), FS)
@@ -126,6 +147,9 @@ def test_medir_fase_ajusta_grava_csv_grafico_e_perfil_com_fase(cli, capturas, tm
                        "--perfil-base", "scripts/sondas/cadeia_tensao_312k.json", "--saida-perfil", saida)
     assert rc == 0, err
     assert "400 kS/s (SPI rápido)" in out and "FASE MÍNIMA" in out
+    assert "312.5 kS/s × 400 kS/s: diferença rms" in out and "Grade combinada" in out
+    grade = list(csv.DictReader(open(tmp_path / "fase_grade.csv", encoding="utf-8")))
+    assert len(grade) > 20 and float(grade[-1]["freq_hz"]) > 170e3      # faixas sem harmônico ficam de fora
     linhas = list(csv.DictReader(open(tmp_path / "fase.csv", encoding="utf-8")))
     assert {linha["arquivo"] for linha in linhas} == {c.name for c in capturas}
     assert all(linha["usado"] in ("sim", "não") for linha in linhas)
@@ -133,8 +157,8 @@ def test_medir_fase_ajusta_grava_csv_grafico_e_perfil_com_fase(cli, capturas, tm
     perfil = json.loads(saida.read_text(encoding="utf-8"))
     assert perfil["id"] == "cadeia_fase" and perfil["resposta_fase"]["segunda_ordem"]["f0_hz"] == pytest.approx(F0, rel=2e-3)
     medidos = [p for p in perfil["pontos"] if "sigma_fase_rad" in p]
-    assert len(medidos) > 60 and all("fase_rad" in p for p in perfil["pontos"])
-    assert perfil["faixa_freq_valida_hz"][0] < 100 and perfil["faixa_freq_valida_hz"][1] > 180e3   # base + quadradas
+    assert len(medidos) > 20 and all("fase_rad" in p for p in perfil["pontos"])     # a grade: 20 faixas por década
+    assert perfil["faixa_freq_valida_hz"][0] < 100 and perfil["faixa_freq_valida_hz"][1] > 170e3   # base + quadradas
     carregado = carregar_perfil_sonda(saida)               # a correção de magnitude de sempre continua valendo
     alto = carregado.ganho_em(np.array([100e3]))[0]
     assert alto == pytest.approx(0.998 * abs(fq.h_segunda_ordem(100e3, F0, Q)), rel=0.01)

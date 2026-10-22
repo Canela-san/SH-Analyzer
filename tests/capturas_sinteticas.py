@@ -248,11 +248,13 @@ def criar_pasta_amplitude_conhecida(pasta: Path, freqs=FREQS_CAL, canal: int = 3
 def quadrada_pela_cadeia(fs: float, f1: float, dur_s: float, duty: float = 0.5, f0: float = 24165.0, q: float = 0.5288,
                          atraso_s: float = 3e-6, ppm: float = 43.0, amplitude_lsb: float = 6600.0,
                          ruido_lsb: float = 0.79, ate_hz: float = 7e5, seed: int = 0,
-                         polo_hz: float | None = None) -> np.ndarray:
+                         polo_hz: float | None = None, inl_lsb: float = 0.0, offset_lsb: float = 0.0) -> np.ndarray:
     """Códigos uint16 de uma quadrada (±``amplitude_lsb``, duty ``duty``) vista pelo ADC depois de um passa-baixa de
     2ª ordem (f0, Q) e de um atraso puro, com o relógio do gerador ``ppm`` acima do da PRU, o aliasing dos harmônicos
     até ``ate_hz``, o ruído e a quantização. É o que o ``medir_fase.py`` recebe da bancada (S2). ``polo_hz``: um polo
-    real a mais (a cadeia deixa de ser um 2ª ordem)."""
+    real a mais (a cadeia deixa de ser um 2ª ordem). ``inl_lsb``: a não linearidade integral do ADC (uma curva suave
+    de amplitude ``inl_lsb`` sobre o código), o que faz espúrios nos harmônicos fracos. ``offset_lsb``: o nível DC
+    (o offset do gerador): as bordas atravessam outros códigos."""
     rng = np.random.default_rng(seed)
     f1 = f1 * (1 + ppm * 1e-6)
     n = int(dur_s * fs)
@@ -268,4 +270,7 @@ def quadrada_pela_cadeia(fs: float, f1: float, dur_s: float, duty: float = 0.5, 
         if polo_hz is not None:
             h /= 1 + 1j * k * f1 / polo_hz
         x += c * abs(h) * np.cos(k * fase + np.angle(h))
-    return np.clip(np.round(32768 + x + rng.normal(0, ruido_lsb, n)), 0, 65535).astype("<u2")
+    codigo = 32768 + offset_lsb + x
+    if inl_lsb:
+        codigo = codigo + inl_lsb * (0.7 * np.sin(2 * np.pi * codigo / 4096 + 0.3) + 0.3 * np.sin(2 * np.pi * codigo / 977))
+    return np.clip(np.round(codigo + rng.normal(0, ruido_lsb, n)), 0, 65535).astype("<u2")

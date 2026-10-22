@@ -24,7 +24,7 @@ from .calibracao_sonda import PontoPerfil, ResumoResposta
 from .canais import analisar_lista_calibracao
 from .constantes import FAIXA_LEGADA_V
 from .erros import ErroSHAN
-from .fase_quadrada import RespostaQuadrada, fase_absoluta, h_segunda_ordem
+from .fase_quadrada import PontosAbsolutos, RespostaCombinada, h_segunda_ordem
 from .sonda import PerfilSonda, carregar_perfil_sonda
 
 log = logging.getLogger(__name__)
@@ -185,55 +185,63 @@ def gerar_grafico(pontos: list[PontoPerfil], perfil_dict: dict, caminho_saida: P
     log.info(f"Gráfico de diagnóstico salvo em '{caminho_saida}'.")
 
 
-def gerar_grafico_bode(medidas: list[RespostaQuadrada], rotulos: list[str], f0: float, q: float,
-                       caminho_saida: Path) -> None:
-    """O diagrama de Bode medido com as quadradas (magnitude relativa a f₁ e fase supondo fase mínima), o 2ª ordem
-    ajustado e os resíduos. Os harmônicos descartados (aliasing, SNR, duty) aparecem vazados."""
+def gerar_grafico_bode(absolutos: list[PontosAbsolutos], combinada: RespostaCombinada, rotulos: list[str], f0: float,
+                       q: float, caminho_saida: Path) -> None:
+    """O diagrama de Bode por ondas quadradas: os harmônicos de cada captura (claros, já costurados), a grade
+    combinada (a média ponderada por faixa, com ±1σ) e o 2ª ordem ajustado; embaixo de cada painel, os resíduos
+    da grade contra ele."""
     import matplotlib.pyplot as plt  # só no uso de --plot
 
-    fig, eixos = plt.subplots(4, 1, sharex=True, figsize=(9, 9), gridspec_kw={"height_ratios": [3, 1, 3, 1]})
+    fig, eixos = plt.subplots(4, 1, sharex=True, figsize=(9, 9.5), gridspec_kw={"height_ratios": [3, 1.3, 3, 1.3]})
     mag, res_mag, fase, res_fase = eixos
-    fmin = min(float(r.freq_hz[0]) for r in medidas) / 1.3
-    fmax = max(float(r.freq_hz[-1]) for r in medidas) * 1.15
+    fmin = float(min(a.freq_hz[0] for a in absolutos)) / 1.3
+    fmax = float(max(a.freq_hz[-1] for a in absolutos)) * 1.15
     fm = np.geomspace(fmin, fmax, 500)
     hm = h_segunda_ordem(fm, f0, q)
-    mag.semilogx(fm, 20 * np.log10(np.abs(hm)), "--", color="tab:blue", lw=1.2,
+    mag.semilogx(fm, 20 * np.log10(np.abs(hm)), "-", color="tab:blue", lw=1.0, alpha=0.8,
                  label=f"2ª ordem ajustado: f0 = {f0 / 1e3:.3f} kHz, Q = {q:.4f}")
-    fase.semilogx(fm, np.degrees(np.unwrap(np.angle(hm))), "--", color="tab:blue", lw=1.2)
-    marcadores = "osD^v<>"
-    limites_mag, limites_fase = [], []
-    for i, (r, rotulo) in enumerate(zip(medidas, rotulos)):
-        m = marcadores[i % len(marcadores)]
-        u = r.usado
-        a1 = abs(h_segunda_ordem(r.f1_hz, f0, q))
-        g_db = 20 * np.log10(r.ganho_rel * a1)
-        psi = np.degrees(fase_absoluta(r, f0, q))
-        modelo = h_segunda_ordem(r.freq_hz, f0, q)
-        r_db = g_db - 20 * np.log10(np.abs(modelo))
-        r_graus = np.degrees(np.angle(np.exp(1j * np.radians(psi - np.degrees(np.angle(modelo))))))
-        texto = f"{rotulo}, f₁ = {r.f1_hz:.1f} Hz"
-        for eixo, y in ((mag, g_db), (res_mag, r_db), (fase, psi), (res_fase, r_graus)):
-            eixo.semilogx(r.freq_hz[u], y[u], m, ms=4, color=f"C{i + 1}", label=texto if eixo is mag else None)
-            if np.any(~u) and eixo in (mag, fase):      # os descartados só nos painéis de cima (não mudam a escala)
-                eixo.semilogx(r.freq_hz[~u], y[~u], m, ms=4, mfc="none", color=f"C{i + 1}")
-        limites_mag.append(np.max(np.abs(r_db[u])))
-        limites_fase.append(np.max(np.abs(r_graus[u])))
+    fase.semilogx(fm, np.degrees(np.unwrap(np.angle(hm))), "-", color="tab:blue", lw=1.0, alpha=0.8)
+    db = 20 / np.log(10)
+    # uma cor por f₁ (as variantes de amplitude/offset e as duas taxas juntas), na legenda uma vez só
+    f1s = sorted({round(a.medida.f1_hz) for a in absolutos})
+    taxas = sorted({rotulo for rotulo in rotulos})
+    ja_na_legenda: set[int] = set()
+    for a in sorted(absolutos, key=lambda a: a.medida.f1_hz):
+        modelo = h_segunda_ordem(a.freq_hz, f0, q)
+        f1 = round(a.medida.f1_hz)
+        kw = dict(ls="none", marker=".", ms=3, alpha=0.35, color=f"C{(f1s.index(f1) % 9) + 1}")
+        rotulo_f1 = None if f1 in ja_na_legenda else f"f₁ = {f1} Hz"
+        ja_na_legenda.add(f1)
+        mag.semilogx(a.freq_hz, db * a.ln_ganho, label=rotulo_f1, **kw)
+        fase.semilogx(a.freq_hz, np.degrees(a.fase_rad), **kw)
+        res_mag.semilogx(a.freq_hz, db * (a.ln_ganho - np.log(np.abs(modelo))), **kw)
+        res_fase.semilogx(a.freq_hz, np.degrees(a.fase_rad - np.unwrap(np.angle(modelo))), **kw)
+    c = combinada
+    modelo_c = h_segunda_ordem(c.freq_hz, f0, q)
+    r_db = db * (c.ln_ganho - np.log(np.abs(modelo_c)))
+    r_gr = np.degrees(c.fase_rad - np.unwrap(np.angle(modelo_c)))
+    kw = dict(ls="none", marker="o", ms=3.5, color="black", ecolor="black", elinewidth=0.8, capsize=1.5, zorder=5)
+    mag.errorbar(c.freq_hz, db * c.ln_ganho, yerr=db * c.sigma_ln, label="Combinada (média ponderada por faixa)", **kw)
+    fase.errorbar(c.freq_hz, np.degrees(c.fase_rad), yerr=np.degrees(c.sigma_fase), **kw)
+    res_mag.errorbar(c.freq_hz, r_db, yerr=db * c.sigma_ln, **kw)
+    res_fase.errorbar(c.freq_hz, r_gr, yerr=np.degrees(c.sigma_fase), **kw)
+    lim_db = max(0.02, 1.5 * float(np.max(np.abs(r_db) + db * c.sigma_ln)))
+    lim_gr = max(0.1, 1.5 * float(np.max(np.abs(r_gr) + np.degrees(c.sigma_fase))))
+    res_mag.set_ylim(-lim_db, lim_db)
+    res_fase.set_ylim(-lim_gr, lim_gr)
     mag.set_ylabel("Ganho (dB, K = 1)")
     res_mag.set_ylabel("Resíduo (dB)")
     fase.set_ylabel("Fase (°)")
     res_fase.set_ylabel("Resíduo (°)")
     res_fase.set_xlabel("Frequência (Hz)")
     mag.set_title("Resposta da cadeia por ondas quadradas (fase a menos de um atraso puro, supondo fase mínima)\n"
-                  "vazados: harmônicos fora do ajuste (aliasing, SNR ou perto de um nulo do duty)", fontsize=10)
-    res_mag.set_ylim(-1.3 * max(max(limites_mag), 0.05), 1.3 * max(max(limites_mag), 0.05))
-    res_fase.set_ylim(-1.3 * max(max(limites_fase), 0.2), 1.3 * max(max(limites_fase), 0.2))
+                  f"{len(absolutos)} capturas ({', '.join(taxas)})", fontsize=10)
     for eixo in eixos:
         eixo.grid(True, which="both", alpha=0.4)
     for eixo in (res_mag, res_fase):
         eixo.axhline(0, color="tab:blue", lw=0.8)
-    mag.legend(fontsize=8, loc="lower left")
+    mag.legend(fontsize=7, loc="lower left", ncols=2)
     fig.tight_layout()
     fig.savefig(caminho_saida, dpi=150)
     plt.close(fig)
     log.info(f"Diagrama de Bode salvo em '{caminho_saida}'.")
-
