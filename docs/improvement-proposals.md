@@ -7,7 +7,7 @@ Cada item tem um código (F = firmware/aquisição, P = Python, T = testes/CI, R
 H = hardware, S = sondas) e as colunas: **ganho** (o que melhora), **esforço** e se **toca a PRU** — mudança no
 assembly só conta como feita depois de montada com `clpru` e validada no hardware.
 
-Revisado em 21/10/2026. Saíram daqui, nesta ordem:
+Revisado em 22/10/2026. Saíram daqui, nesta ordem:
 
 * a revisão do firmware (salto de 7 µs na troca de buffer, contadores de integridade, cabeçalho v4), a revisão dos
   testes e o novo `compactar_amostras.py`; a análise das capturas de bancada de 19/10 trouxe o F9 e o P6;
@@ -21,7 +21,12 @@ Revisado em 21/10/2026. Saíram daqui, nesta ordem:
   pula 200 µs; as duas ferramentas avisam), o P4 (taxa da PRU por padrão, `--fs-pedida`), o P3 (correção de sonda
   em `contexto`), o P5 (atributos de proveniência no HDF5), o S8 (aviso de perfil com mais de 1 ano) e o F5
   (cabeçalho v5: versão do firmware e taxa medida pelo ARM). A conferência nas capturas de 19/10 mostrou que o salto
-  antigo também derruba o SINAD de uma FFT de vários blocos (63 → 22 dB) e puxa a frequência em +1,5 ppm.
+  antigo também derruba o SINAD de uma FFT de vários blocos (63 → 22 dB) e puxa a frequência em +1,5 ppm;
+* o F2 (21/10, T7e): as esperas do CS desceram ao mínimo do datasheet (`3,1,3`) sem perda, e o padrão passou a
+  312,5 kS/s;
+* o F1 (21 e 22/10, T7e e T7f): a revisão do firmware rodou no hardware. O salto de 7 µs na troca sumiu; o defeito
+  do rebase do contador apareceu e foi corrigido; e a grade ficou exata (espera de precisão, folga publicada, rebase
+  autocalibrado: jitter de 8,5 → 0,00 ns). Os números estão em [`bench-results.md`](bench-results.md#t7f-a-grade-de-tempo).
 
 ---
 
@@ -33,14 +38,57 @@ C ↔ Python, um simulador do assembly da PRU, testes em paralelo; cada
 `.bin` se descreve sozinho (cabeçalho com CRC, faixa do ADC, integridade da captura); os dados brutos têm um
 arquivamento sem perdas conferido bit a bit; a documentação cobre operação, arquitetura, laboratório e relatório.
 
-**Onde estão os riscos e os limites:**
+### Avaliação do firmware (22/10/2026)
 
-1. **A revisão do firmware de out/2026 ainda não rodou no hardware** (F1). Até lá, o firmware da BeagleBone é o
-   antigo, com o salto de ~0,7 amostra a cada bloco. Inclui o cabeçalho v5 (F5), compilado e conferido só no PC.
-2. **A taxa máxima (~140 kS/s) cobre só até ~45–70 kHz da banda de supraharmônicos (2–150 kHz).** O gargalo está
-   localizado (F2, F3): esperas do CS 100× maiores que o datasheet pede e SPI em ~10 MHz.
-3. **Converter uma captura longa para Volts ainda usa o sinal inteiro em float64** (8 bytes por amostra): a análise
-   de 10 min (60 milhões de amostras) pede ~1,6 GB de RAM; uma captura de 1 h não caberia (P1).
+Feita com as 46 capturas do T7f e uma releitura do `spi_core.asm`, do `pru_main.c`, do `ler_adc.c`, do `setup.sh` e
+da configuração da BeagleBone.
+
+**Validado no hardware (não mexer sem motivo):**
+
+* **A grade de tempo é exata:** jitter de 0,00 ns (piso do método ~0,3 ns), degrau de zero ciclo em 89 trocas de
+  buffer e 28 rebases do contador, nenhuma amostra fora da grade a 312,5 kS/s (5 min, ARM ocupado, 2 canais).
+* **A integridade do SPI:** 0 quadros com ruído no SDO em todas as capturas desde 19/10, com o SCLK a ~10,7 MHz.
+* **O ADC no nível do datasheet:** o ruído com o tom é o da entrada em curto (0,77 LSB); o que sobra no SINAD é do
+  gerador.
+* **O protocolo ARM ↔ PRU:** o `ler_adc` recusa a captura se a PRU estiver com outro firmware; os contadores
+  (atrasadas, sobrescritos, SDO) e a folga vão para o cabeçalho.
+* **O ARM acompanha:** 0 buffers sobrescritos, também com um `dd` enchendo a DDR. O `ler_adc` tem ~3,4 s por bloco
+  para gravar 2 MB.
+
+**Onde ainda há margem ou risco, medido:**
+
+1. **A folga a 312,5 kS/s é de só 3 a 5 ciclos (15 a 25 ns)** (F10). Na PRU real, o quadro comum leva ~612 ciclos
+   (de 611 a 619, ao acaso: a escrita na DDR passa pelo barramento do ARM) e o da troca de buffer, ~634 (de 631 a
+   638): a troca faz 5 acessos à memória compartilhada de uma vez (~22 ciclos). Até agora, nenhuma amostra saiu
+   atrasada em ~130 trocas a 312,5 kS/s. Mas a cauda da escrita na DDR é aleatória: numa captura de horas (~1 000
+   trocas por hora), uma troca atrasar alguns ciclos é plausível. Seria contada e é pequena (5 a 20 ns, uma
+   amostra), mas tira o "toda amostra no ciclo exato".
+2. **A reserva da DDR depende de uma linha fora do projeto** (F11). Os buffers ficam em `0x9F000000`, os últimos
+   16 MB da DDR da BeagleBone. O Linux não os usa só porque o `/boot/uEnv.txt` da placa tem `mem=496M` (conferido em
+   22/10: `/proc/cmdline`). Numa placa ou imagem nova sem essa linha, o Linux e a PRU escreveriam na mesma memória,
+   em silêncio: capturas corrompidas e travamentos ao acaso. Nada no projeto confere isso hoje (o comentário no
+   `AM335x_PRU.cmd` não reserva nada).
+3. **O simulador prevê folga demais** (F12). Com 1 ciclo por instrução, ele dava 25 ciclos de folga onde a placa tem
+   3 a 5. A PRU mediu 7 ciclos para um `LBBO` + `SBBO` no bloco de controle (o simulador conta 2). Sem calibrar as
+   latências, o simulador não diz se uma mudança cabe.
+4. **Um `kill` (SIGTERM) ou a queda do ssh deixam o cabeçalho incompleto** (F6): só o Ctrl+C reescreve o cabeçalho
+   final (blocos, contadores, folga). E a PRU continua amostrando depois que o `ler_adc` sai.
+5. **A estabilidade em 1 h com o firmware atual não foi medida** (F13). A captura mais longa do T7f tem 5 min; a de
+   10 min (T7c) é do firmware antigo. A análise de uma captura de 1 h também esbarra no P1 (memória).
+6. **O teto com período constante é ~315 kS/s.** Acima disso, até ~322 kS/s, só a troca de buffer atrasa (F10 a
+   levaria a ~322 kS/s); acima de ~323 kS/s, as amostras comuns. Mais que isso pede o SPI mais rápido (F3: ~450 kS/s
+   no papel). Os 500 kS/s do ADS8688 são divididos entre os canais, e o filtro interno de ~15 kHz não sai.
+
+**Recomendação, em ordem:** F10 (a folga, que fecha o item 1), F11 (uma conferência de poucas linhas que evita o
+pior defeito possível) e F12 (para a folga prevista bater com a medida), validados juntos com
+`./varrer_taxa.sh --grade` (~15 min). Depois, o F6 e o F13. O F3 só quando a taxa acima de 315 kS/s for necessária.
+
+**Onde estão os outros limites (fora do firmware):**
+
+1. **A taxa de 312,5 kS/s cobre a banda até ~140 kHz com 1 canal; com 2 canais, até ~70 kHz.** A cadeia de tensão
+   atenua ~30 dB em 140 kHz (o filtro de ~15 kHz do ADC): falta o T3 até lá.
+2. **Converter uma captura longa para Volts ainda usa o sinal inteiro em float64** (8 bytes por amostra): a análise
+   de 10 min a 312,5 kS/s (188 milhões de amostras) pede ~1,5 GB de RAM; 1 h não caberia (P1).
 
 ---
 
@@ -48,15 +96,18 @@ arquivamento sem perdas conferido bit a bit; a documentação cobre operação, 
 
 | Código | Item | Ganho | Esforço | PRU? | Depende de |
 |---|---|---|---|---|---|
-| **F1** | Validar no hardware a revisão do firmware (grade de tempo exata de 22/10: espera de precisão, folga publicada, rebase autocalibrado; T7f) | Alto: tira o jitter de ~8,5 ns de toda amostra | Baixo (bancada) | sim | — |
-| **F2** | Medir até onde as esperas do CS podem cair (`--atraso-cs`) | Alto: teto de ~140 → ~330 kS/s | Baixo (bancada) | não (já configurável) | F1 |
+| **F10** | Folga na troca de buffer: espalhar o trabalho da troca pelas amostras seguintes e tirar a espera de CS alto do caminho em dia | Alto: folga de 3 → ~18 ciclos a 312,5 kS/s; teto com período constante ~315 → ~322 kS/s | Baixo | sim | — |
+| **F11** | Conferir que a DDR dos buffers está fora do Linux (`/proc/iomem`), no `ler_adc` e no `setup.sh` | Alto: evita corrupção silenciosa numa placa sem `mem=496M` | Baixo | não | — |
+| **F12** | Simulador com as latências medidas na placa | Médio: a folga prevista passa a valer | Baixo | não | — |
 | **S1** | Calibrar a sonda de corrente (T10) com hold-out | Alto para corrente | Médio (bancada) | não | — |
 | **P1** | Análise de capturas longas por blocos (sem o sinal inteiro em float64) | Médio: 10 min = 1,6 GB; 1 h não cabe | Médio | não | — |
 | **P8** | Potência, impedância e transferência V/I por frequência | Alto para pesquisa de emissão | Médio | não | S3 |
-| **F9** | Descartar o transitório de troca de faixa já na PRU (a análise já descarta) | Baixo: dado certo desde a 1ª amostra | Baixo | sim | F1 |
-| **F3** | SPI mais rápido (SCLK até 17 MHz) | Alto: rumo a 300–500 kS/s | Médio | sim | F2 |
-| **F4** | `SAMPLES_PER_BUFFER` vindo do ARM, não duplicado no `.asm` | Médio: fim de uma sincronia manual | Baixo | sim | F1 |
-| **F6** | Gravar o bloco parcial no Ctrl+C e parar a PRU no fim | Médio | Baixo | sim (publicar a posição) | F1 |
+| **F6** | SIGTERM e queda do ssh como o Ctrl+C; bloco parcial; parar a PRU no fim | Médio | Baixo | sim (publicar a posição) | — |
+| **F13** | Estabilidade em 1 h no padrão (grade, folga, frequência, amplitude) | Médio: o número do relatório | Baixo (bancada) | não | F10, P1 |
+| **F9** | Descartar o transitório de troca de faixa já na PRU (a análise já descarta) | Baixo: dado certo desde a 1ª amostra | Baixo | sim | — |
+| **F3** | SPI mais rápido (SCLK até 17 MHz) | Alto: teto ~315 → ~450 kS/s | Médio | sim | F10 |
+| **F4** | `SAMPLES_PER_BUFFER` vindo do ARM, não duplicado no `.asm` | Médio: fim de uma sincronia manual | Baixo | sim | — |
+| **F14** | Escrever 2 amostras por acesso à DDR | Incerto: pode encurtar a cauda do quadro comum (611 a 619 ciclos) | Médio | sim | F12 |
 | **F7** | Conferência rápida do `calibrar_sonda.sh` mais leve na BeagleBone | Médio | Baixo | não | medir na BBB |
 | **S2–S7** | Fase, subamostragem, perfil absoluto, teto de ganho, repetições | Alto para V×I | Médio–Alto | não | S1 |
 | **F8** | Endereço do canal no SDO (verificar a ordem dos canais a cada amostra) | Baixo–Médio | Médio | sim | F3 |
@@ -67,35 +118,59 @@ arquivamento sem perdas conferido bit a bit; a documentação cobre operação, 
 
 ## 3. Firmware e aquisição
 
-### F1 — Validar no hardware a revisão do firmware
+### F10 — Folga na troca de buffer
 
-**Por quê.** A revisão de out/2026 corrige dois defeitos de tempo medidos nas capturas reais — +0,697 amostra
-(6,97 µs) em **cada** troca de buffer da T7c, e as primeiras amostras de toda captura saindo mais rápido que o pedido
-— e acrescenta os contadores de integridade e os cabeçalhos v4 e v5 (versão do firmware e taxa medida pelo ARM).
-Tudo foi conferido no simulador (`tests/pru_sim.py`) e o `ler_adc.c` compila no PC com `-Werror`,
-mas a latência real de `LBBO`/`SBBO` e a sintaxe do `clpru` só aparecem na BeagleBone.
+**Por quê.** A 312,5 kS/s (640 ciclos), a troca de buffer deixa 3 a 5 ciclos de folga (T7f): ela faz, de uma vez,
+5 acessos à memória compartilhada (marca o buffer cheio, lê o outro, publica `active_buffer`, os contadores e a
+folga), ~22 ciclos a mais que uma amostra comum. E toda amostra em dia ainda espera o CS alto mínimo (`A` = 3
+iterações, 7 ciclos), que o próprio caminho entre duas amostras já garante: o CS fica alto ≥ 25 ciclos mesmo sem a
+espera, e 66 a 312,5 kS/s.
 
-**Como validar.** `cd firmware && ./setup.sh` (compila e carrega); depois:
+**Proposta.**
 
-1. 10 min a 100 kS/s com um tom estável (como o T7c) → `medir_captura.py` com **continuidade OK** e
-   **`trocas de buffer : OK`** (salto nas trocas igual ao dos outros segmentos, na casa de 0,01 µs; antes: 6,96 µs
-   nas 57 trocas) e o `ler_adc` terminando com "Integridade: ... tudo certo" e o cabeçalho dizendo `Versão de
-   cabeçalho: 5` e `Firmware: ...`. O T7a e o T7b também, com ≥ 3 blocos: uma captura de 1 bloco não tem troca;
-2. ≥ 25 s a 40 kS/s (um bloco > 21,5 s, que antes travava o contador) → continuidade OK;
-3. 200 kS/s → o `ler_adc` tem de acusar **amostras atrasadas** e a taxa real medida (~140 kS/s);
-4. se o `DELTA` do rebase (2 ciclos) estiver errado, aparece como salto de poucos ns a cada 10,7 s: invisível na
-   continuidade (< 0,01 amostra), mas dá para ver comparando o tom ao longo de 10 min.
+* **Espalhar a troca.** Na amostra da troca, só o essencial: o ponteiro de escrita passa para o outro buffer e o
+  contador volta a 0. O resto vai para as amostras 1, 2 e 3 do buffer novo, um ou dois acessos por amostra. O gatilho
+  é o mesmo comparador de hoje (`QBNE continua, r15, r21`): o `r21` vira "a próxima amostra com trabalho" (1, 2, 3
+  e então o tamanho do buffer), sem nenhuma instrução a mais por amostra comum. O rebase do contador não roda nessas
+  amostras (fica para a seguinte).
+* **A espera de CS alto só quando faz falta:** com `A` ≤ 10 iterações (100 ns), o caminho em dia a pula (1
+  instrução em vez de 7 ciclos); a amostra atrasada, que sai emendada na anterior, continua esperando.
 
-### F2 — Medir até onde as esperas do CS podem cair
+Estimativa: a troca passa a custar ~5 a 8 ciclos a mais que uma amostra comum (era ~22) e toda amostra ganha ~6;
+folga de ~18 ciclos a 312,5 kS/s; teto com período constante de ~315 para ~322 kS/s (o limite passa a ser a cauda da
+escrita na DDR nas amostras comuns). O atraso de 1 a 3 amostras para marcar o buffer cheio (até 10 µs) não muda nada
+para o ARM, que olha a cada 2 ms.
 
-**Por quê.** Cada amostra leva ~7 µs na PRU; ~4 µs (57 %) são três esperas do CS (2,0/1,0/1,0 µs) calibradas na
-época do problema dos jumpers. O datasheet (SBAS582C, tab. 7.6) pede 30/10/30 ns, e a conversão (≤ 850 ns) já
-termina durante os 16 bits de comando (1,6 µs). Só reduzi-las leva o teto a ~330 kS/s.
+**Como saber que deu certo.** No simulador calibrado (F12), a folga prevista; na bancada, `./varrer_taxa.sh --grade`:
+folga ≥ 15 ciclos em todas as capturas do padrão, e na parte J nenhuma atrasada até ~322 kS/s.
 
-**Proposta.** O roteiro T7e, método 4 (`ler_adc --atraso-cs`, já implementado): baixar os atrasos por etapas e
-comparar ruído, SINAD/ENOB, THD e continuidade com o padrão a 100 kS/s; depois ver o teto a 250 kS/s. O menor
-conjunto que não muda nada, com folga, vira o novo padrão (`ATRASO_CS_*_PADRAO` em `memoria_pru.h` e no `.asm` —
-`test_contrato_firmware.py` confere que os dois batem).
+### F11 — Conferir que a memória dos buffers está fora do Linux
+
+**Por quê.** Os buffers da PRU ficam em `0x9F000000` (os últimos 16 MB dos 512 MB da BeagleBone). O Linux não os usa
+só porque a placa do laboratório sobe com `mem=496M` no `/boot/uEnv.txt` (conferido em 22/10 em `/proc/cmdline`). O
+comentário "onde o Linux não toca" do `AM335x_PRU.cmd` não reserva nada. Numa placa ou imagem nova sem essa linha, o
+Linux daria essas páginas a processos e ao cache de disco: a PRU as sobrescreveria (travamentos ao acaso) e o Linux
+sobrescreveria as amostras antes de o `ler_adc` gravá-las (capturas corrompidas, sem aviso).
+
+**Proposta.** O `ler_adc` (que já roda como root) lê `/proc/iomem` antes de configurar a PRU e recusa a captura se
+algum trecho `System RAM` cobrir `0x9F000000` a `0x9F3FFFFF`, dizendo o que pôr no `uEnv.txt`. O `setup.sh` confere
+o mesmo e avisa. O guia de instalação ganha a linha do `uEnv.txt`.
+
+**Como saber que deu certo.** Na placa atual, nada muda. Num teste com um `/proc/iomem` de mentira que cobre a
+região, o `ler_adc` recusa.
+
+### F12 — Simulador com as latências medidas
+
+**Por quê.** Com 1 ciclo por instrução, o simulador dava 25 ciclos de folga a 312,5 kS/s; a placa tem 3 a 5. A PRU
+mediu 7 ciclos para um `LBBO` + `SBBO` no bloco de controle (contra 2), e a escrita na DDR varia de ponto a ponto. O
+`tests/pru_sim.py` já modela latências (`Latencias`); falta um conjunto calibrado nas medidas do T7f (o quadro comum
+de 611 a 619 ciclos e o da troca de ~631 a 638).
+
+**Proposta.** Ajustar `Latencias` (custo de `LBBO`/`SBBO` por destino e uma escrita na DDR com cauda) até o simulador
+reproduzir a folga e o teto do T7f, e usá-lo nos testes de folga.
+
+**Como saber que deu certo.** O simulador reproduz o T7f: folga de 3 a 5 ciclos a 640, primeira troca atrasada perto
+de 634 e amostras comuns perto de 619.
 
 ### F3 — SPI mais rápido
 
@@ -123,14 +198,34 @@ lado sem o outro desalinha a troca de buffer sem nenhum erro.
 **Proposta.** Um campo `amostras_por_buffer` em `shared_control`, escrito pelo `ler_adc` e lido pela PRU uma vez
 (como os atrasos de CS). Remove a duplicação — melhor do que gerar o `.asm` no build.
 
-### F6 — Ctrl+C sem perder o bloco em andamento; parar a PRU no fim
+### F6 — Ctrl+C sem perder o bloco em andamento; SIGTERM; parar a PRU no fim
 
-**Por quê.** Numa captura indefinida, o Ctrl+C descarta o bloco que a PRU estava enchendo (até ~10 s a 100 kS/s).
-E a PRU continua amostrando para a DDR depois que o `ler_adc` sai, até a próxima captura.
+**Por quê.** Numa captura indefinida, o Ctrl+C descarta o bloco que a PRU estava enchendo (até ~3,4 s a 312,5 kS/s).
+Só o Ctrl+C (SIGINT) é tratado: um `kill` (SIGTERM) ou a queda do ssh sem o `varrer_taxa.sh` (SIGHUP) terminam o
+`ler_adc` sem reescrever o cabeçalho final (blocos gravados, contadores e folga ficam zerados). E a PRU continua
+amostrando para a DDR depois que o `ler_adc` sai, até a próxima captura.
 
-**Proposta.** A PRU publica a posição de escrita (`r15`) uma vez por amostra, na folga (custo de 1 `SBBO`); no
-Ctrl+C, o `ler_adc` grava as amostras já escritas do bloco atual (múltiplo do nº de canais) e acerta o cabeçalho;
-no fim, escreve `stop` no remoteproc.
+**Proposta.** SIGTERM e SIGHUP tratados como o SIGINT (fim limpo, cabeçalho reescrito) e, no fim, `stop` no
+remoteproc. Gravar o bloco parcial pede a posição de escrita da PRU, e publicá-la a cada amostra custa 1 acesso à
+memória (só depois do F10, que abre a folga); sem ela, o `ler_adc` grava os blocos completos, como hoje.
+
+### F13 — Estabilidade em 1 h no padrão
+
+**Por quê.** O relatório precisa de um número de estabilidade com o firmware atual: a captura mais longa do T7f tem
+5 min, e o T7c (10 min) é do firmware antigo.
+
+**Proposta.** 1 h a 312,5 kS/s com o tom de 10 kHz (~2,2 GB; ~1 070 trocas e ~335 rebases): folga e atrasadas do
+cabeçalho, jitter e degraus por trecho de 5 min, e a frequência e a amplitude do tom por bloco. A análise precisa do
+P1 (por blocos) ou do `medir_captura.py` em trechos (`--inicio` e `--max-amostras`).
+
+### F14 — Escrever 2 amostras por acesso à DDR
+
+**Por quê.** A amostra comum leva de 611 a 619 ciclos, ao acaso (T7f, parte J); a parte variável é, muito
+provavelmente, a escrita de 2 bytes na DDR, que passa pelo barramento do ARM.
+
+**Proposta, exploratória.** Guardar a amostra par num registrador e escrever 4 bytes na ímpar: metade dos acessos.
+Só vale se o F12 mostrar que a cauda vem dessa escrita, e se encurtar a cauda (a amostra que escreve continua
+pagando o acesso).
 
 ### F7 — Conferência rápida do `calibrar_sonda.sh` mais leve
 

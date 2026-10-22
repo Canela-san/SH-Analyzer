@@ -28,7 +28,7 @@ Pré-requisito: [`user-guide.md`](user-guide.md) (capturar e analisar). Este rot
 
 ## Estado da campanha
 
-Atualize esta tabela a cada ida ao laboratório: ela é o resumo do avanço para a apresentação quinzenal ([`report-notes.md`](report-notes.md#7-apresentação-quinzenal-ao-orientador)) e diz o que já pode entrar no relatório. Os números vêm de `$DADOS/lab/2026-10-19/resultados.csv`, gerado com os comandos de cada teste; o detalhe está no parágrafo **Executado em 19/10/2026** do teste.
+Os números de cada teste executado, com a data, o firmware e a pasta dos dados, estão em [`bench-results.md`](bench-results.md) (o que vai para o relatório). Atualize esta tabela a cada ida ao laboratório: ela é o resumo do avanço para a apresentação quinzenal ([`report-notes.md`](report-notes.md#7-apresentação-quinzenal-ao-orientador)) e diz o que já pode entrar no relatório. Os números vêm de `$DADOS/lab/2026-10-19/resultados.csv`, gerado com os comandos de cada teste; o detalhe está no parágrafo **Executado em 19/10/2026** do teste.
 
 | Teste | Situação | Resultado principal | Falta |
 |---|---|---|---|
@@ -1346,7 +1346,7 @@ tom de 10 kHz em ±2,56 V; `$DADOS/lab/2026-10-22/T7f_2026-10-22_0435/`). O firm
 | Jitter de amostragem | **0,00 ns** (abaixo do piso de ~0,3 ns do método), em todas as capturas | 8,5 ns |
 | Degrau nas trocas de buffer (5 min) | 89 trocas: −0,03 ± 0,03 ns (o pior, +0,8 ns) | +0,3 ns |
 | Degrau nos rebases do contador (5 min) | 28 rebases: −0,04 ± 0,07 ns (o pior, +0,8 ns); a PRU mediu 7 ciclos entre as leituras (o simulador, 2) | +4,8 a +6,6 µs (o defeito corrigido em 21/10) |
-| Ruído com o tom, fora de ±5 Hz do tom e dos harmônicos | **0,77 LSB** = o ruído do ADC em curto | 2,23 LSB |
+| Ruído com o tom, fora de ±50 Hz do tom e dos harmônicos | **0,77 LSB** = o ruído do ADC em curto | 2,23 LSB |
 | SNR / SINAD (10 s, como em 21/10) | 69,4 / 67,4 dB (6,7 s: 71,2 / 68,6 dB) | 64,0 / 63,4 dB |
 | Diafonia, 2 canais a 312,5 kS/s | −97,3 dB | −94 a −95 dB (250 kS/s) |
 

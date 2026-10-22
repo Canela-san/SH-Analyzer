@@ -43,9 +43,11 @@ crie a figura com ``estilo.nova_figura(...)``, use as cores de ``COR`` e os text
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import logging
 import math
+import os
 import shutil
 import sys
 from collections.abc import Callable
@@ -73,6 +75,15 @@ from scipy.optimize import curve_fit  # noqa: E402
 RAIZ = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RAIZ / "scripts"))
 
+from supraharmonicos.cabecalho import ler_cabecalho  # noqa: E402
+from supraharmonicos.metricas_captura import (  # noqa: E402
+    analisar_espectro,
+    estimar_jitter,
+    medir_degraus_de_tempo,
+    posicoes_das_trocas,
+    posicoes_dos_rebases,
+    ruido_por_inclinacao,
+)
 from supraharmonicos.registro import configurar_logging_cli  # noqa: E402
 from supraharmonicos.sonda import SONDAS_DIR_PADRAO, carregar_perfil_sonda  # noqa: E402
 
@@ -121,6 +132,20 @@ TEXTOS = {
         "residuo": "Resíduo (dB)",
         "medido": "Medido",
         "ajuste_2a": "Ajuste: passa-baixa de 2ª ordem",
+        "inclinacao": "Inclinação do tom (LSB/ns)",
+        "ruido_residuo": "Ruído RMS do resíduo (LSB)",
+        "antes_sondagem": "21/10: espera por sondagem",
+        "depois_precisao": "22/10: espera de precisão",
+        "modelo_jitter": r"$\sqrt{\sigma_0^2 + (s\,\sigma_t)^2}$",
+        "tempo_captura": "Tempo desde o início da captura (s)",
+        "degrau_ns": "Degrau de tempo (ns)",
+        "trocas": "Trocas de buffer",
+        "rebases": "Rebases do contador",
+        "controle": "Entre eventos (controle)",
+        "meio_ciclo": "±1/2 ciclo da PRU (2,5 ns)",
+        "taxa_ks": "Taxa (kS/s)",
+        "atrasadas": "Amostras fora da grade",
+        "padrao": "padrão",
     },
     "en": {
         "frequencia": "Frequency (Hz)",
@@ -128,6 +153,20 @@ TEXTOS = {
         "residuo": "Residual (dB)",
         "medido": "Measured",
         "ajuste_2a": "Fit: 2nd-order low-pass",
+        "inclinacao": "Tone slope (LSB/ns)",
+        "ruido_residuo": "Residual RMS noise (LSB)",
+        "antes_sondagem": "Oct 21: polling wait",
+        "depois_precisao": "Oct 22: precision wait",
+        "modelo_jitter": r"$\sqrt{\sigma_0^2 + (s\,\sigma_t)^2}$",
+        "tempo_captura": "Time since capture start (s)",
+        "degrau_ns": "Timing step (ns)",
+        "trocas": "Buffer swaps",
+        "rebases": "Counter rebases",
+        "controle": "Between events (control)",
+        "meio_ciclo": "±1/2 PRU cycle (2.5 ns)",
+        "taxa_ks": "Rate (kS/s)",
+        "atrasadas": "Samples off the grid",
+        "padrao": "default",
     },
 }
 
@@ -495,6 +534,199 @@ def perfil_cadeia_tensao(estilo: Estilo) -> Resultado:
     return Resultado(fig, macros, comentarios)
 
 
+# =====================================================================================================
+# T7f: a grade de tempo (22/10/2026) -- lê as capturas em $DADOS (fora do repositório)
+# =====================================================================================================
+DADOS = Path(os.environ.get("DADOS", Path.home() / "Documents" / "sh-analyzer-data"))
+CAPTURA_ANTES_GRADE = DADOS / "lab/2026-10-21/T7e_2026-10-21_1731/B_cs3-1-3_312500_tom.bin"   # firmware v0.7
+PASTA_T7F = DADOS / "lab/2026-10-22/T7f_2026-10-22_0435"
+CAPTURA_DEPOIS_GRADE = PASTA_T7F / "G_cspadrao_312500_tom_60s.bin"
+CAPTURA_LONGA_GRADE = PASTA_T7F / "G_cspadrao_312500_tom_300s.bin"
+TOM_GRADE_HZ = 10_000.0
+AMOSTRAS_10S = 3_145_728        # 10 s a 312,5 kS/s: a duração das capturas de 21/10
+
+
+def _exigir(*caminhos: Path) -> None:
+    faltam = [c for c in caminhos if not c.exists()]
+    if faltam:
+        raise FileNotFoundError("faltam as capturas (defina DADOS ou traga-as): "
+                                + ", ".join(str(c) for c in faltam))
+
+
+def _canal_do_tom(caminho: Path, max_amostras: int | None = None):
+    """(amostras do canal com o tom, em LSB, sem copiar o arquivo; fs do canal; cabeçalho). O tom vai no último
+    canal da lista (o canal 1, nas capturas do T7e/T7f)."""
+    cab = ler_cabecalho(caminho)
+    bruto = np.memmap(caminho, dtype="<u2", mode="r", offset=cab.tamanho_cabecalho)
+    nc = cab.num_canais
+    sinal = bruto[nc - 1::nc] if nc > 1 else bruto
+    if max_amostras is not None:
+        sinal = sinal[:max_amostras]
+    return sinal, cab.pru_clock_hz / cab.sample_period_ticks / nc, cab
+
+
+def _freq_do_tom(sinal, fs: float) -> float:
+    return analisar_espectro(np.asarray(sinal[: 1 << 21], dtype=np.float64), fs, TOM_GRADE_HZ).freq_tom_hz
+
+
+def _ruido_fora_do_tom(sinal, fs: float, f0: float, exclusao_hz: float = 50.0) -> float:
+    """Ruído RMS (LSB) fora de ±``exclusao_hz`` do tom e dos harmônicos até o 9º, extrapolado para a banda toda: o
+    ruído de banda larga, sem o ruído de fase do gerador (que fica colado no tom)."""
+    x = np.asarray(sinal[64: 64 + (1 << 21)], dtype=np.float64)
+    x -= x.mean()
+    janela = np.kaiser(len(x), 14)
+    p = 2 * np.abs(np.fft.rfft(x * janela)) ** 2 / (len(x) * np.sum(janela ** 2))
+    f = np.fft.rfftfreq(len(x), 1 / fs)
+    fora = f > 50
+    for h in range(1, 10):
+        fh = (h * f0) % fs
+        fora &= np.abs(f - min(fh, fs - fh)) > exclusao_hz
+    return math.sqrt(p[fora].sum() / fora.mean())
+
+
+@figura("grade_jitter", "T7f: o ruído do resíduo contra a inclinação do tom, antes (8,5 ns de jitter) e depois")
+def grade_jitter(estilo: Estilo) -> Resultado:
+    _exigir(CAPTURA_ANTES_GRADE, CAPTURA_DEPOIS_GRADE)
+    fig = estilo.nova_figura(0.55)
+    eixo = fig.subplots()
+    macros, comentarios = {}, []
+    for chave, caminho, cor, marcador in (("Antes", CAPTURA_ANTES_GRADE, COR["destaque"], "o"),
+                                          ("Depois", CAPTURA_DEPOIS_GRADE, COR["tinta"], "s")):
+        sinal, fs, cab = _canal_do_tom(caminho, AMOSTRAS_10S)
+        f0 = _freq_do_tom(sinal, fs)
+        jitter = estimar_jitter(sinal, fs, f0)
+        inclinacao, ruido = ruido_por_inclinacao(sinal, fs, f0)
+        s = inclinacao * 1e-9                                         # LSB/ns
+        largo = _ruido_fora_do_tom(sinal, fs, f0)
+        rotulo = estilo.t("antes_sondagem" if chave == "Antes" else "depois_precisao")
+        eixo.plot(s, ruido, linestyle="none", marker=marcador, color=cor, markeredgecolor="white",
+                  markeredgewidth=0.5, zorder=3, label=rotulo)
+        sm = np.linspace(0, s.max() * 1.05, 200)
+        eixo.plot(sm, np.sqrt(jitter.ruido_plano ** 2 + (sm * jitter.rms_ns) ** 2), color=cor, alpha=0.55,
+                  linestyle=(0, (5, 3)), zorder=2)
+        log.info(f"  {chave.lower()}: jitter {jitter.rms_ns:.2f} ns, ruído plano {jitter.ruido_plano:.2f} LSB, "
+                 f"ruído de banda larga {largo:.2f} LSB ({caminho.name}, {cab.versao_firmware or 'firmware antigo'})")
+        macros[f"GradeJitter{chave}"] = rf"\qty{{{jitter.rms_ns:.1f}}}{{\nano\second}}"
+        macros[f"GradeRuidoPlano{chave}"] = rf"\num{{{jitter.ruido_plano:.2f}}}"
+        macros[f"GradeRuidoLargo{chave}"] = rf"\num{{{largo:.2f}}}"
+        comentarios.append(f"{chave}: {caminho.relative_to(DADOS)} (primeiros 10 s), f0 = {f0:.4f} Hz, "
+                           f"jitter = {jitter.rms_ns:.3f} ns, ruído plano = {jitter.ruido_plano:.3f} LSB, "
+                           f"banda larga fora de ±50 Hz = {largo:.3f} LSB")
+    eixo.set_xlim(0, None)
+    eixo.set_ylim(0, None)
+    eixo.xaxis.set_major_formatter(estilo.formatador())
+    eixo.yaxis.set_major_formatter(estilo.formatador())
+    eixo.set_xlabel(estilo.t("inclinacao"))
+    eixo.set_ylabel(estilo.t("ruido_residuo"))
+    eixo.legend(loc="upper left", title=estilo.t("modelo_jitter"), title_fontsize=estilo.formato.fonte_ticks_pt)
+    comentarios.append("Tom de 10 kHz em ±2,56 V, 312,5 kS/s; o modelo tracejado é sqrt(σ0² + (s σt)²) com o σt "
+                       "de estimar_jitter (mediana entre blocos de 2000 amostras).")
+    return Resultado(fig, macros, comentarios)
+
+
+@figura("grade_degraus", "T7f: o degrau de tempo em cada troca de buffer e rebase do contador, em 5 min a 312,5 kS/s")
+def grade_degraus(estilo: Estilo) -> Resultado:
+    _exigir(CAPTURA_LONGA_GRADE)
+    sinal, fs, cab = _canal_do_tom(CAPTURA_LONGA_GRADE)
+    f0 = _freq_do_tom(sinal, fs)
+    pos_trocas = posicoes_das_trocas(cab.samples_per_buffer, cab.num_canais, 0, len(sinal))
+    pos_rebases = posicoes_dos_rebases(cab.pru_clock_hz, cab.sample_period_ticks, cab.num_canais, 0, len(sinal))
+    trocas = medir_degraus_de_tempo(sinal, fs, f0, pos_trocas)
+    rebases = medir_degraus_de_tempo(sinal, fs, f0, pos_rebases)
+    meios = [(a + b) / 2 for a, b in zip([0.0, *pos_trocas], [*pos_trocas, float(len(sinal))])]
+
+    fig = estilo.nova_figura(0.45)
+    eixo = fig.subplots()
+    eixo.axhspan(-2.5, 2.5, color=COR["modelo"], alpha=0.10, linewidth=0, zorder=1, label=estilo.t("meio_ciclo"))
+    eixo.axhline(0, color=COR["modelo"], linewidth=0.6, alpha=0.8, zorder=2)
+    controle_t = [m / fs for m in meios if 4000 <= m <= len(sinal) - 4000][: len(trocas.controle_ns)]
+    eixo.plot(controle_t, trocas.controle_ns[: len(controle_t)], linestyle="none", marker=".",
+              color=COR["secundaria"], alpha=0.6, zorder=2, label=estilo.t("controle"))
+    eixo.plot(np.array(pos_trocas[: len(trocas.eventos_ns)]) / fs, trocas.eventos_ns, linestyle="none", marker="o",
+              color=COR["tinta"], markeredgecolor="white", markeredgewidth=0.5, zorder=3, label=estilo.t("trocas"))
+    eixo.plot(np.array(pos_rebases[: len(rebases.eventos_ns)]) / fs, rebases.eventos_ns, linestyle="none",
+              marker="D", color=COR["destaque"], markeredgecolor="white", markeredgewidth=0.5, zorder=4,
+              label=estilo.t("rebases"))
+    eixo.set_ylim(-4, 4)
+    eixo.yaxis.set_major_locator(MultipleLocator(2))
+    eixo.yaxis.set_major_formatter(estilo.formatador(0))
+    eixo.xaxis.set_major_formatter(estilo.formatador(0))
+    eixo.set_xlim(0, len(sinal) / fs)
+    eixo.set_xlabel(estilo.t("tempo_captura"))
+    eixo.set_ylabel(estilo.t("degrau_ns"))
+    eixo.legend(loc="lower left", ncols=2)
+
+    def media_erro(d):
+        v = np.asarray(d.eventos_ns)
+        return float(v.mean()), float(v.std(ddof=1) / math.sqrt(len(v)))
+    mt, et = media_erro(trocas)
+    mr, er = media_erro(rebases)
+    pior = max([*trocas.eventos_ns, *rebases.eventos_ns], key=abs)
+    log.info(f"  {len(trocas.eventos_ns)} trocas: {mt:+.3f} ± {et:.3f} ns; {len(rebases.eventos_ns)} rebases: "
+             f"{mr:+.3f} ± {er:.3f} ns; pior {pior:+.2f} ns; controle ±{trocas.dispersao_controle_ns:.2f} ns")
+    macros = {
+        "GradeTrocasN": str(len(trocas.eventos_ns)),
+        "GradeTrocasMedia": rf"\qty{{{mt:.2f}({round(et * 100):d})}}{{\nano\second}}",
+        "GradeRebasesN": str(len(rebases.eventos_ns)),
+        "GradeRebasesMedia": rf"\qty{{{mr:.2f}({round(er * 100):d})}}{{\nano\second}}",
+        "GradeDegrauPior": rf"\qty{{{pior:.1f}}}{{\nano\second}}",
+        "GradeControle": rf"\qty{{{trocas.dispersao_controle_ns:.2f}}}{{\nano\second}}",
+        "GradeCiclosRebase": str(cab.ciclos_rebase),
+        "GradeDuracaoLonga": rf"\qty{{{len(sinal) / fs / 60:.0f}}}{{\minute}}",
+    }
+    comentarios = [f"Captura: {CAPTURA_LONGA_GRADE.relative_to(DADOS)} ({cab.versao_firmware}), f0 = {f0:.4f} Hz",
+                   "Degrau = fase do tom ajustada 4000 amostras depois menos 4000 antes, em ns; na PRU, um degrau "
+                   "só pode valer múltiplos de 5 ns (1 ciclo)."]
+    return Resultado(fig, macros, comentarios)
+
+
+@figura("grade_teto", "T7f: amostras fora da grade contra a taxa, 1 tick por vez (o teto com período constante)")
+def grade_teto(estilo: Estilo) -> Resultado:
+    resumo = PASTA_T7F / "resumo.csv"
+    _exigir(resumo)
+    with open(resumo, newline="", encoding="utf-8") as arquivo:
+        linhas = list(csv.DictReader(arquivo))
+    teto = sorted((int(round(200e6 / int(li["taxa_pedida_hz"]))), int(li["amostras_atrasadas"]),
+                   li["folga_ciclos"]) for li in linhas if li["parte"] == "J")
+    ticks = np.array([x[0] for x in teto])
+    atrasadas = np.array([x[1] for x in teto])
+    taxa = 200e6 / ticks / 1e3
+    folgas = [int(li["folga_ciclos"]) for li in linhas if li["parte"] in "GHK" and li["folga_ciclos"]]
+    exato = ticks[atrasadas == 0].min()
+    ultimo_exato_seguido = min(t for t in ticks if np.all(atrasadas[ticks >= t] == 0))
+    comuns = ticks[atrasadas > 2].max()
+    todas = ticks[atrasadas >= 0.99 * 2 * 1048576 - 64].max()
+
+    fig = estilo.nova_figura(0.45)
+    eixo = fig.subplots()
+    eixo.set_yscale("symlog", linthresh=1, linscale=0.6)
+    eixo.plot(taxa, atrasadas, marker="o", color=COR["tinta"], markeredgecolor="white", markeredgewidth=0.5,
+              linewidth=0.6, zorder=3)
+    eixo.axvline(312.5, color=COR["modelo"], linewidth=0.8, linestyle=(0, (5, 3)), zorder=2)
+    eixo.annotate(f"{estilo.t('padrao')} ({estilo.num(312.5, 1)} kS/s)",
+                  xy=(312.5, 1e5), xytext=(4, 0), textcoords="offset points", color=COR["modelo"],
+                  fontsize=estilo.formato.fonte_ticks_pt, va="center")
+    eixo.set_xlabel(estilo.t("taxa_ks"))
+    eixo.set_ylabel(estilo.t("atrasadas"))
+    eixo.xaxis.set_major_formatter(estilo.formatador(0))
+    eixo.set_ylim(-0.3, 4e6)
+    log.info(f"  sem nenhuma atrasada até {ultimo_exato_seguido} ticks ({200e3 / ultimo_exato_seguido:.2f} kS/s); "
+             f"amostras comuns atrasadas a partir de {comuns} ticks ({200e3 / comuns:.1f} kS/s); todas a partir de "
+             f"{todas} ticks ({200e3 / todas:.1f} kS/s); folga mínima no padrão: {min(folgas)} ciclos")
+    macros = {
+        "GradeFolgaMin": str(min(folgas)),
+        "GradeFolgaMinNs": rf"\qty{{{5 * min(folgas)}}}{{\nano\second}}",
+        "GradeTetoConstante": rf"\num{{{200e3 / ultimo_exato_seguido:.1f}}}",
+        "GradeTetoTrocas": rf"\num{{{200e3 / (comuns + 1):.1f}}}",
+        "GradeTetoComuns": rf"\num{{{200e3 / comuns:.1f}}}",
+        "GradeTetoTodas": rf"\num{{{200e3 / todas:.1f}}}",
+    }
+    comentarios = [f"Dados: {resumo.relative_to(DADOS)} (parte J: 2 blocos por taxa, 1 troca de buffer cada)",
+                   f"Taxas em kS/s; folga mínima das capturas G/H/K no padrão: {sorted(folgas)} ciclos; "
+                   f"a 1ª taxa sem atrasada depois de outra com atrasada é {200e3 / exato:.2f} kS/s (aleatório)."]
+    return Resultado(fig, macros, comentarios)
+
+
 # ---- figuras de tela (README) ---------------------------------------------------------------------------
 # O GitHub mostra o README claro ou escuro conforme o visitante: fundo transparente e só cores legíveis nos dois
 # (contraste >= 3:1 contra o branco e contra o #0d1117 do tema escuro; laranja e azul separáveis também para
@@ -643,10 +875,16 @@ def main(argv: list[str] | None = None) -> int:
     saida = args.saida or PASTA_FIGURAS
     sufixo = "" if (args.formato, args.idioma) == ("relatorio", "pt") else f"_{args.formato}_{args.idioma}"
 
+    faltaram = []
     for nome in args.nomes or list(FIGURAS):
         funcao, _ = FIGURAS[nome]
         log.info(f"{nome}:")
-        resultado = funcao(estilo)
+        try:
+            resultado = funcao(estilo)
+        except FileNotFoundError as erro:          # figura de bancada sem as capturas aqui: as outras seguem
+            log.warning(f"{nome}: {erro}")
+            faltaram.append(nome)
+            continue
         if resultado.destino is not None:       # figura do README: arquivo fixo, sem data (não muda à toa no git)
             destino = args.saida / resultado.destino.name if args.saida else resultado.destino
             destino.parent.mkdir(parents=True, exist_ok=True)
@@ -664,7 +902,7 @@ def main(argv: list[str] | None = None) -> int:
         if resultado.macros:
             escrever_macros(base.with_suffix(".tex"), nome, resultado)
         log.info(f"  -> {_relativo(base.with_suffix('.pdf'))}")
-    return 0
+    return 1 if faltaram and args.nomes else 0
 
 
 if __name__ == "__main__":

@@ -1123,8 +1123,9 @@ do ADC ou do gerador, e foi a dependência com a inclinação do tom que apontou
 Em ordem de prioridade, a mesma da tabela [Estado da campanha](lab-procedure.md#estado-da-campanha) do roteiro:
 
 1. **Mais folga na troca de buffer (Marco 16):** a 312,5 kS/s sobram 3 ciclos. Tirar da troca o que pode esperar
-   a amostra seguinte e a espera mínima de CS alto do caminho em dia; validar com `./varrer_taxa.sh --grade`
-   (~15 min). E a foto do CS no osciloscópio (a próxima descida, com persistência).
+   a amostra seguinte e a espera mínima de CS alto do caminho em dia; conferir que a memória dos buffers está fora
+   do Linux (hoje, só o `mem=496M` da placa garante); validar com `./varrer_taxa.sh --grade` (~15 min). E a foto do
+   CS no osciloscópio. A avaliação completa do firmware está em [`improvement-proposals.md`](improvement-proposals.md#avaliação-do-firmware-22102026).
 2. **A campanha do limite (Marco 15).** O padrão do firmware passou a 312,5 kS/s com as esperas no mínimo do datasheet (`3,1,3`), para a Nyquist passar de 150 kHz. `./varrer_taxa.sh --limite` (~35 min) valida o padrão e a correção do rebase (10 min no padrão) e mede o limite em passos de 1 tick (5 ns), de 303 a 333 kS/s, com `3,1,3` e `6,2,6`: o teto, a zona de transição (a primeira amostra atrasada) e a qualidade até ele, para descrever o hardware com precisão no relatório.
 3. **Refazer na taxa padrão (312,5 kS/s)** o que depende da banda: T1, T3 (inteiro, com `--repeticoes 3`), T4 e T6, como manda a tabela [O que refazer com o firmware de out/2026](lab-procedure.md#o-que-refazer-com-o-firmware-de-out2026). O teto (326 kS/s) está no Marco 15; falta fotografar o CS no osciloscópio (a anatomia do quadro).
 4. **Calibração da sonda de corrente (T10)**, o objetivo central, **depois** do T7e: o perfil vale até 0,9 × Nyquist da taxa em que é medido. O fluxo já rodou com hardware real na cadeia de tensão (Marco 12); falta o SCT013 e a validação em frequências que não entraram no perfil (*hold-out*). A sensibilidade de 60 µV/A sobre o resistor de carga é o maior risco (roteiro, fato 5).
@@ -1309,7 +1310,7 @@ Sugestão: manter os capítulos do relatório parcial, para que o leitor da FAPE
 
 ## 8. Números para Citar
 
-Os números do projeto num lugar só, com a condição e a fonte. Os valores medidos referem-se ao canal 1 (divisor de tensão) e a 19/10/2026, salvo indicação.
+Os números do projeto num lugar só, com a condição e a fonte. Os valores medidos referem-se ao canal 1 (divisor de tensão) e a 19/10/2026, salvo indicação. O registro completo de cada teste (data, firmware, pasta dos dados, condições, as figuras e as macros do LaTeX) está em [`bench-results.md`](bench-results.md).
 
 | Grandeza | Valor | Condição | Fonte |
 |---|---|---|---|
@@ -1336,7 +1337,7 @@ Os números do projeto num lugar só, com a condição e a fonte. Os valores med
 | Degrau nas trocas de buffer (firmware `v0.7`) | +0,3 ns (±0,1 ns longe delas) | 312,5 kS/s, 2 trocas | T7f; Marco 16 |
 | Jitter de amostragem (firmware de 22/10) | 0,00 ns (piso do método ~0,3 ns) | 100 e 312,5 kS/s, 1 e 2 canais, com o ARM ocupado | T7f; Marco 16 |
 | Degraus de tempo (firmware de 22/10) | 89 trocas: −0,03 ± 0,03 ns; 28 rebases: −0,04 ± 0,07 ns (zero ciclo em todos) | 5 min a 312,5 kS/s | T7f; Marco 16 |
-| Ruído com o tom de 10 kHz, fora de ±5 Hz dele | 2,23 → 0,77 LSB (= o ruído em curto); SNR 64,0 → 69,4 dB em 10 s | ±2,56 V, 312,5 kS/s | T7f; Marco 16 |
+| Ruído com o tom de 10 kHz, fora de ±50 Hz dele e dos harmônicos | 2,23 → 0,77 LSB (= o ruído em curto); SNR 64,0 → 69,4 dB em 10 s | ±2,56 V, 312,5 kS/s | T7f; Marco 16 |
 | Folga da PRU a 312,5 kS/s | 3 a 5 ciclos (15 a 25 ns); teto com período constante ~315 kS/s | troca de buffer ~636 ciclos, quadro comum ~620 | T7f; Marco 16 |
 | Quadro SPI da PRU | 1 395 ciclos (6,98 µs; transação com o CS baixo: 1 166 ciclos), dos quais 800 (57 %) são as esperas do CS; em geral, 595 + 2 × (S + H + A) ciclos | simulador do `spi_core.asm` | Marco 13; roteiro, T7e |
 | Teto de taxa | ~130 kS/s observados e ~140 kS/s pelo simulador; ~330 kS/s no papel com as esperas mínimas do datasheet | a medir no T7e | Marco 13 |

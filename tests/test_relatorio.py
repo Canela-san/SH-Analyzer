@@ -91,3 +91,34 @@ def test_figura_do_readme_sai_em_svg_transparente_e_igual_a_cada_execucao(gf, tm
     assert svg == (tmp_path / "b" / "voltage-chain-response.svg").read_bytes()   # nada de data nem ids aleatórios
     assert b"<dc:date>" not in svg and b"<text" not in svg                       # texto em curvas
     assert not (tmp_path / "a" / "readme_cadeia_tensao.pdf").exists()
+
+
+def test_figuras_de_bancada_sem_as_capturas_sao_puladas(gf, tmp_path, monkeypatch, capsys):
+    """Sem $DADOS (a CI, outro computador), as figuras do T7f avisam e as outras saem; pedida pelo nome, o código
+    de saída é 1."""
+    monkeypatch.setattr(gf, "PASTA_T7F", tmp_path / "nada")
+    assert gf.main(["grade_teto", "--sem-latex", "--saida", str(tmp_path)]) == 1
+    assert "faltam as capturas" in capsys.readouterr().err and not (tmp_path / "grade_teto.pdf").exists()
+
+
+def test_teto_com_periodo_constante_sai_do_resumo_da_varredura(gf, tmp_path, monkeypatch):
+    """A parte J do resumo.csv: a maior taxa sem nenhuma atrasada daí para baixo, onde as amostras comuns começam a
+    atrasar e onde todas atrasam; e a menor folga das capturas no padrão."""
+    pasta = tmp_path / "T7f"
+    pasta.mkdir()
+    linhas = ["parte,arquivo,esperas_cs,taxa_pedida_hz,canais,entrada,amostras_atrasadas,buffers_sobrescritos,"
+              "quadros_sdo_ruido,taxa_arm_hz,desvio_arm_pct,codigo_saida,folga_ciclos,atraso_max_ciclos",
+              'G,g.bin,"padrao",312500,"1",tom,0,0,0,312500,+0.00,0,4,',
+              'H,h.bin,"padrao",312500,"1",tom,0,0,0,312500,+0.00,0,3,']
+    atrasadas = {640: 0, 639: 0, 638: 1, 637: 0, 636: 5, 635: 2097151}
+    for ticks, n in atrasadas.items():
+        linhas.append(f'J,j{ticks}.bin,"padrao",{200_000_000 // ticks},"1",tom,{n},0,0,0,+0.00,0,,')
+    (pasta / "resumo.csv").write_text("\n".join(linhas) + "\n")
+    monkeypatch.setattr(gf, "PASTA_T7F", pasta)
+    monkeypatch.setattr(gf, "DADOS", tmp_path)
+    assert gf.main(["grade_teto", "--sem-latex", "--saida", str(tmp_path)]) == 0
+    macros = (tmp_path / "grade_teto.tex").read_text()
+    assert r"\GradeFolgaMin}{3}" in macros
+    assert r"\GradeTetoConstante}{\num{313.0}}" in macros                 # 639 ticks: daí para cima, nenhuma
+    assert r"\GradeTetoComuns}{\num{314.5}}" in macros                    # 636 ticks: mais de 2 atrasadas
+    assert r"\GradeTetoTodas}{\num{315.0}}" in macros                     # 635 ticks: todas

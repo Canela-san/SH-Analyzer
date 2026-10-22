@@ -140,6 +140,7 @@ A taxa, os canais e as faixas vêm do cabeçalho, então não é preciso inform�
 | Medir ruído, SINAD, ENOB e diafonia para o relatório | `medir_captura.py` | [Medir uma captura](docs/user-guide.md#medir-uma-captura-para-o-relatório-medir_capturapy) |
 | Arquivar capturas sem perdas (~11 % do tamanho, conferido bit a bit) | `compactar_amostras.py` | [Guardar as capturas](docs/user-guide.md#guardar-as-capturas-sem-perdas-compactar_amostraspy) |
 | Saber onde guardar os dados | a variável `DADOS` | [Onde guardar os dados](docs/user-guide.md#onde-guardar-os-dados) |
+| Ver o que já foi medido, com os números para o relatório | os resultados de bancada | [`docs/bench-results.md`](docs/bench-results.md) |
 | Validar o instrumento em bancada | testes T0 a T11 | [Roteiro de laboratório](docs/lab-procedure.md) |
 
 ## 📈 FFT ou Welch?

@@ -514,24 +514,8 @@ def estimar_jitter(sinal: np.ndarray, fs: float, freq_hz: float,
     n_blocos = len(sinal) // bloco if bloco > 0 else 0
     if n_blocos < 4 or not 0 < freq_hz < fs / 2:
         return None
-    omega = 2.0 * math.pi * freq_hz / fs
-    t = np.arange(bloco, dtype=np.float64) - (bloco - 1) / 2.0
-    colunas = [np.ones(bloco)]
-    for h in range(1, HARMONICOS_JITTER + 1):
-        colunas += [np.cos(h * omega * t), np.sin(h * omega * t)]
-    colunas += [t * np.cos(omega * t), t * np.sin(omega * t)]
-    base = np.column_stack(colunas)
-    projecao = np.linalg.pinv(base)
-    cos1, sen1 = np.cos(omega * t), np.sin(omega * t)
     c0_todos, c1_todos = [], []
-    por_vez = max(1, (1 << 21) // bloco)
-    for inicio in range(0, n_blocos, por_vez):
-        fim = min(n_blocos, inicio + por_vez)
-        x = np.asarray(sinal[inicio * bloco:fim * bloco], dtype=np.float64).reshape(fim - inicio, bloco)
-        coef = x @ projecao.T
-        r2 = (x - coef @ base.T) ** 2
-        # derivada (por amostra) de a·cos(ωt) + b·sin(ωt)
-        d2 = (omega * (coef[:, 2:3] * cos1 - coef[:, 1:2] * sen1)) ** 2
+    for r2, d2 in _residuos_e_inclinacoes(sinal, 2.0 * math.pi * freq_hz / fs, bloco, n_blocos):
         media_d2, media_r2 = d2.mean(axis=1), r2.mean(axis=1)
         dd = d2 - media_d2[:, None]
         variancia = np.maximum((dd * dd).mean(axis=1), _TINY)
@@ -542,6 +526,49 @@ def estimar_jitter(sinal: np.ndarray, fs: float, freq_hz: float,
     c0_mediano = float(np.median(np.concatenate(c0_todos)))
     return Jitter(rms_ns=math.sqrt(max(c1_mediano, 0.0)) / fs * 1e9, ruido_plano=math.sqrt(max(c0_mediano, 0.0)),
                   blocos=n_blocos)
+
+
+def _residuos_e_inclinacoes(sinal: np.ndarray, omega: float, bloco: int, n_blocos: int):
+    """Para cada lote de blocos: (resíduo², inclinação²) por amostra, com o tom ajustado bloco a bloco (DC,
+    fundamental com deriva linear de fase e amplitude, harmônicos até o 5º). A inclinação é a da fundamental, na
+    unidade do sinal por amostra. Lê o sinal em lotes (serve um memmap de horas)."""
+    t = np.arange(bloco, dtype=np.float64) - (bloco - 1) / 2.0
+    colunas = [np.ones(bloco)]
+    for h in range(1, HARMONICOS_JITTER + 1):
+        colunas += [np.cos(h * omega * t), np.sin(h * omega * t)]
+    colunas += [t * np.cos(omega * t), t * np.sin(omega * t)]
+    base = np.column_stack(colunas)
+    projecao = np.linalg.pinv(base)
+    cos1, sen1 = np.cos(omega * t), np.sin(omega * t)
+    por_vez = max(1, (1 << 21) // bloco)
+    for inicio in range(0, n_blocos, por_vez):
+        fim = min(n_blocos, inicio + por_vez)
+        x = np.asarray(sinal[inicio * bloco:fim * bloco], dtype=np.float64).reshape(fim - inicio, bloco)
+        coef = x @ projecao.T
+        r2 = (x - coef @ base.T) ** 2
+        # derivada (por amostra) de a·cos(ωt) + b·sin(ωt)
+        yield r2, (omega * (coef[:, 2:3] * cos1 - coef[:, 1:2] * sen1)) ** 2
+
+
+def ruido_por_inclinacao(sinal: np.ndarray, fs: float, freq_hz: float, faixas: int = 12,
+                         amostras_por_bloco: int = AMOSTRAS_POR_BLOCO_JITTER) -> tuple[np.ndarray, np.ndarray]:
+    """O ruído RMS do resíduo em faixas de inclinação do tom: a "assinatura" do jitter (o ruído cresce com a
+    inclinação) que :func:`estimar_jitter` resume num número. Devolve (inclinação no centro de cada faixa, em unidade
+    do sinal por SEGUNDO; ruído RMS na faixa); faixas iguais de 0 à inclinação máxima."""
+    bloco = int(amostras_por_bloco)
+    n_blocos = len(sinal) // bloco
+    soma = np.zeros(faixas)
+    contagem = np.zeros(faixas)
+    maximo = None
+    for r2, d2 in _residuos_e_inclinacoes(sinal, 2.0 * math.pi * freq_hz / fs, bloco, n_blocos):
+        d = np.sqrt(d2)
+        if maximo is None:
+            maximo = float(np.percentile(d, 99.9)) or 1.0
+        indice = np.minimum((d / maximo * faixas).astype(int), faixas - 1)
+        soma += np.bincount(indice.ravel(), weights=r2.ravel(), minlength=faixas)
+        contagem += np.bincount(indice.ravel(), minlength=faixas)
+    centros = (np.arange(faixas) + 0.5) / faixas * (maximo or 0.0) * fs
+    return centros, np.sqrt(soma / np.maximum(contagem, 1))
 
 
 def _fase_no_ponto(trecho: np.ndarray, omega: float, t: np.ndarray) -> float:
