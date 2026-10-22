@@ -33,6 +33,7 @@ from .contexto import ContextoCaptura, aplicar_correcao_sondas, resolver_context
 from .erros import ErroSHAN, ErroUso
 from .metricas_captura import (
     HARMONICOS_PADRAO,
+    SNR_MINIMO_GRADE_DB,
     Acoplamento,
     Basicas,
     Continuidade,
@@ -668,6 +669,9 @@ def _medir_canal(canal: int, sinal: np.ndarray, corrigido: bool, saturacao: floa
                              ctx.num_canais, por_canal, not args.sem_tom)
     jitter, degraus_trocas, degraus_rebases = _grade_do_canal(sinal, espectro, ctx, inicio, fs_canal)
     linhas += _formatar_grade(jitter, degraus_trocas, degraus_rebases, lsb)
+    if espectro.tem_tom and jitter is None:
+        linhas.append(_campo("jitter de amostragem", f"não medido: o tom está só {espectro.snr_db:.0f} dB acima do ruído "
+                                                     f"(precisa de {SNR_MINIMO_GRADE_DB:.0f})"))
     dica = _dica_troca_de_buffer(cont, trocas, ctx, inicio, fs_canal)
     if dica:
         linhas.append(dica)
@@ -688,8 +692,9 @@ def _medir_canal(canal: int, sinal: np.ndarray, corrigido: bool, saturacao: floa
 
 def _grade_do_canal(sinal: np.ndarray, espectro: Espectro, ctx: ContextoCaptura, inicio: int,
                     fs_canal: float) -> tuple[Jitter | None, Degraus | None, Degraus | None]:
-    """Jitter (só com tom) e os degraus de tempo nas trocas de buffer e nos rebases do contador (só com cabeçalho)."""
-    if not espectro.tem_tom:
+    """Jitter e os degraus de tempo nas trocas de buffer e nos rebases do contador (só com cabeçalho), medidos num
+    tom ao menos ``SNR_MINIMO_GRADE_DB`` acima do ruído."""
+    if not espectro.tem_tom or not espectro.snr_db >= SNR_MINIMO_GRADE_DB:
         return None, None, None
     jitter = estimar_jitter(sinal, fs_canal, espectro.freq_tom_hz)
     cab = ctx.cabecalho

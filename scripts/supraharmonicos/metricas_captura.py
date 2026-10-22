@@ -68,6 +68,8 @@ CICLOS_MINIMOS_POR_SEGMENTO = 10
 AMOSTRAS_POR_BLOCO_JITTER = 2000   # curto: a deriva lenta de fase do gerador fica no ajuste (ver estimar_jitter)
 HARMONICOS_JITTER = 5
 JANELA_DEGRAU = 4000            # amostras de cada lado de um evento para medir o degrau de tempo nele
+SNR_MINIMO_GRADE_DB = 30.0      # jitter e degraus só com o tom bem acima do ruído (a diafonia de -97 dB num canal
+                                # em curto passa como "tom" numa FFT longa, e daria microssegundos de jitter)
 _CHUNK_PROJECAO = 1 << 20
 _TINY = 1e-300
 

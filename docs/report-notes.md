@@ -1099,9 +1099,20 @@ Aplicadas às capturas de 21/10, as duas medidas apontaram o último defeito da 
 
 No simulador, com latências de memória hipotéticas e escritas na DDR atrasadas ao acaso, todo intervalo entre amostras
 é o período exato, ao ciclo. Para caber, o AUTO_RST passou a reaproveitar o corpo da configuração: a PRU foi de 1 876
-para ~1 400 instruções (92 % → 69 % da IMEM). **Falta a bancada** (o [T7f](lab-procedure.md#t7f-o-período-entre-amostras-a-grade-de-tempo)):
-se o jitter cair para < 1 ns, ele era da PRU, e o ruído com o tom de 10 kHz deve cair para perto dos 0,8 LSB do ADC
-(SNR de ~64 para ~73 dB).
+para ~1 400 instruções (92 % → 69 % da IMEM).
+
+**Validado na bancada em 22/10/2026** (o [T7f](lab-procedure.md#t7f-o-período-entre-amostras-a-grade-de-tempo), 46
+capturas, o tom de 10 kHz de 21/10):
+
+1. **O jitter caiu de 8,5 ns para 0,00 ns** (abaixo do piso de ~0,3 ns do método): era da PRU.
+2. **O ruído com o tom caiu de 2,23 para 0,77 LSB**, o ruído do ADC com a entrada em curto: SNR de 64,0 para
+   69,4 dB e SINAD de 63,4 para 67,4 dB em 10 s. O que sobra é do gerador (ruído de fase a menos de 5 Hz do tom e a
+   THD de −72 dB).
+3. **Nenhum degrau** em 89 trocas de buffer (−0,03 ± 0,03 ns) e 28 rebases (−0,04 ± 0,07 ns) em 5 min. Na PRU, um
+   degrau vale múltiplos de 5 ns: todos foram de zero ciclo. O rebase autocalibrado mediu 7 ciclos (o simulador, 2).
+4. **Nenhuma amostra fora da grade a 312,5 kS/s**, em 5 min, com o ARM ocupado e com 2 canais. A folga, porém, é de
+   3 a 5 ciclos (o simulador dava 25): na PRU de verdade, a troca de buffer leva ~636 ciclos. O teto com período
+   constante é ~315 kS/s; até ~322 kS/s, só a troca de buffer sai atrasada.
 
 **Relevância para o relatório:** fecha a pergunta "a grade de tempo é exata?" com números (folga em ciclos, jitter e
 degraus em ns), e não com "não vimos problema". É um bom exemplo de medida que separa causas: o ruído alto parecia
@@ -1111,8 +1122,9 @@ do ADC ou do gerador, e foi a dependência com a inclinação do tom que apontou
 
 Em ordem de prioridade, a mesma da tabela [Estado da campanha](lab-procedure.md#estado-da-campanha) do roteiro:
 
-1. **A grade de tempo (Marco 16):** `./varrer_taxa.sh --grade` (~15 min, o [T7f](lab-procedure.md#t7f-o-período-entre-amostras-a-grade-de-tempo)),
-   com o osciloscópio no CS (a próxima descida, com persistência).
+1. **Mais folga na troca de buffer (Marco 16):** a 312,5 kS/s sobram 3 ciclos. Tirar da troca o que pode esperar
+   a amostra seguinte e a espera mínima de CS alto do caminho em dia; validar com `./varrer_taxa.sh --grade`
+   (~15 min). E a foto do CS no osciloscópio (a próxima descida, com persistência).
 2. **A campanha do limite (Marco 15).** O padrão do firmware passou a 312,5 kS/s com as esperas no mínimo do datasheet (`3,1,3`), para a Nyquist passar de 150 kHz. `./varrer_taxa.sh --limite` (~35 min) valida o padrão e a correção do rebase (10 min no padrão) e mede o limite em passos de 1 tick (5 ns), de 303 a 333 kS/s, com `3,1,3` e `6,2,6`: o teto, a zona de transição (a primeira amostra atrasada) e a qualidade até ele, para descrever o hardware com precisão no relatório.
 3. **Refazer na taxa padrão (312,5 kS/s)** o que depende da banda: T1, T3 (inteiro, com `--repeticoes 3`), T4 e T6, como manda a tabela [O que refazer com o firmware de out/2026](lab-procedure.md#o-que-refazer-com-o-firmware-de-out2026). O teto (326 kS/s) está no Marco 15; falta fotografar o CS no osciloscópio (a anatomia do quadro).
 4. **Calibração da sonda de corrente (T10)**, o objetivo central, **depois** do T7e: o perfil vale até 0,9 × Nyquist da taxa em que é medido. O fluxo já rodou com hardware real na cadeia de tensão (Marco 12); falta o SCT013 e a validação em frequências que não entraram no perfil (*hold-out*). A sensibilidade de 60 µV/A sobre o resistor de carga é o maior risco (roteiro, fato 5).
@@ -1322,6 +1334,10 @@ Os números do projeto num lugar só, com a condição e a fonte. Os valores med
 | Salto medido nas trocas × fora delas | 6,96 µs × 0,01 a 0,04 µs (critério: 10 vezes e 0,05 µs) | `medir_captura.py`, 1 a 8 canais | T6, T7; Marco 14 |
 | Jitter de amostragem (firmware `v0.7`) | 8,5 ns rms, igual de 100 a 312,5 kS/s e de 3,1,3 a 200,100,100; triplica o ruído com um tom de 10 kHz (2,46 contra 0,78 LSB) | capturas de 21/10, tom de 10 kHz em ±2,56 V | T7f; Marco 16 |
 | Degrau nas trocas de buffer (firmware `v0.7`) | +0,3 ns (±0,1 ns longe delas) | 312,5 kS/s, 2 trocas | T7f; Marco 16 |
+| Jitter de amostragem (firmware de 22/10) | 0,00 ns (piso do método ~0,3 ns) | 100 e 312,5 kS/s, 1 e 2 canais, com o ARM ocupado | T7f; Marco 16 |
+| Degraus de tempo (firmware de 22/10) | 89 trocas: −0,03 ± 0,03 ns; 28 rebases: −0,04 ± 0,07 ns (zero ciclo em todos) | 5 min a 312,5 kS/s | T7f; Marco 16 |
+| Ruído com o tom de 10 kHz, fora de ±5 Hz dele | 2,23 → 0,77 LSB (= o ruído em curto); SNR 64,0 → 69,4 dB em 10 s | ±2,56 V, 312,5 kS/s | T7f; Marco 16 |
+| Folga da PRU a 312,5 kS/s | 3 a 5 ciclos (15 a 25 ns); teto com período constante ~315 kS/s | troca de buffer ~636 ciclos, quadro comum ~620 | T7f; Marco 16 |
 | Quadro SPI da PRU | 1 395 ciclos (6,98 µs; transação com o CS baixo: 1 166 ciclos), dos quais 800 (57 %) são as esperas do CS; em geral, 595 + 2 × (S + H + A) ciclos | simulador do `spi_core.asm` | Marco 13; roteiro, T7e |
 | Teto de taxa | ~130 kS/s observados e ~140 kS/s pelo simulador; ~330 kS/s no papel com as esperas mínimas do datasheet | a medir no T7e | Marco 13 |
 | Esperas do CS | 2,0 / 1,0 / 1,0 µs contra 30 / 10 / 30 ns do datasheet | tabela 7.6 do SBAS582C | Marco 13 |

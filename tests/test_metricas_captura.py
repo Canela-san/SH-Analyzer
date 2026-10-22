@@ -767,3 +767,19 @@ def test_medir_captura_mostra_o_jitter_e_os_degraus_e_a_grade_da_pru(cli, tmp_pa
     assert float(linha["degrau_trocas_ns"]) == pytest.approx(5.0, abs=2.5)     # mediana de 0 e 10 ns
     assert linha["folga_minima_ciclos"] == "25" and linha["atraso_maximo_ciclos"] == "0"
     assert set(COLUNAS_CSV) >= {"jitter_ns", "degrau_rebases_ns", "folga_minima_ciclos"}
+
+
+
+def test_medir_captura_nao_estima_jitter_num_tom_fraco(cli, tmp_path):
+    """Um tom 20 dB abaixo do ruído (como a diafonia num canal em curto) ainda é achado na FFT longa, mas não serve
+    para medir o tempo: o jitter e os degraus ficam de fora, com o motivo."""
+    sinal = tom_com_jitter(0.0, n=1 << 19, amplitude=0.3, deriva=0.0)
+    caminho = tmp_path / "fraco.bin"
+    caminho.write_bytes(montar_cabecalho(1 << 19, (1,), (0,), ("",), int(FS_312K), versao=6, blocos=2,
+                                         amostras_por_buffer=1 << 18) + sinal.astype("<u2").tobytes())
+    saida = tmp_path / "fraco.csv"
+    rc, out, err = cli(main, caminho, "--freq", str(F_TOM), "--csv", saida)
+    assert rc == 0, err
+    assert "jitter de amostragem  : não medido: o tom está só" in out and "degraus de tempo" not in out
+    (linha,) = ler_csv(saida)
+    assert linha["jitter_ns"] == "" and linha["degrau_trocas_ns"] == ""

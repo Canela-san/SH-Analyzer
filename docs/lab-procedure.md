@@ -39,7 +39,7 @@ Atualize esta tabela a cada ida ao laboratório: ela é o resumo do avanço para
 | [T4](#t4-frequência-de-amostragem-real) | 🟡 19/10 | Taxa = 200 MHz ÷ ticks confirmada (102,4 kS/s: −64,0 ppm; 110 kS/s: −100,0 ppm; as exatas concordam em 0,02 ppm) | Leitura do contador do osciloscópio (separa gerador e cristal: hoje, −43,2 ppm somados) |
 | [T5](#t5-distorção-e-faixa-dinâmica) | ⏳ | Prévia, das capturas do T4: SINAD 61 dB e ENOB 14,4 bits com o tom em −27,5 dBFS; THD −71,6 dB, limitado pelo gerador | Tudo |
 | [T6](#t6-vários-canais-diafonia-e-atraso) | 🟡 19/10 | Diafonia 1 → 0 de −94,7 dB em 10 kHz; atraso entre canais 9,954 µs (esperado 10,000) | Refazer o ponto de 40 kHz em **20 kHz** (com 2 canais a Nyquist é 25 kHz) |
-| [T7](#t7-integridade-e-limite-de-taxa) | 🟡 21/10 | O salto de 7 µs nas trocas de buffer sumiu (≤ 0,06 µs). [T7e](#t7e-onde-está-o-limite-de-taxa): as esperas do CS descem ao piso do datasheet (`3,1,3`) sem perda nenhuma; teto de 326 kS/s; **trabalho proposto: `6,2,6` a 250 kS/s; o padrão ficou em `3,1,3` a 312,5 kS/s**. Achado: degrau de 5 a 13 µs a cada 10,74 s (o rebase do contador), corrigido no firmware | **[T7f](#t7f-o-período-entre-amostras-a-grade-de-tempo), a grade de tempo** ([passo a passo](#passo-a-passo-da-próxima-ida-a-grade-de-tempo-t7f)): o firmware de 22/10 tira o jitter de 8,5 ns achado nas capturas de 21/10. Depois, a campanha do limite ([passo a passo](#passo-a-passo-da-próxima-ida-a-campanha-do-limite-3125-kss)); T7d |
+| [T7](#t7-integridade-e-limite-de-taxa) | 🟡 21/10 | O salto de 7 µs nas trocas de buffer sumiu (≤ 0,06 µs). [T7e](#t7e-onde-está-o-limite-de-taxa): as esperas do CS descem ao piso do datasheet (`3,1,3`) sem perda nenhuma; teto de 326 kS/s; **trabalho proposto: `6,2,6` a 250 kS/s; o padrão ficou em `3,1,3` a 312,5 kS/s**. Achado: degrau de 5 a 13 µs a cada 10,74 s (o rebase do contador), corrigido no firmware | ✅ 22/10: **[T7f](#t7f-o-período-entre-amostras-a-grade-de-tempo)**, a grade exata: jitter de 8,5 → 0,00 ns, degraus de 0 ciclo, ruído com o tom de 2,23 → 0,77 LSB, nenhuma atrasada a 312,5 kS/s (folga de 3 ciclos). Falta: mais folga na troca de buffer (firmware) e a foto do CS; T7d |
 | [T8](#t8-aliasing) a [T11](#t11-ponta-a-ponta) | ⏳ | — | Tudo; o T10 é o objetivo central |
 
 ### Passo a passo da próxima ida: a grade de tempo (T7f)
@@ -1335,6 +1335,36 @@ caminho do CS. O osciloscópio separa os dois (etapa 4 do passo a passo).
 **Para o relatório.** A tabela acima, antes e depois. O ruído e o SNR do tom de 10 kHz antes e depois, que é o
 efeito visível da correção. A folga e o teto com período constante. É a evidência de que "o instrumento amostra numa
 grade de tempo exata", que vale tanto quanto a integridade das amostras para medir supraharmônicos.
+
+**Executado em 22/10/2026** (firmware `v0.7-1-gb2f9078`, protocolo 2; `./varrer_taxa.sh --grade`, 46 capturas com o
+tom de 10 kHz em ±2,56 V; `$DADOS/lab/2026-10-22/T7f_2026-10-22_0435/`). O firmware compilou no `clpru` de primeira.
+
+| O que | Medido | Antes (21/10) |
+|---|---|---|
+| Amostras atrasadas a 312,5 kS/s | **0** em 60 s, 5 min, 60 s com o ARM ocupado e 60 s com 2 canais | — |
+| Folga mínima a 312,5 kS/s | **3 a 5 ciclos** (15 a 25 ns); o simulador dava 25 | não medida |
+| Jitter de amostragem | **0,00 ns** (abaixo do piso de ~0,3 ns do método), em todas as capturas | 8,5 ns |
+| Degrau nas trocas de buffer (5 min) | 89 trocas: −0,03 ± 0,03 ns (o pior, +0,8 ns) | +0,3 ns |
+| Degrau nos rebases do contador (5 min) | 28 rebases: −0,04 ± 0,07 ns (o pior, +0,8 ns); a PRU mediu 7 ciclos entre as leituras (o simulador, 2) | +4,8 a +6,6 µs (o defeito corrigido em 21/10) |
+| Ruído com o tom, fora de ±5 Hz do tom e dos harmônicos | **0,77 LSB** = o ruído do ADC em curto | 2,23 LSB |
+| SNR / SINAD (10 s, como em 21/10) | 69,4 / 67,4 dB (6,7 s: 71,2 / 68,6 dB) | 64,0 / 63,4 dB |
+| Diafonia, 2 canais a 312,5 kS/s | −97,3 dB | −94 a −95 dB (250 kS/s) |
+
+* **O jitter era da PRU** e sumiu: a espera de precisão funciona. Um degrau na PRU só pode valer múltiplos de 5 ns
+  (1 ciclo): todos os medidos ficaram abaixo de 1,6 ns, ou seja, **zero ciclos** em toda troca e todo rebase.
+* **O que sobra no SINAD é do gerador:** o ruído a menos de 5 Hz do tom (o ruído de fase dele, ±0,7 a 1 Hz a −72 a
+  −80 dBc) e a THD de −72 dB. Por isso uma FFT de 60 s dá SINAD menor (~60 dB) que uma de 10 s: ela resolve o ruído
+  de fase do gerador. Fora dele, o ruído é o do ADC.
+* **O teto com período constante (parte J, 1 troca por captura):** nenhuma atrasada até 635 ticks (314,96 kS/s); de
+  634 a 620 ticks (315,5 a 322,6 kS/s), 1 ou 2 amostras atrasadas por captura, de 1 a 13 ciclos: as **trocas de
+  buffer**; de 619 ticks em diante, também as amostras comuns; a partir de 610 ticks (327,9 kS/s), todas (o laço
+  sem espera, ~326 a 328 kS/s, como em 21/10). Na PRU de verdade, o quadro comum leva ~620 ciclos e o da troca de
+  buffer, ~636: ~18 ciclos a mais que no simulador (os acessos à memória: leitura e escrita no bloco de controle
+  levam 7 ciclos, contra 2).
+* **Decisão:** 312,5 kS/s fica como padrão: toda amostra no ciclo exato, também com o ARM ocupado (a carga custou 1
+  ciclo de folga). Mas a margem é pequena (3 ciclos). Melhoria no firmware, a validar com a mesma `--grade`: tirar
+  da troca de buffer o que pode esperar a amostra seguinte e a espera mínima de CS alto do caminho em dia (ela só
+  importa quando uma amostra sai atrasada, emendada na anterior).
 
 **Para o relatório (geral do T7).** Tabela taxa × canais × duração × nº de eventos × maior salto. É a evidência do requisito de "não corromper os dados medidos".
 

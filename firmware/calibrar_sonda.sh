@@ -353,9 +353,9 @@ Principais:
                          captura e o gerar_perfil_sonda.py/adc_tool.py usam sozinhos.
       --faixa-adc-referencia V   O mesmo para o canal de referência (--canal-referencia).
       --atraso-cs S,H,A  Esperas do CS no laço da PRU, repassadas ao ler_adc (iterações de 10 ns:
-                         setup,hold,alto; padrão do firmware 3,1,3). Só para calibrar numa
-                         taxa acima de ~140 kS/s, com os valores validados no T7e do roteiro de
-                         laboratório; cada captura é conferida (o cabeçalho tem de registrá-los).
+                         setup,hold,alto; padrão do firmware 3,1,3, o mínimo do datasheet). Só
+                         para repetir uma configuração do T7e do roteiro de laboratório; cada
+                         captura é conferida (o cabeçalho tem de registrá-los).
 
 Plano de frequências:
       --freq-min HZ      Menor frequência (padrão ${PADRAO_FREQ_MIN} Hz).
