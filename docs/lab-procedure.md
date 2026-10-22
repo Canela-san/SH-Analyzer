@@ -13,7 +13,7 @@ Pré-requisito: [`user-guide.md`](user-guide.md) (capturar e analisar). Este rot
 
 **Índice**
 
-1. [Estado da campanha](#estado-da-campanha) (o que já foi medido e o que vem a seguir) e o [passo a passo da próxima ida](#passo-a-passo-da-próxima-ida-a-grade-de-tempo-t7f)
+1. [Estado da campanha](#estado-da-campanha) (o que já foi medido e o que vem a seguir) e o [passo a passo da próxima ida](#passo-a-passo-da-próxima-ida-o-quadro-fixo-e-o-spi-rápido)
 2. [Antes de ir: o que o datasheet e o código já dizem](#antes-de-ir-o-que-o-datasheet-e-o-código-já-dizem)
 3. [Equipamentos, segurança e boas práticas](#equipamentos-segurança-e-boas-práticas)
 4. [Convenções e a ferramenta `medir_captura.py`](#convenções-e-a-ferramenta-medir_capturapy)
@@ -33,16 +33,51 @@ Os números de cada teste executado, com a data, o firmware e a pasta dos dados,
 | Teste | Situação | Resultado principal | Falta |
 |---|---|---|---|
 | [T0](#t0-preparação-e-sanidade) | ✅ 19/10 | Escala do ADC **confirmada nas três faixas** (razão 0,9997; 0,9997; 0,9992). Achado: as ~6 primeiras amostras depois de uma troca de faixa são transitório | Refazer o −10 V (as capturas "−10 V" saíram com 0 V na entrada) |
-| [T1](#t1-piso-de-ruído-entrada-em-curto) | ✅ 19/10 | Ruído de 160 / 91 / 58 µV RMS nas faixas de ±10,24 / ±5,12 / ±2,56 V, igual ao datasheet (172 / 96 / 61 µV); não muda com a taxa nem com 2 canais. Offset do canal 1: +3,5 mV (canal 0: +0,05 mV) | Pino do canal 1 em curto direto (origem do offset) |
+| [T1](#t1-piso-de-ruído-entrada-em-curto) | ✅ 19/10 e 22/10 | Ruído de 160 / 91 / 58 µV RMS nas faixas de ±10,24 / ±5,12 / ±2,56 V, igual ao datasheet (172 / 96 / 61 µV); não muda com a taxa nem com 2 canais. **A 312,5 kS/s (22/10): 169 / 95 / 62 µV**, o mesmo. Offset do canal 1: +3,5 mV (canal 0: +0,05 mV) | Pino do canal 1 em curto direto (origem do offset) |
 | [T2](#t2-tensão-contínua-ganho-offset-e-linearidade) | ✅ 19/10 | Razão real do divisor 0,051554 (`$GV` medido = 19,397; −0,03 % do nominal com a carga do ADC); resíduo de linearidade ≤ 0,22 LSB | — |
-| [T3](#t3-resposta-em-frequência-da-cadeia-de-tensão) | ✅ 19/10 | −3 dB em 17,3 kHz; 2ª ordem com f0 = 24,1 kHz e Q = 0,54 | `--repeticoes 3`; fase |
+| [T3](#t3-resposta-em-frequência-da-cadeia-de-tensão) | ✅ 19/10 e 22/10 | **Até 140 kHz a 312,5 kS/s (22/10, perfil `cadeia_tensao_312k`):** −3 dB em 16,8 kHz; 2ª ordem com f0 = 24,2 kHz e Q = 0,53 (resíduo de 0,1 dB em 3,5 décadas); −30,6 dB em 140 kHz. A 0,13 dB rms do de 19/10 | `--repeticoes 3`; fase; o instrumento da referência (caiu 14 % até 140 kHz) |
 | [T4](#t4-frequência-de-amostragem-real) | 🟡 19/10 | Taxa = 200 MHz ÷ ticks confirmada (102,4 kS/s: −64,0 ppm; 110 kS/s: −100,0 ppm; as exatas concordam em 0,02 ppm) | Leitura do contador do osciloscópio (separa gerador e cristal: hoje, −43,2 ppm somados) |
 | [T5](#t5-distorção-e-faixa-dinâmica) | ⏳ | Prévia, das capturas do T4: SINAD 61 dB e ENOB 14,4 bits com o tom em −27,5 dBFS; THD −71,6 dB, limitado pelo gerador | Tudo |
 | [T6](#t6-vários-canais-diafonia-e-atraso) | 🟡 19/10 | Diafonia 1 → 0 de −94,7 dB em 10 kHz; atraso entre canais 9,954 µs (esperado 10,000) | Refazer o ponto de 40 kHz em **20 kHz** (com 2 canais a Nyquist é 25 kHz) |
-| [T7](#t7-integridade-e-limite-de-taxa) | 🟡 21/10 | O salto de 7 µs nas trocas de buffer sumiu (≤ 0,06 µs). [T7e](#t7e-onde-está-o-limite-de-taxa): as esperas do CS descem ao piso do datasheet (`3,1,3`) sem perda nenhuma; teto de 326 kS/s; **trabalho proposto: `6,2,6` a 250 kS/s; o padrão ficou em `3,1,3` a 312,5 kS/s**. Achado: degrau de 5 a 13 µs a cada 10,74 s (o rebase do contador), corrigido no firmware | ✅ 22/10: **[T7f](#t7f-o-período-entre-amostras-a-grade-de-tempo)**, a grade exata: jitter de 8,5 → 0,00 ns, degraus de 0 ciclo, ruído com o tom de 2,23 → 0,77 LSB, nenhuma atrasada a 312,5 kS/s (folga de 3 ciclos). Falta: mais folga na troca de buffer (firmware) e a foto do CS; T7d |
+| [T7](#t7-integridade-e-limite-de-taxa) | 🟡 21/10 | O salto de 7 µs nas trocas de buffer sumiu (≤ 0,06 µs). [T7e](#t7e-onde-está-o-limite-de-taxa): as esperas do CS descem ao piso do datasheet (`3,1,3`) sem perda nenhuma; teto de 326 kS/s; **trabalho proposto: `6,2,6` a 250 kS/s; o padrão ficou em `3,1,3` a 312,5 kS/s**. Achado: degrau de 5 a 13 µs a cada 10,74 s (o rebase do contador), corrigido no firmware | ✅ 22/10: **[T7f](#t7f-o-período-entre-amostras-a-grade-de-tempo)**, a grade exata: jitter de 8,5 → 0,00 ns, degraus de 0 ciclo, ruído com o tom de 2,23 → 0,77 LSB, nenhuma atrasada a 312,5 kS/s (folga de 3 ciclos). Achado na análise: o quadro durava 605 + (bits 1 da amostra) ciclos; corrigido no firmware (quadro fixo e troca espalhada: folga prevista ≥ 31). Falta: a `--grade` com esse firmware e o SPI rápido ([próxima ida](#passo-a-passo-da-próxima-ida-o-quadro-fixo-e-o-spi-rápido)); T7d |
 | [T8](#t8-aliasing) a [T11](#t11-ponta-a-ponta) | ⏳ | — | Tudo; o T10 é o objetivo central |
 
+### Passo a passo da próxima ida: o quadro fixo e o SPI rápido
+
+O firmware da 2ª revisão de 22/10/2026 corrige o que a análise do T7f achou: o quadro durava 605 + (bits 1 da
+amostra) ciclos, e a troca de buffer fazia 5 acessos à memória de uma vez ([T7f](bench-results.md#t7f-a-grade-de-tempo)).
+O simulador calibrado na placa prevê folga ≥ 31 ciclos a 312,5 kS/s (era 3 a 13), qualquer que seja o sinal. **Esta
+ida não precisa de osciloscópio no SPI:** a PRU mede a própria folga.
+
+**1. Firmware (10 min).** No computador: `lab`, `lab preparar` e `lab ssh` (ou os comandos da
+[etapa 1 do T7f](#passo-a-passo-da-próxima-ida-a-grade-de-tempo-t7f)). O `setup.sh` agora confere também que a
+memória dos buffers está fora do Linux. No terminal da placa, a captura de conferência:
+
+```bash
+sudo ./ler_adc --blocos 2 --faixa-adc 1:5.12 -o T7_bancada.bin -t "T7 bancada"
+```
+
+Esperado: `Grade de tempo (PRU): folga mínima` de **30 a 41 ciclos** (era 5) e, no fim, `PRU parada`.
+
+**2. A bancada (5 min).** A mesma do T7f: senoide de 10,000 kHz, 20 Vpp, High-Z, no canal 1.
+
+**3. A grade de novo (~16 min).** Na BeagleBone:
+
+```bash
+./varrer_taxa.sh --grade --simular   # 56 capturas, ~16 min, ~540 MB
+./varrer_taxa.sh --grade
+```
+
+Esperado: a mesma folga (30 a 41 ciclos) em todas as capturas G, H e K, com o tom e com o ARM ocupado; na parte J
+(agora de 640 a 590 ticks), nenhuma amostra atrasada até ~609 ticks (~328 kS/s; era ~315) e todas a partir de ~599
+(~334 kS/s; era ~327). Uma folga que muda com o sinal, ou bem menor que 30, quer dizer que o simulador errou: traga
+as capturas.
+
+**4. Antes de sair.** `exit` no terminal da placa e, no computador, `lab trazer 'T7*'`.
+
 ### Passo a passo da próxima ida: a grade de tempo (T7f)
+
+> **Executado em 22/10/2026** (os resultados estão no [T7f](bench-results.md#t7f-a-grade-de-tempo)).
 
 O firmware de 22/10/2026 tira o jitter de ~8,5 ns que as capturas de 21/10 tinham e faz a PRU medir a própria
 folga ([T7f](#t7f-o-período-entre-amostras-a-grade-de-tempo)). O SPI é o mesmo de 21/10 (`v0.7`, a tag de backup).
@@ -803,6 +838,8 @@ uv run scripts/adc_tool.py $DIA/T1_curto_100k_1ch.bin --welch --modo-espectro ru
 
 **Para o relatório.** Tabela: taxa × nº de canais × (ruído em LSB, µV RMS, nV/√Hz, offset em mV, ruído equivalente na entrada). Tabela do ruído por **faixa de entrada** (±10,24; ±5,12 e ±2,56 V) em µV RMS e em LSB, contra o datasheet. Figura: a PSD do curto.
 
+**Executado em 22/10/2026, a 312,5 kS/s** (`T1_curto_312k_f{2048,1024,512}.bin`, 2 blocos cada): 0,54 / 0,61 / 0,79 LSB (169 / 95 / 62 µV) nas faixas de ±10,24 / ±5,12 / ±2,56 V, o mesmo de 19/10; offset igual. A taxa mais alta e a espera de precisão não trouxeram ruído ([T1 dos resultados](bench-results.md#t1-piso-de-ruído)).
+
 **Executado em 19/10/2026** (curto na entrada, `--inicio 100`):
 
 | Captura | Canal e faixa | Ruído | Offset | Datasheet (típico) |
@@ -912,6 +949,8 @@ uv run report/gerar_figuras.py perfil_cadeia_tensao --png
 ```
 
 **Executado em 19/10/2026** (48 pontos de 50 Hz a 45 kHz, `--ref-externa`, sem repetições; `scripts/sondas/cadeia_tensao.json`): −3 dB em **17,3 kHz** e −12,5 dB em 45 kHz; o 2ª ordem ajusta com f0 = 24,1 kHz, Q = 0,54 e resíduo de 0,13 dB. Para a próxima rodada: `--grandeza tensao` (a coleta de 19/10 é anterior à opção e ficou marcada como corrente, o que não muda o perfil) e `--repeticoes 3`, para ter a incerteza de cada ponto (o ajuste passa a ser ponderado). A fase não foi medida: a função de transferência vale sob a hipótese de fase mínima (ver `docs/report-notes.md`, Marco 12).
+
+**Executado em 22/10/2026, até 140 kHz na taxa padrão** (`calibrar_sonda.sh --taxa 312500 --canal-sonda 1 --pontos 32 --freq-max 140k --blocos 1 --faixa-adc 5.12 --sonda cadeia_tensao_312k --grandeza tensao --ref-externa`, 43 pontos; `scripts/sondas/cadeia_tensao_312k.json`): −3 dB em **16,8 kHz**, 2ª ordem com f0 = 24,2 kHz e Q = 0,53 e resíduo de 0,1 dB até 140 kHz (nenhum outro polo), −30,6 dB em 140 kHz; a 0,13 dB rms do perfil de 19/10 nas frequências em comum. **Em produção a 312,5 kS/s, use `--sonda 1:cadeia_tensao_312k`.** A referência digitada caiu 14 % de 50 Hz a 140 kHz: na próxima rodada, anote o instrumento e confira 2 ou 3 pontos altos no osciloscópio. Os números e a figura de comparação estão no [T3 dos resultados](bench-results.md#t3-resposta-em-frequência-da-cadeia-de-tensão).
 
 ### T4: frequência de amostragem real
 

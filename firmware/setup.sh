@@ -33,6 +33,17 @@ case "$(cat "${REMOTEPROC}/name" 2>/dev/null)" in
     *) printf 'Aviso: %s não parece ser a PRU0 (name = %s).\n' "$REMOTEPROC" "$(cat "${REMOTEPROC}/name" 2>/dev/null)" >&2 ;;
 esac
 
+# Os buffers da PRU (0x9F000000, os últimos 16 MB da DDR) só ficam fora do Linux com 'mem=496M' no /boot/uEnv.txt.
+# Sem isso, a PRU escreveria por cima da memória do sistema. O ler_adc confere de novo a cada captura (/proc/iomem).
+passo "Memória dos buffers da PRU (0x9F000000-0x9F3FFFFF fora da RAM do Linux)"
+# (Endereços em texto com 8 dígitos hexadecimais: o awk da placa pode ser o mawk, sem strtonum.)
+if sudo cat /proc/iomem | awk -F' : ' 'function h(x) { x = tolower(x); while (length(x) < 8) x = "0" x; return x }
+        /^[0-9a-fA-F]/ && $2 == "System RAM" { split($1, f, "-"); if (h(f[1]) < "9f400000" && h(f[2]) >= "9f000000") achou = 1 }
+        END { exit !achou }'; then
+    falha "a RAM do Linux cobre os buffers da PRU (/proc/iomem). Ponha 'mem=496M' na linha cmdline= do /boot/uEnv.txt e reinicie a placa."
+fi
+echo "ok ($(grep -o 'mem=[^ ]*' /proc/cmdline || echo 'sem mem= na linha do kernel, mas a RAM do Linux não chega lá'))"
+
 passo "Pinos da PRU0 (SPI do ADS8688; ver o mapa de bits no topo de spi_core.asm)"
 config-pin P9_31 pruout   # pr1_pru0_pru_r30_0 -> SCLK
 config-pin P9_29 pruout   # pr1_pru0_pru_r30_1 -> SDI/MOSI

@@ -424,11 +424,13 @@ def processar_captura(caminho: Path, freq_alvo_hz: float, modo_referencia: str,
         log.warning(f"pulando '{caminho.name}' -- canal(is) {ausentes} não está(ão) na lista de canais da captura {canais}.")
         return None
     # --faixa por PAPEL [referencia, sonda]: digitada > faixa gravada no cabeçalho v3 (do canal que faz
-    # esse papel) > 20.48, a faixa de reset do ADC (capturas v1/v2). Papel sem canal (1 canal lido) fica "desconhecido".
+    # esse papel) > 20.48, a faixa de reset do ADC (capturas v1/v2). Sem canal de referência (1 canal lido), o papel
+    # "referência" não é usado e leva a faixa do canal da sonda: até 22/10/2026 ele ficava "desconhecido" e cada
+    # captura avisava, em falso, que a faixa não estava no cabeçalho.
     faixas_cabecalho_papel = None
     if cabecalho is not None and cabecalho.faixa_adc_codigo_por_canal and len(cabecalho.lista_canais) >= len(canais):
         total_por_canal = dict(zip(cabecalho.lista_canais, cabecalho.faixa_adc_total_v_por_canal))
-        faixas_cabecalho_papel = [total_por_canal.get(canal_ref) if canal_ref is not None else None,
+        faixas_cabecalho_papel = [total_por_canal.get(canal_ref if canal_ref is not None else canal_sonda),
                                   total_por_canal.get(canal_sonda)]
     faixas, faixas_confiaveis = resolver_faixas(
         faixa_texto, [canal_ref if canal_ref is not None else canal_sonda, canal_sonda], formato,

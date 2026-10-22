@@ -95,7 +95,8 @@ struct shared_control {
     // --- [INTEGRIDADE DA CAPTURA] Contadores escritos pela PRU -------------
     // Contados em registradores no laço principal e publicados aqui só a
     // cada troca de buffer (uma escrita de 12 bytes por SAMPLES_PER_BUFFER
-    // amostras), então não custam nada por amostra. O ARM (ler_adc.c) os
+    // amostras, 4 amostras depois da troca: ver evento_de_buffer em
+    // spi_core.asm), então não custam nada por amostra. O ARM (ler_adc.c) os
     // zera antes de config_ready=1, lê depois de cada bloco gravado e os
     // grava no cabeçalho v4. Em uma captura saudável, os três ficam em 0.
     //
@@ -140,8 +141,9 @@ struct shared_control {
     //
     //   folga_minima_ciclos: a menor folga da captura, em ciclos de 5 ns -- quantos ciclos faltavam para o
     //     instante da amostra quando a PRU terminou o trabalho da anterior. > 0 = toda amostra saiu no ciclo
-    //     exato da grade; a maior taxa com período constante é ~200 MHz / (período - folga). Publicado com os
-    //     contadores, a cada troca de buffer (a troca mais recente só entra na troca seguinte).
+    //     exato da grade; a maior taxa com período constante é ~200 MHz / (período - folga). Publicado 5 amostras
+    //     depois de cada troca de buffer (o evento 5 de spi_core.asm), já com essa troca e os eventos 1 a 4: com
+    //     1 bloco, ele já vale. Desde a 2ª revisão de 22/10/2026 (quadro fixo), não depende do sinal.
     //   atraso_maximo_ciclos: o maior atraso das amostras atrasadas (0 se nenhuma), em ciclos.
     //   ciclos_rebase: ciclos entre as duas leituras do contador no rebase (a cada 2^31 ciclos), medidos pela
     //     PRU antes da 1ª amostra (o simulador dá 2). Diagnóstico: o rebase os usa para não deslocar a grade.

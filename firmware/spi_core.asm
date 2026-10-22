@@ -116,8 +116,26 @@
 ;     inteira da transação): ~470 instruções a menos na IMEM.
 ;   No simulador (1 ciclo por instrução): quadro mínimo de 602 ciclos sem
 ;   troca de buffer e 615 com; a 312,5 kS/s (640 ciclos) sobram 25.
-;   Conferido no simulador, com latências de memória hipotéticas
-;   (tests/test_pru_asm.py); falta a bancada (T7f: varrer_taxa.sh --grade).
+;   Validado na bancada (T7f, 22/10/2026): jitter de 0,00 ns, degrau de 0
+;   ciclo nas trocas e nos rebases; folga de 3 a 13 ciclos a 312,5 kS/s.
+;
+; --- REVISÃO DE 22/10/2026 (2): QUADRO DE DURAÇÃO FIXA E TROCA ESPALHADA ----
+;   - [DURAÇÃO FIXA] O quadro durava 605 + (bits 1 da amostra) ciclos: o OR
+;     que acumulava um bit 1 esticava o SCLK (ver DATA_BIT). Medido no T7f: a
+;     fração de amostras atrasadas de cada período da varredura J seguiu a
+;     fração de amostras com tantos bits 1. Agora a leitura é um AND, sem
+;     desvio: todo quadro dura o mesmo, qualquer que seja o sinal.
+;   - [TROCA ESPALHADA] A troca de buffer fazia 5 acessos à RAM compartilhada
+;     numa amostra só (~20 ciclos na placa). Agora ela só muda de buffer, e
+;     os acessos vão um por amostra nas 5 seguintes (evento_de_buffer). O
+;     rebase do contador não roda numa amostra com evento.
+;   - [CS ALTO] A espera de CS alto mínimo (7 ciclos por amostra com o padrão)
+;     só roda quando pedida acima de 9 iterações: até aí, o caminho entre a
+;     subida e a próxima descida do CS já a garante (>= 19 ciclos).
+;   No simulador com as latências medidas na placa (tests/pru_sim.py,
+;   LATENCIAS_PRU_REAL): a 312,5 kS/s, folga de 41 ciclos numa amostra comum
+;   (eram 20 a 35, conforme o sinal) e >= 31 com a troca (eram 3 a 13); teto
+;   com período constante ~328 kS/s (era ~315). Falta a bancada (--grade).
 ; ==============================================================================
 ; PINOS (inalterado):
 ;   Bit 0 (r30) = SCLK   | Bit 1 (r30) = SDI/MOSI
@@ -164,32 +182,42 @@ mosi_pronto?:
     NOP
     NOP                      ; Acomodação máxima antes da borda de descida
 
-    ; NOTA: este bloco não faz nada útil com o resultado (r5 é descartado) -
-    ; ele existe só para manter o CMD_BIT com EXATAMENTE a mesma duração do
-    ; DATA_BIT em nível ALTO do SCLK, igual estava na versão validada em
-    ; hardware (lá esse bloco capturava o preâmbulo de diagnóstico, na
-    ; mesma posição, logo antes de descer o SCLK). Remover essa simetria
-    ; encurtou justo a margem de acomodação/aquisição antes da borda de
-    ; descida, e é a suspeita mais provável para a distorção de 2x/período
-    ; relatada historicamente (a taxa de variação do sinal é máxima nos
-    ; cruzamentos por zero, onde essa margem apertada mais afetaria a
-    ; leitura). Por isso continua aqui mesmo agora que o comando é
-    ; sempre NO_OP.
+    ; NOTA: este bloco lê o SDO na mesma posição do DATA_BIT (o preâmbulo, que o
+    ; laço principal confere) e mantém o CMD_BIT com EXATAMENTE a mesma duração
+    ; do DATA_BIT em nível ALTO do SCLK, igual estava na versão validada em
+    ; hardware. Remover essa simetria encurtou justo a margem de
+    ; acomodação/aquisição antes da borda de descida, e é a suspeita mais
+    ; provável para a distorção de 2x/período relatada historicamente.
+    ; [DURAÇÃO FIXA, 22/10/2026] A leitura é um AND (r1 = 0 ou 4), sem desvio:
+    ; ver DATA_BIT.
     LSL r5, r5, 1
-    QBBC pula_descarte?, r31, 2
-    OR r5, r5, 1
-pula_descarte?:
+    AND r1, r31, 4           ; SDO lido aqui (bit 2 de r31), no mesmo ciclo do QBBC de antes
 
     CLR r30, r30, 0          ; Desce o SCLK -> ADC lê o bit no SDI
 
-    NOP
+    OR r5, r5, r1            ; o bit entra com o SCLK já baixo (no lugar de um NOP)
     NOP
     NOP
     .endm
 
 ; ==============================================================================
 ; MACRO: Lê 1 bit de dado do SDO (Ciclos 17-32 do frame do ADS8688)
-; r23 = acumulador de 16 bits da amostra
+; r23 = acumulador da amostra: cada bit entra no bit 2 (o MISO é o bit 2 de
+; r31) e o DATA_BIT_ULTIMO alinha os 16 bits no fim (LSR de 2).
+;
+; [DURAÇÃO FIXA, 22/10/2026] Até aqui a leitura era QBBC + OR: um bit 1
+; executava o OR e deixava o SCLK 1 ciclo a mais em nível alto. O quadro
+; durava 605 + (número de bits 1 da amostra) ciclos na PRU de verdade -- de 0
+; a 16 ciclos (80 ns) a mais, conforme o SINAL. Na varredura J do T7f
+; (22/10/2026), a fração de amostras atrasadas em cada período bateu com a
+; fração de amostras com tantos bits 1 (619 ticks: 5,58e-5 atrasadas e
+; 5,53e-5 com 15 bits 1; 618: 8,07e-4 e 8,15e-4 com 14 ou mais; 617: 5,56e-3
+; e 5,66e-3), e a "cauda aleatória da escrita na DDR" não existia. O
+; instante da amostra (a descida do CS) nunca dependeu disso; a folga, o teto
+; de taxa e o padrão do SCLK dependiam. Agora a leitura é um AND (sem desvio)
+; e o bit entra com o SCLK já baixo, no lugar de um NOP: todo bit tem 9
+; ciclos em alto e 7 em baixo, qualquer que seja o dado, e o MISO é lido no
+; mesmo ciclo de antes (o 8º depois da subida do SCLK).
 ; ==============================================================================
 DATA_BIT .macro
     NOP
@@ -207,14 +235,37 @@ DATA_BIT .macro
 
     ; Amostra o MISO no ÚLTIMO instante seguro, logo antes de descer o SCLK
     LSL r23, r23, 1
-    QBBC pula_dado?, r31, 2
-    OR r23, r23, 1
-pula_dado?:
+    AND r1, r31, 4           ; r1 = MISO << 2 (0 ou 4), sem desvio
 
     CLR r30, r30, 0          ; Desce o SCLK
 
+    OR r23, r23, r1          ; o bit entra com o SCLK já baixo (no lugar de um NOP)
     NOP
     NOP
+    .endm
+
+; O 16º bit do laço principal: o mesmo DATA_BIT, com o alinhamento final no lugar de um NOP (nenhum ciclo a mais).
+DATA_BIT_ULTIMO .macro
+    NOP
+    NOP
+    NOP
+
+    SET r30, r30, 0          ; Sobe o SCLK
+
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+
+    LSL r23, r23, 1
+    AND r1, r31, 4
+
+    CLR r30, r30, 0          ; Desce o SCLK
+
+    OR r23, r23, r1
+    LSR r23, r23, 2          ; os 16 bits estavam em r23[17:2]: alinha em r23.w0 para o SBBO
     NOP
     .endm
 
@@ -231,9 +282,11 @@ ler_ads8688_asm:
     LDI r18.w0, 0x200C
     LDI r18.w2, 0x0002
 
-    ; Limite do buffer: 1.048.576 amostras (2 MB por buffer)
-    LDI r21.w0, 0x0000
-    LDI r21.w2, 0x0010   ; 0x00100000 em Hex = 1.048.576
+    ; Limite do buffer: 1.048.576 amostras (2 MB por buffer), em r4. O r21 é a próxima amostra com trabalho de troca
+    ; de buffer (ver evento_de_buffer): no começo, só a última do buffer. Tem de ser > 5 (os eventos 1 a 5).
+    LDI r4.w0, 0x0000
+    LDI r4.w2, 0x0010    ; 0x00100000 em Hex = 1.048.576 (SAMPLES_PER_BUFFER de memoria_pru.h)
+    MOV r21, r4
 
 espera_configuracao:
     LBBO &r20, r14, 24, 4
@@ -436,6 +489,14 @@ atraso_hold_ok:
     QBNE atraso_alto_ok, r11, 0
     LDI r11, 3
 atraso_alto_ok:
+    ; CS alto de até 9 iterações (19 ciclos) o próprio caminho entre a subida e a descida seguinte já garante: no
+    ; mais curto (amostra atrasada, sem espera), são >= 19 instruções, 95 ns (escrita na DDR, contadores, leitura do
+    ; contador e o caminho de amostra_atrasada; tests/test_pru_asm.py confere). O datasheet pede 30 ns. r11 = 0 pula
+    ; a espera; acima de 9, ela roda como pedida.
+    SUB r1, r11, 10
+    QBBC atraso_alto_pedido, r1, 31   ; r11 >= 10: a espera vale
+    LDI r11, 0
+atraso_alto_pedido:
 
     LDI r6, 0
     LDI r7, 0
@@ -578,7 +639,7 @@ delay_cs_setup:
     DATA_BIT
     DATA_BIT
     DATA_BIT
-    DATA_BIT
+    DATA_BIT_ULTIMO          ; o 16º: alinha os bits em r23.w0
 
     MOV r1, r10              ; atraso CS hold (padrão 1 iteração = 10 ns, o mínimo do datasheet)
 delay_cs_hold:
@@ -589,10 +650,15 @@ delay_cs_hold:
 
     ; Tempo mínimo de CS alto entre transações (recarga do capacitor interno
     ; de amostragem do ADS8688), independente da frequência configurada.
-    MOV r1, r11              ; atraso CS alto (padrão 3 iterações = 30 ns, o mínimo do datasheet)
+    ; [22/10/2026] Com r11 = 0 (atraso pedido de até 9 iterações, o padrão incluído), a espera não roda: o caminho
+    ; daqui até a próxima descida do CS já tem >= 19 ciclos (95 ns), mesmo com a amostra atrasada (ver
+    ; atraso_alto_ok). Eram 7 ciclos por amostra no caminho crítico, sem efeito no CS.
+    QBEQ cs_alto_garantido, r11, 0
+    MOV r1, r11              ; atraso CS alto pedido (iterações de 2 ciclos)
 delay_cs_high_minimo:
     SUB r1, r1, 1
     QBNE delay_cs_high_minimo, r1, 0
+cs_alto_garantido:
 
     ; --- GRAVAÇÃO DIRETA NA MEMÓRIA DDR ---
     SBBO &r23, r19, 0, 2
@@ -610,42 +676,82 @@ preambulo_ok:
     ; (ver cabeçalho do arquivo).
 
     ; --- LÓGICA DE PING-PONG ---
+    ; r15 = amostras gravadas no buffer atual; r21 = a próxima com trabalho de troca (evento_de_buffer). Numa amostra
+    ; comum, só estas 2 instruções (as mesmas de antes).
     ADD r15, r15, 1
     QBNE continua, r15, r21
 
-    LDI r15, 0
-    ; [CORRIGIDO] O contador de ciclos NÃO é mais zerado aqui. Zerá-lo depois da transação da última amostra
+    ; [TROCA ESPALHADA, 22/10/2026] Até aqui, a amostra da troca fazia tudo de uma vez: 5 acessos à memória
+    ; compartilhada (marcar o buffer cheio, conferir o outro, publicar active_buffer, os contadores e a folga). Na
+    ; PRU de verdade, ~20 ciclos a mais que uma amostra comum: a 312,5 kS/s, sobravam 3 a 13 ciclos de folga nela
+    ; (T7f). Agora a troca em si só muda de buffer (nenhum acesso à memória), e o resto vai para as 5 amostras
+    ; seguintes, um acesso por amostra (eventos 1 a 5). O rebase do contador não roda numa amostra com evento:
+    ; fica para a seguinte (o contador só trava em 2^32, ~10 s depois de 2^31).
+    ; [CORRIGIDO] O contador de ciclos NÃO é zerado na troca. Zerá-lo depois da transação da última amostra
     ; empurrava a 1ª amostra do buffer seguinte ~1400 ciclos (~7 µs, a duração da transação) além do período: um
     ; salto de ~0,7 amostra a cada troca de buffer a 100 kS/s, medido nas capturas reais (T7c: +0,697 em todas as
     ; 57 trocas). E, com um buffer mais longo que 2^32 ciclos (~21,5 s, taxa abaixo de ~48,8 kS/s), o contador
     ; saturava no meio do buffer. O rebase sem perda (rebase_contador, abaixo) resolve os dois.
-    ; Todo o trabalho da troca fica antes da 1ª leitura do contador da amostra seguinte: a espera fina o absorve.
+    ; Todo o trabalho fica antes da 1ª leitura do contador da amostra seguinte: a espera fina o absorve.
+evento_de_buffer:
+    QBEQ troca_de_buffer, r15, r4
+    ADD r21, r21, 1          ; o próximo evento é na amostra seguinte
+    QBEQ evento_1, r15, 1
+    QBEQ evento_2, r15, 2
+    QBEQ evento_3, r15, 3
+    QBEQ evento_4, r15, 4
 
-    QBEQ troca_para_buffer_1, r26, 0
-
-troca_para_buffer_0:
-    LDI r26, 0
-    MOV r19, r24
-    LDI r27, 1
-    SBBO &r27, r14, 12, 4    ; buffer_1_ready = 1 (acabou de encher)
-    LBBO &r27, r14, 8, 4     ; buffer_0_ready: o ARM já terminou de copiar o buffer que vai ser reescrito?
-    QBA confere_sobrescrita
-
-troca_para_buffer_1:
-    LDI r26, 1
-    MOV r19, r25
-    LDI r27, 1
-    SBBO &r27, r14, 8, 4     ; buffer_0_ready = 1 (acabou de encher)
-    LBBO &r27, r14, 12, 4    ; buffer_1_ready: idem
-
-confere_sobrescrita:
-    ; [INTEGRIDADE] Ainda marcado como pronto = o ARM não o esvaziou: a PRU vai sobrescrever dados não gravados.
-    QBEQ publica_contadores, r27, 0
-    ADD r7, r7, 1
-publica_contadores:
-    SBBO &r26, r14, 4, 4     ; active_buffer (até 22/10/2026 era escrito a cada amostra)
-    SBBO &r6, r14, 36, 12    ; amostras_atrasadas, buffers_sobrescritos, quadros_preambulo_ruim (1 vez por buffer)
+    ; Evento 5: a folga e o atraso máximo (até aqui, com a troca e os eventos 1 a 4). Fim dos eventos.
     SBBO &r12, r14, 60, 8    ; folga_minima_ciclos, atraso_maximo_ciclos
+    MOV r21, r4              ; o próximo evento é a troca, no fim do buffer
+    JMP laco_principal
+
+troca_de_buffer:
+    LDI r15, 0
+    LDI r21, 1               ; evento 1 na 1ª amostra do buffer novo
+    QBEQ troca_para_buffer_1, r26, 0
+    LDI r26, 0               ; o 1 acabou de encher: grava no 0
+    MOV r19, r24
+    JMP laco_principal
+troca_para_buffer_1:
+    LDI r26, 1               ; o 0 acabou de encher: grava no 1
+    MOV r19, r25
+    JMP laco_principal
+
+    ; Evento 1: marca o buffer que acabou de encher (o que NÃO é o r26). É o que o ARM espera para copiá-lo.
+evento_1:
+    LDI r27, 1
+    QBEQ evento_1_buffer_1, r26, 0
+    SBBO &r27, r14, 8, 4     ; buffer_0_ready = 1
+    JMP laco_principal
+evento_1_buffer_1:
+    SBBO &r27, r14, 12, 4    ; buffer_1_ready = 1
+    JMP laco_principal
+
+    ; Evento 2: active_buffer (só informativo para o ARM; até 22/10/2026 era escrito a cada amostra).
+evento_2:
+    SBBO &r26, r14, 4, 4
+    JMP laco_principal
+
+    ; Evento 3: [INTEGRIDADE] o buffer que está sendo reescrito ainda está marcado como pronto? Então o ARM não o
+    ; esvaziou, e a PRU está sobrescrevendo dados não gravados.
+evento_3:
+    QBEQ evento_3_buffer_0, r26, 0
+    LBBO &r27, r14, 12, 4    ; buffer_1_ready
+    QBA evento_3_confere
+evento_3_buffer_0:
+    LBBO &r27, r14, 8, 4     ; buffer_0_ready
+evento_3_confere:
+    QBNE evento_3_sobrescrito, r27, 0    ; (laco_principal está longe demais para um QB*: o JMP vai até lá)
+    JMP laco_principal
+evento_3_sobrescrito:
+    ADD r7, r7, 1
+    JMP laco_principal
+
+    ; Evento 4: amostras_atrasadas, buffers_sobrescritos, quadros_preambulo_ruim (1 vez por buffer).
+evento_4:
+    SBBO &r6, r14, 36, 12
+    JMP laco_principal
 
 continua:
     ; O contador passou de 2^31 (~10,7 s desde o último rebase)? r22 é a última leitura feita para esta amostra.

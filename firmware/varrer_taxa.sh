@@ -26,16 +26,18 @@
 #      2^31 ciclos da PRU (10,74 s) várias vezes -- 35 s com as esperas padrão e com 6,2,6 a 100 kS/s, 35 s com
 #      6,2,6 a 250 kS/s e 10 min com 6,2,6 a 250 kS/s (o T7c). ~12 min e ~330 MB.
 #
-# A GRADE DE TEMPO (--grade, o T7f; pede o firmware de 22/10/2026, com a espera de precisão da PRU). O mesmo tom
+# A GRADE DE TEMPO (--grade, o T7f; pede o firmware de 22/10/2026 com o quadro de duração fixa e a troca de buffer
+# espalhada, a 2ª revisão daquele dia). O mesmo tom
 # de 10 kHz, no padrão (312,5 kS/s, esperas 3,1,3), sem mudar nada na bancada:
 #   G. 60 s a 312,5 kS/s, 60 s a 100 kS/s (para comparar com as capturas de 21/10, que tinham ~8,4 ns de jitter) e
 #      5 min a 312,5 kS/s (~90 trocas de buffer e ~28 rebases do contador).
 #   H. 60 s a 312,5 kS/s com o ARM ocupado (um 'dd' enchendo a DDR, em segundo plano): a folga da PRU e o ler_adc
 #      sob carga.
 #   K. 60 s com 2 canais a 312,5 kS/s no total (o tom no canal 1; o canal 0 como estiver).
-#   J. o teto com período constante: de 640 a 600 ticks (312,5 a 333,3 kS/s), 1 tick por vez, 2 blocos cada. A
-#      folga da PRU já diz onde ele está; aqui ele é conferido captura a captura.
-#   46 capturas, ~15 min e ~500 MB. Cada linha do resumo.csv traz a folga (folga_ciclos) e o pior atraso.
+#   J. o teto com período constante: de 640 a 590 ticks (312,5 a 339,0 kS/s), 1 tick por vez, 2 blocos cada. A
+#      folga da PRU já diz onde ele está; aqui ele é conferido captura a captura. (Até a 1ª revisão de 22/10, o
+#      teto era ~315 kS/s e todas atrasavam abaixo de 611 ticks; com o quadro fixo, o previsto é ~328 kS/s.)
+#   56 capturas, ~16 min e ~540 MB. Cada linha do resumo.csv traz a folga (folga_ciclos) e o pior atraso.
 #
 # USO (na BeagleBone, na pasta do firmware; de preferência no terminal do 'scripts/BeagleBone_Setup.sh ssh'):
 #   ./varrer_taxa.sh              # tudo, com as pausas para mudar a bancada
@@ -94,7 +96,7 @@ GRADE_LONGAS="312500:60 100000:60 312500:300"     # parte G
 GRADE_CARGA="312500:60"                            # parte H: o mesmo, com o ARM enchendo a DDR
 GRADE_2CANAIS="312500:60"                          # parte K
 GRADE_TICKS_DE=640                                 # parte J: 312,5 kS/s...
-GRADE_TICKS_ATE=600                                # ... a 333,3 kS/s, 1 tick por vez
+GRADE_TICKS_ATE=590                                # ... a 339,0 kS/s, 1 tick por vez
 
 PARTES=ABDC
 PARTES_PEDIDAS=0
@@ -309,6 +311,11 @@ if tem G || tem H || tem J || tem K; then
     if [ -f spi_core.asm ] && ! grep -q 'GRADE EXATA' spi_core.asm; then
         echo "Erro: o spi_core.asm desta pasta não tem a grade exata (espera de precisão, 22/10/2026)." >&2
         echo "No computador:  scripts/BeagleBone_Setup.sh enviar --setup" >&2
+        exit 1
+    fi
+    if [ -f spi_core.asm ] && ! grep -q 'QUADRO DE DURAÇÃO FIXA' spi_core.asm; then
+        echo "Erro: o spi_core.asm desta pasta não tem o quadro de duração fixa (2ª revisão de 22/10/2026): a" >&2
+        echo "--grade mediria de novo o firmware do T7f. No computador:  scripts/BeagleBone_Setup.sh enviar --setup" >&2
         exit 1
     fi
     if [ -f ler_adc.c ] && [ -f ler_adc ] && { [ ler_adc -ot ler_adc.c ] || [ ler_adc -ot memoria_pru.h ]; }; then

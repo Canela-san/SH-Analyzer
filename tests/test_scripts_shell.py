@@ -388,7 +388,7 @@ fi
 printf 'Integridade: %d amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído no SDO\n' "$atrasadas"
 quadro=$((595 + 2 * (s + h + a)))
 if [ "$blocos" -lt 2 ]; then
-    echo 'Grade de tempo (PRU): folga ainda não publicada (só na troca de buffer: capture >= 2 blocos) | rebase: 2 ciclo(s) entre as leituras'
+    echo 'Grade de tempo (PRU): folga ainda não publicada (a PRU a publica logo depois de cada bloco) | rebase: 2 ciclo(s) entre as leituras'
 elif [ "$atrasadas" -eq 0 ]; then
     folga=$((200000000 / taxa - quadro))
     printf 'Grade de tempo (PRU): folga mínima %d ciclo(s) = %d ns -- toda amostra no ciclo exato da grade; período constante até ~%d S/s | rebase: 2 ciclo(s) entre as leituras\n' \
@@ -569,7 +569,7 @@ def test_varrer_taxa_grade_roda_a_campanha_t7f_no_padrao(varredura):
     """--grade (firmware de 22/10/2026): capturas longas no padrão, uma com o ARM ocupado, 2 canais e o teto com
     período constante, numa pasta T7f_; a folga e o pior atraso vão para o resumo."""
     r, pasta = varredura("--grade", "--simular")
-    assert r.returncode == 0 and "T7f" in r.stdout and "46 capturas" in r.stdout
+    assert r.returncode == 0 and "T7f" in r.stdout and "56 capturas" in r.stdout
     registro = varredura.pasta.parent / "registro.txt"
     env = {**varredura.env, "LER_ADC_REGISTRO": str(registro)}
     r = subprocess.run(["bash", str(varredura.pasta / "varrer_taxa.sh"), "--grade"], cwd=varredura.pasta.parent,
@@ -583,7 +583,7 @@ def test_varrer_taxa_grade_roda_a_campanha_t7f_no_padrao(varredura):
     assert (pasta / "K_cspadrao_312500_tom_2canais_60s.bin").read_text().split()[:4] == [
         "taxa=312500", "canais=0,1", "blocos=9", "cs="]
     teto = [linha for linha in linhas if linha["parte"] == "J"]
-    assert [200_000_000 // int(linha["taxa_pedida_hz"]) for linha in teto] == list(range(640, 599, -1))
+    assert [200_000_000 // int(linha["taxa_pedida_hz"]) for linha in teto] == list(range(640, 589, -1))
     assert linhas[0]["folga_ciclos"] == "31" and linhas[0]["atraso_max_ciclos"] == ""   # 640 - 609 do falso
     acima = [linha for linha in teto if linha["amostras_atrasadas"] != "0"]
     assert acima and all(linha["atraso_max_ciclos"] == "77" and linha["folga_ciclos"] == "" for linha in acima)
@@ -601,8 +601,8 @@ def test_varrer_taxa_continuar_retoma_as_partes_da_varredura_anterior(varredura)
     r = subprocess.run(["bash", str(varredura.pasta / "varrer_taxa.sh"), "--continuar"], cwd=varredura.pasta.parent,
                        env=varredura.env, capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "43 de 46 já feitas" in r.stdout and "T7f" in r.stdout
-    assert len(_resumo(pasta)) == 46
+    assert "53 de 56 já feitas" in r.stdout and "T7f" in r.stdout
+    assert len(_resumo(pasta)) == 56
 
 
 def test_varrer_taxa_grade_recusa_o_firmware_sem_a_espera_de_precisao(varredura):
@@ -611,6 +611,11 @@ def test_varrer_taxa_grade_recusa_o_firmware_sem_a_espera_de_precisao(varredura)
     r = subprocess.run(["bash", str(varredura.pasta / "varrer_taxa.sh"), "--grade"], cwd=varredura.pasta.parent,
                        env=varredura.env, capture_output=True, text=True, timeout=120)
     assert r.returncode == 1 and "não tem a grade exata" in r.stderr
+    # o firmware do T7f (grade exata, mas o quadro ainda dependia do dado): medir de novo seria perder 16 min
+    asm.write_text("; [CORRIGIDO em 21/10/2026] ...\n; REVISÃO DE 22/10/2026: GRADE EXATA\n")
+    r = subprocess.run(["bash", str(varredura.pasta / "varrer_taxa.sh"), "--grade"], cwd=varredura.pasta.parent,
+                       env=varredura.env, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 1 and "quadro de duração fixa" in r.stderr
     assert not list(varredura.pasta.glob("T7f_*"))
 
 

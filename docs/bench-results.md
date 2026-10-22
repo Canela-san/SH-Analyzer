@@ -32,18 +32,18 @@ As figuras de bancada precisam das capturas em `$DADOS`. Sem elas, o script avis
 
 | Teste | O que mede | Data | Firmware | Figura | Estado |
 |---|---|---|---|---|---|
-| [T7f](#t7f-a-grade-de-tempo) | O período entre amostras: jitter, degraus, folga e teto com período constante | 22/10/2026 | `v0.7-1-gb2f9078` | `grade_jitter`, `grade_degraus`, `grade_teto` | ✅ |
+| [T7f](#t7f-a-grade-de-tempo) | O período entre amostras: jitter, degraus, folga e teto com período constante; o quadro que dependia do dado | 22/10/2026 | `v0.7-1-gb2f9078` | `grade_jitter`, `grade_degraus`, `grade_teto`, `grade_bits` | ✅ (falta repetir com o quadro fixo) |
 | [T7e](#t7e-esperas-do-cs-e-teto-de-taxa) | Esperas do CS e taxa máxima | 21/10/2026 | `v0.6-10`/`-11` | — | ✅ |
 | [T7a–c](#t7a-a-t7c-integridade-e-estabilidade) | Integridade, estabilidade em 10 min e o salto antigo nas trocas de buffer | 19/10/2026 | anterior a out/2026 | — | ✅ (firmware antigo) |
 | [T6](#t6-vários-canais) | Diafonia e atraso entre canais | 19/10 e 22/10/2026 | antigo e `v0.7-1` | — | 🟡 |
 | [T4](#t4-taxa-de-amostragem-real) | Taxa gerada × pedida | 19/10/2026 | anterior a out/2026 | — | 🟡 (falta o contador) |
-| [T3](#t3-resposta-em-frequência-da-cadeia-de-tensão) | Resposta em frequência da cadeia de tensão até 45 kHz | 19/10/2026 | anterior a out/2026 | `perfil_cadeia_tensao` | ✅ (falta até 140 kHz) |
+| [T3](#t3-resposta-em-frequência-da-cadeia-de-tensão) | Resposta em frequência da cadeia de tensão até 140 kHz | 19/10 e 22/10/2026 | antigo e `v0.7-1` | `perfil_cadeia_tensao`, `perfil_cadeia_tensao_comparacao` | ✅ |
 | [T2](#t2-tensão-contínua) | Razão do divisor e linearidade em DC | 19/10/2026 | anterior a out/2026 | — | ✅ |
-| [T1](#t1-piso-de-ruído) | Ruído e offset com a entrada em curto | 19/10/2026 | anterior a out/2026 | — | ✅ (falta a 312,5 kS/s) |
+| [T1](#t1-piso-de-ruído) | Ruído e offset com a entrada em curto | 19/10 e 22/10/2026 | antigo e `v0.7-1` | — | ✅ |
 | [T0](#t0-escala-do-adc) | Escala do ADC nas três faixas | 19/10/2026 | anterior a out/2026 | — | ✅ |
 
-O que falta medir: o T3 até 140 kHz e o T1 a 312,5 kS/s, o T5 (distorção com fonte limpa), o T8 (*aliasing*), o T9
-(espectros conhecidos), o T10 (a sonda de corrente) e o T11 (ponta a ponta). Veja a
+O que falta medir: a `--grade` com o firmware do quadro fixo (o T7f de novo), o T5 (distorção com fonte limpa), o T8
+(*aliasing*), o T9 (espectros conhecidos), o T10 (a sonda de corrente) e o T11 (ponta a ponta). Veja a
 [tabela de estado](lab-procedure.md#estado-da-campanha).
 
 ---
@@ -87,12 +87,36 @@ O que falta medir: o T3 até 140 kHz e o T1 a 312,5 kS/s, o T5 (distorção com 
   de 1 ns: **zero ciclos** em toda troca de buffer e em todo rebase do contador.
 * **O que sobra no SINAD é do gerador:** o ruído de fase a menos de 5 Hz do tom (±0,7 a 1 Hz, a −72 a −80 dBc) e a
   THD de −72 dB. Por isso uma FFT de 60 s dá SINAD menor (~60 dB) que uma de 10 s: ela resolve esse ruído de fase.
-* **A folga é pequena:** na PRU real, o quadro comum leva ~612 ciclos (de 611 a 619, ao acaso: a escrita na DDR) e o
-  da troca de buffer, ~634 (de 631 a 638). A 640 ciclos (312,5 kS/s), sobram 3 a 5 na troca. O simulador, com 1
-  ciclo por instrução, previa 25.
+* **A folga é pequena, e dependia do sinal.** O quadro comum leva **605 + (bits 1 da amostra) ciclos**: a leitura de
+  um bit 1 executava uma instrução a mais e esticava o SCLK em 1 ciclo. Não era "a escrita na DDR, ao acaso", como
+  esta seção dizia até a análise de 22/10 (abaixo). A troca de buffer soma ~20 ciclos (5 acessos à memória
+  compartilhada de uma vez): a 640 ciclos, sobram 3 a 13 nela, conforme os bits 1 da amostra da troca. O simulador,
+  com 1 ciclo por instrução, previa 25; com as latências medidas (F12), reproduz a placa.
+
+**O quadro dependia do dado** (análise de 22/10, a mesma varredura J). A fração de amostras atrasadas a cada período
+bate com a fração de amostras que têm tantos bits 1, tirada das próprias capturas (o tom cruza o meio da escala:
+0x7FFF tem 15 bits 1, 0x8000 tem 1):
+
+| Ticks | Atrasadas | Amostras com ≥ N bits 1 | N |
+|---|---|---|---|
+| 619 | 5,58 × 10⁻⁵ | 5,53 × 10⁻⁵ | 15 |
+| 618 | 8,07 × 10⁻⁴ | 8,15 × 10⁻⁴ | 14 |
+| 617 | 5,56 × 10⁻³ | 5,66 × 10⁻³ | 13 |
+| 616 | 2,44 × 10⁻² | 2,56 × 10⁻² | 12 |
+
+* O ajuste dá um quadro de **605 + bits 1** ciclos (medida/prevista de 0,94 a 0,98). Nas 43 capturas de calibração de
+  22/10 (1 bloco, sem troca), a folga foi **exatamente 20 ciclos em todas**: 640 − 605 − 15.
+* **O instante da amostra nunca dependeu disso** (a descida do CS vem depois da espera de precisão): o jitter de
+  0,00 ns continua valendo. Dependiam a folga, o teto de taxa e o padrão do SCLK (9 ou 10 ciclos em alto, conforme o
+  bit lido).
+* Corrigido no firmware seguinte (leitura sem desvio, troca de buffer espalhada): o simulador calibrado prevê 41
+  ciclos de folga numa amostra comum, qualquer que seja o sinal, e ≥ 31 com a troca; teto ~328 kS/s. Falta a bancada
+  (`./varrer_taxa.sh --grade`, agora até 339 kS/s).
+* Figura `grade_bits` (macros `\GradeBitsBase`, `\GradeBitsRazaoMin`, `\GradeBitsRazaoMax`, `\GradeBitsPeriodoEx`,
+  `\GradeBitsMedidaEx`, `\GradeBitsPrevistaEx`).
 
 **Figuras:** `grade_jitter` (o ruído contra a inclinação do tom, antes e depois), `grade_degraus` (os 117 degraus de
-5 min, dentro de ±1/2 ciclo) e `grade_teto` (a parte J). **Macros:** `\GradeJitterAntes`, `\GradeJitterDepois`,
+5 min, dentro de ±1/2 ciclo), `grade_teto` (a parte J) e `grade_bits` (a parte J contra os bits 1). **Macros:** `\GradeJitterAntes`, `\GradeJitterDepois`,
 `\GradeRuidoPlanoAntes`, `\GradeRuidoLargoAntes`, `\GradeRuidoLargoDepois`, `\GradeTrocasN`, `\GradeTrocasMedia`,
 `\GradeRebasesN`, `\GradeRebasesMedia`, `\GradeDegrauPior`, `\GradeControle`, `\GradeCiclosRebase`,
 `\GradeFolgaMin`, `\GradeFolgaMinNs`, `\GradeTetoConstante`, `\GradeTetoTrocas`, `\GradeTetoComuns`,
@@ -182,8 +206,42 @@ pelo osciloscópio), sem repetições · perfil `scripts/sondas/cadeia_tensao.js
 | A 45 kHz | −12,5 dB |
 | Resíduo do ajuste | 0,13 dB |
 
-**Figura:** `perfil_cadeia_tensao` (macros `\CadeiaTensao...`). Falta: até 140 kHz na taxa padrão (o filtro do ADC
-deixa ~3 % do sinal lá) e `--repeticoes 3`, para a incerteza de cada ponto.
+**Figura:** `perfil_cadeia_tensao` (macros `\CadeiaTensao...`).
+
+**22/10/2026: até 140 kHz, na taxa padrão** · firmware `v0.7-1-gb2f9078` · 43 pontos de 50 Hz a 140 kHz, 312,5 kS/s,
+1 canal, faixa de ±2,56 V, 1 bloco por ponto, `--ref-externa`, sem repetições ·
+`$DADOS/lab/2026-10-22/capturas/cadeia_tensao_312k/` · perfil `scripts/sondas/cadeia_tensao_312k.json` (gerado com
+`--ganho 19.357`, como o de 19/10).
+
+| Grandeza | 22/10 (312,5 kS/s, até 140 kHz) | 19/10 (100 kS/s, até 45 kHz) |
+|---|---|---|
+| −3 dB | **16,83 ± 0,13 kHz** | 17,26 ± 0,16 kHz |
+| Modelo de 2ª ordem | f0 = 24,17 ± 0,07 kHz, Q = 0,529 ± 0,003 | f0 = 24,06 ± 0,21 kHz, Q = 0,540 ± 0,006 |
+| Resíduo do ajuste | 0,105 dB (43 pontos, até 140 kHz) | 0,13 dB |
+| Outro polo até 140 kHz | nenhum (o 2ª ordem + polo real não melhora o BIC) | — |
+| No último ponto | **−30,6 dB em 140 kHz** (a correção multiplica o sinal e o ruído por 34) | −12,5 dB em 45 kHz |
+| Dispersão do ganho abaixo de 1 kHz | **0,44 %** | 0,79 % |
+| Integridade das 43 capturas | 0 atrasadas, 0 com ruído no SDO; folga de 20 ciclos em todas | — |
+
+* **É a mesma cadeia:** nas frequências em comum, os dois perfis diferem **0,13 dB rms** (o pior ponto, −0,29 dB),
+  com taxa (100 e 312,5 kS/s), faixa do ADC (±10,24 e ±2,56 V) e firmware diferentes. A dispersão em baixa
+  frequência caiu à metade com a faixa de ±2,56 V (4 vezes mais resolução no mesmo sinal).
+* **O 2ª ordem vale até 140 kHz** (o filtro interno do ADS8688): os 3 parâmetros descrevem 3,5 décadas a 0,1 dB.
+* **Para a produção a 312,5 kS/s, use `--sonda 1:cadeia_tensao_312k`**: o de 19/10 para em 45 kHz e mantém o ganho
+  constante acima disso (a correção estaria errada por até 30 dB em 140 kHz).
+* **A referência caiu 14 % de 50 Hz a 140 kHz** (7,06 → 6,10 V rms, lida a cada ponto). O perfil vale se a leitura é a
+  tensão real na entrada da cadeia; se a queda é do instrumento, o perfil herda o erro dele. Anote o instrumento na
+  próxima rodada (o caderno de 22/10 ficou em branco) e confira 2 ou 3 pontos altos no osciloscópio.
+* Falta `--repeticoes 3`, para a incerteza de cada ponto.
+
+**Figura:** `perfil_cadeia_tensao_comparacao` (os dois perfis e a diferença; macros `\CadeiaTensaoNovaFzero`,
+`\CadeiaTensaoNovaQ`, `\CadeiaTensaoNovaFcorte`, `\CadeiaTensaoNovaResiduo`, `\CadeiaTensaoNovaGanhoFmax`,
+`\CadeiaTensaoNovaCorrecaoFmax`, `\CadeiaTensaoDifRms`, `\CadeiaTensaoDispersaoAntiga`, `\CadeiaTensaoDispersaoNova`).
+
+```fish
+uv run scripts/gerar_perfil_sonda.py $DADOS/lab/2026-10-22/capturas/cadeia_tensao_312k --referencia-externa --ganho 19.357 --plot
+uv run report/gerar_figuras.py perfil_cadeia_tensao_comparacao --png
+```
 
 ## T2: tensão contínua
 
@@ -211,7 +269,20 @@ e −9,988 V.
 * O ruído segue o datasheet (5 a 7 % abaixo do típico) e não depende da taxa nem do número de canais.
 * O offset do canal 1 (+2,5 a +3,5 mV no pino) passa do máximo do datasheet (±0,75 mV); o do canal 0 é de +0,05 a
   +0,21 mV. A suspeita é a ligação do divisor, não o ADC.
-* Falta a 312,5 kS/s com o firmware atual.
+
+**22/10/2026, a 312,5 kS/s** · firmware `v0.7-1-gb2f9078` · canal 1 em curto, 2 blocos (6,7 s) por faixa ·
+`$DADOS/lab/2026-10-22/T1_curto_312k_f{2048,1024,512}.bin` · `--inicio 100`.
+
+| Faixa | Ruído | Densidade | Offset (canal 1) | Folga da PRU |
+|---|---|---|---|---|
+| ±10,24 V | **0,54 LSB** (169 µV) | 400 nV/√Hz | +3,56 mV | 11 ciclos |
+| ±5,12 V | **0,61 LSB** (95 µV) | 192 nV/√Hz | +2,51 mV | 13 ciclos |
+| ±2,56 V | **0,79 LSB** (62 µV) | 106 nV/√Hz | +2,59 mV | 12 ciclos |
+
+* **A 312,5 kS/s, o mesmo ruído de 19/10** (+4 a +6 %, dentro do típico do datasheet): a taxa mais alta e a espera
+  de precisão não trouxeram ruído. O offset é o mesmo.
+* A folga de 11 a 13 ciclos (contra 3 a 5 com o tom no T7f) é o quadro que dependia do dado: em curto, as amostras
+  têm ~3 bits 1 (0x8021); com o tom, até 15 (ver o T7f).
 
 ## T0: escala do ADC
 

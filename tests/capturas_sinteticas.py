@@ -180,15 +180,17 @@ def captura_producao(caminho: Path, sonda_id: str = "sonda_teste", grandeza_cana
 
 def criar_pasta_calibracao_1canal(pasta: Path, freqs=FREQS_CAL, canal: int = 3, corrente_a: float = 1.0,
                                   nome_sonda: str = "sonda_teste", com_referencia_externa: bool = True,
-                                  fs_total: int = 200_000) -> Path:
+                                  fs_total: int = 200_000, faixa_adc_total_v: float | None = None) -> Path:
     """Pasta no formato de ``calibrar_sonda.sh`` com UM canal só (a sonda) e, opcionalmente, o
-    ``referencia_externa.csv`` com a tensão RMS lida "no osciloscópio" sobre o shunt (``R_SHUNT``)."""
+    ``referencia_externa.csv`` com a tensão RMS lida "no osciloscópio" sobre o shunt (``R_SHUNT``).
+    ``faixa_adc_total_v``: grava a faixa do ADC no cabeçalho (v3+), como o ``ler_adc --faixa-adc``."""
     pasta.mkdir(parents=True, exist_ok=True)
     linhas = ["arquivo,v_shunt_rms_V"]
     for k, f in enumerate(freqs):
         _, v_sonda = captura_calibracao(f, seed=2000 + k, fs_canal=float(fs_total))
         nome = f"calibracao_{f}Hz_rep1.bin"
-        escrever_bin(pasta / nome, [v_sonda * corrente_a], (canal,), (1,), (nome_sonda,), fs_total=fs_total)
+        escrever_bin(pasta / nome, [v_sonda * corrente_a], (canal,), (1,), (nome_sonda,), fs_total=fs_total,
+                     faixas_adc_total_v=faixa_adc_total_v)
         linhas.append(f"{nome},{R_SHUNT * corrente_a / np.sqrt(2):.6f}")
     if com_referencia_externa:
         (pasta / "referencia_externa.csv").write_text("\n".join(linhas) + "\n", encoding="utf-8")

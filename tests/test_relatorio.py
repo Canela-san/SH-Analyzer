@@ -122,3 +122,41 @@ def test_teto_com_periodo_constante_sai_do_resumo_da_varredura(gf, tmp_path, mon
     assert r"\GradeTetoConstante}{\num{313.0}}" in macros                 # 639 ticks: daí para cima, nenhuma
     assert r"\GradeTetoComuns}{\num{314.5}}" in macros                    # 636 ticks: mais de 2 atrasadas
     assert r"\GradeTetoTodas}{\num{315.0}}" in macros                     # 635 ticks: todas
+
+
+def test_comparacao_dos_perfis_de_tensao_mostra_a_mesma_cadeia(gf, tmp_path):
+    """T3 de 22/10 (312,5 kS/s, ±2,56 V, até 140 kHz) contra o de 19/10 (100 kS/s, ±10,24 V, até 45 kHz): a mesma
+    cadeia, a ~0,1 dB nas frequências em comum, e o 2ª ordem ainda vale até 140 kHz."""
+    assert gf.main(["perfil_cadeia_tensao_comparacao", "--sem-latex", "--saida", str(tmp_path)]) == 0
+    macros = (tmp_path / "perfil_cadeia_tensao_comparacao.tex").read_text(encoding="utf-8")
+    dif = float(macros.split(r"\CadeiaTensaoDifRms}{\qty{")[1].split("}")[0])
+    assert dif < 0.2
+    assert r"\CadeiaTensaoNovaFmax}{\qty{140}" in macros
+    residuo = float(macros.split(r"\CadeiaTensaoNovaResiduo}{\qty{")[1].split("}")[0])
+    assert residuo < 0.2
+
+
+def test_grade_bits_recupera_a_duracao_do_quadro_de_uma_varredura_sintetica(gf, tmp_path, monkeypatch):
+    """Uma varredura J feita com um quadro de 605 + (bits 1) ciclos: a figura acha 605 e a razão medida/prevista ~1."""
+    from capturas_sinteticas import montar_cabecalho
+
+    pasta = tmp_path / "T7f"
+    pasta.mkdir()
+    n = 1 << 16
+    codigos = (32768 + 6000 * np.sin(2 * np.pi * 0.01234 * np.arange(n))).astype("<u2")    # cruza o meio da escala
+    cab = montar_cabecalho(n, (1,), (1,), ("",), 312500, versao=6, amostras_por_buffer=n // 2, blocos=2)
+    (pasta / "J_cspadrao_312500_tom.bin").write_bytes(cab + codigos.tobytes())
+    bits = np.unpackbits(codigos[1:].view(np.uint8)).reshape(-1, 16).sum(axis=1)
+    linhas = ["parte,arquivo,esperas_cs,taxa_pedida_hz,canais,entrada,amostras_atrasadas,buffers_sobrescritos,"
+              "quadros_sdo_ruido,taxa_arm_hz,desvio_arm_pct,codigo_saida,folga_ciclos,atraso_max_ciclos"]
+    for ticks in range(630, 605, -1):
+        atrasadas = int(np.sum(605 + bits > ticks))
+        linhas.append(f'J,j{ticks}.bin,"padrao",{200_000_000 // ticks},"1",tom,{atrasadas},0,0,0,+0.00,0,,')
+    (pasta / "resumo.csv").write_text("\n".join(linhas) + "\n")
+    monkeypatch.setattr(gf, "PASTA_T7F", pasta)
+    monkeypatch.setattr(gf, "DADOS", tmp_path)
+    assert gf.main(["grade_bits", "--sem-latex", "--saida", str(tmp_path)]) == 0
+    macros = (tmp_path / "grade_bits.tex").read_text()
+    assert r"\GradeBitsBase}{605}" in macros
+    for nome in ("GradeBitsRazaoMin", "GradeBitsRazaoMax"):
+        assert float(macros.split(rf"\{nome}}}{{\num{{")[1].split("}")[0]) == pytest.approx(1.0, abs=0.02)

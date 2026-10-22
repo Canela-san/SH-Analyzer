@@ -146,6 +146,15 @@ TEXTOS = {
         "taxa_ks": "Taxa (kS/s)",
         "atrasadas": "Amostras fora da grade",
         "padrao": "padrão",
+        "perfil_novo": "22/10: 312,5 kS/s, ±2,56 V",
+        "perfil_antigo": "19/10: 100 kS/s, ±10,24 V",
+        "ajuste_2a_novo": "Ajuste de 2ª ordem (22/10)",
+        "diferenca_db": "19/10 − 22/10 (dB)",
+        "bits_medida": "Medida (varredura J)",
+        "bits_troca": "Só a troca de buffer (1 por captura)",
+        "bits_prevista": "Prevista: quadro de {base} + bits 1 ciclos",
+        "periodo_ciclos": "Período (ciclos de 5 ns)",
+        "fracao_atrasadas": "Fração de amostras atrasadas",
     },
     "en": {
         "frequencia": "Frequency (Hz)",
@@ -167,6 +176,15 @@ TEXTOS = {
         "taxa_ks": "Rate (kS/s)",
         "atrasadas": "Samples off the grid",
         "padrao": "default",
+        "perfil_novo": "Oct 22: 312.5 kS/s, ±2.56 V",
+        "perfil_antigo": "Oct 19: 100 kS/s, ±10.24 V",
+        "ajuste_2a_novo": "2nd-order fit (Oct 22)",
+        "diferenca_db": "Oct 19 − Oct 22 (dB)",
+        "bits_medida": "Measured (sweep J)",
+        "bits_troca": "Buffer swap only (1 per capture)",
+        "bits_prevista": "Predicted: {base} + one-bits cycle frame",
+        "periodo_ciclos": "Period (5 ns cycles)",
+        "fracao_atrasadas": "Fraction of late samples",
     },
 }
 
@@ -420,13 +438,14 @@ def com_incerteza(valor: float, sigma: float, escala: float = 1.0) -> str:
 # =====================================================================================================
 # Figuras
 # =====================================================================================================
-PERFIL_CADEIA_TENSAO = SONDAS_DIR_PADRAO / "cadeia_tensao.json"
+PERFIL_CADEIA_TENSAO = SONDAS_DIR_PADRAO / "cadeia_tensao.json"            # T3 de 19/10: 100 kS/s, até 45 kHz
+PERFIL_CADEIA_TENSAO_312K = SONDAS_DIR_PADRAO / "cadeia_tensao_312k.json"  # T3 de 22/10: 312,5 kS/s, até 140 kHz
 
 
-def _cadeia_tensao():
+def _cadeia_tensao(caminho: Path = PERFIL_CADEIA_TENSAO):
     """Pontos do perfil da cadeia de tensão e os ajustes de passa-baixa: (perfil, f, ganho, ajustes)."""
-    perfil = carregar_perfil_sonda(PERFIL_CADEIA_TENSAO)          # valida o arquivo como o adc_tool.py faria
-    dados = json.loads(PERFIL_CADEIA_TENSAO.read_text(encoding="utf-8"))
+    perfil = carregar_perfil_sonda(caminho)                        # valida o arquivo como o adc_tool.py faria
+    dados = json.loads(caminho.read_text(encoding="utf-8"))
     pontos = sorted(dados["pontos"], key=lambda p: p["freq_hz"])
     f = np.array([p["freq_hz"] for p in pontos], dtype=float)
     g = np.array([p["ganho"] for p in pontos], dtype=float)
@@ -531,6 +550,85 @@ def perfil_cadeia_tensao(estilo: Estilo) -> Resultado:
         "BIC: " + "; ".join(f"{a.nome} {a.bic:.1f}" for a in ajustes.values()),
         "Fase NÃO medida: a função de transferência supõe sistema de fase mínima (sem atraso puro).",
     ]
+    return Resultado(fig, macros, comentarios)
+
+
+@figura("perfil_cadeia_tensao_comparacao", "T3 de 22/10 (312,5 kS/s, até 140 kHz) contra o de 19/10 (100 kS/s, 45 kHz)")
+def perfil_cadeia_tensao_comparacao(estilo: Estilo) -> Resultado:
+    _, fa, ga, _ = _cadeia_tensao(PERFIL_CADEIA_TENSAO)
+    perfil, fn, gn, ajustes = _cadeia_tensao(PERFIL_CADEIA_TENSAO_312K)
+    aj = ajustes["ordem2"]
+    k, f0, q = aj.parametros
+    sk, sf0, sq = aj.incertezas
+    f3 = freq_menos_3db(f0, q)
+    sf3 = propagar(lambda _k, a, b: freq_menos_3db(a, b), aj.parametros, aj.covariancia)
+    melhor = min(ajustes.values(), key=lambda a: a.bic)
+    for a in ajustes.values():
+        log.info(f"  {a.nome:22s} BIC = {a.bic:8.1f}   resíduo = {a.sigma_residuo_db:.3f} dB")
+    if melhor is not aj and aj.bic - melhor.bic > 10:
+        log.warning(f"o modelo '{melhor.nome}' explica os dados decisivamente melhor que a 2ª ordem (ΔBIC > 10).")
+
+    ya, yn = 20 * np.log10(ga), 20 * np.log10(gn)
+    dif = ya - np.interp(np.log(fa), np.log(fn), yn)              # antigo - novo, nas frequências do antigo (em comum)
+    dif_rms = float(np.sqrt(np.mean(dif ** 2)))
+    disp_a = float(np.std(ga[fa < 1000], ddof=1) / np.mean(ga[fa < 1000]))
+    disp_n = float(np.std(gn[fn < 1000], ddof=1) / np.mean(gn[fn < 1000]))
+
+    fig = estilo.nova_figura(0.72)
+    eixo, eixo_dif = fig.subplots(2, 1, sharex=True, gridspec_kw={"height_ratios": [3.2, 1.1], "hspace": 0.04})
+    xmin, xmax = min(fa.min(), fn.min()) / 1.25, fn.max() * 1.15
+    fm = np.geomspace(xmin, xmax, 600)
+    curva, = eixo.plot(fm, mag_db_ordem2(fm, *aj.parametros), color=COR["modelo"], linestyle=(0, (5, 3)), alpha=0.6,
+                       zorder=2, label=estilo.t("ajuste_2a_novo"))
+    novo, = eixo.plot(fn, yn, linestyle="none", marker="o", color=COR["tinta"], markeredgecolor="white",
+                      markeredgewidth=0.5, zorder=3, label=estilo.t("perfil_novo"))
+    antigo, = eixo.plot(fa, ya, linestyle="none", marker="s", markerfacecolor="none", markeredgecolor=COR["destaque"],
+                        markeredgewidth=0.9, zorder=4, label=estilo.t("perfil_antigo"))
+    eixo.axvline(fa.max(), color=COR["secundaria"], linewidth=0.5, linestyle=(0, (1, 1.5)), zorder=1)
+    eixo.set_ylim(min(yn.min(), ya.min()) - 2, 2)
+    eixo.yaxis.set_major_locator(MultipleLocator(6))
+    eixo.yaxis.set_minor_locator(MultipleLocator(3))
+    eixo.yaxis.set_major_formatter(estilo.formatador(0))
+    eixo.set_ylabel(estilo.t("ganho_norm"))
+    eixo.legend(handles=[novo, antigo, curva], loc="lower left")
+
+    eixo_dif.axhline(0, color=COR["modelo"], linewidth=0.6, alpha=0.8, zorder=2)
+    eixo_dif.plot(fa, dif, linestyle="none", marker="s", markerfacecolor="none", markeredgecolor=COR["destaque"],
+                  markeredgewidth=0.9, markersize=estilo.formato.marcador_pt * 0.9, zorder=3)
+    lim = max(0.3, 1.25 * float(np.max(np.abs(dif))))
+    eixo_dif.set_ylim(-lim, lim)
+    eixo_dif.yaxis.set_major_locator(MaxNLocator(nbins=3, symmetric=True, steps=[1, 2, 2.5, 5, 10]))
+    eixo_dif.yaxis.set_major_formatter(estilo.formatador())
+    eixo_dif.set_ylabel(estilo.t("diferenca_db"))
+    eixo_dif.set_xscale("log")
+    eixo_dif.set_xlim(xmin, xmax)
+    eixo_dif.xaxis.set_major_locator(LogLocator(base=10))
+    eixo_dif.xaxis.set_minor_locator(LogLocator(base=10, subs=np.arange(2, 10)))
+    eixo_dif.xaxis.set_major_formatter(LogFormatterMathtext())
+    eixo_dif.set_xlabel(estilo.t("frequencia"))
+    fig.align_ylabels([eixo, eixo_dif])
+
+    log.info(f"  novo: K = {k:.5f} ± {sk:.5f}; f0 = {f0:.1f} ± {sf0:.1f} Hz; Q = {q:.4f} ± {sq:.4f}; "
+             f"f-3dB = {f3:.1f} ± {sf3:.1f} Hz; resíduo {aj.sigma_residuo_db:.3f} dB; em {fn.max():.0f} Hz: {yn[-1]:.1f} dB")
+    log.info(f"  antigo - novo: {dif_rms:.3f} dB rms, pior {dif[np.argmax(np.abs(dif))]:+.3f} dB; dispersão abaixo de "
+             f"1 kHz: {100 * disp_a:.2f} % (antigo) e {100 * disp_n:.2f} % (novo)")
+    macros = {
+        "CadeiaTensaoNovaNpontos": str(len(fn)),
+        "CadeiaTensaoNovaFmax": rf"\qty{{{fn.max() / 1e3:.0f}}}{{\kilo\hertz}}",
+        "CadeiaTensaoNovaFzero": rf"\qty{{{com_incerteza(f0, sf0, 1e3)}}}{{\kilo\hertz}}",
+        "CadeiaTensaoNovaQ": rf"\num{{{com_incerteza(q, sq)}}}",
+        "CadeiaTensaoNovaFcorte": rf"\qty{{{com_incerteza(f3, sf3, 1e3)}}}{{\kilo\hertz}}",
+        "CadeiaTensaoNovaResiduo": rf"\qty{{{aj.sigma_residuo_db:.2f}}}{{\decibel}}",
+        "CadeiaTensaoNovaGanhoFmax": rf"\qty{{{yn[-1]:.1f}}}{{\decibel}}",
+        "CadeiaTensaoNovaCorrecaoFmax": rf"\num{{{1 / gn[-1]:.0f}}}",
+        "CadeiaTensaoDifRms": rf"\qty{{{dif_rms:.2f}}}{{\decibel}}",
+        "CadeiaTensaoDispersaoAntiga": rf"\qty{{{100 * disp_a:.2f}}}{{\percent}}",
+        "CadeiaTensaoDispersaoNova": rf"\qty{{{100 * disp_n:.2f}}}{{\percent}}",
+    }
+    comentarios = [f"Perfis: {PERFIL_CADEIA_TENSAO.relative_to(RAIZ)} (19/10, 100 kS/s, ±10,24 V) e "
+                   f"{PERFIL_CADEIA_TENSAO_312K.relative_to(RAIZ)} ({perfil.id}: 22/10, 312,5 kS/s, ±2,56 V)",
+                   "Diferença: o perfil novo interpolado em log f, nas frequências do antigo (50 Hz a 45 kHz).",
+                   "BIC do novo: " + "; ".join(f"{a.nome} {a.bic:.1f}" for a in ajustes.values())]
     return Resultado(fig, macros, comentarios)
 
 
@@ -724,6 +822,73 @@ def grade_teto(estilo: Estilo) -> Resultado:
     comentarios = [f"Dados: {resumo.relative_to(DADOS)} (parte J: 2 blocos por taxa, 1 troca de buffer cada)",
                    f"Taxas em kS/s; folga mínima das capturas G/H/K no padrão: {sorted(folgas)} ciclos; "
                    f"a 1ª taxa sem atrasada depois de outra com atrasada é {200e3 / exato:.2f} kS/s (aleatório)."]
+    return Resultado(fig, macros, comentarios)
+
+
+@figura("grade_bits", "T7f: a fração de amostras atrasadas segue a fração de amostras com tantos bits 1 (quadro de "
+                      "605 + bits 1 ciclos)")
+def grade_bits(estilo: Estilo) -> Resultado:
+    """A descoberta de 22/10/2026: no firmware do T7f, um bit 1 lido esticava o SCLK em 1 ciclo, e o quadro durava
+    B + (bits 1 da amostra) ciclos. Uma amostra sai atrasada quando o quadro da anterior passa do período T:
+    fração(T) = P(bits 1 >= T - B + 1), com a distribuição de bits 1 tirada das próprias amostras."""
+    resumo = PASTA_T7F / "resumo.csv"
+    referencia = PASTA_T7F / "J_cspadrao_312500_tom.bin"
+    _exigir(resumo, referencia)
+    with open(resumo, newline="", encoding="utf-8") as arquivo:
+        linhas = [li for li in csv.DictReader(arquivo) if li["parte"] == "J"]
+    ticks = np.array([int(round(200e6 / int(li["taxa_pedida_hz"]))) for li in linhas])
+    cab = ler_cabecalho(referencia)
+    codigos = np.memmap(referencia, dtype="<u2", mode="r", offset=cab.tamanho_cabecalho)
+    bits = np.unpackbits(np.asarray(codigos[1:]).view(np.uint8)).reshape(-1, 16).sum(axis=1)
+    cauda = np.array([(bits >= m).mean() for m in range(18)])         # P(bits 1 >= m), m = 0..17
+    n = np.array([int(li["amostras_atrasadas"]) for li in linhas])
+    fracao = n / (2 * cab.samples_per_buffer)
+
+    def prevista(base: int, t):
+        m = np.clip(np.asarray(t) - base + 1, 0, 17)
+        return cauda[m]
+    # B pelo melhor acordo (em log) onde a contagem é limpa: só amostras comuns, poucas seguidas (fração < 5 %)
+    usar = (n > 2) & (fracao < 0.05)
+    base = min(range(590, 620), key=lambda b: float(np.sum((np.log10(prevista(b, ticks[usar]) + 1e-12)
+                                                             - np.log10(fracao[usar])) ** 2)))
+    razao = fracao[usar] / prevista(base, ticks[usar])
+
+    fig = estilo.nova_figura(0.5)
+    eixo = fig.subplots()
+    ordem = np.argsort(ticks)
+    tm = np.arange(ticks.min(), ticks.max() + 1)
+    eixo.plot(tm, prevista(base, tm), drawstyle="steps-mid", color=COR["modelo"], linewidth=estilo.formato.linha_pt,
+              alpha=0.8, zorder=2, label=estilo.t("bits_prevista").format(base=base))
+    # A partir de B + 15 ciclos só 0xFFFF (16 bits 1) atrasaria: as 1 ou 2 atrasadas são a troca de buffer (1 por captura).
+    tk, fr, nn = ticks[ordem], fracao[ordem], n[ordem]
+    so_troca = (nn > 0) & (tk >= base + 15)
+    comuns = (nn > 0) & ~so_troca
+    eixo.plot(tk[comuns], fr[comuns], linestyle="none", marker="o", color=COR["tinta"], markeredgecolor="white",
+              markeredgewidth=0.5, zorder=3, label=estilo.t("bits_medida"))
+    eixo.plot(tk[so_troca], fr[so_troca], linestyle="none", marker="s", markerfacecolor="none",
+              markeredgecolor=COR["destaque"], markeredgewidth=0.9, zorder=3, label=estilo.t("bits_troca"))
+    eixo.set_yscale("log")
+    eixo.set_ylim(1e-7, 2)
+    eixo.invert_xaxis()
+    eixo.set_xlabel(estilo.t("periodo_ciclos"))
+    eixo.set_ylabel(estilo.t("fracao_atrasadas"))
+    eixo.legend(loc="upper left")
+    log.info(f"  quadro = {base} + bits 1 ciclos; medida/prevista nos {int(usar.sum())} períodos com contagem limpa: "
+             f"{razao.min():.2f} a {razao.max():.2f}")
+    i619 = int(np.nonzero(ticks == base + 14)[0][0]) if np.any(ticks == base + 14) else None
+    macros = {
+        "GradeBitsBase": str(base),
+        "GradeBitsRazaoMin": rf"\num{{{razao.min():.2f}}}",
+        "GradeBitsRazaoMax": rf"\num{{{razao.max():.2f}}}",
+    }
+    if i619 is not None:
+        macros["GradeBitsPeriodoEx"] = str(base + 14)
+        macros["GradeBitsMedidaEx"] = rf"\num{{{fracao[i619]:.2e}}}"
+        macros["GradeBitsPrevistaEx"] = rf"\num{{{float(prevista(base, base + 14)):.2e}}}"
+    comentarios = [f"Dados: {resumo.relative_to(DADOS)} (parte J) e a distribuição de bits 1 de {referencia.name} "
+                   f"({cab.versao_firmware})",
+                   "Prevista: fração de amostras com bits 1 >= T - B + 1; B ajustado onde só há amostras comuns "
+                   "isoladas atrasadas (fração < 5 %)."]
     return Resultado(fig, macros, comentarios)
 
 

@@ -4,7 +4,7 @@
 >
 > **Grau de confiança.** O que está sem marca vem do código, dos testes ou dos dados medidos e pode ser citado. O que tem ⚠️ depende da sua memória e precisa ser conferido. Os `[ ]` são imagens ou dados que ainda faltam.
 >
-> **Última atualização:** 22/10/2026. Cobre de jul/2026 (início do Assembly) até os resultados de bancada de 19/10 (Marcos 12 e 14), a revisão do firmware (Marco 13), a varredura das esperas do CS e da taxa de 21/10 (Marco 15) e a grade de tempo (Marco 16). Os achados de engenharia que não são matéria de relatório (robustez, higiene de código, organização do repositório) estão em [`improvement-proposals.md`](improvement-proposals.md).
+> **Última atualização:** 22/10/2026. Cobre de jul/2026 (início do Assembly) até os resultados de bancada de 19/10 (Marcos 12 e 14), a revisão do firmware (Marco 13), a varredura das esperas do CS e da taxa de 21/10 (Marco 15) e a grade de tempo, o quadro que dependia do dado e o T3 até 140 kHz (Marco 16). Os achados de engenharia que não são matéria de relatório (robustez, higiene de código, organização do repositório) estão em [`improvement-proposals.md`](improvement-proposals.md).
 
 ---
 
@@ -1118,16 +1118,39 @@ capturas, o tom de 10 kHz de 21/10):
 degraus em ns), e não com "não vimos problema". É um bom exemplo de medida que separa causas: o ruído alto parecia
 do ADC ou do gerador, e foi a dependência com a inclinação do tom que apontou o tempo.
 
+**Mais tarde no mesmo dia: o quadro dependia do dado.** A "cauda aleatória" do quadro comum (611 a 619 ciclos, que
+se atribuía à escrita na DDR) não era aleatória. Na varredura J, a fração de amostras atrasadas em cada período bateu
+com a fração de amostras que têm tantos bits 1 (619 ciclos: 5,58 × 10⁻⁵ atrasadas e 5,53 × 10⁻⁵ amostras com 15 bits
+1; 616 ciclos: 2,44 × 10⁻² e 2,56 × 10⁻²): o quadro durava **605 + (bits 1 da amostra)** ciclos. A causa estava no
+assembly: o bit lido era acumulado com um desvio (`QBBC` + `OR`), e um bit 1 executava uma instrução a mais com o SCLK
+em alto. As 43 capturas de calibração do mesmo dia (folga de exatamente 20 ciclos em todas: 640 − 605 − 15)
+confirmaram. O instante da amostra nunca dependeu disso (a descida do CS vem depois da espera de precisão), mas a
+folga, o teto e o padrão do SCLK, sim. A correção lê o bit com um `AND` sem desvio e soma-o com o SCLK já baixo, no
+lugar de um NOP: todo quadro dura o mesmo, sem nenhum ciclo a mais. Junto, a troca de buffer passou a fazer um acesso
+à memória por amostra, nas 5 amostras seguintes, em vez de 5 de uma vez. Com o simulador calibrado nas medidas da
+placa (o mesmo modelo reproduz a folga de 20 ciclos e a da troca), a folga prevista a 312,5 kS/s sobe de 3 para 31
+ciclos, qualquer que seja o sinal. Figura `grade_bits` (a varredura J contra a previsão).
+
+**Relevância:** é a lição da PRU em uma frase: num processador sem cache nem interrupções, o tempo de cada caminho
+do código é uma medida, e um desvio condicional no laço de amostragem faz o tempo depender do dado. A pista veio de
+tratar a "cauda aleatória" como um dado a explicar, e não como ruído.
+
+**O T3 até 140 kHz, no mesmo dia** (perfil `cadeia_tensao_312k`, 43 pontos a 312,5 kS/s, faixa de ±2,56 V): −3 dB
+em 16,8 kHz; o mesmo 2ª ordem (f0 = 24,2 kHz, Q = 0,53) descreve 3,5 décadas a 0,1 dB, sem outro polo; −30,6 dB em
+140 kHz. Nas frequências em comum, a 0,13 dB rms do perfil de 19/10, medido a outra taxa, em outra faixa e com outro
+firmware. Figura `perfil_cadeia_tensao_comparacao`. E o T1 a 312,5 kS/s deu o mesmo ruído de 19/10.
+
 ### Marco 17 — Trabalho Pendente
 
 Em ordem de prioridade, a mesma da tabela [Estado da campanha](lab-procedure.md#estado-da-campanha) do roteiro:
 
-1. **Mais folga na troca de buffer (Marco 16):** a 312,5 kS/s sobram 3 ciclos. Tirar da troca o que pode esperar
-   a amostra seguinte e a espera mínima de CS alto do caminho em dia; conferir que a memória dos buffers está fora
-   do Linux (hoje, só o `mem=496M` da placa garante); validar com `./varrer_taxa.sh --grade` (~15 min). E a foto do
-   CS no osciloscópio. A avaliação completa do firmware está em [`improvement-proposals.md`](improvement-proposals.md#avaliação-do-firmware-22102026).
+1. **Validar o quadro fixo e a troca espalhada (Marco 16)** com `./varrer_taxa.sh --grade` (~16 min): folga prevista
+   ≥ 31 ciclos a 312,5 kS/s, a mesma com o tom e em curto; teto ~328 kS/s. A memória dos buffers já é conferida
+   (`/proc/iomem`). Depois, o SPI mais rápido (~15 MHz), que leva o teto para ~430 kS/s e lê cada bit em três
+   instantes para medir a margem sem osciloscópio. A avaliação do firmware está em
+   [`improvement-proposals.md`](improvement-proposals.md#avaliação-do-firmware-22102026).
 2. **A campanha do limite (Marco 15).** O padrão do firmware passou a 312,5 kS/s com as esperas no mínimo do datasheet (`3,1,3`), para a Nyquist passar de 150 kHz. `./varrer_taxa.sh --limite` (~35 min) valida o padrão e a correção do rebase (10 min no padrão) e mede o limite em passos de 1 tick (5 ns), de 303 a 333 kS/s, com `3,1,3` e `6,2,6`: o teto, a zona de transição (a primeira amostra atrasada) e a qualidade até ele, para descrever o hardware com precisão no relatório.
-3. **Refazer na taxa padrão (312,5 kS/s)** o que depende da banda: T1, T3 (inteiro, com `--repeticoes 3`), T4 e T6, como manda a tabela [O que refazer com o firmware de out/2026](lab-procedure.md#o-que-refazer-com-o-firmware-de-out2026). O teto (326 kS/s) está no Marco 15; falta fotografar o CS no osciloscópio (a anatomia do quadro).
+3. **Refazer na taxa padrão (312,5 kS/s)** o que depende da banda: T4 e T6 (o T1 e o T3 foram refeitos em 22/10), como manda a tabela [O que refazer com o firmware de out/2026](lab-procedure.md#o-que-refazer-com-o-firmware-de-out2026). O teto (326 kS/s) está no Marco 15; falta fotografar o CS no osciloscópio (a anatomia do quadro).
 4. **Calibração da sonda de corrente (T10)**, o objetivo central, **depois** do T7e: o perfil vale até 0,9 × Nyquist da taxa em que é medido. O fluxo já rodou com hardware real na cadeia de tensão (Marco 12); falta o SCT013 e a validação em frequências que não entraram no perfil (*hold-out*). A sensibilidade de 60 µV/A sobre o resistor de carga é o maior risco (roteiro, fato 5).
 5. **Completar a caracterização:**
    * o contador de frequência no T4;

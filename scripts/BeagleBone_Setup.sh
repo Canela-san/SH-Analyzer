@@ -642,6 +642,7 @@ cmd_status() {
 
     case "$pru" in
         running) campo "PRU0" "${VERDE}✓${R} rodando" ;;
+        offline) campo "PRU0" "${VERDE}✓${R} parada ${F}(o ler_adc a para no fim de cada captura e a liga na próxima; depois de ligar a placa, rode${R} ${N}setup${R}${F})${R}" ;;
         desconhecido) campo "PRU0" "${AMARELO}!${R} sem remoteproc1 (o overlay da PRU está ativo?)" ;;
         *) campo "PRU0" "${AMARELO}!${R} ${pru} ${F}→${R} ${N}setup${R}" ;;
     esac

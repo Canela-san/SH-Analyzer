@@ -66,6 +66,20 @@ class Latencias:
     escrita: int = 0              # ciclos a mais de todo SBBO fora da DDR
     efeito_escrita: int = 0       # ciclos depois do começo do SBBO em que o zero do contador passa a valer
     ddr: Callable[[], int] | None = None    # ciclos a mais de cada SBBO na DDR (None = ``escrita``)
+    # Na RAM compartilhada (shared_control), se diferente dos registradores de controle (None = ``leitura``/``escrita``)
+    leitura_compartilhada: int | None = None
+    escrita_compartilhada: int | None = None
+
+
+# [F12] Latências que reproduzem a PRU de verdade (BeagleBone, medidas em 22/10/2026 com o firmware anterior, o da
+# leitura do bit com desvio): o simulador com elas dá a mesma folga que a placa publicou.
+#   * LBBO do contador + SBBO no bloco de controle = 7 ciclos entre as leituras (``ciclos_rebase`` de toda captura).
+#   * Quadro comum = 605 + (bits 1 da amostra) ciclos entre duas 1ªs leituras do contador: folga de exatamente 20
+#     ciclos a 640 nas 43 capturas de calibração de 22/10 (o tom cruza o meio da escala: 0x7FFF, 15 bits 1) e a
+#     fração de amostras atrasadas da varredura J do T7f. Com 1 ciclo por instrução o simulador dava 616.
+#   * Troca de buffer (5 acessos à RAM compartilhada de uma vez): folga de 11 a 13 ciclos no T1 de 22/10 (entrada em
+#     curto, ~3 bits 1 por amostra) e de 3 a 5 nas capturas longas com o tom (o pior de 17 a 90 trocas).
+LATENCIAS_PRU_REAL = Latencias(leitura=3, escrita=2, ddr=lambda: 1, leitura_compartilhada=2, escrita_compartilhada=2)
 
 
 class ErroSimulacao(Exception):
@@ -218,6 +232,7 @@ class PRU:
         self.instantes_cs: list[int] = []               # ciclo de cada descida do CS (o instante da amostra)
         self.instantes_cs_sobe: list[int] = []          # ciclo de cada subida do CS (fim da transação)
         self.escritas_ddr: list[tuple[int, int]] = []
+        self.acessos_compartilhada: list[int] = []      # ciclo de cada LBBO/SBBO no shared_control
         self._atual: Transacao | None = None
         self._r30_anterior = 0
         self._clocks_quadro = 0
@@ -368,6 +383,11 @@ def _ex_nop(m: PRU, i: Instrucao):
     return None
 
 
+def _compartilhada(endereco: int) -> bool:
+    """A RAM compartilhada da PRU (12 KB a partir de 0x10000), onde fica o shared_control."""
+    return ENDERECO_SHARED_RAM <= endereco < ENDERECO_SHARED_RAM + 0x3000
+
+
 def _ex_lbbo(m: PRU, i: Instrucao):
     destino, base, deslocamento, n = i.operandos
     if m._decodificar(deslocamento) is not None:
@@ -375,7 +395,11 @@ def _ex_lbbo(m: PRU, i: Instrucao):
     endereco = (m._ler(base) + int(deslocamento, 0)) & MASCARA32
     quantidade = int(n, 0)
     numero, inicio, _ = m._decodificar(destino)
-    m._custo += m.latencias.leitura
+    lat = m.latencias
+    if _compartilhada(endereco):
+        m.acessos_compartilhada.append(m.ciclo)
+    m._custo += lat.leitura_compartilhada if _compartilhada(endereco) and lat.leitura_compartilhada is not None \
+        else lat.leitura
     if quantidade > 4:                                   # vários registradores seguidos (LBBO &r9, ..., 12)
         if inicio or quantidade % 4:
             raise ErroSimulacao(f"linha {i.linha}: LBBO de vários registradores precisa de registrador inteiro e n múltiplo de 4")
@@ -395,7 +419,15 @@ def _ex_sbbo(m: PRU, i: Instrucao):
     quantidade = int(n, 0)
     numero, inicio, _ = m._decodificar(origem)
     ddr = endereco >= 0x90000000
-    m._custo += m.latencias.ddr() if ddr and m.latencias.ddr is not None else m.latencias.escrita
+    lat = m.latencias
+    if _compartilhada(endereco):
+        m.acessos_compartilhada.append(m.ciclo)
+    if ddr and lat.ddr is not None:
+        m._custo += lat.ddr()
+    elif _compartilhada(endereco) and lat.escrita_compartilhada is not None:
+        m._custo += lat.escrita_compartilhada
+    else:
+        m._custo += lat.escrita
     if quantidade > 4:                                   # vários registradores seguidos (SBBO &r6, ..., 12)
         if inicio or quantidade % 4:
             raise ErroSimulacao(f"linha {i.linha}: SBBO de vários registradores precisa de registrador inteiro e n múltiplo de 4")

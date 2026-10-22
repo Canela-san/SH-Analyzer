@@ -291,6 +291,20 @@ class TestCliUmCanal:
         for p in d["pontos"]:
             assert p["ganho"] == pytest.approx(float(planta_h(p["freq_hz"])), rel=2e-3)
 
+    def test_faixa_do_cabecalho_sem_aviso_falso_do_papel_de_referencia(self, cli, tmp_path):
+        """Com 1 canal não há canal de referência. Até 22/10/2026 esse papel ficava sem faixa e TODA captura avisava
+        "a captura não registra a faixa do ADC" (43 vezes no T3 de 22/10), embora a da sonda viesse do cabeçalho."""
+        pasta = criar_pasta_calibracao_1canal(tmp_path / "c", freqs=[1000, 5000], faixa_adc_total_v=10.24)
+        saida = tmp_path / "perfil.json"
+        rc, out, err = cli(main, pasta, "--referencia-externa", "--resistencia-shunt", R_SHUNT, "--ganho", "10",
+                           "-o", saida)
+        assert rc == 0, err
+        assert "não registra a faixa" not in out + err
+        adc = json.loads(saida.read_text(encoding="utf-8"))["calibracao_adc"]
+        assert adc["faixa_v"]["sonda"] == 10.24 and adc["faixa_v_confiavel"]["sonda"] is True
+        for p in json.loads(saida.read_text(encoding="utf-8"))["pontos"]:
+            assert p["ganho"] == pytest.approx(float(planta_h(p["freq_hz"])), rel=2e-3)
+
     def test_corrente_constante_tambem_funciona_com_um_canal(self, cli, pasta_1canal, tmp_path):
         saida = tmp_path / "perfil.json"
         rc, _, err = cli(main, pasta_1canal, "--amplitude-referencia", "1.0", "--ganho", "10", "-o", saida)

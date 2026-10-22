@@ -10,7 +10,10 @@
 #include <time.h>
 #include "memoria_pru.h"
 
-volatile int manter_execucao = 1;
+volatile sig_atomic_t manter_execucao = 1;
+// SIGINT (Ctrl+C), SIGTERM (kill) e SIGHUP (o ssh caiu): o mesmo fim limpo -- o laço sai entre dois blocos e o
+// cabeçalho final (blocos, contadores, folga) é reescrito. Até 22/10/2026 só o SIGINT era tratado: um kill ou a queda
+// do ssh deixavam o cabeçalho com os campos finais zerados.
 void lidar_interrupcao(int sinal) { (void)sinal; manter_execucao = 0; }
 
 // Número de blocos capturados quando nem --blocos nem --duracao são
@@ -301,7 +304,8 @@ static void gerar_nome_arquivo_automatico(time_t instante, char *buffer, size_t 
  *                mecanismo "cru": era a única forma de captura antes
  *                desta funcionalidade, sempre com N fixo em 1).
  *                N = 0 -> captura INDEFINIDAMENTE, buffer atrás de
- *                buffer, até o usuário apertar Ctrl+C. SIGINT já é
+ *                buffer, até o usuário apertar Ctrl+C. SIGINT (e, desde
+ *                22/10/2026, SIGTERM e SIGHUP) já é
  *                tratado por lidar_interrupcao(), então o arquivo é
  *                sempre fechado de forma limpa nesse momento -- nunca a
  *                meio de um fwrite() de um bloco em andamento (ver o
@@ -866,15 +870,16 @@ static void conferir_integridade(volatile struct shared_control *ctrl, struct co
 }
 
 /*
- * [GRADE] O que a PRU diz sobre o período entre amostras (memoria_pru.h). A folga só é publicada na troca de buffer:
- * com 1 bloco, ela ainda é o valor inicial (o período) e não diz nada.
+ * [GRADE] O que a PRU diz sobre o período entre amostras (memoria_pru.h). A folga é publicada 5 amostras depois de
+ * cada troca de buffer (spi_core.asm, evento 5), e cobre essa troca: com 1 bloco ela já vale. Antes de publicada, é o
+ * valor inicial (o período). (Até 22/10/2026 este texto dizia que 1 bloco não publicava: publicava, só sem a troca.)
  */
 static void imprimir_grade(volatile struct shared_control *ctrl, const struct contadores_integridade *c,
                            unsigned long long blocos) {
     uint32_t periodo = ctrl->sample_period_ticks;
     printf("Grade de tempo (PRU): ");
-    if (blocos < 2) {
-        printf("folga ainda não publicada (só na troca de buffer: capture >= 2 blocos)");
+    if (blocos == 0 || (c->amostras_atrasadas == 0 && c->folga_minima_ciclos >= periodo)) {
+        printf("folga ainda não publicada (a PRU a publica logo depois de cada bloco)");
     } else if (c->amostras_atrasadas == 0 && c->folga_minima_ciclos < periodo) {
         printf("folga mínima %u ciclo(s) = %u ns -- toda amostra no ciclo exato da grade; período constante até "
                "~%.0f S/s", c->folga_minima_ciclos, 5u * c->folga_minima_ciclos,
@@ -1070,8 +1075,56 @@ static int reiniciar_pru_antes_da_captura(void) {
     return 0;
 }
 
+// [F11] Os buffers da PRU ficam em DDR_RESERVED_PHYS, os últimos 16 MB da DDR de 512 MB da BeagleBone. O Linux só não
+// os usa porque o /boot/uEnv.txt da placa tem 'mem=496M' (conferido em 22/10/2026 em /proc/cmdline): numa imagem nova
+// sem essa linha, o Linux e a PRU escreveriam na mesma memória, em silêncio -- capturas corrompidas e travamentos ao
+// acaso. Aqui se confere, no /proc/iomem (``caminho``; os testes passam outro), que nenhuma "System RAM" do Linux
+// cobre [inicio, fim). Sem root o /proc/iomem mostra só zeros (o ler_adc sempre roda com sudo, por causa do
+// /dev/mem): avisa e segue. Devolve -1 se há conflito.
+static int conferir_ddr_reservada(const char *caminho, unsigned long long inicio, unsigned long long fim) {
+    FILE *iomem = fopen(caminho, "r");
+    if (iomem == NULL) {
+        fprintf(stderr, "Aviso: não deu para ler %s (%s): a reserva da DDR dos buffers da PRU não foi "
+                         "conferida.\n", caminho, strerror(errno));
+        return 0;
+    }
+    char linha[256];
+    int enderecos_visiveis = 0;
+    int conflitos = 0;
+    while (fgets(linha, sizeof(linha), iomem) != NULL) {
+        unsigned long long a, b;
+        char nome[200];
+        if (linha[0] == ' ') {
+            continue;   // só o nível de cima: as sub-faixas (kernel code, reserved...) vêm indentadas
+        }
+        if (sscanf(linha, "%llx-%llx : %199[^\n]", &a, &b, nome) != 3) {
+            continue;
+        }
+        if (a != 0 || b != 0) {
+            enderecos_visiveis = 1;
+        }
+        if (strcmp(nome, "System RAM") == 0 && a < fim && b >= inicio) {
+            fprintf(stderr, "Erro: a memória dos buffers da PRU (0x%llX-0x%llX) é RAM do Linux (/proc/iomem: "
+                             "%llX-%llX : System RAM). A PRU escreveria por cima da memória do sistema.\n"
+                             "Reserve os últimos 16 MB: 'mem=496M' na linha cmdline= do /boot/uEnv.txt da "
+                             "BeagleBone, e reinicie a placa.\n", inicio, fim - 1, a, b);
+            conflitos++;
+        }
+    }
+    fclose(iomem);
+    if (!enderecos_visiveis) {
+        fprintf(stderr, "Aviso: /proc/iomem sem endereços (rode com sudo): a reserva da DDR não foi conferida.\n");
+        return 0;
+    }
+    return conflitos ? -1 : 0;
+}
+
 int main(int argc, char *argv[]) {
     signal(SIGINT, lidar_interrupcao);
+    signal(SIGTERM, lidar_interrupcao);
+    signal(SIGHUP, lidar_interrupcao);
+    signal(SIGPIPE, SIG_IGN);   // stdout num pipe que fechou (ex.: '| tee' morto com o ssh): sem isso, o printf mataria
+                                // o processo antes de reescrever o cabeçalho; o erro de escrita é só ignorado
 
     // -h/--help em QUALQUER posição -> mostra o uso e sai, sem exigir
     // frequência nem nenhum outro argumento válido. Checado antes de
@@ -1382,6 +1435,12 @@ int main(int argc, char *argv[]) {
     // porquê: sem isso, uma captura com canais diferentes da anterior
     // silenciosamente reaproveitava a máscara de canais já configurada na
     // PRU desde o boot anterior, em vez da máscara calculada acima.
+    size_t bytes_por_buffer = (size_t)SAMPLES_PER_BUFFER * sizeof(uint16_t);
+    if (conferir_ddr_reservada("/proc/iomem", DDR_RESERVED_PHYS,
+                               (unsigned long long)DDR_RESERVED_PHYS + bytes_por_buffer * BUFFERS_PING_PONG) != 0) {
+        return -1;
+    }
+
     printf("Reiniciando a PRU para garantir que os canais desta captura "
            "sejam aplicados (evita reaproveitar a configuração de uma "
            "captura anterior)...\n");
@@ -1410,7 +1469,6 @@ int main(int argc, char *argv[]) {
     // nestes MESMOS buffers ping-pong (não existem buffers separados por
     // canal) -- ver o comentário grande dentro do laço de captura, mais
     // abaixo, para como a posição de cada amostra mapeia para o seu canal.
-    size_t bytes_por_buffer = (size_t)SAMPLES_PER_BUFFER * sizeof(uint16_t);
     void *ddr_map = mmap(0, bytes_por_buffer * BUFFERS_PING_PONG, PROT_READ, MAP_SHARED, mem_fd, DDR_RESERVED_PHYS);
     if (ddr_map == MAP_FAILED) {
         perror("Erro ao mapear a região DDR reservada");
@@ -1797,6 +1855,11 @@ int main(int argc, char *argv[]) {
     munmap(ddr_map, bytes_por_buffer * BUFFERS_PING_PONG);
     munmap(ctrl_map, 4096);
     close(mem_fd);
+    // [F6] A PRU não fica amostrando para a DDR depois da captura (até 22/10/2026, seguia até a próxima). A próxima
+    // captura a liga de novo (reiniciar_pru_antes_da_captura).
+    if (escrever_estado_remoteproc("stop") == 0) {
+        printf("PRU parada (a próxima captura a liga de novo).\n");
+    }
     if (integridade.buffers_sobrescritos > 0) {
         fprintf(stderr, "ERRO: a captura '%s' tem amostras perdidas (%u buffer(s) sobrescrito(s)) -- refaça.\n",
                 nome_arquivo_saida, integridade.buffers_sobrescritos);
