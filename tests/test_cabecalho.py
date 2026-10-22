@@ -123,18 +123,49 @@ def test_codigo_de_faixa_desconhecido_vira_none_sem_quebrar(tmp_path):
     assert c.faixa_adc_codigo_por_canal == (0, 9) and c.faixa_adc_total_v_por_canal == (20.48, None)
 
 
-def test_versao_futura_avisa_e_e_lida_como_v5(tmp_path, caplog):
+def test_versao_futura_avisa_e_e_lida_como_v6(tmp_path, caplog):
     from capturas_sinteticas import montar_cabecalho
 
-    bruto = bytearray(montar_cabecalho(1000, (0, 1), (0, 1), ("", ""), 400_000, versao=5, versao_firmware="v9"))
-    bruto[4:8] = (6).to_bytes(4, "little")                      # "versão 6": formato que este código ainda não conhece
+    bruto = bytearray(montar_cabecalho(1000, (0, 1), (0, 1), ("", ""), 400_000, versao=6, versao_firmware="v9"))
+    bruto[4:8] = (7).to_bytes(4, "little")                      # "versão 7": formato que este código ainda não conhece
     p = tmp_path / "futuro.bin"
     p.write_bytes(bytes(bruto))
     with caplog.at_level(logging.WARNING):
         c = ler_cabecalho(p)
-    assert c.versao_cabecalho == 6 and c.faixa_adc_total_v_por_canal == (20.48, 20.48) and c.buffers_sobrescritos == 0
-    assert c.versao_firmware == "v9"
-    assert any("só conhece até a versão 5" in r.getMessage() for r in caplog.records)
+    assert c.versao_cabecalho == 7 and c.faixa_adc_total_v_por_canal == (20.48, 20.48) and c.buffers_sobrescritos == 0
+    assert c.versao_firmware == "v9" and c.folga_minima_ciclos == 20
+    assert any("só conhece até a versão 6" in r.getMessage() for r in caplog.records)
+
+
+# --------------------------------------------------------------------------------------
+# v6: grade de tempo publicada pela PRU (22/10/2026)
+# --------------------------------------------------------------------------------------
+def test_v6_le_a_grade_de_tempo(tmp_path, caplog):
+    p = escrever_bin(tmp_path / "v6.bin", SINAL, fs_total=312_500, versao=6, grade=(23, 0, 3, 2), blocos=3)
+    c = ler_cabecalho(p)
+    assert c.crc32_valido and c.versao_cabecalho == 6 and c.sample_period_ticks == 640
+    assert (c.folga_minima_ciclos, c.atraso_maximo_ciclos, c.ciclos_rebase, c.versao_protocolo_pru) == (23, 0, 3, 2)
+    assert c.grade_exata is True
+    attrs = c.para_attrs_hdf5()
+    assert attrs["folga_minima_ciclos"] == 23 and attrs["ciclos_rebase"] == 3 and attrs["versao_protocolo_pru"] == 2
+    with caplog.at_level(logging.INFO):
+        imprimir_resumo_cabecalho(c)
+    texto = "\n".join(r.getMessage() for r in caplog.records)
+    # 200 MHz / (640 - 23) = 324,1 kS/s: a maior taxa em que a mesma folga ainda daria período constante
+    assert ("Grade de tempo (PRU): exata -- toda amostra no ciclo da grade, folga mínima 23 ciclos (115 ns); "
+            "período constante até ~324.1 kS/s") in texto
+
+
+def test_v6_com_amostras_atrasadas_ou_um_bloco_so_nao_garante_a_grade(tmp_path):
+    atrasada = ler_cabecalho(escrever_bin(tmp_path / "a.bin", SINAL, fs_total=312_500, versao=6, blocos=3,
+                                          integridade=(5, 0, 0), grade=(0, 40, 2, 2)))
+    assert atrasada.grade_exata is False
+    assert atrasada.descrever_grade() == "5 amostra(s) fora da grade, a pior 40 ciclos (200 ns) atrasada"
+    um_bloco = ler_cabecalho(escrever_bin(tmp_path / "b.bin", SINAL, fs_total=312_500, versao=6, grade=(640, 0, 2, 2)))
+    assert um_bloco.grade_exata is None and "folga não publicada" in um_bloco.descrever_grade()
+    v5 = ler_cabecalho(escrever_bin(tmp_path / "v5.bin", SINAL, versao=5))
+    assert v5.folga_minima_ciclos is None and v5.grade_exata is None and v5.descrever_grade() is None
+    assert "folga_minima_ciclos" not in v5.para_attrs_hdf5()
 
 
 # --------------------------------------------------------------------------------------

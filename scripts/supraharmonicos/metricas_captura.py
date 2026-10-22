@@ -19,7 +19,10 @@ conhecido injetado por um gerador:
   com vários canais e só aparece nessa comparação);
 * acoplamento entre canais: diafonia e atraso de amostragem (o ADS8688
   multiplexa: o canal na posição ``j`` do ciclo é amostrado ``j/fs_total``
-  depois do primeiro).
+  depois do primeiro);
+* grade de tempo (22/10/2026): o jitter da amostragem (a parte do ruído que
+  cresce com a inclinação do tom) e o degrau de tempo, em ns, em posições
+  escolhidas (trocas de buffer, rebases do contador da PRU).
 
 Todas as potências saem da MESMA FFT com janela: ``p[k] = 2|X[k]|²/(N·Σw²)`` é a
 contribuição do bin ``k`` à variância do sinal (Parseval), então "potência do
@@ -62,6 +65,9 @@ LIMITE_SALTO_AMOSTRAS = 0.5     # salto de fase acima disso (em amostras equival
 RAZAO_TROCA_DESTOA = 10.0       # o salto numa troca de buffer destoa acima de 10x o típico dos outros segmentos...
 LIMITE_TROCA_US = 0.05          # ... e de 0,05 µs (capturas saudáveis de 19/10: 0,01 a 0,04 µs; o defeito antigo: 6,97 µs)
 CICLOS_MINIMOS_POR_SEGMENTO = 10
+AMOSTRAS_POR_BLOCO_JITTER = 2000   # curto: a deriva lenta de fase do gerador fica no ajuste (ver estimar_jitter)
+HARMONICOS_JITTER = 5
+JANELA_DEGRAU = 4000            # amostras de cada lado de um evento para medir o degrau de tempo nele
 _CHUNK_PROJECAO = 1 << 20
 _TINY = 1e-300
 
@@ -473,3 +479,140 @@ def calcular_acoplamento(tons: dict[int, tuple[float, float]], posicoes: dict[in
             atraso_esperado_us=(posicoes[canal] - posicoes[agressor]) / fs_total * 1e6,
         ))
     return resultado
+
+
+# ---------------------------------------------------------------------------
+# Grade de tempo: jitter e degraus (22/10/2026)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Jitter:
+    rms_ns: float                      # jitter da amostragem estimado, em ns rms
+    ruido_plano: float                 # ruído (unidade do sinal) onde o tom é plano: o do ADC, sem o do jitter
+    blocos: int
+
+
+def estimar_jitter(sinal: np.ndarray, fs: float, freq_hz: float,
+                   amostras_por_bloco: int = AMOSTRAS_POR_BLOCO_JITTER) -> Jitter | None:
+    """Jitter da amostragem, medido num tom estável.
+
+    Uma amostra tomada ``δ`` fora do instante erra ``inclinação·δ``: o ruído cresce onde o tom é íngreme (nos
+    cruzamentos por zero) e some onde ele é plano (nos picos). Em blocos curtos, ajusta-se o tom (DC, fundamental
+    com deriva linear de fase e amplitude, harmônicos até o 5º) e regride-se o quadrado do resíduo contra o
+    quadrado da inclinação: ``r² ≈ σ0² + (inclinação·σt)²``. ``σt`` (em amostras) vira ns com ``fs`` e ``σ0`` é o
+    ruído do ADC. A mediana entre blocos ignora os poucos com um degrau ou um transitório.
+
+    Blocos curtos importam: a deriva lenta de fase do gerador (espúrios a ±10-20 Hz do tom) não segue um tom de
+    frequência fixa num bloco longo, e o resto dela vira "jitter" -- nas capturas de 21/10/2026, blocos de 20.000
+    amostras davam até 3x mais que blocos de 2.000 a 100 kS/s, e estes davam ~8,4 ns em todas as taxas.
+
+    O que este número não separa: jitter da PRU, do gerador e do relógio de amostragem do ADC somam-se. Com a
+    grade exata da PRU (firmware de 22/10/2026), o que sobrar é do resto da cadeia. Devolve None sem 4 blocos."""
+    bloco = int(amostras_por_bloco)
+    n_blocos = len(sinal) // bloco if bloco > 0 else 0
+    if n_blocos < 4 or not 0 < freq_hz < fs / 2:
+        return None
+    omega = 2.0 * math.pi * freq_hz / fs
+    t = np.arange(bloco, dtype=np.float64) - (bloco - 1) / 2.0
+    colunas = [np.ones(bloco)]
+    for h in range(1, HARMONICOS_JITTER + 1):
+        colunas += [np.cos(h * omega * t), np.sin(h * omega * t)]
+    colunas += [t * np.cos(omega * t), t * np.sin(omega * t)]
+    base = np.column_stack(colunas)
+    projecao = np.linalg.pinv(base)
+    cos1, sen1 = np.cos(omega * t), np.sin(omega * t)
+    c0_todos, c1_todos = [], []
+    por_vez = max(1, (1 << 21) // bloco)
+    for inicio in range(0, n_blocos, por_vez):
+        fim = min(n_blocos, inicio + por_vez)
+        x = np.asarray(sinal[inicio * bloco:fim * bloco], dtype=np.float64).reshape(fim - inicio, bloco)
+        coef = x @ projecao.T
+        r2 = (x - coef @ base.T) ** 2
+        # derivada (por amostra) de a·cos(ωt) + b·sin(ωt)
+        d2 = (omega * (coef[:, 2:3] * cos1 - coef[:, 1:2] * sen1)) ** 2
+        media_d2, media_r2 = d2.mean(axis=1), r2.mean(axis=1)
+        dd = d2 - media_d2[:, None]
+        variancia = np.maximum((dd * dd).mean(axis=1), _TINY)
+        c1 = (dd * (r2 - media_r2[:, None])).mean(axis=1) / variancia
+        c1_todos.append(c1)
+        c0_todos.append(media_r2 - c1 * media_d2)
+    c1_mediano = float(np.median(np.concatenate(c1_todos)))
+    c0_mediano = float(np.median(np.concatenate(c0_todos)))
+    return Jitter(rms_ns=math.sqrt(max(c1_mediano, 0.0)) / fs * 1e9, ruido_plano=math.sqrt(max(c0_mediano, 0.0)),
+                  blocos=n_blocos)
+
+
+def _fase_no_ponto(trecho: np.ndarray, omega: float, t: np.ndarray) -> float:
+    """Fase em ``t = 0`` de ``A·cos(ωt + φ)`` ajustado a ``trecho`` (com deriva linear e H2/H3), em rad."""
+    colunas = [np.ones_like(t), np.cos(omega * t), np.sin(omega * t), t * np.cos(omega * t), t * np.sin(omega * t)]
+    for h in (2, 3):
+        colunas += [np.cos(h * omega * t), np.sin(h * omega * t)]
+    coef, *_ = np.linalg.lstsq(np.column_stack(colunas), np.asarray(trecho, dtype=np.float64), rcond=None)
+    return math.atan2(-coef[2], coef[1])          # a·cos + b·sin = A·cos(ωt + φ) com a = A·cos φ, b = -A·sen φ
+
+
+@dataclass(frozen=True)
+class Degraus:
+    eventos_ns: tuple[float, ...]      # degrau de tempo em cada posição pedida (> 0 = as amostras seguintes atrasaram)
+    controle_ns: tuple[float, ...]     # o mesmo, a meio caminho entre eventos: a escala do "nada aconteceu"
+
+    @property
+    def mediana_ns(self) -> float:
+        return float(np.median(self.eventos_ns)) if self.eventos_ns else math.nan
+
+    @property
+    def maior_ns(self) -> float:
+        return float(max(self.eventos_ns, key=abs)) if self.eventos_ns else math.nan
+
+    @property
+    def dispersao_controle_ns(self) -> float:
+        """Desvio-padrão robusto (1,4826·MAD) dos degraus de controle; nan com menos de 2."""
+        if len(self.controle_ns) < 2:
+            return math.nan
+        c = np.asarray(self.controle_ns)
+        return float(1.4826 * np.median(np.abs(c - np.median(c))))
+
+
+def medir_degraus_de_tempo(sinal: np.ndarray, fs: float, freq_hz: float, posicoes: list[float],
+                           janela: int = JANELA_DEGRAU) -> Degraus:
+    """Degrau de tempo da amostragem em cada posição (em amostras do ``sinal``), em ns.
+
+    A fase do tom é ajustada nas ``janela`` amostras antes e nas ``janela`` depois da posição, cada lado
+    extrapolado até ela; a diferença, dividida por ``2π·f``, é quanto as amostras seguintes andaram no tempo. Com
+    um tom de 10 kHz a ~1/6 do fundo de escala, o ruído do ADC dá ~0,3 ns por evento. Posições sem ``janela`` dos
+    dois lados ficam de fora. O controle repete a conta a meio caminho entre eventos vizinhos."""
+    n = len(sinal)
+    omega = 2.0 * math.pi * freq_hz / fs
+    antes = np.arange(-janela, 0, dtype=np.float64)
+    depois = np.arange(0, janela, dtype=np.float64)
+
+    def degrau(p: int) -> float | None:
+        if p - janela < 0 or p + janela > n:
+            return None
+        dfase = _fase_no_ponto(sinal[p:p + janela], omega, depois) - _fase_no_ponto(sinal[p - janela:p], omega, antes)
+        dfase = (dfase + math.pi) % (2.0 * math.pi) - math.pi
+        return dfase / (2.0 * math.pi * freq_hz) * 1e9
+
+    inteiras = sorted(int(round(p)) for p in posicoes)
+    eventos = [d for d in (degrau(p) for p in inteiras) if d is not None]
+    meios = [(a + b) // 2 for a, b in zip([0, *inteiras], [*inteiras, n]) if b - a > 4 * janela]
+    controle = [d for d in (degrau(p) for p in meios) if d is not None]
+    return Degraus(tuple(eventos), tuple(controle))
+
+
+def posicoes_dos_rebases(clock_hz: float, periodo_ticks: int, num_canais: int, inicio: int, n_amostras: int) -> list[float]:
+    """Onde caem os rebases do contador da PRU (a cada ~2^31 ciclos desde a 1ª amostra), em amostras DO CANAL
+    contadas do início do trecho. Cada rebase espera a leitura passar de 2^31 desde o zero anterior, que veio um
+    quadro depois: os seguintes escorregam ~1 amostra cada, o que não muda nada numa janela de milhares."""
+    if clock_hz <= 0 or periodo_ticks <= 0 or num_canais <= 0:
+        return []
+    passo = (2**31 + periodo_ticks) / periodo_ticks       # amostras brutas entre rebases
+    posicoes = []
+    m = 1
+    while True:
+        p = m * passo / num_canais - inicio
+        if p >= n_amostras:
+            return posicoes
+        if p > 0:
+            posicoes.append(p)
+        m += 1

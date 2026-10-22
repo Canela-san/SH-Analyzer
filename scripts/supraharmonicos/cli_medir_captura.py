@@ -36,14 +36,19 @@ from .metricas_captura import (
     Acoplamento,
     Basicas,
     Continuidade,
+    Degraus,
     Espectro,
+    Jitter,
     TrocasBuffer,
     analisar_espectro,
     calcular_acoplamento,
     calcular_basicas,
     comparar_trocas_de_buffer,
+    estimar_jitter,
     fracao_saturada,
+    medir_degraus_de_tempo,
     posicoes_das_trocas,
+    posicoes_dos_rebases,
     projetar_tom,
     verificar_continuidade,
 )
@@ -70,6 +75,8 @@ COLUNAS_CSV = [
     "salto_max_amostras", "saltos_acima_do_limite", "variacao_amplitude_pct",
     "salto_max_us", "trocas_buffer", "salto_trocas_amostras", "salto_trocas_us", "salto_tipico_amostras", "trocas_destoam",
     "diafonia_db", "atraso_medido_us", "atraso_esperado_us",
+    "jitter_ns", "ruido_plano_lsb", "degrau_trocas_ns", "degrau_rebases_ns", "degrau_controle_ns",
+    "folga_minima_ciclos", "atraso_maximo_ciclos",
     "correcao_sonda", "referencia_rms", "erro_amplitude_pct", "referencia_freq_hz", "erro_freq_ppm",
     "ref_amplitude_texto", "ref_amplitude_pico", "razao_vs_amplitude_ref",
     "osc_arquivo", "osc_freq_hz", "osc_amplitude_pico", "razao_vs_osc", "erro_freq_vs_osc_ppm", "osc_vs_amplitude_ref_pct",
@@ -262,6 +269,9 @@ class ResultadoCanal:
     trocas: TrocasBuffer | None         # None sem continuidade ou sem o tamanho do buffer (captura sem cabeçalho)
     comparacao: dict[str, str]          # colunas do CSV da comparação com o osciloscópio ({} sem --referencia-*)
     inicio: int                         # 1ª amostra do canal medida (--inicio, ou o padrão que pula o transitório)
+    jitter: Jitter | None = None        # grade de tempo (22/10/2026): só com tom
+    degraus_trocas: Degraus | None = None
+    degraus_rebases: Degraus | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +303,28 @@ def _formatar_trocas(trocas: TrocasBuffer | None, cont: Continuidade, fs_canal: 
     veredito = "DESTOAM" if trocas.destoam else "OK"
     return _campo("trocas de buffer", f"{veredito} -- {texto} contra {trocas.salto_tipico_amostras:.3f} "
                                       f"({_us(trocas.salto_tipico_amostras, fs_canal)}) longe delas")
+
+
+def _formatar_degraus(nome: str, d: Degraus | None) -> str | None:
+    if d is None or not d.eventos_ns:
+        return None
+    return f"{nome} {d.mediana_ns:+.2f} ns (mediana de {len(d.eventos_ns)}; maior {d.maior_ns:+.2f})"
+
+
+def _formatar_grade(jitter: Jitter | None, trocas: Degraus | None, rebases: Degraus | None, lsb: float) -> list[str]:
+    """Jitter e degraus de tempo (a grade de tempo da amostragem, medida no tom)."""
+    linhas = []
+    if jitter is not None:
+        linhas.append(_campo("jitter de amostragem", f"{jitter.rms_ns:.2f} ns rms (o ruído que cresce com a inclinação "
+                                                     f"do tom; onde ele é plano, sobra {jitter.ruido_plano / lsb:.2f} LSB)"))
+    partes = [x for x in (_formatar_degraus("trocas de buffer", trocas), _formatar_degraus("rebases do contador", rebases))
+              if x]
+    if partes:
+        controle = next((d.dispersao_controle_ns for d in (trocas, rebases)
+                         if d is not None and not math.isnan(d.dispersao_controle_ns)), math.nan)
+        escala = "" if math.isnan(controle) else f" | longe deles: ±{controle:.2f} ns"
+        linhas.append(_campo("degraus de tempo", " | ".join(partes) + escala))
+    return linhas
 
 
 def _formatar_canal(canal: int, unidade: str, grandeza: str, b: Basicas, e: Espectro, saturacao: float,
@@ -458,6 +490,13 @@ def _linha_csv(arquivo: Path, rotulo: str, fs_nominal: float, fs_pru: float | No
     if acopl is not None:
         linha.update({"diafonia_db": _num(acopl.diafonia_db), "atraso_medido_us": _num(acopl.atraso_medido_us),
                       "atraso_esperado_us": _num(acopl.atraso_esperado_us)})
+    if r.jitter is not None:
+        linha.update({"jitter_ns": _num(r.jitter.rms_ns), "ruido_plano_lsb": _num(r.jitter.ruido_plano / r.lsb)})
+    for coluna, d in (("degrau_trocas_ns", r.degraus_trocas), ("degrau_rebases_ns", r.degraus_rebases)):
+        if d is not None and d.eventos_ns:
+            linha[coluna] = _num(d.mediana_ns)
+            if not math.isnan(d.dispersao_controle_ns):
+                linha["degrau_controle_ns"] = _num(d.dispersao_controle_ns)
     return {coluna: linha.get(coluna, "") for coluna in COLUNAS_CSV}
 
 
@@ -472,6 +511,8 @@ _COLUNAS_RESUMO = (
     ("DC", "media", "{:.6g}"),
     ("salto (amostras)", "salto_max_amostras", "{:.3f}"),
     ("salto trocas µs", "salto_trocas_us", "{:.3g}"),
+    ("jitter ns", "jitter_ns", "{:.2f}"),
+    ("folga ciclos", "folga_minima_ciclos", "{:.0f}"),
 )
 
 
@@ -625,6 +666,8 @@ def _medir_canal(canal: int, sinal: np.ndarray, corrigido: bool, saturacao: floa
     por_canal = ctx.cabecalho.samples_per_buffer / ctx.num_canais if ctx.cabecalho is not None else 0.0
     linhas = _formatar_canal(canal, unidade, grandeza, basicas, espectro, saturacao, cont, trocas, lsb, fs_canal,
                              ctx.num_canais, por_canal, not args.sem_tom)
+    jitter, degraus_trocas, degraus_rebases = _grade_do_canal(sinal, espectro, ctx, inicio, fs_canal)
+    linhas += _formatar_grade(jitter, degraus_trocas, degraus_rebases, lsb)
     dica = _dica_troca_de_buffer(cont, trocas, ctx, inicio, fs_canal)
     if dica:
         linhas.append(dica)
@@ -640,7 +683,27 @@ def _medir_canal(canal: int, sinal: np.ndarray, corrigido: bool, saturacao: floa
     for linha in linhas:
         log.info(linha)
     return ResultadoCanal(canal, grandeza, unidade, lsb, saturacao, corrigido, basicas, espectro, cont, trocas, comparacao,
-                          inicio)
+                          inicio, jitter, degraus_trocas, degraus_rebases)
+
+
+def _grade_do_canal(sinal: np.ndarray, espectro: Espectro, ctx: ContextoCaptura, inicio: int,
+                    fs_canal: float) -> tuple[Jitter | None, Degraus | None, Degraus | None]:
+    """Jitter (só com tom) e os degraus de tempo nas trocas de buffer e nos rebases do contador (só com cabeçalho)."""
+    if not espectro.tem_tom:
+        return None, None, None
+    jitter = estimar_jitter(sinal, fs_canal, espectro.freq_tom_hz)
+    cab = ctx.cabecalho
+    if cab is None or cab.samples_per_buffer <= 0:
+        return jitter, None, None
+    n, inicio = len(sinal), max(inicio, 0)
+    trocas = medir_degraus_de_tempo(sinal, fs_canal, espectro.freq_tom_hz,
+                                    posicoes_das_trocas(cab.samples_per_buffer, ctx.num_canais, inicio, n))
+    rebases = None
+    if cab.versao_cabecalho >= 4:          # firmware com o contador de ciclos sem zero na troca (out/2026 em diante)
+        rebases = medir_degraus_de_tempo(sinal, fs_canal, espectro.freq_tom_hz,
+                                         posicoes_dos_rebases(cab.pru_clock_hz, cab.sample_period_ticks, ctx.num_canais,
+                                                              inicio, n))
+    return jitter, trocas, rebases
 
 
 def _anunciar_frequencias(args: argparse.Namespace, ctx: ContextoCaptura, fs_total: float, fs_pru: float | None,
@@ -700,6 +763,9 @@ def medir_arquivo(caminho: Path, args: argparse.Namespace) -> list[dict[str, str
     log.info(f"=== {caminho.name}" + (f" -- {titulo}" if titulo else "") + " ===")
     for problema in (ctx.cabecalho.problemas_integridade if ctx.cabecalho is not None else []):
         log.warning(f"{caminho.name}: integridade da captura: {problema}.")
+    grade = ctx.cabecalho.descrever_grade() if ctx.cabecalho is not None else None
+    if grade:
+        log.info(f"Grade de tempo (PRU): {grade}")
     nominal = _anunciar_frequencias(args, ctx, fs_total, fs_pru, inicio)
     _avisar_transitorios(transitorios, inicio, args.inicio is not None)
 
@@ -711,7 +777,13 @@ def medir_arquivo(caminho: Path, args: argparse.Namespace) -> list[dict[str, str
     acoplamentos = _medir_acoplamento(sinais, resultados, ctx, fs_canal, fs_total)
 
     rotulo = args.rotulo if args.rotulo is not None else titulo
-    return [_linha_csv(caminho, rotulo, nominal, fs_pru, fs_canal, r, acoplamentos.get(r.canal)) for r in resultados]
+    linhas = [_linha_csv(caminho, rotulo, nominal, fs_pru, fs_canal, r, acoplamentos.get(r.canal)) for r in resultados]
+    cab = ctx.cabecalho
+    if cab is not None and cab.folga_minima_ciclos is not None and cab.blocos_gravados >= 2:
+        for linha in linhas:      # da PRU, a mesma para todos os canais
+            linha["folga_minima_ciclos"] = str(cab.folga_minima_ciclos)
+            linha["atraso_maximo_ciclos"] = str(cab.atraso_maximo_ciclos)
+    return linhas
 
 
 def _validar_frequencias(args: argparse.Namespace) -> None:

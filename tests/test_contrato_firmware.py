@@ -124,9 +124,9 @@ def normalizar(campos: list[tuple[str, int]]) -> list[tuple[str, int]]:
     return saida
 
 
-def test_layout_da_struct_v5_bate_com_o_formato_python(fonte_c, defines):
+def test_layout_da_struct_v6_bate_com_o_formato_python(fonte_c, defines):
     c = normalizar(formato_struct_c(fonte_c, defines))
-    py = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V5))
+    py = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V6))
     assert c == py
     assert inteiro_c(defines["CABECALHO_VERSAO_FIRMWARE_TAMANHO"]) == cab.CABECALHO_VERSAO_FIRMWARE_TAMANHO
 
@@ -136,6 +136,12 @@ def test_v4_e_o_prefixo_de_v5_sem_a_versao_do_firmware():
     v5 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V5))
     assert v5[:-4] == v4[:-1]
     assert v5[-4:] == [("s", cab.CABECALHO_VERSAO_FIRMWARE_TAMANHO), ("d", 1), ("I", 1), ("I", 1)]   # + nº de buffers e o CRC
+
+
+def test_v5_e_o_prefixo_de_v6_sem_a_grade_de_tempo():
+    v5 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V5))
+    v6 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V6))
+    assert v6[:-5] == v5[:-1] and v6[-5:] == [("I", 1)] * 5      # folga, atraso, ciclos do rebase, protocolo e o CRC
 
 
 def test_buffers_ping_pong_do_cabecalho_e_o_que_o_ler_adc_mapeia(defines):
@@ -161,10 +167,13 @@ def test_tamanhos_derivados(fonte_c, defines):
     assert cab._OFFSET_HEADER_CRC32_V4 == cab._TAMANHO_CAMPOS_V4 - 4 == 700
     assert cab._TAMANHO_CAMPOS_V5 == struct.calcsize(cab._FORMATO_CABECALHO_V5) == 748
     assert cab._OFFSET_HEADER_CRC32_V5 == cab._TAMANHO_CAMPOS_V5 - 4 == 744
-    assert cab._TAMANHO_CAMPOS_V5 < inteiro_c(defines["CABECALHO_TAMANHO_TOTAL"])
+    assert cab._TAMANHO_CAMPOS_V6 == struct.calcsize(cab._FORMATO_CABECALHO_V6) == 764
+    assert cab._OFFSET_HEADER_CRC32_V6 == cab._TAMANHO_CAMPOS_V6 - 4 == 760
+    assert cab._TAMANHO_CAMPOS_V6 < inteiro_c(defines["CABECALHO_TAMANHO_TOTAL"])
     for fmt, contagens in ((cab._FORMATO_CABECALHO_V3, cab._CONTAGENS_CABECALHO_V3),
                            (cab._FORMATO_CABECALHO_V4, cab._CONTAGENS_CABECALHO_V4),
-                           (cab._FORMATO_CABECALHO_V5, cab._CONTAGENS_CABECALHO_V5)):
+                           (cab._FORMATO_CABECALHO_V5, cab._CONTAGENS_CABECALHO_V5),
+                           (cab._FORMATO_CABECALHO_V6, cab._CONTAGENS_CABECALHO_V6)):
         assert sum(contagens) == len(struct.unpack(fmt, bytes(struct.calcsize(fmt))))
 
 
@@ -188,6 +197,7 @@ def test_offsets_do_cabecalho_usados_por_calibrar_sonda_sh():
     assert offs["CAB_OFF_PREAMBULO"] == offs["CAB_OFF_ATRASADAS"] + 8
     assert offs["CAB_OFF_CRC_V4"] == cab._OFFSET_HEADER_CRC32_V4
     assert offs["CAB_OFF_CRC_V5"] == cab._OFFSET_HEADER_CRC32_V5
+    assert offs["CAB_OFF_CRC_V6"] == cab._OFFSET_HEADER_CRC32_V6
     assert offs["CAB_OFF_SONDA_ID"] + const.ADS8688_MAX_CANAIS * cab.CABECALHO_SONDA_ID_TAMANHO == off_faixa
     assert offs["CAB_OFF_GRANDEZA"] + const.ADS8688_MAX_CANAIS == offs["CAB_OFF_SONDA_ID"]
     assert offs["CAB_TAM_SONDA_ID"] == cab.CABECALHO_SONDA_ID_TAMANHO
@@ -254,6 +264,21 @@ def test_offsets_da_memoria_compartilhada_pru():
     assert [offsets[n] for n in ("atraso_cs_setup", "atraso_cs_hold", "atraso_cs_alto")] == [48, 52, 56]
     asm = sem_comentarios_asm((FIRMWARE / "spi_core.asm").read_text(encoding="utf-8"))
     assert "SBBO &r6, r14, 36, 12" in asm and "LBBO &r9, r14, 48, 12" in asm
+    # grade de tempo (PRU -> ARM, 22/10/2026): folga e atraso num bloco de 8 bytes, depois ciclos do rebase e protocolo
+    assert [offsets[n] for n in ("folga_minima_ciclos", "atraso_maximo_ciclos", "ciclos_rebase",
+                                 "versao_protocolo_pru")] == [60, 64, 68, 72]
+    assert "SBBO &r12, r14, 60, 8" in asm and "SBBO &r29, r14, 68, 4" in asm
+
+
+def test_versao_do_protocolo_pru_e_a_mesma_no_c_e_no_assembly():
+    """O ler_adc recusa a captura se a PRU não escreve VERSAO_PROTOCOLO_PRU: o assembly tem de escrever o mesmo número."""
+    h = _memoria_pru_sem_comentarios()
+    versao_c = inteiro_c(re.search(r"#\s*define\s+VERSAO_PROTOCOLO_PRU\s+(\w+)", h).group(1))
+    asm = sem_comentarios_asm((FIRMWARE / "spi_core.asm").read_text(encoding="utf-8"))
+    m = re.search(r"LDI r20, (\d+)\s+SBBO &r20, r14, 72, 4", asm)
+    assert m, "o spi_core.asm não escreve a versão do protocolo (offset 72)"
+    assert int(m.group(1)) == versao_c
+    assert "VERSAO_PROTOCOLO_PRU" in LER_ADC_C.read_text(encoding="utf-8")
 
 
 def sem_comentarios_asm(texto: str) -> str:

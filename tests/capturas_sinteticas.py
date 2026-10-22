@@ -39,6 +39,7 @@ FMT_V2 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * 8 + "I"
 FMT_V3 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * 8 + "8BI"
 FMT_V4 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * 8 + "8BIII3II"
 FMT_V5 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * 8 + "8BIII3I32sdII"
+FMT_V6 = FMT_V5[:-1] + "IIIII"
 CODIGO_DA_FAIXA = {20.48: 0, 10.24: 1, 5.12: 2}   # fundo de escala total (V) -> código RANGE_SELn
 
 
@@ -59,26 +60,31 @@ def montar_cabecalho(n_por_canal: int, canais, grandezas, sondas, fs_total: int,
                      crc_valido: bool = True, total_amostras: int | None = None,
                      codigos_faixa_adc=None, integridade=(0, 0, 0), atrasos_cs=(200, 100, 100),
                      amostras_por_buffer: int = 1048576, versao_firmware: str = "v0.0-teste",
-                     taxa_medida_hz: float = 0.0) -> bytes:
-    """Cabeçalho de 1024 bytes (v1 a v5) com CRC-32 correto (ou propositalmente errado).
+                     taxa_medida_hz: float = 0.0, grade=(20, 0, 2, 2), blocos: int = 1) -> bytes:
+    """Cabeçalho de 1024 bytes (v1 a v6) com CRC-32 correto (ou propositalmente errado).
 
     ``codigos_faixa_adc`` (v3+): um código de faixa por canal (padrão: 0 = ±10,24 V em todos).
     ``integridade`` (v4): (amostras_atrasadas, buffers_sobrescritos, quadros_preambulo_ruim); ``atrasos_cs`` (v4):
     as iterações de setup/hold/alto do CS. ``amostras_por_buffer``: o tamanho do bloco da PRU (o do firmware é
     1.048.576; menor, para um teste ter trocas de buffer numa captura curta). ``versao_firmware`` e
-    ``taxa_medida_hz`` (v5): o git describe do build e a taxa medida pelo ARM (0 = não medida)."""
+    ``taxa_medida_hz`` (v5): o git describe do build e a taxa medida pelo ARM (0 = não medida). ``grade`` (v6):
+    (folga_minima_ciclos, atraso_maximo_ciclos, ciclos_rebase, versao_protocolo_pru). ``blocos``: blocos_gravados (a
+    PRU só publica a folga na troca de buffer: com 1 bloco ela não vale)."""
     k = len(canais)
     lista = list(canais) + [0xFF] * (8 - k)
     mascara = sum(1 << c for c in canais)
     total = k * n_por_canal if total_amostras is None else total_amostras
     comuns = [b"SHAN", versao, 1024, 1_700_000_000, int(fs_total), mascara, k, *lista,
-              amostras_por_buffer, 2, 200_000_000, 200_000_000 // int(fs_total), 0, n_por_canal / (fs_total / k), 1, total,
+              amostras_por_buffer, 2, 200_000_000, 200_000_000 // int(fs_total), 0, n_por_canal / (fs_total / k), blocos, total,
               titulo.encode("utf-8"), descricao.encode("utf-8")]
     if versao >= 3:
         gr = list(grandezas) + [0xFF] * (8 - k)
         ids = [s.encode("ascii") for s in sondas] + [b""] * (8 - k)
         codigos = list(codigos_faixa_adc if codigos_faixa_adc is not None else [0] * k) + [0xFF] * (8 - k)
-        if versao >= 5:
+        if versao >= 6:
+            fmt, vals = FMT_V6, [*comuns, *gr, *ids, *codigos, *integridade, *atrasos_cs,
+                                 versao_firmware.encode("ascii"), float(taxa_medida_hz), 2, *grade, 0]
+        elif versao >= 5:
             fmt, vals = FMT_V5, [*comuns, *gr, *ids, *codigos, *integridade, *atrasos_cs,
                                  versao_firmware.encode("ascii"), float(taxa_medida_hz), 2, 0]
         elif versao >= 4:
@@ -106,7 +112,7 @@ def regravar_crc(caminho: Path) -> None:
     o teste confira só o efeito da edição -- e não o de um CRC quebrado."""
     bruto = bytearray(Path(caminho).read_bytes())
     versao = struct.unpack_from("<I", bruto, 4)[0]
-    fmt = (FMT_V5 if versao >= 5 else FMT_V4 if versao == 4 else FMT_V3 if versao == 3
+    fmt = (FMT_V6 if versao >= 6 else FMT_V5 if versao == 5 else FMT_V4 if versao == 4 else FMT_V3 if versao == 3
            else FMT_V2 if versao == 2 else FMT_V1)
     deslocamento_crc = struct.calcsize(fmt) - 4
     struct.pack_into("<I", bruto, deslocamento_crc, 0)

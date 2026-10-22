@@ -12,8 +12,14 @@ nele o ZERA, qualquer que seja o valor escrito, como na BeagleBone com a PRU rod
 que escrevia CYCLE - 2^31 atrasava a grade em 5 a 13 µs a cada 10,74 s; até então o simulador gravava o valor e não
 via o defeito). O instante de cada descida do CS fica em ``instantes_cs`` -- dá para conferir a grade de tempo.
 
+Latências de memória (:class:`Latencias`)
+    Por padrão cada instrução vale 1 ciclo. Na PRU de verdade ``LBBO``/``SBBO`` custam mais, a leitura do contador
+    acontece em algum ciclo DENTRO do ``LBBO``, o zero do contador vale algum tempo depois do ``SBBO`` começar, e uma
+    escrita na DDR pode esperar o barramento. :class:`Latencias` modela tudo isso, para os testes conferirem que a
+    grade de tempo não depende desses números (que não se conhecem sem bancada).
+
 O que NÃO garante
-    * Temporização real (cada instrução vale 1 ciclo; ``LBBO``/``SBBO`` custam mais na PRU de verdade).
+    * Temporização real (os números de :class:`Latencias` são hipóteses, não medidas).
     * Que o ``clpru`` aceita a sintaxe (o simulador é mais tolerante em alguns pontos). Compilar no BeagleBone
       (``make`` em ``firmware/``) continua obrigatório.
     * O comportamento do ADS8688: o MISO é um modelo mínimo (ver :class:`ModeloADC`).
@@ -21,13 +27,17 @@ O que NÃO garante
 Verificações estáticas feitas ao carregar: tamanho em instruções (a IMEM da PRU0 tem 2048) e alcance dos
 desvios ``QB*`` (10 bits com sinal: +-511 instruções; desvios mais longos têm que usar ``JMP``).
 
-Instruções suportadas: ``LDI MOV ADD SUB OR AND LSL LSR SET CLR NOP LBBO SBBO QBA QBBC QBBS QBEQ QBNE JMP``.
-Uma instrução fora dessa lista levanta :class:`ErroSimulacao` -- amplie ``_EXECUTORES`` se precisar de outra.
+Instruções suportadas: ``LDI MOV ADD SUB OR AND LSL LSR MIN MAX SET CLR NOP LBBO SBBO QBA QBBC QBBS QBEQ QBNE
+QBGT QBGE QBLT QBLE JMP``. Uma instrução fora dessa lista levanta :class:`ErroSimulacao` -- amplie ``_EXECUTORES`` se
+precisar de outra. Nas comparações ``QBGT/QBGE/QBLT/QBLE rótulo, REG1, OP`` o operando da DIREITA é o primeiro da
+comparação, como no manual da TI (SPRUIJ2): ``QBGT x, r1, 5`` desvia se 5 > r1. Comparações e ``MIN``/``MAX`` sem
+sinal.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -42,6 +52,20 @@ BIT_MISO_R31 = 2
 
 ENDERECO_CONTADOR_CICLOS = 0x0002200C
 ENDERECO_SHARED_RAM = 0x00010000
+
+
+@dataclass
+class Latencias:
+    """Custos extras das instruções de memória (o padrão, tudo 0, é 1 ciclo por instrução).
+
+    ``efeito_escrita`` não pode passar de ``1 + escrita + amostra_leitura``: a leitura seguinte do contador tem de ver
+    o zero (no hardware, uma escrita e uma leitura no mesmo registrador saem em ordem)."""
+
+    leitura: int = 0              # ciclos a mais de todo LBBO
+    amostra_leitura: int = 0      # em que ciclo de um LBBO o contador é lido (0 = o 1º)
+    escrita: int = 0              # ciclos a mais de todo SBBO fora da DDR
+    efeito_escrita: int = 0       # ciclos depois do começo do SBBO em que o zero do contador passa a valer
+    ddr: Callable[[], int] | None = None    # ciclos a mais de cada SBBO na DDR (None = ``escrita``)
 
 
 class ErroSimulacao(Exception):
@@ -175,16 +199,20 @@ _CAMPOS = {"b0": (0, 8), "b1": (8, 8), "b2": (16, 8), "b3": (24, 8), "w0": (0, 1
 
 
 class PRU:
-    def __init__(self, caminho_asm: Path, memoria_inicial: dict[int, int] | None = None, adc: ModeloADC | None = None):
+    def __init__(self, caminho_asm: Path, memoria_inicial: dict[int, int] | None = None, adc: ModeloADC | None = None,
+                 latencias: Latencias | None = None):
         self.instrucoes, self.rotulos = carregar_programa(caminho_asm)
         self.regs = [0] * 32
         self.memoria: dict[int, int] = {}
+        self.latencias = latencias or Latencias()
+        self.ciclo = 0
+        self.base_contador = 0
+        self._zero_em: int | None = None                 # ciclo em que um zero do contador já pedido passa a valer
+        self._custo = 1
         for endereco, valor32 in (memoria_inicial or {}).items():
             self.escrever_mem(endereco, valor32, 4)
         self.regs[14] = ENDERECO_SHARED_RAM            # ABI do C: 1º argumento em r14
         self.pc = self.rotulos.get("ler_ads8688_asm", 0)
-        self.ciclo = 0
-        self.base_contador = 0
         self.adc = adc or ModeloADC()
         self.transacoes: list[Transacao] = []
         self.instantes_cs: list[int] = []               # ciclo de cada descida do CS (o instante da amostra)
@@ -243,14 +271,20 @@ class PRU:
         return (miso & 1) << BIT_MISO_R31
 
     # -- memória -------------------------------------------------------------
+    def _base(self, instante: int) -> int:
+        if self._zero_em is not None and instante >= self._zero_em:
+            self.base_contador, self._zero_em = self._zero_em, None
+        return self.base_contador
+
     def ler_mem(self, endereco: int, n: int) -> int:
         if endereco == ENDERECO_CONTADOR_CICLOS:
-            return min(self.ciclo - self.base_contador, MASCARA32)     # trava em 0xFFFFFFFF, como na PRU
+            instante = self.ciclo + self.latencias.amostra_leitura
+            return min(max(instante - self._base(instante), 0), MASCARA32)     # trava em 0xFFFFFFFF, como na PRU
         return sum(self.memoria.get(endereco + i, 0) << (8 * i) for i in range(n))
 
     def escrever_mem(self, endereco: int, valor: int, n: int) -> None:
         if endereco == ENDERECO_CONTADOR_CICLOS:
-            self.base_contador = self.ciclo           # zera, qualquer que seja o valor (ver o topo do módulo)
+            self._zero_em = self.ciclo + self.latencias.efeito_escrita   # zera, qualquer que seja o valor (ver o topo)
             return
         for i in range(n):
             self.memoria[endereco + i] = (valor >> (8 * i)) & 0xFF
@@ -289,9 +323,10 @@ class PRU:
             executor = _EXECUTORES.get(ins.mnemonico)
             if executor is None:
                 raise ErroSimulacao(f"linha {ins.linha}: instrução não suportada: {ins.texto}")
+            self._custo = 1
             proximo = executor(self, ins)
             self.pc = self.pc + 1 if proximo is None else proximo
-            self.ciclo += 1
+            self.ciclo += self._custo
             self._observar_pinos()
         raise ErroSimulacao(f"limite de {max_ciclos} ciclos excedido (PC na linha {self.instrucoes[self.pc].linha})")
 
@@ -340,6 +375,7 @@ def _ex_lbbo(m: PRU, i: Instrucao):
     endereco = (m._ler(base) + int(deslocamento, 0)) & MASCARA32
     quantidade = int(n, 0)
     numero, inicio, _ = m._decodificar(destino)
+    m._custo += m.latencias.leitura
     if quantidade > 4:                                   # vários registradores seguidos (LBBO &r9, ..., 12)
         if inicio or quantidade % 4:
             raise ErroSimulacao(f"linha {i.linha}: LBBO de vários registradores precisa de registrador inteiro e n múltiplo de 4")
@@ -358,6 +394,8 @@ def _ex_sbbo(m: PRU, i: Instrucao):
     endereco = (m._ler(base) + int(deslocamento, 0)) & MASCARA32
     quantidade = int(n, 0)
     numero, inicio, _ = m._decodificar(origem)
+    ddr = endereco >= 0x90000000
+    m._custo += m.latencias.ddr() if ddr and m.latencias.ddr is not None else m.latencias.escrita
     if quantidade > 4:                                   # vários registradores seguidos (SBBO &r6, ..., 12)
         if inicio or quantidade % 4:
             raise ErroSimulacao(f"linha {i.linha}: SBBO de vários registradores precisa de registrador inteiro e n múltiplo de 4")
@@ -366,7 +404,7 @@ def _ex_sbbo(m: PRU, i: Instrucao):
         return
     valor = (m.regs[numero] >> inicio) & ((1 << (8 * quantidade)) - 1)
     m.escrever_mem(endereco, valor, quantidade)
-    if endereco >= 0x90000000:
+    if ddr:
         m.escritas_ddr.append((endereco, valor))
 
 
@@ -398,6 +436,8 @@ _EXECUTORES = {
     "AND": _aritmetica(lambda a, b: a & b),
     "LSL": _aritmetica(lambda a, b: a << (b & 31)),
     "LSR": _aritmetica(lambda a, b: a >> (b & 31)),
+    "MIN": _aritmetica(min),
+    "MAX": _aritmetica(max),
     "SET": _ex_set,
     "CLR": _ex_clr,
     "NOP": _ex_nop,
@@ -409,6 +449,10 @@ _EXECUTORES = {
     "QBBS": _desvio_se(lambda valor, bit: (valor >> bit) & 1),
     "QBEQ": _desvio_se(lambda a, b: a == b),
     "QBNE": _desvio_se(lambda a, b: a != b),
+    "QBGT": _desvio_se(lambda reg, op: op > reg),       # SPRUIJ2: if (OP > REG1) goto
+    "QBGE": _desvio_se(lambda reg, op: op >= reg),
+    "QBLT": _desvio_se(lambda reg, op: op < reg),
+    "QBLE": _desvio_se(lambda reg, op: op <= reg),
 }
 
 
@@ -426,6 +470,10 @@ OFFSET_AMOSTRAS_ATRASADAS = 36
 OFFSET_BUFFERS_SOBRESCRITOS = 40
 OFFSET_QUADROS_PREAMBULO_RUIM = 44
 OFFSET_ATRASO_CS_SETUP = 48     # + 4 = hold, + 8 = alto
+OFFSET_FOLGA_MINIMA = 60        # grade de tempo (PRU -> ARM, 22/10/2026)
+OFFSET_ATRASO_MAXIMO = 64
+OFFSET_CICLOS_REBASE = 68
+OFFSET_VERSAO_PROTOCOLO = 72
 OFFSET_BUFFER_0_READY = 8
 OFFSET_BUFFER_1_READY = 12
 

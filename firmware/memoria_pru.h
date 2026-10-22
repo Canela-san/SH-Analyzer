@@ -66,7 +66,7 @@ struct shared_control {
     // mascarados por segurança do lado da PRU (ver pru_main.c).
     //
     // Efeito colateral positivo desta simplificação: a struct caiu de 64
-    // para 32 bytes (hoje são 60, com range_sel, os contadores e os atrasos abaixo) -- menos RAM compartilhada sincronizada manualmente
+    // para 32 bytes (hoje são 76, com range_sel, os contadores, os atrasos e a grade de tempo abaixo) -- menos RAM compartilhada sincronizada manualmente
     // entre ARM e PRU, e um handshake de configuração inicial mais rápido
     // (uma palavra de 32 bits a menos para escrever antes de sinalizar
     // config_ready=1).
@@ -101,7 +101,7 @@ struct shared_control {
     //
     //   amostras_atrasadas: amostras cujo instante já tinha passado quando a
     //     PRU chegou para tomá-las -- a taxa pedida passou do que o laço
-    //     consegue (~140 kS/s com os atrasos de CS padrão) e a taxa real do
+    //     consegue (~326 kS/s com os atrasos de CS padrão, medido em 21/10/2026) e a taxa real do
     //     arquivo é MENOR que a do cabeçalho.
     //   buffers_sobrescritos: trocas de buffer em que o buffer que a PRU ia
     //     começar a encher ainda estava marcado como pronto (o ARM não tinha
@@ -130,7 +130,32 @@ struct shared_control {
     volatile uint32_t atraso_cs_setup;     // Offset 48
     volatile uint32_t atraso_cs_hold;      // Offset 52
     volatile uint32_t atraso_cs_alto;      // Offset 56
+
+    // --- [GRADE DE TEMPO, 22/10/2026] Escritos pela PRU --------------------
+    // Desde 22/10/2026 a PRU espera o instante de cada amostra em duas fases: sondagem do contador de ciclos até
+    // faltarem menos de 255 ciclos, e depois um laço de exatamente os ciclos que faltam. O CS desce sempre no
+    // mesmo ciclo depois do instante da grade (antes, de 0 a ~6 ciclos depois, ao acaso: ~8,4 ns rms de jitter
+    // medido nas capturas de 21/10). Isso vale enquanto o trabalho entre duas amostras (escrita na DDR, troca de
+    // buffer, rebase do contador) termina antes do instante da seguinte; estes campos dizem quanto sobrou.
+    //
+    //   folga_minima_ciclos: a menor folga da captura, em ciclos de 5 ns -- quantos ciclos faltavam para o
+    //     instante da amostra quando a PRU terminou o trabalho da anterior. > 0 = toda amostra saiu no ciclo
+    //     exato da grade; a maior taxa com período constante é ~200 MHz / (período - folga). Publicado com os
+    //     contadores, a cada troca de buffer (a troca mais recente só entra na troca seguinte).
+    //   atraso_maximo_ciclos: o maior atraso das amostras atrasadas (0 se nenhuma), em ciclos.
+    //   ciclos_rebase: ciclos entre as duas leituras do contador no rebase (a cada 2^31 ciclos), medidos pela
+    //     PRU antes da 1ª amostra (o simulador dá 2). Diagnóstico: o rebase os usa para não deslocar a grade.
+    //   versao_protocolo_pru: VERSAO_PROTOCOLO_PRU, escrito pela PRU antes da 1ª amostra. O ler_adc o zera antes
+    //     de config_ready=1 e confere depois: outro valor = o firmware carregado na PRU não é deste ler_adc.
+    volatile uint32_t folga_minima_ciclos;   // Offset 60
+    volatile uint32_t atraso_maximo_ciclos;  // Offset 64
+    volatile uint32_t ciclos_rebase;         // Offset 68
+    volatile uint32_t versao_protocolo_pru;  // Offset 72
 };
+
+// Versão do contrato ARM <-> PRU desta struct (o spi_core.asm escreve o mesmo número em versao_protocolo_pru).
+// 2 = 22/10/2026: grade exata e os campos de tempo acima. Firmwares anteriores não escrevem nada ali (fica 0).
+#define VERSAO_PROTOCOLO_PRU 2u
 
 // Atrasos de CS padrão (iterações de 2 ciclos): o mínimo do datasheet (30/10/30 ns), desde 21/10/2026.
 #define ATRASO_CS_SETUP_PADRAO 3u

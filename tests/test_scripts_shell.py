@@ -365,7 +365,8 @@ def test_makefile_nao_usa_o_usr_include_do_linux(tmp_path, com_make):
 # ---------------------------------------------------------------------------
 
 LER_ADC_FALSO = r'''#!/bin/bash
-# ler_adc falso: a PRU alcança 200 MHz / (595 + 2 (S + H + A)); acima disso, conta amostras atrasadas.
+# ler_adc falso: a PRU alcança 200 MHz / (595 + 2 (S + H + A)); acima disso, conta amostras atrasadas. A folga da
+# grade de tempo (firmware de 22/10/2026) é o que sobra do período nesse quadro.
 taxa=$1; canais=$2; shift 2
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -385,6 +386,17 @@ if [ "$blocos" -ge 2 ]; then
         "$(awk -v r="$real" -v t="$taxa" 'BEGIN { print 100 * (r / t - 1) }')"
 fi
 printf 'Integridade: %d amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído no SDO\n' "$atrasadas"
+quadro=$((595 + 2 * (s + h + a)))
+if [ "$blocos" -lt 2 ]; then
+    echo 'Grade de tempo (PRU): folga ainda não publicada (só na troca de buffer: capture >= 2 blocos) | rebase: 2 ciclo(s) entre as leituras'
+elif [ "$atrasadas" -eq 0 ]; then
+    folga=$((200000000 / taxa - quadro))
+    printf 'Grade de tempo (PRU): folga mínima %d ciclo(s) = %d ns -- toda amostra no ciclo exato da grade; período constante até ~%d S/s | rebase: 2 ciclo(s) entre as leituras\n' \
+        "$folga" $((5 * folga)) $((200000000 / quadro))
+else
+    echo "Grade de tempo (PRU): 123 amostra(s) fora da grade, a pior 77 ciclo(s) = 385 ns atrasada | rebase: 2 ciclo(s) entre as leituras"
+fi
+[ -z "${LER_ADC_REGISTRO:-}" ] || pgrep -x dd > /dev/null && echo "dd rodando" >> "${LER_ADC_REGISTRO:-/dev/null}"
 '''
 
 
@@ -461,7 +473,7 @@ def test_varrer_taxa_para_sem_terminal_na_pausa_e_continua_de_onde_parou(varredu
 
     texto = (pasta / "resumo.csv").read_text().splitlines()   # uma captura que o ler_adc não terminou: refeita
     cortada = texto[5].split(",")
-    cortada[-6] = "?"
+    cortada[-8] = "?"                                         # amostras_atrasadas (folga e atraso vêm depois)
     texto[5] = ",".join(cortada)
     (pasta / "resumo.csv").write_text("\n".join(texto) + "\n")
 
@@ -551,3 +563,52 @@ def test_varrer_taxa_limite_varre_os_ticks_um_a_um_e_usa_o_padrao_do_firmware(va
     assert longa == ["taxa=312500", "canais=1", "blocos=9", "cs=", "duracao=600s"]       # sem --atraso-cs
     assert "blocos=2" in (pasta / por_parte["L"][0]["arquivo"]).read_text()
     assert por_parte["Q"][0]["canais"] == "0,1" and {linha["entrada"] for linha in por_parte["R"]} == {"curto"}
+
+
+def test_varrer_taxa_grade_roda_a_campanha_t7f_no_padrao(varredura):
+    """--grade (firmware de 22/10/2026): capturas longas no padrão, uma com o ARM ocupado, 2 canais e o teto com
+    período constante, numa pasta T7f_; a folga e o pior atraso vão para o resumo."""
+    r, pasta = varredura("--grade", "--simular")
+    assert r.returncode == 0 and "T7f" in r.stdout and "46 capturas" in r.stdout
+    registro = varredura.pasta.parent / "registro.txt"
+    env = {**varredura.env, "LER_ADC_REGISTRO": str(registro)}
+    r = subprocess.run(["bash", str(varredura.pasta / "varrer_taxa.sh"), "--grade"], cwd=varredura.pasta.parent,
+                       env=env, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    (pasta,) = varredura.pasta.glob("T7f_*")
+    linhas = _resumo(pasta)
+    assert [linha["parte"] for linha in linhas[:5]] == ["G", "G", "G", "H", "K"]
+    assert [linha["arquivo"] for linha in linhas[:3]] == ["G_cspadrao_312500_tom_60s.bin", "G_cspadrao_100000_tom_60s.bin",
+                                                         "G_cspadrao_312500_tom_300s.bin"]
+    assert (pasta / "K_cspadrao_312500_tom_2canais_60s.bin").read_text().split()[:4] == [
+        "taxa=312500", "canais=0,1", "blocos=9", "cs="]
+    teto = [linha for linha in linhas if linha["parte"] == "J"]
+    assert [200_000_000 // int(linha["taxa_pedida_hz"]) for linha in teto] == list(range(640, 599, -1))
+    assert linhas[0]["folga_ciclos"] == "31" and linhas[0]["atraso_max_ciclos"] == ""   # 640 - 609 do falso
+    acima = [linha for linha in teto if linha["amostras_atrasadas"] != "0"]
+    assert acima and all(linha["atraso_max_ciclos"] == "77" and linha["folga_ciclos"] == "" for linha in acima)
+    assert "folga 31 ciclos" in r.stdout and "trazer 'T7f_*'" in r.stdout
+    assert registro.read_text().count("dd rodando") == 1                  # a carga só na parte H, e desligada depois
+
+
+def test_varrer_taxa_continuar_retoma_as_partes_da_varredura_anterior(varredura):
+    """Um --continuar sozinho retoma a --grade (as partes vêm do log.txt), não a varredura padrão."""
+    r, pasta = varredura("--grade", entrada="")
+    assert r.returncode == 0, r.stdout + r.stderr
+    (pasta,) = varredura.pasta.glob("T7f_*")
+    texto = (pasta / "resumo.csv").read_text().splitlines()
+    (pasta / "resumo.csv").write_text("\n".join(texto[:-3]) + "\n")       # as 3 últimas não chegaram a ser gravadas
+    r = subprocess.run(["bash", str(varredura.pasta / "varrer_taxa.sh"), "--continuar"], cwd=varredura.pasta.parent,
+                       env=varredura.env, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "43 de 46 já feitas" in r.stdout and "T7f" in r.stdout
+    assert len(_resumo(pasta)) == 46
+
+
+def test_varrer_taxa_grade_recusa_o_firmware_sem_a_espera_de_precisao(varredura):
+    asm = varredura.pasta / "spi_core.asm"
+    asm.write_text("; [CORRIGIDO em 21/10/2026] o rebase zera o contador\n")
+    r = subprocess.run(["bash", str(varredura.pasta / "varrer_taxa.sh"), "--grade"], cwd=varredura.pasta.parent,
+                       env=varredura.env, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 1 and "não tem a grade exata" in r.stderr
+    assert not list(varredura.pasta.glob("T7f_*"))

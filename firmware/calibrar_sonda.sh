@@ -195,10 +195,10 @@ readonly AMOSTRAS_ANALISE_RAPIDA=262144   # amostras brutas (todos os canais) ol
 readonly AMOSTRAS_IGNORADAS_INICIO=4096   # descarta o começo da captura (transitório do arranque)
 readonly SPB_PADRAO=1048576                # SAMPLES_PER_BUFFER (só para estimar tempo; o valor real vem do cabeçalho)
 
-# Layout do cabeçalho .bin v2 a v5 (firmware/ler_adc.c; conferido por tests/test_contrato_firmware.py).
+# Layout do cabeçalho .bin v2 a v6 (firmware/ler_adc.c; conferido por tests/test_contrato_firmware.py).
 # A v3 acrescenta a faixa de entrada do ADC por canal (CAB_OFF_FAIXA_ADC); a v4, os contadores de integridade
-# que a PRU mede durante a captura; a v5, a versão do firmware, a taxa medida pelo ARM e o nº de buffers (este
-# script não os lê).
+# que a PRU mede durante a captura; a v5, a versão do firmware, a taxa medida pelo ARM e o nº de buffers; a v6, a
+# grade de tempo publicada pela PRU (estes dois últimos, este script não lê).
 # A cada versão o CRC (último campo) muda de lugar.
 readonly CAB_TAMANHO=1024
 readonly CAB_OFF_VERSAO=4
@@ -221,6 +221,7 @@ readonly CAB_OFF_PREAMBULO=684      # v4: uint32, quadros SPI com ruído no SDO 
 readonly CAB_OFF_ATRASO_CS=688      # v4: 3 x uint32, esperas do CS no laço da PRU (setup, hold, alto; iterações de 10 ns)
 readonly CAB_OFF_CRC_V4=700
 readonly CAB_OFF_CRC_V5=744
+readonly CAB_OFF_CRC_V6=760
 readonly GRANDEZA_TENSAO=0
 readonly GRANDEZA_CORRENTE=1
 
@@ -1049,7 +1050,7 @@ validar_cabecalho() {
         qc_erro "cabeçalho versão ${versao}: não registra grandeza/sonda por canal. Recompile o firmware (make em firmware/)" cabecalho_v1
         return
     fi
-    if [ "$versao" -gt 5 ]; then
+    if [ "$versao" -gt 6 ]; then
         qc_aviso "cabeçalho versão ${versao}, mais nova que a conhecida por este script: não conferi grandeza/sonda" cabecalho_desconhecido
         return
     fi
@@ -1058,6 +1059,7 @@ validar_cabecalho() {
     [ "$versao" -eq 3 ] && off_crc="$CAB_OFF_CRC_V3"
     [ "$versao" -eq 4 ] && off_crc="$CAB_OFF_CRC_V4"
     [ "$versao" -eq 5 ] && off_crc="$CAB_OFF_CRC_V5"
+    [ "$versao" -eq 6 ] && off_crc="$CAB_OFF_CRC_V6"
     crc_gravado="$(ler_u32 "$arq" "$off_crc")"
     crc_calculado="$(crc_cabecalho_calculado "$arq" "$off_crc")"
     if [ "$crc_gravado" != "$crc_calculado" ]; then

@@ -27,8 +27,11 @@ from supraharmonicos.metricas_captura import (
     calcular_acoplamento,
     calcular_basicas,
     comparar_trocas_de_buffer,
+    estimar_jitter,
     fracao_saturada,
+    medir_degraus_de_tempo,
     posicoes_das_trocas,
+    posicoes_dos_rebases,
     projetar_tom,
     verificar_continuidade,
 )
@@ -683,3 +686,84 @@ def test_salto_numa_troca_de_buffer_aponta_o_bug_do_firmware_antigo(cli, tmp_pat
     rc, out, err = cli(main, p, "--freq", "1000")
     assert rc == 0, err
     assert "DESCONTINUIDADE" in out and "trocas de buffer da PRU: é o defeito do firmware anterior" in out
+
+
+
+# --------------------------------------------------------------------------------------
+# Grade de tempo (22/10/2026): jitter da amostragem e degraus de tempo
+# --------------------------------------------------------------------------------------
+FS_312K, F_TOM = 312_500.0, 10_000.0
+
+
+def tom_com_jitter(jitter_rms_ns: float, n: int = 1 << 20, amplitude: float = 5500.0, deriva: float = 2e-6,
+                   degraus: dict[int, float] | None = None, semente: int = 7) -> np.ndarray:
+    """Um tom de 10 kHz amostrado com erro de tempo uniforme (o da sondagem antiga da PRU), deriva lenta de fase
+    (a do gerador), degraus de tempo (amostra -> s) e o ruído do ADC (0,8 LSB), em códigos arredondados."""
+    rng = np.random.default_rng(semente)
+    k = np.arange(n)
+    erro = rng.uniform(-0.5, 0.5, n) * jitter_rms_ns * math.sqrt(12) * 1e-9
+    for posicao, degrau in (degraus or {}).items():
+        erro[posicao:] += degrau
+    fase = 2 * np.pi * F_TOM * (k / FS_312K + erro) + np.cumsum(rng.normal(0, deriva, n))
+    return np.round(32768 + amplitude * np.cos(fase) + rng.normal(0, 0.8, n))
+
+
+@pytest.mark.parametrize("injetado", [0.0, 2.0, 8.66])
+def test_estimar_jitter_acha_o_erro_de_tempo_injetado(injetado):
+    """8,66 ns = uniforme de 30 ns (6 ciclos da PRU), o que a sondagem antiga dava. O piso, sem jitter nenhum, fica
+    em ~0,3 ns com este tom (~1/6 do fundo de escala), e o ruído onde o tom é plano é o do ADC."""
+    j = estimar_jitter(tom_com_jitter(injetado), FS_312K, F_TOM)
+    assert j.rms_ns == pytest.approx(injetado, abs=0.4) if injetado else j.rms_ns < 0.5
+    assert j.ruido_plano == pytest.approx(math.hypot(0.8, 1 / math.sqrt(12)), rel=0.1)
+    assert j.blocos == (1 << 20) // 2000
+
+
+def test_estimar_jitter_nao_confunde_degrau_nem_deriva_com_jitter():
+    """Um degrau de 6 µs (o rebase antigo) e uma deriva lenta 5x maior mexem em poucos blocos ou no ajuste: a
+    mediana não sai do lugar."""
+    sinal = tom_com_jitter(4.0, deriva=1e-5, degraus={300_000: 6e-6})
+    assert estimar_jitter(sinal, FS_312K, F_TOM).rms_ns == pytest.approx(4.0, abs=0.5)
+
+
+def test_estimar_jitter_precisa_de_4_blocos():
+    assert estimar_jitter(tom_com_jitter(1.0, n=7999), FS_312K, F_TOM) is None
+
+
+def test_degraus_de_tempo_medidos_em_ns():
+    """A deriva de fase daqui (1e-7 rad por amostra) é a das capturas de 21/10 a 312,5 kS/s, onde o controle deu
+    ±0,11 ns; a 20x maior do teste do jitter erraria cada degrau em ~1-2 ns (o controle mostra isso)."""
+    sinal = tom_com_jitter(0.0, deriva=1e-7, degraus={400_000: 7e-9, 700_000: -3e-9})
+    d = medir_degraus_de_tempo(sinal, FS_312K, F_TOM, [400_000, 700_000, 1_048_000])   # a última não tem janela
+    assert len(d.eventos_ns) == 2
+    assert d.eventos_ns[0] == pytest.approx(7.0, abs=0.6) and d.eventos_ns[1] == pytest.approx(-3.0, abs=0.6)
+    assert len(d.controle_ns) == 3 and d.dispersao_controle_ns < 0.5
+    assert d.mediana_ns == pytest.approx(2.0, abs=0.6) and d.maior_ns == pytest.approx(7.0, abs=0.6)
+
+
+def test_posicoes_dos_rebases_a_cada_2_elevado_a_31_ciclos():
+    """640 ticks: ~3.355.444 amostras entre rebases (10,74 s); com 2 canais, metade por canal."""
+    passo = (2**31 + 640) / 640
+    assert posicoes_dos_rebases(200e6, 640, 1, 0, 10_000_000) == pytest.approx([passo, 2 * passo])
+    assert posicoes_dos_rebases(200e6, 640, 2, 100, 3_400_000) == pytest.approx([passo / 2 - 100, passo - 100])
+    assert posicoes_dos_rebases(0, 640, 1, 0, 10_000_000) == []
+
+
+def test_medir_captura_mostra_o_jitter_e_os_degraus_e_a_grade_da_pru(cli, tmp_path):
+    """Uma captura v6 de 3 blocos (2 trocas de buffer) com jitter de 8,66 ns e um degrau de 10 ns na 2ª troca:
+    o medir_captura mostra a grade publicada pela PRU, o jitter e os degraus, e os grava no CSV."""
+    buffer = 1 << 18
+    sinal = tom_com_jitter(8.66, n=3 * buffer, deriva=1e-7, degraus={2 * buffer: 10e-9})
+    caminho = tmp_path / "grade.bin"
+    caminho.write_bytes(montar_cabecalho(3 * buffer, (1,), (0,), ("",), int(FS_312K), versao=6, blocos=3,
+                                         amostras_por_buffer=buffer, grade=(25, 0, 2, 2))
+                        + sinal.astype("<u2").tobytes())
+    saida = tmp_path / "grade.csv"
+    rc, out, err = cli(main, caminho, "--csv", saida)
+    assert rc == 0, err
+    assert "Grade de tempo (PRU): exata -- toda amostra no ciclo da grade, folga mínima 25 ciclos (125 ns)" in out
+    assert "jitter de amostragem  : 8." in out and "degraus de tempo      : trocas de buffer +" in out
+    (linha,) = ler_csv(saida)
+    assert float(linha["jitter_ns"]) == pytest.approx(8.66, abs=0.5)
+    assert float(linha["degrau_trocas_ns"]) == pytest.approx(5.0, abs=2.5)     # mediana de 0 e 10 ns
+    assert linha["folga_minima_ciclos"] == "25" and linha["atraso_maximo_ciclos"] == "0"
+    assert set(COLUNAS_CSV) >= {"jitter_ns", "degrau_rebases_ns", "folga_minima_ciclos"}

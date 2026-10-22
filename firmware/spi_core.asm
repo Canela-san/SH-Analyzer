@@ -93,10 +93,31 @@
 ;   - Atrasos de CS do laço principal lidos de shared_control (ler_adc
 ;     --atraso-cs); com 200/100/100, a transação tem os mesmos 1166 ciclos do
 ;     firmware validado (tests/test_pru_asm.py confere). O padrão (0) é 3/1/3
-;     desde 21/10/2026: 574 ciclos de CS baixo, quadro mínimo de 609.
-;   Tudo isso foi conferido no simulador (tests/pru_sim.py); falta validar
-;   no hardware: make + uma captura longa com um tom estável e o
-;   medir_captura.py (continuidade sem saltos nas trocas de buffer).
+;     desde 21/10/2026: 574 ciclos de CS baixo.
+;
+; --- REVISÃO DE 22/10/2026: GRADE EXATA -------------------------------------
+;   - [JITTER] A espera era uma sondagem do contador: a amostra saía de 0 a 1
+;     volta da sondagem depois do instante, ao acaso. Nas capturas de 21/10
+;     (tom de 10 kHz), ~8,4 ns rms em todas as taxas e esperas de CS -- o
+;     triplo do ruído do ADC nesse tom. Agora: sondagem só até faltarem
+;     menos de 255 ciclos, e um laço de exatamente os ciclos que faltam
+;     (espera_fina). O CS desce sempre no mesmo ciclo depois do instante.
+;   - [FOLGA] O que roda entre duas amostras (DDR, troca de buffer, rebase)
+;     pode demorar mais ou menos; a espera fina absorve, e a menor folga da
+;     captura vai para shared_control (folga_minima_ciclos). Folga > 0 e
+;     nenhuma amostra atrasada = toda amostra no ciclo exato da grade.
+;   - [REBASE] O recuo da grade no rebase usava uma constante chutada (2
+;     ciclos); agora a PRU mede, antes da 1ª amostra, a distância entre as
+;     duas leituras do contador, e o rebase lê o contador de novo depois do
+;     zero (ver rebase_contador).
+;   - O período é lido uma vez (era relido da RAM compartilhada a cada
+;     amostra) e active_buffer só é escrito na troca de buffer.
+;   - O AUTO_RST virou o estágio 9 do laço de configuração (era uma cópia
+;     inteira da transação): ~470 instruções a menos na IMEM.
+;   No simulador (1 ciclo por instrução): quadro mínimo de 602 ciclos sem
+;   troca de buffer e 615 com; a 312,5 kS/s (640 ciclos) sobram 25.
+;   Conferido no simulador, com latências de memória hipotéticas
+;   (tests/test_pru_asm.py); falta a bancada (T7f: varrer_taxa.sh --grade).
 ; ==============================================================================
 ; PINOS (inalterado):
 ;   Bit 0 (r30) = SCLK   | Bit 1 (r30) = SDI/MOSI
@@ -104,10 +125,10 @@
 ; ==============================================================================
 ; REGISTRADORES NOVOS/REAPROVEITADOS (configuração do modo automático, só
 ; usados uma vez, ANTES do laço principal — depois disso ficam sem uso):
-;   r7 = registrador de rascunho onde o comando de 16 bits da escrita de
-;        AUTO_SEQ_EN (transação 1) é montado, antes de ser alinhado para os
-;        bits 31..16 de r28 (formato que CMD_BIT espera). Não usado na
-;        transação 2 (AUTO_RST), que carrega r28 direto via LDI.w0/.w2.
+;   r7 = registrador de rascunho onde o comando de 16 bits de cada
+;        transação de configuração (AUTO_SEQ_EN, RANGE_SELn e, desde
+;        22/10/2026, também o AUTO_RST) é montado, antes de ser alinhado para
+;        os bits 31..16 de r28 (formato que CMD_BIT espera).
 ; Os antigos r6 (índice round-robin), r8/r9 (endereço/tabela de canais) do
 ; modo manual multi-canal NÃO são mais usados em lugar nenhum deste arquivo.
 ; ==============================================================================
@@ -277,14 +298,14 @@ espera_configuracao:
     ; padrão, código 0), uma captura com --faixa-adc ficaria "grudada" na
     ; seguinte e o cabeçalho do .bin descreveria uma escala diferente da real.
     ;
-    ; Um único corpo de transação é reaproveitado nas até 9 escritas (laço
-    ; abaixo): a IMEM da PRU (2048 instruções) não comportaria 9 cópias dos 24
-    ; macros. Os desvios condicionais QB* só alcançam +-511 instruções, e o
+    ; Um único corpo de transação é reaproveitado nas até 9 escritas e no
+    ; AUTO_RST (laço abaixo): a IMEM da PRU (2048 instruções) não comportaria
+    ; uma cópia dos macros para cada uma. Os desvios condicionais QB* só alcançam +-511 instruções, e o
     ; corpo da transação tem ~500: por isso os saltos que o atravessam são
     ; JMP (endereço absoluto). tests/test_pru_asm.py confere isso.
     ;
     ; Registradores do laço (livres: nada abaixo os usa depois da configuração):
-    ;   r6  = estágio (0 = AUTO_SEQ_EN; k = 1..8 -> RANGE_SEL do canal k-1)
+    ;   r6  = estágio (0 = AUTO_SEQ_EN; k = 1..8 -> RANGE_SEL do canal k-1; 9 = AUTO_RST)
     ;   r7  = comando de 16 bits da transação em curso
     ;   r8  = ctrl->auto_seq_mask       r9  = ctrl->range_sel
     ;   r12 = máscara de canais, deslocada 1 bit por estágio (bit 0 = canal do estágio)
@@ -299,9 +320,19 @@ espera_configuracao:
     LDI r6, 0
 
 cfg_proximo_comando:
+    QBEQ cfg_auto_rst, r6, 9
     QBNE cfg_canal, r6, 0
     LDI r7, 0x0300           ; estágio 0: AUTO_SEQ_EN
     OR  r7, r7, r8           ; r7 = 0x0300 | máscara
+    QBA cfg_envia
+
+    ; Estágio 9 (o último): o comando AUTO_RST (0xA000, registrador de COMANDO) -- inicia a varredura automática a
+    ; partir do canal habilitado de menor número. Usa o mesmo corpo de transação, com 16 DATA_BIT em vez de 8 (32
+    ; ciclos, como todo comando do registrador de comando). Até 22/10/2026 era uma cópia inteira da transação (624
+    ; instruções); a única diferença de tempo é a instrução que decide entre 8 e 16 DATA_BIT (5 ns a mais com o SCLK
+    ; baixo, uma vez), e a IMEM ganhou espaço para a espera de precisão do laço principal.
+cfg_auto_rst:
+    LDI r7, 0xA000
     QBA cfg_envia
 
 cfg_canal:
@@ -350,8 +381,18 @@ delay_cs_setup_cfg:
     DATA_BIT
     DATA_BIT
     DATA_BIT
-    ; só 8 DATA_BIT aqui (24 ciclos no total) -- NÃO 16. Ver nota grande
-    ; acima. r23 (dado lido) é descartado de propósito.
+    ; Escrita de registrador de programa: só 8 DATA_BIT (24 ciclos no total) -- NÃO 16. Ver nota grande acima.
+    ; O AUTO_RST (estágio 9) completa os 32 ciclos com mais 8. r23 (dado lido) é descartado de propósito.
+    QBNE cfg_dados_fim, r6, 9
+    DATA_BIT
+    DATA_BIT
+    DATA_BIT
+    DATA_BIT
+    DATA_BIT
+    DATA_BIT
+    DATA_BIT
+    DATA_BIT
+cfg_dados_fim:
 
     LDI r1, 100
 delay_cs_hold_cfg:
@@ -370,81 +411,21 @@ cfg_comando_enviado:
     LSR r13, r13, 4              ; estágios 1-8: passa ao nibble do próximo canal (também quando o canal foi pulado)
 cfg_sem_nibble:
     ADD r6, r6, 1
-    QBEQ cfg_fim, r6, 9
+    QBEQ cfg_fim, r6, 10
     JMP cfg_proximo_comando
 cfg_fim:
-
-    ; --- Transação final: envia o comando AUTO_RST (0xA000, registrador de
-    ; comando) -- inicia a varredura automática a partir do canal habilitado
-    ; de menor número. Transação normal de 32 ciclos (16 CMD_BIT + 16
-    ; DATA_BIT), igual a qualquer comando do registrador de comando.
-    LDI r28.w0, 0x0000
-    LDI r28.w2, 0xA000        ; comando AUTO_RST (fixo)
-    LDI r23, 0
-
-    CLR r30, r30, 3          ; abaixa o CS
-
-    LDI r1, 200
-delay_cs_setup_auto2:
-    SUB r1, r1, 1
-    QBNE delay_cs_setup_auto2, r1, 0
-
-    CMD_BIT
-    CMD_BIT
-    CMD_BIT
-    CMD_BIT
-    CMD_BIT
-    CMD_BIT
-    CMD_BIT
-    CMD_BIT
-    CMD_BIT
-    CMD_BIT
-    CMD_BIT
-    CMD_BIT
-    CMD_BIT
-    CMD_BIT
-    CMD_BIT
-    CMD_BIT
-
-    DATA_BIT
-    DATA_BIT
-    DATA_BIT
-    DATA_BIT
-    DATA_BIT
-    DATA_BIT
-    DATA_BIT
-    DATA_BIT
-    DATA_BIT
-    DATA_BIT
-    DATA_BIT
-    DATA_BIT
-    DATA_BIT
-    DATA_BIT
-    DATA_BIT
-    DATA_BIT
-    ; 16 DATA_BIT aqui (32 ciclos no total) -- transação normal. r23
-    ; descartado de propósito.
-
-    LDI r1, 100
-delay_cs_hold_auto2:
-    SUB r1, r1, 1
-    QBNE delay_cs_hold_auto2, r1, 0
-
-    SET r30, r30, 3          ; levanta o CS
-
-    LDI r1, 100
-delay_cs_high_auto2:
-    SUB r1, r1, 1
-    QBNE delay_cs_high_auto2, r1, 0
 
     ; --- Fim da configuração do ADS8688 — início da captura de verdade ---
     ;
     ; Registradores do laço principal (r6-r13 ficaram livres com o fim da configuração):
     ;   r6  = amostras atrasadas        r7 = buffers sobrescritos      r8 = quadros com preâmbulo != 0
-    ;         (os três vão para ctrl->amostras_atrasadas/buffers_sobrescritos/quadros_preambulo_ruim
-    ;         a cada troca de buffer -- ver memoria_pru.h)
+    ;   r12 = folga mínima (ciclos)     r13 = atraso máximo (ciclos)
+    ;         (os cinco vão para shared_control a cada troca de buffer -- ver memoria_pru.h)
     ;   r9  = atraso CS setup  r10 = atraso CS hold  r11 = atraso CS alto (iterações; 0 = padrão)
+    ;   r29 = ciclos entre as duas leituras do contador no rebase (medidos abaixo)
     ;   r5  = os 16 bits lidos no SDO durante o comando (preâmbulo), zerado a cada quadro
+    ;   r16 = período em ciclos, lido UMA vez (o ler_adc reinicia a PRU a cada captura; até 22/10/2026 era relido
+    ;         da RAM compartilhada a cada amostra, o que só gastava a folga)
     LBBO &r9, r14, 48, 12    ; r9, r10, r11 = ctrl->atraso_cs_setup/hold/alto (0 = o padrão, 3/1/3)
     QBNE atraso_setup_ok, r9, 0
     LDI r9, 3
@@ -460,10 +441,29 @@ atraso_alto_ok:
     LDI r7, 0
     LDI r8, 0
     SBBO &r6, r14, 36, 12    ; contadores publicados zerados
+    MOV r12, r16             ; folga mínima: começa no período (a folga de uma amostra nunca passa dele)
+    LDI r13, 0
+    SBBO &r12, r14, 60, 8
+
+    ; [GRADE EXATA] Calibração do rebase do contador (ver rebase_contador): o rebase lê o contador, o zera e o lê de
+    ; novo, e precisa saber quantos ciclos separam as duas leituras. É a mesma sequência daqui (leitura, escrita
+    ; no bloco de controle da PRU, leitura), só que escrevendo no WAKEUP_EN, o registrador vizinho, com o valor que
+    ; ele já tem (não muda nada: só vale para a instrução SLP, que este firmware não usa). As latências de verdade
+    ; (LBBO/SBBO nesse bloco) entram na medida; o simulador dá 2.
+    SUB r27, r18, 4          ; r27 = 0x22008 (WAKEUP_EN)
+    LBBO &r28, r27, 0, 4
+    LBBO &r1, r18, 0, 4
+    SBBO &r28, r27, 0, 4
+    LBBO &r20, r18, 0, 4
+    SUB r29, r20, r1
+    SBBO &r29, r14, 68, 4    ; ctrl->ciclos_rebase (diagnóstico)
+    LDI r20, 2               ; VERSAO_PROTOCOLO_PRU (memoria_pru.h): o ler_adc confere que é este firmware
+    SBBO &r20, r14, 72, 4
 
     MOV r19, r24
     LDI r15, 0
     LDI r26, 0
+    SBBO &r26, r14, 4, 4     ; active_buffer = 0 (depois, só muda na troca de buffer)
 
     ; A configuração acima levou ~10 transações: o contador de ciclos é zerado de novo aqui, para a 1ª amostra sair
     ; um período depois (e não ser contada como atrasada). Antes da 1ª amostra não há grade de tempo a preservar.
@@ -472,39 +472,63 @@ atraso_alto_ok:
     MOV r17, r16             ; r17 = instante da próxima amostra = 0 + período
     QBA laco_principal
 
-    ; [AMOSTRA ATRASADA] O instante desta amostra já passou: a PRU não está conseguindo a taxa pedida (o laço leva
-    ; ~1400 ciclos por amostra com os atrasos de CS padrão) ou foi segurada (escrita na DDR demorada). A amostra sai
-    ; agora mesmo e é contada. Se o atraso ainda é menor que 1 período, a grade original é mantida (as próximas
-    ; alcançam o horário); se já passa de 1 período, a grade recomeça daqui -- senão o atraso cresceria sem limite
-    ; e, ao passar de 2^31 ciclos, a comparação com sinal do wait_time se inverteria (uma espera de ~10 s).
+    ; [AMOSTRA ATRASADA] O instante desta amostra já passou: a PRU não está conseguindo a taxa pedida (o trabalho
+    ; entre duas amostras não coube no período) ou foi segurada (uma escrita na DDR que demorou). A amostra sai agora
+    ; mesmo, é contada, e o atraso entra no máximo. Se o atraso ainda é menor que 1 período, a grade original é
+    ; mantida (as próximas alcançam o horário); se já passa de 1 período, a grade recomeça daqui -- senão o atraso
+    ; cresceria sem limite e, ao passar de 2^31 ciclos, a comparação com sinal se inverteria (uma espera de ~10 s).
 amostra_atrasada:
     ADD r6, r6, 1
+    SUB r1, r22, r17         ; quanto o instante já tinha passado (ciclos)
+    MAX r13, r13, r1
     ADD r17, r17, r16        ; próximo instante na grade
     SUB r20, r22, r17        ; agora - próximo instante
     QBBS transacao_spi, r20, 31     ; negativo: ainda dá para voltar à grade
     ADD r17, r22, r16        ; atraso de mais de 1 período: recomeça a grade a partir de agora
     QBA transacao_spi
 
+    ; [GRADE EXATA, 22/10/2026] Até aqui a espera era só uma sondagem: ler o contador até passar do instante. A
+    ; amostra saía na 1ª leitura depois dele -- de 0 a 1 volta da sondagem (~6 ciclos na PRU de verdade) mais
+    ; tarde, ao acaso. Medido nas capturas de 21/10 (tom de 10 kHz): ~8,4 ns rms de jitter em todas as taxas e
+    ; esperas de CS, o triplo do ruído do ADC num tom desses. Agora a espera tem duas fases:
+    ;   - grossa: sondagem, só enquanto faltam mais de 255 ciclos;
+    ;   - fina: com R = ciclos que faltam (lidos UMA vez), um laço de exatamente R ciclos (o bit 0 de R vale 1
+    ;     ciclo, e cada volta do laço vale 2). Da leitura até a descida do CS são sempre 11 + R ciclos: o CS
+    ;     desce num ciclo fixo depois do instante da grade, qualquer que seja o caminho até ali.
+    ; O que roda antes da leitura (escrita na DDR, troca de buffer, rebase) pode demorar mais ou menos: a espera
+    ; fina absorve, desde que sobre folga (R >= 0). A menor folga da captura vai para o r12 (ver memoria_pru.h).
 laco_principal:
-    LBBO &r16, r14, 0, 4
     LDI r5, 0                ; preâmbulo deste quadro (os CMD_BIT o acumulam)
-
-    ; Pré-checagem do horário: só roda na folga ANTES do instante da amostra (a espera abaixo absorve), então não
-    ; muda quando a amostra é tomada.
-    LBBO &r22, r18, 0, 4
-    SUB r20, r17, r22
+    LBBO &r22, r18, 0, 4     ; 1ª leitura do contador depois do trabalho da amostra anterior
+    SUB r20, r17, r22        ; R = ciclos até o instante da amostra
     QBBS amostra_atrasada, r20, 31
+    MIN r12, r12, r20        ; folga mínima
+    SUB r1, r20, 255         ; R - 255 < 0: faltam menos de 255 ciclos. (O sinal da subtração, e não um QBGE/QBLT,
+    QBBS espera_fina, r1, 31 ; cuja ordem de operandos é a contrária da leitura: QBLT x, r1, 255 = "se 255 < r1".)
 
-wait_time:
+espera_grossa:
     LBBO &r22, r18, 0, 4
     SUB r20, r17, r22
-    QBBC wait_time, r20, 31
+    QBBS amostra_atrasada, r20, 31  ; uma leitura demorou tanto que o instante passou
+    NOP                      ; da leitura até espera_fina: 5 instruções, como no caminho da 1ª leitura (com o MIN)
+    SUB r1, r20, 255
+    QBBC espera_grossa, r1, 31
+
+espera_fina:
+    QBBC espera_fina_par, r20, 0
+    NOP                      ; R ímpar: 1 ciclo a mais
+espera_fina_par:
+    LSR r1, r20, 1
+    ADD r1, r1, 1            ; R/2 + 1 voltas de 2 ciclos (a última é a fixa)
+espera_fina_laco:
+    SUB r1, r1, 1
+    QBNE espera_fina_laco, r1, 0
 
     ADD r17, r17, r16
 
 transacao_spi:
     ; --- TRANSAÇÃO SPI (32 CICLOS) ---
-    CLR r30, r30, 3         ; Abaixa o CS
+    CLR r30, r30, 3         ; Abaixa o CS: o instante da amostra
 
     MOV r1, r9               ; atraso CS setup (padrão 3 iterações = 30 ns, o mínimo do datasheet)
 delay_cs_setup:
@@ -595,6 +619,7 @@ preambulo_ok:
     ; salto de ~0,7 amostra a cada troca de buffer a 100 kS/s, medido nas capturas reais (T7c: +0,697 em todas as
     ; 57 trocas). E, com um buffer mais longo que 2^32 ciclos (~21,5 s, taxa abaixo de ~48,8 kS/s), o contador
     ; saturava no meio do buffer. O rebase sem perda (rebase_contador, abaixo) resolve os dois.
+    ; Todo o trabalho da troca fica antes da 1ª leitura do contador da amostra seguinte: a espera fina o absorve.
 
     QBEQ troca_para_buffer_1, r26, 0
 
@@ -618,27 +643,33 @@ confere_sobrescrita:
     QBEQ publica_contadores, r27, 0
     ADD r7, r7, 1
 publica_contadores:
+    SBBO &r26, r14, 4, 4     ; active_buffer (até 22/10/2026 era escrito a cada amostra)
     SBBO &r6, r14, 36, 12    ; amostras_atrasadas, buffers_sobrescritos, quadros_preambulo_ruim (1 vez por buffer)
+    SBBO &r12, r14, 60, 8    ; folga_minima_ciclos, atraso_maximo_ciclos
 
 continua:
-    SBBO &r26, r14, 4, 4
-    ; O contador passou de 2^31 (~10,7 s desde o último rebase)? r22 é a leitura feita para esta amostra.
+    ; O contador passou de 2^31 (~10,7 s desde o último rebase)? r22 é a última leitura feita para esta amostra.
     QBBS rebase_contador, r22, 31
     JMP laco_principal
 
     ; [REBASE SEM PERDA] O contador de ciclos da PRU não dá a volta: trava em 0xFFFFFFFF (~21,47 s a 200 MHz).
-    ; Antes disso, o contador é ZERADO e o instante da próxima amostra recua o mesmo tanto (o valor lido mais os
-    ; ciclos entre a leitura e o zero, DELTA): a diferença entre os dois -- que é o que a espera usa -- não muda,
-    ; e a grade de tempo continua a mesma. Um erro de 1-2 ciclos em DELTA vale 5-10 ns, uma vez a cada 10,7 s.
-    ; [CORRIGIDO em 21/10/2026] Com a PRU rodando, uma escrita no contador o ZERA, qualquer que seja o valor: a
-    ; versão anterior escrevia CYCLE - 2^31 e, na BeagleBone, o contador ia a 0 -- a grade atrasava ~1 quadro mais
-    ; o que já tinha passado de 2^31 (5 a 13 µs) a cada 10,74 s, sem amostra atrasada nos contadores (medido na
-    ; varredura T7e de 21/10). Zerar é o que sempre funcionou (o firmware de 19/10 zerava a cada buffer).
+    ; Antes disso, o contador é ZERADO e o instante da próxima amostra recua o mesmo tanto -- a diferença entre os
+    ; dois, que é o que a espera usa, não muda, e a grade de tempo continua a mesma.
+    ; [CORRIGIDO em 21/10/2026] Com a PRU rodando, uma escrita no contador o ZERA, qualquer que seja o valor: o
+    ; firmware anterior escrevia CYCLE - 2^31 e a grade atrasava 5 a 13 µs a cada 10,74 s (varredura T7e).
+    ;
+    ; O recuo é o valor lido (v) mais os ciclos entre essa leitura e o zero valer. Até 22/10/2026 esses ciclos eram
+    ; uma constante chutada (2: "1 a 4 na PRU de verdade"); um erro de 1 ciclo deslocava a grade em 5 ns a cada
+    ; 10,7 s. Agora eles são medidos: a 2ª leitura (u) conta os ciclos desde o zero, e a distância entre as duas
+    ; leituras (r29) foi medida antes da captura com a mesma sequência de instruções. Daí:
+    ;     zero - 1ª leitura = r29 - u     e     recuo = v + r29 - u
     ; Roda na folga entre amostras (o instante da próxima é r17, que só é deslocado junto com o contador).
 rebase_contador:
     LDI r20, 0
-    LBBO &r22, r18, 0, 4     ; CYCLE agora
+    LBBO &r22, r18, 0, 4     ; v = CYCLE agora
     SBBO &r20, r18, 0, 4     ; CYCLE = 0
-    ADD r22, r22, 2          ; DELTA: da leitura até o zero valer (1 a 4 ciclos na PRU de verdade; erro de ±2 = ±10 ns)
-    SUB r17, r17, r22        ; o instante da próxima amostra, no referencial novo
+    LBBO &r1, r18, 0, 4      ; u = ciclos desde o zero
+    SUB r17, r17, r22
+    SUB r17, r17, r29
+    ADD r17, r17, r1         ; o instante da próxima amostra, no referencial novo
     JMP laco_principal

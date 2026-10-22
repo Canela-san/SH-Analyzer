@@ -41,7 +41,7 @@ void lidar_interrupcao(int sinal) { (void)sinal; manter_execucao = 0; }
 // (scripts/supraharmonicos/cabecalho.py) leem todas as versões, e também os
 // '.bin' antigos, sem cabeçalho.
 #define CABECALHO_MAGIC "SHAN"      // 4 bytes, sem terminador nulo armazenado
-#define CABECALHO_VERSAO 5u         // versão do FORMATO do cabeçalho (não do firmware/software) -- v2 adicionou grandeza_por_canal/sonda_id_por_canal; v3, faixa_adc_por_canal; v4, os contadores de integridade da captura e os atrasos de CS; v5, a versão do firmware e a taxa medida pelo ARM (ver struct cabecalho_arquivo_campos)
+#define CABECALHO_VERSAO 6u         // versão do FORMATO do cabeçalho (não do firmware/software) -- v2 adicionou grandeza_por_canal/sonda_id_por_canal; v3, faixa_adc_por_canal; v4, os contadores de integridade da captura e os atrasos de CS; v5, a versão do firmware e a taxa medida pelo ARM; v6, a grade de tempo publicada pela PRU (ver struct cabecalho_arquivo_campos)
 #define CABECALHO_TAMANHO_TOTAL 1024u
 
 // Tamanho FIXO (bytes, incluindo o terminador nulo) dos campos de texto
@@ -205,6 +205,10 @@ struct cabecalho_arquivo_campos {
     char     versao_firmware[CABECALHO_VERSAO_FIRMWARE_TAMANHO]; // [VERSÃO, v5] VERSAO_FIRMWARE deste build (git describe), terminado em '\0'
     double   taxa_medida_hz;           // [INTEGRIDADE, v5] taxa total medida pelo relógio do ARM entre o 1º e o último bloco (incerteza ~0,02 % num bloco de ~10 s); 0.0 = não medida (menos de 2 blocos). Com amostras_atrasadas > 0 é a melhor estimativa da taxa real
     uint32_t buffers_ping_pong;        // [GEOMETRIA, v5] BUFFERS_PING_PONG: quantos buffers de samples_per_buffer amostras a PRU alterna na DDR
+    uint32_t folga_minima_ciclos;      // [GRADE, v6] menor folga da captura, em ciclos de 5 ns: > 0 = toda amostra saiu no ciclo exato da grade (ver memoria_pru.h)
+    uint32_t atraso_maximo_ciclos;     // [GRADE, v6] maior atraso entre as amostras atrasadas, em ciclos (0 se nenhuma)
+    uint32_t ciclos_rebase;            // [GRADE, v6] ciclos entre as duas leituras do contador no rebase, medidos pela PRU antes da 1ª amostra
+    uint32_t versao_protocolo_pru;     // [GRADE, v6] o que a PRU escreveu em versao_protocolo_pru (VERSAO_PROTOCOLO_PRU = este firmware; 0 = firmware da PRU anterior a 22/10/2026)
     uint32_t header_crc32;             // CRC-32 (polinômio 0xEDB88320, o mesmo de zlib/PNG/Ethernet) de todo o cabeçalho, calculado com este próprio campo zerado -- permite a um leitor detectar um cabeçalho truncado/corrompido antes de confiar nos campos acima
 } __attribute__((packed));
 
@@ -833,11 +837,14 @@ struct contadores_integridade {
     uint32_t amostras_atrasadas;
     uint32_t buffers_sobrescritos;
     uint32_t quadros_preambulo_ruim;
+    uint32_t folga_minima_ciclos;      // [GRADE] memoria_pru.h
+    uint32_t atraso_maximo_ciclos;
 };
 
 static void conferir_integridade(volatile struct shared_control *ctrl, struct contadores_integridade *vistos) {
     struct contadores_integridade agora = {
-        ctrl->amostras_atrasadas, ctrl->buffers_sobrescritos, ctrl->quadros_preambulo_ruim
+        ctrl->amostras_atrasadas, ctrl->buffers_sobrescritos, ctrl->quadros_preambulo_ruim,
+        ctrl->folga_minima_ciclos, ctrl->atraso_maximo_ciclos
     };
     if (agora.buffers_sobrescritos > vistos->buffers_sobrescritos) {
         fprintf(stderr, "ERRO: %u buffer(s) sobrescrito(s) pela PRU antes de serem gravados -- o ARM atrasou "
@@ -845,10 +852,10 @@ static void conferir_integridade(volatile struct shared_control *ctrl, struct co
                 agora.buffers_sobrescritos - vistos->buffers_sobrescritos);
     }
     if (agora.amostras_atrasadas > vistos->amostras_atrasadas) {
-        fprintf(stderr, "Aviso: %u amostra(s) tomada(s) depois do instante previsto -- a PRU não acompanhou "
-                         "a taxa pedida (o laço alcança ~140 kS/s com os atrasos de CS padrão); a taxa real "
-                         "é menor que a gravada no cabeçalho.\n",
-                agora.amostras_atrasadas - vistos->amostras_atrasadas);
+        fprintf(stderr, "Aviso: %u amostra(s) tomada(s) depois do instante previsto (até %u ciclos de 5 ns) -- a "
+                         "PRU não acompanhou a taxa pedida (o laço alcança ~326 kS/s com os atrasos de CS "
+                         "padrão) ou foi segurada; o período entre essas amostras não é o do cabeçalho.\n",
+                agora.amostras_atrasadas - vistos->amostras_atrasadas, agora.atraso_maximo_ciclos);
     }
     if (agora.quadros_preambulo_ruim > vistos->quadros_preambulo_ruim) {
         fprintf(stderr, "Aviso: %u quadro(s) SPI com ruído na linha SDO (preâmbulo diferente de 0) -- confira "
@@ -856,6 +863,27 @@ static void conferir_integridade(volatile struct shared_control *ctrl, struct co
                 agora.quadros_preambulo_ruim - vistos->quadros_preambulo_ruim);
     }
     *vistos = agora;
+}
+
+/*
+ * [GRADE] O que a PRU diz sobre o período entre amostras (memoria_pru.h). A folga só é publicada na troca de buffer:
+ * com 1 bloco, ela ainda é o valor inicial (o período) e não diz nada.
+ */
+static void imprimir_grade(volatile struct shared_control *ctrl, const struct contadores_integridade *c,
+                           unsigned long long blocos) {
+    uint32_t periodo = ctrl->sample_period_ticks;
+    printf("Grade de tempo (PRU): ");
+    if (blocos < 2) {
+        printf("folga ainda não publicada (só na troca de buffer: capture >= 2 blocos)");
+    } else if (c->amostras_atrasadas == 0 && c->folga_minima_ciclos < periodo) {
+        printf("folga mínima %u ciclo(s) = %u ns -- toda amostra no ciclo exato da grade; período constante até "
+               "~%.0f S/s", c->folga_minima_ciclos, 5u * c->folga_minima_ciclos,
+               (double)PRU_CLOCK_HZ / (double)(periodo - c->folga_minima_ciclos));
+    } else {
+        printf("%u amostra(s) fora da grade, a pior %u ciclo(s) = %u ns atrasada", c->amostras_atrasadas,
+               c->atraso_maximo_ciclos, 5u * c->atraso_maximo_ciclos);
+    }
+    printf(" | rebase: %u ciclo(s) entre as leituras\n", ctrl->ciclos_rebase);
 }
 
 static double segundos_monotonicos(void) {
@@ -964,9 +992,10 @@ static void imprimir_bloco_gravado(char rotulo, unsigned long long blocos_salvos
 // esperando o primeiro `config_ready == 1` depois do firmware carregar.
 // Depois disso, a PRU entra em `laco_principal`, que roda PARA SEMPRE
 // (`JMP laco_principal`) e nunca mais volta a checar `config_ready` nem a
-// reler `auto_seq_mask` -- só `sample_period_ticks` é relido a cada
+// reler `auto_seq_mask` -- só `sample_period_ticks` era relido a cada
 // amostra dentro do laço (por isso a FREQUÊNCIA sim atualizava entre
-// capturas; os CANAIS, não). `buffer_0_addr`/`buffer_1_addr` também são
+// capturas; os CANAIS, não; desde 22/10/2026 nem ele: com o reinício
+// abaixo, a PRU o lê uma vez por captura). `buffer_0_addr`/`buffer_1_addr` também são
 // lidos só uma vez, mas como são sempre os mesmos endereços fixos
 // (DDR_RESERVED_PHYS + offsets constantes), isso não produzia sintoma
 // visível.
@@ -1419,7 +1448,31 @@ int main(int argc, char *argv[]) {
     ctrl->atraso_cs_hold = atrasos_cs[1];
     ctrl->atraso_cs_alto = atrasos_cs[2];
 
+    // [GRADE] A PRU os escreve antes da 1ª amostra; zerados aqui, um 0 depois quer dizer que ela não escreveu.
+    ctrl->folga_minima_ciclos = 0;
+    ctrl->atraso_maximo_ciclos = 0;
+    ctrl->ciclos_rebase = 0;
+    ctrl->versao_protocolo_pru = 0;
+
     ctrl->config_ready = 1;
+
+    // [GRADE] Confere que o firmware carregado na PRU é o desta versão do ler_adc: a PRU escreve a versão do
+    // protocolo depois de configurar o ADS8688 (~0,1 ms). Um firmware de antes de 22/10/2026 nunca a escreve (o
+    // 'make' foi feito, mas a PRU não recebeu o fw_pru.out novo, ou o contrário): a captura sairia sem a grade
+    // exata e sem os campos de tempo, sem aviso nenhum.
+    for (int espera_ms = 0; espera_ms < 500 && ctrl->versao_protocolo_pru == 0; espera_ms++) {
+        usleep(1000);
+    }
+    if (ctrl->versao_protocolo_pru != VERSAO_PROTOCOLO_PRU) {
+        fprintf(stderr, "Erro: o firmware da PRU não é o deste ler_adc (protocolo %u, este ler_adc espera %u). "
+                         "Recompile e recarregue os dois juntos: scripts/BeagleBone_Setup.sh enviar --setup "
+                         "(no PC), ou 'sudo ./setup.sh' na pasta firmware/ da BeagleBone.\n",
+                ctrl->versao_protocolo_pru, VERSAO_PROTOCOLO_PRU);
+        munmap(ddr_map, bytes_por_buffer * BUFFERS_PING_PONG);
+        munmap(ctrl_map, 4096);
+        close(mem_fd);
+        return -1;
+    }
 
     FILE *ficheiro_bin = fopen(nome_arquivo_saida, "wb");
     if (!ficheiro_bin) {
@@ -1583,7 +1636,7 @@ int main(int argc, char *argv[]) {
 
     unsigned long long blocos_salvos = 0;
     unsigned long long total_amostras_gravadas = 0; // [CABECALHO] soma de amostras brutas gravadas -- preenchido no cabeçalho final
-    struct contadores_integridade integridade = {0, 0, 0};   // [INTEGRIDADE] o último valor visto dos contadores da PRU
+    struct contadores_integridade integridade = {0, 0, 0, 0, 0};   // [INTEGRIDADE] o último valor visto dos contadores da PRU
     double instante_primeiro_bloco = 0.0, instante_ultimo_bloco = 0.0;   // para medir a taxa real (relógio do ARM)
 
     // ============================================================================
@@ -1598,7 +1651,7 @@ int main(int argc, char *argv[]) {
     // Essa lógica NÃO se aplica da mesma forma ao modo AUTO_RST atual, e
     // descartá-la aqui estava introduzindo exatamente o bug: no modo
     // automático, o comando AUTO_RST (enviado uma única vez, na
-    // configuração -- ver spi_core.asm/Transação 2) já é, ele próprio, o
+    // configuração -- ver spi_core.asm, estágio 9 da configuração) já é, ele próprio, o
     // "comando anterior" cujo resultado é descartado -- seu quadro SPI
     // retorna lixo (times de antes da configuração), que já é jogado fora
     // corretamente pela PRU sem nunca tocar a DDR. O datasheet (SBAS582C,
@@ -1696,6 +1749,7 @@ int main(int argc, char *argv[]) {
            integridade.amostras_atrasadas, integridade.buffers_sobrescritos, integridade.quadros_preambulo_ruim,
            (integridade.amostras_atrasadas | integridade.buffers_sobrescritos | integridade.quadros_preambulo_ruim)
                ? "" : " -- tudo certo");
+    imprimir_grade(ctrl, &integridade, blocos_salvos);
 
     // [CABECALHO/NOME DE ARQUIVO] Reescreve o cabeçalho no INÍCIO do
     // arquivo, agora preenchendo blocos_gravados/total_amostras_gravadas
@@ -1713,6 +1767,10 @@ int main(int argc, char *argv[]) {
     cabecalho.campos.buffers_sobrescritos = integridade.buffers_sobrescritos;
     cabecalho.campos.quadros_preambulo_ruim = integridade.quadros_preambulo_ruim;
     cabecalho.campos.taxa_medida_hz = taxa_medida;
+    cabecalho.campos.folga_minima_ciclos = integridade.folga_minima_ciclos;     // [GRADE, v6]
+    cabecalho.campos.atraso_maximo_ciclos = integridade.atraso_maximo_ciclos;
+    cabecalho.campos.ciclos_rebase = ctrl->ciclos_rebase;
+    cabecalho.campos.versao_protocolo_pru = ctrl->versao_protocolo_pru;
     cabecalho.campos.header_crc32 = 0;
     cabecalho.campos.header_crc32 = calcular_crc32(&cabecalho, sizeof(cabecalho));
 

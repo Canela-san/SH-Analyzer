@@ -26,20 +26,34 @@
 #      2^31 ciclos da PRU (10,74 s) várias vezes -- 35 s com as esperas padrão e com 6,2,6 a 100 kS/s, 35 s com
 #      6,2,6 a 250 kS/s e 10 min com 6,2,6 a 250 kS/s (o T7c). ~12 min e ~330 MB.
 #
+# A GRADE DE TEMPO (--grade, o T7f; pede o firmware de 22/10/2026, com a espera de precisão da PRU). O mesmo tom
+# de 10 kHz, no padrão (312,5 kS/s, esperas 3,1,3), sem mudar nada na bancada:
+#   G. 60 s a 312,5 kS/s, 60 s a 100 kS/s (para comparar com as capturas de 21/10, que tinham ~8,4 ns de jitter) e
+#      5 min a 312,5 kS/s (~90 trocas de buffer e ~28 rebases do contador).
+#   H. 60 s a 312,5 kS/s com o ARM ocupado (um 'dd' enchendo a DDR, em segundo plano): a folga da PRU e o ler_adc
+#      sob carga.
+#   K. 60 s com 2 canais a 312,5 kS/s no total (o tom no canal 1; o canal 0 como estiver).
+#   J. o teto com período constante: de 640 a 600 ticks (312,5 a 333,3 kS/s), 1 tick por vez, 2 blocos cada. A
+#      folga da PRU já diz onde ele está; aqui ele é conferido captura a captura.
+#   46 capturas, ~15 min e ~500 MB. Cada linha do resumo.csv traz a folga (folga_ciclos) e o pior atraso.
+#
 # USO (na BeagleBone, na pasta do firmware; de preferência no terminal do 'scripts/BeagleBone_Setup.sh ssh'):
 #   ./varrer_taxa.sh              # tudo, com as pausas para mudar a bancada
 #   ./varrer_taxa.sh --simular    # só mostra o plano, o tempo e o espaço
 #   ./varrer_taxa.sh --partes AB  # só algumas partes (A, B, D e C, nesta ordem; E só se pedida)
 #   ./varrer_taxa.sh --validar    # só a validação do firmware corrigido (a parte E): numa pasta nova, sem
 #                                 # precisar de nenhuma varredura anterior (= --partes E)
+#   ./varrer_taxa.sh --grade      # a grade de tempo (= --partes GHKJ), numa pasta T7f_<data>_<hora>/
 #   ./varrer_taxa.sh --continuar  # retoma a última varredura (ou --continuar T7e_...): pula o que já foi feito
+#                                 # (as partes são as da varredura retomada, lidas do log.txt dela)
 #
 # SE A CONEXÃO CAIR: cada captura e a linha dela no resumo.csv são gravadas assim que ela termina, e a varredura
 # não morre com o ssh: segue até a próxima pausa (ou até o fim) e para ali. Reconecte e rode --continuar.
 #
-# SAÍDA: a pasta T7e_<data>_<hora>/ com as capturas (<parte>_cs<S>-<H>-<A>_<taxa>_<entrada>.bin), o log.txt (tudo o
-# que o ler_adc escreveu) e o resumo.csv (uma linha por captura: contadores de integridade e taxa medida pelo ARM).
-# No computador:  scripts/BeagleBone_Setup.sh trazer 'T7e_*' $DIA
+# SAÍDA: a pasta T7e_<data>_<hora>/ (T7f_ na --grade) com as capturas (<parte>_cs<S>-<H>-<A>_<taxa>_<entrada>.bin),
+# o log.txt (tudo o que o ler_adc escreveu) e o resumo.csv (uma linha por captura: contadores de integridade, taxa
+# medida pelo ARM e, com o firmware de 22/10/2026, a folga da grade de tempo).
+# No computador:  scripts/BeagleBone_Setup.sh trazer 'T7e_*' $DIA   (ou 'T7f_*')
 # ==============================================================================
 
 set -uo pipefail
@@ -75,22 +89,47 @@ LIMITE_TICKS_ATE=600                # 333,3 kS/s (acima do teto medido em 21/10:
 PERTO_DO_LIMITE="3,1,3:640 3,1,3:635 3,1,3:630 3,1,3:625 6,2,6:640 6,2,6:650"   # esperas:ticks, 60 s cada
 TAXA_PADRAO=312500
 
+# A grade de tempo (--grade, firmware de 22/10/2026), no padrão: taxa:duração em s.
+GRADE_LONGAS="312500:60 100000:60 312500:300"     # parte G
+GRADE_CARGA="312500:60"                            # parte H: o mesmo, com o ARM enchendo a DDR
+GRADE_2CANAIS="312500:60"                          # parte K
+GRADE_TICKS_DE=640                                 # parte J: 312,5 kS/s...
+GRADE_TICKS_ATE=600                                # ... a 333,3 kS/s, 1 tick por vez
+
 PARTES=ABDC
+PARTES_PEDIDAS=0
 SIMULAR=0
 CONTINUAR=''
 while [ $# -gt 0 ]; do
     case "$1" in
         --simular) SIMULAR=1 ;;
-        --validar) PARTES=E ;;
-        --limite) PARTES=LMNQR ;;
+        --validar) PARTES=E; PARTES_PEDIDAS=1 ;;
+        --limite) PARTES=LMNQR; PARTES_PEDIDAS=1 ;;
+        --grade) PARTES=GHKJ; PARTES_PEDIDAS=1 ;;
         --continuar)
             if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then CONTINUAR=${2%/}; shift; else CONTINUAR=ultima; fi ;;
-        --partes) [ $# -ge 2 ] || { echo "Erro: --partes precisa de letras (ex.: AB)." >&2; exit 1; }; PARTES=$2; shift ;;
+        --partes) [ $# -ge 2 ] || { echo "Erro: --partes precisa de letras (ex.: AB)." >&2; exit 1; }
+                  PARTES=$2; PARTES_PEDIDAS=1; shift ;;
         -h|--help) sed -n '/^# PARA QUE/,/^# ====/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
         *) echo "Erro: opção desconhecida: '$1' (veja --help)." >&2; exit 1 ;;
     esac
     shift
 done
+
+# --continuar: a pasta da varredura a retomar (a mais recente, se não foi dada) e, sem --partes/--grade/..., as
+# partes dela, do log.txt -- retomar a --grade com um --continuar só não pode virar a varredura padrão.
+if [ -n "$CONTINUAR" ]; then
+    if [ "$CONTINUAR" = ultima ]; then
+        CONTINUAR=$(find . -maxdepth 1 -type d \( -name 'T7e_*' -o -name 'T7f_*' \) -printf '%T@ %f\n' | sort -n | tail -n 1)
+        CONTINUAR=${CONTINUAR#* }
+    fi
+    [ -n "$CONTINUAR" ] && [ -f "$CONTINUAR/resumo.csv" ] \
+        || { echo "Erro: não achei a varredura a continuar (${CONTINUAR:-nenhuma pasta T7e_* ou T7f_* aqui})." >&2; exit 1; }
+    if [ "$PARTES_PEDIDAS" -eq 0 ] && [ -f "$CONTINUAR/log.txt" ]; then
+        anteriores=$(sed -n 's/^== partes \([A-Z]*\),.*/\1/p' "$CONTINUAR/log.txt" | head -n 1)
+        PARTES=${anteriores:-$PARTES}
+    fi
+fi
 
 # Uma captura por linha: parte|esperas|taxa|canais|entrada|duração em s (vazia = blocos)
 PLANO=()
@@ -126,16 +165,29 @@ fi
 if tem N; then PLANO+=("N|padrao|$TAXA_PADRAO|1|tom|600"); fi
 if tem Q; then PLANO+=("Q|padrao|$TAXA_PADRAO|0,1|tom"); fi
 if tem R; then PLANO+=("R|padrao|$TAXA_PADRAO|1|curto" "R|6,2,6|$TAXA_PADRAO|1|curto"); fi
+if tem G; then
+    for par in $GRADE_LONGAS; do PLANO+=("G|padrao|${par%%:*}|1|tom|${par##*:}"); done
+fi
+if tem H; then PLANO+=("H|padrao|${GRADE_CARGA%%:*}|1|tom|${GRADE_CARGA##*:}"); fi
+if tem K; then PLANO+=("K|padrao|${GRADE_2CANAIS%%:*}|0,1|tom|${GRADE_2CANAIS##*:}"); fi
+if tem J; then
+    for ((t = GRADE_TICKS_DE; t >= GRADE_TICKS_ATE; t--)); do PLANO+=("J|padrao|$((200000000 / t))|1|tom"); done
+fi
 case "$PARTES" in
-    *[!ABCDELMNQR]*|'')
-        echo "Erro: --partes aceita as letras A, B, C, D, E, L, M, N, Q e R (ex.: AB; atalhos: --validar, --limite)." >&2
+    *[!ABCDEGHJKLMNQR]*|'')
+        echo "Erro: --partes aceita as letras A, B, C, D, E, G, H, J, K, L, M, N, Q e R (ex.: AB; atalhos: --validar," \
+             "--limite, --grade)." >&2
         exit 1 ;;
+esac
+case "$PARTES" in
+    *[!GHJK]*) PREFIXO=T7e ;;
+    *) PREFIXO=T7f ;;       # só a grade de tempo
 esac
 
 blocos_da_parte() {
     case "$1" in
         C|R) echo 1 ;;      # só o ruído
-        L) echo 2 ;;        # 1 troca de buffer e a taxa medida pelo ARM, em ~7 s por ponto
+        L|J) echo 2 ;;      # 1 troca de buffer e a taxa medida pelo ARM, em ~7 s por ponto
         *) echo "$BLOCOS" ;;
     esac
 }
@@ -146,18 +198,14 @@ nome_da_captura() {   # $1 = item do plano
 }
 
 # --continuar: a mesma pasta; feita = com linha no resumo.csv e com os contadores lidos (uma que o ler_adc não
-# terminou, ou que foi cortada no meio, é refeita).
+# terminou, ou que foi cortada no meio, é refeita). As esperas e os canais vêm entre aspas, com vírgulas: a coluna
+# amostras_atrasadas é contada a partir do FIM da linha, quantas o cabeçalho tiver depois dela (5 até 21/10/2026).
 declare -A FEITA=()
 if [ -n "$CONTINUAR" ]; then
-    if [ "$CONTINUAR" = ultima ]; then
-        CONTINUAR=$(find . -maxdepth 1 -type d -name 'T7e_*' | sort | tail -n 1)
-        CONTINUAR=${CONTINUAR#./}
-    fi
-    [ -n "$CONTINUAR" ] && [ -f "$CONTINUAR/resumo.csv" ] \
-        || { echo "Erro: não achei a varredura a continuar (${CONTINUAR:-nenhuma pasta T7e_* aqui})." >&2; exit 1; }
     while read -r arquivo atrasadas; do
         if [ "$atrasadas" != "?" ]; then FEITA[$arquivo]=1; fi
-    done < <(awk -F, 'NR > 1 { print $2, $(NF - 5) }' "$CONTINUAR/resumo.csv")
+    done < <(awk -F, 'NR == 1 { for (k = 1; k <= NF; k++) if ($k == "amostras_atrasadas") depois = NF - k; next }
+                      { print $2, $(NF - depois) }' "$CONTINUAR/resumo.csv")
 fi
 declare -A FALTAM_NA_PARTE=()
 FALTAM=0
@@ -209,7 +257,11 @@ por_parte() {   # "L: 122 capturas, ~17 min, ~490 MB · M: ..."
 LIVRE_MB=$(( $(df -Pk . | awk 'NR == 2 { print $4 }') / 1024 ))
 
 if [ -t 1 ]; then N=$'\e[1m' F=$'\e[2m' R=$'\e[0m' V=$'\e[32m' AM=$'\e[33m' VM=$'\e[31m'; else N='' F='' R='' V='' AM='' VM=''; fi
-printf '\n  %s◆ T7e: esperas do CS e taxa de amostragem%s\n' "$N" "$R"
+if [ "$PREFIXO" = T7f ]; then
+    printf '\n  %s◆ T7f: a grade de tempo (período entre amostras)%s\n' "$N" "$R"
+else
+    printf '\n  %s◆ T7e: esperas do CS e taxa de amostragem%s\n' "$N" "$R"
+fi
 printf '    partes %s · %d capturas · ~%d min · ~%d MB (livres: %d MB)\n' "$PARTES" "$FALTAM" $(( (TOTAL_S + 59) / 60 )) "$MB_TOTAL" "$LIVRE_MB"
 [ "${#ORDEM_PARTES}" -lt 2 ] || printf '    %s(%s)%s\n' "$F" "$(por_parte)" "$R"
 if [ -n "$CONTINUAR" ]; then
@@ -253,7 +305,18 @@ if tem N || tem Q || tem R; then
         exit 1
     fi
 fi
-if tem E || tem L || tem M || tem N || tem Q || tem R; then
+if tem G || tem H || tem J || tem K; then
+    if [ -f spi_core.asm ] && ! grep -q 'GRADE EXATA' spi_core.asm; then
+        echo "Erro: o spi_core.asm desta pasta não tem a grade exata (espera de precisão, 22/10/2026)." >&2
+        echo "No computador:  scripts/BeagleBone_Setup.sh enviar --setup" >&2
+        exit 1
+    fi
+    if [ -f ler_adc.c ] && [ -f ler_adc ] && { [ ler_adc -ot ler_adc.c ] || [ ler_adc -ot memoria_pru.h ]; }; then
+        echo "Erro: o ler_adc é mais antigo que o código dele: compile antes (./setup.sh)." >&2
+        exit 1
+    fi
+fi
+if tem E || tem L || tem M || tem N || tem Q || tem R || tem G || tem H || tem J || tem K; then
     if [ -f spi_core.asm ] && ! grep -q 'CORRIGIDO em 21/10/2026' spi_core.asm; then
         echo "Erro: o spi_core.asm desta pasta não tem a correção do rebase do contador (21/10/2026)." >&2
         echo "No computador:  scripts/BeagleBone_Setup.sh enviar --setup" >&2
@@ -276,13 +339,14 @@ if [ -n "${SUDO_ASKPASS:-}" ]; then
 fi
 sudo -v || { echo "Erro: o sudo não aceitou a senha." >&2; exit 1; }
 
-PASTA=${CONTINUAR:-T7e_$(date +%Y-%m-%d_%H%M)}
+PASTA=${CONTINUAR:-${PREFIXO}_$(date +%Y-%m-%d_%H%M)}
 mkdir -p "$PASTA"
 LOG="$PASTA/log.txt"
 RESUMO="$PASTA/resumo.csv"
 if [ -z "$CONTINUAR" ]; then
-    echo "parte,arquivo,esperas_cs,taxa_pedida_hz,canais,entrada,amostras_atrasadas,buffers_sobrescritos,quadros_sdo_ruido,taxa_arm_hz,desvio_arm_pct,codigo_saida" > "$RESUMO"
+    echo "parte,arquivo,esperas_cs,taxa_pedida_hz,canais,entrada,amostras_atrasadas,buffers_sobrescritos,quadros_sdo_ruido,taxa_arm_hz,desvio_arm_pct,codigo_saida,folga_ciclos,atraso_max_ciclos" > "$RESUMO"
 fi
+COLUNAS_RESUMO=$(head -n 1 "$RESUMO" | awk -F, '{ print NF }')    # 12 numa varredura retomada de antes de 22/10/2026
 {
     echo "== $(date '+%Y-%m-%d %H:%M:%S %Z') · $(uname -n) · firmware $(cat VERSAO 2>/dev/null || echo '?')$( [ -z "$CONTINUAR" ] || echo ' · CONTINUAÇÃO')"
     echo "== partes $PARTES, $FALTAM de ${#PLANO[@]} capturas, $BLOCOS blocos cada (1 na parte C), faixa: $FAIXA"
@@ -327,6 +391,10 @@ for item in "${PLANO[@]}"; do
             L) printf '\n  %s▸ L: o limite, de 303 a 333 kS/s em passos de 1 tick (5 ns), com o tom%s\n' "$N" "$R" ;;
             M) printf '\n  %s▸ M: 60 s perto do limite, com o tom%s\n' "$N" "$R" ;;
             N) printf '\n  %s▸ N: 10 min no padrão (312,5 kS/s, esperas 3,1,3), com o tom%s\n' "$N" "$R" ;;
+            G) printf '\n  %s▸ G: a grade de tempo no padrão, com o tom (capturas longas)%s\n' "$N" "$R" ;;
+            H) printf '\n  %s▸ H: a mesma, com o ARM ocupado (dd enchendo a DDR)%s\n' "$N" "$R" ;;
+            K) printf '\n  %s▸ K: 2 canais no padrão%s\n' "$N" "$R" ;;
+            J) printf '\n  %s▸ J: o teto com período constante, de 312,5 a 333,3 kS/s, 1 tick por vez%s\n' "$N" "$R" ;;
             D|Q) pausa "tom de 10 kHz no canal 1 (como até agora) e a entrada do canal 0 em CURTO." || resposta=$?
                printf '\n  %s▸ D: 2 canais%s\n' "$N" "$R" ;;
             C|R) pausa "gerador FORA e a entrada do canal 1 em CURTO (o divisor ligado ao retorno)." || resposta=$?
@@ -346,24 +414,35 @@ for item in "${PLANO[@]}"; do
     if [ -n "$segundos" ]; then tamanho=(--duracao "${segundos}s"); else tamanho=(--blocos "$(blocos_da_parte "$parte")"); fi
     esperas=(--atraso-cs "$cs")
     [ "$cs" != padrao ] || esperas=()      # o padrão do firmware, como numa captura qualquer
+    carga=''
+    if [ "$parte" = H ]; then              # a DDR e a CPU do ARM ocupadas durante a captura (o ler_adc tem prioridade)
+        nice -n 10 dd if=/dev/zero of=/dev/null bs=4M 2>/dev/null &
+        carga=$!
+    fi
     # shellcheck disable=SC2086  # $faixa são duas palavras de propósito
     saida=$(sudo "$LER_ADC" "$taxa" "$canais" "${tamanho[@]}" "${esperas[@]}" $faixa -o "$PASTA/$nome" \
-                 -t "T7e $parte cs $cs $taxa $entrada${segundos:+ ${segundos}s}" 2>&1 </dev/null)
+                 -t "$PREFIXO $parte cs $cs $taxa $entrada${segundos:+ ${segundos}s}" 2>&1 </dev/null)
     codigo=$?
+    if [ -n "$carga" ]; then kill "$carga" 2>/dev/null; wait "$carga" 2>/dev/null; fi
     printf '%s\n' "$saida" >> "$LOG"
 
     integridade=$(printf '%s\n' "$saida" | sed -n 's/.*Integridade: \([0-9]*\) amostra(s) atrasada(s), \([0-9]*\) buffer(s) sobrescrito(s), \([0-9]*\) quadro(s).*/\1 \2 \3/p' | tail -n 1)
     taxa_arm=$(printf '%s\n' "$saida" | sed -n 's/.*Taxa real medida pelo ARM: \([0-9]*\) Hz (pedida [0-9]* Hz, \([-+0-9.]*\) %).*/\1 \2/p' | tail -n 1)
+    folga=$(printf '%s\n' "$saida" | sed -n 's/.*Grade de tempo (PRU): folga mínima \([0-9]*\) ciclo.*/\1/p' | tail -n 1)
+    pior=$(printf '%s\n' "$saida" | sed -n 's/.*Grade de tempo (PRU): .*a pior \([0-9]*\) ciclo.*/\1/p' | tail -n 1)
     read -r atrasadas sobrescritos sdo <<< "${integridade:-? ? ?}"
     read -r arm desvio <<< "${taxa_arm:-? ?}"
-    echo "$parte,$nome,\"$cs\",$taxa,\"$canais\",$entrada,$atrasadas,$sobrescritos,$sdo,$arm,$desvio,$codigo" >> "$RESUMO"
+    linha="$parte,$nome,\"$cs\",$taxa,\"$canais\",$entrada,$atrasadas,$sobrescritos,$sdo,$arm,$desvio,$codigo"
+    [ "$COLUNAS_RESUMO" -le 12 ] || linha+=",$folga,$pior"
+    echo "$linha" >> "$RESUMO"
 
     if [ "$codigo" -ne 0 ] && [ -z "$integridade" ]; then
         printf '%s✗ o ler_adc falhou (código %d; veja o log.txt)%s\n' "$VM" "$codigo" "$R"
     elif [ "$atrasadas $sobrescritos $sdo" = "0 0 0" ]; then
-        printf '%s✓%s ARM %s Hz (%s %%)\n' "$V" "$R" "$arm" "$desvio"
+        printf '%s✓%s %sARM %s Hz (%s %%)\n' "$V" "$R" "${folga:+folga $folga ciclos · }" "$arm" "$desvio"
     else
-        printf '%s! atrasadas %s · sobrescritos %s · SDO %s%s · ARM %s Hz\n' "$AM" "$atrasadas" "$sobrescritos" "$sdo" "$R" "$arm"
+        printf '%s! atrasadas %s%s · sobrescritos %s · SDO %s%s · ARM %s Hz\n' "$AM" "$atrasadas" "${pior:+ (até $pior ciclos)}" \
+            "$sobrescritos" "$sdo" "$R" "$arm"
     fi
 done
 
@@ -374,5 +453,5 @@ if [ -n "$interrompido" ]; then
 else
     printf '\n  %s◆ Pronto%s: %s\n' "$N" "$R" "$PASTA"
 fi
-echo "    No computador:  scripts/BeagleBone_Setup.sh trazer 'T7e_*' \$DIA"
+echo "    No computador:  scripts/BeagleBone_Setup.sh trazer '${PREFIXO}_*' \$DIA"
 echo

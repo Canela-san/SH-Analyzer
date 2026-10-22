@@ -13,7 +13,7 @@ Pré-requisito: [`user-guide.md`](user-guide.md) (capturar e analisar). Este rot
 
 **Índice**
 
-1. [Estado da campanha](#estado-da-campanha) (o que já foi medido e o que vem a seguir) e o [passo a passo da próxima ida](#passo-a-passo-da-próxima-ida-firmware-novo-e-taxa-máxima)
+1. [Estado da campanha](#estado-da-campanha) (o que já foi medido e o que vem a seguir) e o [passo a passo da próxima ida](#passo-a-passo-da-próxima-ida-a-grade-de-tempo-t7f)
 2. [Antes de ir: o que o datasheet e o código já dizem](#antes-de-ir-o-que-o-datasheet-e-o-código-já-dizem)
 3. [Equipamentos, segurança e boas práticas](#equipamentos-segurança-e-boas-práticas)
 4. [Convenções e a ferramenta `medir_captura.py`](#convenções-e-a-ferramenta-medir_capturapy)
@@ -39,10 +39,89 @@ Atualize esta tabela a cada ida ao laboratório: ela é o resumo do avanço para
 | [T4](#t4-frequência-de-amostragem-real) | 🟡 19/10 | Taxa = 200 MHz ÷ ticks confirmada (102,4 kS/s: −64,0 ppm; 110 kS/s: −100,0 ppm; as exatas concordam em 0,02 ppm) | Leitura do contador do osciloscópio (separa gerador e cristal: hoje, −43,2 ppm somados) |
 | [T5](#t5-distorção-e-faixa-dinâmica) | ⏳ | Prévia, das capturas do T4: SINAD 61 dB e ENOB 14,4 bits com o tom em −27,5 dBFS; THD −71,6 dB, limitado pelo gerador | Tudo |
 | [T6](#t6-vários-canais-diafonia-e-atraso) | 🟡 19/10 | Diafonia 1 → 0 de −94,7 dB em 10 kHz; atraso entre canais 9,954 µs (esperado 10,000) | Refazer o ponto de 40 kHz em **20 kHz** (com 2 canais a Nyquist é 25 kHz) |
-| [T7](#t7-integridade-e-limite-de-taxa) | 🟡 21/10 | O salto de 7 µs nas trocas de buffer sumiu (≤ 0,06 µs). [T7e](#t7e-onde-está-o-limite-de-taxa): as esperas do CS descem ao piso do datasheet (`3,1,3`) sem perda nenhuma; teto de 326 kS/s; **trabalho proposto: `6,2,6` a 250 kS/s; o padrão ficou em `3,1,3` a 312,5 kS/s**. Achado: degrau de 5 a 13 µs a cada 10,74 s (o rebase do contador), corrigido no firmware | **A campanha do limite** ([passo a passo](#passo-a-passo-da-próxima-ida-a-campanha-do-limite-3125-kss)): o padrão novo (312,5 kS/s, `3,1,3`), o limite em passos de 1 tick, 10 min no padrão (a validação do rebase); T7d |
+| [T7](#t7-integridade-e-limite-de-taxa) | 🟡 21/10 | O salto de 7 µs nas trocas de buffer sumiu (≤ 0,06 µs). [T7e](#t7e-onde-está-o-limite-de-taxa): as esperas do CS descem ao piso do datasheet (`3,1,3`) sem perda nenhuma; teto de 326 kS/s; **trabalho proposto: `6,2,6` a 250 kS/s; o padrão ficou em `3,1,3` a 312,5 kS/s**. Achado: degrau de 5 a 13 µs a cada 10,74 s (o rebase do contador), corrigido no firmware | **[T7f](#t7f-o-período-entre-amostras-a-grade-de-tempo), a grade de tempo** ([passo a passo](#passo-a-passo-da-próxima-ida-a-grade-de-tempo-t7f)): o firmware de 22/10 tira o jitter de 8,5 ns achado nas capturas de 21/10. Depois, a campanha do limite ([passo a passo](#passo-a-passo-da-próxima-ida-a-campanha-do-limite-3125-kss)); T7d |
 | [T8](#t8-aliasing) a [T11](#t11-ponta-a-ponta) | ⏳ | — | Tudo; o T10 é o objetivo central |
 
+### Passo a passo da próxima ida: a grade de tempo (T7f)
+
+O firmware de 22/10/2026 tira o jitter de ~8,5 ns que as capturas de 21/10 tinham e faz a PRU medir a própria
+folga ([T7f](#t7f-o-período-entre-amostras-a-grade-de-tempo)). O SPI é o mesmo de 21/10 (`v0.7`, a tag de backup).
+Esta ida o valida (~15 min de captura) e, se sobrar tempo, segue para a
+[campanha do limite](#passo-a-passo-da-próxima-ida-a-campanha-do-limite-3125-kss), que agora também mede a folga.
+
+**1. Firmware de 22/10 (10 min).** No computador:
+
+```fish
+set DIA $DADOS/lab/(date +%F); mkdir -p $DIA/fotos              # a pasta do dia
+cp docs/lab-notes-template.md $DIA/anotacoes.md                 # o caderno da sessão: preencha durante
+scripts/BeagleBone_Setup.sh preparar                            # relógio, firmware de 22/10, compilação e PRU
+script -a $DIA/terminal_bbb.txt -c "scripts/BeagleBone_Setup.sh ssh"   # o terminal da placa, gravado inteiro
+```
+
+No terminal da placa, a captura de conferência:
+
+```bash
+sudo ./ler_adc --blocos 2 --faixa-adc 1:5.12 -o T7_bancada.bin -t "T7 bancada"
+```
+
+Ela tem de terminar com `Grade de tempo (PRU): folga mínima N ciclo(s) ... toda amostra no ciclo exato da grade`. Se
+a resposta for `Erro: o firmware da PRU não é o deste ler_adc`, a PRU ficou com o firmware antigo: rode `./setup.sh`
+na placa e repita. Se a compilação falhar, me mande o erro (é a primeira compilação do `spi_core.asm` novo no
+`clpru`).
+
+**2. A bancada (5 min).** A mesma de 21/10, sem mudar nada: senoide de 10,000 kHz, 20 Vpp, High-Z, no canal 1, e o
+contador de frequência do osciloscópio no mesmo sinal (anote a leitura no começo e no fim).
+
+**3. A campanha (~15 min).** Na BeagleBone:
+
+```bash
+./varrer_taxa.sh --grade --simular   # 46 capturas, ~15 min, ~500 MB: confira o espaço livre
+./varrer_taxa.sh --grade
+```
+
+| Parte | O que captura (tom de 10 kHz em ±2,56 V, padrão: 312,5 kS/s e `3,1,3`) | Para quê |
+|---|---|---|
+| G | 60 s a 312,5 kS/s; 60 s a 100 kS/s; 5 min a 312,5 kS/s | O jitter e os degraus antes/depois (as de 21/10 são o "antes"), em ~90 trocas de buffer e ~28 rebases |
+| H | 60 s a 312,5 kS/s com um `dd` enchendo a DDR do ARM | A folga e o `ler_adc` sob carga: a grade não pode depender do que o ARM faz |
+| K | 60 s com 2 canais (312,5 kS/s no total) | A grade com a varredura automática de canais |
+| J | De 640 a 600 ticks (312,5 a 333,3 kS/s), 1 tick por vez, 2 blocos | O teto com período constante, captura a captura |
+
+Cada captura mostra `✓ folga N ciclos` no terminal. Na parte J, a folga vai caindo 1 ciclo por tick até a 1ª
+amostra atrasada (`! atrasadas ...`): é o teto. Se a conexão cair, `./varrer_taxa.sh --continuar` retoma a
+`--grade` de onde parou.
+
+**4. O osciloscópio (durante os 5 min da parte G).** CS na ponta (10x, terra curto). Gatilho na **descida** do CS,
+base de tempo de 500 ns/div, e a persistência infinita (ou o histograma de período, se o osciloscópio tiver):
+
+* a **próxima** descida do CS aparece 3,200 µs depois do gatilho. Amplie nela (zoom de 10 ns/div);
+* com o firmware de 22/10 ela é **uma linha só**; com o de antes (`v0.7`), uma faixa de ~30 ns de largura (os 6
+  ciclos da sondagem);
+* meça a largura (ou o desvio-padrão do período, nas estatísticas da medida) e **fotografe**
+  (`$DIA/fotos/cs_jitter_312k.png`, com a escala visível).
+
+Uma linha fina aqui e o jitter ainda alto nas capturas = o jitter não é da PRU (gerador ou ADC). Uma faixa larga =
+o firmware novo não está na PRU (confira a linha `Firmware:` do `ler_adc`).
+
+**5. Se sobrar tempo: a campanha do limite** (~35 min, a partir da etapa 3 da
+[seção seguinte](#passo-a-passo-da-próxima-ida-a-campanha-do-limite-3125-kss): `./varrer_taxa.sh --limite`).
+
+**6. Antes de sair.** Saia do terminal da placa com `exit` e, no computador:
+
+```fish
+scripts/BeagleBone_Setup.sh trazer 'T7*' $DIA
+```
+
+O pacote é a pasta `T7f_*` (e a `T7e_*`, se a campanha do limite rodou), o `T7_bancada.bin`, o
+`terminal_bbb.txt`, a foto do CS e o `anotacoes.md`.
+
+**Quando parar e ir para casa.** Só se a etapa 1 falhar (o `clpru` não compila o `spi_core.asm` novo, ou o
+`ler_adc` não vê o protocolo 2 nem depois do `./setup.sh`): traga o erro inteiro. Com a etapa 1 certa, todo o
+resto roda sozinho.
+
 ### Passo a passo da próxima ida: a campanha do limite (312,5 kS/s)
+
+> **Depois do [T7f](#passo-a-passo-da-próxima-ida-a-grade-de-tempo-t7f)**, no mesmo dia, se sobrar tempo: o
+> firmware é o de 22/10 (as etapas 1 e 2 já estão feitas), e cada captura também mostra a folga.
 
 Desde 21/10/2026, o padrão do firmware é **312,5 kS/s** (200 MHz ÷ 640, a primeira taxa exata acima de 300 kS/s:
 Nyquist de 156 kHz com 1 canal) com as esperas do CS no **mínimo do datasheet** (`3,1,3`), e o rebase do contador
@@ -1194,6 +1273,64 @@ refazer a partir daí está em [O que refazer com o firmware de out/2026](#o-que
 * **Decisão:** esperas de trabalho **`6,2,6`** (60/20/60 ns, o dobro do piso do datasheet, que passou em tudo);
   taxa de trabalho **250 kS/s** (o quadro de 3,12 µs deixa 22 % de folga no período de 4 µs; a 312,5 kS/s a folga é de
   2,7 %, e já houve 1 amostra atrasada).
+
+#### T7f: o período entre amostras (a grade de tempo)
+
+**Objetivo.** Confirmar que o período entre amostras é constante: que cada amostra sai no instante exato da grade de
+200 MHz ÷ ticks, sem jitter e sem degraus nas trocas de buffer e nos rebases do contador da PRU.
+
+**Por que agora.** A análise das capturas de 21/10 com o `medir_captura.py` (a medida do jitter, nova) mostrou
+**~8,5 ns rms de jitter de amostragem** em todas elas, a 100, 250 e 312,5 kS/s e com qualquer espera do CS. A causa
+provável era a espera da PRU: ela sondava o contador de ciclos e soltava a amostra na 1ª leitura depois do
+instante, ou seja, de 0 a ~6 ciclos (30 ns) depois, ao acaso (uniforme em 30 ns = 8,7 ns rms). Num tom de 10 kHz a
+~1/6 do fundo de escala, esse jitter **triplica o ruído** (2,46 LSB contra 0,78 LSB onde o tom é plano, o ruído do
+ADC) e limita o SNR a ~64 dB. Num componente de 150 kHz, o jitter limita a ~42 dB a relação entre ele e o próprio
+ruído de fase. Nas trocas de buffer, o degrau já era de só +0,3 ns (±0,1 ns de incerteza): a correção de 21/10
+tinha resolvido o salto de 7 µs.
+
+**O firmware de 22/10/2026 (protocolo 2) corrige a grade de tempo:**
+
+* **Espera de precisão:** a sondagem só vai até faltarem 255 ciclos. Daí, a PRU espera exatamente os ciclos que
+  faltam, num laço de duração conhecida, e o CS desce sempre no mesmo ciclo depois do instante da grade.
+* **Folga medida:** a PRU guarda a **menor folga** da captura, quantos ciclos sobravam quando ela terminou o
+  trabalho da amostra anterior (DDR, troca de buffer, rebase). Folga > 0 e nenhuma amostra atrasada provam que
+  **toda** amostra saiu no ciclo exato. O `ler_adc` imprime a folga (`Grade de tempo (PRU): folga mínima ...`) e a
+  grava no cabeçalho v6.
+* **Rebase autocalibrado:** o recuo da grade no rebase do contador usava uma constante chutada (2 ciclos). Agora a
+  PRU mede, antes da 1ª amostra, a latência das leituras e da escrita do contador.
+* **Versão do protocolo:** o `ler_adc` recusa a captura se o firmware carregado na PRU não for o dele.
+
+No simulador, com latências de memória hipotéticas e escritas na DDR que demoram, todo intervalo entre descidas do
+CS é exatamente o período, ao ciclo (`tests/test_pru_asm.py`).
+
+**Como.** `./varrer_taxa.sh --grade` ([passo a passo](#passo-a-passo-da-próxima-ida-a-grade-de-tempo-t7f)), com o
+tom de 10 kHz de 21/10. Depois, no computador:
+
+```fish
+python scripts/medir_captura.py $DIA/T7f_*/G_*.bin $DIA/T7f_*/H_*.bin $DIA/T7f_*/K_*.bin --max-amostras 100000000 --csv $DIA/T7f.csv
+```
+
+Cada canal ganha duas linhas: `jitter de amostragem` (ns rms) e `degraus de tempo` (a mediana do degrau nas trocas
+de buffer e nos rebases, em ns, e a dispersão "longe deles", que é a escala do nada aconteceu). A linha
+`Grade de tempo (PRU)` vem do cabeçalho.
+
+**Critérios.**
+
+| O que | Aceita | Antes (21/10) |
+|---|---|---|
+| Folga mínima da PRU a 312,5 kS/s | > 0 em toda captura, nenhuma amostra atrasada | não medida |
+| Jitter de amostragem (tom de 10 kHz) | < 1 ns; o que sobrar é do gerador e do ADC | 8,5 ns |
+| Degrau nas trocas e nos rebases | dentro de 3× a dispersão "longe deles" | +0,3 ns (trocas); +4,8 a 6,6 µs (rebases, corrigido em 21/10) |
+| Ruído com o tom (10 kHz, ±2,56 V) | perto do ruído onde o tom é plano (~0,8 LSB) | 2,46 LSB |
+| Folga com o ARM ocupado (parte H) | > 0 | — |
+| Teto com período constante (parte J) | = 200 MHz ÷ (640 − folga); a 1ª amostra atrasada aparece exatamente ali | 326 kS/s (sem grade exata) |
+
+**Se o jitter não cair** (continuar perto de 8 ns com a folga > 0), ele não é da PRU: é do gerador ou do
+caminho do CS. O osciloscópio separa os dois (etapa 4 do passo a passo).
+
+**Para o relatório.** A tabela acima, antes e depois. O ruído e o SNR do tom de 10 kHz antes e depois, que é o
+efeito visível da correção. A folga e o teto com período constante. É a evidência de que "o instrumento amostra numa
+grade de tempo exata", que vale tanto quanto a integridade das amostras para medir supraharmônicos.
 
 **Para o relatório (geral do T7).** Tabela taxa × canais × duração × nº de eventos × maior salto. É a evidência do requisito de "não corromper os dados medidos".
 

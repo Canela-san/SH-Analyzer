@@ -48,7 +48,7 @@ arquivamento sem perdas conferido bit a bit; a documentação cobre operação, 
 
 | Código | Item | Ganho | Esforço | PRU? | Depende de |
 |---|---|---|---|---|---|
-| **F1** | Validar no hardware a revisão do firmware (grade de tempo, contadores) | Alto: corrige dado de toda captura longa | Baixo (bancada) | sim | — |
+| **F1** | Validar no hardware a revisão do firmware (grade de tempo exata de 22/10: espera de precisão, folga publicada, rebase autocalibrado; T7f) | Alto: tira o jitter de ~8,5 ns de toda amostra | Baixo (bancada) | sim | — |
 | **F2** | Medir até onde as esperas do CS podem cair (`--atraso-cs`) | Alto: teto de ~140 → ~330 kS/s | Baixo (bancada) | não (já configurável) | F1 |
 | **S1** | Calibrar a sonda de corrente (T10) com hold-out | Alto para corrente | Médio (bancada) | não | — |
 | **P1** | Análise de capturas longas por blocos (sem o sinal inteiro em float64) | Médio: 10 min = 1,6 GB; 1 h não cabe | Médio | não | — |
@@ -107,6 +107,14 @@ o limite do próprio ADC (500 kS/s, 2 µs de ciclo).
 **Proposta.** Depois de F2: reduzir os NOPs medindo, com a mesma bateria de F2, e com o osciloscópio no SCLK/SDO
 (tSU_DOCK ≥ 25 ns antes da borda de descida). Cobrir até 150 kHz com 1 canal pede ≥ 300 kS/s.
 
+**Estado em 22/10/2026.** Adiada para depois da grade de tempo (F1, T7f): primeiro o período constante com o SPI
+validado (a tag `v0.7` é o backup desse firmware). Estimativa para quando for feita: bits de ~13 ciclos (~15 MHz,
+dentro dos 17 MHz do ADS8688 e do ADuM3150) levam o quadro de ~613 a ~440 ciclos, um teto de ~450 kS/s, com 400 kS/s
+exatos (500 ticks) com folga. O risco é o caminho de volta do SDO (o isolador duas vezes mais o atraso de saída do
+ADC, 50 a 70 ns): a leitura passa para logo depois da borda seguinte, e o ponto dela deve ficar ajustável sem
+recompilar, como as esperas do CS. Os 500 kS/s do ADS8688 são somados entre os canais: 150 kHz em 2 canais ao mesmo
+tempo pedem outro ADC.
+
 ### F4 — `SAMPLES_PER_BUFFER` vindo do ARM
 
 **Por quê.** O tamanho do bloco (1.048.576) está em `memoria_pru.h` e, de novo, num `LDI r21` do `.asm`: mudar um
@@ -154,7 +162,7 @@ O transitório é um tempo (< 1 LSB em ~80 µs com 1 e com 2 canais), não um n�
 
 **Proposta, o que falta.** Na PRU: depois de escrever os `RANGE_SELn` e o `AUTO_RST`, fazer ~16 quadros descartados
 (≥ 100 µs) antes de zerar o contador de ciclos e começar a gravar, reaproveitando o corpo da transação (a IMEM está
-em 91,7 %). O campo `primeira_amostra_descartada` do cabeçalho já existe para registrar isso. Ganho: o `.bin` sai
+em 68,7 % desde 22/10/2026, quando o AUTO_RST passou a reaproveitar o corpo da configuração; antes, 91,7 %). O campo `primeira_amostra_descartada` do cabeçalho já existe para registrar isso. Ganho: o `.bin` sai
 certo desde a 1ª amostra também para quem o lê fora destas ferramentas.
 
 **Como saber que deu certo.** Repetir a sequência de faixas do T0 (20.48 → 10.24 → 5.12) e conferir que as
