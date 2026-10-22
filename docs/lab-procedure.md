@@ -101,7 +101,18 @@ ainda vale, é a margem de um lado só) e a folga de ~160 ciclos. Depois, a camp
 Cada captura mostra `✓ folga N ciclos · divergências A x, C y`. Se a conferência mostrar o dado errado (o SINAD
 desaba, ou `Integridade` com quadros ruins), pule a campanha e traga a captura: o padrão continua valendo.
 
-**5. Antes de sair.** `exit` no terminal da placa e, no computador, `lab trazer 'T7*'`.
+**5. A fase da cadeia (~5 min).** Troque o tom por uma **onda quadrada** no mesmo canal (20 Vpp, High-Z, offset 0,
+duty 50 %: confira no menu do gerador que é a quadrada simétrica, não um pulso). Os harmônicos ímpares dela têm fase
+conhecida entre si, e a fase de cada um menos n vezes a da fundamental é a fase da cadeia, sem osciloscópio:
+
+```bash
+./varrer_taxa.sh --fase    # 6 capturas: ele pede 1280, 6400 e 256 Hz, e captura cada uma a 312,5 e a 400 kS/s
+```
+
+No computador, depois: `uv run scripts/medir_fase.py $DIA/T3f_*/F_*.bin --csv $DIA/fase.csv --plot $DIA/bode.png`. A
+mesma medida também confere a magnitude do T3 de 22/10 sem o osciloscópio (a referência dele caiu 14 % até 140 kHz).
+
+**6. Antes de sair.** `exit` no terminal da placa e, no computador, `lab trazer 'T7*'` e `lab trazer 'T3f*'`.
 
 ### Passo a passo da próxima ida: a grade de tempo (T7f)
 

@@ -371,7 +371,7 @@ taxa=$1; canais=$2; shift 2
 while [ $# -gt 0 ]; do
     case "$1" in
         -o) saida=$2; shift ;; --atraso-cs) cs=$2; shift ;; --blocos) blocos=$2; shift ;;
-        --duracao) duracao=$2; blocos=9; shift ;; --spi) spi=$2; shift ;;
+        --duracao) duracao=$2; blocos=9; shift ;; --spi) spi=$2; shift ;; -d) descricao=$2; shift ;;
     esac
     shift
 done
@@ -382,7 +382,7 @@ case "${spi:-}" in rapido*) quadro=467 ;; esac          # o SPI rápido (~428 kS
 maximo=$((200000000 / quadro))
 atrasadas=0; real=$taxa
 if [ "$taxa" -gt "$maximo" ]; then atrasadas=123; real=$maximo; fi
-echo "taxa=$taxa canais=$canais blocos=$blocos cs=$cs${duracao:+ duracao=$duracao}${spi:+ spi=$spi}" > "$saida"
+echo "taxa=$taxa canais=$canais blocos=$blocos cs=$cs${duracao:+ duracao=$duracao}${spi:+ spi=$spi}${descricao:+ d=$descricao}" > "$saida"
 if [ "$blocos" -ge 2 ]; then
     printf 'Taxa real medida pelo ARM: %d Hz (pedida %d Hz, %+.2f %%)\n' "$real" "$taxa" \
         "$(awk -v r="$real" -v t="$taxa" 'BEGIN { print 100 * (r / t - 1) }')"
@@ -629,6 +629,30 @@ def test_varrer_taxa_spi_compara_os_modos_e_mede_o_teto_do_rapido(varredura):
     assert acima and max(200_000_000 // int(linha["taxa_pedida_hz"]) for linha in acima) == 466   # o quadro de 467 do falso
     assert [linha["spi"] for linha in linhas if linha["parte"] == "U"] == ["padrao", "rapido"]
     assert "divergências A 0, C 7" in r.stdout
+
+
+def test_varrer_taxa_fase_pede_cada_quadrada_e_captura_nas_duas_taxas(varredura):
+    """--fase (T3f): 3 quadradas (1280, 6400 e 256 Hz), cada uma a 312,5 kS/s (SPI padrão) e a 400 kS/s (rápido), com
+    UMA pausa por quadrada para trocar a frequência do gerador; a f₁ vai na descrição, para o medir_fase.py."""
+    r, _ = varredura("--fase", "--simular")
+    assert r.returncode == 0 and "T3f" in r.stdout and "6 capturas" in r.stdout
+    r, _ = varredura("--fase", entrada="\n\n\n")
+    assert r.returncode == 0, r.stdout + r.stderr
+    (pasta,) = varredura.pasta.glob("T3f_*")
+    assert [linha["spi"] for linha in _resumo(pasta)] == ["padrao", "rapido"] * 3
+    assert r.stdout.count("ONDA QUADRADA de") == 3 and "ONDA QUADRADA de 6400 Hz" in r.stdout
+    padrao = (pasta / "F_cspadrao_312500_quadrada1280Hz_10s.bin").read_text()
+    rapido = (pasta / "F_cspadrao_400000_quadrada1280Hz_10s_spirapido.bin").read_text()
+    assert "d=quadrada f=1280Hz" in padrao and "spi=" not in padrao
+    assert "spi=rapido" in rapido and "duracao=10s" in rapido
+    assert "medir_fase.py" in r.stdout
+
+
+def test_varrer_taxa_fase_para_na_pausa_sem_terminal(varredura):
+    r, _ = varredura("--fase", entrada="")
+    assert r.returncode == 0 and "sem terminal na pausa da quadrada de 1280 Hz" in r.stdout
+    (pasta,) = varredura.pasta.glob("T3f_*")
+    assert _resumo(pasta) == []
 
 
 def test_varrer_taxa_spi_recusa_o_firmware_sem_o_spi_rapido(varredura):

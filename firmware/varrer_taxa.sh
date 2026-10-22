@@ -50,6 +50,13 @@
 #   U. (pede o canal 1 em curto) o ruído a 312,5 kS/s com o padrão e a 400 kS/s com o rápido.
 #   69 capturas, ~11 min e ~370 MB. O resumo.csv traz também o modo do SPI e as divergências.
 #
+# A FASE DA CADEIA (--fase, o T3f; pede o firmware com o SPI rápido). Uma ONDA QUADRADA no canal 1, no lugar do tom
+# (o script para e pede cada frequência). Os harmônicos ímpares de uma quadrada simétrica têm fase conhecida entre si:
+# a fase de cada um menos n vezes a da fundamental é a fase da cadeia, sem osciloscópio (scripts/medir_fase.py, S2).
+#   F. 10 s com cada f₁ (1280, 6400 e 256 Hz) a 312,5 kS/s (SPI padrão) e a 400 kS/s (SPI rápido). Essas f₁ não deixam
+#      o aliasing cair sobre nenhum harmônico ímpar nas duas taxas, e cada uma serve às duas: 3 trocas no gerador.
+#   6 capturas, ~1,5 min de captura (mais as 3 trocas) e ~110 MB.
+#
 # USO (na BeagleBone, na pasta do firmware; de preferência no terminal do 'scripts/BeagleBone_Setup.sh ssh'):
 #   ./varrer_taxa.sh              # tudo, com as pausas para mudar a bancada
 #   ./varrer_taxa.sh --simular    # só mostra o plano, o tempo e o espaço
@@ -58,6 +65,7 @@
 #                                 # precisar de nenhuma varredura anterior (= --partes E)
 #   ./varrer_taxa.sh --grade      # a grade de tempo (= --partes GHKJ), numa pasta T7f_<data>_<hora>/
 #   ./varrer_taxa.sh --spi        # o SPI rápido (= --partes PSTU), numa pasta T7g_<data>_<hora>/
+#   ./varrer_taxa.sh --fase       # a fase da cadeia por ondas quadradas (= --partes F), numa pasta T3f_<data>_<hora>/
 #   ./varrer_taxa.sh --continuar  # retoma a última varredura (ou --continuar T7e_...): pula o que já foi feito
 #                                 # (as partes são as da varredura retomada, lidas do log.txt dela)
 #
@@ -116,6 +124,12 @@ SPI_LONGAS="400000:60"                             # parte S: 1 e 2 canais
 SPI_TICKS_DE=520                                   # parte T: 384,6 kS/s...
 SPI_TICKS_ATE=460                                  # ... a 434,8 kS/s (o teto previsto é ~418)
 
+# A fase da cadeia por ondas quadradas (--fase): f₁ da quadrada (Hz) e, para cada uma, taxa:SPI ('' = o padrão).
+# Nessas f₁, nenhum alias de harmônico cai sobre um harmônico ímpar, a 312,5 e a 400 kS/s.
+FASE_F1="1280 6400 256"
+FASE_TAXAS="312500: 400000:rapido"
+FASE_SEGUNDOS=10
+
 PARTES=ABDC
 PARTES_PEDIDAS=0
 SIMULAR=0
@@ -127,6 +141,7 @@ while [ $# -gt 0 ]; do
         --limite) PARTES=LMNQR; PARTES_PEDIDAS=1 ;;
         --grade) PARTES=GHKJ; PARTES_PEDIDAS=1 ;;
         --spi) PARTES=PSTU; PARTES_PEDIDAS=1 ;;
+        --fase) PARTES=F; PARTES_PEDIDAS=1 ;;
         --continuar)
             if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then CONTINUAR=${2%/}; shift; else CONTINUAR=ultima; fi ;;
         --partes) [ $# -ge 2 ] || { echo "Erro: --partes precisa de letras (ex.: AB)." >&2; exit 1; }
@@ -141,12 +156,14 @@ done
 # partes dela, do log.txt -- retomar a --grade com um --continuar só não pode virar a varredura padrão.
 if [ -n "$CONTINUAR" ]; then
     if [ "$CONTINUAR" = ultima ]; then
-        CONTINUAR=$(find . -maxdepth 1 -type d \( -name 'T7e_*' -o -name 'T7f_*' -o -name 'T7g_*' \) -printf '%T@ %f\n' \
+        CONTINUAR=$(find . -maxdepth 1 -type d \( -name 'T7e_*' -o -name 'T7f_*' -o -name 'T7g_*' -o -name 'T3f_*' \) \
+                    -printf '%T@ %f\n' \
                     | sort -n | tail -n 1)
         CONTINUAR=${CONTINUAR#* }
     fi
     [ -n "$CONTINUAR" ] && [ -f "$CONTINUAR/resumo.csv" ] \
-        || { echo "Erro: não achei a varredura a continuar (${CONTINUAR:-nenhuma pasta T7e_*, T7f_* ou T7g_* aqui})." >&2; exit 1; }
+        || { echo "Erro: não achei a varredura a continuar (${CONTINUAR:-nenhuma pasta T7e_*, T7f_*, T7g_* ou T3f_* aqui})." >&2
+             exit 1; }
     if [ "$PARTES_PEDIDAS" -eq 0 ] && [ -f "$CONTINUAR/log.txt" ]; then
         anteriores=$(sed -n 's/^== partes \([A-Z]*\),.*/\1/p' "$CONTINUAR/log.txt" | head -n 1)
         PARTES=${anteriores:-$PARTES}
@@ -203,10 +220,15 @@ if tem T; then
     for ((t = SPI_TICKS_DE; t >= SPI_TICKS_ATE; t--)); do PLANO+=("T|padrao|$((200000000 / t))|1|tom||rapido"); done
 fi
 if tem U; then PLANO+=("U|padrao|$TAXA_PADRAO|1|curto||padrao" "U|padrao|${SPI_LONGAS%%:*}|1|curto||rapido"); fi
+if tem F; then
+    for f1 in $FASE_F1; do
+        for par in $FASE_TAXAS; do PLANO+=("F|padrao|${par%%:*}|1|quadrada${f1}Hz|$FASE_SEGUNDOS|${par##*:}"); done
+    done
+fi
 case "$PARTES" in
-    *[!ABCDEGHJKLMNPQRSTU]*|'')
-        echo "Erro: --partes aceita as letras A, B, C, D, E, G, H, J, K, L, M, N, P, Q, R, S, T e U (ex.: AB; atalhos:" \
-             "--validar, --limite, --grade, --spi)." >&2
+    *[!ABCDEFGHJKLMNPQRSTU]*|'')
+        echo "Erro: --partes aceita as letras A, B, C, D, E, F, G, H, J, K, L, M, N, P, Q, R, S, T e U (ex.: AB; atalhos:" \
+             "--validar, --limite, --grade, --spi, --fase)." >&2
         exit 1 ;;
 esac
 case "$PARTES" in
@@ -217,6 +239,7 @@ case "$PARTES" in
     *[!PSTU]*) ;;
     *) PREFIXO=T7g ;;       # só o SPI rápido
 esac
+[ "$PARTES" != F ] || PREFIXO=T3f      # só a fase da cadeia
 
 blocos_da_parte() {
     case "$1" in
@@ -297,6 +320,8 @@ if [ "$PREFIXO" = T7f ]; then
     printf '\n  %s◆ T7f: a grade de tempo (período entre amostras)%s\n' "$N" "$R"
 elif [ "$PREFIXO" = T7g ]; then
     printf '\n  %s◆ T7g: o SPI rápido (~15,4 MHz) e a margem do SDO%s\n' "$N" "$R"
+elif [ "$PREFIXO" = T3f ]; then
+    printf '\n  %s◆ T3f: a fase da cadeia por ondas quadradas%s\n' "$N" "$R"
 else
     printf '\n  %s◆ T7e: esperas do CS e taxa de amostragem%s\n' "$N" "$R"
 fi
@@ -360,7 +385,7 @@ if tem G || tem H || tem J || tem K; then
         exit 1
     fi
 fi
-if tem P || tem S || tem T || tem U; then
+if tem P || tem S || tem T || tem U || tem F; then
     if [ -f spi_core.asm ] && ! grep -q 'SPI RÁPIDO' spi_core.asm; then
         echo "Erro: o spi_core.asm desta pasta não tem o SPI rápido (protocolo 3, 22/10/2026)." >&2
         echo "No computador:  scripts/BeagleBone_Setup.sh enviar --setup" >&2
@@ -372,7 +397,7 @@ if tem P || tem S || tem T || tem U; then
     fi
 fi
 if tem E || tem L || tem M || tem N || tem Q || tem R || tem G || tem H || tem J || tem K || tem P || tem S || tem T \
-        || tem U; then
+        || tem U || tem F; then
     if [ -f spi_core.asm ] && ! grep -q 'CORRIGIDO em 21/10/2026' spi_core.asm; then
         echo "Erro: o spi_core.asm desta pasta não tem a correção do rebase do contador (21/10/2026)." >&2
         echo "No computador:  scripts/BeagleBone_Setup.sh enviar --setup" >&2
@@ -430,6 +455,7 @@ pausa() {   # $1 = o que mudar na bancada. Devolve 0 = seguir, 1 = pular a parte
 
 pular_parte=''
 parte_anterior=''
+entrada_anterior=''
 i=0
 for item in "${PLANO[@]}"; do
     [ -z "$interrompido" ] || break
@@ -457,6 +483,8 @@ for item in "${PLANO[@]}"; do
             T) printf '\n  %s▸ T: o teto do SPI rápido, de 384,6 a 434,8 kS/s, 1 tick por vez%s\n' "$N" "$R" ;;
             U) pausa "gerador FORA e a entrada do canal 1 em CURTO (o divisor ligado ao retorno)." || resposta=$?
                printf '\n  %s▸ U: a entrada em curto, com o SPI padrão e o rápido%s\n' "$N" "$R" ;;
+            F) printf '\n  %s▸ F: a fase da cadeia, 10 s com cada quadrada a 312,5 kS/s e a 400 kS/s (SPI rápido)%s\n' \
+                   "$N" "$R" ;;
             D|Q) pausa "tom de 10 kHz no canal 1 (como até agora) e a entrada do canal 0 em CURTO." || resposta=$?
                printf '\n  %s▸ D: 2 canais%s\n' "$N" "$R" ;;
             C|R) pausa "gerador FORA e a entrada do canal 1 em CURTO (o divisor ligado ao retorno)." || resposta=$?
@@ -468,6 +496,21 @@ for item in "${PLANO[@]}"; do
         esac
     fi
     if [ "$pular_parte" = "$parte" ]; then continue; fi
+    # Uma quadrada nova: o gerador muda de frequência (a mesma ligação do tom, no canal 1).
+    if [ "$entrada" != "$entrada_anterior" ]; then
+        entrada_anterior=$entrada
+        case "$entrada" in
+            quadrada*)
+                f1=${entrada#quadrada}
+                resposta=0
+                pausa "gerador: ONDA QUADRADA de ${f1%Hz} Hz, 20 Vpp, High-Z, offset 0, duty 50 % (simetria), no canal 1." \
+                    || resposta=$?
+                case "$resposta" in
+                    1) pular_parte=$parte; continue ;;
+                    2) interrompido="sem terminal na pausa da quadrada de ${f1%Hz} Hz"; break ;;
+                esac ;;
+        esac
+    fi
 
     faixa=$FAIXA
     [ "$canais" = 1 ] || faixa=$FAIXA_2CANAIS
@@ -483,9 +526,12 @@ for item in "${PLANO[@]}"; do
         nice -n 10 dd if=/dev/zero of=/dev/null bs=4M 2>/dev/null &
         carga=$!
     fi
+    descricao=()
+    case "$entrada" in quadrada*) descricao=(-d "quadrada f=${entrada#quadrada}") ;; esac     # o medir_fase.py lê a f₁
     # shellcheck disable=SC2086  # $faixa são duas palavras de propósito
     saida=$(sudo "$LER_ADC" "$taxa" "$canais" "${tamanho[@]}" "${esperas[@]}" "${modo_spi[@]}" $faixa -o "$PASTA/$nome" \
-                 -t "$PREFIXO $parte cs $cs $taxa $entrada${segundos:+ ${segundos}s}${spi:+ spi $spi}" 2>&1 </dev/null)
+                 -t "$PREFIXO $parte cs $cs $taxa $entrada${segundos:+ ${segundos}s}${spi:+ spi $spi}" "${descricao[@]}" \
+                 2>&1 </dev/null)
     codigo=$?
     if [ -n "$carga" ]; then kill "$carga" 2>/dev/null; wait "$carga" 2>/dev/null; fi
     printf '%s\n' "$saida" >> "$LOG"
@@ -523,4 +569,7 @@ else
     printf '\n  %s◆ Pronto%s: %s\n' "$N" "$R" "$PASTA"
 fi
 echo "    No computador:  scripts/BeagleBone_Setup.sh trazer '${PREFIXO}_*' \$DIA"
+if [ "$PREFIXO" = T3f ]; then
+    echo "    E a análise:    uv run scripts/medir_fase.py \$DIA/${PASTA}/F_*.bin --csv \$DIA/${PASTA}/fase.csv --plot \$DIA/${PASTA}/bode.png"
+fi
 echo

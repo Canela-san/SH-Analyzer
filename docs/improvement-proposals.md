@@ -349,7 +349,7 @@ real (cadeia de tensão, `scripts/sondas/cadeia_tensao.json`) já foi feita.
 | Código | Proposta | Para quê | Esforço | Decisão de projeto? |
 |---|---|---|---|---|
 | **S1** | Calibrar a sonda de corrente (T10) e validar por frequências retidas (*hold-out*) | Exatidão de um perfil real; detectar ressonância perdida | Médio (bancada) | Não |
-| **S2** | Medir a **fase** da cadeia **com uma onda quadrada, sem osciloscópio** (abaixo) | Validar a função de transferência ajustada só pela magnitude; preparar S3 | Médio | Não |
+| **S2** | Medir a **fase** da cadeia **com uma onda quadrada, sem osciloscópio** (abaixo; ferramenta e coleta prontas, falta a bancada) | Validar a função de transferência ajustada só pela magnitude; preparar S3 | Baixo (bancada) | Não |
 | **S3** | Ganho **complexo** no perfil | Análise V×I, potência, direção de emissão | Médio–Alto | Sim: muda o formato do perfil |
 | **S4** | **Subamostragem** para medir \|H\| acima da Nyquist | Estender a curva à banda de supraharmônicos sem subir a taxa; separar f0 de Q (correlação −0,87 hoje) | Médio | Não |
 | **S5** | Perfil **absoluto** (V/A) | Eliminar o risco de usar um `--ganho` diferente do da calibração | Médio | Sim: muda o `--ganho` |
@@ -379,8 +379,11 @@ A ideia de dois tons somados num canal do gerador é o mesmo princípio, com um 
 inteiro de f₁ e o "alinhar fase" do gerador a cada troca de frequência, porque a fase relativa entre os canais tem de
 ser conhecida. A quadrada já traz isso de fábrica, com todos os pontos numa captura só.
 
-**Falta:** a ferramenta de análise (fase, magnitude e duty por harmônico; o ajuste conjunto) e, depois, o S3 (o ganho
-complexo no perfil).
+**Estado (22/10/2026): a ferramenta e a coleta estão prontas, falta a bancada.** O `scripts/medir_fase.py` mede fase,
+magnitude e duty por harmônico, descarta o que o aliasing ou um nulo do duty estragam, ajusta o 2ª ordem pela
+magnitude, pela fase e pelas duas (a comparação é o teste da fase mínima) e grava o perfil com `fase_rad` por ponto.
+O `./varrer_taxa.sh --fase` coleta 3 quadradas (1280, 6400 e 256 Hz) a 312,5 e a 400 kS/s. Depois: o S3 (usar a fase
+na correção).
 
 ### Buffers da DDR (avaliação de 22/10/2026)
 

@@ -243,3 +243,29 @@ def criar_pasta_amplitude_conhecida(pasta: Path, freqs=FREQS_CAL, canal: int = 3
             v_osc = pico_real * np.sin(2 * np.pi * f_real * np.arange(4000) / fs_osc + fase) + rng.normal(0, 2e-3, 4000)
             escrever_m_osciloscopio(pasta / (Path(nome).stem + ".m"), v_osc, fs_osc)
     return pasta
+
+
+def quadrada_pela_cadeia(fs: float, f1: float, dur_s: float, duty: float = 0.5, f0: float = 24165.0, q: float = 0.5288,
+                         atraso_s: float = 3e-6, ppm: float = 43.0, amplitude_lsb: float = 6600.0,
+                         ruido_lsb: float = 0.79, ate_hz: float = 7e5, seed: int = 0,
+                         polo_hz: float | None = None) -> np.ndarray:
+    """Códigos uint16 de uma quadrada (±``amplitude_lsb``, duty ``duty``) vista pelo ADC depois de um passa-baixa de
+    2ª ordem (f0, Q) e de um atraso puro, com o relógio do gerador ``ppm`` acima do da PRU, o aliasing dos harmônicos
+    até ``ate_hz``, o ruído e a quantização. É o que o ``medir_fase.py`` recebe da bancada (S2). ``polo_hz``: um polo
+    real a mais (a cadeia deixa de ser um 2ª ordem)."""
+    rng = np.random.default_rng(seed)
+    f1 = f1 * (1 + ppm * 1e-6)
+    n = int(dur_s * fs)
+    t = np.arange(n) / fs + rng.uniform(0, 1 / f1)
+    fase = 2 * np.pi * f1 * (t - atraso_s)
+    x = np.zeros(n)
+    for k in range(1, int(ate_hz / f1) + 1):
+        c = 4 * amplitude_lsb / (np.pi * k) * np.sin(np.pi * k * duty)
+        if abs(c) < 1e-9:
+            continue
+        s = 1j * k * f1 / f0
+        h = 1 / (s * s + s / q + 1)
+        if polo_hz is not None:
+            h /= 1 + 1j * k * f1 / polo_hz
+        x += c * abs(h) * np.cos(k * fase + np.angle(h))
+    return np.clip(np.round(32768 + x + rng.normal(0, ruido_lsb, n)), 0, 65535).astype("<u2")

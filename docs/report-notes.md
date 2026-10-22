@@ -1157,7 +1157,10 @@ Em ordem de prioridade, a mesma da tabela [Estado da campanha](lab-procedure.md#
    * o ponto de 20 kHz no T6a;
    * o T5, com uma fonte de baixa distorção;
    * *aliasing* (T8), espectros conhecidos (T9) e os ensaios ponta a ponta (T11).
-6. **Completar o T3:** `--repeticoes 3`, para ter a incerteza de cada ponto, e, se possível, a fase.
+6. **Completar o T3:** a **fase**, por ondas quadradas, sem osciloscópio (`./varrer_taxa.sh --fase` e
+   `scripts/medir_fase.py`): a fase de cada harmônico ímpar menos n vezes a da fundamental independe do instante da
+   captura e de um atraso puro. O ajuste pela fase sozinha e pela magnitude sozinha é o teste de fase mínima da função
+   de transferência; a mesma medida confere a magnitude sem o osciloscópio. E `--repeticoes 3`.
 7. **Investigar o offset do canal 1** (com o pino em curto direto). O transitório de troca de faixa já é descartado na análise (o `medir_captura.py` pula 200 µs); descartá-lo também no firmware fica como opção ([`improvement-proposals.md`](improvement-proposals.md), F9).
 
 Fechar cada apresentação com esta lista, objetiva e com prioridade, mostra que o estado do projeto e os próximos passos estão claros.

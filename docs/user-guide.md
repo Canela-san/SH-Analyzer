@@ -547,12 +547,48 @@ uv run scripts/adc_tool.py captura.bin --sem-correcao-sonda --welch
 
 ### O que a correção não faz
 
-* Corrige a **amplitude** por frequência, **não a fase**. Não use para análises que dependam da fase relativa entre tensão e corrente (potência por componente, por exemplo).
+* Corrige a **amplitude** por frequência, **não a fase**. Não use para análises que dependam da fase relativa entre tensão e corrente (potência por componente, por exemplo). Um perfil feito pelo `medir_fase.py` já traz a fase de cada ponto (`fase_rad`), mas a correção ainda não a usa (S3).
 * O perfil descreve a **sonda e a cadeia de aquisição juntas** (ADC, isolador, frontend). Se o frontend mudar, recalibre. Um perfil calibrado mais de 1 ano antes da captura (`data_calibracao` do perfil contra a data do cabeçalho) gera um aviso para recalibrar.
 * A confiabilidade física do perfil depende da bancada: tolerância e indutância parasita do shunt, qualidade do gerador, linearidade da sonda.
 * As exportações CSV/HDF5 não aplicam a correção.
 
 A análise completa dos limites está em [`probe-profile-audit.md`](probe-profile-audit.md).
+
+### A fase da cadeia sem osciloscópio: `medir_fase.py`
+
+Uma **onda quadrada** simétrica traz a referência de tempo dentro dela: no centro do pulso, todos os harmônicos são
+cossenos em fase. Numa captura que começou num instante qualquer, a fase de cada harmônico ímpar menos n vezes a da
+fundamental é a fase da cadeia (a menos de um atraso puro, que não se separa sem uma referência externa). A magnitude
+de cada harmônico, dividida pelo 1/n teórico, dá a resposta relativa à fundamental, sem instrumento de referência.
+
+**Na bancada:** `./varrer_taxa.sh --fase` (6 capturas, 3 trocas de frequência no gerador). Ele pede uma quadrada de
+1280, 6400 e 256 Hz, 20 Vpp, High-Z, no canal 1, e captura 10 s de cada uma a 312,5 kS/s e a 400 kS/s (SPI rápido).
+
+**No computador:**
+
+```fish
+uv run scripts/medir_fase.py $DIA/T3f_*/F_*.bin --csv $DIA/fase.csv --plot $DIA/bode.png
+```
+
+Para cada captura, ele mostra:
+
+* a f₁ medida e o duty estimado;
+* quantos harmônicos entraram e por que os outros saíram: aliasing sobre eles, SNR abaixo de 30 dB ou um nulo do
+  duty.
+
+Depois, o ajuste do passa-baixa de 2ª ordem de três jeitos: pela magnitude e pela fase juntas, só pela magnitude e
+só pela fase. Se os três dão o mesmo f0 e Q (a ±3 σ), a cadeia é um 2ª ordem de **fase mínima**, e a função de
+transferência do relatório fica confirmada pela fase. Se não, ele avisa: a fase medida é a que vale.
+
+**O perfil com a fase:** acrescente `--perfil-base scripts/sondas/cadeia_tensao_312k.json --saida-perfil
+scripts/sondas/<id>.json`. A magnitude é a relativa da quadrada vezes K, o ganho em baixa frequência: por padrão a
+mediana do perfil base abaixo de 1 kHz, ou `--ganho-baixa-frequencia 0.99795` (o T2, em DC, com o Fluke). Cada ponto
+ganha `fase_rad`. O perfil continua corrigindo a magnitude como sempre.
+
+**Escolha da f₁:** a taxa dividida por f₁ não pode ficar perto de um inteiro par, senão o aliasing dos harmônicos
+altos cai em cima dos ímpares (o `medir_fase.py` acusa e descarta). As três da `--fase` servem às duas taxas. A f₁
+baixa dá muitos pontos e a alta dá mais sinal por harmônico; um erro de duty pesa nos harmônicos altos da f₁ baixa
+(eles são descartados perto do nulo).
 
 ---
 
