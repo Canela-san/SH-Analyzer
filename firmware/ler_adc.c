@@ -1781,6 +1781,7 @@ int main(int argc, char *argv[]) {
     unsigned long long total_amostras_gravadas = 0; // [CABECALHO] soma de amostras brutas gravadas -- preenchido no cabeçalho final
     struct contadores_integridade integridade = {0, 0, 0, 0, 0, 0, 0};   // [INTEGRIDADE] o último valor visto dos contadores da PRU
     double instante_primeiro_bloco = 0.0, instante_ultimo_bloco = 0.0;   // para medir a taxa real (relógio do ARM)
+    double pior_gravacao_s = 0.0;   // [MARGEM DO ARM] o maior tempo entre ver um bloco pronto e liberá-lo para a PRU
 
     // ============================================================================
     // [BUG CORRIGIDO -- CANAL TROCADO EM CAPTURA MULTI-CANAL] Este programa
@@ -1827,8 +1828,11 @@ int main(int argc, char *argv[]) {
 
     while (manter_execucao && (blocos_desejados == 0 || blocos_salvos < blocos_desejados)) {
         if (ctrl->buffer_0_ready) {
+            double inicio_gravacao = segundos_monotonicos();
             size_t gravado = fwrite(buffer_0_virtual, sizeof(uint16_t), SAMPLES_PER_BUFFER, ficheiro_bin);
             ctrl->buffer_0_ready = 0;
+            double gasto = segundos_monotonicos() - inicio_gravacao;
+            pior_gravacao_s = gasto > pior_gravacao_s ? gasto : pior_gravacao_s;
             if (gravado != (size_t)SAMPLES_PER_BUFFER) {
                 fprintf(stderr, "Erro: fwrite gravou só %zu/%d amostras no "
                                  "bloco A -- disco cheio ou erro de I/O? "
@@ -1848,8 +1852,11 @@ int main(int argc, char *argv[]) {
             }
         }
         if (ctrl->buffer_1_ready) {
+            double inicio_gravacao = segundos_monotonicos();
             size_t gravado = fwrite(buffer_1_virtual, sizeof(uint16_t), SAMPLES_PER_BUFFER, ficheiro_bin);
             ctrl->buffer_1_ready = 0;
+            double gasto = segundos_monotonicos() - inicio_gravacao;
+            pior_gravacao_s = gasto > pior_gravacao_s ? gasto : pior_gravacao_s;
             if (gravado != (size_t)SAMPLES_PER_BUFFER) {
                 fprintf(stderr, "Erro: fwrite gravou só %zu/%d amostras no "
                                  "bloco B -- disco cheio ou erro de I/O? "
@@ -1894,6 +1901,14 @@ int main(int argc, char *argv[]) {
                ? "" : " -- tudo certo");
     imprimir_grade(ctrl, &integridade, blocos_salvos);
     imprimir_spi(modo_spi, &integridade, total_amostras_gravadas);
+    if (blocos_salvos > 0 && ctrl->sample_period_ticks > 0) {
+        // [MARGEM DO ARM] Com 2 buffers, um bloco pronto tem de ser gravado e liberado antes de a PRU encher o outro:
+        // o tempo de 1 bloco. Contam a gravação (cópia da DDR + fwrite) e até 2 ms do usleep do laço.
+        double bloco_s = (double)SAMPLES_PER_BUFFER * ctrl->sample_period_ticks / (double)PRU_CLOCK_HZ;
+        double usado_s = pior_gravacao_s + 0.002;
+        printf("ARM: o bloco mais demorado levou %.0f ms para ser gravado; cada bloco enche em %.0f ms (margem de "
+               "%.0fx com %d buffers)\n", 1e3 * pior_gravacao_s, 1e3 * bloco_s, bloco_s / usado_s, BUFFERS_PING_PONG);
+    }
 
     // [CABECALHO/NOME DE ARQUIVO] Reescreve o cabeçalho no INÍCIO do
     // arquivo, agora preenchendo blocos_gravados/total_amostras_gravadas

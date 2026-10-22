@@ -349,12 +349,54 @@ real (cadeia de tensão, `scripts/sondas/cadeia_tensao.json`) já foi feita.
 | Código | Proposta | Para quê | Esforço | Decisão de projeto? |
 |---|---|---|---|---|
 | **S1** | Calibrar a sonda de corrente (T10) e validar por frequências retidas (*hold-out*) | Exatidão de um perfil real; detectar ressonância perdida | Médio (bancada) | Não |
-| **S2** | Medir a **fase** da cadeia (osciloscópio na entrada e no CS do ADC) | Validar a função de transferência ajustada só pela magnitude; preparar S3 | Médio | Não |
+| **S2** | Medir a **fase** da cadeia **com uma onda quadrada, sem osciloscópio** (abaixo) | Validar a função de transferência ajustada só pela magnitude; preparar S3 | Médio | Não |
 | **S3** | Ganho **complexo** no perfil | Análise V×I, potência, direção de emissão | Médio–Alto | Sim: muda o formato do perfil |
 | **S4** | **Subamostragem** para medir \|H\| acima da Nyquist | Estender a curva à banda de supraharmônicos sem subir a taxa; separar f0 de Q (correlação −0,87 hoje) | Médio | Não |
 | **S5** | Perfil **absoluto** (V/A) | Eliminar o risco de usar um `--ganho` diferente do da calibração | Médio | Sim: muda o `--ganho` |
 | **S6** | Teto de ganho da correção | Não "corrigir" ruído onde a sonda atenua muito (o filtro do ADC já tira 12,5 dB a 45 kHz) | Baixo | Sim: altera o resultado |
 | **S7** | Repetições no T3 (`--repeticoes 3`) | Incerteza por ponto; ajuste ponderado e χ² no `gerar_figuras.py` | Baixo (bancada) | Não |
+
+**S2, revisado em 22/10/2026: a fase pela onda quadrada.** Sem o osciloscópio no SPI nem a entrada auxiliar dele,
+a referência de tempo tem de vir do próprio sinal. Uma quadrada simétrica tem harmônicos ímpares com fase conhecida
+entre si: no centro do pulso, todos são cossenos reais, qualquer que seja o duty. Numa captura, a fase de cada um
+menos n vezes a da fundamental, `arg Xₙ − n·arg X₁`, não depende do instante em que a captura começou. Ela vale
+`ψ(n·f₁) − n·ψ(f₁)`, a fase da cadeia menos a reta da fase em baixa frequência. Um atraso puro (a conversão, o
+instante da amostra) some, e é o que se quer do filtro analógico. A magnitude de cada harmônico, dividida pelo 1/n
+teórico, dá a resposta relativa à fundamental, também sem osciloscópio.
+
+Simulado com o 2ª ordem do T3 (f0 = 24,17 kHz, Q = 0,529), com atraso puro de 3 µs, 43 ppm entre os relógios,
+aliasing, quantização e o ruído do ADC. Uma quadrada de 1 kHz, 1 s a 312,5 kS/s, dá 70 pontos até 140 kHz:
+
+* a fase com erro de 0,03° rms;
+* f0 e Q recuperados só pela fase (24 167 Hz e 0,5288);
+* a magnitude a 0,005 dB.
+
+Um erro de duty não muda a fase, mas muda a magnitude dos harmônicos altos (3,8 dB com 0,2 %). Ele é estimado pelo
+2º harmônico e corrigido (volta a 0,01 dB). As taxas e f₁ são escolhidas para o aliasing cair fora dos harmônicos
+ímpares (taxa/f₁ ímpar ou meio-inteiro: 312,5 kS/s com 1 kHz; a 400 kS/s, f₁ = 997,5 Hz).
+
+A ideia de dois tons somados num canal do gerador é o mesmo princípio, com um harmônico só. Ela pede f₂ múltiplo
+inteiro de f₁ e o "alinhar fase" do gerador a cada troca de frequência, porque a fase relativa entre os canais tem de
+ser conhecida. A quadrada já traz isso de fábrica, com todos os pontos numa captura só.
+
+**Falta:** a ferramenta de análise (fase, magnitude e duty por harmônico; o ajuste conjunto) e, depois, o S3 (o ganho
+complexo no perfil).
+
+### Buffers da DDR (avaliação de 22/10/2026)
+
+Dois buffers de 1.048.576 amostras (2 MB cada), nos 16 MB reservados. A 400 kS/s, cada um enche em 2,6 s.
+
+* **O barramento não depende do tamanho do buffer, só da taxa.** A PRU escreve 2 bytes por amostra (0,8 MB/s a
+  400 kS/s): uma fração mínima da DDR. A cópia do ARM (2 MB por bloco) não atrasou nenhum quadro no T7f: a cauda
+  do quadro era o dado (F15), e com um `dd` enchendo a DDR a folga mudou 1 ciclo.
+* **A margem do ARM** é o tempo de um bloco (2,6 s a 400 kS/s) contra a cópia e o `fwrite` de 2 MB (dezenas de ms,
+  para o cache de páginas do Linux). Desde 22/10 o `ler_adc` imprime o pior tempo e a margem (`ARM: ...`). Nenhum
+  buffer foi sobrescrito em captura nenhuma, inclusive 5 min a 312,5 kS/s com a DDR ocupada.
+* **Mais buffers** (4 de 2 MB, por exemplo) só aumentariam a tolerância a uma parada longa do ARM (de 2,6 para
+  7,9 s): mexe na PRU e no `ler_adc`, e só vale se a margem medida for pequena ou se aparecer um sobrescrito.
+  **Buffers maiores** pioram as capturas curtas (1 bloco = o mínimo: a calibração de sonda dura um bloco por ponto).
+* **O limite real das capturas longas é o disco da placa:** ~1,4 GB livres, 0,8 MB/s a 400 kS/s, ~30 min. 1 h
+  (F13) pede outro destino (um pendrive, ou a gravação pela rede).
 
 ---
 
