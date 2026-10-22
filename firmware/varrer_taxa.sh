@@ -125,16 +125,16 @@ GRADE_TICKS_DE=640                                 # parte J: 312,5 kS/s...
 GRADE_TICKS_ATE=590                                # ... a 339,0 kS/s, 1 tick por vez
 
 # O SPI rápido (--spi, firmware com o protocolo 3): modos do ler_adc --spi.
-SPI_FASES="padrao rapido:a rapido:b rapido:c"      # parte P, a 312,5 kS/s
+SPI_FASES="lenta rapido:a rapido:b rapido:c"       # parte P, a 312,5 kS/s
 SPI_LONGAS="400000:60"                             # parte S: 1 e 2 canais
 SPI_TICKS_DE=520                                   # parte T: 384,6 kS/s...
 SPI_TICKS_ATE=460                                  # ... a 434,8 kS/s (o teto previsto é ~418)
 
 # A fase da cadeia por ondas quadradas (--fase): f₁ da quadrada (Hz; 20 Vpp e offset 0, ou f₁:Vpp ou f₁:Vpp:offset em
-# V) e, para cada uma, taxa:SPI ('' = o padrão). Todas múltiplos ímpares de 256 Hz; em nenhuma um alias de harmônico
+# V) e, para cada uma, taxa:SPI. Todas múltiplos ímpares de 256 Hz; em nenhuma um alias de harmônico
 # cai sobre um harmônico ímpar. Com 16 Vpp e ±2 V, o gerador fica dentro dos ±10 V.
 FASE_F1="256 768 1280 2304 6400 6912 20736 1280:10 6912:16:+2 6912:16:-2 20736:16:+2 20736:16:-2"
-FASE_TAXAS="312500: 400000:rapido"
+FASE_TAXAS="312500:lenta 400000:rapido"
 FASE_SEGUNDOS=30
 
 PARTES=ABDC
@@ -177,7 +177,7 @@ if [ -n "$CONTINUAR" ]; then
     fi
 fi
 
-# Uma captura por linha: parte|esperas|taxa|canais|entrada|duração em s (vazia = blocos)|modo do SPI (vazio = sem --spi)
+# Uma captura por linha: parte|esperas|taxa|canais|entrada|duração em s (vazia = blocos)|modo do SPI (vazio = lenta)
 PLANO=()
 tem() { case "$PARTES" in *"$1"*) return 0 ;; esac; return 1; }
 if tem A; then
@@ -226,7 +226,7 @@ fi
 if tem T; then
     for ((t = SPI_TICKS_DE; t >= SPI_TICKS_ATE; t--)); do PLANO+=("T|padrao|$((200000000 / t))|1|tom||rapido"); done
 fi
-if tem U; then PLANO+=("U|padrao|$TAXA_PADRAO|1|curto||padrao" "U|padrao|${SPI_LONGAS%%:*}|1|curto||rapido"); fi
+if tem U; then PLANO+=("U|padrao|$TAXA_PADRAO|1|curto||lenta" "U|padrao|${SPI_LONGAS%%:*}|1|curto||rapido"); fi
 if tem F; then
     for item_f1 in $FASE_F1; do
         IFS=: read -r f1 vpp off <<< "$item_f1"
@@ -536,8 +536,9 @@ for item in "${PLANO[@]}"; do
     if [ -n "$segundos" ]; then tamanho=(--duracao "${segundos}s"); else tamanho=(--blocos "$(blocos_da_parte "$parte")"); fi
     esperas=(--atraso-cs "$cs")
     [ "$cs" != padrao ] || esperas=()      # o padrão do firmware, como numa captura qualquer
-    modo_spi=()
-    [ -z "$spi" ] || modo_spi=(--spi "$spi")
+    # Sem SPI no item, o lento: estas campanhas foram desenhadas com o SPI de antes de 22/10/2026 (o padrão do
+    # ler_adc passou a ser o rápido), e refazê-las tem de medir a mesma coisa.
+    modo_spi=(--spi "${spi:-lenta}")
     carga=''
     if [ "$parte" = H ]; then              # a DDR e a CPU do ARM ocupadas durante a captura (o ler_adc tem prioridade)
         nice -n 10 dd if=/dev/zero of=/dev/null bs=4M 2>/dev/null &
@@ -564,7 +565,7 @@ for item in "${PLANO[@]}"; do
     read -r arm desvio <<< "${taxa_arm:-? ?}"
     linha="$parte,$nome,\"$cs\",$taxa,\"$canais\",$entrada,$atrasadas,$sobrescritos,$sdo,$arm,$desvio,$codigo"
     [ "$COLUNAS_RESUMO" -le 12 ] || linha+=",$folga,$pior"
-    [ "$COLUNAS_RESUMO" -le 14 ] || linha+=",${spi:-padrao},${div_a:-},${div_c:-}"
+    [ "$COLUNAS_RESUMO" -le 14 ] || linha+=",${spi:-lenta},${div_a:-},${div_c:-}"
     echo "$linha" >> "$RESUMO"
 
     if [ "$codigo" -ne 0 ] && [ -z "$integridade" ]; then

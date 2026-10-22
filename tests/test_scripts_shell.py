@@ -448,7 +448,7 @@ def test_varrer_taxa_captura_o_plano_inteiro_e_resume(varredura):
     assert lento["amostras_atrasadas"] == "123" and int(lento["taxa_arm_hz"]) < 150000
     assert por_nome["B_cs3-1-3_250000_tom.bin"]["amostras_atrasadas"] == "0"
     dois = pasta / "D_cs20-10-10_250000_tom_2canais.bin"
-    assert dois.read_text().split() == ["taxa=250000", "canais=0,1", "blocos=3", "cs=20,10,10"]
+    assert dois.read_text().split() == ["taxa=250000", "canais=0,1", "blocos=3", "cs=20,10,10", "spi=lenta"]
     log = (pasta / "log.txt").read_text()
     assert "firmware v9.9" in log and "pausa" in log and "Integridade" in log
     assert "Pronto" in r.stdout and "trazer 'T7e_*'" in r.stdout
@@ -517,7 +517,7 @@ def test_varrer_taxa_parte_e_valida_o_firmware_com_capturas_longas(varredura):
     nomes = [linha["arquivo"] for linha in _resumo(pasta)]
     assert nomes == ["E_cs200-100-100_100000_tom_35s.bin", "E_cs6-2-6_100000_tom_35s.bin",
                      "E_cs6-2-6_250000_tom_35s.bin", "E_cs6-2-6_250000_tom_600s.bin"]
-    assert (pasta / nomes[-1]).read_text().split()[-1] == "duracao=600s"
+    assert (pasta / nomes[-1]).read_text().split()[-2:] == ["duracao=600s", "spi=lenta"]   # o SPI das campanhas antigas
 
 
 def test_varrer_taxa_validar_roda_so_a_parte_e_numa_pasta_sem_varredura_anterior(varredura):
@@ -564,7 +564,7 @@ def test_varrer_taxa_limite_varre_os_ticks_um_a_um_e_usa_o_padrao_do_firmware(va
     assert acima and min(200_000_000 // int(linha["taxa_pedida_hz"]) for linha in acima) == 600
     assert max(200_000_000 // int(linha["taxa_pedida_hz"]) for linha in acima) == 608   # o quadro de 609 do falso
     longa = (pasta / "N_cspadrao_312500_tom_600s.bin").read_text().split()
-    assert longa == ["taxa=312500", "canais=1", "blocos=9", "cs=", "duracao=600s"]       # sem --atraso-cs
+    assert longa == ["taxa=312500", "canais=1", "blocos=9", "cs=", "duracao=600s", "spi=lenta"]   # sem --atraso-cs
     assert "blocos=2" in (pasta / por_parte["L"][0]["arquivo"]).read_text()
     assert por_parte["Q"][0]["canais"] == "0,1" and {linha["entrada"] for linha in por_parte["R"]} == {"curto"}
 
@@ -619,7 +619,7 @@ def test_varrer_taxa_spi_compara_os_modos_e_mede_o_teto_do_rapido(varredura):
     (pasta,) = varredura.pasta.glob("T7g_*")
     linhas = _resumo(pasta)
     assert [linha["parte"] for linha in linhas[:6]] == ["P", "P", "P", "P", "S", "S"]
-    assert [linha["spi"] for linha in linhas[:4]] == ["padrao", "rapido:a", "rapido:b", "rapido:c"]
+    assert [linha["spi"] for linha in linhas[:4]] == ["lenta", "rapido:a", "rapido:b", "rapido:c"]
     assert linhas[0]["divergencias_a"] == "" and linhas[1]["divergencias_c"] == "7"
     assert (pasta / "P_cspadrao_312500_tom_spirapido-a.bin").read_text().split()[-1] == "spi=rapido:a"
     assert (pasta / "S_cspadrao_400000_tom_2canais_60s_spirapido.bin").exists()
@@ -627,7 +627,7 @@ def test_varrer_taxa_spi_compara_os_modos_e_mede_o_teto_do_rapido(varredura):
     assert [200_000_000 // int(linha["taxa_pedida_hz"]) for linha in teto] == list(range(520, 459, -1))
     acima = [linha for linha in teto if linha["amostras_atrasadas"] != "0"]
     assert acima and max(200_000_000 // int(linha["taxa_pedida_hz"]) for linha in acima) == 466   # o quadro de 467 do falso
-    assert [linha["spi"] for linha in linhas if linha["parte"] == "U"] == ["padrao", "rapido"]
+    assert [linha["spi"] for linha in linhas if linha["parte"] == "U"] == ["lenta", "rapido"]
     assert "divergências A 0, C 7" in r.stdout
 
 
@@ -640,15 +640,15 @@ def test_varrer_taxa_fase_pede_cada_quadrada_e_captura_nas_duas_taxas(varredura)
     r, _ = varredura("--fase", entrada="\n" * 12)
     assert r.returncode == 0, r.stdout + r.stderr
     (pasta,) = varredura.pasta.glob("T3f_*")
-    assert [linha["spi"] for linha in _resumo(pasta)] == ["padrao", "rapido"] * 12
+    assert [linha["spi"] for linha in _resumo(pasta)] == ["lenta", "rapido"] * 12
     assert r.stdout.count("ONDA QUADRADA de") == 12 and "ONDA QUADRADA de 20736 Hz, 20 Vpp, High-Z, offset 0 V" in r.stdout
     assert "ONDA QUADRADA de 1280 Hz, 10 Vpp, High-Z, offset 0 V" in r.stdout
     assert "ONDA QUADRADA de 6912 Hz, 16 Vpp, High-Z, offset -2 V" in r.stdout
     assert (pasta / "F_cspadrao_400000_quadrada20736Hz16Vpp+2V_30s_spirapido.bin").exists()
-    padrao = (pasta / "F_cspadrao_312500_quadrada1280Hz_30s.bin").read_text()
+    padrao = (pasta / "F_cspadrao_312500_quadrada1280Hz_30s_spilenta.bin").read_text()
     rapido = (pasta / "F_cspadrao_400000_quadrada1280Hz_30s_spirapido.bin").read_text()
-    meia = (pasta / "F_cspadrao_312500_quadrada1280Hz10Vpp_30s.bin").read_text()
-    assert "d=quadrada f=1280Hz" in padrao and "spi=" not in padrao
+    meia = (pasta / "F_cspadrao_312500_quadrada1280Hz10Vpp_30s_spilenta.bin").read_text()
+    assert "d=quadrada f=1280Hz" in padrao and "spi=lenta" in padrao
     assert "spi=rapido" in rapido and "duracao=30s" in rapido and "d=quadrada f=1280Hz10Vpp" in meia
     assert "medir_fase.py" in r.stdout
 

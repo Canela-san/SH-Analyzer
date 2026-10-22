@@ -32,7 +32,8 @@ As figuras de bancada precisam das capturas em `$DADOS`. Sem elas, o script avis
 
 | Teste | O que mede | Data | Firmware | Figura | Estado |
 |---|---|---|---|---|---|
-| [T7f](#t7f-a-grade-de-tempo) | O período entre amostras: jitter, degraus, folga e teto com período constante; o quadro que dependia do dado | 22/10/2026 | `v0.7-1-gb2f9078` | `grade_jitter`, `grade_degraus`, `grade_teto`, `grade_bits` | ✅ (falta repetir com o quadro fixo) |
+| [T7g](#t7g-o-spi-rápido) | O SPI rápido (~15,4 MHz): a margem do SDO em 3 fases, o ruído, o teto; 400 kS/s | 22/10/2026 | `v0.7-1-gb3c417b` | — | ✅ (virou o padrão) |
+| [T7f](#t7f-a-grade-de-tempo) | O período entre amostras: jitter, degraus, folga e teto com período constante; o quadro que dependia do dado, e a 2ª rodada com o quadro fixo | 22/10/2026 | `v0.7-1-gb2f9078` e `-gb3c417b` | `grade_jitter`, `grade_degraus`, `grade_teto`, `grade_bits` | ✅ |
 | [T7e](#t7e-esperas-do-cs-e-teto-de-taxa) | Esperas do CS e taxa máxima | 21/10/2026 | `v0.6-10`/`-11` | — | ✅ |
 | [T7a–c](#t7a-a-t7c-integridade-e-estabilidade) | Integridade, estabilidade em 10 min e o salto antigo nas trocas de buffer | 19/10/2026 | anterior a out/2026 | — | ✅ (firmware antigo) |
 | [T6](#t6-vários-canais) | Diafonia e atraso entre canais | 19/10 e 22/10/2026 | antigo e `v0.7-1` | — | 🟡 |
@@ -42,13 +43,54 @@ As figuras de bancada precisam das capturas em `$DADOS`. Sem elas, o script avis
 | [T1](#t1-piso-de-ruído) | Ruído e offset com a entrada em curto | 19/10 e 22/10/2026 | antigo e `v0.7-1` | — | ✅ |
 | [T0](#t0-escala-do-adc) | Escala do ADC nas três faixas | 19/10/2026 | anterior a out/2026 | — | ✅ |
 
-O que falta medir: a `--grade` com o firmware do quadro fixo (o T7f de novo), o T5 (distorção com fonte limpa), o T8
-(*aliasing*), o T9 (espectros conhecidos), o T10 (a sonda de corrente) e o T11 (ponta a ponta). Veja a
+O que falta medir: o T5 (distorção com fonte limpa), o T8 (*aliasing*), o T9 (espectros conhecidos), o T10 (a sonda de
+corrente) e o T11 (ponta a ponta). Veja a
 [tabela de estado](lab-procedure.md#estado-da-campanha).
 
 ---
 
+## T7g: o SPI rápido
+
+**22/10/2026** · firmware `v0.7-1-gb3c417b` (protocolo 3, cabeçalho v7) · `$DADOS/lab/2026-10-22/T7g_2026-10-22_0935/`
+(69 capturas, `./varrer_taxa.sh --spi`) · o tom de 10 kHz no canal 1, ±2,56 V. O SPI rápido tem bits de 13 ciclos
+(~15,4 MHz, contra ~10,7) e lê cada bit em três instantes depois da borda do SCLK que o lança: A = 60 ns, B = 75 ns (a
+latência do SPI lento) e C = 90 ns.
+
+| Grandeza | SPI lento | SPI rápido | Condições |
+|---|---|---|---|
+| Quadros com a fase A ou C diferente da B | — | **0** em todas as 69 capturas (~140 milhões de quadros, 312,5 a 433 kS/s) | o bit lido a 60, 75 e 90 ns é o mesmo: margem ≥ 15 ns para cada lado |
+| Ruído com a entrada em curto | 0,79 LSB | **0,80 LSB** | 312,5 e 400 kS/s, ±2,56 V |
+| THD com o tom | −71,5 dB | −71,4 a −71,5 dB | a do gerador |
+| SINAD com o tom (10 s) | 67,7 dB | 66,6 a 67,9 dB (fases A, B e C) | a variação é do gerador: as três fases leram os mesmos bits |
+| Jitter | 0,00 ns | 0,00 ns | |
+| Folga a 312,5 kS/s | 30 ciclos | **160 a 163 ciclos** | o simulador previa 162 |
+| Folga a 400 kS/s | não alcança | **18 ciclos** (90 ns) | 60 s, 1 e 2 canais: 0 atrasadas, 0 sobrescritos, 0 SDO |
+| Teto com período constante | 327,9 kS/s (610 ticks) | **419,3 kS/s (477 ticks)** | o simulador previa 478 ticks |
+| Amostras comuns atrasam a partir de | 333,9 kS/s (599 ticks) | **429,2 kS/s (466 ticks)** | o simulador previa 467 |
+| Diafonia 1 → 0 | −94,5 dB (312,5 kS/s) | −95,5 dB (400 kS/s) | 2 canais |
+| Margem do ARM por bloco (400 kS/s) | — | 17x (152 ms para gravar 2 MB; o bloco enche em 2,6 s) | `ler_adc`, linha `ARM:` |
+
+* **400 kS/s com o SPI rápido viraram o padrão do `ler_adc`** (`--spi lenta` volta ao SPI de antes). Nyquist de
+  200 kHz com 1 canal, período constante com 18 ciclos de folga no pior momento (a troca de buffer), nenhuma
+  divergência de leitura em nenhuma taxa até 433 kS/s, o mesmo ruído e a mesma distorção.
+* **Com 2 canais, o SINAD do canal com o tom cai a ~65 dB** (65,1 dB a 400 kS/s rápido; 65,6 dB a 312,5 kS/s lento):
+  é do modo de 2 canais, não do SPI.
+* **O simulador acertou** a folga e o teto ao ciclo, com as latências calibradas na placa (F12).
+
 ## T7f: a grade de tempo
+
+**2ª rodada, 22/10/2026, com o quadro fixo** · firmware `v0.7-1-gb3c417b`, SPI lento ·
+`$DADOS/lab/2026-10-22/T7f_2026-10-22_0917/` (56 capturas, `./varrer_taxa.sh --grade`):
+
+* **A folga não depende mais do sinal:** 25 ciclos em todas as capturas longas do padrão de então (312,5 kS/s; eram 3 a
+  5), com o tom, com o ARM ocupado e com 2 canais. Na parte J ela cai **exatamente 1 ciclo por tick**, de 30 (640) a
+  0 (610).
+* **Teto com período constante: 327,9 kS/s** (610 ticks; era ~315). De 609 a 600 ticks atrasam só as amostras com
+  evento de troca (2 a 25); as comuns, a partir de 599 ticks: o quadro comum leva **600 ciclos de trabalho**, como o
+  simulador previa (40 de folga a 640).
+* 0 atrasadas, 0 sobrescritos e 0 quadros com ruído no SDO em todas as 56 capturas.
+
+**1ª rodada, 22/10/2026:**
 
 **22/10/2026** · firmware `v0.7-1-gb2f9078` (protocolo 2: espera de precisão, folga publicada, rebase autocalibrado)
 · `$DADOS/lab/2026-10-22/T7f_2026-10-22_0435/` (46 capturas, `firmware/varrer_taxa.sh --grade`, ~465 MB) · tom de

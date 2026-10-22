@@ -118,7 +118,7 @@ CABECALHO_VERSAO_FIRMWARE_TAMANHO = 32   # [v5] CABECALHO_VERSAO_FIRMWARE_TAMANH
 #   I    header_crc32
 #
 # v7 (mesmos campos da v6, mais o SPI ENTRE versao_protocolo_pru e header_crc32 -- ver memoria_pru.h):
-#   I    modo_spi                     (0 = padrão, ~10,7 MHz; 1, 2, 3 = rápido, ~15,4 MHz, gravando a fase A, B ou C)
+#   I    modo_spi                     (0 = lento, ~10,7 MHz; 1, 2, 3 = rápido, ~15,4 MHz, gravando a fase A, B ou C)
 #   I    divergencias_fase_a          (quadros do SPI rápido em que a leitura a 60 ns discordou da de 75 ns)
 #   I    divergencias_fase_c          (idem, a de 90 ns)
 #   I    header_crc32
@@ -274,7 +274,7 @@ class CabecalhoArquivo:
         if self.modo_spi is None:
             return None
         if self.modo_spi == 0:
-            return "padrão (~10,7 MHz)"
+            return "lento (~10,7 MHz; o padrão até 22/10/2026)"
         fase = {1: "A (60 ns)", 2: "B (75 ns)", 3: "C (90 ns)"}.get(self.modo_spi, f"desconhecida ({self.modo_spi})")
         return (f"rápido (~15,4 MHz), leitura da fase {fase} gravada; {self.divergencias_fase_a} quadro(s) com a fase "
                 f"A diferente da B e {self.divergencias_fase_c} com a C")
@@ -713,7 +713,7 @@ def imprimir_resumo_cabecalho(cabecalho: CabecalhoArquivo) -> None:
     grade = cabecalho.descrever_grade()
     if grade:
         log.info(f"  Grade de tempo (PRU): {grade}")
-    if cabecalho.spi_rapido:
+    if cabecalho.modo_spi is not None:
         log.info(f"  SPI: {cabecalho.descrever_spi()}")
     if cabecalho.versao_cabecalho >= 2:
         partes = []

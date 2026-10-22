@@ -284,10 +284,10 @@ def test_offsets_da_memoria_compartilhada_pru():
 
 
 def test_modos_do_spi_no_c_no_assembly_e_no_python():
-    """MODO_SPI_* de memoria_pru.h: o assembly testa 0 (padrão), 1 (fase A) e 2 (fase B); o resto é a C."""
+    """MODO_SPI_* de memoria_pru.h: o assembly testa 0 (o SPI lento), 1 (fase A) e 2 (fase B); o resto é a C."""
     h = _memoria_pru_sem_comentarios()
     modos = {m.group(1): inteiro_c(m.group(2)) for m in re.finditer(r"#\s*define\s+(MODO_SPI_\w+)\s+(\w+)", h)}
-    assert modos == {"MODO_SPI_PADRAO": 0, "MODO_SPI_RAPIDO_A": 1, "MODO_SPI_RAPIDO_B": 2, "MODO_SPI_RAPIDO_C": 3}
+    assert modos == {"MODO_SPI_LENTO": 0, "MODO_SPI_RAPIDO_A": 1, "MODO_SPI_RAPIDO_B": 2, "MODO_SPI_RAPIDO_C": 3}
     asm = sem_comentarios_asm((FIRMWARE / "spi_core.asm").read_text(encoding="utf-8"))
     assert "QBNE salta_para_o_quadro_rapido, r2, 0" in asm
     assert "QBEQ fase_rapida_pronta, r2, 2" in asm and "QBEQ fase_rapida_a, r2, 1" in asm

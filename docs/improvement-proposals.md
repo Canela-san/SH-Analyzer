@@ -30,7 +30,11 @@ Revisado em 22/10/2026. Saíram daqui, nesta ordem:
 * o F11 (o `ler_adc` e o `setup.sh` conferem no `/proc/iomem` que a DDR dos buffers está fora do Linux), o F12 (o
   simulador com as latências medidas: reproduz a folga do T7f), a parte do F6 que não pede a PRU (SIGTERM e SIGHUP
   como o Ctrl+C; a PRU parada no fim da captura) e o F14, que perdeu o motivo: a "cauda da escrita na DDR" era o
-  quadro que dependia do dado (F15).
+  quadro que dependia do dado (F15);
+* o F15, o F10 e o F3, validados na bancada em 22/10/2026 (T7f, 2ª rodada, e T7g): o quadro fixo (folga de 25
+  ciclos a 312,5 kS/s com qualquer sinal; o simulador acertou o quadro comum ao ciclo), a troca espalhada e o SPI
+  rápido (~15,4 MHz, 0 divergências de leitura em ~140 milhões de quadros, o mesmo ruído, período constante até
+  419,3 kS/s). **400 kS/s com o SPI rápido é o padrão do `ler_adc` desde então** (`--spi lenta` volta ao de antes).
 
 ---
 
@@ -107,15 +111,12 @@ que seja o sinal); os itens 2 a 4 foram resolvidos (F11, F12, F6 sem o bloco par
 
 | Código | Item | Ganho | Esforço | PRU? | Depende de |
 |---|---|---|---|---|---|
-| **F15** | Quadro de duração fixa: ler o bit sem desvio (**implementado**, falta a bancada) | Alto: folga independente do sinal; a amostra comum ganha até 15 ciclos | Baixo | sim | — |
-| **F10** | Troca de buffer espalhada; espera de CS alto só quando pedida (**implementado**, falta a bancada) | Alto: folga de 3 → ≥ 29 ciclos a 312,5 kS/s (com o F15); teto ~315 → ~327 kS/s | Baixo | sim | — |
 | **S1** | Calibrar a sonda de corrente (T10) com hold-out | Alto para corrente | Médio (bancada) | não | — |
 | **P1** | Análise de capturas longas por blocos (sem o sinal inteiro em float64) | Médio: 10 min = 1,6 GB; 1 h não cabe | Médio | não | — |
 | **P8** | Potência, impedância e transferência V/I por frequência | Alto para pesquisa de emissão | Médio | não | S3 |
 | **F6** | Gravar o bloco parcial no fim de uma captura indefinida | Baixo–Médio | Baixo | sim (publicar a posição) | F10 |
 | **F13** | Estabilidade em 1 h no padrão (grade, folga, frequência, amplitude) | Médio: o número do relatório | Baixo (bancada) | não | F10, P1 |
 | **F9** | Descartar o transitório de troca de faixa já na PRU (a análise já descarta) | Baixo: dado certo desde a 1ª amostra | Baixo | sim | — |
-| **F3** | SPI rápido, ~15,4 MHz, com a leitura em 3 fases (**implementado como `--spi rapido`**, falta a bancada) | Alto: teto ~327 → ~418 kS/s; 400 kS/s exatos | Médio | sim | F10, F15 |
 | **F4** | `SAMPLES_PER_BUFFER` vindo do ARM, não duplicado no `.asm` | Médio: fim de uma sincronia manual | Baixo | sim | — |
 | **F7** | Conferência rápida do `calibrar_sonda.sh` mais leve na BeagleBone | Médio | Baixo | não | medir na BBB |
 | **S2–S7** | Fase, subamostragem, perfil absoluto, teto de ganho, repetições | Alto para V×I | Médio–Alto | não | S1 |
@@ -126,88 +127,6 @@ que seja o sinal); os itens 2 a 4 foram resolvidos (F11, F12, F6 sem o bloco par
 ---
 
 ## 3. Firmware e aquisição
-
-### F10 — Folga na troca de buffer
-
-**Por quê.** A 312,5 kS/s (640 ciclos), a troca de buffer deixa 3 a 5 ciclos de folga (T7f): ela faz, de uma vez,
-5 acessos à memória compartilhada (marca o buffer cheio, lê o outro, publica `active_buffer`, os contadores e a
-folga), ~22 ciclos a mais que uma amostra comum. E toda amostra em dia ainda espera o CS alto mínimo (`A` = 3
-iterações, 7 ciclos), que o próprio caminho entre duas amostras já garante: o CS fica alto ≥ 25 ciclos mesmo sem a
-espera, e 66 a 312,5 kS/s.
-
-**Proposta.**
-
-* **Espalhar a troca.** Na amostra da troca, só o essencial: o ponteiro de escrita passa para o outro buffer e o
-  contador volta a 0. O resto vai para as amostras 1, 2 e 3 do buffer novo, um ou dois acessos por amostra. O gatilho
-  é o mesmo comparador de hoje (`QBNE continua, r15, r21`): o `r21` vira "a próxima amostra com trabalho" (1, 2, 3
-  e então o tamanho do buffer), sem nenhuma instrução a mais por amostra comum. O rebase do contador não roda nessas
-  amostras (fica para a seguinte).
-* **A espera de CS alto só quando faz falta:** com `A` ≤ 10 iterações (100 ns), o caminho em dia a pula (1
-  instrução em vez de 7 ciclos); a amostra atrasada, que sai emendada na anterior, continua esperando.
-
-Estimativa: a troca passa a custar ~5 a 8 ciclos a mais que uma amostra comum (era ~22) e toda amostra ganha ~6;
-folga de ~18 ciclos a 312,5 kS/s; teto com período constante de ~315 para ~322 kS/s (o limite passa a ser a cauda da
-escrita na DDR nas amostras comuns). O atraso de 1 a 3 amostras para marcar o buffer cheio (até 10 µs) não muda nada
-para o ARM, que olha a cada 2 ms.
-
-**Como saber que deu certo.** No simulador calibrado (F12), a folga prevista; na bancada, `./varrer_taxa.sh --grade`:
-folga ≥ 15 ciclos em todas as capturas do padrão, e na parte J nenhuma atrasada até ~322 kS/s.
-
-**Estado em 22/10/2026: implementado, falta a bancada.** A troca só muda de buffer (nenhum acesso à memória); os 5
-acessos vão um por amostra nas 5 seguintes (buffer pronto, `active_buffer`, conferência de sobrescrita, contadores,
-folga). O rebase não roda numa amostra com evento. A espera de CS alto só roda pedida acima de 9 iterações: o caminho
-mais curto entre a subida e a descida seguinte já tem 19 ciclos (95 ns; o datasheet pede 30 ns). No simulador
-calibrado, com o F15: folga de 40 ciclos numa amostra comum e ≥ 29 com a troca e os eventos, a 312,5 kS/s; teto ~327 kS/s
-(`tests/test_pru_asm.py`). A `--grade` agora vai até 590 ticks (339 kS/s) e recusa o firmware anterior.
-
-### F15 — Quadro de duração fixa (a leitura do bit sem desvio)
-
-**Por quê.** O `DATA_BIT` lia o MISO com `QBBC` + `OR`: um bit 1 executava o `OR` e deixava o SCLK 1 ciclo a mais em
-nível alto. O quadro durava **605 + (bits 1 da amostra) ciclos** na placa: 0 a 16 ciclos (até 80 ns) a mais, conforme
-o sinal. Na parte J do T7f, a fração de amostras atrasadas de cada período bateu com a fração de amostras com tantos
-bits 1 (619 ticks: 5,58 × 10⁻⁵ contra 5,53 × 10⁻⁵ com 15 bits 1; 616 ticks: 2,44 × 10⁻² contra 2,56 × 10⁻²), e as 43
-capturas de calibração de 22/10 tiveram folga de exatamente 20 ciclos (640 − 605 − 15). O instante da amostra nunca
-dependeu disso; a folga, o teto e o padrão do SCLK, sim.
-
-**Proposta e estado (implementado, falta a bancada).** A leitura vira `AND r1, r31, 4` no mesmo ciclo do `QBBC` de
-antes, e o bit entra no acumulador com o SCLK já baixo, no lugar de um NOP; o 16º bit alinha os 16 bits (um `LSR` no
-lugar de outro NOP). Todo bit tem 9 ciclos em alto e 7 em baixo; o quadro não ganhou nenhum ciclo. O mesmo na leitura
-do preâmbulo (`CMD_BIT`).
-
-**Como saber que deu certo.** Na `--grade`: a mesma folga em todas as capturas do padrão, com o tom e em curto; na
-parte J, nenhuma amostra comum atrasada até ~334 kS/s (599 ticks). E o SINAD/THD do tom igual ou melhor que no T7f
-(o padrão do SCLK deixa de variar com o dado).
-
-### F3 — SPI mais rápido
-
-**Por quê.** Os 32 bits de cada quadro levam ~2,9 µs (~20 ciclos por bit de comando, ~16 por bit de dado: SCLK de
-~10,7 MHz). O ADS8688 e o isolador aceitam 17 MHz. Com o quadro fixo e a troca espalhada, o teto do SPI padrão é
-~327 kS/s; 400 kS/s exatos (500 ticks) pedem um quadro mais curto.
-
-**Estado em 22/10/2026: implementado como opção (`ler_adc --spi rapido`), falta a bancada.** A tag `v0.7` é o
-backup do firmware anterior (o mesmo, sem o modo rápido). No modo rápido:
-
-* **bits de 13 ciclos** (65 ns: ~15,4 MHz), 6 em alto e 7 em baixo, nos 32 bits; o MOSI fica parado em 0 (NO_OP).
-  O CS fica baixo 430 ciclos (eram 573). A configuração do ADC continua com os bits de sempre;
-* **cada bit de dado é lido em 3 instantes** depois da borda do SCLK que o lança: A = 60 ns (logo antes da borda
-  seguinte, como um SPI comum), B = 75 ns (a mesma latência do modo padrão, que lê certo desde 19/10) e C = 90 ns.
-  Grava-se a B (ou a pedida: `rapido:a`, `rapido:c`), e a PRU conta os quadros em que A ou C discordam de B, sem
-  desvio que dependa do dado. É a margem de tempo do SDO (o caminho de volta pelo isolador, ~50 a 70 ns), medida pela
-  própria PRU: A errada = o bit ainda não tinha voltado; C errada = o seguinte já tinha. Substitui o osciloscópio no
-  SCLK/SDO, que não dá para ligar;
-* protocolo 3 (`modo_spi` e as divergências no `shared_control`) e cabeçalho v7 (o modo e as divergências).
-
-No simulador calibrado: folga de 173 ciclos a 312,5 kS/s; a 400 kS/s, 22 ciclos e a grade exata; teto com período
-constante ~418 kS/s (a ~428, as amostras comuns). Com o modelo do caminho do SDO (`ModeloADC.atraso_ciclos`), a
-palavra sai certa nas 3 fases para caminhos de 25 a 55 ns, e as divergências acusam um caminho longo ou curto demais.
-
-**Como saber que deu certo.** `./varrer_taxa.sh --spi` (~11 min): na parte P (312,5 kS/s), o mesmo SINAD, ruído e
-THD no padrão e no rápido, e **0 divergências** na fase gravada; no ideal, também em A e C (margem de ≥ 15 ns para
-cada lado). Na S, 60 s a 400 kS/s sem amostra atrasada; na T, o teto perto de 418 kS/s; na U, o ruído em curto igual
-ao do padrão. Se a A divergir, a B ainda vale (o caminho passa de 60 ns); se a C divergir, idem (o bit seguinte chega
-antes de 90 ns). Se a própria B estiver errada, o SINAD cai (bits trocados): volte ao padrão e traga as capturas.
-Com tudo certo, o rápido vira o padrão. Os 500 kS/s do ADS8688 são somados entre os canais: 150 kHz em 2 canais ao
-mesmo tempo pedem outro ADC.
 
 ### F4 — `SAMPLES_PER_BUFFER` vindo do ARM
 

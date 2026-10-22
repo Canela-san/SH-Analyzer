@@ -155,9 +155,10 @@ struct shared_control {
     volatile uint32_t versao_protocolo_pru;  // Offset 72
 
     // --- [SPI RÁPIDO, 22/10/2026] ------------------------------------------
-    //   modo_spi (ARM -> PRU, antes de config_ready=1): MODO_SPI_PADRAO (bits de 16 ciclos com dado e 20 com
-    //     comando, ~10,7 MHz) ou MODO_SPI_RAPIDO_A/B/C (bits de 13 ciclos, ~15,4 MHz, gravando a leitura feita 60,
-    //     75 ou 90 ns depois da borda do SCLK que lançou o bit; ver BIT_DADO_RAPIDO em spi_core.asm).
+    //   modo_spi (ARM -> PRU, antes de config_ready=1): MODO_SPI_LENTO (bits de 16 ciclos com dado e 20 com
+    //     comando, ~10,7 MHz; o padrão até 22/10/2026) ou MODO_SPI_RAPIDO_A/B/C (bits de 13 ciclos, ~15,4 MHz,
+    //     gravando a leitura feita 60, 75 ou 90 ns depois da borda do SCLK que lançou o bit; ver BIT_DADO_RAPIDO em
+    //     spi_core.asm). O ler_adc usa o RAPIDO_B por padrão desde 22/10/2026 (validado no T7g).
     //   divergencias_fase_a / _c (PRU -> ARM, 6 e 7 amostras depois de cada troca de buffer): quadros do modo
     //     rápido em que a leitura da fase A / C não bateu com a da B. É a margem de tempo do SDO medida pela
     //     própria PRU: A errada = o bit ainda não tinha voltado pelo isolador; C errada = o seguinte já tinha.
@@ -166,9 +167,9 @@ struct shared_control {
     volatile uint32_t divergencias_fase_c;   // Offset 84
 };
 
-#define MODO_SPI_PADRAO   0u
+#define MODO_SPI_LENTO    0u   // o SPI de antes (ler_adc --spi lenta)
 #define MODO_SPI_RAPIDO_A 1u
-#define MODO_SPI_RAPIDO_B 2u   // a mesma latência de leitura do modo padrão (75 ns): o "--spi rapido"
+#define MODO_SPI_RAPIDO_B 2u   // a mesma latência de leitura do SPI lento (75 ns): o padrão do ler_adc
 #define MODO_SPI_RAPIDO_C 3u
 
 // Versão do contrato ARM <-> PRU desta struct (o spi_core.asm escreve o mesmo número em versao_protocolo_pru).

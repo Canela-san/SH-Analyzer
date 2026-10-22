@@ -81,7 +81,7 @@ sudo ./ler_adc <frequencia_hz> [lista_de_canais] [opções]
 
 | Argumento | O que faz |
 |---|---|
-| `frequencia_hz` | Frequência **total** de amostragem, de 1 a 500000 Hz. Com mais de um canal, ela é dividida entre eles. **Opcional:** sem ela (nenhum argumento, ou o primeiro já é uma opção), **312500** (200 MHz ÷ 640, exata, o padrão desde 21/10/2026). A lista de canais só vem depois dela |
+| `frequencia_hz` | Frequência **total** de amostragem, de 1 a 500000 Hz. Com mais de um canal, ela é dividida entre eles. **Opcional:** sem ela (nenhum argumento, ou o primeiro já é uma opção), **400000** (200 MHz ÷ 500, exata, com o SPI rápido: o padrão desde 22/10/2026; antes, 312500). A lista de canais só vem depois dela |
 | `lista_de_canais` | Canais do ADS8688 separados por vírgula, sem espaços (ex.: `0,1,3`). Sem ela, captura só o **canal 1** |
 | `--blocos N` | Captura exatamente N blocos e para. `N=0` captura até você apertar `Ctrl+C`. Padrão: 1 bloco |
 | `--duracao T` | Alternativa a `--blocos`: captura por um tempo (`600`, `10m`, `1.5h`; sem sufixo = segundos). As duas flags são mutuamente exclusivas |
@@ -91,7 +91,7 @@ sudo ./ler_adc <frequencia_hz> [lista_de_canais] [opções]
 | `--grandeza C:G[,...]` | Grandeza de cada canal: `tensao`, `corrente` ou `temperatura` (ex.: `0:tensao,1:corrente`). Canal não citado = `tensao` |
 | `--sonda C:ID[,...]` | Id da sonda usada em cada canal (ex.: `1:fluke_i30_01`), até 31 caracteres. É só um texto no cabeçalho; a correção é feita depois, no `adc_tool.py` |
 | `--faixa-adc C:V[,...]` | **Faixa de entrada do ADC** de cada canal, como fundo de escala total em Volts: `20.48` (±10,24 V, o padrão), `10.24` (±5,12 V) ou `5.12` (±2,56 V). Ex.: `0:20.48,1:5.12`. Canal não citado = `20.48`. Veja [Faixa de entrada do ADC](#faixa-de-entrada-do-adc) |
-| `--spi MODO` | `padrao` (o padrão: SCLK de ~10,7 MHz, até ~327 kS/s) ou `rapido` (SCLK de ~15,4 MHz, até ~418 kS/s; desde 22/10/2026, **a validar na bancada**). No rápido, cada bit é lido 60, 75 e 90 ns depois da borda do SCLK que o lança (fases A, B e C); grava-se a B (a mesma latência do padrão), ou a pedida em `rapido:a`/`rapido:c`, e o fim da captura diz em quantos quadros as outras discordaram: a margem de tempo do SDO, medida pela PRU. Vai para o cabeçalho (versão 7) |
+| `--spi MODO` | `rapido` (o padrão desde 22/10/2026: SCLK de ~15,4 MHz, período constante até ~419 kS/s, validado no T7g) ou `lenta` (o SPI de antes: ~10,7 MHz, até ~328 kS/s). No rápido, cada bit é lido 60, 75 e 90 ns depois da borda do SCLK que o lança (fases A, B e C); grava-se a B (a mesma latência do padrão), ou a pedida em `rapido:a`/`rapido:c`, e o fim da captura diz em quantos quadros as outras discordaram: a margem de tempo do SDO, medida pela PRU. Vai para o cabeçalho (versão 7) |
 | `--atraso-cs S,H,A` | Atrasos do CS em cada amostra, em passos de 10 ns: CS descendo → 1º clock, último clock → CS subindo, CS alto entre amostras. Padrão `3,1,3` (30/10/30 ns, o mínimo do datasheet, desde 21/10/2026; era `200,100,100`, 2/1/1 µs). Esperas maiores só alongam o quadro e baixam a taxa máxima. Veja [Integridade e taxa máxima](#integridade-da-captura-e-taxa-máxima) |
 
 Exemplos:
@@ -732,7 +732,7 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 | Aviso "CRC-32 do cabeçalho NÃO confere" | Cópia truncada ou arquivo corrompido | Copie o arquivo de novo e compare o tamanho. Os campos mostrados podem estar errados |
 | Aviso "canal N é de corrente mas não tem sonda/perfil resolvido" | A captura não registrou a sonda | Use `--sonda-perfil N:ARQUIVO.json` (ou refaça a captura com `--sonda`) |
 | `compactar_amostras.py`: "o zpaq não está instalado" | Falta o compressor | `sudo apt install zpaq`, ou `--rapido` (xz, pacote maior) |
-| `ler_adc`: "amostra(s) tomada(s) depois do instante previsto" | Taxa acima do que a PRU alcança (~326 kS/s com as esperas padrão) | Use o padrão (312,5 kS/s) ou uma taxa exata menor; a taxa real foi menor que a gravada |
+| `ler_adc`: "amostra(s) tomada(s) depois do instante previsto" | Taxa acima do que a PRU alcança com período constante (~419 kS/s com o SPI rápido, ~328 kS/s com `--spi lenta`) | Use o padrão (400 kS/s) ou uma taxa exata menor; a taxa real foi menor que a gravada |
 | `ler_adc` sai com código 3, "buffer(s) sobrescrito(s)" | O ARM não gravou um bloco a tempo: amostras perdidas | Refaça; verifique o cartão SD e o que mais está rodando na BeagleBone |
 | `medir_captura`: DESCONTINUIDADE "numa troca de buffer da PRU" | Captura feita com o firmware anterior a out/2026 | Recompile o firmware (`./setup.sh`) e capture de novo |
 | A captura não termina e nenhuma linha `Bloco A gravado (...)` aparece | PRU parada ou presa | Confira `dmesg \| tail -n 20` e `cat /sys/class/remoteproc/remoteproc1/state`. Rode `./setup.sh` de novo |

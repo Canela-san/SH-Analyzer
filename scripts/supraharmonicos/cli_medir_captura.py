@@ -771,7 +771,7 @@ def medir_arquivo(caminho: Path, args: argparse.Namespace) -> list[dict[str, str
     grade = ctx.cabecalho.descrever_grade() if ctx.cabecalho is not None else None
     if grade:
         log.info(f"Grade de tempo (PRU): {grade}")
-    if ctx.cabecalho is not None and ctx.cabecalho.spi_rapido:
+    if ctx.cabecalho is not None and ctx.cabecalho.modo_spi is not None:
         log.info(f"SPI: {ctx.cabecalho.descrever_spi()}")
     nominal = _anunciar_frequencias(args, ctx, fs_total, fs_pru, inicio)
     _avisar_transitorios(transitorios, inicio, args.inicio is not None)

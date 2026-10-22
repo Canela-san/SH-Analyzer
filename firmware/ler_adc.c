@@ -31,10 +31,12 @@ void lidar_interrupcao(int sinal) { (void)sinal; manter_execucao = 0; }
 // multi-canal também, se o usuário não passar nada.
 #define CANAL_PADRAO 1
 
-// Taxa TOTAL usada quando a frequência não é passada (ver main()): 200 MHz ÷ 640, exata, a primeira acima de
-// 300 kS/s -- a Nyquist de 156 kHz cobre a banda de supraharmônicos (até 150 kHz) com 1 canal. Com as esperas do
-// CS padrão (3/1/3), o quadro mais curto da PRU dá ~326 kS/s (varredura T7e de 21/10/2026): ~4 % de folga.
-#define FREQUENCIA_PADRAO_HZ 312500u
+// Taxa TOTAL usada quando a frequência não é passada (ver main()): 200 MHz ÷ 500, exata -- a Nyquist de 200 kHz
+// cobre a banda de supraharmônicos (até 150 kHz) com folga para o filtro do ADC, com 1 canal. Com o SPI rápido (o
+// padrão desde 22/10/2026), o período fica constante até 419,3 kS/s (477 ticks, varredura T7g): a 400 kS/s sobram
+// 18 ciclos (90 ns) no pior momento. Até 22/10/2026 eram 312,5 kS/s com o SPI de antes (hoje --spi lenta, até
+// 327,9 kS/s).
+#define FREQUENCIA_PADRAO_HZ 400000u
 
 // ============================================================================
 // [CABECALHO DO ARQUIVO .bin]
@@ -344,8 +346,8 @@ static void imprimir_uso(const char *nome_programa) {
         "\n"
         "  frequencia_hz     Frequência TOTAL de transação SPI, em Hz (1-500000). Sem ela\n"
         "                    (o 1º argumento é uma opção, ou não há nenhum): %u Hz, o\n"
-        "                    padrão (200 MHz ÷ 640, exata; com as esperas do CS padrão,\n"
-        "                    a PRU alcança ~326 kS/s). Prefira taxas que dividem 200 MHz.\n"
+        "                    padrão (200 MHz ÷ 500, exata; com o SPI rápido, o período fica\n"
+        "                    constante até ~419 kS/s). Prefira taxas que dividem 200 MHz.\n"
         "                    A lista de canais só vem depois da frequência.\n"
         "  lista_de_canais   Opcional. Canais do ADS8688, separados por vírgula\n"
         "                    sem espaços (ex.: '0,1,3'). Padrão: só o canal %d.\n"
@@ -383,12 +385,12 @@ static void imprimir_uso(const char *nome_programa) {
         "                    21/10/2026 não achou diferença nenhuma de 2/1/1 µs, o padrão\n"
         "                    antigo, até ele). Esperas maiores só deixam o quadro mais\n"
         "                    longo e baixam a taxa máxima (200,100,100: ~143 kS/s).\n"
-        "  --spi MODO        Opcional. 'padrao' (o padrão: bits de 16 a 20 ciclos, SCLK de\n"
-        "                    ~10,7 MHz, ~327 kS/s no máximo) ou 'rapido' (bits de 13\n"
-        "                    ciclos, ~15,4 MHz, ~418 kS/s no máximo; 22/10/2026, a validar\n"
-        "                    na bancada). No rápido, cada bit é lido 60, 75 e 90 ns depois\n"
-        "                    da borda do SCLK que o lança (fases A, B e C); grava-se a B\n"
-        "                    (a latência do modo padrão), ou a pedida em 'rapido:a',\n"
+        "  --spi MODO        Opcional. 'rapido' (o padrão desde 22/10/2026: bits de 13\n"
+        "                    ciclos, SCLK de ~15,4 MHz, período constante até ~419 kS/s)\n"
+        "                    ou 'lenta' (o SPI de antes: bits de 16 a 20 ciclos, ~10,7 MHz,\n"
+        "                    até ~328 kS/s). No rápido, cada bit é lido 60, 75 e 90 ns\n"
+        "                    depois da borda do SCLK que o lança (fases A, B e C); grava-se\n"
+        "                    a B (a latência do SPI lento), ou a pedida em 'rapido:a',\n"
         "                    'rapido:b' ou 'rapido:c', e o fim da captura diz em quantos\n"
         "                    quadros as outras discordaram: a margem de tempo do SDO.\n"
         "  --faixa-adc C:V[,...]  Opcional. Faixa de entrada do ADS8688 em cada canal, no\n"
@@ -821,12 +823,18 @@ static int analisar_lista_faixas(const char *texto, const int *canais, int num_c
  * reportado em stderr).
  */
 /*
- * [SPI RÁPIDO] Interpreta --spi: 'padrao', 'rapido' (= 'rapido:b') ou 'rapido:a|b|c'. Devolve MODO_SPI_*, ou -1
- * com o erro já impresso.
+ * [SPI RÁPIDO] Interpreta --spi: 'lenta' (o SPI de antes de 22/10/2026), 'rapido' (= 'rapido:b', o padrão) ou
+ * 'rapido:a|b|c'. Devolve MODO_SPI_*, ou -1 com o erro já impresso. 'padrao' é recusado: até 22/10/2026 queria dizer
+ * o SPI lento, e hoje o padrão é o rápido.
  */
 static int analisar_modo_spi(const char *texto) {
+    if (strcmp(texto, "lenta") == 0 || strcmp(texto, "lento") == 0) {
+        return (int)MODO_SPI_LENTO;
+    }
     if (strcmp(texto, "padrao") == 0 || strcmp(texto, "padrão") == 0) {
-        return (int)MODO_SPI_PADRAO;
+        fprintf(stderr, "Erro: desde 22/10/2026 o SPI padrão é o rápido (sem --spi). Para o SPI de antes, use "
+                         "--spi lenta.\n");
+        return -1;
     }
     if (strcmp(texto, "rapido") == 0 || strcmp(texto, "rápido") == 0 || strcmp(texto, "rapido:b") == 0) {
         return (int)MODO_SPI_RAPIDO_B;
@@ -837,7 +845,7 @@ static int analisar_modo_spi(const char *texto) {
     if (strcmp(texto, "rapido:c") == 0) {
         return (int)MODO_SPI_RAPIDO_C;
     }
-    fprintf(stderr, "Erro: --spi espera 'padrao', 'rapido', 'rapido:a', 'rapido:b' ou 'rapido:c', recebeu '%s'.\n",
+    fprintf(stderr, "Erro: --spi espera 'rapido', 'lenta', 'rapido:a', 'rapido:b' ou 'rapido:c', recebeu '%s'.\n",
             texto);
     return -1;
 }
@@ -896,7 +904,7 @@ static void conferir_integridade(volatile struct shared_control *ctrl, struct co
     }
     if (agora.amostras_atrasadas > vistos->amostras_atrasadas) {
         fprintf(stderr, "Aviso: %u amostra(s) tomada(s) depois do instante previsto (até %u ciclos de 5 ns) -- a "
-                         "PRU não acompanhou a taxa pedida (o laço alcança ~327 kS/s com o SPI padrão e ~418 com o rápido, com os atrasos de CS "
+                         "PRU não acompanhou a taxa pedida (o período fica constante até ~419 kS/s com o SPI rápido e ~328 com o lento, com os atrasos de CS "
                          "padrão) ou foi segurada; o período entre essas amostras não é o do cabeçalho.\n",
                 agora.amostras_atrasadas - vistos->amostras_atrasadas, agora.atraso_maximo_ciclos);
     }
@@ -935,7 +943,7 @@ static void imprimir_grade(volatile struct shared_control *ctrl, const struct co
  * Contadas desde a 1ª amostra até 7 amostras depois da última troca de buffer (cobrem a captura inteira).
  */
 static void imprimir_spi(uint32_t modo, const struct contadores_integridade *c, unsigned long long amostras) {
-    if (modo == MODO_SPI_PADRAO) {
+    if (modo == MODO_SPI_LENTO) {
         return;
     }
     printf("SPI rápido (fase %c gravada): %u quadro(s) com a fase A (60 ns) diferente da B (75 ns) e %u com a C "
@@ -1401,7 +1409,7 @@ int main(int argc, char *argv[]) {
                ATRASO_CS_SETUP_PADRAO, ATRASO_CS_HOLD_PADRAO, ATRASO_CS_ALTO_PADRAO);
     }
 
-    uint32_t modo_spi = MODO_SPI_PADRAO;
+    uint32_t modo_spi = MODO_SPI_RAPIDO_B;   // o padrão desde 22/10/2026 (T7g: 0 divergências, mesmo ruído)
     if (spi_texto != NULL) {
         int modo = analisar_modo_spi(spi_texto);
         if (modo < 0) {
@@ -1409,7 +1417,10 @@ int main(int argc, char *argv[]) {
         }
         modo_spi = (uint32_t)modo;
     }
-    if (modo_spi != MODO_SPI_PADRAO) {
+    if (modo_spi == MODO_SPI_LENTO) {
+        printf("SPI lento (o de antes de 22/10/2026): bits de 16 a 20 ciclos, ~10,7 MHz; período constante até "
+               "~328 kS/s.\n");
+    } else {
         printf("SPI rápido: bits de 13 ciclos (~15,4 MHz), gravando a leitura da fase %c (%u ns depois da borda do "
                "SCLK que lança o bit); as fases A (60 ns) e C (90 ns) são comparadas com a B a cada quadro.\n",
                fase_do_modo_spi(modo_spi), modo_spi == MODO_SPI_RAPIDO_A ? 60u : (modo_spi == MODO_SPI_RAPIDO_C ? 90u : 75u));

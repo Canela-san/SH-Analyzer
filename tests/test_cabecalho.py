@@ -156,12 +156,12 @@ def test_v7_le_o_spi_rapido_e_as_divergencias(tmp_path, caplog):
     assert "SPI: rápido (~15,4 MHz), leitura da fase B (75 ns) gravada; 0 quadro(s) com a fase A diferente da B e 13 com a C" in texto
 
 
-def test_v7_no_spi_padrao_nao_fala_do_spi_e_v6_nao_tem_o_campo(tmp_path, caplog):
-    padrao = ler_cabecalho(escrever_bin(tmp_path / "p.bin", SINAL, fs_total=312_500, versao=7, spi=(0, 0, 0)))
-    assert padrao.modo_spi == 0 and not padrao.spi_rapido and padrao.descrever_spi() == "padrão (~10,7 MHz)"
+def test_v7_com_o_spi_lento_e_v6_sem_o_campo(tmp_path, caplog):
+    lento = ler_cabecalho(escrever_bin(tmp_path / "p.bin", SINAL, fs_total=312_500, versao=7, spi=(0, 0, 0)))
+    assert lento.modo_spi == 0 and not lento.spi_rapido and lento.descrever_spi().startswith("lento (~10,7 MHz")
     with caplog.at_level(logging.INFO):
-        imprimir_resumo_cabecalho(padrao)
-    assert "SPI:" not in "\n".join(r.getMessage() for r in caplog.records)
+        imprimir_resumo_cabecalho(lento)
+    assert "SPI: lento" in "\n".join(r.getMessage() for r in caplog.records)
     v6 = ler_cabecalho(escrever_bin(tmp_path / "v6.bin", SINAL, fs_total=312_500, versao=6))
     assert v6.modo_spi is None and v6.descrever_spi() is None and "modo_spi" not in v6.para_attrs_hdf5()
 
