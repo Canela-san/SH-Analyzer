@@ -6,18 +6,16 @@
   "calibracao_adc": {
     "formato": "uint16",
     "faixa_v": {
-      "referencia": 20.48,
       "sonda": 5.12
     },
     "ganho": {
       "referencia": 19.357,
       "sonda": 19.357
     },
-    "modo_referencia": "externa",
+    "modo_referencia": "ondas quadradas (sem referência; K do --ganho-baixa-frequencia)",
     "gerado_em": "2026-10-22T14:37:02.394311+00:00",
     "n_pontos": 49,
     "faixa_v_confiavel": {
-      "referencia": false,
       "sonda": true
     },
     "resposta_conjunto": {
@@ -422,6 +420,7 @@
     "metodo": "ondas quadradas: arg X_n − n·arg X_1 dos harmônicos ímpares, média coerente por blocos, capturas costuradas pela de f1 mais baixa e combinadas numa grade logarítmica (scripts/medir_fase.py)",
     "fase": "a menos de um atraso puro, supondo fase mínima (nenhum atraso puro na cadeia analógica); o erro da fase medida da fundamental de cada captura (o INL do ADC) sai por regressão",
     "ganho": "relativo ao ganho em baixa frequência, escalado por K = 0.99743",
+    "k_baixa_frequencia": 0.99743,
     "capturas": [
       {
         "arquivo": "F_cspadrao_312500_quadrada1280Hz10Vpp_30s.bin",

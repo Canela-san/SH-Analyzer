@@ -13,6 +13,7 @@
 | Para... | Use |
 |---|---|
 | **Escrever o relatório** | A [seção 6](#6-estrutura-sugerida-para-o-relatório-final) (capítulo a capítulo, com o que entra em cada um), a [seção 1.1](#11-ponte-com-o-relatório-parcial) (o que mudou desde o relatório parcial e o que ele afirmava que precisa ser corrigido) e a [seção 8](#8-números-para-citar) (os números, com a fonte de cada um) |
+| **Defender o método da fase por ondas quadradas** | A [seção 9](#9-defesa-do-método-a-cadeia-medida-por-ondas-quadradas): a dedução, as conferências e as perguntas prováveis |
 | **Montar a apresentação quinzenal** | A [seção 7](#7-apresentação-quinzenal-ao-orientador) (modelo de slides e registro por quinzena) e a tabela [Estado da campanha](lab-procedure.md#estado-da-campanha) do roteiro |
 | **Uma apresentação longa (1 hora)** | A [seção 5](#5-estrutura-sugerida-para-uma-apresentação-longa-1-hora) |
 | **Retomar o contexto** | A linha do tempo ([seção 2](#2-linha-do-tempo-cronológica)), uma vez, de ponta a ponta; a [seção 3](#3-síntese-por-marco-revisão-rápida-antes-da-apresentação) é a versão de uma linha por marco |
@@ -1167,7 +1168,8 @@ degrau que começa em ~500 Hz, é a de uma ponta 10× subcompensada. A mesma pon
 da quadrada vista na tela (a conferência está no roteiro). O limite da medida é o INL do ADC, e ele aparece onde não
 se esperava: ~1 LSB de erro na fase da fundamental entra em `arg Xₙ − n·arg X₁` multiplicado por n, e chega a 10° no
 harmônico 580 da quadrada de 256 Hz. A ferramenta o tira por captura. Perfil `cadeia_tensao_fase`, com a fase de cada
-ponto.
+ponto. Figuras `perfil_cadeia_tensao_fase` (o Bode) e `perfil_cadeia_tensao_referencia` (senoide menos quadrada
+contra a queda da referência); a defesa do método está na [seção 9](#9-defesa-do-método-a-cadeia-medida-por-ondas-quadradas).
 
 **Relevância:** a fase da função de transferência foi medida sem nenhum instrumento além do próprio sistema, e o
 mesmo método achou o erro do instrumento de referência da medida anterior. É o argumento para o relatório de que o
@@ -1179,8 +1181,9 @@ Em ordem de prioridade, a mesma da tabela [Estado da campanha](lab-procedure.md#
 
 1. **Conferir a ponta do osciloscópio e a origem do polo de 800 kHz (T3f, ~30 min):** a foto da ponta no PROBE
    COMP antes do ajuste, 6 senoides de 1 a 140 kHz com a ponta compensada e o Fluke até 50 kHz, e a subida da
-   quadrada do gerador ([roteiro](lab-procedure.md#passo-a-passo-da-próxima-ida-a-referência-do-t3-e-o-polo-de-800-khz-30-min)).
-   Decide entre o perfil por quadradas e os por senoides, e se o polo fica no perfil. A grade de tempo, o SPI
+   quadrada do gerador ([roteiro](lab-procedure.md#passo-a-passo-da-próxima-ida-a-referência-do-t3-o-polo-de-800-khz-e-a-faixa-de-produção-1-h)).
+   Decide entre o perfil por quadradas e os por senoides, e se o polo fica no perfil. E o `--fase` na faixa de
+   produção (±10,24 V, `--faixa 20.48`): o perfil foi medido em ±2,56 V. A grade de tempo, o SPI
    rápido e o limite de taxa foram medidos em 22/10 (Marco 16): a campanha `--limite` ficou superada.
 2. **Fotografar o CS no osciloscópio** (a anatomia do quadro, para o relatório).
 3. **Refazer na taxa padrão (400 kS/s)** o que depende da banda: T4 e T6, como manda a tabela [O que refazer com o firmware de out/2026](lab-procedure.md#o-que-refazer-com-o-firmware-de-out2026).
@@ -1235,6 +1238,8 @@ Os marcados "**dados já existem**" dá para gerar hoje, com as capturas de `$DA
 **Prioridade alta (resultados do relatório)**
 
 - [x] (Marco 12) Resposta em frequência da cadeia de tensão (T3), com o ajuste de 2ª ordem e os resíduos: `gerar_figuras.py perfil_cadeia_tensao`
+- [x] (Marco 16) O Bode da cadeia por ondas quadradas (T3f), magnitude e fase com o ajuste e os resíduos: `gerar_figuras.py perfil_cadeia_tensao_fase`
+- [x] (Marco 16) Senoide menos quadrada contra a queda da referência do osciloscópio: `gerar_figuras.py perfil_cadeia_tensao_referencia`
 - [ ] (Marco 14) Tabela de ruído por faixa contra o datasheet e a PSD do curto (T1) — **dados já existem**
 - [ ] (Marco 14) Escala do ADC nas três faixas (T0) e a reta do divisor com o resíduo em LSB (T2) — **dados já existem**
 - [ ] (Marco 13/14) Salto de fase a cada troca de buffer ao longo dos 10 min (T7c, antes da correção) — **dados já existem**; o "depois" exige refazer o T7c com o firmware novo
@@ -1407,3 +1412,117 @@ Os números do projeto num lugar só, com a condição e a fonte. Os valores med
 | Código da PRU | 1 878 instruções, 91,7 % da IMEM de 8 KB | `tests/pru_sim.py` | `project-context.md` |
 | Arquivamento sem perdas | 11,0 % do tamanho (407 MB → 44,9 MB); 7-Zip: 14,6 % | capturas até o T3 | Marco 10 |
 | Testes automáticos | ~760, ~1 min 20 s em paralelo, ~90 % de cobertura (a contagem exata do dia: `software-architecture.md`, seção 7) | sem hardware | Marco 10 |
+
+---
+
+## 9. Defesa do Método: a Cadeia Medida por Ondas Quadradas
+
+Como o T3f determinou o filtro da cadeia de tensão (magnitude **e** fase) sem osciloscópio e sem instrumento de
+referência. Os números estão no [T3f](bench-results.md#t3f-a-fase-da-cadeia-por-ondas-quadradas); o código, em
+`scripts/supraharmonicos/fase_quadrada.py`.
+
+### 9.1 A dedução
+
+1. **A quadrada traz a referência de tempo dentro dela.** Uma quadrada simétrica (duty de 50 %) de amplitude A,
+   que cruza o zero subindo no instante t₀, só tem harmônicos ímpares, todos presos ao mesmo t₀:
+   `x(t) = (4A/π) Σₙ ímpar (1/n) sen(n ω₁ (t − t₀))`.
+2. **A cadeia, linear e invariante, multiplica cada harmônico** por `H(jω) = |H| e^{jψ}`:
+   `y(t) = (4A/π) Σ (|H(nω₁)|/n) sen(n ω₁ (t − t₀) + ψ(nω₁))`.
+3. **A captura começa num instante qualquer.** O coeficiente complexo de cada harmônico, calculado na frequência
+   exata n·f₁ (CZT), é `Xₙ = (2A/π) (|H(nω₁)|/n) e^{j[ψ(nω₁) − n ω₁ t₀ − π/2]}`. O t₀ é desconhecido.
+4. **Cada harmônico contra a fundamental elimina t₀ e A:**
+   * `Rₙ = n |Xₙ| / |X₁| = |H(nω₁)| / |H(ω₁)|`;
+   * `Mₙ = arg Xₙ − n arg X₁ − (n − 1) π/2 = ψ(nω₁) − n ψ(ω₁)`.
+
+   O t₀ entra em arg Xₙ como −n ω₁ t₀ e em n·arg X₁ também como −n ω₁ t₀: some. O (n − 1) π/2 é conhecido (n é
+   ímpar: é um sinal ±).
+5. **Um atraso puro também some.** Se `ψ(ω) = −ωτ`, então `ψ(nω₁) − nψ(ω₁) = −nω₁τ + nω₁τ = 0`. O instante exato da
+   amostra, o tempo de conversão e os cabos não entram. Por isso a fase sai "a menos de um atraso puro", e por isso
+   nenhum gatilho nem segundo canal é necessário.
+6. **Cada captura dá a resposta em dezenas a centenas de frequências** (os harmônicos ímpares até 95 % da Nyquist),
+   relativa à fundamental. Faltam dois números por captura: |H(ω₁)| e ψ(ω₁).
+7. **A costura acha esses dois números sem o modelo.** As f₁ são múltiplos ímpares de 256 Hz (768 = 3 × 256,
+   1280 = 5 × 256, ..., 20736 = 81 × 256): todo harmônico de uma quadrada rápida é também harmônico da de 256 Hz,
+   que o mede. Para cada captura, ln|H(ω₁)| (um deslocamento) e ψ(ω₁) (o coeficiente de n) saem por mínimos
+   quadrados ponderados sobre todos os harmônicos em comum, não por um ponto só.
+8. **Só a captura de 256 Hz usa o modelo, e só onde ele não pode errar.** Um erro em |H(256 Hz)| é um fator
+   constante, que o K absorve. Um erro ε em ψ(256 Hz) vira n·ε = (f/256 Hz)·ε, uma reta: um atraso puro, que
+   a medida já não define. A curva, então, é a menos de K e de um atraso. O K (ganho em DC) vem do T2, com o Fluke.
+9. **Todos os harmônicos (1324 usados, de 24 capturas) entram numa grade logarítmica** de 20 faixas por década,
+   com a média ponderada por 1/σ² em cada faixa.
+
+### 9.2 As incertezas
+
+* **Ruído e deriva:** cada captura de 30 s é dividida em blocos de ~3 s; a média coerente dá a medida, e a
+  dispersão entre os blocos, a incerteza.
+* **O INL do ADC**, que é determinístico (o mesmo código dá o mesmo erro) e não cai com captura mais longa:
+  * as variantes (a mesma f₁ com outra amplitude ou outro offset) cruzam outros códigos, e a dispersão entre elas
+    vira um piso por harmônico (0,08 LSB);
+  * ~1 LSB de INL em quadratura com a fundamental erra arg X₁ em δ ≈ 0,01°, e δ entra em Mₙ multiplicado por n
+    (10° no harmônico 580). Ele é ajustado por captura: é o mesmo que tratar ψ(ω₁) como incógnita, o que ela
+    já é.
+* **O duty:** um duty ≠ 50 % faz aparecer harmônicos pares e muda a magnitude dos ímpares por cos(πnε). O ε é
+  estimado pelos pares e corrigido; a fase dos ímpares não muda (os pulsos continuam centrados).
+* **O aliasing:** os harmônicos acima da Nyquist dobram. As f₁ foram escolhidas para que as dobras não caiam em
+  cima dos ímpares, e o que cairia a menos de 60 dB de um harmônico usado é previsto e descartado.
+
+### 9.3 O ajuste e o teste de fase mínima
+
+`H(s) = K ω₀² / (s² + (ω₀/Q) s + ω₀²) · 1/(1 + s/ωₚ)`, ajustado de três jeitos: pela magnitude sozinha, pela fase
+sozinha e pelas duas. **Num sistema de fase mínima, a fase é determinada pela magnitude** (a relação de Bode: a
+fase é a transformada de Hilbert de ln|H|). Se a magnitude e a fase, medidas independentemente, dão os mesmos
+parâmetros, não há na cadeia nada além do modelo: nenhum zero no semiplano direito, nenhum passa-tudo. Resultado:
+f₀ de 22,808 e 22,817 kHz, Q de 0,5002 e 0,5000, polo de 820 ± 21 e 690 ± 93 kHz. É o mesmo filtro (a 2 e 3 σ).
+Sem o polo de 800 kHz, as duas discordavam a 6 σ, e o BIC prefere o polo por 630.
+
+**A interpretação:**
+
+* Q = 0,5001 é o amortecimento crítico: dois polos reais coincidentes, `H ≈ 1/(1 + s/ω₀)²`;
+* −3 dB em f₀·√(√2 − 1) = 0,644 f₀ = 14,68 kHz (o datasheet do ADS8688 diz ~15 kHz);
+* −0,10 dB em 2,5 kHz (o datasheet: planicidade de ±0,1 dB até 2,5 kHz);
+* o polo de 800 kHz tira 0,2 dB em 178 kHz.
+
+### 9.4 Por que confiar
+
+* **Coerência interna.** Sete f₁ diferentes medem as mesmas frequências como harmônicos de ordens diferentes. Tirar
+  qualquer uma delas muda a grade em ≤ 0,005 dB e ≤ 0,03° (*jackknife*). Um erro do método que dependesse de n
+  apareceria aí.
+* **Duas taxas e dois SPIs** (312,5 kS/s com o SPI lento, 400 kS/s com o rápido) dão 0,0005 dB e 0,004° de
+  diferença.
+* **A magnitude e a fase concordam** como um sistema de fase mínima (9.3).
+* **Capturas sintéticas** com H, atraso, 43 ppm entre os relógios, aliasing, ruído e INL conhecidos devolvem f₀, Q
+  e o polo (`tests/test_fase_quadrada.py`).
+* **As senoides confirmam, com a referência certa.** O T3 por senoides dividido pela quadrada é exatamente a queda
+  do RMS que o osciloscópio leu (correlação de 1,000). Tomando como referência a amplitude fixa do gerador, as
+  senoides reproduzem a quadrada a 0,017 dB rms de 300 Hz a 140 kHz (figura `perfil_cadeia_tensao_referencia`).
+
+### 9.5 Perguntas prováveis
+
+* **"Por que não senoides?"** A senoide precisa de uma referência de amplitude (um instrumento: aqui, o
+  osciloscópio errou 1,3 dB) e, para a fase, de uma referência de tempo, um segundo canal que tem a própria fase. E
+  é uma frequência por captura. A quadrada traz a referência de tempo nela e dá centenas de frequências por captura.
+* **"E se a quadrada do gerador não for perfeita?"**
+  * O duty é medido e corrigido.
+  * Uma borda lenta ou um *overshoot* lineares (iguais em toda borda) multiplicam todos os harmônicos como um
+    filtro, e entram em H. É a dúvida do polo de 800 kHz, que a subida da quadrada, medida no osciloscópio, separa.
+  * Uma borda limitada por *slew rate* dependeria da amplitude, e as variantes de 16 e 20 Vpp a descartam.
+  * Bordas de subida e descida diferentes quebram a simetria de meia onda e criam harmônicos pares, que a medida
+    vê.
+* **"Como a fase pode estar certa sem referência de tempo?"** Ela está certa a menos de um atraso puro, e o atraso
+  puro não é parte da forma do filtro. A curvatura da fase, que é o filtro, é medida e confere com a magnitude.
+* **"E a fase entre tensão e corrente?"** Ela precisa do atraso relativo entre os canais (o T6b) e do perfil do
+  canal de corrente. A mesma quadrada nos dois canais ao mesmo tempo mediria a razão das duas cadeias, com o atraso
+  relativo junto.
+* **"Por que a quadrada e não a senoide, quando discordam?"** A diferença tem a forma de um degrau: começa em
+  ~500 Hz e fica plana acima de 40 kHz. É a forma de uma ponta 10× descompensada (divisor resistivo em baixa
+  frequência, capacitivo em alta). Uma queda real no nó, por carga no gerador de 50 Ω, cresceria com a frequência,
+  não ficaria num patamar, e pediria dezenas de nF na entrada de um divisor de alta impedância. E o filtro da
+  quadrada bate com o datasheet; o da senoide (−3 dB em 16,8 kHz), não. A conferência da ponta (a foto no PROBE
+  COMP) fecha a questão.
+* **"O que não foi verificado?"**
+  * A faixa do ADC: o perfil é de ±2,56 V, e a produção usa ±10,24 V.
+  * A origem do polo de 800 kHz.
+  * A reprodutibilidade em outro dia.
+
+  Os três estão na próxima ida do [roteiro](lab-procedure.md#passo-a-passo-da-próxima-ida-a-referência-do-t3-o-polo-de-800-khz-e-a-faixa-de-produção-1-h).
+

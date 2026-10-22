@@ -372,6 +372,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         -o) saida=$2; shift ;; --atraso-cs) cs=$2; shift ;; --blocos) blocos=$2; shift ;;
         --duracao) duracao=$2; blocos=9; shift ;; --spi) spi=$2; shift ;; -d) descricao=$2; shift ;;
+        --faixa-adc) faixa=$2; shift ;;
     esac
     shift
 done
@@ -382,7 +383,7 @@ case "${spi:-}" in rapido*) quadro=467 ;; esac          # o SPI rápido (~428 kS
 maximo=$((200000000 / quadro))
 atrasadas=0; real=$taxa
 if [ "$taxa" -gt "$maximo" ]; then atrasadas=123; real=$maximo; fi
-echo "taxa=$taxa canais=$canais blocos=$blocos cs=$cs${duracao:+ duracao=$duracao}${spi:+ spi=$spi}${descricao:+ d=$descricao}" > "$saida"
+echo "taxa=$taxa canais=$canais blocos=$blocos cs=$cs faixa=$faixa${duracao:+ duracao=$duracao}${spi:+ spi=$spi}${descricao:+ d=$descricao}" > "$saida"
 if [ "$blocos" -ge 2 ]; then
     printf 'Taxa real medida pelo ARM: %d Hz (pedida %d Hz, %+.2f %%)\n' "$real" "$taxa" \
         "$(awk -v r="$real" -v t="$taxa" 'BEGIN { print 100 * (r / t - 1) }')"
@@ -448,7 +449,8 @@ def test_varrer_taxa_captura_o_plano_inteiro_e_resume(varredura):
     assert lento["amostras_atrasadas"] == "123" and int(lento["taxa_arm_hz"]) < 150000
     assert por_nome["B_cs3-1-3_250000_tom.bin"]["amostras_atrasadas"] == "0"
     dois = pasta / "D_cs20-10-10_250000_tom_2canais.bin"
-    assert dois.read_text().split() == ["taxa=250000", "canais=0,1", "blocos=3", "cs=20,10,10", "spi=lenta"]
+    assert dois.read_text().split() == ["taxa=250000", "canais=0,1", "blocos=3", "cs=20,10,10", "faixa=0:5.12,1:5.12",
+                                      "spi=lenta"]
     log = (pasta / "log.txt").read_text()
     assert "firmware v9.9" in log and "pausa" in log and "Integridade" in log
     assert "Pronto" in r.stdout and "trazer 'T7e_*'" in r.stdout
@@ -566,7 +568,8 @@ def test_varrer_taxa_limite_varre_os_ticks_um_a_um_e_usa_o_padrao_do_firmware(va
     assert acima and min(200_000_000 // int(linha["taxa_pedida_hz"]) for linha in acima) == 600
     assert max(200_000_000 // int(linha["taxa_pedida_hz"]) for linha in acima) == 608   # o quadro de 609 do falso
     longa = (pasta / "N_cspadrao_312500_tom_600s.bin").read_text().split()
-    assert longa == ["taxa=312500", "canais=1", "blocos=9", "cs=", "duracao=600s", "spi=lenta"]   # sem --atraso-cs
+    assert longa == ["taxa=312500", "canais=1", "blocos=9", "cs=", "faixa=1:5.12", "duracao=600s",
+                     "spi=lenta"]   # sem --atraso-cs
     assert "blocos=2" in (pasta / por_parte["L"][0]["arquivo"]).read_text()
     assert por_parte["Q"][0]["canais"] == "0,1" and {linha["entrada"] for linha in por_parte["R"]} == {"curto"}
 
@@ -653,6 +656,22 @@ def test_varrer_taxa_fase_pede_cada_quadrada_e_captura_nas_duas_taxas(varredura)
     assert "d=quadrada f=1280Hz" in padrao and "spi=lenta" in padrao
     assert "spi=rapido" in rapido and "duracao=30s" in rapido and "d=quadrada f=1280Hz10Vpp" in meia
     assert "medir_fase.py" in r.stdout
+
+
+def test_varrer_taxa_fase_na_faixa_de_producao_e_o_continuar_herda_a_faixa(varredura):
+    """--faixa 20.48: o T3f na faixa do canal de tensão em produção (±10,24 V). Uma varredura interrompida continua
+    na mesma faixa sem repetir a opção, e pedir outra é recusado."""
+    r, _ = varredura("--fase", "--faixa", "20.48", entrada="\n" * 3)
+    (pasta,) = varredura.pasta.glob("T3f_*")
+    feitas = sorted(pasta.glob("F_*.bin"))
+    assert feitas and all("faixa=1:20.48" in c.read_text() for c in feitas)
+    r, _ = varredura("--continuar", entrada="\n" * 12)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert len(_resumo(pasta)) == 24 and all("faixa=1:20.48" in c.read_text() for c in pasta.glob("F_*.bin"))
+    r, _ = varredura("--continuar", "--faixa", "5.12")
+    assert r.returncode == 1 and "feita com --faixa 20.48" in r.stderr
+    r, _ = varredura("--faixa", "3.3", "--simular")
+    assert r.returncode == 1 and "use 20.48" in r.stderr
 
 
 def test_varrer_taxa_fase_para_na_pausa_sem_terminal(varredura):

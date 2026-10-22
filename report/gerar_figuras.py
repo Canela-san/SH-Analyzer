@@ -48,6 +48,7 @@ import json
 import logging
 import math
 import os
+import re
 import shutil
 import sys
 from collections.abc import Callable
@@ -76,6 +77,7 @@ RAIZ = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RAIZ / "scripts"))
 
 from supraharmonicos.cabecalho import ler_cabecalho  # noqa: E402
+from supraharmonicos.fase_quadrada import fase_do_modelo, h_segunda_ordem  # noqa: E402
 from supraharmonicos.metricas_captura import (  # noqa: E402
     analisar_espectro,
     estimar_jitter,
@@ -155,6 +157,14 @@ TEXTOS = {
         "bits_prevista": "Prevista: quadro de {base} + bits 1 ciclos",
         "periodo_ciclos": "Período (ciclos de 5 ns)",
         "fracao_atrasadas": "Fração de amostras atrasadas",
+        "fase_graus": "Fase (°)",
+        "residuo_graus": "Resíduo (°)",
+        "medido_quadradas": "Medido: 24 ondas quadradas",
+        "ajuste_2a_polo": "Ajuste: 2ª ordem × polo real",
+        "senoide_menos_quadrada": "Senoide (osciloscópio) − quadrada",
+        "queda_referencia": "Queda da referência lida no osciloscópio",
+        "diferenca_ref_db": "Diferença (dB)",
+        "sobra_db": "Sobra (dB)",
     },
     "en": {
         "frequencia": "Frequency (Hz)",
@@ -185,6 +195,14 @@ TEXTOS = {
         "bits_prevista": "Predicted: {base} + one-bits cycle frame",
         "periodo_ciclos": "Period (5 ns cycles)",
         "fracao_atrasadas": "Fraction of late samples",
+        "fase_graus": "Phase (°)",
+        "residuo_graus": "Residual (°)",
+        "medido_quadradas": "Measured: 24 square waves",
+        "ajuste_2a_polo": "Fit: 2nd order × real pole",
+        "senoide_menos_quadrada": "Sine (oscilloscope) − square",
+        "queda_referencia": "Drop of the oscilloscope reference",
+        "diferenca_ref_db": "Difference (dB)",
+        "sobra_db": "Remainder (dB)",
     },
 }
 
@@ -440,6 +458,7 @@ def com_incerteza(valor: float, sigma: float, escala: float = 1.0) -> str:
 # =====================================================================================================
 PERFIL_CADEIA_TENSAO = SONDAS_DIR_PADRAO / "cadeia_tensao.json"            # T3 de 19/10: 100 kS/s, até 45 kHz
 PERFIL_CADEIA_TENSAO_312K = SONDAS_DIR_PADRAO / "cadeia_tensao_312k.json"  # T3 de 22/10: 312,5 kS/s, até 140 kHz
+PERFIL_CADEIA_TENSAO_FASE = SONDAS_DIR_PADRAO / "cadeia_tensao_fase.json"  # T3f de 22/10: ondas quadradas, com a fase
 
 
 def _cadeia_tensao(caminho: Path = PERFIL_CADEIA_TENSAO):
@@ -629,6 +648,217 @@ def perfil_cadeia_tensao_comparacao(estilo: Estilo) -> Resultado:
                    f"{PERFIL_CADEIA_TENSAO_312K.relative_to(RAIZ)} ({perfil.id}: 22/10, 312,5 kS/s, ±2,56 V)",
                    "Diferença: o perfil novo interpolado em log f, nas frequências do antigo (50 Hz a 45 kHz).",
                    "BIC do novo: " + "; ".join(f"{a.nome} {a.bic:.1f}" for a in ajustes.values())]
+    return Resultado(fig, macros, comentarios)
+
+
+def _cadeia_tensao_fase(caminho: Path = PERFIL_CADEIA_TENSAO_FASE):
+    """O perfil por ondas quadradas: (perfil, f, ganho/K, σ do ln, fase, σ da fase, K, modelo) só nos pontos da grade
+    medida (os que têm ``sigma_fase_rad``; abaixo de 256 Hz o perfil traz pontos do perfil base, sem fase medida)."""
+    perfil = carregar_perfil_sonda(caminho)
+    dados = json.loads(caminho.read_text(encoding="utf-8"))
+    pontos = sorted((p for p in dados["pontos"] if "sigma_fase_rad" in p), key=lambda p: p["freq_hz"])
+    f = np.array([p["freq_hz"] for p in pontos], dtype=float)
+    g = np.array([p["ganho"] for p in pontos], dtype=float)
+    s_ln = np.array([p["desvio_pct"] for p in pontos], dtype=float) / 100
+    fase = np.array([p["fase_rad"] for p in pontos], dtype=float)
+    s_fase = np.array([p["sigma_fase_rad"] for p in pontos], dtype=float)
+    modelo = dados["resposta_fase"]["segunda_ordem"]
+    f0, q, polo = modelo["f0_hz"], modelo["q"], modelo.get("polo_real_hz", math.inf)
+    # K (o ganho em baixa frequência, do T2) multiplica a grade, que é relativa: o medir_fase.py o escreve no perfil;
+    # sem ele, sai dos pontos abaixo de 2 kHz
+    achado = re.search(r"K = ([0-9.]+)", dados["resposta_fase"].get("ganho", ""))
+    if "k_baixa_frequencia" in dados["resposta_fase"]:
+        k = float(dados["resposta_fase"]["k_baixa_frequencia"])
+    elif achado:
+        k = float(achado.group(1))
+    else:
+        baixos = f < 2000
+        k = float(np.exp(np.average(np.log(g[baixos] / np.abs(h_segunda_ordem(f[baixos], f0, q, polo))),
+                                    weights=1 / s_ln[baixos] ** 2)))
+    return perfil, dados, f, g / k, s_ln, fase, s_fase, k, (f0, q, polo)
+
+
+def _freq_menos_3db_modelo(f0: float, q: float, polo: float) -> float:
+    from scipy.optimize import brentq
+
+    return float(brentq(lambda x: abs(h_segunda_ordem(x, f0, q, polo)) ** 2 - 0.5, f0 * 1e-3, f0 * 1e3))
+
+
+def _eixo_log_frequencia(eixo, estilo: Estilo, xmin: float, xmax: float) -> None:
+    eixo.set_xscale("log")
+    eixo.set_xlim(xmin, xmax)
+    eixo.xaxis.set_major_locator(LogLocator(base=10))
+    eixo.xaxis.set_minor_locator(LogLocator(base=10, subs=np.arange(2, 10)))
+    eixo.xaxis.set_major_formatter(LogFormatterMathtext())
+    eixo.set_xlabel(estilo.t("frequencia"))
+
+
+@figura("perfil_cadeia_tensao_fase", "T3f: magnitude e fase da cadeia de tensão por ondas quadradas (Bode, com o ajuste)")
+def perfil_cadeia_tensao_fase(estilo: Estilo) -> Resultado:
+    perfil, dados, f, g, s_ln, fase, s_fase, k, (f0, q, polo) = _cadeia_tensao_fase()
+    modelo = dados["resposta_fase"]["segunda_ordem"]
+    f3 = _freq_menos_3db_modelo(f0, q, polo)
+    capturas = dados["resposta_fase"]["capturas"]
+
+    fig = estilo.nova_figura(1.05)
+    mag, res_mag, ang, res_ang = fig.subplots(4, 1, sharex=True,
+                                              gridspec_kw={"height_ratios": [3, 1.15, 3, 1.15], "hspace": 0.05})
+    xmin, xmax = f.min() / 1.3, f.max() * 1.25
+    fm = np.geomspace(xmin, xmax, 600)
+    hm = h_segunda_ordem(fm, f0, q, polo)
+    estilo_pontos = dict(linestyle="none", marker="o", color=COR["tinta"], markeredgecolor="white",
+                         markeredgewidth=0.5, zorder=3)
+    estilo_barras = dict(fmt="o", color=COR["tinta"], ecolor=COR["tinta"], elinewidth=0.6, capsize=1.2,
+                         markeredgecolor="white", markeredgewidth=0.5, markersize=estilo.formato.marcador_pt * 0.8,
+                         zorder=3)
+
+    curva, = mag.plot(fm, DB_POR_NEPER * np.log(np.abs(hm)), color=COR["modelo"], linestyle=(0, (5, 3)), alpha=0.7,
+                      zorder=2, label=estilo.t("ajuste_2a_polo"))
+    medidos, = mag.plot(f, DB_POR_NEPER * np.log(g), label=estilo.t("medido_quadradas"), **estilo_pontos)
+    mag.plot([f3, f3], [-100, -3], color=COR["secundaria"], linewidth=0.5, linestyle=(0, (1, 1.5)), zorder=1)
+    mag.plot([f3], [-3], marker="o", markersize=estilo.formato.marcador_pt * 0.9, markerfacecolor="white",
+             markeredgecolor=COR["modelo"], markeredgewidth=0.8, linestyle="none", zorder=4)
+    mag.annotate(r"$f_{-3\,\mathrm{dB}}$ = " + estilo.qty(f3 / 1e3, 2, r"\kilo\hertz", "kHz"), xy=(f3, -3),
+                 xytext=(-6, -4), textcoords="offset points", ha="right", va="top", color=COR["secundaria"],
+                 fontsize=estilo.formato.fonte_ticks_pt)
+    mag.set_ylim(DB_POR_NEPER * np.log(g.min()) - 3, 2)
+    mag.yaxis.set_major_locator(MultipleLocator(10))
+    mag.yaxis.set_minor_locator(MultipleLocator(5))
+    mag.yaxis.set_major_formatter(estilo.formatador(0))
+    mag.set_ylabel(estilo.t("ganho_norm"))
+    mag.legend(handles=[medidos, curva], loc="lower left")
+
+    r_db = DB_POR_NEPER * (np.log(g) - np.log(np.abs(h_segunda_ordem(f, f0, q, polo))))
+    res_mag.axhline(0, color=COR["modelo"], linewidth=0.6, alpha=0.8, zorder=2)
+    res_mag.errorbar(f, r_db, yerr=DB_POR_NEPER * s_ln, **estilo_barras)
+    visiveis = f < 120e3          # acima disso a barra de incerteza cresce (harmônicos de poucos LSB) e esmagaria o resto
+    lim = max(0.01, 1.3 * float(np.max(np.abs(r_db[visiveis]) + DB_POR_NEPER * s_ln[visiveis])))
+    res_mag.set_ylim(-lim, lim)
+    res_mag.yaxis.set_major_locator(MaxNLocator(nbins=3, symmetric=True, steps=[1, 2, 2.5, 5, 10]))
+    res_mag.yaxis.set_major_formatter(estilo.formatador())
+    res_mag.set_ylabel(estilo.t("residuo"))
+
+    ang.plot(fm, np.degrees(fase_do_modelo(fm, f0, q, polo)), color=COR["modelo"], linestyle=(0, (5, 3)), alpha=0.7,
+             zorder=2)
+    ang.plot(f, np.degrees(fase), **estilo_pontos)
+    ang.set_ylim(-185, 5)
+    ang.yaxis.set_major_locator(MultipleLocator(45))
+    ang.yaxis.set_minor_locator(MultipleLocator(15))
+    ang.yaxis.set_major_formatter(estilo.formatador(0))
+    ang.set_ylabel(estilo.t("fase_graus"))
+
+    r_graus = np.degrees(fase - fase_do_modelo(f, f0, q, polo))
+    res_ang.axhline(0, color=COR["modelo"], linewidth=0.6, alpha=0.8, zorder=2)
+    res_ang.errorbar(f, r_graus, yerr=np.degrees(s_fase), **estilo_barras)
+    lim = max(0.05, 1.3 * float(np.max(np.abs(r_graus[visiveis]) + np.degrees(s_fase[visiveis]))))
+    res_ang.set_ylim(-lim, lim)
+    res_ang.yaxis.set_major_locator(MaxNLocator(nbins=3, symmetric=True, steps=[1, 2, 2.5, 5, 10]))
+    res_ang.yaxis.set_major_formatter(estilo.formatador())
+    res_ang.set_ylabel(estilo.t("residuo_graus"))
+    _eixo_log_frequencia(res_ang, estilo, xmin, xmax)
+    fig.align_ylabels([mag, res_mag, ang, res_ang])
+
+    log.info(f"  f0 = {f0:.1f} Hz, Q = {q:.5f}, polo = {polo / 1e3:.0f} kHz, f-3dB = {f3:.1f} Hz, K = {k:.5f}; "
+             f"{len(f)} faixas; resíduo da grade {np.sqrt(np.mean(r_db ** 2)):.4f} dB e "
+             f"{np.sqrt(np.mean(r_graus ** 2)):.3f}° rms")
+    macros = {
+        "CadeiaFaseNcapturas": str(len(capturas)),
+        "CadeiaFaseNfaixas": str(len(f)),
+        "CadeiaFaseFmin": rf"\qty{{{f.min():.0f}}}{{\hertz}}",
+        "CadeiaFaseFmax": rf"\qty{{{f.max() / 1e3:.1f}}}{{\kilo\hertz}}",
+        "CadeiaFaseFzero": rf"\qty{{{com_incerteza(f0, modelo['sigma_f0_hz'], 1e3)}}}{{\kilo\hertz}}",
+        "CadeiaFaseQ": rf"\num{{{com_incerteza(q, modelo['sigma_q'])}}}",
+        "CadeiaFaseFcorte": rf"\qty{{{f3 / 1e3:.2f}}}{{\kilo\hertz}}",
+        "CadeiaFaseK": rf"\num{{{k:.5f}}}",
+        "CadeiaFaseResiduoDb": rf"\qty{{{modelo['residuo_db']:.4f}}}{{\decibel}}",
+        "CadeiaFaseResiduoGraus": rf"\qty{{{modelo['residuo_graus']:.3f}}}{{\degree}}",
+        "CadeiaFaseSigmaDb": rf"\qty{{{DB_POR_NEPER * float(np.median(s_ln)):.4f}}}{{\decibel}}",
+        "CadeiaFaseSigmaGraus": rf"\qty{{{math.degrees(float(np.median(s_fase))):.3f}}}{{\degree}}",
+        "CadeiaFaseGanhoFmax": rf"\qty{{{DB_POR_NEPER * math.log(g[-1]):.1f}}}{{\decibel}}",
+        "CadeiaFaseFaseFmax": rf"\qty{{{math.degrees(fase[-1]):.1f}}}{{\degree}}",
+    }
+    if math.isfinite(polo):
+        macros["CadeiaFasePolo"] = rf"\qty{{{com_incerteza(polo, modelo['sigma_polo_real_hz'], 1e3)}}}{{\kilo\hertz}}"
+    comentarios = [
+        f"Perfil: {PERFIL_CADEIA_TENSAO_FASE.relative_to(RAIZ)} ({perfil.id}; {len(f)} faixas da grade medida, "
+        f"{len(capturas)} capturas)",
+        "Modelo: H(s) = K ω0² / (s² + (ω0/Q) s + ω0²) · 1/(1 + s/ωp), ajustado pelo medir_fase.py à magnitude e à "
+        "fase relativas dos harmônicos ímpares (arg Xn − n·arg X1)",
+        f"f0 = {f0:.2f} ± {modelo['sigma_f0_hz']:.2f} Hz; Q = {q:.5f} ± {modelo['sigma_q']:.5f}; polo = "
+        f"{polo:.0f} ± {modelo.get('sigma_polo_real_hz', math.nan):.0f} Hz; f-3dB = {f3:.1f} Hz; K = {k:.5f}",
+        "Fase: a menos de um atraso puro, supondo fase mínima (a magnitude e a fase dão o mesmo filtro).",
+    ]
+    return Resultado(fig, macros, comentarios)
+
+
+REFERENCIA_T3_312K = Path(os.environ.get("DADOS", Path.home() / "Documents" / "sh-analyzer-data")) / \
+    "lab/2026-10-22/capturas/cadeia_tensao_312k/referencia_externa.csv"
+
+
+@figura("perfil_cadeia_tensao_referencia", "T3 por senoides menos T3f por quadradas, contra a queda da referência do "
+        "osciloscópio")
+def perfil_cadeia_tensao_referencia(estilo: Estilo) -> Resultado:
+    """O perfil por senoides (referência: o RMS que o osciloscópio leu na entrada do divisor) dividido pelo por
+    quadradas (sem referência nenhuma) é a queda dessa referência: a varredura por senoides, com o gerador (de
+    amplitude constante) como referência, reproduz a quadrada."""
+    _exigir(REFERENCIA_T3_312K)
+    with open(REFERENCIA_T3_312K, encoding="utf-8") as arq:
+        ref = {linha["arquivo"]: float(linha["tensao_rms_V"]) for linha in csv.DictReader(arq)}
+    fr = np.array([float(nome.split("_")[1].removesuffix("Hz")) for nome in ref])
+    vr = np.array(list(ref.values()))
+    ordem = np.argsort(fr)
+    fr, vr = fr[ordem], vr[ordem]
+    _, fs, gs, _ = _cadeia_tensao(PERFIL_CADEIA_TENSAO_312K)
+    _, _, fq, gq, *_, k, _ = _cadeia_tensao_fase()
+    sel = (fs >= fq.min()) & (fs <= fq.max())
+    fs, gs = fs[sel], gs[sel]
+    dif = DB_POR_NEPER * (np.log(gs) - np.interp(np.log(fs), np.log(fq), np.log(k * gq)))
+    queda = -DB_POR_NEPER * np.log(np.interp(np.log(fs), np.log(fr), vr) / np.median(vr[fr < 300]))
+    sobra = dif - queda
+    rms_sobra = float(np.sqrt(np.mean(sobra ** 2)))
+    alto = fs > 40e3
+
+    fig = estilo.nova_figura(0.62)
+    eixo, eixo_sobra = fig.subplots(2, 1, sharex=True, gridspec_kw={"height_ratios": [3, 1.1], "hspace": 0.04})
+    xmin, xmax = fs.min() / 1.3, fs.max() * 1.3
+    linha_ref, = eixo.plot(fr[(fr >= fs.min() / 1.01) & (fr <= fs.max() * 1.01)],
+                           -DB_POR_NEPER * np.log(vr / np.median(vr[fr < 300]))[(fr >= fs.min() / 1.01)
+                                                                               & (fr <= fs.max() * 1.01)],
+                           color=COR["destaque"], marker="s", markerfacecolor="none", markeredgewidth=0.9,
+                           linewidth=0.8, zorder=2, label=estilo.t("queda_referencia"))
+    pontos, = eixo.plot(fs, dif, linestyle="none", marker="o", color=COR["tinta"], markeredgecolor="white",
+                        markeredgewidth=0.5, zorder=3, label=estilo.t("senoide_menos_quadrada"))
+    eixo.axhline(0, color=COR["secundaria"], linewidth=0.5, zorder=1)
+    eixo.set_ylim(-0.15, max(1.5, 1.1 * float(dif.max())))
+    eixo.yaxis.set_major_locator(MultipleLocator(0.5))
+    eixo.yaxis.set_major_formatter(estilo.formatador(1))
+    eixo.set_ylabel(estilo.t("diferenca_ref_db"))
+    eixo.legend(handles=[pontos, linha_ref], loc="upper left")
+
+    eixo_sobra.axhline(0, color=COR["modelo"], linewidth=0.6, alpha=0.8, zorder=2)
+    eixo_sobra.plot(fs, sobra, linestyle="none", marker="o", color=COR["tinta"], markeredgecolor="white",
+                    markeredgewidth=0.5, markersize=estilo.formato.marcador_pt * 0.8, zorder=3)
+    lim = max(0.05, 1.3 * float(np.max(np.abs(sobra))))
+    eixo_sobra.set_ylim(-lim, lim)
+    eixo_sobra.yaxis.set_major_locator(MaxNLocator(nbins=3, symmetric=True, steps=[1, 2, 2.5, 5, 10]))
+    eixo_sobra.yaxis.set_major_formatter(estilo.formatador())
+    eixo_sobra.set_ylabel(estilo.t("sobra_db"))
+    _eixo_log_frequencia(eixo_sobra, estilo, xmin, xmax)
+    fig.align_ylabels([eixo, eixo_sobra])
+
+    log.info(f"  senoide − quadrada acima de 40 kHz: {dif[alto].mean():+.3f} dB; queda da referência "
+             f"{queda[alto].mean():+.3f} dB; sobra {rms_sobra:.4f} dB rms (correlação {np.corrcoef(dif, queda)[0, 1]:.4f})")
+    macros = {
+        "CadeiaRefDifAlta": rf"\qty{{{dif[alto].mean():.2f}}}{{\decibel}}",
+        "CadeiaRefQuedaAlta": rf"\qty{{{queda[alto].mean():.2f}}}{{\decibel}}",
+        "CadeiaRefQuedaPct": rf"\qty{{{100 * (1 - vr[-1] / np.median(vr[fr < 300])):.0f}}}{{\percent}}",
+        "CadeiaRefSobraRms": rf"\qty{{{rms_sobra:.3f}}}{{\decibel}}",
+        "CadeiaRefCorrelacao": rf"\num{{{np.corrcoef(dif, queda)[0, 1]:.3f}}}",
+    }
+    comentarios = [f"Senoides: {PERFIL_CADEIA_TENSAO_312K.relative_to(RAIZ)} e a referência digitada em cada ponto "
+                   f"({REFERENCIA_T3_312K.name}); quadradas: {PERFIL_CADEIA_TENSAO_FASE.relative_to(RAIZ)} (× K)",
+                   "Sobra = (senoide − quadrada) − queda da referência: a senoide com o gerador como referência menos a "
+                   "quadrada."]
     return Resultado(fig, macros, comentarios)
 
 

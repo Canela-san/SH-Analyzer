@@ -38,7 +38,7 @@ As figuras de bancada precisam das capturas em `$DADOS`. Sem elas, o script avis
 | [T7a–c](#t7a-a-t7c-integridade-e-estabilidade) | Integridade, estabilidade em 10 min e o salto antigo nas trocas de buffer | 19/10/2026 | anterior a out/2026 | — | ✅ (firmware antigo) |
 | [T6](#t6-vários-canais) | Diafonia e atraso entre canais | 19/10 e 22/10/2026 | antigo e `v0.7-1` | — | 🟡 |
 | [T4](#t4-taxa-de-amostragem-real) | Taxa gerada × pedida | 19/10/2026 | anterior a out/2026 | — | 🟡 (falta o contador) |
-| [T3f](#t3f-a-fase-da-cadeia-por-ondas-quadradas) | Magnitude e fase da cadeia de tensão até 180 kHz por ondas quadradas, sem instrumento de referência | 22/10/2026 | `v0.7-4-gb4ea1ad` | `bode.png` do `medir_fase.py` | ✅ (falta conferir a ponta do osciloscópio) |
+| [T3f](#t3f-a-fase-da-cadeia-por-ondas-quadradas) | Magnitude e fase da cadeia de tensão até 180 kHz por ondas quadradas, sem instrumento de referência | 22/10/2026 | `v0.7-4-gb4ea1ad` | `perfil_cadeia_tensao_fase`, `perfil_cadeia_tensao_referencia` | ✅ (falta conferir a ponta do osciloscópio) |
 | [T3](#t3-resposta-em-frequência-da-cadeia-de-tensão) | Resposta em frequência da cadeia de tensão até 140 kHz | 19/10 e 22/10/2026 | antigo e `v0.7-1` | `perfil_cadeia_tensao`, `perfil_cadeia_tensao_comparacao` | ✅ (acima de ~1 kHz, sob suspeita: veja o T3f) |
 | [T2](#t2-tensão-contínua) | Razão do divisor e linearidade em DC | 19/10/2026 | anterior a out/2026 | — | ✅ |
 | [T1](#t1-piso-de-ruído) | Ruído e offset com a entrada em curto | 19/10 e 22/10/2026 | antigo e `v0.7-1` | — | ✅ |
@@ -266,7 +266,7 @@ capacitivo" (veja abaixo).
   de 0,2 µs, que a medida não separa de um atraso puro; o que ela vê é a curvatura.
 * **O polo de 800 kHz é da cadeia ou do gerador.** A quadrada mede os dois juntos. Na cadeia, ele cabe na
   resistência de saída do divisor (dezenas de kΩ) contra a capacitância da entrada do ADC e da fiação (alguns pF).
-  No gerador, seria uma borda de ~0,45 µs (10–90 %). A [próxima ida](lab-procedure.md#passo-a-passo-da-próxima-ida-a-referência-do-t3-e-o-polo-de-800-khz-30-min)
+  No gerador, seria uma borda de ~0,45 µs (10–90 %). A [próxima ida](lab-procedure.md#passo-a-passo-da-próxima-ida-a-referência-do-t3-o-polo-de-800-khz-e-a-faixa-de-produção-1-h)
   separa os dois (etapa 3).
 * **A fase confirma o modelo.** A magnitude sozinha e a fase sozinha dão o mesmo f0, Q e polo. A cadeia é de fase
   mínima, e a fase do perfil pode vir da medida ou do modelo. Sem o polo, as duas discordam a 6 σ.
@@ -296,10 +296,51 @@ capacitivo" (veja abaixo).
   vai de 50 Hz a 178,5 kHz e serve às duas taxas (abaixo de 256 Hz, os pontos do `cadeia_tensao_312k`). A conferência da ponta, na próxima ida, decide de vez entre ele e o
   `cadeia_tensao_312k`.
 
-**Figura:** o `bode.png` da pasta (o Bode medido, a grade e os resíduos contra o modelo).
+**A confiabilidade do perfil, para usá-lo na correção.** O que foi conferido:
+
+| Conferência | Resultado |
+|---|---|
+| Refazer a grade sem cada frequência de quadrada, uma por vez (*jackknife*; as duas taxas e as variantes juntas) | Muda ≤ 0,005 dB e ≤ 0,03°. O erro-padrão empírico é de 0,0008 dB e 0,004° (mediana), 2 a 25 vezes menor que a σ declarada: ela é conservadora |
+| O mesmo, sem cada captura | ≤ 0,002 dB e ≤ 0,026° |
+| A interpolação do perfil (PCHIP em dB × log f, 20 pontos por década), aplicada ao próprio modelo | ≤ 0,001 dB entre os pontos |
+| As senoides do T3 de 22/10 com o **gerador** como referência (amplitude fixa), em vez do osciloscópio | Reproduzem a quadrada a **0,017 dB rms** de 300 Hz a 140 kHz. A diferença das senoides com o osciloscópio para a quadrada é a queda da leitura dele (correlação de 1,000) |
+| A borda da quadrada limitada por *slew rate* (que dependeria da amplitude) | Descartada: as variantes de 16 e 20 Vpp diferem ≤ 0,02 dB no harmônico mais alto, contra 0,05 a 0,09 dB se fosse |
+| 312,5 contra 400 kS/s (SPIs diferentes) | 0,0005 dB e 0,004° |
+
+O orçamento de incerteza da magnitude, em dB:
+
+| Fonte | 1 kHz | 10 kHz | 50 kHz | 100 kHz | 150 kHz | 178 kHz |
+|---|---|---|---|---|---|---|
+| A grade (ruído e INL, a σ declarada) | 0,001 | 0,001 | 0,004 | 0,011 | 0,026 | 0,049 |
+| A interpolação | < 0,001 | < 0,001 | < 0,001 | < 0,001 | < 0,001 | < 0,001 |
+| K (0,05 %, o T2 e o T0) | 0,005 | 0,005 | 0,005 | 0,005 | 0,005 | 0,005 |
+| O polo de 800 kHz, **se** for do gerador (o perfil ficaria baixo) | 0 | 0,001 | 0,017 | 0,067 | 0,150 | 0,210 |
+| A faixa do ADC (medido em ±2,56 V; a produção é ±10,24 V) | não medida | | | | | |
+| A reprodutibilidade (outro dia, outra temperatura) | não medida | | | | | |
+
+* **Até ~50 kHz, o perfil é bom a ~0,01 dB.** Acima de 100 kHz, o que pesa é o polo de 800 kHz (≤ 0,21 dB em
+  178 kHz). A senoide com o gerador como referência fica até 0,03 dB acima da quadrada em 120 kHz; se o polo
+  fosse todo do gerador, seriam 0,10 dB. Isso sugere que a maior parte dele é da cadeia, mas a planicidade do
+  gerador (tipicamente ±0,1 dB) não deixa fechar a questão.
+* **A faixa do ADC não foi testada.** O PGA do ADS8688 tem outro ganho em cada faixa, e a banda dele pode mudar com
+  isso: o polo de 800 kHz pode até ser ele. As senoides de 19/10 (±10,24 V) e de 22/10 (±2,56 V) concordam a
+  0,13 dB rms até 45 kHz, o que não basta. O `./varrer_taxa.sh --fase --faixa 20.48` mede isso, e se o polo mudar
+  com a faixa, ele é do ADC.
+* **Em 178 kHz, a correção multiplica o sinal por 63** (−36 dB): o ruído do ADC é multiplicado junto, e é ele, não o
+  perfil, que limita a medida ali.
+* **A fase é a menos de um atraso puro.** A correção de magnitude não precisa dela. A fase entre tensão e corrente
+  (potência por componente) precisa também do atraso entre os canais e do perfil do canal de corrente.
+
+**Figuras:** `perfil_cadeia_tensao_fase` (o Bode do perfil: a grade com ±1σ, o ajuste e os resíduos; macros
+`\CadeiaFaseFzero`, `\CadeiaFaseQ`, `\CadeiaFasePolo`, `\CadeiaFaseFcorte`, `\CadeiaFaseResiduoDb`,
+`\CadeiaFaseResiduoGraus`, `\CadeiaFaseSigmaDb`, `\CadeiaFaseSigmaGraus`, `\CadeiaFaseK`, ...) e
+`perfil_cadeia_tensao_referencia` (senoide menos quadrada contra a queda da referência do osciloscópio; macros
+`\CadeiaRefDifAlta`, `\CadeiaRefQuedaAlta`, `\CadeiaRefQuedaPct`, `\CadeiaRefSobraRms`, `\CadeiaRefCorrelacao`; pede
+`$DADOS`). O `bode.png` da pasta é o diagnóstico do `medir_fase.py` (os harmônicos de cada captura).
 
 ```fish
 uv run scripts/medir_fase.py $DADOS/lab/2026-10-22/T3f_*/F_*.bin --csv fase.csv --plot bode.png --perfil-base scripts/sondas/cadeia_tensao_312k.json --saida-perfil scripts/sondas/cadeia_tensao_fase.json --ganho-baixa-frequencia 0.99743
+uv run report/gerar_figuras.py perfil_cadeia_tensao_fase perfil_cadeia_tensao_referencia --png
 ```
 
 ## T3: resposta em frequência da cadeia de tensão

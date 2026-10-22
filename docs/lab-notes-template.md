@@ -1,6 +1,6 @@
 # Anotações da bancada: AAAA-MM-DD
 
-Modelo do caderno de uma ida ao laboratório (o [passo a passo](lab-procedure.md#passo-a-passo-da-próxima-ida-a-referência-do-t3-e-o-polo-de-800-khz-30-min)
+Modelo do caderno de uma ida ao laboratório (o [passo a passo](lab-procedure.md#passo-a-passo-da-próxima-ida-a-referência-do-t3-o-polo-de-800-khz-e-a-faixa-de-produção-1-h)
 manda copiá-lo para `$DIA/anotacoes.md`). Preencha durante a sessão: o que não está nas capturas nem no
 `terminal_bbb.txt` só existe aqui. Escreva a hora de cada coisa que der errado.
 

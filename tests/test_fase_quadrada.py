@@ -181,6 +181,8 @@ def test_medir_fase_ajusta_grava_csv_grafico_e_perfil_com_fase(cli, capturas, tm
     assert (tmp_path / "bode.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
     perfil = json.loads(saida.read_text(encoding="utf-8"))
     assert perfil["id"] == "cadeia_fase" and perfil["resposta_fase"]["segunda_ordem"]["f0_hz"] == pytest.approx(F0, rel=2e-3)
+    assert perfil["calibracao_adc"]["faixa_v"] == {"sonda": 20.48}        # a das capturas, não a do perfil base
+    assert perfil["resposta_fase"]["k_baixa_frequencia"] == pytest.approx(0.998, abs=1e-3)
     medidos = [p for p in perfil["pontos"] if "sigma_fase_rad" in p]
     assert len(medidos) > 20 and all("fase_rad" in p for p in perfil["pontos"])     # a grade: 20 faixas por década
     assert perfil["faixa_freq_valida_hz"][0] < 100 and perfil["faixa_freq_valida_hz"][1] > 170e3   # base + quadradas
@@ -213,6 +215,15 @@ def test_ajuste_com_polo_o_recupera_e_sem_polo_na_cadeia_nao_o_inventa():
     sem = [medir(f1=f1, seed=s) for f1, s in ((1280.0, 1), (6400.0, 2))]
     aj = fq.ajustar_segunda_ordem(sem, com_polo=True)
     assert aj.polo_hz > 2e6 and fq.ajustar_segunda_ordem(sem).bic - aj.bic < 10      # não se paga
+
+
+def test_medir_fase_recusa_misturar_faixas_do_adc(cli, capturas, tmp_path):
+    x = quadrada_pela_cadeia(312_500.0, 1280.0, 0.3, seed=5)
+    outra = tmp_path / "F_faixa_5.bin"
+    outra.write_bytes(montar_cabecalho(len(x), (1,), (0,), ("",), 312_500, versao=7, descricao="quadrada f=1280Hz",
+                                       codigos_faixa_adc=(2,), spi=(0, 0, 0)) + x.tobytes())     # ±2,56 V
+    rc, _, err = cli(main, capturas[0], outra)
+    assert rc == 2 and "faixas diferentes" in err
 
 
 def test_medir_fase_saida_de_perfil_pede_o_perfil_base(cli, capturas, tmp_path):

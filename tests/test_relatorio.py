@@ -160,3 +160,32 @@ def test_grade_bits_recupera_a_duracao_do_quadro_de_uma_varredura_sintetica(gf, 
     assert r"\GradeBitsBase}{605}" in macros
     for nome in ("GradeBitsRazaoMin", "GradeBitsRazaoMax"):
         assert float(macros.split(rf"\{nome}}}{{\num{{")[1].split("}")[0]) == pytest.approx(1.0, abs=0.02)
+
+
+def test_bode_da_cadeia_por_quadradas_sai_do_perfil_com_fase(gf, tmp_path):
+    """O Bode do T3f vem só do perfil (scripts/sondas/cadeia_tensao_fase.json), sem as capturas: os pontos da grade,
+    o 2ª ordem com o polo real e os números para o texto."""
+    assert gf.main(["perfil_cadeia_tensao_fase", "--sem-latex", "--saida", str(tmp_path)]) == 0
+    assert (tmp_path / "perfil_cadeia_tensao_fase.pdf").read_bytes()[:4] == b"%PDF"
+    macros = (tmp_path / "perfil_cadeia_tensao_fase.tex").read_text(encoding="utf-8")
+    assert r"\CadeiaFaseFzero}{\qty{22.81" in macros and r"\CadeiaFaseFcorte}{\qty{14.6" in macros
+    assert r"\CadeiaFasePolo}" in macros and r"\CadeiaFaseK}{\num{0.99743}" in macros
+
+
+def test_queda_da_referencia_explica_senoide_menos_quadrada(gf, tmp_path, monkeypatch):
+    """Uma referência digitada que caísse exatamente o que a senoide sobe acima da quadrada deixa sobra zero; sem o
+    arquivo da referência (fora do repositório), a figura é pulada."""
+    _, fs, gs, _ = gf._cadeia_tensao(gf.PERFIL_CADEIA_TENSAO_312K)
+    _, _, fq, gq, *_, k, _ = gf._cadeia_tensao_fase()
+    dentro = (fs >= fq.min()) & (fs <= fq.max())
+    dif = np.where(dentro, 20 * (np.log10(gs) - np.interp(np.log(fs), np.log(fq), np.log10(k * gq))), 0.0)
+    linhas = ["arquivo,tensao_rms_V"] + [f"calibracao_{round(f)}Hz_rep1.bin,{7.0 * 10 ** (-d / 20):.6f}"
+                                         for f, d in zip(fs, dif)]
+    arquivo = tmp_path / "referencia_externa.csv"
+    arquivo.write_text("\n".join(linhas) + "\n", encoding="utf-8")
+    monkeypatch.setattr(gf, "REFERENCIA_T3_312K", arquivo)
+    assert gf.main(["perfil_cadeia_tensao_referencia", "--sem-latex", "--saida", str(tmp_path)]) == 0
+    macros = (tmp_path / "perfil_cadeia_tensao_referencia.tex").read_text(encoding="utf-8")
+    assert float(macros.split(r"\CadeiaRefSobraRms}{\qty{")[1].split("}")[0]) < 0.005
+    monkeypatch.setattr(gf, "REFERENCIA_T3_312K", tmp_path / "nada.csv")
+    assert gf.main(["perfil_cadeia_tensao_referencia", "--sem-latex", "--saida", str(tmp_path / "x")]) == 1

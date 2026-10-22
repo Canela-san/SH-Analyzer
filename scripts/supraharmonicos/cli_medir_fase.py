@@ -113,8 +113,8 @@ def _analisar_modelo(texto: str) -> tuple[float, float]:
     return f0, q
 
 
-def ler_quadrada(caminho: Path, args: argparse.Namespace) -> tuple[np.ndarray, float, float | None, str]:
-    """(sinal do canal em LSB, fs do canal, f₁ de dica, descrição curta)."""
+def ler_quadrada(caminho: Path, args: argparse.Namespace) -> tuple[np.ndarray, float, float | None, str, float | None]:
+    """(sinal do canal em LSB, fs do canal, f₁ de dica, descrição curta, faixa total do ADC no canal em V)."""
     cab = ler_cabecalho(caminho)
     if cab is None or not cab.crc32_valido:
         raise ErroSHAN(f"'{caminho.name}' sem cabeçalho válido: a taxa e o canal vêm dele.")
@@ -136,7 +136,9 @@ def ler_quadrada(caminho: Path, args: argparse.Namespace) -> tuple[np.ndarray, f
         m = _RE_F1_NA_DESCRICAO.search(cab.descricao or "")
         dica = float(m.group(1)) if m else None
     rotulo = f"{fs / 1e3:g} kS/s" + (" (SPI rápido)" if cab.spi_rapido else "")
-    return np.asarray(sinal[inicio:fim], dtype=np.float64), fs, dica, rotulo
+    faixas = cab.faixa_adc_total_v_por_canal or ()
+    faixa = float(faixas[canais.index(canal)]) if len(faixas) > canais.index(canal) else None
+    return np.asarray(sinal[inicio:fim], dtype=np.float64), fs, dica, rotulo, faixa
 
 
 def _medir_todas(entradas, f0: float, q: float, polo: float, args: argparse.Namespace) -> list[RespostaQuadrada]:
@@ -325,7 +327,8 @@ def _gravar_csv(caminho_csv: Path, caminhos: list[Path], medidas: list[RespostaQ
 
 
 def montar_perfil_com_fase(base: dict, combinada: RespostaCombinada, medidas: list[RespostaQuadrada],
-                           caminhos: list[Path], ajuste: AjusteFase, k_baixa: float, ident: str) -> dict:
+                           caminhos: list[Path], ajuste: AjusteFase, k_baixa: float, ident: str,
+                           faixa_v: float | None = None) -> dict:
     """Perfil de sonda no formato de sempre (``pontos`` com ``freq_hz``/``ganho``), um ponto por faixa da grade
     combinada (a média ponderada de todas as capturas), cada um com ``fase_rad`` e ``sigma_fase_rad``, e o bloco
     ``resposta_fase``. A magnitude é a da grade (K = 1) vezes K, o ganho em baixa frequência, que a quadrada não mede;
@@ -350,6 +353,11 @@ def montar_perfil_com_fase(base: dict, combinada: RespostaCombinada, medidas: li
         for f, g, fase, s_ln, s_fase in pontos]
     perfil["faixa_freq_valida_hz"] = [pontos[0][0], pontos[-1][0]]
     adc = dict(perfil.get("calibracao_adc", {}))
+    # a faixa e a referência são as destas capturas, não as do perfil base (o ganho e o formato, sim, são os dele)
+    adc["modo_referencia"] = "ondas quadradas (sem referência; K do --ganho-baixa-frequencia)"
+    if faixa_v is not None:
+        adc["faixa_v"] = {"sonda": faixa_v}
+        adc["faixa_v_confiavel"] = {"sonda": True}
     adc["gerado_em"] = datetime.now(timezone.utc).isoformat()
     adc["n_pontos"] = len(pontos)
     resumo = resumir_resposta([PontoPerfil(f, g, 1, 0.0) for f, g, *_ in pontos])
@@ -367,6 +375,7 @@ def montar_perfil_com_fase(base: dict, combinada: RespostaCombinada, medidas: li
         "fase": "a menos de um atraso puro, supondo fase mínima (nenhum atraso puro na cadeia analógica); o erro da fase "
                 "medida da fundamental de cada captura (o INL do ADC) sai por regressão",
         "ganho": f"relativo ao ganho em baixa frequência, escalado por K = {k_baixa:g}",
+        "k_baixa_frequencia": k_baixa,
         "capturas": [{"arquivo": c.name, "fs_hz": round(r.fs_hz, 3), "f1_hz": round(r.f1_hz, 6),
                       "duty_desvio": round(r.duty_desvio, 7), "blocos": r.blocos,
                       "harmonicos_usados": int(r.usado.sum()), "amplitude_fundamental_lsb": round(float(r.amplitude[0]), 1)}
@@ -388,12 +397,16 @@ def main(argv: list[str] | None = None) -> int:
         f0, q = _analisar_modelo(args.modelo_inicial)
         if args.saida_perfil is not None and args.perfil_base is None:
             raise ErroUso("--saida-perfil precisa de --perfil-base (a calibração do ADC e o --ganho vêm dele).")
-        entradas, caminhos, rotulos = [], [], []
+        entradas, caminhos, rotulos, faixas = [], [], [], set()
         for caminho in args.arquivos:
-            sinal, fs, dica, rotulo = ler_quadrada(caminho, args)
+            sinal, fs, dica, rotulo, faixa = ler_quadrada(caminho, args)
             entradas.append((sinal, fs, dica, rotulo))
             caminhos.append(caminho)
             rotulos.append(rotulo)
+            faixas.add(faixa)
+        if len(faixas) > 1:
+            raise ErroUso(f"as capturas são de faixas diferentes do ADC ({', '.join(f'{f:g} V' for f in sorted(faixas))}): "
+                          "a resposta do ADS8688 pode depender da faixa; analise cada faixa separadamente.")
         # 1ª passada com o modelo de partida; a 2ª, com o ajustado (desenrolar a fase, prever o aliasing e o duty)
         medidas = _medir_todas(entradas, f0, q, math.inf, args)
         conjunto = ajustar_segunda_ordem(medidas, f0_inicial=f0, q_inicial=q)
@@ -439,7 +452,7 @@ def main(argv: list[str] | None = None) -> int:
                 log.info(f"K (ganho em baixa frequência) = {k:.5f}: a mediana de {len(baixos)} ponto(s) do perfil base "
                          "abaixo de 1 kHz.")
             ident = args.id or args.saida_perfil.stem
-            perfil = montar_perfil_com_fase(base, combinada, medidas, caminhos, melhor, k, ident)
+            perfil = montar_perfil_com_fase(base, combinada, medidas, caminhos, melhor, k, ident, next(iter(faixas)))
             gravar_perfil_validado(perfil, args.saida_perfil, len(perfil["pontos"]))
     except ErroUso as e:
         parser.error(str(e))

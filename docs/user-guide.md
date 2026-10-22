@@ -568,7 +568,9 @@ quadradas de 256, 768, 1280, 2304, 6400, 6912 e 20736 Hz (20 Vpp, High-Z, no can
 * 1280 Hz em 10 Vpp;
 * 6912 e 20736 Hz em 16 Vpp com offset de +2 V e de −2 V.
 
-Cada uma é capturada a 312,5 kS/s e a 400 kS/s (SPI rápido).
+Cada uma é capturada a 312,5 kS/s e a 400 kS/s (SPI rápido). A faixa do ADC é ±2,56 V; `--faixa 20.48` mede na
+faixa de produção do canal de tensão (±10,24 V). O `medir_fase.py` recusa misturar faixas: a resposta do ADS8688
+pode depender dela.
 
 **No computador:**
 

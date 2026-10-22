@@ -72,6 +72,8 @@
 #   ./varrer_taxa.sh --grade      # a grade de tempo (= --partes GHKJ), numa pasta T7f_<data>_<hora>/
 #   ./varrer_taxa.sh --spi        # o SPI rápido (= --partes PSTU), numa pasta T7g_<data>_<hora>/
 #   ./varrer_taxa.sh --fase       # a fase da cadeia por ondas quadradas (= --partes F), numa pasta T3f_<data>_<hora>/
+#   ./varrer_taxa.sh --fase --faixa 20.48   # a mesma, na faixa de produção do canal de tensão (±10,24 V; o padrão
+#                                 # de todas as partes é ±2,56 V = 5.12). O --continuar herda a faixa da varredura
 #   ./varrer_taxa.sh --continuar  # retoma a última varredura (ou --continuar T7e_...): pula o que já foi feito
 #                                 # (as partes são as da varredura retomada, lidas do log.txt dela)
 #
@@ -141,6 +143,7 @@ PARTES=ABDC
 PARTES_PEDIDAS=0
 SIMULAR=0
 CONTINUAR=''
+FAIXA_PEDIDA=''
 while [ $# -gt 0 ]; do
     case "$1" in
         --simular) SIMULAR=1 ;;
@@ -153,6 +156,11 @@ while [ $# -gt 0 ]; do
             if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then CONTINUAR=${2%/}; shift; else CONTINUAR=ultima; fi ;;
         --partes) [ $# -ge 2 ] || { echo "Erro: --partes precisa de letras (ex.: AB)." >&2; exit 1; }
                   PARTES=$2; PARTES_PEDIDAS=1; shift ;;
+        --faixa) [ $# -ge 2 ] || { echo "Erro: --faixa precisa da faixa total (20.48, 10.24 ou 5.12)." >&2; exit 1; }
+                 case "$2" in 20.48|10.24|5.12) FAIXA_PEDIDA=$2 ;;
+                     *) echo "Erro: --faixa '$2': use 20.48 (±10,24 V), 10.24 (±5,12 V) ou 5.12 (±2,56 V)." >&2; exit 1 ;;
+                 esac
+                 shift ;;
         -h|--help) sed -n '/^# PARA QUE/,/^# ====/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
         *) echo "Erro: opção desconhecida: '$1' (veja --help)." >&2; exit 1 ;;
     esac
@@ -175,6 +183,19 @@ if [ -n "$CONTINUAR" ]; then
         anteriores=$(sed -n 's/^== partes \([A-Z]*\),.*/\1/p' "$CONTINUAR/log.txt" | head -n 1)
         PARTES=${anteriores:-$PARTES}
     fi
+    # a faixa é a da varredura: misturar faixas numa pasta estragaria a comparação entre as capturas
+    if [ -f "$CONTINUAR/log.txt" ]; then
+        faixa_anterior=$(sed -n 's/^== partes .*faixa: --faixa-adc 1:\([0-9.]*\).*/\1/p' "$CONTINUAR/log.txt" | head -n 1)
+        if [ -n "$faixa_anterior" ] && [ -n "$FAIXA_PEDIDA" ] && [ "$faixa_anterior" != "$FAIXA_PEDIDA" ]; then
+            echo "Erro: $CONTINUAR foi feita com --faixa $faixa_anterior, não $FAIXA_PEDIDA." >&2
+            exit 1
+        fi
+        FAIXA_PEDIDA=${FAIXA_PEDIDA:-$faixa_anterior}
+    fi
+fi
+if [ -n "$FAIXA_PEDIDA" ]; then
+    FAIXA="--faixa-adc 1:$FAIXA_PEDIDA"
+    FAIXA_2CANAIS="--faixa-adc 0:$FAIXA_PEDIDA,1:$FAIXA_PEDIDA"
 fi
 
 # Uma captura por linha: parte|esperas|taxa|canais|entrada|duração em s (vazia = blocos)|modo do SPI (vazio = lenta)
