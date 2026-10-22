@@ -612,3 +612,86 @@ def test_varrer_taxa_grade_recusa_o_firmware_sem_a_espera_de_precisao(varredura)
                        env=varredura.env, capture_output=True, text=True, timeout=120)
     assert r.returncode == 1 and "não tem a grade exata" in r.stderr
     assert not list(varredura.pasta.glob("T7f_*"))
+
+
+
+# ---------------------------------------------------------------------------
+# scripts/sessao_lab.sh: o alias 'lab' (fish e bash)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def sessao(tmp_path):
+    """Um repositório de mentira com o sessao_lab.sh, o modelo do caderno e uma ferramenta da placa que só ecoa."""
+    raiz = tmp_path / "repo"
+    (raiz / "scripts").mkdir(parents=True)
+    (raiz / "docs").mkdir()
+    shutil.copy2(RAIZ / "scripts" / "sessao_lab.sh", raiz / "scripts" / "sessao_lab.sh")
+    (raiz / "docs" / "lab-notes-template.md").write_text("# Anotações da bancada: AAAA-MM-DD\n")
+    _executavel(raiz / "scripts" / "BeagleBone_Setup.sh", '#!/bin/bash\necho "placa: $* | DIA=$DIA"\n')
+    env = {k: v for k, v in os.environ.items() if k not in ("DIA", "DADOS", "SH_ANALYZER")}
+    env.update({"DADOS": str(tmp_path / "dados"), "BBB_IP": "192.0.2.1", "XDG_CONFIG_HOME": str(tmp_path / "cfg"),
+                "NO_COLOR": "1"})
+    script = raiz / "scripts" / "sessao_lab.sh"
+    alias = f"eval \"$({script} --variaveis)\" && {script}"
+
+    def bash(comando: str, **extra):
+        return subprocess.run(["bash", "-c", f"shopt -s expand_aliases\nalias lab='{alias}'\n{comando}"],
+                              env={**env, **extra}, capture_output=True, text=True, timeout=60)
+
+    bash.raiz, bash.alias, bash.env, bash.dados = raiz, alias, env, tmp_path / "dados"
+    return bash
+
+
+def test_sessao_lab_define_as_variaveis_cria_o_dia_e_mostra_o_estado(sessao):
+    import datetime
+    hoje = datetime.date.today().isoformat()
+    r = sessao('lab; echo "DIA=$DIA"; echo "SH=$SH_ANALYZER"; pwd')
+    assert r.returncode == 0, r.stdout + r.stderr
+    dia = sessao.dados / "lab" / hoje
+    assert f"DIA={dia}" in r.stdout and f"SH={sessao.raiz}" in r.stdout and r.stdout.strip().endswith(str(sessao.raiz))
+    assert (dia / "fotos").is_dir()
+    assert (dia / "anotacoes.md").read_text() == f"# Anotações da bancada: {hoje}\n"   # o título com a data
+    assert "(nova)" in r.stderr and "criado do modelo" in r.stderr
+    assert "192.0.2.1 não responde" in r.stdout and "lab preparar" in r.stdout and "não é um repositório git" in r.stdout
+    (dia / "anotacoes.md").write_text("o que já foi anotado\n")
+    r = sessao("lab")                                                         # de novo: não apaga nada
+    assert "já existia" in r.stderr and (dia / "anotacoes.md").read_text() == "o que já foi anotado\n"
+
+
+def test_sessao_lab_passa_os_argumentos_para_a_placa_sem_expandir_curingas(sessao):
+    r = sessao("lab trazer 'T7*'")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "placa: trazer T7* | DIA=" in r.stdout and "Próximo" not in r.stdout
+
+
+@pytest.mark.skipif(shutil.which("fish") is None, reason="sem o fish")
+def test_sessao_lab_no_fish(sessao):
+    r = subprocess.run(["fish", "--no-config", "-c", f"alias lab='{sessao.alias}'; lab trazer 'T7*'; echo \"DIA=$DIA\"; pwd"],
+                       env=sessao.env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "placa: trazer T7* | DIA=" in r.stdout and f"DIA={sessao.dados}/lab/" in r.stdout
+    assert r.stdout.strip().endswith(str(sessao.raiz))
+
+
+def test_sessao_lab_continua_a_sessao_que_passou_da_meia_noite(sessao):
+    ontem = sessao.dados / "lab" / "2026-10-21"
+    (ontem / "T7f_2026-10-21_2330").mkdir(parents=True)
+    captura = ontem / "T7f_2026-10-21_2330" / "G.bin"
+    captura.write_bytes(b"x")
+    r = sessao('lab > /dev/null; echo "DIA=$DIA"', DIA=str(ontem))          # mexida agora: a mesma sessão
+    assert f"DIA={ontem}" in r.stdout and "sessão em andamento" in r.stderr
+    antigo = 1_000_000_000
+    for caminho in (captura, captura.parent, ontem / "anotacoes.md", ontem / "fotos", ontem):
+        os.utime(caminho, (antigo, antigo))
+    r = sessao('lab > /dev/null; echo "DIA=$DIA"', DIA=str(ontem))          # parada há muito: o dia de hoje
+    assert f"DIA={ontem}" not in r.stdout
+
+
+def test_sessao_lab_para_se_nao_consegue_criar_o_dia(sessao, tmp_path):
+    bloqueio = tmp_path / "arquivo"
+    bloqueio.write_text("não é pasta")
+    r = sessao('lab; echo "depois: $?"', DADOS=str(bloqueio))
+    assert "não consegui criar" in r.stderr and "depois: 1" in r.stdout and "Próximo" not in r.stdout
+    direto = subprocess.run([str(sessao.raiz / "scripts" / "sessao_lab.sh")], env=sessao.env,
+                            capture_output=True, text=True, timeout=30)
+    assert direto.returncode == 1 and "rode pelo alias" in direto.stderr

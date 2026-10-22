@@ -58,6 +58,10 @@ scripts/BeagleBone_Setup.sh preparar                            # relógio, firm
 script -a $DIA/terminal_bbb.txt -c "scripts/BeagleBone_Setup.sh ssh"   # o terminal da placa, gravado inteiro
 ```
 
+Atalho: com o alias `lab` (a linha está no topo de [`scripts/sessao_lab.sh`](../scripts/sessao_lab.sh)), as duas
+primeiras linhas viram `lab` (que também mostra o estado do código, da placa, do disco e do notebook), a terceira,
+`lab preparar`, e a última, `lab ssh`. No fim, `lab trazer 'T7*'`.
+
 No terminal da placa, a captura de conferência:
 
 ```bash
