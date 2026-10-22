@@ -38,7 +38,8 @@ As figuras de bancada precisam das capturas em `$DADOS`. Sem elas, o script avis
 | [T7a–c](#t7a-a-t7c-integridade-e-estabilidade) | Integridade, estabilidade em 10 min e o salto antigo nas trocas de buffer | 19/10/2026 | anterior a out/2026 | — | ✅ (firmware antigo) |
 | [T6](#t6-vários-canais) | Diafonia e atraso entre canais | 19/10 e 22/10/2026 | antigo e `v0.7-1` | — | 🟡 |
 | [T4](#t4-taxa-de-amostragem-real) | Taxa gerada × pedida | 19/10/2026 | anterior a out/2026 | — | 🟡 (falta o contador) |
-| [T3](#t3-resposta-em-frequência-da-cadeia-de-tensão) | Resposta em frequência da cadeia de tensão até 140 kHz | 19/10 e 22/10/2026 | antigo e `v0.7-1` | `perfil_cadeia_tensao`, `perfil_cadeia_tensao_comparacao` | ✅ |
+| [T3f](#t3f-a-fase-da-cadeia-por-ondas-quadradas) | Magnitude e fase da cadeia de tensão até 180 kHz por ondas quadradas, sem instrumento de referência | 22/10/2026 | `v0.7-4-gb4ea1ad` | `bode.png` do `medir_fase.py` | ✅ (falta conferir a ponta do osciloscópio) |
+| [T3](#t3-resposta-em-frequência-da-cadeia-de-tensão) | Resposta em frequência da cadeia de tensão até 140 kHz | 19/10 e 22/10/2026 | antigo e `v0.7-1` | `perfil_cadeia_tensao`, `perfil_cadeia_tensao_comparacao` | ✅ (acima de ~1 kHz, sob suspeita: veja o T3f) |
 | [T2](#t2-tensão-contínua) | Razão do divisor e linearidade em DC | 19/10/2026 | anterior a out/2026 | — | ✅ |
 | [T1](#t1-piso-de-ruído) | Ruído e offset com a entrada em curto | 19/10 e 22/10/2026 | antigo e `v0.7-1` | — | ✅ |
 | [T0](#t0-escala-do-adc) | Escala do ADC nas três faixas | 19/10/2026 | anterior a out/2026 | — | ✅ |
@@ -236,6 +237,71 @@ sem a leitura do contador do osciloscópio.
 * **Erro comum de −43,2 ppm** = o do cristal da BeagleBone somado ao do gerador. Separar os dois pede o contador de
   frequência do osciloscópio.
 
+## T3f: a fase da cadeia por ondas quadradas
+
+**22/10/2026** · firmware `v0.7-4-gb4ea1ad` · `./varrer_taxa.sh --fase`: 24 capturas de 30 s no canal 1, faixa de
+±2,56 V. São 7 quadradas (256, 768, 1280, 2304, 6400, 6912 e 20736 Hz; 20 Vpp, High-Z) e as variantes (1280 Hz em
+10 Vpp; 6912 e 20736 Hz em 16 Vpp com offset de +2 e −2 V), cada uma a 312,5 kS/s (SPI lento) e a 400 kS/s (SPI
+rápido). Nas 24, 0 amostras atrasadas e 0 divergências de leitura; folga de 25 e de 18 ciclos ·
+`$DADOS/lab/2026-10-22/T3f_2026-10-22_1134/` (`medir_fase.log`, `fase.csv`, `fase_grade.csv`, `bode.png`) · perfil
+`scripts/sondas/cadeia_tensao_fase.json`, com K = 0,99743 (o T2, 0,99795 em DC na faixa de ±10,24 V, levado à de
+±2,56 V pela razão do T0, 0,9992/0,9997). No osciloscópio, a quadrada do gerador parecia ter um "caráter
+capacitivo" (veja abaixo).
+
+| Grandeza | Resultado |
+|---|---|
+| Modelo | 2ª ordem com **f0 = 22,811 kHz (± 2 Hz) e Q = 0,5001**, vezes um polo real em **800 ± 16 kHz** |
+| −3 dB | **14,68 kHz** (o datasheet do ADS8688: ~15 kHz) |
+| Resíduo do ajuste | **0,0105 dB e 0,136° rms** por harmônico (2672 resíduos de 24 capturas, χ²red 0,12) |
+| Teste de fase mínima | Só a magnitude: f0 = 22,808 kHz, Q = 0,5002, polo em 820 ± 21 kHz. Só a fase: 22,817 kHz, 0,5000, 690 ± 93 kHz. O mesmo filtro (a 2,1 e 2,8 σ) |
+| Sem o polo | Resíduo de 0,079 dB, e a magnitude e a fase a 6 σ uma da outra. O BIC prefere o polo por 630 |
+| Grade combinada | 42 faixas de 256 Hz a 178,5 kHz; incerteza mediana **0,0017 dB e 0,012°**; χ² entre as capturas ≤ 0,01 (as incertezas são conservadoras: o piso vem da pior variante) |
+| 312,5 × 400 kS/s | **0,0005 dB e 0,004° rms** em 38 faixas: a taxa e o SPI não mudam a medida |
+| Erro de fase da fundamental | 0,005° a 0,016° por captura: ~1 LSB em quadratura com a fundamental (o INL). Igual nas duas taxas; muda com a amplitude e o offset |
+| Piso por harmônico (variantes) | 0,08 LSB (1280 Hz, 10 contra 20 Vpp: a de 10 Vpp se afasta até 0,05 dB e 0,7° acima de 100 kHz, com o dobro do erro relativo do INL); 0,01 a 0,03 LSB nas outras |
+| Senoide (T3 de 22/10) menos quadrada | 0 abaixo de 500 Hz; +0,5 dB em 6,5 kHz; +0,9 dB em 20 kHz; **+1,2 a +1,3 dB de 40 a 140 kHz** |
+
+* **A cadeia são três polos reais.** Q = 0,5001 é o amortecimento crítico: os dois polos do filtro do ADS8688
+  coincidem em 22,81 kHz. O terceiro, em 800 kHz, tira 0,2 dB e 12° a 170 kHz. Desses 12°, quase tudo é um atraso
+  de 0,2 µs, que a medida não separa de um atraso puro; o que ela vê é a curvatura.
+* **O polo de 800 kHz é da cadeia ou do gerador.** A quadrada mede os dois juntos. Na cadeia, ele cabe na
+  resistência de saída do divisor (dezenas de kΩ) contra a capacitância da entrada do ADC e da fiação (alguns pF).
+  No gerador, seria uma borda de ~0,45 µs (10–90 %). A [próxima ida](lab-procedure.md#passo-a-passo-da-próxima-ida-a-referência-do-t3-e-o-polo-de-800-khz-30-min)
+  separa os dois (etapa 3).
+* **A fase confirma o modelo.** A magnitude sozinha e a fase sozinha dão o mesmo f0, Q e polo. A cadeia é de fase
+  mínima, e a fase do perfil pode vir da medida ou do modelo. Sem o polo, as duas discordam a 6 σ.
+* **A senoide e a quadrada discordam, e a diferença tem a forma de uma ponta descompensada.** A diferença é um
+  degrau: começa em ~500 Hz e chega a +1,2 a +1,3 dB acima de ~40 kHz. É a queda da referência que o osciloscópio leu
+  no T3 de 22/10 (7,06 → 6,10 V rms, −1,27 dB). Uma ponta 10× subcompensada faz exatamente isso: divide pelos
+  resistores em baixa frequência e pelos capacitores em alta, com a transição na casa dos kHz, e mostra uma quadrada
+  com os cantos arredondados (o "caráter capacitivo"). A quadrada não usa referência nenhuma. Se a conferência
+  confirmar, os perfis por senoides (`cadeia_tensao` e `cadeia_tensao_312k`) ficam altos a partir de ~1 kHz
+  (0,1 dB em 1,4 kHz, 0,4 dB em 5 kHz, 1,2 dB acima de 40 kHz), e o 2ª ordem deles (f0 = 24,2 kHz, Q = 0,53, −3 dB
+  em 16,8 kHz) herda o erro.
+* **O limite é o INL do ADC, e ele aparece na fundamental.** O erro de ~1 LSB na fase medida da fundamental entra
+  em `arg Xₙ − n·arg X₁` multiplicado por n: na quadrada de 256 Hz, 10° no harmônico 580. Ele é tirado por
+  captura, no ajuste e na costura. Tirado, o χ² da fase de cada captura cai de até 19 para 0,01 a 0,12. O que sobra
+  por harmônico é o piso das variantes.
+* **A variante de 1280 Hz em 10 Vpp é a que mais se afasta e fica no perfil.** Ela chega a 0,05 dB e 1° acima de
+  100 kHz, mas a de 1280 Hz em 20 Vpp não se afasta. O desvio é o mesmo nas duas taxas (correlação de 0,995;
+  diferença de 0,03° contra um desvio de 0,5°): não é ruído, nem a taxa, nem o SPI. A fase muda sem a magnitude
+  correspondente, então não é um filtro (outra faixa de saída do gerador mudaria as duas juntas). É o INL: um erro
+  de ~0,03 a 0,1 LSB por harmônico, que pesa o dobro com metade da amplitude.
+  * **Sem ela, o perfil não muda:** ≤ 0,0016 dB na magnitude e, na fase, só um atraso puro de 5,6 ns (o polo do
+    ajuste vai de 800 para 778 kHz, e a convenção de fase mínima o acompanha).
+  * **O que mudaria é a incerteza:** o piso cairia de 0,080 para 0,032 LSB. Mas ela é a única variante que mede o
+    erro dos harmônicos abaixo de 1 LSB das quadradas lentas. Sem ela, a fase sozinha e a magnitude sozinha passam a
+    discordar no polo (657 ± 36 contra 783 kHz), sinal de que 0,032 LSB é otimista.
+* **Para a produção**, o perfil de magnitude e fase é o `cadeia_tensao_fase` (`--sonda 1:cadeia_tensao_fase`), que
+  vai de 50 Hz a 178,5 kHz e serve às duas taxas (abaixo de 256 Hz, os pontos do `cadeia_tensao_312k`). A conferência da ponta, na próxima ida, decide de vez entre ele e o
+  `cadeia_tensao_312k`.
+
+**Figura:** o `bode.png` da pasta (o Bode medido, a grade e os resíduos contra o modelo).
+
+```fish
+uv run scripts/medir_fase.py $DADOS/lab/2026-10-22/T3f_*/F_*.bin --csv fase.csv --plot bode.png --perfil-base scripts/sondas/cadeia_tensao_312k.json --saida-perfil scripts/sondas/cadeia_tensao_fase.json --ganho-baixa-frequencia 0.99743
+```
+
 ## T3: resposta em frequência da cadeia de tensão
 
 **19/10/2026** · firmware antigo · 48 pontos de 50 Hz a 45 kHz, 100 kS/s, `--ref-externa` (RMS na entrada do divisor
@@ -269,11 +335,13 @@ pelo osciloscópio), sem repetições · perfil `scripts/sondas/cadeia_tensao.js
   com taxa (100 e 312,5 kS/s), faixa do ADC (±10,24 e ±2,56 V) e firmware diferentes. A dispersão em baixa
   frequência caiu à metade com a faixa de ±2,56 V (4 vezes mais resolução no mesmo sinal).
 * **O 2ª ordem vale até 140 kHz** (o filtro interno do ADS8688): os 3 parâmetros descrevem 3,5 décadas a 0,1 dB.
-* **Para a produção a 312,5 kS/s, use `--sonda 1:cadeia_tensao_312k`**: o de 19/10 para em 45 kHz e mantém o ganho
+* **Para a produção a 312,5 kS/s, era o `cadeia_tensao_312k`** (desde o T3f, o `cadeia_tensao_fase`): o de 19/10 para em 45 kHz e mantém o ganho
   constante acima disso (a correção estaria errada por até 30 dB em 140 kHz).
 * **A referência caiu 14 % de 50 Hz a 140 kHz** (7,06 → 6,10 V rms, lida a cada ponto). O perfil vale se a leitura é a
-  tensão real na entrada da cadeia; se a queda é do instrumento, o perfil herda o erro dele. Anote o instrumento na
-  próxima rodada (o caderno de 22/10 ficou em branco) e confira 2 ou 3 pontos altos no osciloscópio.
+  tensão real na entrada da cadeia; se a queda é do instrumento, o perfil herda o erro dele. O instrumento era o
+  osciloscópio, em High Res. **O [T3f](#t3f-a-fase-da-cadeia-por-ondas-quadradas), sem referência nenhuma, dá a
+  cadeia 1,2 a 1,3 dB abaixo deste perfil acima de ~40 kHz: a queda da referência, com a forma de uma ponta
+  descompensada.** A conferência está na próxima ida.
 * Falta `--repeticoes 3`, para a incerteza de cada ponto.
 
 **Figura:** `perfil_cadeia_tensao_comparacao` (os dois perfis e a diferença; macros `\CadeiaTensaoNovaFzero`,

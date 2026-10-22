@@ -1,0 +1,655 @@
+{
+  "id": "cadeia_tensao_fase",
+  "tipo": "resposta_frequencia",
+  "data_calibracao": "2026-10-22",
+  "calibrado_com": "cadeia completa SH-Analyzer (sonda + isolador + ADS8688)",
+  "calibracao_adc": {
+    "formato": "uint16",
+    "faixa_v": {
+      "referencia": 20.48,
+      "sonda": 5.12
+    },
+    "ganho": {
+      "referencia": 19.357,
+      "sonda": 19.357
+    },
+    "modo_referencia": "externa",
+    "gerado_em": "2026-10-22T14:37:02.394311+00:00",
+    "n_pontos": 49,
+    "faixa_v_confiavel": {
+      "referencia": false,
+      "sonda": true
+    },
+    "resposta_conjunto": {
+      "ganho_baixa_frequencia": 0.997471,
+      "freq_menos3db_hz": 14630.4,
+      "inclinacao_db_por_oitava": -11.98,
+      "ganho_na_maior_frequencia_db": -36.1
+    }
+  },
+  "pontos": [
+    {
+      "freq_hz": 49.997,
+      "ganho": 0.997471,
+      "n": 1,
+      "desvio_pct": 0.0,
+      "fase_rad": -0.004445
+    },
+    {
+      "freq_hz": 64.998,
+      "ganho": 0.997521,
+      "n": 1,
+      "desvio_pct": 0.0,
+      "fase_rad": -0.0057786
+    },
+    {
+      "freq_hz": 82.996,
+      "ganho": 1.004556,
+      "n": 1,
+      "desvio_pct": 0.0,
+      "fase_rad": -0.0073787
+    },
+    {
+      "freq_hz": 107.996,
+      "ganho": 0.991694,
+      "n": 1,
+      "desvio_pct": 0.0,
+      "fase_rad": -0.0096013
+    },
+    {
+      "freq_hz": 138.995,
+      "ganho": 0.993621,
+      "n": 1,
+      "desvio_pct": 0.0,
+      "fase_rad": -0.0123572
+    },
+    {
+      "freq_hz": 179.992,
+      "ganho": 1.00316,
+      "n": 1,
+      "desvio_pct": 0.0,
+      "fase_rad": -0.0160019
+    },
+    {
+      "freq_hz": 231.99,
+      "ganho": 1.004426,
+      "n": 1,
+      "desvio_pct": 0.0,
+      "fase_rad": -0.0206244
+    },
+    {
+      "freq_hz": 255.9889,
+      "ganho": 0.9973045,
+      "n": 1,
+      "desvio_pct": 0.02005,
+      "fase_rad": -0.0227578,
+      "sigma_fase_rad": 0.0002003
+    },
+    {
+      "freq_hz": 767.9668,
+      "ganho": 0.9962926,
+      "n": 1,
+      "desvio_pct": 0.01488,
+      "fase_rad": -0.0681859,
+      "sigma_fase_rad": 0.0001431
+    },
+    {
+      "freq_hz": 1279.9447,
+      "ganho": 0.9944005,
+      "n": 1,
+      "desvio_pct": 0.01513,
+      "fase_rad": -0.1135177,
+      "sigma_fase_rad": 0.0001458
+    },
+    {
+      "freq_hz": 1791.9226,
+      "ganho": 0.9914959,
+      "n": 1,
+      "desvio_pct": 0.01551,
+      "fase_rad": -0.1588251,
+      "sigma_fase_rad": 0.0001499
+    },
+    {
+      "freq_hz": 2303.9005,
+      "ganho": 0.9876004,
+      "n": 1,
+      "desvio_pct": 0.01178,
+      "fase_rad": -0.2039922,
+      "sigma_fase_rad": 0.0001061
+    },
+    {
+      "freq_hz": 2815.8784,
+      "ganho": 0.9827496,
+      "n": 1,
+      "desvio_pct": 0.01661,
+      "fase_rad": -0.2489794,
+      "sigma_fase_rad": 0.0001617
+    },
+    {
+      "freq_hz": 3327.8562,
+      "ganho": 0.9769643,
+      "n": 1,
+      "desvio_pct": 0.01733,
+      "fase_rad": -0.2937299,
+      "sigma_fase_rad": 0.0001693
+    },
+    {
+      "freq_hz": 3839.8343,
+      "ganho": 0.9702361,
+      "n": 1,
+      "desvio_pct": 0.00978,
+      "fase_rad": -0.3381364,
+      "sigma_fase_rad": 8.13e-05
+    },
+    {
+      "freq_hz": 4351.812,
+      "ganho": 0.9627537,
+      "n": 1,
+      "desvio_pct": 0.01907,
+      "fase_rad": -0.382354,
+      "sigma_fase_rad": 0.0001876
+    },
+    {
+      "freq_hz": 4863.7899,
+      "ganho": 0.9544064,
+      "n": 1,
+      "desvio_pct": 0.02007,
+      "fase_rad": -0.4261462,
+      "sigma_fase_rad": 0.0001981
+    },
+    {
+      "freq_hz": 5375.7678,
+      "ganho": 0.9452936,
+      "n": 1,
+      "desvio_pct": 0.01371,
+      "fase_rad": -0.4695467,
+      "sigma_fase_rad": 0.0001281
+    },
+    {
+      "freq_hz": 5887.7456,
+      "ganho": 0.9354632,
+      "n": 1,
+      "desvio_pct": 0.02237,
+      "fase_rad": -0.5125192,
+      "sigma_fase_rad": 0.0002221
+    },
+    {
+      "freq_hz": 6648.0731,
+      "ganho": 0.9196466,
+      "n": 1,
+      "desvio_pct": 0.0093,
+      "fase_rad": -0.5754194,
+      "sigma_fase_rad": 8.41e-05
+    },
+    {
+      "freq_hz": 7423.6793,
+      "ganho": 0.902183,
+      "n": 1,
+      "desvio_pct": 0.02648,
+      "fase_rad": -0.6385557,
+      "sigma_fase_rad": 0.0002645
+    },
+    {
+      "freq_hz": 8318.5292,
+      "ganho": 0.880597,
+      "n": 1,
+      "desvio_pct": 0.014,
+      "fase_rad": -0.7097944,
+      "sigma_fase_rad": 0.0001391
+    },
+    {
+      "freq_hz": 9040.7877,
+      "ganho": 0.8622826,
+      "n": 1,
+      "desvio_pct": 0.01329,
+      "fase_rad": -0.7659422,
+      "sigma_fase_rad": 0.0001342
+    },
+    {
+      "freq_hz": 10078.1082,
+      "ganho": 0.8346966,
+      "n": 1,
+      "desvio_pct": 0.01587,
+      "fase_rad": -0.8446779,
+      "sigma_fase_rad": 0.0001619
+    },
+    {
+      "freq_hz": 11508.6032,
+      "ganho": 0.7952172,
+      "n": 1,
+      "desvio_pct": 0.01086,
+      "fase_rad": -0.9489008,
+      "sigma_fase_rad": 0.0001182
+    },
+    {
+      "freq_hz": 13036.1045,
+      "ganho": 0.7519184,
+      "n": 1,
+      "desvio_pct": 0.01787,
+      "fase_rad": -1.0546728,
+      "sigma_fase_rad": 0.0001893
+    },
+    {
+      "freq_hz": 14348.9693,
+      "ganho": 0.7147455,
+      "n": 1,
+      "desvio_pct": 0.01362,
+      "fase_rad": -1.1409028,
+      "sigma_fase_rad": 0.0001594
+    },
+    {
+      "freq_hz": 16343.3067,
+      "ganho": 0.6591242,
+      "n": 1,
+      "desvio_pct": 0.01321,
+      "fase_rad": -1.2637569,
+      "sigma_fase_rad": 0.0001638
+    },
+    {
+      "freq_hz": 18622.38,
+      "ganho": 0.5985147,
+      "n": 1,
+      "desvio_pct": 0.01493,
+      "fase_rad": -1.3924557,
+      "sigma_fase_rad": 0.0001802
+    },
+    {
+      "freq_hz": 21023.3834,
+      "ganho": 0.539277,
+      "n": 1,
+      "desvio_pct": 0.0161,
+      "fase_rad": -1.5153898,
+      "sigma_fase_rad": 0.0002104
+    },
+    {
+      "freq_hz": 23432.6869,
+      "ganho": 0.4852617,
+      "n": 1,
+      "desvio_pct": 0.02042,
+      "fase_rad": -1.6267776,
+      "sigma_fase_rad": 0.0002495
+    },
+    {
+      "freq_hz": 26106.668,
+      "ganho": 0.4317367,
+      "n": 1,
+      "desvio_pct": 0.01978,
+      "fase_rad": -1.7377653,
+      "sigma_fase_rad": 0.0002723
+    },
+    {
+      "freq_hz": 29286.5193,
+      "ganho": 0.3765081,
+      "n": 1,
+      "desvio_pct": 0.02308,
+      "fase_rad": -1.8545667,
+      "sigma_fase_rad": 0.0003191
+    },
+    {
+      "freq_hz": 32122.8197,
+      "ganho": 0.3342355,
+      "n": 1,
+      "desvio_pct": 0.03438,
+      "fase_rad": -1.946666,
+      "sigma_fase_rad": 0.0004121
+    },
+    {
+      "freq_hz": 35483.0166,
+      "ganho": 0.2914949,
+      "n": 1,
+      "desvio_pct": 0.02597,
+      "fase_rad": -2.043126,
+      "sigma_fase_rad": 0.0003568
+    },
+    {
+      "freq_hz": 40338.2807,
+      "ganho": 0.2414701,
+      "n": 1,
+      "desvio_pct": 0.03539,
+      "fase_rad": -2.162555,
+      "sigma_fase_rad": 0.0004742
+    },
+    {
+      "freq_hz": 45112.2627,
+      "ganho": 0.202861,
+      "n": 1,
+      "desvio_pct": 0.04296,
+      "fase_rad": -2.2615782,
+      "sigma_fase_rad": 0.0005791
+    },
+    {
+      "freq_hz": 50291.2482,
+      "ganho": 0.1699196,
+      "n": 1,
+      "desvio_pct": 0.0433,
+      "fase_rad": -2.3527271,
+      "sigma_fase_rad": 0.0006112
+    },
+    {
+      "freq_hz": 57281.888,
+      "ganho": 0.1362043,
+      "n": 1,
+      "desvio_pct": 0.06531,
+      "fase_rad": -2.4551832,
+      "sigma_fase_rad": 0.0008301
+    },
+    {
+      "freq_hz": 63995.8873,
+      "ganho": 0.1121226,
+      "n": 1,
+      "desvio_pct": 0.06376,
+      "fase_rad": -2.5366147,
+      "sigma_fase_rad": 0.0009414
+    },
+    {
+      "freq_hz": 73038.7137,
+      "ganho": 0.0882742,
+      "n": 1,
+      "desvio_pct": 0.06988,
+      "fase_rad": -2.6273279,
+      "sigma_fase_rad": 0.0011546
+    },
+    {
+      "freq_hz": 81559.2404,
+      "ganho": 0.0719986,
+      "n": 1,
+      "desvio_pct": 0.12254,
+      "fase_rad": -2.6974317,
+      "sigma_fase_rad": 0.001681
+    },
+    {
+      "freq_hz": 90165.0095,
+      "ganho": 0.0596168,
+      "n": 1,
+      "desvio_pct": 0.11109,
+      "fase_rad": -2.7585112,
+      "sigma_fase_rad": 0.0018602
+    },
+    {
+      "freq_hz": 100910.343,
+      "ganho": 0.0480917,
+      "n": 1,
+      "desvio_pct": 0.1224,
+      "fase_rad": -2.8221778,
+      "sigma_fase_rad": 0.002117
+    },
+    {
+      "freq_hz": 113556.547,
+      "ganho": 0.038284,
+      "n": 1,
+      "desvio_pct": 0.16305,
+      "fase_rad": -2.8859105,
+      "sigma_fase_rad": 0.0026095
+    },
+    {
+      "freq_hz": 128085.762,
+      "ganho": 0.0302641,
+      "n": 1,
+      "desvio_pct": 0.20212,
+      "fase_rad": -2.9470895,
+      "sigma_fase_rad": 0.0030694
+    },
+    {
+      "freq_hz": 143883.3092,
+      "ganho": 0.0240594,
+      "n": 1,
+      "desvio_pct": 0.29926,
+      "fase_rad": -3.0041296,
+      "sigma_fase_rad": 0.0041509
+    },
+    {
+      "freq_hz": 159332.4496,
+      "ganho": 0.0196337,
+      "n": 1,
+      "desvio_pct": 0.56731,
+      "fase_rad": -3.0526907,
+      "sigma_fase_rad": 0.0073015
+    },
+    {
+      "freq_hz": 178523.8847,
+      "ganho": 0.0156306,
+      "n": 1,
+      "desvio_pct": 0.56319,
+      "fase_rad": -3.1052283,
+      "sigma_fase_rad": 0.0073052
+    }
+  ],
+  "faixa_freq_valida_hz": [
+    49.997,
+    178523.88473594285
+  ],
+  "resposta_fase": {
+    "metodo": "ondas quadradas: arg X_n − n·arg X_1 dos harmônicos ímpares, média coerente por blocos, capturas costuradas pela de f1 mais baixa e combinadas numa grade logarítmica (scripts/medir_fase.py)",
+    "fase": "a menos de um atraso puro, supondo fase mínima (nenhum atraso puro na cadeia analógica); o erro da fase medida da fundamental de cada captura (o INL do ADC) sai por regressão",
+    "ganho": "relativo ao ganho em baixa frequência, escalado por K = 0.99743",
+    "capturas": [
+      {
+        "arquivo": "F_cspadrao_312500_quadrada1280Hz10Vpp_30s.bin",
+        "fs_hz": 312500.0,
+        "f1_hz": 1279.944844,
+        "duty_desvio": 7.2e-06,
+        "blocos": 8,
+        "harmonicos_usados": 58,
+        "amplitude_fundamental_lsb": 4140.9
+      },
+      {
+        "arquivo": "F_cspadrao_312500_quadrada1280Hz_30s.bin",
+        "fs_hz": 312500.0,
+        "f1_hz": 1279.944797,
+        "duty_desvio": 3.3e-06,
+        "blocos": 8,
+        "harmonicos_usados": 58,
+        "amplitude_fundamental_lsb": 8262.6
+      },
+      {
+        "arquivo": "F_cspadrao_312500_quadrada20736Hz16Vpp+2V_30s.bin",
+        "fs_hz": 312500.0,
+        "f1_hz": 20735.106563,
+        "duty_desvio": 4.28e-05,
+        "blocos": 8,
+        "harmonicos_usados": 4,
+        "amplitude_fundamental_lsb": 3639.3
+      },
+      {
+        "arquivo": "F_cspadrao_312500_quadrada20736Hz16Vpp-2V_30s.bin",
+        "fs_hz": 312500.0,
+        "f1_hz": 20735.106778,
+        "duty_desvio": 3.93e-05,
+        "blocos": 8,
+        "harmonicos_usados": 4,
+        "amplitude_fundamental_lsb": 3639.8
+      },
+      {
+        "arquivo": "F_cspadrao_312500_quadrada20736Hz_30s.bin",
+        "fs_hz": 312500.0,
+        "f1_hz": 20735.105279,
+        "duty_desvio": 3.53e-05,
+        "blocos": 8,
+        "harmonicos_usados": 4,
+        "amplitude_fundamental_lsb": 4540.4
+      },
+      {
+        "arquivo": "F_cspadrao_312500_quadrada2304Hz_30s.bin",
+        "fs_hz": 312500.0,
+        "f1_hz": 2303.900578,
+        "duty_desvio": 7.2e-06,
+        "blocos": 8,
+        "harmonicos_usados": 32,
+        "amplitude_fundamental_lsb": 8207.6
+      },
+      {
+        "arquivo": "F_cspadrao_312500_quadrada256Hz_30s.bin",
+        "fs_hz": 312500.0,
+        "f1_hz": 255.988941,
+        "duty_desvio": 9e-07,
+        "blocos": 8,
+        "harmonicos_usados": 290,
+        "amplitude_fundamental_lsb": 8281.4
+      },
+      {
+        "arquivo": "F_cspadrao_312500_quadrada6400Hz_30s.bin",
+        "fs_hz": 312500.0,
+        "f1_hz": 6399.723863,
+        "duty_desvio": 1.64e-05,
+        "blocos": 8,
+        "harmonicos_usados": 12,
+        "amplitude_fundamental_lsb": 7688.8
+      },
+      {
+        "arquivo": "F_cspadrao_312500_quadrada6912Hz16Vpp+2V_30s.bin",
+        "fs_hz": 312500.0,
+        "f1_hz": 6911.702242,
+        "duty_desvio": 1.86e-05,
+        "blocos": 8,
+        "harmonicos_usados": 11,
+        "amplitude_fundamental_lsb": 6087.2
+      },
+      {
+        "arquivo": "F_cspadrao_312500_quadrada6912Hz16Vpp-2V_30s.bin",
+        "fs_hz": 312500.0,
+        "f1_hz": 6911.70226,
+        "duty_desvio": 2.2e-05,
+        "blocos": 8,
+        "harmonicos_usados": 11,
+        "amplitude_fundamental_lsb": 6088.3
+      },
+      {
+        "arquivo": "F_cspadrao_312500_quadrada6912Hz_30s.bin",
+        "fs_hz": 312500.0,
+        "f1_hz": 6911.701687,
+        "duty_desvio": 1.45e-05,
+        "blocos": 8,
+        "harmonicos_usados": 11,
+        "amplitude_fundamental_lsb": 7597.5
+      },
+      {
+        "arquivo": "F_cspadrao_312500_quadrada768Hz_30s.bin",
+        "fs_hz": 312500.0,
+        "f1_hz": 767.966845,
+        "duty_desvio": 2e-06,
+        "blocos": 8,
+        "harmonicos_usados": 97,
+        "amplitude_fundamental_lsb": 8276.0
+      },
+      {
+        "arquivo": "F_cspadrao_400000_quadrada1280Hz10Vpp_30s_spirapido.bin",
+        "fs_hz": 400000.0,
+        "f1_hz": 1279.944817,
+        "duty_desvio": 7.2e-06,
+        "blocos": 11,
+        "harmonicos_usados": 74,
+        "amplitude_fundamental_lsb": 4141.0
+      },
+      {
+        "arquivo": "F_cspadrao_400000_quadrada1280Hz_30s_spirapido.bin",
+        "fs_hz": 400000.0,
+        "f1_hz": 1279.944805,
+        "duty_desvio": 3.5e-06,
+        "blocos": 11,
+        "harmonicos_usados": 74,
+        "amplitude_fundamental_lsb": 8263.1
+      },
+      {
+        "arquivo": "F_cspadrao_400000_quadrada20736Hz16Vpp+2V_30s_spirapido.bin",
+        "fs_hz": 400000.0,
+        "f1_hz": 20735.10625,
+        "duty_desvio": 3.76e-05,
+        "blocos": 11,
+        "harmonicos_usados": 5,
+        "amplitude_fundamental_lsb": 3639.3
+      },
+      {
+        "arquivo": "F_cspadrao_400000_quadrada20736Hz16Vpp-2V_30s_spirapido.bin",
+        "fs_hz": 400000.0,
+        "f1_hz": 20735.106451,
+        "duty_desvio": 4.55e-05,
+        "blocos": 11,
+        "harmonicos_usados": 5,
+        "amplitude_fundamental_lsb": 3639.8
+      },
+      {
+        "arquivo": "F_cspadrao_400000_quadrada20736Hz_30s_spirapido.bin",
+        "fs_hz": 400000.0,
+        "f1_hz": 20735.106092,
+        "duty_desvio": 2.3e-05,
+        "blocos": 11,
+        "harmonicos_usados": 5,
+        "amplitude_fundamental_lsb": 4540.6
+      },
+      {
+        "arquivo": "F_cspadrao_400000_quadrada2304Hz_30s_spirapido.bin",
+        "fs_hz": 400000.0,
+        "f1_hz": 2303.900571,
+        "duty_desvio": 7.3e-06,
+        "blocos": 11,
+        "harmonicos_usados": 41,
+        "amplitude_fundamental_lsb": 8208.3
+      },
+      {
+        "arquivo": "F_cspadrao_400000_quadrada256Hz_30s_spirapido.bin",
+        "fs_hz": 400000.0,
+        "f1_hz": 255.988941,
+        "duty_desvio": 1.3e-06,
+        "blocos": 11,
+        "harmonicos_usados": 371,
+        "amplitude_fundamental_lsb": 8282.2
+      },
+      {
+        "arquivo": "F_cspadrao_400000_quadrada6400Hz_30s_spirapido.bin",
+        "fs_hz": 400000.0,
+        "f1_hz": 6399.723856,
+        "duty_desvio": 1.76e-05,
+        "blocos": 11,
+        "harmonicos_usados": 15,
+        "amplitude_fundamental_lsb": 7689.2
+      },
+      {
+        "arquivo": "F_cspadrao_400000_quadrada6912Hz16Vpp+2V_30s_spirapido.bin",
+        "fs_hz": 400000.0,
+        "f1_hz": 6911.702142,
+        "duty_desvio": 1.87e-05,
+        "blocos": 11,
+        "harmonicos_usados": 14,
+        "amplitude_fundamental_lsb": 6087.2
+      },
+      {
+        "arquivo": "F_cspadrao_400000_quadrada6912Hz16Vpp-2V_30s_spirapido.bin",
+        "fs_hz": 400000.0,
+        "f1_hz": 6911.702348,
+        "duty_desvio": 2.2e-05,
+        "blocos": 11,
+        "harmonicos_usados": 14,
+        "amplitude_fundamental_lsb": 6088.6
+      },
+      {
+        "arquivo": "F_cspadrao_400000_quadrada6912Hz_30s_spirapido.bin",
+        "fs_hz": 400000.0,
+        "f1_hz": 6911.701781,
+        "duty_desvio": 1.62e-05,
+        "blocos": 11,
+        "harmonicos_usados": 14,
+        "amplitude_fundamental_lsb": 7597.6
+      },
+      {
+        "arquivo": "F_cspadrao_400000_quadrada768Hz_30s_spirapido.bin",
+        "fs_hz": 400000.0,
+        "f1_hz": 767.966829,
+        "duty_desvio": 2e-06,
+        "blocos": 11,
+        "harmonicos_usados": 124,
+        "amplitude_fundamental_lsb": 8276.9
+      }
+    ],
+    "segunda_ordem": {
+      "f0_hz": 22811.29,
+      "sigma_f0_hz": 1.79,
+      "q": 0.50012,
+      "sigma_q": 4e-05,
+      "residuo_db": 0.0105,
+      "residuo_graus": 0.1357,
+      "chi2_reduzido": 0.12,
+      "polo_real_hz": 800092.0,
+      "sigma_polo_real_hz": 16221.0
+    }
+  }
+}

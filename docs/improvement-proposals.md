@@ -298,19 +298,23 @@ A ideia de dois tons somados num canal do gerador é o mesmo princípio, com um 
 inteiro de f₁ e o "alinhar fase" do gerador a cada troca de frequência, porque a fase relativa entre os canais tem de
 ser conhecida. A quadrada já traz isso de fábrica, com todos os pontos numa captura só.
 
-**Estado (22/10/2026): a ferramenta e a coleta estão prontas, falta a bancada.** O `scripts/medir_fase.py` mede fase,
-magnitude e duty por harmônico, descarta o que o aliasing ou um nulo do duty estragam, ajusta o 2ª ordem pela
-magnitude, pela fase e pelas duas (a comparação é o teste da fase mínima) e grava o perfil com `fase_rad` por ponto.
-O `./varrer_taxa.sh --fase` coleta 7 quadradas (256 a 20736 Hz, múltiplos ímpares de 256 Hz), 30 s cada, a 312,5 e a
-400 kS/s, e variantes de amplitude e offset (1280 Hz em 10 Vpp; 6912 e 20736 Hz em 16 Vpp com ±2 V). A análise:
+**Estado (22/10/2026): medido (o [T3f](bench-results.md#t3f-a-fase-da-cadeia-por-ondas-quadradas)).** O
+`./varrer_taxa.sh --fase` coletou 7 quadradas (256 a 20736 Hz, múltiplos ímpares de 256 Hz), 30 s cada, a 312,5 e a
+400 kS/s, e as variantes de amplitude e offset. O `scripts/medir_fase.py` deu:
 
-* é por blocos, com a incerteza medida;
-* costura as capturas por regressão sobre os harmônicos em comum;
-* combina tudo numa grade ponderada;
-* confere a coerência entre capturas e entre as duas taxas.
+* **o modelo:** a cadeia de tensão é um 2ª ordem com f0 = 22,811 kHz e Q = 0,5001, vezes um polo real em 800 kHz;
+* **o ajuste:** resíduo de 0,01 dB e 0,14°, e a magnitude e a fase dão o mesmo filtro (fase mínima);
+* **a grade:** incerteza de ~0,002 dB e ~0,01°.
 
-O limite é o INL do ADC: em cada frequência, ele faz o mesmo erro para qualquer f₁. As variantes o revelam e,
-na média, o reduzem; a dispersão entre elas vira o piso de incerteza. Depois: o S3 (usar a fase na correção).
+O polo a mais entra quando o BIC o pede (`--polo auto`). Duas lições ficaram na ferramenta:
+
+* **O INL aparece na fundamental.** ~1 LSB de erro em arg X₁ entra multiplicado por n (10° no harmônico 580 da
+  quadrada de 256 Hz). Ele é tirado por captura no ajuste, na costura (inclusive na captura-base, onde viraria um
+  atraso puro) e no piso das variantes, que ele dobrava.
+* **A quadrada não usa referência.** Por isso ela mostrou que o T3 por senoides herdou ~1,3 dB da referência do
+  osciloscópio em alta frequência.
+
+Depois: o S3 (usar a fase na correção).
 
 ### Buffers da DDR (avaliação de 22/10/2026)
 

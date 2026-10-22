@@ -500,7 +500,9 @@ def test_varrer_taxa_nao_morre_com_a_queda_da_conexao(varredura):
                             cwd=varredura.pasta.parent, env=env, stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     import time
-    time.sleep(0.6)
+    limite = time.monotonic() + 60
+    while not list(varredura.pasta.glob("T7e_*/*.bin")) and time.monotonic() < limite:    # já nas capturas (e no trap),
+        time.sleep(0.02)                                                                  # e não um tempo fixo
     proc.send_signal(signal.SIGHUP)
     proc.communicate(timeout=120)
     assert proc.returncode == 0

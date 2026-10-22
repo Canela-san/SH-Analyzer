@@ -6,13 +6,14 @@ para o teste ser rápido; na bancada são 10 s, com ~6 vezes menos ruído.
 """
 
 import csv
+import dataclasses
 import json
 
 import numpy as np
 import pytest
 from capturas_sinteticas import montar_cabecalho, quadrada_pela_cadeia
 from supraharmonicos import fase_quadrada as fq
-from supraharmonicos.cli_medir_fase import main
+from supraharmonicos.cli_medir_fase import _piso_das_variantes, main
 from supraharmonicos.sonda import carregar_perfil_sonda
 
 FS = 312_500.0
@@ -91,6 +92,30 @@ def test_ajuste_recupera_f0_e_q_pela_fase_sozinha_e_pela_magnitude():
         assert aj.f0_hz == pytest.approx(F0, rel=1e-3) and aj.q == pytest.approx(Q, rel=1e-3), aj
 
 
+def test_o_erro_da_fase_da_fundamental_nao_entra_no_ajuste():
+    """Um erro δ em arg X₁ (o INL do ADC; ~0,01° no T3f) entra em arg Xₙ − n·arg X₁ como −n·δ: 6° no harmônico 100.
+    O ajuste e a costura o tiram por captura e ficam com a curvatura; f0, Q, o χ² e a fase costurada não mudam."""
+    limpas = [medir(f1=1280.0, seed=1), medir(f1=6400.0, seed=2)]
+    tortas = [dataclasses.replace(r, fase_rel_rad=r.fase_rel_rad - r.n * np.radians(d) * (r.n > 1))
+              for r, d in zip(limpas, (0.06, -0.03))]
+    a, b = fq.ajustar_segunda_ordem(limpas, False, True), fq.ajustar_segunda_ordem(tortas, False, True)
+    assert b.f0_hz == pytest.approx(a.f0_hz, rel=1e-6) and b.q == pytest.approx(a.q, rel=1e-6)
+    assert b.chi2_reduzido == pytest.approx(a.chi2_reduzido, rel=1e-3) and b.chi2_reduzido < 2
+    # nem na fase costurada: na captura-base, que ancora as outras, ele viraria um atraso puro a mais
+    for limpa, torta in zip(fq.costurar(limpas, F0, Q), fq.costurar(tortas, F0, Q)):
+        assert np.max(np.abs(torta.fase_rad - limpa.fase_rad)) < 1e-6
+
+
+
+def test_o_piso_das_variantes_nao_conta_o_erro_da_fundamental():
+    """O erro de |X₁| e de arg X₁ de cada variante a costura já tira; o piso por harmônico não pode contá-lo (no T3f,
+    contado, ele dobrava o piso)."""
+    a, b = medir(f1=1280.0, seed=1), medir(f1=1280.0, seed=2)
+    torta = dataclasses.replace(b, fase_rel_rad=b.fase_rel_rad - b.n * np.radians(0.01) * (b.n > 1),
+                                ganho_rel=b.ganho_rel * np.where(b.n > 1, 1.001, 1.0))
+    assert _piso_das_variantes([a, torta]) == pytest.approx(_piso_das_variantes([a, b]), rel=0.02)
+
+
 def test_fase_absoluta_supondo_fase_minima_e_a_do_filtro():
     r = medir(seed=9)
     psi = fq.fase_absoluta(r, F0, Q)
@@ -105,7 +130,7 @@ def test_a_costura_nao_depende_do_modelo_e_a_grade_e_coerente():
     medidas = [medir(f1=256.0, dur=0.5, seed=11), medir(f1=1280.0, seed=12)]
     for f0 in (F0, 0.95 * F0):
         base, rapida = fq.costurar(medidas, f0, Q)
-        assert base.ancora == "modelo" and rapida.ancora.startswith("f₁ = 256")
+        assert base.ancora.startswith("modelo") and rapida.ancora.startswith("f₁ = 256")
         comuns = np.intersect1d(np.round(base.freq_hz, 3), np.round(rapida.freq_hz, 3))
         assert len(comuns) >= 15
         ib = np.isin(np.round(base.freq_hz, 3), comuns)
@@ -164,13 +189,30 @@ def test_medir_fase_ajusta_grava_csv_grafico_e_perfil_com_fase(cli, capturas, tm
     assert alto == pytest.approx(0.998 * abs(fq.h_segunda_ordem(100e3, F0, Q)), rel=0.01)
 
 
-def test_medir_fase_avisa_quando_a_cadeia_nao_e_um_segundo_ordem(cli, tmp_path):
-    """Com um polo real a 60 kHz a mais, a magnitude e a fase pedem filtros diferentes: o aviso diz para usar a fase
-    medida, e não a de um modelo."""
+def test_polo_real_a_mais_e_achado_pelo_bic_e_sem_ele_ha_aviso(cli, tmp_path):
+    """Com um polo real a 60 kHz a mais, o 2ª ordem sozinho não explica a cadeia: a magnitude e a fase pedem filtros
+    diferentes, e o aviso diz para usar a fase medida (--polo nao). No automático, o BIC põe o polo, que sai no lugar,
+    e a magnitude e a fase voltam a concordar."""
     arquivos = [gravar(tmp_path, f"F_{f1}.bin", 312_500, f1, polo_hz=60e3, seed=s)
                 for f1, s in ((1280.0, 1), (6400.0, 2))]
-    rc, out, err = cli(main, *arquivos)
+    rc, out, err = cli(main, *arquivos, "--polo", "nao")
     assert rc == 0 and "NÃO dão o mesmo filtro" in err
+    rc, out, err = cli(main, *arquivos, "--saida-perfil", tmp_path / "p.json",
+                       "--perfil-base", "scripts/sondas/cadeia_tensao_312k.json")
+    assert rc == 0 and "→ COM o polo" in out and "NÃO dão" not in err
+    so = json.loads((tmp_path / "p.json").read_text(encoding="utf-8"))["resposta_fase"]["segunda_ordem"]
+    assert so["f0_hz"] == pytest.approx(F0, rel=2e-3) and so["q"] == pytest.approx(Q, rel=3e-3)
+    assert so["polo_real_hz"] == pytest.approx(60e3, rel=0.03)
+
+
+def test_ajuste_com_polo_o_recupera_e_sem_polo_na_cadeia_nao_o_inventa():
+    com = [medir(f1=f1, polo_hz=150e3, seed=s) for f1, s in ((1280.0, 1), (6400.0, 2))]
+    aj = fq.ajustar_segunda_ordem(com, com_polo=True)
+    assert aj.polo_hz == pytest.approx(150e3, rel=0.05) and aj.f0_hz == pytest.approx(F0, rel=1e-3), aj
+    assert fq.ajustar_segunda_ordem(com).bic - aj.bic > 100
+    sem = [medir(f1=f1, seed=s) for f1, s in ((1280.0, 1), (6400.0, 2))]
+    aj = fq.ajustar_segunda_ordem(sem, com_polo=True)
+    assert aj.polo_hz > 2e6 and fq.ajustar_segunda_ordem(sem).bic - aj.bic < 10      # não se paga
 
 
 def test_medir_fase_saida_de_perfil_pede_o_perfil_base(cli, capturas, tmp_path):

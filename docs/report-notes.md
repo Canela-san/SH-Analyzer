@@ -1140,27 +1140,58 @@ em 16,8 kHz; o mesmo 2ª ordem (f0 = 24,2 kHz, Q = 0,53) descreve 3,5 décadas a
 140 kHz. Nas frequências em comum, a 0,13 dB rms do perfil de 19/10, medido a outra taxa, em outra faixa e com outro
 firmware. Figura `perfil_cadeia_tensao_comparacao`. E o T1 a 312,5 kS/s deu o mesmo ruído de 19/10.
 
+**A 2ª parte do dia: o quadro fixo, o SPI rápido e 400 kS/s.** O firmware com o quadro fixo foi à placa e a 2ª
+rodada do T7f confirmou o que o simulador calibrado previa: o quadro comum de 600 ciclos, folga de 25 ciclos a
+312,5 kS/s com qualquer sinal, teto de 327,9 kS/s. O SPI rápido (bits de 13 ciclos, ~15,4 MHz) lê cada bit em três
+instantes e conta as divergências, para medir a margem do SDO sem osciloscópio. No T7g (69 capturas), 0 quadros com
+a leitura de 60 ns ou a de 90 ns diferente da de 75 ns, ou seja, margem de pelo menos 15 ns para cada lado. O ruído
+foi o mesmo (0,80 contra 0,79 LSB), a distorção também, e o período ficou constante até 419,3 kS/s. A 400 kS/s, a
+folga é de 18 ciclos. Com isso, 400 kS/s e o SPI rápido viraram o padrão do `ler_adc` (`--spi lenta` volta ao de
+antes): a Nyquist sobe de 156 para 200 kHz. Taxas inteiras saem de 200 MHz ÷ 2ᵃ5ᵇ, e não há nenhuma entre 400 e
+420 kHz.
+
+**A fase da cadeia sem osciloscópio (T3f).** Uma onda quadrada simétrica traz a referência de tempo dentro dela: a
+fase de cada harmônico ímpar menos n vezes a da fundamental independe do instante da captura e de um atraso puro.
+Foram 24 capturas de 30 s (7 quadradas de 256 a 20736 Hz e variantes de amplitude e offset, nas duas taxas):
+
+* a cadeia de tensão é um 2ª ordem com **f0 = 22,811 kHz e Q = 0,5001**, isto é, dois polos reais coincidentes,
+  vezes um polo real em **800 kHz**;
+* −3 dB em **14,68 kHz** (o datasheet do ADS8688 diz ~15 kHz);
+* resíduo de **0,01 dB e 0,14°** de 256 Hz a 180 kHz;
+* a magnitude sozinha e a fase sozinha dão o mesmo filtro: a cadeia é de **fase mínima**;
+* as duas taxas, com SPIs diferentes, diferem 0,0005 dB e 0,004°.
+
+A quadrada não usa instrumento de referência, e por isso desmentiu o T3 por senoides. As senoides ficam 1,2 a 1,3 dB
+acima dela acima de ~40 kHz, exatamente a queda da referência que o osciloscópio leu. A forma da diferença, um
+degrau que começa em ~500 Hz, é a de uma ponta 10× subcompensada. A mesma ponta explicaria o "caráter capacitivo"
+da quadrada vista na tela (a conferência está no roteiro). O limite da medida é o INL do ADC, e ele aparece onde não
+se esperava: ~1 LSB de erro na fase da fundamental entra em `arg Xₙ − n·arg X₁` multiplicado por n, e chega a 10° no
+harmônico 580 da quadrada de 256 Hz. A ferramenta o tira por captura. Perfil `cadeia_tensao_fase`, com a fase de cada
+ponto.
+
+**Relevância:** a fase da função de transferência foi medida sem nenhum instrumento além do próprio sistema, e o
+mesmo método achou o erro do instrumento de referência da medida anterior. É o argumento para o relatório de que o
+perfil por quadradas é o de referência.
+
 ### Marco 17 — Trabalho Pendente
 
 Em ordem de prioridade, a mesma da tabela [Estado da campanha](lab-procedure.md#estado-da-campanha) do roteiro:
 
-1. **Validar o quadro fixo e a troca espalhada (Marco 16)** com `./varrer_taxa.sh --grade` (~16 min): folga prevista
-   ≥ 29 ciclos a 312,5 kS/s, a mesma com o tom e em curto; teto ~327 kS/s. A memória dos buffers já é conferida
-   (`/proc/iomem`). Depois, o SPI mais rápido (~15 MHz), que leva o teto para ~430 kS/s e lê cada bit em três
-   instantes para medir a margem sem osciloscópio. A avaliação do firmware está em
-   [`improvement-proposals.md`](improvement-proposals.md#avaliação-do-firmware-22102026).
-2. **A campanha do limite (Marco 15).** O padrão do firmware passou a 312,5 kS/s com as esperas no mínimo do datasheet (`3,1,3`), para a Nyquist passar de 150 kHz. `./varrer_taxa.sh --limite` (~35 min) valida o padrão e a correção do rebase (10 min no padrão) e mede o limite em passos de 1 tick (5 ns), de 303 a 333 kS/s, com `3,1,3` e `6,2,6`: o teto, a zona de transição (a primeira amostra atrasada) e a qualidade até ele, para descrever o hardware com precisão no relatório.
-3. **Refazer na taxa padrão (312,5 kS/s)** o que depende da banda: T4 e T6 (o T1 e o T3 foram refeitos em 22/10), como manda a tabela [O que refazer com o firmware de out/2026](lab-procedure.md#o-que-refazer-com-o-firmware-de-out2026). O teto (326 kS/s) está no Marco 15; falta fotografar o CS no osciloscópio (a anatomia do quadro).
+1. **Conferir a ponta do osciloscópio e a origem do polo de 800 kHz (T3f, ~30 min):** a foto da ponta no PROBE
+   COMP antes do ajuste, 6 senoides de 1 a 140 kHz com a ponta compensada e o Fluke até 50 kHz, e a subida da
+   quadrada do gerador ([roteiro](lab-procedure.md#passo-a-passo-da-próxima-ida-a-referência-do-t3-e-o-polo-de-800-khz-30-min)).
+   Decide entre o perfil por quadradas e os por senoides, e se o polo fica no perfil. A grade de tempo, o SPI
+   rápido e o limite de taxa foram medidos em 22/10 (Marco 16): a campanha `--limite` ficou superada.
+2. **Fotografar o CS no osciloscópio** (a anatomia do quadro, para o relatório).
+3. **Refazer na taxa padrão (400 kS/s)** o que depende da banda: T4 e T6, como manda a tabela [O que refazer com o firmware de out/2026](lab-procedure.md#o-que-refazer-com-o-firmware-de-out2026).
 4. **Calibração da sonda de corrente (T10)**, o objetivo central, **depois** do T7e: o perfil vale até 0,9 × Nyquist da taxa em que é medido. O fluxo já rodou com hardware real na cadeia de tensão (Marco 12); falta o SCT013 e a validação em frequências que não entraram no perfil (*hold-out*). A sensibilidade de 60 µV/A sobre o resistor de carga é o maior risco (roteiro, fato 5).
 5. **Completar a caracterização:**
    * o contador de frequência no T4;
    * o ponto de 20 kHz no T6a;
    * o T5, com uma fonte de baixa distorção;
    * *aliasing* (T8), espectros conhecidos (T9) e os ensaios ponta a ponta (T11).
-6. **Completar o T3:** a **fase**, por ondas quadradas, sem osciloscópio (`./varrer_taxa.sh --fase` e
-   `scripts/medir_fase.py`): a fase de cada harmônico ímpar menos n vezes a da fundamental independe do instante da
-   captura e de um atraso puro. O ajuste pela fase sozinha e pela magnitude sozinha é o teste de fase mínima da função
-   de transferência; a mesma medida confere a magnitude sem o osciloscópio. E `--repeticoes 3`.
+6. **Usar a fase na correção (S3):** o perfil `cadeia_tensao_fase` já traz a fase de cada ponto, mas a correção
+   ainda só usa a magnitude ([`improvement-proposals.md`](improvement-proposals.md)).
 7. **Investigar o offset do canal 1** (com o pino em curto direto). O transitório de troca de faixa já é descartado na análise (o `medir_captura.py` pula 200 µs); descartá-lo também no firmware fica como opção ([`improvement-proposals.md`](improvement-proposals.md), F9).
 
 Fechar cada apresentação com esta lista, objetiva e com prioridade, mostra que o estado do projeto e os próximos passos estão claros.
@@ -1192,7 +1223,8 @@ Fechar cada apresentação com esta lista, objetiva e com prioridade, mostra que
     * um transitório de 60 µs ao trocar a faixa.
 15. **Esperas do CS e taxa (21/10):** as esperas descem ao piso do datasheet sem perda; o teto vai de 143 para 326 kS/s; o defeito do rebase do contador foi achado pela posição dos degraus no tempo.
 16. **Grade de tempo (22/10):** jitter de 8,5 ns achado nas capturas (o ruído crescia com a inclinação do tom); a PRU passou a esperar o ciclo exato e a medir a própria folga.
-17. **Pendente:** validar a grade na bancada, medir o limite de taxa, calibrar a sonda de corrente (o objetivo central) e completar a caracterização.
+    * 2ª parte: o quadro fixo validado, o SPI rápido sem nenhuma leitura divergente e 400 kS/s como padrão; a fase da cadeia por ondas quadradas (três polos reais, fase mínima), que mostrou o erro da referência do osciloscópio no T3 por senoides.
+17. **Pendente:** conferir a ponta do osciloscópio, calibrar a sonda de corrente (o objetivo central) e completar a caracterização.
 
 ---
 
@@ -1349,6 +1381,7 @@ Os números do projeto num lugar só, com a condição e a fonte. Os valores med
 | Linearidade | resíduo ≤ 0,22 LSB | ±0,5 V no pino | T2 |
 | Sensibilidade do canal de corrente | 60 µV/A (`$GI` = 16 667 A/V) | SCT013 100A:50mA sobre 0,12 Ω; ainda não medida | Roteiro, fato 5 |
 | Resposta da cadeia de tensão | −3 dB em 17,26 ± 0,16 kHz; f0 = 24,06 ± 0,21 kHz; Q = 0,540 ± 0,006; K = 0,9969 ± 0,0028; −12,5 dB em 45 kHz; resíduo de 0,13 dB | 48 pontos, 50 Hz a 45 kHz, 100 kS/s | T3; Marco 12 |
+| Resposta da cadeia de tensão, magnitude e fase (ondas quadradas, sem referência) | −3 dB em 14,68 kHz; 2ª ordem com f0 = 22,811 kHz e Q = 0,5001 (dois polos reais) × polo real em 800 ± 16 kHz; resíduo de 0,0105 dB e 0,136°; fase mínima (magnitude e fase dão o mesmo filtro) | 24 quadradas, 256 Hz a 180 kHz, 312,5 e 400 kS/s (diferem 0,0005 dB e 0,004°) | T3f; Marco 16 |
 | Taxa de amostragem | = 200 MHz ÷ ticks a 0,02 ppm; erro comum de −43,2 ppm (cristal + gerador) | 50 a 125 kS/s | T4 |
 | SINAD / ENOB | 61 dB / 14,4 bits | 10 kHz a −27,5 dBFS, gerador sem filtro | T4 (prévia do T5) |
 | THD medido | −71,6 dB (limitado pelo gerador; ADC: −102 dB no datasheet) | 10 kHz | T4 |
@@ -1365,6 +1398,8 @@ Os números do projeto num lugar só, com a condição e a fonte. Os valores med
 | Degraus de tempo (firmware de 22/10) | 89 trocas: −0,03 ± 0,03 ns; 28 rebases: −0,04 ± 0,07 ns (zero ciclo em todos) | 5 min a 312,5 kS/s | T7f; Marco 16 |
 | Ruído com o tom de 10 kHz, fora de ±50 Hz dele e dos harmônicos | 2,23 → 0,77 LSB (= o ruído em curto); SNR 64,0 → 69,4 dB em 10 s | ±2,56 V, 312,5 kS/s | T7f; Marco 16 |
 | Folga da PRU a 312,5 kS/s | 3 a 5 ciclos (15 a 25 ns); teto com período constante ~315 kS/s | troca de buffer ~636 ciclos, quadro comum ~620 | T7f; Marco 16 |
+| Folga e teto com o quadro fixo (SPI lento) | folga de 25 ciclos a 312,5 kS/s com qualquer sinal; teto com período constante 327,9 kS/s (610 ticks) | quadro comum de 600 ciclos | T7f, 2ª rodada; Marco 16 |
+| SPI rápido (~15,4 MHz) | 0 leituras divergentes (margem do SDO ≥ 15 ns para cada lado); ruído 0,80 contra 0,79 LSB; teto 419,3 kS/s (477 ticks); folga de 18 ciclos a 400 kS/s | 69 capturas; o padrão desde 22/10 | T7g; Marco 16 |
 | Quadro SPI da PRU | 1 395 ciclos (6,98 µs; transação com o CS baixo: 1 166 ciclos), dos quais 800 (57 %) são as esperas do CS; em geral, 595 + 2 × (S + H + A) ciclos | simulador do `spi_core.asm` | Marco 13; roteiro, T7e |
 | Teto de taxa | ~130 kS/s observados e ~140 kS/s pelo simulador; ~330 kS/s no papel com as esperas mínimas do datasheet | a medir no T7e | Marco 13 |
 | Esperas do CS | 2,0 / 1,0 / 1,0 µs contra 30 / 10 / 30 ns do datasheet | tabela 7.6 do SBAS582C | Marco 13 |

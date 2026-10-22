@@ -1,8 +1,8 @@
 """CLI de ``scripts/medir_fase.py``: a resposta em frequência da cadeia (magnitude E fase) por capturas de onda quadrada.
 
 A medida está em ``fase_quadrada``; aqui ficam a leitura das capturas, as duas passadas (o modelo de partida e o
-ajustado), o ajuste do 2ª ordem (conjunto, só magnitude e só fase: a comparação é o teste da fase mínima), o CSV,
-o gráfico e o perfil de sonda com a fase. Traduz ``ErroUso`` -> ``parser.error`` e ``ErroSHAN`` -> ``Erro: ...``.
+ajustado), o ajuste do 2ª ordem, com ou sem um polo real a mais (o BIC decide), em três versões (conjunto, só
+magnitude e só fase: a comparação é o teste da fase mínima), o CSV, o gráfico e o perfil de sonda com a fase. Traduz ``ErroUso`` -> ``parser.error`` e ``ErroSHAN`` -> ``Erro: ...``.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from .fase_quadrada import (
     AMOSTRAS_POR_BLOCO,
     F0_PADRAO_HZ,
     PISO_SISTEMATICO_LSB,
+    POLO_INICIAL_HZ,
     Q_PADRAO,
     AjusteFase,
     PontosAbsolutos,
@@ -35,6 +36,7 @@ from .fase_quadrada import (
     combinar_em_grade,
     costurar,
     fase_absoluta,
+    fase_do_modelo,
     h_segunda_ordem,
     medir_quadrada,
 )
@@ -50,6 +52,7 @@ COLUNAS_CSV = ["arquivo", "fs_hz", "f1_hz", "duty_desvio", "blocos", "n", "freq_
 COLUNAS_CSV_GRADE = ["freq_hz", "ganho_db", "sigma_db", "fase_graus", "sigma_graus", "harmonicos", "chi2_ganho",
                      "chi2_fase"]
 CHI2_INCOERENTE = 3.0           # χ² mediano das faixas acima disso: as capturas discordam além das incertezas
+DELTA_BIC_DO_POLO = 10.0        # o polo real a mais entra quando baixa o BIC em mais que isso (evidência "muito forte")
 _RE_F1_NA_DESCRICAO = re.compile(r"quadrada\s+f=([0-9.]+)\s*Hz", re.IGNORECASE)
 
 
@@ -83,6 +86,9 @@ def montar_parser() -> argparse.ArgumentParser:
     p.add_argument("--modelo-inicial", default=f"{F0_PADRAO_HZ:g},{Q_PADRAO:g}", metavar="F0,Q",
                    help="2ª ordem de partida, só para desenrolar a fase e prever o aliasing (padrão: o do T3, "
                         "%(default)s).")
+    p.add_argument("--polo", choices=("auto", "sim", "nao"), default="auto",
+                   help="Um polo real a mais no modelo (o da cadeia além do 2ª ordem do ADS8688: no T3f, ~800 kHz). "
+                        f"auto: entra se baixar o BIC em mais de {DELTA_BIC_DO_POLO:g} (padrão); sim/nao: sempre/nunca.")
     p.add_argument("--csv", type=Path, help="Grava um ponto por harmônico (usados e descartados, com o motivo).")
     p.add_argument("--plot", type=Path, help="Grava o diagrama de Bode medido, com o ajuste (PNG/PDF).")
     p.add_argument("--perfil-base", type=Path,
@@ -133,14 +139,34 @@ def ler_quadrada(caminho: Path, args: argparse.Namespace) -> tuple[np.ndarray, f
     return np.asarray(sinal[inicio:fim], dtype=np.float64), fs, dica, rotulo
 
 
-def _medir_todas(entradas, f0: float, q: float, args: argparse.Namespace) -> list[RespostaQuadrada]:
-    return [medir_quadrada(sinal, fs, dica, f0, q, args.freq_max, args.amostras_por_bloco, args.piso_sistematico)
+def _medir_todas(entradas, f0: float, q: float, polo: float, args: argparse.Namespace) -> list[RespostaQuadrada]:
+    return [medir_quadrada(sinal, fs, dica, f0, q, args.freq_max, args.amostras_por_bloco, args.piso_sistematico, polo)
             for sinal, fs, dica, _ in entradas]
 
 
-def _freq_menos_3db(f0: float, q: float) -> float:
-    b = 1 / q ** 2 - 2
-    return f0 * math.sqrt((-b + math.sqrt(b * b + 4)) / 2)
+def _freq_menos_3db(f0: float, q: float, polo: float = math.inf) -> float:
+    from scipy.optimize import brentq
+
+    return float(brentq(lambda f: abs(h_segunda_ordem(f, f0, q, polo)) ** 2 - 0.5, f0 * 1e-3, f0 * 1e3))
+
+
+def _texto_do_polo(a: AjusteFase) -> str:
+    return f"   polo em {a.polo_hz / 1e3:.0f} ± {a.sigma_polo_hz / 1e3:.0f} kHz" if math.isfinite(a.polo_hz) else ""
+
+
+def _escolher_polo(sem: AjusteFase, com: AjusteFase, modo: str) -> bool:
+    """Com ou sem o polo real a mais: pelo BIC (χ² + k·ln N), ou o que o --polo mandar."""
+    delta = sem.bic - com.bic
+    if not math.isfinite(com.polo_hz):
+        texto = "o ajuste com o polo o levou ao infinito"
+    else:
+        texto = (f"polo em {com.polo_hz / 1e3:.0f} ± {com.sigma_polo_hz / 1e3:.0f} kHz, χ²red {sem.chi2_reduzido:.2f} → "
+                 f"{com.chi2_reduzido:.2f}, resíduos {sem.residuo_db:.4f} → {com.residuo_db:.4f} dB e "
+                 f"{sem.residuo_graus:.3f} → {com.residuo_graus:.3f}°")
+    usar = math.isfinite(com.polo_hz) and (modo == "sim" or (modo == "auto" and delta > DELTA_BIC_DO_POLO))
+    log.info(f"Polo real a mais: {texto}; ΔBIC = {delta:+.1f} → {'COM' if usar else 'sem'} o polo"
+             + ("" if modo == "auto" else f" (--polo {modo})"))
+    return usar
 
 
 def _relatar(caminhos: list[Path], rotulos: list[str], medidas: list[RespostaQuadrada], ajustes: list[AjusteFase]) -> None:
@@ -151,31 +177,32 @@ def _relatar(caminhos: list[Path], rotulos: list[str], medidas: list[RespostaQua
                  f"até {r.freq_hz[-1] / 1e3:.1f} kHz; SNR de {np.min(r.snr_db[r.usado]):.0f} a "
                  f"{np.max(r.snr_db[r.usado]):.0f} dB"
                  + (f"; fora: {', '.join(fora[:6])}{' ...' if len(fora) > 6 else ''}" if fora else ""))
-    log.info("Ajuste do passa-baixa de 2ª ordem H(s) = K ω0² / (s² + (ω0/Q) s + ω0²):")
+    log.info("Ajuste do passa-baixa de 2ª ordem H(s) = K ω0² / (s² + (ω0/Q) s + ω0²)"
+             + (" vezes o polo real 1 / (1 + s/ωp):" if math.isfinite(ajustes[0].polo_hz) else ":"))
     for a in ajustes:
-        log.info(f"  {a.nome:13s} f0 = {a.f0_hz:9.1f} ± {a.sigma_f0_hz:5.1f} Hz   Q = {a.q:.4f} ± {a.sigma_q:.4f}   "
-                 f"−3 dB em {_freq_menos_3db(a.f0_hz, a.q) / 1e3:.2f} kHz   resíduos {a.residuo_db:.3f} dB e "
-                 f"{a.residuo_graus:.3f}°   χ²red {a.chi2_reduzido:.2f} ({a.n_pontos} resíduos)")
+        log.info(f"  {a.nome:13s} f0 = {a.f0_hz:9.1f} ± {a.sigma_f0_hz:5.1f} Hz   Q = {a.q:.4f} ± {a.sigma_q:.4f}"
+                 f"{_texto_do_polo(a)}   −3 dB em {_freq_menos_3db(a.f0_hz, a.q, a.polo_hz) / 1e3:.2f} kHz   "
+                 f"resíduos {a.residuo_db:.4f} dB e {a.residuo_graus:.3f}°   χ²red {a.chi2_reduzido:.2f} "
+                 f"({a.n_pontos} resíduos)")
     so_mag, so_fase = ajustes[1], ajustes[2]
     df0 = (so_fase.f0_hz - so_mag.f0_hz) / math.hypot(so_fase.sigma_f0_hz, so_mag.sigma_f0_hz)
     dq = (so_fase.q - so_mag.q) / math.hypot(so_fase.sigma_q, so_mag.sigma_q)
     if max(abs(df0), abs(dq)) <= 3:
         log.info(f"  A fase e a magnitude dão o mesmo filtro (f0 a {df0:+.1f} σ, Q a {dq:+.1f} σ): a cadeia se comporta "
-                 "como um 2ª ordem de FASE MÍNIMA, e a fase do perfil pode vir do modelo ou da medida.")
+                 "como o modelo, de FASE MÍNIMA, e a fase do perfil pode vir do modelo ou da medida.")
     else:
         log.warning(f"  A fase e a magnitude NÃO dão o mesmo filtro (f0 a {df0:+.1f} σ, Q a {dq:+.1f} σ): há algo "
-                    "além de um 2ª ordem de fase mínima (um polo ou zero a mais, ou um erro de medida). Use a fase "
+                    "além do modelo de fase mínima (um polo ou zero a mais, ou um erro de medida). Use a fase "
                     "medida, não a do modelo.")
 
 
-def _residuos_da_grade(c: RespostaCombinada, f0: float, q: float) -> tuple[np.ndarray, np.ndarray]:
-    modelo = h_segunda_ordem(c.freq_hz, f0, q)
-    return (c.ln_ganho - np.log(np.abs(modelo)),
-            c.fase_rad + np.arctan2(c.freq_hz / f0 / q, 1 - (c.freq_hz / f0) ** 2))
+def _residuos_da_grade(c: RespostaCombinada, f0: float, q: float, polo: float) -> tuple[np.ndarray, np.ndarray]:
+    return (c.ln_ganho - np.log(np.abs(h_segunda_ordem(c.freq_hz, f0, q, polo))),
+            c.fase_rad - fase_do_modelo(c.freq_hz, f0, q, polo))
 
 
 def _relatar_coerencia(absolutos: list[PontosAbsolutos], combinada: RespostaCombinada,
-                       f0: float, q: float, por_decada: int, piso_usado: float) -> None:
+                       f0: float, q: float, polo: float, por_decada: int, piso_usado: float) -> None:
     """Três conferências: os pontos de cada faixa concordam (χ²)? as duas taxas dão a mesma curva? a mesma f₁ em
     amplitudes diferentes dá a mesma resposta (linearidade: o INL do ADC pesaria na menor)?"""
     chi_ln, chi_fa = np.nanmedian(combinada.chi2_ln), np.nanmedian(combinada.chi2_fase)
@@ -193,12 +220,12 @@ def _relatar_coerencia(absolutos: list[PontosAbsolutos], combinada: RespostaComb
         grupos.setdefault(round(a.medida.fs_hz), []).append(a)
     if len(grupos) == 2:
         (fs_a, ga), (fs_b, gb) = sorted(grupos.items())
-        ca, cb = combinar_em_grade(ga, f0, q, por_decada), combinar_em_grade(gb, f0, q, por_decada)
+        ca, cb = combinar_em_grade(ga, f0, q, por_decada, polo), combinar_em_grade(gb, f0, q, por_decada, polo)
         lo, hi = max(ca.freq_hz[0], cb.freq_hz[0]), min(ca.freq_hz[-1], cb.freq_hz[-1])
         sel = (ca.freq_hz >= lo) & (ca.freq_hz <= hi)
         if np.sum(sel) >= 3:
-            ra_ln, ra_fa = _residuos_da_grade(ca, f0, q)
-            rb_ln, rb_fa = _residuos_da_grade(cb, f0, q)
+            ra_ln, ra_fa = _residuos_da_grade(ca, f0, q, polo)
+            rb_ln, rb_fa = _residuos_da_grade(cb, f0, q, polo)
             d_ln = ra_ln[sel] - np.interp(np.log(ca.freq_hz[sel]), np.log(cb.freq_hz), rb_ln)
             d_fa = ra_fa[sel] - np.interp(np.log(ca.freq_hz[sel]), np.log(cb.freq_hz), rb_fa)
             log.info(f"{fs_a / 1e3:g} kS/s × {fs_b / 1e3:g} kS/s: diferença rms de {8.6859 * np.sqrt(np.mean(d_ln ** 2)):.4f} "
@@ -207,7 +234,8 @@ def _relatar_coerencia(absolutos: list[PontosAbsolutos], combinada: RespostaComb
     # As variantes da mesma quadrada (f₁ e taxa iguais, com outra amplitude ou outro offset): a resposta não pode mudar.
     # O que muda é o INL do ADC, que as bordas atravessam em outros códigos: o erro que ele faz numa frequência é o
     # mesmo para qualquer f₁ (não se vê comparando f₁ diferentes, nem some com captura mais longa); só a variação de
-    # amplitude/offset o revela, e a média das variantes o reduz.
+    # amplitude/offset o revela, e a média das variantes o reduz. O erro do INL na fundamental (|X₁| e arg X₁) sai antes,
+    # como na costura.
     grupos_var: dict[tuple[int, float], list[RespostaQuadrada]] = {}
     for a in absolutos:
         grupos_var.setdefault((round(a.medida.fs_hz), round(a.medida.f1_hz, 1)), []).append(a.medida)
@@ -215,11 +243,9 @@ def _relatar_coerencia(absolutos: list[PontosAbsolutos], combinada: RespostaComb
         if len(membros) < 2:
             continue
         comum = np.logical_and.reduce([m.usado for m in membros]) & (membros[0].n > 1)
-        if np.sum(comum) < 2:
+        if np.sum(comum) < 3:
             continue
-        ln = np.array([np.log(m.ganho_rel[comum]) for m in membros])
-        fa = np.array([m.fase_rel_rad[comum] for m in membros])
-        d_ln, d_fa = ln - ln.mean(axis=0), fa - fa.mean(axis=0)
+        d_ln, d_fa = _desvios_das_variantes(membros, comum)
         amp = np.array([m.amplitude[comum] for m in membros])
         piso = float(np.sqrt(np.mean((d_fa * amp) ** 2)) * math.sqrt(len(membros) / (len(membros) - 1)))
         variantes = ", ".join(f"{m.amplitude[0]:.0f} LSB em {m.nivel_medio - 32768:+.0f}" for m in membros)
@@ -227,6 +253,20 @@ def _relatar_coerencia(absolutos: list[PontosAbsolutos], combinada: RespostaComb
                  f"{8.6859 * np.sqrt(np.mean(d_ln ** 2)):.4f} dB e {math.degrees(np.sqrt(np.mean(d_fa ** 2))):.3f}° "
                  f"({int(np.sum(comum))} harmônicos); como piso por harmônico, ~{piso:.3f} LSB "
                  f"(o --piso-sistematico usado é {piso_usado:g})")
+
+
+def _desvios_das_variantes(membros: list[RespostaQuadrada], comum: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(ln do ganho, fase) de cada variante menos a média delas, nos harmônicos em comum, sem o que a costura já tira
+    de cada captura: o erro de |X₁| (um desvio constante do ln) e o de arg X₁ (n vezes um δ; ``_erro_da_fundamental``).
+    Sobra o erro de cada harmônico, que é o que o piso descreve. Pesos ∝ amplitude² (σ da fase ∝ 1/amplitude)."""
+    n = membros[0].n[comum].astype(float)
+    ln = np.array([np.log(m.ganho_rel[comum]) for m in membros])
+    fa = np.array([m.fase_rel_rad[comum] for m in membros])
+    w = np.mean([m.amplitude[comum] for m in membros], axis=0) ** 2
+    d_ln, d_fa = ln - ln.mean(axis=0), fa - fa.mean(axis=0)
+    d_ln -= (d_ln @ w / np.sum(w))[:, None]
+    d_fa -= ((d_fa * n) @ w / np.sum(w * n * n))[:, None] * n
+    return d_ln, d_fa
 
 
 def _piso_das_variantes(medidas: list[RespostaQuadrada]) -> float:
@@ -240,11 +280,10 @@ def _piso_das_variantes(medidas: list[RespostaQuadrada]) -> float:
         if len(membros) < 2:
             continue
         comum = np.logical_and.reduce([m.usado for m in membros]) & (membros[0].n > 1)
-        if np.sum(comum) < 2:
+        if np.sum(comum) < 3:
             continue
-        fa = np.array([m.fase_rel_rad[comum] for m in membros])
         amp = np.array([m.amplitude[comum] for m in membros])
-        d = (fa - fa.mean(axis=0)) * amp
+        d = _desvios_das_variantes(membros, comum)[1] * amp
         maior = max(maior, float(np.sqrt(np.mean(d ** 2)) * math.sqrt(len(membros) / (len(membros) - 1))))
     return maior
 
@@ -261,13 +300,14 @@ def _gravar_csv_grade(caminho: Path, c: RespostaCombinada) -> None:
     log.info(f"Grade combinada ({len(c.freq_hz)} faixas, K = 1) gravada em {caminho}")
 
 
-def _gravar_csv(caminho_csv: Path, caminhos: list[Path], medidas: list[RespostaQuadrada], f0: float, q: float) -> None:
+def _gravar_csv(caminho_csv: Path, caminhos: list[Path], medidas: list[RespostaQuadrada], f0: float, q: float,
+                polo: float) -> None:
     caminho_csv.parent.mkdir(parents=True, exist_ok=True)
     with open(caminho_csv, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=COLUNAS_CSV)
         w.writeheader()
         for caminho, r in zip(caminhos, medidas):
-            absoluta = fase_absoluta(r, f0, q)
+            absoluta = fase_absoluta(r, f0, q, polo)
             for i in range(len(r)):
                 w.writerow({
                     "arquivo": caminho.name, "fs_hz": f"{r.fs_hz:.3f}", "f1_hz": f"{r.f1_hz:.6f}",
@@ -290,14 +330,14 @@ def montar_perfil_com_fase(base: dict, combinada: RespostaCombinada, medidas: li
     combinada (a média ponderada de todas as capturas), cada um com ``fase_rad`` e ``sigma_fase_rad``, e o bloco
     ``resposta_fase``. A magnitude é a da grade (K = 1) vezes K, o ganho em baixa frequência, que a quadrada não mede;
     abaixo da menor frequência medida, os pontos do perfil base, com a fase do modelo."""
-    f0, q = ajuste.f0_hz, ajuste.q
+    f0, q, polo = ajuste.f0_hz, ajuste.q, ajuste.polo_hz
     pontos = [(float(f), k_baixa * math.exp(float(ln)), float(fa), float(s_ln), float(s_fa))
               for f, ln, fa, s_ln, s_fa in zip(combinada.freq_hz, combinada.ln_ganho, combinada.fase_rad,
                                                combinada.sigma_ln, combinada.sigma_fase)]
     menor = pontos[0][0]
     for p in sorted(base.get("pontos", []), key=lambda p: p["freq_hz"]):
         if p["freq_hz"] < menor / 1.05:
-            fase = float(np.angle(h_segunda_ordem(p["freq_hz"], f0, q)))
+            fase = float(fase_do_modelo(np.array([p["freq_hz"]]), f0, q, polo)[0])
             pontos.append((float(p["freq_hz"]), float(p["ganho"]), fase, 0.01 * float(p.get("desvio_pct", 0.0)), math.nan))
     pontos.sort()
 
@@ -324,7 +364,8 @@ def montar_perfil_com_fase(base: dict, combinada: RespostaCombinada, medidas: li
     perfil["resposta_fase"] = {
         "metodo": "ondas quadradas: arg X_n − n·arg X_1 dos harmônicos ímpares, média coerente por blocos, capturas "
                   "costuradas pela de f1 mais baixa e combinadas numa grade logarítmica (scripts/medir_fase.py)",
-        "fase": "a menos de um atraso puro, supondo fase mínima (nenhum atraso puro na cadeia analógica)",
+        "fase": "a menos de um atraso puro, supondo fase mínima (nenhum atraso puro na cadeia analógica); o erro da fase "
+                "medida da fundamental de cada captura (o INL do ADC) sai por regressão",
         "ganho": f"relativo ao ganho em baixa frequência, escalado por K = {k_baixa:g}",
         "capturas": [{"arquivo": c.name, "fs_hz": round(r.fs_hz, 3), "f1_hz": round(r.f1_hz, 6),
                       "duty_desvio": round(r.duty_desvio, 7), "blocos": r.blocos,
@@ -332,7 +373,9 @@ def montar_perfil_com_fase(base: dict, combinada: RespostaCombinada, medidas: li
                      for c, r in zip(caminhos, medidas)],
         "segunda_ordem": {"f0_hz": round(f0, 2), "sigma_f0_hz": round(ajuste.sigma_f0_hz, 2), "q": round(q, 5),
                           "sigma_q": round(ajuste.sigma_q, 5), "residuo_db": round(ajuste.residuo_db, 4),
-                          "residuo_graus": round(ajuste.residuo_graus, 4), "chi2_reduzido": round(ajuste.chi2_reduzido, 3)},
+                          "residuo_graus": round(ajuste.residuo_graus, 4), "chi2_reduzido": round(ajuste.chi2_reduzido, 3),
+                          **({} if not math.isfinite(polo) else
+                             {"polo_real_hz": round(polo, 0), "sigma_polo_real_hz": round(ajuste.sigma_polo_hz, 0)})},
     }
     return perfil
 
@@ -352,28 +395,38 @@ def main(argv: list[str] | None = None) -> int:
             caminhos.append(caminho)
             rotulos.append(rotulo)
         # 1ª passada com o modelo de partida; a 2ª, com o ajustado (desenrolar a fase, prever o aliasing e o duty)
-        medidas = _medir_todas(entradas, f0, q, args)
+        medidas = _medir_todas(entradas, f0, q, math.inf, args)
         conjunto = ajustar_segunda_ordem(medidas, f0_inicial=f0, q_inicial=q)
-        medidas = _medir_todas(entradas, conjunto.f0_hz, conjunto.q, args)
+        medidas = _medir_todas(entradas, conjunto.f0_hz, conjunto.q, math.inf, args)
         piso = _piso_das_variantes(medidas)
         if piso > args.piso_sistematico and not args.piso_fixo:
             log.info(f"As variantes de amplitude/offset mostram um piso de ~{piso:.3f} LSB por harmônico, acima do "
                      f"--piso-sistematico ({args.piso_sistematico:g}): a análise usa {piso:.3f} (--piso-fixo mantém o dado).")
             args.piso_sistematico = piso
-            medidas = _medir_todas(entradas, conjunto.f0_hz, conjunto.q, args)
-        ajustes = [ajustar_segunda_ordem(medidas, True, True, conjunto.f0_hz, conjunto.q),
-                   ajustar_segunda_ordem(medidas, True, False, conjunto.f0_hz, conjunto.q),
-                   ajustar_segunda_ordem(medidas, False, True, conjunto.f0_hz, conjunto.q)]
+            medidas = _medir_todas(entradas, conjunto.f0_hz, conjunto.q, math.inf, args)
+        polo = math.inf
+        if args.polo != "nao":
+            sem = ajustar_segunda_ordem(medidas, f0_inicial=conjunto.f0_hz, q_inicial=conjunto.q)
+            com = ajustar_segunda_ordem(medidas, f0_inicial=conjunto.f0_hz, q_inicial=conjunto.q, com_polo=True)
+            if _escolher_polo(sem, com, args.polo):
+                # a 3ª passada, com o polo: a previsão das razões do duty e do aliasing nos harmônicos altos muda
+                conjunto, polo = com, com.polo_hz
+                medidas = _medir_todas(entradas, conjunto.f0_hz, conjunto.q, polo, args)
+        com_polo = math.isfinite(polo)
+        ajustes = [ajustar_segunda_ordem(medidas, usar_mag, usar_fase, conjunto.f0_hz, conjunto.q, com_polo,
+                                         polo if com_polo else POLO_INICIAL_HZ)
+                   for usar_mag, usar_fase in ((True, True), (True, False), (False, True))]
         _relatar(caminhos, rotulos, medidas, ajustes)
         melhor = ajustes[0]
-        absolutos = costurar(medidas, melhor.f0_hz, melhor.q)
-        combinada = combinar_em_grade(absolutos, melhor.f0_hz, melhor.q, args.por_decada)
-        _relatar_coerencia(absolutos, combinada, melhor.f0_hz, melhor.q, args.por_decada, args.piso_sistematico)
+        f0, q, polo = melhor.f0_hz, melhor.q, melhor.polo_hz
+        absolutos = costurar(medidas, f0, q, polo)
+        combinada = combinar_em_grade(absolutos, f0, q, args.por_decada, polo)
+        _relatar_coerencia(absolutos, combinada, f0, q, polo, args.por_decada, args.piso_sistematico)
         if args.csv is not None:
-            _gravar_csv(args.csv, caminhos, medidas, melhor.f0_hz, melhor.q)
+            _gravar_csv(args.csv, caminhos, medidas, f0, q, polo)
             _gravar_csv_grade(args.csv.with_name(args.csv.stem + "_grade.csv"), combinada)
         if args.plot is not None:
-            gerar_grafico_bode(absolutos, combinada, rotulos, melhor.f0_hz, melhor.q, args.plot)
+            gerar_grafico_bode(absolutos, combinada, rotulos, f0, q, args.plot, polo)
         if args.saida_perfil is not None:
             base = json.loads(args.perfil_base.read_text(encoding="utf-8"))
             carregar_perfil_sonda(args.perfil_base)          # valida o base

@@ -598,7 +598,9 @@ o mesmo qualquer que seja a f₁. Numa dada frequência, o erro relativo é o me
 diferentes não o mostra, e captura mais longa não o reduz. O que o revela é mudar os códigos que as bordas
 atravessam, isto é, a amplitude e o offset (as variantes). A média das variantes o reduz: na simulação, com um INL
 de 0,4 LSB, de ~0,2° para ~0,05° a 150 kHz. A dispersão entre as variantes vira o piso de incerteza por harmônico:
-quando ela passa do `--piso-sistematico`, a análise passa a usá-la (`--piso-fixo` impede).
+quando ela passa do `--piso-sistematico`, a análise passa a usá-la (`--piso-fixo` impede). Antes, sai de cada
+variante o erro do INL na fundamental (|X₁| e arg X₁, abaixo), que a costura já tira: contado, ele dobrava o piso
+no T3f (0,165 LSB em vez de 0,080).
 
 No fim, três conferências:
 
@@ -608,9 +610,18 @@ No fim, três conferências:
 
 O `--csv` grava os harmônicos e, ao lado, a grade (`_grade.csv`).
 
-Depois, o ajuste do passa-baixa de 2ª ordem de três jeitos: pela magnitude e pela fase juntas, só pela magnitude e
-só pela fase. Se os três dão o mesmo f0 e Q (a ±3 σ), a cadeia é um 2ª ordem de **fase mínima**, e a função de
-transferência do relatório fica confirmada pela fase. Se não, ele avisa: a fase medida é a que vale.
+Depois, o ajuste do modelo: o passa-baixa de 2ª ordem e, se ele se pagar, um **polo real a mais**. Com `--polo auto`
+(o padrão), o polo entra quando baixa o BIC (χ² + parâmetros × ln N) em mais de 10; `--polo sim` e `--polo nao`
+forçam. No T3f de 22/10/2026 ele entrou, em ~800 kHz: sem ele, a magnitude acima de 100 kHz fica 0,1 a 0,2 dB abaixo
+do 2ª ordem. O ajuste é feito de três jeitos: pela magnitude e pela fase juntas, só pela magnitude e só pela fase. Se
+os três dão o mesmo f0 e Q (a ±3 σ), a cadeia é o modelo, de **fase mínima**, e a função de transferência do
+relatório fica confirmada pela fase. Se não, ele avisa: a fase medida é a que vale.
+
+**O erro da fase da fundamental.** Um erro δ na fase medida da fundamental entra em `arg Xₙ − n·arg X₁` multiplicado
+por n. No T3f, ~1 LSB de INL em quadratura com a fundamental dá δ de 0,005° a 0,016°, conforme a amplitude e o
+offset (e igual nas duas taxas), e isso são 10° no harmônico 580 da quadrada de 256 Hz. O ajuste e a costura acham
+um δ por captura e o tiram. O que sobra é a curvatura da fase, que é o que o filtro tem. Na captura de f₁ mais baixa,
+que ancora as outras, o δ vira um atraso puro, que a medida não define de qualquer jeito.
 
 **O perfil com a fase:** acrescente `--perfil-base scripts/sondas/cadeia_tensao_312k.json --saida-perfil
 scripts/sondas/<id>.json`. A magnitude é a relativa da quadrada vezes K, o ganho em baixa frequência: por padrão a
@@ -623,8 +634,10 @@ dá muitos pontos e a alta, mais sinal por harmônico: num harmônico de ordem n
 erro de duty pesa nos harmônicos altos da f₁ baixa, e os perto do nulo são descartados.
 
 **Precisa refazer o perfil por senoides (`calibrar_sonda.sh`)?** Não. A quadrada mede a magnitude relativa sem
-instrumento de referência; na senoide, a referência é o osciloscópio, e ele foi a dúvida do T3 de 22/10. O ganho
-absoluto vem do K: o T2, em DC, com o Fluke. Uma varredura por senoides só serviria de conferência independente.
+instrumento de referência; na senoide, a referência é o osciloscópio. No T3f, as senoides de 22/10 ficaram 1,2 a
+1,3 dB acima da quadrada acima de ~40 kHz, a queda da referência do osciloscópio (suspeita: a ponta descompensada;
+a conferência está no roteiro). O ganho absoluto vem do K: o T2, em DC, com o Fluke, levado à faixa da captura pelo
+T0 (0,99743 em ±2,56 V). Uma varredura por senoides só serve de conferência independente, e com a ponta compensada.
 
 ---
 

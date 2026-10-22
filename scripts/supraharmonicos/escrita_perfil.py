@@ -13,6 +13,7 @@ Depende de: ``calibracao_sonda``, ``canais``, ``sonda``, ``erros``;
 
 import json
 import logging
+import math
 import os
 import shutil
 from datetime import datetime, timezone
@@ -24,7 +25,7 @@ from .calibracao_sonda import PontoPerfil, ResumoResposta
 from .canais import analisar_lista_calibracao
 from .constantes import FAIXA_LEGADA_V
 from .erros import ErroSHAN
-from .fase_quadrada import PontosAbsolutos, RespostaCombinada, h_segunda_ordem
+from .fase_quadrada import PontosAbsolutos, RespostaCombinada, fase_do_modelo, h_segunda_ordem
 from .sonda import PerfilSonda, carregar_perfil_sonda
 
 log = logging.getLogger(__name__)
@@ -186,10 +187,10 @@ def gerar_grafico(pontos: list[PontoPerfil], perfil_dict: dict, caminho_saida: P
 
 
 def gerar_grafico_bode(absolutos: list[PontosAbsolutos], combinada: RespostaCombinada, rotulos: list[str], f0: float,
-                       q: float, caminho_saida: Path) -> None:
+                       q: float, caminho_saida: Path, polo: float = math.inf) -> None:
     """O diagrama de Bode por ondas quadradas: os harmônicos de cada captura (claros, já costurados), a grade
-    combinada (a média ponderada por faixa, com ±1σ) e o 2ª ordem ajustado; embaixo de cada painel, os resíduos
-    da grade contra ele."""
+    combinada (a média ponderada por faixa, com ±1σ) e o 2ª ordem ajustado (com o polo real a mais, se houver);
+    embaixo de cada painel, os resíduos da grade contra ele."""
     import matplotlib.pyplot as plt  # só no uso de --plot
 
     fig, eixos = plt.subplots(4, 1, sharex=True, figsize=(9, 9.5), gridspec_kw={"height_ratios": [3, 1.3, 3, 1.3]})
@@ -197,17 +198,18 @@ def gerar_grafico_bode(absolutos: list[PontosAbsolutos], combinada: RespostaComb
     fmin = float(min(a.freq_hz[0] for a in absolutos)) / 1.3
     fmax = float(max(a.freq_hz[-1] for a in absolutos)) * 1.15
     fm = np.geomspace(fmin, fmax, 500)
-    hm = h_segunda_ordem(fm, f0, q)
+    hm = h_segunda_ordem(fm, f0, q, polo)
+    texto_polo = f", polo real em {polo / 1e3:.0f} kHz" if math.isfinite(polo) else ""
     mag.semilogx(fm, 20 * np.log10(np.abs(hm)), "-", color="tab:blue", lw=1.0, alpha=0.8,
-                 label=f"2ª ordem ajustado: f0 = {f0 / 1e3:.3f} kHz, Q = {q:.4f}")
-    fase.semilogx(fm, np.degrees(np.unwrap(np.angle(hm))), "-", color="tab:blue", lw=1.0, alpha=0.8)
+                 label=f"2ª ordem ajustado: f0 = {f0 / 1e3:.3f} kHz, Q = {q:.4f}{texto_polo}")
+    fase.semilogx(fm, np.degrees(fase_do_modelo(fm, f0, q, polo)), "-", color="tab:blue", lw=1.0, alpha=0.8)
     db = 20 / np.log(10)
     # uma cor por f₁ (as variantes de amplitude/offset e as duas taxas juntas), na legenda uma vez só
     f1s = sorted({round(a.medida.f1_hz) for a in absolutos})
     taxas = sorted({rotulo for rotulo in rotulos})
     ja_na_legenda: set[int] = set()
     for a in sorted(absolutos, key=lambda a: a.medida.f1_hz):
-        modelo = h_segunda_ordem(a.freq_hz, f0, q)
+        modelo = h_segunda_ordem(a.freq_hz, f0, q, polo)
         f1 = round(a.medida.f1_hz)
         kw = dict(ls="none", marker=".", ms=3, alpha=0.35, color=f"C{(f1s.index(f1) % 9) + 1}")
         rotulo_f1 = None if f1 in ja_na_legenda else f"f₁ = {f1} Hz"
@@ -215,11 +217,10 @@ def gerar_grafico_bode(absolutos: list[PontosAbsolutos], combinada: RespostaComb
         mag.semilogx(a.freq_hz, db * a.ln_ganho, label=rotulo_f1, **kw)
         fase.semilogx(a.freq_hz, np.degrees(a.fase_rad), **kw)
         res_mag.semilogx(a.freq_hz, db * (a.ln_ganho - np.log(np.abs(modelo))), **kw)
-        res_fase.semilogx(a.freq_hz, np.degrees(a.fase_rad - np.unwrap(np.angle(modelo))), **kw)
+        res_fase.semilogx(a.freq_hz, np.degrees(a.fase_rad - fase_do_modelo(a.freq_hz, f0, q, polo)), **kw)
     c = combinada
-    modelo_c = h_segunda_ordem(c.freq_hz, f0, q)
-    r_db = db * (c.ln_ganho - np.log(np.abs(modelo_c)))
-    r_gr = np.degrees(c.fase_rad - np.unwrap(np.angle(modelo_c)))
+    r_db = db * (c.ln_ganho - np.log(np.abs(h_segunda_ordem(c.freq_hz, f0, q, polo))))
+    r_gr = np.degrees(c.fase_rad - fase_do_modelo(c.freq_hz, f0, q, polo))
     kw = dict(ls="none", marker="o", ms=3.5, color="black", ecolor="black", elinewidth=0.8, capsize=1.5, zorder=5)
     mag.errorbar(c.freq_hz, db * c.ln_ganho, yerr=db * c.sigma_ln, label="Combinada (média ponderada por faixa)", **kw)
     fase.errorbar(c.freq_hz, np.degrees(c.fase_rad), yerr=np.degrees(c.sigma_fase), **kw)
