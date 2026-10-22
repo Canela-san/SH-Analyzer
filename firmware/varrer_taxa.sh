@@ -36,8 +36,19 @@
 #   K. 60 s com 2 canais a 312,5 kS/s no total (o tom no canal 1; o canal 0 como estiver).
 #   J. o teto com período constante: de 640 a 590 ticks (312,5 a 339,0 kS/s), 1 tick por vez, 2 blocos cada. A
 #      folga da PRU já diz onde ele está; aqui ele é conferido captura a captura. (Até a 1ª revisão de 22/10, o
-#      teto era ~315 kS/s e todas atrasavam abaixo de 611 ticks; com o quadro fixo, o previsto é ~328 kS/s.)
+#      teto era ~315 kS/s e todas atrasavam abaixo de 611 ticks; com o quadro fixo, o previsto é ~327 kS/s.)
 #   56 capturas, ~16 min e ~540 MB. Cada linha do resumo.csv traz a folga (folga_ciclos) e o pior atraso.
+#
+# O SPI RÁPIDO (--spi, o T7g; pede o firmware com o SPI rápido, protocolo 3, 22/10/2026). O mesmo tom de 10 kHz. O
+# SPI rápido tem bits de 13 ciclos (~15,4 MHz, contra ~10,7) e lê cada bit em 3 instantes (fases A, B e C: 60, 75 e
+# 90 ns depois da borda do SCLK que o lança), contando os quadros em que A ou C discordam de B. É a margem de tempo
+# do SDO, medida pela PRU, sem osciloscópio:
+#   P. a 312,5 kS/s, 2 blocos: o SPI padrão e o rápido gravando a fase A, a B e a C. O mesmo SINAD e nenhuma
+#      divergência na B = o rápido lê o mesmo dado que o padrão.
+#   S. 60 s a 400 kS/s com o rápido (fase B), com 1 canal e com 2 (200 kS/s por canal).
+#   T. o teto com período constante do rápido: de 520 a 460 ticks (384,6 a 434,8 kS/s), 1 tick por vez, 2 blocos.
+#   U. (pede o canal 1 em curto) o ruído a 312,5 kS/s com o padrão e a 400 kS/s com o rápido.
+#   69 capturas, ~11 min e ~370 MB. O resumo.csv traz também o modo do SPI e as divergências.
 #
 # USO (na BeagleBone, na pasta do firmware; de preferência no terminal do 'scripts/BeagleBone_Setup.sh ssh'):
 #   ./varrer_taxa.sh              # tudo, com as pausas para mudar a bancada
@@ -46,6 +57,7 @@
 #   ./varrer_taxa.sh --validar    # só a validação do firmware corrigido (a parte E): numa pasta nova, sem
 #                                 # precisar de nenhuma varredura anterior (= --partes E)
 #   ./varrer_taxa.sh --grade      # a grade de tempo (= --partes GHKJ), numa pasta T7f_<data>_<hora>/
+#   ./varrer_taxa.sh --spi        # o SPI rápido (= --partes PSTU), numa pasta T7g_<data>_<hora>/
 #   ./varrer_taxa.sh --continuar  # retoma a última varredura (ou --continuar T7e_...): pula o que já foi feito
 #                                 # (as partes são as da varredura retomada, lidas do log.txt dela)
 #
@@ -98,6 +110,12 @@ GRADE_2CANAIS="312500:60"                          # parte K
 GRADE_TICKS_DE=640                                 # parte J: 312,5 kS/s...
 GRADE_TICKS_ATE=590                                # ... a 339,0 kS/s, 1 tick por vez
 
+# O SPI rápido (--spi, firmware com o protocolo 3): modos do ler_adc --spi.
+SPI_FASES="padrao rapido:a rapido:b rapido:c"      # parte P, a 312,5 kS/s
+SPI_LONGAS="400000:60"                             # parte S: 1 e 2 canais
+SPI_TICKS_DE=520                                   # parte T: 384,6 kS/s...
+SPI_TICKS_ATE=460                                  # ... a 434,8 kS/s (o teto previsto é ~418)
+
 PARTES=ABDC
 PARTES_PEDIDAS=0
 SIMULAR=0
@@ -108,6 +126,7 @@ while [ $# -gt 0 ]; do
         --validar) PARTES=E; PARTES_PEDIDAS=1 ;;
         --limite) PARTES=LMNQR; PARTES_PEDIDAS=1 ;;
         --grade) PARTES=GHKJ; PARTES_PEDIDAS=1 ;;
+        --spi) PARTES=PSTU; PARTES_PEDIDAS=1 ;;
         --continuar)
             if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then CONTINUAR=${2%/}; shift; else CONTINUAR=ultima; fi ;;
         --partes) [ $# -ge 2 ] || { echo "Erro: --partes precisa de letras (ex.: AB)." >&2; exit 1; }
@@ -122,18 +141,19 @@ done
 # partes dela, do log.txt -- retomar a --grade com um --continuar só não pode virar a varredura padrão.
 if [ -n "$CONTINUAR" ]; then
     if [ "$CONTINUAR" = ultima ]; then
-        CONTINUAR=$(find . -maxdepth 1 -type d \( -name 'T7e_*' -o -name 'T7f_*' \) -printf '%T@ %f\n' | sort -n | tail -n 1)
+        CONTINUAR=$(find . -maxdepth 1 -type d \( -name 'T7e_*' -o -name 'T7f_*' -o -name 'T7g_*' \) -printf '%T@ %f\n' \
+                    | sort -n | tail -n 1)
         CONTINUAR=${CONTINUAR#* }
     fi
     [ -n "$CONTINUAR" ] && [ -f "$CONTINUAR/resumo.csv" ] \
-        || { echo "Erro: não achei a varredura a continuar (${CONTINUAR:-nenhuma pasta T7e_* ou T7f_* aqui})." >&2; exit 1; }
+        || { echo "Erro: não achei a varredura a continuar (${CONTINUAR:-nenhuma pasta T7e_*, T7f_* ou T7g_* aqui})." >&2; exit 1; }
     if [ "$PARTES_PEDIDAS" -eq 0 ] && [ -f "$CONTINUAR/log.txt" ]; then
         anteriores=$(sed -n 's/^== partes \([A-Z]*\),.*/\1/p' "$CONTINUAR/log.txt" | head -n 1)
         PARTES=${anteriores:-$PARTES}
     fi
 fi
 
-# Uma captura por linha: parte|esperas|taxa|canais|entrada|duração em s (vazia = blocos)
+# Uma captura por linha: parte|esperas|taxa|canais|entrada|duração em s (vazia = blocos)|modo do SPI (vazio = sem --spi)
 PLANO=()
 tem() { case "$PARTES" in *"$1"*) return 0 ;; esac; return 1; }
 if tem A; then
@@ -175,28 +195,40 @@ if tem K; then PLANO+=("K|padrao|${GRADE_2CANAIS%%:*}|0,1|tom|${GRADE_2CANAIS##*
 if tem J; then
     for ((t = GRADE_TICKS_DE; t >= GRADE_TICKS_ATE; t--)); do PLANO+=("J|padrao|$((200000000 / t))|1|tom"); done
 fi
+if tem P; then for spi in $SPI_FASES; do PLANO+=("P|padrao|$TAXA_PADRAO|1|tom||$spi"); done; fi
+if tem S; then
+    PLANO+=("S|padrao|${SPI_LONGAS%%:*}|1|tom|${SPI_LONGAS##*:}|rapido" "S|padrao|${SPI_LONGAS%%:*}|0,1|tom|${SPI_LONGAS##*:}|rapido")
+fi
+if tem T; then
+    for ((t = SPI_TICKS_DE; t >= SPI_TICKS_ATE; t--)); do PLANO+=("T|padrao|$((200000000 / t))|1|tom||rapido"); done
+fi
+if tem U; then PLANO+=("U|padrao|$TAXA_PADRAO|1|curto||padrao" "U|padrao|${SPI_LONGAS%%:*}|1|curto||rapido"); fi
 case "$PARTES" in
-    *[!ABCDEGHJKLMNQR]*|'')
-        echo "Erro: --partes aceita as letras A, B, C, D, E, G, H, J, K, L, M, N, Q e R (ex.: AB; atalhos: --validar," \
-             "--limite, --grade)." >&2
+    *[!ABCDEGHJKLMNPQRSTU]*|'')
+        echo "Erro: --partes aceita as letras A, B, C, D, E, G, H, J, K, L, M, N, P, Q, R, S, T e U (ex.: AB; atalhos:" \
+             "--validar, --limite, --grade, --spi)." >&2
         exit 1 ;;
 esac
 case "$PARTES" in
     *[!GHJK]*) PREFIXO=T7e ;;
     *) PREFIXO=T7f ;;       # só a grade de tempo
 esac
+case "$PARTES" in
+    *[!PSTU]*) ;;
+    *) PREFIXO=T7g ;;       # só o SPI rápido
+esac
 
 blocos_da_parte() {
     case "$1" in
-        C|R) echo 1 ;;      # só o ruído
-        L|J) echo 2 ;;      # 1 troca de buffer e a taxa medida pelo ARM, em ~7 s por ponto
+        C|R|U) echo 1 ;;    # só o ruído
+        L|J|P|T) echo 2 ;;  # 1 troca de buffer e a taxa medida pelo ARM, em ~7 s por ponto
         *) echo "$BLOCOS" ;;
     esac
 }
 nome_da_captura() {   # $1 = item do plano
-    local parte cs taxa canais entrada segundos
-    IFS='|' read -r parte cs taxa canais entrada segundos <<< "$1"
-    echo "${parte}_cs${cs//,/-}_${taxa}_${entrada}$( [ "$canais" = 1 ] || echo _2canais )${segundos:+_${segundos}s}.bin"
+    local parte cs taxa canais entrada segundos spi
+    IFS='|' read -r parte cs taxa canais entrada segundos spi <<< "$1"
+    echo "${parte}_cs${cs//,/-}_${taxa}_${entrada}$( [ "$canais" = 1 ] || echo _2canais )${segundos:+_${segundos}s}${spi:+_spi${spi/:/-}}.bin"
 }
 
 # --continuar: a mesma pasta; feita = com linha no resumo.csv e com os contadores lidos (uma que o ler_adc não
@@ -218,11 +250,13 @@ for item in "${PLANO[@]}"; do
 done
 
 # Duração prevista de uma captura: a taxa que a PRU alcança com essas esperas (o quadro mínimo é de
-# 595 + 2 × (S + H + A) ciclos de 5 ns, pelo simulador) e ~2 s de preparação.
-duracao_s() {   # $1 = esperas ("padrao" = 3,1,3), $2 = taxa, $3 = blocos
-    local s h a
+# 595 + 2 × (S + H + A) ciclos de 5 ns, pelo simulador; ~467 no SPI rápido) e ~2 s de preparação.
+duracao_s() {   # $1 = esperas ("padrao" = 3,1,3), $2 = taxa, $3 = blocos, $4 = modo do SPI
+    local s h a q
     IFS=, read -r s h a <<< "${1/#padrao/3,1,3}"
-    awk -v t="$2" -v q=$((595 + 2 * (s + h + a))) -v clk=$CLOCK_PRU -v n=$(($3 * AMOSTRAS_POR_BLOCO)) \
+    q=$((595 + 2 * (s + h + a)))
+    case "${4:-}" in rapido*) q=467 ;; esac
+    awk -v t="$2" -v q=$q -v clk=$CLOCK_PRU -v n=$(($3 * AMOSTRAS_POR_BLOCO)) \
         'BEGIN { m = clk / q; r = (t < m) ? t : m; printf "%.0f\n", n / r + 2 }'
 }
 
@@ -232,13 +266,13 @@ declare -A N_PARTE=() S_PARTE=() MB_PARTE=()
 ORDEM_PARTES=''
 for item in "${PLANO[@]}"; do
     [ -z "${FEITA[$(nome_da_captura "$item")]:-}" ] || continue
-    IFS='|' read -r parte cs taxa _ _ segundos <<< "$item"
+    IFS='|' read -r parte cs taxa _ _ segundos spi <<< "$item"
     if [ -n "$segundos" ]; then
         s_item=$((segundos + 2))
         mb_item=$((taxa * segundos * 2 / 1048576 + 1))
     else
         b=$(blocos_da_parte "$parte")
-        s_item=$(duracao_s "$cs" "$taxa" "$b")    # o bloco é de amostras brutas: a duração só depende da taxa total
+        s_item=$(duracao_s "$cs" "$taxa" "$b" "$spi")    # o bloco é de amostras brutas: a duração só depende da taxa total
         mb_item=$((b * AMOSTRAS_POR_BLOCO * 2 / 1048576 + 1))
     fi
     TOTAL_S=$((TOTAL_S + s_item))
@@ -261,6 +295,8 @@ LIVRE_MB=$(( $(df -Pk . | awk 'NR == 2 { print $4 }') / 1024 ))
 if [ -t 1 ]; then N=$'\e[1m' F=$'\e[2m' R=$'\e[0m' V=$'\e[32m' AM=$'\e[33m' VM=$'\e[31m'; else N='' F='' R='' V='' AM='' VM=''; fi
 if [ "$PREFIXO" = T7f ]; then
     printf '\n  %s◆ T7f: a grade de tempo (período entre amostras)%s\n' "$N" "$R"
+elif [ "$PREFIXO" = T7g ]; then
+    printf '\n  %s◆ T7g: o SPI rápido (~15,4 MHz) e a margem do SDO%s\n' "$N" "$R"
 else
     printf '\n  %s◆ T7e: esperas do CS e taxa de amostragem%s\n' "$N" "$R"
 fi
@@ -277,8 +313,9 @@ if [ "$SIMULAR" -eq 1 ]; then
     printf '\n'
     for item in "${PLANO[@]}"; do
         [ -z "${FEITA[$(nome_da_captura "$item")]:-}" ] || continue
-        IFS='|' read -r parte cs taxa canais entrada segundos <<< "$item"
-        printf '    %s  cs %-12s %7s Hz  canais %-4s %s%s\n' "$parte" "$cs" "$taxa" "$canais" "$entrada" "${segundos:+, $segundos s}"
+        IFS='|' read -r parte cs taxa canais entrada segundos spi <<< "$item"
+        printf '    %s  cs %-12s %7s Hz  canais %-4s %s%s%s\n' "$parte" "$cs" "$taxa" "$canais" "$entrada" \
+            "${segundos:+, $segundos s}" "${spi:+, SPI $spi}"
     done
     printf '\n    (--simular: nada foi capturado)\n\n'
     exit 0
@@ -323,7 +360,19 @@ if tem G || tem H || tem J || tem K; then
         exit 1
     fi
 fi
-if tem E || tem L || tem M || tem N || tem Q || tem R || tem G || tem H || tem J || tem K; then
+if tem P || tem S || tem T || tem U; then
+    if [ -f spi_core.asm ] && ! grep -q 'SPI RÁPIDO' spi_core.asm; then
+        echo "Erro: o spi_core.asm desta pasta não tem o SPI rápido (protocolo 3, 22/10/2026)." >&2
+        echo "No computador:  scripts/BeagleBone_Setup.sh enviar --setup" >&2
+        exit 1
+    fi
+    if [ -f ler_adc.c ] && [ -f ler_adc ] && { [ ler_adc -ot ler_adc.c ] || [ ler_adc -ot memoria_pru.h ]; }; then
+        echo "Erro: o ler_adc é mais antigo que o código dele: compile antes (./setup.sh)." >&2
+        exit 1
+    fi
+fi
+if tem E || tem L || tem M || tem N || tem Q || tem R || tem G || tem H || tem J || tem K || tem P || tem S || tem T \
+        || tem U; then
     if [ -f spi_core.asm ] && ! grep -q 'CORRIGIDO em 21/10/2026' spi_core.asm; then
         echo "Erro: o spi_core.asm desta pasta não tem a correção do rebase do contador (21/10/2026)." >&2
         echo "No computador:  scripts/BeagleBone_Setup.sh enviar --setup" >&2
@@ -351,9 +400,10 @@ mkdir -p "$PASTA"
 LOG="$PASTA/log.txt"
 RESUMO="$PASTA/resumo.csv"
 if [ -z "$CONTINUAR" ]; then
-    echo "parte,arquivo,esperas_cs,taxa_pedida_hz,canais,entrada,amostras_atrasadas,buffers_sobrescritos,quadros_sdo_ruido,taxa_arm_hz,desvio_arm_pct,codigo_saida,folga_ciclos,atraso_max_ciclos" > "$RESUMO"
+    echo "parte,arquivo,esperas_cs,taxa_pedida_hz,canais,entrada,amostras_atrasadas,buffers_sobrescritos,quadros_sdo_ruido,taxa_arm_hz,desvio_arm_pct,codigo_saida,folga_ciclos,atraso_max_ciclos,spi,divergencias_a,divergencias_c" > "$RESUMO"
 fi
-COLUNAS_RESUMO=$(head -n 1 "$RESUMO" | awk -F, '{ print NF }')    # 12 numa varredura retomada de antes de 22/10/2026
+# 12 numa varredura retomada de antes de 22/10/2026; 14 antes do SPI rápido (2ª revisão de 22/10/2026)
+COLUNAS_RESUMO=$(head -n 1 "$RESUMO" | awk -F, '{ print NF }')
 {
     echo "== $(date '+%Y-%m-%d %H:%M:%S %Z') · $(uname -n) · firmware $(cat VERSAO 2>/dev/null || echo '?')$( [ -z "$CONTINUAR" ] || echo ' · CONTINUAÇÃO')"
     echo "== partes $PARTES, $FALTAM de ${#PLANO[@]} capturas, $BLOCOS blocos cada (1 na parte C), faixa: $FAIXA"
@@ -386,7 +436,7 @@ for item in "${PLANO[@]}"; do
     i=$((i + 1))
     nome=$(nome_da_captura "$item")
     [ -z "${FEITA[$nome]:-}" ] || continue
-    IFS='|' read -r parte cs taxa canais entrada segundos <<< "$item"
+    IFS='|' read -r parte cs taxa canais entrada segundos spi <<< "$item"
     if [ "$parte" != "$parte_anterior" ]; then
         parte_anterior=$parte
         pular_parte=''
@@ -401,7 +451,12 @@ for item in "${PLANO[@]}"; do
             G) printf '\n  %s▸ G: a grade de tempo no padrão, com o tom (capturas longas)%s\n' "$N" "$R" ;;
             H) printf '\n  %s▸ H: a mesma, com o ARM ocupado (dd enchendo a DDR)%s\n' "$N" "$R" ;;
             K) printf '\n  %s▸ K: 2 canais no padrão%s\n' "$N" "$R" ;;
-            J) printf '\n  %s▸ J: o teto com período constante, de 312,5 a 333,3 kS/s, 1 tick por vez%s\n' "$N" "$R" ;;
+            J) printf '\n  %s▸ J: o teto com período constante, de 312,5 a 339,0 kS/s, 1 tick por vez%s\n' "$N" "$R" ;;
+            P) printf '\n  %s▸ P: o SPI padrão e o rápido (fases A, B e C) a 312,5 kS/s, com o tom%s\n' "$N" "$R" ;;
+            S) printf '\n  %s▸ S: 60 s a 400 kS/s com o SPI rápido, com 1 e 2 canais%s\n' "$N" "$R" ;;
+            T) printf '\n  %s▸ T: o teto do SPI rápido, de 384,6 a 434,8 kS/s, 1 tick por vez%s\n' "$N" "$R" ;;
+            U) pausa "gerador FORA e a entrada do canal 1 em CURTO (o divisor ligado ao retorno)." || resposta=$?
+               printf '\n  %s▸ U: a entrada em curto, com o SPI padrão e o rápido%s\n' "$N" "$R" ;;
             D|Q) pausa "tom de 10 kHz no canal 1 (como até agora) e a entrada do canal 0 em CURTO." || resposta=$?
                printf '\n  %s▸ D: 2 canais%s\n' "$N" "$R" ;;
             C|R) pausa "gerador FORA e a entrada do canal 1 em CURTO (o divisor ligado ao retorno)." || resposta=$?
@@ -421,14 +476,16 @@ for item in "${PLANO[@]}"; do
     if [ -n "$segundos" ]; then tamanho=(--duracao "${segundos}s"); else tamanho=(--blocos "$(blocos_da_parte "$parte")"); fi
     esperas=(--atraso-cs "$cs")
     [ "$cs" != padrao ] || esperas=()      # o padrão do firmware, como numa captura qualquer
+    modo_spi=()
+    [ -z "$spi" ] || modo_spi=(--spi "$spi")
     carga=''
     if [ "$parte" = H ]; then              # a DDR e a CPU do ARM ocupadas durante a captura (o ler_adc tem prioridade)
         nice -n 10 dd if=/dev/zero of=/dev/null bs=4M 2>/dev/null &
         carga=$!
     fi
     # shellcheck disable=SC2086  # $faixa são duas palavras de propósito
-    saida=$(sudo "$LER_ADC" "$taxa" "$canais" "${tamanho[@]}" "${esperas[@]}" $faixa -o "$PASTA/$nome" \
-                 -t "$PREFIXO $parte cs $cs $taxa $entrada${segundos:+ ${segundos}s}" 2>&1 </dev/null)
+    saida=$(sudo "$LER_ADC" "$taxa" "$canais" "${tamanho[@]}" "${esperas[@]}" "${modo_spi[@]}" $faixa -o "$PASTA/$nome" \
+                 -t "$PREFIXO $parte cs $cs $taxa $entrada${segundos:+ ${segundos}s}${spi:+ spi $spi}" 2>&1 </dev/null)
     codigo=$?
     if [ -n "$carga" ]; then kill "$carga" 2>/dev/null; wait "$carga" 2>/dev/null; fi
     printf '%s\n' "$saida" >> "$LOG"
@@ -437,16 +494,21 @@ for item in "${PLANO[@]}"; do
     taxa_arm=$(printf '%s\n' "$saida" | sed -n 's/.*Taxa real medida pelo ARM: \([0-9]*\) Hz (pedida [0-9]* Hz, \([-+0-9.]*\) %).*/\1 \2/p' | tail -n 1)
     folga=$(printf '%s\n' "$saida" | sed -n 's/.*Grade de tempo (PRU): folga mínima \([0-9]*\) ciclo.*/\1/p' | tail -n 1)
     pior=$(printf '%s\n' "$saida" | sed -n 's/.*Grade de tempo (PRU): .*a pior \([0-9]*\) ciclo.*/\1/p' | tail -n 1)
+    divergencias=$(printf '%s\n' "$saida" \
+        | sed -n 's/.*SPI rápido (fase . gravada): \([0-9]*\) quadro(s) com a fase A .* e \([0-9]*\) com a C.*/\1 \2/p' | tail -n 1)
+    read -r div_a div_c <<< "${divergencias:- }"
     read -r atrasadas sobrescritos sdo <<< "${integridade:-? ? ?}"
     read -r arm desvio <<< "${taxa_arm:-? ?}"
     linha="$parte,$nome,\"$cs\",$taxa,\"$canais\",$entrada,$atrasadas,$sobrescritos,$sdo,$arm,$desvio,$codigo"
     [ "$COLUNAS_RESUMO" -le 12 ] || linha+=",$folga,$pior"
+    [ "$COLUNAS_RESUMO" -le 14 ] || linha+=",${spi:-padrao},${div_a:-},${div_c:-}"
     echo "$linha" >> "$RESUMO"
 
     if [ "$codigo" -ne 0 ] && [ -z "$integridade" ]; then
         printf '%s✗ o ler_adc falhou (código %d; veja o log.txt)%s\n' "$VM" "$codigo" "$R"
     elif [ "$atrasadas $sobrescritos $sdo" = "0 0 0" ]; then
-        printf '%s✓%s %sARM %s Hz (%s %%)\n' "$V" "$R" "${folga:+folga $folga ciclos · }" "$arm" "$desvio"
+        printf '%s✓%s %s%sARM %s Hz (%s %%)\n' "$V" "$R" "${folga:+folga $folga ciclos · }" \
+            "${div_a:+divergências A $div_a, C $div_c · }" "$arm" "$desvio"
     else
         printf '%s! atrasadas %s%s · sobrescritos %s · SDO %s%s · ARM %s Hz\n' "$AM" "$atrasadas" "${pior:+ (até $pior ciclos)}" \
             "$sobrescritos" "$sdo" "$R" "$arm"

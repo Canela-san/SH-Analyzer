@@ -44,7 +44,7 @@ void lidar_interrupcao(int sinal) { (void)sinal; manter_execucao = 0; }
 // (scripts/supraharmonicos/cabecalho.py) leem todas as versões, e também os
 // '.bin' antigos, sem cabeçalho.
 #define CABECALHO_MAGIC "SHAN"      // 4 bytes, sem terminador nulo armazenado
-#define CABECALHO_VERSAO 6u         // versão do FORMATO do cabeçalho (não do firmware/software) -- v2 adicionou grandeza_por_canal/sonda_id_por_canal; v3, faixa_adc_por_canal; v4, os contadores de integridade da captura e os atrasos de CS; v5, a versão do firmware e a taxa medida pelo ARM; v6, a grade de tempo publicada pela PRU (ver struct cabecalho_arquivo_campos)
+#define CABECALHO_VERSAO 7u         // versão do FORMATO do cabeçalho (não do firmware/software) -- v2 adicionou grandeza_por_canal/sonda_id_por_canal; v3, faixa_adc_por_canal; v4, os contadores de integridade da captura e os atrasos de CS; v5, a versão do firmware e a taxa medida pelo ARM; v6, a grade de tempo publicada pela PRU; v7, o modo do SPI e as divergências entre as fases de leitura (ver struct cabecalho_arquivo_campos)
 #define CABECALHO_TAMANHO_TOTAL 1024u
 
 // Tamanho FIXO (bytes, incluindo o terminador nulo) dos campos de texto
@@ -212,6 +212,9 @@ struct cabecalho_arquivo_campos {
     uint32_t atraso_maximo_ciclos;     // [GRADE, v6] maior atraso entre as amostras atrasadas, em ciclos (0 se nenhuma)
     uint32_t ciclos_rebase;            // [GRADE, v6] ciclos entre as duas leituras do contador no rebase, medidos pela PRU antes da 1ª amostra
     uint32_t versao_protocolo_pru;     // [GRADE, v6] o que a PRU escreveu em versao_protocolo_pru (VERSAO_PROTOCOLO_PRU = este firmware; 0 = firmware da PRU anterior a 22/10/2026)
+    uint32_t modo_spi;                 // [SPI, v7] MODO_SPI_* de memoria_pru.h: 0 = padrão (~10,7 MHz); 1, 2, 3 = rápido (~15,4 MHz) gravando a fase A, B ou C (--spi)
+    uint32_t divergencias_fase_a;      // [SPI, v7] quadros do SPI rápido em que a leitura da fase A (60 ns) discordou da B (75 ns); 0 no modo padrão
+    uint32_t divergencias_fase_c;      // [SPI, v7] idem, a fase C (90 ns) contra a B
     uint32_t header_crc32;             // CRC-32 (polinômio 0xEDB88320, o mesmo de zlib/PNG/Ethernet) de todo o cabeçalho, calculado com este próprio campo zerado -- permite a um leitor detectar um cabeçalho truncado/corrompido antes de confiar nos campos acima
 } __attribute__((packed));
 
@@ -380,6 +383,14 @@ static void imprimir_uso(const char *nome_programa) {
         "                    21/10/2026 não achou diferença nenhuma de 2/1/1 µs, o padrão\n"
         "                    antigo, até ele). Esperas maiores só deixam o quadro mais\n"
         "                    longo e baixam a taxa máxima (200,100,100: ~143 kS/s).\n"
+        "  --spi MODO        Opcional. 'padrao' (o padrão: bits de 16 a 20 ciclos, SCLK de\n"
+        "                    ~10,7 MHz, ~327 kS/s no máximo) ou 'rapido' (bits de 13\n"
+        "                    ciclos, ~15,4 MHz, ~418 kS/s no máximo; 22/10/2026, a validar\n"
+        "                    na bancada). No rápido, cada bit é lido 60, 75 e 90 ns depois\n"
+        "                    da borda do SCLK que o lança (fases A, B e C); grava-se a B\n"
+        "                    (a latência do modo padrão), ou a pedida em 'rapido:a',\n"
+        "                    'rapido:b' ou 'rapido:c', e o fim da captura diz em quantos\n"
+        "                    quadros as outras discordaram: a margem de tempo do SDO.\n"
         "  --faixa-adc C:V[,...]  Opcional. Faixa de entrada do ADS8688 em cada canal, no\n"
         "                    formato 'canal:volts', onde 'volts' é a faixa TOTAL (pico\n"
         "                    a pico) -- o mesmo número do --faixa do adc_tool.py:\n"
@@ -810,6 +821,32 @@ static int analisar_lista_faixas(const char *texto, const int *canais, int num_c
  * reportado em stderr).
  */
 /*
+ * [SPI RÁPIDO] Interpreta --spi: 'padrao', 'rapido' (= 'rapido:b') ou 'rapido:a|b|c'. Devolve MODO_SPI_*, ou -1
+ * com o erro já impresso.
+ */
+static int analisar_modo_spi(const char *texto) {
+    if (strcmp(texto, "padrao") == 0 || strcmp(texto, "padrão") == 0) {
+        return (int)MODO_SPI_PADRAO;
+    }
+    if (strcmp(texto, "rapido") == 0 || strcmp(texto, "rápido") == 0 || strcmp(texto, "rapido:b") == 0) {
+        return (int)MODO_SPI_RAPIDO_B;
+    }
+    if (strcmp(texto, "rapido:a") == 0) {
+        return (int)MODO_SPI_RAPIDO_A;
+    }
+    if (strcmp(texto, "rapido:c") == 0) {
+        return (int)MODO_SPI_RAPIDO_C;
+    }
+    fprintf(stderr, "Erro: --spi espera 'padrao', 'rapido', 'rapido:a', 'rapido:b' ou 'rapido:c', recebeu '%s'.\n",
+            texto);
+    return -1;
+}
+
+static char fase_do_modo_spi(uint32_t modo) {
+    return modo == MODO_SPI_RAPIDO_A ? 'A' : (modo == MODO_SPI_RAPIDO_C ? 'C' : 'B');
+}
+
+/*
  * [ATRASOS DO CS] Interpreta --atraso-cs "S,H,A" (três inteiros, iterações de
  * 2 ciclos da PRU = 10 ns). Mínimo 1: o laço de espera da PRU conta para baixo
  * até 0, e um 0 daria a volta nos 32 bits (uma espera de ~21 s). Máximo 10000
@@ -843,12 +880,14 @@ struct contadores_integridade {
     uint32_t quadros_preambulo_ruim;
     uint32_t folga_minima_ciclos;      // [GRADE] memoria_pru.h
     uint32_t atraso_maximo_ciclos;
+    uint32_t divergencias_fase_a;      // [SPI RÁPIDO] memoria_pru.h
+    uint32_t divergencias_fase_c;
 };
 
 static void conferir_integridade(volatile struct shared_control *ctrl, struct contadores_integridade *vistos) {
     struct contadores_integridade agora = {
         ctrl->amostras_atrasadas, ctrl->buffers_sobrescritos, ctrl->quadros_preambulo_ruim,
-        ctrl->folga_minima_ciclos, ctrl->atraso_maximo_ciclos
+        ctrl->folga_minima_ciclos, ctrl->atraso_maximo_ciclos, ctrl->divergencias_fase_a, ctrl->divergencias_fase_c
     };
     if (agora.buffers_sobrescritos > vistos->buffers_sobrescritos) {
         fprintf(stderr, "ERRO: %u buffer(s) sobrescrito(s) pela PRU antes de serem gravados -- o ARM atrasou "
@@ -857,7 +896,7 @@ static void conferir_integridade(volatile struct shared_control *ctrl, struct co
     }
     if (agora.amostras_atrasadas > vistos->amostras_atrasadas) {
         fprintf(stderr, "Aviso: %u amostra(s) tomada(s) depois do instante previsto (até %u ciclos de 5 ns) -- a "
-                         "PRU não acompanhou a taxa pedida (o laço alcança ~326 kS/s com os atrasos de CS "
+                         "PRU não acompanhou a taxa pedida (o laço alcança ~327 kS/s com o SPI padrão e ~418 com o rápido, com os atrasos de CS "
                          "padrão) ou foi segurada; o período entre essas amostras não é o do cabeçalho.\n",
                 agora.amostras_atrasadas - vistos->amostras_atrasadas, agora.atraso_maximo_ciclos);
     }
@@ -889,6 +928,27 @@ static void imprimir_grade(volatile struct shared_control *ctrl, const struct co
                c->atraso_maximo_ciclos, 5u * c->atraso_maximo_ciclos);
     }
     printf(" | rebase: %u ciclo(s) entre as leituras\n", ctrl->ciclos_rebase);
+}
+
+/*
+ * [SPI RÁPIDO] As divergências entre as fases de leitura (memoria_pru.h): a margem de tempo do SDO medida pela PRU.
+ * Contadas desde a 1ª amostra até 7 amostras depois da última troca de buffer (cobrem a captura inteira).
+ */
+static void imprimir_spi(uint32_t modo, const struct contadores_integridade *c, unsigned long long amostras) {
+    if (modo == MODO_SPI_PADRAO) {
+        return;
+    }
+    printf("SPI rápido (fase %c gravada): %u quadro(s) com a fase A (60 ns) diferente da B (75 ns) e %u com a C "
+           "(90 ns), em %llu quadro(s)", fase_do_modo_spi(modo), c->divergencias_fase_a, c->divergencias_fase_c, amostras);
+    if (c->divergencias_fase_a == 0 && c->divergencias_fase_c == 0) {
+        printf(" -- as três fases leram o mesmo bit: margem de pelo menos 15 ns para cada lado\n");
+    } else if (c->divergencias_fase_c == 0) {
+        printf(" -- o SDO volta perto de 60 ns: a fase B (75 ns) tem margem só de um lado\n");
+    } else if (c->divergencias_fase_a == 0) {
+        printf(" -- o bit seguinte chega antes de 90 ns: a fase B (75 ns) tem margem só de um lado\n");
+    } else {
+        printf(" -- A e C discordam: a janela do bit é estreita; confira o SINAD contra o SPI padrão\n");
+    }
 }
 
 static double segundos_monotonicos(void) {
@@ -1166,6 +1226,7 @@ int main(int argc, char *argv[]) {
     const char *sonda_texto = NULL;        // [SONDA/GRANDEZA] valor de --sonda, se passado
     const char *faixa_adc_texto = NULL;    // [FAIXA DE ENTRADA] valor de --faixa-adc, se passado
     const char *atraso_cs_texto = NULL;    // [ATRASOS DO CS] valor de --atraso-cs, se passado
+    const char *spi_texto = NULL;          // [SPI RÁPIDO] valor de --spi, se passado
 
     for (int i = primeiro_opcional; i < argc; i++) {
         if (strcmp(argv[i], "--blocos") == 0) {
@@ -1237,6 +1298,12 @@ int main(int argc, char *argv[]) {
                 return -1;
             }
             atraso_cs_texto = argv[++i];
+        } else if (strcmp(argv[i], "--spi") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Erro: --spi precisa de um valor (ex.: --spi rapido).\n");
+                return -1;
+            }
+            spi_texto = argv[++i];
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "Erro: opção desconhecida '%s'.\n", argv[i]);
             imprimir_uso(argv[0]);
@@ -1332,6 +1399,20 @@ int main(int argc, char *argv[]) {
                atrasos_cs[0], atrasos_cs[1], atrasos_cs[2],
                atrasos_cs[0] * 0.01, atrasos_cs[1] * 0.01, atrasos_cs[2] * 0.01,
                ATRASO_CS_SETUP_PADRAO, ATRASO_CS_HOLD_PADRAO, ATRASO_CS_ALTO_PADRAO);
+    }
+
+    uint32_t modo_spi = MODO_SPI_PADRAO;
+    if (spi_texto != NULL) {
+        int modo = analisar_modo_spi(spi_texto);
+        if (modo < 0) {
+            return -1;
+        }
+        modo_spi = (uint32_t)modo;
+    }
+    if (modo_spi != MODO_SPI_PADRAO) {
+        printf("SPI rápido: bits de 13 ciclos (~15,4 MHz), gravando a leitura da fase %c (%u ns depois da borda do "
+               "SCLK que lança o bit); as fases A (60 ns) e C (90 ns) são comparadas com a B a cada quadro.\n",
+               fase_do_modo_spi(modo_spi), modo_spi == MODO_SPI_RAPIDO_A ? 60u : (modo_spi == MODO_SPI_RAPIDO_C ? 90u : 75u));
     }
 
     // Resolve blocos_desejados cedo (antes de tocar em /dev/mem ou criar o
@@ -1505,6 +1586,9 @@ int main(int argc, char *argv[]) {
     ctrl->atraso_cs_setup = atrasos_cs[0];
     ctrl->atraso_cs_hold = atrasos_cs[1];
     ctrl->atraso_cs_alto = atrasos_cs[2];
+    ctrl->modo_spi = modo_spi;             // [SPI RÁPIDO] idem: lido uma vez, antes da 1ª amostra
+    ctrl->divergencias_fase_a = 0;
+    ctrl->divergencias_fase_c = 0;
 
     // [GRADE] A PRU os escreve antes da 1ª amostra; zerados aqui, um 0 depois quer dizer que ela não escreveu.
     ctrl->folga_minima_ciclos = 0;
@@ -1574,6 +1658,7 @@ int main(int argc, char *argv[]) {
     memcpy(cabecalho.campos.sonda_id_por_canal, sonda_canais, sizeof(sonda_canais));
     memcpy(cabecalho.campos.faixa_adc_por_canal, faixa_adc_canais, sizeof(faixa_adc_canais)); // [FAIXA DE ENTRADA, v3]
     memcpy(cabecalho.campos.atraso_cs_iteracoes, atrasos_cs, sizeof(atrasos_cs));          // [INTEGRIDADE, v4] (os contadores entram no cabeçalho final)
+    cabecalho.campos.modo_spi = modo_spi;                                                  // [SPI, v7] (as divergências, no final)
     {   // [VERSÃO, v5] cortada em 31 bytes se for maior; o resto do campo já está zerado pelo memset acima
         size_t n = strlen(VERSAO_FIRMWARE);
         if (n >= sizeof(cabecalho.campos.versao_firmware)) {
@@ -1694,7 +1779,7 @@ int main(int argc, char *argv[]) {
 
     unsigned long long blocos_salvos = 0;
     unsigned long long total_amostras_gravadas = 0; // [CABECALHO] soma de amostras brutas gravadas -- preenchido no cabeçalho final
-    struct contadores_integridade integridade = {0, 0, 0, 0, 0};   // [INTEGRIDADE] o último valor visto dos contadores da PRU
+    struct contadores_integridade integridade = {0, 0, 0, 0, 0, 0, 0};   // [INTEGRIDADE] o último valor visto dos contadores da PRU
     double instante_primeiro_bloco = 0.0, instante_ultimo_bloco = 0.0;   // para medir a taxa real (relógio do ARM)
 
     // ============================================================================
@@ -1808,6 +1893,7 @@ int main(int argc, char *argv[]) {
            (integridade.amostras_atrasadas | integridade.buffers_sobrescritos | integridade.quadros_preambulo_ruim)
                ? "" : " -- tudo certo");
     imprimir_grade(ctrl, &integridade, blocos_salvos);
+    imprimir_spi(modo_spi, &integridade, total_amostras_gravadas);
 
     // [CABECALHO/NOME DE ARQUIVO] Reescreve o cabeçalho no INÍCIO do
     // arquivo, agora preenchendo blocos_gravados/total_amostras_gravadas
@@ -1829,6 +1915,8 @@ int main(int argc, char *argv[]) {
     cabecalho.campos.atraso_maximo_ciclos = integridade.atraso_maximo_ciclos;
     cabecalho.campos.ciclos_rebase = ctrl->ciclos_rebase;
     cabecalho.campos.versao_protocolo_pru = ctrl->versao_protocolo_pru;
+    cabecalho.campos.divergencias_fase_a = integridade.divergencias_fase_a;                    // [SPI, v7]
+    cabecalho.campos.divergencias_fase_c = integridade.divergencias_fase_c;
     cabecalho.campos.header_crc32 = 0;
     cabecalho.campos.header_crc32 = calcular_crc32(&cabecalho, sizeof(cabecalho));
 

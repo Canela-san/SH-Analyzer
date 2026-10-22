@@ -371,22 +371,23 @@ taxa=$1; canais=$2; shift 2
 while [ $# -gt 0 ]; do
     case "$1" in
         -o) saida=$2; shift ;; --atraso-cs) cs=$2; shift ;; --blocos) blocos=$2; shift ;;
-        --duracao) duracao=$2; blocos=9; shift ;;
+        --duracao) duracao=$2; blocos=9; shift ;; --spi) spi=$2; shift ;;
     esac
     shift
 done
 IFS=, read -r s h a <<< "${cs:-3,1,3}"         # sem --atraso-cs: o padrão do firmware
 sleep "${LER_ADC_DEMORA:-0}"
-maximo=$((200000000 / (595 + 2 * (s + h + a))))
+quadro=$((595 + 2 * (s + h + a)))
+case "${spi:-}" in rapido*) quadro=467 ;; esac          # o SPI rápido (~428 kS/s no máximo)
+maximo=$((200000000 / quadro))
 atrasadas=0; real=$taxa
 if [ "$taxa" -gt "$maximo" ]; then atrasadas=123; real=$maximo; fi
-echo "taxa=$taxa canais=$canais blocos=$blocos cs=$cs${duracao:+ duracao=$duracao}" > "$saida"
+echo "taxa=$taxa canais=$canais blocos=$blocos cs=$cs${duracao:+ duracao=$duracao}${spi:+ spi=$spi}" > "$saida"
 if [ "$blocos" -ge 2 ]; then
     printf 'Taxa real medida pelo ARM: %d Hz (pedida %d Hz, %+.2f %%)\n' "$real" "$taxa" \
         "$(awk -v r="$real" -v t="$taxa" 'BEGIN { print 100 * (r / t - 1) }')"
 fi
 printf 'Integridade: %d amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído no SDO\n' "$atrasadas"
-quadro=$((595 + 2 * (s + h + a)))
 if [ "$blocos" -lt 2 ]; then
     echo 'Grade de tempo (PRU): folga ainda não publicada (a PRU a publica logo depois de cada bloco) | rebase: 2 ciclo(s) entre as leituras'
 elif [ "$atrasadas" -eq 0 ]; then
@@ -396,6 +397,9 @@ elif [ "$atrasadas" -eq 0 ]; then
 else
     echo "Grade de tempo (PRU): 123 amostra(s) fora da grade, a pior 77 ciclo(s) = 385 ns atrasada | rebase: 2 ciclo(s) entre as leituras"
 fi
+case "${spi:-}" in
+    rapido*) echo "SPI rápido (fase B gravada): 0 quadro(s) com a fase A (60 ns) diferente da B (75 ns) e 7 com a C (90 ns), em 2097152 quadro(s) -- o bit seguinte chega antes de 90 ns" ;;
+esac
 [ -z "${LER_ADC_REGISTRO:-}" ] || pgrep -x dd > /dev/null && echo "dd rodando" >> "${LER_ADC_REGISTRO:-/dev/null}"
 '''
 
@@ -473,7 +477,7 @@ def test_varrer_taxa_para_sem_terminal_na_pausa_e_continua_de_onde_parou(varredu
 
     texto = (pasta / "resumo.csv").read_text().splitlines()   # uma captura que o ler_adc não terminou: refeita
     cortada = texto[5].split(",")
-    cortada[-8] = "?"                                         # amostras_atrasadas (folga e atraso vêm depois)
+    cortada[-11] = "?"                                        # amostras_atrasadas (folga, atraso e o SPI vêm depois)
     texto[5] = ",".join(cortada)
     (pasta / "resumo.csv").write_text("\n".join(texto) + "\n")
 
@@ -603,6 +607,36 @@ def test_varrer_taxa_continuar_retoma_as_partes_da_varredura_anterior(varredura)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "53 de 56 já feitas" in r.stdout and "T7f" in r.stdout
     assert len(_resumo(pasta)) == 56
+
+
+def test_varrer_taxa_spi_compara_os_modos_e_mede_o_teto_do_rapido(varredura):
+    """--spi (T7g): o padrão e o rápido nas 3 fases a 312,5 kS/s, 60 s a 400 kS/s com 1 e 2 canais, o teto do rápido
+    de 520 a 460 ticks e o curto (com uma pausa); o modo do SPI e as divergências vão para o resumo."""
+    r, _ = varredura("--spi", "--simular")
+    assert r.returncode == 0 and "T7g" in r.stdout and "69 capturas" in r.stdout and "SPI rapido:a" in r.stdout
+    r, _ = varredura("--spi", entrada="\n")
+    assert r.returncode == 0, r.stdout + r.stderr
+    (pasta,) = varredura.pasta.glob("T7g_*")
+    linhas = _resumo(pasta)
+    assert [linha["parte"] for linha in linhas[:6]] == ["P", "P", "P", "P", "S", "S"]
+    assert [linha["spi"] for linha in linhas[:4]] == ["padrao", "rapido:a", "rapido:b", "rapido:c"]
+    assert linhas[0]["divergencias_a"] == "" and linhas[1]["divergencias_c"] == "7"
+    assert (pasta / "P_cspadrao_312500_tom_spirapido-a.bin").read_text().split()[-1] == "spi=rapido:a"
+    assert (pasta / "S_cspadrao_400000_tom_2canais_60s_spirapido.bin").exists()
+    teto = [linha for linha in linhas if linha["parte"] == "T"]
+    assert [200_000_000 // int(linha["taxa_pedida_hz"]) for linha in teto] == list(range(520, 459, -1))
+    acima = [linha for linha in teto if linha["amostras_atrasadas"] != "0"]
+    assert acima and max(200_000_000 // int(linha["taxa_pedida_hz"]) for linha in acima) == 466   # o quadro de 467 do falso
+    assert [linha["spi"] for linha in linhas if linha["parte"] == "U"] == ["padrao", "rapido"]
+    assert "divergências A 0, C 7" in r.stdout
+
+
+def test_varrer_taxa_spi_recusa_o_firmware_sem_o_spi_rapido(varredura):
+    (varredura.pasta / "spi_core.asm").write_text("; [CORRIGIDO em 21/10/2026]\n; GRADE EXATA\n; QUADRO DE DURAÇÃO FIXA\n")
+    r = subprocess.run(["bash", str(varredura.pasta / "varrer_taxa.sh"), "--spi"], cwd=varredura.pasta.parent,
+                       env=varredura.env, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 1 and "não tem o SPI rápido" in r.stderr
+    assert not list(varredura.pasta.glob("T7g_*"))
 
 
 def test_varrer_taxa_grade_recusa_o_firmware_sem_a_espera_de_precisao(varredura):

@@ -769,6 +769,23 @@ def test_medir_captura_mostra_o_jitter_e_os_degraus_e_a_grade_da_pru(cli, tmp_pa
     assert set(COLUNAS_CSV) >= {"jitter_ns", "degrau_rebases_ns", "folga_minima_ciclos"}
 
 
+def test_medir_captura_mostra_o_spi_rapido_e_as_divergencias(cli, tmp_path):
+    """Cabeçalho v7 com o SPI rápido (fase B gravada): a linha do SPI no console e as divergências no CSV; com 1
+    bloco, a folga já vale (desde a v7 a PRU a publica com a troca)."""
+    sinal = tom_com_jitter(0.0, n=1 << 16, deriva=1e-7)
+    caminho = tmp_path / "rapido.bin"
+    caminho.write_bytes(montar_cabecalho(1 << 16, (1,), (0,), ("",), 400_000, versao=7, blocos=1,
+                                         amostras_por_buffer=1 << 16, grade=(22, 0, 7, 3), spi=(2, 0, 4))
+                        + sinal.astype("<u2").tobytes())
+    saida = tmp_path / "rapido.csv"
+    rc, out, err = cli(main, caminho, "--csv", saida)
+    assert rc == 0, err
+    assert "SPI: rápido (~15,4 MHz), leitura da fase B (75 ns) gravada; 0 quadro(s) com a fase A diferente da B e 4" in out
+    (linha,) = ler_csv(saida)
+    assert (linha["modo_spi"], linha["divergencias_fase_a"], linha["divergencias_fase_c"]) == ("2", "0", "4")
+    assert linha["folga_minima_ciclos"] == "22"
+
+
 
 def test_medir_captura_nao_estima_jitter_num_tom_fraco(cli, tmp_path):
     """Um tom 20 dB abaixo do ruído (como a diafonia num canal em curto) ainda é achado na FFT longa, mas não serve

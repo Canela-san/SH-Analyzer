@@ -222,6 +222,7 @@ readonly CAB_OFF_ATRASO_CS=688      # v4: 3 x uint32, esperas do CS no laço da 
 readonly CAB_OFF_CRC_V4=700
 readonly CAB_OFF_CRC_V5=744
 readonly CAB_OFF_CRC_V6=760
+readonly CAB_OFF_CRC_V7=772     # v7: + o modo do SPI e as divergências entre as fases de leitura
 readonly GRANDEZA_TENSAO=0
 readonly GRANDEZA_CORRENTE=1
 
@@ -1050,7 +1051,7 @@ validar_cabecalho() {
         qc_erro "cabeçalho versão ${versao}: não registra grandeza/sonda por canal. Recompile o firmware (make em firmware/)" cabecalho_v1
         return
     fi
-    if [ "$versao" -gt 6 ]; then
+    if [ "$versao" -gt 7 ]; then
         qc_aviso "cabeçalho versão ${versao}, mais nova que a conhecida por este script: não conferi grandeza/sonda" cabecalho_desconhecido
         return
     fi
@@ -1060,6 +1061,7 @@ validar_cabecalho() {
     [ "$versao" -eq 4 ] && off_crc="$CAB_OFF_CRC_V4"
     [ "$versao" -eq 5 ] && off_crc="$CAB_OFF_CRC_V5"
     [ "$versao" -eq 6 ] && off_crc="$CAB_OFF_CRC_V6"
+    [ "$versao" -eq 7 ] && off_crc="$CAB_OFF_CRC_V7"
     crc_gravado="$(ler_u32 "$arq" "$off_crc")"
     crc_calculado="$(crc_cabecalho_calculado "$arq" "$off_crc")"
     if [ "$crc_gravado" != "$crc_calculado" ]; then

@@ -109,8 +109,8 @@ bate com a fração de amostras que têm tantos bits 1, tirada das próprias cap
 * **O instante da amostra nunca dependeu disso** (a descida do CS vem depois da espera de precisão): o jitter de
   0,00 ns continua valendo. Dependiam a folga, o teto de taxa e o padrão do SCLK (9 ou 10 ciclos em alto, conforme o
   bit lido).
-* Corrigido no firmware seguinte (leitura sem desvio, troca de buffer espalhada): o simulador calibrado prevê 41
-  ciclos de folga numa amostra comum, qualquer que seja o sinal, e ≥ 31 com a troca; teto ~328 kS/s. Falta a bancada
+* Corrigido no firmware seguinte (leitura sem desvio, troca de buffer espalhada): o simulador calibrado prevê 40
+  ciclos de folga numa amostra comum, qualquer que seja o sinal, e ≥ 29 com a troca; teto ~327 kS/s. Falta a bancada
   (`./varrer_taxa.sh --grade`, agora até 339 kS/s).
 * Figura `grade_bits` (macros `\GradeBitsBase`, `\GradeBitsRazaoMin`, `\GradeBitsRazaoMax`, `\GradeBitsPeriodoEx`,
   `\GradeBitsMedidaEx`, `\GradeBitsPrevistaEx`).

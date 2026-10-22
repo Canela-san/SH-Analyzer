@@ -133,9 +133,16 @@
 ;     só roda quando pedida acima de 9 iterações: até aí, o caminho entre a
 ;     subida e a próxima descida do CS já a garante (>= 19 ciclos).
 ;   No simulador com as latências medidas na placa (tests/pru_sim.py,
-;   LATENCIAS_PRU_REAL): a 312,5 kS/s, folga de 41 ciclos numa amostra comum
-;   (eram 20 a 35, conforme o sinal) e >= 31 com a troca (eram 3 a 13); teto
-;   com período constante ~328 kS/s (era ~315). Falta a bancada (--grade).
+;   LATENCIAS_PRU_REAL): a 312,5 kS/s, folga de 40 ciclos numa amostra comum
+;   (eram 20 a 35, conforme o sinal) e >= 29 com a troca e os eventos (eram 3
+;   a 13); teto com período constante ~327 kS/s (era ~315). Falta a bancada.
+;
+; --- REVISÃO DE 22/10/2026 (3): SPI RÁPIDO, OPCIONAL ------------------------
+;   - Com ctrl->modo_spi != 0 (ler_adc --spi rapido), o laço principal usa
+;     bits de 13 ciclos (~15,4 MHz) e lê cada bit em 3 instantes, contando os
+;     quadros em que eles discordam (ver BIT_DADO_RAPIDO e transacao_rapida).
+;     No simulador calibrado: teto ~418 kS/s; 400 kS/s com 22 ciclos de folga.
+;     O modo padrão continua o mesmo (1 ciclo a mais no desvio de modo).
 ; ==============================================================================
 ; PINOS (inalterado):
 ;   Bit 0 (r30) = SCLK   | Bit 1 (r30) = SDI/MOSI
@@ -270,6 +277,57 @@ DATA_BIT_ULTIMO .macro
     .endm
 
 ; ==============================================================================
+; [SPI RÁPIDO, 22/10/2026] Bits de 13 ciclos (65 ns: SCLK de ~15,4 MHz, abaixo
+; dos 17 MHz do ADS8688 e do isolador), 6 em alto e 7 em baixo. Só no laço
+; principal, com ctrl->modo_spi != 0 (ler_adc --spi rapido); a configuração do
+; ADC continua com os bits de sempre. O MOSI fica parado em 0 (NO_OP).
+;
+; O risco de encurtar o bit é o caminho de volta do SDO: a borda de descida do
+; SCLK atravessa o isolador, o ADC lança o bit seguinte e ele volta pelo
+; isolador (~50 a 70 ns ao todo). O modo padrão lê o bit 15 ciclos (75 ns)
+; depois da borda que o lançou; com bits de 13 ciclos, essa leitura cai 2
+; ciclos depois da borda SEGUINTE -- vale enquanto o bit novo ainda não voltou.
+; Para medir essa margem sem osciloscópio, cada bit de dado é lido em TRÊS
+; instantes depois da borda que o lançou: A = 12 ciclos (60 ns, logo antes da
+; borda seguinte, como um SPI comum), B = 15 (75 ns, a latência do modo padrão)
+; e C = 18 (90 ns). Grava-se a fase pedida (padrão B) e contam-se os quadros em
+; que A ou C discordam de B (ctrl->divergencias_fase_a/_c): A errada = o bit
+; ainda não tinha chegado; C errada = o bit seguinte já tinha chegado.
+; Cada fase tem o seu acumulador: A em r20, B em r23, C em r27 (o bit no bit 2).
+; ==============================================================================
+BIT_COMANDO_RAPIDO .macro
+    SET r30, r30, 0          ; 0: sobe o SCLK
+    LSL r5, r5, 1            ; 1
+    NOP                      ; 2
+    NOP                      ; 3
+    NOP                      ; 4
+    AND r1, r31, 4           ; 5: o preâmbulo (SDO), logo antes da descida
+    CLR r30, r30, 0          ; 6: desce o SCLK (o ADC lê o SDI, sempre 0)
+    OR r5, r5, r1            ; 7
+    NOP                      ; 8
+    NOP                      ; 9
+    NOP                      ; 10
+    NOP                      ; 11
+    NOP                      ; 12
+    .endm
+
+BIT_DADO_RAPIDO .macro
+    SET r30, r30, 0          ; 0: sobe o SCLK
+    LSL r20, r20, 1          ; 1: acumulador da fase A
+    LSL r23, r23, 1          ; 2: fase B
+    LSL r27, r27, 1          ; 3: fase C
+    NOP                      ; 4
+    AND r1, r31, 4           ; 5: fase A, 12 ciclos depois da descida que lançou o bit
+    CLR r30, r30, 0          ; 6: desce o SCLK (o ADC lança o bit seguinte)
+    OR r20, r20, r1          ; 7
+    AND r1, r31, 4           ; 8: fase B, 15 ciclos (a latência do modo padrão)
+    OR r23, r23, r1          ; 9
+    NOP                      ; 10
+    AND r1, r31, 4           ; 11: fase C, 18 ciclos
+    OR r27, r27, r1          ; 12
+    .endm
+
+; ==============================================================================
 ; ASSINATURA: void ler_ads8688_asm(volatile struct shared_control *ctrl)
 ; r14 = Ponteiro base da struct shared_control (0x00010000)
 ; ==============================================================================
@@ -283,7 +341,7 @@ ler_ads8688_asm:
     LDI r18.w2, 0x0002
 
     ; Limite do buffer: 1.048.576 amostras (2 MB por buffer), em r4. O r21 é a próxima amostra com trabalho de troca
-    ; de buffer (ver evento_de_buffer): no começo, só a última do buffer. Tem de ser > 5 (os eventos 1 a 5).
+    ; de buffer (ver evento_de_buffer): no começo, só a última do buffer. Tem de ser > 7 (os eventos 1 a 7).
     LDI r4.w0, 0x0000
     LDI r4.w2, 0x0010    ; 0x00100000 em Hex = 1.048.576 (SAMPLES_PER_BUFFER de memoria_pru.h)
     MOV r21, r4
@@ -476,6 +534,9 @@ cfg_fim:
     ;         (os cinco vão para shared_control a cada troca de buffer -- ver memoria_pru.h)
     ;   r9  = atraso CS setup  r10 = atraso CS hold  r11 = atraso CS alto (iterações; 0 = padrão)
     ;   r29 = ciclos entre as duas leituras do contador no rebase (medidos abaixo)
+    ;   r2  = ctrl->modo_spi: 0 = SPI padrão; 1, 2, 3 = SPI rápido gravando a leitura da fase A, B ou C (ver
+    ;         BIT_DADO_RAPIDO). (r2 é o ponteiro de pilha do C, que não volta mais a rodar: esta função não retorna.)
+    ;   r0, r3 = quadros do SPI rápido em que a fase A / a fase C discordou da B (publicados nos eventos 6 e 7)
     ;   r5  = os 16 bits lidos no SDO durante o comando (preâmbulo), zerado a cada quadro
     ;   r16 = período em ciclos, lido UMA vez (o ler_adc reinicia a PRU a cada captura; até 22/10/2026 era relido
     ;         da RAM compartilhada a cada amostra, o que só gastava a folga)
@@ -498,6 +559,13 @@ atraso_alto_ok:
     LDI r11, 0
 atraso_alto_pedido:
 
+    LBBO &r2, r14, 76, 4     ; r2 = ctrl->modo_spi (0 = padrão)
+    LDI r0, 0
+    LDI r3, 0
+    SBBO &r0, r14, 80, 4     ; divergências publicadas zeradas
+    SBBO &r3, r14, 84, 4
+    CLR r30, r30, 1          ; MOSI em 0 (NO_OP): o quadro rápido não o escreve
+
     LDI r6, 0
     LDI r7, 0
     LDI r8, 0
@@ -518,7 +586,7 @@ atraso_alto_pedido:
     LBBO &r20, r18, 0, 4
     SUB r29, r20, r1
     SBBO &r29, r14, 68, 4    ; ctrl->ciclos_rebase (diagnóstico)
-    LDI r20, 2               ; VERSAO_PROTOCOLO_PRU (memoria_pru.h): o ler_adc confere que é este firmware
+    LDI r20, 3               ; VERSAO_PROTOCOLO_PRU (memoria_pru.h): o ler_adc confere que é este firmware
     SBBO &r20, r14, 72, 4
 
     MOV r19, r24
@@ -548,14 +616,17 @@ amostra_atrasada:
     ADD r17, r22, r16        ; atraso de mais de 1 período: recomeça a grade a partir de agora
     QBA transacao_spi
 
+salta_para_o_quadro_rapido:
+    JMP transacao_rapida
+
     ; [GRADE EXATA, 22/10/2026] Até aqui a espera era só uma sondagem: ler o contador até passar do instante. A
     ; amostra saía na 1ª leitura depois dele -- de 0 a 1 volta da sondagem (~6 ciclos na PRU de verdade) mais
     ; tarde, ao acaso. Medido nas capturas de 21/10 (tom de 10 kHz): ~8,4 ns rms de jitter em todas as taxas e
     ; esperas de CS, o triplo do ruído do ADC num tom desses. Agora a espera tem duas fases:
     ;   - grossa: sondagem, só enquanto faltam mais de 255 ciclos;
     ;   - fina: com R = ciclos que faltam (lidos UMA vez), um laço de exatamente R ciclos (o bit 0 de R vale 1
-    ;     ciclo, e cada volta do laço vale 2). Da leitura até a descida do CS são sempre 11 + R ciclos: o CS
-    ;     desce num ciclo fixo depois do instante da grade, qualquer que seja o caminho até ali.
+    ;     ciclo, e cada volta do laço vale 2). Da leitura até a descida do CS são sempre 12 + R ciclos (13 + R
+    ;     no SPI rápido): o CS desce num ciclo fixo depois do instante da grade, qualquer que seja o caminho.
     ; O que roda antes da leitura (escrita na DDR, troca de buffer, rebase) pode demorar mais ou menos: a espera
     ; fina absorve, desde que sobre folga (R >= 0). A menor folga da captura vai para o r12 (ver memoria_pru.h).
 laco_principal:
@@ -588,6 +659,10 @@ espera_fina_laco:
     ADD r17, r17, r16
 
 transacao_spi:
+    ; [SPI RÁPIDO] Com r2 != 0, o quadro é o de bits de 13 ciclos (transacao_rapida, no fim do arquivo). O desvio
+    ; custa 1 ciclo no modo padrão e 2 no rápido, sempre os mesmos: o CS desce 12 + R (13 + R) ciclos depois da
+    ; leitura do contador.
+    QBNE salta_para_o_quadro_rapido, r2, 0
     ; --- TRANSAÇÃO SPI (32 CICLOS) ---
     CLR r30, r30, 3         ; Abaixa o CS: o instante da amostra
 
@@ -647,6 +722,7 @@ delay_cs_hold:
     QBNE delay_cs_hold, r1, 0
 
     SET r30, r30, 3          ; Levanta o CS - fim da transação
+cs_subiu:                    ; o quadro rápido volta aqui, com o CS já alto e a amostra em r23.w0
 
     ; Tempo mínimo de CS alto entre transações (recarga do capacitor interno
     ; de amostragem do ADS8688), independente da frequência configurada.
@@ -684,8 +760,8 @@ preambulo_ok:
     ; [TROCA ESPALHADA, 22/10/2026] Até aqui, a amostra da troca fazia tudo de uma vez: 5 acessos à memória
     ; compartilhada (marcar o buffer cheio, conferir o outro, publicar active_buffer, os contadores e a folga). Na
     ; PRU de verdade, ~20 ciclos a mais que uma amostra comum: a 312,5 kS/s, sobravam 3 a 13 ciclos de folga nela
-    ; (T7f). Agora a troca em si só muda de buffer (nenhum acesso à memória), e o resto vai para as 5 amostras
-    ; seguintes, um acesso por amostra (eventos 1 a 5). O rebase do contador não roda numa amostra com evento:
+    ; (T7f). Agora a troca em si só muda de buffer (nenhum acesso à memória), e o resto vai para as 7 amostras
+    ; seguintes, um acesso por amostra (eventos 1 a 7; o 6 e o 7 são do SPI rápido). O rebase do contador não roda numa amostra com evento:
     ; fica para a seguinte (o contador só trava em 2^32, ~10 s depois de 2^31).
     ; [CORRIGIDO] O contador de ciclos NÃO é zerado na troca. Zerá-lo depois da transação da última amostra
     ; empurrava a 1ª amostra do buffer seguinte ~1400 ciclos (~7 µs, a duração da transação) além do período: um
@@ -700,10 +776,22 @@ evento_de_buffer:
     QBEQ evento_2, r15, 2
     QBEQ evento_3, r15, 3
     QBEQ evento_4, r15, 4
+    QBEQ evento_5, r15, 5
+    QBEQ evento_6, r15, 6
 
-    ; Evento 5: a folga e o atraso máximo (até aqui, com a troca e os eventos 1 a 4). Fim dos eventos.
-    SBBO &r12, r14, 60, 8    ; folga_minima_ciclos, atraso_maximo_ciclos
+    ; Evento 7: as divergências da fase C do SPI rápido (0 no padrão). Fim dos eventos.
+    SBBO &r3, r14, 84, 4     ; divergencias_fase_c
     MOV r21, r4              ; o próximo evento é a troca, no fim do buffer
+    JMP laco_principal
+
+    ; Evento 5: a folga e o atraso máximo (até aqui, com a troca e os eventos 1 a 4).
+evento_5:
+    SBBO &r12, r14, 60, 8    ; folga_minima_ciclos, atraso_maximo_ciclos
+    JMP laco_principal
+
+    ; Evento 6: as divergências da fase A do SPI rápido (0 no padrão).
+evento_6:
+    SBBO &r0, r14, 80, 4     ; divergencias_fase_a
     JMP laco_principal
 
 troca_de_buffer:
@@ -779,3 +867,77 @@ rebase_contador:
     SUB r17, r17, r29
     ADD r17, r17, r1         ; o instante da próxima amostra, no referencial novo
     JMP laco_principal
+
+    ; ==========================================================================
+    ; [SPI RÁPIDO, 22/10/2026] O quadro com bits de 13 ciclos (ver BIT_DADO_RAPIDO). Vem de transacao_spi com r2 != 0
+    ; e volta para cs_subiu com o CS alto e a amostra em r23.w0, como o quadro padrão. O CS fica baixo ~430 ciclos
+    ; (eram 573 no padrão).
+    ; ==========================================================================
+transacao_rapida:
+    CLR r30, r30, 3          ; Abaixa o CS: o instante da amostra
+    MOV r1, r9               ; atraso CS setup (padrão 3 iterações; com os 3 LDI, 50 ns até o 1º SCLK: o mínimo é 30)
+delay_cs_setup_rapido:
+    SUB r1, r1, 1
+    QBNE delay_cs_setup_rapido, r1, 0
+    LDI r20, 0               ; acumuladores das fases A, B e C
+    LDI r23, 0
+    LDI r27, 0
+
+    BIT_COMANDO_RAPIDO
+    BIT_COMANDO_RAPIDO
+    BIT_COMANDO_RAPIDO
+    BIT_COMANDO_RAPIDO
+    BIT_COMANDO_RAPIDO
+    BIT_COMANDO_RAPIDO
+    BIT_COMANDO_RAPIDO
+    BIT_COMANDO_RAPIDO
+    BIT_COMANDO_RAPIDO
+    BIT_COMANDO_RAPIDO
+    BIT_COMANDO_RAPIDO
+    BIT_COMANDO_RAPIDO
+    BIT_COMANDO_RAPIDO
+    BIT_COMANDO_RAPIDO
+    BIT_COMANDO_RAPIDO
+    BIT_COMANDO_RAPIDO
+
+    BIT_DADO_RAPIDO
+    BIT_DADO_RAPIDO
+    BIT_DADO_RAPIDO
+    BIT_DADO_RAPIDO
+    BIT_DADO_RAPIDO
+    BIT_DADO_RAPIDO
+    BIT_DADO_RAPIDO
+    BIT_DADO_RAPIDO
+    BIT_DADO_RAPIDO
+    BIT_DADO_RAPIDO
+    BIT_DADO_RAPIDO
+    BIT_DADO_RAPIDO
+    BIT_DADO_RAPIDO
+    BIT_DADO_RAPIDO
+    BIT_DADO_RAPIDO
+    BIT_DADO_RAPIDO          ; a fase C do último bit é lida 5 ciclos depois da última descida, com o CS ainda baixo
+
+    MOV r1, r10              ; atraso CS hold (com os 6 ciclos do fim do último bit: 45 ns; o mínimo é 10)
+delay_cs_hold_rapido:
+    SUB r1, r1, 1
+    QBNE delay_cs_hold_rapido, r1, 0
+    SET r30, r30, 3          ; Levanta o CS - fim da transação
+
+    ; Divergências entre as fases, sem desvio que dependa do dado (XOR != 0 -> MIN dá 1): o tempo do quadro não muda.
+    XOR r1, r20, r23
+    MIN r1, r1, 1
+    ADD r0, r0, r1           ; a fase A discordou da B
+    XOR r1, r27, r23
+    MIN r1, r1, 1
+    ADD r3, r3, r1           ; a fase C discordou da B
+
+    ; A fase gravada (r2 = 1, 2 ou 3: A, B ou C). O caminho muda com a configuração, não com o dado.
+    QBEQ fase_rapida_pronta, r2, 2
+    QBEQ fase_rapida_a, r2, 1
+    MOV r23, r27             ; fase C
+    QBA fase_rapida_pronta
+fase_rapida_a:
+    MOV r23, r20
+fase_rapida_pronta:
+    LSR r23, r23, 2          ; os 16 bits estavam em r23[17:2]: alinha em r23.w0 para o SBBO
+    JMP cs_subiu

@@ -1128,7 +1128,7 @@ confirmaram. O instante da amostra nunca dependeu disso (a descida do CS vem dep
 folga, o teto e o padrão do SCLK, sim. A correção lê o bit com um `AND` sem desvio e soma-o com o SCLK já baixo, no
 lugar de um NOP: todo quadro dura o mesmo, sem nenhum ciclo a mais. Junto, a troca de buffer passou a fazer um acesso
 à memória por amostra, nas 5 amostras seguintes, em vez de 5 de uma vez. Com o simulador calibrado nas medidas da
-placa (o mesmo modelo reproduz a folga de 20 ciclos e a da troca), a folga prevista a 312,5 kS/s sobe de 3 para 31
+placa (o mesmo modelo reproduz a folga de 20 ciclos e a da troca), a folga prevista a 312,5 kS/s sobe de 3 para 29
 ciclos, qualquer que seja o sinal. Figura `grade_bits` (a varredura J contra a previsão).
 
 **Relevância:** é a lição da PRU em uma frase: num processador sem cache nem interrupções, o tempo de cada caminho
@@ -1145,7 +1145,7 @@ firmware. Figura `perfil_cadeia_tensao_comparacao`. E o T1 a 312,5 kS/s deu o me
 Em ordem de prioridade, a mesma da tabela [Estado da campanha](lab-procedure.md#estado-da-campanha) do roteiro:
 
 1. **Validar o quadro fixo e a troca espalhada (Marco 16)** com `./varrer_taxa.sh --grade` (~16 min): folga prevista
-   ≥ 31 ciclos a 312,5 kS/s, a mesma com o tom e em curto; teto ~328 kS/s. A memória dos buffers já é conferida
+   ≥ 29 ciclos a 312,5 kS/s, a mesma com o tom e em curto; teto ~327 kS/s. A memória dos buffers já é conferida
    (`/proc/iomem`). Depois, o SPI mais rápido (~15 MHz), que leva o teto para ~430 kS/s e lê cada bit em três
    instantes para medir a margem sem osciloscópio. A avaliação do firmware está em
    [`improvement-proposals.md`](improvement-proposals.md#avaliação-do-firmware-22102026).

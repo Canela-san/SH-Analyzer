@@ -90,7 +90,7 @@ pior defeito possível) e F12 (para a folga prevista bater com a medida), valida
 **Atualização, mais tarde no mesmo dia (T3 e T1 a 312,5 kS/s e uma releitura da parte J):** o item 1 tinha outra
 causa. O quadro comum durava **605 + (bits 1 da amostra) ciclos**: a fração de amostras atrasadas de cada período da
 parte J bateu com a fração de amostras com tantos bits 1, por 4 décadas (F15). Não havia cauda aleatória da DDR. As
-correções F15 e F10 estão no `spi_core.asm` (o simulador calibrado prevê folga ≥ 31 ciclos a 312,5 kS/s, qualquer
+correções F15 e F10 estão no `spi_core.asm` (o simulador calibrado prevê folga ≥ 29 ciclos a 312,5 kS/s, qualquer
 que seja o sinal); os itens 2 a 4 foram resolvidos (F11, F12, F6 sem o bloco parcial). Falta a bancada:
 `./varrer_taxa.sh --grade`.
 
@@ -108,14 +108,14 @@ que seja o sinal); os itens 2 a 4 foram resolvidos (F11, F12, F6 sem o bloco par
 | Código | Item | Ganho | Esforço | PRU? | Depende de |
 |---|---|---|---|---|---|
 | **F15** | Quadro de duração fixa: ler o bit sem desvio (**implementado**, falta a bancada) | Alto: folga independente do sinal; a amostra comum ganha até 15 ciclos | Baixo | sim | — |
-| **F10** | Troca de buffer espalhada; espera de CS alto só quando pedida (**implementado**, falta a bancada) | Alto: folga de 3 → ≥ 31 ciclos a 312,5 kS/s (com o F15); teto ~315 → ~328 kS/s | Baixo | sim | — |
+| **F10** | Troca de buffer espalhada; espera de CS alto só quando pedida (**implementado**, falta a bancada) | Alto: folga de 3 → ≥ 29 ciclos a 312,5 kS/s (com o F15); teto ~315 → ~327 kS/s | Baixo | sim | — |
 | **S1** | Calibrar a sonda de corrente (T10) com hold-out | Alto para corrente | Médio (bancada) | não | — |
 | **P1** | Análise de capturas longas por blocos (sem o sinal inteiro em float64) | Médio: 10 min = 1,6 GB; 1 h não cabe | Médio | não | — |
 | **P8** | Potência, impedância e transferência V/I por frequência | Alto para pesquisa de emissão | Médio | não | S3 |
 | **F6** | Gravar o bloco parcial no fim de uma captura indefinida | Baixo–Médio | Baixo | sim (publicar a posição) | F10 |
 | **F13** | Estabilidade em 1 h no padrão (grade, folga, frequência, amplitude) | Médio: o número do relatório | Baixo (bancada) | não | F10, P1 |
 | **F9** | Descartar o transitório de troca de faixa já na PRU (a análise já descarta) | Baixo: dado certo desde a 1ª amostra | Baixo | sim | — |
-| **F3** | SPI mais rápido (SCLK até 17 MHz) | Alto: teto ~328 → ~450 kS/s | Médio | sim | F10, F15 |
+| **F3** | SPI rápido, ~15,4 MHz, com a leitura em 3 fases (**implementado como `--spi rapido`**, falta a bancada) | Alto: teto ~327 → ~418 kS/s; 400 kS/s exatos | Médio | sim | F10, F15 |
 | **F4** | `SAMPLES_PER_BUFFER` vindo do ARM, não duplicado no `.asm` | Médio: fim de uma sincronia manual | Baixo | sim | — |
 | **F7** | Conferência rápida do `calibrar_sonda.sh` mais leve na BeagleBone | Médio | Baixo | não | medir na BBB |
 | **S2–S7** | Fase, subamostragem, perfil absoluto, teto de ganho, repetições | Alto para V×I | Médio–Alto | não | S1 |
@@ -157,7 +157,7 @@ folga ≥ 15 ciclos em todas as capturas do padrão, e na parte J nenhuma atrasa
 acessos vão um por amostra nas 5 seguintes (buffer pronto, `active_buffer`, conferência de sobrescrita, contadores,
 folga). O rebase não roda numa amostra com evento. A espera de CS alto só roda pedida acima de 9 iterações: o caminho
 mais curto entre a subida e a descida seguinte já tem 19 ciclos (95 ns; o datasheet pede 30 ns). No simulador
-calibrado, com o F15: folga de 41 ciclos numa amostra comum e ≥ 31 com a troca, a 312,5 kS/s; teto ~328 kS/s
+calibrado, com o F15: folga de 40 ciclos numa amostra comum e ≥ 29 com a troca e os eventos, a 312,5 kS/s; teto ~327 kS/s
 (`tests/test_pru_asm.py`). A `--grade` agora vai até 590 ticks (339 kS/s) e recusa o firmware anterior.
 
 ### F15 — Quadro de duração fixa (a leitura do bit sem desvio)
@@ -181,20 +181,33 @@ parte J, nenhuma amostra comum atrasada até ~334 kS/s (599 ticks). E o SINAD/TH
 ### F3 — SPI mais rápido
 
 **Por quê.** Os 32 bits de cada quadro levam ~2,9 µs (~20 ciclos por bit de comando, ~16 por bit de dado: SCLK de
-~10–12 MHz). O `CMD_BIT` tem NOPs para ficar simétrico ao `DATA_BIT` e um bloco que lê o MISO só para gastar o mesmo
-tempo — herança da depuração dos jumpers. O ADS8688 aceita 17 MHz (59 ns por bit), o que daria ~1,9 µs por quadro e
-o limite do próprio ADC (500 kS/s, 2 µs de ciclo).
+~10,7 MHz). O ADS8688 e o isolador aceitam 17 MHz. Com o quadro fixo e a troca espalhada, o teto do SPI padrão é
+~327 kS/s; 400 kS/s exatos (500 ticks) pedem um quadro mais curto.
 
-**Proposta.** Depois de F2: reduzir os NOPs medindo, com a mesma bateria de F2, e com o osciloscópio no SCLK/SDO
-(tSU_DOCK ≥ 25 ns antes da borda de descida). Cobrir até 150 kHz com 1 canal pede ≥ 300 kS/s.
+**Estado em 22/10/2026: implementado como opção (`ler_adc --spi rapido`), falta a bancada.** A tag `v0.7` é o
+backup do firmware anterior (o mesmo, sem o modo rápido). No modo rápido:
 
-**Estado em 22/10/2026.** Adiada para depois da grade de tempo (F1, T7f): primeiro o período constante com o SPI
-validado (a tag `v0.7` é o backup desse firmware). Estimativa para quando for feita: bits de ~13 ciclos (~15 MHz,
-dentro dos 17 MHz do ADS8688 e do ADuM3150) levam o quadro de ~613 a ~440 ciclos, um teto de ~450 kS/s, com 400 kS/s
-exatos (500 ticks) com folga. O risco é o caminho de volta do SDO (o isolador duas vezes mais o atraso de saída do
-ADC, 50 a 70 ns): a leitura passa para logo depois da borda seguinte, e o ponto dela deve ficar ajustável sem
-recompilar, como as esperas do CS. Os 500 kS/s do ADS8688 são somados entre os canais: 150 kHz em 2 canais ao mesmo
-tempo pedem outro ADC.
+* **bits de 13 ciclos** (65 ns: ~15,4 MHz), 6 em alto e 7 em baixo, nos 32 bits; o MOSI fica parado em 0 (NO_OP).
+  O CS fica baixo 430 ciclos (eram 573). A configuração do ADC continua com os bits de sempre;
+* **cada bit de dado é lido em 3 instantes** depois da borda do SCLK que o lança: A = 60 ns (logo antes da borda
+  seguinte, como um SPI comum), B = 75 ns (a mesma latência do modo padrão, que lê certo desde 19/10) e C = 90 ns.
+  Grava-se a B (ou a pedida: `rapido:a`, `rapido:c`), e a PRU conta os quadros em que A ou C discordam de B, sem
+  desvio que dependa do dado. É a margem de tempo do SDO (o caminho de volta pelo isolador, ~50 a 70 ns), medida pela
+  própria PRU: A errada = o bit ainda não tinha voltado; C errada = o seguinte já tinha. Substitui o osciloscópio no
+  SCLK/SDO, que não dá para ligar;
+* protocolo 3 (`modo_spi` e as divergências no `shared_control`) e cabeçalho v7 (o modo e as divergências).
+
+No simulador calibrado: folga de 173 ciclos a 312,5 kS/s; a 400 kS/s, 22 ciclos e a grade exata; teto com período
+constante ~418 kS/s (a ~428, as amostras comuns). Com o modelo do caminho do SDO (`ModeloADC.atraso_ciclos`), a
+palavra sai certa nas 3 fases para caminhos de 25 a 55 ns, e as divergências acusam um caminho longo ou curto demais.
+
+**Como saber que deu certo.** `./varrer_taxa.sh --spi` (~11 min): na parte P (312,5 kS/s), o mesmo SINAD, ruído e
+THD no padrão e no rápido, e **0 divergências** na fase gravada; no ideal, também em A e C (margem de ≥ 15 ns para
+cada lado). Na S, 60 s a 400 kS/s sem amostra atrasada; na T, o teto perto de 418 kS/s; na U, o ruído em curto igual
+ao do padrão. Se a A divergir, a B ainda vale (o caminho passa de 60 ns); se a C divergir, idem (o bit seguinte chega
+antes de 90 ns). Se a própria B estiver errada, o SINAD cai (bits trocados): volte ao padrão e traga as capturas.
+Com tudo certo, o rápido vira o padrão. Os 500 kS/s do ADS8688 são somados entre os canais: 150 kHz em 2 canais ao
+mesmo tempo pedem outro ADC.
 
 ### F4 — `SAMPLES_PER_BUFFER` vindo do ARM
 
@@ -211,7 +224,7 @@ lado sem o outro desalinha a troca de buffer sem nenhum erro.
 `ler_adc` para a PRU no fim.)
 
 **Proposta.** Gravar o bloco parcial pede a posição de escrita da PRU, e publicá-la a cada amostra custa 1 acesso à
-memória: cabe na folga aberta pelo F10 e pelo F15 (≥ 31 ciclos), depois de validados.
+memória: cabe na folga aberta pelo F10 e pelo F15 (≥ 29 ciclos), depois de validados.
 
 ### F13 — Estabilidade em 1 h no padrão
 

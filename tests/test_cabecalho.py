@@ -123,18 +123,52 @@ def test_codigo_de_faixa_desconhecido_vira_none_sem_quebrar(tmp_path):
     assert c.faixa_adc_codigo_por_canal == (0, 9) and c.faixa_adc_total_v_por_canal == (20.48, None)
 
 
-def test_versao_futura_avisa_e_e_lida_como_v6(tmp_path, caplog):
+def test_versao_futura_avisa_e_e_lida_como_v7(tmp_path, caplog):
     from capturas_sinteticas import montar_cabecalho
 
-    bruto = bytearray(montar_cabecalho(1000, (0, 1), (0, 1), ("", ""), 400_000, versao=6, versao_firmware="v9"))
-    bruto[4:8] = (7).to_bytes(4, "little")                      # "versão 7": formato que este código ainda não conhece
+    bruto = bytearray(montar_cabecalho(1000, (0, 1), (0, 1), ("", ""), 400_000, versao=7, versao_firmware="v9",
+                                       spi=(2, 5, 0)))
+    bruto[4:8] = (8).to_bytes(4, "little")                      # "versão 8": formato que este código ainda não conhece
     p = tmp_path / "futuro.bin"
     p.write_bytes(bytes(bruto))
     with caplog.at_level(logging.WARNING):
         c = ler_cabecalho(p)
-    assert c.versao_cabecalho == 7 and c.faixa_adc_total_v_por_canal == (20.48, 20.48) and c.buffers_sobrescritos == 0
-    assert c.versao_firmware == "v9" and c.folga_minima_ciclos == 20
-    assert any("só conhece até a versão 6" in r.getMessage() for r in caplog.records)
+    assert c.versao_cabecalho == 8 and c.faixa_adc_total_v_por_canal == (20.48, 20.48) and c.buffers_sobrescritos == 0
+    assert c.versao_firmware == "v9" and c.folga_minima_ciclos == 20 and c.modo_spi == 2
+    assert any("só conhece até a versão 7" in r.getMessage() for r in caplog.records)
+
+
+# --------------------------------------------------------------------------------------
+# v7: o modo do SPI e as divergências entre as fases de leitura (22/10/2026)
+# --------------------------------------------------------------------------------------
+def test_v7_le_o_spi_rapido_e_as_divergencias(tmp_path, caplog):
+    p = escrever_bin(tmp_path / "v7.bin", SINAL, fs_total=400_000, versao=7, grade=(22, 0, 7, 3), blocos=1,
+                     spi=(2, 0, 13))
+    c = ler_cabecalho(p)
+    assert c.crc32_valido and c.versao_cabecalho == 7 and c.sample_period_ticks == 500
+    assert (c.modo_spi, c.divergencias_fase_a, c.divergencias_fase_c) == (2, 0, 13) and c.spi_rapido
+    assert c.grade_exata is True                     # desde a v7, 1 bloco já tem a folga (com a troca de buffer)
+    attrs = c.para_attrs_hdf5()
+    assert attrs["modo_spi"] == 2 and attrs["divergencias_fase_c"] == 13
+    with caplog.at_level(logging.INFO):
+        imprimir_resumo_cabecalho(c)
+    texto = "\n".join(r.getMessage() for r in caplog.records)
+    assert "SPI: rápido (~15,4 MHz), leitura da fase B (75 ns) gravada; 0 quadro(s) com a fase A diferente da B e 13 com a C" in texto
+
+
+def test_v7_no_spi_padrao_nao_fala_do_spi_e_v6_nao_tem_o_campo(tmp_path, caplog):
+    padrao = ler_cabecalho(escrever_bin(tmp_path / "p.bin", SINAL, fs_total=312_500, versao=7, spi=(0, 0, 0)))
+    assert padrao.modo_spi == 0 and not padrao.spi_rapido and padrao.descrever_spi() == "padrão (~10,7 MHz)"
+    with caplog.at_level(logging.INFO):
+        imprimir_resumo_cabecalho(padrao)
+    assert "SPI:" not in "\n".join(r.getMessage() for r in caplog.records)
+    v6 = ler_cabecalho(escrever_bin(tmp_path / "v6.bin", SINAL, fs_total=312_500, versao=6))
+    assert v6.modo_spi is None and v6.descrever_spi() is None and "modo_spi" not in v6.para_attrs_hdf5()
+
+
+def test_v7_folga_ainda_nao_publicada_vale_o_periodo(tmp_path):
+    c = ler_cabecalho(escrever_bin(tmp_path / "n.bin", SINAL, fs_total=312_500, versao=7, grade=(640, 0, 7, 3)))
+    assert c.grade_exata is None and "não publicada" in c.descrever_grade()
 
 
 # --------------------------------------------------------------------------------------

@@ -124,9 +124,9 @@ def normalizar(campos: list[tuple[str, int]]) -> list[tuple[str, int]]:
     return saida
 
 
-def test_layout_da_struct_v6_bate_com_o_formato_python(fonte_c, defines):
+def test_layout_da_struct_v7_bate_com_o_formato_python(fonte_c, defines):
     c = normalizar(formato_struct_c(fonte_c, defines))
-    py = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V6))
+    py = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V7))
     assert c == py
     assert inteiro_c(defines["CABECALHO_VERSAO_FIRMWARE_TAMANHO"]) == cab.CABECALHO_VERSAO_FIRMWARE_TAMANHO
 
@@ -142,6 +142,12 @@ def test_v5_e_o_prefixo_de_v6_sem_a_grade_de_tempo():
     v5 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V5))
     v6 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V6))
     assert v6[:-5] == v5[:-1] and v6[-5:] == [("I", 1)] * 5      # folga, atraso, ciclos do rebase, protocolo e o CRC
+
+
+def test_v6_e_o_prefixo_de_v7_sem_o_spi():
+    v6 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V6))
+    v7 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V7))
+    assert v7[:-4] == v6[:-1] and v7[-4:] == [("I", 1)] * 4      # modo do SPI, as 2 divergências e o CRC
 
 
 def test_buffers_ping_pong_do_cabecalho_e_o_que_o_ler_adc_mapeia(defines):
@@ -169,11 +175,14 @@ def test_tamanhos_derivados(fonte_c, defines):
     assert cab._OFFSET_HEADER_CRC32_V5 == cab._TAMANHO_CAMPOS_V5 - 4 == 744
     assert cab._TAMANHO_CAMPOS_V6 == struct.calcsize(cab._FORMATO_CABECALHO_V6) == 764
     assert cab._OFFSET_HEADER_CRC32_V6 == cab._TAMANHO_CAMPOS_V6 - 4 == 760
-    assert cab._TAMANHO_CAMPOS_V6 < inteiro_c(defines["CABECALHO_TAMANHO_TOTAL"])
+    assert cab._TAMANHO_CAMPOS_V7 == struct.calcsize(cab._FORMATO_CABECALHO_V7) == 776
+    assert cab._OFFSET_HEADER_CRC32_V7 == cab._TAMANHO_CAMPOS_V7 - 4 == 772
+    assert cab._TAMANHO_CAMPOS_V7 < inteiro_c(defines["CABECALHO_TAMANHO_TOTAL"])
     for fmt, contagens in ((cab._FORMATO_CABECALHO_V3, cab._CONTAGENS_CABECALHO_V3),
                            (cab._FORMATO_CABECALHO_V4, cab._CONTAGENS_CABECALHO_V4),
                            (cab._FORMATO_CABECALHO_V5, cab._CONTAGENS_CABECALHO_V5),
-                           (cab._FORMATO_CABECALHO_V6, cab._CONTAGENS_CABECALHO_V6)):
+                           (cab._FORMATO_CABECALHO_V6, cab._CONTAGENS_CABECALHO_V6),
+                           (cab._FORMATO_CABECALHO_V7, cab._CONTAGENS_CABECALHO_V7)):
         assert sum(contagens) == len(struct.unpack(fmt, bytes(struct.calcsize(fmt))))
 
 
@@ -198,6 +207,7 @@ def test_offsets_do_cabecalho_usados_por_calibrar_sonda_sh():
     assert offs["CAB_OFF_CRC_V4"] == cab._OFFSET_HEADER_CRC32_V4
     assert offs["CAB_OFF_CRC_V5"] == cab._OFFSET_HEADER_CRC32_V5
     assert offs["CAB_OFF_CRC_V6"] == cab._OFFSET_HEADER_CRC32_V6
+    assert offs["CAB_OFF_CRC_V7"] == cab._OFFSET_HEADER_CRC32_V7
     assert offs["CAB_OFF_SONDA_ID"] + const.ADS8688_MAX_CANAIS * cab.CABECALHO_SONDA_ID_TAMANHO == off_faixa
     assert offs["CAB_OFF_GRANDEZA"] + const.ADS8688_MAX_CANAIS == offs["CAB_OFF_SONDA_ID"]
     assert offs["CAB_TAM_SONDA_ID"] == cab.CABECALHO_SONDA_ID_TAMANHO
@@ -268,6 +278,19 @@ def test_offsets_da_memoria_compartilhada_pru():
     assert [offsets[n] for n in ("folga_minima_ciclos", "atraso_maximo_ciclos", "ciclos_rebase",
                                  "versao_protocolo_pru")] == [60, 64, 68, 72]
     assert "SBBO &r12, r14, 60, 8" in asm and "SBBO &r29, r14, 68, 4" in asm
+    # SPI rápido (22/10/2026, protocolo 3): o modo (ARM -> PRU) e as divergências entre as fases (PRU -> ARM)
+    assert [offsets[n] for n in ("modo_spi", "divergencias_fase_a", "divergencias_fase_c")] == [76, 80, 84]
+    assert "LBBO &r2, r14, 76, 4" in asm and "SBBO &r0, r14, 80, 4" in asm and "SBBO &r3, r14, 84, 4" in asm
+
+
+def test_modos_do_spi_no_c_no_assembly_e_no_python():
+    """MODO_SPI_* de memoria_pru.h: o assembly testa 0 (padrão), 1 (fase A) e 2 (fase B); o resto é a C."""
+    h = _memoria_pru_sem_comentarios()
+    modos = {m.group(1): inteiro_c(m.group(2)) for m in re.finditer(r"#\s*define\s+(MODO_SPI_\w+)\s+(\w+)", h)}
+    assert modos == {"MODO_SPI_PADRAO": 0, "MODO_SPI_RAPIDO_A": 1, "MODO_SPI_RAPIDO_B": 2, "MODO_SPI_RAPIDO_C": 3}
+    asm = sem_comentarios_asm((FIRMWARE / "spi_core.asm").read_text(encoding="utf-8"))
+    assert "QBNE salta_para_o_quadro_rapido, r2, 0" in asm
+    assert "QBEQ fase_rapida_pronta, r2, 2" in asm and "QBEQ fase_rapida_a, r2, 1" in asm
 
 
 def test_versao_do_protocolo_pru_e_a_mesma_no_c_e_no_assembly():

@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 
 CABECALHO_MAGIC = b"SHAN"
 CABECALHO_TAMANHO_TOTAL = 1024
-CABECALHO_VERSAO_SUPORTADA = 6  # versão mais recente do FORMATO do cabeçalho que este script sabe interpretar
+CABECALHO_VERSAO_SUPORTADA = 7  # versão mais recente do FORMATO do cabeçalho que este script sabe interpretar
 
 # [SONDA/GRANDEZA] Tamanho fixo (bytes, incluindo terminador nulo) do id de
 # sonda por canal na v2 do cabeçalho -- precisa bater com
@@ -114,7 +114,13 @@ CABECALHO_VERSAO_FIRMWARE_TAMANHO = 32   # [v5] CABECALHO_VERSAO_FIRMWARE_TAMANH
 #   I    folga_minima_ciclos          (menor folga da captura, ciclos de 5 ns; > 0 = toda amostra no ciclo da grade)
 #   I    atraso_maximo_ciclos         (maior atraso das amostras atrasadas, ciclos; 0 se nenhuma)
 #   I    ciclos_rebase                (ciclos entre as duas leituras do contador no rebase, medidos pela PRU)
-#   I    versao_protocolo_pru         (VERSAO_PROTOCOLO_PRU que a PRU escreveu; 2 desde 22/10/2026)
+#   I    versao_protocolo_pru         (VERSAO_PROTOCOLO_PRU que a PRU escreveu; 2 desde 22/10/2026, 3 com o SPI rápido)
+#   I    header_crc32
+#
+# v7 (mesmos campos da v6, mais o SPI ENTRE versao_protocolo_pru e header_crc32 -- ver memoria_pru.h):
+#   I    modo_spi                     (0 = padrão, ~10,7 MHz; 1, 2, 3 = rápido, ~15,4 MHz, gravando a fase A, B ou C)
+#   I    divergencias_fase_a          (quadros do SPI rápido em que a leitura a 60 ns discordou da de 75 ns)
+#   I    divergencias_fase_c          (idem, a de 90 ns)
 #   I    header_crc32
 _FORMATO_CABECALHO_V1 = "<4sIIQIII8BIIIIIdQQ64s256sI"
 _FORMATO_CABECALHO_V2 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "I"
@@ -123,6 +129,7 @@ _FORMATO_CABECALHO_V4 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CAN
 _FORMATO_CABECALHO_V5 = ("<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "8BIII3I"
                          + f"{CABECALHO_VERSAO_FIRMWARE_TAMANHO}sdII")
 _FORMATO_CABECALHO_V6 = _FORMATO_CABECALHO_V5[:-1] + "IIII" + "I"
+_FORMATO_CABECALHO_V7 = _FORMATO_CABECALHO_V6[:-1] + "III" + "I"
 
 # Contagens de valores por campo, na mesma ordem do format string -- usadas
 # por _consumir() para dividir a tupla plana devolvida por struct.unpack.
@@ -139,6 +146,7 @@ _CONTAGENS_CABECALHO_V3 = _CONTAGENS_CABECALHO_V2[:-1] + [8, 1]  # v2 + 8 bytes 
 _CONTAGENS_CABECALHO_V4 = _CONTAGENS_CABECALHO_V3[:-1] + [1, 1, 1, 3, 1]  # v3 + 3 contadores + 3 atrasos antes do crc
 _CONTAGENS_CABECALHO_V5 = _CONTAGENS_CABECALHO_V4[:-1] + [1, 1, 1, 1]  # v4 + versão, taxa medida e nº de buffers antes do crc
 _CONTAGENS_CABECALHO_V6 = _CONTAGENS_CABECALHO_V5[:-1] + [1, 1, 1, 1, 1]  # v5 + os 4 campos da grade de tempo antes do crc
+_CONTAGENS_CABECALHO_V7 = _CONTAGENS_CABECALHO_V6[:-1] + [1, 1, 1, 1]  # v6 + modo do SPI e as 2 divergências antes do crc
 
 _TAMANHO_CAMPOS_V1 = struct.calcsize(_FORMATO_CABECALHO_V1)  # 408 bytes
 _TAMANHO_CAMPOS_V2 = struct.calcsize(_FORMATO_CABECALHO_V2)  # 408 + 8 + 8*32 = 672 bytes
@@ -146,12 +154,14 @@ _TAMANHO_CAMPOS_V3 = struct.calcsize(_FORMATO_CABECALHO_V3)  # 672 + 8 = 680 byt
 _TAMANHO_CAMPOS_V4 = struct.calcsize(_FORMATO_CABECALHO_V4)  # 680 + 24 = 704 bytes
 _TAMANHO_CAMPOS_V5 = struct.calcsize(_FORMATO_CABECALHO_V5)  # 704 + 32 + 8 + 4 = 748 bytes
 _TAMANHO_CAMPOS_V6 = struct.calcsize(_FORMATO_CABECALHO_V6)  # 748 + 16 = 764 bytes
+_TAMANHO_CAMPOS_V7 = struct.calcsize(_FORMATO_CABECALHO_V7)  # 764 + 12 = 776 bytes
 _OFFSET_HEADER_CRC32_V1 = _TAMANHO_CAMPOS_V1 - struct.calcsize("I")  # 404
 _OFFSET_HEADER_CRC32_V2 = _TAMANHO_CAMPOS_V2 - struct.calcsize("I")  # 668
 _OFFSET_HEADER_CRC32_V3 = _TAMANHO_CAMPOS_V3 - struct.calcsize("I")  # 676
 _OFFSET_HEADER_CRC32_V4 = _TAMANHO_CAMPOS_V4 - struct.calcsize("I")  # 700
 _OFFSET_HEADER_CRC32_V5 = _TAMANHO_CAMPOS_V5 - struct.calcsize("I")  # 744
 _OFFSET_HEADER_CRC32_V6 = _TAMANHO_CAMPOS_V6 - struct.calcsize("I")  # 760
+_OFFSET_HEADER_CRC32_V7 = _TAMANHO_CAMPOS_V7 - struct.calcsize("I")  # 772
 
 
 def _consumir(campos_tupla: tuple, contagens: list[int]) -> list:
@@ -231,15 +241,43 @@ class CabecalhoArquivo:
     atraso_maximo_ciclos: int | None = None
     ciclos_rebase: int | None = None
     versao_protocolo_pru: int | None = None
+    # [SPI, v7] None antes da v7: o SPI era sempre o padrão.
+    modo_spi: int | None = None
+    divergencias_fase_a: int | None = None
+    divergencias_fase_c: int | None = None
+
+    @property
+    def _folga_publicada(self) -> bool:
+        """A v6 (firmware do T7f) só tinha a folga com a troca a partir de 2 blocos; desde a v7, a PRU a publica 5
+        amostras depois de cada troca, e 1 bloco já a tem (com a troca). Antes de publicada, ela vale o período."""
+        if self.folga_minima_ciclos is None:
+            return False
+        if self.versao_cabecalho < 7 and self.blocos_gravados < 2:
+            return False
+        return self.amostras_atrasadas != 0 or self.folga_minima_ciclos < self.sample_period_ticks
 
     @property
     def grade_exata(self) -> bool | None:
         """True quando a PRU garante que TODA amostra saiu no ciclo exato da grade (firmware de 22/10/2026 em diante:
         espera de precisão, nenhuma amostra atrasada e folga publicada). None quando não dá para saber: cabeçalho
-        anterior à v6 ou captura de 1 bloco só (a folga só é publicada na troca de buffer)."""
-        if self.folga_minima_ciclos is None or self.blocos_gravados < 2:
+        anterior à v6, ou a folga ainda não publicada (v6 com 1 bloco só)."""
+        if not self._folga_publicada:
             return None
         return bool(self.amostras_atrasadas == 0 and self.folga_minima_ciclos < self.sample_period_ticks)
+
+    @property
+    def spi_rapido(self) -> bool:
+        return bool(self.modo_spi)
+
+    def descrever_spi(self) -> str | None:
+        """Uma frase sobre o SPI da captura (v7); None antes da v7."""
+        if self.modo_spi is None:
+            return None
+        if self.modo_spi == 0:
+            return "padrão (~10,7 MHz)"
+        fase = {1: "A (60 ns)", 2: "B (75 ns)", 3: "C (90 ns)"}.get(self.modo_spi, f"desconhecida ({self.modo_spi})")
+        return (f"rápido (~15,4 MHz), leitura da fase {fase} gravada; {self.divergencias_fase_a} quadro(s) com a fase "
+                f"A diferente da B e {self.divergencias_fase_c} com a C")
 
     @property
     def problemas_integridade(self) -> list[str]:
@@ -347,14 +385,18 @@ class CabecalhoArquivo:
             attrs["atraso_maximo_ciclos"] = self.atraso_maximo_ciclos
             attrs["ciclos_rebase"] = self.ciclos_rebase
             attrs["versao_protocolo_pru"] = self.versao_protocolo_pru
+        if self.modo_spi is not None:  # só v7+
+            attrs["modo_spi"] = self.modo_spi
+            attrs["divergencias_fase_a"] = self.divergencias_fase_a
+            attrs["divergencias_fase_c"] = self.divergencias_fase_c
         return attrs
 
     def descrever_grade(self) -> str | None:
         """Uma frase sobre o período entre amostras, do que a PRU publicou (v6); None antes da v6."""
         if self.folga_minima_ciclos is None:
             return None
-        if self.blocos_gravados < 2:
-            return "folga não publicada (só na troca de buffer: a captura tem 1 bloco)"
+        if not self._folga_publicada:
+            return "folga não publicada (firmware do T7f: só a partir de 2 blocos)"
         if self.grade_exata:
             ticks = self.sample_period_ticks
             teto = (f"; período constante até ~{self.pru_clock_hz / (ticks - self.folga_minima_ciclos) / 1e3:.1f} kS/s"
@@ -431,13 +473,18 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
         formato, contagens, offset_crc = _FORMATO_CABECALHO_V5, _CONTAGENS_CABECALHO_V5, _OFFSET_HEADER_CRC32_V5
         tem_grandeza_sonda = True
         tem_faixa_adc = True
-    else:
+    elif versao_cabecalho == 6:
         formato, contagens, offset_crc = _FORMATO_CABECALHO_V6, _CONTAGENS_CABECALHO_V6, _OFFSET_HEADER_CRC32_V6
+        tem_grandeza_sonda = True
+        tem_faixa_adc = True
+    else:
+        formato, contagens, offset_crc = _FORMATO_CABECALHO_V7, _CONTAGENS_CABECALHO_V7, _OFFSET_HEADER_CRC32_V7
         tem_grandeza_sonda = True
         tem_faixa_adc = True
     tem_integridade = versao_cabecalho >= 4
     tem_versao_firmware = versao_cabecalho >= 5
     tem_grade = versao_cabecalho >= 6
+    tem_spi = versao_cabecalho >= 7
 
     # Só versões MAIS NOVAS que a suportada são suspeitas: v1 e v2 são formatos
     # conhecidos (lidos acima) e não merecem aviso.
@@ -456,7 +503,24 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
     integridade = (None, None, None, ())
     versao_firmware, taxa_medida_hz, buffers_ping_pong = "", None, None
     grade = (None, None, None, None)
-    if tem_grade:
+    spi = (None, None, None)
+    if tem_spi:
+        (
+            _magic, _versao, tamanho_cabecalho, timestamp_unix, frequencia_hz,
+            auto_seq_mask, num_canais, lista_canais_bytes, samples_per_buffer,
+            bytes_por_amostra, pru_clock_hz, sample_period_ticks,
+            primeira_amostra_descartada, duracao_pedida_segundos, blocos_gravados,
+            total_amostras_gravadas, titulo_bruto, descricao_bruto,
+            grandeza_bytes, sonda_id_bytes_lista, faixa_adc_bytes,
+            atrasadas, sobrescritos, preambulo, atrasos_cs, versao_bruta, taxa_medida, buffers_ping_pong,
+            folga, atraso_max, ciclos_rebase, protocolo, modo_spi, div_a, div_c, header_crc32,
+        ) = _consumir(campos, contagens)
+        integridade = (atrasadas, sobrescritos, preambulo, tuple(atrasos_cs))
+        versao_firmware = versao_bruta.split(b"\x00", 1)[0].decode("ascii", errors="replace")
+        taxa_medida_hz = float(taxa_medida) if taxa_medida > 0 else None
+        grade = (folga, atraso_max, ciclos_rebase, protocolo)
+        spi = (modo_spi, div_a, div_c)
+    elif tem_grade:
         (
             _magic, _versao, tamanho_cabecalho, timestamp_unix, frequencia_hz,
             auto_seq_mask, num_canais, lista_canais_bytes, samples_per_buffer,
@@ -602,6 +666,9 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
         atraso_maximo_ciclos=grade[1],
         ciclos_rebase=grade[2],
         versao_protocolo_pru=grade[3],
+        modo_spi=spi[0],
+        divergencias_fase_a=spi[1],
+        divergencias_fase_c=spi[2],
     )
 
 
@@ -646,6 +713,8 @@ def imprimir_resumo_cabecalho(cabecalho: CabecalhoArquivo) -> None:
     grade = cabecalho.descrever_grade()
     if grade:
         log.info(f"  Grade de tempo (PRU): {grade}")
+    if cabecalho.spi_rapido:
+        log.info(f"  SPI: {cabecalho.descrever_spi()}")
     if cabecalho.versao_cabecalho >= 2:
         partes = []
         for canal, grandeza, sonda_id in zip(

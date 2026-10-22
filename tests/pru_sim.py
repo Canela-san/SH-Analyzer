@@ -27,7 +27,7 @@ O que NÃO garante
 Verificações estáticas feitas ao carregar: tamanho em instruções (a IMEM da PRU0 tem 2048) e alcance dos
 desvios ``QB*`` (10 bits com sinal: +-511 instruções; desvios mais longos têm que usar ``JMP``).
 
-Instruções suportadas: ``LDI MOV ADD SUB OR AND LSL LSR MIN MAX SET CLR NOP LBBO SBBO QBA QBBC QBBS QBEQ QBNE
+Instruções suportadas: ``LDI MOV ADD SUB OR AND XOR LSL LSR MIN MAX SET CLR NOP LBBO SBBO QBA QBBC QBBS QBEQ QBNE
 QBGT QBGE QBLT QBLE JMP``. Uma instrução fora dessa lista levanta :class:`ErroSimulacao` -- amplie ``_EXECUTORES`` se
 precisar de outra. Nas comparações ``QBGT/QBGE/QBLT/QBLE rótulo, REG1, OP`` o operando da DIREITA é o primeiro da
 comparação, como no manual da TI (SPRUIJ2): ``QBGT x, r1, 5`` desvia se 5 > r1. Comparações e ``MIN``/``MAX`` sem
@@ -117,11 +117,16 @@ class ModeloADC:
     """MISO mínimo: devolve, bit a bit, uma palavra fixa por quadro de dados (só para o laço principal rodar).
 
     Nas 16 primeiras bordas o SDO fica em 0, como o ADS8688 de verdade (datasheet 8.4.1.1.4); ``ruido_no_quadro``
-    (número do quadro, a partir de 0) põe um 1 nessa fase -- o que um reflexo na linha faria."""
+    (número do quadro, a partir de 0) põe um 1 nessa fase -- o que um reflexo na linha faria.
 
-    def __init__(self, palavra: int = 0x8000, ruido_no_quadro: set[int] | None = None) -> None:
+    ``atraso_ciclos``: o caminho de volta do SDO (o SCLK pelo isolador, o atraso de saída do ADC e o SDO de volta
+    pelo isolador). O bit lançado numa borda de descida do SCLK só aparece em ``r31`` ``atraso_ciclos`` ciclos depois
+    dela (0 = na instrução seguinte à da borda). É o que o SPI rápido precisa para ser conferido."""
+
+    def __init__(self, palavra: int = 0x8000, ruido_no_quadro: set[int] | None = None, atraso_ciclos: int = 0) -> None:
         self.palavra = palavra
         self.ruido_no_quadro = ruido_no_quadro or set()
+        self.atraso_ciclos = atraso_ciclos
         self._indice = 0
         self._quadro = -1
 
@@ -236,6 +241,7 @@ class PRU:
         self._atual: Transacao | None = None
         self._r30_anterior = 0
         self._clocks_quadro = 0
+        self._bordas_quadro: list[int] = []             # ciclo de cada descida do SCLK no quadro atual
         self.violacoes_desvio: list[str] = []
         self._verificar_estaticamente()
 
@@ -282,7 +288,9 @@ class PRU:
         self.regs[numero] = (self.regs[numero] & ~mascara & MASCARA32) | ((valor << inicio) & mascara)
 
     def _r31(self) -> int:
-        miso = self.adc.proximo_bit(self._clocks_quadro)
+        # as bordas de descida deste quadro que já "voltaram" pelo caminho do SDO (ModeloADC.atraso_ciclos)
+        visiveis = sum(1 for borda in self._bordas_quadro if borda + self.adc.atraso_ciclos <= self.ciclo)
+        miso = self.adc.proximo_bit(visiveis)
         return (miso & 1) << BIT_MISO_R31
 
     # -- memória -------------------------------------------------------------
@@ -316,6 +324,7 @@ class PRU:
                     self.instantes_cs.append(self.ciclo)
                     self._atual = Transacao()
                     self._clocks_quadro = 0
+                    self._bordas_quadro = []
                     self.adc.novo_quadro()
                 elif cs_antes == 0 and cs_agora == 1 and self._atual is not None:
                     self.instantes_cs_sobe.append(self.ciclo)
@@ -324,6 +333,7 @@ class PRU:
             if mudou & (1 << PINO_SCLK) and not (r30 >> PINO_SCLK) & 1 and self._atual is not None:
                 self._atual.bits_mosi.append((r30 >> PINO_MOSI) & 1)    # SDI é lido na borda de descida
                 self._clocks_quadro += 1
+                self._bordas_quadro.append(self.ciclo)
         self._r30_anterior = r30
 
     # -- execução --------------------------------------------------------------
@@ -466,6 +476,7 @@ _EXECUTORES = {
     "SUB": _aritmetica(lambda a, b: a - b),
     "OR": _aritmetica(lambda a, b: a | b),
     "AND": _aritmetica(lambda a, b: a & b),
+    "XOR": _aritmetica(lambda a, b: a ^ b),
     "LSL": _aritmetica(lambda a, b: a << (b & 31)),
     "LSR": _aritmetica(lambda a, b: a >> (b & 31)),
     "MIN": _aritmetica(min),
@@ -506,6 +517,9 @@ OFFSET_FOLGA_MINIMA = 60        # grade de tempo (PRU -> ARM, 22/10/2026)
 OFFSET_ATRASO_MAXIMO = 64
 OFFSET_CICLOS_REBASE = 68
 OFFSET_VERSAO_PROTOCOLO = 72
+OFFSET_MODO_SPI = 76            # SPI rápido (22/10/2026, protocolo 3)
+OFFSET_DIVERGENCIAS_FASE_A = 80
+OFFSET_DIVERGENCIAS_FASE_C = 84
 OFFSET_BUFFER_0_READY = 8
 OFFSET_BUFFER_1_READY = 12
 

@@ -77,7 +77,7 @@ COLUNAS_CSV = [
     "salto_max_us", "trocas_buffer", "salto_trocas_amostras", "salto_trocas_us", "salto_tipico_amostras", "trocas_destoam",
     "diafonia_db", "atraso_medido_us", "atraso_esperado_us",
     "jitter_ns", "ruido_plano_lsb", "degrau_trocas_ns", "degrau_rebases_ns", "degrau_controle_ns",
-    "folga_minima_ciclos", "atraso_maximo_ciclos",
+    "folga_minima_ciclos", "atraso_maximo_ciclos", "modo_spi", "divergencias_fase_a", "divergencias_fase_c",
     "correcao_sonda", "referencia_rms", "erro_amplitude_pct", "referencia_freq_hz", "erro_freq_ppm",
     "ref_amplitude_texto", "ref_amplitude_pico", "razao_vs_amplitude_ref",
     "osc_arquivo", "osc_freq_hz", "osc_amplitude_pico", "razao_vs_osc", "erro_freq_vs_osc_ppm", "osc_vs_amplitude_ref_pct",
@@ -771,6 +771,8 @@ def medir_arquivo(caminho: Path, args: argparse.Namespace) -> list[dict[str, str
     grade = ctx.cabecalho.descrever_grade() if ctx.cabecalho is not None else None
     if grade:
         log.info(f"Grade de tempo (PRU): {grade}")
+    if ctx.cabecalho is not None and ctx.cabecalho.spi_rapido:
+        log.info(f"SPI: {ctx.cabecalho.descrever_spi()}")
     nominal = _anunciar_frequencias(args, ctx, fs_total, fs_pru, inicio)
     _avisar_transitorios(transitorios, inicio, args.inicio is not None)
 
@@ -784,10 +786,15 @@ def medir_arquivo(caminho: Path, args: argparse.Namespace) -> list[dict[str, str
     rotulo = args.rotulo if args.rotulo is not None else titulo
     linhas = [_linha_csv(caminho, rotulo, nominal, fs_pru, fs_canal, r, acoplamentos.get(r.canal)) for r in resultados]
     cab = ctx.cabecalho
-    if cab is not None and cab.folga_minima_ciclos is not None and cab.blocos_gravados >= 2:
+    if cab is not None and cab.grade_exata is not None:
         for linha in linhas:      # da PRU, a mesma para todos os canais
             linha["folga_minima_ciclos"] = str(cab.folga_minima_ciclos)
             linha["atraso_maximo_ciclos"] = str(cab.atraso_maximo_ciclos)
+    if cab is not None and cab.modo_spi is not None:
+        for linha in linhas:
+            linha["modo_spi"] = str(cab.modo_spi)
+            linha["divergencias_fase_a"] = str(cab.divergencias_fase_a)
+            linha["divergencias_fase_c"] = str(cab.divergencias_fase_c)
     return linhas
 
 

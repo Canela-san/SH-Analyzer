@@ -39,15 +39,16 @@ Os números de cada teste executado, com a data, o firmware e a pasta dos dados,
 | [T4](#t4-frequência-de-amostragem-real) | 🟡 19/10 | Taxa = 200 MHz ÷ ticks confirmada (102,4 kS/s: −64,0 ppm; 110 kS/s: −100,0 ppm; as exatas concordam em 0,02 ppm) | Leitura do contador do osciloscópio (separa gerador e cristal: hoje, −43,2 ppm somados) |
 | [T5](#t5-distorção-e-faixa-dinâmica) | ⏳ | Prévia, das capturas do T4: SINAD 61 dB e ENOB 14,4 bits com o tom em −27,5 dBFS; THD −71,6 dB, limitado pelo gerador | Tudo |
 | [T6](#t6-vários-canais-diafonia-e-atraso) | 🟡 19/10 | Diafonia 1 → 0 de −94,7 dB em 10 kHz; atraso entre canais 9,954 µs (esperado 10,000) | Refazer o ponto de 40 kHz em **20 kHz** (com 2 canais a Nyquist é 25 kHz) |
-| [T7](#t7-integridade-e-limite-de-taxa) | 🟡 21/10 | O salto de 7 µs nas trocas de buffer sumiu (≤ 0,06 µs). [T7e](#t7e-onde-está-o-limite-de-taxa): as esperas do CS descem ao piso do datasheet (`3,1,3`) sem perda nenhuma; teto de 326 kS/s; **trabalho proposto: `6,2,6` a 250 kS/s; o padrão ficou em `3,1,3` a 312,5 kS/s**. Achado: degrau de 5 a 13 µs a cada 10,74 s (o rebase do contador), corrigido no firmware | ✅ 22/10: **[T7f](#t7f-o-período-entre-amostras-a-grade-de-tempo)**, a grade exata: jitter de 8,5 → 0,00 ns, degraus de 0 ciclo, ruído com o tom de 2,23 → 0,77 LSB, nenhuma atrasada a 312,5 kS/s (folga de 3 ciclos). Achado na análise: o quadro durava 605 + (bits 1 da amostra) ciclos; corrigido no firmware (quadro fixo e troca espalhada: folga prevista ≥ 31). Falta: a `--grade` com esse firmware e o SPI rápido ([próxima ida](#passo-a-passo-da-próxima-ida-o-quadro-fixo-e-o-spi-rápido)); T7d |
+| [T7](#t7-integridade-e-limite-de-taxa) | 🟡 21/10 | O salto de 7 µs nas trocas de buffer sumiu (≤ 0,06 µs). [T7e](#t7e-onde-está-o-limite-de-taxa): as esperas do CS descem ao piso do datasheet (`3,1,3`) sem perda nenhuma; teto de 326 kS/s; **trabalho proposto: `6,2,6` a 250 kS/s; o padrão ficou em `3,1,3` a 312,5 kS/s**. Achado: degrau de 5 a 13 µs a cada 10,74 s (o rebase do contador), corrigido no firmware | ✅ 22/10: **[T7f](#t7f-o-período-entre-amostras-a-grade-de-tempo)**, a grade exata: jitter de 8,5 → 0,00 ns, degraus de 0 ciclo, ruído com o tom de 2,23 → 0,77 LSB, nenhuma atrasada a 312,5 kS/s (folga de 3 ciclos). Achado na análise: o quadro durava 605 + (bits 1 da amostra) ciclos; corrigido no firmware (quadro fixo e troca espalhada: folga prevista ≥ 29). Falta: a `--grade` com esse firmware e o SPI rápido ([próxima ida](#passo-a-passo-da-próxima-ida-o-quadro-fixo-e-o-spi-rápido)); T7d |
 | [T8](#t8-aliasing) a [T11](#t11-ponta-a-ponta) | ⏳ | — | Tudo; o T10 é o objetivo central |
 
 ### Passo a passo da próxima ida: o quadro fixo e o SPI rápido
 
 O firmware da 2ª revisão de 22/10/2026 corrige o que a análise do T7f achou: o quadro durava 605 + (bits 1 da
 amostra) ciclos, e a troca de buffer fazia 5 acessos à memória de uma vez ([T7f](bench-results.md#t7f-a-grade-de-tempo)).
-O simulador calibrado na placa prevê folga ≥ 31 ciclos a 312,5 kS/s (era 3 a 13), qualquer que seja o sinal. **Esta
-ida não precisa de osciloscópio no SPI:** a PRU mede a própria folga.
+O simulador calibrado na placa prevê folga ≥ 29 ciclos a 312,5 kS/s (era 3 a 13), qualquer que seja o sinal. O mesmo
+firmware traz o SPI rápido como opção (etapa 4). **Esta ida não precisa de osciloscópio no SPI:** a PRU mede a
+própria folga e a margem do SDO.
 
 **1. Firmware (10 min).** No computador: `lab`, `lab preparar` e `lab ssh` (ou os comandos da
 [etapa 1 do T7f](#passo-a-passo-da-próxima-ida-a-grade-de-tempo-t7f)). O `setup.sh` agora confere também que a
@@ -57,7 +58,7 @@ memória dos buffers está fora do Linux. No terminal da placa, a captura de con
 sudo ./ler_adc --blocos 2 --faixa-adc 1:5.12 -o T7_bancada.bin -t "T7 bancada"
 ```
 
-Esperado: `Grade de tempo (PRU): folga mínima` de **30 a 41 ciclos** (era 5) e, no fim, `PRU parada`.
+Esperado: `Grade de tempo (PRU): folga mínima` de **29 a 40 ciclos** (era 5) e, no fim, `PRU parada`.
 
 **2. A bancada (5 min).** A mesma do T7f: senoide de 10,000 kHz, 20 Vpp, High-Z, no canal 1.
 
@@ -68,12 +69,39 @@ Esperado: `Grade de tempo (PRU): folga mínima` de **30 a 41 ciclos** (era 5) e,
 ./varrer_taxa.sh --grade
 ```
 
-Esperado: a mesma folga (30 a 41 ciclos) em todas as capturas G, H e K, com o tom e com o ARM ocupado; na parte J
-(agora de 640 a 590 ticks), nenhuma amostra atrasada até ~609 ticks (~328 kS/s; era ~315) e todas a partir de ~599
-(~334 kS/s; era ~327). Uma folga que muda com o sinal, ou bem menor que 30, quer dizer que o simulador errou: traga
+Esperado: a mesma folga (29 a 40 ciclos) em todas as capturas G, H e K, com o tom e com o ARM ocupado; na parte J
+(agora de 640 a 590 ticks), nenhuma amostra atrasada até ~611 ticks (~327 kS/s; era ~315) e todas a partir de ~600
+(~333 kS/s; era ~327). Uma folga que muda com o sinal, ou bem menor que 30, quer dizer que o simulador errou: traga
 as capturas.
 
-**4. Antes de sair.** `exit` no terminal da placa e, no computador, `lab trazer 'T7*'`.
+**4. O SPI rápido (~11 min).** O mesmo firmware tem o SPI rápido como opção (`--spi rapido`: SCLK de ~15,4 MHz
+contra ~10,7, teto previsto de ~418 kS/s). Sem osciloscópio no SPI, a margem vem da própria PRU: ela lê cada bit em 3
+instantes (60, 75 e 90 ns depois da borda que o lança) e conta os quadros em que eles discordam. Primeiro uma
+conferência, com o mesmo tom:
+
+```bash
+sudo ./ler_adc --blocos 2 --faixa-adc 1:5.12 --spi rapido -o T7_spi.bin -t "T7 SPI rapido"
+```
+
+Esperado: a linha `SPI rápido (fase B gravada): 0 quadro(s) com a fase A ... e 0 com a C` (ou alguns em A ou em C:
+ainda vale, é a margem de um lado só) e a folga de ~160 ciclos. Depois, a campanha:
+
+```bash
+./varrer_taxa.sh --spi --simular   # 69 capturas, ~11 min, ~370 MB
+./varrer_taxa.sh --spi
+```
+
+| Parte | O que captura (tom de 10 kHz em ±2,56 V) | Para quê |
+|---|---|---|
+| P | 312,5 kS/s, 2 blocos: o SPI padrão e o rápido gravando a fase A, a B e a C | O mesmo SINAD e ruído nos quatro = o rápido lê o mesmo dado; as divergências de cada fase |
+| S | 60 s a 400 kS/s com o rápido, com 1 canal e com 2 | A taxa nova, longa, com trocas de buffer e rebases |
+| T | De 520 a 460 ticks (384,6 a 434,8 kS/s), 1 tick por vez, 2 blocos | O teto do rápido com período constante (previsto ~418 kS/s) |
+| U | Ele para e pede: o gerador fora e o canal 1 em curto. O ruído no padrão e no rápido | O piso de ruído com o SCLK mais rápido |
+
+Cada captura mostra `✓ folga N ciclos · divergências A x, C y`. Se a conferência mostrar o dado errado (o SINAD
+desaba, ou `Integridade` com quadros ruins), pule a campanha e traga a captura: o padrão continua valendo.
+
+**5. Antes de sair.** `exit` no terminal da placa e, no computador, `lab trazer 'T7*'`.
 
 ### Passo a passo da próxima ida: a grade de tempo (T7f)
 

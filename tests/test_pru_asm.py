@@ -27,7 +27,10 @@ from pru_sim import (
     OFFSET_BUFFER_1_READY,
     OFFSET_BUFFERS_SOBRESCRITOS,
     OFFSET_CICLOS_REBASE,
+    OFFSET_DIVERGENCIAS_FASE_A,
+    OFFSET_DIVERGENCIAS_FASE_C,
     OFFSET_FOLGA_MINIMA,
+    OFFSET_MODO_SPI,
     OFFSET_QUADROS_PREAMBULO_RUIM,
     OFFSET_RANGE_SEL,
     OFFSET_VERSAO_PROTOCOLO,
@@ -156,13 +159,14 @@ def test_nenhum_desvio_condicional_passa_do_alcance_do_qb():
 # --------------------------------------------------------------------------------------
 CONFIG_1CANAL = 3               # transações de configuração com 1 canal: AUTO_SEQ_EN, RANGE_SEL e AUTO_RST
 PERIODO = 2000                  # 100 kS/s a 200 MHz
-BUFFER = 8                      # amostras por buffer nos testes: > 5, os eventos de troca (o real tem 1.048.576)
+BUFFER = 12                     # amostras por buffer nos testes: > 7, os eventos de troca, e com amostras comuns
 
 
 def pru_laco(buffer: int = BUFFER, periodo: int = PERIODO, adc: ModeloADC | None = None, atrasos=None,
-             latencias: Latencias | None = None) -> PRU:
+             latencias: Latencias | None = None, modo_spi: int = 0) -> PRU:
     """PRU com 1 canal e buffers de ``buffer`` amostras (o real tem 1.048.576: inviável de simular)."""
     mem = memoria_configurada(0b10, 0, periodo_ticks=periodo)
+    mem[ENDERECO_SHARED_RAM + OFFSET_MODO_SPI] = modo_spi
     if atrasos is not None:
         for k, valor in enumerate(atrasos):
             mem[ENDERECO_SHARED_RAM + OFFSET_ATRASO_CS_SETUP + 4 * k] = valor
@@ -418,12 +422,12 @@ def test_o_quadro_dura_o_mesmo_qualquer_que_seja_o_dado():
 
 def test_nenhuma_amostra_faz_mais_de_um_acesso_a_ram_compartilhada():
     """A troca de buffer fazia 5 acessos de uma vez (~20 ciclos na placa); agora a troca não faz nenhum, e cada uma
-    das 5 amostras seguintes faz 1."""
+    das 7 amostras seguintes faz 1 (o 6º e o 7º publicam as divergências do SPI rápido)."""
     pru = pru_laco(periodo=PERIODO_312K)
-    pru.executar(max_transacoes=CONFIG_1CANAL + 3 * BUFFER + 6)
+    pru.executar(max_transacoes=CONFIG_1CANAL + 3 * BUFFER + 8)
     instantes = instantes_no_laco(pru)
     por_intervalo = [sum(a <= c < b for c in pru.acessos_compartilhada) for a, b in zip(instantes, instantes[1:])]
-    assert max(por_intervalo) == 1 and sum(por_intervalo) == 3 * 5, por_intervalo
+    assert max(por_intervalo) == 1 and sum(por_intervalo) == 3 * 7, por_intervalo
 
 
 def test_eventos_da_troca_em_ordem_buffer_pronto_primeiro():
@@ -445,7 +449,7 @@ def test_eventos_da_troca_em_ordem_buffer_pronto_primeiro():
 
 def executar_com_arm(pru: PRU, trocas: int = 3) -> PRU:
     """Roda ``trocas`` trocas de buffer (e os eventos) com um ARM que esvazia cada buffer logo que ele fica pronto."""
-    for n in range(CONFIG_1CANAL + 1, CONFIG_1CANAL + trocas * BUFFER + 7):
+    for n in range(CONFIG_1CANAL + 1, CONFIG_1CANAL + trocas * BUFFER + 9):
         pru.executar(max_transacoes=n)
         for offset in (OFFSET_BUFFER_0_READY, OFFSET_BUFFER_1_READY):
             pru.escrever_mem(ENDERECO_SHARED_RAM + offset, 0, 4)
@@ -454,13 +458,14 @@ def executar_com_arm(pru: PRU, trocas: int = 3) -> PRU:
 
 def test_latencias_da_placa_preveem_a_folga_do_firmware_novo():
     """[F12] Com as latências calibradas no firmware anterior (LATENCIAS_PRU_REAL), o simulador prevê para este, a
-    312,5 kS/s: 41 ciclos de folga numa amostra comum, qualquer que seja o dado (eram 20 a 35, conforme os bits 1), e
-    pelo menos 31 com a troca de buffer (eram 3 a 13). Teto com período constante: 200 MHz / 609 = ~328 kS/s."""
-    assert {folga_sem_troca(p, LATENCIAS_PRU_REAL) for p in PALAVRAS} == {41}
+    312,5 kS/s: 40 ciclos de folga numa amostra comum, qualquer que seja o dado (eram 20 a 35, conforme os bits 1), e
+    pelo menos 29 com a troca de buffer e os 7 eventos (eram 3 a 13). Teto com período constante: 200 MHz / 611 =
+    ~327 kS/s."""
+    assert {folga_sem_troca(p, LATENCIAS_PRU_REAL) for p in PALAVRAS} == {40}
     pru = executar_com_arm(pru_laco(periodo=PERIODO_312K, adc=ModeloADC(0x7FFF), latencias=LATENCIAS_PRU_REAL))
-    assert pru.regs[12] == 31
-    teto = executar_com_arm(pru_laco(periodo=PERIODO_312K - 31, adc=ModeloADC(0x7FFF), latencias=LATENCIAS_PRU_REAL))
-    assert teto.regs[6] == 0 and set(intervalos(teto)) == {PERIODO_312K - 31}
+    assert pru.regs[12] == 29
+    teto = executar_com_arm(pru_laco(periodo=PERIODO_312K - 29, adc=ModeloADC(0x7FFF), latencias=LATENCIAS_PRU_REAL))
+    assert teto.regs[6] == 0 and set(intervalos(teto)) == {PERIODO_312K - 29}
 
 
 def tempos_cs_alto(pru: PRU) -> list[int]:
@@ -483,12 +488,116 @@ def test_cs_alto_minimo_garantido_pelo_caminho_mesmo_com_amostras_atrasadas():
 def test_versao_do_protocolo_e_publicada_antes_da_primeira_amostra():
     pru = pru_laco()
     pru.executar(max_transacoes=CONFIG_1CANAL + 1)
-    assert contador(pru, OFFSET_VERSAO_PROTOCOLO) == 2 and contador(pru, OFFSET_CICLOS_REBASE) == 2
+    assert contador(pru, OFFSET_VERSAO_PROTOCOLO) == 3 and contador(pru, OFFSET_CICLOS_REBASE) == 2
 
 
 def test_auto_rst_sai_do_mesmo_corpo_da_configuracao_e_libera_a_imem():
-    """O AUTO_RST era uma cópia inteira da transação (624 instruções); agora é o estágio 9 do laço de configuração."""
+    """O AUTO_RST era uma cópia inteira da transação (624 instruções); agora é o estágio 9 do laço de configuração.
+    (Com o quadro do SPI rápido, ~450 instruções a mais.)"""
     pru = PRU(ASM, memoria_configurada(0b1))
-    assert pru.total_instrucoes < 1500
+    assert pru.total_instrucoes < 1850
     texto = ASM.read_text(encoding="utf-8")
     assert texto.count("LDI r7, 0xA000") == 1 and "0xA000" not in texto.replace("LDI r7, 0xA000", "").split("cfg_auto_rst")[0]
+
+
+# --------------------------------------------------------------------------------------
+# SPI rápido (22/10/2026): bits de 13 ciclos, cada bit de dado lido em 3 instantes
+# --------------------------------------------------------------------------------------
+MODO_PADRAO, MODO_RAPIDO_A, MODO_RAPIDO_B, MODO_RAPIDO_C = 0, 1, 2, 3
+PERIODO_400K = 500
+# O caminho de volta do SDO, em ciclos de 5 ns, como o simulador o conta (ver ModeloADC): a fase A lê 11 ciclos depois
+# da borda que lançou o bit, a B, 14 (a mesma latência do modo padrão) e a C, 17; a borda seguinte vem 13 depois.
+# Um caminho de 9 (~50 ns) deixa as três certas.
+ATRASO_SDO = 9
+
+
+def pru_rapido(modo: int = MODO_RAPIDO_B, palavra: int = 0xABCD, atraso: int = ATRASO_SDO, **kw) -> PRU:
+    return pru_laco(adc=ModeloADC(palavra, atraso_ciclos=atraso), modo_spi=modo, **kw)
+
+
+@pytest.mark.parametrize("modo", [MODO_RAPIDO_A, MODO_RAPIDO_B, MODO_RAPIDO_C])
+@pytest.mark.parametrize("palavra", PALAVRAS, ids=hex)
+def test_spi_rapido_le_a_palavra_certa_nas_tres_fases(modo, palavra):
+    pru = pru_rapido(modo, palavra)
+    pru.executar(max_transacoes=CONFIG_1CANAL + 4)
+    assert [v for _, v in pru.escritas_ddr[:3]] == [palavra] * 3
+    assert pru.regs[0] == 0 and pru.regs[3] == 0                # nenhuma divergência entre as fases
+
+
+def test_spi_rapido_tem_bits_de_13_ciclos_e_cs_baixo_mais_curto():
+    """~15,4 MHz no SCLK (65 ns por bit) e o CS baixo de 430 ciclos (eram 573); o modo padrão continua igual."""
+    pru = pru_rapido()
+    pru.executar(max_transacoes=CONFIG_1CANAL + 3)
+    bordas = pru._bordas_quadro
+    assert len(bordas) == 32 and {b - a for a, b in zip(bordas, bordas[1:])} == {13}
+    assert duracao_transacao(pru) == 430
+    padrao = pru_laco()
+    padrao.executar(max_transacoes=CONFIG_1CANAL + 3)
+    assert duracao_transacao(padrao) == 573
+
+
+def test_spi_rapido_mantem_a_grade_a_400_ks_com_as_latencias_da_placa():
+    """A 400 kS/s exatos (500 ticks), com trocas de buffer, os eventos e as latências calibradas: todo intervalo é o
+    período, nenhuma amostra atrasada, e sobram ~22 ciclos (teto com período constante ~418 kS/s)."""
+    pru = executar_com_arm(pru_rapido(periodo=PERIODO_400K, latencias=LATENCIAS_PRU_REAL))
+    assert set(intervalos(pru)) == {PERIODO_400K}
+    assert pru.regs[6] == 0 and pru.regs[12] == 22
+    padrao = executar_com_arm(pru_laco(periodo=PERIODO_400K, latencias=LATENCIAS_PRU_REAL))
+    assert padrao.regs[6] > 0                                   # o SPI padrão não chega a 400 kS/s
+
+
+def test_divergencias_medem_a_margem_do_sdo_sem_osciloscopio():
+    """O caminho de volta do SDO decide qual fase acerta: longo demais, a A lê o bit anterior; curto demais, a C (e,
+    mais curto ainda, a B) lê o seguinte. A fase gravada é a pedida, e as divergências contam os quadros."""
+    longo = pru_rapido(MODO_RAPIDO_B, 0xABCD, atraso=13)        # ~65 ns: a A (11) ainda não vê o bit
+    longo.executar(max_transacoes=CONFIG_1CANAL + 6)
+    assert [v for _, v in longo.escritas_ddr[:4]] == [0xABCD] * 4
+    assert longo.regs[0] >= 4 and longo.regs[3] == 0
+    curto = pru_rapido(MODO_RAPIDO_B, 0xABCD, atraso=4)         # ~20 ns: a C (13 + 4) já vê o bit seguinte
+    curto.executar(max_transacoes=CONFIG_1CANAL + 6)
+    assert [v for _, v in curto.escritas_ddr[:4]] == [0xABCD] * 4
+    assert curto.regs[0] == 0 and curto.regs[3] >= 4
+    errado = pru_rapido(MODO_RAPIDO_C, 0xABCD, atraso=4)        # gravando a C nesse caso: o dado sai deslocado
+    errado.executar(max_transacoes=CONFIG_1CANAL + 4)
+    assert errado.escritas_ddr[0][1] != 0xABCD and errado.regs[3] > 0
+
+
+def test_divergencias_sao_publicadas_depois_da_troca():
+    pru = pru_rapido(MODO_RAPIDO_B, 0xABCD, atraso=13, periodo=PERIODO_312K)
+    pru.executar(max_transacoes=CONFIG_1CANAL + BUFFER + 8)     # a troca e os 7 eventos
+    assert contador(pru, OFFSET_DIVERGENCIAS_FASE_A) >= BUFFER and contador(pru, OFFSET_DIVERGENCIAS_FASE_C) == 0
+
+
+def test_spi_rapido_o_quadro_nao_depende_do_dado_nem_da_fase():
+    """Como no modo padrão desde o quadro fixo: a mesma folga com qualquer palavra; e as 3 fases, a mesma duração de
+    CS baixo (só o caminho depois da subida do CS muda com a fase, e não com o dado)."""
+    folgas = set()
+    for palavra in PALAVRAS:
+        pru = pru_rapido(MODO_RAPIDO_B, palavra, buffer=1 << 20, periodo=PERIODO_312K)
+        pru.executar(max_transacoes=CONFIG_1CANAL + 6)
+        folgas.add(pru.regs[12])
+    assert len(folgas) == 1
+    duracoes = set()
+    for modo in (MODO_RAPIDO_A, MODO_RAPIDO_B, MODO_RAPIDO_C):
+        pru = pru_rapido(modo)
+        pru.executar(max_transacoes=CONFIG_1CANAL + 3)
+        duracoes.add(duracao_transacao(pru))
+    assert duracoes == {430}
+
+
+def test_spi_rapido_conta_o_preambulo_com_ruido():
+    adc = ModeloADC(0x1234, ruido_no_quadro={CONFIG_1CANAL + 1}, atraso_ciclos=ATRASO_SDO)
+    pru = pru_laco(adc=adc, modo_spi=MODO_RAPIDO_B)
+    pru.executar(max_transacoes=CONFIG_1CANAL + BUFFER + 6)
+    assert contador(pru, OFFSET_QUADROS_PREAMBULO_RUIM) == 1
+    assert all(v == 0x1234 for _, v in pru.escritas_ddr[:4])
+
+
+def test_modo_padrao_com_o_caminho_do_sdo_da_placa_le_certo():
+    """O modo padrão lê 14 ciclos depois da borda que lançou o bit, e a seguinte vem 16 depois: com o caminho de
+    ~50 a 70 ns da placa (10 a 14 ciclos), certo, como em toda captura desde 19/10."""
+    for atraso in (0, 10, 14):
+        pru = pru_laco(adc=ModeloADC(0xABCD, atraso_ciclos=atraso))
+        pru.executar(max_transacoes=CONFIG_1CANAL + 3)
+        assert pru.escritas_ddr[0][1] == 0xABCD, atraso
+
