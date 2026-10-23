@@ -105,6 +105,35 @@ que seja o sinal); os itens 2 a 4 foram resolvidos (F11, F12, F6 sem o bloco par
 2. **Converter uma captura longa para Volts ainda usa o sinal inteiro em float64** (8 bytes por amostra): a análise
    de 10 min a 312,5 kS/s (188 milhões de amostras) pede ~1,5 GB de RAM; 1 h não caberia (P1).
 
+### Revisão do firmware (23/10/2026)
+
+**500 kS/s não cabem na arquitetura atual.** A 500 kS/s cada amostra tem 400 ciclos (2 µs, o ciclo mínimo do
+próprio ADS8688), e só o CS baixo do quadro rápido leva ~430. Chegar lá pediria bits de 12 ciclos (SCLK de 16,7 MHz,
+colado nos ~17 MHz do ADC e do isolador: CS baixo de 392 ciclos e 6 de CS alto, sobrando 2), um laço contado ciclo a
+ciclo no lugar da espera de precisão, a escrita na DDR passada à PRU1 (pelo scratchpad) e espaço na IMEM. A leitura do
+SDO aguentaria: no T7g o bit volta entre 25 e 60 ns, e a fase B (75 ns) ficaria com ≥ 10 ns de margem. O ganho é
+pequeno: Nyquist de 250 kHz com 1 canal e ~6 dB a mais de rejeição de aliasing; com 2 canais, 125 kHz por canal, ainda
+sem cobrir 150 kHz. Fica em 400 kS/s.
+
+**O limite da aquisição é o aliasing no topo da banda.** O único anti-aliasing é o passa-baixa interno do ADS8688.
+Pelo modelo do T3f, uma imagem chega a 130 kHz só 12,9 dB abaixo de um componente real de mesma amplitude (vinda de
+270 kHz a 400 kS/s) e a 150 kHz só 9 dB abaixo (de 250 kHz). Remédios: capturar em duas taxas e comparar (`adc_tool.py
+aliasing`, 23/10/2026) e, na próxima placa, um filtro externo (H3).
+
+**Corrigido** (sem mudar o laço principal; protocolo 4, falta a bancada: `make`/`setup.sh` e uma captura):
+* o `ler_adc` recusa taxas acima do teto da PRU (477 ticks no SPI rápido, 610 no lento, mais as esperas de CS fora do
+  padrão), a não ser com `--forcar-taxa`: pedir 500000 Hz dava ~430 kS/s gravados como 500 kS/s. A frequência é lida
+  inteira (o `atoi` lia "400k" como 400 Hz);
+* toda saída com erro depois de a PRU ser ligada a para (antes ela ficava amostrando até a próxima captura);
+* o início não depende mais de uma espera fixa de 50 ms: o `pru_main.c` avisa que está pronto
+  (`versao_protocolo_pru = 0`, depois de zerar `config_ready`) e só então o `ler_adc` configura;
+* a configuração escreve 0 nos registradores 02h (canais desligados) e 03h (formato do SDO), que nada reescrevia
+  entre capturas. Não é um RST, que voltaria a faixa a ±10,24 V e provocaria o transitório do F9 em toda captura.
+
+**Aberto:** o `ler_adc` sobrescreve um `.bin` existente sem aviso (recusar, com `--sobrescrever` para os scripts, muda
+o uso: decisão do usuário). Em captura multicanal, os canais são amostrados 1/fs um depois do outro (2,5 µs a
+400 kS/s, 135° em 150 kHz): o P8 (V×I) terá de adiantar cada canal k de k/fs.
+
 ---
 
 ## 2. Prioridade
@@ -122,6 +151,7 @@ que seja o sinal); os itens 2 a 4 foram resolvidos (F11, F12, F6 sem o bloco par
 | **S2–S7** | Fase, subamostragem, perfil absoluto, teto de ganho, repetições | Alto para V×I | Médio–Alto | não | S1 |
 | **F8** | Endereço do canal no SDO (verificar a ordem dos canais a cada amostra) | Baixo–Médio | Médio | sim | F3 |
 | **H1–H2** | Isolador contra o BOM, pontos de teste na próxima PCB | Baixo–Médio | Baixo–Médio | não | — |
+| **H3** | Filtro anti-aliasing externo (~170–200 kHz) na próxima PCB | Médio: a imagem a 150 kHz está só 9 dB abaixo | Médio | não | — |
 | **T2–T3** | Testes de host do C; cobertura da plotagem | Baixo | Baixo | não | — |
 
 ---
@@ -184,7 +214,8 @@ O transitório é um tempo (< 1 LSB em ~80 µs com 1 e com 2 canais), não um n�
 
 **Proposta, o que falta.** Na PRU: depois de escrever os `RANGE_SELn` e o `AUTO_RST`, fazer ~16 quadros descartados
 (≥ 100 µs) antes de zerar o contador de ciclos e começar a gravar, reaproveitando o corpo da transação (a IMEM está
-em 68,7 % desde 22/10/2026, quando o AUTO_RST passou a reaproveitar o corpo da configuração; antes, 91,7 %). O campo `primeira_amostra_descartada` do cabeçalho já existe para registrar isso. Ganho: o `.bin` sai
+em 89,1 % desde 23/10/2026, com o quadro do SPI rápido; o teste limita o `.asm` a 1.850 das 2.048 instruções, e
+sobram 25: para abrir espaço, a instrução `LOOP` da PRU no quadro da configuração liberaria ~500). O campo `primeira_amostra_descartada` do cabeçalho já existe para registrar isso. Ganho: o `.bin` sai
 certo desde a 1ª amostra também para quem o lê fora destas ferramentas.
 
 **Como saber que deu certo.** Repetir a sequência de faixas do T0 (20.48 → 10.24 → 5.12) e conferir que as
@@ -257,6 +288,16 @@ importar.
 
 SCLK/CS/MOSI/MISO dos dois lados da barreira de isolamento e um GPIO livre da PRU exposto (marcar a primeira amostra
 gravada — útil para medir a fase, S2). Desacoplamento de baixo ESR junto ao ADC e trilhas de SPI curtas.
+
+### H3 — Filtro anti-aliasing externo na próxima revisão da PCB
+
+**Por quê.** O único anti-aliasing da cadeia é o passa-baixa interno do ADS8688 (2ª ordem, ~15 kHz). A 400 kS/s, uma
+imagem chega a 150 kHz só 9 dB abaixo de um componente real de mesma amplitude, e a 130 kHz, 12,9 dB (revisão de
+23/10/2026). Fontes chaveadas emitem acima de 150 kHz.
+
+**Proposta.** Um passa-baixa de ~170 a 200 kHz antes da entrada do ADC, de ordem suficiente para somar 20 a 30 dB em
+250 a 400 kHz. A atenuação dele em 150 kHz entra no perfil da cadeia, medido pelo método das quadradas (T3f), como o
+resto.
 
 ---
 

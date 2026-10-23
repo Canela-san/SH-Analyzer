@@ -114,7 +114,7 @@ CABECALHO_VERSAO_FIRMWARE_TAMANHO = 32   # [v5] CABECALHO_VERSAO_FIRMWARE_TAMANH
 #   I    folga_minima_ciclos          (menor folga da captura, ciclos de 5 ns; > 0 = toda amostra no ciclo da grade)
 #   I    atraso_maximo_ciclos         (maior atraso das amostras atrasadas, ciclos; 0 se nenhuma)
 #   I    ciclos_rebase                (ciclos entre as duas leituras do contador no rebase, medidos pela PRU)
-#   I    versao_protocolo_pru         (VERSAO_PROTOCOLO_PRU que a PRU escreveu; 2 desde 22/10/2026, 3 com o SPI rápido)
+#   I    versao_protocolo_pru         (VERSAO_PROTOCOLO_PRU que a PRU escreveu; 2 desde 22/10/2026, 3 com o SPI rápido, 4 com o início sem corrida, 23/10)
 #   I    header_crc32
 #
 # v7 (mesmos campos da v6, mais o SPI ENTRE versao_protocolo_pru e header_crc32 -- ver memoria_pru.h):

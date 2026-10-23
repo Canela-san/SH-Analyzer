@@ -43,6 +43,8 @@ from pru_sim import (
 ASM = Path(__file__).resolve().parents[1] / "firmware" / "spi_core.asm"
 
 
+CMD_CANAIS_LIGADOS = 0x0500       # escrita de 0 no registrador 02h (canais desligados): todos ligados
+CMD_FORMATO_SDO = 0x0700          # escrita de 0 no registrador 03h (formato do SDO, daisy chain, alarme)
 CMD_AUTO_SEQ_EN = 0x0300          # escrita no registrador 01h (AUTO_SEQ_EN)
 CMD_AUTO_RST = 0xA000             # comando AUTO_RST (varredura automática)
 CMD_RANGE_SEL_CANAL0 = 0x0B00     # escrita no registrador 05h (RANGE_SEL0); canal N soma N * 0x200
@@ -53,12 +55,14 @@ def comando_range(canal: int, codigo: int) -> int:
 
 
 def configuracao(mascara: int, range_sel: int | None = 0, max_transacoes: int = 20) -> list[int]:
-    """Palavras de comando (16 bits) das transações de CONFIGURAÇÃO: tudo até o AUTO_RST, inclusive."""
+    """Palavras de comando (16 bits) das transações de CONFIGURAÇÃO depois das escritas fixas de 02h e 03h (que
+    abrem toda configuração desde 23/10/2026): do AUTO_SEQ_EN até o AUTO_RST, inclusive."""
     pru = PRU(ASM, memoria_configurada(mascara, range_sel))
     pru.executar(max_transacoes=max_transacoes)
     palavras = [t.palavra16 for t in pru.transacoes]
     assert CMD_AUTO_RST in palavras, "o assembly não chegou a enviar o AUTO_RST"
-    return palavras[: palavras.index(CMD_AUTO_RST) + 1]
+    assert palavras[:2] == [CMD_CANAIS_LIGADOS, CMD_FORMATO_SDO]
+    return palavras[2: palavras.index(CMD_AUTO_RST) + 1]
 
 
 def nibbles(**codigos: int) -> int:
@@ -127,6 +131,16 @@ def test_comandos_de_configuracao_tem_24_ciclos_de_sclk_e_o_auto_rst_32(bits):
             assert ciclos == 24, hex(palavra)
 
 
+@pytest.mark.parametrize("mascara", [0b00000001, 0b10000000, 0b11111111])
+def test_02h_e_03h_sao_escritos_com_0_antes_de_tudo_em_24_ciclos(mascara):
+    """[23/10/2026] O ADS8688 não reinicia entre capturas: os registradores 02h (canais desligados) e 03h (formato do
+    SDO) voltam ao padrão (0) em toda configuração, antes do AUTO_SEQ_EN, sem mexer na faixa (um RST mexeria)."""
+    pru = PRU(ASM, memoria_configurada(mascara, nibbles(c0=2, c7=1)))
+    pru.executar(max_transacoes=4)
+    assert [t.palavra16 for t in pru.transacoes[:3]] == [CMD_CANAIS_LIGADOS, CMD_FORMATO_SDO, CMD_AUTO_SEQ_EN | mascara]
+    assert [t.ciclos_sclk for t in pru.transacoes[:2]] == [24, 24]
+
+
 def test_so_o_nibble_de_cada_canal_vale_nao_o_registrador_inteiro():
     """Códigos com bits acima do nibble do canal vizinho não vazam: canal 0 = 0x2, canal 1 = 0x1."""
     palavras = configuracao(0b11, 0x12)
@@ -157,7 +171,7 @@ def test_nenhum_desvio_condicional_passa_do_alcance_do_qb():
 # --------------------------------------------------------------------------------------
 # Laço principal: grade de tempo das amostras e detectores de integridade (revisão out/2026)
 # --------------------------------------------------------------------------------------
-CONFIG_1CANAL = 3               # transações de configuração com 1 canal: AUTO_SEQ_EN, RANGE_SEL e AUTO_RST
+CONFIG_1CANAL = 5               # transações de configuração com 1 canal: 02h, 03h, AUTO_SEQ_EN, RANGE_SEL e AUTO_RST
 PERIODO = 2000                  # 100 kS/s a 200 MHz
 BUFFER = 12                     # amostras por buffer nos testes: > 7, os eventos de troca, e com amostras comuns
 
@@ -488,7 +502,7 @@ def test_cs_alto_minimo_garantido_pelo_caminho_mesmo_com_amostras_atrasadas():
 def test_versao_do_protocolo_e_publicada_antes_da_primeira_amostra():
     pru = pru_laco()
     pru.executar(max_transacoes=CONFIG_1CANAL + 1)
-    assert contador(pru, OFFSET_VERSAO_PROTOCOLO) == 3 and contador(pru, OFFSET_CICLOS_REBASE) == 2
+    assert contador(pru, OFFSET_VERSAO_PROTOCOLO) == 4 and contador(pru, OFFSET_CICLOS_REBASE) == 2
 
 
 def test_auto_rst_sai_do_mesmo_corpo_da_configuracao_e_libera_a_imem():

@@ -22,38 +22,16 @@ void main(void) {
     *pru_ctrl |= (1 << 3);
     *pru_cycle = 0;
 
-    if (ctrl->sample_period_ticks < 100) {
-        ctrl->sample_period_ticks = 20000;
-    }
-
-    // [MODO AUTOMÁTICO] Mesmo espírito defensivo do clamp acima: só protege
-    // contra RAM compartilhada "fria" (zerada/lixo) antes do ARM configurar
-    // de verdade -- em uso normal, ler_adc.c sempre escreve auto_seq_mask
-    // (com pelo menos 1 bit ligado) antes de sinalizar config_ready=1, e
-    // espera_configuracao (spi_core.asm) só avança depois disso.
+    // [INÍCIO SEM CORRIDA, 23/10/2026] config_ready = 0 primeiro (uma RAM compartilhada com lixo, ou com o 1 da
+    // captura anterior, não pode soltar a captura: é o caso do 'setup.sh', que liga a PRU sem nenhum ler_adc), e só
+    // depois o aviso de "pronta" (versao_protocolo_pru = 0): o ler_adc espera esse 0 para escrever a configuração e o
+    // config_ready = 1, que então nunca é apagado por aqui. Até 23/10/2026 o ARM esperava 50 ms fixos depois do start.
     //
-    // Dois cuidados, substituindo o antigo clamp de num_canais/
-    // comandos_canais[0] do modo manual multi-canal:
-    //   1) Bits acima do bit 7 não correspondem a nenhum canal físico do
-    //      ADS8688 (só há 8 -- canais 0-7) e contaminariam os bits de
-    //      endereço/R-W do comando de escrita do registrador AUTO_SEQ_EN
-    //      montado em spi_core.asm. Mascarado para 8 bits por segurança.
-    //   2) auto_seq_mask == 0 (nenhum canal habilitado) não tem sentido
-    //      físico -- a varredura automática não teria o que varrer. Cai no
-    //      canal 1 (bit 1 -> 0x02), o mesmo padrão histórico usado antes da
-    //      captura multi-canal (era o único canal desta placa com sinal de
-    //      verdade conectado -- ver cabeçalho de spi_core.asm).
-    ctrl->auto_seq_mask &= 0xFFu;
-    if (ctrl->auto_seq_mask == 0) {
-        ctrl->auto_seq_mask = 0x02u; // canal 1 - padrão histórico
-    }
-
-    // [FAIXA DE ENTRADA POR CANAL] Nada a sanear em ctrl->range_sel aqui: o
-    // valor que vale é o que o ARM escreve DEPOIS deste ponto (a PRU espera em
-    // espera_configuracao, spi_core.asm), e é o ler_adc.c que só grava códigos
-    // válidos (0, 1 ou 2 -- ver memoria_pru.h). Uma RAM compartilhada "fria"
-    // (tudo zero) já significa a faixa padrão do ADC.
+    // Os ajustes de sample_period_ticks (< 100 -> 20000) e de auto_seq_mask (8 bits, 0 -> canal 1) que ficavam aqui
+    // saíram: rodavam ANTES de o ARM escrever esses campos, que ele sempre reescreve com valores válidos, e por isso
+    // nunca tinham efeito.
     ctrl->config_ready = 0;
+    ctrl->versao_protocolo_pru = 0;
 
     ler_ads8688_asm(ctrl);
 }

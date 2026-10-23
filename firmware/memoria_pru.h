@@ -62,8 +62,8 @@ struct shared_control {
     // ordem "desejada" -- diferente do antigo modo manual multi-canal, onde
     // a ordem de intercalação era livre (definida pela ordem da lista
     // passada em --canais). Só os 8 bits menos significativos são válidos
-    // (ADS8688_MAX_CANAIS = 8 canais físicos); bits acima desses são
-    // mascarados por segurança do lado da PRU (ver pru_main.c).
+    // (ADS8688_MAX_CANAIS = 8 canais físicos); o ler_adc.c só aceita canais
+    // de 0 a 7, então os bits acima nunca vêm ligados.
     //
     // Efeito colateral positivo desta simplificação: a struct caiu de 64
     // para 32 bytes (hoje são 76, com range_sel, os contadores, os atrasos e a grade de tempo abaixo) -- menos RAM compartilhada sincronizada manualmente
@@ -147,8 +147,10 @@ struct shared_control {
     //   atraso_maximo_ciclos: o maior atraso das amostras atrasadas (0 se nenhuma), em ciclos.
     //   ciclos_rebase: ciclos entre as duas leituras do contador no rebase (a cada 2^31 ciclos), medidos pela
     //     PRU antes da 1ª amostra (o simulador dá 2). Diagnóstico: o rebase os usa para não deslocar a grade.
-    //   versao_protocolo_pru: VERSAO_PROTOCOLO_PRU, escrito pela PRU antes da 1ª amostra. O ler_adc o zera antes
-    //     de config_ready=1 e confere depois: outro valor = o firmware carregado na PRU não é deste ler_adc.
+    //   versao_protocolo_pru: VERSAO_PROTOCOLO_PRU, escrito pela PRU antes da 1ª amostra; o ler_adc confere depois
+    //     de config_ready=1: outro valor = o firmware carregado na PRU não é deste ler_adc. [INÍCIO SEM CORRIDA,
+    //     23/10/2026] Antes disso o campo é o aviso de "pronta": o ler_adc escreve 0xFFFFFFFF com a PRU parada, o
+    //     pru_main.c escreve 0 quando ela chega à espera da configuração, e só então o ler_adc a escreve.
     volatile uint32_t folga_minima_ciclos;   // Offset 60
     volatile uint32_t atraso_maximo_ciclos;  // Offset 64
     volatile uint32_t ciclos_rebase;         // Offset 68
@@ -175,7 +177,9 @@ struct shared_control {
 // Versão do contrato ARM <-> PRU desta struct (o spi_core.asm escreve o mesmo número em versao_protocolo_pru).
 // 2 = 22/10/2026: grade exata e os campos de tempo acima. Firmwares anteriores não escrevem nada ali (fica 0).
 // 3 = 22/10/2026, 2ª revisão: o SPI rápido (modo_spi e as divergências).
-#define VERSAO_PROTOCOLO_PRU 3u
+// 4 = 23/10/2026: o aviso de "pronta" no início (pru_main.c) e os registradores 02h e 03h do ADS8688 escritos na
+//     configuração (spi_core.asm). O laço principal é o mesmo do protocolo 3.
+#define VERSAO_PROTOCOLO_PRU 4u
 
 // Atrasos de CS padrão (iterações de 2 ciclos): o mínimo do datasheet (30/10/30 ns), desde 21/10/2026.
 #define ATRASO_CS_SETUP_PADRAO 3u

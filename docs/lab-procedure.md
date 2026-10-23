@@ -926,10 +926,10 @@ sudo ./ler_adc 100000 1 --faixa-adc 1:10.24 --blocos 1 -o T1_curto_100k_faixa102
 sudo ./ler_adc 100000 1 --faixa-adc 1:5.12  --blocos 1 -o T1_curto_100k_faixa512.bin  -t "T1 curto 100k faixa 5.12"
 # opcional, se os outros canais tiverem entrada acessível (em curto):
 sudo ./ler_adc 100000 0,1,2,3,4,5,6,7 --blocos 1 -o T1_curto_100k_8ch.bin -t "T1 curto 100k 8ch"
-# ACIMA do recomendado (só para o relatório; veja T7e):
+# ACIMA do recomendado (só para o relatório; veja T7e; acima do teto da PRU o ler_adc pede --forcar-taxa):
 sudo ./ler_adc 130000 1 --blocos 1 -o T1_curto_130k_1ch.bin -t "T1 curto 130k 1ch"
 sudo ./ler_adc 200000 1 --blocos 2 -o T1_curto_200k_1ch.bin -t "T1 curto 200k 1ch"
-sudo ./ler_adc 500000 1 --blocos 5 -o T1_curto_500k_1ch.bin -t "T1 curto 500k 1ch"
+sudo ./ler_adc 500000 1 --blocos 5 --forcar-taxa -o T1_curto_500k_1ch.bin -t "T1 curto 500k 1ch"
 ```
 
 Repita com a condição "sonda ligada, sem condutor" no canal 0, **já na faixa de produção do canal de corrente**:

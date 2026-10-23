@@ -43,6 +43,11 @@ def _compactar(argv: list[str]) -> int:
     return main(argv)
 
 
+def _aliasing(argv: list[str]) -> int:
+    from .cli_aliasing import main
+    return main(argv)
+
+
 SUBCOMANDOS: dict[str, tuple[Callable[[list[str]], int], str]] = {
     "analisar": (_analisar, "(o padrão) forma de onda, FFT, Welch, harmônicos, bandas IEC, espectrograma, picos e "
                             "exportação (CSV/JSON/MATLAB) de uma captura"),
@@ -54,6 +59,8 @@ SUBCOMANDOS: dict[str, tuple[Callable[[list[str]], int], str]] = {
                         "calibrar_sonda.sh -- o mesmo que gerar_perfil_sonda.py"),
     "compactar": (_compactar, "arquiva capturas sem perdas (.zpaq.tar, conferido bit a bit) e extrai, lista ou "
                               "verifica pacotes -- o mesmo que compactar_amostras.py"),
+    "aliasing": (_aliasing, "separa componentes reais de imagens de aliasing com duas capturas do mesmo sinal em "
+                            "taxas diferentes"),
 }
 
 

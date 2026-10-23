@@ -92,6 +92,7 @@ sudo ./ler_adc <frequencia_hz> [lista_de_canais] [opções]
 | `--sonda C:ID[,...]` | Id da sonda usada em cada canal (ex.: `1:fluke_i30_01`), até 31 caracteres. É só um texto no cabeçalho; a correção é feita depois, no `adc_tool.py` |
 | `--faixa-adc C:V[,...]` | **Faixa de entrada do ADC** de cada canal, como fundo de escala total em Volts: `20.48` (±10,24 V, o padrão), `10.24` (±5,12 V) ou `5.12` (±2,56 V). Ex.: `0:20.48,1:5.12`. Canal não citado = `20.48`. Veja [Faixa de entrada do ADC](#faixa-de-entrada-do-adc) |
 | `--spi MODO` | `rapido` (o padrão desde 22/10/2026: SCLK de ~15,4 MHz, período constante até ~419 kS/s, validado no T7g) ou `lenta` (o SPI de antes: ~10,7 MHz, até ~328 kS/s). No rápido, cada bit é lido 60, 75 e 90 ns depois da borda do SCLK que o lança (fases A, B e C); grava-se a B (a mesma latência do padrão), ou a pedida em `rapido:a`/`rapido:c`, e o fim da captura diz em quantos quadros as outras discordaram: a margem de tempo do SDO, medida pela PRU. Vai para o cabeçalho (versão 7) |
+| `--forcar-taxa` | Aceita uma frequência acima do **teto da PRU** (419287 Hz com o SPI rápido e 327868 com o lento, nas esperas de CS padrão; esperas maiores baixam o teto). Sem ela, desde 23/10/2026, o `ler_adc` recusa: acima do teto as amostras saem atrasadas e a taxa real fica menor que a do cabeçalho (pedir 500000 dava ~430 kS/s gravados como 500 kS/s). Só para varreduras que medem o teto, como o `varrer_taxa.sh` |
 | `--atraso-cs S,H,A` | Atrasos do CS em cada amostra, em passos de 10 ns: CS descendo → 1º clock, último clock → CS subindo, CS alto entre amostras. Padrão `3,1,3` (30/10/30 ns, o mínimo do datasheet, desde 21/10/2026; era `200,100,100`, 2/1/1 µs). Esperas maiores só alongam o quadro e baixam a taxa máxima. Veja [Integridade e taxa máxima](#integridade-da-captura-e-taxa-máxima) |
 
 Exemplos:
@@ -202,6 +203,7 @@ A ferramenta tem três modos: **plotagem** (padrão), **conversão** `.bin` ↔ 
 | `adc_tool.py medir ...` | As métricas de bancada (o mesmo que `medir_captura.py`) |
 | `adc_tool.py perfil ...` | O perfil de uma sonda (o mesmo que `gerar_perfil_sonda.py`) |
 | `adc_tool.py compactar ...` | O arquivamento sem perdas (o mesmo que `compactar_amostras.py`) |
+| `adc_tool.py aliasing A.bin B.bin` | Separa componentes reais de imagens de aliasing com duas capturas do mesmo sinal em taxas diferentes (veja [Real ou imagem?](#real-ou-imagem-adc_toolpy-aliasing)) |
 
 Os scripts separados continuam funcionando, e os comandos do roteiro de laboratório não mudam. Cada comando carrega só as bibliotecas que usa: o `--help` e o `info` não carregam o SciPy nem o matplotlib, e a análise sem gráfico não carrega o matplotlib.
 
@@ -640,6 +642,55 @@ instrumento de referência; na senoide, a referência é o osciloscópio. No T3f
 1,3 dB acima da quadrada acima de ~40 kHz, a queda da referência do osciloscópio (suspeita: a ponta descompensada;
 a conferência está no roteiro). O ganho absoluto vem do K: o T2, em DC, com o Fluke, levado à faixa da captura pelo
 T0 (0,99743 em ±2,56 V). Uma varredura por senoides só serve de conferência independente, e com a ponta compensada.
+
+---
+
+## Real ou imagem? `adc_tool.py aliasing`
+
+**O problema.** O único anti-aliasing da cadeia é o passa-baixa interno do ADS8688 (2ª ordem, ~15 kHz). Ele atenua o
+que está acima da Nyquist, mas pouco mais do que o que está logo abaixo: a 400 kS/s, uma imagem chega a 130 kHz só
+~13 dB abaixo de um componente real de mesma amplitude (vinda de 270 kHz) e a 150 kHz, só ~9 dB (de 250 kHz). Fontes
+chaveadas emitem acima de 150 kHz, então, numa captura só, um pico no topo da banda pode ser uma imagem.
+
+**O método.** Capture o mesmo sinal em duas taxas. Um componente real abaixo das duas Nyquist aparece na mesma
+frequência nas duas; uma imagem muda de lugar, e o par de posições dá a frequência de entrada. A amplitude também tem
+de bater, porque o filtro do ADC age antes da amostragem e atenua a mesma entrada igual nas duas. Na BeagleBone:
+
+```bash
+sudo ./ler_adc 400000 1 --faixa-adc 1:5.12 --duracao 10s -o SH_A_400k.bin -t "A 400k"
+```
+
+```bash
+sudo ./ler_adc 320000 1 --faixa-adc 1:5.12 --duracao 10s -o SH_B_320k.bin -t "B 320k"
+```
+
+No computador:
+
+```bash
+uv run scripts/adc_tool.py aliasing SH_A_400k.bin SH_B_320k.bin --csv aliasing.csv
+```
+
+A saída é uma tabela, um componente por linha: a frequência de entrada deduzida, onde ele aparece em cada captura,
+a amplitude em cada uma (em dBV no pino do ADC, sem a correção da sonda) e o diagnóstico: `real`, `real em A; imagem
+em B` (acima da Nyquist de B), `imagem nas duas, de X kHz` ou `sem par na outra captura`. Com um tom de 270 kHz:
+
+```
+     entrada         em A      dB         em B      dB   diagnóstico
+       (kHz)        (kHz)                (kHz)
+      60.000       60.000   -26.0       60.000   -26.0   real
+     270.000      130.000   -26.0       50.000   -26.0   imagem nas duas, de 270.00 kHz
+```
+
+* **A 2ª taxa:** 320 kS/s (625 ticks, exata, Nyquist de 160 kHz) cobre a banda até 150 kHz e afasta as imagens das
+  posições de 400 kS/s. Qualquer taxa até o teto da PRU serve.
+* **Frequências que duas taxas não separam:** algumas entradas caem no mesmo lugar nas duas (com 400 e 320 kS/s,
+  360 kHz aparece em 40 kHz nas duas, como um real de 40 kHz). A ferramenta lista essas posições no fim e marca um
+  pico ali como `AMBÍGUO`, com a entrada mais baixa como a provável (o filtro atenua a de cima ~40 dB a mais). Uma 3ª
+  taxa decide.
+* **As capturas não são simultâneas** (o ADC é um só): a emissão tem de ser estável entre elas. Uma diferença de
+  amplitude acima de `--tolerancia-db` (3 dB) sai marcada; `--tolerancia-hz` (100 Hz) aceita uma emissão que deriva.
+* **Opções:** `--canal`, `--freq-min` (2 kHz), `--freq-max` (98 % da Nyquist de cada uma), `--acima-do-piso` (20 dB
+  acima da mediana do espectro), `--resolucao` (25 Hz), `--f-max-entrada` (1 MHz), `--max-segundos` (10 s).
 
 ---
 

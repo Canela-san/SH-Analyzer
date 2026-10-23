@@ -373,6 +373,7 @@ while [ $# -gt 0 ]; do
         -o) saida=$2; shift ;; --atraso-cs) cs=$2; shift ;; --blocos) blocos=$2; shift ;;
         --duracao) duracao=$2; blocos=9; shift ;; --spi) spi=$2; shift ;; -d) descricao=$2; shift ;;
         --faixa-adc) faixa=$2; shift ;;
+        --forcar-taxa) forcar=1; shift; continue ;;
     esac
     shift
 done
@@ -381,6 +382,10 @@ sleep "${LER_ADC_DEMORA:-0}"
 quadro=$((595 + 2 * (s + h + a)))
 case "${spi:-}" in rapido*) quadro=467 ;; esac          # o SPI rápido (~428 kS/s no máximo)
 maximo=$((200000000 / quadro))
+if [ "$taxa" -gt "$maximo" ] && [ -z "${forcar:-}" ]; then   # como o ler_adc desde 23/10/2026
+    echo "Erro: $taxa Hz passam do teto da PRU; use --forcar-taxa." >&2
+    exit 255
+fi
 atrasadas=0; real=$taxa
 if [ "$taxa" -gt "$maximo" ]; then atrasadas=123; real=$maximo; fi
 echo "taxa=$taxa canais=$canais blocos=$blocos cs=$cs faixa=$faixa${duracao:+ duracao=$duracao}${spi:+ spi=$spi}${descricao:+ d=$descricao}" > "$saida"

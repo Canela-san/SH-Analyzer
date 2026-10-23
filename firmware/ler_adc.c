@@ -38,6 +38,15 @@ void lidar_interrupcao(int sinal) { (void)sinal; manter_execucao = 0; }
 // 327,9 kS/s).
 #define FREQUENCIA_PADRAO_HZ 400000u
 
+// [TETO DA PRU, 23/10/2026] O menor período (em ticks) com que TODA amostra sai no ciclo exato da grade, medido na
+// placa com as esperas de CS padrão (3/1/3): 477 no SPI rápido (419,3 kS/s, T7g) e 610 no lento (327,9 kS/s, T7f); o
+// simulador dá 1 tick a mais nos dois. Abaixo dele as amostras atrasam e a taxa real fica MENOR que a do cabeçalho
+// (pedir 500000 Hz dava ~430 kS/s gravados como 500 kS/s): o ler_adc recusa, a não ser com --forcar-taxa (as varreduras
+// do varrer_taxa.sh passam do teto de propósito). Ver teto_ticks_da_pru() para as esperas de CS fora do padrão.
+#define TETO_TICKS_SPI_RAPIDO 477u
+#define TETO_TICKS_SPI_LENTO  610u
+#define FREQUENCIA_MAXIMA_HZ  500000u   // o ADS8688 converte no máximo 500 kS/s no total
+
 // ============================================================================
 // [CABECALHO DO ARQUIVO .bin]
 // ============================================================================
@@ -348,7 +357,9 @@ static void imprimir_uso(const char *nome_programa) {
         "                    (o 1º argumento é uma opção, ou não há nenhum): %u Hz, o\n"
         "                    padrão (200 MHz ÷ 500, exata; com o SPI rápido, o período fica\n"
         "                    constante até ~419 kS/s). Prefira taxas que dividem 200 MHz.\n"
-        "                    A lista de canais só vem depois da frequência.\n"
+        "                    Acima do teto da PRU (419287 Hz com o SPI rápido e 327868 com o\n"
+        "                    lento, com as esperas de CS padrão) a captura é recusada: ver\n"
+        "                    --forcar-taxa. A lista de canais só vem depois da frequência.\n"
         "  lista_de_canais   Opcional. Canais do ADS8688, separados por vírgula\n"
         "                    sem espaços (ex.: '0,1,3'). Padrão: só o canal %d.\n"
         "  --blocos N        Opcional. Captura exatamente N blocos e para. N=0\n"
@@ -393,6 +404,9 @@ static void imprimir_uso(const char *nome_programa) {
         "                    a B (a latência do SPI lento), ou a pedida em 'rapido:a',\n"
         "                    'rapido:b' ou 'rapido:c', e o fim da captura diz em quantos\n"
         "                    quadros as outras discordaram: a margem de tempo do SDO.\n"
+        "  --forcar-taxa     Opcional. Aceita uma frequência acima do teto da PRU: as\n"
+        "                    amostras saem atrasadas e a taxa real fica menor que a do\n"
+        "                    cabeçalho. Só para varreduras que medem o teto (varrer_taxa.sh).\n"
         "  --faixa-adc C:V[,...]  Opcional. Faixa de entrada do ADS8688 em cada canal, no\n"
         "                    formato 'canal:volts', onde 'volts' é a faixa TOTAL (pico\n"
         "                    a pico) -- o mesmo número do --faixa do adc_tool.py:\n"
@@ -855,6 +869,62 @@ static char fase_do_modo_spi(uint32_t modo) {
 }
 
 /*
+ * [FREQUÊNCIA, 23/10/2026] Lê a frequência total (Hz) conferindo o texto inteiro: o atoi de antes lia "400k" como 400 Hz
+ * e "4e5" como 4 Hz, sem erro. Devolve 0, ou -1 com o erro já impresso.
+ */
+static int analisar_frequencia(const char *texto, uint32_t *frequencia) {
+    char *fim;
+    errno = 0;
+    unsigned long valor = strtoul(texto, &fim, 10);
+    if (fim == texto || *fim != '\0' || errno != 0 || valor < 1 || valor > FREQUENCIA_MAXIMA_HZ) {
+        fprintf(stderr, "Erro: frequência inválida '%s'. Use um inteiro em Hz, de 1 a %u (ex.: 400000; sufixos como "
+                         "'400k' não são aceitos).\n", texto, FREQUENCIA_MAXIMA_HZ);
+        return -1;
+    }
+    *frequencia = (uint32_t)valor;
+    return 0;
+}
+
+/*
+ * [TETO DA PRU, 23/10/2026] O menor período, em ticks, com todas as amostras na grade (ver TETO_TICKS_*), para o modo
+ * do SPI e as esperas de CS desta captura. Cada iteração de setup ou de hold a mais que o padrão soma 2 ciclos ao
+ * quadro; a espera de CS alto só roda a partir de 10 iterações (abaixo disso o próprio caminho já a garante, ver
+ * spi_core.asm) e então soma 2·A + 1. tests/test_ler_adc_host.py confere a conta contra o simulador da PRU.
+ */
+static uint32_t teto_ticks_da_pru(uint32_t modo_spi, const uint32_t atrasos[3]) {
+    long teto = (modo_spi == MODO_SPI_LENTO) ? (long)TETO_TICKS_SPI_LENTO : (long)TETO_TICKS_SPI_RAPIDO;
+    teto += 2L * ((long)atrasos[0] - (long)ATRASO_CS_SETUP_PADRAO) + 2L * ((long)atrasos[1] - (long)ATRASO_CS_HOLD_PADRAO);
+    if (atrasos[2] >= 10u) {
+        teto += 2L * (long)atrasos[2] + 1L;
+    }
+    return (uint32_t)teto;
+}
+
+/*
+ * [TETO DA PRU, 23/10/2026] Recusa uma taxa acima do que a PRU mantém na grade (devolve -1 com o erro impresso), a não
+ * ser com --forcar-taxa: aí só avisa que a taxa real vai sair menor que a do cabeçalho.
+ */
+static int conferir_teto_da_taxa(uint32_t frequencia, uint32_t modo_spi, const uint32_t atrasos[3], int forcar) {
+    uint32_t ticks = PRU_CLOCK_HZ / frequencia;
+    uint32_t teto = teto_ticks_da_pru(modo_spi, atrasos);
+    if (ticks >= teto) {
+        return 0;
+    }
+    const char *spi = (modo_spi == MODO_SPI_LENTO) ? "lento" : "rápido";
+    if (forcar) {
+        fprintf(stderr, "Aviso: %u Hz (%u ticks) passam do teto da PRU com o SPI %s e estas esperas de CS (%u ticks = "
+                         "%u Hz): as amostras vão sair atrasadas e a taxa real será MENOR que a do cabeçalho "
+                         "(--forcar-taxa).\n", frequencia, ticks, spi, teto, PRU_CLOCK_HZ / teto);
+        return 0;
+    }
+    fprintf(stderr, "Erro: %u Hz pedem um período de %u ticks, abaixo do teto da PRU com o SPI %s e estas esperas de "
+                     "CS (%u ticks): as amostras sairiam atrasadas e a taxa real ficaria menor que a do cabeçalho. "
+                     "Use até %u Hz, ou --forcar-taxa para capturar assim mesmo (varreduras do teto).\n",
+            frequencia, ticks, spi, teto, PRU_CLOCK_HZ / teto);
+    return -1;
+}
+
+/*
  * [ATRASOS DO CS] Interpreta --atraso-cs "S,H,A" (três inteiros, iterações de
  * 2 ciclos da PRU = 10 ns). Mínimo 1: o laço de espera da PRU conta para baixo
  * até 0, e um 0 daria a volta nos 32 bits (uma espera de ~21 s). Máximo 10000
@@ -1083,7 +1153,7 @@ static void imprimir_bloco_gravado(char rotulo, unsigned long long blocos_salvos
 // timing já foi calibrado e depurado em bancada --, force um stop+start
 // do núcleo PRU0 (mesmo mecanismo que `setup.sh` já usa para carregar o
 // firmware) antes de CADA captura. Isso faz `pru_main.c` rodar de novo do
-// zero (`config_ready = 0`, clamps de segurança) e a PRU volta a esperar
+// zero (`config_ready = 0` e o aviso de "pronta", desde 23/10/2026) e a PRU volta a esperar
 // em `espera_configuracao` -- garantindo que a máscara de canais escrita
 // logo em seguida por este programa seja sempre a que a PRU realmente usa
 // na próxima configuração do ADS8688.
@@ -1121,13 +1191,22 @@ static int escrever_estado_remoteproc(const char *comando) {
     return (escrito == (ssize_t)tamanho) ? 0 : -1;
 }
 
-static int reiniciar_pru_antes_da_captura(void) {
+// [INÍCIO SEM CORRIDA, 23/10/2026] Escrito em versao_protocolo_pru com a PRU parada; o pru_main.c o troca por 0 quando
+// a PRU chega à espera da configuração (depois de zerar config_ready). Até aqui o ARM esperava 50 ms fixos depois do
+// start e o pru_main.c zerava config_ready: uma PRU mais lenta que isso apagaria o config_ready = 1 do ARM, e a
+// captura falharia com a mensagem errada ("firmware não é o deste").
+#define PRU_AINDA_NAO_INICIOU 0xFFFFFFFFu
+
+static int reiniciar_pru_antes_da_captura(volatile struct shared_control *ctrl) {
     // "stop" pode falhar se a PRU já estiver parada (ex.: primeira
     // captura logo após `setup.sh`, antes de qualquer `ler_adc` ter
     // rodado) -- não é um erro real, por isso o retorno é ignorado aqui;
     // só a falha do "start" seguinte é que importa.
     escrever_estado_remoteproc("stop");
     usleep(50000); // folga para o núcleo terminar de parar
+
+    ctrl->config_ready = 0;
+    ctrl->versao_protocolo_pru = PRU_AINDA_NAO_INICIOU;
 
     if (escrever_estado_remoteproc("start") != 0) {
         fprintf(stderr, "Erro ao reiniciar a PRU via '%s' (rode primeiro "
@@ -1138,9 +1217,33 @@ static int reiniciar_pru_antes_da_captura(void) {
                          "imagem).\n", REMOTEPROC_PRU0_ESTADO);
         return -1;
     }
-    usleep(50000); // folga para a PRU inicializar e chegar em espera_configuracao
-                    // antes de escrevermos a nova configuração em shared_control
+    // A configuração só é escrita depois que a PRU avisa que está esperando por ela (versao_protocolo_pru = 0).
+    for (int espera_ms = 0; espera_ms < 500 && ctrl->versao_protocolo_pru != 0; espera_ms++) {
+        usleep(1000);
+    }
+    if (ctrl->versao_protocolo_pru != 0) {
+        fprintf(stderr, "Erro: a PRU não avisou que está pronta em 500 ms depois do start (versao_protocolo_pru = "
+                         "0x%08X; o firmware deste ler_adc escreve 0 ao iniciar). O fw_pru.out carregado é anterior a "
+                         "23/10/2026 ou a PRU não iniciou: recompile e recarregue os dois juntos (scripts/"
+                         "BeagleBone_Setup.sh enviar --setup no PC, ou 'sudo ./setup.sh' na BeagleBone).\n",
+                ctrl->versao_protocolo_pru);
+        escrever_estado_remoteproc("stop");
+        return -1;
+    }
     return 0;
+}
+
+// [23/10/2026] Saída com erro depois de a PRU ser ligada: para a PRU (até aqui ela ficava amostrando e escrevendo na
+// DDR até a próxima captura), fecha o arquivo, se já aberto, e desfaz os mapeamentos.
+static int abortar_captura(FILE *ficheiro, void *ddr_map, size_t bytes_ddr, void *ctrl_map, int mem_fd) {
+    escrever_estado_remoteproc("stop");
+    if (ficheiro != NULL) {
+        fclose(ficheiro);
+    }
+    munmap(ddr_map, bytes_ddr);
+    munmap(ctrl_map, 4096);
+    close(mem_fd);
+    return -1;
 }
 
 // [F11] Os buffers da PRU ficam em DDR_RESERVED_PHYS, os últimos 16 MB da DDR de 512 MB da BeagleBone. O Linux só não
@@ -1210,10 +1313,7 @@ int main(int argc, char *argv[]) {
     uint32_t frequencia_desejada = FREQUENCIA_PADRAO_HZ;
     int primeiro_opcional = 1;
     if (argc > 1 && argv[1][0] != '-') {
-        frequencia_desejada = (uint32_t)atoi(argv[1]);
-        if (frequencia_desejada == 0 || frequencia_desejada > 500000) {
-            fprintf(stderr, "Erro: frequência inválida. Use um valor entre 1 e 500000 Hz.\n");
-            imprimir_uso(argv[0]);
+        if (analisar_frequencia(argv[1], &frequencia_desejada) < 0) {
             return -1;
         }
         primeiro_opcional = 2;
@@ -1235,6 +1335,7 @@ int main(int argc, char *argv[]) {
     const char *faixa_adc_texto = NULL;    // [FAIXA DE ENTRADA] valor de --faixa-adc, se passado
     const char *atraso_cs_texto = NULL;    // [ATRASOS DO CS] valor de --atraso-cs, se passado
     const char *spi_texto = NULL;          // [SPI RÁPIDO] valor de --spi, se passado
+    int forcar_taxa = 0;                   // [TETO DA PRU] --forcar-taxa: aceita uma taxa acima do teto da PRU
 
     for (int i = primeiro_opcional; i < argc; i++) {
         if (strcmp(argv[i], "--blocos") == 0) {
@@ -1312,6 +1413,8 @@ int main(int argc, char *argv[]) {
                 return -1;
             }
             spi_texto = argv[++i];
+        } else if (strcmp(argv[i], "--forcar-taxa") == 0) {
+            forcar_taxa = 1;
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "Erro: opção desconhecida '%s'.\n", argv[i]);
             imprimir_uso(argv[0]);
@@ -1425,6 +1528,9 @@ int main(int argc, char *argv[]) {
                "SCLK que lança o bit); as fases A (60 ns) e C (90 ns) são comparadas com a B a cada quadro.\n",
                fase_do_modo_spi(modo_spi), modo_spi == MODO_SPI_RAPIDO_A ? 60u : (modo_spi == MODO_SPI_RAPIDO_C ? 90u : 75u));
     }
+    if (conferir_teto_da_taxa(frequencia_desejada, modo_spi, atrasos_cs, forcar_taxa) < 0) {
+        return -1;
+    }
 
     // Resolve blocos_desejados cedo (antes de tocar em /dev/mem ou criar o
     // arquivo de saída) -- mesma filosofia de "validar primeiro, tocar
@@ -1520,26 +1626,21 @@ int main(int argc, char *argv[]) {
         mascara_auto_seq |= (1u << canais[i]);
     }
 
-    // [BUG CORRIGIDO -- CANAIS "GRUDADOS" ENTRE CAPTURAS] Reinicia a PRU
-    // ANTES de tocar em /dev/mem ou abrir o arquivo de saída -- último
-    // passo da fase de validação, primeiro passo que efetivamente toca
-    // hardware. Ver docstring de reiniciar_pru_antes_da_captura() para o
-    // porquê: sem isso, uma captura com canais diferentes da anterior
-    // silenciosamente reaproveitava a máscara de canais já configurada na
-    // PRU desde o boot anterior, em vez da máscara calculada acima.
+    // [BUG CORRIGIDO -- CANAIS "GRUDADOS" ENTRE CAPTURAS] A PRU é reiniciada
+    // logo depois de mapear /dev/mem e antes de abrir o arquivo de saída --
+    // primeiro passo que efetivamente toca hardware. Ver docstring de
+    // reiniciar_pru_antes_da_captura() para o porquê: sem isso, uma captura
+    // com canais diferentes da anterior silenciosamente reaproveitava a
+    // máscara de canais já configurada na PRU desde o boot anterior, em vez
+    // da máscara calculada acima.
     size_t bytes_por_buffer = (size_t)SAMPLES_PER_BUFFER * sizeof(uint16_t);
     if (conferir_ddr_reservada("/proc/iomem", DDR_RESERVED_PHYS,
                                (unsigned long long)DDR_RESERVED_PHYS + bytes_por_buffer * BUFFERS_PING_PONG) != 0) {
         return -1;
     }
 
-    printf("Reiniciando a PRU para garantir que os canais desta captura "
-           "sejam aplicados (evita reaproveitar a configuração de uma "
-           "captura anterior)...\n");
-    if (reiniciar_pru_antes_da_captura() != 0) {
-        return -1;
-    }
-
+    // [INÍCIO SEM CORRIDA, 23/10/2026] A memória é mapeada ANTES de reiniciar a PRU: o reinício zera config_ready e
+    // espera o aviso da PRU na RAM compartilhada (ver reiniciar_pru_antes_da_captura).
     int mem_fd = open("/dev/mem", O_RDWR | O_SYNC);
     if (mem_fd < 0) {
         perror("Erro ao abrir /dev/mem (rode com sudo)");
@@ -1572,6 +1673,16 @@ int main(int argc, char *argv[]) {
     uint16_t *buffer_0_virtual = (uint16_t *)ddr_map;
     uint16_t *buffer_1_virtual = buffer_0_virtual + SAMPLES_PER_BUFFER;
 
+    printf("Reiniciando a PRU para garantir que os canais desta captura "
+           "sejam aplicados (evita reaproveitar a configuração de uma "
+           "captura anterior)...\n");
+    if (reiniciar_pru_antes_da_captura(ctrl) != 0) {
+        munmap(ddr_map, bytes_por_buffer * BUFFERS_PING_PONG);
+        munmap(ctrl_map, 4096);
+        close(mem_fd);
+        return -1;
+    }
+
     ctrl->buffer_0_addr = DDR_RESERVED_PHYS;
     ctrl->buffer_1_addr = DDR_RESERVED_PHYS + (uint32_t)bytes_por_buffer;
     ctrl->buffer_0_ready = 0;
@@ -1601,11 +1712,11 @@ int main(int argc, char *argv[]) {
     ctrl->divergencias_fase_a = 0;
     ctrl->divergencias_fase_c = 0;
 
-    // [GRADE] A PRU os escreve antes da 1ª amostra; zerados aqui, um 0 depois quer dizer que ela não escreveu.
+    // [GRADE] A PRU os escreve antes da 1ª amostra; zerados aqui, um 0 depois quer dizer que ela não escreveu. (O
+    // versao_protocolo_pru já está em 0: é o aviso de "pronta" da PRU, ver reiniciar_pru_antes_da_captura.)
     ctrl->folga_minima_ciclos = 0;
     ctrl->atraso_maximo_ciclos = 0;
     ctrl->ciclos_rebase = 0;
-    ctrl->versao_protocolo_pru = 0;
 
     ctrl->config_ready = 1;
 
@@ -1621,19 +1732,13 @@ int main(int argc, char *argv[]) {
                          "Recompile e recarregue os dois juntos: scripts/BeagleBone_Setup.sh enviar --setup "
                          "(no PC), ou 'sudo ./setup.sh' na pasta firmware/ da BeagleBone.\n",
                 ctrl->versao_protocolo_pru, VERSAO_PROTOCOLO_PRU);
-        munmap(ddr_map, bytes_por_buffer * BUFFERS_PING_PONG);
-        munmap(ctrl_map, 4096);
-        close(mem_fd);
-        return -1;
+        return abortar_captura(NULL, ddr_map, bytes_por_buffer * BUFFERS_PING_PONG, ctrl_map, mem_fd);
     }
 
     FILE *ficheiro_bin = fopen(nome_arquivo_saida, "wb");
     if (!ficheiro_bin) {
         fprintf(stderr, "Erro ao criar '%s': %s\n", nome_arquivo_saida, strerror(errno));
-        munmap(ddr_map, bytes_por_buffer * BUFFERS_PING_PONG);
-        munmap(ctrl_map, 4096);
-        close(mem_fd);
-        return -1;
+        return abortar_captura(NULL, ddr_map, bytes_por_buffer * BUFFERS_PING_PONG, ctrl_map, mem_fd);
     }
 
     // [CABECALHO/NOME DE ARQUIVO] Monta e grava o cabeçalho de 1024 bytes
@@ -1713,11 +1818,7 @@ int main(int argc, char *argv[]) {
     if (fwrite(&cabecalho, sizeof(cabecalho), 1, ficheiro_bin) != 1) {
         fprintf(stderr, "Erro: falha ao gravar o cabeçalho (%zu bytes) em "
                          "'%s'.\n", sizeof(cabecalho), nome_arquivo_saida);
-        fclose(ficheiro_bin);
-        munmap(ddr_map, bytes_por_buffer * BUFFERS_PING_PONG);
-        munmap(ctrl_map, 4096);
-        close(mem_fd);
-        return -1;
+        return abortar_captura(ficheiro_bin, ddr_map, bytes_por_buffer * BUFFERS_PING_PONG, ctrl_map, mem_fd);
     }
 
     printf("Cabeçalho gravado (%zu bytes) em '%s' | magic=%.4s versao=%u | "
@@ -1806,7 +1907,7 @@ int main(int argc, char *argv[]) {
     // Essa lógica NÃO se aplica da mesma forma ao modo AUTO_RST atual, e
     // descartá-la aqui estava introduzindo exatamente o bug: no modo
     // automático, o comando AUTO_RST (enviado uma única vez, na
-    // configuração -- ver spi_core.asm, estágio 9 da configuração) já é, ele próprio, o
+    // configuração -- ver spi_core.asm, o último estágio da configuração) já é, ele próprio, o
     // "comando anterior" cujo resultado é descartado -- seu quadro SPI
     // retorna lixo (times de antes da configuração), que já é jogado fora
     // corretamente pela PRU sem nunca tocar a DDR. O datasheet (SBAS582C,

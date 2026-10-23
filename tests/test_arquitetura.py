@@ -28,16 +28,17 @@ CAMADAS = {
     # 2 -- composições de camada 1
     "espectro": 2, "conversao": 2, "hdf5": 2, "contexto": 2, "metricas_captura": 2, "compactacao": 2, "exportacao": 2,
     # 3 -- aplicação
-    "calibracao_sonda": 3, "modos": 3,
+    "calibracao_sonda": 3, "modos": 3, "aliasing": 3,
     # 4
     "escrita_perfil": 4, "cli_adc_tool": 4, "cli_medir_captura": 4, "cli_compactar": 4, "cli_info": 4,
+    "cli_aliasing": 4,
     # 5
     "cli_gerar_perfil": 5, "cli_medir_fase": 5,
     # 6 -- a porta de entrada (adc_tool.py SUBCOMANDO): escolhe a CLI e a importa só quando pedida
     "cli_principal": 6,
 }
 MODULOS_CLI = {"cli_adc_tool", "cli_gerar_perfil", "cli_medir_captura", "cli_compactar", "cli_info", "cli_principal",
-               "cli_medir_fase"}
+               "cli_medir_fase", "cli_aliasing"}
 
 
 def modulos_do_pacote() -> list[str]:

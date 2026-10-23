@@ -112,7 +112,7 @@
 ;     zero (ver rebase_contador).
 ;   - O período é lido uma vez (era relido da RAM compartilhada a cada
 ;     amostra) e active_buffer só é escrito na troca de buffer.
-;   - O AUTO_RST virou o estágio 9 do laço de configuração (era uma cópia
+;   - O AUTO_RST virou o último estágio do laço de configuração (era uma cópia
 ;     inteira da transação): ~470 instruções a menos na IMEM.
 ;   No simulador (1 ciclo por instrução): quadro mínimo de 602 ciclos sem
 ;   troca de buffer e 615 com; a 312,5 kS/s (640 ciclos) sobram 25.
@@ -143,6 +143,17 @@
 ;     quadros em que eles discordam (ver BIT_DADO_RAPIDO e transacao_rapida).
 ;     No simulador calibrado: teto ~418 kS/s; 400 kS/s com 22 ciclos de folga.
 ;     O modo padrão continua o mesmo (1 ciclo a mais no desvio de modo).
+;
+; --- REVISÃO DE 23/10/2026: 02h E 03h NA CONFIGURAÇÃO (PROTOCOLO 4) ---------
+;   - A configuração escrevia AUTO_SEQ_EN, os RANGE_SELn e o AUTO_RST, mas não
+;     os registradores 02h (canais desligados) e 03h (formato do SDO, daisy
+;     chain, alarme): o ADS8688 não é reiniciado entre capturas, e um valor
+;     errado ali (um ruído no SDI) ficaria até a placa ser desligada. Agora os
+;     dois são escritos com 0 (o padrão de reset) nos estágios 0 e 1 do laço de
+;     configuração. Não é um RST: ele voltaria a faixa de todo canal a ±10,24 V
+;     por alguns µs e provocaria o transitório de troca de faixa (F9) em toda
+;     captura. ~2 µs a mais por captura, antes do contador ser zerado; o laço
+;     principal não muda.
 ; ==============================================================================
 ; PINOS (inalterado):
 ;   Bit 0 (r30) = SCLK   | Bit 1 (r30) = SDI/MOSI
@@ -360,8 +371,9 @@ espera_configuracao:
     LBBO &r25, r14, 20, 4 ; r25 = buffer_1_addr
 
     ; ==========================================================================
-    ; [MODO AUTOMÁTICO] Sequência de configuração do ADS8688 — até 10 transações
-    ; separadas (AUTO_SEQ_EN, RANGE_SELn de cada canal habilitado e AUTO_RST),
+    ; [MODO AUTOMÁTICO] Sequência de configuração do ADS8688 — até 12 transações
+    ; separadas (02h e 03h desde 23/10/2026, AUTO_SEQ_EN, RANGE_SELn de cada
+    ; canal habilitado e AUTO_RST),
     ; executadas uma única vez, ANTES do laço principal. Nenhum
     ; resultado lido via SDO aqui é gravado na DDR (ver descarte da primeira
     ; amostra do lado ARM em ler_adc.c, que cobre qualquer resíduo que ainda
@@ -386,13 +398,17 @@ espera_configuracao:
     ;     usa 32 ciclos, igual sempre foi (16 de comando + 16 de leitura).
     ; ==========================================================================
 
-    ; --- Transações de escrita de registrador de programa: AUTO_SEQ_EN
-    ; (estágio 0) e RANGE_SELn de cada canal habilitado (estágios 1 a 8).
+    ; --- Transações de escrita de registrador de programa: 02h e 03h (estágios
+    ; 0 e 1), AUTO_SEQ_EN (estágio 2) e RANGE_SELn de cada canal habilitado
+    ; (estágios 3 a 10).
     ;
     ; Formato do quadro de 16 bits: bits [15:9] = endereço (7 bits), bit [8]
     ; = R/W (1 = escrita), bits [7:0] = dado. 24 ciclos no total: 16 CMD_BIT
     ; (o comando de 16 bits) + 8 DATA_BIT (ciclos adicionais exigidos pelo
     ; datasheet, dado descartado).
+    ;   - 02h (canais desligados) e 03h (formato do SDO): 0x0500 e 0x0700, dado
+    ;     0 -- todos os canais ligados; SDO só com o dado, sem daisy chain nem
+    ;     alarme (o padrão de reset; ver a revisão de 23/10/2026 no cabeçalho).
     ;   - AUTO_SEQ_EN (endereço 0x01): parte fixa 0x0300; dado = máscara de
     ;     canais vinda de ctrl->auto_seq_mask (bit N ligado = canal N incluído
     ;     na varredura).
@@ -409,14 +425,14 @@ espera_configuracao:
     ; padrão, código 0), uma captura com --faixa-adc ficaria "grudada" na
     ; seguinte e o cabeçalho do .bin descreveria uma escala diferente da real.
     ;
-    ; Um único corpo de transação é reaproveitado nas até 9 escritas e no
+    ; Um único corpo de transação é reaproveitado nas até 11 escritas e no
     ; AUTO_RST (laço abaixo): a IMEM da PRU (2048 instruções) não comportaria
     ; uma cópia dos macros para cada uma. Os desvios condicionais QB* só alcançam +-511 instruções, e o
     ; corpo da transação tem ~500: por isso os saltos que o atravessam são
     ; JMP (endereço absoluto). tests/test_pru_asm.py confere isso.
     ;
     ; Registradores do laço (livres: nada abaixo os usa depois da configuração):
-    ;   r6  = estágio (0 = AUTO_SEQ_EN; k = 1..8 -> RANGE_SEL do canal k-1; 9 = AUTO_RST)
+    ;   r6  = estágio (0 = 02h; 1 = 03h; 2 = AUTO_SEQ_EN; k = 3..10 -> RANGE_SEL do canal k-3; 11 = AUTO_RST)
     ;   r7  = comando de 16 bits da transação em curso
     ;   r8  = ctrl->auto_seq_mask       r9  = ctrl->range_sel
     ;   r12 = máscara de canais, deslocada 1 bit por estágio (bit 0 = canal do estágio)
@@ -431,13 +447,19 @@ espera_configuracao:
     LDI r6, 0
 
 cfg_proximo_comando:
-    QBEQ cfg_auto_rst, r6, 9
-    QBNE cfg_canal, r6, 0
-    LDI r7, 0x0300           ; estágio 0: AUTO_SEQ_EN
+    QBEQ cfg_auto_rst, r6, 11
+    QBLT cfg_canal, r6, 2    ; 2 < r6: estágios 3 a 10, os RANGE_SEL
+    QBEQ cfg_auto_seq, r6, 2
+    LDI r7, 0x0500           ; estágio 0: 02h = 0, todos os canais ligados
+    QBEQ cfg_envia, r6, 0
+    LDI r7, 0x0700           ; estágio 1: 03h = 0, SDO só com o dado
+    QBA cfg_envia
+cfg_auto_seq:
+    LDI r7, 0x0300           ; estágio 2: AUTO_SEQ_EN
     OR  r7, r7, r8           ; r7 = 0x0300 | máscara
     QBA cfg_envia
 
-    ; Estágio 9 (o último): o comando AUTO_RST (0xA000, registrador de COMANDO) -- inicia a varredura automática a
+    ; Estágio 11 (o último): o comando AUTO_RST (0xA000, registrador de COMANDO) -- inicia a varredura automática a
     ; partir do canal habilitado de menor número. Usa o mesmo corpo de transação, com 16 DATA_BIT em vez de 8 (32
     ; ciclos, como todo comando do registrador de comando). Até 22/10/2026 era uma cópia inteira da transação (624
     ; instruções); a única diferença de tempo é a instrução que decide entre 8 e 16 DATA_BIT (5 ns a mais com o SCLK
@@ -493,8 +515,8 @@ delay_cs_setup_cfg:
     DATA_BIT
     DATA_BIT
     ; Escrita de registrador de programa: só 8 DATA_BIT (24 ciclos no total) -- NÃO 16. Ver nota grande acima.
-    ; O AUTO_RST (estágio 9) completa os 32 ciclos com mais 8. r23 (dado lido) é descartado de propósito.
-    QBNE cfg_dados_fim, r6, 9
+    ; O AUTO_RST (estágio 11) completa os 32 ciclos com mais 8. r23 (dado lido) é descartado de propósito.
+    QBNE cfg_dados_fim, r6, 11
     DATA_BIT
     DATA_BIT
     DATA_BIT
@@ -518,11 +540,11 @@ delay_cs_high_cfg:
     QBNE delay_cs_high_cfg, r1, 0
 
 cfg_comando_enviado:
-    QBEQ cfg_sem_nibble, r6, 0   ; estágio 0 (AUTO_SEQ_EN) não consome nibble
-    LSR r13, r13, 4              ; estágios 1-8: passa ao nibble do próximo canal (também quando o canal foi pulado)
+    QBGT cfg_sem_nibble, r6, 3   ; 3 > r6: os estágios 0 a 2 (02h, 03h, AUTO_SEQ_EN) não consomem nibble
+    LSR r13, r13, 4              ; estágios 3-10: passa ao nibble do próximo canal (também quando o canal foi pulado)
 cfg_sem_nibble:
     ADD r6, r6, 1
-    QBEQ cfg_fim, r6, 10
+    QBEQ cfg_fim, r6, 12
     JMP cfg_proximo_comando
 cfg_fim:
 
@@ -586,7 +608,7 @@ atraso_alto_pedido:
     LBBO &r20, r18, 0, 4
     SUB r29, r20, r1
     SBBO &r29, r14, 68, 4    ; ctrl->ciclos_rebase (diagnóstico)
-    LDI r20, 3               ; VERSAO_PROTOCOLO_PRU (memoria_pru.h): o ler_adc confere que é este firmware
+    LDI r20, 4               ; VERSAO_PROTOCOLO_PRU (memoria_pru.h): o ler_adc confere que é este firmware
     SBBO &r20, r14, 72, 4
 
     MOV r19, r24

@@ -567,8 +567,10 @@ for item in "${PLANO[@]}"; do
     fi
     descricao=()
     case "$entrada" in quadrada*) descricao=(-d "quadrada f=${entrada#quadrada}") ;; esac     # o medir_fase.py lê a f₁
+    # --forcar-taxa: desde 23/10/2026 o ler_adc recusa taxas acima do teto da PRU, e estas varreduras passam dele de
+    # propósito (é o teto que elas medem).
     # shellcheck disable=SC2086  # $faixa são duas palavras de propósito
-    saida=$(sudo "$LER_ADC" "$taxa" "$canais" "${tamanho[@]}" "${esperas[@]}" "${modo_spi[@]}" $faixa -o "$PASTA/$nome" \
+    saida=$(sudo "$LER_ADC" "$taxa" "$canais" "${tamanho[@]}" "${esperas[@]}" "${modo_spi[@]}" --forcar-taxa $faixa -o "$PASTA/$nome" \
                  -t "$PREFIXO $parte cs $cs $taxa $entrada${segundos:+ ${segundos}s}${spi:+ spi $spi}" "${descricao[@]}" \
                  2>&1 </dev/null)
     codigo=$?
