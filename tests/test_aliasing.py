@@ -11,7 +11,6 @@ import csv
 import numpy as np
 import pytest
 from capturas_sinteticas import escrever_bin
-
 from supraharmonicos import cli_aliasing, cli_principal
 from supraharmonicos.aliasing import Pico, dobrar, entradas_ambiguas, entradas_possiveis, parear
 
