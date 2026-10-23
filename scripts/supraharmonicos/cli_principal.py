@@ -56,7 +56,7 @@ SUBCOMANDOS: dict[str, tuple[Callable[[list[str]], int], str]] = {
     "medir": (_medir, "métricas de bancada de uma ou várias capturas (ruído, THD, SINAD, ENOB, SFDR, continuidade, "
                       "diafonia, erro contra um instrumento), em tabela e CSV -- o mesmo que medir_captura.py"),
     "perfil": (_perfil, "gera o perfil de resposta em frequência de uma sonda a partir das capturas do "
-                        "calibrar_sonda.sh -- o mesmo que gerar_perfil_sonda.py"),
+                        "coletar.sh sonda -- o mesmo que gerar_perfil_sonda.py"),
     "compactar": (_compactar, "arquiva capturas sem perdas (.zpaq.tar, conferido bit a bit) e extrai, lista ou "
                               "verifica pacotes -- o mesmo que compactar_amostras.py"),
     "aliasing": (_aliasing, "separa componentes reais de imagens de aliasing com duas capturas do mesmo sinal em "

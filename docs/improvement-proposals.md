@@ -89,14 +89,14 @@ da configuração da BeagleBone.
 
 **Recomendação, em ordem:** F10 (a folga, que fecha o item 1), F11 (uma conferência de poucas linhas que evita o
 pior defeito possível) e F12 (para a folga prevista bater com a medida), validados juntos com
-`./varrer_taxa.sh --grade` (~15 min). Depois, o F6 e o F13. O F3 só quando a taxa acima de 315 kS/s for necessária.
+`./coletar.sh bancada --grade` (~15 min). Depois, o F6 e o F13. O F3 só quando a taxa acima de 315 kS/s for necessária.
 
 **Atualização, mais tarde no mesmo dia (T3 e T1 a 312,5 kS/s e uma releitura da parte J):** o item 1 tinha outra
 causa. O quadro comum durava **605 + (bits 1 da amostra) ciclos**: a fração de amostras atrasadas de cada período da
 parte J bateu com a fração de amostras com tantos bits 1, por 4 décadas (F15). Não havia cauda aleatória da DDR. As
 correções F15 e F10 estão no `spi_core.asm` (o simulador calibrado prevê folga ≥ 29 ciclos a 312,5 kS/s, qualquer
 que seja o sinal); os itens 2 a 4 foram resolvidos (F11, F12, F6 sem o bloco parcial). Falta a bancada:
-`./varrer_taxa.sh --grade`.
+`./coletar.sh bancada --grade`.
 
 **Onde estão os outros limites (fora do firmware):**
 
@@ -130,6 +130,21 @@ aliasing`, 23/10/2026) e, na próxima placa, um filtro externo (H3).
 * a configuração escreve 0 nos registradores 02h (canais desligados) e 03h (formato do SDO), que nada reescrevia
   entre capturas. Não é um RST, que voltaria a faixa a ±10,24 V e provocaria o transitório do F9 em toda captura.
 
+**O `ler_adc` reescrito (23/10/2026, depois de um dia de bancada):** a BeagleBone reiniciou, o `config-pin` se perdeu e
+as capturas saíram todas zeradas com "tudo certo"; antes, as do teste em bateria (a placa de aquisição só recebe o 5 V
+do conector, não o do USB). Agora ele confere os pinos da PRU onde o `config-pin` os grava e os reconfigura, e para
+com o código 4 quando 65536 amostras seguidas são iguais (ADC mudo). A saída ficou em níveis (o essencial sempre;
+`-v` para os detalhes), com cores e barra de progresso só num terminal, um resumo final de formato fixo (lido pelo
+`coletar.sh bancada`) e códigos de saída 0 a 4; os comentários históricos saíram (a história está nestes documentos).
+
+**As coletas num script só (23/10/2026): `./coletar.sh MODO`.** O `calibrar_sonda.sh` virou o modo `sonda` e o
+`varrer_taxa.sh`, o motor das coletas em lote: `bancada` (o T7), `cadeia` (o T3f, que era o `--fase`) e dois modos
+novos, `aliasing` (3 taxas, faixa automática, para o `adc_tool.py aliasing`, que passou a aceitar N capturas) e
+`ruido` (o curto nas 3 faixas). E mais dois: `teto` (a maior taxa na grade por varredura em frequência, e a taxa de
+trabalho) e `conferir` (~10 s antes de uma série: firmware, ADC, nível, offset, ruído, a faixa certa e o Vpp
+esperado; teria pego a ligação errada e a placa sem alimentação de 23/10). Sem opções, cada modo usa a configuração
+que dá uma boa análise. O `enviar` apaga os dois scripts antigos da placa.
+
 **Aberto:** o `ler_adc` sobrescreve um `.bin` existente sem aviso (recusar, com `--sobrescrever` para os scripts, muda
 o uso: decisão do usuário). Em captura multicanal, os canais são amostrados 1/fs um depois do outro (2,5 µs a
 400 kS/s, 135° em 150 kHz): o P8 (V×I) terá de adiantar cada canal k de k/fs.
@@ -147,7 +162,7 @@ o uso: decisão do usuário). Em captura multicanal, os canais são amostrados 1
 | **F13** | Estabilidade em 1 h no padrão (grade, folga, frequência, amplitude) | Médio: o número do relatório | Baixo (bancada) | não | F10, P1 |
 | **F9** | Descartar o transitório de troca de faixa já na PRU (a análise já descarta) | Baixo: dado certo desde a 1ª amostra | Baixo | sim | — |
 | **F4** | `SAMPLES_PER_BUFFER` vindo do ARM, não duplicado no `.asm` | Médio: fim de uma sincronia manual | Baixo | sim | — |
-| **F7** | Conferência rápida do `calibrar_sonda.sh` mais leve na BeagleBone | Médio | Baixo | não | medir na BBB |
+| **F7** | Conferência rápida do `coletar.sh sonda` mais leve na BeagleBone | Médio | Baixo | não | medir na BBB |
 | **S2–S7** | Fase, subamostragem, perfil absoluto, teto de ganho, repetições | Alto para V×I | Médio–Alto | não | S1 |
 | **F8** | Endereço do canal no SDO (verificar a ordem dos canais a cada amostra) | Baixo–Médio | Médio | sim | F3 |
 | **H1–H2** | Isolador contra o BOM, pontos de teste na próxima PCB | Baixo–Médio | Baixo–Médio | não | — |
@@ -184,10 +199,10 @@ memória: cabe na folga aberta pelo F10 e pelo F15 (≥ 29 ciclos), depois de va
 cabeçalho, jitter e degraus por trecho de 5 min, e a frequência e a amplitude do tom por bloco. A análise precisa do
 P1 (por blocos) ou do `medir_captura.py` em trechos (`--inicio` e `--max-amostras`).
 
-### F7 — Conferência rápida do `calibrar_sonda.sh` mais leve
+### F7 — Conferência rápida do `coletar.sh sonda` mais leve
 
 **Por quê.** A cada captura, o script analisa 262.144 amostras em `od | awk`: 0,7 s no PC; numa Cortex-A8 deve
-passar de vários segundos por ponto (não medido). É também o que domina o tempo de `tests/test_calibrar_sonda.py`.
+passar de vários segundos por ponto (não medido). É também o que domina o tempo de `tests/test_coletar_sonda.py`.
 
 **Proposta.** Medir na BeagleBone (`time` numa captura). Se incomodar: analisar 65.536 amostras (sobram > 30 ciclos
 do tom mais baixo do plano) ou mover a análise para um pequeno programa em C compilado junto com o `ler_adc`.
@@ -340,7 +355,7 @@ inteiro de f₁ e o "alinhar fase" do gerador a cada troca de frequência, porqu
 ser conhecida. A quadrada já traz isso de fábrica, com todos os pontos numa captura só.
 
 **Estado (22/10/2026): medido (o [T3f](bench-results.md#t3f-a-fase-da-cadeia-por-ondas-quadradas)).** O
-`./varrer_taxa.sh --fase` coletou 7 quadradas (256 a 20736 Hz, múltiplos ímpares de 256 Hz), 30 s cada, a 312,5 e a
+`./coletar.sh cadeia` coletou 7 quadradas (256 a 20736 Hz, múltiplos ímpares de 256 Hz), 30 s cada, a 312,5 e a
 400 kS/s, e as variantes de amplitude e offset. O `scripts/medir_fase.py` deu:
 
 * **o modelo:** a cadeia de tensão é um 2ª ordem com f0 = 22,811 kHz e Q = 0,5001, vezes um polo real em 800 kHz;

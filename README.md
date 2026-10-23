@@ -62,7 +62,7 @@ Essa separação é proposital: o projeto põe a **integridade dos dados** acima
 
 * Captura de 1 a 8 canais, com a faixa de entrada do ADC escolhida por canal (±10,24 / ±5,12 / ±2,56 V).
 * Capturas de segundos a horas (`--duracao 10m`, `1.5h`): o ARM grava um bloco enquanto a PRU enche o outro.
-* Calibração de sondas em bancada (`calibrar_sonda.sh`): escolhe as frequências, pede cada uma no gerador e confere cada captura.
+* Calibração de sondas em bancada (`coletar.sh sonda`): escolhe as frequências, pede cada uma no gerador e confere cada captura.
 
 **No computador**
 
@@ -137,7 +137,7 @@ A taxa, os canais e as faixas vêm do cabeçalho, então não é preciso inform�
 | Quero... | Use | Onde ler |
 |---|---|---|
 | Harmônicos com grupos e fases, bandas IEC, espectrograma, exportar para MATLAB | `adc_tool.py` | [Análise para pesquisa](docs/user-guide.md#análise-para-pesquisa-harmônicos-bandas-iec-espectrograma-e-exportação) |
-| Calibrar uma sonda de corrente ou a cadeia de tensão | `calibrar_sonda.sh` → `gerar_perfil_sonda.py` | [Sondas: calibração e correção](docs/user-guide.md#sondas-de-corrente-calibração-e-correção) |
+| Calibrar uma sonda de corrente ou a cadeia de tensão | `coletar.sh sonda` → `gerar_perfil_sonda.py` | [Sondas: calibração e correção](docs/user-guide.md#sondas-de-corrente-calibração-e-correção) |
 | Medir ruído, SINAD, ENOB e diafonia para o relatório | `medir_captura.py` | [Medir uma captura](docs/user-guide.md#medir-uma-captura-para-o-relatório-medir_capturapy) |
 | Medir a fase (e a magnitude) da cadeia sem osciloscópio | `medir_fase.py` | [A fase da cadeia](docs/user-guide.md#a-fase-da-cadeia-sem-osciloscópio-medir_fasepy) |
 | Arquivar capturas sem perdas (~11 % do tamanho, conferido bit a bit) | `compactar_amostras.py` | [Guardar as capturas](docs/user-guide.md#guardar-as-capturas-sem-perdas-compactar_amostraspy) |
@@ -170,7 +170,7 @@ O andamento, teste a teste, está no [Estado da campanha](docs/lab-procedure.md#
 
 ```text
 .
-├── firmware/          # BeagleBone: PRU (spi_core.asm, pru_main.c), ler_adc.c, Makefile, setup.sh, calibrar_sonda.sh
+├── firmware/          # BeagleBone: PRU (spi_core.asm, pru_main.c), ler_adc.c, Makefile, setup.sh, coletar.sh (+ coleta/)
 ├── scripts/           # Computador: adc_tool.py e as outras entradas, o pacote supraharmonicos/, os perfis de sonda
 │                      #   (sondas/), BeagleBone_Setup.sh (a interface com a placa) e ci.sh (a CI local)
 ├── tests/             # Testes automáticos (pytest), sem precisar de hardware, e o simulador da PRU

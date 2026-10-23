@@ -55,7 +55,7 @@ TIPOS_PERFIL_SUPORTADOS = ("resposta_frequencia", "ganho_fixo")
 # começa com letra/dígito, depois só letras, dígitos, '_', '-' e '.'. Exclui
 # separadores de caminho (e, junto com o teste de '..' em
 # resolver_perfil_canal, qualquer tentativa de sair de sondas_dir).
-# firmware/calibrar_sonda.sh já sanitiza para [a-z0-9_-], bem dentro disso.
+# o ./coletar.sh sonda já sanitiza para [a-z0-9_-], bem dentro disso.
 PADRAO_SONDA_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 # Acima deste reforço (dB) sobre o ruído do ADC, aplicar_correcao_sonda()

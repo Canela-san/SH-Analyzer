@@ -70,7 +70,7 @@ Depois, ajuste o trimmer até a quadrada ficar plana e fotografe de novo. Anote 
 **2. A referência em 6 frequências (15 min).** Com a ponta compensada, um T3 curto a 400 kS/s:
 
 ```bash
-sudo ./calibrar_sonda.sh --taxa 400000 --canal-sonda 1 --pontos 6 --freq-min 1000 --freq-max 140k --blocos 1 --faixa-adc 5.12 --sonda conferencia_referencia --grandeza tensao --ref-externa
+./coletar.sh sonda --taxa 400000 --canal-sonda 1 --pontos 6 --freq-min 1000 --freq-max 140k --blocos 1 --faixa-adc 5.12 --sonda conferencia_referencia --grandeza tensao --ref-externa
 ```
 
 Em cada ponto, digite o RMS do osciloscópio (High Res, ≥ 8 ciclos na tela) e anote no caderno o RMS do **Fluke 289**
@@ -91,7 +91,7 @@ onde ela estava no T3. Meça o tempo de subida (10–90 %) com a base de tempo e
 **4. A faixa de produção (~35 min).** O mesmo `--fase`, em ±10,24 V (a BeagleBone com o firmware de 22/10):
 
 ```bash
-./varrer_taxa.sh --fase --faixa 20.48
+./coletar.sh cadeia --faixa 20.48
 ```
 
 No computador, com o K do T2, que foi medido nessa faixa:
@@ -130,15 +130,15 @@ memória dos buffers está fora do Linux. No terminal da placa, a captura de con
 sudo ./ler_adc --blocos 2 --faixa-adc 1:5.12 -o T7_bancada.bin -t "T7 bancada"
 ```
 
-Esperado: `Grade de tempo (PRU): folga mínima` de **29 a 40 ciclos** (era 5) e, no fim, `PRU parada`.
+Esperado: a linha `Grade` com `folga mínima` de **29 a 40 ciclos** (era 5) e, no fim (com `-v`), `PRU parada`.
 
 **2. A bancada (5 min).** A mesma do T7f: senoide de 10,000 kHz, 20 Vpp, High-Z, no canal 1.
 
 **3. A grade de novo (~16 min).** Na BeagleBone:
 
 ```bash
-./varrer_taxa.sh --grade --simular   # 56 capturas, ~16 min, ~540 MB
-./varrer_taxa.sh --grade
+./coletar.sh bancada --grade --simular   # 56 capturas, ~16 min, ~540 MB
+./coletar.sh bancada --grade
 ```
 
 Esperado: a mesma folga (29 a 40 ciclos) em todas as capturas G, H e K, com o tom e com o ARM ocupado; na parte J
@@ -155,12 +155,12 @@ conferência, com o mesmo tom:
 sudo ./ler_adc --blocos 2 --faixa-adc 1:5.12 --spi rapido -o T7_spi.bin -t "T7 SPI rapido"
 ```
 
-Esperado: a linha `SPI rápido (fase B gravada): 0 quadro(s) com a fase A ... e 0 com a C` (ou alguns em A ou em C:
+Esperado: a linha `SPI  rápido, fase B gravada; divergências de leitura: 0 na fase A e 0 na C` (ou alguns em A ou em C:
 ainda vale, é a margem de um lado só) e a folga de ~160 ciclos. Depois, a campanha:
 
 ```bash
-./varrer_taxa.sh --spi --simular   # 69 capturas, ~11 min, ~370 MB
-./varrer_taxa.sh --spi
+./coletar.sh bancada --spi --simular   # 69 capturas, ~11 min, ~370 MB
+./coletar.sh bancada --spi
 ```
 
 | Parte | O que captura (tom de 10 kHz em ±2,56 V) | Para quê |
@@ -178,7 +178,7 @@ duty 50 %: confira no menu do gerador que é a quadrada simétrica, não um puls
 conhecida entre si, e a fase de cada um menos n vezes a da fundamental é a fase da cadeia, sem osciloscópio:
 
 ```bash
-./varrer_taxa.sh --fase    # 24 capturas de 30 s: 7 quadradas (256 a 20736 Hz) e as variantes, nas duas taxas
+./coletar.sh cadeia    # 24 capturas de 30 s: 7 quadradas (256 a 20736 Hz) e as variantes, nas duas taxas
 ```
 
 Ele para a cada troca no gerador (12 vezes) e diz a frequência, a amplitude e o offset. Ajuste a frequência com todos
@@ -219,7 +219,7 @@ No terminal da placa, a captura de conferência:
 sudo ./ler_adc --blocos 2 --faixa-adc 1:5.12 -o T7_bancada.bin -t "T7 bancada"
 ```
 
-Ela tem de terminar com `Grade de tempo (PRU): folga mínima N ciclo(s) ... toda amostra no ciclo exato da grade`. Se
+Ela tem de terminar com `Grade  exata: folga mínima N ciclos ...` (toda amostra no ciclo exato da grade). Se
 a resposta for `Erro: o firmware da PRU não é o deste ler_adc`, a PRU ficou com o firmware antigo: rode `./setup.sh`
 na placa e repita. Se a compilação falhar, me mande o erro (é a primeira compilação do `spi_core.asm` novo no
 `clpru`).
@@ -230,8 +230,8 @@ contador de frequência do osciloscópio no mesmo sinal (anote a leitura no come
 **3. A campanha (~15 min).** Na BeagleBone:
 
 ```bash
-./varrer_taxa.sh --grade --simular   # 46 capturas, ~15 min, ~500 MB: confira o espaço livre
-./varrer_taxa.sh --grade
+./coletar.sh bancada --grade --simular   # 46 capturas, ~15 min, ~500 MB: confira o espaço livre
+./coletar.sh bancada --grade
 ```
 
 | Parte | O que captura (tom de 10 kHz em ±2,56 V, padrão: 312,5 kS/s e `3,1,3`) | Para quê |
@@ -242,7 +242,7 @@ contador de frequência do osciloscópio no mesmo sinal (anote a leitura no come
 | J | De 640 a 600 ticks (312,5 a 333,3 kS/s), 1 tick por vez, 2 blocos | O teto com período constante, captura a captura |
 
 Cada captura mostra `✓ folga N ciclos` no terminal. Na parte J, a folga vai caindo 1 ciclo por tick até a 1ª
-amostra atrasada (`! atrasadas ...`): é o teto. Se a conexão cair, `./varrer_taxa.sh --continuar` retoma a
+amostra atrasada (`! atrasadas ...`): é o teto. Se a conexão cair, `./coletar.sh bancada --continuar` retoma a
 `--grade` de onde parou.
 
 **4. O osciloscópio (durante os 5 min da parte G).** CS na ponta (10x, terra curto). Gatilho na **descida** do CS,
@@ -255,10 +255,10 @@ base de tempo de 500 ns/div, e a persistência infinita (ou o histograma de per�
   (`$DIA/fotos/cs_jitter_312k.png`, com a escala visível).
 
 Uma linha fina aqui e o jitter ainda alto nas capturas = o jitter não é da PRU (gerador ou ADC). Uma faixa larga =
-o firmware novo não está na PRU (confira a linha `Firmware:` do `ler_adc`).
+o firmware novo não está na PRU (confira a versão na primeira linha do `ler_adc`).
 
 **5. Se sobrar tempo: a campanha do limite** (~35 min, a partir da etapa 3 da
-[seção seguinte](#passo-a-passo-da-próxima-ida-a-campanha-do-limite-3125-kss): `./varrer_taxa.sh --limite`).
+[seção seguinte](#passo-a-passo-da-próxima-ida-a-campanha-do-limite-3125-kss): `./coletar.sh bancada --limite`).
 
 **6. Antes de sair.** Saia do terminal da placa com `exit` e, no computador:
 
@@ -304,8 +304,8 @@ agora na taxa padrão: `sudo ./ler_adc --blocos 1 --faixa-adc 1:5.12 -o T7_banca
 **3. A campanha (~35 min).** Na BeagleBone:
 
 ```bash
-./varrer_taxa.sh --limite --simular   # 132 capturas, ~35 min, ~1,2 GB: confira o espaço livre e o tempo de cada parte
-./varrer_taxa.sh --limite
+./coletar.sh bancada --limite --simular   # 132 capturas, ~35 min, ~1,2 GB: confira o espaço livre e o tempo de cada parte
+./coletar.sh bancada --limite
 ```
 
 | Parte | O que captura (tom de 10 kHz em ±2,56 V) | Para quê |
@@ -318,7 +318,7 @@ agora na taxa padrão: `sudo ./ler_adc --blocos 1 --faixa-adc 1:5.12 -o T7_banca
 
 Se o espaço livre não bastar, o `--simular` mostra o tamanho de cada parte: rode `--partes L`, traga as capturas
 para o computador, apague-as da placa (`rm -r T7e_*`) e rode `--partes MNQR`. Se a conexão cair, a varredura para
-na pausa seguinte com tudo salvo: `./varrer_taxa.sh --continuar`. Opcional, se sobrar tempo: `./varrer_taxa.sh
+na pausa seguinte com tudo salvo: `./coletar.sh bancada --continuar`. Opcional, se sobrar tempo: `./coletar.sh bancada
 --validar` (a configuração `6,2,6` a 250 kS/s em 10 min, ~12 min).
 
 **4. O osciloscópio (durante os 10 min da parte N).** CS e SCLK no padrão: o período do CS é de 3,20 µs, o CS baixo
@@ -406,8 +406,8 @@ sudo ./ler_adc 100000 1 --blocos 3 --faixa-adc 1:5.12 -o T7a_fs_100000.bin -t "T
 sudo ./ler_adc 50000 1 --blocos 3 --faixa-adc 1:5.12 -o T7a_fs_50000.bin -t "T7a 50000"
 ```
 
-No terminal de cada captura: `Firmware: v0.6-...`, `Taxa real medida pelo ARM: ...` **sem** "DIFERENTE da pedida"
-e `Integridade: 0 amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído no SDO -- tudo certo`.
+No terminal de cada captura: a versão do firmware na primeira linha, a `Taxa medida` **sem** "DIFERENTE da pedida"
+e `Integridade  tudo certo: 0 amostras atrasadas, 0 buffers sobrescritos, 0 quadros com ruído no SDO`.
 No computador:
 
 ```fish
@@ -433,8 +433,8 @@ Esperado: período de 10,00 µs e CS baixo de 5,83 µs. Meça o período, o CS b
 tudo o que a escolha precisa e grava cada saída do `ler_adc`:
 
 ```bash
-./varrer_taxa.sh --simular     # o plano: ~100 capturas, ~40 min e ~650 MB (confira o disco)
-./varrer_taxa.sh               # a varredura
+./coletar.sh bancada --simular     # o plano: ~100 capturas, ~40 min e ~650 MB (confira o disco)
+./coletar.sh bancada               # a varredura
 ```
 
 Ele faz, com o tom e na faixa de ±2,56 V, 3 blocos por captura:
@@ -450,7 +450,7 @@ A cada captura ele mostra os contadores e a taxa medida pelo ARM: um `!` com amo
 esperado (é onde a PRU para). Tudo vai para `T7e_<data>_<hora>/`, com o `log.txt` (a saída inteira do `ler_adc`) e o
 `resumo.csv`. `Ctrl+C` para no meio e guarda o que já foi feito; `--partes AB` roda só algumas partes. **Se a conexão
 cair**, as capturas seguem até a próxima pausa e a varredura para ali (cada captura já está salva, com a linha dela no
-`resumo.csv`): reconecte e rode `./varrer_taxa.sh --continuar`, que retoma a última pasta, pula o que foi feito e
+`resumo.csv`): reconecte e rode `./coletar.sh bancada --continuar`, que retoma a última pasta, pula o que foi feito e
 volta à pausa em que parou. No computador:
 
 ```fish
@@ -476,7 +476,7 @@ sudo ./ler_adc $R 0,1 --blocos 3 --atraso-cs $CS --faixa-adc 0:5.12,1:5.12 -o T6
 sudo ./ler_adc $R 1 --blocos 3 --atraso-cs $CS --faixa-adc 1:5.12 -o T1_trabalho.bin -t "T1 curto $R cs $CS"
 ```
 
-O T7c termina com `Integridade: ... tudo certo` e com a `Taxa real medida pelo ARM` igual à pedida. Anote a leitura
+O T7c termina com `Integridade  tudo certo` e com a `Taxa medida` igual à pedida. Anote a leitura
 do contador no começo e no fim dele.
 
 **7. Confirmar no osciloscópio (durante os 10 min do T7c; T7e, passo 5).** Com as esperas e a taxa de trabalho: o
@@ -495,7 +495,7 @@ anote e **fotografe a tela** (`$DIA/fotos/cs_trabalho.png`): é o "depois" da fo
 | Nenhuma espera menor que o padrão passa | As esperas não sobem a taxa nesta placa | Taxa de trabalho de 125 kS/s com as esperas padrão (a maior exata com folga); faça a etapa 6 com ela |
 
 Em todos os outros casos, o firmware de hoje serve: as esperas de trabalho viram o padrão dele depois, em casa, e até
-lá basta passar `--atraso-cs` em toda captura, inclusive no `calibrar_sonda.sh`.
+lá basta passar `--atraso-cs` em toda captura, inclusive no `coletar.sh sonda`.
 
 #### 9. Antes de sair: o pacote para a análise
 
@@ -592,7 +592,7 @@ Sem o `configurar`, valem os padrões da imagem Debian (`debian@192.168.6.2`, se
 O `enviar` guarda o firmware que estava lá, **só o código e os binários** (não as capturas: o antigo `cp -a` da pasta
 inteira as duplicava), em `~/firmware-anteriores/<data>_<versão>/`. Para o firmware de 19/10, que não tinha
 `VERSAO`, o nome termina em `sem-versao`. Ele também escreve em `firmware/VERSAO` o `git describe`, que o `ler_adc`
-novo grava no cabeçalho (v5) e imprime na largada (`Firmware: v0.6-...`); o `adc_tool.py info` a mostra de cada
+novo grava no cabeçalho (v5) e imprime na primeira linha (`firmware v0.6-...`); o `adc_tool.py info` a mostra de cada
 captura. Ele recusa enviar com mudanças não commitadas em `firmware/` (a versão apontaria para um código que não
 existe); `--forcar` envia assim mesmo, com `-dirty` na versão.
 
@@ -756,7 +756,7 @@ Equipamentos do seu levantamento (`bench-notes.md`), com o que importa de cada u
 ### Nomes e pastas
 
 * **Na BeagleBone** (`firmware/`): `T<n><letra>_<descrição>.bin`, por exemplo `T5a_1k_m40dBFS.bin`, e título curto no cabeçalho com `-t "T5a 1kHz -40dBFS"` (até 63 bytes).
-* **No computador:** copie tudo para `$DADOS/lab/AAAA-MM-DD/` (a pasta do dia, `$DIA` nos comandos), **fora do repositório**: dentro dele, um `git clean` apagaria os dados. As coletas do `calibrar_sonda.sh` (`firmware/capturas/<id>/` na BeagleBone) vão para `$DIA/capturas/<id>/`. Todos os resultados numéricos vão para **um único** `$DIA/resultados.csv`.
+* **No computador:** copie tudo para `$DADOS/lab/AAAA-MM-DD/` (a pasta do dia, `$DIA` nos comandos), **fora do repositório**: dentro dele, um `git clean` apagaria os dados. As coletas do `coletar.sh sonda` (`firmware/capturas/<id>/` na BeagleBone) vão para `$DIA/capturas/<id>/`. Todos os resultados numéricos vão para **um único** `$DIA/resultados.csv`.
 * **Canais desta bancada, em todos os testes: canal 1 = tensão (divisor) e canal 0 = corrente (SCT013).** Os comandos abaixo já usam essa atribuição (para mudá-la, troque o número do canal no `ler_adc`, em `--faixa-adc`, `--grandeza`, `--sonda` e `--canal-sonda`). Nos comandos de captura, o argumento depois da taxa é a lista de canais. **Com os dois canais, o ADS8688 varre sempre em ordem crescente: o canal 0 (corrente) é convertido primeiro e o canal 1 (tensão) 1/taxa total depois** (10 µs a 100 kS/s; veja o T6b).
 * **Variáveis do roteiro (fish, no computador, na raiz do repositório).** Defina uma vez por sessão e use nos comandos de análise; assim, se o T2 ou o T10-0 mudarem um ganho, ou se você for analisar outro dia, troca só uma linha:
 
@@ -772,14 +772,14 @@ set GI 16667       # --ganho do canal de corrente: 1 ÷ 60 µV/A (SCT013 100A:50
 
 * **Forma de onda do osciloscópio (`.m`).** Salve o arquivo de cada ponto com o **mesmo nome base da captura** (`calibracao_1000Hz_rep1.m` ao lado de `calibracao_1000Hz_rep1.bin`); o `gerar_perfil_sonda.py --referencia-osciloscopio` e o `medir_captura.py --osciloscopio` o encontram sozinhos. Anote o ajuste vertical e se a ponta é 10x (`--osc-escala`). Nesta versão, a variável salva pelo osciloscópio deve estar na **grandeza física** (tensão no nó de entrada do divisor; corrente da TCP0030A em A) e use `--osc-unidade A` (o nome é histórico: "A" aqui quer dizer "já está na grandeza física do canal, não multiplique pelo `--ganho`").
 * **"A sonda" = o conjunto.** Neste projeto, "sonda" e "perfil da sonda" designam o conjunto medido de ponta a ponta: no canal de tensão, o **divisor + o ADS8688**; no de corrente, o **SCT013 + resistores + o ADS8688**. A frequência de corte do filtro do ADC não precisa ser conhecida: aparece na curva medida.
-* **Grandeza no perfil de tensão.** Com `--grandeza tensao`, o `calibrar_sonda.sh` grava `--grandeza <canal>:tensao` nas capturas do divisor, como em produção (`--grandeza 1:tensao --sonda 1:cadeia_tensao`), e os textos dele falam da tensão na entrada da cadeia em vez de "shunt". Coletas feitas antes dessa opção ficaram marcadas como `corrente`: é só um rótulo, que o gerador de perfil não usa nos modos de 1 canal.
+* **Grandeza no perfil de tensão.** Com `--grandeza tensao`, o `coletar.sh sonda` grava `--grandeza <canal>:tensao` nas capturas do divisor, como em produção (`--grandeza 1:tensao --sonda 1:cadeia_tensao`), e os textos dele falam da tensão na entrada da cadeia em vez de "shunt". Coletas feitas antes dessa opção ficaram marcadas como `corrente`: é só um rótulo, que o gerador de perfil não usa nos modos de 1 canal.
 * **0 dBFS = metade do fundo de escala total** no pino do ADC: 10,24 V no canal 1 (tensão, ±10,24 V; 2,56 V no canal 0, corrente, em ±2,56 V). Amplitudes de pico no pino do canal 1: −0,5 dBFS = 9,67 V; −6 dBFS = 5,13 V; −20 dBFS = 1,024 V; −40 dBFS = 102 mV; −60 dBFS = 10,2 mV. **Pelo divisor** o gerador só chega a 0,517 V de pico (−26 dBFS): a tabela de gerador do [T5](#t5-distorção-e-faixa-dinâmica) já converte.
 
 Para copiar as capturas (e as coletas de calibração do dia):
 
 ```fish
 scripts/BeagleBone_Setup.sh trazer 'T*.bin' $DIA
-scp -r 'debian@192.168.6.2:firmware/capturas' $DIA/     # as coletas do calibrar_sonda.sh (uma pasta inteira)
+scp -r 'debian@192.168.6.2:firmware/capturas' $DIA/     # as coletas do coletar.sh sonda (uma pasta inteira)
 ```
 
 ### `medir_captura.py` em um minuto
@@ -850,7 +850,7 @@ Opções que você vai usar muito:
 **Objetivo.** Ter certeza de que firmware, relógio, cabeçalho **e a escala do ADC (nas três faixas)** estão certos antes de gastar tempo em medidas.
 
 1. No computador, com a BeagleBone por USB: `scripts/BeagleBone_Setup.sh hora` (o `preparar` já faz). O painel (`scripts/BeagleBone_Setup.sh`) mostra o relógio dela com `(certo)`.
-2. Na BeagleBone: `cd firmware && ./setup.sh && dmesg | tail -n 20` (a PRU sobe sem reclamar). O `setup.sh` **recompila** o firmware (`make clean; make`): é preciso fazer isso depois de atualizar o repositório. A revisão de out/2026 (grade de tempo e contadores de integridade, cabeçalho v4) mexeu no `spi_core.asm` e só foi validada no simulador `tests/pru_sim.py`. Se o `make` falhar, guarde a mensagem e use o plano B ([Antes de sair e ao chegar](#antes-de-sair-e-ao-chegar-levar-o-firmware-novo-à-beaglebone)). Confira com `./ler_adc --help` que as opções `--faixa-adc` e `--atraso-cs` existem, e, na captura do passo 5, que o `ler_adc` termina com a linha `Integridade: 0 amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído no SDO -- tudo certo` e que o resumo do cabeçalho diz `Versão de cabeçalho: 5` e `Firmware:` com a versão que você copiou.
+2. Na BeagleBone: `cd firmware && ./setup.sh && dmesg | tail -n 20` (a PRU sobe sem reclamar). O `setup.sh` **recompila** o firmware (`make clean; make`): é preciso fazer isso depois de atualizar o repositório. A revisão de out/2026 (grade de tempo e contadores de integridade, cabeçalho v4) mexeu no `spi_core.asm` e só foi validada no simulador `tests/pru_sim.py`. Se o `make` falhar, guarde a mensagem e use o plano B ([Antes de sair e ao chegar](#antes-de-sair-e-ao-chegar-levar-o-firmware-novo-à-beaglebone)). Confira com `./ler_adc --help` que as opções `--faixa-adc` e `--atraso-cs` existem, e, na captura do passo 5, que o `ler_adc` termina com a linha `Integridade  tudo certo: 0 amostras atrasadas, 0 buffers sobrescritos, 0 quadros com ruído no SDO` e que o resumo do cabeçalho diz `Versão de cabeçalho: 5` e `Firmware:` com a versão que você copiou.
 3. Ligue o gerador, o osciloscópio, a ponta TCP0030A, o frontend e a BeagleBone **30 minutos antes** do T1.
 4. **Capacitor do canal de corrente:** com tudo desligado, meça o valor dele (Fluke ou LCR; o seu 63 mF parece impreciso) e fotografe a placa. Anote o valor, **remova-o** e confirme que os dois resistores em série (1,79 kΩ e 1,7929 kΩ) continuam no lugar.
 5. Entrada do canal de tensão em curto (a entrada do divisor ligada ao retorno). Capture:
@@ -1019,7 +1019,7 @@ O `$GV` continua 19,357, como no perfil do T3: o ganho de baixa frequência do p
 
 ```bash
 cd firmware
-sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45k --blocos 1 --sonda cadeia_tensao --grandeza tensao --ref-externa
+./coletar.sh sonda --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45k --blocos 1 --sonda cadeia_tensao --grandeza tensao --ref-externa
 ```
 
 * O script pede a "**tensão RMS na entrada da cadeia**": a do nó de entrada do divisor que você lê no osciloscópio/multímetro (ex.: `7.0712` para 20 Vpp; aceita também `7.0712 Vrms` ou `7071.2m`).
@@ -1029,7 +1029,7 @@ sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45
 **Variante com amplitude conhecida (nada a digitar a cada ponto).** Se o gerador mantém o nível (confira no osciloscópio em 3 ou 4 frequências), informe a amplitude que ajustou: o script a grava nos metadados de cada captura (`ref: f=.. amp=..`). **Atenção à convenção:** em volts, a amplitude é a tensão **no pino do ADC, antes do `--ganho`**, e não na entrada do divisor. Informe, portanto, o que o divisor nominal entrega ao pino: 20 Vpp no gerador (*High-Z*) × 0,051662 = **1,0332 Vpp**:
 
 ```bash
-sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45k --blocos 1 --sonda cadeia_tensao --grandeza tensao --amplitude 1.0332Vpp
+./coletar.sh sonda --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45k --blocos 1 --sonda cadeia_tensao --grandeza tensao --amplitude 1.0332Vpp
 ```
 
 (Se informar `20Vpp` junto com `--ganho 19.357`, o gerador de perfil entende 387 Vpp injetados e o ganho de baixa frequência sai ~0,05: o aviso "fora de [0,7; 1,3]" denuncia o erro.)
@@ -1066,9 +1066,9 @@ uv run report/gerar_figuras.py perfil_cadeia_tensao --png
 
 **Executado em 19/10/2026** (48 pontos de 50 Hz a 45 kHz, `--ref-externa`, sem repetições; `scripts/sondas/cadeia_tensao.json`): −3 dB em **17,3 kHz** e −12,5 dB em 45 kHz; o 2ª ordem ajusta com f0 = 24,1 kHz, Q = 0,54 e resíduo de 0,13 dB. Para a próxima rodada: `--grandeza tensao` (a coleta de 19/10 é anterior à opção e ficou marcada como corrente, o que não muda o perfil) e `--repeticoes 3`, para ter a incerteza de cada ponto (o ajuste passa a ser ponderado). A fase não foi medida: a função de transferência vale sob a hipótese de fase mínima (ver `docs/report-notes.md`, Marco 12).
 
-**Executado em 22/10/2026, até 140 kHz na taxa padrão** (`calibrar_sonda.sh --taxa 312500 --canal-sonda 1 --pontos 32 --freq-max 140k --blocos 1 --faixa-adc 5.12 --sonda cadeia_tensao_312k --grandeza tensao --ref-externa`, 43 pontos; `scripts/sondas/cadeia_tensao_312k.json`): −3 dB em **16,8 kHz**, 2ª ordem com f0 = 24,2 kHz e Q = 0,53 e resíduo de 0,1 dB até 140 kHz (nenhum outro polo), −30,6 dB em 140 kHz; a 0,13 dB rms do perfil de 19/10 nas frequências em comum. Em produção, foi o `cadeia_tensao_312k` até o T3f (abaixo). A referência digitada caiu 14 % de 50 Hz a 140 kHz: na próxima rodada, anote o instrumento e confira 2 ou 3 pontos altos no osciloscópio. Os números e a figura de comparação estão no [T3 dos resultados](bench-results.md#t3-resposta-em-frequência-da-cadeia-de-tensão).
+**Executado em 22/10/2026, até 140 kHz na taxa padrão** (`coletar.sh sonda --taxa 312500 --canal-sonda 1 --pontos 32 --freq-max 140k --blocos 1 --faixa-adc 5.12 --sonda cadeia_tensao_312k --grandeza tensao --ref-externa`, 43 pontos; `scripts/sondas/cadeia_tensao_312k.json`): −3 dB em **16,8 kHz**, 2ª ordem com f0 = 24,2 kHz e Q = 0,53 e resíduo de 0,1 dB até 140 kHz (nenhum outro polo), −30,6 dB em 140 kHz; a 0,13 dB rms do perfil de 19/10 nas frequências em comum. Em produção, foi o `cadeia_tensao_312k` até o T3f (abaixo). A referência digitada caiu 14 % de 50 Hz a 140 kHz: na próxima rodada, anote o instrumento e confira 2 ou 3 pontos altos no osciloscópio. Os números e a figura de comparação estão no [T3 dos resultados](bench-results.md#t3-resposta-em-frequência-da-cadeia-de-tensão).
 
-**Executado em 22/10/2026, a fase por ondas quadradas (T3f)** (`./varrer_taxa.sh --fase`, 24 capturas de 30 s;
+**Executado em 22/10/2026, a fase por ondas quadradas (T3f)** (`./coletar.sh cadeia`, 24 capturas de 30 s;
 `uv run scripts/medir_fase.py`; `scripts/sondas/cadeia_tensao_fase.json`, de 50 Hz a 178,5 kHz): dois polos reais em
 22,81 kHz (Q = 0,5001) e um em 800 kHz, −3 dB em **14,68 kHz**, resíduo de 0,01 dB e 0,14°; a magnitude e a fase
 dão o mesmo filtro (fase mínima). As senoides acima ficam 1,2 a 1,3 dB acima da quadrada a partir de ~40 kHz: é a
@@ -1241,7 +1241,7 @@ uv run scripts/medir_captura.py $DIA/T7[abcd]*.bin --freq 10000 --sem-correcao-s
 
 **Esperado.** Em cada captura: `continuidade : OK`, **0 eventos**, maior salto de fase **de poucos milésimos de amostra** (0,001 a 0,004 nas capturas de 19/10 sem troca de buffer, 0,01 a 0,04 µs), e a linha `trocas de buffer : OK -- N no trecho, salto mediano 0.00x amostra(s) (0.0x µs ...) contra 0.00x ... longe delas`: o salto nas trocas igual ao dos outros segmentos. O critério de 0,5 amostra **do canal** não basta sozinho: o salto de 7 µs do firmware antigo vale 0,7 amostra com 1 canal a 100 kS/s, mas 0,35 com 2 canais e 0,09 com 8. É a linha das trocas que o pega em qualquer nº de canais (nas capturas de 19/10: `DESTOAM -- ... 6.96 µs ... contra 0.0229 µs`). Tamanho do arquivo igual ao do cabeçalho (a ferramenta avisa se não for); amplitude do tom varia menos de ~0,1% entre segmentos. No T7c, o tom pode derivar um pouco pelo gerador: compare com a leitura do osciloscópio no início e no fim.
 
-**Passou se:** zero eventos e `trocas de buffer : OK` em todas as capturas de até 100 kS/s, inclusive T7b e T7d, e o `ler_adc` termina com `Integridade: 0 amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído no SDO -- tudo certo`. Um evento = anote em qual taxa, que amostra (`perto da amostra N`) e olhe a saída do terminal do `ler_adc` e o `dmesg` daquele instante.
+**Passou se:** zero eventos e `trocas de buffer : OK` em todas as capturas de até 100 kS/s, inclusive T7b e T7d, e o `ler_adc` termina com `Integridade  tudo certo: 0 amostras atrasadas, 0 buffers sobrescritos, 0 quadros com ruído no SDO`. Um evento = anote em qual taxa, que amostra (`perto da amostra N`) e olhe a saída do terminal do `ler_adc` e o `dmesg` daquele instante.
 
 **Executado em 19/10/2026, com o firmware anterior a out/2026** (canal 1, tom de 10 kHz, `--inicio 100`):
 
@@ -1255,11 +1255,11 @@ uv run scripts/medir_captura.py $DIA/T7[abcd]*.bin --freq 10000 --sem-correcao-s
 
 * **O defeito:** o contador de ciclos da PRU era zerado a cada troca de buffer **depois** da transação da última amostra, e a primeira amostra do bloco seguinte saía uma transação (~1 394 ciclos, 6,97 µs) atrasada. O salto, em amostras, cresce com a taxa (0,697 a 100 kS/s, 0,77 a 110 kS/s, 0,87 a 125 kS/s): é um tempo fixo. Nenhuma amostra se perdeu; a grade de tempo é que escorregou. O `medir_captura.py` o aponta ("numa troca de buffer da PRU"). A correção (out/2026) está no [Marco 13](report-notes.md#marco-13--revisão-do-firmware-grade-de-tempo-e-integridade-da-captura) das notas.
 * **Dentro de cada bloco, o sistema é estável:** em 11 janelas de 1 bloco espalhadas pelos 10 min, o tom ficou em 9 999,5690 a 9 999,5699 Hz (0,09 ppm) e a amplitude em 0,304809 a 0,304836 V RMS (0,009 %).
-* **A refazer, com o firmware novo** (`./setup.sh`): T7a e T7b com ≥ 3 blocos e o T7c. O maior salto tem de cair para os milésimos em todas as trocas, e o `ler_adc` tem de terminar com a linha `Integridade: ... tudo certo`. É a validação em hardware da correção (o simulador já confere a lógica).
+* **A refazer, com o firmware novo** (`./setup.sh`): T7a e T7b com ≥ 3 blocos e o T7c. O maior salto tem de cair para os milésimos em todas as trocas, e o `ler_adc` tem de terminar com a linha `Integridade  tudo certo`. É a validação em hardware da correção (o simulador já confere a lógica).
 
 #### T7e: onde está o limite de taxa
 
-**Objetivo.** Saber **até onde** vai a taxa real e **qual parte** do projeto é o gargalo (a PRU/SPI, o ADC ou o lado ARM), em vez de supor. **Ordem:** o método 2 (osciloscópio, 10 min), o método 1 com as esperas padrão, o **método 4** (a busca das esperas mínimas e do teto: é ele que decide a taxa de trabalho) e o método 3 só se aparecerem buffers sobrescritos. **Atalho:** o `firmware/varrer_taxa.sh` faz os métodos 1 e 4 (e a diafonia e o ruído em curto de cada conjunto) de uma vez, sem decisões no meio; a escolha sai da análise das capturas ([etapas 4 e 5 do passo a passo](#passo-a-passo-da-próxima-ida-firmware-novo-e-taxa-máxima)). São os itens F2 e F3 de [`improvement-proposals.md`](improvement-proposals.md#f2--medir-até-onde-as-esperas-do-cs-podem-cair), medidos em bancada.
+**Objetivo.** Saber **até onde** vai a taxa real e **qual parte** do projeto é o gargalo (a PRU/SPI, o ADC ou o lado ARM), em vez de supor. **Ordem:** o método 2 (osciloscópio, 10 min), o método 1 com as esperas padrão, o **método 4** (a busca das esperas mínimas e do teto: é ele que decide a taxa de trabalho) e o método 3 só se aparecerem buffers sobrescritos. **Atalho:** o `firmware/coleta/campanha.sh` faz os métodos 1 e 4 (e a diafonia e o ruído em curto de cada conjunto) de uma vez, sem decisões no meio; a escolha sai da análise das capturas ([etapas 4 e 5 do passo a passo](#passo-a-passo-da-próxima-ida-firmware-novo-e-taxa-máxima)). São os itens F2 e F3 de [`improvement-proposals.md`](improvement-proposals.md#f2--medir-até-onde-as-esperas-do-cs-podem-cair), medidos em bancada.
 
 **Hipótese a testar** (confirmada na leitura do firmware e no simulador em out/2026; falta a medida no CS). O ADS8688 precisa só de ~2 µs por amostra (500 kS/s), mas a PRU gasta bem mais: pela contagem estática do `spi_core.asm` (±10%), 32 bits de SCLK de ~16 a 19 ciclos cada (≈ 2,9 µs) mais os três laços de atraso do CS (200 + 100 + 100 iterações de 2 ciclos = 800 ciclos = **4,0 µs**) dão **~7 µs por quadro**, ou seja, ~140 kS/s no papel; o limite que você observou (130 kS/s) está nessa faixa. Executar o próprio `spi_core.asm` num simulador de PRU (`tests/pru_sim.py`, 1 ciclo por instrução, sem hardware) deu o mesmo resultado: **1 395 ciclos = 6,98 µs por quadro (~143 kS/s)** no firmware de out/2026, dos quais **800 ciclos (57 %) são os três laços de atraso do CS** (em geral, 595 + 2 × (S + H + A) ciclos; ver o método 4). É um teto de papel (acessos à memória externa podem somar ciclos): só o osciloscópio (método 2) confirma. Os mínimos do datasheet são 30/10/30 ns (tSU_CSCK, tD_CKCS, tPH_CS); reduza só pelo método 4, medindo. Se for isso, a taxa **real** satura entre 130 e 145 kS/s, **sem perder amostra**, qualquer que seja a taxa pedida, e o firmware de out/2026 conta as **amostras atrasadas** a cada captura. O lado ARM é improvável (130 kS/s = 260 kB/s; cada buffer de 2 MB demora ~8 s para encher).
 
@@ -1338,8 +1338,8 @@ SINAD, SNR, THD, ruído em LSB, DC e maior salto, lado a lado. É nela que se co
 
 Um conjunto **passa** se, comparado com o `200,100,100`:
 
-* o `ler_adc` termina com `Integridade: 0 amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído
-  no SDO -- tudo certo` (o ruído no SDO é o primeiro sinal de clock ou dado chegando fora de hora);
+* o `ler_adc` termina com `Integridade  tudo certo: 0 amostras atrasadas, 0 buffers sobrescritos, 0 quadros com
+  ruído no SDO` (o ruído no SDO é o primeiro sinal de clock ou dado chegando fora de hora);
 * a amplitude do tom fica igual em ±0,02 %, e a frequência em ±0,1 ppm (o gerador sozinho deriva ~0,09 ppm em 10 min;
   uma amostra fora de hora apareceria nos contadores do `ler_adc`, não só na frequência);
 * SINAD e SNR ficam em ±0,5 dB, THD em ±1 dB, densidade de ruído em ±5 % e DC (`media`) em ±0,1 mV;
@@ -1375,7 +1375,7 @@ uv run scripts/medir_captura.py $DIA/T7e_teto_*.bin --referencia-freq 10000.02 -
 (sem `--freq`: se a PRU não alcançar a taxa, o tom aparece deslocado.) Uma taxa **passa** com:
 
 * `0 amostra(s) atrasada(s)`;
-* `Taxa real medida pelo ARM` igual à pedida (sem o aviso "DIFERENTE da pedida");
+* `Taxa medida` igual à pedida (sem o aviso "DIFERENTE da pedida");
 * `erro_freq_ppm` igual ao das taxas exatas do T4 (o mesmo erro de cristal);
 * SINAD e ruído iguais aos do passo 1.
 
@@ -1389,7 +1389,7 @@ período é o CS alto. Fotografe a tela, para a anatomia do quadro no relatório
 
 *Passo 6: usar.* Até virarem o padrão do firmware (`ATRASO_CS_*_PADRAO` em `firmware/memoria_pru.h`, junto com os
 testes que fixam o padrão), passe `--atraso-cs` **em toda captura** na taxa nova, inclusive no
-`calibrar_sonda.sh --atraso-cs S,H,A`, que o repassa ao `ler_adc` e confere no cabeçalho de cada captura. O que
+`coletar.sh sonda --atraso-cs S,H,A`, que o repassa ao `ler_adc` e confere no cabeçalho de cada captura. O que
 refazer a partir daí está em [O que refazer com o firmware de out/2026](#o-que-refazer-com-o-firmware-de-out2026).
 
 **Método 3: separar o lado ARM.** Repita o ponto de 130 kS/s (e o de 100 kS/s) (a) gravando em disco, (b) gravando em RAM (`-o /dev/shm/T7e_ram.bin`, 2,6 MB) e (c) com o disco ocupado (`scp` grande em outra janela). Se só (c) gerar eventos de continuidade, o gargalo é de I/O do ARM; se (a), (b) e (c) derem o mesmo, não é o ARM.
@@ -1406,7 +1406,7 @@ refazer a partir daí está em [O que refazer com o firmware de out/2026](#o-que
 
 **Para o relatório.** Figura: `fs_real` × taxa pedida (a "joelheira" no limite); tabela de eventos por taxa e por condição de carga; o período do CS e a anatomia do quadro; a conclusão sobre o gargalo e a taxa que seria necessária (≥ 300 kS/s) para cobrir a banda até 150 kHz.
 
-**Executado em 21/10/2026** (firmware v0.6-11, `firmware/varrer_taxa.sh`, 101 capturas com o tom de 10 kHz em
+**Executado em 21/10/2026** (firmware v0.6-11, `firmware/coleta/campanha.sh`, 101 capturas com o tom de 10 kHz em
 ±2,56 V; `$DADOS/lab/2026-10-21/T7e_2026-10-21_1731/`):
 
 * **Integridade:** 0 quadros com ruído no SDO e 0 buffers sobrescritos em todas as capturas; amostras atrasadas só
@@ -1435,7 +1435,7 @@ refazer a partir daí está em [O que refazer com o firmware de out/2026](#o-que
   contador de ciclos o **zera**, e o rebase escrevia `CYCLE − 2^31`. Corrigido em 21/10 (o rebase zera o contador e
   recua o instante da próxima amostra o mesmo tanto); o simulador passou a zerar o contador em toda escrita, e o
   `medir_captura.py` reconhece o degrau ("cai em múltiplos de 10,74 s"). **Falta validar no hardware:** no computador,
-  `scripts/BeagleBone_Setup.sh enviar --setup`; na BeagleBone, com o tom, `./varrer_taxa.sh --validar` (~12 min, numa
+  `scripts/BeagleBone_Setup.sh enviar --setup`; na BeagleBone, com o tom, `./coletar.sh bancada --validar` (~12 min, numa
   pasta nova: não precisa da varredura anterior). Ele recusa rodar se o firmware na PRU não for o corrigido.
 * **Decisão:** esperas de trabalho **`6,2,6`** (60/20/60 ns, o dobro do piso do datasheet, que passou em tudo);
   taxa de trabalho **250 kS/s** (o quadro de 3,12 µs deixa 22 % de folga no período de 4 µs; a 312,5 kS/s a folga é de
@@ -1461,7 +1461,7 @@ tinha resolvido o salto de 7 µs.
   faltam, num laço de duração conhecida, e o CS desce sempre no mesmo ciclo depois do instante da grade.
 * **Folga medida:** a PRU guarda a **menor folga** da captura, quantos ciclos sobravam quando ela terminou o
   trabalho da amostra anterior (DDR, troca de buffer, rebase). Folga > 0 e nenhuma amostra atrasada provam que
-  **toda** amostra saiu no ciclo exato. O `ler_adc` imprime a folga (`Grade de tempo (PRU): folga mínima ...`) e a
+  **toda** amostra saiu no ciclo exato. O `ler_adc` imprime a folga (linha `Grade`: `folga mínima ...`) e a
   grava no cabeçalho v6.
 * **Rebase autocalibrado:** o recuo da grade no rebase do contador usava uma constante chutada (2 ciclos). Agora a
   PRU mede, antes da 1ª amostra, a latência das leituras e da escrita do contador.
@@ -1470,7 +1470,7 @@ tinha resolvido o salto de 7 µs.
 No simulador, com latências de memória hipotéticas e escritas na DDR que demoram, todo intervalo entre descidas do
 CS é exatamente o período, ao ciclo (`tests/test_pru_asm.py`).
 
-**Como.** `./varrer_taxa.sh --grade` ([passo a passo](#passo-a-passo-da-próxima-ida-a-grade-de-tempo-t7f)), com o
+**Como.** `./coletar.sh bancada --grade` ([passo a passo](#passo-a-passo-da-próxima-ida-a-grade-de-tempo-t7f)), com o
 tom de 10 kHz de 21/10. Depois, no computador:
 
 ```fish
@@ -1499,7 +1499,7 @@ caminho do CS. O osciloscópio separa os dois (etapa 4 do passo a passo).
 efeito visível da correção. A folga e o teto com período constante. É a evidência de que "o instrumento amostra numa
 grade de tempo exata", que vale tanto quanto a integridade das amostras para medir supraharmônicos.
 
-**Executado em 22/10/2026** (firmware `v0.7-1-gb2f9078`, protocolo 2; `./varrer_taxa.sh --grade`, 46 capturas com o
+**Executado em 22/10/2026** (firmware `v0.7-1-gb2f9078`, protocolo 2; `./coletar.sh bancada --grade`, 46 capturas com o
 tom de 10 kHz em ±2,56 V; `$DADOS/lab/2026-10-22/T7f_2026-10-22_0435/`). O firmware compilou no `clpru` de primeira.
 
 | O que | Medido | Antes (21/10) |
@@ -1648,7 +1648,7 @@ uv run scripts/medir_captura.py $DIA/T10_0_1k_N10.bin --sem-correcao-sonda --gan
 
 ```bash
 cd firmware
-sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 0 --pontos 24 --freq-max 45k \
+./coletar.sh sonda --taxa 100000 --canal-sonda 0 --pontos 24 --freq-max 45k \
     --blocos 4 --repeticoes 2 --sonda sct013_100a_sn001 --ref-externa --faixa-adc 5.12
 ```
 
@@ -1659,7 +1659,7 @@ O `--faixa-adc 5.12` coloca o canal da sonda em ±2,56 V; vale para todo o plano
 
 **Quanto sinal sobra (ordem de grandeza, ruído branco do ADC, N = 10 e 116 mA RMS, faixa de ±2,56 V).** Tom de 70 µV em 1 kHz: ~55 a 57 dB acima do ruído por bin com 10 s (erro de amplitude por ruído ~0,2%); em 20 kHz (−4 dB do filtro): ~51 dB (0,3%); em 40 kHz (−17 dB): ~38 a 40 dB (1%); com 4 blocos (42 s) cada ponto ganha ~6 dB (em 40 kHz: ~0,6%). Em ±10,24 V seriam 9 dB a menos (46 a 48; 42; 29 a 31 dB; erros de 0,5%; 0,8%; 3%). Interferência real (60 Hz e harmônicos, rádio) vai piorar isso: o `gerar_perfil_sonda.py` avisa quando o tom de um ponto não passa 20 dB acima do piso por bin; refaça esses pontos com mais blocos ou mais espiras.
 
-**Passo 1b: variante com `.m` do osciloscópio.** Em vez de digitar o RMS, salve a forma de onda da TCP0030A (em A) de cada ponto como `.m` (ou `.mat`/`.csv`) com o **mesmo nome base da captura** (`calibracao_1000Hz_rep1.m`), com pelo menos 10 ciclos e 20 amostras por ciclo. O `calibrar_sonda.sh` é o mesmo comando do passo 1, **sem** `--ref-externa` (nesse modo ele não pede nenhum valor a cada ponto: só captura; ou use `--ref-externa` e salve também o `.m`, para ter as duas referências e poder compará-las). A amplitude de cada `.m` entra no passo 2, com `--referencia-osciloscopio` no lugar de `--referencia-externa`. A amplitude de referência vem do ajuste de senoide por mínimos quadrados (IEEE 1057), que usa todos os ciclos e é melhor que o RMS lido do painel.
+**Passo 1b: variante com `.m` do osciloscópio.** Em vez de digitar o RMS, salve a forma de onda da TCP0030A (em A) de cada ponto como `.m` (ou `.mat`/`.csv`) com o **mesmo nome base da captura** (`calibracao_1000Hz_rep1.m`), com pelo menos 10 ciclos e 20 amostras por ciclo. O `coletar.sh sonda` é o mesmo comando do passo 1, **sem** `--ref-externa` (nesse modo ele não pede nenhum valor a cada ponto: só captura; ou use `--ref-externa` e salve também o `.m`, para ter as duas referências e poder compará-las). A amplitude de cada `.m` entra no passo 2, com `--referencia-osciloscopio` no lugar de `--referencia-externa`. A amplitude de referência vem do ajuste de senoide por mínimos quadrados (IEEE 1057), que usa todos os ciclos e é melhor que o RMS lido do painel.
 
 **Passo 1c: amplitude "conhecida" não se aplica aqui** (a corrente não é `V_gerador ÷ R`: o resistor de fio enrolado e os 50 Ω de saída deixam o valor dependente da frequência). Só use `--amplitude ...Apk` se tiver medido a corrente na TCP0030A numa frequência e souber que o gerador é plano. Em **tensão** o método vale, e a variante do T3 já usa esse raciocínio.
 
@@ -1825,20 +1825,22 @@ Os limites abaixo são **propostas** (baseadas no datasheet e em boas práticas)
 | Perfil com ganho de 1,0 em baixa frequência muito diferente (ex.: 0,1) | `--ganho` diferente de 1/sensibilidade | Use o ganho certo (divisor: 19,357; SCT013 sobre 0,12 Ω: 16 667) |
 | Perfil "dentes de serra" ou pontos fora da curva | Gerador instável; resistor aquecendo; ponta mal compensada; TCP0030A sem zero/DEGAUSS | Refaça os pontos (`R`); repita com `--repeticoes`; compense a ponta |
 | `ler_adc` trava | PRU parada | `dmesg`; `./setup.sh` |
-| `ler_adc` termina com código 3 e a linha `Integridade:` acusa **buffers sobrescritos** | O ARM não gravou um bloco antes de a PRU voltar a ele: amostras perdidas e um bloco misturado | Captura inválida. Grave em RAM (`-o /dev/shm/...`) ou num disco mais rápido; feche o que estiver usando o disco; T7e, método 3 |
-| A linha `Integridade:` acusa **amostras atrasadas** | A taxa pedida passou do que a PRU alcança (~140 kS/s com os atrasos de CS padrão) | A taxa real é menor que a do cabeçalho: use a que o `ler_adc` imprime ou fique em ≤ 100 kS/s. Esperado no T7e |
-| A linha `Integridade:` acusa **quadros com ruído no SDO** | Ruído ou reflexo na linha de dados (o problema dos jumpers longos) | Encurte e reforce as ligações entre a BeagleBone e a placa; as amostras desses quadros são suspeitas |
+| `Erro: o ADC não está respondendo` (código 4; amostras todas 0x0000) | A placa de aquisição sem alimentação (a BeagleBone só no USB: a placa é alimentada pelo 5 V do conector) ou os pinos da PRU sem configuração | Ligue a fonte de 5 V no conector da BeagleBone; se persistir, `sudo ./setup.sh` |
+| `Aviso: os pinos da PRU não estavam no modo do SPI` | A BeagleBone reiniciou (o `config-pin` se perde) | Nada: o `ler_adc` os configura de novo e segue |
+| `ler_adc` termina com código 3 e a linha `Integridade` acusa **buffers sobrescritos** | O ARM não gravou um bloco antes de a PRU voltar a ele: amostras perdidas e um bloco misturado | Captura inválida. Grave em RAM (`-o /dev/shm/...`) ou num disco mais rápido; feche o que estiver usando o disco; T7e, método 3 |
+| A linha `Integridade` acusa **amostras atrasadas** | A taxa pedida passou do que a PRU alcança (~419 kS/s com o SPI rápido; o `ler_adc` recusa acima disso sem `--forcar-taxa`) | A taxa real é menor que a do cabeçalho: use a que o `ler_adc` imprime ou fique em ≤ 100 kS/s. Esperado no T7e |
+| A linha `Integridade` acusa **quadros com ruído no SDO** | Ruído ou reflexo na linha de dados (o problema dos jumpers longos) | Encurte e reforce as ligações entre a BeagleBone e a placa; as amostras desses quadros são suspeitas |
 | `DESCONTINUIDADE ... numa troca de buffer da PRU` (~0,7 amostra a 100 kS/s, ~0,35 com 2 canais) | Firmware anterior a out/2026 | `./setup.sh` e refaça a captura; nas antigas, analise um bloco por vez (`--inicio`/`--max-amostras`) |
 | Ruído do T1 de 4 a 6 LSB numa faixa nova, mas normal nas outras | Transitório das primeiras ~6 amostras depois de trocar a faixa | `--inicio 100` |
 | Tom em frequência inesperada com vários canais (ex.: 40 kHz aparece em 10 kHz) | Acima da Nyquist **do canal** (taxa ÷ nº de canais ÷ 2) | Reduza a frequência ou o número de canais |
-| Disco cheio | Capturas longas | `df -h`; copie e apague; `calibrar_sonda.sh` pausa abaixo de 50 MB |
+| Disco cheio | Capturas longas | `df -h`; copie e apague; `coletar.sh sonda` pausa abaixo de 50 MB |
 
 ---
 
 ## Checklist ao sair do laboratório
 
 - [ ] Todos os `.bin` copiados para o computador (e **também** em um segundo lugar: `uv run scripts/compactar_amostras.py $DIA`, e o pacote em dois lugares) e o tamanho conferido.
-- [ ] A saída de terminal do `ler_adc` de cada captura guardada (a linha `Integridade:` e a taxa real medida não ficam só no cabeçalho).
+- [ ] A saída de terminal do `ler_adc` de cada captura guardada (as linhas `Integridade` e `Taxa medida` não ficam só no cabeçalho).
 - [ ] `resultados.csv` do dia salvo, com uma linha por canal medido.
 - [ ] Pastas `capturas/cadeia_tensao/` e `capturas/sct013_100a_sn001/` em `$DIA/capturas/` (incluem `referencia_externa.csv` e `plano_coleta.txt`) copiadas, junto com o `.m` do osciloscópio de cada ponto (mesmo nome da captura) e as leituras da TCP0030A.
 - [ ] Escala do ADC conferida no T0 (razões das três faixas) e a tabela de ruído por faixa do T1; os valores de `$GV` e `$GI` realmente usados nos perfis e a faixa de cada canal (`--faixa-adc`) anotados.

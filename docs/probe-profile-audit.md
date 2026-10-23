@@ -1,6 +1,6 @@
 # Auditoria do fluxo de perfil de sonda
 
-**Escopo:** `calibrar_sonda.sh` → `gerar_perfil_sonda.py` → `scripts/sondas/<id>.json` → `adc_tool.py` (cabeçalho v2 gravado por `ler_adc.c`).
+**Escopo:** `coletar.sh sonda` → `gerar_perfil_sonda.py` → `scripts/sondas/<id>.json` → `adc_tool.py` (cabeçalho v2 gravado por `ler_adc.c`).
 **Método:** leitura do código + experimentos com capturas **sintéticas** de uma sonda de resposta conhecida (passa-baixa de 1ª ordem, fc = 30 kHz; shunt 0,1 Ω; ruído de 0,5 mV no ADC). Nada foi testado em hardware real — as conclusões abaixo valem para o *software*; a exatidão física depende da bancada (seção 3).
 **Reprodução:** `uv run --extra dev pytest tests/e2e` (12 testes, ~30 s; a suíte nasceu como `scripts/test_perfil_sonda.py` e foi migrada para pytest quando o código Python virou o pacote `scripts/supraharmonicos/` — ver `docs/software-architecture.md`). Os nomes de função citados abaixo (`ler_cabecalho`, `aplicar_correcao_sonda`, `carregar_perfil_sonda`...) continuam os mesmos; só mudaram de arquivo, do antigo `adc_tool.py` para os módulos do pacote.
 
@@ -93,7 +93,7 @@ Soma-se um efeito do hardware: canais multiplexados (AUTO_RST) são amostrados e
 Hoje `ganho(f) = S(f)/S_nominal` obriga a repetir o mesmo `--ganho`. O aviso do bug 1 mitiga, mas o desenho que elimina a classe de erro é gravar a sensibilidade **absoluta** S(f) [V/A no pino do ADC] e dividir por ela, ignorando `--ganho` para esse canal. Muda o formato (campo novo, perfis antigos continuam valendo) e a semântica de `--ganho`.
 
 ### 4.3 Validação cruzada por frequências retidas (hold-out)
-Medir 2–3 frequências **fora** da malha do perfil e comparar com a curva interpolada: é a única verificação que detecta ressonância perdida e erro de interpolação em dados reais. Proposta: `calibrar_sonda.sh` marca pontos como `validacao` e `gerar_perfil_sonda.py` os exclui do perfil e imprime o erro. Não implementado.
+Medir 2–3 frequências **fora** da malha do perfil e comparar com a curva interpolada: é a única verificação que detecta ressonância perdida e erro de interpolação em dados reais. Proposta: `coletar.sh sonda` marca pontos como `validacao` e `gerar_perfil_sonda.py` os exclui do perfil e imprime o erro. Não implementado.
 
 ### 4.4 Teto de ganho da correção
 Onde 1/H é muito grande o ruído domina e a "correção" produz números enganosos. Hoje só avisa (> 20 dB). Opção: limitar 1/H a um máximo (inversa regularizada, ex. Tikhonov) — decisão de projeto (altera o resultado).
@@ -106,7 +106,7 @@ A divisão espectral do registro inteiro trata o sinal como periódico; em regis
 
 ### 4.7 Menores
 - `gerar_perfil_sonda.py` não verifica estabilidade da amplitude *dentro* da captura (deriva do gerador durante os 2–3 s); comparar a 1ª e 2ª metade e avisar > 1–2 %.
-- `calibrar_sonda.sh` não foi alterado por esta auditoria; sem achados na revisão e nos testes anteriores (`bash -n` ok; `shellcheck` não disponível neste ambiente nesta sessão — rodar localmente). **Achado posterior (2026-10), já corrigido:** a checagem de Nyquist usava a taxa total em vez da efetiva por canal (`taxa/4` com 2 canais); o script foi reescrito (escolha automática de frequências, conferência de cada captura, novos modos) — ver o `git log` do script e `docs/user-guide.md`, "Passo 1". O texto desta auditoria descreve o script **como ele estava** na época.
+- `coletar.sh sonda` não foi alterado por esta auditoria; sem achados na revisão e nos testes anteriores (`bash -n` ok; `shellcheck` não disponível neste ambiente nesta sessão — rodar localmente). **Achado posterior (2026-10), já corrigido:** a checagem de Nyquist usava a taxa total em vez da efetiva por canal (`taxa/4` com 2 canais); o script foi reescrito (escolha automática de frequências, conferência de cada captura, novos modos) — ver o `git log` do script e `docs/user-guide.md`, "Passo 1". O texto desta auditoria descreve o script **como ele estava** na época.
 - `ler_adc.c` não foi alterado. Por decisão do projeto não valida o id da sonda; a validação de caracteres ficou no Python. Se quiser defesa em profundidade, validar também no `--sonda` do C (exige recompilar e retestar no BeagleBone).
 
 ---
@@ -123,7 +123,7 @@ A divisão espectral do registro inteiro trata o sinal como periódico; em regis
 | `docs/probe-profile-audit.md` | **novo** — este documento |
 | `docs/project-context.md` | seções atualizadas (modelo de calibração, pipeline, geração de perfil, status, restrições) |
 
-Sem alteração (na época desta auditoria): `firmware/ler_adc.c`, `firmware/calibrar_sonda.sh`, `docs/probe-profile-example.json`. O `calibrar_sonda.sh` foi reescrito depois (ver o `git log` do arquivo).
+Sem alteração (na época desta auditoria): `firmware/ler_adc.c`, `firmware/coleta/sonda.sh`, `docs/probe-profile-example.json`. O `coletar.sh sonda` foi reescrito depois (ver o `git log` do arquivo).
 
 ---
 

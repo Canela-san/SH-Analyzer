@@ -174,3 +174,105 @@ def entradas_ambiguas(fs_a_hz: float, fs_b_hz: float, f_max_hz: float, f_max_ent
             if abs(dobrar(entrada, fs_a_hz) - x) <= tolerancia_hz and abs(dobrar(entrada, fs_b_hz) - x) <= tolerancia_hz:
                 achados.add((round(x, 3), round(entrada, 3)))
     return sorted(achados)
+
+
+LETRAS = "ABCDEFGH"
+
+
+@dataclass
+class ComponenteMulti:
+    """Um componente de entrada visto em N >= 2 capturas (a 1ª é a referência dos pares)."""
+
+    frequencia_entrada_hz: float | None
+    picos: list[Pico | None]                 # um por captura; None = sem pico ali
+    reais: list[bool]                        # o pico de cada captura está na própria entrada (não é imagem)
+    ambiguas_hz: list[float] = field(default_factory=list)
+    amplitudes_batem: bool = True
+    taxas_discordam: bool = False            # os pares apontaram entradas diferentes (a emissão mudou?)
+
+    @property
+    def diagnostico(self) -> str:
+        n = len(self.picos)
+        presentes = [k for k, p in enumerate(self.picos) if p is not None]
+        if self.frequencia_entrada_hz is None:
+            return "sem par nas outras capturas (abaixo do limiar lá, fora da faixa analisada ou intermitente)"
+        reais = [k for k in presentes if self.reais[k]]
+        imagens = [k for k in presentes if not self.reais[k]]
+
+        def letras(ks):
+            return ", ".join(LETRAS[k] for k in ks)
+
+        if not imagens:
+            texto = "real"
+        elif not reais:
+            todas = len(presentes) == n
+            onde = ("nas duas" if n == 2 else "em todas") if todas else f"em {letras(imagens)}"
+            texto = f"imagem {onde}, de {self.frequencia_entrada_hz / 1e3:.2f} kHz"
+        else:
+            texto = f"real em {letras(reais)}; imagem em {letras(imagens)}"
+        faltando = [k for k in range(n) if k not in presentes]
+        if faltando:
+            texto += f"; sem pico em {letras(faltando)}"
+        if not self.amplitudes_batem:
+            texto += " (as amplitudes diferem: a emissão mudou entre as capturas?)"
+        if self.taxas_discordam:
+            texto += " (as taxas apontam entradas diferentes: a emissão mudou?)"
+        if self.ambiguas_hz:
+            outras = ", ".join(f"{f / 1e3:.2f}" for f in self.ambiguas_hz)
+            texto += f" -- AMBÍGUO: também seria a entrada em {outras} kHz (uma taxa a mais decide)"
+        return texto
+
+
+def parear_varias(picos: list[list[Pico]], fs_hz: list[float], faixas: list[tuple[float, float]],
+                  tolerancia_hz: float, tolerancia_db: float, f_max_entrada_hz: float) -> list[ComponenteMulti]:
+    """Pareia N >= 2 capturas: cada uma contra a 1ª (``parear``), e a entrada de cada pico da 1ª é a que TODOS os
+    pares aceitam (a de cada par mais as ambíguas dele): uma 3ª taxa desfaz o que duas deixam ambíguo. Os picos das
+    outras capturas que nenhum par usou saem sozinhos."""
+    n = len(picos)
+    pares = [parear(picos[0], fs_hz[0], faixas[0], picos[k], fs_hz[k], faixas[k], tolerancia_hz, tolerancia_db,
+                    f_max_entrada_hz) for k in range(1, n)]
+    usados: list[set[int]] = [set() for _ in range(n)]
+    componentes = []
+    for i, a in enumerate(picos[0]):
+        hipoteses, nos_pares = [], []
+        for comps in pares:
+            comp = next((c for c in comps if c.em_a is a and c.em_b is not None), None)
+            nos_pares.append(comp)
+            if comp is not None:
+                hipoteses.append([comp.frequencia_entrada_hz, *comp.ambiguas_hz])
+        usados[0].add(i)
+        if not hipoteses:
+            componentes.append(ComponenteMulti(None, [a] + [None] * (n - 1), [False] * n))
+            continue
+        aceitas = sorted(f for f in hipoteses[0]
+                         if all(any(abs(f - g) <= tolerancia_hz for g in outras) for outras in hipoteses[1:]))
+        discordam = not aceitas
+        if discordam:
+            aceitas = sorted(hipoteses[0])
+        f_entrada = aceitas[0]
+        lista = [a] + [comp.em_b if comp is not None else None for comp in nos_pares]
+        for k, comp in enumerate(nos_pares, start=1):
+            if comp is not None:
+                usados[k].add(next(j for j, p in enumerate(picos[k]) if p is comp.em_b))
+        componentes.append(ComponenteMulti(
+            f_entrada, lista, [p is not None and abs(f_entrada - p.frequencia_hz) <= tolerancia_hz for p in lista],
+            ambiguas_hz=[f for f in aceitas[1:] if abs(f - f_entrada) > tolerancia_hz],
+            amplitudes_batem=all(c.amplitudes_batem for c in nos_pares if c is not None),
+            taxas_discordam=discordam))
+    for k in range(1, n):
+        for j, p in enumerate(picos[k]):
+            if j not in usados[k]:
+                componentes.append(ComponenteMulti(None, [p if m == k else None for m in range(n)], [False] * n))
+    componentes.sort(key=lambda c: (c.frequencia_entrada_hz is None,
+                                    c.frequencia_entrada_hz if c.frequencia_entrada_hz is not None
+                                    else next(p for p in c.picos if p is not None).frequencia_hz))
+    return componentes
+
+
+def entradas_ambiguas_em_todas(fs_hz: list[float], f_max_hz: float, f_max_entrada_hz: float,
+                               tolerancia_hz: float) -> list[tuple[float, float]]:
+    """As posições (onde aparece, entrada) em que uma imagem cai no MESMO lugar em todas as taxas: ali nem o conjunto
+    separa a imagem de um componente real. Com duas taxas, as de ``entradas_ambiguas``; cada taxa a mais elimina as
+    que ela desloca."""
+    candidatas = entradas_ambiguas(fs_hz[0], fs_hz[1], f_max_hz, f_max_entrada_hz, tolerancia_hz)
+    return [(x, e) for x, e in candidatas if all(abs(dobrar(e, fs) - x) <= tolerancia_hz for fs in fs_hz[2:])]

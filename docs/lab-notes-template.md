@@ -11,7 +11,7 @@ manda copiá-lo para `$DIA/anotacoes.md`). Preencha durante a sessão: o que nã
 - Placa de aquisição alimentada por:
 - Gerador (modelo, canal, forma, frequência, amplitude em Vpp, carga High-Z, offset):
 - Osciloscópio (modelo, ponta 10x?, onde está o terra; a ponta compensada no PROBE COMP? foto antes e depois do ajuste):
-- Versão do firmware (a linha `Firmware:` do `ler_adc`):
+- Versão do firmware (a primeira linha do `ler_adc`: `ler_adc · SH-Analyzer · firmware ...`):
 - Hora em que tudo foi ligado:
 
 ## Contador de frequência (o tom)
@@ -38,7 +38,7 @@ manda copiá-lo para `$DIA/anotacoes.md`). Preencha durante a sessão: o que nã
 
 ## Grade de tempo (T7f)
 
-- Folga da captura de conferência (`T7_bancada.bin`, linha `Grade de tempo (PRU)`): ___ ciclos
+- Folga da captura de conferência (`T7_bancada.bin`, linha `Grade` do resumo): ___ ciclos
 - Osciloscópio, gatilho na descida do CS, a próxima descida a 3,200 µs (persistência infinita):
 
 | Firmware | Largura da faixa da próxima descida | Desvio-padrão do período | Foto |

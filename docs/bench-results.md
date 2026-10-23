@@ -9,7 +9,7 @@ podem ser citados. Os procedimentos (como medir) ficam no [roteiro de laboratór
 
 * `$DADOS` é a pasta das capturas (no computador do projeto, `~/Documents/sh-analyzer-data`); `$DADOS/lab/AAAA-MM-DD/`
   é um dia de bancada.
-* O firmware é o `git describe` gravado no cabeçalho de cada captura (a linha `Firmware:` do `ler_adc`).
+* O firmware é o `git describe` gravado no cabeçalho de cada captura (a primeira linha do `ler_adc`).
 * LSB é o da faixa usada: 312,5 µV em ±10,24 V, 156,3 µV em ±5,12 V e 78,1 µV em ±2,56 V.
 * Um resultado medido com um firmware que tinha um defeito conhecido diz qual, e se o defeito afeta o número.
 
@@ -53,7 +53,7 @@ corrente) e o T11 (ponta a ponta). Veja a
 ## T7g: o SPI rápido
 
 **22/10/2026** · firmware `v0.7-1-gb3c417b` (protocolo 3, cabeçalho v7) · `$DADOS/lab/2026-10-22/T7g_2026-10-22_0935/`
-(69 capturas, `./varrer_taxa.sh --spi`) · o tom de 10 kHz no canal 1, ±2,56 V. O SPI rápido tem bits de 13 ciclos
+(69 capturas, `./coletar.sh bancada --spi`) · o tom de 10 kHz no canal 1, ±2,56 V. O SPI rápido tem bits de 13 ciclos
 (~15,4 MHz, contra ~10,7) e lê cada bit em três instantes depois da borda do SCLK que o lança: A = 60 ns, B = 75 ns (a
 latência do SPI lento) e C = 90 ns.
 
@@ -81,7 +81,7 @@ latência do SPI lento) e C = 90 ns.
 ## T7f: a grade de tempo
 
 **2ª rodada, 22/10/2026, com o quadro fixo** · firmware `v0.7-1-gb3c417b`, SPI lento ·
-`$DADOS/lab/2026-10-22/T7f_2026-10-22_0917/` (56 capturas, `./varrer_taxa.sh --grade`):
+`$DADOS/lab/2026-10-22/T7f_2026-10-22_0917/` (56 capturas, `./coletar.sh bancada --grade`):
 
 * **A folga não depende mais do sinal:** 25 ciclos em todas as capturas longas do padrão de então (312,5 kS/s; eram 3 a
   5), com o tom, com o ARM ocupado e com 2 canais. Na parte J ela cai **exatamente 1 ciclo por tick**, de 30 (640) a
@@ -154,7 +154,7 @@ bate com a fração de amostras que têm tantos bits 1, tirada das próprias cap
   bit lido).
 * Corrigido no firmware seguinte (leitura sem desvio, troca de buffer espalhada): o simulador calibrado prevê 40
   ciclos de folga numa amostra comum, qualquer que seja o sinal, e ≥ 29 com a troca; teto ~327 kS/s. Falta a bancada
-  (`./varrer_taxa.sh --grade`, agora até 339 kS/s).
+  (`./coletar.sh bancada --grade`, agora até 339 kS/s).
 * Figura `grade_bits` (macros `\GradeBitsBase`, `\GradeBitsRazaoMin`, `\GradeBitsRazaoMax`, `\GradeBitsPeriodoEx`,
   `\GradeBitsMedidaEx`, `\GradeBitsPrevistaEx`).
 
@@ -239,7 +239,7 @@ sem a leitura do contador do osciloscópio.
 
 ## T3f: a fase da cadeia por ondas quadradas
 
-**22/10/2026** · firmware `v0.7-4-gb4ea1ad` · `./varrer_taxa.sh --fase`: 24 capturas de 30 s no canal 1, faixa de
+**22/10/2026** · firmware `v0.7-4-gb4ea1ad` · `./coletar.sh cadeia`: 24 capturas de 30 s no canal 1, faixa de
 ±2,56 V. São 7 quadradas (256, 768, 1280, 2304, 6400, 6912 e 20736 Hz; 20 Vpp, High-Z) e as variantes (1280 Hz em
 10 Vpp; 6912 e 20736 Hz em 16 Vpp com offset de +2 e −2 V), cada uma a 312,5 kS/s (SPI lento) e a 400 kS/s (SPI
 rápido). Nas 24, 0 amostras atrasadas e 0 divergências de leitura; folga de 25 e de 18 ciclos ·
@@ -324,7 +324,7 @@ O orçamento de incerteza da magnitude, em dB:
   gerador (tipicamente ±0,1 dB) não deixa fechar a questão.
 * **A faixa do ADC não foi testada.** O PGA do ADS8688 tem outro ganho em cada faixa, e a banda dele pode mudar com
   isso: o polo de 800 kHz pode até ser ele. As senoides de 19/10 (±10,24 V) e de 22/10 (±2,56 V) concordam a
-  0,13 dB rms até 45 kHz, o que não basta. O `./varrer_taxa.sh --fase --faixa 20.48` mede isso, e se o polo mudar
+  0,13 dB rms até 45 kHz, o que não basta. O `./coletar.sh cadeia --faixa 20.48` mede isso, e se o polo mudar
   com a faixa, ele é do ADC.
 * **Em 178 kHz, a correção multiplica o sinal por 63** (−36 dB): o ruído do ADC é multiplicado junto, e é ele, não o
   perfil, que limita a medida ali.

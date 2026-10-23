@@ -1,8 +1,8 @@
-"""CLI de ``adc_tool.py aliasing``: separa componentes reais de imagens de aliasing com duas capturas do mesmo sinal em
-taxas diferentes (o método está em ``aliasing``).
+"""CLI de ``adc_tool.py aliasing``: separa componentes reais de imagens de aliasing com duas ou mais capturas do mesmo
+sinal em taxas diferentes (o método está em ``aliasing``; o ``coletar.sh aliasing``, na BeagleBone, faz as capturas).
 
-Lê as duas capturas (a taxa vem do cabeçalho: a que a PRU gera), acha os picos de cada uma acima do piso, pareia cada
-pico de uma com o da outra pela frequência de entrada que explica os dois e imprime a tabela; ``--csv`` grava a mesma
+Lê as capturas (a taxa vem do cabeçalho: a que a PRU gera), acha os picos de cada uma acima do piso, pareia cada pico
+da 1ª com os das outras pela frequência de entrada que explica todos e imprime a tabela; ``--csv`` grava a mesma
 tabela. Traduz ``ErroUso`` -> ``parser.error`` e ``ErroSHAN`` -> ``Erro: ...``.
 """
 
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .aliasing import Componente, entradas_ambiguas, parear, picos_do_sinal
+from .aliasing import LETRAS, ComponenteMulti, entradas_ambiguas_em_todas, parear_varias, picos_do_sinal
 from .cabecalho import ler_cabecalho
 from .constantes import CORTE_SUPRAHARMONICOS_PADRAO, DISTANCIA_MINIMA_PICOS_PADRAO
 from .erros import ErroSHAN, ErroUso
@@ -30,16 +30,16 @@ FRACAO_DA_NYQUIST = 0.98        # a análise vai até aqui (o último bin antes 
 def montar_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="adc_tool.py aliasing",
-        description="Separa componentes reais de imagens de aliasing com DUAS capturas do mesmo sinal em taxas "
-                    "diferentes: um componente real fica na mesma frequência nas duas; uma imagem muda de lugar, e o "
-                    "par de posições dá a frequência de entrada. O único anti-aliasing da cadeia é o filtro de ~15 kHz "
+        description="Separa componentes reais de imagens de aliasing com DUAS OU MAIS capturas do mesmo sinal em taxas "
+                    "diferentes: um componente real fica na mesma frequência em todas; uma imagem muda de lugar, e as "
+                    "posições dão a frequência de entrada. Uma 3ª taxa desfaz as posições em que duas coincidem. O único anti-aliasing da cadeia é o filtro de ~15 kHz "
                     "do ADS8688: a 400 kS/s, uma imagem chega a 150 kHz só ~9 dB abaixo de um componente real. As "
                     "capturas não são simultâneas: a emissão tem de ser estável entre elas.",
-        epilog="Ex.: sudo ./ler_adc 400000 1 --duracao 10s -o A_400k.bin; sudo ./ler_adc 320000 1 --duracao 10s -o "
-               "B_320k.bin (na BeagleBone); depois uv run scripts/adc_tool.py aliasing A_400k.bin B_320k.bin "
-               "--csv aliasing.csv")
-    p.add_argument("captura_a", type=Path, help="1ª captura .bin (com cabeçalho).")
-    p.add_argument("captura_b", type=Path, help="2ª captura .bin, do mesmo sinal, em outra taxa.")
+        epilog="Ex.: ./coletar.sh aliasing (na BeagleBone: 3 taxas, 10 s cada); depois uv run scripts/adc_tool.py "
+               "aliasing $DIA/ALS_*/X_*_sinal_*.bin --csv aliasing.csv")
+    p.add_argument("capturas", type=Path, nargs="+", metavar="CAPTURA",
+                   help="2 ou mais capturas .bin (com cabeçalho) do mesmo sinal, cada uma numa taxa; a 1ª é a "
+                        "referência (a coluna A).")
     p.add_argument("--canal", type=int, help="Canal analisado (padrão: o primeiro presente nas duas capturas).")
     p.add_argument("--freq-min", type=float, default=CORTE_SUPRAHARMONICOS_PADRAO, metavar="HZ",
                    help="Menor frequência analisada (padrão: %(default)g Hz, abaixo fica a rede e os harmônicos dela).")
@@ -94,37 +94,41 @@ def _ler(caminho: Path, canal: int | None, args: argparse.Namespace) -> tuple[np
     return sinal, fs, faixa, canal
 
 
-def _canal_comum(a: Path, b: Path) -> int:
+def _canal_comum(caminhos: list[Path]) -> int:
     listas = []
-    for caminho in (a, b):
+    for caminho in caminhos:
         cab = ler_cabecalho(caminho)
         if cab is None or not cab.crc32_valido:
             raise ErroSHAN(f"'{caminho.name}' sem cabeçalho válido: a taxa vem dele.")
         listas.append(list(cab.lista_canais[:max(cab.num_canais, 1)]))
-    comuns = [c for c in listas[0] if c in listas[1]]
+    comuns = [c for c in listas[0] if all(c in outra for outra in listas[1:])]
     if not comuns:
-        raise ErroUso(f"as capturas não têm canal em comum ({listas[0]} e {listas[1]}).")
+        raise ErroUso(f"as capturas não têm canal em comum ({', '.join(str(lista) for lista in listas)}).")
     return comuns[0]
 
 
-def _linha(c: Componente) -> str:
-    def pico(p):
-        return f"{p.frequencia_hz / 1e3:10.3f} {p.amplitude_db:7.1f}" if p is not None else f"{'—':>10} {'—':>7}"
+def _celula(p) -> str:
+    return f"{p.frequencia_hz / 1e3:10.3f} {p.amplitude_db:7.1f}" if p is not None else f"{'—':>10} {'—':>7}"
+
+
+def _linha(c: ComponenteMulti) -> str:
     entrada = f"{c.frequencia_entrada_hz / 1e3:10.3f}" if c.frequencia_entrada_hz is not None else f"{'—':>10}"
-    return f"  {entrada}   {pico(c.em_a)}   {pico(c.em_b)}   {c.diagnostico}"
+    return f"  {entrada}   " + "   ".join(_celula(p) for p in c.picos) + f"   {c.diagnostico}"
 
 
-def _gravar_csv(caminho: Path, componentes: list[Componente]) -> None:
+def _gravar_csv(caminho: Path, componentes: list[ComponenteMulti], n: int) -> None:
     def num(x):
         return "" if x is None else f"{x:.6g}"
+    letras = [LETRAS[k].lower() for k in range(n)]
     with open(caminho, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["entrada_hz", "a_hz", "a_db", "b_hz", "b_db", "real_em_a", "real_em_b", "ambiguas_hz", "diagnostico"])
+        w.writerow(["entrada_hz", *[f"{x}_{c}" for x in letras for c in ("hz", "db")],
+                    *[f"real_em_{x}" for x in letras], "ambiguas_hz", "diagnostico"])
         for c in componentes:
             w.writerow([num(c.frequencia_entrada_hz),
-                        num(c.em_a.frequencia_hz if c.em_a else None), num(c.em_a.amplitude_db if c.em_a else None),
-                        num(c.em_b.frequencia_hz if c.em_b else None), num(c.em_b.amplitude_db if c.em_b else None),
-                        int(c.real_em_a), int(c.real_em_b), ";".join(f"{f:.6g}" for f in c.ambiguas_hz), c.diagnostico])
+                        *[v for p in c.picos for v in (num(p.frequencia_hz if p else None),
+                                                       num(p.amplitude_db if p else None))],
+                        *[int(r) for r in c.reais], ";".join(f"{f:.6g}" for f in c.ambiguas_hz), c.diagnostico])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -132,48 +136,56 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     configurar_logging_cli()
     try:
-        canal = args.canal if args.canal is not None else _canal_comum(args.captura_a, args.captura_b)
-        sinal_a, fs_a, faixa_a, _ = _ler(args.captura_a, canal, args)
-        sinal_b, fs_b, faixa_b, _ = _ler(args.captura_b, canal, args)
-        if abs(fs_a - fs_b) <= args.tolerancia_hz:
-            raise ErroUso(f"as duas capturas têm a mesma taxa por canal ({fs_a:.0f} S/s): para separar as imagens, "
-                          "capture o mesmo sinal em outra taxa (ex.: 400000 e 320000).")
-        if (faixa_a is None) != (faixa_b is None):
-            raise ErroUso("só uma das capturas tem a faixa do ADC no cabeçalho: as amplitudes não são comparáveis.")
-        unidade = "dBV no pino do ADC" if faixa_a is not None else "dB re 1 LSB"
+        if len(args.capturas) < 2 or len(args.capturas) > len(LETRAS):
+            raise ErroUso(f"passe de 2 a {len(LETRAS)} capturas do mesmo sinal, cada uma numa taxa.")
+        canal = args.canal if args.canal is not None else _canal_comum(args.capturas)
+        lidas = [_ler(caminho, canal, args) for caminho in args.capturas]
+        taxas = [fs for _, fs, _, _ in lidas]
+        for i in range(len(taxas)):
+            for j in range(i + 1, len(taxas)):
+                if abs(taxas[i] - taxas[j]) <= args.tolerancia_hz:
+                    raise ErroUso(f"as capturas {LETRAS[i]} e {LETRAS[j]} têm a mesma taxa por canal ({taxas[i]:.0f} "
+                                  "S/s): para separar as imagens, cada captura tem de estar numa taxa (ex.: 400000, "
+                                  "390625 e 320000).")
+        if len({faixa is None for _, _, faixa, _ in lidas}) > 1:
+            raise ErroUso("só algumas capturas têm a faixa do ADC no cabeçalho: as amplitudes não são comparáveis.")
+        unidade = "dBV no pino do ADC" if lidas[0][2] is not None else "dB re 1 LSB"
 
-        faixas = []
-        picos = []
-        for nome, sinal, fs in (("A", sinal_a, fs_a), ("B", sinal_b, fs_b)):
+        faixas, picos = [], []
+        for k, (sinal, fs, _, _) in enumerate(lidas):
             f_max = min(args.freq_max or np.inf, FRACAO_DA_NYQUIST * fs / 2)
             if f_max <= args.freq_min:
-                raise ErroUso(f"captura {nome}: a faixa analisada é vazia ({args.freq_min:g} a {f_max:g} Hz).")
+                raise ErroUso(f"captura {LETRAS[k]}: a faixa analisada é vazia ({args.freq_min:g} a {f_max:g} Hz).")
             achados, piso = picos_do_sinal(sinal, fs, args.freq_min, f_max, args.acima_do_piso, args.resolucao,
                                            DISTANCIA_MINIMA_PICOS_PADRAO)
-            log.info(f"{nome}: {fs / 1e3:g} kS/s no canal {canal}, {args.freq_min / 1e3:g} a {f_max / 1e3:g} kHz: "
-                     f"{len(achados)} pico(s) acima de {piso + args.acima_do_piso:.1f} {unidade} (piso {piso:.1f}).")
+            log.info(f"{LETRAS[k]}: {args.capturas[k].name}, {fs / 1e3:g} kS/s no canal {canal}, {args.freq_min / 1e3:g} "
+                     f"a {f_max / 1e3:g} kHz: {len(achados)} pico(s) acima de {piso + args.acima_do_piso:.1f} {unidade} "
+                     f"(piso {piso:.1f}).")
             faixas.append((args.freq_min, f_max))
             picos.append(achados)
 
-        componentes = parear(picos[0], fs_a, faixas[0], picos[1], fs_b, faixas[1], args.tolerancia_hz,
-                             args.tolerancia_db, args.f_max_entrada)
-        log.info(f"\n  {'entrada':>10}   {'em A':>10} {'dB':>7}   {'em B':>10} {'dB':>7}   diagnóstico"
-                 f"\n  {'(kHz)':>10}   {'(kHz)':>10} {'':>7}   {'(kHz)':>10}")
+        componentes = parear_varias(picos, taxas, faixas, args.tolerancia_hz, args.tolerancia_db, args.f_max_entrada)
+        cabecalho = "   ".join(f"{'em ' + LETRAS[k]:>10} {'dB':>7}" for k in range(len(lidas)))
+        unidades = "   ".join(f"{'(kHz)':>10} {'':>7}" for _ in lidas)
+        log.info(f"\n  {'entrada':>10}   {cabecalho}   diagnóstico\n  {'(kHz)':>10}   {unidades}")
         for c in componentes:
             log.info(_linha(c))
-        reais = sum(1 for c in componentes if c.em_a and c.em_b and c.real_em_a and c.real_em_b)
-        imagens = sum(1 for c in componentes if c.em_a and c.em_b and not (c.real_em_a and c.real_em_b))
-        sem_par = sum(1 for c in componentes if c.em_a is None or c.em_b is None)
-        log.info(f"\n{reais} real(is), {imagens} com imagem em pelo menos uma das capturas e {sem_par} sem par "
-                 f"(amplitudes em {unidade}).")
+        com_entrada = [c for c in componentes if c.frequencia_entrada_hz is not None]
+        reais = sum(1 for c in com_entrada if all(r for r, p in zip(c.reais, c.picos) if p is not None))
+        log.info(f"\n{reais} real(is), {len(com_entrada) - reais} com imagem em pelo menos uma das capturas e "
+                 f"{len(componentes) - len(com_entrada)} sem par (amplitudes em {unidade}).")
 
-        ambiguas = entradas_ambiguas(fs_a, fs_b, min(f[1] for f in faixas), args.f_max_entrada, args.tolerancia_hz)
+        ambiguas = entradas_ambiguas_em_todas(taxas, min(f[1] for f in faixas), args.f_max_entrada, args.tolerancia_hz)
+        nomes_taxas = " e ".join(f"{fs / 1e3:g}" for fs in taxas)
         if ambiguas:
             texto = ", ".join(f"{x / 1e3:g} kHz (de {e / 1e3:g})" for x, e in ambiguas)
-            log.info(f"Com {fs_a / 1e3:g} e {fs_b / 1e3:g} kS/s, uma imagem cai no mesmo lugar nas duas em: {texto}. "
-                     "Um pico real ali não se distingue dessa imagem sem uma 3ª taxa.")
+            log.info(f"Com {nomes_taxas} kS/s, uma imagem cai no mesmo lugar em todas em: {texto}. Um pico real ali "
+                     "não se distingue dessa imagem sem mais uma taxa.")
+        elif len(taxas) > 2:
+            log.info(f"Com {nomes_taxas} kS/s, nenhuma imagem (até {args.f_max_entrada / 1e3:g} kHz) cai no mesmo "
+                     "lugar em todas: cada pico tem uma só entrada possível.")
         if args.csv is not None:
-            _gravar_csv(args.csv, componentes)
+            _gravar_csv(args.csv, componentes, len(lidas))
             log.info(f"Tabela gravada em {args.csv}")
     except ErroUso as e:
         parser.error(str(e))

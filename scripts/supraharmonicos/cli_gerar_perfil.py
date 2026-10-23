@@ -60,7 +60,7 @@ def montar_parser() -> argparse.ArgumentParser:
         description=(
             "Constrói o perfil de calibração (.json) da SONDA -- o conjunto sonda + frontend + ADS8688 (com o "
             "filtro passa-baixa interno dele), medido de ponta a ponta -- a partir das capturas de "
-            "firmware/calibrar_sonda.sh. Mede frequência e amplitude de cada captura (não confia no nome do "
+            "o ./coletar.sh sonda. Mede frequência e amplitude de cada captura (não confia no nome do "
             "arquivo), calcula o ganho contra a grandeza que foi injetada e agrega repetições. A grandeza "
             "injetada vem de UMA destas fontes: a amplitude conhecida da senoide (gravada nos metadados de cada "
             "captura, ou --amplitude-referencia), o osciloscópio (--referencia-osciloscopio), leituras "
@@ -69,7 +69,7 @@ def montar_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Exemplos:\n"
-            "  # Amplitude gravada nos metadados de cada captura (calibrar_sonda.sh --amplitude 500mVpp):\n"
+            "  # Amplitude gravada nos metadados de cada captura (coletar.sh sonda --amplitude 500mVpp):\n"
             "  uv run gerar_perfil_sonda.py capturas/fluke_i30_01 --plot\n"
             "  # Amplitude constante dada aqui (mesmo sinal em todas as capturas)\n"
             "  uv run gerar_perfil_sonda.py capturas/fluke_i30_01 --amplitude-referencia 500mVpp --plot\n"
@@ -94,7 +94,7 @@ def montar_parser() -> argparse.ArgumentParser:
     grupo_ref = parser.add_argument_group(
         "Referência da grandeza injetada (escolha UMA fonte)",
         "Sem referência não há ganho. Sem nenhuma flag desta seção, vale a amplitude gravada nos metadados das "
-        "capturas ('ref: amp=...', escrita por calibrar_sonda.sh --amplitude), se houver.",
+        "capturas ('ref: amp=...', escrita por coletar.sh sonda --amplitude), se houver.",
     )
     grupo_ref.add_argument("--amplitude-referencia", type=str, default=None, metavar="AMPLITUDE",
                            help="Amplitude CONHECIDA da senoide injetada, igual em todas as capturas: número + unidade + tipo "
@@ -112,7 +112,7 @@ def montar_parser() -> argparse.ArgumentParser:
                            help=f"Grandeza real lida num instrumento externo, anotada por captura em um CSV (colunas 'arquivo' e "
                                 f"'v_shunt_rms_V' [tensão no shunt; precisa de --resistencia-shunt], 'corrente_rms_A' ou "
                                 f"'tensao_rms_V' [tensão na entrada de uma cadeia de tensão]). Sem caminho: '{NOME_REFERENCIA_EXTERNA}' "
-                                f"dentro da pasta de capturas (escrito por 'calibrar_sonda.sh --ref-externa'). As capturas têm 1 canal só (o da sonda).")
+                                f"dentro da pasta de capturas (escrito por './coletar.sh sonda --ref-externa'). As capturas têm 1 canal só (o da sonda).")
     adicionar_argumentos_osciloscopio(parser.add_argument_group(
         "Osciloscópio (com --referencia-osciloscopio)",
         "O leitor de .m/.mat/.csv é tolerante, mas não há formato único entre fabricantes: se ele não acertar a "
@@ -222,7 +222,7 @@ def _validar_e_completar_args(args: argparse.Namespace) -> None:
     if not re.match(r"^[a-z0-9_-]+$", args.id):
         log.warning(
             f"id '{args.id}' tem caracteres fora de [a-z0-9_-] -- "
-            f"firmware/calibrar_sonda.sh só gera pastas já sanitizadas; se "
+            f"o ./coletar.sh sonda só gera pastas já sanitizadas; se "
             f"esta pasta não veio de lá, considere renomear."
         )
 
@@ -327,7 +327,7 @@ def _medir_capturas(args: argparse.Namespace, arquivos: list[Path], status_manif
                 log.warning(
                     f"pulando '{caminho.name}' -- sem leitura do instrumento externo em "
                     f"'{_caminho_referencia_externa(args).name}'. Anote o valor (ou refaça o ponto com "
-                    f"'calibrar_sonda.sh --ref-externa --modo refazer')."
+                    f"'./coletar.sh sonda --ref-externa --modo refazer')."
                 )
                 continue
             resultado.referencia_pico = math.sqrt(2.0) * corrente_rms  # RMS -> pico (tom senoidal)

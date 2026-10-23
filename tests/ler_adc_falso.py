@@ -5,12 +5,12 @@
 #     "numpy>=1.20",
 # ]
 # ///
-"""``ler_adc`` FALSO, só para testar ``firmware/calibrar_sonda.sh`` sem hardware.
+"""``ler_adc`` FALSO, só para testar ``./coletar.sh sonda`` sem hardware.
 
 Imita a interface de linha de comando do ``firmware/ler_adc.c`` (taxa, lista de canais,
 ``--blocos``, ``--grandeza``, ``--sonda``, ``--faixa-adc``, ``--atraso-cs``, ``-o``, ``-t``, ``-d``) e grava um ``.bin`` v5
 sintético com o mesmo formato (``capturas_sinteticas.montar_cabecalho``). A descrição (``-d``) vai para o cabeçalho
-e, se trouxer ``ref: amp=...``, a amplitude do tom injetado é essa (o gerador "obedeceu" ao operador). Quem usa é ``test_calibrar_sonda.py``,
+e, se trouxer ``ref: amp=...``, a amplitude do tom injetado é essa (o gerador "obedeceu" ao operador). Quem usa é ``test_coletar_sonda.py``,
 que o chama através de um pequeno wrapper ``sh`` (o script de calibração executa o binário direto).
 
 Variáveis de ambiente:
@@ -45,12 +45,12 @@ Variáveis de ambiente:
     grandeza_corrente  todos os canais marcados como corrente   sem_cabecalho     só amostras, sem o cabeçalho "SHAN"
 
 O canal da SONDA (o que recebe ``planta_h(f)``) é o que tem id em ``--sonda``; sem nenhum id, o de grandeza corrente.
-Assim a mesma simulação vale para ``calibrar_sonda.sh --grandeza tensao`` (sonda marcada como tensão).
+Assim a mesma simulação vale para ``coletar.sh sonda --grandeza tensao`` (sonda marcada como tensão).
 
 Faixa do ADC: sem ``--faixa-adc`` todo canal usa o código 0 (±10,24 V, fundo de escala total 20,48 V), como o ADS8688 de
 verdade; com ela, cada canal usa a faixa pedida (``canal:volts``) e as amostras são codificadas com ela. As amplitudes
 dos cenários são em VOLTS (um tom de 1 V de pico = 19,5% do fundo de escala em ±5,12 V, 9,8% em ±10,24 V -- abaixo de
-10% o script avisa "sinal fraco"); por isso ``test_calibrar_sonda.py`` roda o script com ``--faixa-adc 10.24`` por
+10% o script avisa "sinal fraco"); por isso ``test_coletar_sonda.py`` roda o script com ``--faixa-adc 10.24`` por
 padrão, a faixa em que os sinais dos cenários têm a fração de escala para a qual foram pensados.
 
 A frequência "injetada na bancada" é a pedida no título (``Calibracao <F>Hz rep<N> ...``), como se

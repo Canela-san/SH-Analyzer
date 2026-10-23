@@ -19,7 +19,7 @@ Passo a passo para quem vai **operar** o SH-Analyzer: capturar na BeagleBone, an
 
 Indo ao laboratório validar o projeto inteiro? Siga o [`lab-procedure.md`](lab-procedure.md): testes numerados, sinal a injetar em cada um, comandos e o que anotar.
 
-> Os comandos `uv run scripts/...` deste guia são executados **a partir da raiz do repositório**, no computador (`./scripts/adc_tool.py ...` também funciona: o próprio script chama o `uv`). Os comandos `./setup.sh`, `./ler_adc` e `./calibrar_sonda.sh` são executados **na BeagleBone**, dentro da pasta `firmware/`.
+> Os comandos `uv run scripts/...` deste guia são executados **a partir da raiz do repositório**, no computador (`./scripts/adc_tool.py ...` também funciona: o próprio script chama o `uv`). Os comandos `./setup.sh`, `./ler_adc` e `./coletar.sh sonda` são executados **na BeagleBone**, dentro da pasta `firmware/`.
 
 ---
 
@@ -31,7 +31,7 @@ Indo ao laboratório validar o projeto inteiro? Siga o [`lab-procedure.md`](lab-
 | 2. Capturar | BeagleBone | `firmware/ler_adc` | Arquivo `.bin` autodescritivo |
 | 3. Transferir | Computador | `scripts/BeagleBone_Setup.sh trazer` (ou `scp`, ou a pasta do `montar`) | `.bin` no seu computador |
 | 4. Analisar | Computador | `scripts/adc_tool.py` | Gráficos, lista de picos, CSV ou HDF5 |
-| (extra) Calibrar sonda | BeagleBone + computador | `firmware/calibrar_sonda.sh` → `scripts/gerar_perfil_sonda.py` | Perfil `.json` que corrige a resposta em frequência da sonda |
+| (extra) Calibrar sonda | BeagleBone + computador | `firmware/coleta/sonda.sh` → `scripts/gerar_perfil_sonda.py` | Perfil `.json` que corrige a resposta em frequência da sonda |
 | (extra) Medir para o relatório | Computador | `scripts/medir_captura.py` | Números com unidade (ruído, THD, SINAD, ENOB, SFDR, continuidade, diafonia) e uma linha de CSV por canal |
 
 ---
@@ -57,27 +57,27 @@ scripts/BeagleBone_Setup.sh ssh          # terminal na pasta do firmware, com o 
 | `enviar [--setup] [--forcar] [--simular]` | Leva `firmware/` com a versão e um plano B do firmware que estava lá (abaixo) |
 | `setup` | Roda o `setup.sh` lá: pinos, compilação e carga da PRU, sem pedir a senha do sudo |
 | `ssh [comando]` | Abre um terminal na pasta do firmware, com `sudo` sem senha (para o `sudo ./ler_adc`); com um comando, só o roda lá (`ssh 'sudo ./ler_adc 100000 1 --blocos 3'`) |
-| `trazer [padrão] [destino]` | Copia capturas (e pastas, como a `T7e_*` do `varrer_taxa.sh`) da pasta do firmware (padrão `'*.bin'`) para o computador (padrão `$DIA`, ou a pasta atual) |
+| `trazer [padrão] [destino]` | Copia capturas (e pastas, como a `T7e_*` do `coletar.sh bancada`) da pasta do firmware (padrão `'*.bin'`) para o computador (padrão `$DIA`, ou a pasta atual) |
 | `montar [pasta]` / `desmontar` | Monta o home da BeagleBone numa pasta do computador por `sshfs` (padrão `~/BeagleBone`; `sudo apt install sshfs`). Ele recusa uma pasta dentro do repositório: lá, um `git clean -xfd` apagaria arquivos **da placa** pela montagem |
 | `configurar` | Grava IP, usuário, senha e as pastas em `~/.config/sh-analyzer/beaglebone.conf` (só você lê), para não informar de novo |
 
 **Acesso, informado uma vez.** Padrões da imagem Debian da BeagleBone: `debian@192.168.6.2`, senha `temppwd` (também a do sudo). Em alguns sistemas a placa aparece em `192.168.7.2`: `--ip 192.168.7.2`. Para outros valores, `configurar` (grava), as variáveis `BBB_IP`, `BBB_USER`, `BBB_SENHA`, `BBB_SENHA_SUDO`, `BBB_PASTA`, `BBB_MONTAGEM` (valem sobre o arquivo) ou as opções `--ip`, `--usuario`, `--pasta` (valem sobre tudo). A senha nunca vai na linha de comando, onde `ps` a mostraria: o login SSH a recebe do próprio script (`SSH_ASKPASS`) e o sudo, de um arquivo em `/dev/shm` (RAM, só do usuário) que é apagado no fim de cada comando ou sessão. Com uma chave SSH autorizada (`ssh-copy-id debian@192.168.6.2`), o login nem usa senha. Uma conexão é reaproveitada pelos comandos seguintes por 2 minutos, porque a placa demora para abrir conexões.
 
-**O que vai para a BeagleBone: só a pasta `firmware/`** (o `enviar`). Ela compila e roda o `ler_adc`, o código da PRU, o `setup.sh` e o `calibrar_sonda.sh` (bash puro); a análise é toda no computador. O repositório inteiro e o `.git` só ocupariam o espaço das capturas. O `enviar` recusa se `firmware/` tem mudanças não commitadas (`--forcar` envia, marcando a versão com `-dirty`); escreve em `firmware/VERSAO` o `git describe` (é a versão que o `ler_adc` grava em cada captura, já que na BeagleBone não há `.git`); guarda o firmware que estava lá, **só o código**, em `~/firmware-anteriores/<data>_<versão>/` (o plano B); e copia os arquivos versionados de `firmware/` mais o `VERSAO`, numa conexão SSH só. Nada na BeagleBone é apagado, e capturas que estejam na pasta do firmware não são copiadas para o plano B. `--simular` mostra o que faria.
+**O que vai para a BeagleBone: só a pasta `firmware/`** (o `enviar`). Ela compila e roda o `ler_adc`, o código da PRU, o `setup.sh` e o `coletar.sh` (bash puro, com os modos em `coleta/`); a análise é toda no computador. O repositório inteiro e o `.git` só ocupariam o espaço das capturas. O `enviar` recusa se `firmware/` tem mudanças não commitadas (`--forcar` envia, marcando a versão com `-dirty`); escreve em `firmware/VERSAO` o `git describe` (é a versão que o `ler_adc` grava em cada captura, já que na BeagleBone não há `.git`); guarda o firmware que estava lá, **só o código**, em `~/firmware-anteriores/<data>_<versão>/` (o plano B); e copia os arquivos versionados de `firmware/` mais o `VERSAO`, numa conexão SSH só. Nada na BeagleBone é apagado, e capturas que estejam na pasta do firmware não são copiadas para o plano B. `--simular` mostra o que faria.
 
 **O `setup.sh`** (o `setup`, ou `./setup.sh` lá, na pasta do firmware) faz, nesta ordem: configura os pinos SPI (`config-pin`), mostra a versão que vai compilar, recompila tudo (`make clean && make`, que gera `ler_adc` e `fw_pru.out`), copia o firmware para `/lib/firmware/am335x-pru0-fw` e reinicia a PRU pelo `remoteproc`. Ele para no primeiro erro (uma compilação que falha não carrega firmware velho na PRU) e, no fim, confere que a PRU ficou rodando; se não ficou, mostra as últimas mensagens do kernel (à mão: `dmesg | tail -n 20`). Rode-o de novo depois de cada reboot da placa e de cada mudança no firmware.
 
-**Acerte o relógio** (o `hora`, que o `preparar` já faz). A BeagleBone não tem bateria de RTC, então depois de ligada ela pode estar com a data errada, e o `timestamp` gravado no cabeçalho de cada captura sairia errado. O `hora` envia o instante do computador em UTC (vale qualquer que seja o fuso dela), desconta o tempo que o sudo levou e diz quanto o relógio estava errado. O `calibrar_sonda.sh` avisa quando o relógio marca um ano antes de 2024.
+**Acerte o relógio** (o `hora`, que o `preparar` já faz). A BeagleBone não tem bateria de RTC, então depois de ligada ela pode estar com a data errada, e o `timestamp` gravado no cabeçalho de cada captura sairia errado. O `hora` envia o instante do computador em UTC (vale qualquer que seja o fuso dela), desconta o tempo que o sudo levou e diz quanto o relógio estava errado. O `coletar.sh sonda` avisa quando o relógio marca um ano antes de 2024.
 
 ---
 
 ## Capturar com `ler_adc`
 
 ```bash
-sudo ./ler_adc <frequencia_hz> [lista_de_canais] [opções]
+sudo ./ler_adc [frequencia_hz [lista_de_canais]] [opções]
 ```
 
-`sudo` é necessário porque o programa acessa `/dev/mem`.
+`sudo` é necessário porque o programa acessa a PRU, os pinos e `/dev/mem`. `./ler_adc --help` mostra as opções.
 
 | Argumento | O que faz |
 |---|---|
@@ -92,7 +92,8 @@ sudo ./ler_adc <frequencia_hz> [lista_de_canais] [opções]
 | `--sonda C:ID[,...]` | Id da sonda usada em cada canal (ex.: `1:fluke_i30_01`), até 31 caracteres. É só um texto no cabeçalho; a correção é feita depois, no `adc_tool.py` |
 | `--faixa-adc C:V[,...]` | **Faixa de entrada do ADC** de cada canal, como fundo de escala total em Volts: `20.48` (±10,24 V, o padrão), `10.24` (±5,12 V) ou `5.12` (±2,56 V). Ex.: `0:20.48,1:5.12`. Canal não citado = `20.48`. Veja [Faixa de entrada do ADC](#faixa-de-entrada-do-adc) |
 | `--spi MODO` | `rapido` (o padrão desde 22/10/2026: SCLK de ~15,4 MHz, período constante até ~419 kS/s, validado no T7g) ou `lenta` (o SPI de antes: ~10,7 MHz, até ~328 kS/s). No rápido, cada bit é lido 60, 75 e 90 ns depois da borda do SCLK que o lança (fases A, B e C); grava-se a B (a mesma latência do padrão), ou a pedida em `rapido:a`/`rapido:c`, e o fim da captura diz em quantos quadros as outras discordaram: a margem de tempo do SDO, medida pela PRU. Vai para o cabeçalho (versão 7) |
-| `--forcar-taxa` | Aceita uma frequência acima do **teto da PRU** (419287 Hz com o SPI rápido e 327868 com o lento, nas esperas de CS padrão; esperas maiores baixam o teto). Sem ela, desde 23/10/2026, o `ler_adc` recusa: acima do teto as amostras saem atrasadas e a taxa real fica menor que a do cabeçalho (pedir 500000 dava ~430 kS/s gravados como 500 kS/s). Só para varreduras que medem o teto, como o `varrer_taxa.sh` |
+| `--forcar-taxa` | Aceita uma frequência acima do **teto da PRU** (419287 Hz com o SPI rápido e 327868 com o lento, nas esperas de CS padrão; esperas maiores baixam o teto). Sem ela, desde 23/10/2026, o `ler_adc` recusa: acima do teto as amostras saem atrasadas e a taxa real fica menor que a do cabeçalho (pedir 500000 dava ~430 kS/s gravados como 500 kS/s). Só para varreduras que medem o teto, como o `coletar.sh bancada` |
+| `-v`, `--verbose` | Mostra também os detalhes: a configuração da PRU, os pinos, a DDR, o cabeçalho, cada bloco (fora de um terminal) e os tempos de gravação do ARM. Sem ela, só o que importa: a configuração, a barra de progresso, os avisos e o resumo final |
 | `--atraso-cs S,H,A` | Atrasos do CS em cada amostra, em passos de 10 ns: CS descendo → 1º clock, último clock → CS subindo, CS alto entre amostras. Padrão `3,1,3` (30/10/30 ns, o mínimo do datasheet, desde 21/10/2026; era `200,100,100`, 2/1/1 µs). Esperas maiores só alongam o quadro e baixam a taxa máxima. Veja [Integridade e taxa máxima](#integridade-da-captura-e-taxa-máxima) |
 
 Exemplos:
@@ -106,6 +107,51 @@ sudo ./ler_adc 102400 --duracao 10m -o ensaio_bancada.bin \
 sudo ./ler_adc 102400 0,1 --grandeza 0:tensao,1:corrente --sonda 1:fluke_i30_01
 sudo ./ler_adc 100000 0,1 --faixa-adc 0:20.48,1:5.12   # canal 0 em ±10,24 V, canal 1 (sinal pequeno) em ±2,56 V
 ```
+
+### O que aparece no terminal
+
+```
+ler_adc · SH-Analyzer · firmware v0.7-12-gabc1234
+  Arquivo      SH_2026-10-23/S0_60Hz.bin
+  Título       S0 60 Hz
+  Taxa         400000 S/s (SPI rápido, fase B)
+  Canal 1      tensão, ±2.56 V, sonda cadeia_tensao_fase
+  Duração      12 blocos = 31.46 s (pedida: 30 s)
+
+  Capturando  ████████████░░░░░░░░░░░░  6/12 blocos · 15.7 de 31.5 s
+```
+
+e, no fim:
+
+```
+✓ Captura concluída
+  Arquivo      SH_2026-10-23/S0_60Hz.bin (12 blocos, 31.46 s, 24.0 MiB)
+  Integridade  tudo certo: 0 amostras atrasadas, 0 buffers sobrescritos, 0 quadros com ruído no SDO
+  Grade        exata: folga mínima 18 ciclos (90 ns), período constante até 414938 S/s
+  SPI          rápido, fase B gravada; divergências de leitura: 0 na fase A e 0 na C
+  Taxa medida  399931 S/s pelo relógio do ARM (-0.02 % da pedida)
+```
+
+* **Avisos e erros** saem no stderr, com `Aviso:` ou `Erro:` na frente; o resto, no stdout. Num terminal há cores e a
+  barra de progresso; fora dele (num log, no `coletar.sh`), o texto sai limpo. O `coletar.sh` lê as linhas
+  `Integridade`, `Grade`, `SPI` e `Taxa medida` do resumo.
+* **O resultado** é `✓ Captura concluída`, `! Captura concluída, com avisos` (amostras atrasadas ou ruído no SDO),
+  `! Captura interrompida antes do fim` (Ctrl+C numa captura com tamanho definido) ou `✗ ...` (amostras perdidas, erro
+  de escrita, ADC sem resposta).
+* **Códigos de saída:** 0 ok, 1 erro, 2 argumento inválido, 3 buffers sobrescritos (amostras perdidas: refaça) e 4 ADC
+  sem resposta.
+
+**O que o `ler_adc` confere sozinho, antes e durante a captura:**
+
+* **Os pinos da PRU** (P9_28 a P9_31, os mesmos do `config-pin` do `setup.sh`). O `config-pin` se perde quando a
+  BeagleBone reinicia: sem ele, a PRU chaveia pinos desligados e a captura sai **toda zerada**. O `ler_adc` lê o modo de
+  cada pino onde o `config-pin` o grava (`/sys/devices/platform/ocp/ocp:P9_xx_pinmux/state`) e, se não for o da PRU,
+  avisa e o configura de novo. Numa imagem sem esse caminho, só avisa que não deu para conferir.
+* **A memória dos buffers** fora do Linux (`mem=496M` no `/boot/uEnv.txt`).
+* **O ADC respondendo**, a cada bloco: 65536 amostras iguais seguidas só acontecem com o ADC mudo (a placa de
+  aquisição sem alimentação: **pelo USB da BeagleBone ela fica desligada**, ligue a fonte de 5 V no conector; ou os
+  pinos sem configuração) ou com a entrada saturada. A captura para com o código 4 e a causa provável.
+* **A taxa** pedida contra o teto da PRU (ver `--forcar-taxa`) e o firmware da PRU contra o do `ler_adc` (o protocolo).
 
 ### Faixa de entrada do ADC
 
@@ -125,23 +171,23 @@ O ADS8688 converte cada canal em 16 bits dentro de uma **faixa de entrada** prog
 
 ### Integridade da captura e taxa máxima
 
-Enquanto captura, a PRU conta três coisas que indicariam dados ruins, sem custo para a amostragem (as contas ficam na folga entre uma amostra e a espera pela próxima, e só são publicadas a cada bloco). O `ler_adc` avisa a cada bloco, imprime um resumo no fim e grava os três no cabeçalho (versão 4):
+Enquanto captura, a PRU conta três coisas que indicariam dados ruins, sem custo para a amostragem (as contas ficam na folga entre uma amostra e a espera pela próxima, e só são publicadas a cada bloco). O `ler_adc` avisa quando um deles aumenta, mostra os três na linha `Integridade` do resumo e os grava no cabeçalho (versão 4):
 
 | Contador | O que significa | O que fazer |
 |---|---|---|
-| amostras atrasadas | A PRU chegou atrasada para tomar a amostra: a taxa pedida passou do que ela alcança (~326 kS/s com as esperas padrão, 3,1,3; ~143 kS/s com as antigas, 200,100,100). A taxa real do arquivo é **menor** que a do cabeçalho | Peça uma taxa menor (o padrão, 312,5 kS/s, ou uma exata abaixo dele) |
+| amostras atrasadas | A PRU chegou atrasada para tomar a amostra: a taxa pedida passou do que ela alcança (~419 kS/s com o SPI rápido e as esperas padrão; o `ler_adc` recusa acima disso sem `--forcar-taxa`) ou ela foi segurada. A taxa real do arquivo é **menor** que a do cabeçalho | Peça uma taxa menor (o padrão, 400 kS/s, ou uma exata abaixo do teto) |
 | buffers sobrescritos | A PRU começou a reescrever um bloco que o ARM ainda não tinha gravado: amostras **perdidas**. O `ler_adc` sai com código 3 | Refaça a captura; veja se o cartão SD está lento ou o sistema sobrecarregado |
 | quadros com ruído no SDO | O ADC mantém a linha de dados em 0 durante o comando de cada amostra; um 1 ali é ruído ou reflexo na ligação (o problema histórico dos jumpers longos) | Confira a ligação ADC ↔ BeagleBone; essas amostras são suspeitas |
 
-No fim, o `ler_adc` também mostra a **taxa real**, medida pelo relógio do ARM entre o primeiro e o último bloco (precisa de 2 blocos ou mais; incerteza ~0,02 %), e a grava no cabeçalho (versão 5, com a versão do firmware que fez a captura; o `adc_tool.py info` mostra as duas).
+No fim, o `ler_adc` também mostra a **taxa real** (linha `Taxa medida`), medida pelo relógio do ARM entre o primeiro e o último bloco (precisa de 2 blocos ou mais; incerteza ~0,02 %), e a grava no cabeçalho (versão 5, com a versão do firmware que fez a captura, a da primeira linha do `ler_adc`; o `adc_tool.py info` mostra as duas).
 
-**A grade de tempo (firmware de 22/10/2026).** A PRU solta cada amostra num ciclo exato da grade de `200 MHz ÷ ticks`: ela espera os ciclos que faltam, em vez de sondar o relógio (o jeito antigo dava ~8,5 ns rms de jitter). E mede quanto sobrou: a última linha do `ler_adc` é
+**A grade de tempo (firmware de 22/10/2026).** A PRU solta cada amostra num ciclo exato da grade de `200 MHz ÷ ticks`: ela espera os ciclos que faltam, em vez de sondar o relógio (o jeito antigo dava ~8,5 ns rms de jitter). E mede quanto sobrou: a linha `Grade` do resumo é
 
 ```
-Grade de tempo (PRU): folga mínima 26 ciclo(s) = 130 ns -- toda amostra no ciclo exato da grade; período constante até ~325203 S/s | rebase: 4 ciclo(s) entre as leituras
+  Grade        exata: folga mínima 18 ciclos (90 ns), período constante até 414938 S/s
 ```
 
-A **folga mínima** é o que sobrava, no pior momento da captura (em geral, uma troca de buffer), entre o fim do trabalho de uma amostra e o instante da seguinte. Maior que 0, sem amostra atrasada, quer dizer que **todas** as amostras saíram no ciclo exato. A PRU a publica logo depois de cada bloco (já com a troca de buffer) e ela vai para o cabeçalho (versão 6 em diante). A 312,5 kS/s, com o firmware de 22/10/2026 (quadro fixo), espere de 29 a 40 ciclos, com qualquer sinal (no SPI rápido, ~160). A linha `ARM:` diz quanto o ARM levou, no pior bloco, para gravá-lo, e a margem contra o tempo de um bloco (com 2 buffers, um bloco atrasado mais que isso seria sobrescrito). Se o `ler_adc` disser `o firmware da PRU não é o deste ler_adc`, a PRU ficou com outra versão: `./setup.sh` na pasta `firmware/` (ou `scripts/BeagleBone_Setup.sh enviar --setup` no computador). O `adc_tool.py`, o `medir_captura.py` e o `gerar_perfil_sonda.py` avisam quando um contador do cabeçalho não é zero, e a calibração de sonda descarta a captura com amostras perdidas ou atrasadas.
+A **folga mínima** é o que sobrava, no pior momento da captura (em geral, uma troca de buffer), entre o fim do trabalho de uma amostra e o instante da seguinte. Maior que 0, sem amostra atrasada, quer dizer que **todas** as amostras saíram no ciclo exato. A PRU a publica logo depois de cada bloco (já com a troca de buffer) e ela vai para o cabeçalho (versão 6 em diante). A 312,5 kS/s, com o firmware de 22/10/2026 (quadro fixo), espere de 29 a 40 ciclos, com qualquer sinal (no SPI rápido, ~160). Com `-v`, a linha `gravação no ARM` diz quanto o ARM levou, no pior bloco, para gravá-lo, e a margem contra o tempo de um bloco (com 2 buffers, um bloco atrasado mais que isso seria sobrescrito); abaixo de 3x, ela vira um aviso. Se o `ler_adc` disser `o firmware da PRU não é o deste ler_adc`, a PRU ficou com outra versão: `./setup.sh` na pasta `firmware/` (ou `scripts/BeagleBone_Setup.sh enviar --setup` no computador). O `adc_tool.py`, o `medir_captura.py` e o `gerar_perfil_sonda.py` avisam quando um contador do cabeçalho não é zero, e a calibração de sonda descarta a captura com amostras perdidas ou atrasadas.
 
 **O que limita a taxa.** Cada amostra leva ~7 µs na PRU: ~3 µs são os 32 clocks do SPI (feitos em software) e ~4 µs são três esperas do CS (2, 1 e 1 µs), calibradas na época do problema dos jumpers. O datasheet do ADS8688 pede só 30, 10 e 30 ns. Com `--atraso-cs` dá para medir em bancada até onde elas podem cair (teste T7e, método 4, do [roteiro](lab-procedure.md), com a tabela de quanto cada conjunto rende); só reduzi-las levaria o teto de ~140 para ~330 kS/s, e 250 kS/s é o teto prático com folga. Valores reduzidos são **experimentais**: confira o ruído, a distorção e a continuidade antes de usar uma captura feita assim.
 
@@ -154,6 +200,50 @@ A **folga mínima** é o que sobrava, no pior momento da captura (em geral, uma 
 ### A ordem dos canais
 
 O ADS8688 varre os canais habilitados **sempre em ordem crescente**, não na ordem digitada. O `ler_adc` ordena a lista e imprime a ordem real. Você não precisa se preocupar com isso na análise: o cabeçalho da captura já guarda a ordem correta.
+
+---
+
+## Coletar dados: `coletar.sh`
+
+O `ler_adc` faz uma captura. O `coletar.sh` (na pasta do firmware, na BeagleBone) faz as **coletas**: chama o `ler_adc`
+do jeito certo para cada finalidade, confere cada captura, grava tudo numa pasta própria e diz, no fim, o comando de
+análise no computador. **Sem opções, cada modo usa a configuração que dá uma boa análise depois** (mais taxas, mais
+tempo, todas as faixas, conforme o caso).
+
+```bash
+./coletar.sh --help
+```
+
+| Modo | Para quê | Sem opções | Pasta | Análise no computador |
+|---|---|---|---|---|
+| `conferir` | **Antes de uma série de capturas** e depois de mexer na bancada: o firmware, os pinos e o ADC respondendo; o nível (Vpp), o offset e o ruído do sinal; a menor faixa que o comporta; com `--esperado-vpp`, se o sinal é o que o gerador manda | canal 1, 400 kS/s, ±10,24 V, 1 bloco (~10 s) | `conferencia.bin` | — (o veredito sai no terminal; código 1 = algo errado) |
+| `sonda` | A calibração de uma sonda por senoides, ponto a ponto ([Passo 1](#passo-1-coletar-os-pontos-na-beaglebone)) | interativo | `capturas/<id>/` | `gerar_perfil_sonda.py` |
+| `cadeia` | A resposta da cadeia, magnitude e fase, por ondas quadradas ([`medir_fase.py`](#a-fase-da-cadeia-sem-osciloscópio-medir_fasepy)) | 12 quadradas × 2 taxas, 30 s cada (pede cada uma) | `T3f_*` | `medir_fase.py` |
+| `aliasing` | O mesmo sinal em várias taxas, para separar componentes reais de imagens ([abaixo](#real-ou-imagem-adc_toolpy-aliasing)) | 400, 390,625 e 320 kS/s, 10 s cada, faixa automática | `ALS_*` | `adc_tool.py aliasing` |
+| `ruido` | O piso de ruído com a entrada em curto | as 3 faixas, 400 kS/s, 4 blocos cada (pede o curto) | `RUIDO_*` | `medir_captura.py --sem-tom` |
+| `teto` | A maior taxa com toda amostra na grade, por varredura em frequência, e a taxa de trabalho | SPI rápido e lento, margem de 10 ticks | `TETO_*` | — (`teto.csv`) |
+| `bancada` | As varreduras de hardware do T7: esperas do CS, taxa, grade (`--grade`), SPI (`--spi`), limite (`--limite`), validação (`--validar`) | as partes A, B, D e C (~100 capturas, pede o curto) | `T7e_*`, `T7f_*`, `T7g_*` | `medir_captura.py` |
+
+```bash
+./coletar.sh conferir --faixa 5.12 --esperado-vpp 16 --ganho 19.357   # 16 Vpp no divisor: chega certo?
+./coletar.sh aliasing --grandeza 1:tensao --sonda 1:cadeia_tensao_fase
+./coletar.sh teto
+./coletar.sh cadeia --faixa 20.48 --simular
+```
+
+* **Cada modo tem a sua ajuda:** `./coletar.sh aliasing --help`.
+* **Os modos em lote** (`cadeia`, `aliasing`, `ruido`, `bancada`) gravam a pasta com as capturas, o `log.txt` (tudo o
+  que o `ler_adc` disse) e o `resumo.csv` (uma linha por captura: integridade, folga da grade, taxa medida, divergências
+  do SPI). `--simular` mostra o plano, o tempo e o espaço sem capturar. Se a conexão cair, a coleta segue até a próxima
+  pausa e para; `--continuar` retoma a última do modo (ou uma pasta dada), com as mesmas opções e a mesma faixa.
+* **Faixa automática** (`aliasing`, o padrão): uma captura curta em ±10,24 V e a menor faixa em que o pico de todos os
+  canais cabe com 15 % de folga. Fica gravada em `faixa_automatica.bin`, na pasta da coleta.
+* **O `teto`** estima o teto pela folga que a PRU publica numa taxa folgada, varre 1 tick (5 ns) por vez a partir de
+  um pouco acima da estimativa até duas taxas seguidas com amostras atrasadas e confirma o teto com uma captura longa
+  (10 blocos). A taxa de trabalho é a maior taxa exata (200 MHz ÷ ticks inteiro) com a margem pedida (`--margem`).
+  O quadro da PRU não depende do sinal: qualquer entrada serve.
+* **O `sonda`** roda como root (o `coletar.sh` o chama com `sudo`); os outros modos pedem o `sudo` uma vez, no começo.
+* **O `bancada` e o `teto`** passam `--forcar-taxa` ao `ler_adc`: eles medem o teto de propósito. Os outros, não.
 
 ---
 
@@ -177,7 +267,7 @@ set -Ux DADOS ~/Documents/sh-analyzer-data    # uma vez: o fish guarda a variáv
 
 | Pasta | Conteúdo |
 |---|---|
-| `$DADOS/lab/AAAA-MM-DD/` | Um dia de bancada: os `.bin`, o `resultados.csv` do `medir_captura.py` e, em `capturas/<id>/`, as coletas do `calibrar_sonda.sh` |
+| `$DADOS/lab/AAAA-MM-DD/` | Um dia de bancada: os `.bin`, o `resultados.csv` do `medir_captura.py` e, em `capturas/<id>/`, as coletas do `coletar.sh sonda` |
 | `$DADOS/legacy/` | Capturas anteriores ao roteiro de laboratório (firmware antigo) |
 
 Os comandos `uv run scripts/...` continuam sendo executados na raiz do repositório, com os caminhos apontando para `$DADOS`. Os perfis de sonda gerados (`scripts/sondas/<id>.json`) são pequenos, fazem parte da configuração do instrumento e **ficam** no repositório. Para guardar um dia inteiro sem perdas e em pouco espaço, use o `compactar_amostras.py` (veja [Guardar as capturas sem perdas](#guardar-as-capturas-sem-perdas-compactar_amostraspy)) e mantenha o pacote em dois lugares.
@@ -354,7 +444,7 @@ Com `-o grafico.png`, as figuras extras saem ao lado: `grafico_espectrograma.png
 
 **Por quê:** o frontend de **tensão** tem ganho constante, então basta o `--ganho`. Uma **sonda de corrente**, ao contrário, atenua de forma diferente em cada frequência. Medir supraharmônicos de corrente sem corrigir isso dá amplitudes erradas. A solução é medir a resposta em frequência da sonda uma vez, guardar num **perfil** (`.json`) e deixar o `adc_tool.py` corrigir cada captura.
 
-O canal de **tensão** também passa pelo filtro de ~15 kHz do ADC (veja abaixo), então, para supraharmônicos de tensão, a cadeia de tensão (divisor + frontend + ADC) é calibrada com o **mesmo fluxo**, como se fosse uma sonda: `calibrar_sonda.sh --grandeza tensao`. O que muda é só a bancada (o gerador vai direto à entrada do divisor, sem shunt) e os textos do script; o perfil é aplicado ao canal de tensão em produção com `--sonda <canal>:<id>`.
+O canal de **tensão** também passa pelo filtro de ~15 kHz do ADC (veja abaixo), então, para supraharmônicos de tensão, a cadeia de tensão (divisor + frontend + ADC) é calibrada com o **mesmo fluxo**, como se fosse uma sonda: `coletar.sh sonda --grandeza tensao`. O que muda é só a bancada (o gerador vai direto à entrada do divisor, sem shunt) e os textos do script; o perfil é aplicado ao canal de tensão em produção com `--sonda <canal>:<id>`.
 
 O fluxo tem três passos:
 
@@ -364,7 +454,7 @@ O fluxo tem três passos:
 
 Para o perfil, o script precisa saber **o que foi injetado** em cada frequência. Há quatro jeitos (escolha um):
 
-| Jeito | Opção do `calibrar_sonda.sh` | Canais por captura | Nyquist por canal | Quando usar |
+| Jeito | Opção do `coletar.sh sonda` | Canais por captura | Nyquist por canal | Quando usar |
 |---|---|---|---|---|
 | **Amplitude conhecida** | `--amplitude 500mVpp` (ou `--amplitude-por-ponto`) | **1** (só a saída da sonda) | taxa ÷ 2 | O gerador injeta uma **senoide pura** de amplitude e frequência ajustáveis e você **sabe a amplitude** que ajustou. Nada é digitado a cada ponto: amplitude e frequência ficam gravadas nos **metadados** de cada captura, e várias frequências dão o perfil |
 | **Osciloscópio** | `--ref-externa` (leitura digitada) ou o `.m` do osciloscópio (veja abaixo) | **1** | taxa ÷ 2 | Chega até a banda inteira de supraharmônicos, e o osciloscópio mede o que o gerador **de fato** entregou (planura do gerador incluída) |
@@ -389,26 +479,26 @@ Você só diz **quantos pontos** quer, a **taxa de amostragem** do ADC e o **nom
 ```bash
 cd firmware
 # 1 canal, referência no osciloscópio, até a banda de supraharmônicos (Nyquist 200 kHz, pontos até 160 kHz):
-sudo ./calibrar_sonda.sh --taxa 400000 --canal-sonda 1 --pontos 24 --freq-max 160k --sonda fluke_i30_sn0001 --ref-externa
+./coletar.sh sonda --taxa 400000 --canal-sonda 1 --pontos 24 --freq-max 160k --sonda fluke_i30_sn0001 --ref-externa
 
 # Amplitude conhecida: senoide de 500 mVpp no gerador, a mesma em todos os pontos; vai para os metadados de cada captura
-sudo ./calibrar_sonda.sh --taxa 400000 --canal-sonda 1 --pontos 24 --freq-max 160k --sonda fluke_i30_sn0001 --amplitude 500mVpp
+./coletar.sh sonda --taxa 400000 --canal-sonda 1 --pontos 24 --freq-max 160k --sonda fluke_i30_sn0001 --amplitude 500mVpp
 
 # Sem osciloscópio: segundo canal do ADC (canal 0) no shunt; Nyquist por canal = taxa/4
-sudo ./calibrar_sonda.sh --taxa 204800 --canal-sonda 1 --canal-referencia 0 --pontos 20 --sonda fluke_i30_sn0001
+./coletar.sh sonda --taxa 204800 --canal-sonda 1 --canal-referencia 0 --pontos 20 --sonda fluke_i30_sn0001
 
 # Cadeia de tensão (divisor no canal 1), referência no osciloscópio na entrada do divisor
-sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45k --sonda cadeia_tensao --grandeza tensao --ref-externa
+./coletar.sh sonda --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45k --sonda cadeia_tensao --grandeza tensao --ref-externa
 
 # Sonda com saída de poucos mV: faixa de entrada do ADC de ±2,56 V no canal da sonda (mais resolução)
-sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 20 --sonda fluke_i30_sn0001 --amplitude 5mVpp --faixa-adc 5.12
+./coletar.sh sonda --taxa 100000 --canal-sonda 1 --pontos 20 --sonda fluke_i30_sn0001 --amplitude 5mVpp --faixa-adc 5.12
 ```
 
 `--faixa-adc` (e `--faixa-adc-referencia`, para o canal de referência) escolhe a [faixa de entrada do ADC](#faixa-de-entrada-do-adc), vale para todo o plano (fica em `plano_coleta.txt`, e `--modo retomar` a reaproveita) e é conferida no cabeçalho de cada captura. Escolha a menor faixa que comporta o pico da saída da sonda, sem saturar nas amplitudes mais altas do plano.
 
 Desde 21/10/2026 as esperas padrão do firmware (3,1,3) alcançam ~326 kS/s, então dá para calibrar a 312,5 kS/s sem nada a mais. Com outras esperas (`--atraso-cs`), o script as repassa ao `ler_adc`, guarda no plano e confere no cabeçalho de cada captura; com as antigas (`200,100,100`), a PRU não passa de ~143 kS/s e toda captura acima disso é recusada por amostras atrasadas.
 
-> Se aparecer `Permission denied`, o arquivo está sem permissão de execução: rode `chmod +x calibrar_sonda.sh` uma vez (ou use `sudo bash calibrar_sonda.sh`). Sem nenhuma opção, o script pergunta o que precisa. A taxa aceita `102400`, `102.4k` ou `102,4 kHz`.
+> Se aparecer `Permission denied`, o arquivo está sem permissão de execução: rode `chmod +x coletar.sh coleta/*.sh` uma vez (ou use `bash coletar.sh sonda`). Sem nenhuma opção, o script pergunta o que precisa. A taxa aceita `102400`, `102.4k` ou `102,4 kHz`.
 
 **Quais frequências?** O script espalha os pontos em **escala logarítmica** entre 50 Hz e **80% da Nyquist efetiva** (com 1 canal a 400 kHz, de 50 Hz a 160 kHz; com 2 canais a 102,4 kHz, de 50 Hz a 20,4 kHz), arredondados para valores fáceis de ajustar no gerador, e mostra o plano antes de começar. Escala logarítmica é a escolha padrão porque a resposta de uma sonda varia por décadas de frequência, e depois da primeira rodada o script sugere **pontos extras** onde o ganho mais variou entre vizinhos. Para outra faixa: `--freq-min` e `--freq-max`.
 
@@ -563,7 +653,7 @@ cossenos em fase. Numa captura que começou num instante qualquer, a fase de cad
 fundamental é a fase da cadeia (a menos de um atraso puro, que não se separa sem uma referência externa). A magnitude
 de cada harmônico, dividida pelo 1/n teórico, dá a resposta relativa à fundamental, sem instrumento de referência.
 
-**Na bancada:** `./varrer_taxa.sh --fase`: 24 capturas de 30 s e 12 trocas no gerador, ~30 min. Ele pede
+**Na bancada:** `./coletar.sh cadeia`: 24 capturas de 30 s e 12 trocas no gerador, ~30 min. Ele pede
 quadradas de 256, 768, 1280, 2304, 6400, 6912 e 20736 Hz (20 Vpp, High-Z, no canal 1), todas múltiplos ímpares de
 256 Hz, e as variantes:
 
@@ -637,7 +727,7 @@ altos cai em cima dos ímpares (o `medir_fase.py` acusa e descarta). As da `--fa
 dá muitos pontos e a alta, mais sinal por harmônico: num harmônico de ordem n, a amplitude é 1/n da fundamental. Um
 erro de duty pesa nos harmônicos altos da f₁ baixa, e os perto do nulo são descartados.
 
-**Precisa refazer o perfil por senoides (`calibrar_sonda.sh`)?** Não. A quadrada mede a magnitude relativa sem
+**Precisa refazer o perfil por senoides (`coletar.sh sonda`)?** Não. A quadrada mede a magnitude relativa sem
 instrumento de referência; na senoide, a referência é o osciloscópio. No T3f, as senoides de 22/10 ficaram 1,2 a
 1,3 dB acima da quadrada acima de ~40 kHz, a queda da referência do osciloscópio (suspeita: a ponta descompensada;
 a conferência está no roteiro). O ganho absoluto vem do K: o T2, em DC, com o Fluke, levado à faixa da captura pelo
@@ -652,27 +742,27 @@ que está acima da Nyquist, mas pouco mais do que o que está logo abaixo: a 400
 ~13 dB abaixo de um componente real de mesma amplitude (vinda de 270 kHz) e a 150 kHz, só ~9 dB (de 250 kHz). Fontes
 chaveadas emitem acima de 150 kHz, então, numa captura só, um pico no topo da banda pode ser uma imagem.
 
-**O método.** Capture o mesmo sinal em duas taxas. Um componente real abaixo das duas Nyquist aparece na mesma
-frequência nas duas; uma imagem muda de lugar, e o par de posições dá a frequência de entrada. A amplitude também tem
-de bater, porque o filtro do ADC age antes da amostragem e atenua a mesma entrada igual nas duas. Na BeagleBone:
+**O método.** Capture o mesmo sinal em várias taxas. Um componente real abaixo das Nyquist aparece na mesma
+frequência em todas; uma imagem muda de lugar, e as posições dão a frequência de entrada. A amplitude também tem de
+bater, porque o filtro do ADC age antes da amostragem e atenua a mesma entrada igual em todas. Na BeagleBone, o
+`coletar.sh` faz as capturas (400, 390,625 e 320 kS/s, 10 s cada, na faixa certa para o sinal):
 
 ```bash
-sudo ./ler_adc 400000 1 --faixa-adc 1:5.12 --duracao 10s -o SH_A_400k.bin -t "A 400k"
+./coletar.sh aliasing
 ```
+
+No computador, o comando que ele mostra no fim:
 
 ```bash
-sudo ./ler_adc 320000 1 --faixa-adc 1:5.12 --duracao 10s -o SH_B_320k.bin -t "B 320k"
+uv run scripts/adc_tool.py aliasing $DIA/ALS_<data>/X_*_sinal_*.bin --csv aliasing.csv
 ```
 
-No computador:
+Com duas capturas feitas à mão (`ler_adc` em duas taxas) também serve: `adc_tool.py aliasing A.bin B.bin`.
 
-```bash
-uv run scripts/adc_tool.py aliasing SH_A_400k.bin SH_B_320k.bin --csv aliasing.csv
-```
-
-A saída é uma tabela, um componente por linha: a frequência de entrada deduzida, onde ele aparece em cada captura,
-a amplitude em cada uma (em dBV no pino do ADC, sem a correção da sonda) e o diagnóstico: `real`, `real em A; imagem
-em B` (acima da Nyquist de B), `imagem nas duas, de X kHz` ou `sem par na outra captura`. Com um tom de 270 kHz:
+A saída é uma tabela, um componente por linha: a frequência de entrada deduzida, onde ele aparece em cada captura (A
+é a primeira, a referência), a amplitude em cada uma (em dBV no pino do ADC, sem a correção da sonda) e o diagnóstico:
+`real`, `real em A; imagem em B` (acima da Nyquist de B), `imagem em todas, de X kHz`, `sem pico em C` ou `sem par
+nas outras capturas`. Com duas capturas e um tom de 270 kHz:
 
 ```
      entrada         em A      dB         em B      dB   diagnóstico
@@ -681,12 +771,12 @@ em B` (acima da Nyquist de B), `imagem nas duas, de X kHz` ou `sem par na outra 
      270.000      130.000   -26.0       50.000   -26.0   imagem nas duas, de 270.00 kHz
 ```
 
-* **A 2ª taxa:** 320 kS/s (625 ticks, exata, Nyquist de 160 kHz) cobre a banda até 150 kHz e afasta as imagens das
-  posições de 400 kS/s. Qualquer taxa até o teto da PRU serve.
-* **Frequências que duas taxas não separam:** algumas entradas caem no mesmo lugar nas duas (com 400 e 320 kS/s,
-  360 kHz aparece em 40 kHz nas duas, como um real de 40 kHz). A ferramenta lista essas posições no fim e marca um
-  pico ali como `AMBÍGUO`, com a entrada mais baixa como a provável (o filtro atenua a de cima ~40 dB a mais). Uma 3ª
-  taxa decide.
+* **As taxas:** 400, 390,625 e 320 kS/s são exatas (200 MHz ÷ 500, 512 e 625 ticks) e têm Nyquist ≥ 160 kHz, acima
+  da banda. Qualquer taxa até o teto da PRU serve (`--taxas`).
+* **Por que três:** algumas entradas caem no mesmo lugar em duas taxas (com 400 e 320 kS/s, 360 kHz aparece em 40 kHz
+  nas duas, como um real de 40 kHz). Com duas, a ferramenta marca um pico ali como `AMBÍGUO`, com a entrada mais baixa
+  como a provável (o filtro atenua a de cima ~40 dB a mais). A 3ª taxa desfaz isso: cada par contra a 1ª captura dá as
+  entradas possíveis, e vale a que todos aceitam. No fim, a ferramenta diz se ainda sobra alguma posição ambígua.
 * **As capturas não são simultâneas** (o ADC é um só): a emissão tem de ser estável entre elas. Uma diferença de
   amplitude acima de `--tolerancia-db` (3 dB) sai marcada; `--tolerancia-hz` (100 Hz) aceita uma emissão que deriva.
 * **Opções:** `--canal`, `--freq-min` (2 kHz), `--freq-max` (98 % da Nyquist de cada uma), `--acima-do-piso` (20 dB
@@ -781,7 +871,7 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 
 | Script | Onde roda | O que faz |
 |---|---|---|
-| `firmware/varrer_taxa.sh` | BeagleBone | O T7e de uma vez: captura as esperas do CS (do padrão ao piso do datasheet), a taxa de 125 a 500 kS/s, 2 canais e a entrada em curto, com o log e um `resumo.csv`; `--simular` mostra o plano, `--partes` escolhe partes, `--continuar` retoma a última varredura (se a conexão cair, ela para na pausa seguinte, com tudo salvo), `--validar` roda só a validação do firmware corrigido em 21/10 (capturas de 35 s e 10 min), `--limite` a campanha do limite com o padrão novo (303 a 333 kS/s em passos de 1 tick, 60 s perto do limite, 10 min no padrão, 2 canais e curto). Veja o [roteiro de laboratório](lab-procedure.md#passo-a-passo-da-próxima-ida-firmware-novo-e-taxa-máxima) |
+| `firmware/coletar.sh` | BeagleBone | As coletas de dados, por modo: `conferir`, `sonda`, `cadeia`, `aliasing`, `ruido`, `teto` e `bancada` (veja [Coletar dados](#coletar-dados-coletarsh)); os modos ficam em `firmware/coleta/` |
 | `scripts/BeagleBone_Setup.sh` | Computador | A interface com a BeagleBone: `status`, `preparar`, `hora`, `enviar`, `setup`, `ssh`, `trazer`, `montar`/`desmontar` e `configurar`. Veja [Preparar a BeagleBone](#preparar-a-beaglebone) |
 | `scripts/compactar_amostras.py` | Computador | (ou `adc_tool.py compactar`) Arquiva pastas de captura sem perdas num pacote `.zpaq.tar` (~11 % do tamanho), conferido bit a bit; também `listar`, `extrair` e `verificar`. Veja [Guardar as capturas sem perdas](#guardar-as-capturas-sem-perdas-compactar_amostraspy) |
 | `report/gerar_figuras.py` | Computador | Gera as figuras do relatório (PDF vetorial, já no tamanho final, com o texto composto pelo LaTeX) e um `.tex` com os números citados (macros siunitx). `uv run report/gerar_figuras.py` gera todas; `--listar`, `--png` (prévia), `--formato artigo --idioma en` (coluna de artigo, em inglês), `--saida PASTA` (ex.: a pasta do projeto LaTeX). Inclua no documento sem `width=`, para as fontes baterem com as do texto. As figuras `readme_*` são as do README: SVG transparente, gravado direto em `docs/images/` |
@@ -801,20 +891,21 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 | `ler_adc`: "amostra(s) tomada(s) depois do instante previsto" | Taxa acima do que a PRU alcança com período constante (~419 kS/s com o SPI rápido, ~328 kS/s com `--spi lenta`) | Use o padrão (400 kS/s) ou uma taxa exata menor; a taxa real foi menor que a gravada |
 | `ler_adc` sai com código 3, "buffer(s) sobrescrito(s)" | O ARM não gravou um bloco a tempo: amostras perdidas | Refaça; verifique o cartão SD e o que mais está rodando na BeagleBone |
 | `medir_captura`: DESCONTINUIDADE "numa troca de buffer da PRU" | Captura feita com o firmware anterior a out/2026 | Recompile o firmware (`./setup.sh`) e capture de novo |
-| A captura não termina e nenhuma linha `Bloco A gravado (...)` aparece | PRU parada ou presa | Confira `dmesg \| tail -n 20` e `cat /sys/class/remoteproc/remoteproc1/state`. Rode `./setup.sh` de novo |
+| A captura não termina e a barra de progresso não anda (com `-v` fora de um terminal: nenhuma linha `bloco N gravado`) | PRU parada ou presa | Confira `dmesg \| tail -n 20` e `cat /sys/class/remoteproc/remoteproc1/state`. Rode `./setup.sh` de novo |
+| `Erro: o ADC não está respondendo` (amostras todas 0x0000; código 4) | A placa de aquisição sem alimentação (a BeagleBone só no USB) ou os pinos da PRU sem configuração | Ligue a fonte de 5 V no conector da BeagleBone; se persistir, `sudo ./setup.sh` |
 | Timestamp do cabeçalho errado | Relógio da BeagleBone desatualizado | Rode `scripts/BeagleBone_Setup.sh hora` no computador |
 | `--fft` dá resultado estranho depois de aplicar passa-alta | Filtro removeu a fundamental | Veja o aviso em [FFT ou Welch?](#fft-ou-welch) e rode `--fft` e `--welch` separados |
 | `ler_adc` recusa o `-t` ou o `-d` com erro | Título acima de 63 bytes ou descrição acima de 255 (o texto não é truncado) | Encurte o texto (letras acentuadas ocupam 2 bytes) |
 | Canais parecem trocados | Você digitou os canais fora de ordem | O ADC sempre varre em ordem crescente. Deixe a ordem vir do cabeçalho (não passe `--canais`) |
-| `Permission denied` ao rodar `calibrar_sonda.sh` | Arquivo sem permissão de execução | `chmod +x calibrar_sonda.sh` |
-| `calibrar_sonda.sh`: "o `ler_adc` travou (estourou o tempo limite)" | PRU parada ou presa | Confira o `dmesg` e rode `./setup.sh` de novo; depois refaça o ponto (`R`) |
-| `calibrar_sonda.sh`: "captura incompleta (disco cheio?)" | O `ler_adc` devolve sucesso mesmo com o disco cheio, a captura sai cortada | Libere espaço (copie capturas antigas para o computador) e refaça o ponto |
-| `calibrar_sonda.sh`: "saturou o ADC" | Amplitude do gerador (ou corrente) alta demais | Reduza a amplitude e refaça o ponto. Capturas saturadas são descartadas pelo `gerar_perfil_sonda.py` |
-| `calibrar_sonda.sh`: "frequência medida fora da planejada" | Gerador ajustado errado | Corrija a frequência no gerador e refaça o ponto |
-| `calibrar_sonda.sh`: "praticamente sem sinal" | Gerador desligado, shunt/sonda mal ligados ou canal errado | Confira a bancada e o número de `--canal-sonda` (e `--canal-referencia`, se usou) |
-| `calibrar_sonda.sh`: "sinal fraco" nas frequências altas | Filtro passa-baixa de ~15 kHz embutido no ADS8688 | Esperado. Aumente a amplitude no pino do ADC; aceite o ponto (`C`) se ainda tiver ≥ 0,2% da escala |
-| `calibrar_sonda.sh` recusa o plano: "frequência máxima ... Nyquist" | `--freq-max` ≥ 98% da Nyquist efetiva (taxa ÷ 2 com 1 canal, ÷ 4 com 2) | Aumente `--taxa` ou use 1 canal; para 150 kHz, 400 kHz e 1 canal |
-| `calibrar_sonda.sh`/`gerar_perfil_sonda.py`: amplitude "sem tipo" ou "sem unidade" | `500mV`, `0.5` ou `2rms`: faltou dizer se é pico a pico, pico ou eficaz, ou se é V ou A | Escreva número + unidade + tipo: `500mVpp`, `250mVpk`, `176.8mVrms`, `2Arms` |
+| `Permission denied` ao rodar `coletar.sh sonda` | Arquivo sem permissão de execução | `chmod +x coletar.sh coleta/*.sh` |
+| `coletar.sh sonda`: "o `ler_adc` travou (estourou o tempo limite)" | PRU parada ou presa | Confira o `dmesg` e rode `./setup.sh` de novo; depois refaça o ponto (`R`) |
+| `coletar.sh sonda`: "captura incompleta (disco cheio?)" | O `ler_adc` devolve sucesso mesmo com o disco cheio, a captura sai cortada | Libere espaço (copie capturas antigas para o computador) e refaça o ponto |
+| `coletar.sh sonda`: "saturou o ADC" | Amplitude do gerador (ou corrente) alta demais | Reduza a amplitude e refaça o ponto. Capturas saturadas são descartadas pelo `gerar_perfil_sonda.py` |
+| `coletar.sh sonda`: "frequência medida fora da planejada" | Gerador ajustado errado | Corrija a frequência no gerador e refaça o ponto |
+| `coletar.sh sonda`: "praticamente sem sinal" | Gerador desligado, shunt/sonda mal ligados ou canal errado | Confira a bancada e o número de `--canal-sonda` (e `--canal-referencia`, se usou) |
+| `coletar.sh sonda`: "sinal fraco" nas frequências altas | Filtro passa-baixa de ~15 kHz embutido no ADS8688 | Esperado. Aumente a amplitude no pino do ADC; aceite o ponto (`C`) se ainda tiver ≥ 0,2% da escala |
+| `coletar.sh sonda` recusa o plano: "frequência máxima ... Nyquist" | `--freq-max` ≥ 98% da Nyquist efetiva (taxa ÷ 2 com 1 canal, ÷ 4 com 2) | Aumente `--taxa` ou use 1 canal; para 150 kHz, 400 kHz e 1 canal |
+| `coletar.sh sonda`/`gerar_perfil_sonda.py`: amplitude "sem tipo" ou "sem unidade" | `500mV`, `0.5` ou `2rms`: faltou dizer se é pico a pico, pico ou eficaz, ou se é V ou A | Escreva número + unidade + tipo: `500mVpp`, `250mVpk`, `176.8mVrms`, `2Arms` |
 | `gerar_perfil_sonda.py`: "informe a referência da grandeza injetada" ou "sem amplitude conhecida" | As capturas não trazem `ref: amp=...` nos metadados e nenhuma flag de referência foi dada | Use `--amplitude-referencia AMP` (mesma amplitude em todas), `--referencia-osciloscopio`, `--referencia-externa` ou `--resistencia-shunt`; ou refaça a coleta com `--amplitude` |
 | `gerar_perfil_sonda.py`: "ADC/osciloscópio" ou "osciloscópio vs injetada" diverge mais de ~1% | O gerador não entregou a amplitude ajustada (carga de 50 Ω × alta impedância, planura em frequência alta) | Use o osciloscópio como referência (`--referencia-osciloscopio`) ou corrija o ajuste do gerador |
 | `gerar_perfil_sonda.py`: ganho na menor frequência fora de [0,7; 1,3] | `--ganho` diferente de 1 ÷ sensibilidade da sonda | Confira o `--ganho` (sonda de 100 mV/A → 10) e o `--resistencia-shunt` |

@@ -121,3 +121,60 @@ def test_cli_recusa_duas_capturas_na_mesma_taxa(tmp_path):
 def test_aliasing_e_um_subcomando_do_adc_tool():
     assert "aliasing" in cli_principal.SUBCOMANDOS
     assert "aliasing" in cli_principal.texto_subcomandos()
+
+
+# --------------------------------------------------------------------------------------
+# Três ou mais taxas (o padrão do coletar.sh aliasing: 400, 390,625 e 320 kS/s)
+# --------------------------------------------------------------------------------------
+FS_C = 390_625
+FAIXA_C = (2e3, 0.98 * FS_C / 2)
+
+
+def test_uma_terceira_taxa_desfaz_a_ambiguidade_de_duas():
+    """Em 40 kHz, 400 e 320 kS/s não separam um real de 40 kHz da imagem de 360 kHz; a 390,625 kS/s a imagem cairia
+    em 30,6 kHz, e o pico em 40 kHz fica: é real, sem ambiguidade."""
+    from supraharmonicos.aliasing import entradas_ambiguas_em_todas, parear_varias
+    a, b, c = [Pico(40e3, -30.0)], [Pico(40e3, -30.1)], [Pico(40e3, -30.0)]
+    (duas,) = parear_varias([a, b], [FS_A, FS_B], [FAIXA_A, FAIXA_B], 100.0, 3.0, 1e6)
+    assert duas.diagnostico.startswith("real") and duas.ambiguas_hz
+    (tres,) = parear_varias([a, b, c], [FS_A, FS_B, FS_C], [FAIXA_A, FAIXA_B, FAIXA_C], 100.0, 3.0, 1e6)
+    assert tres.diagnostico == "real" and tres.ambiguas_hz == [] and tres.reais == [True, True, True]
+    assert (40e3, 360e3) in entradas_ambiguas(FS_A, FS_B, 150e3, 1e6, 50.0)
+    assert entradas_ambiguas_em_todas([FS_A, FS_B, FS_C], 150e3, 1e6, 50.0) == []
+
+
+def test_imagem_em_tres_taxas_e_pico_que_falta_numa_delas():
+    from supraharmonicos.aliasing import parear_varias
+    a, b = [Pico(130e3, -40.0)], [Pico(50e3, -40.0)]
+    c = [Pico(dobrar(270e3, FS_C), -40.1)]
+    (comp,) = parear_varias([a, b, c], [FS_A, FS_B, FS_C], [FAIXA_A, FAIXA_B, FAIXA_C], 100.0, 3.0, 1e6)
+    assert comp.frequencia_entrada_hz == pytest.approx(270e3) and comp.diagnostico.startswith("imagem em todas")
+    (comp,) = parear_varias([a, b, []], [FS_A, FS_B, FS_C], [FAIXA_A, FAIXA_B, FAIXA_C], 100.0, 3.0, 1e6)
+    assert comp.diagnostico == "imagem em A, B, de 270.00 kHz; sem pico em C"
+
+
+def test_cli_com_tres_capturas(tmp_path, capsys):
+    tons = [(10e3, 0.5), (40e3, 0.05), (270e3, 0.05)]
+    caminhos = [_captura(tmp_path / f"{k}.bin", fs, tons, seed=k) for k, fs in enumerate((FS_A, FS_C, FS_B))]
+    saida = tmp_path / "aliasing.csv"
+    assert cli_aliasing.main([*map(str, caminhos), "--csv", str(saida)]) == 0
+    linhas = list(csv.DictReader(saida.open(encoding="utf-8")))
+    assert {"a_hz", "b_hz", "c_hz", "real_em_c"} <= set(linhas[0])
+    por_entrada = {round(float(r["entrada_hz"]) / 1e3): r for r in linhas if r["entrada_hz"]}
+    assert set(por_entrada) == {10, 40, 270}
+    assert por_entrada[40]["diagnostico"] == "real" and por_entrada[40]["ambiguas_hz"] == ""
+    assert por_entrada[270]["diagnostico"].startswith("imagem em todas")
+    assert float(por_entrada[270]["b_hz"]) == pytest.approx(dobrar(270e3, FS_C), abs=30)
+    assert "nenhuma imagem" in capsys.readouterr().out
+
+
+def test_cli_recusa_uma_captura_so_e_taxas_repetidas(tmp_path):
+    a = _captura(tmp_path / "A.bin", FS_A, TONS[:2])
+    with pytest.raises(SystemExit) as e:
+        cli_aliasing.main([str(a)])
+    assert e.value.code == 2
+    b = _captura(tmp_path / "B.bin", FS_B, TONS[:2], seed=4)
+    c = _captura(tmp_path / "C.bin", FS_A, TONS[:2], seed=5)
+    with pytest.raises(SystemExit) as e:
+        cli_aliasing.main([str(a), str(b), str(c)])
+    assert e.value.code == 2

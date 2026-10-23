@@ -160,7 +160,7 @@ def captura_calibracao(freq_hz: float, seed: int, dur_s: float = 0.5, fs_canal: 
 
 
 def criar_pasta_calibracao(pasta: Path, freqs=FREQS_CAL, reps: int = 2, nome_sonda: str = "sonda_teste") -> Path:
-    """Pasta no formato de ``firmware/calibrar_sonda.sh``: ``calibracao_<F>Hz_rep<N>.bin``."""
+    """Pasta no formato de ``./coletar.sh sonda``: ``calibracao_<F>Hz_rep<N>.bin``."""
     pasta.mkdir(parents=True, exist_ok=True)
     rng, k = np.random.default_rng(1), 0
     for f in freqs:
@@ -186,7 +186,7 @@ def captura_producao(caminho: Path, sonda_id: str = "sonda_teste", grandeza_cana
 def criar_pasta_calibracao_1canal(pasta: Path, freqs=FREQS_CAL, canal: int = 3, corrente_a: float = 1.0,
                                   nome_sonda: str = "sonda_teste", com_referencia_externa: bool = True,
                                   fs_total: int = 200_000, faixa_adc_total_v: float | None = None) -> Path:
-    """Pasta no formato de ``calibrar_sonda.sh`` com UM canal só (a sonda) e, opcionalmente, o
+    """Pasta no formato de ``coletar.sh sonda`` com UM canal só (a sonda) e, opcionalmente, o
     ``referencia_externa.csv`` com a tensão RMS lida "no osciloscópio" sobre o shunt (``R_SHUNT``).
     ``faixa_adc_total_v``: grava a faixa do ADC no cabeçalho (v3+), como o ``ler_adc --faixa-adc``."""
     pasta.mkdir(parents=True, exist_ok=True)

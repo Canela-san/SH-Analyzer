@@ -361,7 +361,7 @@ def test_makefile_nao_usa_o_usr_include_do_linux(tmp_path, com_make):
 
 
 # ---------------------------------------------------------------------------
-# firmware/varrer_taxa.sh: o T7e inteiro numa tacada
+# ./coletar.sh bancada, cadeia, aliasing, ruido e teto (firmware/coleta/campanha.sh e teto.sh)
 # ---------------------------------------------------------------------------
 
 LER_ADC_FALSO = r'''#!/bin/bash
@@ -389,23 +389,27 @@ fi
 atrasadas=0; real=$taxa
 if [ "$taxa" -gt "$maximo" ]; then atrasadas=123; real=$maximo; fi
 echo "taxa=$taxa canais=$canais blocos=$blocos cs=$cs faixa=$faixa${duracao:+ duracao=$duracao}${spi:+ spi=$spi}${descricao:+ d=$descricao}" > "$saida"
-if [ "$blocos" -ge 2 ]; then
-    printf 'Taxa real medida pelo ARM: %d Hz (pedida %d Hz, %+.2f %%)\n' "$real" "$taxa" \
-        "$(awk -v r="$real" -v t="$taxa" 'BEGIN { print 100 * (r / t - 1) }')"
-fi
-printf 'Integridade: %d amostra(s) atrasada(s), 0 buffer(s) sobrescrito(s), 0 quadro(s) com ruído no SDO\n' "$atrasadas"
+# O resumo final no formato do ler_adc desde 23/10/2026 (as linhas que o coleta/comum.sh lê).
+echo "✓ Captura concluída"
+if [ "$atrasadas" -eq 0 ]; then estado="tudo certo"; else estado="PROBLEMAS"; fi
+printf '  Integridade  %s: %d amostras atrasadas, 0 buffers sobrescritos, 0 quadros com ruído no SDO\n' "$estado" "$atrasadas"
 if [ "$blocos" -lt 2 ]; then
-    echo 'Grade de tempo (PRU): folga ainda não publicada (a PRU a publica logo depois de cada bloco) | rebase: 2 ciclo(s) entre as leituras'
+    echo '  Grade        folga ainda não publicada (a PRU a publica depois de cada bloco)'
 elif [ "$atrasadas" -eq 0 ]; then
     folga=$((200000000 / taxa - quadro))
-    printf 'Grade de tempo (PRU): folga mínima %d ciclo(s) = %d ns -- toda amostra no ciclo exato da grade; período constante até ~%d S/s | rebase: 2 ciclo(s) entre as leituras\n' \
+    printf '  Grade        exata: folga mínima %d ciclos (%d ns), período constante até %d S/s\n' \
         "$folga" $((5 * folga)) $((200000000 / quadro))
 else
-    echo "Grade de tempo (PRU): 123 amostra(s) fora da grade, a pior 77 ciclo(s) = 385 ns atrasada | rebase: 2 ciclo(s) entre as leituras"
+    echo "  Grade        123 amostras fora da grade, a pior 77 ciclos (385 ns) atrasada"
 fi
 case "${spi:-}" in
-    rapido*) echo "SPI rápido (fase B gravada): 0 quadro(s) com a fase A (60 ns) diferente da B (75 ns) e 7 com a C (90 ns), em 2097152 quadro(s) -- o bit seguinte chega antes de 90 ns" ;;
+    rapido*) echo "  SPI          rápido, fase B gravada; divergências de leitura: 0 na fase A e 7 na C" ;;
+    *) echo "  SPI          lento (~10,7 MHz)" ;;
 esac
+if [ "$blocos" -ge 2 ]; then
+    printf '  Taxa medida  %d S/s pelo relógio do ARM (%+.2f %% da pedida)\n' "$real" \
+        "$(awk -v r="$real" -v t="$taxa" 'BEGIN { print 100 * (r / t - 1) }')"
+fi
 [ -z "${LER_ADC_REGISTRO:-}" ] || pgrep -x dd > /dev/null && echo "dd rodando" >> "${LER_ADC_REGISTRO:-/dev/null}"
 '''
 
@@ -414,7 +418,8 @@ esac
 def varredura(tmp_path):
     pasta = tmp_path / "firmware"
     pasta.mkdir()
-    shutil.copy2(RAIZ / "firmware" / "varrer_taxa.sh", pasta / "varrer_taxa.sh")
+    shutil.copy2(RAIZ / "firmware" / "coletar.sh", pasta / "coletar.sh")
+    shutil.copytree(RAIZ / "firmware" / "coleta", pasta / "coleta")
     (pasta / "VERSAO").write_text("v9.9\n")
     _executavel(pasta / "ler_adc", LER_ADC_FALSO)
     falsos = tmp_path / "falsos"
@@ -426,7 +431,7 @@ def varredura(tmp_path):
     env.update({"PATH": f"{falsos}:{os.environ['PATH']}", "LC_ALL": "C", "NO_COLOR": "1"})
 
     def rodar(*args, entrada=""):
-        r = subprocess.run(["bash", str(pasta / "varrer_taxa.sh"), *args], cwd=tmp_path, env=env, input=entrada,
+        r = subprocess.run(["bash", str(pasta / "coletar.sh"), *args], cwd=tmp_path, env=env, input=entrada,
                            capture_output=True, text=True, timeout=120)
         resultados = sorted(pasta.glob("T7e_*"))
         return r, (resultados[-1] if resultados else None)
@@ -441,8 +446,8 @@ def _resumo(pasta: Path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def test_varrer_taxa_captura_o_plano_inteiro_e_resume(varredura):
-    r, pasta = varredura(entrada="\np\n")                    # D: feita; C: pulada ("p")
+def test_coletar_bancada_captura_o_plano_inteiro_e_resume(varredura):
+    r, pasta = varredura("bancada", entrada="\np\n")                    # D: feita; C: pulada ("p")
     assert r.returncode == 0, r.stdout + r.stderr
     linhas = _resumo(pasta)
     partes = [linha["parte"] for linha in linhas]
@@ -461,10 +466,10 @@ def test_varrer_taxa_captura_o_plano_inteiro_e_resume(varredura):
     assert "Pronto" in r.stdout and "trazer 'T7e_*'" in r.stdout
 
 
-def test_varrer_taxa_curto_com_1_bloco_e_simular(varredura):
-    r, pasta = varredura("--simular")
+def test_coletar_bancada_curto_com_1_bloco_e_simular(varredura):
+    r, pasta = varredura("bancada", "--simular")
     assert r.returncode == 0 and "101 capturas" in r.stdout and pasta is None   # nada capturado
-    r, pasta = varredura("--partes", "C", entrada="\n")
+    r, pasta = varredura("bancada", "--partes", "C", entrada="\n")
     assert r.returncode == 0, r.stdout + r.stderr
     linhas = _resumo(pasta)
     assert len(linhas) == 18 and {linha["entrada"] for linha in linhas} == {"curto"}
@@ -472,10 +477,10 @@ def test_varrer_taxa_curto_com_1_bloco_e_simular(varredura):
     assert "blocos=1" in (pasta / "C_cs3-1-3_100000_curto.bin").read_text()
 
 
-def test_varrer_taxa_para_sem_terminal_na_pausa_e_continua_de_onde_parou(varredura):
+def test_coletar_bancada_para_sem_terminal_na_pausa_e_continua_de_onde_parou(varredura):
     """Como em 21/10: a conexão caiu na pausa da parte D. Sem terminal, a varredura para ali, com o que
     foi feito salvo; --continuar pula o que tem linha no resumo e refaz a que o ler_adc não terminou."""
-    r, pasta = varredura(entrada="")                          # sem terminal: o read da pausa falha
+    r, pasta = varredura("bancada", entrada="")                          # sem terminal: o read da pausa falha
     assert r.returncode == 0, r.stdout + r.stderr
     assert "Parado" in r.stdout and "--continuar" in r.stdout
     linhas = _resumo(pasta)
@@ -488,7 +493,7 @@ def test_varrer_taxa_para_sem_terminal_na_pausa_e_continua_de_onde_parou(varredu
     texto[5] = ",".join(cortada)
     (pasta / "resumo.csv").write_text("\n".join(texto) + "\n")
 
-    r, continuada = varredura("--continuar", entrada="\n\n")
+    r, continuada = varredura("bancada", "--continuar", entrada="\n\n")
     assert r.returncode == 0, r.stdout + r.stderr
     assert continuada == pasta                                # a mesma pasta, não uma nova
     assert "77 de 101 já feitas" in r.stdout and "[ 79/101]" in r.stdout and "[  1/101]" not in r.stdout
@@ -496,14 +501,14 @@ def test_varrer_taxa_para_sem_terminal_na_pausa_e_continua_de_onde_parou(varredu
     nomes = [linha["arquivo"] for linha in linhas]
     assert len(set(nomes)) == 101 and nomes.count(cortada[1]) == 2
     assert "CONTINUAÇÃO" in (pasta / "log.txt").read_text()
-    r, _ = varredura("--continuar")
+    r, _ = varredura("bancada", "--continuar")
     assert "Nada a fazer" in r.stdout
 
 
-def test_varrer_taxa_nao_morre_com_a_queda_da_conexao(varredura):
+def test_coletar_bancada_nao_morre_com_a_queda_da_conexao(varredura):
     """SIGHUP (o ssh caiu) no meio das capturas: elas seguem até o fim da parte."""
     env = {**varredura.env, "LER_ADC_DEMORA": "0.05"}
-    proc = subprocess.Popen(["bash", str(varredura.pasta / "varrer_taxa.sh"), "--partes", "A"],
+    proc = subprocess.Popen(["bash", str(varredura.pasta / "coletar.sh"), "bancada", "--partes", "A"],
                             cwd=varredura.pasta.parent, env=env, stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     import time
@@ -517,11 +522,11 @@ def test_varrer_taxa_nao_morre_com_a_queda_da_conexao(varredura):
     assert len(_resumo(pasta)) == 26
 
 
-def test_varrer_taxa_parte_e_valida_o_firmware_com_capturas_longas(varredura):
+def test_coletar_bancada_parte_e_valida_o_firmware_com_capturas_longas(varredura):
     """A parte E (só quando pedida): capturas que cruzam 2^31 ciclos da PRU várias vezes, com --duracao."""
-    r, pasta = varredura("--simular")
+    r, pasta = varredura("bancada", "--simular")
     assert "E " not in r.stdout.replace("partes", "")                    # fora do padrão (ABDC)
-    r, pasta = varredura("--partes", "E")
+    r, pasta = varredura("bancada", "--partes", "E")
     assert r.returncode == 0, r.stdout + r.stderr
     nomes = [linha["arquivo"] for linha in _resumo(pasta)]
     assert nomes == ["E_cs200-100-100_100000_tom_35s.bin", "E_cs6-2-6_100000_tom_35s.bin",
@@ -529,40 +534,40 @@ def test_varrer_taxa_parte_e_valida_o_firmware_com_capturas_longas(varredura):
     assert (pasta / nomes[-1]).read_text().split()[-2:] == ["duracao=600s", "spi=lenta"]   # o SPI das campanhas antigas
 
 
-def test_varrer_taxa_validar_roda_so_a_parte_e_numa_pasta_sem_varredura_anterior(varredura):
+def test_coletar_bancada_validar_roda_so_a_parte_e_numa_pasta_sem_varredura_anterior(varredura):
     """As capturas antigas foram para o computador: --validar não precisa de nenhuma pasta T7e_* anterior."""
     assert not list(varredura.pasta.glob("T7e_*"))
-    r, pasta = varredura("--validar")
+    r, pasta = varredura("bancada", "--validar")
     assert r.returncode == 0, r.stdout + r.stderr
     assert [linha["parte"] for linha in _resumo(pasta)] == ["E"] * 4
-    r, _ = varredura("--partes", "EX")
+    r, _ = varredura("bancada", "--partes", "EX")
     assert r.returncode == 1 and "aceita as letras" in r.stderr
 
 
-def test_varrer_taxa_validar_recusa_o_firmware_sem_a_correcao(varredura):
+def test_coletar_bancada_validar_recusa_o_firmware_sem_a_correcao(varredura):
     """Validar com o firmware antigo gastaria 12 min à toa: confere o código, a compilação e (na BeagleBone) a PRU."""
     asm = varredura.pasta / "spi_core.asm"
     fw = varredura.pasta / "fw_pru.out"
     asm.write_text("; rebase antigo: SUB r22, r22, r12\n")
-    r, pasta = varredura("--validar")
+    r, pasta = varredura("bancada", "--validar")
     assert r.returncode == 1 and "não tem a correção" in r.stderr and pasta is None
     asm.write_text("; [CORRIGIDO em 21/10/2026] o rebase zera o contador\n")
     fw.write_bytes(b"\x00")
     os.utime(fw, (1_000_000_000, 1_000_000_000))                       # compilado antes da última mudança
-    r, pasta = varredura("--validar")
+    r, pasta = varredura("bancada", "--validar")
     assert r.returncode == 1 and "mais antigo" in r.stderr and pasta is None
     os.utime(fw, None)                                                  # compilado agora
-    r, pasta = varredura("--validar")
+    r, pasta = varredura("bancada", "--validar")
     assert r.returncode == 0, r.stdout + r.stderr
     assert len(_resumo(pasta)) == 4
 
 
-def test_varrer_taxa_limite_varre_os_ticks_um_a_um_e_usa_o_padrao_do_firmware(varredura):
+def test_coletar_bancada_limite_varre_os_ticks_um_a_um_e_usa_o_padrao_do_firmware(varredura):
     """--limite: 303 a 333 kS/s em passos de 1 tick (5 ns) para 3,1,3 e 6,2,6, 60 s perto do limite, 10 min no padrão
     (sem --atraso-cs), 2 canais e o curto."""
-    r, pasta = varredura("--limite", "--simular")
+    r, pasta = varredura("bancada", "--limite", "--simular")
     assert "132 capturas" in r.stdout and "L: 122" in r.stdout
-    r, pasta = varredura("--limite", entrada="\n\n")
+    r, pasta = varredura("bancada", "--limite", entrada="\n\n")
     assert r.returncode == 0, r.stdout + r.stderr
     linhas = _resumo(pasta)
     por_parte = {p: [linha for linha in linhas if linha["parte"] == p] for p in "LMNQR"}
@@ -579,14 +584,14 @@ def test_varrer_taxa_limite_varre_os_ticks_um_a_um_e_usa_o_padrao_do_firmware(va
     assert por_parte["Q"][0]["canais"] == "0,1" and {linha["entrada"] for linha in por_parte["R"]} == {"curto"}
 
 
-def test_varrer_taxa_grade_roda_a_campanha_t7f_no_padrao(varredura):
+def test_coletar_bancada_grade_roda_a_campanha_t7f_no_padrao(varredura):
     """--grade (firmware de 22/10/2026): capturas longas no padrão, uma com o ARM ocupado, 2 canais e o teto com
     período constante, numa pasta T7f_; a folga e o pior atraso vão para o resumo."""
-    r, pasta = varredura("--grade", "--simular")
+    r, pasta = varredura("bancada", "--grade", "--simular")
     assert r.returncode == 0 and "T7f" in r.stdout and "56 capturas" in r.stdout
     registro = varredura.pasta.parent / "registro.txt"
     env = {**varredura.env, "LER_ADC_REGISTRO": str(registro)}
-    r = subprocess.run(["bash", str(varredura.pasta / "varrer_taxa.sh"), "--grade"], cwd=varredura.pasta.parent,
+    r = subprocess.run(["bash", str(varredura.pasta / "coletar.sh"), "bancada", "--grade"], cwd=varredura.pasta.parent,
                        env=env, capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
     (pasta,) = varredura.pasta.glob("T7f_*")
@@ -605,26 +610,26 @@ def test_varrer_taxa_grade_roda_a_campanha_t7f_no_padrao(varredura):
     assert registro.read_text().count("dd rodando") == 1                  # a carga só na parte H, e desligada depois
 
 
-def test_varrer_taxa_continuar_retoma_as_partes_da_varredura_anterior(varredura):
+def test_coletar_bancada_continuar_retoma_as_partes_da_varredura_anterior(varredura):
     """Um --continuar sozinho retoma a --grade (as partes vêm do log.txt), não a varredura padrão."""
-    r, pasta = varredura("--grade", entrada="")
+    r, pasta = varredura("bancada", "--grade", entrada="")
     assert r.returncode == 0, r.stdout + r.stderr
     (pasta,) = varredura.pasta.glob("T7f_*")
     texto = (pasta / "resumo.csv").read_text().splitlines()
     (pasta / "resumo.csv").write_text("\n".join(texto[:-3]) + "\n")       # as 3 últimas não chegaram a ser gravadas
-    r = subprocess.run(["bash", str(varredura.pasta / "varrer_taxa.sh"), "--continuar"], cwd=varredura.pasta.parent,
+    r = subprocess.run(["bash", str(varredura.pasta / "coletar.sh"), "bancada", "--continuar"], cwd=varredura.pasta.parent,
                        env=varredura.env, capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "53 de 56 já feitas" in r.stdout and "T7f" in r.stdout
     assert len(_resumo(pasta)) == 56
 
 
-def test_varrer_taxa_spi_compara_os_modos_e_mede_o_teto_do_rapido(varredura):
+def test_coletar_bancada_spi_compara_os_modos_e_mede_o_teto_do_rapido(varredura):
     """--spi (T7g): o padrão e o rápido nas 3 fases a 312,5 kS/s, 60 s a 400 kS/s com 1 e 2 canais, o teto do rápido
     de 520 a 460 ticks e o curto (com uma pausa); o modo do SPI e as divergências vão para o resumo."""
-    r, _ = varredura("--spi", "--simular")
+    r, _ = varredura("bancada", "--spi", "--simular")
     assert r.returncode == 0 and "T7g" in r.stdout and "69 capturas" in r.stdout and "SPI rapido:a" in r.stdout
-    r, _ = varredura("--spi", entrada="\n")
+    r, _ = varredura("bancada", "--spi", entrada="\n")
     assert r.returncode == 0, r.stdout + r.stderr
     (pasta,) = varredura.pasta.glob("T7g_*")
     linhas = _resumo(pasta)
@@ -641,13 +646,13 @@ def test_varrer_taxa_spi_compara_os_modos_e_mede_o_teto_do_rapido(varredura):
     assert "divergências A 0, C 7" in r.stdout
 
 
-def test_varrer_taxa_fase_pede_cada_quadrada_e_captura_nas_duas_taxas(varredura):
+def test_coletar_cadeia_pede_cada_quadrada_e_captura_nas_duas_taxas(varredura):
     """--fase (T3f): 7 quadradas (múltiplos ímpares de 256 Hz) e as variantes (1280 Hz em 10 Vpp; 6912 e 20736 Hz em
     16 Vpp com ±2 V), cada uma a 312,5 kS/s (SPI padrão) e a 400 kS/s (rápido), 30 s, com UMA pausa por quadrada para
     trocar o gerador; a f₁ vai na descrição."""
-    r, _ = varredura("--fase", "--simular")
+    r, _ = varredura("cadeia", "--simular")
     assert r.returncode == 0 and "T3f" in r.stdout and "24 capturas" in r.stdout
-    r, _ = varredura("--fase", entrada="\n" * 12)
+    r, _ = varredura("cadeia", entrada="\n" * 12)
     assert r.returncode == 0, r.stdout + r.stderr
     (pasta,) = varredura.pasta.glob("T3f_*")
     assert [linha["spi"] for linha in _resumo(pasta)] == ["lenta", "rapido"] * 12
@@ -663,50 +668,219 @@ def test_varrer_taxa_fase_pede_cada_quadrada_e_captura_nas_duas_taxas(varredura)
     assert "medir_fase.py" in r.stdout
 
 
-def test_varrer_taxa_fase_na_faixa_de_producao_e_o_continuar_herda_a_faixa(varredura):
+def test_coletar_cadeia_na_faixa_de_producao_e_o_continuar_herda_a_faixa(varredura):
     """--faixa 20.48: o T3f na faixa do canal de tensão em produção (±10,24 V). Uma varredura interrompida continua
     na mesma faixa sem repetir a opção, e pedir outra é recusado."""
-    r, _ = varredura("--fase", "--faixa", "20.48", entrada="\n" * 3)
+    r, _ = varredura("cadeia", "--faixa", "20.48", entrada="\n" * 3)
     (pasta,) = varredura.pasta.glob("T3f_*")
     feitas = sorted(pasta.glob("F_*.bin"))
     assert feitas and all("faixa=1:20.48" in c.read_text() for c in feitas)
-    r, _ = varredura("--continuar", entrada="\n" * 12)
+    r, _ = varredura("cadeia", "--continuar", entrada="\n" * 12)
     assert r.returncode == 0, r.stdout + r.stderr
     assert len(_resumo(pasta)) == 24 and all("faixa=1:20.48" in c.read_text() for c in pasta.glob("F_*.bin"))
-    r, _ = varredura("--continuar", "--faixa", "5.12")
+    r, _ = varredura("cadeia", "--continuar", "--faixa", "5.12")
     assert r.returncode == 1 and "feita com --faixa 20.48" in r.stderr
-    r, _ = varredura("--faixa", "3.3", "--simular")
+    r, _ = varredura("cadeia", "--faixa", "3.3", "--simular")
     assert r.returncode == 1 and "use 20.48" in r.stderr
 
 
-def test_varrer_taxa_fase_para_na_pausa_sem_terminal(varredura):
-    r, _ = varredura("--fase", entrada="")
+def test_coletar_cadeia_para_na_pausa_sem_terminal(varredura):
+    r, _ = varredura("cadeia", entrada="")
     assert r.returncode == 0 and "sem terminal na pausa da quadrada de 256 Hz" in r.stdout
     (pasta,) = varredura.pasta.glob("T3f_*")
     assert _resumo(pasta) == []
 
 
-def test_varrer_taxa_spi_recusa_o_firmware_sem_o_spi_rapido(varredura):
+def test_coletar_bancada_spi_recusa_o_firmware_sem_o_spi_rapido(varredura):
     (varredura.pasta / "spi_core.asm").write_text("; [CORRIGIDO em 21/10/2026]\n; GRADE EXATA\n; QUADRO DE DURAÇÃO FIXA\n")
-    r = subprocess.run(["bash", str(varredura.pasta / "varrer_taxa.sh"), "--spi"], cwd=varredura.pasta.parent,
+    r = subprocess.run(["bash", str(varredura.pasta / "coletar.sh"), "bancada", "--spi"], cwd=varredura.pasta.parent,
                        env=varredura.env, capture_output=True, text=True, timeout=120)
     assert r.returncode == 1 and "não tem o SPI rápido" in r.stderr
     assert not list(varredura.pasta.glob("T7g_*"))
 
 
-def test_varrer_taxa_grade_recusa_o_firmware_sem_a_espera_de_precisao(varredura):
+def test_coletar_bancada_grade_recusa_o_firmware_sem_a_espera_de_precisao(varredura):
     asm = varredura.pasta / "spi_core.asm"
     asm.write_text("; [CORRIGIDO em 21/10/2026] o rebase zera o contador\n")
-    r = subprocess.run(["bash", str(varredura.pasta / "varrer_taxa.sh"), "--grade"], cwd=varredura.pasta.parent,
+    r = subprocess.run(["bash", str(varredura.pasta / "coletar.sh"), "bancada", "--grade"], cwd=varredura.pasta.parent,
                        env=varredura.env, capture_output=True, text=True, timeout=120)
     assert r.returncode == 1 and "não tem a grade exata" in r.stderr
     # o firmware do T7f (grade exata, mas o quadro ainda dependia do dado): medir de novo seria perder 16 min
     asm.write_text("; [CORRIGIDO em 21/10/2026] ...\n; REVISÃO DE 22/10/2026: GRADE EXATA\n")
-    r = subprocess.run(["bash", str(varredura.pasta / "varrer_taxa.sh"), "--grade"], cwd=varredura.pasta.parent,
+    r = subprocess.run(["bash", str(varredura.pasta / "coletar.sh"), "bancada", "--grade"], cwd=varredura.pasta.parent,
                        env=varredura.env, capture_output=True, text=True, timeout=120)
     assert r.returncode == 1 and "quadro de duração fixa" in r.stderr
     assert not list(varredura.pasta.glob("T7f_*"))
 
+
+
+# Um ler_adc falso que grava um .bin DE VERDADE (cabeçalho e amostras, pelo capturas_sinteticas): um seno de
+# SINAL_VPP volts pico a pico no pino (padrão 0,8) a SINAL_F Hz, com o ruído do ADC e o offset da placa; FALSO_MUDO=1
+# imita o ADC sem resposta (amostras todas 0 e o código 4). Cada chamada vai para FALSO_REGISTRO.
+LER_ADC_BINARIO = r"""#!{python}
+import os, sys
+sys.path.insert(0, {testes!r})
+import numpy as np
+from capturas_sinteticas import escrever_bin
+
+args = sys.argv[1:]
+with open(os.environ.get("FALSO_REGISTRO", os.devnull), "a") as f:
+    f.write(" ".join(args) + "\n")
+taxa, canais = int(args[0]), [int(c) for c in args[1].split(",")]
+opcoes, i = {{}}, 2
+while i < len(args):
+    if args[i] == "--forcar-taxa":
+        i += 1
+        continue
+    opcoes[args[i]] = args[i + 1]
+    i += 2
+faixas = dict((int(c), float(v)) for c, v in (p.split(":") for p in opcoes.get("--faixa-adc", "").split(",") if p))
+blocos = int(opcoes.get("--blocos", "2"))
+n = 32768 * blocos // len(canais)
+t = np.arange(n) / (taxa / len(canais))
+vpp, freq = float(os.environ.get("SINAL_VPP", "0.8")), float(os.environ.get("SINAL_F", "60"))
+ruido = np.random.default_rng(len(args)).normal(0, 6e-5, n)
+sinais = [vpp / 2 * np.sin(2 * np.pi * freq * t) + ruido + 0.0026 for _ in canais]
+escrever_bin(opcoes["-o"], sinais, canais=tuple(canais), grandezas=(0,) * len(canais), sondas=("",) * len(canais),
+             fs_total=taxa, faixas_adc_total_v=[faixas.get(c, 20.48) for c in canais])
+if os.environ.get("FALSO_MUDO") == "1":
+    with open(opcoes["-o"], "r+b") as f:
+        f.seek(1024)
+        f.write(bytes(2 * n * len(canais)))
+    print("Erro: o ADC não está respondendo: as 65536 primeiras amostras do bloco 1 valem todas 0x0000.", file=sys.stderr)
+    print("✗ Captura interrompida: o ADC não respondeu")
+    sys.exit(4)
+print("✓ Captura concluída")
+print("  Integridade  tudo certo: 0 amostras atrasadas, 0 buffers sobrescritos, 0 quadros com ruído no SDO")
+print("  Grade        exata: folga mínima 18 ciclos (90 ns), período constante até 414938 S/s")
+print("  SPI          rápido, fase B gravada; divergências de leitura: 0 na fase A e 0 na C")
+if blocos >= 2 or "--duracao" in opcoes:
+    print(f"  Taxa medida  {{taxa}} S/s pelo relógio do ARM (+0.00 % da pedida)")
+"""
+
+
+@pytest.fixture
+def coleta(varredura, tmp_path):
+    """A mesma pasta de firmware falsa da varredura, com o ler_adc que grava .bin de verdade."""
+    _executavel(varredura.pasta / "ler_adc", LER_ADC_BINARIO.format(python=sys.executable, testes=str(Path(__file__).parent)))
+    registro = tmp_path / "chamadas.txt"
+
+    def rodar(*args, entrada="", **env_extra):
+        env = {**varredura.env, "FALSO_REGISTRO": str(registro), **{k: str(v) for k, v in env_extra.items()}}
+        r = subprocess.run(["bash", str(varredura.pasta / "coletar.sh"), *args], cwd=tmp_path, env=env, input=entrada,
+                           capture_output=True, text=True, timeout=300)
+        return r
+
+    rodar.pasta, rodar.registro = varredura.pasta, registro
+    return rodar
+
+
+def test_coletar_sem_modo_mostra_os_modos_e_recusa_modo_desconhecido(varredura):
+    r = subprocess.run(["bash", str(varredura.pasta / "coletar.sh")], capture_output=True, text=True, env=varredura.env)
+    assert r.returncode == 0
+    for modo in ("conferir", "sonda", "cadeia", "aliasing", "ruido", "teto", "bancada"):
+        assert f"  {modo} " in r.stdout
+    r = subprocess.run(["bash", str(varredura.pasta / "coletar.sh"), "calibrar"], capture_output=True, text=True,
+                       env=varredura.env)
+    assert r.returncode == 2 and "modo desconhecido" in r.stderr
+    for modo in ("aliasing", "ruido", "cadeia", "bancada", "teto", "conferir"):
+        r = subprocess.run(["bash", str(varredura.pasta / "coletar.sh"), modo, "--help"], capture_output=True, text=True,
+                           env=varredura.env)
+        assert r.returncode == 0 and r.stdout.startswith("Uso: ./coletar.sh " + modo), modo
+
+
+def test_coletar_conferir_mede_o_sinal_e_sugere_a_faixa(coleta):
+    """Um seno de 0,8 Vpp no pino em ±10,24 V: captura íntegra, o nível, o offset, e a sugestão de ±2,56 V."""
+    r = coleta("conferir", "--esperado-vpp", "0.8", SINAL_F="1220.703125")     # 100 ciclos inteiros: o offset sem viés
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Pronto para capturar" in r.stdout and "captura íntegra, grade exata (folga 18 ciclos)" in r.stdout
+    assert "canal 1: 0.80" in r.stdout and "offset +2.6" in r.stdout
+    assert "--faixa-adc 1:5.12" in r.stdout and "bate com o esperado" in r.stdout
+    assert (coleta.pasta / "conferencia.bin").stat().st_size > 1024
+    assert "--faixa-adc 1:20.48" in coleta.registro.read_text()
+
+
+def test_coletar_conferir_acusa_o_sinal_errado_na_entrada(coleta):
+    """O caso de 23/10: o gerador mandava 16 Vpp para o divisor (19,357), mas chegava ~95 vezes menos."""
+    r = coleta("conferir", "--esperado-vpp", "16", "--ganho", "19.357", SINAL_VPP="0.0087")
+    assert r.returncode == 1
+    assert "esperado 16 Vpp" in r.stdout and "confira o plugue" in r.stdout and "1 problema(s)" in r.stdout
+
+
+def test_coletar_conferir_acusa_o_adc_mudo_e_a_saturacao(coleta):
+    r = coleta("conferir", FALSO_MUDO="1")
+    assert r.returncode == 1 and "o ADC não está respondendo" in r.stdout and "fonte de 5 V" in r.stdout
+    r = coleta("conferir", "--faixa", "5.12", SINAL_VPP="8")
+    assert r.returncode == 1 and "saturou" in r.stdout
+
+
+def test_coletar_aliasing_escolhe_a_faixa_e_captura_nas_3_taxas(coleta):
+    """Sem opções: a faixa automática (0,8 Vpp cabe em ±2,56 V), 10 s em 400, 390,625 e 320 kS/s com o SPI rápido,
+    sem --forcar-taxa, e no fim o comando do adc_tool.py aliasing."""
+    r = coleta("aliasing", "--simular")
+    assert r.returncode == 0 and "3 capturas" in r.stdout and "faixa: automática" in r.stdout
+    r = coleta("aliasing", "--grandeza", "1:tensao", "--sonda", "1:cadeia_tensao_fase")
+    assert r.returncode == 0, r.stdout + r.stderr
+    (pasta,) = coleta.pasta.glob("ALS_*")
+    linhas = _resumo(pasta)
+    assert [linha["taxa_pedida_hz"] for linha in linhas] == ["400000", "390625", "320000"]
+    assert all(linha["amostras_atrasadas"] == "0" and linha["spi"] == "rapido" for linha in linhas)
+    assert "faixa automática: 5.12 V" in r.stdout and (pasta / "faixa_automatica.bin").exists()
+    chamadas = coleta.registro.read_text().splitlines()
+    assert "--faixa-adc 1:20.48" in chamadas[0]                       # a captura curta da faixa automática
+    assert all("--faixa-adc 1:5.12" in c and "--duracao 10s" in c and "--forcar-taxa" not in c and
+               "--sonda 1:cadeia_tensao_fase" in c for c in chamadas[1:])
+    assert "adc_tool.py aliasing" in r.stdout and "X_*_sinal_*.bin" in r.stdout
+
+
+def test_coletar_aliasing_com_opcoes_e_continuar(coleta):
+    r = coleta("aliasing", "--taxas", "400000,320000", "--segundos", "5", "--faixa", "20.48", "--repeticoes", "2",
+               "--canais", "0,1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    (pasta,) = coleta.pasta.glob("ALS_*")
+    nomes = [linha["arquivo"] for linha in _resumo(pasta)]
+    assert nomes == ["X_cspadrao_400000_sinal_r1_2canais_5s_spirapido.bin", "X_cspadrao_320000_sinal_r1_2canais_5s_spirapido.bin",
+                     "X_cspadrao_400000_sinal_r2_2canais_5s_spirapido.bin", "X_cspadrao_320000_sinal_r2_2canais_5s_spirapido.bin"]
+    assert "aliasing_r1.csv" in r.stdout and "aliasing_r2.csv" in r.stdout
+    r = coleta("aliasing", "--continuar")                     # as opções vêm do log.txt: o mesmo plano, já feito
+    assert "Nada a fazer" in r.stdout and "4 de 4 já feitas" in r.stdout
+    r = coleta("aliasing", "--taxas", "500000")
+    assert r.returncode == 1 and "teto da PRU" in r.stderr
+    r = coleta("aliasing", "--partes", "A")
+    assert r.returncode == 1 and "não vale no modo aliasing" in r.stderr
+
+
+def test_coletar_ruido_pede_o_curto_e_captura_cada_faixa(coleta):
+    r = coleta("ruido", entrada="\n")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "CURTO" in r.stdout and "medir_captura.py" in r.stdout
+    (pasta,) = coleta.pasta.glob("RUIDO_*")
+    linhas = _resumo(pasta)
+    assert [linha["arquivo"] for linha in linhas] == [f"Z_cspadrao_400000_curto_f{f}_spirapido.bin" for f in ("20.48", "10.24", "5.12")]
+    chamadas = coleta.registro.read_text().splitlines()
+    assert [c.split("--faixa-adc ")[1].split()[0] for c in chamadas] == ["1:20.48", "1:10.24", "1:5.12"]
+    assert all("--blocos 4" in c for c in chamadas)
+
+
+def test_coletar_teto_varre_em_frequencia_e_recomenda_a_taxa_de_trabalho(varredura):
+    """O ler_adc falso atrasa abaixo de 467 ticks no SPI rápido e de 609 no lento: a estimativa pela folga, a
+    varredura de 1 tick e a confirmação longa acham os dois tetos, e a taxa de trabalho é a maior exata com 10 ticks
+    de margem (400 e 320 kS/s)."""
+    r = subprocess.run(["bash", str(varredura.pasta / "coletar.sh"), "teto"], cwd=varredura.pasta.parent,
+                       env=varredura.env, capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0, r.stdout + r.stderr
+    (pasta,) = varredura.pasta.glob("TETO_*")
+    import csv
+    with open(pasta / "teto.csv", newline="", encoding="utf-8") as f:
+        resultado = {linha["spi"]: linha for linha in csv.DictReader(f)}
+    assert resultado["rapido"]["teto_ticks"] == "467" and resultado["rapido"]["trabalho_hz"] == "400000"
+    assert resultado["lenta"]["teto_ticks"] == "609" and resultado["lenta"]["trabalho_hz"] == "320000"
+    pontos = _resumo(pasta)
+    confirmacoes = [p for p in pontos if p["etapa"] == "confirmacao"]
+    assert [p["ticks"] for p in confirmacoes] == ["467", "609"] and all(p["blocos"] == "10" for p in confirmacoes)
+    varridos = [int(p["ticks"]) for p in pontos if p["etapa"] == "varredura" and p["spi"] == "rapido"]
+    assert varridos == sorted(varridos, reverse=True) and min(varridos) == 465       # 2 atrasadas seguidas e para
+    assert "teto 467 ticks" in r.stdout and "taxa de trabalho 400000 S/s" in r.stdout
 
 
 # ---------------------------------------------------------------------------

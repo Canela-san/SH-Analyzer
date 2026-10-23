@@ -28,7 +28,7 @@
 #     lenta para abrir conexões, e o 'preparar' faz várias.
 #
 # POR QUE SÓ firmware/ VAI PARA A PLACA: ela compila e roda o ler_adc, o código da PRU, o setup.sh e o
-# calibrar_sonda.sh; a análise roda no computador. O repositório inteiro (e o .git) só ocuparia o espaço das
+# coletar.sh (com coleta/); a análise roda no computador. O repositório inteiro (e o .git) só ocuparia o espaço das
 # capturas. O que a placa não tem, sem o .git, é a VERSÃO do código, que o ler_adc grava em cada captura
 # (cabeçalho v5): o 'enviar' a escreve em firmware/VERSAO, a partir do 'git describe'.
 # ==============================================================================
@@ -293,7 +293,11 @@ else
     echo "primeira cópia nesta pasta: não há firmware anterior para guardar"
 fi
 tar -C "$pasta" -xf -
-echo "copiado: $# arquivo(s) em ~/$pasta"'
+echo "copiado: $# arquivo(s) em ~/$pasta"
+# os scripts que o coletar.sh substituiu (23/10/2026): leriam a saída do ler_adc no formato antigo
+for f in calibrar_sonda.sh varrer_taxa.sh; do
+    if [ -e "$pasta/$f" ]; then rm -f -- "$pasta/$f"; echo "removido: $f (agora ./coletar.sh)"; fi
+done'
 
 cmd_enviar() {
     local forcar=0 setup=0 simular=0 a
@@ -379,7 +383,7 @@ cmd_setup() {
     remoto "$(comando_remoto "$SETUP_REMOTO" "$d" "$PASTA")" 2>&1 </dev/null | recuar \
         || falha "o setup.sh falhou: veja as mensagens acima. Plano B: o firmware anterior, em ~/${PASTA}-anteriores/."
     ok "firmware compilado e PRU0 rodando"
-    proximo "Confira na largada do ler_adc a linha \"Firmware: $(cat "$RAIZ/firmware/VERSAO" 2>/dev/null || echo '...')\"."
+    proximo "Confira na primeira linha do ler_adc: \"firmware $(cat "$RAIZ/firmware/VERSAO" 2>/dev/null || echo '...')\"."
 }
 
 # ==============================================================================

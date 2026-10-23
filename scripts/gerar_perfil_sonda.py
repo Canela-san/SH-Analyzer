@@ -8,7 +8,7 @@
 # ]
 # ///
 """gerar_perfil_sonda.py -- constrói o perfil de calibração (.json) de uma sonda
-de corrente a partir das capturas geradas por firmware/calibrar_sonda.sh.
+de corrente a partir das capturas geradas pelo ./coletar.sh sonda.
 
 Este arquivo é só a ENTRADA de linha de comando; a lógica mora no pacote
 ``supraharmonicos`` (ao lado deste arquivo): medição em ``calibracao_sonda``,

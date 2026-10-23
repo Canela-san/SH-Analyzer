@@ -4,7 +4,7 @@ Núcleo "sem CLI" do gerador de perfis (a linha de comando está em
 ``cli_gerar_perfil``). Entrada: a pasta de capturas de UMA sonda
 (``capturas/<sonda>/``), com arquivos ``calibracao_<FREQ>Hz_rep<N>[_vM].bin``
 (grandeza/sonda_id gravados no cabeçalho v2 -- ver ``firmware/ler_adc.c``)
-gerados por ``firmware/calibrar_sonda.sh`` e, opcionalmente, o manifesto
+gerados por ``./coletar.sh sonda`` e, opcionalmente, o manifesto
 ``pontos_coletados.csv`` (só referência cruzada).
 
 O QUE É "A SONDA": o perfil descreve o CONJUNTO medido, de ponta a ponta -- a sonda de corrente,
@@ -17,7 +17,7 @@ COMO A GRANDEZA INJETADA É CONHECIDA (mutuamente exclusivos):
 
 * modo ``amplitude``   -- a senoide injetada tem amplitude CONHECIDA (a que se ajustou no gerador), dada
   com unidade e tipo (``500mVpp``). Ela vem, por captura, do campo de descrição do cabeçalho
-  (``ler_adc -d "ref: f=1000Hz amp=500mVpp"``, o que ``calibrar_sonda.sh --amplitude`` grava) ou, para
+  (``ler_adc -d "ref: f=1000Hz amp=500mVpp"``, o que ``coletar.sh sonda --amplitude`` grava) ou, para
   todas as capturas de uma vez, de ``--amplitude-referencia``. Uma captura de 1 canal só (a sonda);
 * modo ``osciloscopio`` -- a amplitude vem de um osciloscópio que mediu o MESMO sinal: um ``.m``/``.mat``/
   ``.csv`` por captura, com o nome da captura (ver ``osciloscopio``), ajustado por mínimos quadrados.
@@ -83,10 +83,10 @@ log = logging.getLogger(__name__)
 # Arquivo (na pasta de capturas) com as leituras do instrumento externo, uma linha por captura:
 # 'arquivo' + 'v_shunt_rms_V' (tensão RMS no shunt, em V -- precisa de --resistencia-shunt) OU
 # 'corrente_rms_A' (corrente RMS, em A) OU 'tensao_rms_V' (tensão RMS na entrada de uma cadeia de
-# tensão, em V). Escrito por firmware/calibrar_sonda.sh --ref-externa (a coluna depende de --grandeza).
+# tensão, em V). Escrito pelo ./coletar.sh sonda --ref-externa (a coluna depende de --grandeza).
 NOME_REFERENCIA_EXTERNA = "referencia_externa.csv"
 
-# Mesmo padrão de nome usado por firmware/calibrar_sonda.sh
+# Mesmo padrão de nome usado pelo ./coletar.sh sonda
 # (calibracao_<FREQ>Hz_rep<N>.bin), incluindo a variante "_vM" que
 # caminho_disponivel() gera lá para não sobrescrever uma captura anterior.
 PADRAO_NOME_CAPTURA = re.compile(r"^calibracao_(\d+)Hz_rep(\d+)(?:_v\d+)?\.bin$")
@@ -129,7 +129,7 @@ def identificar_captura(caminho: Path) -> tuple[float | None, ReferenciaCaptura 
 
 
 def descobrir_capturas(pasta: Path) -> list[Path]:
-    """Lista os '.bin' de calibração em 'pasta': os que seguem o padrão de nome de firmware/calibrar_sonda.sh
+    """Lista os '.bin' de calibração em 'pasta': os que seguem o padrão de nome do ./coletar.sh sonda
     E qualquer outro '.bin' cujo cabeçalho traga a frequência injetada (``ref: f=...``) -- com os metadados, o
     nome do arquivo deixa de importar. Não depende do manifesto existir."""
     if not pasta.is_dir():
@@ -144,7 +144,7 @@ def descobrir_capturas(pasta: Path) -> list[Path]:
     if not arquivos:
         raise ErroSHAN(
             f"nenhum arquivo 'calibracao_<FREQ>Hz_rep<N>.bin' (nem '.bin' com 'ref: f=...' nos metadados) "
-            f"encontrado em '{pasta}'. Essa é a convenção de nome gravada por firmware/calibrar_sonda.sh "
+            f"encontrado em '{pasta}'. Essa é a convenção de nome gravada pelo ./coletar.sh sonda "
             f"-- confira se a pasta está certa."
         )
     return arquivos
@@ -534,13 +534,13 @@ def ler_referencia_externa(caminho: Path, resistencia_shunt: float | None) -> di
     convertida em corrente com ``resistencia_shunt``). Aceita ``,`` ou
     ``;`` como separador (planilhas em pt-BR salvam com ``;`` e vírgula decimal) e
     ignora linhas em branco e comentários (``#``). Se um arquivo aparece mais de uma
-    vez, vale a ÚLTIMA linha (``calibrar_sonda.sh`` só acrescenta quando você refaz um
+    vez, vale a ÚLTIMA linha (``coletar.sh sonda`` só acrescenta quando você refaz um
     ponto); uma linha SEM valor anula a leitura anterior daquele arquivo. Valor ausente, não numérico ou não positivo é erro: uma leitura digitada
     errada viraria um ganho errado em silêncio."""
     if not caminho.is_file():
         raise ErroSHAN(
             f"não encontrei o arquivo de referência externa '{caminho}'. Ele é escrito por "
-            f"'calibrar_sonda.sh --ref-externa' (uma linha por captura: arquivo,v_shunt_rms_V) "
+            f"'./coletar.sh sonda --ref-externa' (uma linha por captura: arquivo,v_shunt_rms_V) "
             f"ou pode ser criado à mão com esse formato."
         )
     linhas = [ln for ln in caminho.read_text(encoding="utf-8-sig").splitlines()
@@ -605,7 +605,7 @@ class PontoPerfil:
 def agregar_por_frequencia(pontos: list[PontoMedido], modo_referencia: str,
                             resistencia_shunt: float | None) -> list[PontoPerfil]:
     """Agrupa 'pontos' pela frequência-ALVO nominal (freq_alvo_hz, herdada
-    do nome do arquivo/--redundancia em firmware/calibrar_sonda.sh) -- essa
+    do nome do arquivo/--redundancia no ./coletar.sh sonda) -- essa
     é a chave de "mesmo ponto de calibração, repetido N vezes", não a
     frequência medida: duas repetições do MESMO alvo nominal podem ter
     frequências medidas ligeiramente diferentes entre si (imprecisão do

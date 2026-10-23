@@ -1,232 +1,133 @@
+/*
+ * ler_adc -- captura do SH-Analyzer na BeagleBone.
+ *
+ * A PRU0 (spi_core.asm) lê o ADS8688 pelo SPI numa grade de tempo exata e enche, alternando, dois buffers na DDR. Este
+ * programa prepara a placa (pinos da PRU, memória reservada), configura e reinicia a PRU, grava cada buffer cheio num
+ * .bin (cabeçalho de 1024 bytes + amostras de 16 bits intercaladas por canal) e confere a integridade da captura.
+ *
+ *   sudo ./ler_adc [FREQUENCIA [CANAIS]] [opções]        (./ler_adc --help)
+ *
+ * O contrato com a PRU está em memoria_pru.h; o formato do .bin, na struct cabecalho_arquivo_campos (lida por
+ * scripts/supraharmonicos/cabecalho.py; tests/test_contrato_firmware.py confere os dois lados).
+ */
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <unistd.h>
-#include <stdint.h>
-#include <signal.h>
 #include <string.h>
-#include <errno.h>
+#include <sys/mman.h>
 #include <time.h>
+#include <unistd.h>
+
 #include "memoria_pru.h"
 
-volatile sig_atomic_t manter_execucao = 1;
-// SIGINT (Ctrl+C), SIGTERM (kill) e SIGHUP (o ssh caiu): o mesmo fim limpo -- o laço sai entre dois blocos e o
-// cabeçalho final (blocos, contadores, folga) é reescrito. Até 22/10/2026 só o SIGINT era tratado: um kill ou a queda
-// do ssh deixavam o cabeçalho com os campos finais zerados.
-void lidar_interrupcao(int sinal) { (void)sinal; manter_execucao = 0; }
+// =====================================================================================================================
+// Constantes
+// =====================================================================================================================
 
-// Número de blocos capturados quando nem --blocos nem --duracao são
-// passados na linha de comando -- mantém o comportamento histórico deste
-// programa (a única forma de captura antes desta funcionalidade: sempre
-// exatamente 1 bloco, via o antigo BLOCOS_PARA_CAPTURAR fixo). Ver main()
-// e a documentação de --blocos/--duracao, logo abaixo, para como alterar
-// isso em tempo de execução.
+#define CANAL_PADRAO 1                  // o canal de tensão da placa
 #define BLOCOS_PADRAO 1
-
-// Canal usado quando nenhuma lista é passada em argv[2] (modo de um canal
-// só) -- mantém o comportamento histórico deste programa: nesta placa, o
-// canal 1 é o único de fato conectado a um sinal válido (ver nota no
-// cabeçalho de spi_core.asm). Continua sendo o padrão implícito em modo
-// multi-canal também, se o usuário não passar nada.
-#define CANAL_PADRAO 1
-
-// Taxa TOTAL usada quando a frequência não é passada (ver main()): 200 MHz ÷ 500, exata -- a Nyquist de 200 kHz
-// cobre a banda de supraharmônicos (até 150 kHz) com folga para o filtro do ADC, com 1 canal. Com o SPI rápido (o
-// padrão desde 22/10/2026), o período fica constante até 419,3 kS/s (477 ticks, varredura T7g): a 400 kS/s sobram
-// 18 ciclos (90 ns) no pior momento. Até 22/10/2026 eram 312,5 kS/s com o SPI de antes (hoje --spi lenta, até
-// 327,9 kS/s).
+// 200 MHz ÷ 500, exata: Nyquist de 200 kHz com 1 canal, acima da banda de supraharmônicos (até 150 kHz).
 #define FREQUENCIA_PADRAO_HZ 400000u
+#define FREQUENCIA_MAXIMA_HZ 500000u    // o ADS8688 converte no máximo 500 kS/s no total
 
-// [TETO DA PRU, 23/10/2026] O menor período (em ticks) com que TODA amostra sai no ciclo exato da grade, medido na
-// placa com as esperas de CS padrão (3/1/3): 477 no SPI rápido (419,3 kS/s, T7g) e 610 no lento (327,9 kS/s, T7f); o
-// simulador dá 1 tick a mais nos dois. Abaixo dele as amostras atrasam e a taxa real fica MENOR que a do cabeçalho
-// (pedir 500000 Hz dava ~430 kS/s gravados como 500 kS/s): o ler_adc recusa, a não ser com --forcar-taxa (as varreduras
-// do varrer_taxa.sh passam do teto de propósito). Ver teto_ticks_da_pru() para as esperas de CS fora do padrão.
+// Teto da PRU: o menor período, em ticks de 5 ns, com toda amostra no ciclo exato da grade, medido na placa com as
+// esperas de CS padrão: 477 no SPI rápido (419,3 kS/s, T7g) e 610 no lento (327,9 kS/s, T7f). Abaixo dele as
+// amostras atrasam e a taxa real fica menor que a do cabeçalho; ver teto_ticks_da_pru() para outras esperas.
 #define TETO_TICKS_SPI_RAPIDO 477u
 #define TETO_TICKS_SPI_LENTO  610u
-#define FREQUENCIA_MAXIMA_HZ  500000u   // o ADS8688 converte no máximo 500 kS/s no total
 
-// ============================================================================
-// [CABECALHO DO ARQUIVO .bin]
-// ============================================================================
-// Todo '.bin' gerado por este programa começa com um cabeçalho de tamanho
-// FIXO (1024 bytes) antes de qualquer amostra bruta. As ferramentas Python
-// (scripts/supraharmonicos/cabecalho.py) leem todas as versões, e também os
-// '.bin' antigos, sem cabeçalho.
-#define CABECALHO_MAGIC "SHAN"      // 4 bytes, sem terminador nulo armazenado
-#define CABECALHO_VERSAO 7u         // versão do FORMATO do cabeçalho (não do firmware/software) -- v2 adicionou grandeza_por_canal/sonda_id_por_canal; v3, faixa_adc_por_canal; v4, os contadores de integridade da captura e os atrasos de CS; v5, a versão do firmware e a taxa medida pelo ARM; v6, a grade de tempo publicada pela PRU; v7, o modo do SPI e as divergências entre as fases de leitura (ver struct cabecalho_arquivo_campos)
+#define PRU_CLOCK_HZ 200000000u
+#define BUFFERS_PING_PONG 2u            // buffers de SAMPLES_PER_BUFFER amostras que a PRU alterna na DDR
+
+// --- Cabeçalho do .bin --------------------------------------------------------------------------------------------
+#define CABECALHO_MAGIC "SHAN"
+#define CABECALHO_VERSAO 7u             // versão do FORMATO do cabeçalho (o histórico está em cabecalho.py)
 #define CABECALHO_TAMANHO_TOTAL 1024u
-
-// Tamanho FIXO (bytes, incluindo o terminador nulo) dos campos de texto
-// livre de rastreabilidade -- ver --titulo/--descricao e a struct logo
-// abaixo. Nomeados aqui (em vez de "64"/"256" soltos no meio da struct e de
-// novo na validação de tamanho em main()) pela mesma razão de sempre: uma
-// única fonte de verdade para um número que precisa bater em mais de um
-// lugar do arquivo.
 #define CABECALHO_TITULO_TAMANHO 64u
 #define CABECALHO_DESCRICAO_TAMANHO 256u
-
-// [SONDA/GRANDEZA] Tamanho FIXO (bytes, incluindo o terminador nulo) do
-// identificador de sonda por canal -- ver --sonda, sonda_id_por_canal na
-// struct abaixo, e docs/probe-correction-design.md para o racional
-// completo. 32 bytes (31 úteis de texto ASCII) cobre confortavelmente um
-// código do tipo "fabricante_modelo_serial" sem precisar abreviar; o nome/
-// descrição completos da sonda ficam no arquivo de perfil correspondente,
-// do lado Python -- este campo é só a CHAVE de busca desse arquivo, não o
-// perfil em si.
 #define CABECALHO_SONDA_ID_TAMANHO 32u
-
-// [VERSÃO DO FIRMWARE, v5] O Makefile passa o 'git describe' do repositório
-// (ou o arquivo VERSAO, escrito no PC antes de copiar a pasta para a
-// BeagleBone, onde não há git) em -DVERSAO_FIRMWARE. Gravado em cada captura
-// para saber, meses depois, qual build gerou um '.bin' -- o firmware muda
-// entre campanhas de bancada. 32 bytes com o '\0': um describe como
-// "v0.4-12-gabcdef1-dirty" tem ~22; o que passar disso é cortado.
 #define CABECALHO_VERSAO_FIRMWARE_TAMANHO 32u
 #ifndef VERSAO_FIRMWARE
-#define VERSAO_FIRMWARE "desconhecida"
+#define VERSAO_FIRMWARE "desconhecida"  // o Makefile passa o 'git describe' (ou o arquivo VERSAO)
 #endif
 
-// Buffers do esquema ping-pong na DDR: a PRU enche um enquanto o ARM grava o
-// outro (SAMPLES_PER_BUFFER amostras cada, ver memoria_pru.h). Gravado no
-// cabeçalho v5 junto com samples_per_buffer, para o arquivo descrever sozinho
-// a geometria da captura (as trocas de buffer caem a cada SAMPLES_PER_BUFFER
-// amostras brutas).
-#define BUFFERS_PING_PONG 2u
-
-// [SONDA/GRANDEZA] Valores possíveis para grandeza_por_canal na struct
-// abaixo -- a grandeza física que cada canal habilitado está medindo.
-// Mesma indexação de lista_canais (posição i descreve o canal
-// lista_canais[i]); slots não usados (índice >= num_canais) ficam em
-// GRANDEZA_NAO_USADA. Precisa ficar em sincronia manual com os mesmos
-// valores do lado Python (adc_tool.py) -- não há arquivo de constantes
-// compartilhado entre C e Python neste projeto (mesma situação já conhecida
-// de ADS8688_MAX_CANAIS).
+// Grandeza de cada canal (os mesmos códigos de supraharmonicos/constantes.py).
 #define GRANDEZA_TENSAO       0u
 #define GRANDEZA_CORRENTE     1u
 #define GRANDEZA_TEMPERATURA  2u
 #define GRANDEZA_NAO_USADA    0xFFu
-
-// Grandeza assumida para um canal habilitado que não recebeu --grandeza
-// explícito -- preserva o uso histórico deste programa (nenhuma flag nova
-// = tudo como antes, canal de tensão).
 #define GRANDEZA_PADRAO GRANDEZA_TENSAO
 
-// [FAIXA DE ENTRADA POR CANAL] Código de faixa de cada canal (registrador
-// RANGE_SELn do ADS8688, Range_CHn[3:0]) gravado em faixa_adc_por_canal no
-// cabeçalho v3 e enviado à PRU em shared_control->range_sel (ver
-// memoria_pru.h, que define ADS8688_FAIXA_*). Slots não usados do cabeçalho
-// ficam em FAIXA_ADC_NAO_USADA. Precisa ficar em sincronia manual com
-// supraharmonicos/constantes.py (FAIXAS_ADC_V) -- tests/test_contrato_firmware.py confere.
+// Faixa de entrada do ADS8688 por canal (RANGE_SELn). O código é o índice de FAIXA_ADC_ESPAN_V, a faixa TOTAL em volts
+// com VREF = 4,096 V (o --faixa do adc_tool.py).
 #define FAIXA_ADC_NAO_USADA 0xFFu
-
-// Faixa assumida para um canal sem --faixa-adc: a de reset do ADS8688
-// (±2,5 × VREF), a mesma que o ADC já usava antes desta flag existir.
 #define FAIXA_ADC_PADRAO ADS8688_FAIXA_2_5_VREF
-
-// Faixa TOTAL (pico a pico, em volts) de cada código, com VREF = 4,096 V
-// (referência interna): é o valor que o Python chama de --faixa.
 static const double FAIXA_ADC_ESPAN_V[] = {20.48, 10.24, 5.12};
 #define FAIXA_ADC_NUM_CODIGOS 3
 
-// Clock da PRU usado para converter uma frequência em Hz para um número de
-// ciclos da PRU (sample_period_ticks, escrito em shared_control). Nomeado em
-// vez de deixar "200000000" solto no meio da conta -- é o mesmo valor usado
-// em spi_core.asm para todos os cálculos de timing (200 MHz); lá nunca
-// precisou ser nomeado porque não entra em nenhuma conta em tempo de
-// execução daquele lado, só aqui (e agora também no cabeçalho, ver abaixo).
-#define PRU_CLOCK_HZ 200000000u
+// --- Placa ------------------------------------------------------------------------------------------------------------
+#define REMOTEPROC_PRU0_ESTADO "/sys/class/remoteproc/remoteproc1/state"
+#define BASE_PINMUX "/sys/devices/platform/ocp"     // onde o config-pin lê e escreve o modo de cada pino
+#define PRU_AINDA_NAO_INICIOU 0xFFFFFFFFu            // marca em versao_protocolo_pru, trocada por 0 pelo pru_main.c
 
-// Nome de arquivo gerado automaticamente quando -o/--saida não é passado:
-// "captura_AAAAMMDD_HHMMSS.bin" -- ver gerar_nome_arquivo_automatico().
-// Tamanho generoso (a string real tem ~27 bytes incluindo o terminador) para
-// nunca chegar perto do limite mesmo com futuras mudanças de formato.
-#define TAMANHO_NOME_ARQUIVO_AUTOMATICO 64
+// Com o ruído do ADC (~0,8 LSB rms), tantas amostras iguais seguidas só acontecem com o ADC mudo (SDO parado em 0: a
+// placa de aquisição sem alimentação ou os pinos da PRU sem configuração) ou com a entrada saturada.
+#define AMOSTRAS_CONFERIDAS_ADC_MUDO 65536u
 
-// ----------------------------------------------------------------------------
-// 'cabecalho_arquivo_campos' lista os campos de verdade, SEM padding. O
-// padding para completar exatos 1024 bytes é calculado em TEMPO DE
-// COMPILAÇÃO (ver 'cabecalho_arquivo', logo abaixo) a partir de
-// sizeof(struct cabecalho_arquivo_campos) -- em vez de contar bytes na mão e
-// escrever um array de tamanho fixo "no chute". Já tivemos um problema de
-// sincronização manual de tamanho neste projeto (SAMPLES_PER_BUFFER, que
-// precisa bater manualmente com o LDI hardcoded em spi_core.asm); a ideia
-// aqui é não repetir esse padrão de erro para o cabeçalho -- se um campo for
-// adicionado/removido no futuro, o padding se ajusta sozinho, e a
-// verificação de tamanho logo abaixo pega em tempo de compilação qualquer
-// inconsistência (por exemplo, os campos somados ultrapassando 1024 bytes).
-//
-// __attribute__((packed)) em AMBAS as structs: sem isso, o compilador
-// poderia inserir bytes de padding ENTRE os campos para respeitar o
-// alinhamento natural de cada tipo -- o caso mais óbvio aqui é
-// 'timestamp_unix' (um uint64_t): os 3 campos anteriores somam 12 bytes, e
-// em várias ABIs um uint64_t exige alinhamento de 8 bytes, o que inseriria 4
-// bytes de padding invisível antes dele. Esse padding "automático" do
-// compilador (a) varia entre arquitetura/ABI e até entre versões de
-// compilador, e (b) tornaria o layout binário deste cabeçalho dependente de
-// COMO ele foi compilado, não de uma especificação fixa -- inaceitável para
-// um formato de arquivo que será lido de volta por outros programas
-// (adc_tool.py, uma reimplementação futura em outra linguagem, etc.),
-// possivelmente compilados/rodando em outra arquitetura. 'packed' fixa o
-// layout em bytes, exatamente na ordem declarada, sem nenhum espaço extra --
-// o mesmo raciocínio já aplicado ao formato de amostras brutas do '.bin'
-// (sempre 2 bytes por amostra, sem metadado nenhum) e ao layout de
-// 'shared_control' em memoria_pru.h (compartilhado por valor entre ARM e
-// PRU).
-//
-// Custo aceito: acesso a um campo desalinhado (ex.: escrever em
-// 'timestamp_unix' começando no byte 12, não no 16) pode ser um pouco mais
-// lento que um acesso alinhado em alguns processadores -- no Cortex-A8 do
-// BeagleBone isso é resolvido em hardware de forma transparente (não gera
-// falha, só pode custar ciclos extras). Irrelevante aqui: o cabeçalho é
-// montado e gravado UMA ÚNICA VEZ por captura (e reescrito uma segunda vez
-// só no final, ver escrita final em main()), bem fora do laço principal de
-// aquisição, que sim tem orçamento de tempo apertado.
-//
-// Convenção de byte order: gravado com o byte order NATIVO da CPU do
-// BeagleBone (ARM Cortex-A8, little-endian) -- a mesma convenção já
-// assumida pelas amostras brutas do '.bin' e pelo adc_tool.py (dtype numpy
-// '<u2'/'<i2', o '<' explícito de little-endian). Um leitor rodando numa
-// arquitetura big-endian precisaria converter os campos multi-byte na mão;
-// não há necessidade disso hoje, mas vale documentar a suposição.
+// --- Códigos de saída -------------------------------------------------------------------------------------------------
+#define SAIDA_OK 0
+#define SAIDA_ERRO 1
+#define SAIDA_USO 2
+#define SAIDA_SOBRESCRITO 3             // buffers sobrescritos: amostras perdidas
+#define SAIDA_ADC_MUDO 4
+
+// =====================================================================================================================
+// Cabeçalho do .bin
+// =====================================================================================================================
+// 1024 bytes, little-endian, sem padding entre campos (packed): o layout é o do arquivo, não o do compilador. Os
+// campos finais (blocos, contadores, taxa medida, grade) só valem depois da reescrita no fim da captura; o CRC-32
+// (zlib) cobre o cabeçalho inteiro com o próprio campo zerado.
 struct cabecalho_arquivo_campos {
-    char     magic[4];                 // "SHAN" -- assinatura fixa, permite a uma ferramenta reconhecer o formato antes de tentar interpretar o resto
-    uint32_t versao_cabecalho;         // versão do FORMATO deste cabeçalho (começa em 1) -- não confundir com versão do firmware/software
-    uint32_t tamanho_cabecalho;        // bytes totais do cabeçalho (1024) -- gravado explicitamente para um leitor não precisar hardcodar esse número
-    uint64_t timestamp_unix;           // segundos desde a epoch Unix (UTC), capturados no início do processamento dos argumentos -- aproximação a poucos milissegundos do início real da varredura do ADC (ainda faltam mmap/configuração do ADS8688 pela frente nesse instante)
-    uint32_t frequencia_hz;            // frequência TOTAL de transação SPI pedida via linha de comando -- mesma semântica de -f/--frequencia no adc_tool.py
-    uint32_t auto_seq_mask;            // máscara de canais habilitados (bit N = canal N) escrita em shared_control->auto_seq_mask -- ver memoria_pru.h
-    uint32_t num_canais;               // popcount de auto_seq_mask -- quantidade de canais habilitados nesta captura
-    uint8_t  lista_canais[ADS8688_MAX_CANAIS]; // canais habilitados, em ORDEM CRESCENTE (mesma ordem de varredura do ADS8688 e mesma ordem impressa no console) -- slots não usados (índice >= num_canais) ficam em 0xFF (nunca um canal válido, que é sempre 0-7)
-    uint32_t samples_per_buffer;       // SAMPLES_PER_BUFFER no momento da captura -- tamanho de 1 bloco, em amostras BRUTAS intercaladas (não por canal)
-    uint32_t bytes_por_amostra;        // largura de cada amostra bruta no '.bin', em bytes (hoje sempre 2 = sizeof(uint16_t))
-    uint32_t pru_clock_hz;             // clock da PRU usado para converter Hz -> ciclos (PRU_CLOCK_HZ, hoje 200 MHz) -- permite reconstruir/conferir sample_period_ticks a partir de frequencia_hz sem hardcodar 200 MHz do lado de quem lê
-    uint32_t sample_period_ticks;      // valor efetivamente escrito em shared_control->sample_period_ticks para esta captura
-    uint32_t primeira_amostra_descartada; // 1 = a primeira amostra bruta de toda a captura foi descartada antes de chegar ao arquivo; hoje sempre 0 (ver main() -- descarte removido: no modo AUTO_RST a primeira amostra do laço principal já é dado válido de canais[0], não resíduo). Campo mantido por compatibilidade de formato, reservado para o caso de um firmware futuro reintroduzir algum descarte
-    double   duracao_pedida_segundos;  // se --duracao foi usado, a duração pedida em segundos; 0.0 caso contrário (--blocos ou o padrão de 1 bloco)
-    uint64_t blocos_gravados;          // preenchido (reescrito) só ao FINAL da captura -- fica 0 enquanto a captura está em andamento, ou se o programa for encerrado (crash, kill -9) antes da reescrita final. uint64_t (não uint32_t) por consistência com blocos_salvos/total_amostras_gravadas, que já são de 64 bits no resto do arquivo -- ver main().
-    uint64_t total_amostras_gravadas;  // idem, total de amostras BRUTAS intercaladas gravadas -- equivale a (tamanho_do_arquivo - 1024) / bytes_por_amostra, e é sempre um múltiplo exato de samples_per_buffer (nenhuma amostra é descartada, ver primeira_amostra_descartada acima). uint64_t É NECESSÁRIO aqui, não só por consistência: a 500 kSPS contínuos, um uint32_t estouraria em pouco mais de 2 horas de captura.
-    char     titulo[CABECALHO_TITULO_TAMANHO];       // [RASTREABILIDADE] --titulo/-t, opcional, texto livre em UTF-8, terminado em '\0'. Não informado -> todos os bytes zerados (string vazia), não lixo -- ver memset(0) da struct inteira em main(). Rejeitado (não truncado) em main() se não couber -- ver comentário lá sobre por que truncar um UTF-8 num limite de bytes arbitrário é arriscado.
-    char     descricao[CABECALHO_DESCRICAO_TAMANHO]; // [RASTREABILIDADE] --descricao/-d, mesmas regras de titulo, só que maior -- espaço para uma frase completa sobre o objetivo/contexto do ensaio (ex.: local, o que estava sendo injetado/medido).
-    uint8_t  grandeza_por_canal[ADS8688_MAX_CANAIS];             // [SONDA/GRANDEZA, v2] grandeza física de cada canal habilitado (GRANDEZA_TENSAO/CORRENTE/TEMPERATURA) -- mesma indexação de lista_canais (posição i descreve lista_canais[i]); slots não usados = GRANDEZA_NAO_USADA. Sem --grandeza na linha de comando, todo canal assume GRANDEZA_PADRAO (tensão), preservando o comportamento histórico.
-    char     sonda_id_por_canal[ADS8688_MAX_CANAIS][CABECALHO_SONDA_ID_TAMANHO]; // [SONDA/GRANDEZA, v2] identificador ASCII da sonda usada em cada canal (--sonda), mesma indexação acima; string vazia = nenhuma sonda associada a este canal. Só a CHAVE de busca -- este programa não valida se o id corresponde a um arquivo de perfil real nem interpreta a curva de calibração; isso é feito inteiramente por adc_tool.py, que é onde os perfis de fato residem (ver docs/probe-correction-design.md).
-    uint8_t  faixa_adc_por_canal[ADS8688_MAX_CANAIS];            // [FAIXA DE ENTRADA, v3] código de faixa (0 = ±10,24 V, 1 = ±5,12 V, 2 = ±2,56 V) com que o ADS8688 converteu cada canal habilitado -- mesma indexação de lista_canais (posição i descreve lista_canais[i]); slots não usados = FAIXA_ADC_NAO_USADA. É o que o ADC realmente recebeu em RANGE_SELn (a PRU escreve o código de todo canal habilitado a cada captura), então o Python converte código -> volts sem depender de --faixa. Sem --faixa-adc, todo canal usa FAIXA_ADC_PADRAO.
-    uint32_t amostras_atrasadas;       // [INTEGRIDADE, v4] amostras que a PRU tomou depois do instante previsto (a taxa pedida passou do que o laço alcança) -- com isso > 0, a taxa real é MENOR que frequencia_hz. Ver memoria_pru.h
-    uint32_t buffers_sobrescritos;     // [INTEGRIDADE, v4] trocas de buffer em que o ARM ainda não tinha copiado o buffer que a PRU começou a reescrever: amostras perdidas. > 0 = captura comprometida (este programa sai com código 3)
-    uint32_t quadros_preambulo_ruim;   // [INTEGRIDADE, v4] quadros SPI com algum 1 nos 16 bits de preâmbulo (o SDO tem de ficar em 0 durante o comando, datasheet 8.4.1.1.4): ruído/reflexo na linha SDO
-    uint32_t atraso_cs_iteracoes[3];   // [INTEGRIDADE, v4] atrasos de CS usados no laço da PRU (setup, hold, alto), em iterações de 2 ciclos (10 ns) -- 3/1/3 é o padrão desde 21/10/2026 (200/100/100 antes). Ver --atraso-cs
-    char     versao_firmware[CABECALHO_VERSAO_FIRMWARE_TAMANHO]; // [VERSÃO, v5] VERSAO_FIRMWARE deste build (git describe), terminado em '\0'
-    double   taxa_medida_hz;           // [INTEGRIDADE, v5] taxa total medida pelo relógio do ARM entre o 1º e o último bloco (incerteza ~0,02 % num bloco de ~10 s); 0.0 = não medida (menos de 2 blocos). Com amostras_atrasadas > 0 é a melhor estimativa da taxa real
-    uint32_t buffers_ping_pong;        // [GEOMETRIA, v5] BUFFERS_PING_PONG: quantos buffers de samples_per_buffer amostras a PRU alterna na DDR
-    uint32_t folga_minima_ciclos;      // [GRADE, v6] menor folga da captura, em ciclos de 5 ns: > 0 = toda amostra saiu no ciclo exato da grade (ver memoria_pru.h)
-    uint32_t atraso_maximo_ciclos;     // [GRADE, v6] maior atraso entre as amostras atrasadas, em ciclos (0 se nenhuma)
-    uint32_t ciclos_rebase;            // [GRADE, v6] ciclos entre as duas leituras do contador no rebase, medidos pela PRU antes da 1ª amostra
-    uint32_t versao_protocolo_pru;     // [GRADE, v6] o que a PRU escreveu em versao_protocolo_pru (VERSAO_PROTOCOLO_PRU = este firmware; 0 = firmware da PRU anterior a 22/10/2026)
-    uint32_t modo_spi;                 // [SPI, v7] MODO_SPI_* de memoria_pru.h: 0 = padrão (~10,7 MHz); 1, 2, 3 = rápido (~15,4 MHz) gravando a fase A, B ou C (--spi)
-    uint32_t divergencias_fase_a;      // [SPI, v7] quadros do SPI rápido em que a leitura da fase A (60 ns) discordou da B (75 ns); 0 no modo padrão
-    uint32_t divergencias_fase_c;      // [SPI, v7] idem, a fase C (90 ns) contra a B
-    uint32_t header_crc32;             // CRC-32 (polinômio 0xEDB88320, o mesmo de zlib/PNG/Ethernet) de todo o cabeçalho, calculado com este próprio campo zerado -- permite a um leitor detectar um cabeçalho truncado/corrompido antes de confiar nos campos acima
+    char     magic[4];                                 // "SHAN"
+    uint32_t versao_cabecalho;                         // CABECALHO_VERSAO
+    uint32_t tamanho_cabecalho;                        // 1024
+    uint64_t timestamp_unix;                           // início da captura (s, UTC; a placa não tem RTC: confira a hora)
+    uint32_t frequencia_hz;                            // taxa TOTAL pedida
+    uint32_t auto_seq_mask;                            // bit N = canal N na varredura
+    uint32_t num_canais;
+    uint8_t  lista_canais[ADS8688_MAX_CANAIS];         // em ordem crescente (a da varredura); 0xFF nos não usados
+    uint32_t samples_per_buffer;                       // amostras brutas (todos os canais) por bloco
+    uint32_t bytes_por_amostra;                        // 2
+    uint32_t pru_clock_hz;
+    uint32_t sample_period_ticks;                      // a taxa real é pru_clock_hz / sample_period_ticks
+    uint32_t primeira_amostra_descartada;              // sempre 0: no AUTO_RST a 1ª amostra já é do canal certo
+    double   duracao_pedida_segundos;                  // --duracao, ou 0
+    uint64_t blocos_gravados;                          // [final]
+    uint64_t total_amostras_gravadas;                  // [final]
+    char     titulo[CABECALHO_TITULO_TAMANHO];         // UTF-8, terminado em '\0'
+    char     descricao[CABECALHO_DESCRICAO_TAMANHO];
+    uint8_t  grandeza_por_canal[ADS8688_MAX_CANAIS];   // [v2] por posição de lista_canais
+    char     sonda_id_por_canal[ADS8688_MAX_CANAIS][CABECALHO_SONDA_ID_TAMANHO];   // [v2]
+    uint8_t  faixa_adc_por_canal[ADS8688_MAX_CANAIS];  // [v3] código de faixa que o ADC recebeu
+    uint32_t amostras_atrasadas;                       // [v4, final] contadores da PRU (memoria_pru.h)
+    uint32_t buffers_sobrescritos;
+    uint32_t quadros_preambulo_ruim;
+    uint32_t atraso_cs_iteracoes[3];                   // [v4] esperas de CS (setup, hold, alto)
+    char     versao_firmware[CABECALHO_VERSAO_FIRMWARE_TAMANHO];   // [v5] VERSAO_FIRMWARE
+    double   taxa_medida_hz;                           // [v5, final] pelo relógio do ARM; 0 = não medida
+    uint32_t buffers_ping_pong;                        // [v5]
+    uint32_t folga_minima_ciclos;                      // [v6, final] grade de tempo publicada pela PRU
+    uint32_t atraso_maximo_ciclos;
+    uint32_t ciclos_rebase;
+    uint32_t versao_protocolo_pru;
+    uint32_t modo_spi;                                 // [v7] MODO_SPI_*
+    uint32_t divergencias_fase_a;                      // [v7, final]
+    uint32_t divergencias_fase_c;
+    uint32_t header_crc32;
 } __attribute__((packed));
 
 struct cabecalho_arquivo {
@@ -234,622 +135,368 @@ struct cabecalho_arquivo {
     uint8_t padding[CABECALHO_TAMANHO_TOTAL - sizeof(struct cabecalho_arquivo_campos)];
 } __attribute__((packed));
 
-// Verificação em tempo de compilação de que o cabeçalho tem exatos 1024
-// bytes -- de propósito NÃO usa _Static_assert (recurso de C11) para não
-// depender de um dialeto específico: o Makefile deste projeto compila só
-// com "gcc -Wall -O3", sem "-std=", e nenhum lugar do repositório fixa a
-// versão do GCC do toolchain da BeagleBone. Um array de tamanho negativo é
-// erro de compilação garantido em qualquer dialeto de C, de C89 em diante --
-// se a expressão abaixo for falsa, a compilação falha exatamente aqui, com
-// uma mensagem apontando para esta linha, em vez de silenciosamente gerar
-// um cabeçalho com o tamanho errado.
-typedef char verificacao_cabecalho_1024_bytes[
-    (sizeof(struct cabecalho_arquivo) == CABECALHO_TAMANHO_TOTAL) ? 1 : -1
-];
+_Static_assert(sizeof(struct cabecalho_arquivo) == CABECALHO_TAMANHO_TOTAL, "o cabeçalho tem de ter 1024 bytes");
 
-// ----------------------------------------------------------------------------
-// CRC-32 (implementação bit a bit, sem tabela de lookup) -- usado só para o
-// cabeçalho de 1024 bytes, duas vezes por captura (uma vez no início, e de
-// novo no final, ao reescrever blocos_gravados/total_amostras_gravadas).
-// Nesse volume (1024 bytes = 8192 iterações de bit), a versão sem tabela é
-// trivialmente rápida e evita carregar uma tabela de 256 uint32_t (1 KB) só
-// para esse uso pontual -- bem diferente do laço de aquisição, onde cada
-// instrução conta. Polinômio 0xEDB88320 (forma refletida) -- o mesmo usado
-// por zlib, PNG e Ethernet (CRC-32/ISO-HDLC).
+// CRC-32 refletido, polinômio 0xEDB88320 (o do zlib): o Python confere com zlib.crc32.
 static uint32_t calcular_crc32(const void *dados, size_t tamanho) {
     const uint8_t *bytes = (const uint8_t *)dados;
     uint32_t crc = 0xFFFFFFFFu;
-
     for (size_t i = 0; i < tamanho; i++) {
         crc ^= bytes[i];
         for (int bit = 0; bit < 8; bit++) {
-            uint32_t mascara = 0u - (crc & 1u); // 0xFFFFFFFF se bit=1, senão 0 -- aritmética unsigned, sempre bem definida (módulo 2^32)
-            crc = (crc >> 1) ^ (0xEDB88320u & mascara);
+            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
         }
     }
     return ~crc;
 }
 
-/*
- * [CABECALHO/NOME DE ARQUIVO] Gera o nome padrão usado quando -o/--saida não
- * é passado na linha de comando: "captura_AAAAMMDD_HHMMSS.bin", a partir do
- * horário LOCAL do sistema no instante em que os argumentos são processados
- * -- conveniente para um humano navegando os arquivos depois. O instante
- * exato e inambíguo (epoch Unix, UTC) fica gravado à parte, no campo
- * timestamp_unix do cabeçalho -- ferramentas de pós-processamento devem
- * usar aquele campo, não tentar reconstruir a data a partir do nome do
- * arquivo (fuso horário do sistema pode mudar).
- *
- * ⚠️ A maioria das BeagleBones não tem RTC com bateria: se a placa não
- * estiver com o relógio sincronizado (NTP, ou ajustado manualmente) no
- * momento da captura, tanto o nome do arquivo quanto timestamp_unix podem
- * refletir um horário incorreto (ex.: próximo da epoch, 1970). Vale
- * conferir `date` antes de um ensaio cujo timestamp importe para o
- * relatório (ex.: validação em bancada, seção 7 do contexto do projeto).
- *
- * 'buffer' precisa ter pelo menos TAMANHO_NOME_ARQUIVO_AUTOMATICO bytes. Em
- * caso de falha (extremamente raro -- localtime_r ou strftime com erro),
- * cai para um nome fixo genérico em vez de deixar 'buffer' com conteúdo
- * indefinido, para nunca abrir um arquivo com um caminho corrompido/não
- * inicializado.
- */
-static void gerar_nome_arquivo_automatico(time_t instante, char *buffer, size_t tamanho_buffer) {
-    struct tm horario_local;
-    if (localtime_r(&instante, &horario_local) == NULL) {
-        snprintf(buffer, tamanho_buffer, "captura_sem_timestamp.bin");
-        return;
-    }
+// =====================================================================================================================
+// Saída no terminal
+// =====================================================================================================================
+// stdout: o resumo da captura, o progresso e, com -v, os detalhes. stderr: avisos e erros. Cores e a barra de progresso
+// só num terminal (fora dele, como nos logs do varrer_taxa.sh e do calibrar_sonda.sh, o texto sai limpo).
 
-    char parte_data_hora[32];
-    if (strftime(parte_data_hora, sizeof(parte_data_hora), "%Y%m%d_%H%M%S", &horario_local) == 0) {
-        snprintf(buffer, tamanho_buffer, "captura_sem_timestamp.bin");
-        return;
-    }
+static int verboso = 0;
+static int terminal_stdout = 0;     // stdout é um terminal: barra de progresso
+static int cor_stdout = 0;
+static int cor_stderr = 0;
+static int progresso_ativo = 0;     // a última linha do stdout é a barra (\r): limpá-la antes de qualquer outro texto
 
-    snprintf(buffer, tamanho_buffer, "captura_%s.bin", parte_data_hora);
+enum estilo { NEGRITO, FRACO, VERMELHO, VERDE, AMARELO, CIANO };
+static const char *const CODIGOS_ANSI[] = {"\033[1m", "\033[2m", "\033[31m", "\033[32m", "\033[33m", "\033[36m"};
+
+static int usa_cor(FILE *f) { return f == stderr ? cor_stderr : cor_stdout; }
+static const char *ansi(FILE *f, enum estilo e) { return usa_cor(f) ? CODIGOS_ANSI[e] : ""; }
+static const char *fim_ansi(FILE *f) { return usa_cor(f) ? "\033[0m" : ""; }
+
+static int pode_usar_cor(int fd) {
+    const char *term = getenv("TERM");
+    return isatty(fd) && getenv("NO_COLOR") == NULL && term != NULL && strcmp(term, "dumb") != 0;
 }
 
-/*
- * [CONTROLE DE DURAÇÃO DA CAPTURA] --blocos e --duracao (mutuamente
- * exclusivas, validado em main()) controlam por quanto tempo a captura
- * roda antes de fechar o arquivo .bin sozinha:
- *
- *   --blocos N   N > 0 -> captura exatamente N blocos e para (é o
- *                mecanismo "cru": era a única forma de captura antes
- *                desta funcionalidade, sempre com N fixo em 1).
- *                N = 0 -> captura INDEFINIDAMENTE, buffer atrás de
- *                buffer, até o usuário apertar Ctrl+C. SIGINT (e, desde
- *                22/10/2026, SIGTERM e SIGHUP) já é
- *                tratado por lidar_interrupcao(), então o arquivo é
- *                sempre fechado de forma limpa nesse momento -- nunca a
- *                meio de um fwrite() de um bloco em andamento (ver o
- *                laço principal, mais abaixo: só saímos do laço entre um
- *                bloco e outro, nunca durante a gravação de um).
- *
- *   --duracao T  Alternativa mais conveniente a --blocos quando o que
- *                importa é o TEMPO de captura, não o número de blocos em
- *                si (ex.: "quero 10 minutos de dados", sem ter que fazer
- *                a conta manualmente). T aceita um sufixo de unidade
- *                opcional -- 's' (segundos, também o padrão sem sufixo),
- *                'm' (minutos) ou 'h' (horas) -- e valores fracionários
- *                (ex.: '1.5h'). O número de blocos equivalente é
- *                calculado UMA ÚNICA VEZ, antes de abrir o arquivo/
- *                iniciar a captura (ver calcular_blocos_para_duracao),
- *                a partir da frequência total escolhida e de
- *                SAMPLES_PER_BUFFER -- não há monitoramento de relógio de
- *                parede durante a captura em si, só essa conversão
- *                antecipada para um número de blocos, que a partir daí é
- *                tratado exatamente como se tivesse vindo de --blocos.
- *                Arredondado para CIMA: um bloco parcial ainda representa
- *                tempo de captura real pedido pelo usuário, então nunca
- *                descartamos esse resto (melhor capturar um pouco mais
- *                que o pedido do que menos).
- *
- * Sem nenhuma das duas flags, o comportamento é o histórico: BLOCOS_PADRAO
- * (1) bloco.
- */
-
-static void imprimir_uso(const char *nome_programa) {
-    fprintf(stderr,
-        "Uso: sudo %s [frequencia_hz [lista_de_canais]] [--blocos N | --duracao T] [-o ARQUIVO] [opções]\n"
-        "\n"
-        "  frequencia_hz     Frequência TOTAL de transação SPI, em Hz (1-500000). Sem ela\n"
-        "                    (o 1º argumento é uma opção, ou não há nenhum): %u Hz, o\n"
-        "                    padrão (200 MHz ÷ 500, exata; com o SPI rápido, o período fica\n"
-        "                    constante até ~419 kS/s). Prefira taxas que dividem 200 MHz.\n"
-        "                    Acima do teto da PRU (419287 Hz com o SPI rápido e 327868 com o\n"
-        "                    lento, com as esperas de CS padrão) a captura é recusada: ver\n"
-        "                    --forcar-taxa. A lista de canais só vem depois da frequência.\n"
-        "  lista_de_canais   Opcional. Canais do ADS8688, separados por vírgula\n"
-        "                    sem espaços (ex.: '0,1,3'). Padrão: só o canal %d.\n"
-        "  --blocos N        Opcional. Captura exatamente N blocos e para. N=0\n"
-        "                    captura indefinidamente, até Ctrl+C. Padrão: %d bloco(s).\n"
-        "  --duracao T       Opcional, alternativa a --blocos: captura pelo tempo T\n"
-        "                    (ex.: '600', '10m', '1.5h' -- sem sufixo = segundos),\n"
-        "                    convertido para um número de blocos automaticamente.\n"
-        "                    --blocos e --duracao são mutuamente exclusivas.\n"
-        "  -o, --saida ARQ   Opcional. Nome do arquivo '.bin' de saída. Sem esta\n"
-        "                    flag, um nome é gerado automaticamente a partir do\n"
-        "                    horário local, no formato 'captura_AAAAMMDD_HHMMSS.bin'.\n"
-        "  -t, --titulo TXT  Opcional. Título curto da captura, gravado no cabeçalho\n"
-        "                    (até %u bytes em UTF-8). Sem esta flag, fica vazio.\n"
-        "  -d, --descricao TXT  Opcional. Descrição/contexto da captura, gravada no\n"
-        "                    cabeçalho (até %u bytes em UTF-8). Sem esta flag, fica\n"
-        "                    vazia. Texto maior que o limite é um ERRO (não é\n"
-        "                    truncado) -- encurte e tente de novo.\n"
-        "  --grandeza C:G[,...] Opcional. Grandeza física medida em cada canal,\n"
-        "                    no formato 'canal:grandeza' (ex.:\n"
-        "                    '0:tensao,1:corrente,3:corrente'). Valores aceitos:\n"
-        "                    'tensao', 'corrente', 'temperatura'. Canal da captura\n"
-        "                    não citado aqui assume 'tensao' (padrão histórico).\n"
-        "  --sonda C:ID[,...]   Opcional. Identificador da sonda usada em cada\n"
-        "                    canal, no formato 'canal:id' (ex.:\n"
-        "                    '1:fluke_i30_01'), até %u bytes por id. Aceito em\n"
-        "                    qualquer canal (tensão, corrente ou temperatura).\n"
-        "                    Gravado só como texto no cabeçalho -- este programa\n"
-        "                    NÃO valida se o id corresponde a um perfil real; a\n"
-        "                    correção em si é feita por adc_tool.py, na análise.\n"
-        "  --atraso-cs S,H,A Opcional. Atrasos de CS do laço da PRU, em iterações de\n"
-        "                    10 ns: CS descendo -> 1º SCLK, último SCLK -> CS subindo e\n"
-        "                    CS alto entre amostras (1-10000 cada). Padrão: %u,%u,%u\n"
-        "                    (30/10/30 ns, o mínimo do datasheet: a varredura T7e de\n"
-        "                    21/10/2026 não achou diferença nenhuma de 2/1/1 µs, o padrão\n"
-        "                    antigo, até ele). Esperas maiores só deixam o quadro mais\n"
-        "                    longo e baixam a taxa máxima (200,100,100: ~143 kS/s).\n"
-        "  --spi MODO        Opcional. 'rapido' (o padrão desde 22/10/2026: bits de 13\n"
-        "                    ciclos, SCLK de ~15,4 MHz, período constante até ~419 kS/s)\n"
-        "                    ou 'lenta' (o SPI de antes: bits de 16 a 20 ciclos, ~10,7 MHz,\n"
-        "                    até ~328 kS/s). No rápido, cada bit é lido 60, 75 e 90 ns\n"
-        "                    depois da borda do SCLK que o lança (fases A, B e C); grava-se\n"
-        "                    a B (a latência do SPI lento), ou a pedida em 'rapido:a',\n"
-        "                    'rapido:b' ou 'rapido:c', e o fim da captura diz em quantos\n"
-        "                    quadros as outras discordaram: a margem de tempo do SDO.\n"
-        "  --forcar-taxa     Opcional. Aceita uma frequência acima do teto da PRU: as\n"
-        "                    amostras saem atrasadas e a taxa real fica menor que a do\n"
-        "                    cabeçalho. Só para varreduras que medem o teto (varrer_taxa.sh).\n"
-        "  --faixa-adc C:V[,...]  Opcional. Faixa de entrada do ADS8688 em cada canal, no\n"
-        "                    formato 'canal:volts', onde 'volts' é a faixa TOTAL (pico\n"
-        "                    a pico) -- o mesmo número do --faixa do adc_tool.py:\n"
-        "                    '20.48' (±10,24 V, padrão), '10.24' (±5,12 V) ou '5.12'\n"
-        "                    (±2,56 V). Faixa menor = degrau (LSB) menor e menos ruído\n"
-        "                    em volts, desde que o sinal no pino caiba nela (acima\n"
-        "                    dela o ADC satura). Ex.: '1:5.12'. Canal não citado usa\n"
-        "                    20.48. A faixa fica gravada no cabeçalho e o adc_tool.py a\n"
-        "                    usa sozinho.\n"
-        "\n"
-        "O arquivo gerado começa com um cabeçalho fixo de 1024 bytes (frequência,\n"
-        "canais, timestamp, título/descrição, grandeza/sonda por canal e outros\n"
-        "metadados da captura) antes das amostras brutas -- ver 'struct\n"
-        "cabecalho_arquivo' em ler_adc.c.\n"
-        "\n"
-        "Integridade: a PRU conta, sem custo para a amostragem, amostras atrasadas\n"
-        "(taxa acima do que ela alcança), buffers sobrescritos antes de gravados e\n"
-        "quadros SPI com ruído na linha SDO. Os três vão para o cabeçalho (v4) e\n"
-        "aparecem como aviso aqui. Código de saída 3 = buffer sobrescrito (amostras\n"
-        "perdidas: refaça a captura).\n"
-        "\n"
-        "Exemplos:\n"
-        "  sudo %s                               # %u Hz, %d bloco(s), canal %d, nome automático\n"
-        "  sudo %s --duracao 10m                 # o mesmo, por ~10 minutos\n"
-        "  sudo %s 102400                        # outra taxa\n"
-        "  sudo %s 102400 0,1,3 --blocos 5       # 5 blocos, 3 canais\n"
-        "  sudo %s 102400 --blocos 0             # indefinido, até Ctrl+C\n"
-        "  sudo %s 102400 --duracao 10m          # ~10 minutos de captura\n"
-        "  sudo %s 102400 -o ensaio_bancada.bin  # nome de arquivo explícito\n"
-        "  sudo %s 102400 -t \"Medição Condomínio X\" -d \"Busca por supraharmônicos\"\n"
-        "  sudo %s 102400 0,1 --grandeza 0:tensao,1:corrente --sonda 1:fluke_i30_01\n"
-        "  sudo %s 100000 0,1 --faixa-adc 0:20.48,1:5.12   # canal 1 (sensor de corrente) em ±2,56 V\n",
-        nome_programa, FREQUENCIA_PADRAO_HZ, CANAL_PADRAO, BLOCOS_PADRAO,
-        CABECALHO_TITULO_TAMANHO - 1u, CABECALHO_DESCRICAO_TAMANHO - 1u,
-        CABECALHO_SONDA_ID_TAMANHO - 1u,
-        ATRASO_CS_SETUP_PADRAO, ATRASO_CS_HOLD_PADRAO, ATRASO_CS_ALTO_PADRAO,
-        nome_programa, FREQUENCIA_PADRAO_HZ, BLOCOS_PADRAO, CANAL_PADRAO, nome_programa, nome_programa,
-        nome_programa, nome_programa, nome_programa, nome_programa, nome_programa,
-        nome_programa, nome_programa);
+static void limpar_progresso(void) {
+    if (progresso_ativo) {
+        fputs("\r\033[K", stdout);
+        fflush(stdout);
+        progresso_ativo = 0;
+    }
 }
 
-/*
- * [MODO AUTOMÁTICO] Interpreta a lista de canais (ex.: "0,1,3"), separada
- * por vírgulas, sem espaços -- recebida via linha de comando (a posição
- * exata do argumento é resolvida em main(), pelo laço de parsing logo
- * abaixo de argv[2]; não precisa mais ser exatamente argv[2]). Valida:
- *   - cada canal precisa estar entre 0 e 7 (o ADS8688 tem 8 entradas
- *     single-ended endereçáveis);
- *   - no máximo ADS8688_MAX_CANAIS (8) entradas na lista -- o total de
- *     canais que o próprio ADC possui;
- *   - sem canais repetidos: repetir um canal na lista não divide a
- *     frequência entre canais DIFERENTES como pedido, só amostra o mesmo
- *     canal mais vezes por ciclo -- quase certamente um erro de digitação,
- *     por isso é tratado como erro em vez de silenciosamente aceito.
- *
- * IMPORTANTE -- mudança de comportamento em relação ao antigo modo manual:
- * a lista é ORDENADA EM ORDEM CRESCENTE antes de retornar, independente da
- * ordem em que foi digitada. Isso não é uma escolha de estilo: o ADS8688 em
- * modo automático (AUTO_RST) sempre varre os canais habilitados em ordem
- * crescente de número de canal -- é assim que o hardware funciona, não algo
- * configurável (ver datasheet SBAS582C, seção 8.4.2.5). No antigo modo
- * manual, a ordem de intercalação era livre (definida pela ordem digitada);
- * agora ela é sempre a ordem numérica dos canais. Ordenar aqui garante que
- * a ordem impressa no console -- que o usuário deve copiar para --canais no
- * adc_tool.py -- bata exatamente com a ordem real de intercalação no
- * arquivo .bin, não importa em que ordem o usuário digitou na linha de
- * comando.
- *
- * Retorna o número de canais lidos (preenchendo 'canais_saida', já
- * ordenado), ou -1 em caso de erro (já reportado em stderr).
- */
-static int analisar_lista_canais(const char *texto, int *canais_saida) {
-    int total = 0;
+static const char *plural(unsigned long long n, const char *singular, const char *plural_) {
+    return n == 1 ? singular : plural_;
+}
+
+__attribute__((format(printf, 1, 2)))
+static void erro(const char *formato, ...) {
+    limpar_progresso();
+    fflush(stdout);
+    fprintf(stderr, "%s%sErro:%s ", ansi(stderr, NEGRITO), ansi(stderr, VERMELHO), fim_ansi(stderr));
+    va_list args;
+    va_start(args, formato);
+    vfprintf(stderr, formato, args);
+    va_end(args);
+    fputc('\n', stderr);
+}
+
+__attribute__((format(printf, 1, 2)))
+static void aviso(const char *formato, ...) {
+    limpar_progresso();
+    fflush(stdout);
+    fprintf(stderr, "%s%sAviso:%s ", ansi(stderr, NEGRITO), ansi(stderr, AMARELO), fim_ansi(stderr));
+    va_list args;
+    va_start(args, formato);
+    vfprintf(stderr, formato, args);
+    va_end(args);
+    fputc('\n', stderr);
+}
+
+// Uma linha "rótulo  valor" do resumo (sempre exibida). O rótulo é alinhado em colunas, não em bytes (UTF-8).
+#define LARGURA_ROTULO 12
+__attribute__((format(printf, 2, 3)))
+static void campo(const char *rotulo, const char *formato, ...) {
+    limpar_progresso();
+    int colunas = 0;
+    for (const char *p = rotulo; *p; p++) {
+        colunas += ((unsigned char)*p & 0xC0u) != 0x80u;
+    }
+    printf("  %s%s%*s%s ", ansi(stdout, FRACO), rotulo, colunas < LARGURA_ROTULO ? LARGURA_ROTULO - colunas : 0, "",
+           fim_ansi(stdout));
+    va_list args;
+    va_start(args, formato);
+    vprintf(formato, args);
+    va_end(args);
+    putchar('\n');
+}
+
+// Um detalhe (só com -v).
+__attribute__((format(printf, 1, 2)))
+static void detalhe(const char *formato, ...) {
+    if (!verboso) {
+        return;
+    }
+    limpar_progresso();
+    printf("  %s·%s ", ansi(stdout, FRACO), fim_ansi(stdout));
+    va_list args;
+    va_start(args, formato);
+    vprintf(formato, args);
+    va_end(args);
+    putchar('\n');
+}
+
+// Uma etapa concluída que vale mostrar sempre (ex.: pinos reconfigurados).
+__attribute__((format(printf, 1, 2)))
+static void feito(const char *formato, ...) {
+    limpar_progresso();
+    printf("  %s✓%s ", ansi(stdout, VERDE), fim_ansi(stdout));
+    va_list args;
+    va_start(args, formato);
+    vprintf(formato, args);
+    va_end(args);
+    putchar('\n');
+}
+
+static void imprimir_ajuda(const char *argv0) {
+    const char *programa = strrchr(argv0, '/') ? strrchr(argv0, '/') + 1 : argv0;
+    printf("%sUso:%s sudo ./%s [FREQUENCIA [CANAIS]] [opções]\n"
+           "\n"
+           "Captura o ADS8688 pela PRU0 e grava um .bin (cabeçalho de 1024 bytes + amostras de 16 bits).\n"
+           "\n"
+           "%sArgumentos%s\n"
+           "  FREQUENCIA            taxa TOTAL em Hz, inteiro (padrão: %u). Teto da PRU com as esperas\n"
+           "                        de CS padrão: 419287 Hz com o SPI rápido e 327868 com o lento. Com N\n"
+           "                        canais, cada um recebe FREQUENCIA/N. Prefira divisores de 200 MHz.\n"
+           "  CANAIS                canais do ADS8688 separados por vírgula, sem espaços (padrão: %d).\n"
+           "                        A varredura é sempre em ordem crescente.\n"
+           "\n"
+           "%sDuração%s (uma das duas; padrão: %d bloco de %u amostras)\n"
+           "  --blocos N            N blocos e para; 0 = até Ctrl+C\n"
+           "  --duracao T           tempo com sufixo s, m ou h (30s, 10m, 1.5h), em blocos inteiros\n"
+           "\n"
+           "%sArquivo e metadados%s\n"
+           "  -o, --saida ARQUIVO   .bin de saída (padrão: captura_AAAAMMDD_HHMMSS.bin)\n"
+           "  -t, --titulo TEXTO    título curto (até %u bytes)\n"
+           "  -d, --descricao TEXTO descrição (até %u bytes)\n"
+           "  --grandeza C:G,...    tensao, corrente ou temperatura por canal (padrão: tensao)\n"
+           "  --sonda C:ID,...      id do perfil de sonda por canal (até %u bytes), para o adc_tool.py\n"
+           "\n"
+           "%sADC e PRU%s\n"
+           "  --faixa-adc C:V,...   faixa total por canal: 20.48 (±10,24 V, padrão), 10.24 ou 5.12\n"
+           "  --spi MODO            rapido (padrão, ~15,4 MHz, lê na fase B), rapido:a, rapido:c ou\n"
+           "                        lenta (~10,7 MHz, o SPI de antes de 22/10/2026)\n"
+           "  --atraso-cs S,H,A     esperas do CS em passos de 10 ns (padrão: %u,%u,%u, o mínimo do ADC)\n"
+           "  --forcar-taxa         aceita uma taxa acima do teto da PRU (só para varrer o teto: a taxa\n"
+           "                        real sai menor que a do cabeçalho)\n"
+           "\n"
+           "%sSaída%s\n"
+           "  -v, --verbose         mostra também os detalhes: cabeçalho, PRU, pinos, cada bloco, tempos\n"
+           "  -h, --help            esta ajuda\n"
+           "\n"
+           "Antes de capturar, o ler_adc confere a memória reservada da DDR e os pinos da PRU (P9_28 a\n"
+           "P9_31; se a placa reiniciou, ele os configura de novo) e, a cada bloco, que o ADC está\n"
+           "respondendo.\n"
+           "\n"
+           "%sCódigos de saída%s  0 ok · 1 erro · 2 argumento inválido · 3 buffers sobrescritos (amostras\n"
+           "perdidas) · 4 ADC sem resposta\n"
+           "\n"
+           "%sExemplos%s\n"
+           "  sudo ./%s                       # 400 kS/s no canal 1, 1 bloco\n"
+           "  sudo ./%s --blocos 0            # até Ctrl+C\n"
+           "  sudo ./%s 400000 1 --faixa-adc 1:5.12 --duracao 30s -o s0.bin -t \"S0 60 Hz\"\n"
+           "  sudo ./%s 200000 0,1 --grandeza 0:corrente --sonda 0:sct013_100a_sn001 --blocos 4\n",
+           ansi(stdout, NEGRITO), fim_ansi(stdout), programa,
+           ansi(stdout, NEGRITO), fim_ansi(stdout), FREQUENCIA_PADRAO_HZ, CANAL_PADRAO,
+           ansi(stdout, NEGRITO), fim_ansi(stdout), BLOCOS_PADRAO, SAMPLES_PER_BUFFER,
+           ansi(stdout, NEGRITO), fim_ansi(stdout), CABECALHO_TITULO_TAMANHO - 1u, CABECALHO_DESCRICAO_TAMANHO - 1u,
+           CABECALHO_SONDA_ID_TAMANHO - 1u,
+           ansi(stdout, NEGRITO), fim_ansi(stdout), ATRASO_CS_SETUP_PADRAO, ATRASO_CS_HOLD_PADRAO,
+           ATRASO_CS_ALTO_PADRAO,
+           ansi(stdout, NEGRITO), fim_ansi(stdout),
+           ansi(stdout, NEGRITO), fim_ansi(stdout),
+           ansi(stdout, NEGRITO), fim_ansi(stdout), programa, programa, programa, programa);
+}
+
+// =====================================================================================================================
+// Argumentos
+// =====================================================================================================================
+
+static const char *nome_da_grandeza(uint8_t grandeza) {
+    switch (grandeza) {
+        case GRANDEZA_TENSAO:      return "tensão";
+        case GRANDEZA_CORRENTE:    return "corrente";
+        case GRANDEZA_TEMPERATURA: return "temperatura";
+        default:                   return "?";
+    }
+}
+
+static char fase_do_modo_spi(uint32_t modo) {
+    return modo == MODO_SPI_RAPIDO_A ? 'A' : (modo == MODO_SPI_RAPIDO_C ? 'C' : 'B');
+}
+
+// Lê a frequência total conferindo o texto inteiro ("400k" e "4e5" são erros, não 400 e 4 Hz). Devolve 0 ou -1.
+static int analisar_frequencia(const char *texto, uint32_t *frequencia) {
+    char *fim;
+    errno = 0;
+    unsigned long valor = strtoul(texto, &fim, 10);
+    if (fim == texto || *fim != '\0' || errno != 0 || valor < 1 || valor > FREQUENCIA_MAXIMA_HZ) {
+        erro("frequência inválida '%s': use um inteiro em Hz, de 1 a %u (ex.: 400000; sufixos como '400k' não são "
+             "aceitos).", texto, FREQUENCIA_MAXIMA_HZ);
+        return -1;
+    }
+    *frequencia = (uint32_t)valor;
+    return 0;
+}
+
+// Lista de canais ("0,1,3"), sem repetições, devolvida em ORDEM CRESCENTE: é a ordem em que o ADS8688 os varre em
+// modo automático, qualquer que seja a digitada. Devolve o nº de canais ou -1.
+static int analisar_lista_canais(const char *texto, int *canais) {
     char copia[256];
-    strncpy(copia, texto, sizeof(copia) - 1);
-    copia[sizeof(copia) - 1] = '\0';
-
-    char *cursor = copia;
-    char *token;
-    while ((token = strtok(cursor, ",")) != NULL) {
-        cursor = NULL; // strtok: passar NULL nas chamadas seguintes continua a mesma string
-
+    snprintf(copia, sizeof(copia), "%s", texto);
+    int total = 0;
+    for (char *token = strtok(copia, ","); token != NULL; token = strtok(NULL, ",")) {
         char *fim;
         long valor = strtol(token, &fim, 10);
-        if (fim == token || *fim != '\0') {
-            fprintf(stderr, "Erro: '%s' não é um número de canal válido em "
-                             "'%s'.\n", token, texto);
-            return -1;
-        }
-        if (valor < 0 || valor > 7) {
-            fprintf(stderr, "Erro: canal %ld inválido -- o ADS8688 só tem "
-                             "canais 0-7.\n", valor);
-            return -1;
-        }
-        if (total >= ADS8688_MAX_CANAIS) {
-            fprintf(stderr, "Erro: mais de %d canais em '%s' -- o ADS8688 "
-                             "só tem %d entradas.\n",
-                    ADS8688_MAX_CANAIS, texto, ADS8688_MAX_CANAIS);
+        if (fim == token || *fim != '\0' || valor < 0 || valor >= ADS8688_MAX_CANAIS) {
+            erro("canal '%s' inválido em '%s': o ADS8688 tem os canais 0 a %d.", token, texto, ADS8688_MAX_CANAIS - 1);
             return -1;
         }
         for (int i = 0; i < total; i++) {
-            if (canais_saida[i] == (int)valor) {
-                fprintf(stderr, "Erro: canal %ld repetido em '%s' -- cada "
-                                 "canal deve aparecer só uma vez na lista.\n",
-                        valor, texto);
+            if (canais[i] == (int)valor) {
+                erro("o canal %ld aparece duas vezes em '%s'.", valor, texto);
                 return -1;
             }
         }
-        canais_saida[total++] = (int)valor;
+        canais[total++] = (int)valor;
     }
-
     if (total == 0) {
-        fprintf(stderr, "Erro: lista de canais vazia em '%s'.\n", texto);
+        erro("lista de canais vazia: '%s'.", texto);
         return -1;
     }
-
-    // [MODO AUTOMÁTICO] Ordena em ordem crescente -- ver docstring acima.
-    // Insertion sort: total é no máximo 8, o custo é irrelevante.
-    for (int i = 1; i < total; i++) {
-        int chave = canais_saida[i];
-        int j = i - 1;
-        while (j >= 0 && canais_saida[j] > chave) {
-            canais_saida[j + 1] = canais_saida[j];
+    for (int i = 1; i < total; i++) {           // ordenação por inserção: são no máximo 8
+        int chave = canais[i], j = i - 1;
+        while (j >= 0 && canais[j] > chave) {
+            canais[j + 1] = canais[j];
             j--;
         }
-        canais_saida[j + 1] = chave;
+        canais[j + 1] = chave;
     }
-
     return total;
 }
 
-/*
- * [SONDA/GRANDEZA] Traduz um número de canal físico (0-7) para sua POSIÇÃO
- * dentro de 'canais' (a lista já ordenada em ordem crescente, produzida por
- * analisar_lista_canais) -- a mesma indexação usada por lista_canais no
- * cabeçalho, e portanto também por grandeza_por_canal/sonda_id_por_canal.
- * Existe como função separada, em vez de embutir a busca linear em cada
- * chamador, para deixar explícito que --grandeza/--sonda são informados
- * pelo NÚMERO do canal (o que o usuário digitou), não pela posição -- essa
- * tradução evita reproduzir, para estas duas flags novas, a mesma classe de
- * bug de desalinhamento que a ordenação de canais em modo automático já
- * exigiu corrigir uma vez neste projeto (ver docstring de
- * analisar_lista_canais).
- *
- * Retorna a posição (>= 0) se 'canal_alvo' está em 'canais', ou -1 se não
- * está.
- */
-static int posicao_do_canal(const int *canais, int num_canais, int canal_alvo) {
+static int posicao_do_canal(const int *canais, int num_canais, int canal) {
     for (int i = 0; i < num_canais; i++) {
-        if (canais[i] == canal_alvo) {
+        if (canais[i] == canal) {
             return i;
         }
     }
     return -1;
 }
 
-/*
- * [SONDA/GRANDEZA] Interpreta --grandeza (ex.: "0:tensao,1:corrente,3:corrente"),
- * uma lista de pares "canal:grandeza" separados por vírgula, sem espaços.
- * Cada canal citado precisa fazer parte de 'canais' (a lista final, já
- * ordenada, vinda de analisar_lista_canais) -- referenciar um canal fora da
- * captura é erro. Canais da captura que não aparecerem aqui mantêm o valor
- * já presente em 'grandeza_saida' (ver chamador: preenchido com
- * GRANDEZA_PADRAO antes desta função ser chamada), preservando o uso
- * histórico deste programa (nenhuma flag nova = tudo como antes, canal de
- * tensão).
- *
- * 'grandeza_saida' precisa ter pelo menos ADS8688_MAX_CANAIS posições, já
- * indexadas pela MESMA posição que 'canais' usa (posição i descreve
- * canais[i]) -- não pelo número físico do canal (ver posicao_do_canal).
- *
- * Retorna 0 em sucesso, -1 em erro (já reportado em stderr).
- */
-static int analisar_lista_grandezas(const char *texto, const int *canais, int num_canais,
-                                     uint8_t *grandeza_saida) {
+// Um par "canal:valor" das opções por canal (--grandeza, --sonda, --faixa-adc). Separa o texto em 'token' (que é
+// modificado), confere o canal e devolve a sua POSIÇÃO na captura (a indexação do cabeçalho), ou -1.
+static int canal_do_par(char *token, const char *opcao, const char *exemplo, const int *canais, int num_canais,
+                        const char **valor) {
+    char *dois_pontos = strchr(token, ':');
+    if (dois_pontos == NULL) {
+        erro("'%s' em %s: use o formato 'canal:valor' (ex.: '%s').", token, opcao, exemplo);
+        return -1;
+    }
+    *dois_pontos = '\0';
+    *valor = dois_pontos + 1;
+    char *fim;
+    long canal = strtol(token, &fim, 10);
+    if (fim == token || *fim != '\0') {
+        erro("'%s' não é um número de canal em %s.", token, opcao);
+        return -1;
+    }
+    int posicao = posicao_do_canal(canais, num_canais, (int)canal);
+    if (posicao < 0) {
+        erro("%s cita o canal %ld, que não está na captura.", opcao, canal);
+        return -1;
+    }
+    return posicao;
+}
+
+static int analisar_lista_grandezas(const char *texto, const int *canais, int num_canais, uint8_t *grandezas) {
     char copia[512];
-    strncpy(copia, texto, sizeof(copia) - 1);
-    copia[sizeof(copia) - 1] = '\0';
-
-    char *cursor = copia;
-    char *token;
-    while ((token = strtok(cursor, ",")) != NULL) {
-        cursor = NULL;
-
-        char *dois_pontos = strchr(token, ':');
-        if (dois_pontos == NULL) {
-            fprintf(stderr, "Erro: '%s' em --grandeza precisa estar no "
-                             "formato 'canal:grandeza' (ex.: '0:tensao').\n",
-                    token);
-            return -1;
-        }
-        *dois_pontos = '\0';
-        const char *parte_canal = token;
-        const char *parte_grandeza = dois_pontos + 1;
-
-        char *fim;
-        long canal = strtol(parte_canal, &fim, 10);
-        if (fim == parte_canal || *fim != '\0') {
-            fprintf(stderr, "Erro: '%s' não é um número de canal válido em "
-                             "--grandeza.\n", parte_canal);
-            return -1;
-        }
-
-        int posicao = posicao_do_canal(canais, num_canais, (int)canal);
+    snprintf(copia, sizeof(copia), "%s", texto);
+    for (char *token = strtok(copia, ","); token != NULL; token = strtok(NULL, ",")) {
+        const char *valor;
+        int posicao = canal_do_par(token, "--grandeza", "0:tensao", canais, num_canais, &valor);
         if (posicao < 0) {
-            fprintf(stderr, "Erro: --grandeza referencia o canal %ld, que "
-                             "não faz parte da captura (canais "
-                             "selecionados: ", canal);
-            for (int i = 0; i < num_canais; i++) {
-                fprintf(stderr, "%d%s", canais[i], (i + 1 < num_canais) ? ", " : "");
-            }
-            fprintf(stderr, ").\n");
             return -1;
         }
-
-        uint8_t valor;
-        if (strcmp(parte_grandeza, "tensao") == 0) {
-            valor = GRANDEZA_TENSAO;
-        } else if (strcmp(parte_grandeza, "corrente") == 0) {
-            valor = GRANDEZA_CORRENTE;
-        } else if (strcmp(parte_grandeza, "temperatura") == 0) {
-            valor = GRANDEZA_TEMPERATURA;
+        if (strcmp(valor, "tensao") == 0) {
+            grandezas[posicao] = GRANDEZA_TENSAO;
+        } else if (strcmp(valor, "corrente") == 0) {
+            grandezas[posicao] = GRANDEZA_CORRENTE;
+        } else if (strcmp(valor, "temperatura") == 0) {
+            grandezas[posicao] = GRANDEZA_TEMPERATURA;
         } else {
-            fprintf(stderr, "Erro: grandeza '%s' desconhecida em --grandeza "
-                             "(canal %ld) -- use 'tensao', 'corrente' ou "
-                             "'temperatura'.\n", parte_grandeza, canal);
+            erro("grandeza '%s' desconhecida em --grandeza: use tensao, corrente ou temperatura.", valor);
             return -1;
         }
-
-        grandeza_saida[posicao] = valor;
     }
-
     return 0;
 }
 
-/*
- * [SONDA/GRANDEZA] Interpreta --sonda (ex.:
- * "1:fluke_i30_01,3:tp_101_sn2"), mesma sintaxe "canal:valor" de
- * --grandeza. Aceito em QUALQUER canal (tensão, corrente ou temperatura) --
- * por pedido explícito, este programa não restringe --sonda a canais de
- * corrente. ler_adc.c também não sabe (nem precisa saber) se o id
- * informado corresponde a um perfil de sonda real: essa validação, e toda a
- * lógica de correção em si, ficam inteiramente do lado Python
- * (adc_tool.py), que é onde os arquivos de perfil de fato existem -- aqui
- * só se grava a string, como uma chave de busca para o outro lado resolver
- * depois (ver docs/probe-correction-design.md).
- *
- * 'sonda_saida' precisa ter pelo menos ADS8688_MAX_CANAIS linhas de
- * CABECALHO_SONDA_ID_TAMANHO bytes cada, na mesma indexação por posição de
- * 'canais' usada por analisar_lista_grandezas/lista_canais.
- *
- * Retorna 0 em sucesso, -1 em erro (já reportado em stderr) -- o único erro
- * possível aqui é sintaxe ou um id que não cabe no campo de tamanho fixo do
- * cabeçalho (REJEITADO, não truncado -- mesma filosofia já usada para
- * --titulo/--descricao, pela mesma razão: um id truncado na mão poderia
- * colidir silenciosamente com outra sonda de nome parecido).
- */
+// --sonda grava só o id (a chave do perfil); quem o resolve e corrige o sinal é o adc_tool.py. Um id longo demais é
+// recusado, não truncado: cortado, ele poderia apontar para outra sonda.
 static int analisar_lista_sondas(const char *texto, const int *canais, int num_canais,
-                                  char sonda_saida[][CABECALHO_SONDA_ID_TAMANHO]) {
+                                 char sondas[][CABECALHO_SONDA_ID_TAMANHO]) {
     char copia[512];
-    strncpy(copia, texto, sizeof(copia) - 1);
-    copia[sizeof(copia) - 1] = '\0';
-
-    char *cursor = copia;
-    char *token;
-    while ((token = strtok(cursor, ",")) != NULL) {
-        cursor = NULL;
-
-        char *dois_pontos = strchr(token, ':');
-        if (dois_pontos == NULL) {
-            fprintf(stderr, "Erro: '%s' em --sonda precisa estar no formato "
-                             "'canal:id' (ex.: '1:fluke_i30_01').\n",
-                    token);
-            return -1;
-        }
-        *dois_pontos = '\0';
-        const char *parte_canal = token;
-        const char *parte_id = dois_pontos + 1;
-
-        char *fim;
-        long canal = strtol(parte_canal, &fim, 10);
-        if (fim == parte_canal || *fim != '\0') {
-            fprintf(stderr, "Erro: '%s' não é um número de canal válido em "
-                             "--sonda.\n", parte_canal);
-            return -1;
-        }
-
-        int posicao = posicao_do_canal(canais, num_canais, (int)canal);
+    snprintf(copia, sizeof(copia), "%s", texto);
+    for (char *token = strtok(copia, ","); token != NULL; token = strtok(NULL, ",")) {
+        const char *valor;
+        int posicao = canal_do_par(token, "--sonda", "1:sct013_100a_sn001", canais, num_canais, &valor);
         if (posicao < 0) {
-            fprintf(stderr, "Erro: --sonda referencia o canal %ld, que não "
-                             "faz parte da captura (canais selecionados: ",
-                    canal);
-            for (int i = 0; i < num_canais; i++) {
-                fprintf(stderr, "%d%s", canais[i], (i + 1 < num_canais) ? ", " : "");
-            }
-            fprintf(stderr, ").\n");
             return -1;
         }
-
-        if (parte_id[0] == '\0') {
-            fprintf(stderr, "Erro: id de sonda vazio para o canal %ld em "
-                             "--sonda.\n", canal);
+        size_t tamanho = strlen(valor);
+        if (tamanho == 0 || tamanho > CABECALHO_SONDA_ID_TAMANHO - 1u) {
+            erro("id de sonda '%s' em --sonda: precisa ter de 1 a %u bytes.", valor, CABECALHO_SONDA_ID_TAMANHO - 1u);
             return -1;
         }
-        if (strlen(parte_id) > CABECALHO_SONDA_ID_TAMANHO - 1u) {
-            fprintf(stderr, "Erro: id de sonda '%s' (canal %ld) tem %zu "
-                             "bytes, mas o campo do cabeçalho só suporta até "
-                             "%u bytes (%u no total, reservando 1 para o "
-                             "terminador nulo). Encurte o id.\n",
-                    parte_id, canal, strlen(parte_id),
-                    CABECALHO_SONDA_ID_TAMANHO - 1u, CABECALHO_SONDA_ID_TAMANHO);
-            return -1;
-        }
-
-        strncpy(sonda_saida[posicao], parte_id, CABECALHO_SONDA_ID_TAMANHO - 1u);
-        sonda_saida[posicao][CABECALHO_SONDA_ID_TAMANHO - 1u] = '\0';
+        memcpy(sondas[posicao], valor, tamanho + 1);
     }
-
     return 0;
 }
 
-/*
- * [FAIXA DE ENTRADA POR CANAL] Interpreta --faixa-adc (ex.: "0:20.48,1:5.12"),
- * mesma sintaxe "canal:valor" de --grandeza/--sonda. O valor é a faixa TOTAL
- * (pico a pico) em volts -- a mesma convenção do --faixa do adc_tool.py --,
- * e precisa ser uma das três faixas bipolares do ADS8688 com VREF = 4,096 V:
- * 20.48 (código 0, ±10,24 V), 10.24 (código 1, ±5,12 V) ou 5.12 (código 2,
- * ±2,56 V). Qualquer outro número é REJEITADO (não arredondado): gravar uma
- * faixa diferente da que o ADC realmente usa corromperia todas as leituras.
- *
- * 'faixa_saida' tem a mesma indexação por POSIÇÃO de 'canais' que
- * analisar_lista_grandezas (posição i descreve canais[i]) e vem preenchido
- * com FAIXA_ADC_PADRAO nos slots usados. Referenciar um canal fora da
- * captura é erro.
- *
- * Retorna 0 em sucesso, -1 em erro (já reportado em stderr).
- */
-static int analisar_lista_faixas(const char *texto, const int *canais, int num_canais,
-                                  uint8_t *faixa_saida) {
+// A faixa tem de ser uma das três bipolares do ADS8688; outro número é recusado (gravar uma faixa diferente da que o
+// ADC usa corromperia toda leitura).
+static int analisar_lista_faixas(const char *texto, const int *canais, int num_canais, uint8_t *faixas) {
     char copia[512];
-    strncpy(copia, texto, sizeof(copia) - 1);
-    copia[sizeof(copia) - 1] = '\0';
-
-    char *cursor = copia;
-    char *token;
-    int ja_citado[ADS8688_MAX_CANAIS] = {0};    // canal repetido com faixas diferentes seria ambíguo
-    while ((token = strtok(cursor, ",")) != NULL) {
-        cursor = NULL;
-
-        char *dois_pontos = strchr(token, ':');
-        if (dois_pontos == NULL) {
-            fprintf(stderr, "Erro: '%s' em --faixa-adc precisa estar no "
-                             "formato 'canal:volts' (ex.: '1:5.12').\n", token);
-            return -1;
-        }
-        *dois_pontos = '\0';
-        const char *parte_canal = token;
-        const char *parte_faixa = dois_pontos + 1;
-
-        char *fim;
-        long canal = strtol(parte_canal, &fim, 10);
-        if (fim == parte_canal || *fim != '\0') {
-            fprintf(stderr, "Erro: '%s' não é um número de canal válido em "
-                             "--faixa-adc.\n", parte_canal);
-            return -1;
-        }
-
-        int posicao = posicao_do_canal(canais, num_canais, (int)canal);
+    snprintf(copia, sizeof(copia), "%s", texto);
+    int citado[ADS8688_MAX_CANAIS] = {0};
+    for (char *token = strtok(copia, ","); token != NULL; token = strtok(NULL, ",")) {
+        const char *valor;
+        int posicao = canal_do_par(token, "--faixa-adc", "1:5.12", canais, num_canais, &valor);
         if (posicao < 0) {
-            fprintf(stderr, "Erro: --faixa-adc referencia o canal %ld, que "
-                             "não faz parte da captura (canais selecionados: ",
-                    canal);
-            for (int i = 0; i < num_canais; i++) {
-                fprintf(stderr, "%d%s", canais[i], (i + 1 < num_canais) ? ", " : "");
-            }
-            fprintf(stderr, ").\n");
             return -1;
         }
-
-        if (ja_citado[posicao]) {
-            fprintf(stderr, "Erro: o canal %ld aparece mais de uma vez em "
-                             "--faixa-adc.\n", canal);
+        if (citado[posicao]) {
+            erro("o canal %d aparece duas vezes em --faixa-adc.", canais[posicao]);
             return -1;
         }
-        ja_citado[posicao] = 1;
-
-        double volts = strtod(parte_faixa, &fim);
-        if (fim == parte_faixa || *fim != '\0') {
-            fprintf(stderr, "Erro: '%s' não é um número válido em --faixa-adc "
-                             "(canal %ld).\n", parte_faixa, canal);
-            return -1;
-        }
-
+        citado[posicao] = 1;
+        char *fim;
+        double volts = strtod(valor, &fim);
         int codigo = -1;
-        for (int c = 0; c < FAIXA_ADC_NUM_CODIGOS; c++) {
+        for (int c = 0; fim != valor && *fim == '\0' && c < FAIXA_ADC_NUM_CODIGOS; c++) {
             double diferenca = volts - FAIXA_ADC_ESPAN_V[c];
-            if (diferenca < 0.0) {
-                diferenca = -diferenca;
-            }
-            if (diferenca < 0.005) {
+            if (diferenca < 0.005 && diferenca > -0.005) {
                 codigo = c;
-                break;
             }
         }
         if (codigo < 0) {
-            fprintf(stderr, "Erro: faixa '%s' (canal %ld) não é suportada em "
-                             "--faixa-adc -- use 20.48 (±10,24 V), 10.24 "
-                             "(±5,12 V) ou 5.12 (±2,56 V).\n", parte_faixa, canal);
+            erro("faixa '%s' em --faixa-adc: use 20.48 (±10,24 V), 10.24 (±5,12 V) ou 5.12 (±2,56 V).", valor);
             return -1;
         }
-
-        faixa_saida[posicao] = (uint8_t)codigo;
+        faixas[posicao] = (uint8_t)codigo;
     }
-
     return 0;
 }
 
-/*
- * Interpreta uma duração de captura (--duracao) em segundos. Aceita um
- * sufixo de unidade opcional, sem distinguir maiúsculas/minúsculas: 's'
- * (segundos -- também o padrão quando nenhum sufixo é dado), 'm' (minutos)
- * ou 'h' (horas). Valores fracionários são aceitos (ex.: '1.5h' = 90
- * minutos) -- não há motivo para obrigar o usuário a converter a unidade
- * manualmente, já que a conversão final para blocos arredonda para cima de
- * qualquer forma (ver calcular_blocos_para_duracao).
- *
- * Retorna a duração em segundos (> 0), ou -1.0 em caso de erro (já
- * reportado em stderr).
- */
-/*
- * [SPI RÁPIDO] Interpreta --spi: 'lenta' (o SPI de antes de 22/10/2026), 'rapido' (= 'rapido:b', o padrão) ou
- * 'rapido:a|b|c'. Devolve MODO_SPI_*, ou -1 com o erro já impresso. 'padrao' é recusado: até 22/10/2026 queria dizer
- * o SPI lento, e hoje o padrão é o rápido.
- */
 static int analisar_modo_spi(const char *texto) {
-    if (strcmp(texto, "lenta") == 0 || strcmp(texto, "lento") == 0) {
-        return (int)MODO_SPI_LENTO;
-    }
-    if (strcmp(texto, "padrao") == 0 || strcmp(texto, "padrão") == 0) {
-        fprintf(stderr, "Erro: desde 22/10/2026 o SPI padrão é o rápido (sem --spi). Para o SPI de antes, use "
-                         "--spi lenta.\n");
-        return -1;
-    }
     if (strcmp(texto, "rapido") == 0 || strcmp(texto, "rápido") == 0 || strcmp(texto, "rapido:b") == 0) {
         return (int)MODO_SPI_RAPIDO_B;
     }
@@ -859,38 +506,65 @@ static int analisar_modo_spi(const char *texto) {
     if (strcmp(texto, "rapido:c") == 0) {
         return (int)MODO_SPI_RAPIDO_C;
     }
-    fprintf(stderr, "Erro: --spi espera 'rapido', 'lenta', 'rapido:a', 'rapido:b' ou 'rapido:c', recebeu '%s'.\n",
-            texto);
+    if (strcmp(texto, "lenta") == 0 || strcmp(texto, "lento") == 0) {
+        return (int)MODO_SPI_LENTO;
+    }
+    erro("--spi '%s': use rapido, rapido:a, rapido:c ou lenta%s.", texto,
+         strncmp(texto, "padr", 4) == 0 ? " (desde 22/10/2026 o padrão é o rápido)" : "");
     return -1;
 }
 
-static char fase_do_modo_spi(uint32_t modo) {
-    return modo == MODO_SPI_RAPIDO_A ? 'A' : (modo == MODO_SPI_RAPIDO_C ? 'C' : 'B');
-}
-
-/*
- * [FREQUÊNCIA, 23/10/2026] Lê a frequência total (Hz) conferindo o texto inteiro: o atoi de antes lia "400k" como 400 Hz
- * e "4e5" como 4 Hz, sem erro. Devolve 0, ou -1 com o erro já impresso.
- */
-static int analisar_frequencia(const char *texto, uint32_t *frequencia) {
-    char *fim;
-    errno = 0;
-    unsigned long valor = strtoul(texto, &fim, 10);
-    if (fim == texto || *fim != '\0' || errno != 0 || valor < 1 || valor > FREQUENCIA_MAXIMA_HZ) {
-        fprintf(stderr, "Erro: frequência inválida '%s'. Use um inteiro em Hz, de 1 a %u (ex.: 400000; sufixos como "
-                         "'400k' não são aceitos).\n", texto, FREQUENCIA_MAXIMA_HZ);
-        return -1;
+// "S,H,A": três inteiros de 1 a 10000 (iterações de 10 ns). 0 não serve: a espera da PRU conta para baixo até 0.
+static int analisar_atrasos_cs(const char *texto, uint32_t atrasos[3]) {
+    const char *p = texto;
+    for (int k = 0; k < 3; k++) {
+        char *fim;
+        long valor = strtol(p, &fim, 10);
+        if (fim == p || valor < 1 || valor > 10000 || (k < 2 && *fim != ',') || (k == 2 && *fim != '\0')) {
+            erro("--atraso-cs '%s': use três inteiros de 1 a 10000 separados por vírgula (ex.: 3,1,3).", texto);
+            return -1;
+        }
+        atrasos[k] = (uint32_t)valor;
+        p = fim + 1;
     }
-    *frequencia = (uint32_t)valor;
     return 0;
 }
 
-/*
- * [TETO DA PRU, 23/10/2026] O menor período, em ticks, com todas as amostras na grade (ver TETO_TICKS_*), para o modo
- * do SPI e as esperas de CS desta captura. Cada iteração de setup ou de hold a mais que o padrão soma 2 ciclos ao
- * quadro; a espera de CS alto só roda a partir de 10 iterações (abaixo disso o próprio caminho já a garante, ver
- * spi_core.asm) e então soma 2·A + 1. tests/test_ler_adc_host.py confere a conta contra o simulador da PRU.
- */
+// Duração com sufixo opcional s, m ou h (sem sufixo = segundos). Devolve os segundos, ou -1.
+static double analisar_duracao_em_segundos(const char *texto) {
+    char *fim;
+    double valor = strtod(texto, &fim);
+    double multiplicador = 0.0;
+    if (fim != texto) {
+        if (*fim == '\0' || ((fim[0] == 's' || fim[0] == 'S') && fim[1] == '\0')) {
+            multiplicador = 1.0;
+        } else if ((fim[0] == 'm' || fim[0] == 'M') && fim[1] == '\0') {
+            multiplicador = 60.0;
+        } else if ((fim[0] == 'h' || fim[0] == 'H') && fim[1] == '\0') {
+            multiplicador = 3600.0;
+        }
+    }
+    if (multiplicador == 0.0 || valor * multiplicador <= 0.0) {
+        erro("--duracao '%s': use um número positivo, com s, m ou h (ex.: 600, 10m, 1.5h).", texto);
+        return -1.0;
+    }
+    return valor * multiplicador;
+}
+
+// Blocos inteiros que cobrem a duração pedida (arredonda para cima; pelo menos 1).
+static unsigned long long calcular_blocos_para_duracao(double segundos, uint32_t frequencia) {
+    double exatos = segundos * (double)frequencia / (double)SAMPLES_PER_BUFFER;
+    unsigned long long blocos = (unsigned long long)exatos;
+    if ((double)blocos < exatos) {
+        blocos++;
+    }
+    return blocos < 1 ? 1 : blocos;
+}
+
+// O menor período (ticks) com todas as amostras na grade, para o SPI e as esperas de CS desta captura. Cada iteração
+// de setup ou de hold além do padrão soma 2 ciclos ao quadro; a espera de CS alto só roda a partir de 10 iterações
+// (abaixo disso o próprio caminho a garante, ver spi_core.asm) e então soma 2·A + 1. tests/test_ler_adc_host.py
+// confere a conta contra o simulador da PRU.
 static uint32_t teto_ticks_da_pru(uint32_t modo_spi, const uint32_t atrasos[3]) {
     long teto = (modo_spi == MODO_SPI_LENTO) ? (long)TETO_TICKS_SPI_LENTO : (long)TETO_TICKS_SPI_RAPIDO;
     teto += 2L * ((long)atrasos[0] - (long)ATRASO_CS_SETUP_PADRAO) + 2L * ((long)atrasos[1] - (long)ATRASO_CS_HOLD_PADRAO);
@@ -900,10 +574,7 @@ static uint32_t teto_ticks_da_pru(uint32_t modo_spi, const uint32_t atrasos[3]) 
     return (uint32_t)teto;
 }
 
-/*
- * [TETO DA PRU, 23/10/2026] Recusa uma taxa acima do que a PRU mantém na grade (devolve -1 com o erro impresso), a não
- * ser com --forcar-taxa: aí só avisa que a taxa real vai sair menor que a do cabeçalho.
- */
+// Recusa uma taxa acima do teto da PRU (devolve -1); com --forcar-taxa, só avisa.
 static int conferir_teto_da_taxa(uint32_t frequencia, uint32_t modo_spi, const uint32_t atrasos[3], int forcar) {
     uint32_t ticks = PRU_CLOCK_HZ / frequencia;
     uint32_t teto = teto_ticks_da_pru(modo_spi, atrasos);
@@ -912,274 +583,329 @@ static int conferir_teto_da_taxa(uint32_t frequencia, uint32_t modo_spi, const u
     }
     const char *spi = (modo_spi == MODO_SPI_LENTO) ? "lento" : "rápido";
     if (forcar) {
-        fprintf(stderr, "Aviso: %u Hz (%u ticks) passam do teto da PRU com o SPI %s e estas esperas de CS (%u ticks = "
-                         "%u Hz): as amostras vão sair atrasadas e a taxa real será MENOR que a do cabeçalho "
-                         "(--forcar-taxa).\n", frequencia, ticks, spi, teto, PRU_CLOCK_HZ / teto);
+        aviso("%u Hz (%u ticks) passam do teto da PRU com o SPI %s e estas esperas de CS (%u ticks = %u Hz): as "
+              "amostras vão atrasar e a taxa real sairá menor que a do cabeçalho (--forcar-taxa).",
+              frequencia, ticks, spi, teto, PRU_CLOCK_HZ / teto);
         return 0;
     }
-    fprintf(stderr, "Erro: %u Hz pedem um período de %u ticks, abaixo do teto da PRU com o SPI %s e estas esperas de "
-                     "CS (%u ticks): as amostras sairiam atrasadas e a taxa real ficaria menor que a do cabeçalho. "
-                     "Use até %u Hz, ou --forcar-taxa para capturar assim mesmo (varreduras do teto).\n",
-            frequencia, ticks, spi, teto, PRU_CLOCK_HZ / teto);
+    erro("%u Hz pedem %u ticks por amostra, abaixo do teto da PRU com o SPI %s e estas esperas de CS (%u ticks): as "
+         "amostras atrasariam e a taxa real sairia menor que a do cabeçalho. Use até %u Hz, ou --forcar-taxa para "
+         "varrer o teto.", frequencia, ticks, spi, teto, PRU_CLOCK_HZ / teto);
     return -1;
 }
 
-/*
- * [ATRASOS DO CS] Interpreta --atraso-cs "S,H,A" (três inteiros, iterações de
- * 2 ciclos da PRU = 10 ns). Mínimo 1: o laço de espera da PRU conta para baixo
- * até 0, e um 0 daria a volta nos 32 bits (uma espera de ~21 s). Máximo 10000
- * (100 µs), bem acima de qualquer uso razoável. Retorna 0, ou -1 com o erro
- * já impresso.
- */
-static int analisar_atrasos_cs(const char *texto, uint32_t atrasos[3]) {
-    const char *p = texto;
-    for (int k = 0; k < 3; k++) {
-        char *fim;
-        long valor = strtol(p, &fim, 10);
-        if (fim == p || valor < 1 || valor > 10000 || (k < 2 && *fim != ',') || (k == 2 && *fim != '\0')) {
-            fprintf(stderr, "Erro: --atraso-cs espera três inteiros de 1 a 10000 separados por vírgula "
-                             "(setup,hold,alto -- ex.: 3,1,3, o padrão), recebeu '%s'.\n", texto);
-            return -1;
-        }
-        atrasos[k] = (uint32_t)valor;
-        p = fim + 1;
+// "captura_AAAAMMDD_HHMMSS.bin" pela hora local (a placa não tem RTC: confira a hora antes de um ensaio).
+static void gerar_nome_arquivo_automatico(time_t instante, char *nome, size_t tamanho) {
+    struct tm local;
+    char data_hora[32];
+    if (localtime_r(&instante, &local) == NULL || strftime(data_hora, sizeof(data_hora), "%Y%m%d_%H%M%S", &local) == 0) {
+        snprintf(nome, tamanho, "captura_sem_timestamp.bin");
+        return;
     }
+    snprintf(nome, tamanho, "captura_%s.bin", data_hora);
+}
+
+// Tudo o que a captura precisa, já validado: nada aqui toca a placa nem o disco.
+struct configuracao {
+    uint32_t frequencia;
+    uint32_t ticks;
+    int canais[ADS8688_MAX_CANAIS];                       // em ordem crescente
+    int num_canais;
+    uint32_t mascara;                                     // AUTO_SEQ_EN
+    uint8_t grandezas[ADS8688_MAX_CANAIS];                // por posição de canais[]
+    char sondas[ADS8688_MAX_CANAIS][CABECALHO_SONDA_ID_TAMANHO];
+    uint8_t faixas[ADS8688_MAX_CANAIS];
+    uint32_t range_sel;                                   // 4 bits por canal, indexado pelo NÚMERO do canal
+    uint32_t atrasos_cs[3];
+    uint32_t modo_spi;
+    unsigned long long blocos;                            // 0 = até Ctrl+C
+    double duracao_pedida;                                // 0 sem --duracao
+    const char *titulo;
+    const char *descricao;
+    const char *arquivo;
+    char arquivo_automatico[64];
+    time_t instante;
+    int forcar_taxa;
+};
+
+// Opção com valor: devolve-o e avança o índice, ou NULL com o erro impresso.
+static const char *valor_da_opcao(int argc, char *argv[], int *i) {
+    if (*i + 1 >= argc) {
+        erro("%s precisa de um valor (veja --help).", argv[*i]);
+        return NULL;
+    }
+    return argv[++*i];
+}
+
+// Devolve SAIDA_OK ou SAIDA_USO (com o erro impresso).
+static int analisar_argumentos(int argc, char *argv[], struct configuracao *c) {
+    const char *texto_canais = NULL, *texto_blocos = NULL, *texto_duracao = NULL, *texto_grandeza = NULL;
+    const char *texto_sonda = NULL, *texto_faixa = NULL, *texto_atraso = NULL, *texto_spi = NULL;
+
+    memset(c, 0, sizeof(*c));
+    c->frequencia = FREQUENCIA_PADRAO_HZ;
+    c->instante = time(NULL);
+    int i = 1;
+    if (argc > 1 && argv[1][0] != '-') {        // a frequência é o 1º argumento, quando há
+        if (analisar_frequencia(argv[1], &c->frequencia) < 0) {
+            return SAIDA_USO;
+        }
+        i = 2;
+    }
+    for (; i < argc; i++) {
+        const char *a = argv[i];
+        const char **destino = NULL;
+        if (strcmp(a, "--blocos") == 0) {
+            destino = &texto_blocos;
+        } else if (strcmp(a, "--duracao") == 0) {
+            destino = &texto_duracao;
+        } else if (strcmp(a, "-o") == 0 || strcmp(a, "--saida") == 0) {
+            destino = &c->arquivo;
+        } else if (strcmp(a, "-t") == 0 || strcmp(a, "--titulo") == 0) {
+            destino = &c->titulo;
+        } else if (strcmp(a, "-d") == 0 || strcmp(a, "--descricao") == 0) {
+            destino = &c->descricao;
+        } else if (strcmp(a, "--grandeza") == 0) {
+            destino = &texto_grandeza;
+        } else if (strcmp(a, "--sonda") == 0) {
+            destino = &texto_sonda;
+        } else if (strcmp(a, "--faixa-adc") == 0) {
+            destino = &texto_faixa;
+        } else if (strcmp(a, "--atraso-cs") == 0) {
+            destino = &texto_atraso;
+        } else if (strcmp(a, "--spi") == 0) {
+            destino = &texto_spi;
+        } else if (strcmp(a, "--forcar-taxa") == 0) {
+            c->forcar_taxa = 1;
+        } else if (strcmp(a, "-v") == 0 || strcmp(a, "--verbose") == 0 || strcmp(a, "--verboso") == 0) {
+            verboso = 1;
+        } else if (a[0] == '-') {
+            erro("opção desconhecida '%s' (veja %s --help).", a, argv[0]);
+            return SAIDA_USO;
+        } else if (texto_canais == NULL) {
+            texto_canais = a;
+        } else {
+            erro("argumento a mais: '%s' (os canais já são '%s'; a frequência vem antes deles).", a, texto_canais);
+            return SAIDA_USO;
+        }
+        if (destino != NULL && (*destino = valor_da_opcao(argc, argv, &i)) == NULL) {
+            return SAIDA_USO;
+        }
+    }
+
+    if (texto_canais != NULL) {
+        c->num_canais = analisar_lista_canais(texto_canais, c->canais);
+        if (c->num_canais < 0) {
+            return SAIDA_USO;
+        }
+    } else {
+        c->num_canais = 1;
+        c->canais[0] = CANAL_PADRAO;
+    }
+    memset(c->grandezas, GRANDEZA_NAO_USADA, sizeof(c->grandezas));
+    memset(c->faixas, FAIXA_ADC_NAO_USADA, sizeof(c->faixas));
+    for (int k = 0; k < c->num_canais; k++) {
+        c->grandezas[k] = GRANDEZA_PADRAO;
+        c->faixas[k] = FAIXA_ADC_PADRAO;
+        c->mascara |= 1u << c->canais[k];
+    }
+    if ((texto_grandeza && analisar_lista_grandezas(texto_grandeza, c->canais, c->num_canais, c->grandezas) < 0) ||
+        (texto_sonda && analisar_lista_sondas(texto_sonda, c->canais, c->num_canais, c->sondas) < 0) ||
+        (texto_faixa && analisar_lista_faixas(texto_faixa, c->canais, c->num_canais, c->faixas) < 0)) {
+        return SAIDA_USO;
+    }
+    for (int k = 0; k < c->num_canais; k++) {
+        c->range_sel |= ((uint32_t)c->faixas[k] & 0xFu) << (4 * c->canais[k]);
+    }
+
+    c->atrasos_cs[0] = ATRASO_CS_SETUP_PADRAO;
+    c->atrasos_cs[1] = ATRASO_CS_HOLD_PADRAO;
+    c->atrasos_cs[2] = ATRASO_CS_ALTO_PADRAO;
+    if (texto_atraso && analisar_atrasos_cs(texto_atraso, c->atrasos_cs) < 0) {
+        return SAIDA_USO;
+    }
+    c->modo_spi = MODO_SPI_RAPIDO_B;
+    if (texto_spi) {
+        int modo = analisar_modo_spi(texto_spi);
+        if (modo < 0) {
+            return SAIDA_USO;
+        }
+        c->modo_spi = (uint32_t)modo;
+    }
+    if (conferir_teto_da_taxa(c->frequencia, c->modo_spi, c->atrasos_cs, c->forcar_taxa) < 0) {
+        return SAIDA_USO;
+    }
+    c->ticks = PRU_CLOCK_HZ / c->frequencia;
+
+    if (texto_blocos && texto_duracao) {
+        erro("--blocos e --duracao não podem ser usados juntos.");
+        return SAIDA_USO;
+    }
+    c->blocos = BLOCOS_PADRAO;
+    if (texto_blocos) {
+        char *fim;
+        long long valor = strtoll(texto_blocos, &fim, 10);
+        if (fim == texto_blocos || *fim != '\0' || valor < 0) {
+            erro("--blocos '%s': use um inteiro >= 0 (0 = até Ctrl+C).", texto_blocos);
+            return SAIDA_USO;
+        }
+        c->blocos = (unsigned long long)valor;
+    } else if (texto_duracao) {
+        c->duracao_pedida = analisar_duracao_em_segundos(texto_duracao);
+        if (c->duracao_pedida < 0.0) {
+            return SAIDA_USO;
+        }
+        c->blocos = calcular_blocos_para_duracao(c->duracao_pedida, c->frequencia);
+    }
+
+    // Texto longo demais é recusado, não truncado: cortar UTF-8 num limite de bytes pode partir um caractere.
+    if (c->titulo && strlen(c->titulo) > CABECALHO_TITULO_TAMANHO - 1u) {
+        erro("--titulo tem %zu bytes; o limite é %u.", strlen(c->titulo), CABECALHO_TITULO_TAMANHO - 1u);
+        return SAIDA_USO;
+    }
+    if (c->descricao && strlen(c->descricao) > CABECALHO_DESCRICAO_TAMANHO - 1u) {
+        erro("--descricao tem %zu bytes; o limite é %u.", strlen(c->descricao), CABECALHO_DESCRICAO_TAMANHO - 1u);
+        return SAIDA_USO;
+    }
+    if (c->arquivo != NULL && c->arquivo[0] == '\0') {
+        erro("nome de arquivo vazio em -o.");
+        return SAIDA_USO;
+    }
+    if (c->arquivo == NULL) {
+        gerar_nome_arquivo_automatico(c->instante, c->arquivo_automatico, sizeof(c->arquivo_automatico));
+        c->arquivo = c->arquivo_automatico;
+    }
+    return SAIDA_OK;
+}
+
+// =====================================================================================================================
+// Placa: memória reservada, pinos da PRU, reinício da PRU
+// =====================================================================================================================
+
+// Os buffers ficam nos últimos 16 MB da DDR, fora do Linux só com 'mem=496M' no /boot/uEnv.txt: sem isso, o Linux e a
+// PRU escreveriam na mesma memória, em silêncio. Confere no /proc/iomem (``caminho``; os testes passam outro) que
+// nenhuma "System RAM" cobre [inicio, fim). Sem root o arquivo mostra só zeros: avisa e segue. Devolve -1 no conflito.
+static int conferir_ddr_reservada(const char *caminho, unsigned long long inicio, unsigned long long fim) {
+    FILE *iomem = fopen(caminho, "r");
+    if (iomem == NULL) {
+        aviso("não deu para ler %s (%s): a reserva da DDR para a PRU não foi conferida.", caminho, strerror(errno));
+        return 0;
+    }
+    char linha[256];
+    int enderecos_visiveis = 0, conflito = 0;
+    while (fgets(linha, sizeof(linha), iomem) != NULL) {
+        unsigned long long a, b;
+        char nome[200];
+        if (linha[0] == ' ' || sscanf(linha, "%llx-%llx : %199[^\n]", &a, &b, nome) != 3) {
+            continue;                       // só o nível de cima; as sub-faixas vêm indentadas
+        }
+        enderecos_visiveis |= (a != 0 || b != 0);
+        if (strcmp(nome, "System RAM") == 0 && a < fim && b >= inicio) {
+            erro("a memória dos buffers da PRU (0x%llX-0x%llX) é RAM do Linux (/proc/iomem: %llX-%llX : System RAM): a "
+                 "PRU escreveria por cima do sistema. Ponha 'mem=496M' na linha cmdline= do /boot/uEnv.txt e reinicie "
+                 "a placa.", inicio, fim - 1, a, b);
+            conflito = 1;
+        }
+    }
+    fclose(iomem);
+    if (!enderecos_visiveis) {
+        aviso("o /proc/iomem não mostra endereços (rode com sudo): a reserva da DDR não foi conferida.");
+        return 0;
+    }
+    return conflito ? -1 : 0;
+}
+
+// Os pinos do SPI na PRU0 (os mesmos do setup.sh; tests/test_ler_adc_host.py confere). O config-pin não sobrevive a um
+// reinício da placa: sem ele, a PRU chaveia pinos desligados e lê o SDO parado em 0 (uma captura toda zerada que passa
+// em todas as outras checagens).
+struct pino_pru {
+    const char *pino;
+    const char *modo;
+    const char *sinal;
+};
+static const struct pino_pru PINOS_PRU[] = {
+    {"P9_31", "pruout", "SCLK"},
+    {"P9_29", "pruout", "SDI"},
+    {"P9_30", "pruin", "SDO"},
+    {"P9_28", "pruout", "CS"},
+};
+#define NUM_PINOS_PRU (sizeof(PINOS_PRU) / sizeof(PINOS_PRU[0]))
+
+static void caminho_do_pino(const char *base, const char *pino, char *caminho, size_t tamanho) {
+    snprintf(caminho, tamanho, "%s/ocp:%s_pinmux/state", base, pino);
+}
+
+static int ler_modo_do_pino(const char *base, const char *pino, char *modo, size_t tamanho) {
+    char caminho[256];
+    caminho_do_pino(base, pino, caminho, sizeof(caminho));
+    FILE *f = fopen(caminho, "r");
+    if (f == NULL) {
+        return -1;
+    }
+    if (fgets(modo, (int)tamanho, f) == NULL) {
+        modo[0] = '\0';
+    }
+    fclose(f);
+    modo[strcspn(modo, " \t\r\n")] = '\0';
     return 0;
 }
 
-/*
- * [INTEGRIDADE] Lê os contadores que a PRU publica a cada troca de buffer
- * (memoria_pru.h) e avisa, no stderr, o que aumentou desde a última chamada.
- * Não toca na PRU: só lê a RAM compartilhada, depois de gravar um bloco.
- */
-struct contadores_integridade {
-    uint32_t amostras_atrasadas;
-    uint32_t buffers_sobrescritos;
-    uint32_t quadros_preambulo_ruim;
-    uint32_t folga_minima_ciclos;      // [GRADE] memoria_pru.h
-    uint32_t atraso_maximo_ciclos;
-    uint32_t divergencias_fase_a;      // [SPI RÁPIDO] memoria_pru.h
-    uint32_t divergencias_fase_c;
-};
-
-static void conferir_integridade(volatile struct shared_control *ctrl, struct contadores_integridade *vistos) {
-    struct contadores_integridade agora = {
-        ctrl->amostras_atrasadas, ctrl->buffers_sobrescritos, ctrl->quadros_preambulo_ruim,
-        ctrl->folga_minima_ciclos, ctrl->atraso_maximo_ciclos, ctrl->divergencias_fase_a, ctrl->divergencias_fase_c
-    };
-    if (agora.buffers_sobrescritos > vistos->buffers_sobrescritos) {
-        fprintf(stderr, "ERRO: %u buffer(s) sobrescrito(s) pela PRU antes de serem gravados -- o ARM atrasou "
-                         "(disco lento ou sistema sobrecarregado) e há amostras PERDIDAS no arquivo.\n",
-                agora.buffers_sobrescritos - vistos->buffers_sobrescritos);
+// Escreve o modo como o config-pin (echo MODO > state). O sysfs só acusa um modo inválido no fclose.
+static int escrever_modo_do_pino(const char *base, const char *pino, const char *modo) {
+    char caminho[256];
+    caminho_do_pino(base, pino, caminho, sizeof(caminho));
+    FILE *f = fopen(caminho, "w");
+    if (f == NULL) {
+        return -1;
     }
-    if (agora.amostras_atrasadas > vistos->amostras_atrasadas) {
-        fprintf(stderr, "Aviso: %u amostra(s) tomada(s) depois do instante previsto (até %u ciclos de 5 ns) -- a "
-                         "PRU não acompanhou a taxa pedida (o período fica constante até ~419 kS/s com o SPI rápido e ~328 com o lento, com os atrasos de CS "
-                         "padrão) ou foi segurada; o período entre essas amostras não é o do cabeçalho.\n",
-                agora.amostras_atrasadas - vistos->amostras_atrasadas, agora.atraso_maximo_ciclos);
-    }
-    if (agora.quadros_preambulo_ruim > vistos->quadros_preambulo_ruim) {
-        fprintf(stderr, "Aviso: %u quadro(s) SPI com ruído na linha SDO (preâmbulo diferente de 0) -- confira "
-                         "a ligação ADC <-> BeagleBone (jumpers longos?); essas amostras são suspeitas.\n",
-                agora.quadros_preambulo_ruim - vistos->quadros_preambulo_ruim);
-    }
-    *vistos = agora;
+    int falhou = fprintf(f, "%s\n", modo) < 0;
+    return (fclose(f) != 0 || falhou) ? -1 : 0;
 }
 
-/*
- * [GRADE] O que a PRU diz sobre o período entre amostras (memoria_pru.h). A folga é publicada 5 amostras depois de
- * cada troca de buffer (spi_core.asm, evento 5), e cobre essa troca: com 1 bloco ela já vale. Antes de publicada, é o
- * valor inicial (o período). (Até 22/10/2026 este texto dizia que 1 bloco não publicava: publicava, só sem a troca.)
- */
-static void imprimir_grade(volatile struct shared_control *ctrl, const struct contadores_integridade *c,
-                           unsigned long long blocos) {
-    uint32_t periodo = ctrl->sample_period_ticks;
-    printf("Grade de tempo (PRU): ");
-    if (blocos == 0 || (c->amostras_atrasadas == 0 && c->folga_minima_ciclos >= periodo)) {
-        printf("folga ainda não publicada (a PRU a publica logo depois de cada bloco)");
-    } else if (c->amostras_atrasadas == 0 && c->folga_minima_ciclos < periodo) {
-        printf("folga mínima %u ciclo(s) = %u ns -- toda amostra no ciclo exato da grade; período constante até "
-               "~%.0f S/s", c->folga_minima_ciclos, 5u * c->folga_minima_ciclos,
-               (double)PRU_CLOCK_HZ / (double)(periodo - c->folga_minima_ciclos));
-    } else {
-        printf("%u amostra(s) fora da grade, a pior %u ciclo(s) = %u ns atrasada", c->amostras_atrasadas,
-               c->atraso_maximo_ciclos, 5u * c->atraso_maximo_ciclos);
+// Confere o modo de cada pino do SPI e, se a placa reiniciou (ou alguém mexeu), põe de volta o da PRU. Devolve 0 com
+// os pinos certos, 1 se não deu para conferir (imagem sem o pinmux do config-pin: só avisa) e -1 se não deu para
+// configurar (erro impresso).
+static int preparar_pinos_da_pru(const char *base) {
+    char modos[NUM_PINOS_PRU][32];
+    for (size_t i = 0; i < NUM_PINOS_PRU; i++) {
+        if (ler_modo_do_pino(base, PINOS_PRU[i].pino, modos[i], sizeof(modos[i])) != 0) {
+            aviso("não deu para conferir os pinos da PRU (%s/ocp:%s_pinmux/state: %s). Se a captura sair zerada, rode "
+                  "sudo ./setup.sh.", base, PINOS_PRU[i].pino, strerror(errno));
+            return 1;
+        }
     }
-    printf(" | rebase: %u ciclo(s) entre as leituras\n", ctrl->ciclos_rebase);
+    char errados[256] = "";
+    size_t usado = 0;
+    for (size_t i = 0; i < NUM_PINOS_PRU; i++) {
+        if (strcmp(modos[i], PINOS_PRU[i].modo) != 0 && usado < sizeof(errados)) {
+            usado += (size_t)snprintf(errados + usado, sizeof(errados) - usado, "%s%s (%s) em '%s'",
+                                      usado ? ", " : "", PINOS_PRU[i].pino, PINOS_PRU[i].sinal,
+                                      modos[i][0] ? modos[i] : "?");
+        }
+    }
+    if (usado == 0) {
+        detalhe("pinos da PRU no modo do SPI (P9_28 a P9_31)");
+        return 0;
+    }
+    aviso("os pinos da PRU não estavam no modo do SPI: %s. A placa foi reiniciada? Configurando agora, como o "
+          "config-pin do setup.sh.", errados);
+    for (size_t i = 0; i < NUM_PINOS_PRU; i++) {
+        if (strcmp(modos[i], PINOS_PRU[i].modo) == 0) {
+            continue;
+        }
+        char lido[32] = "";
+        errno = 0;
+        if (escrever_modo_do_pino(base, PINOS_PRU[i].pino, PINOS_PRU[i].modo) != 0 ||
+            ler_modo_do_pino(base, PINOS_PRU[i].pino, lido, sizeof(lido)) != 0 || strcmp(lido, PINOS_PRU[i].modo) != 0) {
+            erro("não deu para pôr o %s em '%s' (%s): rode sudo ./setup.sh e confira o overlay da PRU no "
+                 "/boot/uEnv.txt.", PINOS_PRU[i].pino, PINOS_PRU[i].modo, errno ? strerror(errno) : "modo não aceito");
+            return -1;
+        }
+    }
+    feito("pinos da PRU configurados (P9_28 a P9_31)");
+    return 0;
 }
 
-/*
- * [SPI RÁPIDO] As divergências entre as fases de leitura (memoria_pru.h): a margem de tempo do SDO medida pela PRU.
- * Contadas desde a 1ª amostra até 7 amostras depois da última troca de buffer (cobrem a captura inteira).
- */
-static void imprimir_spi(uint32_t modo, const struct contadores_integridade *c, unsigned long long amostras) {
-    if (modo == MODO_SPI_LENTO) {
-        return;
-    }
-    printf("SPI rápido (fase %c gravada): %u quadro(s) com a fase A (60 ns) diferente da B (75 ns) e %u com a C "
-           "(90 ns), em %llu quadro(s)", fase_do_modo_spi(modo), c->divergencias_fase_a, c->divergencias_fase_c, amostras);
-    if (c->divergencias_fase_a == 0 && c->divergencias_fase_c == 0) {
-        printf(" -- as três fases leram o mesmo bit: margem de pelo menos 15 ns para cada lado\n");
-    } else if (c->divergencias_fase_c == 0) {
-        printf(" -- o SDO volta perto de 60 ns: a fase B (75 ns) tem margem só de um lado\n");
-    } else if (c->divergencias_fase_a == 0) {
-        printf(" -- o bit seguinte chega antes de 90 ns: a fase B (75 ns) tem margem só de um lado\n");
-    } else {
-        printf(" -- A e C discordam: a janela do bit é estreita; confira o SINAD contra o SPI padrão\n");
-    }
-}
-
-static double segundos_monotonicos(void) {
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
-}
-
-static double analisar_duracao_em_segundos(const char *texto) {
-    char *fim;
-    double valor = strtod(texto, &fim);
-
-    if (fim == texto) {
-        fprintf(stderr, "Erro: '%s' não é uma duração válida em --duracao "
-                         "(use um número, opcionalmente seguido de 's', 'm' "
-                         "ou 'h' -- ex.: '600', '10m', '1.5h').\n", texto);
-        return -1.0;
-    }
-
-    double multiplicador;
-    if (*fim == '\0' || ((fim[0] == 's' || fim[0] == 'S') && fim[1] == '\0')) {
-        multiplicador = 1.0; // segundos (padrão sem sufixo)
-    } else if ((fim[0] == 'm' || fim[0] == 'M') && fim[1] == '\0') {
-        multiplicador = 60.0;
-    } else if ((fim[0] == 'h' || fim[0] == 'H') && fim[1] == '\0') {
-        multiplicador = 3600.0;
-    } else {
-        fprintf(stderr, "Erro: sufixo de unidade '%s' não reconhecido em "
-                         "--duracao='%s' -- use 's' (segundos), 'm' "
-                         "(minutos), 'h' (horas), ou nenhum sufixo (assume "
-                         "segundos).\n", fim, texto);
-        return -1.0;
-    }
-
-    double segundos = valor * multiplicador;
-    if (segundos <= 0.0) {
-        fprintf(stderr, "Erro: --duracao precisa ser um valor positivo "
-                         "(recebido: '%s' = %.3f segundo(s)).\n", texto, segundos);
-        return -1.0;
-    }
-    return segundos;
-}
-
-/*
- * Converte uma duração (em segundos) para um número de blocos, a partir da
- * frequência TOTAL de transação SPI escolhida e de SAMPLES_PER_BUFFER
- * (fixo, ver memoria_pru.h). Isso NÃO depende do número de canais:
- * SAMPLES_PER_BUFFER conta amostras BRUTAS intercaladas -- o tempo para
- * encher um buffer é sempre SAMPLES_PER_BUFFER / frequencia_desejada,
- * independente de quantos canais estão habilitados (dividir a frequência
- * entre canais é uma consequência da intercalação, não muda quantas
- * amostras brutas totais cabem num buffer nem quanto tempo isso leva).
- *
- * Arredondado para CIMA -- calculado manualmente, sem <math.h>/ceil(), só
- * para não precisar linkar libm no Makefile por causa de uma única
- * chamada. Um bloco parcial ainda representa tempo de captura real pedido
- * pelo usuário, e é preferível capturar um pouco mais do que o pedido a
- * capturar menos. Nunca retorna 0 -- mesmo uma duração muito curta ainda
- * resulta em pelo menos 1 bloco (não existe captura de "menos de 1 bloco"
- * nesta arquitetura de ping-pong).
- */
-static unsigned long long calcular_blocos_para_duracao(double segundos,
-                                                          uint32_t frequencia_desejada) {
-    double segundos_por_bloco = (double)SAMPLES_PER_BUFFER / (double)frequencia_desejada;
-    double blocos_exatos = segundos / segundos_por_bloco;
-
-    unsigned long long blocos = (unsigned long long)blocos_exatos;
-    if ((double)blocos < blocos_exatos) {
-        blocos += 1; // arredonda para cima manualmente
-    }
-    if (blocos < 1) {
-        blocos = 1;
-    }
-    return blocos;
-}
-
-/*
- * Imprime a mensagem de progresso "Bloco X gravado" no formato apropriado
- * para o modo de captura ativo -- com total conhecido (--blocos N > 0,
- * --duracao, ou o padrão) ou indefinido (--blocos 0). Extraído para uma
- * função só para não duplicar essa decisão nos dois blocos quase idênticos
- * (buffer 0 / buffer 1) do laço principal, mais abaixo.
- */
-static void imprimir_bloco_gravado(char rotulo, unsigned long long blocos_salvos,
-                                    unsigned long long blocos_desejados) {
-    if (blocos_desejados == 0) {
-        printf("Bloco %c gravado (%llu, captura indefinida -- Ctrl+C para "
-               "parar e salvar)\n", rotulo, blocos_salvos);
-    } else {
-        printf("Bloco %c gravado (%llu/%llu)\n", rotulo, blocos_salvos, blocos_desejados);
-    }
-}
-
-// ============================================================================
-// [BUG CORRIGIDO -- CANAIS "GRUDADOS" ENTRE CAPTURAS] Reinicia o núcleo da
-// PRU0 via remoteproc ANTES de cada captura.
-//
-// SINTOMA: uma segunda chamada a `ler_adc` com uma lista de canais/máscara
-// diferente da primeira silenciosamente continuava usando os canais da
-// PRIMEIRA captura, mesmo com `auto_seq_mask` sendo escrito corretamente em
-// shared_control a cada execução.
-//
-// CAUSA RAIZ: `spi_core.asm` só executa a sequência de configuração do
-// ADS8688 (escrita de AUTO_SEQ_EN com a máscara de canais + comando
-// AUTO_RST) UMA ÚNICA VEZ por boot da PRU -- em `espera_configuracao`,
-// esperando o primeiro `config_ready == 1` depois do firmware carregar.
-// Depois disso, a PRU entra em `laco_principal`, que roda PARA SEMPRE
-// (`JMP laco_principal`) e nunca mais volta a checar `config_ready` nem a
-// reler `auto_seq_mask` -- só `sample_period_ticks` era relido a cada
-// amostra dentro do laço (por isso a FREQUÊNCIA sim atualizava entre
-// capturas; os CANAIS, não; desde 22/10/2026 nem ele: com o reinício
-// abaixo, a PRU o lê uma vez por captura). `buffer_0_addr`/`buffer_1_addr` também são
-// lidos só uma vez, mas como são sempre os mesmos endereços fixos
-// (DDR_RESERVED_PHYS + offsets constantes), isso não produzia sintoma
-// visível.
-//
-// Ou seja: a partir da segunda vez que `setup.sh` é rodado (ou que a PRU é
-// reiniciada), TODAS as capturas seguintes -- não importa o que `ler_adc`
-// escreva em `auto_seq_mask` -- reaproveitam os canais configurados na
-// PRIMEIRA captura feita desde aquele boot da PRU.
-//
-// CORREÇÃO: em vez de mexer no laço de tempo crítico já validado em
-// hardware (`spi_core.asm`) -- risco desnecessário para um laço cujo
-// timing já foi calibrado e depurado em bancada --, force um stop+start
-// do núcleo PRU0 (mesmo mecanismo que `setup.sh` já usa para carregar o
-// firmware) antes de CADA captura. Isso faz `pru_main.c` rodar de novo do
-// zero (`config_ready = 0` e o aviso de "pronta", desde 23/10/2026) e a PRU volta a esperar
-// em `espera_configuracao` -- garantindo que a máscara de canais escrita
-// logo em seguida por este programa seja sempre a que a PRU realmente usa
-// na próxima configuração do ADS8688.
-//
-// CUSTO/DESEMPENHO: um stop+start de remoteproc leva poucos milissegundos
-// e é pago UMA VEZ por invocação de `ler_adc`, totalmente fora do laço de
-// aquisição -- nenhuma instrução extra é adicionada ao laço principal, e a
-// taxa de amostragem máxima suportada não muda em nada. O conteúdo da RAM
-// compartilhada em si NÃO é apagado por esse stop+start (só o contador de
-// programa e os registradores da PRU são resetados) -- irrelevante aqui,
-// porque TODOS os campos que a PRU lê antes do laço principal
-// (buffer_0_addr, buffer_1_addr, sample_period_ticks, auto_seq_mask,
-// range_sel) já
-// são reescritos por este programa logo abaixo, incondicionalmente, antes
-// de sinalizar config_ready=1 de novo.
-//
-// Falha ao reiniciar é tratada como erro FATAL (retorna -1 em vez de só
-// avisar): prosseguir mesmo assim reproduziria silenciosamente o bug que
-// esta função existe para eliminar -- uma captura gravada com os canais
-// errados, sem nenhum aviso no cabeçalho nem no console.
-// ============================================================================
-#define REMOTEPROC_PRU0_ESTADO "/sys/class/remoteproc/remoteproc1/state"
-
-// Escreve um comando ("stop"/"start") no arquivo de estado do remoteproc.
-// Retorna 0 em sucesso, -1 em falha (arquivo não existe/sem permissão/
-// escrita incompleta).
 static int escrever_estado_remoteproc(const char *comando) {
     int fd = open(REMOTEPROC_PRU0_ESTADO, O_WRONLY);
     if (fd < 0) {
@@ -1191,894 +917,543 @@ static int escrever_estado_remoteproc(const char *comando) {
     return (escrito == (ssize_t)tamanho) ? 0 : -1;
 }
 
-// [INÍCIO SEM CORRIDA, 23/10/2026] Escrito em versao_protocolo_pru com a PRU parada; o pru_main.c o troca por 0 quando
-// a PRU chega à espera da configuração (depois de zerar config_ready). Até aqui o ARM esperava 50 ms fixos depois do
-// start e o pru_main.c zerava config_ready: uma PRU mais lenta que isso apagaria o config_ready = 1 do ARM, e a
-// captura falharia com a mensagem errada ("firmware não é o deste").
-#define PRU_AINDA_NAO_INICIOU 0xFFFFFFFFu
-
+// A PRU lê a configuração uma vez por boot (espera_configuracao em spi_core.asm) e depois só amostra: sem reiniciá-la a
+// cada captura, os canais e a faixa da captura anterior continuariam valendo. Com a PRU parada, zera config_ready e
+// marca versao_protocolo_pru; depois do start, espera o pru_main.c trocar a marca por 0 ("pronta, esperando a
+// configuração") antes de o ARM escrevê-la.
 static int reiniciar_pru_antes_da_captura(volatile struct shared_control *ctrl) {
-    // "stop" pode falhar se a PRU já estiver parada (ex.: primeira
-    // captura logo após `setup.sh`, antes de qualquer `ler_adc` ter
-    // rodado) -- não é um erro real, por isso o retorno é ignorado aqui;
-    // só a falha do "start" seguinte é que importa.
-    escrever_estado_remoteproc("stop");
-    usleep(50000); // folga para o núcleo terminar de parar
+    escrever_estado_remoteproc("stop");     // falha se ela já estava parada: não é erro
+    usleep(50000);
 
     ctrl->config_ready = 0;
     ctrl->versao_protocolo_pru = PRU_AINDA_NAO_INICIOU;
 
     if (escrever_estado_remoteproc("start") != 0) {
-        fprintf(stderr, "Erro ao reiniciar a PRU via '%s' (rode primeiro "
-                         "'sudo ./setup.sh' para carregar o firmware ao "
-                         "menos uma vez, ou confira se o caminho do "
-                         "remoteproc está certo neste kernel -- pode ser "
-                         "remoteproc0 em vez de remoteproc1 dependendo da "
-                         "imagem).\n", REMOTEPROC_PRU0_ESTADO);
+        erro("não deu para ligar a PRU por %s: rode sudo ./setup.sh para carregar o firmware (em algumas imagens a "
+             "PRU0 é o remoteproc0).", REMOTEPROC_PRU0_ESTADO);
         return -1;
     }
-    // A configuração só é escrita depois que a PRU avisa que está esperando por ela (versao_protocolo_pru = 0).
     for (int espera_ms = 0; espera_ms < 500 && ctrl->versao_protocolo_pru != 0; espera_ms++) {
         usleep(1000);
     }
     if (ctrl->versao_protocolo_pru != 0) {
-        fprintf(stderr, "Erro: a PRU não avisou que está pronta em 500 ms depois do start (versao_protocolo_pru = "
-                         "0x%08X; o firmware deste ler_adc escreve 0 ao iniciar). O fw_pru.out carregado é anterior a "
-                         "23/10/2026 ou a PRU não iniciou: recompile e recarregue os dois juntos (scripts/"
-                         "BeagleBone_Setup.sh enviar --setup no PC, ou 'sudo ./setup.sh' na BeagleBone).\n",
-                ctrl->versao_protocolo_pru);
+        erro("a PRU não ficou pronta em 500 ms (versao_protocolo_pru = 0x%08X). O fw_pru.out carregado é anterior a "
+             "23/10/2026 ou a PRU não iniciou: recompile e recarregue os dois com sudo ./setup.sh.",
+             ctrl->versao_protocolo_pru);
         escrever_estado_remoteproc("stop");
         return -1;
     }
     return 0;
 }
 
-// [23/10/2026] Saída com erro depois de a PRU ser ligada: para a PRU (até aqui ela ficava amostrando e escrevendo na
-// DDR até a próxima captura), fecha o arquivo, se já aberto, e desfaz os mapeamentos.
-static int abortar_captura(FILE *ficheiro, void *ddr_map, size_t bytes_ddr, void *ctrl_map, int mem_fd) {
+// Saída com erro depois de a PRU ser ligada: para a PRU (senão ela seguiria escrevendo na DDR até a próxima captura),
+// fecha o arquivo, se aberto, e desfaz os mapeamentos.
+static int abortar_captura(FILE *arquivo, void *ddr_map, size_t bytes_ddr, void *ctrl_map, int mem_fd) {
     escrever_estado_remoteproc("stop");
-    if (ficheiro != NULL) {
-        fclose(ficheiro);
+    if (arquivo != NULL) {
+        fclose(arquivo);
     }
     munmap(ddr_map, bytes_ddr);
     munmap(ctrl_map, 4096);
     close(mem_fd);
-    return -1;
+    return SAIDA_ERRO;
 }
 
-// [F11] Os buffers da PRU ficam em DDR_RESERVED_PHYS, os últimos 16 MB da DDR de 512 MB da BeagleBone. O Linux só não
-// os usa porque o /boot/uEnv.txt da placa tem 'mem=496M' (conferido em 22/10/2026 em /proc/cmdline): numa imagem nova
-// sem essa linha, o Linux e a PRU escreveriam na mesma memória, em silêncio -- capturas corrompidas e travamentos ao
-// acaso. Aqui se confere, no /proc/iomem (``caminho``; os testes passam outro), que nenhuma "System RAM" do Linux
-// cobre [inicio, fim). Sem root o /proc/iomem mostra só zeros (o ler_adc sempre roda com sudo, por causa do
-// /dev/mem): avisa e segue. Devolve -1 se há conflito.
-static int conferir_ddr_reservada(const char *caminho, unsigned long long inicio, unsigned long long fim) {
-    FILE *iomem = fopen(caminho, "r");
-    if (iomem == NULL) {
-        fprintf(stderr, "Aviso: não deu para ler %s (%s): a reserva da DDR dos buffers da PRU não foi "
-                         "conferida.\n", caminho, strerror(errno));
-        return 0;
-    }
-    char linha[256];
-    int enderecos_visiveis = 0;
-    int conflitos = 0;
-    while (fgets(linha, sizeof(linha), iomem) != NULL) {
-        unsigned long long a, b;
-        char nome[200];
-        if (linha[0] == ' ') {
-            continue;   // só o nível de cima: as sub-faixas (kernel code, reserved...) vêm indentadas
-        }
-        if (sscanf(linha, "%llx-%llx : %199[^\n]", &a, &b, nome) != 3) {
-            continue;
-        }
-        if (a != 0 || b != 0) {
-            enderecos_visiveis = 1;
-        }
-        if (strcmp(nome, "System RAM") == 0 && a < fim && b >= inicio) {
-            fprintf(stderr, "Erro: a memória dos buffers da PRU (0x%llX-0x%llX) é RAM do Linux (/proc/iomem: "
-                             "%llX-%llX : System RAM). A PRU escreveria por cima da memória do sistema.\n"
-                             "Reserve os últimos 16 MB: 'mem=496M' na linha cmdline= do /boot/uEnv.txt da "
-                             "BeagleBone, e reinicie a placa.\n", inicio, fim - 1, a, b);
-            conflitos++;
+// 1 se as n amostras são todas iguais: o ADC não respondeu (SDO parado) ou a entrada está saturada.
+static int amostras_todas_iguais(const volatile uint16_t *amostras, size_t n) {
+    for (size_t i = 1; i < n; i++) {
+        if (amostras[i] != amostras[0]) {
+            return 0;
         }
     }
-    fclose(iomem);
-    if (!enderecos_visiveis) {
-        fprintf(stderr, "Aviso: /proc/iomem sem endereços (rode com sudo): a reserva da DDR não foi conferida.\n");
-        return 0;
-    }
-    return conflitos ? -1 : 0;
+    return 1;
 }
+
+// =====================================================================================================================
+// Captura
+// =====================================================================================================================
+
+static volatile sig_atomic_t manter_execucao = 1;
+static volatile sig_atomic_t sinal_recebido = 0;
+
+// SIGINT (Ctrl+C), SIGTERM e SIGHUP (o ssh caiu): o laço sai entre dois blocos e o cabeçalho final é reescrito.
+static void lidar_interrupcao(int sinal) {
+    sinal_recebido = sinal;
+    manter_execucao = 0;
+}
+
+static double segundos_monotonicos(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
+}
+
+// Os contadores que a PRU publica depois de cada troca de buffer (memoria_pru.h).
+struct contadores_integridade {
+    uint32_t amostras_atrasadas;
+    uint32_t buffers_sobrescritos;
+    uint32_t quadros_preambulo_ruim;
+    uint32_t folga_minima_ciclos;
+    uint32_t atraso_maximo_ciclos;
+    uint32_t divergencias_fase_a;
+    uint32_t divergencias_fase_c;
+};
+
+// Lê os contadores e avisa do que aumentou desde a última leitura.
+static void conferir_integridade(volatile struct shared_control *ctrl, struct contadores_integridade *vistos) {
+    struct contadores_integridade agora = {
+        ctrl->amostras_atrasadas, ctrl->buffers_sobrescritos, ctrl->quadros_preambulo_ruim,
+        ctrl->folga_minima_ciclos, ctrl->atraso_maximo_ciclos, ctrl->divergencias_fase_a, ctrl->divergencias_fase_c
+    };
+    if (agora.buffers_sobrescritos > vistos->buffers_sobrescritos) {
+        erro("%u buffer(s) reescrito(s) pela PRU antes de gravado(s): há amostras PERDIDAS (o ARM atrasou: disco lento "
+             "ou sistema ocupado).", agora.buffers_sobrescritos - vistos->buffers_sobrescritos);
+    }
+    if (agora.amostras_atrasadas > vistos->amostras_atrasadas) {
+        aviso("%u amostra(s) fora da grade (até %u ciclos de 5 ns): a PRU não acompanhou a taxa; o período entre elas "
+              "não é o do cabeçalho.", agora.amostras_atrasadas - vistos->amostras_atrasadas, agora.atraso_maximo_ciclos);
+    }
+    if (agora.quadros_preambulo_ruim > vistos->quadros_preambulo_ruim) {
+        aviso("%u quadro(s) SPI com ruído no SDO: confira a ligação ADC <-> BeagleBone; essas amostras são suspeitas.",
+              agora.quadros_preambulo_ruim - vistos->quadros_preambulo_ruim);
+    }
+    *vistos = agora;
+}
+
+#define LARGURA_BARRA 24
+
+static void mostrar_progresso(unsigned long long feitos, unsigned long long total, double segundos_por_bloco) {
+    if (!terminal_stdout) {
+        return;
+    }
+    printf("\r\033[K  %sCapturando%s  ", ansi(stdout, NEGRITO), fim_ansi(stdout));
+    if (total > 0) {
+        unsigned long long cheios = feitos * LARGURA_BARRA / total;
+        fputs(ansi(stdout, CIANO), stdout);
+        for (unsigned long long k = 0; k < LARGURA_BARRA; k++) {
+            fputs(k < cheios ? "█" : "░", stdout);
+        }
+        printf("%s  %llu/%llu %s · %.1f de %.1f s", fim_ansi(stdout), feitos, total, plural(total, "bloco", "blocos"),
+               (double)feitos * segundos_por_bloco, (double)total * segundos_por_bloco);
+    } else {
+        printf("%llu %s · %.1f s %s(Ctrl+C para parar e salvar)%s", feitos, plural(feitos, "bloco", "blocos"),
+               (double)feitos * segundos_por_bloco, ansi(stdout, FRACO), fim_ansi(stdout));
+    }
+    fflush(stdout);
+    progresso_ativo = 1;
+}
+
+static void imprimir_configuracao(const struct configuracao *c, double segundos_por_bloco) {
+    printf("%sler_adc%s · SH-Analyzer · firmware %s\n", ansi(stdout, NEGRITO), fim_ansi(stdout), VERSAO_FIRMWARE);
+    campo("Arquivo", "%s", c->arquivo);
+    if (c->titulo) {
+        campo("Título", "%s", c->titulo);
+    }
+    if (c->descricao && verboso) {
+        campo("Descrição", "%s", c->descricao);
+    }
+    double taxa_real = (double)PRU_CLOCK_HZ / (double)c->ticks;
+    char spi[48];
+    if (c->modo_spi == MODO_SPI_LENTO) {
+        snprintf(spi, sizeof(spi), "SPI lento");
+    } else {
+        snprintf(spi, sizeof(spi), "SPI rápido, fase %c", fase_do_modo_spi(c->modo_spi));
+    }
+    char real[64] = "";             // fora dos divisores de 200 MHz, a PRU arredonda o período (o adc_tool.py usa o real)
+    if (taxa_real != (double)c->frequencia) {
+        snprintf(real, sizeof(real), "; a PRU gera %.2f S/s", taxa_real);
+    }
+    if (c->num_canais > 1) {
+        campo("Taxa", "%u S/s no total, %.0f S/s por canal (%s%s)", c->frequencia, taxa_real / c->num_canais, spi,
+              real);
+    } else {
+        campo("Taxa", "%u S/s (%s%s)", c->frequencia, spi, real);
+    }
+    for (int k = 0; k < c->num_canais; k++) {
+        char rotulo[16], sonda[48] = "";
+        snprintf(rotulo, sizeof(rotulo), "Canal %d", c->canais[k]);
+        if (c->sondas[k][0]) {
+            snprintf(sonda, sizeof(sonda), ", sonda %s", c->sondas[k]);
+        }
+        campo(rotulo, "%s, ±%.2f V%s", nome_da_grandeza(c->grandezas[k]), FAIXA_ADC_ESPAN_V[c->faixas[k]] / 2.0, sonda);
+    }
+    if (c->blocos == 0) {
+        campo("Duração", "até Ctrl+C (blocos de %.3f s)", segundos_por_bloco);
+    } else if (c->duracao_pedida > 0.0) {
+        campo("Duração", "%llu %s = %.2f s (pedida: %g s)", c->blocos, plural(c->blocos, "bloco", "blocos"),
+              (double)c->blocos * segundos_por_bloco, c->duracao_pedida);
+    } else {
+        campo("Duração", "%llu %s = %.2f s", c->blocos, plural(c->blocos, "bloco", "blocos"),
+              (double)c->blocos * segundos_por_bloco);
+    }
+    if (c->atrasos_cs[0] != ATRASO_CS_SETUP_PADRAO || c->atrasos_cs[1] != ATRASO_CS_HOLD_PADRAO ||
+        c->atrasos_cs[2] != ATRASO_CS_ALTO_PADRAO) {
+        campo("Esperas CS", "%u/%u/%u iterações (%u/%u/%u ns; padrão %u/%u/%u)", c->atrasos_cs[0], c->atrasos_cs[1],
+              c->atrasos_cs[2], 10 * c->atrasos_cs[0], 10 * c->atrasos_cs[1], 10 * c->atrasos_cs[2],
+              ATRASO_CS_SETUP_PADRAO, ATRASO_CS_HOLD_PADRAO, ATRASO_CS_ALTO_PADRAO);
+    }
+    detalhe("período de %u ticks de 5 ns; blocos de %u amostras brutas (%.3f s) em %u buffers ping-pong na DDR",
+            c->ticks, SAMPLES_PER_BUFFER, segundos_por_bloco, BUFFERS_PING_PONG);
+    if (c->num_canais > 1) {
+        detalhe("amostras intercaladas na ordem dos canais acima: a amostra i é do canal da posição i %% %d",
+                c->num_canais);
+    }
+    putchar('\n');
+}
+
+// O que a captura deixou: um resultado e os números, sempre no mesmo formato (o varrer_taxa.sh lê as linhas
+// Integridade, Grade, SPI e Taxa medida).
+struct resultado {
+    unsigned long long blocos;
+    unsigned long long amostras;
+    double taxa_medida;                     // 0 = não medida (menos de 2 blocos)
+    double pior_gravacao_s;
+    int erro_escrita;
+    int adc_mudo;
+};
+
+static void imprimir_resultado(const struct configuracao *c, volatile struct shared_control *ctrl,
+                               const struct contadores_integridade *n, const struct resultado *r) {
+    const char *simbolo, *texto;
+    enum estilo cor;
+    if (r->adc_mudo) {
+        simbolo = "✗"; cor = VERMELHO; texto = "Captura interrompida: o ADC não respondeu";
+    } else if (r->erro_escrita) {
+        simbolo = "✗"; cor = VERMELHO; texto = "Captura interrompida: erro de escrita";
+    } else if (n->buffers_sobrescritos) {
+        simbolo = "✗"; cor = VERMELHO; texto = "Captura com amostras perdidas";
+    } else if (sinal_recebido && c->blocos != 0) {
+        simbolo = "!"; cor = AMARELO; texto = "Captura interrompida antes do fim";
+    } else if (n->amostras_atrasadas || n->quadros_preambulo_ruim) {
+        simbolo = "!"; cor = AMARELO; texto = "Captura concluída, com avisos";
+    } else {
+        simbolo = "✓"; cor = VERDE; texto = "Captura concluída";
+    }
+    limpar_progresso();
+    printf("\n%s%s%s %s%s\n", ansi(stdout, NEGRITO), ansi(stdout, cor), simbolo, texto, fim_ansi(stdout));
+
+    double segundos = (double)r->amostras * (double)c->ticks / (double)PRU_CLOCK_HZ;
+    double mib = (double)(CABECALHO_TAMANHO_TOTAL + r->amostras * sizeof(uint16_t)) / (1024.0 * 1024.0);
+    campo("Arquivo", "%s (%llu %s, %.2f s, %.1f MiB)", c->arquivo, r->blocos, plural(r->blocos, "bloco", "blocos"),
+          segundos, mib);
+
+    int integro = !(n->amostras_atrasadas | n->buffers_sobrescritos | n->quadros_preambulo_ruim);
+    campo("Integridade", "%s%s%s: %u %s, %u %s, %u %s", ansi(stdout, integro ? VERDE : AMARELO),
+          integro ? "tudo certo" : "PROBLEMAS", fim_ansi(stdout),
+          n->amostras_atrasadas, plural(n->amostras_atrasadas, "amostra atrasada", "amostras atrasadas"),
+          n->buffers_sobrescritos, plural(n->buffers_sobrescritos, "buffer sobrescrito", "buffers sobrescritos"),
+          n->quadros_preambulo_ruim, plural(n->quadros_preambulo_ruim, "quadro com ruído no SDO",
+                                             "quadros com ruído no SDO"));
+
+    uint32_t periodo = ctrl->sample_period_ticks;
+    if (r->blocos == 0 || (n->amostras_atrasadas == 0 && n->folga_minima_ciclos >= periodo)) {
+        campo("Grade", "folga ainda não publicada (a PRU a publica depois de cada bloco)");
+    } else if (n->amostras_atrasadas == 0) {
+        campo("Grade", "exata: folga mínima %u %s (%u ns), período constante até %.0f S/s", n->folga_minima_ciclos,
+              plural(n->folga_minima_ciclos, "ciclo", "ciclos"), 5u * n->folga_minima_ciclos,
+              (double)PRU_CLOCK_HZ / (double)(periodo - n->folga_minima_ciclos));
+    } else {
+        campo("Grade", "%u %s fora da grade, a pior %u %s (%u ns) atrasada", n->amostras_atrasadas,
+              plural(n->amostras_atrasadas, "amostra", "amostras"), n->atraso_maximo_ciclos,
+              plural(n->atraso_maximo_ciclos, "ciclo", "ciclos"), 5u * n->atraso_maximo_ciclos);
+    }
+
+    if (c->modo_spi == MODO_SPI_LENTO) {
+        campo("SPI", "lento (~10,7 MHz)");
+    } else {
+        campo("SPI", "rápido, fase %c gravada; divergências de leitura: %u na fase A e %u na C",
+              fase_do_modo_spi(c->modo_spi), n->divergencias_fase_a, n->divergencias_fase_c);
+        if (n->divergencias_fase_a || n->divergencias_fase_c) {
+            aviso("%s", n->divergencias_fase_c == 0
+                  ? "o SDO volta perto de 60 ns depois da borda: a fase B (75 ns) tem margem só de um lado."
+                  : n->divergencias_fase_a == 0
+                  ? "o bit seguinte chega antes de 90 ns: a fase B (75 ns) tem margem só de um lado."
+                  : "as fases A e C discordam da B: a janela do bit é estreita; compare o SINAD com --spi lenta.");
+        }
+    }
+
+    if (r->taxa_medida > 0.0) {
+        double desvio = 100.0 * (r->taxa_medida / c->frequencia - 1.0);
+        campo("Taxa medida", "%.0f S/s pelo relógio do ARM (%+.2f %% da pedida)%s", r->taxa_medida, desvio,
+              (desvio < -0.5 || desvio > 0.5) ? " -- DIFERENTE da pedida, confira" : "");
+    }
+    double segundos_por_bloco = (double)SAMPLES_PER_BUFFER * (double)c->ticks / (double)PRU_CLOCK_HZ;
+    if (r->blocos > 0) {
+        double margem = segundos_por_bloco / (r->pior_gravacao_s + 0.002);   // + a espera do laço (2 ms)
+        detalhe("rebase do contador: %u ciclos entre as leituras", ctrl->ciclos_rebase);
+        detalhe("gravação no ARM: o pior bloco levou %.0f ms; cada bloco enche em %.0f ms (margem de %.0fx)",
+                1e3 * r->pior_gravacao_s, 1e3 * segundos_por_bloco, margem);
+        if (margem < 3.0) {
+            aviso("o ARM levou %.0f ms para gravar um bloco que enche em %.0f ms: pouca margem antes de perder "
+                  "amostras (disco lento ou sistema ocupado?).", 1e3 * r->pior_gravacao_s, 1e3 * segundos_por_bloco);
+        }
+    }
+}
+
+// =====================================================================================================================
+// main
+// =====================================================================================================================
 
 int main(int argc, char *argv[]) {
     signal(SIGINT, lidar_interrupcao);
     signal(SIGTERM, lidar_interrupcao);
     signal(SIGHUP, lidar_interrupcao);
-    signal(SIGPIPE, SIG_IGN);   // stdout num pipe que fechou (ex.: '| tee' morto com o ssh): sem isso, o printf mataria
-                                // o processo antes de reescrever o cabeçalho; o erro de escrita é só ignorado
+    signal(SIGPIPE, SIG_IGN);       // um '| tee' que morreu com o ssh não pode matar o ler_adc antes do cabeçalho final
+    setvbuf(stdout, NULL, _IOLBF, 0);   // num log (2>&1), stdout e stderr na ordem em que aconteceram
 
-    // -h/--help em QUALQUER posição -> mostra o uso e sai, sem exigir
-    // frequência nem nenhum outro argumento válido. Checado antes de
-    // qualquer outro parsing para não disparar, por exemplo, "frequência
-    // inválida" ao rodar só `ler_adc --help`.
+    terminal_stdout = isatty(STDOUT_FILENO);
+    cor_stdout = pode_usar_cor(STDOUT_FILENO);
+    cor_stderr = pode_usar_cor(STDERR_FILENO);
+
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            imprimir_uso(argv[0]);
-            return 0;
+            imprimir_ajuda(argv[0]);
+            return SAIDA_OK;
         }
     }
 
-    // [TAXA PADRÃO] Sem a frequência (nenhum argumento, ou o 1º já é uma opção), FREQUENCIA_PADRAO_HZ. A lista de
-    // canais, quando existe, vem sempre depois da frequência.
-    uint32_t frequencia_desejada = FREQUENCIA_PADRAO_HZ;
-    int primeiro_opcional = 1;
-    if (argc > 1 && argv[1][0] != '-') {
-        if (analisar_frequencia(argv[1], &frequencia_desejada) < 0) {
-            return -1;
-        }
-        primeiro_opcional = 2;
+    struct configuracao config;
+    int codigo = analisar_argumentos(argc, argv, &config);
+    if (codigo != SAIDA_OK) {
+        return codigo;
     }
+    if (geteuid() != 0) {
+        erro("o ler_adc precisa de root (a PRU, os pinos e /dev/mem): rode com sudo.");
+        return SAIDA_ERRO;
+    }
+    double segundos_por_bloco = (double)SAMPLES_PER_BUFFER * (double)config.ticks / (double)PRU_CLOCK_HZ;
+    imprimir_configuracao(&config, segundos_por_bloco);
 
-    // argv[2] em diante: um argumento posicional opcional (a lista de
-    // canais) e, em qualquer ordem, as flags opcionais --blocos/--duracao
-    // e -o/--saida (ver docstrings acima). Nenhuma biblioteca de parsing
-    // (getopt etc.) é usada aqui -- mesmo estilo de parsing manual já usado
-    // neste arquivo para a lista de canais.
-    const char *lista_canais_texto = NULL;
-    const char *blocos_texto = NULL;
-    const char *duracao_texto = NULL;
-    const char *nome_arquivo_texto = NULL; // [CABECALHO/NOME DE ARQUIVO] valor de -o/--saida, se passado
-    const char *titulo_texto = NULL;       // [CABECALHO/RASTREABILIDADE] valor de -t/--titulo, se passado
-    const char *descricao_texto = NULL;    // [CABECALHO/RASTREABILIDADE] valor de -d/--descricao, se passado
-    const char *grandeza_texto = NULL;     // [SONDA/GRANDEZA] valor de --grandeza, se passado
-    const char *sonda_texto = NULL;        // [SONDA/GRANDEZA] valor de --sonda, se passado
-    const char *faixa_adc_texto = NULL;    // [FAIXA DE ENTRADA] valor de --faixa-adc, se passado
-    const char *atraso_cs_texto = NULL;    // [ATRASOS DO CS] valor de --atraso-cs, se passado
-    const char *spi_texto = NULL;          // [SPI RÁPIDO] valor de --spi, se passado
-    int forcar_taxa = 0;                   // [TETO DA PRU] --forcar-taxa: aceita uma taxa acima do teto da PRU
-
-    for (int i = primeiro_opcional; i < argc; i++) {
-        if (strcmp(argv[i], "--blocos") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Erro: --blocos precisa de um valor (ex.: "
-                                 "--blocos 3, ou --blocos 0 para captura "
-                                 "indefinida).\n");
-                return -1;
-            }
-            blocos_texto = argv[++i];
-        } else if (strcmp(argv[i], "--duracao") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Erro: --duracao precisa de um valor (ex.: "
-                                 "--duracao 600, --duracao 10m, --duracao "
-                                 "1.5h).\n");
-                return -1;
-            }
-            duracao_texto = argv[++i];
-        } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--saida") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Erro: %s precisa de um nome de arquivo "
-                                 "(ex.: -o captura.bin).\n", argv[i]);
-                return -1;
-            }
-            nome_arquivo_texto = argv[++i];
-            if (nome_arquivo_texto[0] == '\0') {
-                fprintf(stderr, "Erro: nome de arquivo vazio em -o/--saida.\n");
-                return -1;
-            }
-        } else if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--titulo") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Erro: %s precisa de um valor (ex.: -t "
-                                 "\"Medição Condomínio X\").\n", argv[i]);
-                return -1;
-            }
-            titulo_texto = argv[++i];
-        } else if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--descricao") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Erro: %s precisa de um valor (ex.: -d "
-                                 "\"Busca por supraharmônicos\").\n", argv[i]);
-                return -1;
-            }
-            descricao_texto = argv[++i];
-        } else if (strcmp(argv[i], "--grandeza") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Erro: --grandeza precisa de um valor (ex.: "
-                                 "--grandeza 0:tensao,1:corrente).\n");
-                return -1;
-            }
-            grandeza_texto = argv[++i];
-        } else if (strcmp(argv[i], "--sonda") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Erro: --sonda precisa de um valor (ex.: "
-                                 "--sonda 1:fluke_i30_01).\n");
-                return -1;
-            }
-            sonda_texto = argv[++i];
-        } else if (strcmp(argv[i], "--faixa-adc") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Erro: --faixa-adc precisa de um valor (ex.: "
-                                 "--faixa-adc 1:5.12).\n");
-                return -1;
-            }
-            faixa_adc_texto = argv[++i];
-        } else if (strcmp(argv[i], "--atraso-cs") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Erro: --atraso-cs precisa de um valor (ex.: "
-                                 "--atraso-cs 6,2,6).\n");
-                return -1;
-            }
-            atraso_cs_texto = argv[++i];
-        } else if (strcmp(argv[i], "--spi") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Erro: --spi precisa de um valor (ex.: --spi rapido).\n");
-                return -1;
-            }
-            spi_texto = argv[++i];
-        } else if (strcmp(argv[i], "--forcar-taxa") == 0) {
-            forcar_taxa = 1;
-        } else if (argv[i][0] == '-') {
-            fprintf(stderr, "Erro: opção desconhecida '%s'.\n", argv[i]);
-            imprimir_uso(argv[0]);
-            return -1;
-        } else if (lista_canais_texto == NULL) {
-            lista_canais_texto = argv[i];
-        } else {
-            fprintf(stderr, "Erro: argumento posicional inesperado '%s' -- "
-                             "a lista de canais já foi informada como "
-                             "'%s'.\n", argv[i], lista_canais_texto);
-            return -1;
-        }
-    }
-
-    if (blocos_texto != NULL && duracao_texto != NULL) {
-        fprintf(stderr, "Erro: --blocos e --duracao são mutuamente "
-                         "exclusivas -- escolha só uma forma de controlar a "
-                         "duração da captura.\n");
-        return -1;
-    }
-
-    // argv[2] (agora lista_canais_texto), opcional: lista de canais a
-    // amostrar, ex. "0,1,3" (sem espaços). Sem esse argumento, mantém o
-    // comportamento histórico deste programa: um canal só, o canal 1
-    // (CANAL_PADRAO). A ordem final impressa/usada é sempre crescente --
-    // ver analisar_lista_canais().
-    int canais[ADS8688_MAX_CANAIS];
-    int num_canais;
-    if (lista_canais_texto != NULL) {
-        num_canais = analisar_lista_canais(lista_canais_texto, canais);
-        if (num_canais < 0) {
-            return -1; // erro já reportado em stderr por analisar_lista_canais
-        }
-    } else {
-        num_canais = 1;
-        canais[0] = CANAL_PADRAO;
-    }
-
-    // [SONDA/GRANDEZA] Resolvido logo após 'canais'/'num_canais' -- ambas as
-    // flags são expressas em NÚMERO de canal (analisar_lista_grandezas/
-    // analisar_lista_sondas traduzem para posição internamente), então
-    // dependem da lista final já validada e ordenada. Mesma filosofia de
-    // "validar primeiro, tocar hardware/disco depois" do resto do arquivo.
-    //
-    // grandeza_canais começa com GRANDEZA_NAO_USADA em todo slot (mesmo
-    // sentinela de lista_canais), depois GRANDEZA_PADRAO só nos slots
-    // realmente usados por esta captura (0..num_canais) -- --grandeza, se
-    // passado, sobrescreve a partir daí. sonda_canais começa vazio (nenhuma
-    // sonda associada) em todo canal; --sonda, se passado, preenche.
-    uint8_t grandeza_canais[ADS8688_MAX_CANAIS];
-    char sonda_canais[ADS8688_MAX_CANAIS][CABECALHO_SONDA_ID_TAMANHO];
-    memset(grandeza_canais, GRANDEZA_NAO_USADA, sizeof(grandeza_canais));
-    memset(sonda_canais, 0, sizeof(sonda_canais));
-    for (int i = 0; i < num_canais; i++) {
-        grandeza_canais[i] = GRANDEZA_PADRAO;
-    }
-    if (grandeza_texto != NULL) {
-        if (analisar_lista_grandezas(grandeza_texto, canais, num_canais, grandeza_canais) < 0) {
-            return -1; // erro já reportado em stderr por analisar_lista_grandezas
-        }
-    }
-    if (sonda_texto != NULL) {
-        if (analisar_lista_sondas(sonda_texto, canais, num_canais, sonda_canais) < 0) {
-            return -1; // erro já reportado em stderr por analisar_lista_sondas
-        }
-    }
-
-    // [FAIXA DE ENTRADA POR CANAL] Mesma indexação por posição de grandeza_canais:
-    // FAIXA_ADC_NAO_USADA nos slots sem canal, FAIXA_ADC_PADRAO nos usados,
-    // --faixa-adc por cima. 'range_sel' é a mesma informação empacotada para a
-    // PRU (4 bits por canal, indexado pelo NÚMERO do canal, não pela posição).
-    uint8_t faixa_adc_canais[ADS8688_MAX_CANAIS];
-    memset(faixa_adc_canais, FAIXA_ADC_NAO_USADA, sizeof(faixa_adc_canais));
-    for (int i = 0; i < num_canais; i++) {
-        faixa_adc_canais[i] = FAIXA_ADC_PADRAO;
-    }
-    if (faixa_adc_texto != NULL) {
-        if (analisar_lista_faixas(faixa_adc_texto, canais, num_canais, faixa_adc_canais) < 0) {
-            return -1; // erro já reportado em stderr por analisar_lista_faixas
-        }
-    }
-    uint32_t range_sel = 0;
-    for (int i = 0; i < num_canais; i++) {
-        range_sel |= ((uint32_t)faixa_adc_canais[i] & 0xFu) << (4 * canais[i]);
-    }
-
-    uint32_t atrasos_cs[3] = {ATRASO_CS_SETUP_PADRAO, ATRASO_CS_HOLD_PADRAO, ATRASO_CS_ALTO_PADRAO};
-    if (atraso_cs_texto != NULL) {
-        if (analisar_atrasos_cs(atraso_cs_texto, atrasos_cs) < 0) {
-            return -1;
-        }
-        printf("Atrasos de CS: %u/%u/%u iterações (%.2f/%.2f/%.2f µs); o padrão é %u/%u/%u.\n",
-               atrasos_cs[0], atrasos_cs[1], atrasos_cs[2],
-               atrasos_cs[0] * 0.01, atrasos_cs[1] * 0.01, atrasos_cs[2] * 0.01,
-               ATRASO_CS_SETUP_PADRAO, ATRASO_CS_HOLD_PADRAO, ATRASO_CS_ALTO_PADRAO);
-    }
-
-    uint32_t modo_spi = MODO_SPI_RAPIDO_B;   // o padrão desde 22/10/2026 (T7g: 0 divergências, mesmo ruído)
-    if (spi_texto != NULL) {
-        int modo = analisar_modo_spi(spi_texto);
-        if (modo < 0) {
-            return -1;
-        }
-        modo_spi = (uint32_t)modo;
-    }
-    if (modo_spi == MODO_SPI_LENTO) {
-        printf("SPI lento (o de antes de 22/10/2026): bits de 16 a 20 ciclos, ~10,7 MHz; período constante até "
-               "~328 kS/s.\n");
-    } else {
-        printf("SPI rápido: bits de 13 ciclos (~15,4 MHz), gravando a leitura da fase %c (%u ns depois da borda do "
-               "SCLK que lança o bit); as fases A (60 ns) e C (90 ns) são comparadas com a B a cada quadro.\n",
-               fase_do_modo_spi(modo_spi), modo_spi == MODO_SPI_RAPIDO_A ? 60u : (modo_spi == MODO_SPI_RAPIDO_C ? 90u : 75u));
-    }
-    if (conferir_teto_da_taxa(frequencia_desejada, modo_spi, atrasos_cs, forcar_taxa) < 0) {
-        return -1;
-    }
-
-    // Resolve blocos_desejados cedo (antes de tocar em /dev/mem ou criar o
-    // arquivo de saída) -- mesma filosofia de "validar primeiro, tocar
-    // hardware/disco depois" já seguida no resto deste programa.
-    double duracao_pedida_segundos = 0.0; // [CABECALHO] 0.0 quando --duracao não é usado; gravado no cabeçalho para referência futura da captura
-    unsigned long long blocos_desejados = BLOCOS_PADRAO;
-    if (blocos_texto != NULL) {
-        char *fim;
-        long long valor = strtoll(blocos_texto, &fim, 10);
-        if (fim == blocos_texto || *fim != '\0') {
-            fprintf(stderr, "Erro: '%s' não é um número de blocos válido em "
-                             "--blocos.\n", blocos_texto);
-            return -1;
-        }
-        if (valor < 0) {
-            fprintf(stderr, "Erro: --blocos não pode ser negativo (use 0 "
-                             "para captura indefinida, até Ctrl+C).\n");
-            return -1;
-        }
-        blocos_desejados = (unsigned long long)valor;
-    } else if (duracao_texto != NULL) {
-        duracao_pedida_segundos = analisar_duracao_em_segundos(duracao_texto);
-        if (duracao_pedida_segundos < 0.0) {
-            return -1; // erro já reportado por analisar_duracao_em_segundos
-        }
-        blocos_desejados = calcular_blocos_para_duracao(duracao_pedida_segundos, frequencia_desejada);
-        double segundos_por_bloco = (double)SAMPLES_PER_BUFFER / (double)frequencia_desejada;
-        printf("Duração pedida: %.3f s -> %llu bloco(s) "
-               "(%.3f s de captura real, %.3f s/bloco a %u Hz total).\n",
-               duracao_pedida_segundos, blocos_desejados,
-               (double)blocos_desejados * segundos_por_bloco, segundos_por_bloco,
-               frequencia_desejada);
-    }
-
-    // [CABECALHO/NOME DE ARQUIVO] Resolvido cedo (antes de tocar em
-    // /dev/mem ou criar o arquivo de saída) -- mesma filosofia de "validar
-    // primeiro, tocar hardware/disco depois". O mesmo instante capturado
-    // aqui é usado tanto para gerar o nome automático do arquivo (se
-    // -o/--saida não foi passado) quanto para o campo timestamp_unix do
-    // cabeçalho, mais abaixo -- uma única fonte de verdade para "quando
-    // esta captura começou".
-    time_t instante_captura = time(NULL);
-
-    char nome_arquivo_automatico[TAMANHO_NOME_ARQUIVO_AUTOMATICO];
-    const char *nome_arquivo_saida;
-    if (nome_arquivo_texto != NULL) {
-        nome_arquivo_saida = nome_arquivo_texto;
-    } else {
-        gerar_nome_arquivo_automatico(instante_captura, nome_arquivo_automatico,
-                                       sizeof(nome_arquivo_automatico));
-        nome_arquivo_saida = nome_arquivo_automatico;
-    }
-
-    // [CABECALHO/RASTREABILIDADE] Valida o tamanho de --titulo/--descricao
-    // cedo -- mesma filosofia de "validar primeiro, tocar hardware/disco
-    // depois" já seguida no resto deste programa. REJEITA (em vez de
-    // truncar) quando o texto não cabe no campo de tamanho fixo do
-    // cabeçalho: truncar uma string em UTF-8 num limite de bytes arbitrário
-    // arrisca cortar no meio de uma sequência multibyte, gravando UTF-8
-    // inválido no arquivo -- rejeitar evita esse problema por completo, e é
-    // consistente com a filosofia deste programa de falhar alto em vez de
-    // silenciosamente corromper/truncar dados (mesmo espírito da checagem
-    // de retorno de fwrite() no laço principal, mais abaixo). strlen() mede
-    // bytes, não "caracteres"/pontos de código -- exatamente o que importa
-    // aqui, já que o campo do cabeçalho tem um limite em BYTES; argv já
-    // chega do shell como os bytes brutos em UTF-8, sem nenhuma decodificação
-    // necessária ou possível neste nível.
-    if (titulo_texto != NULL && strlen(titulo_texto) > CABECALHO_TITULO_TAMANHO - 1u) {
-        fprintf(stderr, "Erro: --titulo tem %zu bytes (em UTF-8), mas o "
-                         "campo do cabeçalho só suporta até %u bytes de "
-                         "texto (%u no total, reservando 1 para o "
-                         "terminador nulo). Encurte o título.\n",
-                strlen(titulo_texto), CABECALHO_TITULO_TAMANHO - 1u, CABECALHO_TITULO_TAMANHO);
-        return -1;
-    }
-    if (descricao_texto != NULL && strlen(descricao_texto) > CABECALHO_DESCRICAO_TAMANHO - 1u) {
-        fprintf(stderr, "Erro: --descricao tem %zu bytes (em UTF-8), mas o "
-                         "campo do cabeçalho só suporta até %u bytes de "
-                         "texto (%u no total, reservando 1 para o "
-                         "terminador nulo). Encurte a descrição.\n",
-                strlen(descricao_texto), CABECALHO_DESCRICAO_TAMANHO - 1u, CABECALHO_DESCRICAO_TAMANHO);
-        return -1;
-    }
-
-    // [MODO AUTOMÁTICO] Monta a máscara de bits do registrador AUTO_SEQ_EN
-    // do ADS8688 a partir da lista de canais já validada/ordenada: bit N
-    // ligado = canal N incluído na varredura automática. Substitui a antiga
-    // tabela comandos_canais[] (um comando manual de 32 bits por canal,
-    // consumida pela PRU em round-robin); agora a PRU só precisa desta
-    // única palavra de 32 bits (só os 8 bits baixos são significativos).
-    uint32_t mascara_auto_seq = 0;
-    for (int i = 0; i < num_canais; i++) {
-        mascara_auto_seq |= (1u << canais[i]);
-    }
-
-    // [BUG CORRIGIDO -- CANAIS "GRUDADOS" ENTRE CAPTURAS] A PRU é reiniciada
-    // logo depois de mapear /dev/mem e antes de abrir o arquivo de saída --
-    // primeiro passo que efetivamente toca hardware. Ver docstring de
-    // reiniciar_pru_antes_da_captura() para o porquê: sem isso, uma captura
-    // com canais diferentes da anterior silenciosamente reaproveitava a
-    // máscara de canais já configurada na PRU desde o boot anterior, em vez
-    // da máscara calculada acima.
+    // --- Placa --------------------------------------------------------------------------------------------------------
     size_t bytes_por_buffer = (size_t)SAMPLES_PER_BUFFER * sizeof(uint16_t);
-    if (conferir_ddr_reservada("/proc/iomem", DDR_RESERVED_PHYS,
-                               (unsigned long long)DDR_RESERVED_PHYS + bytes_por_buffer * BUFFERS_PING_PONG) != 0) {
-        return -1;
+    unsigned long long fim_ddr = (unsigned long long)DDR_RESERVED_PHYS + bytes_por_buffer * BUFFERS_PING_PONG;
+    if (conferir_ddr_reservada("/proc/iomem", DDR_RESERVED_PHYS, fim_ddr) != 0) {
+        return SAIDA_ERRO;
+    }
+    detalhe("DDR dos buffers fora do Linux (0x%X-0x%llX)", DDR_RESERVED_PHYS, fim_ddr - 1);
+    if (preparar_pinos_da_pru(BASE_PINMUX) < 0) {
+        return SAIDA_ERRO;
     }
 
-    // [INÍCIO SEM CORRIDA, 23/10/2026] A memória é mapeada ANTES de reiniciar a PRU: o reinício zera config_ready e
-    // espera o aviso da PRU na RAM compartilhada (ver reiniciar_pru_antes_da_captura).
     int mem_fd = open("/dev/mem", O_RDWR | O_SYNC);
     if (mem_fd < 0) {
-        perror("Erro ao abrir /dev/mem (rode com sudo)");
-        return -1;
+        erro("não deu para abrir /dev/mem: %s.", strerror(errno));
+        return SAIDA_ERRO;
     }
-
     void *ctrl_map = mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, mem_fd, PRU_SHARED_RAM_PHYS);
     if (ctrl_map == MAP_FAILED) {
-        perror("Erro ao mapear a área de controle (shared RAM)");
+        erro("não deu para mapear a RAM compartilhada da PRU: %s.", strerror(errno));
         close(mem_fd);
-        return -1;
+        return SAIDA_ERRO;
     }
     volatile struct shared_control *ctrl = (volatile struct shared_control *)ctrl_map;
-
-    // Cada amostra ocupa 2 bytes (só o dado real do ADC - o preâmbulo é lido
-    // pela PRU só para manter o timing simétrico entre as duas metades do
-    // frame SPI, mas nunca é gravado na DDR, então não entra aqui). Em modo
-    // multi-canal, as amostras de canais diferentes ficam INTERCALADAS
-    // nestes MESMOS buffers ping-pong (não existem buffers separados por
-    // canal) -- ver o comentário grande dentro do laço de captura, mais
-    // abaixo, para como a posição de cada amostra mapeia para o seu canal.
     void *ddr_map = mmap(0, bytes_por_buffer * BUFFERS_PING_PONG, PROT_READ, MAP_SHARED, mem_fd, DDR_RESERVED_PHYS);
     if (ddr_map == MAP_FAILED) {
-        perror("Erro ao mapear a região DDR reservada");
+        erro("não deu para mapear a DDR reservada: %s.", strerror(errno));
         munmap(ctrl_map, 4096);
         close(mem_fd);
-        return -1;
+        return SAIDA_ERRO;
     }
+    const volatile uint16_t *buffers[BUFFERS_PING_PONG] = {
+        (const volatile uint16_t *)ddr_map, (const volatile uint16_t *)ddr_map + SAMPLES_PER_BUFFER
+    };
+    volatile uint32_t *prontos[BUFFERS_PING_PONG] = {&ctrl->buffer_0_ready, &ctrl->buffer_1_ready};
 
-    uint16_t *buffer_0_virtual = (uint16_t *)ddr_map;
-    uint16_t *buffer_1_virtual = buffer_0_virtual + SAMPLES_PER_BUFFER;
-
-    printf("Reiniciando a PRU para garantir que os canais desta captura "
-           "sejam aplicados (evita reaproveitar a configuração de uma "
-           "captura anterior)...\n");
     if (reiniciar_pru_antes_da_captura(ctrl) != 0) {
         munmap(ddr_map, bytes_por_buffer * BUFFERS_PING_PONG);
         munmap(ctrl_map, 4096);
         close(mem_fd);
-        return -1;
+        return SAIDA_ERRO;
     }
 
+    // A PRU lê a configuração só depois de config_ready = 1. O versao_protocolo_pru já está em 0 (o aviso de "pronta").
     ctrl->buffer_0_addr = DDR_RESERVED_PHYS;
     ctrl->buffer_1_addr = DDR_RESERVED_PHYS + (uint32_t)bytes_por_buffer;
     ctrl->buffer_0_ready = 0;
     ctrl->buffer_1_ready = 0;
-    ctrl->sample_period_ticks = PRU_CLOCK_HZ / frequencia_desejada;
-
-    // [MODO AUTOMÁTICO] Escreve a máscara ANTES de sinalizar config_ready=1
-    // -- mesmo cuidado de ordenação já usado para buffer_0_addr/
-    // buffer_1_addr acima: a PRU só lê auto_seq_mask depois de ver
-    // config_ready=1 (ver espera_configuracao em spi_core.asm).
-    ctrl->auto_seq_mask = mascara_auto_seq;
-
-    // [FAIXA DE ENTRADA POR CANAL] Mesma ordenação: antes de config_ready=1.
-    // A PRU escreve este código em RANGE_SELn de todo canal habilitado
-    // (spi_core.asm), inclusive o padrão -- ver memoria_pru.h.
-    ctrl->range_sel = range_sel;
-
-    // [INTEGRIDADE / ATRASOS DO CS] Idem: a PRU lê os atrasos uma vez, antes da
-    // 1ª amostra, e republica os contadores (zerados) logo em seguida.
+    ctrl->sample_period_ticks = config.ticks;
+    ctrl->auto_seq_mask = config.mascara;
+    ctrl->range_sel = config.range_sel;
     ctrl->amostras_atrasadas = 0;
     ctrl->buffers_sobrescritos = 0;
     ctrl->quadros_preambulo_ruim = 0;
-    ctrl->atraso_cs_setup = atrasos_cs[0];
-    ctrl->atraso_cs_hold = atrasos_cs[1];
-    ctrl->atraso_cs_alto = atrasos_cs[2];
-    ctrl->modo_spi = modo_spi;             // [SPI RÁPIDO] idem: lido uma vez, antes da 1ª amostra
+    ctrl->atraso_cs_setup = config.atrasos_cs[0];
+    ctrl->atraso_cs_hold = config.atrasos_cs[1];
+    ctrl->atraso_cs_alto = config.atrasos_cs[2];
+    ctrl->modo_spi = config.modo_spi;
     ctrl->divergencias_fase_a = 0;
     ctrl->divergencias_fase_c = 0;
-
-    // [GRADE] A PRU os escreve antes da 1ª amostra; zerados aqui, um 0 depois quer dizer que ela não escreveu. (O
-    // versao_protocolo_pru já está em 0: é o aviso de "pronta" da PRU, ver reiniciar_pru_antes_da_captura.)
     ctrl->folga_minima_ciclos = 0;
     ctrl->atraso_maximo_ciclos = 0;
     ctrl->ciclos_rebase = 0;
-
     ctrl->config_ready = 1;
 
-    // [GRADE] Confere que o firmware carregado na PRU é o desta versão do ler_adc: a PRU escreve a versão do
-    // protocolo depois de configurar o ADS8688 (~0,1 ms). Um firmware de antes de 22/10/2026 nunca a escreve (o
-    // 'make' foi feito, mas a PRU não recebeu o fw_pru.out novo, ou o contrário): a captura sairia sem a grade
-    // exata e sem os campos de tempo, sem aviso nenhum.
+    // A PRU escreve a versão do protocolo depois de configurar o ADS8688 (~0,1 ms): outro valor = o fw_pru.out
+    // carregado não é o deste ler_adc (o 'make' foi feito, mas a PRU não recebeu o firmware novo, ou o contrário).
     for (int espera_ms = 0; espera_ms < 500 && ctrl->versao_protocolo_pru == 0; espera_ms++) {
         usleep(1000);
     }
     if (ctrl->versao_protocolo_pru != VERSAO_PROTOCOLO_PRU) {
-        fprintf(stderr, "Erro: o firmware da PRU não é o deste ler_adc (protocolo %u, este ler_adc espera %u). "
-                         "Recompile e recarregue os dois juntos: scripts/BeagleBone_Setup.sh enviar --setup "
-                         "(no PC), ou 'sudo ./setup.sh' na pasta firmware/ da BeagleBone.\n",
-                ctrl->versao_protocolo_pru, VERSAO_PROTOCOLO_PRU);
+        erro("o firmware da PRU não é o deste ler_adc (protocolo %u; este espera %u): recompile e recarregue os dois "
+             "com sudo ./setup.sh.", ctrl->versao_protocolo_pru, VERSAO_PROTOCOLO_PRU);
+        return abortar_captura(NULL, ddr_map, bytes_por_buffer * BUFFERS_PING_PONG, ctrl_map, mem_fd);
+    }
+    detalhe("PRU reiniciada e configurada (protocolo %u)", VERSAO_PROTOCOLO_PRU);
+
+    // --- Arquivo -------------------------------------------------------------------------------------------------------
+    FILE *arquivo = fopen(config.arquivo, "wb");
+    if (arquivo == NULL) {
+        erro("não deu para criar '%s': %s%s.", config.arquivo, strerror(errno),
+             errno == ENOENT ? " (a pasta existe? crie-a com mkdir -p)" : "");
         return abortar_captura(NULL, ddr_map, bytes_por_buffer * BUFFERS_PING_PONG, ctrl_map, mem_fd);
     }
 
-    FILE *ficheiro_bin = fopen(nome_arquivo_saida, "wb");
-    if (!ficheiro_bin) {
-        fprintf(stderr, "Erro ao criar '%s': %s\n", nome_arquivo_saida, strerror(errno));
-        return abortar_captura(NULL, ddr_map, bytes_por_buffer * BUFFERS_PING_PONG, ctrl_map, mem_fd);
-    }
-
-    // [CABECALHO/NOME DE ARQUIVO] Monta e grava o cabeçalho de 1024 bytes
-    // UMA ÚNICA VEZ, logo após abrir o arquivo e ANTES de qualquer amostra
-    // -- blocos_gravados/total_amostras_gravadas ficam zerados aqui (ainda
-    // não sabemos o total final) e são reescritos no MESMO offset (0) só
-    // depois que o laço principal terminar, ver o fim de main(). memset a
-    // zero primeiro para que os bytes de padding (e qualquer campo não
-    // preenchido explicitamente) sejam determinísticos -- sem isso, o
-    // padding conteria lixo de pilha não inicializado, tornando o CRC (e o
-    // próprio arquivo) não reprodutível entre execuções com os mesmos
-    // parâmetros.
     struct cabecalho_arquivo cabecalho;
-    memset(&cabecalho, 0, sizeof(cabecalho));
-
-    memcpy(cabecalho.campos.magic, CABECALHO_MAGIC, sizeof(cabecalho.campos.magic));
-    cabecalho.campos.versao_cabecalho = CABECALHO_VERSAO;
-    cabecalho.campos.tamanho_cabecalho = (uint32_t)sizeof(cabecalho);
-    cabecalho.campos.timestamp_unix = (uint64_t)instante_captura;
-    cabecalho.campos.frequencia_hz = frequencia_desejada;
-    cabecalho.campos.auto_seq_mask = mascara_auto_seq;
-    cabecalho.campos.num_canais = (uint32_t)num_canais;
-
-    memset(cabecalho.campos.lista_canais, 0xFF, sizeof(cabecalho.campos.lista_canais));
-    for (int i = 0; i < num_canais; i++) {
-        cabecalho.campos.lista_canais[i] = (uint8_t)canais[i];
+    memset(&cabecalho, 0, sizeof(cabecalho));     // padding e campos não usados determinísticos (o CRC também)
+    struct cabecalho_arquivo_campos *h = &cabecalho.campos;
+    memcpy(h->magic, CABECALHO_MAGIC, sizeof(h->magic));
+    h->versao_cabecalho = CABECALHO_VERSAO;
+    h->tamanho_cabecalho = (uint32_t)sizeof(cabecalho);
+    h->timestamp_unix = (uint64_t)config.instante;
+    h->frequencia_hz = config.frequencia;
+    h->auto_seq_mask = config.mascara;
+    h->num_canais = (uint32_t)config.num_canais;
+    memset(h->lista_canais, 0xFF, sizeof(h->lista_canais));
+    for (int k = 0; k < config.num_canais; k++) {
+        h->lista_canais[k] = (uint8_t)config.canais[k];
     }
-
-    // [SONDA/GRANDEZA] grandeza_canais/sonda_canais já vêm prontos (com os
-    // sentinelas/padrões corretos nos slots não usados) de mais acima --
-    // só copiar para dentro da struct do cabeçalho.
-    memcpy(cabecalho.campos.grandeza_por_canal, grandeza_canais, sizeof(grandeza_canais));
-    memcpy(cabecalho.campos.sonda_id_por_canal, sonda_canais, sizeof(sonda_canais));
-    memcpy(cabecalho.campos.faixa_adc_por_canal, faixa_adc_canais, sizeof(faixa_adc_canais)); // [FAIXA DE ENTRADA, v3]
-    memcpy(cabecalho.campos.atraso_cs_iteracoes, atrasos_cs, sizeof(atrasos_cs));          // [INTEGRIDADE, v4] (os contadores entram no cabeçalho final)
-    cabecalho.campos.modo_spi = modo_spi;                                                  // [SPI, v7] (as divergências, no final)
-    {   // [VERSÃO, v5] cortada em 31 bytes se for maior; o resto do campo já está zerado pelo memset acima
-        size_t n = strlen(VERSAO_FIRMWARE);
-        if (n >= sizeof(cabecalho.campos.versao_firmware)) {
-            n = sizeof(cabecalho.campos.versao_firmware) - 1;
-        }
-        memcpy(cabecalho.campos.versao_firmware, VERSAO_FIRMWARE, n);
+    h->samples_per_buffer = SAMPLES_PER_BUFFER;
+    h->bytes_por_amostra = (uint32_t)sizeof(uint16_t);
+    h->pru_clock_hz = PRU_CLOCK_HZ;
+    h->sample_period_ticks = config.ticks;
+    h->primeira_amostra_descartada = 0u;
+    h->duracao_pedida_segundos = config.duracao_pedida;
+    if (config.titulo) {
+        memcpy(h->titulo, config.titulo, strlen(config.titulo) + 1);
     }
-
-    cabecalho.campos.samples_per_buffer = (uint32_t)SAMPLES_PER_BUFFER;
-    cabecalho.campos.buffers_ping_pong = BUFFERS_PING_PONG;                                // [GEOMETRIA, v5]
-    cabecalho.campos.bytes_por_amostra = (uint32_t)sizeof(uint16_t);
-    cabecalho.campos.pru_clock_hz = PRU_CLOCK_HZ;
-    cabecalho.campos.sample_period_ticks = ctrl->sample_period_ticks;
-    // [BUG CORRIGIDO -- CANAL TROCADO EM CAPTURA MULTI-CANAL] Não há mais
-    // descarte de amostra nenhuma -- ver a explicação grande junto à
-    // remoção de 'descarte_pendente', mais abaixo, sobre por que o
-    // descarte herdado do modo manual estava incorreto para o AUTO_RST.
-    cabecalho.campos.primeira_amostra_descartada = 0u;
-    cabecalho.campos.duracao_pedida_segundos = duracao_pedida_segundos;
-    cabecalho.campos.blocos_gravados = 0;         // preenchido no final, ver fim de main()
-    cabecalho.campos.total_amostras_gravadas = 0; // idem
-
-    // [CABECALHO/RASTREABILIDADE] titulo/descricao já ficaram zerados (todos
-    // os bytes) pelo memset(&cabecalho, 0, ...) logo acima -- se
-    // titulo_texto/descricao_texto forem NULL (flag não passada), os campos
-    // simplesmente permanecem como estão: strings vazias, não lixo. Quando
-    // passados, o tamanho já foi validado mais acima (rejeitado se não
-    // coubesse), então o memcpy abaixo -- incluindo o '\0' final -- nunca
-    // ultrapassa os limites de titulo[]/descricao[]. O restante de cada
-    // array (depois do '\0') continua zerado, do memset inicial.
-    if (titulo_texto != NULL) {
-        memcpy(cabecalho.campos.titulo, titulo_texto, strlen(titulo_texto) + 1);
+    if (config.descricao) {
+        memcpy(h->descricao, config.descricao, strlen(config.descricao) + 1);
     }
-    if (descricao_texto != NULL) {
-        memcpy(cabecalho.campos.descricao, descricao_texto, strlen(descricao_texto) + 1);
+    memcpy(h->grandeza_por_canal, config.grandezas, sizeof(h->grandeza_por_canal));
+    memcpy(h->sonda_id_por_canal, config.sondas, sizeof(h->sonda_id_por_canal));
+    memcpy(h->faixa_adc_por_canal, config.faixas, sizeof(h->faixa_adc_por_canal));
+    memcpy(h->atraso_cs_iteracoes, config.atrasos_cs, sizeof(h->atraso_cs_iteracoes));
+    snprintf(h->versao_firmware, sizeof(h->versao_firmware), "%s", VERSAO_FIRMWARE);
+    h->buffers_ping_pong = BUFFERS_PING_PONG;
+    h->modo_spi = config.modo_spi;
+    h->header_crc32 = calcular_crc32(&cabecalho, sizeof(cabecalho));
+    if (fwrite(&cabecalho, sizeof(cabecalho), 1, arquivo) != 1) {
+        erro("não deu para gravar o cabeçalho em '%s'.", config.arquivo);
+        return abortar_captura(arquivo, ddr_map, bytes_por_buffer * BUFFERS_PING_PONG, ctrl_map, mem_fd);
     }
+    detalhe("cabeçalho v%u gravado (%u bytes, CRC 0x%08X, início %llu)", CABECALHO_VERSAO, CABECALHO_TAMANHO_TOTAL,
+            h->header_crc32, (unsigned long long)h->timestamp_unix);
 
-    cabecalho.campos.header_crc32 = 0; // zerado durante o próprio cálculo do CRC
-    cabecalho.campos.header_crc32 = calcular_crc32(&cabecalho, sizeof(cabecalho));
-
-    if (fwrite(&cabecalho, sizeof(cabecalho), 1, ficheiro_bin) != 1) {
-        fprintf(stderr, "Erro: falha ao gravar o cabeçalho (%zu bytes) em "
-                         "'%s'.\n", sizeof(cabecalho), nome_arquivo_saida);
-        return abortar_captura(ficheiro_bin, ddr_map, bytes_por_buffer * BUFFERS_PING_PONG, ctrl_map, mem_fd);
-    }
-
-    printf("Cabeçalho gravado (%zu bytes) em '%s' | magic=%.4s versao=%u | "
-           "timestamp_unix=%llu | crc32=0x%08X\n",
-           sizeof(cabecalho), nome_arquivo_saida, cabecalho.campos.magic,
-           cabecalho.campos.versao_cabecalho,
-           (unsigned long long)cabecalho.campos.timestamp_unix,
-           cabecalho.campos.header_crc32);
-    printf("  Firmware: %s\n", cabecalho.campos.versao_firmware);
-    printf("  Título: %s\n", (titulo_texto != NULL) ? cabecalho.campos.titulo : "(não informado)");
-    printf("  Descrição: %s\n", (descricao_texto != NULL) ? cabecalho.campos.descricao : "(não informada)");
-
-    printf("Frequência total (taxa de transação SPI): %u Hz | "
-           "SAMPLES_PER_BUFFER=%d | ticks=%u\n",
-           frequencia_desejada, SAMPLES_PER_BUFFER, ctrl->sample_period_ticks);
-
-    printf("Canais selecionados (%d), em ordem crescente -- a varredura "
-           "automática do ADS8688 sempre segue essa ordem, "
-           "independente de como foram digitados: ", num_canais);
-    for (int i = 0; i < num_canais; i++) {
-        printf("%d%s", canais[i], (i + 1 < num_canais) ? ", " : "\n");
-    }
-
-    printf("Grandeza/sonda por canal:\n");
-    for (int i = 0; i < num_canais; i++) {
-        const char *nome_grandeza;
-        switch (grandeza_canais[i]) {
-            case GRANDEZA_TENSAO:      nome_grandeza = "tensao"; break;
-            case GRANDEZA_CORRENTE:    nome_grandeza = "corrente"; break;
-            case GRANDEZA_TEMPERATURA: nome_grandeza = "temperatura"; break;
-            default:                   nome_grandeza = "desconhecida"; break;
-        }
-        const double faixa_total_v = FAIXA_ADC_ESPAN_V[faixa_adc_canais[i]];
-        if (sonda_canais[i][0] != '\0') {
-            printf("  Canal %d: %s (sonda: %s) | faixa do ADC ±%.2f V (--faixa %.2f)\n",
-                   canais[i], nome_grandeza, sonda_canais[i], faixa_total_v / 2.0, faixa_total_v);
-        } else {
-            printf("  Canal %d: %s | faixa do ADC ±%.2f V (--faixa %.2f)\n",
-                   canais[i], nome_grandeza, faixa_total_v / 2.0, faixa_total_v);
-        }
-    }
-
-    if (num_canais > 1) {
-        // A frequência acima continua sendo a taxa de TRANSAÇÕES SPI (uma
-        // amostra bruta por transação, como sempre foi); com N canais
-        // intercalados, cada canal individualmente acaba sendo amostrado a
-        // frequencia_desejada/N -- essa divisão é uma CONSEQUÊNCIA direta
-        // da intercalação, não um parâmetro configurado à parte.
-        printf("Frequência efetiva por canal: %.2f Hz (%u Hz / %d canais)\n",
-               (double)frequencia_desejada / num_canais, frequencia_desejada,
-               num_canais);
-        printf("Formato do arquivo: amostras intercaladas em ORDEM "
-               "CRESCENTE de canal (imposta pelo hardware em modo "
-               "automático) -- amostra_bruta[i] pertence ao canal "
-               "canais[i %% %d], usando a lista já ordenada impressa acima. "
-               "O .bin gerado tem um cabeçalho de 1024 bytes seguido pelas "
-               "amostras (ver mensagem de cabeçalho acima), então o "
-               "adc_tool.py precisa pular esses bytes e receber essa mesma "
-               "lista/ordem via --canais para desintercalar corretamente.\n",
-               num_canais);
-    }
-
-    if (blocos_desejados == 0) {
-        printf("Capturando indefinidamente -- pressione Ctrl+C para parar e "
-               "salvar o arquivo...\n");
-    } else {
-        printf("Capturando %llu bloco(s) e encerrando automaticamente...\n",
-               blocos_desejados);
-    }
-
-    unsigned long long blocos_salvos = 0;
-    unsigned long long total_amostras_gravadas = 0; // [CABECALHO] soma de amostras brutas gravadas -- preenchido no cabeçalho final
-    struct contadores_integridade integridade = {0, 0, 0, 0, 0, 0, 0};   // [INTEGRIDADE] o último valor visto dos contadores da PRU
-    double instante_primeiro_bloco = 0.0, instante_ultimo_bloco = 0.0;   // para medir a taxa real (relógio do ARM)
-    double pior_gravacao_s = 0.0;   // [MARGEM DO ARM] o maior tempo entre ver um bloco pronto e liberá-lo para a PRU
-
-    // ============================================================================
-    // [BUG CORRIGIDO -- CANAL TROCADO EM CAPTURA MULTI-CANAL] Este programa
-    // costumava descartar incondicionalmente a primeira amostra bruta de
-    // TODA captura, herdando uma lógica do antigo modo MANUAL multi-canal
-    // (onde cada quadro SPI reenvia o comando MAN_Ch_x do canal desejado, e
-    // o ADS8688 só devolve, em cada quadro, o resultado do comando do
-    // quadro ANTERIOR -- exigindo descartar 1 amostra para realinhar
-    // posição <-> canal contra o primeiro comando de configuração).
-    //
-    // Essa lógica NÃO se aplica da mesma forma ao modo AUTO_RST atual, e
-    // descartá-la aqui estava introduzindo exatamente o bug: no modo
-    // automático, o comando AUTO_RST (enviado uma única vez, na
-    // configuração -- ver spi_core.asm, o último estágio da configuração) já é, ele próprio, o
-    // "comando anterior" cujo resultado é descartado -- seu quadro SPI
-    // retorna lixo (times de antes da configuração), que já é jogado fora
-    // corretamente pela PRU sem nunca tocar a DDR. O datasheet (SBAS582C,
-    // Figura 100/101, "Device Operation Example in AUTO_RST Mode") e o
-    // fluxo de referência da própria TI (fórum E2E, thread "ADS8688 flow
-    // chart") confirmam: o quadro AUTO_RST retorna dado indefinido
-    // (descartado), e o PRIMEIRO quadro NO_OP seguinte -- que é exatamente
-    // o quadro 0 do laço principal abaixo -- já retorna o dado VÁLIDO do
-    // canal habilitado de menor número (canais[0]). Não existe um segundo
-    // quadro de lixo a descartar depois desse.
-    //
-    // Descartar mais uma amostra aqui, como o código fazia antes, jogava
-    // fora esse primeiro dado válido de canais[0] e deslocava TODA a
-    // intercalação em -1 posição: a amostra retida na posição i passava a
-    // conter o dado do canal canais[(i+1) % N], não canais[i % N] como
-    // documentado -- ou seja, o dado do canal canais[1] aparecia rotulado
-    // como canais[0], o de canais[2] como canais[1], e assim por diante
-    // (o último canal da lista "vazava" para a posição 0 do bloco
-    // seguinte). Em captura de 1 canal só isso é matematicamente
-    // invisível (todo quadro é o mesmo canal, então um deslocamento de 1
-    // amostra no tempo não muda qual canal aparece onde) -- por isso só
-    // apareceu em captura multi-canal, e só ficou claro com um único canal
-    // realmente conectado entre vários habilitados.
-    //
-    // Sem nenhum descarte, a amostra retida i corresponde exatamente a
-    // canais[i % N] em qualquer captura (1 canal ou N canais), batendo com
-    // a fórmula já documentada no README/cabeçalho/mensagens de console
-    // deste programa -- nenhuma outra mudança é necessária.
-    // ============================================================================
-
-    while (manter_execucao && (blocos_desejados == 0 || blocos_salvos < blocos_desejados)) {
-        if (ctrl->buffer_0_ready) {
-            double inicio_gravacao = segundos_monotonicos();
-            size_t gravado = fwrite(buffer_0_virtual, sizeof(uint16_t), SAMPLES_PER_BUFFER, ficheiro_bin);
-            ctrl->buffer_0_ready = 0;
-            double gasto = segundos_monotonicos() - inicio_gravacao;
-            pior_gravacao_s = gasto > pior_gravacao_s ? gasto : pior_gravacao_s;
-            if (gravado != (size_t)SAMPLES_PER_BUFFER) {
-                fprintf(stderr, "Erro: fwrite gravou só %zu/%d amostras no "
-                                 "bloco A -- disco cheio ou erro de I/O? "
-                                 "Encerrando a captura para não deixar um "
-                                 ".bin truncado sem aviso.\n",
-                        gravado, SAMPLES_PER_BUFFER);
-                manter_execucao = 0;
-            } else {
-                blocos_salvos++;
-                total_amostras_gravadas += gravado;
-                instante_ultimo_bloco = segundos_monotonicos();
-                if (blocos_salvos == 1) {
-                    instante_primeiro_bloco = instante_ultimo_bloco;
-                }
-                imprimir_bloco_gravado('A', blocos_salvos, blocos_desejados);
-                conferir_integridade(ctrl, &integridade);
+    // --- Laço de blocos --------------------------------------------------------------------------------------------
+    // Sem descarte de amostra: no AUTO_RST, o quadro do próprio AUTO_RST (na configuração, nunca gravado) é o que traz
+    // lixo; a 1ª amostra do laço já é do canal de menor número, e a amostra i é do canal da posição i % N.
+    struct contadores_integridade integridade = {0, 0, 0, 0, 0, 0, 0};
+    struct resultado resultado = {0, 0, 0.0, 0.0, 0, 0};
+    double instante_primeiro = 0.0, instante_ultimo = 0.0;
+    uint16_t valor_mudo = 0;
+    mostrar_progresso(0, config.blocos, segundos_por_bloco);
+    while (manter_execucao && (config.blocos == 0 || resultado.blocos < config.blocos)) {
+        for (unsigned b = 0; b < BUFFERS_PING_PONG && manter_execucao; b++) {
+            if (!*prontos[b] || (config.blocos != 0 && resultado.blocos >= config.blocos)) {
+                continue;
             }
-        }
-        if (ctrl->buffer_1_ready) {
-            double inicio_gravacao = segundos_monotonicos();
-            size_t gravado = fwrite(buffer_1_virtual, sizeof(uint16_t), SAMPLES_PER_BUFFER, ficheiro_bin);
-            ctrl->buffer_1_ready = 0;
-            double gasto = segundos_monotonicos() - inicio_gravacao;
-            pior_gravacao_s = gasto > pior_gravacao_s ? gasto : pior_gravacao_s;
-            if (gravado != (size_t)SAMPLES_PER_BUFFER) {
-                fprintf(stderr, "Erro: fwrite gravou só %zu/%d amostras no "
-                                 "bloco B -- disco cheio ou erro de I/O? "
-                                 "Encerrando a captura para não deixar um "
-                                 ".bin truncado sem aviso.\n",
-                        gravado, SAMPLES_PER_BUFFER);
+            double inicio = segundos_monotonicos();
+            int mudo = amostras_todas_iguais(buffers[b], AMOSTRAS_CONFERIDAS_ADC_MUDO);
+            size_t gravadas = fwrite((const void *)buffers[b], sizeof(uint16_t), SAMPLES_PER_BUFFER, arquivo);
+            *prontos[b] = 0;
+            double gasto = segundos_monotonicos() - inicio;
+            resultado.pior_gravacao_s = gasto > resultado.pior_gravacao_s ? gasto : resultado.pior_gravacao_s;
+            if (gravadas != SAMPLES_PER_BUFFER) {
+                erro("a gravação do bloco %llu parou em %zu de %u amostras (%s): disco cheio? A captura foi "
+                     "encerrada.", resultado.blocos + 1, gravadas, SAMPLES_PER_BUFFER, strerror(errno));
+                resultado.erro_escrita = 1;
                 manter_execucao = 0;
-            } else {
-                blocos_salvos++;
-                total_amostras_gravadas += gravado;
-                instante_ultimo_bloco = segundos_monotonicos();
-                if (blocos_salvos == 1) {
-                    instante_primeiro_bloco = instante_ultimo_bloco;
-                }
-                imprimir_bloco_gravado('B', blocos_salvos, blocos_desejados);
-                conferir_integridade(ctrl, &integridade);
+                break;
             }
+            resultado.blocos++;
+            resultado.amostras += gravadas;
+            instante_ultimo = segundos_monotonicos();
+            if (resultado.blocos == 1) {
+                instante_primeiro = instante_ultimo;
+            }
+            conferir_integridade(ctrl, &integridade);
+            if (mudo) {
+                valor_mudo = buffers[b][0];
+                resultado.adc_mudo = 1;
+                manter_execucao = 0;
+                break;
+            }
+            if (!terminal_stdout) {
+                detalhe("bloco %llu gravado (buffer %c, %.0f ms)", resultado.blocos, 'A' + b, 1e3 * gasto);
+            }
+            mostrar_progresso(resultado.blocos, config.blocos, segundos_por_bloco);
         }
         usleep(2000);
     }
+    if (progresso_ativo) {
+        putchar('\n');
+        progresso_ativo = 0;
+    }
+    if (resultado.adc_mudo) {
+        erro("o ADC não está respondendo: as %u primeiras amostras do bloco %llu valem todas 0x%04X. %s A captura foi "
+             "interrompida.", AMOSTRAS_CONFERIDAS_ADC_MUDO, resultado.blocos, valor_mudo,
+             valor_mudo == 0
+             ? "Causas prováveis: a placa de aquisição sem alimentação (a BeagleBone tem de estar na fonte de 5 V do "
+               "conector: pelo USB, a placa fica desligada) ou os pinos da PRU sem configuração (sudo ./setup.sh)."
+             : "A entrada está saturada (fundo de escala) ou o ADC travou.");
+    }
 
-    printf("Captura concluída: %s (%llu bloco(s) gravado(s))\n",
-           nome_arquivo_saida, blocos_salvos);
-
-    // [INTEGRIDADE] Taxa real medida pelo relógio do ARM entre o 1º e o último
-    // bloco (o ARM vê cada bloco com até 2 ms de atraso -- usleep do laço --, o
-    // que dá ~0,02 % de incerteza num bloco de ~10 s). Uma conferência
-    // independente dos contadores da PRU, sem custo nenhum para ela.
+    // --- Fim ----------------------------------------------------------------------------------------------------------
     conferir_integridade(ctrl, &integridade);
-    double taxa_medida = 0.0;   // [v5] vai para o cabeçalho final; 0 = não medida
-    if (blocos_salvos >= 2 && instante_ultimo_bloco > instante_primeiro_bloco) {
-        taxa_medida = (double)(blocos_salvos - 1) * SAMPLES_PER_BUFFER
-                    / (instante_ultimo_bloco - instante_primeiro_bloco);
-        double desvio_pct = 100.0 * (taxa_medida / frequencia_desejada - 1.0);
-        printf("Taxa real medida pelo ARM: %.0f Hz (pedida %u Hz, %+.2f %%)%s\n", taxa_medida,
-               frequencia_desejada, desvio_pct,
-               (desvio_pct < -0.5 || desvio_pct > 0.5) ? " -- DIFERENTE da pedida, confira" : "");
+    if (resultado.blocos >= 2 && instante_ultimo > instante_primeiro) {
+        // Entre o 1º e o último bloco, pelo relógio do ARM (~0,02 % num bloco de ~2,6 s: o laço espera 2 ms).
+        resultado.taxa_medida = (double)(resultado.blocos - 1) * SAMPLES_PER_BUFFER / (instante_ultimo - instante_primeiro);
     }
-    printf("Integridade: %u amostra(s) atrasada(s), %u buffer(s) sobrescrito(s), %u quadro(s) com ruído no SDO%s\n",
-           integridade.amostras_atrasadas, integridade.buffers_sobrescritos, integridade.quadros_preambulo_ruim,
-           (integridade.amostras_atrasadas | integridade.buffers_sobrescritos | integridade.quadros_preambulo_ruim)
-               ? "" : " -- tudo certo");
-    imprimir_grade(ctrl, &integridade, blocos_salvos);
-    imprimir_spi(modo_spi, &integridade, total_amostras_gravadas);
-    if (blocos_salvos > 0 && ctrl->sample_period_ticks > 0) {
-        // [MARGEM DO ARM] Com 2 buffers, um bloco pronto tem de ser gravado e liberado antes de a PRU encher o outro:
-        // o tempo de 1 bloco. Contam a gravação (cópia da DDR + fwrite) e até 2 ms do usleep do laço.
-        double bloco_s = (double)SAMPLES_PER_BUFFER * ctrl->sample_period_ticks / (double)PRU_CLOCK_HZ;
-        double usado_s = pior_gravacao_s + 0.002;
-        printf("ARM: o bloco mais demorado levou %.0f ms para ser gravado; cada bloco enche em %.0f ms (margem de "
-               "%.0fx com %d buffers)\n", 1e3 * pior_gravacao_s, 1e3 * bloco_s, bloco_s / usado_s, BUFFERS_PING_PONG);
+    if (resultado.blocos == 0 && !resultado.adc_mudo) {
+        aviso("nenhum bloco gravado: '%s' tem só o cabeçalho.", config.arquivo);
     }
 
-    // [CABECALHO/NOME DE ARQUIVO] Reescreve o cabeçalho no INÍCIO do
-    // arquivo, agora preenchendo blocos_gravados/total_amostras_gravadas
-    // (que ficaram zerados na primeira gravação, acima) com os valores
-    // finais reais, e recalculando o CRC sobre o cabeçalho já atualizado.
-    // Só acontece aqui, DEPOIS que o laço principal já terminou -- não
-    // introduz nenhum atraso adicional no caminho crítico de gravação dos
-    // blocos. Tratado como um "melhor esforço": se o fseek/fwrite falhar,
-    // avisa mas não retorna erro -- as amostras em si já estão gravadas e
-    // íntegras nesse ponto, só os 2 campos de resumo do cabeçalho é que
-    // ficariam desatualizados (em 0).
-    cabecalho.campos.blocos_gravados = blocos_salvos;
-    cabecalho.campos.total_amostras_gravadas = total_amostras_gravadas;
-    cabecalho.campos.amostras_atrasadas = integridade.amostras_atrasadas;
-    cabecalho.campos.buffers_sobrescritos = integridade.buffers_sobrescritos;
-    cabecalho.campos.quadros_preambulo_ruim = integridade.quadros_preambulo_ruim;
-    cabecalho.campos.taxa_medida_hz = taxa_medida;
-    cabecalho.campos.folga_minima_ciclos = integridade.folga_minima_ciclos;     // [GRADE, v6]
-    cabecalho.campos.atraso_maximo_ciclos = integridade.atraso_maximo_ciclos;
-    cabecalho.campos.ciclos_rebase = ctrl->ciclos_rebase;
-    cabecalho.campos.versao_protocolo_pru = ctrl->versao_protocolo_pru;
-    cabecalho.campos.divergencias_fase_a = integridade.divergencias_fase_a;                    // [SPI, v7]
-    cabecalho.campos.divergencias_fase_c = integridade.divergencias_fase_c;
-    cabecalho.campos.header_crc32 = 0;
-    cabecalho.campos.header_crc32 = calcular_crc32(&cabecalho, sizeof(cabecalho));
-
-    if (fseek(ficheiro_bin, 0, SEEK_SET) != 0) {
-        fprintf(stderr, "Aviso: não foi possível reposicionar '%s' para "
-                         "reescrever o cabeçalho final (%s) -- os campos "
-                         "blocos_gravados/total_amostras_gravadas do "
-                         "cabeçalho ficaram com o valor inicial (0); as "
-                         "amostras gravadas continuam íntegras.\n",
-                nome_arquivo_saida, strerror(errno));
-    } else if (fwrite(&cabecalho, sizeof(cabecalho), 1, ficheiro_bin) != 1) {
-        fprintf(stderr, "Aviso: falha ao reescrever o cabeçalho final em "
-                         "'%s' -- as amostras gravadas continuam íntegras, "
-                         "mas os campos blocos_gravados/"
-                         "total_amostras_gravadas do cabeçalho podem ter "
-                         "ficado com o valor inicial (0).\n", nome_arquivo_saida);
+    h->blocos_gravados = resultado.blocos;
+    h->total_amostras_gravadas = resultado.amostras;
+    h->amostras_atrasadas = integridade.amostras_atrasadas;
+    h->buffers_sobrescritos = integridade.buffers_sobrescritos;
+    h->quadros_preambulo_ruim = integridade.quadros_preambulo_ruim;
+    h->taxa_medida_hz = resultado.taxa_medida;
+    h->folga_minima_ciclos = integridade.folga_minima_ciclos;
+    h->atraso_maximo_ciclos = integridade.atraso_maximo_ciclos;
+    h->ciclos_rebase = ctrl->ciclos_rebase;
+    h->versao_protocolo_pru = ctrl->versao_protocolo_pru;
+    h->divergencias_fase_a = integridade.divergencias_fase_a;
+    h->divergencias_fase_c = integridade.divergencias_fase_c;
+    h->header_crc32 = 0;
+    h->header_crc32 = calcular_crc32(&cabecalho, sizeof(cabecalho));
+    if (fseek(arquivo, 0, SEEK_SET) != 0 || fwrite(&cabecalho, sizeof(cabecalho), 1, arquivo) != 1) {
+        aviso("não deu para reescrever o cabeçalho final de '%s' (%s): as amostras estão íntegras, mas os blocos, os "
+              "contadores e a taxa medida ficaram em 0 no cabeçalho.", config.arquivo, strerror(errno));
     } else {
-        printf("Cabeçalho final atualizado: blocos_gravados=%llu | "
-               "total_amostras_gravadas=%llu\n",
-               blocos_salvos, total_amostras_gravadas);
+        detalhe("cabeçalho final reescrito (%llu blocos, %llu amostras)", resultado.blocos, resultado.amostras);
     }
+    fclose(arquivo);
 
-    fclose(ficheiro_bin);
+    imprimir_resultado(&config, ctrl, &integridade, &resultado);
+
     munmap(ddr_map, bytes_por_buffer * BUFFERS_PING_PONG);
     munmap(ctrl_map, 4096);
     close(mem_fd);
-    // [F6] A PRU não fica amostrando para a DDR depois da captura (até 22/10/2026, seguia até a próxima). A próxima
-    // captura a liga de novo (reiniciar_pru_antes_da_captura).
-    if (escrever_estado_remoteproc("stop") == 0) {
-        printf("PRU parada (a próxima captura a liga de novo).\n");
+    if (escrever_estado_remoteproc("stop") == 0) {   // a PRU não fica escrevendo na DDR depois da captura
+        detalhe("PRU parada (a próxima captura a liga de novo)");
     }
-    if (integridade.buffers_sobrescritos > 0) {
-        fprintf(stderr, "ERRO: a captura '%s' tem amostras perdidas (%u buffer(s) sobrescrito(s)) -- refaça.\n",
-                nome_arquivo_saida, integridade.buffers_sobrescritos);
-        return 3;
+
+    if (resultado.erro_escrita) {
+        return SAIDA_ERRO;
     }
-    return 0;
+    if (resultado.adc_mudo) {
+        return SAIDA_ADC_MUDO;
+    }
+    return integridade.buffers_sobrescritos ? SAIDA_SOBRESCRITO : SAIDA_OK;
 }

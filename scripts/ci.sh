@@ -30,8 +30,8 @@ testes() {   # $1 = versão do Python; o resto vai para o pytest
 firmware() {
     etapa "gcc -Werror: firmware/ler_adc.c (o clpru da PRU é proprietário e fica de fora)"
     gcc -std=gnu11 -Wall -Wextra -Werror -fsyntax-only firmware/ler_adc.c
-    etapa "shellcheck (${SHELLCHECK}): firmware/*.sh scripts/*.sh"
-    uvx --quiet --from "$SHELLCHECK" shellcheck firmware/*.sh scripts/*.sh
+    etapa "shellcheck (${SHELLCHECK}): firmware/*.sh firmware/coleta/*.sh scripts/*.sh"
+    uvx --quiet --from "$SHELLCHECK" shellcheck -x firmware/*.sh firmware/coleta/*.sh scripts/*.sh
 }
 
 command -v zpaq > /dev/null || echo "Aviso: sem o zpaq, os testes do compactar_amostras são pulados (sudo apt install zpaq)." >&2

@@ -1,4 +1,5 @@
-"""Testes de ``firmware/calibrar_sonda.sh`` (coleta dos pontos de calibração de uma sonda).
+"""Testes de ``./coletar.sh sonda`` (``firmware/coleta/sonda.sh``; até 23/10/2026, o ``calibrar_sonda.sh``): a coleta
+dos pontos de calibração de uma sonda.
 
 Não precisam de BeagleBone: o script é executado de verdade (bash), mas no lugar do ``ler_adc``
 entra um FALSO (``ler_adc_falso.py``) que grava ``.bin`` v2 sintéticos e sabe simular defeitos
@@ -37,7 +38,8 @@ from supraharmonicos.erros import ErroSHAN
 from supraharmonicos.referencia import analisar_amplitude
 
 RAIZ = Path(__file__).resolve().parents[1]
-SCRIPT = RAIZ / "firmware" / "calibrar_sonda.sh"
+SCRIPT = RAIZ / "firmware" / "coleta" / "sonda.sh"
+COLETAR = RAIZ / "firmware" / "coletar.sh"
 LER_ADC_C = RAIZ / "firmware" / "ler_adc.c"
 MEMORIA_PRU_H = RAIZ / "firmware" / "memoria_pru.h"
 FALSO = Path(__file__).with_name("ler_adc_falso.py")
@@ -119,7 +121,7 @@ class Bancada:
             **(extra_env or {}),
         }
         proc = subprocess.run(
-            ["bash", str(SCRIPT), "--pasta", str(self.capturas), *args],
+            ["bash", str(COLETAR), "sonda", "--pasta", str(self.capturas), *args],
             input=entradas if eof else entradas + "\n" * 400, capture_output=True, text=True, env=env, timeout=600,
         )
         return proc.returncode, proc.stderr + proc.stdout

@@ -26,7 +26,7 @@ A tabela mostra o que mudou entre esta proposta e o código.
 | Correção em frequência | Divisão espectral, PCHIP em (log f, dB) | Feito, com `next_fast_len` na FFT. Fora da faixa calibrada: **clamp** no ponto mais próximo com aviso (não bloqueia e não extrapola) |
 | Rótulo do eixo por grandeza | Dinâmico | Feito |
 | `--sem-correcao-sonda` e fallback para `--ganho` escalar | Propostos | Feitos, e há também `--sonda-perfil CANAL:ARQUIVO` e `--sondas-dir` |
-| Ferramenta de calibração (seção 7.1) | `scripts/calibrar_sonda.py` | Dividida em duas: `firmware/calibrar_sonda.sh` (coleta interativa, na BeagleBone) e `scripts/gerar_perfil_sonda.py` (análise, gera o `.json`) |
+| Ferramenta de calibração (seção 7.1) | `scripts/calibrar_sonda.py` | Dividida em duas: `firmware/coleta/sonda.sh` (coleta interativa, na BeagleBone) e `scripts/gerar_perfil_sonda.py` (análise, gera o `.json`) |
 | Validação por frequências retidas (seção 7) | Reservar pontos fora da malha | **Não implementada** (ver `docs/probe-profile-audit.md`, 4.3) |
 | Fase (`fase_graus`) | Campo reservado | Campo reservado; a correção é só de **magnitude** (auditoria, 4.1) |
 | Exportação HDF5 (seção 6.3) | Gravar a curva usada | Grava grandeza e id da sonda como atributos, mas **não aplica** a correção nem grava a curva |
@@ -272,7 +272,7 @@ Sim — essa é a forma padrão de caracterizar resposta em frequência de um tr
   ponto tende a ser baixo; ainda assim, repetir 2-3 medições por frequência e promediar o
   ganho extraído é barato e reduz o risco de um ponto ruim isolado distorcer a curva.
 
-### 7.1 Ferramenta: `calibrar_sonda.py` (hoje `calibrar_sonda.sh` + `gerar_perfil_sonda.py`)
+### 7.1 Ferramenta: `calibrar_sonda.py` (hoje `coletar.sh sonda` + `gerar_perfil_sonda.py`)
 
 > Implementada em duas partes (ver a tabela de status no topo). O nome `calibrar_sonda` ficou
 > com o script de coleta; a análise é o `gerar_perfil_sonda.py`.

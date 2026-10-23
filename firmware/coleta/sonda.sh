@@ -1,9 +1,10 @@
 #!/bin/bash
 #
 # ==============================================================================
-# calibrar_sonda.sh -- coleta automatizada dos pontos de calibração de uma "sonda"
+# coleta/sonda.sh (./coletar.sh sonda; até 23/10/2026, o calibrar_sonda.sh) -- coleta automatizada dos pontos de
+# calibração de uma "sonda"
 # do SH-Analyzer: uma sonda de CORRENTE ou a cadeia de um canal de TENSÃO
-# (roda NA BEAGLEBONE, ao lado do binário `ler_adc`).
+# (roda NA BEAGLEBONE, pelo ./coletar.sh sonda; o `ler_adc` fica na pasta do firmware, acima de coleta/).
 # ==============================================================================
 #
 # PARA QUE SERVE
@@ -66,15 +67,15 @@
 #   Ajuste a amplitude para o sinal ocupar de ~20% a ~80% da escala do ADC (sem saturar).
 #
 # USO
-#   sudo ./calibrar_sonda.sh                      # modo interativo (pergunta tudo)
-#   sudo ./calibrar_sonda.sh --taxa 102400 --canal-sonda 1 --pontos 20 --sonda fluke_i30_sn0001 --ref-externa
-#   sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45k --sonda cadeia_tensao --grandeza tensao --ref-externa
-#   sudo ./calibrar_sonda.sh --taxa 102400 --canal-sonda 1 --canal-referencia 0 --pontos 20 --sonda fluke_i30_sn0001
-#   sudo ./calibrar_sonda.sh --taxa 102400 --canal-sonda 1 --pontos 20 --sonda fluke_i30_sn0001 --amplitude 500mVpp
-#   sudo ./calibrar_sonda.sh --modo retomar --sonda fluke_i30_sn0001
-#   sudo ./calibrar_sonda.sh --modo refinar --sonda fluke_i30_sn0001
-#   sudo ./calibrar_sonda.sh --modo refazer --freqs 200,1000 --sonda fluke_i30_sn0001
-#   ./calibrar_sonda.sh --help                    # todas as opções
+#   ./coletar.sh sonda                      # modo interativo (pergunta tudo)
+#   ./coletar.sh sonda --taxa 102400 --canal-sonda 1 --pontos 20 --sonda fluke_i30_sn0001 --ref-externa
+#   ./coletar.sh sonda --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45k --sonda cadeia_tensao --grandeza tensao --ref-externa
+#   ./coletar.sh sonda --taxa 102400 --canal-sonda 1 --canal-referencia 0 --pontos 20 --sonda fluke_i30_sn0001
+#   ./coletar.sh sonda --taxa 102400 --canal-sonda 1 --pontos 20 --sonda fluke_i30_sn0001 --amplitude 500mVpp
+#   ./coletar.sh sonda --modo retomar --sonda fluke_i30_sn0001
+#   ./coletar.sh sonda --modo refinar --sonda fluke_i30_sn0001
+#   ./coletar.sh sonda --modo refazer --freqs 200,1000 --sonda fluke_i30_sn0001
+#   ./coletar.sh sonda --help                    # todas as opções
 #
 # MODOS
 #   novo     plano novo de N pontos log-espaçados (padrão).
@@ -137,7 +138,7 @@
 #
 # PARA TESTES: SH_LER_ADC=<caminho> troca o executável do ler_adc; SH_LER_ADC_TIMEOUT=<s>
 # muda o limite de tempo de uma captura; SH_PULAR_VERIFICACAO_ROOT=1 dispensa o 'sudo'.
-# tests/test_calibrar_sonda.py usa os três com um ler_adc falso. Quem faz 'source' deste arquivo
+# tests/test_coletar_sonda.py usa os três com um ler_adc falso. Quem faz 'source' deste arquivo
 # só carrega as funções (o main não roda), o que permite testá-las uma a uma.
 #
 # Requisitos: bash 4.4+ (nameref), coreutils GNU (od, timeout, df, find -printf),
@@ -230,7 +231,7 @@ readonly GRANDEZA_CORRENTE=1
 # quem chama). SH_LER_ADC permite apontar para outro binário (usado nos testes).
 DIR_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly DIR_SCRIPT
-LER_ADC="${SH_LER_ADC:-${DIR_SCRIPT}/ler_adc}"
+LER_ADC="${SH_LER_ADC:-$(cd "${DIR_SCRIPT}/.." && pwd)/ler_adc}"   # o ler_adc fica na pasta do firmware, acima de coleta/
 readonly LER_ADC
 
 # Parâmetros (preenchidos pela linha de comando, pelo plano salvo ou por perguntas).
@@ -316,7 +317,7 @@ interrompido() {
         ARQUIVO_EM_CAPTURA=""
     fi
     log_aviso "Interrompido. A captura em andamento foi descartada; as já aceitas continuam em '${PASTA_SONDA:-${PASTA_BASE}}/'."
-    [ -n "$PASTA_SONDA" ] && log_info "Para continuar depois:  sudo ./calibrar_sonda.sh --modo retomar --sonda ${SONDA_ID}"
+    [ -n "$PASTA_SONDA" ] && log_info "Para continuar depois:  ./coletar.sh sonda --modo retomar --sonda ${SONDA_ID}"
     exit 130
 }
 trap interrompido INT TERM
@@ -326,7 +327,7 @@ trap interrompido INT TERM
 # =============================================================================
 uso() {
     cat <<EOF
-Uso: sudo ./calibrar_sonda.sh [opções]
+Uso: ./coletar.sh sonda [opções]
 
 Coleta os pontos de calibração de uma "sonda" -- uma sonda de corrente ou a cadeia de
 um canal de tensão (divisor/ponta + frontend + ADC): escolhe as frequências, pede para
@@ -398,17 +399,17 @@ Saída:
   -h, --help             Esta ajuda.
 
 Exemplos:
-  sudo ./calibrar_sonda.sh --taxa 102400 --canal-sonda 1 --pontos 20 --sonda fluke_i30_sn0001 --ref-externa
-  sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45k --sonda cadeia_tensao --grandeza tensao --ref-externa
-  sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45k --sonda cadeia_tensao --grandeza tensao --amplitude 1.0332Vpp
-  sudo ./calibrar_sonda.sh --taxa 102400 --canal-sonda 1 --pontos 20 --sonda minha_sonda --amplitude 500mVpp
-  sudo ./calibrar_sonda.sh --taxa 100000 --canal-sonda 1 --pontos 20 --sonda minha_sonda --amplitude 5mVpp --faixa-adc 5.12
-  sudo ./calibrar_sonda.sh --taxa 400000 --canal-sonda 1 --pontos 24 --freq-max 160k --sonda minha_sonda
-  sudo ./calibrar_sonda.sh --taxa 204800 --canal-sonda 1 --canal-referencia 0 --pontos 20 --sonda minha_sonda
-  sudo ./calibrar_sonda.sh --modo retomar --sonda fluke_i30_sn0001
-  sudo ./calibrar_sonda.sh --modo refinar --pontos 4 --sonda fluke_i30_sn0001
-  sudo ./calibrar_sonda.sh --modo refazer --freqs 200,1000 --sonda fluke_i30_sn0001
-  sudo ./calibrar_sonda.sh --modo resumo --sonda fluke_i30_sn0001
+  ./coletar.sh sonda --taxa 102400 --canal-sonda 1 --pontos 20 --sonda fluke_i30_sn0001 --ref-externa
+  ./coletar.sh sonda --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45k --sonda cadeia_tensao --grandeza tensao --ref-externa
+  ./coletar.sh sonda --taxa 100000 --canal-sonda 1 --pontos 24 --freq-max 45k --sonda cadeia_tensao --grandeza tensao --amplitude 1.0332Vpp
+  ./coletar.sh sonda --taxa 102400 --canal-sonda 1 --pontos 20 --sonda minha_sonda --amplitude 500mVpp
+  ./coletar.sh sonda --taxa 100000 --canal-sonda 1 --pontos 20 --sonda minha_sonda --amplitude 5mVpp --faixa-adc 5.12
+  ./coletar.sh sonda --taxa 400000 --canal-sonda 1 --pontos 24 --freq-max 160k --sonda minha_sonda
+  ./coletar.sh sonda --taxa 204800 --canal-sonda 1 --canal-referencia 0 --pontos 20 --sonda minha_sonda
+  ./coletar.sh sonda --modo retomar --sonda fluke_i30_sn0001
+  ./coletar.sh sonda --modo refinar --pontos 4 --sonda fluke_i30_sn0001
+  ./coletar.sh sonda --modo refazer --freqs 200,1000 --sonda fluke_i30_sn0001
+  ./coletar.sh sonda --modo resumo --sonda fluke_i30_sn0001
 
 Em cada ponto: [C]ontinuar aceita, [R]efazer mede de novo, [P]ular deixa o ponto
 de fora (dá para pegá-lo depois com --modo retomar), [A]bortar encerra.
@@ -486,7 +487,7 @@ verificar_dependencias() {
 verificar_root() {
     [ "${SH_PULAR_VERIFICACAO_ROOT:-0}" = "1" ] && return 0   # só para testes automáticos
     if [ "$(id -u)" -ne 0 ]; then
-        erro_fatal "Este script precisa rodar como root (o '${LER_ADC##*/}' acessa /dev/mem) -- rode com 'sudo'."
+        erro_fatal "Este script precisa rodar como root (o '${LER_ADC##*/}' acessa /dev/mem) -- rode com sudo (o ./coletar.sh sonda já o chama com ele)."
     fi
 }
 
@@ -682,7 +683,7 @@ normalizar_tensao() {
 #   texto   -> a amplitude limpa (sem espaços, ponto decimal), que é o que vai para os metadados;
 #   pico    -> o valor de PICO em V ou A;
 #   unidade -> V ou A.
-# Se a entrada for inválida imprime o MOTIVO e sai com 1. tests/test_calibrar_sonda.py confere que este
+# Se a entrada for inválida imprime o MOTIVO e sai com 1. tests/test_coletar_sonda.py confere que este
 # programa e o Python aceitam e recusam as mesmas entradas.
 readonly AWK_AMPLITUDE='
 BEGIN {
@@ -816,7 +817,7 @@ readonly CABECALHO_MANIFESTO="frequencia_hz,repeticao,arquivo,timestamp,status,f
 salvar_plano() {
     local arquivo="${PASTA_SONDA}/${NOME_PLANO}"
     {
-        echo "# Plano de coleta do calibrar_sonda.sh (editado automaticamente; pode ser lido, não precisa ser editado)"
+        echo "# Plano de coleta do coletar.sh sonda (editado automaticamente; pode ser lido, não precisa ser editado)"
         echo "grandeza=${GRANDEZA}"
         echo "taxa=${TAXA}"
         echo "canal_sonda=${CANAL_SONDA}"
@@ -1777,7 +1778,7 @@ candidatos_refino() {
 }
 
 dica_retomar() {
-    log_info "Para continuar depois:  sudo ./calibrar_sonda.sh --modo retomar --sonda ${SONDA_ID}"
+    log_info "Para continuar depois:  ./coletar.sh sonda --modo retomar --sonda ${SONDA_ID}"
 }
 
 resumo_curto() {
@@ -1847,7 +1848,7 @@ proximos_passos() {
     local pendentes
     pendentes="$(pares_pendentes "${PLANO_FREQS[@]}" | grep -c . || true)"
     if [ "$pendentes" -gt 0 ]; then
-        log_aviso "Há ${pendentes} captura(s) do plano ainda sem arquivo. Para completar:  sudo ./calibrar_sonda.sh --modo retomar --sonda ${SONDA_ID}"
+        log_aviso "Há ${pendentes} captura(s) do plano ainda sem arquivo. Para completar:  ./coletar.sh sonda --modo retomar --sonda ${SONDA_ID}"
     fi
 }
 
@@ -1869,7 +1870,7 @@ oferecer_refino() {
         sugestao=$(( n < 5 ? n : 5 ))
         if [ "$ASSUMIR_SIM" -eq 1 ]; then
             maximo=0
-            log_info "Para coletar esses pontos:  sudo ./calibrar_sonda.sh --modo refinar --sonda ${SONDA_ID}"
+            log_info "Para coletar esses pontos:  ./coletar.sh sonda --modo refinar --sonda ${SONDA_ID}"
         else
             ler_valor resposta "Quantos pontos extras coletar? (0 = nenhum) [${sugestao}]: " "^[0-9]+\$|^\$"
             maximo="${resposta:-$sugestao}"

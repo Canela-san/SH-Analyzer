@@ -4,6 +4,8 @@ O ``ler_adc`` só roda inteiro na BeagleBone (/dev/mem, PRU). Funções que não
 reserva da DDR no /proc/iomem (F11), são testadas aqui: o harness inclui o ``.c`` com o ``main`` renomeado.
 """
 
+import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -82,7 +84,7 @@ def test_ler_adc_trata_sigterm_e_sighup_como_o_ctrl_c_e_para_a_pru_no_fim():
     for sinal in ("SIGINT", "SIGTERM", "SIGHUP"):
         assert f"signal({sinal}, lidar_interrupcao);" in fonte
     assert "signal(SIGPIPE, SIG_IGN);" in fonte
-    fim = fonte[fonte.index("Cabeçalho final atualizado"):]
+    fim = fonte[fonte.index("imprimir_resultado(&config"):]
     assert 'escrever_estado_remoteproc("stop")' in fim
 
 
@@ -184,3 +186,159 @@ def test_erro_depois_de_ligar_a_pru_para_a_pru():
     depois_do_reinicio = trecho[trecho.index("ctrl->buffer_0_addr"):]
     assert "return -1;" not in depois_do_reinicio
     assert depois_do_reinicio.count("return abortar_captura(") == 3
+
+
+
+# --------------------------------------------------------------------------------------
+# [23/10/2026] Pinos da PRU, ADC mudo, o resumo que o coletar.sh lê (coleta/comum.sh) e os códigos de saída
+# --------------------------------------------------------------------------------------
+HARNESS_SAIDA = r"""
+#define main ler_adc_main
+#include "ler_adc.c"
+#undef main
+int main(int argc, char **argv) {
+    if (strcmp(argv[1], "pinos") == 0) {
+        printf("%d\n", preparar_pinos_da_pru(argv[2]));
+        return 0;
+    }
+    if (strcmp(argv[1], "mudo") == 0) {
+        uint16_t vivo[8] = {32800, 32801, 32800, 32799, 32800, 32800, 32802, 32800}, morto[8] = {0};
+        printf("%d %d\n", amostras_todas_iguais(vivo, 8), amostras_todas_iguais(morto, 8));
+        return 0;
+    }
+    /* resultado ATRASADAS DIV_A DIV_C BLOCOS -- argumentos do ler_adc */
+    struct configuracao c;
+    if (analisar_argumentos(argc - 6, argv + 6, &c) != 0) return 2;
+    struct shared_control ctrl;
+    memset(&ctrl, 0, sizeof(ctrl));
+    ctrl.sample_period_ticks = c.ticks;
+    uint32_t atrasadas = (uint32_t)atoi(argv[2]);
+    struct contadores_integridade n = {atrasadas, 0, 0, atrasadas ? 0 : 18, atrasadas ? 77 : 0,
+                                       (uint32_t)atoi(argv[3]), (uint32_t)atoi(argv[4])};
+    unsigned long long blocos = (unsigned long long)atoi(argv[5]);
+    struct resultado r = {blocos, blocos * SAMPLES_PER_BUFFER, blocos >= 2 ? 399931.0 : 0.0, 0.15, 0, 0};
+    imprimir_resultado(&c, &ctrl, &n, &r);
+    return 0;
+}
+"""
+
+
+def _compilar(tmp_path_factory, nome: str, fonte: str, *extras: str) -> Path:
+    pasta = tmp_path_factory.mktemp(nome)
+    arquivo = pasta / f"{nome}.c"
+    arquivo.write_text(fonte)
+    binario = pasta / nome
+    r = subprocess.run(["gcc", "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", f"-I{FIRMWARE}",
+                        *extras, "-o", str(binario), str(arquivo)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    return binario
+
+
+@pytest.fixture(scope="module")
+def saida(tmp_path_factory):
+    binario = _compilar(tmp_path_factory, "harness_saida", HARNESS_SAIDA)
+
+    def rodar(*args) -> subprocess.CompletedProcess:
+        return subprocess.run([str(binario), *map(str, args)], capture_output=True, text=True,
+                              env={"PATH": "/usr/bin:/bin", "TERM": "dumb"})
+    return rodar
+
+
+PINOS_DO_SPI = {"P9_31": "pruout", "P9_29": "pruout", "P9_30": "pruin", "P9_28": "pruout"}
+
+
+def _pinmux(base: Path, modos: dict[str, str]) -> Path:
+    for pino, modo in modos.items():
+        (base / f"ocp:{pino}_pinmux").mkdir(parents=True, exist_ok=True)
+        (base / f"ocp:{pino}_pinmux" / "state").write_text(modo + "\n")
+    return base
+
+
+def test_pinos_depois_de_um_reinicio_sao_configurados_de_novo(saida, tmp_path):
+    """Depois de um reinício, o config-pin se perde (os pinos voltam a 'default'): o ler_adc avisa e escreve o modo
+    da PRU, como o config-pin do setup.sh (echo MODO > state)."""
+    base = _pinmux(tmp_path, {p: "default" for p in PINOS_DO_SPI})
+    r = saida("pinos", base)
+    assert r.stdout.split()[-1] == "0", r.stdout + r.stderr
+    assert "Aviso:" in r.stderr and "P9_31 (SCLK) em 'default'" in r.stderr and "reiniciada" in r.stderr
+    assert "pinos da PRU configurados" in r.stdout
+    assert {p: (base / f"ocp:{p}_pinmux" / "state").read_text().strip() for p in PINOS_DO_SPI} == PINOS_DO_SPI
+
+
+def test_pinos_ja_certos_nao_geram_aviso_nem_escrita(saida, tmp_path):
+    base = _pinmux(tmp_path, PINOS_DO_SPI)
+    antes = {p: (base / f"ocp:{p}_pinmux" / "state").stat().st_mtime_ns for p in PINOS_DO_SPI}
+    r = saida("pinos", base)
+    assert r.stdout.split()[-1] == "0" and r.stderr == ""
+    assert {p: (base / f"ocp:{p}_pinmux" / "state").stat().st_mtime_ns for p in PINOS_DO_SPI} == antes
+
+
+def test_sem_o_pinmux_do_config_pin_so_avisa(saida, tmp_path):
+    r = saida("pinos", tmp_path / "nao_existe")
+    assert r.stdout.split()[-1] == "1" and "não deu para conferir os pinos" in r.stderr and "setup.sh" in r.stderr
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="como root, o arquivo só-leitura é gravável")
+def test_pino_que_nao_aceita_o_modo_e_erro(saida, tmp_path):
+    base = _pinmux(tmp_path, {**PINOS_DO_SPI, "P9_31": "default"})
+    (base / "ocp:P9_31_pinmux" / "state").chmod(0o444)
+    r = saida("pinos", base)
+    assert r.stdout.split()[-1] == "-1" and "Erro:" in r.stderr and "P9_31" in r.stderr
+
+
+def test_pinos_do_ler_adc_sao_os_do_setup_sh():
+    setup = (FIRMWARE / "setup.sh").read_text(encoding="utf-8")
+    do_setup = dict(re.findall(r"^config-pin (P9_\d+) (\w+)", setup, re.M))
+    fonte = (FIRMWARE / "ler_adc.c").read_text(encoding="utf-8")
+    do_ler_adc = {p: m for p, m, _ in re.findall(r'\{"(P9_\d+)", "(\w+)", "([^"]*)"\}', fonte)}
+    assert do_setup == do_ler_adc == PINOS_DO_SPI
+
+
+def test_adc_mudo_e_amostras_todas_iguais(saida):
+    assert saida("mudo").stdout.split() == ["0", "1"]
+
+
+def _seds_do_coletar() -> dict[str, str]:
+    """Os scripts sed com que o coletar.sh (coleta/comum.sh, ler_resumo) lê o resumo do ler_adc."""
+    sh = (FIRMWARE / "coleta" / "comum.sh").read_text(encoding="utf-8")
+    achados = {}
+    for nome in ("integridade", "taxa_arm", "folga", "pior", "divergencias"):
+        m = re.search(rf"{nome}=\$\(printf '%s\\n' \"\$saida\"\s*\\?\s*\|\s*sed -n '([^']+)'", sh)
+        assert m, f"o coleta/comum.sh não lê mais '{nome}' com sed"
+        achados[nome] = m.group(1)
+    return achados
+
+
+def _ler_como_o_coletar(texto: str) -> dict[str, str]:
+    return {nome: subprocess.run(["sed", "-n", script], input=texto, capture_output=True, text=True).stdout.strip()
+            for nome, script in _seds_do_coletar().items()}
+
+
+def test_o_coletar_le_o_resumo_do_ler_adc(saida):
+    """O resumo de verdade (imprimir_resultado), lido com os mesmos sed do coletar.sh: uma captura limpa e uma com
+    amostras atrasadas e divergências (no singular e no plural)."""
+    limpo = saida("resultado", 0, 0, 0, 12, "ler_adc", "400000", "1", "--blocos", "12")
+    assert _ler_como_o_coletar(limpo.stdout + limpo.stderr) == {
+        "integridade": "0 0 0", "taxa_arm": "399931 -0.02", "folga": "18", "pior": "", "divergencias": "0 0"}
+    atrasado = saida("resultado", 1, 1, 7, 2, "ler_adc", "400000", "1", "--blocos", "2")
+    lido = _ler_como_o_coletar(atrasado.stdout + atrasado.stderr)
+    assert lido["integridade"] == "1 0 0" and lido["pior"] == "77" and lido["folga"] == ""
+    assert lido["divergencias"] == "1 7"
+    assert "Captura concluída, com avisos" in atrasado.stdout and "Aviso:" in atrasado.stderr
+
+
+@pytest.fixture(scope="module")
+def ler_adc(tmp_path_factory):
+    return _compilar(tmp_path_factory, "ler_adc", (FIRMWARE / "ler_adc.c").read_text(encoding="utf-8"),
+                     '-DVERSAO_FIRMWARE="v0.0-teste"')
+
+
+def test_ajuda_e_codigos_de_saida(ler_adc):
+    ajuda = subprocess.run([str(ler_adc), "--help"], capture_output=True, text=True)
+    assert ajuda.returncode == 0 and "-v, --verbose" in ajuda.stdout and "--forcar-taxa" in ajuda.stdout
+    for args in (["400k"], ["--xyz"], ["400000", "1", "--faixa-adc", "1:5.13"], ["500000"], ["--blocos"]):
+        r = subprocess.run([str(ler_adc), *args], capture_output=True, text=True)
+        assert r.returncode == 2 and r.stderr.startswith("Erro:"), (args, r.stderr)
+    if os.geteuid() != 0:
+        r = subprocess.run([str(ler_adc), "400000", "1"], capture_output=True, text=True)
+        assert r.returncode == 1 and "sudo" in r.stderr

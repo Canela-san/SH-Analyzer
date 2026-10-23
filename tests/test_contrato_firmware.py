@@ -192,9 +192,9 @@ def test_v3_e_o_prefixo_de_v4_sem_a_integridade():
     assert v4[:-7] == v3[:-1] and v4[-7:] == [("I", 1)] * 7      # 3 contadores + 3 atrasos + o CRC
 
 
-def test_offsets_do_cabecalho_usados_por_calibrar_sonda_sh():
-    """calibrar_sonda.sh lê o cabeçalho por offsets fixos (od); precisam bater com o layout v3."""
-    sh = (FIRMWARE / "calibrar_sonda.sh").read_text(encoding="utf-8")
+def test_offsets_do_cabecalho_usados_pelo_coletar_sonda():
+    """O coletar.sh sonda (coleta/sonda.sh) lê o cabeçalho por offsets fixos (od); precisam bater com o layout v3."""
+    sh = (FIRMWARE / "coleta" / "sonda.sh").read_text(encoding="utf-8")
     offs = {m.group(1): int(m.group(2)) for m in re.finditer(r"readonly (CAB_(?:OFF|TAM)_\w+)=(\d+)", sh)}
     off_faixa = cab._TAMANHO_CAMPOS_V2 - 4                                   # logo depois de sonda_id_por_canal, antes do CRC
     assert offs["CAB_OFF_CRC_V2"] == cab._OFFSET_HEADER_CRC32_V2
