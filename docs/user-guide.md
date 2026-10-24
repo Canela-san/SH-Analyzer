@@ -217,7 +217,7 @@ tempo, todas as faixas, conforme o caso).
 | Modo | Para quê | Sem opções | Pasta | Análise no computador |
 |---|---|---|---|---|
 | `conferir` | **Antes de uma série de capturas** e depois de mexer na bancada: o firmware, os pinos e o ADC respondendo; o nível (Vpp), o offset e o ruído do sinal; a menor faixa que o comporta; com `--esperado-vpp`, se o sinal é o que o gerador manda | canal 1, 400 kS/s, ±10,24 V, 1 bloco (~10 s) | `conferencia.bin` | — (o veredito sai no terminal; código 1 = algo errado) |
-| `calibrar` | **A calibração da cadeia** (sonda + frontend + ADC), magnitude e fase, por ondas quadradas; com `--referencia`, dividida pela entrada medida no osciloscópio ([`medir_fase.py`](#a-calibração-por-ondas-quadradas-medir_fasepy)) | 17 quadradas × 2 taxas × 2 faixas (±10,24 e ±2,56 V), 30 s cada (pede cada uma; ~36 min) | `CAL_*` | `medir_fase.py`, uma vez por faixa |
+| `calibrar` | **A calibração da cadeia** (sonda + frontend + ADC), magnitude e fase, por ondas quadradas; com `--referencia`, dividida pela entrada medida no osciloscópio; com `--canal-referencia`, dois canais juntos e a razão entre eles ([`medir_fase.py`](#a-calibração-por-ondas-quadradas-medir_fasepy)) | 17 quadradas × 2 taxas × 2 faixas (±10,24 e ±2,56 V), 30 s cada (pede cada uma; ~36 min) | `CAL_*` | `medir_fase.py`, uma vez por faixa |
 | `sonda` | A calibração por senoides, ponto a ponto ([Passo 1](#passo-1-coletar-os-pontos-na-beaglebone)): o ganho em baixa frequência (o K) e a conferência da curva do `calibrar` | interativo | `capturas/<id>/` | `gerar_perfil_sonda.py` |
 | `aliasing` | O mesmo sinal em várias taxas, para separar componentes reais de imagens ([abaixo](#real-ou-imagem-adc_toolpy-aliasing)) | 400, 390,625 e 320 kS/s, 10 s cada, faixa automática | `ALS_*` | `adc_tool.py aliasing` |
 | `ruido` | O piso de ruído com a entrada em curto | as 3 faixas, 400 kS/s, 4 blocos cada (pede o curto) | `RUIDO_*` | `medir_captura.py --sem-tom` |
@@ -596,6 +596,14 @@ Uma coleta de tensão feita antes de `--grandeza tensao` gravou a leitura na col
 
 O resultado é `scripts/sondas/<id>.json`. Para ver o formato de um perfil, abra [`probe-profile-example.json`](probe-profile-example.json).
 
+**Validação (opcional).** A única conferência que pega uma ressonância perdida entre os pontos ou um erro de
+interpolação em dados reais é medir onde o perfil não foi medido:
+
+* `--reter 3000,27000,95000`: os pontos dessas frequências ficam fora do perfil, e o log diz o erro do perfil
+  interpolado em cada um (e o rms), ao lado da dispersão entre as repetições do ponto;
+* `--comparar-com scripts/sondas/<outro>.json`: o erro de outro perfil da mesma cadeia (o das ondas quadradas) em cada
+  ponto medido aqui, a conferência entre os dois métodos (avisa se o `--ganho` dele for outro).
+
 ### Referência pelo osciloscópio (arquivo `.m`)
 
 Se você tem o osciloscópio de gigasamples medindo o **mesmo sinal** de cada captura, ele é a referência mais independente: mede o que o gerador de fato entregou, com a planura do gerador incluída.
@@ -698,24 +706,83 @@ nome da captura. Toda captura precisa da sua. Para cada entrada, o log diz quant
 quantos dB e graus): é o que a borda do gerador poria na medida sem a referência. Com uma ponta passiva no lugar da
 THDP0200, compense-a antes (a descompensação vira um degrau na referência, e ele entra na calibração).
 
-**A sonda de corrente.** Funciona, com a entrada medida (`--grandeza corrente` a torna obrigatória): uma corrente
-quadrada nunca é a ideal (a indutância do circuito e a saída do gerador arredondam as bordas, com o caráter de carga de
-capacitor que se vê na tela), e sem a referência isso entraria como se fosse da sonda. A referência é a **TCP0030A** no
-condutor (desmagnetize e zere antes). As variantes são só de amplitude (um offset não passa pelo TC e magnetiza o
-núcleo), e a faixa padrão é a menor (±2,56 V): passe a de produção do canal com `--faixas`.
+**A sonda de corrente.** Num canal só, funciona com a entrada medida (`--grandeza corrente` a torna obrigatória):
+uma corrente quadrada nunca é a ideal (a indutância do circuito e a saída do gerador arredondam as bordas, com o
+caráter de carga de capacitor que se vê na tela), e sem a referência isso entraria como se fosse da sonda. A referência
+é a **TCP0030A** no condutor (desmagnetize e zere antes). As variantes são só de amplitude (um offset não passa pelo TC
+e magnetiza o núcleo), e a faixa padrão é a menor (±2,56 V): passe a de produção do canal com `--faixas`.
 
 ```bash
 ./coletar.sh calibrar --grandeza corrente --canal 0 --sonda sct013_100a_sn001 --faixas 5.12
 ```
 
-Dois cuidados:
+O passa-alta do TC (alguns Hz) não estraga a fase: a parte linear do adiantamento dele, o erro da fundamental tirado
+de cada captura já absorve. O que sobra é uma curvatura de ~0,1 a 0,2° nos harmônicos mais baixos; `--passa-alta` a
+mede (ajusta o passa-alta e relata, sem mudar o perfil). O limite real é o **sinal**: 60 µV/A (SCT013 sobre 0,12 Ω).
+Com o gerador sozinho (~1,6 A·espira), o perfil é bom até ~50 kHz; para ir a 150 kHz e além, são precisas dezenas de
+ampère-espira (uma fonte de corrente quadrada de 1 a 2 A e 20 espiras).
 
-* **SNR.** O sinal do TC é pequeno: com 0,16 A de pico e N = 10 espiras, os harmônicos altos da quadrada de 256 Hz
-  caem perto do ruído. Os de f₁ alta cobrem a alta frequência; mais espiras e `--segundos 60` ajudam.
-* **A fase absoluta.** A costura ancora a fase no modelo passa-baixa em f₁ (fase mínima). O TC tem um passa-alta em
-  baixa frequência que o modelo ainda não tem, e um erro ε na fase em f₁ vira um atraso aparente de ε/(2π f₁) em toda
-  a curva (0,4° em 256 Hz são 5 µs). A magnitude não depende disso; a fase de um canal de corrente, até o modelo ganhar
-  o passa-alta, vale só a menos de um atraso (o `medir_fase.py` avisa).
+#### A razão de dois canais: `--canal-referencia`
+
+Para a fase entre tensão e corrente (potência, impedância e direção de emissão por componente), o método é outro:
+os **dois canais ao mesmo tempo**. O TC no canal medido e, no de referência, a tensão num resistor do mesmo laço,
+pelo divisor (a cadeia de tensão já calibrada):
+
+```text
+fonte de corrente quadrada ─► R (NÃO indutivo) ─► N espiras no SCT013 ─► retorno
+                              │                   (o TC do lado do terra)
+                              └─► divisor ─► canal 1 (±10,24 V)        SCT013 ─► canal 0 (±2,56 V)
+```
+
+Como os dois canais veem a mesma corrente no mesmo instante, a razão entre eles em cada harmônico é H_I/H_V com a
+fase **absoluta**, qualquer que seja a forma da corrente (a borda, o duty, o gerador limitando), sem modelo, sem fase
+mínima e sem o osciloscópio. O atraso de 1/taxa total entre os canais da varredura (2,5 µs a 400 kS/s) é descontado.
+A corrente no laço é a tensão no resistor (que o perfil de tensão converte) dividida pela impedância dele, e o TC
+enxerga N espiras dela: `H_I = razão · (faixa_I/faixa_V) · (G_I/G_V) · Z / N · H_V`. Em V·I*, a fase de H_V se cancela:
+para a potência, só a fase da razão importa. Com dois canais, cada um vai a metade da taxa: até ~95 kHz a 400 kS/s, o
+mesmo limite de qualquer análise V×I em produção.
+
+1. **A impedância do resistor** (um de fio é indutivo: 30° em 100 kHz não são raros): no osciloscópio, a THDP0200
+   sobre ele e a TCP0030A pelo fio, na mesma captura, uma quadrada de f₁ baixa e uma de f₁ alta. O `medir_shunt.py`
+   dá Z(f) (e R e L), o `--shunt` do passo 3:
+
+   ```fish
+   uv run scripts/medir_shunt.py $DIA/shunt_1280Hz.csv $DIA/shunt_20736Hz.csv --var-tensao CH1 --var-corrente CH2 --resistencia-dc 10.02 --csv scripts/sondas/shunt_laco.csv --plot $DIA/shunt.png
+   ```
+
+   Com um resistor de filme não indutivo medido a 4 fios, `--resistencia 10.02` basta.
+2. **Na bancada:** o calibrar com o canal de referência (e, com `--diafonia`, 3 quadradas com o condutor fora da
+   garra: o vazamento da tensão no canal de corrente, que a análise subtrai; o canal de corrente é 30 a 40 dB mais
+   fraco, e a diafonia cresce com a frequência):
+
+   ```bash
+   ./coletar.sh calibrar --grandeza corrente --canal 0 --canal-referencia 1 --diafonia --resistencia 10.02 --espiras 20 --sonda sct013_100a_sn001
+   ```
+
+3. **No computador**, com o perfil COM fase da cadeia de tensão na faixa do canal de referência:
+
+   ```fish
+   uv run scripts/medir_fase.py $DIA/CAL_*/F_*_f5.12_*.bin --canal 0 --canal-referencia 1 --perfil-referencia scripts/sondas/cadeia_tensao_fase_1024.json --shunt scripts/sondas/shunt_laco.csv --espiras 20 --ganho 16667 --diafonia $DIA/CAL_*/W_*_f5.12_*.bin --csv $DIA/razao.csv --plot $DIA/razao.png --saida-perfil scripts/sondas/sct013_100a_sn001.json
+   ```
+
+   O perfil sai absoluto (K incluso: o R a 4 fios e o K da tensão do T2 dão ~0,1 a 0,2 %, melhor que a ponta), com a
+   fase e o bloco `resposta_fase.razao` (a razão medida, a que a correção de V·I vai usar). O `--csv` grava os
+   harmônicos, a grade absoluta (`_grade.csv`) e a da razão (`_razao.csv`).
+4. **Acima de ~95 kHz** (só a magnitude da corrente importa ali), o método de um canal com a entrada medida, ancorado
+   no perfil da razão: `--ancora` tira dele o K e o atraso, na sobreposição, e diz o resíduo entre os dois métodos (a
+   conferência); o perfil gravado usa os pontos da âncora até o fim dela e os da curva acima:
+
+   ```fish
+   uv run scripts/medir_fase.py $DIA/CAL1_*/F_*_f5.12_*.bin --canal 0 --entrada $DIA/CAL1_*/ref_*.csv --ancora scripts/sondas/sct013_100a_sn001.json --passa-alta --saida-perfil scripts/sondas/sct013_100a_sn001_190k.json
+   ```
+
+**O que torna o perfil de corrente confiável** (o roteiro do T10 tem o passo a passo):
+
+* os dois métodos concordarem na sobreposição (o resíduo do `--ancora`), e senoides fora da grade (`gerar_perfil_sonda.py
+  --reter` e `--comparar-com`, abaixo);
+* a garra invertida: o sinal indutivo troca de sinal, o acoplamento capacitivo entre o primário e o secundário não;
+* N = 10 e N = 20, e duas amplitudes: a linearidade e o INL em sinal pequeno (dezenas de LSB);
+* reabrir a garra e repetir, e outro dia.
 
 **Sem a entrada medida:**
 
@@ -927,6 +994,7 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 |---|---|---|
 | `firmware/coletar.sh` | BeagleBone | As coletas de dados, por modo: `conferir`, `calibrar`, `sonda`, `aliasing`, `ruido`, `teto` e `bancada` (veja [Coletar dados](#coletar-dados-coletarsh)); os modos ficam em `firmware/coleta/` |
 | `scripts/BeagleBone_Setup.sh` | Computador | A interface com a BeagleBone: `status`, `preparar`, `hora`, `enviar`, `setup`, `ssh`, `trazer`, `montar`/`desmontar` e `configurar`. Veja [Preparar a BeagleBone](#preparar-a-beaglebone) |
+| `scripts/medir_shunt.py` | Computador | A impedância Z(f) de um resistor pelo osciloscópio (a tensão e a corrente na mesma captura): R, L e o CSV do `--shunt` do `medir_fase.py --canal-referencia`. Veja [A razão de dois canais](#a-razão-de-dois-canais---canal-referencia) |
 | `scripts/compactar_amostras.py` | Computador | (ou `adc_tool.py compactar`) Arquiva pastas de captura sem perdas num pacote `.zpaq.tar` (~11 % do tamanho), conferido bit a bit; também `listar`, `extrair` e `verificar`. Veja [Guardar as capturas sem perdas](#guardar-as-capturas-sem-perdas-compactar_amostraspy) |
 | `report/gerar_figuras.py` | Computador | Gera as figuras do relatório (PDF vetorial, já no tamanho final, com o texto composto pelo LaTeX) e um `.tex` com os números citados (macros siunitx). `uv run report/gerar_figuras.py` gera todas; `--listar`, `--png` (prévia), `--formato artigo --idioma en` (coluna de artigo, em inglês), `--saida PASTA` (ex.: a pasta do projeto LaTeX). Inclua no documento sem `width=`, para as fontes baterem com as do texto. As figuras `readme_*` são as do README: SVG transparente, gravado direto em `docs/images/` |
 

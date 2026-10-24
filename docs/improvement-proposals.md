@@ -384,10 +384,30 @@ quadrada na entrada, a faixa do ADC, o K e o INL. Mais f₁ na mesma amplitude n
   sem a entrada, um polo da cadeia achado pelo BIC; com ela, o 2ª ordem sai no lugar e o polo não entra.
 * **As duas faixas** (±10,24 V, a de produção, e ±2,56 V) por padrão, **25344 Hz** (um 7º harmônico forte em 177 kHz,
   onde a incerteza era a maior) e **variantes de offset também em 256 Hz** (a base da costura): 68 capturas.
-* **Falta, para a fase da corrente:** a costura ancora a fase no modelo passa-baixa em f₁, e o TC tem um passa-alta em
-  baixa frequência; um erro ε na fase em f₁ vira um atraso aparente de ε/(2π f₁) (0,4° em 256 Hz = 5 µs). Um
-  passa-alta de 1ª ordem no modelo (como o polo real, escolhido pelo BIC; a curvatura em 1/n dos harmônicos baixos da
-  quadrada de 256 Hz o mede) resolve. A magnitude já vale.
+* **O passa-alta do TC não vira atraso** (corrigido em 24/10/2026; a primeira avaliação dizia que sim): a parte
+  linear em n do adiantamento dele, o erro da fundamental tirado de cada captura (o do INL) já absorve. Numa
+  simulação com 3 Hz, a âncora mediu atraso de 0,002 µs (e não os 7 µs da conta sem esse efeito); sobra uma curvatura
+  de ~0,1 a 0,2° nos harmônicos mais baixos, que `medir_fase.py --passa-alta` mede (um passa-alta de 1ª ordem no
+  modelo, que só relata).
+
+**Estado (24/10/2026, 2ª parte): a sonda de corrente com magnitude e fase.** O limite é o sinal (60 µV/A: com o gerador
+sozinho, ~1,6 A·espira, o perfil vale até ~50 kHz) e, para a fase entre tensão e corrente, o método é a **razão de
+dois canais capturados juntos**:
+
+* `fase_quadrada` ganhou o passa-alta opcional no modelo; `razao_quadrada`, a razão por harmônico entre dois canais
+  simultâneos (o atraso de 1/taxa total da varredura descontado; a diafonia subtraída); `perfil_complexo`, a leitura
+  de um perfil com fase e da impedância de um shunt; `ancora_perfil`, a âncora do método de um canal num perfil
+  absoluto.
+* `medir_fase.py --canal-referencia` (com `--perfil-referencia`, `--resistencia`/`--shunt`, `--espiras`, `--ganho`,
+  `--diafonia`): o perfil absoluto do canal medido com a fase e a razão medida; `--ancora` e `--passa-alta` no método
+  de um canal. `medir_shunt.py`: Z(f) do resistor do laço pelo osciloscópio.
+* `coletar.sh calibrar --canal-referencia R` (`--faixa-referencia`, `--diafonia`, `--resistencia`, `--espiras`).
+* `gerar_perfil_sonda.py --reter` (hold-out) e `--comparar-com` (outro perfil).
+* Tudo opcional: sem as opções novas, as ferramentas fazem o que faziam.
+
+Falta: a fonte de corrente (1 a 2 A, bipolar) e o resistor não indutivo na bancada, a ida do T10 e o S3. Em
+hardware, a carga de 0,12 Ω do SCT013 usa 0,2 % da faixa a 100 A; uma de ~10 Ω daria +38 dB de sinal (decisão de
+projeto; pede recalibrar).
 
 Depois: o S3 (usar a fase na correção).
 

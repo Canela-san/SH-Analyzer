@@ -246,3 +246,36 @@ def gerar_grafico_bode(absolutos: list[PontosAbsolutos], combinada: RespostaComb
     fig.savefig(caminho_saida, dpi=150)
     plt.close(fig)
     log.info(f"Diagrama de Bode salvo em '{caminho_saida}'.")
+
+
+def gerar_grafico_curva(curvas: list, combinada, rotulos: list[str], caminho_saida: Path, titulo: str,
+                        rotulo_ganho: str = "Ganho (dB)") -> None:
+    """Bode de uma curva medida sem modelo (a razão de dois canais, a impedância de um shunt): os pontos de cada
+    captura (claros, uma cor por rótulo) e a grade combinada (preta, com ±1σ). ``curvas``: objetos com ``freq_hz``,
+    ``ln_ganho`` e ``fase_rad`` (como ``PontosCurva``); ``combinada``: a saída de ``combinar_em_grade``."""
+    import matplotlib.pyplot as plt  # só no uso de --plot
+
+    fig, (mag, fase) = plt.subplots(2, 1, sharex=True, figsize=(9, 7))
+    db = 20 / np.log(10)
+    cores = {r: f"C{k % 9 + 1}" for k, r in enumerate(dict.fromkeys(rotulos))}
+    ja_na_legenda: set[str] = set()
+    for curva, rotulo in zip(curvas, rotulos):
+        kw = dict(ls="none", marker=".", ms=3, alpha=0.35, color=cores[rotulo])
+        mag.semilogx(curva.freq_hz, db * curva.ln_ganho, label=None if rotulo in ja_na_legenda else rotulo, **kw)
+        fase.semilogx(curva.freq_hz, np.degrees(curva.fase_rad), **kw)
+        ja_na_legenda.add(rotulo)
+    c = combinada
+    kw = dict(ls="none", marker="o", ms=3.5, color="black", ecolor="black", elinewidth=0.8, capsize=1.5, zorder=5)
+    mag.errorbar(c.freq_hz, db * c.ln_ganho, yerr=db * c.sigma_ln, label="Combinada (média ponderada por faixa)", **kw)
+    fase.errorbar(c.freq_hz, np.degrees(c.fase_rad), yerr=np.degrees(c.sigma_fase), **kw)
+    mag.set_ylabel(rotulo_ganho)
+    fase.set_ylabel("Fase (°)")
+    fase.set_xlabel("Frequência (Hz)")
+    mag.set_title(titulo, fontsize=10)
+    for eixo in (mag, fase):
+        eixo.grid(True, which="both", alpha=0.4)
+    mag.legend(fontsize=7, loc="best", ncols=2)
+    fig.tight_layout()
+    fig.savefig(caminho_saida, dpi=150)
+    plt.close(fig)
+    log.info(f"Gráfico salvo em '{caminho_saida}'.")

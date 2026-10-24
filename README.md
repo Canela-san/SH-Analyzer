@@ -71,6 +71,7 @@ Essa separação é proposital: o projeto põe a **integridade dos dados** acima
 * **Sondas:** cada canal é corrigido pela resposta em frequência medida da sua cadeia (sonda, frontend e ADC).
 * **Métricas de bancada** (`medir_captura.py`): ruído, THD, SINAD, ENOB, SFDR, diafonia e a continuidade da grade de tempo.
 * **Fase da cadeia sem osciloscópio** (`medir_fase.py`): magnitude e fase por ondas quadradas, o ajuste do 2ª ordem e o teste de fase mínima.
+* **Sonda de corrente com magnitude e fase** (`medir_fase.py --canal-referencia`, `medir_shunt.py`): a razão de dois canais capturados juntos (o TC e a tensão num resistor do laço), com a fase absoluta, a diafonia subtraída e a âncora do método de um canal.
 * **Exportação reprodutível:** CSV, JSON com os metadados que geraram o resultado, MATLAB e um HDF5 autossuficiente, que leva o cabeçalho original, os perfis das sondas e a proveniência.
 
 ## 📏 Medido em bancada
@@ -140,6 +141,7 @@ A taxa, os canais e as faixas vêm do cabeçalho, então não é preciso inform�
 | Calibrar por senoides, ponto a ponto (o K em baixa frequência e a conferência) | `coletar.sh sonda` → `gerar_perfil_sonda.py` | [Sondas: calibração e correção](docs/user-guide.md#sondas-de-corrente-calibração-e-correção) |
 | Medir ruído, SINAD, ENOB e diafonia para o relatório | `medir_captura.py` | [Medir uma captura](docs/user-guide.md#medir-uma-captura-para-o-relatório-medir_capturapy) |
 | Calibrar a cadeia (magnitude e fase) por ondas quadradas | `coletar.sh calibrar` e `medir_fase.py` | [A calibração por ondas quadradas](docs/user-guide.md#a-calibração-por-ondas-quadradas-medir_fasepy) |
+| Calibrar a sonda de corrente com a fase (dois canais juntos) | `coletar.sh calibrar --canal-referencia`, `medir_shunt.py` e `medir_fase.py --canal-referencia` | [A razão de dois canais](docs/user-guide.md#a-razão-de-dois-canais---canal-referencia) |
 | Arquivar capturas sem perdas (~11 % do tamanho, conferido bit a bit) | `compactar_amostras.py` | [Guardar as capturas](docs/user-guide.md#guardar-as-capturas-sem-perdas-compactar_amostraspy) |
 | Saber onde guardar os dados | a variável `DADOS` | [Onde guardar os dados](docs/user-guide.md#onde-guardar-os-dados) |
 | Ver o que já foi medido, com os números para o relatório | os resultados de bancada | [`docs/bench-results.md`](docs/bench-results.md) |

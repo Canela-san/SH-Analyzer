@@ -82,6 +82,16 @@ CAL_CANAL=1
 CAL_GRANDEZA=tensao
 CAL_SONDA=''
 CAL_REFERENCIA=0
+# --canal-referencia: dois canais juntos, o medido e um de referência (a tensão num resistor do laço, pelo divisor),
+# e a razão entre eles (medir_fase.py --canal-referencia): a fase absoluta, sem a quadrada ideal nem o osciloscópio.
+# Com dois canais, cada um vai a metade da taxa (Nyquist de ~100 kHz a 400 kS/s). A diafonia (--diafonia): as mesmas
+# capturas, com o condutor fora da garra do sensor, em três quadradas que cobrem a banda.
+CAL_CANAL_REF=''
+CAL_FAIXA_REF=20.48
+CAL_DIAFONIA=0
+CAL_DIAFONIA_QUADRADAS="256 6912 20736"
+CAL_RESISTENCIA=''
+CAL_ESPIRAS=''
 
 # aliasing: 3 taxas exatas (divisores de 200 MHz) com Nyquist >= 160 kHz. Duas já separam a maioria das imagens; a
 # 3ª desfaz as posições em que as duas coincidem (com 400 e 320 kS/s, 360 kHz aparece em 40 kHz nas duas).
@@ -131,6 +141,11 @@ nunca é ideal (a indutância da carga e a saída do gerador arredondam as borda
 
 Opções (padrão: uma boa análise sem nenhuma)
   --referencia      pede, em cada quadrada, a entrada no osciloscópio (THDP0200 na tensão, TCP0030A na corrente)
+  --canal-referencia R   dois canais juntos: o medido (--canal) e o R, com a tensão num resistor NÃO indutivo do laço
+                    pelo divisor (a fase absoluta pela razão entre eles, sem o osciloscópio; até ~95 kHz a 400 kS/s)
+  --faixa-referencia F   a faixa do canal de referência (padrão: 20.48, a de produção do canal de tensão)
+  --diafonia        com --canal-referencia: mais 3 quadradas com o condutor FORA da garra (o vazamento entre canais)
+  --resistencia OHMS e --espiras N   o resistor do laço e as espiras pela sonda: só vão para o comando da análise
   --grandeza G      tensao (padrão) ou corrente: os textos da bancada, as variantes (na corrente, sem offset), a
                     faixa padrão e o cabeçalho das capturas
   --canal N         o canal com a sonda (padrão: 1)
@@ -279,6 +294,23 @@ while [ $# -gt 0 ]; do
             [[ "$2" =~ ^[0-7]$ ]] || falha "--canal '$2': um canal de 0 a 7."
             CAL_CANAL=$2; EXPLICITA[canal]=1; shift ;;
         --referencia) so_em calibrar "$1"; CAL_REFERENCIA=1; EXPLICITA[referencia]=1 ;;
+        --canal-referencia)
+            so_em calibrar "$1"; precisa_valor $# "$1"
+            [[ "$2" =~ ^[0-7]$ ]] || falha "--canal-referencia '$2': um canal de 0 a 7."
+            CAL_CANAL_REF=$2; EXPLICITA[canal_ref]=1; shift ;;
+        --faixa-referencia)
+            so_em calibrar "$1"; precisa_valor $# "$1"
+            valida_faixa "$2" || falha "--faixa-referencia '$2': use 20.48 (±10,24 V), 10.24 (±5,12 V) ou 5.12 (±2,56 V)."
+            CAL_FAIXA_REF=$2; EXPLICITA[faixa_ref]=1; shift ;;
+        --diafonia) so_em calibrar "$1"; CAL_DIAFONIA=1; EXPLICITA[diafonia]=1 ;;
+        --resistencia)
+            so_em calibrar "$1"; precisa_valor $# "$1"
+            [[ "$2" =~ ^[0-9]+(\.[0-9]+)?$ ]] || falha "--resistencia '$2': um número em ohms (ex.: 10.02)."
+            CAL_RESISTENCIA=$2; EXPLICITA[resistencia]=1; shift ;;
+        --espiras)
+            so_em calibrar "$1"; precisa_valor $# "$1"
+            case "$2" in ''|*[!0-9]*|0) falha "--espiras '$2': use um inteiro positivo." ;; esac
+            CAL_ESPIRAS=$2; EXPLICITA[espiras]=1; shift ;;
         --blocos)
             so_em ruido "$1"; precisa_valor $# "$1"
             case "$2" in ''|*[!0-9]*|0) falha "--blocos '$2': use um inteiro positivo." ;; esac
@@ -363,6 +395,11 @@ if [ -n "$CONTINUAR" ] && [ -f "$CONTINUAR/log.txt" ]; then
             grandeza) CAL_GRANDEZA=$valor ;;
             sonda) CAL_SONDA=$valor ;;
             referencia) CAL_REFERENCIA=$valor ;;
+            canal_ref) CAL_CANAL_REF=$valor ;;
+            faixa_ref) CAL_FAIXA_REF=$valor ;;
+            diafonia) CAL_DIAFONIA=$valor ;;
+            resistencia) CAL_RESISTENCIA=$valor ;;
+            espiras) CAL_ESPIRAS=$valor ;;
             extra) [ -z "${EXPLICITA[extra]:-}" ] && [ -n "$valor" ] && read -ra EXTRA <<< "${valor//;/ }" ;;
         esac
     done
@@ -373,7 +410,9 @@ if [ "$MODO" = calibrar ]; then
     if [ "$CAL_GRANDEZA" = corrente ]; then
         CAL_QUADRADAS=${CAL_QUADRADAS:-$CAL_QUADRADAS_CORRENTE}
         CAL_FAIXAS=${CAL_FAIXAS:-$CAL_FAIXAS_CORRENTE}
-        CAL_REFERENCIA=1                    # a corrente quadrada nunca é a ideal: sem a entrada medida, não calibra
+        # a corrente quadrada nunca é a ideal: num canal só, sem a entrada medida, não calibra (com o canal de
+        # referência, a forma da entrada se cancela na razão, e o osciloscópio fica opcional)
+        [ -n "$CAL_CANAL_REF" ] || CAL_REFERENCIA=1
     else
         CAL_QUADRADAS=${CAL_QUADRADAS:-$CAL_QUADRADAS_TENSAO}
         CAL_FAIXAS=${CAL_FAIXAS:-$CAL_FAIXAS_TENSAO}
@@ -381,6 +420,14 @@ if [ "$MODO" = calibrar ]; then
     CANAIS=$CAL_CANAL
     EXTRA=(--grandeza "$CAL_CANAL:$CAL_GRANDEZA")
     [ -z "$CAL_SONDA" ] || EXTRA+=(--sonda "$CAL_CANAL:$CAL_SONDA")
+    if [ -n "$CAL_CANAL_REF" ]; then
+        [ "$CAL_CANAL_REF" != "$CAL_CANAL" ] || falha "--canal-referencia $CAL_CANAL_REF é o próprio canal medido (--canal)."
+        if [ "$CAL_CANAL" -lt "$CAL_CANAL_REF" ]; then CANAIS=$CAL_CANAL,$CAL_CANAL_REF; else CANAIS=$CAL_CANAL_REF,$CAL_CANAL; fi
+        EXTRA=(--grandeza "$CAL_CANAL:$CAL_GRANDEZA,$CAL_CANAL_REF:tensao")
+        [ -z "$CAL_SONDA" ] || EXTRA+=(--sonda "$CAL_CANAL:$CAL_SONDA")
+    elif [ "$CAL_DIAFONIA" -eq 1 ]; then
+        falha "--diafonia mede o vazamento entre o canal medido e o de referência: precisa de --canal-referencia."
+    fi
 fi
 
 # Uma captura por item: parte|esperas|taxa|canais|entrada|duração em s (vazia = blocos)|SPI (vazio = lenta)|faixa
@@ -440,10 +487,19 @@ if tem F; then
         variante="${vpp:+${vpp}Vpp}${off:+${off}V}"
         for faixa_f in $CAL_FAIXAS; do
             for par in $CAL_TAXAS; do
-                PLANO+=("F|padrao|${par%%:*}|$CAL_CANAL|quadrada${f1}Hz${variante}|$CAL_SEGUNDOS|${par##*:}|$faixa_f")
+                PLANO+=("F|padrao|${par%%:*}|$CANAIS|quadrada${f1}Hz${variante}|$CAL_SEGUNDOS|${par##*:}|$faixa_f")
             done
         done
     done
+    if [ "$CAL_DIAFONIA" -eq 1 ]; then
+        for f1 in $CAL_DIAFONIA_QUADRADAS; do
+            for faixa_f in $CAL_FAIXAS; do
+                for par in $CAL_TAXAS; do
+                    PLANO+=("W|padrao|${par%%:*}|$CANAIS|quadrada${f1}Hz|$CAL_SEGUNDOS|${par##*:}|$faixa_f")
+                done
+            done
+        done
+    fi
 fi
 if tem X; then
     for ((r = 1; r <= REPETICOES; r++)); do
@@ -547,7 +603,7 @@ LIVRE_MB=$(espaco_livre_mb)
 case "$PREFIXO" in
     T7f) titulo "T7f: a grade de tempo (período entre amostras)" ;;
     T7g) titulo "T7g: o SPI rápido (~15,4 MHz) e a margem do SDO" ;;
-    CAL) titulo "Calibração por ondas quadradas: canal $CAL_CANAL ($CAL_GRANDEZA), faixas ${CAL_FAIXAS// /, }$( [ "$CAL_REFERENCIA" -eq 0 ] || echo ', com a entrada no osciloscópio')" ;;
+    CAL) titulo "Calibração por ondas quadradas: canal $CAL_CANAL ($CAL_GRANDEZA), faixas ${CAL_FAIXAS// /, }$( [ -z "$CAL_CANAL_REF" ] || echo ", referência no canal $CAL_CANAL_REF (faixa $CAL_FAIXA_REF)")$( [ "$CAL_REFERENCIA" -eq 0 ] || echo ', com a entrada no osciloscópio')" ;;
     ALS) titulo "Aliasing: o mesmo sinal em $(echo "$ALIASING_TAXAS" | wc -w) taxas (canais $CANAIS)" ;;
     RUIDO) titulo "Ruído: a entrada em curto nas faixas $RUIDO_FAIXAS (canais $CANAIS)" ;;
     *) titulo "T7e: esperas do CS e taxa de amostragem" ;;
@@ -610,14 +666,14 @@ if tem G || tem H || tem J || tem K; then
     fi
     if mais_antigo; then falha "o ler_adc é mais antigo que o código dele: compile antes (./setup.sh)."; fi
 fi
-if tem P || tem S || tem T || tem U || tem F || tem X || tem Z; then
+if tem P || tem S || tem T || tem U || tem F || tem W || tem X || tem Z; then
     if [ -f spi_core.asm ] && ! grep -q 'SPI RÁPIDO' spi_core.asm; then
         falha "o spi_core.asm desta pasta não tem o SPI rápido (protocolo 3, 22/10/2026). No computador:  scripts/BeagleBone_Setup.sh enviar --setup"
     fi
     if mais_antigo; then falha "o ler_adc é mais antigo que o código dele: compile antes (./setup.sh)."; fi
 fi
 if tem E || tem L || tem M || tem N || tem Q || tem R || tem G || tem H || tem J || tem K || tem P || tem S || tem T \
-        || tem U || tem F || tem X || tem Z; then
+        || tem U || tem F || tem W || tem X || tem Z; then
     if [ -f spi_core.asm ] && ! grep -q 'CORRIGIDO em 21/10/2026' spi_core.asm; then
         falha "o spi_core.asm desta pasta não tem a correção do rebase do contador (21/10/2026). No computador:  scripts/BeagleBone_Setup.sh enviar --setup"
     fi
@@ -659,7 +715,7 @@ fi
         aliasing) extra="${EXTRA[*]+${EXTRA[*]}}"
                   echo "== opções taxas=${ALIASING_TAXAS// /,} segundos=$ALIASING_SEGUNDOS canais=$CANAIS repeticoes=$REPETICOES spi=$SPI_MODO extra=${extra// /;}" ;;
         ruido) echo "== opções taxas=${RUIDO_TAXAS// /,} faixas=${RUIDO_FAIXAS// /,} blocos=$RUIDO_BLOCOS canais=$CANAIS spi=$SPI_MODO" ;;
-        calibrar) echo "== opções segundos=$CAL_SEGUNDOS faixas=${CAL_FAIXAS// /,} taxas=${CAL_TAXAS// /,} quadradas=${CAL_QUADRADAS// /,} canal=$CAL_CANAL grandeza=$CAL_GRANDEZA sonda=$CAL_SONDA referencia=$CAL_REFERENCIA" ;;
+        calibrar) echo "== opções segundos=$CAL_SEGUNDOS faixas=${CAL_FAIXAS// /,} taxas=${CAL_TAXAS// /,} quadradas=${CAL_QUADRADAS// /,} canal=$CAL_CANAL grandeza=$CAL_GRANDEZA sonda=$CAL_SONDA referencia=$CAL_REFERENCIA canal_ref=$CAL_CANAL_REF faixa_ref=$CAL_FAIXA_REF diafonia=$CAL_DIAFONIA resistencia=$CAL_RESISTENCIA espiras=$CAL_ESPIRAS" ;;
     esac
 } >> "$LOG"
 printf '    pasta: %s\n' "$PASTA"
@@ -714,6 +770,8 @@ for item in "${PLANO[@]}"; do
             U) pausa "gerador FORA e a entrada do canal 1 em CURTO (o divisor ligado ao retorno)." || resposta=$?
                secao "U: a entrada em curto, com o SPI padrão e o rápido" ;;
             F) secao "F: ${CAL_SEGUNDOS} s com cada quadrada, em cada taxa (${CAL_TAXAS// /, }) e faixa (${CAL_FAIXAS// /, })" ;;
+            W) pausa "a DIAFONIA: tire o condutor de dentro da garra do sensor do canal $CAL_CANAL (feche-a vazia, longe do laço); a corrente segue pelo resistor, com a tensão dele no canal $CAL_CANAL_REF." || resposta=$?
+               secao "W: a diafonia, ${CAL_SEGUNDOS} s em cada quadrada (${CAL_DIAFONIA_QUADRADAS// /, } Hz), com o sensor sem o condutor" ;;
             X) secao "o mesmo sinal, ${ALIASING_SEGUNDOS} s em cada taxa ($ALIASING_TAXAS), faixa $FAIXA_TOTAL V" ;;
             Z) pausa "gerador FORA e a entrada do(s) canal(is) $CANAIS em CURTO (o divisor ligado ao retorno)." || resposta=$?
                secao "a entrada em curto, $RUIDO_BLOCOS blocos em cada faixa" ;;
@@ -741,7 +799,10 @@ for item in "${PLANO[@]}"; do
                 case "$resto" in *Vpp*) vpp=${resto%%Vpp*}; off=${resto#*Vpp} ;; esac
                 off=${off%V}
                 resposta=0
-                if [ "$CAL_GRANDEZA" = corrente ]; then
+                if [ "$CAL_GRANDEZA" = corrente ] && [ -n "$CAL_CANAL_REF" ]; then
+                    bancada="gerador (ou a fonte de corrente): ONDA QUADRADA de $f1 Hz, ${vpp:-20} Vpp, duty 50 %, no laço: o resistor (a tensão dele pelo divisor no canal $CAL_CANAL_REF) e o condutor pelo sensor do canal $CAL_CANAL."
+                    ponta="a TCP0030A no condutor (desmagnetize e zere antes)"
+                elif [ "$CAL_GRANDEZA" = corrente ]; then
                     bancada="gerador: ONDA QUADRADA de $f1 Hz, ${vpp:-20} Vpp, duty 50 % (simetria), no circuito de corrente (o condutor pelo sensor do canal $CAL_CANAL)."
                     ponta="a TCP0030A no condutor (desmagnetize e zere antes)"
                 else
@@ -777,6 +838,9 @@ for item in "${PLANO[@]}"; do
     descricao=()
     case "$entrada" in quadrada*) descricao=(-d "quadrada f=${entrada#quadrada}") ;; esac     # o medir_fase.py lê a f₁
     read -ra faixa <<< "$(argumento_de_faixa "$canais" "${faixa_item:-$FAIXA_TOTAL}")"
+    if [ "$MODO" = calibrar ] && [ -n "$CAL_CANAL_REF" ]; then          # o de referência na faixa dele
+        faixa=(--faixa-adc "$CAL_CANAL:${faixa_item:-$FAIXA_TOTAL},$CAL_CANAL_REF:$CAL_FAIXA_REF")
+    fi
     # --forcar-taxa: o ler_adc recusa taxas acima do teto da PRU, e as varreduras do T7 passam dele de propósito.
     forcar=()
     [ "$MODO" != bancada ] || forcar=(--forcar-taxa)
@@ -820,10 +884,17 @@ echo "    No computador:  scripts/BeagleBone_Setup.sh trazer '${PREFIXO}_*' \$DI
 case "$PREFIXO" in
     CAL)
         [ "$CAL_REFERENCIA" -eq 0 ] || echo "    Copie os ref_*.csv do osciloscópio para \$DIA/${PASTA}; a análise, uma por faixa:"
-        for faixa_f in $CAL_FAIXAS; do
+        if [ -n "$CAL_CANAL_REF" ]; then
+            for faixa_f in $CAL_FAIXAS; do
+                echo "    E a análise (±$(LC_ALL=C awk -v f="$faixa_f" 'BEGIN { printf "%g", f / 2 }') V):  uv run scripts/medir_fase.py \$DIA/${PASTA}/F_*_f${faixa_f}_*.bin --canal $CAL_CANAL --canal-referencia $CAL_CANAL_REF --perfil-referencia scripts/sondas/<perfil com fase do canal $CAL_CANAL_REF em $CAL_FAIXA_REF>.json --resistencia ${CAL_RESISTENCIA:-<R em ohms>} --espiras ${CAL_ESPIRAS:-<N>} --ganho <o nominal do canal $CAL_CANAL>$( [ "$CAL_DIAFONIA" -eq 0 ] || echo " --diafonia \$DIA/${PASTA}/W_*_f${faixa_f}_*.bin") --csv \$DIA/${PASTA}/razao_f${faixa_f}.csv --plot \$DIA/${PASTA}/razao_f${faixa_f}.png --saida-perfil scripts/sondas/<id>.json"
+                [ "$CAL_REFERENCIA" -eq 0 ] || echo "    e a conferência pelo método de um canal:  uv run scripts/medir_fase.py \$DIA/${PASTA}/F_*_f${faixa_f}_*.bin --canal $CAL_CANAL --entrada \$DIA/${PASTA}/ref_*.csv --ancora scripts/sondas/<id>.json --passa-alta"
+            done
+            echo "    (um resistor de fio é indutivo: meça a impedância dele com o medir_shunt.py e troque --resistencia por --shunt)"
+        fi
+        for faixa_f in $( [ -z "$CAL_CANAL_REF" ] && echo "$CAL_FAIXAS" ); do
             echo "    E a análise (±$(LC_ALL=C awk -v f="$faixa_f" 'BEGIN { printf "%g", f / 2 }') V):  uv run scripts/medir_fase.py \$DIA/${PASTA}/F_*_f${faixa_f}_*.bin$( [ "$CAL_REFERENCIA" -eq 0 ] || echo " --entrada \$DIA/${PASTA}/ref_*.csv") --csv \$DIA/${PASTA}/fase_f${faixa_f}.csv --plot \$DIA/${PASTA}/bode_f${faixa_f}.png"
         done
-        echo "    (o perfil com a fase: --perfil-base scripts/sondas/<base>.json --saida-perfil scripts/sondas/<id>.json)" ;;
+        [ -n "$CAL_CANAL_REF" ] || echo "    (o perfil com a fase: --perfil-base scripts/sondas/<base>.json --saida-perfil scripts/sondas/<id>.json)" ;;
     ALS)
         for ((r = 1; r <= REPETICOES; r++)); do
             sufixo=$( [ "$REPETICOES" -eq 1 ] || echo "_r$r")

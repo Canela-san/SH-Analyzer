@@ -18,6 +18,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .analise_razao import executar_razao
+from .ancora_perfil import ajustar_a_ancora, curva_ancorada, pontos_combinados
 from .cabecalho import ler_cabecalho
 from .calibracao_sonda import PontoPerfil, resumir_resposta
 from .constantes import GRANDEZA_CORRENTE
@@ -46,6 +48,7 @@ from .fase_quadrada import (
     medir_quadrada,
 )
 from .osciloscopio import ler_forma_de_onda
+from .perfil_complexo import ler_perfil_complexo
 from .registro import configurar_logging_cli
 from .sonda import carregar_perfil_sonda
 
@@ -122,6 +125,44 @@ def montar_parser() -> argparse.ArgumentParser:
     g.add_argument("--osc-var", metavar="NOME[:COL]", help="Variável (ou coluna) com a forma de onda (padrão: detectada).")
     g.add_argument("--osc-tempo", metavar="NOME", help="Variável com o vetor de tempo (padrão: detectada).")
     g.add_argument("--osc-fs", type=float, metavar="HZ", help="Taxa do osciloscópio, se o arquivo não a traz.")
+    d = p.add_argument_group(
+        "dois canais ao mesmo tempo (a razão; opcional)",
+        "Com --canal-referencia, cada captura tem DOIS canais com a mesma onda ao mesmo tempo (o coletar.sh calibrar "
+        "--canal-referencia): o medido (--canal) e o de referência. A razão entre eles em cada harmônico é H/H_ref, "
+        "com a fase absoluta, qualquer que seja a forma da entrada, sem modelo e sem fase mínima (o atraso de "
+        "1/taxa total entre os canais da varredura é descontado). Na sonda de corrente: o TC no canal medido e a "
+        "tensão num resistor do laço, pelo divisor, no de referência. Com --perfil-referencia (o perfil com fase do "
+        "canal de referência) e --resistencia ou --shunt, sai a resposta absoluta do canal medido e, com --ganho e "
+        "--saida-perfil, o perfil dele com a fase. Vai até ~95 kHz (com dois canais, a Nyquist é a metade).")
+    d.add_argument("--canal-referencia", type=int, metavar="N", help="O canal de referência (liga este modo).")
+    d.add_argument("--atraso-entre-canais-us", type=float, metavar="US",
+                   help="Quanto o canal medido é amostrado depois do de referência (padrão: a diferença das posições "
+                        "na varredura ÷ a taxa total; ex.: canal 0 medido e 1 referência a 400 kS/s: −2,5 µs).")
+    d.add_argument("--diafonia", nargs="+", type=Path, metavar="ARQUIVO",
+                   help="Capturas da mesma montagem com o canal medido sem sinal próprio (o condutor fora da garra do "
+                        "TC): o vazamento da referência nele, subtraído da razão.")
+    d.add_argument("--perfil-referencia", type=Path, metavar="PERFIL",
+                   help="O perfil COM fase do canal de referência (o do medir_fase.py, ex.: cadeia_tensao_fase.json), "
+                        "na faixa das capturas.")
+    d.add_argument("--ganho-referencia", type=float, metavar="G",
+                   help="O --ganho nominal do canal de referência (padrão: o gravado no --perfil-referencia).")
+    d.add_argument("--resistencia", type=float, metavar="OHMS",
+                   help="O resistor do laço, puramente resistivo (medido a 4 fios; um de fio é indutivo: use --shunt).")
+    d.add_argument("--shunt", type=Path, metavar="CSV", help="A impedância Z(f) do resistor do laço (o medir_shunt.py).")
+    d.add_argument("--espiras", type=int, default=1, help="Espiras do laço pela sonda (padrão: %(default)s).")
+    d.add_argument("--ganho", type=float, metavar="G",
+                   help="O --ganho nominal do canal medido (o do adc_tool; no SCT013 sobre 0,12 Ω, 16667): o perfil "
+                        "é relativo a ele.")
+    c = p.add_argument_group("conferências do método de um canal (opcional)")
+    c.add_argument("--passa-alta", action="store_true",
+                   help="Ajusta também um passa-alta de 1ª ordem (o de um TC em baixa frequência) e diz o atraso "
+                        "aparente que ele faria na âncora de fase mínima. Só relata: o perfil não muda.")
+    c.add_argument("--ancora", type=Path, metavar="PERFIL",
+                   help="Um perfil com a fase ABSOLUTA da mesma cadeia (o da razão de dois canais): K e o atraso da "
+                        "curva saem dele, na sobreposição, e o perfil gravado usa os pontos dele até --ancora-ate e os "
+                        "da curva acima. Dispensa o --perfil-base.")
+    c.add_argument("--ancora-ate", type=float, metavar="HZ",
+                   help="Até onde valem os pontos da âncora no perfil (padrão: até o fim dela).")
     p.add_argument("--ganho-baixa-frequencia", type=float, metavar="K",
                    help="Ganho da cadeia em baixa frequência (o 'K' do 2ª ordem), que a quadrada não mede (ela é "
                         "relativa). Padrão: a mediana dos pontos do --perfil-base abaixo de 1 kHz. O T2 (DC, Fluke) dá "
@@ -231,16 +272,45 @@ def _medir_todas(entradas, f0: float, q: float, polo: float, args: argparse.Name
     return [dividir_pela_entrada(r, e, f0, q, polo, c.name) for r, (c, e) in zip(medidas, casadas)]
 
 
+def _relatar_ancora(ident: str, a) -> None:
+    texto = (f"Âncora '{ident}': {a.n_pontos} faixas em comum, de {a.de_hz:.0f} Hz a {a.ate_hz / 1e3:.1f} kHz; "
+             f"K = {math.exp(a.ln_k):.5f} ± {a.sigma_ln_k * math.exp(a.ln_k):.5f}; atraso aparente da curva de um canal "
+             f"{a.atraso_s * 1e6:+.4f} ± {a.sigma_inclinacao / (2 * math.pi) * 1e6:.4f} µs (descontado); depois disso, "
+             f"resíduo de {a.residuo_db:.4f} dB e {a.residuo_graus:.3f}° entre os dois métodos")
+    if a.residuo_db > 0.1 or a.residuo_graus > 1.0:
+        log.warning(texto + ": os métodos discordam além do esperado (o perfil da âncora é da mesma cadeia, na mesma "
+                    "faixa e com o mesmo --ganho?).")
+    else:
+        log.info(texto)
+
+
+def _conferir_passa_alta(medidas: list[RespostaQuadrada], melhor: AjusteFase, ancora) -> None:
+    com_polo = math.isfinite(melhor.polo_hz)
+    com = ajustar_segunda_ordem(medidas, True, True, melhor.f0_hz, melhor.q, com_polo,
+                                melhor.polo_hz if com_polo else POLO_INICIAL_HZ, com_passa_alta=True)
+    f1 = min(r.f1_hz for r in medidas)
+    # a parte linear em n do adiantamento (n·atan(fc/f₁)) o erro da fundamental, tirado por captura, já absorve; o que
+    # fica na curva sem o passa-alta no modelo é a curvatura, a maior no 3º harmônico da quadrada mais lenta
+    curvatura = math.degrees(math.atan(com.passa_alta_hz / (3 * f1)))
+    texto = (f"Passa-alta (conferência; o perfil não muda): fc = {com.passa_alta_hz:.3f} ± {com.sigma_passa_alta_hz:.3f} Hz, "
+             f"ΔBIC = {melhor.bic - com.bic:+.1f}; sem ele no modelo, a fase da curva fica até ~{curvatura:.3f}° adiantada "
+             f"nos harmônicos mais baixos (em {3 * f1:.0f} Hz), e cai com 1/f (a parte linear, o erro da fundamental de "
+             "cada captura já tira)")
+    if ancora is not None:
+        texto += f"; a âncora achou um atraso de {ancora.atraso_s * 1e6:+.4f} µs"
+    log.info(texto)
+
+
 def _avisar_da_corrente(com_entrada: bool) -> None:
     if not com_entrada:
         log.warning("Canal de CORRENTE sem --entrada: a corrente quadrada não é a ideal (a indutância da carga e a "
                     "saída do gerador arredondam as bordas), e o que ela tem de diferente entraria como se fosse da "
                     "sonda. Meça a corrente com a TCP0030A no osciloscópio, uma forma de onda por quadrada, e passe "
                     "--entrada.")
-    log.warning("Canal de corrente: a fase absoluta ancora no modelo passa-baixa em f₁ (fase mínima), e o TC tem um "
-                "passa-alta em baixa frequência que o modelo não tem; um erro de ε na fase em f₁ vira um atraso "
-                "aparente de ε/(2π f₁) em toda a curva. A magnitude não depende disso; a fase, até o modelo ganhar o "
-                "passa-alta, só a menos de um atraso.")
+    log.warning("Canal de corrente: o modelo passa-baixa não tem o passa-alta do TC. A parte linear do adiantamento "
+                "dele o erro da fundamental de cada captura já tira; sobra uma curvatura nos harmônicos mais baixos "
+                "(--passa-alta a mede). Para a fase entre tensão e corrente, use a razão de dois canais "
+                "(--canal-referencia), e --ancora para levar esta curva ao perfil dela.")
 
 
 def _freq_menos_3db(f0: float, q: float, polo: float = math.inf) -> float:
@@ -499,8 +569,22 @@ def main(argv: list[str] | None = None) -> int:
     configurar_logging_cli()
     try:
         f0, q = _analisar_modelo(args.modelo_inicial)
-        if args.saida_perfil is not None and args.perfil_base is None:
-            raise ErroUso("--saida-perfil precisa de --perfil-base (a calibração do ADC e o --ganho vêm dele).")
+        if args.canal_referencia is not None:
+            executar_razao(args, _RE_F1_NA_DESCRICAO, (f0, q, math.inf))
+            return 0
+        so_com_referencia = [nome for nome, valor in (
+            ("--atraso-entre-canais-us", args.atraso_entre_canais_us), ("--diafonia", args.diafonia),
+            ("--perfil-referencia", args.perfil_referencia), ("--ganho-referencia", args.ganho_referencia),
+            ("--resistencia", args.resistencia), ("--shunt", args.shunt), ("--ganho", args.ganho)) if valor is not None]
+        if args.espiras != 1:
+            so_com_referencia.append("--espiras")
+        if so_com_referencia:
+            raise ErroUso(f"{', '.join(so_com_referencia)} só vale(m) com --canal-referencia (o modo de dois canais).")
+        if args.ancora_ate is not None and args.ancora is None:
+            raise ErroUso("--ancora-ate só vale com --ancora.")
+        if args.saida_perfil is not None and args.perfil_base is None and args.ancora is None:
+            raise ErroUso("--saida-perfil precisa de --perfil-base (a calibração do ADC e o --ganho vêm dele), ou de "
+                          "--ancora.")
         entradas, caminhos, rotulos, faixas, grandezas = [], [], [], set(), set()
         for caminho in args.arquivos:
             sinal, fs, dica, rotulo, faixa, grandeza = ler_quadrada(caminho, args)
@@ -550,12 +634,39 @@ def main(argv: list[str] | None = None) -> int:
         absolutos = costurar(medidas, f0, q, polo)
         combinada = combinar_em_grade(absolutos, f0, q, args.por_decada, polo)
         _relatar_coerencia(absolutos, combinada, f0, q, polo, args.por_decada, args.piso_sistematico)
+        ancora = ajuste_ancora = None
+        if args.ancora is not None:
+            ancora = ler_perfil_complexo(args.ancora)
+            ajuste_ancora = ajustar_a_ancora(combinada, ancora, args.ancora_ate)
+            _relatar_ancora(ancora.id, ajuste_ancora)
+        if args.passa_alta:
+            _conferir_passa_alta(medidas, melhor, ajuste_ancora)
         if args.csv is not None:
             _gravar_csv(args.csv, caminhos, medidas, f0, q, polo)
             _gravar_csv_grade(args.csv.with_name(args.csv.stem + "_grade.csv"), combinada)
         if args.plot is not None:
             gerar_grafico_bode(absolutos, combinada, rotulos, f0, q, args.plot, polo)
-        if args.saida_perfil is not None:
+        if args.saida_perfil is not None and ancora is not None:
+            ate = args.ancora_ate if args.ancora_ate is not None else float(ancora.freq_hz[-1])
+            ancorada = curva_ancorada(combinada, ajuste_ancora)
+            ident = args.id or args.saida_perfil.stem
+            perfil = montar_perfil_com_fase(ancora.dados, ancorada, medidas, caminhos, melhor, 1.0, ident,
+                                            next(iter(faixas)))
+            perfil["pontos"] = pontos_combinados(ancorada, ancora, ate)
+            perfil["faixa_freq_valida_hz"] = [perfil["pontos"][0]["freq_hz"], perfil["pontos"][-1]["freq_hz"]]
+            perfil["calibracao_adc"]["n_pontos"] = len(perfil["pontos"])
+            perfil["calibracao_adc"]["modo_referencia"] = (f"ondas quadradas num canal, ancoradas no perfil "
+                                                           f"'{ancora.id}' (K e o atraso) até {ate / 1e3:.1f} kHz")
+            perfil["resposta_fase"]["k_baixa_frequencia"] = round(math.exp(ajuste_ancora.ln_k), 6)
+            perfil["resposta_fase"]["ganho"] = f"o da âncora '{ancora.id}' até {ate / 1e3:.1f} kHz; acima, o da curva vezes K"
+            perfil["resposta_fase"]["fase"] = (f"a da âncora '{ancora.id}' até {ate / 1e3:.1f} kHz; acima, a da curva com "
+                                               "o atraso que a âncora fixou")
+            perfil["resposta_fase"]["ancora"] = {
+                "perfil": ancora.id, "ate_hz": round(ate, 1), "k": round(math.exp(ajuste_ancora.ln_k), 6),
+                "atraso_s": float(f"{ajuste_ancora.atraso_s:.6g}"), "residuo_db": round(ajuste_ancora.residuo_db, 4),
+                "residuo_graus": round(ajuste_ancora.residuo_graus, 4), "faixas_em_comum": ajuste_ancora.n_pontos}
+            gravar_perfil_validado(perfil, args.saida_perfil, len(perfil["pontos"]))
+        elif args.saida_perfil is not None:
             base = json.loads(args.perfil_base.read_text(encoding="utf-8"))
             carregar_perfil_sonda(args.perfil_base)          # valida o base
             k = args.ganho_baixa_frequencia

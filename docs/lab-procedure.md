@@ -1609,6 +1609,30 @@ uv run scripts/adc_tool.py $DIA/T9c.bin --fft --janela hann --ganho $GV -o $DIA/
 
 **Objetivo.** Medir a resposta em frequência da **sonda mais a cadeia de aquisição** (SCT013 + resistor de 0,12 Ω + resistores em série + ADS8688, com o capacitor removido) do canal de produção, gerar `scripts/sondas/<id>.json` e **validar** o perfil em frequências que não entraram nele. É o objetivo central do projeto.
 
+**O método com magnitude e fase (24/10/2026): a razão de dois canais.** O roteiro abaixo (senoides com a TCP0030A, um
+canal a 100 kS/s) dá só a magnitude, até 45 kHz, e continua valendo como conferência. Para a magnitude **e a fase**
+(a fase entre tensão e corrente é a que a potência por componente precisa), o método é capturar os dois canais juntos:
+o SCT013 no canal 0 e a tensão num resistor do mesmo laço, pelo divisor, no canal 1 ([guia](user-guide.md#a-razão-de-dois-canais---canal-referencia)).
+A forma da corrente se cancela na razão, e o osciloscópio fica só para a impedância do resistor e a conferência.
+
+* **Bancada.** Uma fonte de corrente quadrada **bipolar** de 1 a 2 A (uma meia-ponte de MOSFET em ±12 V acionada pelo
+  gerador, ou um amplificador de potência de banda larga; sem corrente contínua, que magnetiza o núcleo do TC; com DC,
+  um capacitor grande em série), um resistor de **5 a 10 Ω não indutivo** (filme de potência, ou vários SMD em
+  paralelo; 2 A em 5 Ω são 20 W: dissipador) e **20 espiras** no SCT013, no condutor do lado do terra. O gerador
+  sozinho (~1,6 A·espira) dá um perfil bom só até ~50 kHz.
+* **1. O resistor (osciloscópio, 10 min).** A THDP0200 sobre ele e a TCP0030A pelo fio, na mesma captura, numa quadrada
+  de 1280 Hz e numa de 20736 Hz; salve as duas formas de onda (CSV com os dois canais) e meça R a 4 fios com o Fluke:
+  `uv run scripts/medir_shunt.py $DIA/shunt_*.csv --resistencia-dc <R> --csv scripts/sondas/shunt_laco.csv --plot $DIA/shunt.png`.
+* **2. A coleta (~25 min).** `./coletar.sh calibrar --grandeza corrente --canal 0 --canal-referencia 1 --diafonia --resistencia <R> --espiras 20 --sonda sct013_100a_sn001`.
+  A parte W pede o condutor fora da garra (a diafonia). Com `--referencia`, cada pausa pede também a TCP0030A no
+  osciloscópio, para o método de um canal (acima de 95 kHz).
+* **3. A análise.** O comando sai no fim da coleta: `medir_fase.py --canal 0 --canal-referencia 1 --perfil-referencia
+  <o perfil com fase da tensão em ±10,24 V> --shunt scripts/sondas/shunt_laco.csv --espiras 20 --ganho $GI --diafonia ...`.
+  O K de baixa frequência deve sair perto de 1 (o `--ganho` nominal de 60 µV/A); longe disso, confira as espiras e o shunt.
+* **4. As conferências.** A garra invertida (o sinal indutivo troca de sinal; o acoplamento capacitivo, não), N = 10 e
+  N = 20, duas amplitudes, reabrir a garra e repetir; e as senoides abaixo como hold-out:
+  `gerar_perfil_sonda.py ... --comparar-com scripts/sondas/sct013_100a_sn001.json`.
+
 **Regras de ouro.**
 
 1. **Mesmo canal e mesmo `--ganho` (`$GI`)** que você usará em produção, **e a faixa de ±2,56 V (`--faixa-adc 0:5.12`)**, que é a que dá mais resolução a esse sinal. O ganho em volts no pino não depende da faixa (o cabeçalho a registra e as ferramentas convertem sozinhas), mas o ruído depende: use a de produção. O perfil só vale para essa cadeia (o `adc_tool.py` e o `medir_captura.py` avisam se o `--ganho` divergir).

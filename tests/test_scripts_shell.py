@@ -717,6 +717,37 @@ def test_coletar_calibrar_continuar_herda_as_opcoes_e_recusa_as_erradas(varredur
     assert r.returncode == 2 and "modo desconhecido" in r.stderr
 
 
+def test_coletar_calibrar_com_canal_de_referencia_e_diafonia(varredura):
+    """--canal-referencia: os dois canais juntos (o medido na faixa dele, a referência em ±10,24 V), sem forçar o
+    osciloscópio na corrente (a razão cancela a forma da entrada); --diafonia acrescenta 3 quadradas com o condutor
+    fora da garra (uma pausa para isso); o fim dá o medir_fase.py --canal-referencia com o resistor e as espiras."""
+    r, _ = varredura("calibrar", "--grandeza", "corrente", "--canal", "0", "--canal-referencia", "1", "--diafonia",
+                     "--simular")
+    assert r.returncode == 0 and "32 capturas" in r.stdout, r.stdout + r.stderr
+    assert "referência no canal 1 (faixa 20.48)" in r.stdout and "com a entrada no osciloscópio" not in r.stdout
+    r, _ = varredura("calibrar", "--grandeza", "corrente", "--canal", "0", "--canal-referencia", "1", "--diafonia",
+                     "--quadradas", "256,6912", "--taxas", "400000", "--resistencia", "10.02", "--espiras", "20",
+                     entrada="\n" * 6)
+    assert r.returncode == 0, r.stdout + r.stderr
+    (pasta,) = varredura.pasta.glob("CAL_*")
+    nomes = [linha["arquivo"] for linha in _resumo(pasta)]
+    assert nomes[:2] == ["F_cspadrao_400000_quadrada256Hz_2canais_f5.12_30s_spirapido.bin",
+                         "F_cspadrao_400000_quadrada6912Hz_2canais_f5.12_30s_spirapido.bin"]
+    assert nomes[2:] == [f"W_cspadrao_400000_quadrada{f}Hz_2canais_f5.12_30s_spirapido.bin" for f in (256, 6912, 20736)]
+    captura = (pasta / nomes[0]).read_text()
+    assert "canais=0,1" in captura and "faixa=0:5.12,1:20.48" in captura and "grandeza=0:corrente,1:tensao" in captura
+    assert "a DIAFONIA: tire o condutor de dentro da garra do sensor do canal 0" in r.stdout
+    assert "o resistor (a tensão dele pelo divisor no canal 1)" in r.stdout and "TCP0030A" not in r.stdout
+    assert "--canal 0 --canal-referencia 1" in r.stdout and "--resistencia 10.02 --espiras 20" in r.stdout
+    assert "--diafonia $DIA/" + pasta.name + "/W_*_f5.12_*.bin" in r.stdout and "medir_shunt.py" in r.stdout
+    for opcoes, erro in ((("--diafonia",), "precisa de --canal-referencia"),
+                         (("--canal-referencia", "1"), "é o próprio canal medido"),
+                         (("--canal-referencia", "1", "--faixa-referencia", "3.3"), "--faixa-referencia '3.3'"),
+                         (("--canal-referencia", "2", "--espiras", "0"), "--espiras '0'")):
+        r, _ = varredura("calibrar", "--canal", "1", *opcoes, "--simular")
+        assert r.returncode == 1 and erro in r.stderr, (opcoes, r.stderr)
+
+
 def test_coletar_calibrar_para_na_pausa_sem_terminal(varredura):
     r, _ = varredura("calibrar", entrada="")
     assert r.returncode == 0 and "sem terminal na pausa da quadrada de 256 Hz" in r.stdout
