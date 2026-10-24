@@ -5,7 +5,7 @@
 # linha por captura) e a retomada de onde parou (--continuar). Chamado pelo coletar.sh:
 #
 #   ./coletar.sh bancada  [opções]   as varreduras de hardware do T7 (esperas do CS, taxa, grade, SPI)
-#   ./coletar.sh cadeia   [opções]   a resposta da cadeia por ondas quadradas (o T3f)
+#   ./coletar.sh calibrar [opções]   a calibração da cadeia (magnitude e fase) por ondas quadradas (o T3f)
 #   ./coletar.sh aliasing [opções]   o mesmo sinal em várias taxas, para o adc_tool.py aliasing
 #   ./coletar.sh ruido    [opções]   o piso de ruído com a entrada em curto, nas faixas do ADC
 #
@@ -21,7 +21,7 @@ cd "$DIR_FIRMWARE" || exit 1
 MODO=${1:-}
 shift || true
 case "$MODO" in
-    bancada|cadeia|aliasing|ruido) ;;
+    bancada|calibrar|aliasing|ruido) ;;
     *) falha "modo '$MODO' desconhecido para a campanha (veja ./coletar.sh --help)." ;;
 esac
 
@@ -59,13 +59,29 @@ SPI_LONGAS="400000:60"                             # parte S: 1 e 2 canais
 SPI_TICKS_DE=520                                   # parte T: 384,6 kS/s...
 SPI_TICKS_ATE=460                                  # ... a 434,8 kS/s
 
-# cadeia (T3f): f₁ da quadrada (Hz; 20 Vpp e offset 0, ou f₁:Vpp ou f₁:Vpp:offset em V) e, para cada uma, taxa:SPI.
-# Todas múltiplos ímpares de 256 Hz (a de 256 Hz mede a fundamental de cada outra: a costura não depende do modelo);
-# em nenhuma um alias de harmônico cai sobre um harmônico ímpar, a 312,5 nem a 400 kS/s. As variantes (1280 Hz em
-# 10 Vpp; 6912 e 20736 Hz em 16 Vpp com ±2 V) mudam os códigos que as bordas atravessam: revelam e reduzem o INL.
-FASE_F1="256 768 1280 2304 6400 6912 20736 1280:10 6912:16:+2 6912:16:-2 20736:16:+2 20736:16:-2"
-FASE_TAXAS="312500:lenta 400000:rapido"
-FASE_SEGUNDOS=30
+# calibrar (o T3f): f₁ da quadrada (Hz; 20 Vpp e offset 0, ou f₁:Vpp ou f₁:Vpp:offset em V) e, para cada uma, cada
+# taxa:SPI em cada faixa do ADC. Todas múltiplos ímpares de 256 Hz (a de 256 Hz mede a fundamental de cada outra: a
+# costura não depende do modelo); em nenhuma um alias de harmônico cai sobre um harmônico ímpar, a 312,5, a 320, a
+# 390,625 nem a 400 kS/s. 25344 Hz (256 x 99) põe um 7º harmônico forte em 177 kHz, onde a incerteza do T3f era a
+# maior. As variantes (outra amplitude, ±2 V de offset) mudam os códigos que as bordas atravessam: revelam e reduzem
+# o INL do ADC, o maior erro que sobra por captura (mais f₁ na mesma amplitude repetiriam o mesmo erro). Na corrente,
+# só de amplitude: um offset não passa pelo TC (e magnetiza o núcleo).
+CAL_QUADRADAS_TENSAO="256 768 1280 2304 6400 6912 20736 25344 256:16:+2 256:16:-2 1280:10 6912:16:+2 6912:16:-2 20736:16:+2 20736:16:-2 25344:16:+2 25344:16:-2"
+CAL_QUADRADAS_CORRENTE="256 768 1280 2304 6400 6912 20736 25344 256:14 1280:10 6912:14 20736:14 25344:14"
+# A resposta é analógica (no T3f, 312,5 e 400 kS/s deram a mesma curva a 0,0005 dB): a 2ª taxa confere isso e muda o
+# aliasing de lugar; o SPI lento numa e o rápido na outra conferem que o modo do SPI não muda nada.
+CAL_TAXAS="312500:lenta 400000:rapido"
+# A de produção do canal de tensão (±10,24 V) e a do T3f (±2,56 V): o PGA do ADC muda de ganho com a faixa, e o filtro
+# pode mudar com ele. Na corrente, a menor (o sinal do TC é pequeno): passe a de produção do canal com --faixas.
+CAL_FAIXAS_TENSAO="20.48 5.12"
+CAL_FAIXAS_CORRENTE="5.12"
+CAL_QUADRADAS=''
+CAL_FAIXAS=''
+CAL_SEGUNDOS=30
+CAL_CANAL=1
+CAL_GRANDEZA=tensao
+CAL_SONDA=''
+CAL_REFERENCIA=0
 
 # aliasing: 3 taxas exatas (divisores de 200 MHz) com Nyquist >= 160 kHz. Duas já separam a maioria das imagens; a
 # 3ª desfaz as posições em que as duas coincidem (com 400 e 320 kS/s, 360 kHz aparece em 40 kHz nas duas).
@@ -98,19 +114,34 @@ Opções
   --simular         só mostra o plano, o tempo e o espaço
 FIM
         ;;
-        cadeia) cat <<'FIM'
-Uso: ./coletar.sh cadeia [opções]
+        calibrar) cat <<'FIM'
+Uso: ./coletar.sh calibrar [opções]
 
-A resposta da cadeia (magnitude e FASE) por ondas quadradas, sem osciloscópio: os harmônicos ímpares de uma
-quadrada simétrica têm fase conhecida entre si. Uma ONDA QUADRADA no canal 1; o script para e pede cada uma:
-256, 768, 1280, 2304, 6400, 6912 e 20736 Hz (20 Vpp) e as variantes (1280 Hz em 10 Vpp; 6912 e 20736 Hz em 16 Vpp
-com offset de ±2 V), cada uma a 312,5 kS/s (SPI lento) e a 400 kS/s (rápido). 24 capturas, ~12 min de captura.
-No computador: scripts/medir_fase.py (o comando sai no fim).
+A calibração da cadeia (sonda + frontend + ADC), em magnitude e FASE, por ondas quadradas: os harmônicos ímpares de
+uma quadrada têm fase conhecida entre si, e a fase de cada um menos n vezes a da fundamental não depende do instante
+da captura. Uma ONDA QUADRADA na entrada; o script para e pede cada uma: 256, 768, 1280, 2304, 6400, 6912, 20736 e
+25344 Hz (20 Vpp) e as variantes de amplitude e offset (que revelam e reduzem o INL do ADC), cada uma a 312,5 kS/s
+(SPI lento) e a 400 kS/s (rápido), nas faixas ±10,24 V (a de produção) e ±2,56 V. 68 capturas de 30 s, ~36 min de
+captura e 17 trocas no gerador. No computador: scripts/medir_fase.py, uma vez por faixa (os comandos saem no fim).
 
-Opções
-  --faixa F         faixa total do ADC: 20.48 (a de produção do canal de tensão), 10.24 ou 5.12 (padrão)
+Sem osciloscópio, a análise supõe a quadrada IDEAL na entrada (a borda do gerador entra como se fosse da cadeia).
+Com --referencia, cada pausa pede também a forma de onda da entrada no osciloscópio, e a análise divide por ela:
+a forma da entrada deixa de importar. Na corrente (--grandeza corrente) ela é obrigatória: uma corrente quadrada
+nunca é ideal (a indutância da carga e a saída do gerador arredondam as bordas).
+
+Opções (padrão: uma boa análise sem nenhuma)
+  --referencia      pede, em cada quadrada, a entrada no osciloscópio (THDP0200 na tensão, TCP0030A na corrente)
+  --grandeza G      tensao (padrão) ou corrente: os textos da bancada, as variantes (na corrente, sem offset), a
+                    faixa padrão e o cabeçalho das capturas
+  --canal N         o canal com a sonda (padrão: 1)
+  --sonda ID        o id da sonda, gravado no cabeçalho
+  --faixas LISTA    faixas totais do ADC, separadas por vírgula (padrão: 20.48,5.12; na corrente, 5.12)
+  --faixa F         o mesmo, com uma faixa só
+  --taxas LISTA     taxa:SPI, separadas por vírgula (padrão: 312500:lenta,400000:rapido; sem :SPI, rapido)
+  --quadradas LISTA f₁[:Vpp[:offset]] em Hz, V e V, separadas por vírgula (padrão: as 17 acima; use múltiplos ímpares
+                    de 256 Hz, e a de 256 Hz, que costura as outras)
   --segundos N      duração de cada captura (padrão: 30)
-  --continuar [P]   retoma a última coleta deste modo (ou a pasta P), na mesma faixa
+  --continuar [P]   retoma a última coleta deste modo (ou a pasta P), com as mesmas opções
   --simular         só mostra o plano, o tempo e o espaço
 FIM
         ;;
@@ -169,7 +200,7 @@ EXTRA=()                            # --grandeza/--sonda, passados ao ler_adc
 declare -A EXPLICITA=()             # as opções dadas agora (o --continuar não as troca pelas da coleta retomada)
 case "$MODO" in
     bancada) PARTES=ABDC ;;
-    cadeia) PARTES=F ;;
+    calibrar) PARTES=F ;;
     aliasing) PARTES=X; FAIXA_PEDIDA=auto ;;
     ruido) PARTES=Z ;;
 esac
@@ -197,26 +228,57 @@ while [ $# -gt 0 ]; do
         --partes) so_em bancada "$1"; precisa_valor $# "$1"; PARTES=$2; PARTES_PEDIDAS=1; shift ;;
         --faixa)
             precisa_valor $# "$1"
+            if [ "$MODO" = calibrar ]; then
+                valida_faixa "$2" || falha "--faixa '$2': use 20.48 (±10,24 V), 10.24 (±5,12 V) ou 5.12 (±2,56 V)."
+                CAL_FAIXAS=$2; EXPLICITA[faixas]=1; shift; shift; continue
+            fi
             if valida_faixa "$2" || { [ "$MODO" = aliasing ] && [ "$2" = auto ]; }; then FAIXA_PEDIDA=$2
             else falha "--faixa '$2': use 20.48 (±10,24 V), 10.24 (±5,12 V) ou 5.12 (±2,56 V)$( [ "$MODO" != aliasing ] || echo ', ou auto')."; fi
             shift ;;
         --faixas)
-            so_em ruido "$1"; precisa_valor $# "$1"
+            so_em "ruido calibrar" "$1"; precisa_valor $# "$1"
             for f in $(lista "$2"); do valida_faixa "$f" || falha "--faixas: '$f' não é uma faixa (20.48, 10.24 ou 5.12)."; done
-            RUIDO_FAIXAS=$(lista "$2"); EXPLICITA[faixas]=1; shift ;;
+            if [ "$MODO" = ruido ]; then RUIDO_FAIXAS=$(lista "$2"); else CAL_FAIXAS=$(lista "$2"); fi
+            EXPLICITA[faixas]=1; shift ;;
         --taxas)
-            so_em "aliasing ruido" "$1"; precisa_valor $# "$1"
+            so_em "aliasing ruido calibrar" "$1"; precisa_valor $# "$1"
+            taxas=''
             for t in $(lista "$2"); do
+                spi_t=rapido
+                if [ "$MODO" = calibrar ] && [ "${t#*:}" != "$t" ]; then spi_t=${t#*:}; t=${t%%:*}; fi
                 case "$t" in ''|*[!0-9]*) falha "--taxas: '$t' não é uma taxa em Hz." ;; esac
-                [ $((CLOCK_PRU / t)) -ge "$TETO_TICKS_RAPIDO" ] || falha "--taxas: $t Hz passa do teto da PRU (~419 kS/s)."
+                case "$spi_t" in
+                    rapido) teto=$TETO_TICKS_RAPIDO ;;
+                    lenta) teto=$TETO_TICKS_LENTO ;;
+                    *) falha "--taxas: SPI '$spi_t': use rapido ou lenta (ex.: 312500:lenta)." ;;
+                esac
+                [ "$t" -gt 0 ] && [ $((CLOCK_PRU / t)) -ge "$teto" ] \
+                    || falha "--taxas: $t Hz passa do teto da PRU com o SPI $spi_t (~$((CLOCK_PRU / teto)) S/s)."
+                if [ "$MODO" = calibrar ]; then taxas+="${taxas:+ }$t:$spi_t"; else taxas+="${taxas:+ }$t"; fi
             done
-            if [ "$MODO" = aliasing ]; then ALIASING_TAXAS=$(lista "$2"); else RUIDO_TAXAS=$(lista "$2"); fi
+            case "$MODO" in
+                aliasing) ALIASING_TAXAS=$taxas ;;
+                ruido) RUIDO_TAXAS=$taxas ;;
+                calibrar) CAL_TAXAS=$taxas ;;
+            esac
             EXPLICITA[taxas]=1; shift ;;
         --segundos)
-            so_em "cadeia aliasing" "$1"; precisa_valor $# "$1"
+            so_em "calibrar aliasing" "$1"; precisa_valor $# "$1"
             case "$2" in ''|*[!0-9]*|0) falha "--segundos '$2': use um inteiro positivo." ;; esac
-            if [ "$MODO" = cadeia ]; then FASE_SEGUNDOS=$2; else ALIASING_SEGUNDOS=$2; fi
+            if [ "$MODO" = calibrar ]; then CAL_SEGUNDOS=$2; else ALIASING_SEGUNDOS=$2; fi
             EXPLICITA[segundos]=1; shift ;;
+        --quadradas)
+            so_em calibrar "$1"; precisa_valor $# "$1"
+            for q in $(lista "$2"); do
+                [[ "$q" =~ ^[0-9]+(\.[0-9]+)?(:[0-9]+(\.[0-9]+)?(:[+-]?[0-9]+(\.[0-9]+)?)?)?$ ]] \
+                    || falha "--quadradas: '$q' não é f₁[:Vpp[:offset]] (ex.: 256, 1280:10, 6912:16:+2)."
+            done
+            CAL_QUADRADAS=$(lista "$2"); EXPLICITA[quadradas]=1; shift ;;
+        --canal)
+            so_em calibrar "$1"; precisa_valor $# "$1"
+            [[ "$2" =~ ^[0-7]$ ]] || falha "--canal '$2': um canal de 0 a 7."
+            CAL_CANAL=$2; EXPLICITA[canal]=1; shift ;;
+        --referencia) so_em calibrar "$1"; CAL_REFERENCIA=1; EXPLICITA[referencia]=1 ;;
         --blocos)
             so_em ruido "$1"; precisa_valor $# "$1"
             case "$2" in ''|*[!0-9]*|0) falha "--blocos '$2': use um inteiro positivo." ;; esac
@@ -229,7 +291,17 @@ while [ $# -gt 0 ]; do
             so_em aliasing "$1"; precisa_valor $# "$1"
             case "$2" in ''|*[!0-9]*|0) falha "--repeticoes '$2': use um inteiro positivo." ;; esac
             REPETICOES=$2; EXPLICITA[repeticoes]=1; shift ;;
-        --grandeza|--sonda) so_em aliasing "$1"; precisa_valor $# "$1"; EXTRA+=("$1" "$2"); EXPLICITA[extra]=1; shift ;;
+        --grandeza|--sonda)
+            so_em "aliasing calibrar" "$1"; precisa_valor $# "$1"
+            if [ "$MODO" = aliasing ]; then EXTRA+=("$1" "$2"); EXPLICITA[extra]=1
+            elif [ "$1" = --sonda ]; then
+                [[ "$2" =~ ^[A-Za-z0-9_.-]+$ ]] || falha "--sonda '$2': um id de sonda (letras, números, _ . -)."
+                CAL_SONDA=$2; EXPLICITA[sonda]=1
+            else
+                case "$2" in tensao|corrente) CAL_GRANDEZA=$2 ;; *) falha "--grandeza '$2': use tensao ou corrente." ;; esac
+                EXPLICITA[grandeza]=1
+            fi
+            shift ;;
         *) falha "opção desconhecida: '$1' (veja ./coletar.sh $MODO --help)." ;;
     esac
     shift
@@ -238,7 +310,7 @@ done
 # A pasta de cada modo e, no --continuar sem pasta, as que ele procura.
 case "$MODO" in
     bancada) PREFIXOS="T7e T7f T7g" ;;
-    cadeia) PREFIXOS="T3f" ;;
+    calibrar) PREFIXOS="CAL" ;;
     aliasing) PREFIXOS="ALS" ;;
     ruido) PREFIXOS="RUIDO" ;;
 esac
@@ -259,7 +331,7 @@ if [ -n "$CONTINUAR" ]; then
         PARTES=${anteriores:-$PARTES}
     fi
     # A faixa é a da coleta: misturar faixas numa pasta estragaria a comparação entre as capturas.
-    if [ -f "$CONTINUAR/log.txt" ] && [ "$MODO" != ruido ]; then
+    if [ -f "$CONTINUAR/log.txt" ] && [ "$MODO" != ruido ] && [ "$MODO" != calibrar ]; then
         faixa_anterior=$(sed -n 's/^== partes .*faixa: --faixa-adc [0-7]:\([0-9.]*\).*/\1/p' "$CONTINUAR/log.txt" | head -n 1)
         if [ -n "$faixa_anterior" ] && [ -n "$FAIXA_PEDIDA" ] && [ "$FAIXA_PEDIDA" != auto ] \
                 && [ "$faixa_anterior" != "$FAIXA_PEDIDA" ]; then
@@ -275,18 +347,41 @@ if [ -n "$CONTINUAR" ] && [ -f "$CONTINUAR/log.txt" ]; then
         valor=${par#*=}
         [ -z "${EXPLICITA[$chave]:-}" ] || continue
         case "$chave" in
-            taxas) if [ "$MODO" = aliasing ]; then ALIASING_TAXAS=${valor//,/ }; else RUIDO_TAXAS=${valor//,/ }; fi ;;
-            segundos) if [ "$MODO" = cadeia ]; then FASE_SEGUNDOS=$valor; else ALIASING_SEGUNDOS=$valor; fi ;;
+            taxas) case "$MODO" in
+                       aliasing) ALIASING_TAXAS=${valor//,/ } ;;
+                       calibrar) CAL_TAXAS=${valor//,/ } ;;
+                       *) RUIDO_TAXAS=${valor//,/ } ;;
+                   esac ;;
+            segundos) if [ "$MODO" = calibrar ]; then CAL_SEGUNDOS=$valor; else ALIASING_SEGUNDOS=$valor; fi ;;
             canais) CANAIS=$valor ;;
             repeticoes) REPETICOES=$valor ;;
             spi) SPI_MODO=$valor ;;
-            faixas) RUIDO_FAIXAS=${valor//,/ } ;;
+            faixas) if [ "$MODO" = calibrar ]; then CAL_FAIXAS=${valor//,/ }; else RUIDO_FAIXAS=${valor//,/ }; fi ;;
             blocos) RUIDO_BLOCOS=$valor ;;
+            quadradas) CAL_QUADRADAS=${valor//,/ } ;;
+            canal) CAL_CANAL=$valor ;;
+            grandeza) CAL_GRANDEZA=$valor ;;
+            sonda) CAL_SONDA=$valor ;;
+            referencia) CAL_REFERENCIA=$valor ;;
             extra) [ -z "${EXPLICITA[extra]:-}" ] && [ -n "$valor" ] && read -ra EXTRA <<< "${valor//;/ }" ;;
         esac
     done
 fi
 FAIXA_TOTAL=${FAIXA_PEDIDA:-5.12}
+if [ "$MODO" = calibrar ]; then
+    # Os padrões da grandeza (no que não foi dado nem veio da coleta retomada), o canal e o cabeçalho.
+    if [ "$CAL_GRANDEZA" = corrente ]; then
+        CAL_QUADRADAS=${CAL_QUADRADAS:-$CAL_QUADRADAS_CORRENTE}
+        CAL_FAIXAS=${CAL_FAIXAS:-$CAL_FAIXAS_CORRENTE}
+        CAL_REFERENCIA=1                    # a corrente quadrada nunca é a ideal: sem a entrada medida, não calibra
+    else
+        CAL_QUADRADAS=${CAL_QUADRADAS:-$CAL_QUADRADAS_TENSAO}
+        CAL_FAIXAS=${CAL_FAIXAS:-$CAL_FAIXAS_TENSAO}
+    fi
+    CANAIS=$CAL_CANAL
+    EXTRA=(--grandeza "$CAL_CANAL:$CAL_GRANDEZA")
+    [ -z "$CAL_SONDA" ] || EXTRA+=(--sonda "$CAL_CANAL:$CAL_SONDA")
+fi
 
 # Uma captura por item: parte|esperas|taxa|canais|entrada|duração em s (vazia = blocos)|SPI (vazio = lenta)|faixa
 # (vazia = a da coleta)
@@ -340,11 +435,13 @@ if tem T; then
 fi
 if tem U; then PLANO+=("U|padrao|$TAXA_PADRAO|1|curto||lenta" "U|padrao|${SPI_LONGAS%%:*}|1|curto||rapido"); fi
 if tem F; then
-    for item_f1 in $FASE_F1; do
+    for item_f1 in $CAL_QUADRADAS; do
         IFS=: read -r f1 vpp off <<< "$item_f1"
         variante="${vpp:+${vpp}Vpp}${off:+${off}V}"
-        for par in $FASE_TAXAS; do
-            PLANO+=("F|padrao|${par%%:*}|1|quadrada${f1}Hz${variante}|$FASE_SEGUNDOS|${par##*:}")
+        for faixa_f in $CAL_FAIXAS; do
+            for par in $CAL_TAXAS; do
+                PLANO+=("F|padrao|${par%%:*}|$CAL_CANAL|quadrada${f1}Hz${variante}|$CAL_SEGUNDOS|${par##*:}|$faixa_f")
+            done
         done
     done
 fi
@@ -362,12 +459,12 @@ if tem Z; then
 fi
 if [ "$MODO" = bancada ]; then
     case "$PARTES" in
-        *[!ABCDEFGHJKLMNPQRSTU]*|'')
-            falha "--partes aceita as letras A, B, C, D, E, F, G, H, J, K, L, M, N, P, Q, R, S, T e U (ex.: AB; atalhos: --validar, --limite, --grade, --spi)." ;;
+        *[!ABCDEGHJKLMNPQRSTU]*|'')
+            falha "--partes aceita as letras A, B, C, D, E, G, H, J, K, L, M, N, P, Q, R, S, T e U (ex.: AB; atalhos: --validar, --limite, --grade, --spi)." ;;
     esac
 fi
 case "$MODO" in
-    cadeia) PREFIXO=T3f ;;
+    calibrar) PREFIXO=CAL ;;
     aliasing) PREFIXO=ALS ;;
     ruido) PREFIXO=RUIDO ;;
     *)  case "$PARTES" in
@@ -377,8 +474,7 @@ case "$MODO" in
         case "$PARTES" in
             *[!PSTU]*) ;;
             *) PREFIXO=T7g ;;       # só o SPI rápido
-        esac
-        [ "$PARTES" != F ] || PREFIXO=T3f ;;
+        esac ;;
 esac
 
 blocos_da_parte() {
@@ -451,7 +547,7 @@ LIVRE_MB=$(espaco_livre_mb)
 case "$PREFIXO" in
     T7f) titulo "T7f: a grade de tempo (período entre amostras)" ;;
     T7g) titulo "T7g: o SPI rápido (~15,4 MHz) e a margem do SDO" ;;
-    T3f) titulo "T3f: a fase da cadeia por ondas quadradas" ;;
+    CAL) titulo "Calibração por ondas quadradas: canal $CAL_CANAL ($CAL_GRANDEZA), faixas ${CAL_FAIXAS// /, }$( [ "$CAL_REFERENCIA" -eq 0 ] || echo ', com a entrada no osciloscópio')" ;;
     ALS) titulo "Aliasing: o mesmo sinal em $(echo "$ALIASING_TAXAS" | wc -w) taxas (canais $CANAIS)" ;;
     RUIDO) titulo "Ruído: a entrada em curto nas faixas $RUIDO_FAIXAS (canais $CANAIS)" ;;
     *) titulo "T7e: esperas do CS e taxa de amostragem" ;;
@@ -483,8 +579,13 @@ if [ "$SIMULAR" -eq 1 ]; then
 fi
 if [ "$LIVRE_MB" -lt $(( MB_TOTAL + 100 )) ]; then
     printf '  %sErro: faltam %d MB livres aqui. Traga as capturas antigas para o computador e apague-as daqui, ou\n' "$VM" $(( MB_TOTAL + 100 - LIVRE_MB ))
-    printf '  rode menos partes de cada vez, trazendo (e apagando daqui) as capturas entre uma e outra:\n'
-    printf '  %s.%s\n' "$(por_parte)" "$R"
+    if [ "$MODO" = calibrar ]; then
+        printf '  rode uma faixa de cada vez (--faixa 20.48, e depois --faixa 5.12), trazendo (e apagando daqui) as\n'
+        printf '  capturas entre uma e outra.%s\n' "$R"
+    else
+        printf '  rode menos partes de cada vez, trazendo (e apagando daqui) as capturas entre uma e outra:\n'
+        printf '  %s.%s\n' "$(por_parte)" "$R"
+    fi
     echo "  O que já foi feito numa pasta não se perde: --continuar retoma (veja --help)."
     exit 1
 fi
@@ -558,7 +659,7 @@ fi
         aliasing) extra="${EXTRA[*]+${EXTRA[*]}}"
                   echo "== opções taxas=${ALIASING_TAXAS// /,} segundos=$ALIASING_SEGUNDOS canais=$CANAIS repeticoes=$REPETICOES spi=$SPI_MODO extra=${extra// /;}" ;;
         ruido) echo "== opções taxas=${RUIDO_TAXAS// /,} faixas=${RUIDO_FAIXAS// /,} blocos=$RUIDO_BLOCOS canais=$CANAIS spi=$SPI_MODO" ;;
-        cadeia) echo "== opções segundos=$FASE_SEGUNDOS" ;;
+        calibrar) echo "== opções segundos=$CAL_SEGUNDOS faixas=${CAL_FAIXAS// /,} taxas=${CAL_TAXAS// /,} quadradas=${CAL_QUADRADAS// /,} canal=$CAL_CANAL grandeza=$CAL_GRANDEZA sonda=$CAL_SONDA referencia=$CAL_REFERENCIA" ;;
     esac
 } >> "$LOG"
 printf '    pasta: %s\n' "$PASTA"
@@ -569,8 +670,9 @@ interrompido=''
 trap 'interrompido="com Ctrl+C"' INT
 trap '' HUP
 
-pausa() {   # $1 = o que mudar na bancada. Devolve 0 = seguir, 1 = pular a parte, 2 = sem terminal (parar)
+pausa() {   # $1 = o que mudar na bancada; $2 = uma 2ª linha. Devolve 0 = seguir, 1 = pular a parte, 2 = sem terminal
     printf '\n  %s▸ Mude a bancada:%s %s\n' "$N$AM" "$R" "$1"
+    [ -z "${2:-}" ] || printf '    %s\n' "$2"
     printf '    Enter quando estiver pronto, ou p e Enter para pular esta parte: '
     local resposta=''
     if ! read -r resposta; then
@@ -611,7 +713,7 @@ for item in "${PLANO[@]}"; do
             T) secao "T: o teto do SPI rápido, de 384,6 a 434,8 kS/s, 1 tick por vez" ;;
             U) pausa "gerador FORA e a entrada do canal 1 em CURTO (o divisor ligado ao retorno)." || resposta=$?
                secao "U: a entrada em curto, com o SPI padrão e o rápido" ;;
-            F) secao "F: a fase da cadeia, ${FASE_SEGUNDOS} s com cada quadrada a 312,5 kS/s e a 400 kS/s (SPI rápido)" ;;
+            F) secao "F: ${CAL_SEGUNDOS} s com cada quadrada, em cada taxa (${CAL_TAXAS// /, }) e faixa (${CAL_FAIXAS// /, })" ;;
             X) secao "o mesmo sinal, ${ALIASING_SEGUNDOS} s em cada taxa ($ALIASING_TAXAS), faixa $FAIXA_TOTAL V" ;;
             Z) pausa "gerador FORA e a entrada do(s) canal(is) $CANAIS em CURTO (o divisor ligado ao retorno)." || resposta=$?
                secao "a entrada em curto, $RUIDO_BLOCOS blocos em cada faixa" ;;
@@ -639,8 +741,18 @@ for item in "${PLANO[@]}"; do
                 case "$resto" in *Vpp*) vpp=${resto%%Vpp*}; off=${resto#*Vpp} ;; esac
                 off=${off%V}
                 resposta=0
-                pausa "gerador: ONDA QUADRADA de $f1 Hz, ${vpp:-20} Vpp, High-Z, offset ${off:-0} V, duty 50 % (simetria), no canal 1." \
-                    || resposta=$?
+                if [ "$CAL_GRANDEZA" = corrente ]; then
+                    bancada="gerador: ONDA QUADRADA de $f1 Hz, ${vpp:-20} Vpp, duty 50 % (simetria), no circuito de corrente (o condutor pelo sensor do canal $CAL_CANAL)."
+                    ponta="a TCP0030A no condutor (desmagnetize e zere antes)"
+                else
+                    bancada="gerador: ONDA QUADRADA de $f1 Hz, ${vpp:-20} Vpp, High-Z, offset ${off:-0} V, duty 50 % (simetria), no canal $CAL_CANAL."
+                    ponta="a THDP0200 na entrada da sonda"
+                fi
+                referencia=''
+                if [ "$CAL_REFERENCIA" -eq 1 ]; then
+                    referencia="e no osciloscópio, $ponta (ligada até o fim), Hi Res, >= 100 períodos, >= 2 MS/s: durante as capturas, salve a forma de onda como ${N}ref_${entrada}.csv${R}"
+                fi
+                pausa "$bancada" "$referencia" || resposta=$?
                 case "$resposta" in
                     1) pular_parte=$parte; continue ;;
                     2) interrompido="sem terminal na pausa da quadrada de $f1 Hz"; break ;;
@@ -706,7 +818,12 @@ else
 fi
 echo "    No computador:  scripts/BeagleBone_Setup.sh trazer '${PREFIXO}_*' \$DIA"
 case "$PREFIXO" in
-    T3f) echo "    E a análise:    uv run scripts/medir_fase.py \$DIA/${PASTA}/F_*.bin --csv \$DIA/${PASTA}/fase.csv --plot \$DIA/${PASTA}/bode.png" ;;
+    CAL)
+        [ "$CAL_REFERENCIA" -eq 0 ] || echo "    Copie os ref_*.csv do osciloscópio para \$DIA/${PASTA}; a análise, uma por faixa:"
+        for faixa_f in $CAL_FAIXAS; do
+            echo "    E a análise (±$(LC_ALL=C awk -v f="$faixa_f" 'BEGIN { printf "%g", f / 2 }') V):  uv run scripts/medir_fase.py \$DIA/${PASTA}/F_*_f${faixa_f}_*.bin$( [ "$CAL_REFERENCIA" -eq 0 ] || echo " --entrada \$DIA/${PASTA}/ref_*.csv") --csv \$DIA/${PASTA}/fase_f${faixa_f}.csv --plot \$DIA/${PASTA}/bode_f${faixa_f}.png"
+        done
+        echo "    (o perfil com a fase: --perfil-base scripts/sondas/<base>.json --saida-perfil scripts/sondas/<id>.json)" ;;
     ALS)
         for ((r = 1; r <= REPETICOES; r++)); do
             sufixo=$( [ "$REPETICOES" -eq 1 ] || echo "_r$r")

@@ -361,7 +361,7 @@ def test_makefile_nao_usa_o_usr_include_do_linux(tmp_path, com_make):
 
 
 # ---------------------------------------------------------------------------
-# ./coletar.sh bancada, cadeia, aliasing, ruido e teto (firmware/coleta/campanha.sh e teto.sh)
+# ./coletar.sh bancada, calibrar, aliasing, ruido e teto (firmware/coleta/campanha.sh e teto.sh)
 # ---------------------------------------------------------------------------
 
 LER_ADC_FALSO = r'''#!/bin/bash
@@ -372,7 +372,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         -o) saida=$2; shift ;; --atraso-cs) cs=$2; shift ;; --blocos) blocos=$2; shift ;;
         --duracao) duracao=$2; blocos=9; shift ;; --spi) spi=$2; shift ;; -d) descricao=$2; shift ;;
-        --faixa-adc) faixa=$2; shift ;;
+        --faixa-adc) faixa=$2; shift ;; --grandeza) grandeza=$2; shift ;; --sonda) sonda=$2; shift ;;
         --forcar-taxa) forcar=1; shift; continue ;;
     esac
     shift
@@ -388,7 +388,7 @@ if [ "$taxa" -gt "$maximo" ] && [ -z "${forcar:-}" ]; then   # como o ler_adc de
 fi
 atrasadas=0; real=$taxa
 if [ "$taxa" -gt "$maximo" ]; then atrasadas=123; real=$maximo; fi
-echo "taxa=$taxa canais=$canais blocos=$blocos cs=$cs faixa=$faixa${duracao:+ duracao=$duracao}${spi:+ spi=$spi}${descricao:+ d=$descricao}" > "$saida"
+echo "taxa=$taxa canais=$canais blocos=$blocos cs=$cs faixa=$faixa${duracao:+ duracao=$duracao}${spi:+ spi=$spi}${grandeza:+ grandeza=$grandeza}${sonda:+ sonda=$sonda}${descricao:+ d=$descricao}" > "$saida"
 # O resumo final no formato do ler_adc desde 23/10/2026 (as linhas que o coleta/comum.sh lê).
 echo "✓ Captura concluída"
 if [ "$atrasadas" -eq 0 ]; then estado="tudo certo"; else estado="PROBLEMAS"; fi
@@ -646,48 +646,81 @@ def test_coletar_bancada_spi_compara_os_modos_e_mede_o_teto_do_rapido(varredura)
     assert "divergências A 0, C 7" in r.stdout
 
 
-def test_coletar_cadeia_pede_cada_quadrada_e_captura_nas_duas_taxas(varredura):
-    """--fase (T3f): 7 quadradas (múltiplos ímpares de 256 Hz) e as variantes (1280 Hz em 10 Vpp; 6912 e 20736 Hz em
-    16 Vpp com ±2 V), cada uma a 312,5 kS/s (SPI padrão) e a 400 kS/s (rápido), 30 s, com UMA pausa por quadrada para
-    trocar o gerador; a f₁ vai na descrição."""
-    r, _ = varredura("cadeia", "--simular")
-    assert r.returncode == 0 and "T3f" in r.stdout and "24 capturas" in r.stdout
-    r, _ = varredura("cadeia", entrada="\n" * 12)
+def test_coletar_calibrar_pede_cada_quadrada_em_cada_taxa_e_faixa(varredura):
+    """O padrão: 8 quadradas (múltiplos ímpares de 256 Hz, até 25344 Hz) e 9 variantes de amplitude e offset, cada uma
+    a 312,5 kS/s (SPI lento) e a 400 kS/s (rápido) nas faixas ±10,24 V e ±2,56 V, 30 s, com UMA pausa por quadrada;
+    a f₁ vai na descrição, a faixa no nome, e o fim dá um medir_fase.py por faixa."""
+    r, _ = varredura("calibrar", "--simular")
+    assert r.returncode == 0 and "Calibração por ondas quadradas" in r.stdout and "68 capturas" in r.stdout
+    r, _ = varredura("calibrar", entrada="\n" * 17)
     assert r.returncode == 0, r.stdout + r.stderr
-    (pasta,) = varredura.pasta.glob("T3f_*")
-    assert [linha["spi"] for linha in _resumo(pasta)] == ["lenta", "rapido"] * 12
-    assert r.stdout.count("ONDA QUADRADA de") == 12 and "ONDA QUADRADA de 20736 Hz, 20 Vpp, High-Z, offset 0 V" in r.stdout
+    (pasta,) = varredura.pasta.glob("CAL_*")
+    linhas = _resumo(pasta)
+    assert len(linhas) == 68 and [linha["spi"] for linha in linhas] == ["lenta", "rapido"] * 34
+    assert r.stdout.count("ONDA QUADRADA de") == 17 and "ONDA QUADRADA de 25344 Hz, 20 Vpp, High-Z, offset 0 V" in r.stdout
     assert "ONDA QUADRADA de 1280 Hz, 10 Vpp, High-Z, offset 0 V" in r.stdout
-    assert "ONDA QUADRADA de 6912 Hz, 16 Vpp, High-Z, offset -2 V" in r.stdout
-    assert (pasta / "F_cspadrao_400000_quadrada20736Hz16Vpp+2V_30s_spirapido.bin").exists()
-    padrao = (pasta / "F_cspadrao_312500_quadrada1280Hz_30s_spilenta.bin").read_text()
-    rapido = (pasta / "F_cspadrao_400000_quadrada1280Hz_30s_spirapido.bin").read_text()
-    meia = (pasta / "F_cspadrao_312500_quadrada1280Hz10Vpp_30s_spilenta.bin").read_text()
-    assert "d=quadrada f=1280Hz" in padrao and "spi=lenta" in padrao
-    assert "spi=rapido" in rapido and "duracao=30s" in rapido and "d=quadrada f=1280Hz10Vpp" in meia
-    assert "medir_fase.py" in r.stdout
+    assert "ONDA QUADRADA de 256 Hz, 16 Vpp, High-Z, offset -2 V" in r.stdout and "osciloscópio" not in r.stdout
+    assert (pasta / "F_cspadrao_400000_quadrada20736Hz16Vpp+2V_f20.48_30s_spirapido.bin").exists()
+    padrao = (pasta / "F_cspadrao_312500_quadrada1280Hz_f20.48_30s_spilenta.bin").read_text()
+    rapido = (pasta / "F_cspadrao_400000_quadrada1280Hz_f5.12_30s_spirapido.bin").read_text()
+    meia = (pasta / "F_cspadrao_312500_quadrada1280Hz10Vpp_f20.48_30s_spilenta.bin").read_text()
+    assert "d=quadrada f=1280Hz" in padrao and "spi=lenta" in padrao and "faixa=1:20.48" in padrao
+    assert "grandeza=1:tensao" in padrao and "sonda=" not in padrao
+    assert "spi=rapido" in rapido and "duracao=30s" in rapido and "faixa=1:5.12" in rapido
+    assert "d=quadrada f=1280Hz10Vpp" in meia
+    assert "medir_fase.py $DIA/" + pasta.name + "/F_*_f20.48_*.bin --csv" in r.stdout
+    assert "F_*_f5.12_*.bin" in r.stdout and "--entrada" not in r.stdout
 
 
-def test_coletar_cadeia_na_faixa_de_producao_e_o_continuar_herda_a_faixa(varredura):
-    """--faixa 20.48: o T3f na faixa do canal de tensão em produção (±10,24 V). Uma varredura interrompida continua
-    na mesma faixa sem repetir a opção, e pedir outra é recusado."""
-    r, _ = varredura("cadeia", "--faixa", "20.48", entrada="\n" * 3)
-    (pasta,) = varredura.pasta.glob("T3f_*")
-    feitas = sorted(pasta.glob("F_*.bin"))
-    assert feitas and all("faixa=1:20.48" in c.read_text() for c in feitas)
-    r, _ = varredura("cadeia", "--continuar", entrada="\n" * 12)
+def test_coletar_calibrar_com_a_entrada_no_osciloscopio_e_na_corrente(varredura):
+    """--referencia pede a forma de onda da entrada em cada pausa (com o nome que o medir_fase.py casa) e põe o
+    --entrada nos comandos; na corrente ela é obrigatória, as variantes não têm offset e a faixa padrão é a menor."""
+    r, _ = varredura("calibrar", "--referencia", "--quadradas", "256,1280:10", "--faixa", "20.48", entrada="\n" * 2)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert len(_resumo(pasta)) == 24 and all("faixa=1:20.48" in c.read_text() for c in pasta.glob("F_*.bin"))
-    r, _ = varredura("cadeia", "--continuar", "--faixa", "5.12")
-    assert r.returncode == 1 and "feita com --faixa 20.48" in r.stderr
-    r, _ = varredura("cadeia", "--faixa", "3.3", "--simular")
-    assert r.returncode == 1 and "use 20.48" in r.stderr
+    assert "a THDP0200 na entrada da sonda" in r.stdout and "salve a forma de onda como ref_quadrada1280Hz10Vpp.csv" in r.stdout
+    assert "--entrada $DIA/" in r.stdout and "Copie os ref_*.csv" in r.stdout
+    r, _ = varredura("calibrar", "--grandeza", "corrente", "--canal", "0", "--sonda", "sct013_100a_sn001", "--simular")
+    assert r.returncode == 0 and "26 capturas" in r.stdout and "canal 0 (corrente)" in r.stdout
+    assert "faixas 5.12, com a entrada no osciloscópio" in r.stdout and "quadrada25344Hz14Vpp," in r.stdout
+    assert "Vpp+" not in r.stdout and "Vpp-" not in r.stdout                  # nenhum offset pelo TC
+    r, _ = varredura("calibrar", "--grandeza", "corrente", "--canal", "0", "--sonda", "sct013_100a_sn001",
+                     "--quadradas", "256", entrada="\n")
+    assert r.returncode == 0, r.stdout + r.stderr
+    (pasta,) = sorted(varredura.pasta.glob("CAL_*"))[-1:]
+    captura = (pasta / "F_cspadrao_312500_quadrada256Hz_canais0_f5.12_30s_spilenta.bin").read_text()
+    assert "canais=0" in captura and "grandeza=0:corrente" in captura and "sonda=0:sct013_100a_sn001" in captura
+    assert "no circuito de corrente (o condutor pelo sensor do canal 0)" in r.stdout and "TCP0030A" in r.stdout
+    assert "ref_quadrada256Hz.csv" in r.stdout and "--entrada $DIA/" in r.stdout
 
 
-def test_coletar_cadeia_para_na_pausa_sem_terminal(varredura):
-    r, _ = varredura("cadeia", entrada="")
+def test_coletar_calibrar_continuar_herda_as_opcoes_e_recusa_as_erradas(varredura):
+    r, _ = varredura("calibrar", "--faixa", "20.48", "--quadradas", "256,1280:10", "--taxas", "400000",
+                     "--segundos", "5", entrada="\n")
+    assert r.returncode == 0 and "sem terminal na pausa da quadrada de 1280 Hz" in r.stdout
+    (pasta,) = varredura.pasta.glob("CAL_*")
+    assert [linha["arquivo"] for linha in _resumo(pasta)] == ["F_cspadrao_400000_quadrada256Hz_f20.48_5s_spirapido.bin"]
+    r, _ = varredura("calibrar", "--continuar", entrada="\n")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "1 de 2 já feitas" in r.stdout and r.stdout.count("ONDA QUADRADA de") == 1
+    assert [linha["arquivo"] for linha in _resumo(pasta)][1] == "F_cspadrao_400000_quadrada1280Hz10Vpp_f20.48_5s_spirapido.bin"
+    for opcoes, erro in ((("--taxas", "500000"), "passa do teto da PRU com o SPI rapido"),
+                         (("--taxas", "400000:lenta"), "passa do teto da PRU com o SPI lenta"),
+                         (("--taxas", "400000:meio"), "use rapido ou lenta"),
+                         (("--quadradas", "256:x"), "não é f₁[:Vpp[:offset]]"),
+                         (("--canal", "9"), "um canal de 0 a 7"),
+                         (("--grandeza", "temperatura"), "use tensao ou corrente"),
+                         (("--faixa", "3.3"), "use 20.48"),
+                         (("--repeticoes", "2"), "não vale no modo calibrar")):
+        r, _ = varredura("calibrar", *opcoes, "--simular")
+        assert r.returncode == 1 and erro in r.stderr, (opcoes, r.stderr)
+    r, _ = varredura("cadeia", "--simular")                     # o nome antigo
+    assert r.returncode == 2 and "modo desconhecido" in r.stderr
+
+
+def test_coletar_calibrar_para_na_pausa_sem_terminal(varredura):
+    r, _ = varredura("calibrar", entrada="")
     assert r.returncode == 0 and "sem terminal na pausa da quadrada de 256 Hz" in r.stdout
-    (pasta,) = varredura.pasta.glob("T3f_*")
+    (pasta,) = varredura.pasta.glob("CAL_*")
     assert _resumo(pasta) == []
 
 
@@ -778,12 +811,12 @@ def coleta(varredura, tmp_path):
 def test_coletar_sem_modo_mostra_os_modos_e_recusa_modo_desconhecido(varredura):
     r = subprocess.run(["bash", str(varredura.pasta / "coletar.sh")], capture_output=True, text=True, env=varredura.env)
     assert r.returncode == 0
-    for modo in ("conferir", "sonda", "cadeia", "aliasing", "ruido", "teto", "bancada"):
+    for modo in ("conferir", "calibrar", "sonda", "aliasing", "ruido", "teto", "bancada"):
         assert f"  {modo} " in r.stdout
-    r = subprocess.run(["bash", str(varredura.pasta / "coletar.sh"), "calibrar"], capture_output=True, text=True,
+    r = subprocess.run(["bash", str(varredura.pasta / "coletar.sh"), "calibrar_sonda"], capture_output=True, text=True,
                        env=varredura.env)
     assert r.returncode == 2 and "modo desconhecido" in r.stderr
-    for modo in ("aliasing", "ruido", "cadeia", "bancada", "teto", "conferir"):
+    for modo in ("aliasing", "ruido", "calibrar", "bancada", "teto", "conferir"):
         r = subprocess.run(["bash", str(varredura.pasta / "coletar.sh"), modo, "--help"], capture_output=True, text=True,
                            env=varredura.env)
         assert r.returncode == 0 and r.stdout.startswith("Uso: ./coletar.sh " + modo), modo

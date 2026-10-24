@@ -1508,6 +1508,10 @@ Sem o polo de 800 kHz, as duas discordavam a 6 σ, e o BIC prefere o polo por 63
   * Uma borda limitada por *slew rate* dependeria da amplitude, e as variantes de 16 e 20 Vpp a descartam.
   * Bordas de subida e descida diferentes quebram a simetria de meia onda e criam harmônicos pares, que a medida
     vê.
+  * E, desde 24/10/2026, a entrada pode ser medida: o osciloscópio salva a forma de onda dela em cada quadrada, e
+    cada harmônico da captura é dividido pelo da entrada (`medir_fase.py --entrada`). A forma da entrada sai da conta,
+    seja ela qual for, e as duas capturas não precisam ser simultâneas (os invariantes não dependem do instante). É
+    o que permite calibrar a sonda de corrente pelo mesmo método: uma corrente quadrada nunca é a ideal.
 * **"Como a fase pode estar certa sem referência de tempo?"** Ela está certa a menos de um atraso puro, e o atraso
   puro não é parte da forma do filtro. A curvatura da fase, que é o filtro, é medida e confere com a magnitude.
 * **"E a fase entre tensão e corrente?"** Ela precisa do atraso relativo entre os canais (o T6b) e do perfil do

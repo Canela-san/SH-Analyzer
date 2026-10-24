@@ -324,7 +324,7 @@ O orçamento de incerteza da magnitude, em dB:
   gerador (tipicamente ±0,1 dB) não deixa fechar a questão.
 * **A faixa do ADC não foi testada.** O PGA do ADS8688 tem outro ganho em cada faixa, e a banda dele pode mudar com
   isso: o polo de 800 kHz pode até ser ele. As senoides de 19/10 (±10,24 V) e de 22/10 (±2,56 V) concordam a
-  0,13 dB rms até 45 kHz, o que não basta. O `./coletar.sh cadeia --faixa 20.48` mede isso, e se o polo mudar
+  0,13 dB rms até 45 kHz, o que não basta. O `./coletar.sh calibrar --referencia` mede isso (nas duas faixas, com a entrada medida), e se o polo mudar
   com a faixa, ele é do ADC.
 * **Em 178 kHz, a correção multiplica o sinal por 63** (−36 dB): o ruído do ADC é multiplicado junto, e é ele, não o
   perfil, que limita a medida ali.

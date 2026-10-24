@@ -137,9 +137,9 @@ A taxa, os canais e as faixas vêm do cabeçalho, então não é preciso inform�
 | Quero... | Use | Onde ler |
 |---|---|---|
 | Harmônicos com grupos e fases, bandas IEC, espectrograma, exportar para MATLAB | `adc_tool.py` | [Análise para pesquisa](docs/user-guide.md#análise-para-pesquisa-harmônicos-bandas-iec-espectrograma-e-exportação) |
-| Calibrar uma sonda de corrente ou a cadeia de tensão | `coletar.sh sonda` → `gerar_perfil_sonda.py` | [Sondas: calibração e correção](docs/user-guide.md#sondas-de-corrente-calibração-e-correção) |
+| Calibrar por senoides, ponto a ponto (o K em baixa frequência e a conferência) | `coletar.sh sonda` → `gerar_perfil_sonda.py` | [Sondas: calibração e correção](docs/user-guide.md#sondas-de-corrente-calibração-e-correção) |
 | Medir ruído, SINAD, ENOB e diafonia para o relatório | `medir_captura.py` | [Medir uma captura](docs/user-guide.md#medir-uma-captura-para-o-relatório-medir_capturapy) |
-| Medir a fase (e a magnitude) da cadeia sem osciloscópio | `medir_fase.py` | [A fase da cadeia](docs/user-guide.md#a-fase-da-cadeia-sem-osciloscópio-medir_fasepy) |
+| Calibrar a cadeia (magnitude e fase) por ondas quadradas | `coletar.sh calibrar` e `medir_fase.py` | [A calibração por ondas quadradas](docs/user-guide.md#a-calibração-por-ondas-quadradas-medir_fasepy) |
 | Arquivar capturas sem perdas (~11 % do tamanho, conferido bit a bit) | `compactar_amostras.py` | [Guardar as capturas](docs/user-guide.md#guardar-as-capturas-sem-perdas-compactar_amostraspy) |
 | Saber onde guardar os dados | a variável `DADOS` | [Onde guardar os dados](docs/user-guide.md#onde-guardar-os-dados) |
 | Ver o que já foi medido, com os números para o relatório | os resultados de bancada | [`docs/bench-results.md`](docs/bench-results.md) |

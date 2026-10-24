@@ -217,8 +217,8 @@ tempo, todas as faixas, conforme o caso).
 | Modo | Para quê | Sem opções | Pasta | Análise no computador |
 |---|---|---|---|---|
 | `conferir` | **Antes de uma série de capturas** e depois de mexer na bancada: o firmware, os pinos e o ADC respondendo; o nível (Vpp), o offset e o ruído do sinal; a menor faixa que o comporta; com `--esperado-vpp`, se o sinal é o que o gerador manda | canal 1, 400 kS/s, ±10,24 V, 1 bloco (~10 s) | `conferencia.bin` | — (o veredito sai no terminal; código 1 = algo errado) |
-| `sonda` | A calibração de uma sonda por senoides, ponto a ponto ([Passo 1](#passo-1-coletar-os-pontos-na-beaglebone)) | interativo | `capturas/<id>/` | `gerar_perfil_sonda.py` |
-| `cadeia` | A resposta da cadeia, magnitude e fase, por ondas quadradas ([`medir_fase.py`](#a-fase-da-cadeia-sem-osciloscópio-medir_fasepy)) | 12 quadradas × 2 taxas, 30 s cada (pede cada uma) | `T3f_*` | `medir_fase.py` |
+| `calibrar` | **A calibração da cadeia** (sonda + frontend + ADC), magnitude e fase, por ondas quadradas; com `--referencia`, dividida pela entrada medida no osciloscópio ([`medir_fase.py`](#a-calibração-por-ondas-quadradas-medir_fasepy)) | 17 quadradas × 2 taxas × 2 faixas (±10,24 e ±2,56 V), 30 s cada (pede cada uma; ~36 min) | `CAL_*` | `medir_fase.py`, uma vez por faixa |
+| `sonda` | A calibração por senoides, ponto a ponto ([Passo 1](#passo-1-coletar-os-pontos-na-beaglebone)): o ganho em baixa frequência (o K) e a conferência da curva do `calibrar` | interativo | `capturas/<id>/` | `gerar_perfil_sonda.py` |
 | `aliasing` | O mesmo sinal em várias taxas, para separar componentes reais de imagens ([abaixo](#real-ou-imagem-adc_toolpy-aliasing)) | 400, 390,625 e 320 kS/s, 10 s cada, faixa automática | `ALS_*` | `adc_tool.py aliasing` |
 | `ruido` | O piso de ruído com a entrada em curto | as 3 faixas, 400 kS/s, 4 blocos cada (pede o curto) | `RUIDO_*` | `medir_captura.py --sem-tom` |
 | `teto` | A maior taxa com toda amostra na grade, por varredura em frequência, e a taxa de trabalho | SPI rápido e lento, margem de 10 ticks | `TETO_*` | — (`teto.csv`) |
@@ -228,11 +228,11 @@ tempo, todas as faixas, conforme o caso).
 ./coletar.sh conferir --faixa 5.12 --esperado-vpp 16 --ganho 19.357   # 16 Vpp no divisor: chega certo?
 ./coletar.sh aliasing --grandeza 1:tensao --sonda 1:cadeia_tensao_fase
 ./coletar.sh teto
-./coletar.sh cadeia --faixa 20.48 --simular
+./coletar.sh calibrar --referencia --simular
 ```
 
 * **Cada modo tem a sua ajuda:** `./coletar.sh aliasing --help`.
-* **Os modos em lote** (`cadeia`, `aliasing`, `ruido`, `bancada`) gravam a pasta com as capturas, o `log.txt` (tudo o
+* **Os modos em lote** (`calibrar`, `aliasing`, `ruido`, `bancada`) gravam a pasta com as capturas, o `log.txt` (tudo o
   que o `ler_adc` disse) e o `resumo.csv` (uma linha por captura: integridade, folga da grade, taxa medida, divergências
   do SPI). `--simular` mostra o plano, o tempo e o espaço sem capturar. Se a conexão cair, a coleta segue até a próxima
   pausa e para; `--continuar` retoma a última do modo (ou uma pasta dada), com as mesmas opções e a mesma faixa.
@@ -646,41 +646,94 @@ uv run scripts/adc_tool.py captura.bin --sem-correcao-sonda --welch
 
 A análise completa dos limites está em [`probe-profile-audit.md`](probe-profile-audit.md).
 
-### A fase da cadeia sem osciloscópio: `medir_fase.py`
+### A calibração por ondas quadradas: `medir_fase.py`
 
-Uma **onda quadrada** simétrica traz a referência de tempo dentro dela: no centro do pulso, todos os harmônicos são
-cossenos em fase. Numa captura que começou num instante qualquer, a fase de cada harmônico ímpar menos n vezes a da
-fundamental é a fase da cadeia (a menos de um atraso puro, que não se separa sem uma referência externa). A magnitude
-de cada harmônico, dividida pelo 1/n teórico, dá a resposta relativa à fundamental, sem instrumento de referência.
+É **o método principal de calibrar uma sonda** (a cadeia inteira: sonda, frontend e ADC), em magnitude e fase. Uma
+**onda quadrada** traz a referência de tempo dentro dela: no centro do pulso, todos os harmônicos são cossenos em fase.
+Numa captura que começou num instante qualquer, a fase de cada harmônico ímpar menos n vezes a da fundamental é a fase
+da cadeia (a menos de um atraso puro, que não se separa sem uma referência externa). A magnitude de cada harmônico,
+dividida pelo 1/n teórico, dá a resposta relativa à fundamental.
 
-**Na bancada:** `./coletar.sh cadeia`: 24 capturas de 30 s e 12 trocas no gerador, ~30 min. Ele pede
-quadradas de 256, 768, 1280, 2304, 6400, 6912 e 20736 Hz (20 Vpp, High-Z, no canal 1), todas múltiplos ímpares de
-256 Hz, e as variantes:
+**Na bancada:** `./coletar.sh calibrar`: 68 capturas de 30 s e 17 trocas no gerador, ~36 min de captura (~1,5 GB).
+Ele pede quadradas de 256, 768, 1280, 2304, 6400, 6912, 20736 e 25344 Hz (20 Vpp, High-Z, no canal 1), todas múltiplos
+ímpares de 256 Hz, e as variantes, que mudam os códigos que as bordas atravessam (o INL, abaixo):
 
+* 256 Hz em 16 Vpp com offset de +2 V e de −2 V;
 * 1280 Hz em 10 Vpp;
-* 6912 e 20736 Hz em 16 Vpp com offset de +2 V e de −2 V.
+* 6912, 20736 e 25344 Hz em 16 Vpp com offset de +2 V e de −2 V.
 
-Cada uma é capturada a 312,5 kS/s e a 400 kS/s (SPI rápido). A faixa do ADC é ±2,56 V; `--faixa 20.48` mede na
-faixa de produção do canal de tensão (±10,24 V). O `medir_fase.py` recusa misturar faixas: a resposta do ADS8688
-pode depender dela.
+Cada uma é capturada a 312,5 kS/s (SPI lento) e a 400 kS/s (rápido), nas faixas ±10,24 V (a de produção do canal de
+tensão) e ±2,56 V (a do T3f). O `medir_fase.py` recusa misturar faixas (o PGA do ADS8688 muda com a faixa, e a
+resposta pode mudar com ele): o fim da coleta dá um comando por faixa. Opções: `--faixas`, `--taxas 400000:rapido,...`,
+`--quadradas 256,1280:10,...`, `--segundos`, `--canal`, `--sonda`, `--grandeza`, `--referencia` (`--help`).
 
-**No computador:**
+* **Duas taxas bastam?** Bastaria uma: a resposta é da cadeia analógica, antes da amostragem, e não depende da taxa
+  (no T3f, 312,5 e 400 kS/s deram a mesma curva a 0,0005 dB e 0,004°). A segunda confere isso, confere que o modo do
+  SPI não muda nada e põe o aliasing em outro lugar (um harmônico descartado numa taxa entra na outra).
+* **Mais frequências reduzem o erro?** Pouco. O erro aleatório já é pequeno (no T3f, 0,0017 dB e 0,012° na grade). O
+  que sobra é sistemático: a forma da quadrada na entrada (a borda do gerador; abaixo), a faixa do ADC, o K e o INL.
+  Mais f₁ na mesma amplitude repetem o mesmo erro de INL; o que o reduz são as variantes de amplitude e offset. A
+  25344 Hz entrou por outro motivo: um 7º harmônico forte em 177 kHz, onde a incerteza do T3f era a maior.
+
+**A entrada medida: `--referencia` e `--entrada`.** A análise supõe a quadrada IDEAL na entrada: bordas instantâneas,
+só o duty fora do lugar. A borda real do gerador entra como se fosse da cadeia: no T3f, um "polo de 800 kHz" que a
+quadrada sozinha não diz se é do gerador ou da cadeia (até 0,21 dB em 178 kHz). Com a forma de onda da entrada medida
+por um instrumento de banda muito maior que a da cadeia, cada harmônico da captura é dividido pelo mesmo harmônico da
+entrada, e a forma da entrada deixa de importar (o duty, a borda, a carga). As duas capturas não precisam ser
+simultâneas: os dois invariantes não dependem do instante, só precisam ser da mesma forma de onda (o gerador parado na
+mesma quadrada).
+
+1. `./coletar.sh calibrar --referencia`: em cada pausa, ele pede também, no osciloscópio, a ponta **THDP0200** na
+   entrada da sonda (ligada desde o começo, até o fim), o modo **Hi Res** (a média põe nulos nos múltiplos da taxa, de
+   onde viria o aliasing), 100 períodos ou mais e 2 MS/s ou mais; durante as capturas, salve a forma de onda com o nome
+   que ele dá: `ref_<entrada>.csv` (ex.: `ref_quadrada6912Hz16Vpp+2V.csv`).
+2. No computador, copie os `ref_*.csv` para a pasta da coleta e passe `--entrada`:
 
 ```fish
-uv run scripts/medir_fase.py $DIA/T3f_*/F_*.bin --csv $DIA/fase.csv --plot $DIA/bode.png
+uv run scripts/medir_fase.py $DIA/CAL_*/F_*_f20.48_*.bin --entrada $DIA/CAL_*/ref_*.csv --csv $DIA/fase_f20.48.csv --plot $DIA/bode_f20.48.png
+```
+
+Cada captura usa a entrada de mesma f₁; entre várias (as variantes), a do nome `ref_<entrada>`, com a `<entrada>` do
+nome da captura. Toda captura precisa da sua. Para cada entrada, o log diz quanto ela difere da quadrada ideal (até
+quantos dB e graus): é o que a borda do gerador poria na medida sem a referência. Com uma ponta passiva no lugar da
+THDP0200, compense-a antes (a descompensação vira um degrau na referência, e ele entra na calibração).
+
+**A sonda de corrente.** Funciona, com a entrada medida (`--grandeza corrente` a torna obrigatória): uma corrente
+quadrada nunca é a ideal (a indutância do circuito e a saída do gerador arredondam as bordas, com o caráter de carga de
+capacitor que se vê na tela), e sem a referência isso entraria como se fosse da sonda. A referência é a **TCP0030A** no
+condutor (desmagnetize e zere antes). As variantes são só de amplitude (um offset não passa pelo TC e magnetiza o
+núcleo), e a faixa padrão é a menor (±2,56 V): passe a de produção do canal com `--faixas`.
+
+```bash
+./coletar.sh calibrar --grandeza corrente --canal 0 --sonda sct013_100a_sn001 --faixas 5.12
+```
+
+Dois cuidados:
+
+* **SNR.** O sinal do TC é pequeno: com 0,16 A de pico e N = 10 espiras, os harmônicos altos da quadrada de 256 Hz
+  caem perto do ruído. Os de f₁ alta cobrem a alta frequência; mais espiras e `--segundos 60` ajudam.
+* **A fase absoluta.** A costura ancora a fase no modelo passa-baixa em f₁ (fase mínima). O TC tem um passa-alta em
+  baixa frequência que o modelo ainda não tem, e um erro ε na fase em f₁ vira um atraso aparente de ε/(2π f₁) em toda
+  a curva (0,4° em 256 Hz são 5 µs). A magnitude não depende disso; a fase de um canal de corrente, até o modelo ganhar
+  o passa-alta, vale só a menos de um atraso (o `medir_fase.py` avisa).
+
+**Sem a entrada medida:**
+
+```fish
+uv run scripts/medir_fase.py $DIA/CAL_*/F_*_f20.48_*.bin --csv $DIA/fase_f20.48.csv --plot $DIA/bode_f20.48.png
 ```
 
 Para cada captura, ele mostra:
 
 * a f₁ medida e o duty estimado;
 * quantos harmônicos entraram e por que os outros saíram: aliasing sobre eles, SNR abaixo de 30 dB ou um nulo do
-  duty.
+  duty (com `--entrada`, a SNR da entrada e os harmônicos que ela não mediu; o duty deixa de importar).
 
 **Como as capturas viram uma curva só.** Cada captura é dividida em blocos de ~3 s. A média coerente deles dá a
 medida, e a dispersão entre eles, a incerteza. Somam-se a ela:
 
 * um piso por harmônico, `--piso-sistematico` (padrão 0,02 LSB, o INL do ADC): um harmônico fraco pesa pouco;
-* o erro do duty.
+* o erro do duty (sem `--entrada`) ou o ruído da entrada medida (com ela).
 
 Depois, a **costura**. A quadrada de 256 Hz mede o ganho e a fase na fundamental de cada uma das outras (todas são
 múltiplos ímpares dela), e cada captura é posta na mesma escala por essa medida, não pelo modelo. Por fim, uma
@@ -723,7 +776,8 @@ mediana do perfil base abaixo de 1 kHz, ou `--ganho-baixa-frequencia 0.99795` (o
 ganha `fase_rad`. O perfil continua corrigindo a magnitude como sempre.
 
 **Escolha da f₁:** a taxa dividida por f₁ não pode ficar perto de um inteiro par, senão o aliasing dos harmônicos
-altos cai em cima dos ímpares (o `medir_fase.py` acusa e descarta). As da `--fase` servem às duas taxas. A f₁ baixa
+altos cai em cima dos ímpares (o `medir_fase.py` acusa e descarta). As do `calibrar` servem a 312,5, 320, 390,625 e
+400 kS/s. A f₁ baixa
 dá muitos pontos e a alta, mais sinal por harmônico: num harmônico de ordem n, a amplitude é 1/n da fundamental. Um
 erro de duty pesa nos harmônicos altos da f₁ baixa, e os perto do nulo são descartados.
 
@@ -871,7 +925,7 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 
 | Script | Onde roda | O que faz |
 |---|---|---|
-| `firmware/coletar.sh` | BeagleBone | As coletas de dados, por modo: `conferir`, `sonda`, `cadeia`, `aliasing`, `ruido`, `teto` e `bancada` (veja [Coletar dados](#coletar-dados-coletarsh)); os modos ficam em `firmware/coleta/` |
+| `firmware/coletar.sh` | BeagleBone | As coletas de dados, por modo: `conferir`, `calibrar`, `sonda`, `aliasing`, `ruido`, `teto` e `bancada` (veja [Coletar dados](#coletar-dados-coletarsh)); os modos ficam em `firmware/coleta/` |
 | `scripts/BeagleBone_Setup.sh` | Computador | A interface com a BeagleBone: `status`, `preparar`, `hora`, `enviar`, `setup`, `ssh`, `trazer`, `montar`/`desmontar` e `configurar`. Veja [Preparar a BeagleBone](#preparar-a-beaglebone) |
 | `scripts/compactar_amostras.py` | Computador | (ou `adc_tool.py compactar`) Arquiva pastas de captura sem perdas num pacote `.zpaq.tar` (~11 % do tamanho), conferido bit a bit; também `listar`, `extrair` e `verificar`. Veja [Guardar as capturas sem perdas](#guardar-as-capturas-sem-perdas-compactar_amostraspy) |
 | `report/gerar_figuras.py` | Computador | Gera as figuras do relatório (PDF vetorial, já no tamanho final, com o texto composto pelo LaTeX) e um `.tex` com os números citados (macros siunitx). `uv run report/gerar_figuras.py` gera todas; `--listar`, `--png` (prévia), `--formato artigo --idioma en` (coluna de artigo, em inglês), `--saida PASTA` (ex.: a pasta do projeto LaTeX). Inclua no documento sem `width=`, para as fontes baterem com as do texto. As figuras `readme_*` são as do README: SVG transparente, gravado direto em `docs/images/` |

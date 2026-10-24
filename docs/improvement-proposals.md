@@ -143,7 +143,8 @@ novos, `aliasing` (3 taxas, faixa automática, para o `adc_tool.py aliasing`, qu
 `ruido` (o curto nas 3 faixas). E mais dois: `teto` (a maior taxa na grade por varredura em frequência, e a taxa de
 trabalho) e `conferir` (~10 s antes de uma série: firmware, ADC, nível, offset, ruído, a faixa certa e o Vpp
 esperado; teria pego a ligação errada e a placa sem alimentação de 23/10). Sem opções, cada modo usa a configuração
-que dá uma boa análise. O `enviar` apaga os dois scripts antigos da placa.
+que dá uma boa análise. O `enviar` apaga os dois scripts antigos da placa. Em 24/10/2026 o `cadeia` virou `calibrar`, o método
+principal de calibrar a sonda (S2, acima).
 
 **Aberto:** o `ler_adc` sobrescreve um `.bin` existente sem aviso (recusar, com `--sobrescrever` para os scripts, muda
 o uso: decisão do usuário). Em captura multicanal, os canais são amostrados 1/fs um depois do outro (2,5 µs a
@@ -369,6 +370,24 @@ O polo a mais entra quando o BIC o pede (`--polo auto`). Duas lições ficaram n
   atraso puro) e no piso das variantes, que ele dobrava.
 * **A quadrada não usa referência.** Por isso ela mostrou que o T3 por senoides herdou ~1,3 dB da referência do
   osciloscópio em alta frequência.
+
+**Estado (24/10/2026): o método principal de calibrar, com a entrada medida.** O `coletar.sh cadeia` virou
+`coletar.sh calibrar`. O que mais pesa no erro não é o ruído (0,0017 dB na grade), e sim o sistemático: a forma da
+quadrada na entrada, a faixa do ADC, o K e o INL. Mais f₁ na mesma amplitude não ajudam (repetem o mesmo INL), e uma
+2ª taxa só confere (a resposta é analógica). O que mudou:
+
+* **A entrada medida** (`calibrar --referencia`, `medir_fase.py --entrada`): o osciloscópio salva a forma de onda da
+  entrada em cada quadrada (THDP0200 na tensão, TCP0030A na corrente), e cada harmônico da captura é dividido pelo da
+  entrada (`fase_quadrada.dividir_pela_entrada`). Como os dois invariantes não dependem do instante, as capturas não
+  precisam ser simultâneas. Sai da conta a borda do gerador (o polo de 800 kHz fica decidido), o duty e a forma da
+  corrente: com ela, a sonda de corrente se calibra pelo mesmo método. Num teste sintético, uma borda de 60 kHz vira,
+  sem a entrada, um polo da cadeia achado pelo BIC; com ela, o 2ª ordem sai no lugar e o polo não entra.
+* **As duas faixas** (±10,24 V, a de produção, e ±2,56 V) por padrão, **25344 Hz** (um 7º harmônico forte em 177 kHz,
+  onde a incerteza era a maior) e **variantes de offset também em 256 Hz** (a base da costura): 68 capturas.
+* **Falta, para a fase da corrente:** a costura ancora a fase no modelo passa-baixa em f₁, e o TC tem um passa-alta em
+  baixa frequência; um erro ε na fase em f₁ vira um atraso aparente de ε/(2π f₁) (0,4° em 256 Hz = 5 µs). Um
+  passa-alta de 1ª ordem no modelo (como o polo real, escolhido pelo BIC; a curvatura em 1/n dos harmônicos baixos da
+  quadrada de 256 Hz o mede) resolve. A magnitude já vale.
 
 Depois: o S3 (usar a fase na correção).
 
