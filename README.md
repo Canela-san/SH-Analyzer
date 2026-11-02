@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="docs/images/banner.svg" alt="SH-Analyzer: analisador de supraharmônicos" width="100%">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/banner-logo-spectrum-dark.svg">
+    <img src="docs/images/banner-logo-spectrum-light.svg" alt="SH-Analyzer: analisador de supraharmônicos" width="100%">
+  </picture>
 </p>
 
 <p align="center">
@@ -176,7 +179,7 @@ O andamento, teste a teste, está no [Estado da campanha](docs/lab-procedure.md#
 ├── scripts/           # Computador: adc_tool.py e as outras entradas, o pacote supraharmonicos/, os perfis de sonda
 │                      #   (sondas/), BeagleBone_Setup.sh (a interface com a placa) e ci.sh (a CI local)
 ├── tests/             # Testes automáticos (pytest), sem precisar de hardware, e o simulador da PRU
-├── report/            # gerar_figuras.py: as figuras do relatório num estilo só
+├── report/            # gerar_figuras.py: as figuras do relatório num estilo só; gerar_marca.py: banner, logo e ícone
 ├── hardware/          # Projeto da PCB no Altium Designer (DAQ_Module)
 ├── docs/              # Documentação (tabela abaixo), datasheets, documentos da FAPESP e imagens
 ├── pyproject.toml     # Dependências e configuração de pytest e ruff
