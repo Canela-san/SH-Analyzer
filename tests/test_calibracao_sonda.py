@@ -617,3 +617,36 @@ def test_captura_com_amostras_perdidas_ou_atrasadas_sai_do_perfil(cli, tmp_path,
     pontos = ler_json(tmp_path / "p.json")["pontos"]
     n = {alvo: next(p["n"] for p in pontos if abs(p["freq_hz"] / alvo - 1) < 0.03) for alvo in (1000, 2200, 4700)}
     assert n == {1000: 1, 2200: 1, 4700: 2}                 # as duas primeiras saíram do perfil, a 3ª ficou
+
+
+class TestValidacao:
+    """--reter (o hold-out: pontos medidos e deixados fora do perfil) e --comparar-com (outro perfil da mesma cadeia)."""
+
+    def test_reter_tira_os_pontos_do_perfil_e_diz_o_erro_neles(self, cli, pasta_meta, tmp_path):
+        saida = tmp_path / "p.json"
+        rc, out, err = cli(main, pasta_meta, "-o", saida, "--reter", "4700,33000")
+        assert rc == 0, err
+        freqs = [p["freq_hz"] for p in ler_json(saida)["pontos"]]
+        assert len(freqs) == len(FREQS_CONJUNTO) - 2 and not any(abs(f / 4700 - 1) < 0.02 for f in freqs)
+        assert "2 ponto(s) retido(s) para a validação" in out
+        m = re.search(r"Hold-out \(pontos fora do perfil\): erro rms ([0-9.]+) %", out)
+        # sem 33 kHz, o buraco de 22 a 47 kHz na descida do filtro: a interpolação erra ~2 %, e é isso que o hold-out mostra
+        assert m and 0.3 < float(m.group(1)) < 3.0
+        assert len(re.findall(r"Hold-out \(pontos fora do perfil\): +[0-9.]+ Hz medido", out)) == 2
+
+    def test_comparar_com_outro_perfil_da_o_erro_de_cada_ponto(self, cli, pasta_meta, tmp_path):
+        outro = tmp_path / "outro.json"
+        f = np.geomspace(50, 1e5, 60)
+        outro.write_text(json.dumps({"id": "quadradas", "tipo": "resposta_frequencia",
+                                     "pontos": [{"freq_hz": float(x), "ganho": float(1.01 * esperado(x))} for x in f]}),
+                         encoding="utf-8")
+        rc, out, err = cli(main, pasta_meta, "-o", tmp_path / "p.json", "--comparar-com", outro)
+        assert rc == 0, err
+        m = re.search(r"Contra 'quadradas': erro rms ([0-9.]+) %", out)
+        assert m and float(m.group(1)) == pytest.approx(1.0, abs=0.3)
+
+    def test_reter_recusa_frequencia_invalida_e_tudo_retido(self, cli, pasta_meta, tmp_path):
+        rc, _, err = cli(main, pasta_meta, "-o", tmp_path / "p.json", "--reter", "abc")
+        assert rc == 2 and "--reter" in err
+        rc, _, err = cli(main, pasta_meta, "-o", tmp_path / "p.json", "--reter", ",".join(map(str, FREQS_CONJUNTO[1:])))
+        assert rc == 1 and "sobraram 1 ponto(s)" in err

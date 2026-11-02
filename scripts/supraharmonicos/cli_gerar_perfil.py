@@ -18,6 +18,8 @@ import re
 from datetime import date
 from pathlib import Path
 
+import numpy as np
+
 from .calibracao_sonda import (
     JANELA_CALIBRACAO_PADRAO,
     NOME_REFERENCIA_EXTERNA,
@@ -26,6 +28,7 @@ from .calibracao_sonda import (
     SOBREPOSICAO_WELCH_CALIBRACAO_PADRAO,
     TOLERANCIA_FREQ_PCT_PADRAO,
     PontoMedido,
+    PontoPerfil,
     ResumoResposta,
     agregar_por_frequencia,
     descobrir_capturas,
@@ -47,7 +50,7 @@ from .osciloscopio import (
 )
 from .referencia import Amplitude, ReferenciaCaptura, analisar_amplitude, pico_fisico
 from .registro import configurar_logging_cli
-from .sonda import SONDAS_DIR_PADRAO
+from .sonda import SONDAS_DIR_PADRAO, carregar_perfil_sonda
 
 log = logging.getLogger(__name__)
 
@@ -169,6 +172,17 @@ def montar_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--plot", action="store_true", help="Gera um '.png' de diagnóstico (pontos + curva interpolada) ao lado do '.json'.")
 
+    validacao = parser.add_argument_group(
+        "validação (opcional)",
+        "A única conferência que pega uma ressonância perdida entre os pontos ou um erro de interpolação em dados "
+        "reais é medir em frequências que NÃO entraram no perfil (hold-out), ou comparar com outro método.")
+    validacao.add_argument("--reter", type=str, default=None, metavar="HZ[,HZ...]",
+                           help="Frequências cujos pontos ficam FORA do perfil (±--tolerancia-freq-pct): o erro do "
+                                "perfil interpolado nelas sai no log. Ex.: --reter 3000,27000,95000.")
+    validacao.add_argument("--comparar-com", type=Path, default=None, metavar="PERFIL",
+                           help="Outro perfil da mesma cadeia (ex.: o das ondas quadradas, do medir_fase.py): o erro "
+                                "dele em cada ponto medido aqui, a conferência entre os dois métodos.")
+
     return parser
 
 
@@ -195,6 +209,14 @@ def _validar_e_completar_args(args: argparse.Namespace) -> None:
         raise ErroUso("--tolerancia-freq-pct precisa ser positiva.")
     if args.frequencia is not None and not (math.isfinite(args.frequencia) and args.frequencia > 0):
         raise ErroUso("-f/--frequencia precisa ser um número positivo (Hz).")
+    args.frequencias_retidas = []
+    if args.reter is not None:
+        try:
+            args.frequencias_retidas = [float(x) for x in args.reter.split(",") if x.strip()]
+        except ValueError:
+            raise ErroUso(f"--reter espera frequências em Hz separadas por vírgula, recebeu '{args.reter}'.") from None
+        if not args.frequencias_retidas or any(not (f > 0 and math.isfinite(f)) for f in args.frequencias_retidas):
+            raise ErroUso("--reter precisa de frequências positivas (Hz).")
 
     args.amplitude_constante = None
     if args.referencia_externa is not None:
@@ -418,6 +440,13 @@ def executar_geracao(args: argparse.Namespace) -> None:
 
     pontos_perfil = agregar_por_frequencia(pontos_medidos, args.modo_referencia, args.resistencia_shunt)
     log.info(f"{len(pontos_perfil)} ponto(s) de frequência únicos após agregação de repetições.")
+    todos = list(pontos_perfil)
+    pontos_perfil, retidos = separar_retidos(pontos_perfil, args.frequencias_retidas, args.tolerancia_freq_pct)
+    if args.frequencias_retidas:
+        if len(pontos_perfil) < 2:
+            raise ErroSHAN(f"com --reter, sobraram {len(pontos_perfil)} ponto(s) para o perfil: são precisos 2.")
+        log.info(f"{len(retidos)} ponto(s) retido(s) para a validação (fora do perfil): "
+                 f"{', '.join(f'{p.freq_hz:g} Hz' for p in retidos) or 'nenhum'}.")
 
     ganho_ref = min(pontos_perfil, key=lambda p: p.freq_hz).ganho
     if not (0.7 <= ganho_ref <= 1.3):
@@ -441,8 +470,54 @@ def executar_geracao(args: argparse.Namespace) -> None:
         log.info(f"  {p.freq_hz:10.2f} Hz -> ganho {p.ganho:.4f}{marcador}")
     _registrar_resumo_resposta(resumo)
 
+    if retidos:
+        relatar_erros(retidos, carregar_perfil_sonda(caminho_saida), "Hold-out (pontos fora do perfil)")
+    if args.comparar_com is not None:
+        outro = carregar_perfil_sonda(args.comparar_com)
+        ganho_outro = (outro.calibracao_adc or {}).get("ganho", {}).get("sonda")
+        ganho_aqui = analisar_lista_calibracao(args.ganho, 2, "--ganho")[1]
+        if ganho_outro is not None and not math.isclose(float(ganho_outro), ganho_aqui, rel_tol=1e-3):
+            log.warning(f"'{outro.id}' foi gerado com --ganho {float(ganho_outro):g}, e estes pontos com "
+                        f"{ganho_aqui:g}: o erro sai com a razão {ganho_aqui / float(ganho_outro):.4g} junto.")
+        relatar_erros(todos, outro, f"Contra '{outro.id}'")
+
     if args.plot:
         gerar_grafico(pontos_perfil, perfil_dict, caminho_saida.with_suffix(".png"))
+
+
+def separar_retidos(pontos: list[PontoPerfil], frequencias: list[float],
+                    tolerancia_pct: float) -> tuple[list[PontoPerfil], list[PontoPerfil]]:
+    """(os pontos do perfil, os retidos): retido é o ponto a menos de ``tolerancia_pct`` de uma das ``frequencias``."""
+    if not frequencias:
+        return pontos, []
+
+    def retido(p: PontoPerfil) -> bool:
+        return any(abs(p.freq_hz / f - 1) * 100 <= tolerancia_pct for f in frequencias)
+    return [p for p in pontos if not retido(p)], [p for p in pontos if retido(p)]
+
+
+def relatar_erros(pontos: list[PontoPerfil], perfil, titulo: str) -> None:
+    """O erro do ``perfil`` interpolado em cada ponto medido (em % e dB), e o rms, ao lado da dispersão entre as
+    repetições do ponto (o que o erro deveria ficar perto, se o perfil está certo)."""
+    lo, hi = perfil.faixa_freq_valida_hz or (perfil.pontos[0][0], perfil.pontos[0][-1])
+    dentro = [p for p in pontos if lo <= p.freq_hz <= hi]
+    if len(dentro) < len(pontos):
+        log.info(f"{titulo}: {len(pontos) - len(dentro)} ponto(s) fora da faixa de '{perfil.id}' "
+                 f"({lo:g} a {hi:g} Hz) ficam de fora.")
+    if not dentro:
+        return
+    perfil.silenciar_aviso_fora_da_faixa()
+    previsto = perfil.ganho_em(np.array([p.freq_hz for p in dentro]))
+    erros = []
+    for p, g in zip(dentro, previsto):
+        erro = 100 * (g / p.ganho - 1)
+        erros.append(erro)
+        disp = f" (dispersão das repetições {p.desvio_pct:.2f} %)" if p.n_amostras > 1 else ""
+        log.info(f"  {titulo}: {p.freq_hz:10.2f} Hz medido {p.ganho:.5f}, perfil {g:.5f}: {erro:+.3f} % "
+                 f"({20 * math.log10(g / p.ganho):+.4f} dB){disp}")
+    rms = math.sqrt(sum(e * e for e in erros) / len(erros))
+    log.info(f"{titulo}: erro rms {rms:.3f} % ({20 * math.log10(1 + rms / 100):.4f} dB), o maior "
+             f"{max(erros, key=abs):+.3f} %, em {len(dentro)} ponto(s)")
 
 
 def main(argv: list[str] | None = None) -> int:

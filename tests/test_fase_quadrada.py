@@ -11,7 +11,7 @@ import json
 
 import numpy as np
 import pytest
-from capturas_sinteticas import montar_cabecalho, quadrada_pela_cadeia
+from capturas_sinteticas import escrever_m_osciloscopio, montar_cabecalho, quadrada_pela_cadeia
 from supraharmonicos import fase_quadrada as fq
 from supraharmonicos.cli_medir_fase import _piso_das_variantes, main
 from supraharmonicos.sonda import carregar_perfil_sonda
@@ -229,3 +229,110 @@ def test_medir_fase_recusa_misturar_faixas_do_adc(cli, capturas, tmp_path):
 def test_medir_fase_saida_de_perfil_pede_o_perfil_base(cli, capturas, tmp_path):
     rc, _, err = cli(main, capturas[0], "--saida-perfil", tmp_path / "p.json")
     assert rc == 2 and "--perfil-base" in err
+
+
+# --------------------------------------------------------------------------------------
+# A entrada medida (o osciloscópio na entrada da sonda): a forma real da entrada sai da medida
+# --------------------------------------------------------------------------------------
+FS_OSC = 1e6
+BORDA_HZ = 60e3          # a borda do gerador, exagerada (um RC de 2,7 µs) para aparecer em capturas de 0,3 s
+
+
+def entrada_no_osciloscopio(f1, dur=0.1, borda_hz=BORDA_HZ, duty=0.5, seed=0):
+    """O que o osciloscópio vê na entrada: a quadrada com a borda do gerador (um polo), sem o filtro da cadeia, no
+    relógio do osciloscópio (o do ADC anda 63 ppm à frente dele), a 1 MS/s, sem aliasing (o Hi Res)."""
+    return quadrada_pela_cadeia(FS_OSC, f1, dur, duty=duty, f0=1e12, atraso_s=0.0, ppm=-20.0, amplitude_lsb=20000.0,
+                                ruido_lsb=2.0, ate_hz=0.45 * FS_OSC, seed=seed, polo_hz=borda_hz).astype(float)
+
+
+def medir_entrada(f1, **kw):
+    return fq.medir_quadrada(entrada_no_osciloscopio(f1, **kw), FS_OSC, f1, 1e12, Q, fq.FRACAO_DA_NYQUIST * FS / 2,
+                             piso_sistematico=0.02, prever_aliasing=False)
+
+
+def test_a_entrada_medida_tira_a_borda_do_gerador_e_o_duty_da_medida():
+    """A borda do gerador (um polo de 60 kHz na entrada) a quadrada ideal põe na cadeia; dividida pela entrada medida
+    no osciloscópio, sobra a cadeia (o 2ª ordem), e o duty fora do lugar sai sem a correção pelos pares."""
+    for f1, seed in ((1280.0, 1), (6400.0, 2)):
+        saida = medir(f1=f1, duty=0.503, polo_hz=BORDA_HZ, seed=seed)
+        _, mag = erros(saida)
+        assert np.max(np.abs(mag)) > 3.0                         # a borda: dB em 100 kHz
+        r = fq.dividir_pela_entrada(saida, medir_entrada(f1, duty=0.503, seed=seed + 10), F0, Q, nome="ref.csv")
+        fase, mag = erros(r)
+        z_fase = fase / np.degrees(r.sigma_fase_rad[r.usado])
+        z_mag = mag / (8.686 * r.sigma_ln_ganho[r.usado])
+        assert r.usado.sum() >= 10 and r.entrada == "ref.csv"
+        assert np.max(np.abs(z_fase)) < 5 and np.max(np.abs(z_mag)) < 5, (fase, mag)
+        baixo = r.freq_hz[r.usado] < BORDA_HZ                     # acima, a borda deixa os harmônicos fracos (ruído)
+        assert np.max(np.abs(mag[baixo])) < 0.05 and np.max(np.abs(fase[baixo])) < 0.3
+
+
+def test_o_desvio_da_entrada_contra_a_quadrada_ideal_mostra_a_borda():
+    ideal = fq.desvio_da_quadrada_ideal(medir_entrada(1280.0, borda_hz=1e12, seed=3))
+    borda = fq.desvio_da_quadrada_ideal(medir_entrada(1280.0, seed=3))
+    assert ideal[0] < 0.01 and ideal[1] < 0.05
+    assert borda[0] > 5 and borda[1] > 5 and borda[2] > 140e3     # o polo de 60 kHz: -8 dB e dezenas de graus a 148 kHz
+
+
+def test_entrada_de_outra_quadrada_e_recusada():
+    with pytest.raises(fq.ErroSHAN, match="não são a mesma quadrada"):
+        fq.dividir_pela_entrada(medir(f1=1280.0, seed=1), medir_entrada(6400.0, seed=2))
+
+
+def test_registro_com_poucos_periodos_por_bloco_e_recusado():
+    """Um registro curto do osciloscópio (8 períodos, 2 por bloco): a janela não separa os harmônicos vizinhos."""
+    with pytest.raises(fq.ErroSHAN, match="2.0 períodos da quadrada"):
+        fq.medir_quadrada(entrada_no_osciloscopio(256.0, dur=8 / 256.0), FS_OSC, 256.0, 1e12, Q, 150e3,
+                          prever_aliasing=False)
+
+
+def gravar_entrada(pasta, nome, f1, **kw):
+    return escrever_m_osciloscopio(pasta / nome, entrada_no_osciloscopio(f1, **kw), FS_OSC)
+
+
+def test_medir_fase_com_a_entrada_medida_nao_inventa_o_polo_da_borda(cli, tmp_path):
+    """Sem --entrada, a borda do gerador vira um polo real da cadeia (o BIC o põe, em 60 kHz); com ela, o 2ª ordem
+    sozinho explica tudo, f0 e Q saem no lugar, e o perfil diz de onde veio a referência."""
+    arquivos = [gravar(tmp_path, f"F_cspadrao_312500_quadrada{f1:g}Hz_30s.bin", 312_500, f1, polo_hz=BORDA_HZ, seed=s)
+                for f1, s in ((1280.0, 1), (6400.0, 2))]
+    refs = [gravar_entrada(tmp_path, f"ref_quadrada{f1:g}Hz.m", f1, seed=s) for f1, s in ((1280.0, 11), (6400.0, 12))]
+    rc, out, _ = cli(main, *arquivos, "--saida-perfil", tmp_path / "sem.json",
+                     "--perfil-base", "scripts/sondas/cadeia_tensao_312k.json")
+    so = json.loads((tmp_path / "sem.json").read_text(encoding="utf-8"))["resposta_fase"]["segunda_ordem"]
+    assert rc == 0 and "→ COM o polo" in out and so["polo_real_hz"] == pytest.approx(BORDA_HZ, rel=0.05)
+    rc, out, err = cli(main, *arquivos, "--entrada", *refs, "--csv", tmp_path / "fase.csv",
+                       "--saida-perfil", tmp_path / "com.json", "--perfil-base", "scripts/sondas/cadeia_tensao_312k.json")
+    assert rc == 0, err
+    assert "→ sem o polo" in out and "contra a quadrada ideal" in out and "÷ ref_quadrada1280Hz.m" in out
+    perfil = json.loads((tmp_path / "com.json").read_text(encoding="utf-8"))
+    so = perfil["resposta_fase"]["segunda_ordem"]
+    assert so["f0_hz"] == pytest.approx(F0, rel=2e-3) and so["q"] == pytest.approx(Q, rel=3e-3)
+    assert "polo_real_hz" not in so and "osciloscópio" in perfil["calibracao_adc"]["modo_referencia"]
+    assert {c["entrada"] for c in perfil["resposta_fase"]["capturas"]} == {r.name for r in refs}
+    linhas = list(csv.DictReader(open(tmp_path / "fase.csv", encoding="utf-8")))
+    assert {(linha["arquivo"], linha["entrada"]) for linha in linhas} == {(a.name, r.name) for a, r in zip(arquivos, refs)}
+
+
+def test_medir_fase_casa_as_variantes_pelo_nome_e_pede_a_entrada_de_cada_captura(cli, tmp_path):
+    a = gravar(tmp_path, "F_cspadrao_312500_quadrada1280Hz_30s.bin", 312_500, 1280.0, seed=1)
+    b = gravar(tmp_path, "F_cspadrao_312500_quadrada1280Hz10Vpp_30s.bin", 312_500, 1280.0, seed=2, amplitude_lsb=3300.0)
+    c = gravar(tmp_path, "F_cspadrao_312500_quadrada6400Hz_30s.bin", 312_500, 6400.0, seed=3)
+    ra = gravar_entrada(tmp_path, "ref_quadrada1280Hz.m", 1280.0, borda_hz=1e12, seed=11)
+    rb = gravar_entrada(tmp_path, "ref_quadrada1280Hz10Vpp.m", 1280.0, borda_hz=1e12, seed=12)
+    rc, _, err = cli(main, a, b, c, "--entrada", ra, rb)
+    assert rc == 1 and "quadrada6400Hz" in err and "não tem a entrada medida" in err
+    rc, out, err = cli(main, a, b, "--entrada", ra, rb)
+    assert rc == 0, err
+    assert f"{a.name} (312.5 kS/s, ÷ {ra.name})" in out and f"{b.name} (312.5 kS/s, ÷ {rb.name})" in out
+    sem_nome = gravar_entrada(tmp_path, "outra_1280Hz.m", 1280.0, borda_hz=1e12, seed=13)
+    rc, _, err = cli(main, a, "--entrada", rb, sem_nome)
+    assert rc == 1 and "nomeie cada uma ref_<entrada>" in err
+
+
+def test_canal_de_corrente_sem_entrada_avisa(cli, tmp_path):
+    x = quadrada_pela_cadeia(312_500.0, 1280.0, 0.3, seed=5)
+    corrente = tmp_path / "F_corrente.bin"
+    corrente.write_bytes(montar_cabecalho(len(x), (1,), (1,), ("",), 312_500, versao=7, descricao="quadrada f=1280Hz",
+                                          spi=(0, 0, 0)) + x.tobytes())
+    rc, _, err = cli(main, corrente, gravar(tmp_path, "F_6400.bin", 312_500, 6400.0, seed=6))
+    assert rc == 0 and "CORRENTE sem --entrada" in err and "passa-alta" in err

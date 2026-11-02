@@ -18,16 +18,21 @@ from pathlib import Path
 
 import numpy as np
 
+from .analise_razao import executar_razao
+from .ancora_perfil import ajustar_a_ancora, curva_ancorada, pontos_combinados
 from .cabecalho import ler_cabecalho
 from .calibracao_sonda import PontoPerfil, resumir_resposta
+from .constantes import GRANDEZA_CORRENTE
 from .erros import ErroSHAN, ErroUso
 from .escrita_perfil import gerar_grafico_bode, gravar_perfil_validado
 from .fase_quadrada import (
     AMOSTRAS_POR_BLOCO,
     F0_PADRAO_HZ,
+    FRACAO_DA_NYQUIST,
     PISO_SISTEMATICO_LSB,
     POLO_INICIAL_HZ,
     Q_PADRAO,
+    TOLERANCIA_F1_ENTRADA,
     AjusteFase,
     PontosAbsolutos,
     RespostaCombinada,
@@ -35,11 +40,15 @@ from .fase_quadrada import (
     ajustar_segunda_ordem,
     combinar_em_grade,
     costurar,
+    desvio_da_quadrada_ideal,
+    dividir_pela_entrada,
     fase_absoluta,
     fase_do_modelo,
     h_segunda_ordem,
     medir_quadrada,
 )
+from .osciloscopio import ler_forma_de_onda
+from .perfil_complexo import ler_perfil_complexo
 from .registro import configurar_logging_cli
 from .sonda import carregar_perfil_sonda
 
@@ -48,12 +57,16 @@ log = logging.getLogger(__name__)
 INICIO_PADRAO_MS = 0.2          # o transitório de troca de faixa do ADC (T0): ~80 µs
 COLUNAS_CSV = ["arquivo", "fs_hz", "f1_hz", "duty_desvio", "blocos", "n", "freq_hz", "amplitude_lsb", "ganho_rel",
                "ganho_rel_db", "sigma_db", "fase_rel_graus", "fase_min_graus", "sigma_graus", "snr_db", "contaminacao_db",
-               "usado", "motivo"]
+               "usado", "motivo", "entrada"]
 COLUNAS_CSV_GRADE = ["freq_hz", "ganho_db", "sigma_db", "fase_graus", "sigma_graus", "harmonicos", "chi2_ganho",
                      "chi2_fase"]
 CHI2_INCOERENTE = 3.0           # χ² mediano das faixas acima disso: as capturas discordam além das incertezas
 DELTA_BIC_DO_POLO = 10.0        # o polo real a mais entra quando baixa o BIC em mais que isso (evidência "muito forte")
 _RE_F1_NA_DESCRICAO = re.compile(r"quadrada\s+f=([0-9.]+)\s*Hz", re.IGNORECASE)
+_RE_F1_NO_NOME = re.compile(r"(?<![0-9.])([0-9]+(?:\.[0-9]+)?)Hz")
+F0_PLANO_HZ = 1e12              # o modelo da entrada no osciloscópio: plano (a ponta e ele têm ~1000x a banda da cadeia)
+PISO_RELATIVO_ENTRADA = 1e-6    # piso por harmônico da entrada, relativo à fundamental (num sinal de dois níveis, a não
+                                # linearidade do osciloscópio só pesa nas bordas, fora da banda: sobra o ruído)
 
 
 def montar_parser() -> argparse.ArgumentParser:
@@ -63,8 +76,9 @@ def montar_parser() -> argparse.ArgumentParser:
                     "sem osciloscópio: a fase de cada harmônico ímpar menos n vezes a da fundamental não depende do "
                     "instante da captura (S2, docs/improvement-proposals.md). Ajusta o passa-baixa de 2ª ordem pela "
                     "magnitude, pela fase e pelas duas, e pode gravar um perfil de sonda com a fase.",
-        epilog="Ex.: uv run scripts/medir_fase.py $DIA/T3f_*/F_*.bin --csv fase.csv --plot fase.png "
-               "--perfil-base scripts/sondas/cadeia_tensao_312k.json --saida-perfil scripts/sondas/cadeia_tensao_fase.json")
+        epilog="Ex.: uv run scripts/medir_fase.py $DIA/CAL_*/F_*_f20.48_*.bin --entrada $DIA/CAL_*/ref_*.csv "
+               "--csv fase.csv --plot fase.png --perfil-base scripts/sondas/cadeia_tensao_312k.json "
+               "--saida-perfil scripts/sondas/cadeia_tensao_fase.json")
     p.add_argument("arquivos", nargs="+", type=Path, help="Capturas .bin (cabeçalho v5+) de uma quadrada simétrica.")
     p.add_argument("--canal", type=int, help="Canal com a quadrada (padrão: o único, ou o último da captura).")
     p.add_argument("--f1", type=float, metavar="HZ",
@@ -96,6 +110,59 @@ def montar_parser() -> argparse.ArgumentParser:
                         "menor frequência medida. Pede --saida-perfil.")
     p.add_argument("--saida-perfil", type=Path, help="Grava o perfil com a fase (cada ponto ganha 'fase_rad').")
     p.add_argument("--id", help="Id do perfil gravado (padrão: o nome do arquivo de --saida-perfil).")
+    g = p.add_argument_group(
+        "a entrada medida (osciloscópio)",
+        "Sem --entrada, a análise supõe a quadrada IDEAL na entrada (só o duty fora do lugar): a borda do gerador entra "
+        "como se fosse da cadeia, e uma corrente quadrada (que a indutância da carga e o gerador arredondam) não serve. "
+        "Com --entrada, cada harmônico da captura é dividido pelo da forma de onda da entrada, salva pelo osciloscópio "
+        "(THDP0200 na tensão, TCP0030A na corrente), e a forma da entrada não importa: só precisa ser a mesma (o gerador "
+        "parado na mesma quadrada; as capturas não precisam ser simultâneas). Uma por quadrada, de preferência no modo "
+        "Hi Res, com 100 períodos ou mais e 2 MS/s ou mais.")
+    g.add_argument("--entrada", nargs="+", type=Path, metavar="ARQUIVO",
+                   help="Formas de onda da entrada (.csv/.m/.mat/.txt), uma por quadrada. Cada captura usa a de mesma "
+                        "f₁; com várias (as variantes de amplitude e offset), a do nome ref_<entrada>, com a <entrada> "
+                        "do nome da captura (ex.: ref_quadrada6912Hz16Vpp+2V.csv).")
+    g.add_argument("--osc-var", metavar="NOME[:COL]", help="Variável (ou coluna) com a forma de onda (padrão: detectada).")
+    g.add_argument("--osc-tempo", metavar="NOME", help="Variável com o vetor de tempo (padrão: detectada).")
+    g.add_argument("--osc-fs", type=float, metavar="HZ", help="Taxa do osciloscópio, se o arquivo não a traz.")
+    d = p.add_argument_group(
+        "dois canais ao mesmo tempo (a razão; opcional)",
+        "Com --canal-referencia, cada captura tem DOIS canais com a mesma onda ao mesmo tempo (o coletar.sh calibrar "
+        "--canal-referencia): o medido (--canal) e o de referência. A razão entre eles em cada harmônico é H/H_ref, "
+        "com a fase absoluta, qualquer que seja a forma da entrada, sem modelo e sem fase mínima (o atraso de "
+        "1/taxa total entre os canais da varredura é descontado). Na sonda de corrente: o TC no canal medido e a "
+        "tensão num resistor do laço, pelo divisor, no de referência. Com --perfil-referencia (o perfil com fase do "
+        "canal de referência) e --resistencia ou --shunt, sai a resposta absoluta do canal medido e, com --ganho e "
+        "--saida-perfil, o perfil dele com a fase. Vai até ~95 kHz (com dois canais, a Nyquist é a metade).")
+    d.add_argument("--canal-referencia", type=int, metavar="N", help="O canal de referência (liga este modo).")
+    d.add_argument("--atraso-entre-canais-us", type=float, metavar="US",
+                   help="Quanto o canal medido é amostrado depois do de referência (padrão: a diferença das posições "
+                        "na varredura ÷ a taxa total; ex.: canal 0 medido e 1 referência a 400 kS/s: −2,5 µs).")
+    d.add_argument("--diafonia", nargs="+", type=Path, metavar="ARQUIVO",
+                   help="Capturas da mesma montagem com o canal medido sem sinal próprio (o condutor fora da garra do "
+                        "TC): o vazamento da referência nele, subtraído da razão.")
+    d.add_argument("--perfil-referencia", type=Path, metavar="PERFIL",
+                   help="O perfil COM fase do canal de referência (o do medir_fase.py, ex.: cadeia_tensao_fase.json), "
+                        "na faixa das capturas.")
+    d.add_argument("--ganho-referencia", type=float, metavar="G",
+                   help="O --ganho nominal do canal de referência (padrão: o gravado no --perfil-referencia).")
+    d.add_argument("--resistencia", type=float, metavar="OHMS",
+                   help="O resistor do laço, puramente resistivo (medido a 4 fios; um de fio é indutivo: use --shunt).")
+    d.add_argument("--shunt", type=Path, metavar="CSV", help="A impedância Z(f) do resistor do laço (o medir_shunt.py).")
+    d.add_argument("--espiras", type=int, default=1, help="Espiras do laço pela sonda (padrão: %(default)s).")
+    d.add_argument("--ganho", type=float, metavar="G",
+                   help="O --ganho nominal do canal medido (o do adc_tool; no SCT013 sobre 0,12 Ω, 16667): o perfil "
+                        "é relativo a ele.")
+    c = p.add_argument_group("conferências do método de um canal (opcional)")
+    c.add_argument("--passa-alta", action="store_true",
+                   help="Ajusta também um passa-alta de 1ª ordem (o de um TC em baixa frequência) e diz o atraso "
+                        "aparente que ele faria na âncora de fase mínima. Só relata: o perfil não muda.")
+    c.add_argument("--ancora", type=Path, metavar="PERFIL",
+                   help="Um perfil com a fase ABSOLUTA da mesma cadeia (o da razão de dois canais): K e o atraso da "
+                        "curva saem dele, na sobreposição, e o perfil gravado usa os pontos dele até --ancora-ate e os "
+                        "da curva acima. Dispensa o --perfil-base.")
+    c.add_argument("--ancora-ate", type=float, metavar="HZ",
+                   help="Até onde valem os pontos da âncora no perfil (padrão: até o fim dela).")
     p.add_argument("--ganho-baixa-frequencia", type=float, metavar="K",
                    help="Ganho da cadeia em baixa frequência (o 'K' do 2ª ordem), que a quadrada não mede (ela é "
                         "relativa). Padrão: a mediana dos pontos do --perfil-base abaixo de 1 kHz. O T2 (DC, Fluke) dá "
@@ -113,8 +180,9 @@ def _analisar_modelo(texto: str) -> tuple[float, float]:
     return f0, q
 
 
-def ler_quadrada(caminho: Path, args: argparse.Namespace) -> tuple[np.ndarray, float, float | None, str, float | None]:
-    """(sinal do canal em LSB, fs do canal, f₁ de dica, descrição curta, faixa total do ADC no canal em V)."""
+def ler_quadrada(caminho: Path, args: argparse.Namespace) -> tuple[np.ndarray, float, float | None, str, float | None,
+                                                                   int | None]:
+    """(sinal do canal em LSB, fs do canal, f₁ de dica, descrição curta, faixa total do ADC no canal em V, grandeza)."""
     cab = ler_cabecalho(caminho)
     if cab is None or not cab.crc32_valido:
         raise ErroSHAN(f"'{caminho.name}' sem cabeçalho válido: a taxa e o canal vêm dele.")
@@ -138,12 +206,111 @@ def ler_quadrada(caminho: Path, args: argparse.Namespace) -> tuple[np.ndarray, f
     rotulo = f"{fs / 1e3:g} kS/s" + (" (SPI rápido)" if cab.spi_rapido else "")
     faixas = cab.faixa_adc_total_v_por_canal or ()
     faixa = float(faixas[canais.index(canal)]) if len(faixas) > canais.index(canal) else None
-    return np.asarray(sinal[inicio:fim], dtype=np.float64), fs, dica, rotulo, faixa
+    grandezas = cab.grandeza_por_canal or ()
+    grandeza = int(grandezas[canais.index(canal)]) if len(grandezas) > canais.index(canal) else None
+    return np.asarray(sinal[inicio:fim], dtype=np.float64), fs, dica, rotulo, faixa, grandeza
 
 
-def _medir_todas(entradas, f0: float, q: float, polo: float, args: argparse.Namespace) -> list[RespostaQuadrada]:
-    return [medir_quadrada(sinal, fs, dica, f0, q, args.freq_max, args.amostras_por_bloco, args.piso_sistematico, polo)
-            for sinal, fs, dica, _ in entradas]
+def _token_da_entrada(caminho: Path) -> str:
+    """'ref_quadrada6912Hz16Vpp+2V.csv' -> 'quadrada6912Hz16Vpp+2V' (o nome da entrada, como nas capturas)."""
+    nome = caminho.stem
+    return re.sub(r"^ref[_-]", "", nome, flags=re.IGNORECASE)
+
+
+def medir_entradas(caminhos: list[Path], args: argparse.Namespace, freq_max: float) -> list[tuple[Path, RespostaQuadrada]]:
+    """Cada forma de onda da entrada (do osciloscópio) medida como uma quadrada por um modelo plano, até ``freq_max``
+    (a maior frequência das capturas), sem previsão de aliasing."""
+    medidas = []
+    for caminho in caminhos:
+        onda = ler_forma_de_onda(caminho, args.osc_var, args.osc_tempo, args.osc_fs)
+        x = np.asarray(onda.valores, dtype=np.float64)
+        m = _RE_F1_NO_NOME.search(_token_da_entrada(caminho))
+        amplitude = (np.percentile(x, 99) - np.percentile(x, 1)) / 2 * 4 / math.pi      # ~a da fundamental
+        try:
+            r = medir_quadrada(x, onda.fs, float(m.group(1)) if m else None, F0_PLANO_HZ, Q_PADRAO, freq_max,
+                               args.amostras_por_bloco, PISO_RELATIVO_ENTRADA * amplitude, prever_aliasing=False)
+        except ErroSHAN as e:
+            raise ErroSHAN(f"entrada '{caminho.name}': {e}") from None
+        dev_db, dev_graus, ate = desvio_da_quadrada_ideal(r)
+        log.info(f"Entrada {caminho.name} ({onda.fs / 1e6:g} MS/s, {len(x) / onda.fs * 1e3:.0f} ms): f₁ = {r.f1_hz:.4f} Hz, "
+                 f"duty 50 ± {100 * r.duty_desvio:.4f} %, {int(r.usado.sum())} de {len(r)} harmônicos ímpares; contra a "
+                 f"quadrada ideal, até {dev_db:.3f} dB e {dev_graus:.3f}° (até {ate / 1e3:.1f} kHz)")
+        medidas.append((caminho, r))
+    return medidas
+
+
+def casar_entradas(caminhos: list[Path], medidas: list[RespostaQuadrada],
+                   entradas: list[tuple[Path, RespostaQuadrada]]) -> list[tuple[Path, RespostaQuadrada]]:
+    """A entrada de cada captura: a de mesma f₁ e, entre várias (as variantes de amplitude e offset da mesma f₁), a
+    de nome ref_<entrada>, com a <entrada> do nome da captura. Toda captura precisa da sua (misturar capturas com e sem
+    a referência daria duas convenções numa curva só)."""
+    saida = []
+    for caminho, r in zip(caminhos, medidas):
+        mesma_f1 = [(c, e) for c, e in entradas if abs(e.f1_hz / r.f1_hz - 1) <= TOLERANCIA_F1_ENTRADA]
+        pedacos = set(caminho.stem.split("_"))
+        pelo_nome = [(c, e) for c, e in mesma_f1 if _token_da_entrada(c) in pedacos]
+        if len(pelo_nome) == 1:
+            saida.append(pelo_nome[0])
+        elif len(mesma_f1) == 1:
+            saida.append(mesma_f1[0])
+        elif not mesma_f1:
+            raise ErroSHAN(f"'{caminho.name}' (f₁ = {r.f1_hz:.2f} Hz) não tem a entrada medida em --entrada: toda "
+                           "captura precisa da sua (ou nenhuma, sem --entrada).")
+        else:
+            raise ErroSHAN(f"'{caminho.name}': {len(mesma_f1)} entradas com f₁ = {r.f1_hz:.2f} Hz "
+                           f"({', '.join(c.name for c, _ in mesma_f1)}); nomeie cada uma ref_<entrada>, com a <entrada> "
+                           "do nome da captura (ex.: ref_quadrada6912Hz16Vpp+2V.csv).")
+    return saida
+
+
+def _medir_todas(entradas, f0: float, q: float, polo: float, args: argparse.Namespace,
+                 casadas: list[tuple[Path, RespostaQuadrada]] | None = None) -> list[RespostaQuadrada]:
+    medidas = [medir_quadrada(sinal, fs, dica, f0, q, args.freq_max, args.amostras_por_bloco, args.piso_sistematico, polo)
+               for sinal, fs, dica, _ in entradas]
+    if casadas is None:
+        return medidas
+    return [dividir_pela_entrada(r, e, f0, q, polo, c.name) for r, (c, e) in zip(medidas, casadas)]
+
+
+def _relatar_ancora(ident: str, a) -> None:
+    texto = (f"Âncora '{ident}': {a.n_pontos} faixas em comum, de {a.de_hz:.0f} Hz a {a.ate_hz / 1e3:.1f} kHz; "
+             f"K = {math.exp(a.ln_k):.5f} ± {a.sigma_ln_k * math.exp(a.ln_k):.5f}; atraso aparente da curva de um canal "
+             f"{a.atraso_s * 1e6:+.4f} ± {a.sigma_inclinacao / (2 * math.pi) * 1e6:.4f} µs (descontado); depois disso, "
+             f"resíduo de {a.residuo_db:.4f} dB e {a.residuo_graus:.3f}° entre os dois métodos")
+    if a.residuo_db > 0.1 or a.residuo_graus > 1.0:
+        log.warning(texto + ": os métodos discordam além do esperado (o perfil da âncora é da mesma cadeia, na mesma "
+                    "faixa e com o mesmo --ganho?).")
+    else:
+        log.info(texto)
+
+
+def _conferir_passa_alta(medidas: list[RespostaQuadrada], melhor: AjusteFase, ancora) -> None:
+    com_polo = math.isfinite(melhor.polo_hz)
+    com = ajustar_segunda_ordem(medidas, True, True, melhor.f0_hz, melhor.q, com_polo,
+                                melhor.polo_hz if com_polo else POLO_INICIAL_HZ, com_passa_alta=True)
+    f1 = min(r.f1_hz for r in medidas)
+    # a parte linear em n do adiantamento (n·atan(fc/f₁)) o erro da fundamental, tirado por captura, já absorve; o que
+    # fica na curva sem o passa-alta no modelo é a curvatura, a maior no 3º harmônico da quadrada mais lenta
+    curvatura = math.degrees(math.atan(com.passa_alta_hz / (3 * f1)))
+    texto = (f"Passa-alta (conferência; o perfil não muda): fc = {com.passa_alta_hz:.3f} ± {com.sigma_passa_alta_hz:.3f} Hz, "
+             f"ΔBIC = {melhor.bic - com.bic:+.1f}; sem ele no modelo, a fase da curva fica até ~{curvatura:.3f}° adiantada "
+             f"nos harmônicos mais baixos (em {3 * f1:.0f} Hz), e cai com 1/f (a parte linear, o erro da fundamental de "
+             "cada captura já tira)")
+    if ancora is not None:
+        texto += f"; a âncora achou um atraso de {ancora.atraso_s * 1e6:+.4f} µs"
+    log.info(texto)
+
+
+def _avisar_da_corrente(com_entrada: bool) -> None:
+    if not com_entrada:
+        log.warning("Canal de CORRENTE sem --entrada: a corrente quadrada não é a ideal (a indutância da carga e a "
+                    "saída do gerador arredondam as bordas), e o que ela tem de diferente entraria como se fosse da "
+                    "sonda. Meça a corrente com a TCP0030A no osciloscópio, uma forma de onda por quadrada, e passe "
+                    "--entrada.")
+    log.warning("Canal de corrente: o modelo passa-baixa não tem o passa-alta do TC. A parte linear do adiantamento "
+                "dele o erro da fundamental de cada captura já tira; sobra uma curvatura nos harmônicos mais baixos "
+                "(--passa-alta a mede). Para a fase entre tensão e corrente, use a razão de dois canais "
+                "(--canal-referencia), e --ancora para levar esta curva ao perfil dela.")
 
 
 def _freq_menos_3db(f0: float, q: float, polo: float = math.inf) -> float:
@@ -174,7 +341,8 @@ def _escolher_polo(sem: AjusteFase, com: AjusteFase, modo: str) -> bool:
 def _relatar(caminhos: list[Path], rotulos: list[str], medidas: list[RespostaQuadrada], ajustes: list[AjusteFase]) -> None:
     for caminho, rotulo, r in zip(caminhos, rotulos, medidas):
         fora = [f"{int(n)}: {m}" for n, m in zip(r.n, r.motivo) if m]
-        log.info(f"{caminho.name} ({rotulo}): f₁ = {r.f1_hz:.4f} Hz, duty 50 ± {100 * r.duty_desvio:.4f} % "
+        log.info(f"{caminho.name} ({rotulo}{', ÷ ' + r.entrada if r.entrada else ''}): f₁ = {r.f1_hz:.4f} Hz, "
+                 f"duty 50 ± {100 * r.duty_desvio:.4f} % "
                  f"(± {100 * r.sigma_duty:.4f}), {r.blocos} blocos, {int(r.usado.sum())} de {len(r)} harmônicos ímpares "
                  f"até {r.freq_hz[-1] / 1e3:.1f} kHz; SNR de {np.min(r.snr_db[r.usado]):.0f} a "
                  f"{np.max(r.snr_db[r.usado]):.0f} dB"
@@ -321,7 +489,7 @@ def _gravar_csv(caminho_csv: Path, caminhos: list[Path], medidas: list[RespostaQ
                     "fase_min_graus": f"{math.degrees(absoluta[i]):.4f}",
                     "sigma_graus": f"{math.degrees(r.sigma_fase_rad[i]):.4f}", "snr_db": f"{r.snr_db[i]:.1f}",
                     "contaminacao_db": "" if not math.isfinite(r.contaminacao_db[i]) else f"{r.contaminacao_db[i]:.1f}",
-                    "usado": "sim" if r.usado[i] else "não", "motivo": r.motivo[i],
+                    "usado": "sim" if r.usado[i] else "não", "motivo": r.motivo[i], "entrada": r.entrada,
                 })
     log.info(f"{sum(len(r) for r in medidas)} harmônico(s) gravado(s) em {caminho_csv}")
 
@@ -354,7 +522,11 @@ def montar_perfil_com_fase(base: dict, combinada: RespostaCombinada, medidas: li
     perfil["faixa_freq_valida_hz"] = [pontos[0][0], pontos[-1][0]]
     adc = dict(perfil.get("calibracao_adc", {}))
     # a faixa e a referência são as destas capturas, não as do perfil base (o ganho e o formato, sim, são os dele)
-    adc["modo_referencia"] = "ondas quadradas (sem referência; K do --ganho-baixa-frequencia)"
+    if any(r.entrada for r in medidas):
+        adc["modo_referencia"] = ("ondas quadradas com a entrada medida pelo osciloscópio (--entrada); K do "
+                                  "--ganho-baixa-frequencia")
+    else:
+        adc["modo_referencia"] = "ondas quadradas (sem referência; K do --ganho-baixa-frequencia)"
     if faixa_v is not None:
         adc["faixa_v"] = {"sonda": faixa_v}
         adc["faixa_v_confiavel"] = {"sonda": True}
@@ -370,15 +542,17 @@ def montar_perfil_com_fase(base: dict, combinada: RespostaCombinada, medidas: li
         }
     perfil["calibracao_adc"] = adc
     perfil["resposta_fase"] = {
-        "metodo": "ondas quadradas: arg X_n − n·arg X_1 dos harmônicos ímpares, média coerente por blocos, capturas "
-                  "costuradas pela de f1 mais baixa e combinadas numa grade logarítmica (scripts/medir_fase.py)",
+        "metodo": "ondas quadradas: arg X_n − n·arg X_1 dos harmônicos ímpares, média coerente por blocos, "
+                  + ("divididos pelos da entrada medida no osciloscópio, " if any(r.entrada for r in medidas) else "")
+                  + "capturas costuradas pela de f1 mais baixa e combinadas numa grade logarítmica (scripts/medir_fase.py)",
         "fase": "a menos de um atraso puro, supondo fase mínima (nenhum atraso puro na cadeia analógica); o erro da fase "
                 "medida da fundamental de cada captura (o INL do ADC) sai por regressão",
         "ganho": f"relativo ao ganho em baixa frequência, escalado por K = {k_baixa:g}",
         "k_baixa_frequencia": k_baixa,
         "capturas": [{"arquivo": c.name, "fs_hz": round(r.fs_hz, 3), "f1_hz": round(r.f1_hz, 6),
                       "duty_desvio": round(r.duty_desvio, 7), "blocos": r.blocos,
-                      "harmonicos_usados": int(r.usado.sum()), "amplitude_fundamental_lsb": round(float(r.amplitude[0]), 1)}
+                      "harmonicos_usados": int(r.usado.sum()), "amplitude_fundamental_lsb": round(float(r.amplitude[0]), 1),
+                      **({"entrada": r.entrada} if r.entrada else {})}
                      for c, r in zip(caminhos, medidas)],
         "segunda_ordem": {"f0_hz": round(f0, 2), "sigma_f0_hz": round(ajuste.sigma_f0_hz, 2), "q": round(q, 5),
                           "sigma_q": round(ajuste.sigma_q, 5), "residuo_db": round(ajuste.residuo_db, 4),
@@ -395,28 +569,53 @@ def main(argv: list[str] | None = None) -> int:
     configurar_logging_cli()
     try:
         f0, q = _analisar_modelo(args.modelo_inicial)
-        if args.saida_perfil is not None and args.perfil_base is None:
-            raise ErroUso("--saida-perfil precisa de --perfil-base (a calibração do ADC e o --ganho vêm dele).")
-        entradas, caminhos, rotulos, faixas = [], [], [], set()
+        if args.canal_referencia is not None:
+            executar_razao(args, _RE_F1_NA_DESCRICAO, (f0, q, math.inf))
+            return 0
+        so_com_referencia = [nome for nome, valor in (
+            ("--atraso-entre-canais-us", args.atraso_entre_canais_us), ("--diafonia", args.diafonia),
+            ("--perfil-referencia", args.perfil_referencia), ("--ganho-referencia", args.ganho_referencia),
+            ("--resistencia", args.resistencia), ("--shunt", args.shunt), ("--ganho", args.ganho)) if valor is not None]
+        if args.espiras != 1:
+            so_com_referencia.append("--espiras")
+        if so_com_referencia:
+            raise ErroUso(f"{', '.join(so_com_referencia)} só vale(m) com --canal-referencia (o modo de dois canais).")
+        if args.ancora_ate is not None and args.ancora is None:
+            raise ErroUso("--ancora-ate só vale com --ancora.")
+        if args.saida_perfil is not None and args.perfil_base is None and args.ancora is None:
+            raise ErroUso("--saida-perfil precisa de --perfil-base (a calibração do ADC e o --ganho vêm dele), ou de "
+                          "--ancora.")
+        entradas, caminhos, rotulos, faixas, grandezas = [], [], [], set(), set()
         for caminho in args.arquivos:
-            sinal, fs, dica, rotulo, faixa = ler_quadrada(caminho, args)
+            sinal, fs, dica, rotulo, faixa, grandeza = ler_quadrada(caminho, args)
             entradas.append((sinal, fs, dica, rotulo))
             caminhos.append(caminho)
             rotulos.append(rotulo)
             faixas.add(faixa)
+            grandezas.add(grandeza)
         if len(faixas) > 1:
             raise ErroUso(f"as capturas são de faixas diferentes do ADC ({', '.join(f'{f:g} V' for f in sorted(faixas))}): "
                           "a resposta do ADS8688 pode depender da faixa; analise cada faixa separadamente.")
+        if GRANDEZA_CORRENTE in grandezas:
+            _avisar_da_corrente(args.entrada is not None)
+        referencias = None
+        if args.entrada:
+            limite = max(FRACAO_DA_NYQUIST * fs / 2 for _, fs, _, _ in entradas)
+            referencias = medir_entradas(args.entrada, args, limite if args.freq_max is None else min(args.freq_max, limite))
         # 1ª passada com o modelo de partida; a 2ª, com o ajustado (desenrolar a fase, prever o aliasing e o duty)
         medidas = _medir_todas(entradas, f0, q, math.inf, args)
+        casadas = None
+        if referencias is not None:
+            casadas = casar_entradas(caminhos, medidas, referencias)
+            medidas = [dividir_pela_entrada(r, e, f0, q, math.inf, c.name) for r, (c, e) in zip(medidas, casadas)]
         conjunto = ajustar_segunda_ordem(medidas, f0_inicial=f0, q_inicial=q)
-        medidas = _medir_todas(entradas, conjunto.f0_hz, conjunto.q, math.inf, args)
+        medidas = _medir_todas(entradas, conjunto.f0_hz, conjunto.q, math.inf, args, casadas)
         piso = _piso_das_variantes(medidas)
         if piso > args.piso_sistematico and not args.piso_fixo:
             log.info(f"As variantes de amplitude/offset mostram um piso de ~{piso:.3f} LSB por harmônico, acima do "
                      f"--piso-sistematico ({args.piso_sistematico:g}): a análise usa {piso:.3f} (--piso-fixo mantém o dado).")
             args.piso_sistematico = piso
-            medidas = _medir_todas(entradas, conjunto.f0_hz, conjunto.q, math.inf, args)
+            medidas = _medir_todas(entradas, conjunto.f0_hz, conjunto.q, math.inf, args, casadas)
         polo = math.inf
         if args.polo != "nao":
             sem = ajustar_segunda_ordem(medidas, f0_inicial=conjunto.f0_hz, q_inicial=conjunto.q)
@@ -424,7 +623,7 @@ def main(argv: list[str] | None = None) -> int:
             if _escolher_polo(sem, com, args.polo):
                 # a 3ª passada, com o polo: a previsão das razões do duty e do aliasing nos harmônicos altos muda
                 conjunto, polo = com, com.polo_hz
-                medidas = _medir_todas(entradas, conjunto.f0_hz, conjunto.q, polo, args)
+                medidas = _medir_todas(entradas, conjunto.f0_hz, conjunto.q, polo, args, casadas)
         com_polo = math.isfinite(polo)
         ajustes = [ajustar_segunda_ordem(medidas, usar_mag, usar_fase, conjunto.f0_hz, conjunto.q, com_polo,
                                          polo if com_polo else POLO_INICIAL_HZ)
@@ -435,12 +634,39 @@ def main(argv: list[str] | None = None) -> int:
         absolutos = costurar(medidas, f0, q, polo)
         combinada = combinar_em_grade(absolutos, f0, q, args.por_decada, polo)
         _relatar_coerencia(absolutos, combinada, f0, q, polo, args.por_decada, args.piso_sistematico)
+        ancora = ajuste_ancora = None
+        if args.ancora is not None:
+            ancora = ler_perfil_complexo(args.ancora)
+            ajuste_ancora = ajustar_a_ancora(combinada, ancora, args.ancora_ate)
+            _relatar_ancora(ancora.id, ajuste_ancora)
+        if args.passa_alta:
+            _conferir_passa_alta(medidas, melhor, ajuste_ancora)
         if args.csv is not None:
             _gravar_csv(args.csv, caminhos, medidas, f0, q, polo)
             _gravar_csv_grade(args.csv.with_name(args.csv.stem + "_grade.csv"), combinada)
         if args.plot is not None:
             gerar_grafico_bode(absolutos, combinada, rotulos, f0, q, args.plot, polo)
-        if args.saida_perfil is not None:
+        if args.saida_perfil is not None and ancora is not None:
+            ate = args.ancora_ate if args.ancora_ate is not None else float(ancora.freq_hz[-1])
+            ancorada = curva_ancorada(combinada, ajuste_ancora)
+            ident = args.id or args.saida_perfil.stem
+            perfil = montar_perfil_com_fase(ancora.dados, ancorada, medidas, caminhos, melhor, 1.0, ident,
+                                            next(iter(faixas)))
+            perfil["pontos"] = pontos_combinados(ancorada, ancora, ate)
+            perfil["faixa_freq_valida_hz"] = [perfil["pontos"][0]["freq_hz"], perfil["pontos"][-1]["freq_hz"]]
+            perfil["calibracao_adc"]["n_pontos"] = len(perfil["pontos"])
+            perfil["calibracao_adc"]["modo_referencia"] = (f"ondas quadradas num canal, ancoradas no perfil "
+                                                           f"'{ancora.id}' (K e o atraso) até {ate / 1e3:.1f} kHz")
+            perfil["resposta_fase"]["k_baixa_frequencia"] = round(math.exp(ajuste_ancora.ln_k), 6)
+            perfil["resposta_fase"]["ganho"] = f"o da âncora '{ancora.id}' até {ate / 1e3:.1f} kHz; acima, o da curva vezes K"
+            perfil["resposta_fase"]["fase"] = (f"a da âncora '{ancora.id}' até {ate / 1e3:.1f} kHz; acima, a da curva com "
+                                               "o atraso que a âncora fixou")
+            perfil["resposta_fase"]["ancora"] = {
+                "perfil": ancora.id, "ate_hz": round(ate, 1), "k": round(math.exp(ajuste_ancora.ln_k), 6),
+                "atraso_s": float(f"{ajuste_ancora.atraso_s:.6g}"), "residuo_db": round(ajuste_ancora.residuo_db, 4),
+                "residuo_graus": round(ajuste_ancora.residuo_graus, 4), "faixas_em_comum": ajuste_ancora.n_pontos}
+            gravar_perfil_validado(perfil, args.saida_perfil, len(perfil["pontos"]))
+        elif args.saida_perfil is not None:
             base = json.loads(args.perfil_base.read_text(encoding="utf-8"))
             carregar_perfil_sonda(args.perfil_base)          # valida o base
             k = args.ganho_baixa_frequencia

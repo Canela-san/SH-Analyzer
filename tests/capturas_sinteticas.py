@@ -248,13 +248,15 @@ def criar_pasta_amplitude_conhecida(pasta: Path, freqs=FREQS_CAL, canal: int = 3
 def quadrada_pela_cadeia(fs: float, f1: float, dur_s: float, duty: float = 0.5, f0: float = 24165.0, q: float = 0.5288,
                          atraso_s: float = 3e-6, ppm: float = 43.0, amplitude_lsb: float = 6600.0,
                          ruido_lsb: float = 0.79, ate_hz: float = 7e5, seed: int = 0,
-                         polo_hz: float | None = None, inl_lsb: float = 0.0, offset_lsb: float = 0.0) -> np.ndarray:
+                         polo_hz: float | None = None, inl_lsb: float = 0.0, offset_lsb: float = 0.0,
+                         passa_alta_hz: float | None = None) -> np.ndarray:
     """Códigos uint16 de uma quadrada (±``amplitude_lsb``, duty ``duty``) vista pelo ADC depois de um passa-baixa de
     2ª ordem (f0, Q) e de um atraso puro, com o relógio do gerador ``ppm`` acima do da PRU, o aliasing dos harmônicos
     até ``ate_hz``, o ruído e a quantização. É o que o ``medir_fase.py`` recebe da bancada (S2). ``polo_hz``: um polo
     real a mais (a cadeia deixa de ser um 2ª ordem). ``inl_lsb``: a não linearidade integral do ADC (uma curva suave
     de amplitude ``inl_lsb`` sobre o código), o que faz espúrios nos harmônicos fracos. ``offset_lsb``: o nível DC
-    (o offset do gerador): as bordas atravessam outros códigos."""
+    (o offset do gerador): as bordas atravessam outros códigos. ``passa_alta_hz``: um passa-alta de 1ª ordem a mais
+    (o de um TC em baixa frequência)."""
     rng = np.random.default_rng(seed)
     f1 = f1 * (1 + ppm * 1e-6)
     n = int(dur_s * fs)
@@ -269,8 +271,41 @@ def quadrada_pela_cadeia(fs: float, f1: float, dur_s: float, duty: float = 0.5, 
         h = 1 / (s * s + s / q + 1)
         if polo_hz is not None:
             h /= 1 + 1j * k * f1 / polo_hz
+        if passa_alta_hz is not None:
+            h /= 1 - 1j * passa_alta_hz / (k * f1)
         x += c * abs(h) * np.cos(k * fase + np.angle(h))
     codigo = 32768 + offset_lsb + x
     if inl_lsb:
         codigo = codigo + inl_lsb * (0.7 * np.sin(2 * np.pi * codigo / 4096 + 0.3) + 0.3 * np.sin(2 * np.pi * codigo / 977))
     return np.clip(np.round(codigo + rng.normal(0, ruido_lsb, n)), 0, 65535).astype("<u2")
+
+
+def quadrada_em_dois_canais(fs_total: float, f1: float, dur_s: float, h_a, h_b, amplitude_a_lsb: float = 40.0,
+                            amplitude_b_lsb: float = 1500.0, duty: float = 0.5, borda_hz: float | None = None,
+                            ppm: float = 43.0, ruido_lsb: float = 0.75, ate_hz: float = 7e5, seed: int = 0,
+                            vazamento=None) -> tuple[np.ndarray, np.ndarray]:
+    """Códigos uint16 de dois canais da varredura do ADS8688 (o a primeiro, o b 1/``fs_total`` depois; cada um a
+    ``fs_total``/2), com a MESMA onda quadrada (``duty``; a borda arredondada por um polo em ``borda_hz``) passando
+    por duas cadeias, ``h_a(f)`` e ``h_b(f)`` (complexas). ``vazamento(f)``: a fração do sinal do canal b que vaza no
+    a (a diafonia). É o que o ``medir_fase.py --canal-referencia`` recebe da bancada: o TC no a, o resistor no b."""
+    rng = np.random.default_rng(seed)
+    f1 = f1 * (1 + ppm * 1e-6)
+    fs = fs_total / 2
+    n = int(dur_s * fs)
+    t_a = np.arange(n) / fs + rng.uniform(0, 1 / f1)
+    t_b = t_a + 1 / fs_total
+    xa, xb = np.zeros(n), np.zeros(n)
+    for k in range(1, int(ate_hz / f1) + 1):
+        c = 4 / (np.pi * k) * np.sin(np.pi * k * duty)
+        if abs(c) < 1e-9:
+            continue
+        f = k * f1
+        borda = 1 / (1 + 1j * f / borda_hz) if borda_hz else 1.0
+        ha, hb = complex(h_a(f)) * borda, complex(h_b(f)) * borda
+        xb += amplitude_b_lsb * c * abs(hb) * np.cos(2 * np.pi * f * t_b + np.angle(hb))
+        xa += amplitude_a_lsb * c * abs(ha) * np.cos(2 * np.pi * f * t_a + np.angle(ha))
+        if vazamento is not None:
+            v = complex(vazamento(f)) * hb * amplitude_b_lsb
+            xa += c * abs(v) * np.cos(2 * np.pi * f * t_a + np.angle(v))
+    codigos = [np.clip(np.round(32768 + x + rng.normal(0, ruido_lsb, n)), 0, 65535).astype("<u2") for x in (xa, xb)]
+    return codigos[0], codigos[1]

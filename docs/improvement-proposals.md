@@ -143,7 +143,8 @@ novos, `aliasing` (3 taxas, faixa automática, para o `adc_tool.py aliasing`, qu
 `ruido` (o curto nas 3 faixas). E mais dois: `teto` (a maior taxa na grade por varredura em frequência, e a taxa de
 trabalho) e `conferir` (~10 s antes de uma série: firmware, ADC, nível, offset, ruído, a faixa certa e o Vpp
 esperado; teria pego a ligação errada e a placa sem alimentação de 23/10). Sem opções, cada modo usa a configuração
-que dá uma boa análise. O `enviar` apaga os dois scripts antigos da placa.
+que dá uma boa análise. O `enviar` apaga os dois scripts antigos da placa. Em 24/10/2026 o `cadeia` virou `calibrar`, o método
+principal de calibrar a sonda (S2, acima).
 
 **Aberto:** o `ler_adc` sobrescreve um `.bin` existente sem aviso (recusar, com `--sobrescrever` para os scripts, muda
 o uso: decisão do usuário). Em captura multicanal, os canais são amostrados 1/fs um depois do outro (2,5 µs a
@@ -369,6 +370,44 @@ O polo a mais entra quando o BIC o pede (`--polo auto`). Duas lições ficaram n
   atraso puro) e no piso das variantes, que ele dobrava.
 * **A quadrada não usa referência.** Por isso ela mostrou que o T3 por senoides herdou ~1,3 dB da referência do
   osciloscópio em alta frequência.
+
+**Estado (24/10/2026): o método principal de calibrar, com a entrada medida.** O `coletar.sh cadeia` virou
+`coletar.sh calibrar`. O que mais pesa no erro não é o ruído (0,0017 dB na grade), e sim o sistemático: a forma da
+quadrada na entrada, a faixa do ADC, o K e o INL. Mais f₁ na mesma amplitude não ajudam (repetem o mesmo INL), e uma
+2ª taxa só confere (a resposta é analógica). O que mudou:
+
+* **A entrada medida** (`calibrar --referencia`, `medir_fase.py --entrada`): o osciloscópio salva a forma de onda da
+  entrada em cada quadrada (THDP0200 na tensão, TCP0030A na corrente), e cada harmônico da captura é dividido pelo da
+  entrada (`fase_quadrada.dividir_pela_entrada`). Como os dois invariantes não dependem do instante, as capturas não
+  precisam ser simultâneas. Sai da conta a borda do gerador (o polo de 800 kHz fica decidido), o duty e a forma da
+  corrente: com ela, a sonda de corrente se calibra pelo mesmo método. Num teste sintético, uma borda de 60 kHz vira,
+  sem a entrada, um polo da cadeia achado pelo BIC; com ela, o 2ª ordem sai no lugar e o polo não entra.
+* **As duas faixas** (±10,24 V, a de produção, e ±2,56 V) por padrão, **25344 Hz** (um 7º harmônico forte em 177 kHz,
+  onde a incerteza era a maior) e **variantes de offset também em 256 Hz** (a base da costura): 68 capturas.
+* **O passa-alta do TC não vira atraso** (corrigido em 24/10/2026; a primeira avaliação dizia que sim): a parte
+  linear em n do adiantamento dele, o erro da fundamental tirado de cada captura (o do INL) já absorve. Numa
+  simulação com 3 Hz, a âncora mediu atraso de 0,002 µs (e não os 7 µs da conta sem esse efeito); sobra uma curvatura
+  de ~0,1 a 0,2° nos harmônicos mais baixos, que `medir_fase.py --passa-alta` mede (um passa-alta de 1ª ordem no
+  modelo, que só relata).
+
+**Estado (24/10/2026, 2ª parte): a sonda de corrente com magnitude e fase.** O limite é o sinal (60 µV/A: com o gerador
+sozinho, ~1,6 A·espira, o perfil vale até ~50 kHz) e, para a fase entre tensão e corrente, o método é a **razão de
+dois canais capturados juntos**:
+
+* `fase_quadrada` ganhou o passa-alta opcional no modelo; `razao_quadrada`, a razão por harmônico entre dois canais
+  simultâneos (o atraso de 1/taxa total da varredura descontado; a diafonia subtraída); `perfil_complexo`, a leitura
+  de um perfil com fase e da impedância de um shunt; `ancora_perfil`, a âncora do método de um canal num perfil
+  absoluto.
+* `medir_fase.py --canal-referencia` (com `--perfil-referencia`, `--resistencia`/`--shunt`, `--espiras`, `--ganho`,
+  `--diafonia`): o perfil absoluto do canal medido com a fase e a razão medida; `--ancora` e `--passa-alta` no método
+  de um canal. `medir_shunt.py`: Z(f) do resistor do laço pelo osciloscópio.
+* `coletar.sh calibrar --canal-referencia R` (`--faixa-referencia`, `--diafonia`, `--resistencia`, `--espiras`).
+* `gerar_perfil_sonda.py --reter` (hold-out) e `--comparar-com` (outro perfil).
+* Tudo opcional: sem as opções novas, as ferramentas fazem o que faziam.
+
+Falta: a fonte de corrente (1 a 2 A, bipolar) e o resistor não indutivo na bancada, a ida do T10 e o S3. Em
+hardware, a carga de 0,12 Ω do SCT013 usa 0,2 % da faixa a 100 A; uma de ~10 Ω daria +38 dB de sinal (decisão de
+projeto; pede recalibrar).
 
 Depois: o S3 (usar a fase na correção).
 

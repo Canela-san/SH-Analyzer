@@ -23,6 +23,15 @@ Cuidados que este módulo cobre
     * Os relógios do gerador e da BeagleBone diferem (~40 ppm): f₁ é medida na própria captura, e um erro dela some
       de M_n (a janela é simétrica).
 
+A entrada medida (``dividir_pela_entrada``)
+    Tudo acima supõe a quadrada IDEAL na entrada: bordas instantâneas, só o duty fora do lugar. A borda real do
+    gerador (ou a corrente que a indutância da carga e a saída do gerador arredondam) entra na medida como se fosse da
+    cadeia: no T3f, um "polo de 800 kHz" que tanto pode ser de um quanto da outra (≤ 0,21 dB em 178 kHz). Com a forma
+    de onda da entrada medida por um instrumento de banda muito maior (o osciloscópio com a ponta THDP0200 ou a
+    TCP0030A), cada harmônico da saída dividido pelo mesmo harmônico da entrada dá H(n f₁) / H(f₁) com QUALQUER forma
+    de onda periódica na entrada: os dois invariantes não dependem do instante, então as duas capturas não precisam
+    ser simultâneas, só da mesma forma de onda (o gerador parado na mesma quadrada).
+
 O modelo da cadeia é o passa-baixa de 2ª ordem do T3: ``H(s) = K ω0² / (s² + (ω0/Q) s + ω0²)``.
 """
 
@@ -30,7 +39,7 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -42,6 +51,7 @@ F0_PADRAO_HZ = 24165.0          # o 2ª ordem do T3 de 22/10/2026 (cadeia_tensao
 Q_PADRAO = 0.5288
 POLO_INICIAL_HZ = 1e6           # o polo real a mais (--polo): o ponto de partida; o T3f de 22/10/2026 deu ~800 kHz
 POLO_MINIMO_HZ = 2e4            # abaixo disso não é "um polo a mais", é outro filtro
+PASSA_ALTA_INICIAL_HZ = 1.0     # o passa-alta a mais (--passa-alta): o ponto de partida (um TC: ~1 Hz)
 FRACAO_DA_NYQUIST = 0.95        # harmônicos até 95 % da Nyquist
 CONTAMINACAO_MAX_DB = -60.0     # aliasing previsto acima disso, relativo ao harmônico: fora (~0,06° de erro)
 SNR_MINIMO_DB = 30.0            # harmônico menos de 30 dB acima do ruído vizinho: fora
@@ -56,28 +66,35 @@ BLOCOS_MINIMOS = 4              # captura curta: dividida em 4 blocos (a dispers
 # f₁ alta, com harmônicos de dezenas de LSB ali, ficam com o peso. Ajustável no medir_fase.py (--piso-sistematico).
 PISO_SISTEMATICO_LSB = 0.02
 PARES_PARA_O_DUTY = 4           # o duty sai dos harmônicos 2, 4, 6 e 8
+PERIODOS_POR_BLOCO = 16         # blocos com menos períodos que isso (registros do osciloscópio, a MS/s) crescem até aqui
+PERIODOS_MINIMOS_POR_BLOCO = 5  # abaixo disso, a janela não separa um harmônico do vizinho (o lóbulo tem ±4 raias)
+TOLERANCIA_F1_ENTRADA = 2e-3    # a f₁ da entrada e a da saída (relógios do osciloscópio e da PRU: ~100 ppm)
 
 
-def h_segunda_ordem(f, f0: float, q: float, polo: float = math.inf) -> np.ndarray:
-    """H(j2πf) do passa-baixa de 2ª ordem com K = 1 e, se ``polo`` é finito, um polo real a mais (Hz)."""
+def h_segunda_ordem(f, f0: float, q: float, polo: float = math.inf, passa_alta: float = 0.0) -> np.ndarray:
+    """H(j2πf) do passa-baixa de 2ª ordem com K = 1 e, se ``polo`` é finito, um polo real a mais (Hz); com
+    ``passa_alta`` > 0, um passa-alta de 1ª ordem (Hz: o de um TC em baixa frequência)."""
     f = np.asarray(f, dtype=np.float64)
     s = 1j * f / f0
-    return 1.0 / (s * s + s / q + 1.0) / (1.0 + 1j * f / polo)
+    h = 1.0 / (s * s + s / q + 1.0) / (1.0 + 1j * f / polo)
+    return h if passa_alta <= 0 else h / (1.0 - 1j * passa_alta / f)
 
 
-def fase_relativa_modelo(f, f1: float, f0: float, q: float, polo: float = math.inf) -> np.ndarray:
+def fase_relativa_modelo(f, f1: float, f0: float, q: float, polo: float = math.inf, passa_alta: float = 0.0) -> np.ndarray:
     """ψ(f) − (f/f₁)·ψ(f₁) do 2ª ordem, com ψ contínua (desenrolada a partir de 0 Hz)."""
     f = np.asarray(f, dtype=np.float64)
-    return fase_do_modelo(f, f0, q, polo) - (f / f1) * fase_do_modelo(np.array([f1]), f0, q, polo)[0]
+    return (fase_do_modelo(f, f0, q, polo, passa_alta)
+            - (f / f1) * fase_do_modelo(np.array([f1]), f0, q, polo, passa_alta)[0])
 
 
-def fase_do_modelo(f, f0: float, q: float, polo: float = math.inf) -> np.ndarray:
+def fase_do_modelo(f, f0: float, q: float, polo: float = math.inf, passa_alta: float = 0.0) -> np.ndarray:
     """ψ(f) do modelo, contínua (desenrolada a partir de 0 Hz)."""
     # arg de 1 / (1 − x² + j x/Q): vai de 0 a −π sem salto (o denominador nunca cruza o semieixo real negativo); o polo
-    # real soma de 0 a −π/2
+    # real soma de 0 a −π/2, e o passa-alta, de +π/2 (em 0 Hz) a 0
     f = np.asarray(f, dtype=np.float64)
     x = f / f0
-    return -np.arctan2(x / q, 1.0 - x * x) - np.arctan(f / polo)
+    fase = -np.arctan2(x / q, 1.0 - x * x) - np.arctan(f / polo)
+    return fase if passa_alta <= 0 else fase + np.arctan(passa_alta / f)
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -99,11 +116,14 @@ class RespostaQuadrada:
     fase_rel_rad: np.ndarray            # M_n − θ_n, desenrolada pelo modelo de partida
     sigma_fase_rad: np.ndarray
     amplitude: np.ndarray               # amplitude de pico do harmônico, na unidade do sinal (LSB na CLI)
+    z_medio: np.ndarray                 # Z_n = X_n·e^{−jn arg X₁}, média coerente dos blocos (complexo; Z_1 real)
+    sigma_rel: np.ndarray               # incerteza de Z_n relativa a |Z_n| (o ruído e o piso), sem o duty
     nivel_medio: float                  # o nível médio da captura (o offset): as variantes de offset mudam os códigos
     snr_db: np.ndarray                  # o harmônico sobre o ruído (a dispersão entre os blocos)
     contaminacao_db: np.ndarray         # o aliasing previsto sobre ele, relativo a ele
     usado: np.ndarray                   # passou nos critérios
     motivo: list[str] = field(default_factory=list)   # vazio = usado
+    entrada: str = ""                   # a referência da entrada que dividiu a medida (vazio = a quadrada ideal)
 
     def __len__(self) -> int:
         return len(self.n)
@@ -176,9 +196,25 @@ def _harmonicos_do_bloco(xw: np.ndarray, fs: float, f1: float, m_impares: int, m
     return impares, pares
 
 
+def comprimento_do_bloco(n_amostras: int, fs: float, f1: float, amostras_por_bloco: int = AMOSTRAS_POR_BLOCO) -> int:
+    """Amostras de cada bloco da média coerente: ``amostras_por_bloco`` (ou 1/4 da captura, se ela for curta), no
+    mínimo ``PERIODOS_POR_BLOCO`` períodos; recusa blocos de menos de 4096 amostras ou de menos de
+    ``PERIODOS_MINIMOS_POR_BLOCO`` períodos."""
+    comprimento = amostras_por_bloco if n_amostras >= BLOCOS_MINIMOS * amostras_por_bloco else n_amostras // BLOCOS_MINIMOS
+    comprimento = min(max(comprimento, int(math.ceil(PERIODOS_POR_BLOCO * fs / f1))), n_amostras // BLOCOS_MINIMOS)
+    if comprimento < 4096:
+        raise ErroSHAN(f"captura curta demais ({n_amostras} amostras): são precisos {BLOCOS_MINIMOS} blocos de 4096.")
+    if comprimento * f1 / fs < PERIODOS_MINIMOS_POR_BLOCO:
+        raise ErroSHAN(f"captura curta demais ({n_amostras / fs * 1e3:.1f} ms): cada um dos {BLOCOS_MINIMOS} blocos teria "
+                       f"{comprimento * f1 / fs:.1f} períodos da quadrada, e são precisos {PERIODOS_MINIMOS_POR_BLOCO} "
+                       f"(um registro de pelo menos {BLOCOS_MINIMOS * PERIODOS_MINIMOS_POR_BLOCO / f1 * 1e3:.0f} ms).")
+    return comprimento
+
+
 def medir_quadrada(sinal: np.ndarray, fs: float, f_dica: float | None = None, f0: float = F0_PADRAO_HZ,
                    q: float = Q_PADRAO, freq_max_hz: float | None = None, amostras_por_bloco: int = AMOSTRAS_POR_BLOCO,
-                   piso_sistematico: float = PISO_SISTEMATICO_LSB, polo: float = math.inf) -> RespostaQuadrada:
+                   piso_sistematico: float = PISO_SISTEMATICO_LSB, polo: float = math.inf,
+                   prever_aliasing: bool = True) -> RespostaQuadrada:
     """Mede os harmônicos ímpares de uma captura de quadrada e devolve a resposta da cadeia relativa a f₁.
 
     A captura é dividida em blocos (``amostras_por_bloco``; em capturas curtas, 4 blocos). Em cada bloco, o invariante
@@ -187,7 +223,9 @@ def medir_quadrada(sinal: np.ndarray, fs: float, f_dica: float | None = None, f0
     unidade do sinal) entra somado em quadratura, dividido pela amplitude de cada harmônico.
 
     ``f0``/``q``: o modelo de partida -- para desenrolar a fase, prever o aliasing e tirar o filtro da razão entre os
-    harmônicos pares e a fundamental (não entram na medida)."""
+    harmônicos pares e a fundamental (não entram na medida). ``prever_aliasing=False``: a captura não tem aliasing a
+    prever pelo modelo (a entrada no osciloscópio, que amostra a MS/s; o modo Hi Res dele põe nulos nos múltiplos da
+    taxa, de onde o aliasing viria)."""
     x = np.asarray(sinal, dtype=np.float64)
     nivel_medio = float(np.mean(x))
     x = x - nivel_medio
@@ -200,9 +238,7 @@ def medir_quadrada(sinal: np.ndarray, fs: float, f_dica: float | None = None, f0
     pares_k = np.arange(1, PARES_PARA_O_DUTY + 1)
     pares_k = pares_k[2 * pares_k * f1 < limite] if np.any(2 * pares_k * f1 < limite) else pares_k[:1]
 
-    comprimento = amostras_por_bloco if len(x) >= BLOCOS_MINIMOS * amostras_por_bloco else len(x) // BLOCOS_MINIMOS
-    if comprimento < 4096:
-        raise ErroSHAN(f"captura curta demais ({len(x)} amostras): são precisos {BLOCOS_MINIMOS} blocos de 4096.")
+    comprimento = comprimento_do_bloco(len(x), fs, f1, amostras_por_bloco)
     n_blocos = len(x) // comprimento
     w = _janela_bh(comprimento)
     soma = float(np.sum(w))
@@ -246,7 +282,10 @@ def medir_quadrada(sinal: np.ndarray, fs: float, f_dica: float | None = None, f0
     sigma_ln = np.sqrt(rel_ruido ** 2 + rel_ruido[0] ** 2 + sistematico ** 2 + duty_ln ** 2 + SIGMA_LN_MINIMO ** 2)
 
     resolucao = 4.0 * fs / comprimento                       # ~2 lóbulos da Blackman-Harris
-    contam = contaminacao_por_aliasing(f1, fs, n, eps, f0, q, resolucao, polo=polo)
+    if prever_aliasing:
+        contam = contaminacao_por_aliasing(f1, fs, n, eps, f0, q, resolucao, polo=polo)
+    else:
+        contam = np.full(len(n), -np.inf)
 
     motivos = []
     for i in range(len(n)):
@@ -263,7 +302,70 @@ def medir_quadrada(sinal: np.ndarray, fs: float, f_dica: float | None = None, f0
     usado = np.array([m == "" for m in motivos])
     log.debug(f"f₁ = {f1:.4f} Hz, ε = {eps:.5f}, {n_blocos} blocos, {usado.sum()} de {len(n)} harmônicos usados")
     return RespostaQuadrada(f1, fs, eps, sigma_eps, n_blocos, n, n * f1, ganho_rel, sigma_ln, fase_rel, sigma_fase,
-                            amplitude, nivel_medio, snr_db, contam, usado, motivos)
+                            amplitude, zm, np.sqrt(rel_ruido ** 2 + sistematico ** 2), nivel_medio, snr_db, contam, usado,
+                            motivos)
+
+
+def dividir_pela_entrada(saida: RespostaQuadrada, entrada: RespostaQuadrada, f0: float = F0_PADRAO_HZ,
+                         q: float = Q_PADRAO, polo: float = math.inf, nome: str = "entrada") -> RespostaQuadrada:
+    """A medida da saída (o ADC) dividida, harmônico a harmônico, pela da entrada (o osciloscópio na entrada da
+    sonda), em vez de supor a quadrada ideal: ``Z_n(saída) / Z_n(entrada)``, com Z_n = X_n·e^{−jn arg X₁}, normalizado
+    pela fundamental, é H(n f₁) / H(f₁)·e^{−j n arg H(f₁)} -- o mesmo M_n e o mesmo R_n de antes, sem o duty, a borda
+    do gerador nem a forma da corrente na conta. As razões são das amplitudes brutas (o fator do duty não entra), e a
+    fase se desenrola pelo modelo (``f0``, ``q``, ``polo``), como na medida. Um harmônico fica de fora se a entrada não
+    o mediu, ou se tem SNR baixa nela; os critérios da saída (o aliasing previsto, a SNR) continuam valendo."""
+    if abs(entrada.f1_hz / saida.f1_hz - 1) > TOLERANCIA_F1_ENTRADA:
+        raise ErroSHAN(f"a entrada '{nome}' tem f₁ = {entrada.f1_hz:.3f} Hz, e a saída, {saida.f1_hz:.3f} Hz: não são "
+                       "a mesma quadrada.")
+    posicao = {int(k): i for i, k in enumerate(entrada.n)}
+    i_ent = np.array([posicao.get(int(k), -1) for k in saida.n])
+    tem = i_ent >= 0
+    if not tem[0]:
+        raise ErroSHAN(f"a entrada '{nome}' não tem a fundamental medida.")
+    j = np.where(tem, i_ent, 0)
+    z_ent = np.where(tem, entrada.z_medio[j], 1.0)
+    s_ent = np.where(tem, entrada.sigma_rel[j], 0.0)
+    snr_ent = np.where(tem, entrada.snr_db[j], np.inf)
+    razao = saida.z_medio / z_ent
+    razao = razao / razao[0]                                 # Z_1 é real e positivo nas duas: a fundamental vira 1
+    ganho_rel = np.abs(razao)
+    previsto = fase_relativa_modelo(saida.freq_hz, saida.f1_hz, f0, q, polo)
+    fase_rel = previsto + np.angle(np.exp(1j * (np.angle(razao) - previsto)))
+    s_sai = saida.sigma_rel
+    sigma_ln = np.sqrt(s_sai ** 2 + s_sai[0] ** 2 + s_ent ** 2 + s_ent[0] ** 2 + SIGMA_LN_MINIMO ** 2)
+    sigma_fase = np.sqrt(s_sai ** 2 + s_ent ** 2 + SIGMA_FASE_MINIMO ** 2)
+    snr_db = -10 * np.log10(10 ** (-saida.snr_db / 10) + 10 ** (-snr_ent / 10))
+    motivos = []
+    for i in range(len(saida.n)):
+        if i == 0:
+            motivos.append("")
+        elif not tem[i]:
+            motivos.append("fora da entrada medida")
+        elif saida.contaminacao_db[i] > CONTAMINACAO_MAX_DB:
+            motivos.append(f"aliasing a {saida.contaminacao_db[i]:.0f} dB")
+        elif saida.snr_db[i] < SNR_MINIMO_DB:
+            motivos.append(f"SNR de {saida.snr_db[i]:.0f} dB")
+        elif snr_ent[i] < SNR_MINIMO_DB:
+            motivos.append(f"SNR de {snr_ent[i]:.0f} dB na entrada")
+        else:
+            motivos.append("")
+    return replace(saida, ganho_rel=ganho_rel, sigma_ln_ganho=sigma_ln, fase_rel_rad=fase_rel, sigma_fase_rad=sigma_fase,
+                   snr_db=snr_db, usado=np.array([m == "" for m in motivos]), motivo=motivos, entrada=nome)
+
+
+def desvio_da_quadrada_ideal(entrada: RespostaQuadrada) -> tuple[float, float, float]:
+    """(maior desvio de magnitude em dB, maior desvio de fase em graus, até que frequência) da entrada medida contra
+    a quadrada ideal com o mesmo duty, nos harmônicos usados: o que a borda do gerador (ou a forma da corrente) poria
+    na medida sem a referência. A fase sai sem a reta em n (um deslocamento da borda), como no ajuste."""
+    u = entrada.usado & (entrada.n > 1)
+    if not np.any(u):
+        return 0.0, 0.0, entrada.f1_hz
+    n = entrada.n[u].astype(float)
+    fase = entrada.fase_rel_rad[u]
+    w = 1 / entrada.sigma_fase_rad[u] ** 2
+    fase = fase - n * float(np.sum(w * n * fase) / np.sum(w * n * n))
+    return (float(np.max(np.abs(20 * np.log10(entrada.ganho_rel[u])))), float(np.degrees(np.max(np.abs(fase)))),
+            float(entrada.freq_hz[u][-1]))
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -283,6 +385,8 @@ class AjusteFase:
     polo_hz: float = math.inf   # o polo real a mais (Hz); infinito = só o 2ª ordem
     sigma_polo_hz: float = math.nan
     n_parametros: int = 2       # do modelo e, na fase, um erro da fundamental por captura
+    passa_alta_hz: float = 0.0  # o passa-alta de 1ª ordem (Hz); 0 = nenhum
+    sigma_passa_alta_hz: float = math.nan
 
     @property
     def bic(self) -> float:
@@ -295,7 +399,8 @@ def _polo_do_parametro(inverso_mhz: float) -> float:
     return 1e6 / inverso_mhz if inverso_mhz > 0 else math.inf
 
 
-def _erro_da_fundamental(r: RespostaQuadrada, f0: float, q: float, polo: float) -> tuple[np.ndarray, np.ndarray, float]:
+def _erro_da_fundamental(r: RespostaQuadrada, f0: float, q: float, polo: float,
+                         passa_alta: float = 0.0) -> tuple[np.ndarray, np.ndarray, float]:
     """(resíduo, σ, δ) da fase relativa contra o modelo nos harmônicos usados acima da fundamental, em rad, já sem o
     erro δ da fase medida da fundamental. Um erro em arg X₁ entra em arg Xₙ − n·arg X₁ multiplicado por n: no T3f de
     22/10/2026, ~1 LSB em quadratura com a fundamental (o INL do ADC: muda com a amplitude e o offset, não com a taxa),
@@ -306,34 +411,39 @@ def _erro_da_fundamental(r: RespostaQuadrada, f0: float, q: float, polo: float) 
     if not np.any(u):
         return np.empty(0), np.empty(0), 0.0
     n = r.n[u].astype(float)
-    res = np.angle(np.exp(1j * (r.fase_rel_rad[u] - fase_relativa_modelo(r.freq_hz[u], r.f1_hz, f0, q, polo))))
+    res = np.angle(np.exp(1j * (r.fase_rel_rad[u] - fase_relativa_modelo(r.freq_hz[u], r.f1_hz, f0, q, polo, passa_alta))))
     w = 1 / r.sigma_fase_rad[u] ** 2
     delta = float(np.sum(w * n * res) / np.sum(w * n * n))
     return res - n * delta, r.sigma_fase_rad[u], delta
 
 
-def _residuos(p, medidas: list[RespostaQuadrada], usar_mag: bool, usar_fase: bool) -> np.ndarray:
+def _residuos(p, medidas: list[RespostaQuadrada], usar_mag: bool, usar_fase: bool,
+              com_passa_alta: bool = False) -> np.ndarray:
     f0, q = p[0], p[1]
-    polo = _polo_do_parametro(p[2]) if len(p) > 2 else math.inf
+    passa_alta = p[-1] if com_passa_alta else 0.0
+    polo = _polo_do_parametro(p[2]) if len(p) > (3 if com_passa_alta else 2) else math.inf
     saida = []
     for r in medidas:
         u = r.usado
         if usar_mag:
-            modelo = np.abs(h_segunda_ordem(r.freq_hz[u], f0, q, polo)) / abs(h_segunda_ordem(r.f1_hz, f0, q, polo))
+            modelo = (np.abs(h_segunda_ordem(r.freq_hz[u], f0, q, polo, passa_alta))
+                      / abs(h_segunda_ordem(r.f1_hz, f0, q, polo, passa_alta)))
             saida.append((np.log(r.ganho_rel[u]) - np.log(modelo)) / r.sigma_ln_ganho[u])
         if usar_fase:
-            res, sigma, _ = _erro_da_fundamental(r, f0, q, polo)
+            res, sigma, _ = _erro_da_fundamental(r, f0, q, polo, passa_alta)
             saida.append(res / sigma)
     return np.concatenate(saida)
 
 
 def ajustar_segunda_ordem(medidas: list[RespostaQuadrada], usar_mag: bool = True, usar_fase: bool = True,
                           f0_inicial: float = F0_PADRAO_HZ, q_inicial: float = Q_PADRAO, com_polo: bool = False,
-                          polo_inicial: float = POLO_INICIAL_HZ) -> AjusteFase:
+                          polo_inicial: float = POLO_INICIAL_HZ, com_passa_alta: bool = False,
+                          passa_alta_inicial: float = PASSA_ALTA_INICIAL_HZ) -> AjusteFase:
     """Mínimos quadrados ponderados de (f0, Q) aos pontos usados e, com ``com_polo``, de um polo real a mais. Na fase,
     cada captura tem ainda o erro da fase da fundamental (``_erro_da_fundamental``), que conta nos graus de liberdade. As
     incertezas vêm do jacobiano, escaladas por sqrt(χ²_red) quando ele passa de 1 (o modelo ou as incertezas não
-    explicam tudo)."""
+    explicam tudo). ``com_passa_alta``: um passa-alta de 1ª ordem a mais (o de um TC), medido pela curvatura em 1/n da
+    fase dos harmônicos baixos da quadrada mais lenta."""
     from scipy.optimize import least_squares
 
     if not (usar_mag or usar_fase):
@@ -344,7 +454,13 @@ def ajustar_segunda_ordem(medidas: list[RespostaQuadrada], usar_mag: bool = True
         baixo.append(0.0)
         alto.append(1e6 / POLO_MINIMO_HZ)
         escala.append(1e6 / polo_inicial)
-    res = least_squares(_residuos, x0, args=(medidas, usar_mag, usar_fase), bounds=(baixo, alto), x_scale=escala)
+    if com_passa_alta:
+        x0.append(passa_alta_inicial)
+        baixo.append(0.0)
+        alto.append(min(r.f1_hz for r in medidas) / 2)
+        escala.append(max(passa_alta_inicial, 1.0))
+    res = least_squares(_residuos, x0, args=(medidas, usar_mag, usar_fase, com_passa_alta), bounds=(baixo, alto),
+                        x_scale=escala)
     n_res, k = len(res.fun), len(x0)
     incomodos = sum(1 for r in medidas if np.any(r.usado & (r.n > 1))) if usar_fase else 0
     gl = max(n_res - k - incomodos, 1)
@@ -359,17 +475,19 @@ def ajustar_segunda_ordem(medidas: list[RespostaQuadrada], usar_mag: bool = True
     if com_polo:
         polo = _polo_do_parametro(res.x[2])
         sigma_polo = polo * sigmas[2] / res.x[2] if res.x[2] > 0 else math.nan     # σ(1/p)/(1/p) = σp/p
+    passa_alta, sigma_passa_alta = (float(res.x[-1]), float(sigmas[-1])) if com_passa_alta else (0.0, math.nan)
     mag_db, fase_g = [], []
     for r in medidas:
         u = r.usado
-        modelo = np.abs(h_segunda_ordem(r.freq_hz[u], f0, q, polo)) / abs(h_segunda_ordem(r.f1_hz, f0, q, polo))
+        modelo = (np.abs(h_segunda_ordem(r.freq_hz[u], f0, q, polo, passa_alta))
+                  / abs(h_segunda_ordem(r.f1_hz, f0, q, polo, passa_alta)))
         mag_db.append(20 * np.log10(r.ganho_rel[u] / modelo))
-        fase_g.append(np.degrees(_erro_da_fundamental(r, f0, q, polo)[0]))
+        fase_g.append(np.degrees(_erro_da_fundamental(r, f0, q, polo, passa_alta)[0]))
     nome = "conjunto" if usar_mag and usar_fase else ("só magnitude" if usar_mag else "só fase")
     return AjusteFase(nome, float(f0), float(q), float(sigmas[0]), float(sigmas[1]),
                       float(np.sqrt(np.mean(np.concatenate(mag_db) ** 2))),
                       float(np.sqrt(np.mean(np.concatenate(fase_g) ** 2))), chi2, n_res, polo, float(sigma_polo),
-                      k + incomodos)
+                      k + incomodos, passa_alta, sigma_passa_alta)
 
 
 def fase_absoluta(r: RespostaQuadrada, f0: float, q: float, polo: float = math.inf) -> np.ndarray:
