@@ -13,7 +13,7 @@ Pré-requisito: [`user-guide.md`](user-guide.md) (capturar e analisar). Este rot
 
 **Índice**
 
-1. [Estado da campanha](#estado-da-campanha) (o que já foi medido e o que vem a seguir) e o [passo a passo da próxima ida](#passo-a-passo-da-próxima-ida-a-referência-do-t3-o-polo-de-800-khz-e-a-faixa-de-produção-1-h)
+1. [Estado da campanha](#estado-da-campanha) (o que já foi medido e o que vem a seguir) e o [passo a passo da próxima ida](#passo-a-passo-da-próxima-ida-a-sonda-de-corrente-e-a-faixa-de-produção-sem-osciloscópio-2-h-30)
 2. [Antes de ir: o que o datasheet e o código já dizem](#antes-de-ir-o-que-o-datasheet-e-o-código-já-dizem)
 3. [Equipamentos, segurança e boas práticas](#equipamentos-segurança-e-boas-práticas)
 4. [Convenções e a ferramenta `medir_captura.py`](#convenções-e-a-ferramenta-medir_capturapy)
@@ -33,16 +33,140 @@ Os números de cada teste executado, com a data, o firmware e a pasta dos dados,
 | Teste | Situação | Resultado principal | Falta |
 |---|---|---|---|
 | [T0](#t0-preparação-e-sanidade) | ✅ 19/10 | Escala do ADC **confirmada nas três faixas** (razão 0,9997; 0,9997; 0,9992). Achado: as ~6 primeiras amostras depois de uma troca de faixa são transitório | Refazer o −10 V (as capturas "−10 V" saíram com 0 V na entrada) |
-| [T1](#t1-piso-de-ruído-entrada-em-curto) | ✅ 19/10 e 22/10 | Ruído de 160 / 91 / 58 µV RMS nas faixas de ±10,24 / ±5,12 / ±2,56 V, igual ao datasheet (172 / 96 / 61 µV); não muda com a taxa nem com 2 canais. **A 312,5 kS/s (22/10): 169 / 95 / 62 µV**, o mesmo. Offset do canal 1: +3,5 mV (canal 0: +0,05 mV) | Pino do canal 1 em curto direto (origem do offset) |
+| [T1](#t1-piso-de-ruído-entrada-em-curto) | ✅ 19/10 e 22/10 | Ruído de 160 / 91 / 58 µV RMS nas faixas de ±10,24 / ±5,12 / ±2,56 V, igual ao datasheet (172 / 96 / 61 µV); não muda com a taxa nem com 2 canais. **A 312,5 kS/s (22/10): 169 / 95 / 62 µV**, o mesmo; **a 400 kS/s (23/10, ±2,56 V): 61,6 µV**. Offset do canal 1: +2,6 a +3,5 mV (canal 0: +0,05 mV) | Pino do canal 1 em curto direto (origem do offset) |
 | [T2](#t2-tensão-contínua-ganho-offset-e-linearidade) | ✅ 19/10 | Razão real do divisor 0,051554 (`$GV` medido = 19,397; −0,03 % do nominal com a carga do ADC); resíduo de linearidade ≤ 0,22 LSB | — |
-| [T3](#t3-resposta-em-frequência-da-cadeia-de-tensão) | ✅ 19/10 e 22/10 | **Até 140 kHz a 312,5 kS/s (22/10, perfil `cadeia_tensao_312k`):** −3 dB em 16,8 kHz; 2ª ordem com f0 = 24,2 kHz e Q = 0,53 (resíduo de 0,1 dB em 3,5 décadas); −30,6 dB em 140 kHz. A 0,13 dB rms do de 19/10. **[T3f](bench-results.md#t3f-a-fase-da-cadeia-por-ondas-quadradas) (22/10), magnitude e fase por ondas quadradas, sem referência (perfil `cadeia_tensao_fase`, até 180 kHz):** dois polos reais em 22,81 kHz (Q = 0,5001) e um em 800 kHz; −3 dB em 14,68 kHz; resíduo de 0,01 dB e 0,14°; fase mínima confirmada. As senoides ficam 1,2 a 1,3 dB acima dele em alta frequência: a referência do osciloscópio (suspeita: a ponta descompensada) | A conferência da ponta e o `calibrar --referencia` nas duas faixas (a origem do polo de 800 kHz e a faixa de produção) ([próxima ida](#passo-a-passo-da-próxima-ida-a-referência-do-t3-o-polo-de-800-khz-e-a-faixa-de-produção-1-h)) |
+| [T3](#t3-resposta-em-frequência-da-cadeia-de-tensão) | ✅ 19/10 e 22/10 | **Até 140 kHz a 312,5 kS/s (22/10, perfil `cadeia_tensao_312k`):** −3 dB em 16,8 kHz; 2ª ordem com f0 = 24,2 kHz e Q = 0,53 (resíduo de 0,1 dB em 3,5 décadas); −30,6 dB em 140 kHz. A 0,13 dB rms do de 19/10. **[T3f](bench-results.md#t3f-a-fase-da-cadeia-por-ondas-quadradas) (22/10), magnitude e fase por ondas quadradas, sem referência (perfil `cadeia_tensao_fase`, até 180 kHz):** dois polos reais em 22,81 kHz (Q = 0,5001) e um em 800 kHz; −3 dB em 14,68 kHz; resíduo de 0,01 dB e 0,14°; fase mínima confirmada. **Confirmado em 23/10 por senoides com o gerador como referência** ([T9 e T8](bench-results.md#t9-e-t8-sinais-de-espectro-conhecido-e-aliasing)): 10 tons de 60 Hz a 270 kHz a ±0,05 dB do modelo, e o polo de 800 kHz é da cadeia. Os perfis por senoides com o osciloscópio (1,2 a 1,3 dB altos acima de 40 kHz) erraram pela referência: **o de produção é o `cadeia_tensao_fase`** | O `calibrar` na faixa de produção (±10,24 V), sem osciloscópio ([próxima ida](#passo-a-passo-da-próxima-ida-a-sonda-de-corrente-e-a-faixa-de-produção-sem-osciloscópio-2-h-30)) |
 | [T4](#t4-frequência-de-amostragem-real) | 🟡 19/10 | Taxa = 200 MHz ÷ ticks confirmada (102,4 kS/s: −64,0 ppm; 110 kS/s: −100,0 ppm; as exatas concordam em 0,02 ppm) | Leitura do contador do osciloscópio (separa gerador e cristal: hoje, −43,2 ppm somados) |
 | [T5](#t5-distorção-e-faixa-dinâmica) | ⏳ | Prévia, das capturas do T4: SINAD 61 dB e ENOB 14,4 bits com o tom em −27,5 dBFS; THD −71,6 dB, limitado pelo gerador | Tudo |
 | [T6](#t6-vários-canais-diafonia-e-atraso) | 🟡 19/10 | Diafonia 1 → 0 de −94,7 dB em 10 kHz; atraso entre canais 9,954 µs (esperado 10,000) | Refazer o ponto de 40 kHz em **20 kHz** (com 2 canais a Nyquist é 25 kHz) |
 | [T7](#t7-integridade-e-limite-de-taxa) | 🟡 21/10 | O salto de 7 µs nas trocas de buffer sumiu (≤ 0,06 µs). [T7e](#t7e-onde-está-o-limite-de-taxa): as esperas do CS descem ao piso do datasheet (`3,1,3`) sem perda nenhuma; teto de 326 kS/s; **trabalho proposto: `6,2,6` a 250 kS/s; o padrão ficou em `3,1,3` a 312,5 kS/s**. Achado: degrau de 5 a 13 µs a cada 10,74 s (o rebase do contador), corrigido no firmware | ✅ 22/10: **[T7f](#t7f-o-período-entre-amostras-a-grade-de-tempo)**, a grade exata: jitter de 8,5 → 0,00 ns, degraus de 0 ciclo, ruído com o tom de 2,23 → 0,77 LSB, nenhuma atrasada a 312,5 kS/s (folga de 3 ciclos). Achado na análise: o quadro durava 605 + (bits 1 da amostra) ciclos; corrigido no firmware. **2ª rodada (22/10), com o quadro fixo:** folga de 25 ciclos com qualquer sinal, teto de 327,9 kS/s. **[T7g](bench-results.md#t7g-o-spi-rápido), o SPI rápido:** 0 leituras divergentes (margem do SDO ≥ 15 ns para cada lado), o mesmo ruído, período constante até 419,3 kS/s e 18 ciclos de folga a 400 kS/s: **o padrão desde 22/10** (`--spi lenta` volta ao de antes). Falta: T7d |
-| [T8](#t8-aliasing) a [T11](#t11-ponta-a-ponta) | ⏳ | — | Tudo; o T10 é o objetivo central |
+| [T8](#t8-aliasing) | ✅ 23/10 | O tom acima da Nyquist dobra com a atenuação da cadeia na frequência **real**, a 0,01 dB: 130 kHz a 100 kS/s (em 30 kHz), 270 kHz a 400 e 320 kS/s (em 130 e 50 kHz); −30,6 dB em 130 kHz e −43,5 dB em 270 kHz | — |
+| [T9](#t9-sinais-de-espectro-conhecido) | 🟡 23/10 | 60 Hz de 16 Vpp com tons de 9 kHz (−60 e −70 dBc), 25 kHz (−40 dBc), AM a 40 kHz e FM a 75 kHz, a 400 kS/s: os tons a ±0,05 dB do nominal com o perfil; as bandas laterais da AM a 0,02 dB da teoria; menor tom detectável de 8 µV (9 kHz) a 105 µV (180 kHz) de pico em 30 s. A FM tem o espectro certo e a potência 1,6 dB abaixo | T9b (dois tons); 75 kHz sem FM (separa o gerador); o T9a já está nas quadradas do T3f |
+| Alimentação | ✅ 23/10 | **A placa de aquisição só funciona com a fonte de 5 V na BeagleBone**: pelo USB, o pino de +5 V do conector fica sem tensão e o ADC, mudo (por projeto da placa). O laço de terra pelo gerador põe 33 µV de 60 Hz no pino, 106 dB abaixo da fundamental de produção | — |
+| [T10](#t10-perfil-da-sonda-de-corrente) | ⏳ | — | Tudo: é o objetivo central ([próxima ida](#passo-a-passo-da-próxima-ida-a-sonda-de-corrente-e-a-faixa-de-produção-sem-osciloscópio-2-h-30)) |
+| [T11](#t11-ponta-a-ponta) | ⏳ | — | Depois do T10 |
 
-### Passo a passo da próxima ida: a referência do T3, o polo de ~800 kHz e a faixa de produção (~1 h)
+### Passo a passo da próxima ida: a sonda de corrente e a faixa de produção, sem osciloscópio (~2 h 30)
+
+As senoides de 23/10 ([T9 e T8](bench-results.md#t9-e-t8-sinais-de-espectro-conhecido-e-aliasing)) fecharam duas
+das três perguntas da ida anterior sem osciloscópio: o perfil por ondas quadradas está certo e o polo de 800 kHz é da
+cadeia. A avaliação das sondas pelo osciloscópio fica para depois. Para o perfil, faltam duas coisas, e as duas
+dispensam o osciloscópio: a **sonda de corrente** (T10, o objetivo central), pela razão de dois canais com um resistor
+puro, e a **cadeia de tensão na faixa de produção** (±10,24 V).
+
+**Antes de ir (em casa, 15 min).**
+
+* **A fonte de 5 V da BeagleBone.** Sem ela a placa de aquisição não liga: pelo USB, o pino de +5 V do conector
+  fica sem tensão ([23/10](bench-results.md#a-alimentação-da-placa-e-o-terra)).
+* **Um resistor de 5 a 10 Ω não indutivo** (filme de potência, ou vários SMD em paralelo; 2 A em 5 Ω são 20 W).
+  Meça-o a 4 fios no Fluke e anote R com 4 algarismos: ele entra como `--resistencia R`, no lugar do
+  `medir_shunt.py`. Um resíduo de 50 nH em 10 Ω dá 0,2° em 100 kHz.
+* **Fio para 20 espiras** no SCT013 (e fita para fixá-las) e, se houver, a **fonte de corrente quadrada bipolar** de
+  1 a 2 A (uma meia-ponte de MOSFET acionada pelo gerador, ou um amplificador de banda larga). Só com o gerador
+  (~3 A·espira com 20 espiras e 10 Ω), o perfil fica bom até ~50 kHz.
+* **Espaço na placa:** ~2,1 GB (1,4 GB da tensão e 0,7 GB da corrente). Traga as capturas anteriores antes.
+* **O caderno** (`cp docs/lab-notes-template.md $DIA/anotacoes.md`), preenchido durante: o de 23/10 ficou vazio, e o
+  relatório precisa da montagem de cada teste.
+
+**1. Conferir (5 min).** A BeagleBone na fonte, a quadrada do gerador na entrada do divisor:
+
+```bash
+./coletar.sh conferir
+```
+
+**2. A faixa de produção da cadeia de tensão (~40 min, com 17 trocas de quadrada no gerador).** O `calibrar` mede as
+quadradas nas duas faixas, ±10,24 V (a de produção) e ±2,56 V (a do T3f, que repete o perfil em outro dia), a 312,5
+e a 400 kS/s:
+
+```bash
+./coletar.sh calibrar      # 68 capturas de 30 s, ~37 min, ~1,4 GB
+```
+
+No computador, os comandos saem no fim da coleta, um por faixa. O de ±10,24 V grava o perfil de produção:
+
+```fish
+uv run scripts/medir_fase.py $DIA/CAL_*/F_*_f20.48_*.bin --csv $DIA/fase_f20.48.csv --plot $DIA/bode_f20.48.png --perfil-base scripts/sondas/cadeia_tensao_fase.json --saida-perfil scripts/sondas/cadeia_tensao_fase_1024.json --ganho-baixa-frequencia 0.99795
+uv run scripts/medir_fase.py $DIA/CAL_*/F_*_f5.12_*.bin --csv $DIA/fase_f5.12.csv --plot $DIA/bode_f5.12.png
+```
+
+* **f0, Q e o polo iguais nas duas faixas** (a ~0,1 %, o polo dentro da incerteza): a faixa não muda a resposta, e o
+  perfil se reproduziu em outro dia.
+* **O polo (ou f0) mudou:** é do PGA do ADC, e cada faixa tem o seu perfil. Em produção, o de ±10,24 V.
+
+Se der tempo, repita três senoides de 23/10 na faixa de produção (5 min), para a mesma conferência por senoides:
+
+```bash
+mkdir -p SH_$(date +%F) && sudo ./ler_adc 400000 1 --faixa-adc 1:20.48 --duracao 30s --grandeza 1:tensao --sonda 1:cadeia_tensao_fase_1024 -o SH_$(date +%F)/S1_25k_f20.48.bin -t "S1 25 kHz em 20.48" -d "60 Hz 16 Vpp + 25 kHz 0,16 Vpp"
+```
+
+(e o mesmo com 130 kHz e com 270 kHz, 0,5 Vpp: `S4_130k_f20.48.bin` e `S4c_270k_f20.48.bin`).
+
+**3. O laço de corrente (15 min).**
+
+```text
+gerador ou fonte de corrente ─► R (5 a 10 Ω) ─► 20 espiras no SCT013 ─► retorno ao terra
+                                │                (no condutor do lado do terra, onde a tensão quase não varia)
+                                └─► entrada do divisor de tensão (canal 1): mede V = R·I
+SCT013 ─► placa (canal 0, ±2,56 V)
+```
+
+O lado frio de R vai ao terra comum, num ponto só. Sem corrente contínua no laço: ela magnetiza o núcleo do TC (com
+DC, um capacitor grande em série).
+
+**4. T10-0: o sinal basta? (10 min).** Uma quadrada só, 10 s, para conferir a sensibilidade e o SNR antes da coleta:
+
+```bash
+./coletar.sh calibrar --grandeza corrente --canal 0 --canal-referencia 1 --faixa-referencia 5.12 --resistencia <R> --espiras 20 --quadradas 1280 --segundos 10 --sonda t10_0
+```
+
+```fish
+uv run scripts/medir_fase.py $DIA/CAL_*/F_*.bin --canal 0 --canal-referencia 1 --perfil-referencia scripts/sondas/cadeia_tensao_fase.json --resistencia <R> --espiras 20 --ganho 16667
+```
+
+O K de baixa frequência deve sair perto de 1 (os 60 µV/A nominais: `--ganho 16667`). Longe disso, confira as
+espiras e o resistor de carga da placa. Se os harmônicos perderem o SNR antes de ~50 kHz, aumente a corrente.
+
+**5. A coleta do T10 (~25 min).** Com `--faixa-referencia 5.12`, o canal de tensão fica em ±2,56 V e o perfil de
+referência é o `cadeia_tensao_fase`, já validado; a parte W pede o condutor fora da garra (a diafonia):
+
+```bash
+./coletar.sh calibrar --grandeza corrente --canal 0 --canal-referencia 1 --faixa-referencia 5.12 --diafonia --resistencia <R> --espiras 20 --sonda sct013_100a_sn001      # 32 capturas, ~18 min, ~660 MB, e a parte W
+```
+
+O comando da análise sai no fim (`medir_fase.py --canal 0 --canal-referencia 1 --perfil-referencia
+scripts/sondas/cadeia_tensao_fase.json --resistencia <R> --espiras 20 --ganho 16667 --diafonia ... --saida-perfil
+scripts/sondas/sct013_100a_sn001.json`). O perfil sai com magnitude e fase até ~95 kHz, a Nyquist de cada canal com
+dois canais a 400 kS/s, que é também a banda da potência por componente em produção.
+
+**6. As conferências (~30 min).** Cada uma é o mesmo comando com `--quadradas "1280 6912 20736"` e outro `--sonda`:
+
+| Conferência | O que muda | Esperado |
+|---|---|---|
+| A garra invertida | o condutor no sentido contrário (`--sonda sct013_invertida`) | a mesma magnitude e a fase a 180°; o acoplamento capacitivo não inverteria |
+| N = 10 | `--espiras 10` | o mesmo perfil (a capacitância entre espiras não pesa) |
+| Metade da corrente | o gerador ou a fonte em metade da amplitude | o mesmo perfil (o TC linear, o resistor sem aquecer) |
+| Reabrir a garra | abrir, fechar e repetir | a repetibilidade |
+
+**7. Se sobrar tempo: os itens curtos (~45 min no total).**
+
+| Item | Tempo | O que fazer |
+|---|---|---|
+| T1: o pino do canal 1 em curto direto | 5 min | `sudo ./ler_adc 400000 1 --faixa-adc 1:5.12 --duracao 10s -o T1_pino_curto.bin -t "T1 pino em curto"`: o offset de +2,6 mV some (é a ligação do divisor) ou fica (é o ADC) |
+| T0: o −10 V | 5 min | uma fonte DC de −10 V no divisor e o Fluke: `sudo ./ler_adc 400000 1 --duracao 5s -o T0_m10v.bin -t "T0 -10 V"` |
+| T2 com o firmware atual | 15 min | os 5 níveis DC do [T2](#t2-tensão-contínua-ganho-offset-e-linearidade), a 400 kS/s: o K dos perfis vem de 19/10 |
+| T6: o atraso entre canais a 400 kS/s | 5 min | o mesmo sinal nos canais 1 e 2: `sudo ./ler_adc 400000 1,2 --duracao 10s -o T6b_400k.bin -t "T6b 400k"` (esperado: 2,5 µs) |
+| T9b: dois tons | 10 min | 20,0 e 20,3 kHz somados no gerador (*Combine*), como no [T9b](#t9-sinais-de-espectro-conhecido) |
+| 75 kHz sem FM | 2 min | o S3 sem a modulação: separa o −1,6 dB da FM entre o gerador e a medida |
+| Fotos | 10 min | a bancada de cada montagem, a placa e o laço de corrente: não dá para fazê-las depois |
+
+**Antes de sair:** `scripts/BeagleBone_Setup.sh trazer 'CAL_*' $DIA` (e `'SH_*'`, `'T*'`) e o caderno completo.
+
+### Passo a passo da ida anterior: a referência do T3, o polo de ~800 kHz e a faixa de produção (~1 h)
+
+> **Adiado em 02/11/2026.** As etapas 1 e 2 (a ponta e a referência no osciloscópio) ficam para quando houver a
+> avaliação das sondas pelo osciloscópio. As perguntas que elas respondiam foram fechadas pelas senoides de 23/10: o
+> perfil das quadradas está certo e o polo é da cadeia. A etapa 3 sem `--referencia` está na
+> [próxima ida](#passo-a-passo-da-próxima-ida-a-sonda-de-corrente-e-a-faixa-de-produção-sem-osciloscópio-2-h-30).
 
 O [T3f](bench-results.md#t3f-a-fase-da-cadeia-por-ondas-quadradas) (22/10/2026) mediu a cadeia por ondas quadradas,
 sem instrumento de referência, e deixou três perguntas:
@@ -1080,8 +1204,10 @@ uv run report/gerar_figuras.py perfil_cadeia_tensao --png
 `uv run scripts/medir_fase.py`; `scripts/sondas/cadeia_tensao_fase.json`, de 50 Hz a 178,5 kHz): dois polos reais em
 22,81 kHz (Q = 0,5001) e um em 800 kHz, −3 dB em **14,68 kHz**, resíduo de 0,01 dB e 0,14°; a magnitude e a fase
 dão o mesmo filtro (fase mínima). As senoides acima ficam 1,2 a 1,3 dB acima da quadrada a partir de ~40 kHz: é a
-queda da referência do osciloscópio. **Em produção, `--sonda 1:cadeia_tensao_fase`**; a conferência da ponta está na
-[próxima ida](#passo-a-passo-da-próxima-ida-a-referência-do-t3-o-polo-de-800-khz-e-a-faixa-de-produção-1-h). Os números estão no
+queda da referência do osciloscópio. **Em produção, `--sonda 1:cadeia_tensao_fase`**: as senoides de 23/10, com o
+gerador como referência, o confirmaram a ±0,05 dB de 60 Hz a 270 kHz e mostraram que o polo de 800 kHz é da cadeia
+([T9 e T8](bench-results.md#t9-e-t8-sinais-de-espectro-conhecido-e-aliasing)); falta a faixa de produção, na
+[próxima ida](#passo-a-passo-da-próxima-ida-a-sonda-de-corrente-e-a-faixa-de-produção-sem-osciloscópio-2-h-30). Os números estão no
 [T3f dos resultados](bench-results.md#t3f-a-fase-da-cadeia-por-ondas-quadradas).
 
 ### T4: frequência de amostragem real

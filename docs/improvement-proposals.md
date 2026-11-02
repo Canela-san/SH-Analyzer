@@ -168,6 +168,7 @@ o uso: decisão do usuário). Em captura multicanal, os canais são amostrados 1
 | **F8** | Endereço do canal no SDO (verificar a ordem dos canais a cada amostra) | Baixo–Médio | Médio | sim | F3 |
 | **H1–H2** | Isolador contra o BOM, pontos de teste na próxima PCB | Baixo–Médio | Baixo–Médio | não | — |
 | **H3** | Filtro anti-aliasing externo (~170–200 kHz) na próxima PCB | Médio: a imagem a 150 kHz está só 9 dB abaixo | Médio | não | — |
+| **H4** | O +5 V da placa de aquisição também pelo USB, na próxima PCB | Baixo: hoje a fonte externa é obrigatória | Baixo | não | — |
 | **T2–T3** | Testes de host do C; cobertura da plotagem | Baixo | Baixo | não | — |
 
 ---
@@ -309,11 +310,24 @@ gravada — útil para medir a fase, S2). Desacoplamento de baixo ESR junto ao A
 
 **Por quê.** O único anti-aliasing da cadeia é o passa-baixa interno do ADS8688 (2ª ordem, ~15 kHz). A 400 kS/s, uma
 imagem chega a 150 kHz só 9 dB abaixo de um componente real de mesma amplitude, e a 130 kHz, 12,9 dB (revisão de
-23/10/2026). Fontes chaveadas emitem acima de 150 kHz.
+23/10/2026). Fontes chaveadas emitem acima de 150 kHz. **Confirmado em bancada (23/10/2026):** um tom de 270 kHz
+aparece em 130 kHz com −43,5 dB, a atenuação do perfil na frequência real, a 0,01 dB
+([T8](bench-results.md#t9-e-t8-sinais-de-espectro-conhecido-e-aliasing)).
 
 **Proposta.** Um passa-baixa de ~170 a 200 kHz antes da entrada do ADC, de ordem suficiente para somar 20 a 30 dB em
 250 a 400 kHz. A atenuação dele em 150 kHz entra no perfil da cadeia, medido pelo método das quadradas (T3f), como o
 resto.
+
+### H4 — O +5 V da placa de aquisição também pelo USB, na próxima revisão da PCB
+
+**Por quê.** A placa recebe o +5 V por um pino do conector que a BeagleBone só energiza pela entrada da fonte de 5 V.
+Alimentada só pelo USB, a BeagleBone liga e o ADC não: todas as amostras saem 0x0000 (23/10/2026, a configuração B e C
+da [alimentação](bench-results.md#a-alimentação-da-placa-e-o-terra)). Desde então o `ler_adc` para com o código 4 e o
+`coletar.sh conferir` avisa, mas a exigência da fonte continua.
+
+**Proposta.** Na próxima revisão, tirar o +5 V de um pino energizado também pelo USB, conferindo antes se a corrente
+da placa cabe no que o USB entrega. A placa atual não foi desenhada para isso e fica como está: o instrumento usa a
+fonte externa.
 
 ---
 

@@ -32,23 +32,99 @@ As figuras de bancada precisam das capturas em `$DADOS`. Sem elas, o script avis
 
 | Teste | O que mede | Data | Firmware | Figura | Estado |
 |---|---|---|---|---|---|
+| [T9 e T8](#t9-e-t8-sinais-de-espectro-conhecido-e-aliasing) | 60 Hz forte com tons fracos, AM, FM e tons acima da Nyquist (dobrados), contra o perfil do T3f: a validação do perfil por senoides, o *aliasing* e o limite de detecção | 23/10/2026 | `v0.7-10-g63f4673` | `validacao_cadeia_senoides`, `espectro_supraharmonicos` | ✅ (falta o T9b e a FM) |
+| [Alimentação](#a-alimentação-da-placa-e-o-terra) | A placa de aquisição com a BeagleBone no USB e na fonte; o 60 Hz do laço de terra | 23/10/2026 | `v0.7-9-ge00c5e7` | — | ✅ |
 | [T7g](#t7g-o-spi-rápido) | O SPI rápido (~15,4 MHz): a margem do SDO em 3 fases, o ruído, o teto; 400 kS/s | 22/10/2026 | `v0.7-1-gb3c417b` | — | ✅ (virou o padrão) |
 | [T7f](#t7f-a-grade-de-tempo) | O período entre amostras: jitter, degraus, folga e teto com período constante; o quadro que dependia do dado, e a 2ª rodada com o quadro fixo | 22/10/2026 | `v0.7-1-gb2f9078` e `-gb3c417b` | `grade_jitter`, `grade_degraus`, `grade_teto`, `grade_bits` | ✅ |
 | [T7e](#t7e-esperas-do-cs-e-teto-de-taxa) | Esperas do CS e taxa máxima | 21/10/2026 | `v0.6-10`/`-11` | — | ✅ |
 | [T7a–c](#t7a-a-t7c-integridade-e-estabilidade) | Integridade, estabilidade em 10 min e o salto antigo nas trocas de buffer | 19/10/2026 | anterior a out/2026 | — | ✅ (firmware antigo) |
 | [T6](#t6-vários-canais) | Diafonia e atraso entre canais | 19/10 e 22/10/2026 | antigo e `v0.7-1` | — | 🟡 |
 | [T4](#t4-taxa-de-amostragem-real) | Taxa gerada × pedida | 19/10/2026 | anterior a out/2026 | — | 🟡 (falta o contador) |
-| [T3f](#t3f-a-fase-da-cadeia-por-ondas-quadradas) | Magnitude e fase da cadeia de tensão até 180 kHz por ondas quadradas, sem instrumento de referência | 22/10/2026 | `v0.7-4-gb4ea1ad` | `perfil_cadeia_tensao_fase`, `perfil_cadeia_tensao_referencia` | ✅ (falta conferir a ponta do osciloscópio) |
-| [T3](#t3-resposta-em-frequência-da-cadeia-de-tensão) | Resposta em frequência da cadeia de tensão até 140 kHz | 19/10 e 22/10/2026 | antigo e `v0.7-1` | `perfil_cadeia_tensao`, `perfil_cadeia_tensao_comparacao` | ✅ (acima de ~1 kHz, sob suspeita: veja o T3f) |
+| [T3f](#t3f-a-fase-da-cadeia-por-ondas-quadradas) | Magnitude e fase da cadeia de tensão até 180 kHz por ondas quadradas, sem instrumento de referência | 22/10/2026 | `v0.7-4-gb4ea1ad` | `perfil_cadeia_tensao_fase`, `perfil_cadeia_tensao_referencia` | ✅ (confirmado por senoides em 23/10; falta a faixa de ±10,24 V) |
+| [T3](#t3-resposta-em-frequência-da-cadeia-de-tensão) | Resposta em frequência da cadeia de tensão até 140 kHz | 19/10 e 22/10/2026 | antigo e `v0.7-1` | `perfil_cadeia_tensao`, `perfil_cadeia_tensao_comparacao` | Histórico (acima de ~40 kHz, a referência do osciloscópio errou: use o T3f) |
 | [T2](#t2-tensão-contínua) | Razão do divisor e linearidade em DC | 19/10/2026 | anterior a out/2026 | — | ✅ |
 | [T1](#t1-piso-de-ruído) | Ruído e offset com a entrada em curto | 19/10 e 22/10/2026 | antigo e `v0.7-1` | — | ✅ |
 | [T0](#t0-escala-do-adc) | Escala do ADC nas três faixas | 19/10/2026 | anterior a out/2026 | — | ✅ |
 
-O que falta medir: o T5 (distorção com fonte limpa), o T8 (*aliasing*), o T9 (espectros conhecidos), o T10 (a sonda de
-corrente) e o T11 (ponta a ponta). Veja a
-[tabela de estado](lab-procedure.md#estado-da-campanha).
+O que falta medir: o T10 (a sonda de corrente), a cadeia de tensão na faixa de produção (±10,24 V), o T5 (distorção
+com fonte limpa), o T9b (dois tons), o T11 (ponta a ponta) e, com o firmware atual, o T0, o T2, o T4 e o atraso do T6.
+Veja a [tabela de estado](lab-procedure.md#estado-da-campanha) e o [plano do relatório final](final-report-plan.md).
 
 ---
+
+## T9 e T8: sinais de espectro conhecido e aliasing
+
+**23/10/2026** · firmware `v0.7-10-g63f4673` · `$DADOS/lab/2026-10-23/SH_2026-10-23/` (11 capturas) · canal 1, ±2,56 V,
+perfil `cadeia_tensao_fase` no cabeçalho · 30 s a 400 kS/s, salvo as variantes a 320 kS/s (10 s) e a 100 kS/s (30 s,
+SPI lento) · 0 amostras atrasadas e 0 leituras divergentes em todas. O sinal é um 60 Hz de 16 Vpp somado a um tom de
+amplitude conhecida (⚠️ como os dois foram somados não ficou anotado no caderno).
+
+**A referência é a amplitude nominal do gerador, em High-Z, sem osciloscópio.** O esperado no pino é a amplitude
+nominal ÷ 19,357 (o ganho nominal do divisor) × o ganho do modelo do T3f na frequência **real** do tom; o medido é a
+potência em ±2 Hz do pico, numa FFT com janela de Hann da captura inteira (0,03 Hz por bin). Os números saem de
+`report/gerar_figuras.py validacao_cadeia_senoides` e `espectro_supraharmonicos`.
+
+| Captura | Sinal | Taxa (kS/s) | Aparece em | Medido − esperado |
+|---|---|---|---|---|
+| S0 | 60 Hz, 16 Vpp | 400 | 60 Hz | −0,03 dB |
+| S5 | 9 kHz, 16 mVpp (−60 dBc) | 400 | 9 kHz | +0,03 dB |
+| S5 | 9 kHz, 5 mVpp (−70 dBc) | 400 | 9 kHz | +0,05 dB |
+| S1 | 25 kHz, 0,16 Vpp (−40 dBc) | 400 | 25 kHz | −0,03 dB |
+| S2 | 40 kHz, 0,5 Vpp, AM de 80 % a 120 Hz | 400 | 40 kHz ± 120 Hz | portadora −0,04 dB; bandas laterais a −7,97 e −7,98 dB dela (teoria: −7,96) |
+| S3 | 75 kHz, 0,5 Vpp, FM de ±2 kHz a 100 Hz | 400 | 73 a 77 kHz | desvio de 1416 Hz rms (teoria: 1414); **potência −1,64 dB** |
+| S4 | 130 kHz, 0,5 Vpp | 400 e 320 | 130 kHz | −0,01 dB nas duas |
+| S4b | 130 kHz, 0,5 Vpp | 100 | 30 kHz (dobrado) | −0,01 dB |
+| S4c | 270 kHz, 0,5 Vpp | 400 e 320 | 130 e 50 kHz (dobrados) | +0,01 e −0,01 dB |
+
+* **O perfil por ondas quadradas está certo.** Dez senoides, de 60 Hz a 270 kHz, ficam a ±0,05 dB do modelo do T3f
+  (0,027 dB rms). São dois métodos independentes: os harmônicos de quadradas, sem referência (22/10), e senoides de
+  amplitude conhecida (23/10). A diferença de 1,2 a 1,3 dB dos perfis por senoides de 22/10 (`cadeia_tensao_312k`)
+  era, então, a referência lida no osciloscópio. **O perfil de produção é o `cadeia_tensao_fase`**; o
+  `cadeia_tensao` e o `cadeia_tensao_312k` ficam como histórico.
+* **O polo de ~800 kHz é da cadeia, não da borda do gerador.** Uma senoide não tem borda: se o polo fosse do
+  gerador, as senoides sairiam +0,11 dB acima do modelo em 130 kHz e +0,47 dB em 270 kHz. Saíram −0,01 e +0,01 dB.
+  A hipótese é que o gerador seja plano até 270 kHz; uma queda dele que compensasse o polo exatamente nas duas
+  frequências é improvável.
+* **T8: a rejeição de *aliasing* é o próprio perfil.** O tom dobrado sai com a atenuação da cadeia na frequência
+  **real**, a 0,01 dB, nas três taxas: −30,6 dB em 130 kHz e −43,5 dB em 270 kHz. A 400 kS/s, uma componente de
+  270 kHz aparece em 130 kHz só 12,9 dB abaixo de uma componente real de 130 kHz com a mesma amplitude, e a correção
+  pelo perfil (feita na frequência aparente) a leva a −12,9 dB da amplitude real dela. Não há filtro *anti-aliasing*
+  além do interno do ADC: é uma limitação a declarar.
+* **T9c: o menor tom detectável**, 10 dB acima do piso numa captura de 30 s (S0): 8 µV de pico na entrada do
+  divisor em 9 kHz e 105 µV em 180 kHz (o piso sobe com a correção). O tom de 5 mVpp (−70 dBc) sai 59 dB acima do
+  piso por bin. Em ±10,24 V, a faixa de produção, o ruído é ~2,7 vezes maior (T1): ~9 dB a menos.
+* **O 60 Hz do gerador:** 2ª harmônica a −69 dBc e 3ª a −67 dBc; acima de 2 kHz, nenhum espúrio acima de −94 dBc.
+  Em volta da portadora da AM aparecem raias a ±60 Hz e múltiplos, a −93 dBc: o 60 Hz misturado ao tom (no somador ou
+  no ADC), 63 dB abaixo da portadora.
+* **A FM (S3) é o único ponto fora.** O espectro está certo (o desvio, a simetria e as raias de Bessel, a 100 Hz uma
+  da outra), mas a potência fica 1,64 dB abaixo da nominal. Não é a cadeia: os tons de 40 e 130 kHz batem. A suspeita
+  é o nível do gerador no modo FM; uma captura de 75 kHz sem FM resolve.
+
+**Figuras:** `validacao_cadeia_senoides` (as senoides sobre o perfil e o modelo, com o que se veria se o polo fosse
+do gerador) e `espectro_supraharmonicos` (S1 inteiro, sem e com a correção; S5, a AM e a FM de perto, com a teoria).
+
+## A alimentação da placa e o terra
+
+**23/10/2026** · firmware `v0.7-9-ge00c5e7` · `$DADOS/lab/2026-10-23/BAT_2026-10-23/` · canal 1, ±2,56 V, 30 s a
+400 kS/s · a entrada do divisor em curto, ou ligada ao gerador com a saída desligada.
+
+| Configuração | Entrada em curto | Gerador ligado, saída desligada |
+|---|---|---|
+| A: notebook na tomada, BeagleBone na fonte de 5 V | 61,6 µV RMS (0,79 LSB); offset +2,56 mV | 68,7 µV RMS; 60 Hz de 33 µV no pino (~0,64 mV na entrada) |
+| B: notebook na tomada, BeagleBone pelo USB | ADC mudo: todas as amostras em 0x0000 | ADC mudo |
+| C: notebook na bateria, BeagleBone pelo USB | ADC mudo | ADC mudo |
+
+* **B e C mostram uma restrição do hardware, não um defeito.** A placa de aquisição recebe o +5 V por um pino do
+  conector que a BeagleBone só energiza pela entrada de 5 V (a fonte externa); pelo USB, esse pino fica sem tensão e
+  o ADC, desligado. **O instrumento só funciona com a fonte externa de 5 V na BeagleBone.** Uma revisão da placa
+  poderia tirar o 5 V de um pino energizado também pelo USB; esta não foi desenhada para isso, e fica como está.
+  Desde 23/10, o `ler_adc` para com o código 4 quando o ADC está mudo, e o `coletar.sh conferir` pega isso antes de
+  uma série.
+* **O ruído com o firmware atual, a 400 kS/s:** 61,6 µV RMS em ±2,56 V com o divisor em curto, o mesmo de 22/10 a
+  312,5 kS/s (62 µV) e o típico do datasheet (61 µV). O offset é o mesmo (+2,6 mV).
+* **O 60 Hz do laço de terra pelo gerador** (33 µV no pino, com harmônicos de ~4,5 µV) fica 106 dB abaixo da
+  fundamental de produção (127 V na faixa de ±10,24 V) e fora da banda dos supraharmônicos: não precisa de outra
+  montagem. A comparação tomada × bateria com a BeagleBone na fonte não foi feita e não é necessária.
 
 ## T7g: o SPI rápido
 
@@ -266,8 +342,9 @@ capacitivo" (veja abaixo).
   de 0,2 µs, que a medida não separa de um atraso puro; o que ela vê é a curvatura.
 * **O polo de 800 kHz é da cadeia ou do gerador.** A quadrada mede os dois juntos. Na cadeia, ele cabe na
   resistência de saída do divisor (dezenas de kΩ) contra a capacitância da entrada do ADC e da fiação (alguns pF).
-  No gerador, seria uma borda de ~0,45 µs (10–90 %). A [próxima ida](lab-procedure.md#passo-a-passo-da-próxima-ida-a-referência-do-t3-o-polo-de-800-khz-e-a-faixa-de-produção-1-h)
-  separa os dois (etapa 3).
+  No gerador, seria uma borda de ~0,45 µs (10–90 %). **Resolvido em 23/10: é da cadeia.** Senoides de 130 e
+  270 kHz, que não têm borda, caem no modelo com o polo a 0,01 dB; sem ele, sairiam 0,11 e 0,47 dB acima
+  ([T9 e T8](#t9-e-t8-sinais-de-espectro-conhecido-e-aliasing)).
 * **A fase confirma o modelo.** A magnitude sozinha e a fase sozinha dão o mesmo f0, Q e polo. A cadeia é de fase
   mínima, e a fase do perfil pode vir da medida ou do modelo. Sem o polo, as duas discordam a 6 σ.
 * **A senoide e a quadrada discordam, e a diferença tem a forma de uma ponta descompensada.** A diferença é um
@@ -293,8 +370,9 @@ capacitivo" (veja abaixo).
     erro dos harmônicos abaixo de 1 LSB das quadradas lentas. Sem ela, a fase sozinha e a magnitude sozinha passam a
     discordar no polo (657 ± 36 contra 783 kHz), sinal de que 0,032 LSB é otimista.
 * **Para a produção**, o perfil de magnitude e fase é o `cadeia_tensao_fase` (`--sonda 1:cadeia_tensao_fase`), que
-  vai de 50 Hz a 178,5 kHz e serve às duas taxas (abaixo de 256 Hz, os pontos do `cadeia_tensao_312k`). A conferência da ponta, na próxima ida, decide de vez entre ele e o
-  `cadeia_tensao_312k`.
+  vai de 50 Hz a 178,5 kHz e serve às duas taxas (abaixo de 256 Hz, os pontos do `cadeia_tensao_312k`). As senoides
+  de 23/10, com o gerador como referência, decidiram entre ele e o `cadeia_tensao_312k`: ficam a ±0,05 dB do
+  modelo dele de 60 Hz a 270 kHz ([T9 e T8](#t9-e-t8-sinais-de-espectro-conhecido-e-aliasing)).
 
 **A confiabilidade do perfil, para usá-lo na correção.** O que foi conferido:
 
@@ -314,18 +392,17 @@ O orçamento de incerteza da magnitude, em dB:
 | A grade (ruído e INL, a σ declarada) | 0,001 | 0,001 | 0,004 | 0,011 | 0,026 | 0,049 |
 | A interpolação | < 0,001 | < 0,001 | < 0,001 | < 0,001 | < 0,001 | < 0,001 |
 | K (0,05 %, o T2 e o T0) | 0,005 | 0,005 | 0,005 | 0,005 | 0,005 | 0,005 |
-| O polo de 800 kHz, **se** for do gerador (o perfil ficaria baixo) | 0 | 0,001 | 0,017 | 0,067 | 0,150 | 0,210 |
+| O polo de 800 kHz, **se** fosse do gerador (descartado em 23/10: é da cadeia) | 0 | 0 | 0 | 0 | 0 | 0 |
 | A faixa do ADC (medido em ±2,56 V; a produção é ±10,24 V) | não medida | | | | | |
 | A reprodutibilidade (outro dia, outra temperatura) | não medida | | | | | |
 
-* **Até ~50 kHz, o perfil é bom a ~0,01 dB.** Acima de 100 kHz, o que pesa é o polo de 800 kHz (≤ 0,21 dB em
-  178 kHz). A senoide com o gerador como referência fica até 0,03 dB acima da quadrada em 120 kHz; se o polo
-  fosse todo do gerador, seriam 0,10 dB. Isso sugere que a maior parte dele é da cadeia, mas a planicidade do
-  gerador (tipicamente ±0,1 dB) não deixa fechar a questão.
+* **Até ~50 kHz, o perfil é bom a ~0,01 dB; em 178 kHz, a ~0,05 dB** (a grade). A dúvida do polo de 800 kHz, que
+  pesaria até 0,21 dB em 178 kHz, foi fechada em 23/10: as senoides de 130 e 270 kHz mostram que ele é da cadeia
+  ([T9 e T8](#t9-e-t8-sinais-de-espectro-conhecido-e-aliasing)).
 * **A faixa do ADC não foi testada.** O PGA do ADS8688 tem outro ganho em cada faixa, e a banda dele pode mudar com
   isso: o polo de 800 kHz pode até ser ele. As senoides de 19/10 (±10,24 V) e de 22/10 (±2,56 V) concordam a
-  0,13 dB rms até 45 kHz, o que não basta. O `./coletar.sh calibrar --referencia` mede isso (nas duas faixas, com a entrada medida), e se o polo mudar
-  com a faixa, ele é do ADC.
+  0,13 dB rms até 45 kHz, o que não basta. O `./coletar.sh calibrar` mede isso (as quadradas nas duas faixas; não
+  precisa do osciloscópio), e se o polo mudar com a faixa, ele é do PGA do ADC.
 * **Em 178 kHz, a correção multiplica o sinal por 63** (−36 dB): o ruído do ADC é multiplicado junto, e é ele, não o
   perfil, que limita a medida ali.
 * **A fase é a menos de um atraso puro.** A correção de magnitude não precisa dela. A fase entre tensão e corrente

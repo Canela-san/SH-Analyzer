@@ -60,49 +60,66 @@ Essa separação é proposital: o projeto põe a **integridade dos dados** acima
 
 **Na BeagleBone**
 
-* Captura de 1 a 8 canais, com a faixa de entrada do ADC escolhida por canal (±10,24 / ±5,12 / ±2,56 V).
+* Captura de 1 a 8 canais a até **400 kS/s no total** (período constante até 419 kS/s), com a grade de tempo exata: cada amostra sai no ciclo previsto, e a captura registra a própria integridade.
+* A faixa de entrada do ADC escolhida por canal (±10,24 / ±5,12 / ±2,56 V).
 * Capturas de segundos a horas (`--duracao 10m`, `1.5h`): o ARM grava um bloco enquanto a PRU enche o outro.
-* Calibração de sondas em bancada (`coletar.sh sonda`): escolhe as frequências, pede cada uma no gerador e confere cada captura.
+* As coletas de bancada num script só, `./coletar.sh MODO`: a conferência antes de uma série (`conferir`), a calibração por ondas quadradas (`calibrar`), a calibração por senoides (`sonda`), o ruído, o *aliasing* e o limite de taxa.
 
 **No computador**
 
 * **Harmônicos:** FFT sincronizada com a rede, componentes e grupos da IEC 61000-4-7, THD e THDG.
 * **Supraharmônicos:** espectro médio (Welch), lista de picos, espectrograma e bandas de 200 Hz de 2 a 9 kHz, com a agregação de 3 s e 10 min da IEC 61000-4-30.
-* **Sondas:** cada canal é corrigido pela resposta em frequência medida da sua cadeia (sonda, frontend e ADC).
+* **Correção da cadeia:** cada canal é corrigido pela resposta em frequência medida da cadeia inteira (sonda, condicionamento e o filtro interno do ADC).
+* **Calibração sem instrumento de referência** (`medir_fase.py`): magnitude e fase da cadeia pelos harmônicos de ondas quadradas, com o ajuste do modelo e o teste de fase mínima.
+* **Sonda de corrente com magnitude e fase** (`medir_fase.py --canal-referencia`): a razão de dois canais capturados juntos (o TC e a tensão num resistor do laço), com a fase absoluta e a diafonia subtraída.
 * **Métricas de bancada** (`medir_captura.py`): ruído, THD, SINAD, ENOB, SFDR, diafonia e a continuidade da grade de tempo.
-* **Fase da cadeia sem osciloscópio** (`medir_fase.py`): magnitude e fase por ondas quadradas, o ajuste do 2ª ordem e o teste de fase mínima.
-* **Sonda de corrente com magnitude e fase** (`medir_fase.py --canal-referencia`, `medir_shunt.py`): a razão de dois canais capturados juntos (o TC e a tensão num resistor do laço), com a fase absoluta, a diafonia subtraída e a âncora do método de um canal.
 * **Exportação reprodutível:** CSV, JSON com os metadados que geraram o resultado, MATLAB e um HDF5 autossuficiente, que leva o cabeçalho original, os perfis das sondas e a proveniência.
 
 ## 📏 Medido em bancada
 
-O primeiro dia de bancada (19/10/2026) caracterizou o ADC e a cadeia de tensão contra um osciloscópio:
+Um supraharmônico de 25 kHz, 40 dB abaixo de um 60 Hz de 16 Vpp, medido pelo canal de tensão a 400 kS/s (23/10/2026). Sem correção, o filtro interno do ADC o mostra 6,9 dB abaixo do real; com o perfil da cadeia, ele sai no nível do gerador, a 0,03 dB:
 
 <p align="center">
-  <img src="docs/images/voltage-chain-response.svg" alt="Resposta em frequência da cadeia de tensão: ganho plano até alguns kHz, −3 dB em 17,3 kHz, ajustada a um passa-baixa de 2ª ordem; resíduo do ajuste dentro de ±0,5 dB" width="800">
+  <img src="docs/images/supraharmonic-spectrum.svg" alt="Espectro de 20 Hz a 200 kHz: o 60 Hz em 0 dBc e um tom de 25 kHz em −40 dBc; a curva corrigida pelo perfil devolve o tom ao nível nominal, e o piso de ruído sobe com a correção acima de 20 kHz" width="800">
   <br>
-  <sub>Resposta em frequência da cadeia de tensão (T3): 48 pontos de 50 Hz a 45 kHz, ajustados a um passa-baixa de 2ª ordem (f<sub>0</sub> = 24,1 kHz, Q = 0,54). Figura gerada por <a href="report/gerar_figuras.py"><code>report/gerar_figuras.py</code></a> (<code>readme_cadeia_tensao</code>).</sub>
+  <sub>60 Hz de 16 Vpp somado a 25 kHz de 0,16 Vpp, 30 s a 400 kS/s; Welch com 1 Hz de resolução. Figura gerada por <a href="report/gerar_figuras.py"><code>report/gerar_figuras.py</code></a> (<code>readme_espectro</code>).</sub>
+</p>
+
+A correção vem da resposta da cadeia de tensão, medida em magnitude **e** fase pelos harmônicos de ondas quadradas, sem instrumento de referência. Dez senoides de amplitude conhecida, de 60 Hz a 270 kHz, caem sobre ela a ±0,05 dB:
+
+<p align="center">
+  <img src="docs/images/voltage-chain-response.svg" alt="Diagrama de Bode da cadeia de tensão: ganho plano até alguns kHz, −3 dB em 14,7 kHz e queda de 12 dB por oitava; fase de 0 a −180 graus; os pontos medidos caem sobre o modelo de dois polos reais em 22,8 kHz e um em 800 kHz" width="800">
+  <br>
+  <sub>Magnitude e fase da cadeia de tensão (divisor + filtro interno do ADC) de 256 Hz a 178,5 kHz, com o modelo ajustado: dois polos reais em 22,8 kHz e um em 800 kHz. Figura gerada por <a href="report/gerar_figuras.py"><code>report/gerar_figuras.py</code></a> (<code>readme_cadeia_tensao</code>).</sub>
 </p>
 
 | Medida | Resultado |
 |---|---|
-| Escala, nas três faixas de entrada | erro ≤ 0,08 % |
-| Ruído com a entrada em curto (±10,24 / ±5,12 / ±2,56 V) | 160 / 91 / 58 µV RMS, igual ao datasheet |
-| Linearidade | resíduo ≤ 0,22 LSB |
-| Diafonia entre canais | −94,7 dB |
-| Taxa de amostragem | 200 MHz ÷ ticks, confirmada a 0,02 ppm; estável a 0,09 ppm em 10 min |
-| Cadeia de tensão | −3 dB em 17,3 kHz; −12,5 dB em 45 kHz |
+| Taxa de amostragem | **400 kS/s** com 1 canal; período constante até 419,3 kS/s |
+| Integridade | 0 amostras atrasadas e 0 leituras divergentes em ~140 milhões de quadros; jitter de 0,00 ns |
+| Ruído com a entrada em curto (±10,24 / ±5,12 / ±2,56 V) | 169 / 95 / 62 µV RMS, o do datasheet |
+| Escala e linearidade | erro ≤ 0,08 % nas três faixas; resíduo ≤ 0,22 LSB |
+| Cadeia de tensão | −3 dB em 14,7 kHz; magnitude e fase até 178 kHz, com resíduo de 0,01 dB e 0,14° |
+| Validação por senoides | 10 tons de 60 Hz a 270 kHz a ±0,05 dB do perfil |
+| Supraharmônico mais fraco medido | 9 kHz a −70 dBc do 60 Hz, 59 dB acima do piso |
+| Menor tom detectável (30 s, ±2,56 V) | 8 µV de pico em 9 kHz; 105 µV em 180 kHz |
+| Diafonia entre canais | −95,5 dB |
+
+Os números completos, com a data, o firmware e a pasta dos dados de cada um, estão em [`docs/bench-results.md`](docs/bench-results.md).
 
 > [!IMPORTANT]
-> O ADS8688 tem um filtro passa-baixa de 2ª ordem embutido em cada canal (corte de ~15 kHz, pelo datasheet), que não dá para desligar: é ele que derruba a curva acima. Na banda dos supraharmônicos, o sinal chega ao conversor atenuado em dezenas de dB, e a correção por perfil devolve a amplitude, mas amplifica o ruído na mesma proporção. Por isso o perfil de cada canal é medido sobre a cadeia inteira (sonda, frontend e ADC). Além disso, a taxa máxima de hoje (~326 kS/s, com o padrão em 312,5 kS/s) põe a Nyquist em ~156 kHz: a banda inteira cabe, mas no limite. Os detalhes estão em [Sondas: calibração e correção](docs/user-guide.md#sondas-de-corrente-calibração-e-correção) e nos [limites conhecidos](docs/project-context.md).
+> O ADS8688 tem um passa-baixa de 2ª ordem em cada canal (dois polos reais em 22,8 kHz) que não dá para desligar. Na banda dos supraharmônicos, o sinal chega ao conversor atenuado em dezenas de dB: a correção pelo perfil devolve a amplitude, mas multiplica o ruído na mesma proporção, e um componente acima da Nyquist dobra para dentro da banda atenuado só pelo mesmo filtro (um de 270 kHz aparece em 130 kHz, 43,5 dB abaixo). Por isso o perfil de cada canal é medido sobre a cadeia inteira. Os detalhes estão em [Sondas: calibração e correção](docs/user-guide.md#sondas-de-corrente-calibração-e-correção) e nos [limites conhecidos](docs/project-context.md).
 
 ## 🚀 Início rápido
 
 Você precisa de duas máquinas: a **BeagleBone** (captura) e o **seu computador** (análise).
 
+> [!WARNING]
+> **Ligue a fonte de 5 V na BeagleBone.** A placa de aquisição recebe o +5 V por um pino que a BeagleBone só energiza pela entrada da fonte: alimentada só pelo USB, ela liga, mas o ADC fica desligado (o `ler_adc` para com "o ADC não está respondendo"). O USB continua sendo a ligação com o computador.
+
 ### 1. Capturar
 
-Com a BeagleBone ligada por USB, o `BeagleBone_Setup.sh` faz tudo do computador: acerta o relógio dela, leva o firmware, compila e carrega a PRU. Ela precisa do `gcc` e do compilador `clpru` da Texas Instruments.
+Com a BeagleBone na fonte e ligada ao computador por USB, o `BeagleBone_Setup.sh` faz tudo do computador: acerta o relógio dela, leva o firmware, compila e carrega a PRU. Ela precisa do `gcc` e do compilador `clpru` da Texas Instruments.
 
 ```bash
 scripts/BeagleBone_Setup.sh preparar
@@ -118,7 +135,7 @@ scripts/BeagleBone_Setup.sh ssh
 sudo ./ler_adc --duracao 10s
 ```
 
-O resultado é um `captura_AAAAMMDD_HHMMSS.bin`: cerca de 10 s a 312,5 kS/s (a taxa padrão) no canal 1. Todas as opções estão em `sudo ./ler_adc --help`.
+O resultado é um `captura_AAAAMMDD_HHMMSS.bin`: cerca de 10 s a 400 kS/s (a taxa padrão) no canal 1. Todas as opções estão em `sudo ./ler_adc --help`.
 
 ### 2. Analisar
 
@@ -138,13 +155,14 @@ A taxa, os canais e as faixas vêm do cabeçalho, então não é preciso inform�
 | Quero... | Use | Onde ler |
 |---|---|---|
 | Harmônicos com grupos e fases, bandas IEC, espectrograma, exportar para MATLAB | `adc_tool.py` | [Análise para pesquisa](docs/user-guide.md#análise-para-pesquisa-harmônicos-bandas-iec-espectrograma-e-exportação) |
-| Calibrar por senoides, ponto a ponto (o K em baixa frequência e a conferência) | `coletar.sh sonda` → `gerar_perfil_sonda.py` | [Sondas: calibração e correção](docs/user-guide.md#sondas-de-corrente-calibração-e-correção) |
+| Conferir a bancada antes de uma série de capturas | `coletar.sh conferir` | [Guia de uso](docs/user-guide.md) |
+| Calibrar a cadeia (magnitude e fase) por ondas quadradas, sem instrumento de referência | `coletar.sh calibrar` e `medir_fase.py` | [A calibração por ondas quadradas](docs/user-guide.md#a-calibração-por-ondas-quadradas-medir_fasepy) |
+| Calibrar a sonda de corrente com a fase (dois canais juntos) | `coletar.sh calibrar --canal-referencia` e `medir_fase.py --canal-referencia` | [A razão de dois canais](docs/user-guide.md#a-razão-de-dois-canais---canal-referencia) |
+| Calibrar por senoides, ponto a ponto | `coletar.sh sonda` → `gerar_perfil_sonda.py` | [Sondas: calibração e correção](docs/user-guide.md#sondas-de-corrente-calibração-e-correção) |
 | Medir ruído, SINAD, ENOB e diafonia para o relatório | `medir_captura.py` | [Medir uma captura](docs/user-guide.md#medir-uma-captura-para-o-relatório-medir_capturapy) |
-| Calibrar a cadeia (magnitude e fase) por ondas quadradas | `coletar.sh calibrar` e `medir_fase.py` | [A calibração por ondas quadradas](docs/user-guide.md#a-calibração-por-ondas-quadradas-medir_fasepy) |
-| Calibrar a sonda de corrente com a fase (dois canais juntos) | `coletar.sh calibrar --canal-referencia`, `medir_shunt.py` e `medir_fase.py --canal-referencia` | [A razão de dois canais](docs/user-guide.md#a-razão-de-dois-canais---canal-referencia) |
+| Gerar as figuras do relatório e do README | `report/gerar_figuras.py` | [`docs/bench-results.md`](docs/bench-results.md) |
 | Arquivar capturas sem perdas (~11 % do tamanho, conferido bit a bit) | `compactar_amostras.py` | [Guardar as capturas](docs/user-guide.md#guardar-as-capturas-sem-perdas-compactar_amostraspy) |
 | Saber onde guardar os dados | a variável `DADOS` | [Onde guardar os dados](docs/user-guide.md#onde-guardar-os-dados) |
-| Ver o que já foi medido, com os números para o relatório | os resultados de bancada | [`docs/bench-results.md`](docs/bench-results.md) |
 | Validar o instrumento em bancada | testes T0 a T11 | [Roteiro de laboratório](docs/lab-procedure.md) |
 
 ## 📈 FFT ou Welch?
@@ -160,13 +178,12 @@ As duas podem ser combinadas na mesma execução. A explicação completa, com o
 
 | Situação | O que |
 |---|---|
-| ✅ Validado em hardware | Protocolo SPI do ADS8688, handshake ARM↔PRU e varredura automática de canais (1 e 5 canais a 102,4 kS/s): canais ligados à rede mostram os 60 Hz, canais desconectados mostram só ruído |
-| 📏 Medido em bancada | ADC e aquisição (T0 a T4, T6 e T7, alguns com pontos a refazer) e resposta em frequência da cadeia de tensão (T3), na [tabela acima](#-medido-em-bancada) |
-| 🧪 Validado com sinais sintéticos | Toda a análise espectral, a correção de sondas e a geração de perfis |
-| 🛠️ Corrigido, falta validar em hardware | O firmware anterior a out/2026 perdia 6,97 µs a cada troca de buffer. A correção e os contadores de integridade foram conferidos num simulador da PRU; falta refazer o T7 na BeagleBone |
-| ⏳ Pendente | Teto da taxa de amostragem (T7e), **calibração da sonda de corrente** (T10), distorção, *aliasing* e ensaios ponta a ponta (T5, T8, T9, T11), fase da cadeia |
+| ✅ Validado em hardware | Aquisição a 400 kS/s com a grade de tempo exata e a integridade medida em cada captura (T7f e T7g); a cadeia de tensão em magnitude e fase até 178 kHz (T3f), confirmada por senoides até 270 kHz; *aliasing* (T8) e supraharmônicos de espectro conhecido (T9) |
+| 📏 Medido com o firmware anterior, a refazer | Escala, razão do divisor, exatidão da taxa e atraso entre canais (T0, T2, T4 e T6) |
+| 🧪 Validado com dados sintéticos | A calibração da sonda de corrente com magnitude e fase pela razão de dois canais; a análise espectral e a correção |
+| ⏳ Pendente | **A calibração da sonda de corrente em bancada (T10)**, a cadeia de tensão na faixa de produção (±10,24 V), uma carga real (T11) e a distorção com fonte limpa (T5) |
 
-O andamento, teste a teste, está no [Estado da campanha](docs/lab-procedure.md#estado-da-campanha).
+O andamento, teste a teste, está no [Estado da campanha](docs/lab-procedure.md#estado-da-campanha), e o caminho até o relatório final no [plano do relatório](docs/final-report-plan.md).
 
 ## 📂 Estrutura do repositório
 
@@ -190,12 +207,14 @@ Pastas e documentos têm nomes em inglês, minúsculos e sem espaço; o código 
 | Documento | Para quem | Conteúdo |
 |---|---|---|
 | [`docs/user-guide.md`](docs/user-guide.md) | Quem vai **usar** | Passo a passo: capturar, analisar, calibrar sondas, formato do `.bin`, problemas comuns |
-| [`docs/lab-procedure.md`](docs/lab-procedure.md) | Quem vai **testar em bancada** | Testes T0 a T11: sinal a injetar, comandos, o que anotar no osciloscópio, critérios de aceitação e dados para o relatório |
+| [`docs/lab-procedure.md`](docs/lab-procedure.md) | Quem vai **testar em bancada** | Testes T0 a T11: sinal a injetar, comandos, o que anotar, critérios de aceitação e o passo a passo da próxima ida |
+| [`docs/bench-results.md`](docs/bench-results.md) | Quem vai **citar um resultado** | Os números medidos, teste a teste, com a data, o firmware, a pasta dos dados e as figuras |
 | [`docs/software-architecture.md`](docs/software-architecture.md) | Quem vai **modificar o Python** | Módulos e camadas, convenções, testes, CI, receitas e checklist de PR |
 | [`docs/project-context.md`](docs/project-context.md) | Quem quer a **referência técnica completa** | Protocolo SPI, firmware, formato do cabeçalho, pipeline de análise, estado e limites (texto denso, escrito também para ser lido por IA) |
 | [`docs/improvement-proposals.md`](docs/improvement-proposals.md) | Quem vai **evoluir o projeto** | Melhorias abertas, com prioridade e esforço |
 | [`docs/probe-profile-audit.md`](docs/probe-profile-audit.md) | Quem confia na **calibração de sondas** | Auditoria do perfil e da correção: evidências, bugs corrigidos, limites |
 | [`docs/probe-correction-design.md`](docs/probe-correction-design.md) | Quem quer saber **por que** foi feito assim | Raciocínio de projeto da correção de sondas (histórico) |
+| [`docs/final-report-plan.md`](docs/final-report-plan.md) | Quem escreve **o relatório final** | O que já está demonstrado, o que falta em cada seção, as idas ao laboratório e o cronograma |
 | [`docs/report-notes.md`](docs/report-notes.md) | Quem escreve **relatório ou apresentação** | Notas cronológicas e os números para citar |
 | [`report/gerar_figuras.py`](report/gerar_figuras.py) | Quem escreve **relatório ou artigo** | Figuras em PDF vetorial no tamanho final, com o texto pelo LaTeX, e os números citados como macros siunitx |
 

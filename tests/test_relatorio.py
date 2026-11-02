@@ -189,3 +189,65 @@ def test_queda_da_referencia_explica_senoide_menos_quadrada(gf, tmp_path, monkey
     assert float(macros.split(r"\CadeiaRefSobraRms}{\qty{")[1].split("}")[0]) < 0.005
     monkeypatch.setattr(gf, "REFERENCIA_T3_312K", tmp_path / "nada.csv")
     assert gf.main(["perfil_cadeia_tensao_referencia", "--sem-latex", "--saida", str(tmp_path / "x")]) == 1
+
+
+def _capturas_sh_sinteticas(gf, pasta):
+    """Cada captura de ``TONS_SH`` com o 60 Hz de 16 Vpp e o tom na amplitude que o modelo do T3f prevê na frequência
+    real (o tom de cima da Nyquist é amostrado como está, e dobra sozinho), em ±2,56 V."""
+    from capturas_sinteticas import montar_cabecalho
+
+    h, k, gv, _ = gf._modelo_t3f()
+    rng = np.random.default_rng(3)
+    pasta.mkdir()
+
+    def pico_no_pino(vpp, f):
+        return vpp / 2 / gv * k * float(h(f))
+
+    for tom in gf.TONS_SH:
+        fs = 320_000 if "320k" in tom.arquivo else 100_000 if "100kSs" in tom.arquivo else 400_000
+        n = 1 << 19
+        t = np.arange(n) / fs
+        v = pico_no_pino(16.0, 60.0) * np.sin(2 * np.pi * 60 * t)
+        a = pico_no_pino(tom.vpp, tom.f_hz)
+        if tom.modo == "fm":
+            v += a * np.cos(2 * np.pi * tom.f_hz * t + 20 * np.sin(2 * np.pi * 100 * t))
+        elif tom.modo == "am":
+            v += a * (1 + 0.8 * np.cos(2 * np.pi * 120 * t)) * np.cos(2 * np.pi * tom.f_hz * t)
+        elif tom.f_hz != 60:
+            v += a * np.sin(2 * np.pi * tom.f_hz * t + 0.3)
+        codigos = np.round(32768 + v / (5.12 / 65536) + rng.normal(0, 0.3, n)).astype("<u2")
+        cab = montar_cabecalho(n, (1,), (1,), ("",), fs, versao=7, codigos_faixa_adc=(2,))
+        (pasta / tom.arquivo).write_bytes(cab + codigos.tobytes())
+
+
+def test_senoides_na_amplitude_do_modelo_dao_zero_db_diretas_e_dobradas(gf, tmp_path, monkeypatch):
+    """A validação do T3f por senoides (23/10): com cada tom exatamente na amplitude do modelo, a diferença é ~0 dB,
+    inclusive nos dobrados (130 kHz a 100 kS/s, 270 kHz a 320 e 400 kS/s) e na portadora da AM; a FM, cuja potência
+    se espalha por ±2 kHz, a menos de 0,3 dB."""
+    _capturas_sh_sinteticas(gf, tmp_path / "SH")
+    monkeypatch.setattr(gf, "PASTA_SH", tmp_path / "SH")
+    comparacoes = gf._comparar_tons()
+    for c in comparacoes:
+        assert abs(c.diferenca_db) < (0.3 if c.tom.modo == "fm" else 0.05), (c.tom.arquivo, c.diferenca_db)
+    assert sum(c.dobrado for c in comparacoes) == 3
+
+
+def test_figuras_de_23_10_e_as_macros_com_capturas_sinteticas(gf, tmp_path, monkeypatch):
+    _capturas_sh_sinteticas(gf, tmp_path / "SH")
+    monkeypatch.setattr(gf, "PASTA_SH", tmp_path / "SH")
+    assert gf.main(["validacao_cadeia_senoides", "espectro_supraharmonicos", "--sem-latex",
+                    "--saida", str(tmp_path)]) == 0
+    macros = (tmp_path / "validacao_cadeia_senoides.tex").read_text(encoding="utf-8")
+    assert r"\SenoidesN}{10}" in macros and r"\SenoidesFmax}{\qty{270}" in macros
+    assert float(macros.split(r"\SenoidesSemPolo}{\qty{")[1].split("}")[0]) == pytest.approx(0.47, abs=0.02)
+    macros = (tmp_path / "espectro_supraharmonicos.tex").read_text(encoding="utf-8")
+    assert float(macros.split(r"\EspectroTomDbc}{\qty{")[1].split("}")[0]) == pytest.approx(-40.0, abs=0.1)
+    lateral = float(macros.split(r"\EspectroAmLateralA}{\qty{")[1].split("}")[0])
+    assert lateral == pytest.approx(20 * math.log10(0.4), abs=0.1)        # AM de 80 %: −7,96 dB
+
+
+def test_figuras_de_23_10_sem_as_capturas_sao_puladas(gf, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(gf, "PASTA_SH", tmp_path / "nada")
+    for nome in ("validacao_cadeia_senoides", "espectro_supraharmonicos", "readme_espectro"):
+        assert gf.main([nome, "--sem-latex", "--saida", str(tmp_path)]) == 1
+    assert "faltam as capturas" in capsys.readouterr().err

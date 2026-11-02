@@ -165,6 +165,19 @@ TEXTOS = {
         "queda_referencia": "Queda da referência lida no osciloscópio",
         "diferenca_ref_db": "Diferença (dB)",
         "sobra_db": "Sobra (dB)",
+        "quadradas_t3f": "Quadradas (T3f, 22/10)",
+        "modelo_t3f": "Modelo do T3f",
+        "extrapolado": "Modelo extrapolado",
+        "senoide_direta": "Senoide (23/10)",
+        "senoide_dobrada": "Senoide dobrada (aliasing)",
+        "senoide_menos_modelo": "Senoide − modelo (dB)",
+        "polo_no_gerador": "Se o polo de {polo} fosse do gerador",
+        "dobrado": "dobrado",
+        "sem_correcao": "Sem correção (o que o ADC vê)",
+        "com_perfil": "Com o perfil da cadeia",
+        "nivel_dbc": "Nível (dBc)",
+        "nominal": "Nominal (gerador)",
+        "desvio_de": "Desvio de {f} (Hz)",
     },
     "en": {
         "frequencia": "Frequency (Hz)",
@@ -203,6 +216,19 @@ TEXTOS = {
         "queda_referencia": "Drop of the oscilloscope reference",
         "diferenca_ref_db": "Difference (dB)",
         "sobra_db": "Remainder (dB)",
+        "quadradas_t3f": "Square waves (T3f, Oct 22)",
+        "modelo_t3f": "T3f model",
+        "extrapolado": "Extrapolated model",
+        "senoide_direta": "Sine (Oct 23)",
+        "senoide_dobrada": "Aliased sine",
+        "senoide_menos_modelo": "Sine − model (dB)",
+        "polo_no_gerador": "If the {polo} pole were the generator's",
+        "dobrado": "aliased",
+        "sem_correcao": "Uncorrected (what the ADC sees)",
+        "com_perfil": "Corrected by the chain profile",
+        "nivel_dbc": "Level (dBc)",
+        "nominal": "Nominal (generator)",
+        "desvio_de": "Offset from {f} (Hz)",
     },
 }
 
@@ -1122,6 +1148,381 @@ def grade_bits(estilo: Estilo) -> Resultado:
     return Resultado(fig, macros, comentarios)
 
 
+# =====================================================================================================
+# T8 e T9 (23/10/2026): senoides de amplitude conhecida e supraharmônicos -- lê as capturas em $DADOS
+# =====================================================================================================
+PASTA_SH = DADOS / "lab/2026-10-23/SH_2026-10-23"
+
+
+@dataclass(frozen=True)
+class TomConhecido:
+    """Uma captura do 60 Hz de 16 Vpp somado a um tom de amplitude conhecida: a do gerador em High-Z, sem
+    osciloscópio. ``f_hz`` é a frequência real; acima da Nyquist da captura, o tom aparece dobrado."""
+    arquivo: str
+    f_hz: float
+    vpp: float
+    modo: str = "tom"   # "tom"; "am" (só a portadora); "fm" (a potência em ±3,5 kHz, cada bin corrigido pelo modelo)
+
+
+TONS_SH = (
+    TomConhecido("S0_60Hz.bin", 60.0, 16.0),
+    TomConhecido("S5_9k_5mV.bin", 9e3, 0.005),
+    TomConhecido("S5_9k_16mV.bin", 9e3, 0.016),
+    TomConhecido("S1_25k.bin", 25e3, 0.16),
+    TomConhecido("S2_40k_AM.bin", 40e3, 0.5, "am"),
+    TomConhecido("S3_75k_FM.bin", 75e3, 0.5, "fm"),
+    TomConhecido("S4_130k.bin", 130e3, 0.5),
+    TomConhecido("S4_130k_320k.bin", 130e3, 0.5),
+    TomConhecido("S4b_130k_100kSs.bin", 130e3, 0.5),
+    TomConhecido("S4c_270k_400k.bin", 270e3, 0.5),
+    TomConhecido("S4c_270k_320k.bin", 270e3, 0.5),
+)
+MEIA_BANDA_TOM_HZ = 2.0         # a potência de um tom: ±2 Hz em volta do pico (as bandas laterais da AM ficam a 120 Hz)
+BUSCA_TOM_HZ = 50.0             # o pico, procurado a ±50 Hz do nominal: o relógio do ADC erra ~−43 ppm (T4), 12 Hz em 270 kHz
+MEIA_BANDA_FM_HZ = 3500.0       # a FM de ±2 kHz a 100 Hz tem 99 % da potência em ±2,2 kHz (Carson)
+
+
+def _pico(f: np.ndarray, p: np.ndarray, f_nominal: float) -> float:
+    """A frequência do maior bin a ±``BUSCA_TOM_HZ`` de ``f_nominal``: onde o tom está de fato, no relógio do ADC."""
+    perto = np.abs(f - f_nominal) <= BUSCA_TOM_HZ
+    return float(f[perto][np.argmax(p[perto])])
+
+
+def _em_dados(caminho: Path) -> Path:
+    """O caminho relativo a $DADOS, para os comentários do .tex (inteiro, se estiver fora dele)."""
+    return caminho.relative_to(DADOS) if caminho.is_relative_to(DADOS) else caminho
+
+
+def _volts_no_pino(caminho: Path, max_amostras: int | None = None):
+    """(volts no pino do ADC, sem a média; fs; cabeçalho) de uma captura de 1 canal."""
+    sinal, fs, cab = _canal_do_tom(caminho, max_amostras)
+    v = np.asarray(sinal, dtype=np.float64) * (cab.faixa_adc_total_v_por_canal[-1] / 65536)
+    return v - v.mean(), fs, cab
+
+
+def _espectro_de_potencia(x: np.ndarray, fs: float, janela: str = "hann") -> tuple[np.ndarray, np.ndarray]:
+    """(f, V² por bin). Com a Hann, a soma dos bins em volta de um tom é o quadrado do RMS dele (para medir); com a
+    flat-top, o pico de um tom é o quadrado do RMS dele, a menos de 0,01 dB (para desenhar)."""
+    if janela == "hann":
+        w = np.hanning(len(x))
+        p = 2 * np.abs(np.fft.rfft(x * w)) ** 2 / (len(x) * np.sum(w ** 2))
+    else:
+        from scipy.signal.windows import flattop
+
+        w = flattop(len(x), sym=False)
+        p = 2 * (np.abs(np.fft.rfft(x * w)) / np.sum(w)) ** 2
+    return np.fft.rfftfreq(len(x), 1 / fs), p
+
+
+def _aparente(f_hz: float, fs: float) -> float:
+    """Onde um tom de ``f_hz`` aparece numa captura a ``fs``: dobrado em torno dos múltiplos de fs/2."""
+    r = f_hz % fs
+    return min(r, fs - r)
+
+
+@dataclass
+class ComparacaoTom:
+    tom: TomConhecido
+    fs: float
+    firmware: str
+    ganho: float            # medido, no eixo do perfil: RMS no pino ÷ RMS nominal na entrada × ganho nominal ÷ K
+    ganho_modelo: float     # |H(f)| do modelo do T3f na frequência real (1 em baixa frequência)
+
+    @property
+    def dobrado(self) -> bool:
+        return self.tom.f_hz > self.fs / 2
+
+    @property
+    def diferenca_db(self) -> float:
+        return DB_POR_NEPER * math.log(self.ganho / self.ganho_modelo)
+
+
+def _modelo_t3f():
+    """(|H(f)| do modelo do T3f, K, ganho nominal da cadeia, (f0, Q, polo))."""
+    _, dados, _, _, _, _, _, k, (f0, q, polo) = _cadeia_tensao_fase()
+
+    def h(f):
+        return np.abs(h_segunda_ordem(np.maximum(f, 1e-6), f0, q, polo))
+    return h, k, float(dados["calibracao_adc"]["ganho"]["sonda"]), (f0, q, polo)
+
+
+def _comparar_tons() -> list[ComparacaoTom]:
+    """Cada tom de ``TONS_SH`` medido na captura e comparado com o modelo do T3f na frequência real."""
+    caminhos = [PASTA_SH / t.arquivo for t in TONS_SH]
+    _exigir(*caminhos)
+    h, k, gv, _ = _modelo_t3f()
+    comparacoes = []
+    for tom, caminho in zip(TONS_SH, caminhos):
+        x, fs, cab = _volts_no_pino(caminho)
+        f, p = _espectro_de_potencia(x, fs)
+        fa = _aparente(tom.f_hz, fs)
+        if tom.modo == "fm":
+            # a FM espalha a potência por ±2 kHz, onde o ganho varia ~1 dB: cada bin corrigido na sua frequência
+            banda = np.abs(f - fa) <= MEIA_BANDA_FM_HZ
+            rms = math.sqrt(float(np.sum(p[banda] / h(f[banda]) ** 2))) * float(h(tom.f_hz))
+        else:   # ±2 Hz numa captura de 30 s; numa curta, ao menos os 3 bins de cada lado do lóbulo da Hann
+            meia = max(MEIA_BANDA_TOM_HZ, 3 * fs / len(x))
+            rms = math.sqrt(float(np.sum(p[np.abs(f - _pico(f, p, fa)) <= meia])))
+        rms_nominal = tom.vpp / (2 * math.sqrt(2))
+        comparacoes.append(ComparacaoTom(tom, fs, cab.versao_firmware, rms * gv / (rms_nominal * k),
+                                         float(h(tom.f_hz))))
+    return comparacoes
+
+
+@figura("validacao_cadeia_senoides", "T8/T9 (23/10): senoides de amplitude conhecida contra o modelo do T3f, até "
+        "270 kHz (acima da Nyquist, dobradas)")
+def validacao_cadeia_senoides(estilo: Estilo) -> Resultado:
+    tons = _comparar_tons()
+    _, _, f_q, g_q, _, _, _, k, (f0, q, polo) = _cadeia_tensao_fase()
+    validos = [c for c in tons if c.tom.modo != "fm"]
+    fm_ = [c for c in tons if c.tom.modo == "fm"]
+    marcador = estilo.formato.marcador_pt
+
+    fig = estilo.nova_figura(0.82)
+    mag, res = fig.subplots(2, 1, sharex=True, gridspec_kw={"height_ratios": [3, 1.6], "hspace": 0.05})
+    xmin, xmax, nyquist = 40.0, 400e3, 200e3
+    for eixo in (mag, res):
+        eixo.axvspan(nyquist, xmax, color=COR["grade"], alpha=0.5, linewidth=0, zorder=0)
+    fm = np.geomspace(xmin, xmax, 800)
+    hm_db = DB_POR_NEPER * np.log(np.abs(h_segunda_ordem(fm, f0, q, polo)))
+    medida = fm <= f_q.max()
+    curva, = mag.plot(fm[medida], hm_db[medida], color=COR["modelo"], linestyle=(0, (5, 3)), alpha=0.8, zorder=2,
+                      label=estilo.t("modelo_t3f"))
+    extrapolada, = mag.plot(fm[~medida], hm_db[~medida], color=COR["modelo"], linestyle=(0, (1, 1.5)), alpha=0.8,
+                            zorder=2, label=estilo.t("extrapolado"))
+    quadradas, = mag.plot(f_q, DB_POR_NEPER * np.log(g_q), linestyle="none", marker="s", markersize=marcador * 0.7,
+                          color=COR["secundaria"], markerfacecolor="white", markeredgewidth=0.6, zorder=3,
+                          label=estilo.t("quadradas_t3f"))
+    estilo_direta = dict(linestyle="none", marker="D", markersize=marcador * 1.05, color=COR["destaque"],
+                         markeredgecolor="white", markeredgewidth=0.5, zorder=4)
+    estilo_dobrada = dict(linestyle="none", marker="D", markersize=marcador * 1.05, markerfacecolor="white",
+                          markeredgecolor=COR["destaque"], markeredgewidth=0.9, zorder=4)
+    alcas = [quadradas, curva, extrapolada]
+    for dobrado, est, chave in ((False, estilo_direta, "senoide_direta"), (True, estilo_dobrada, "senoide_dobrada")):
+        grupo = [c for c in validos if c.dobrado == dobrado]
+        alca, = mag.plot([c.tom.f_hz for c in grupo], [DB_POR_NEPER * math.log(c.ganho) for c in grupo],
+                         label=estilo.t(chave), **est)
+        alcas.append(alca)
+        res.plot([c.tom.f_hz for c in grupo], [c.diferenca_db for c in grupo], **est)
+    mag.set_ylim(float(hm_db.min()) - 3, 3)
+    mag.yaxis.set_major_locator(MultipleLocator(10))
+    mag.yaxis.set_minor_locator(MultipleLocator(5))
+    mag.yaxis.set_major_formatter(estilo.formatador(0))
+    mag.set_ylabel(estilo.t("ganho_norm"))
+    mag.legend(handles=alcas, loc="lower left")
+    mag.text(math.sqrt(nyquist * xmax), -2, estilo.t("dobrado"), ha="center", va="top", rotation=90,
+             color=COR["secundaria"], fontsize=estilo.formato.fonte_ticks_pt)
+
+    # o que as senoides mostrariam se o polo real fosse a borda da quadrada do gerador, e não da cadeia
+    se_gerador = 10 * np.log10(1 + (fm / polo) ** 2)
+    rotulo_polo = estilo.t("polo_no_gerador").format(polo=estilo.qty(polo / 1e3, 0, r"\kilo\hertz", "kHz"))
+    pologer, = res.plot(fm, se_gerador, color=COR["secundaria"], linestyle=(0, (4, 2)), linewidth=0.8, zorder=2,
+                        label=rotulo_polo)
+    res.axhline(0, color=COR["modelo"], linewidth=0.6, alpha=0.8, zorder=2)
+    piso, teto = -0.25, 0.65
+    res.set_ylim(piso, teto)
+    for c in fm_:      # a FM ficou fora da escala: a seta diz onde e quanto
+        res.annotate("FM: " + estilo.qty(c.diferenca_db, 1, r"\decibel", "dB"), xy=(c.tom.f_hz, piso),
+                     xytext=(3, 14), textcoords="offset points", ha="left", va="bottom", color=COR["destaque"],
+                     fontsize=estilo.formato.fonte_ticks_pt,
+                     arrowprops=dict(arrowstyle="->", color=COR["destaque"], linewidth=0.7))
+    res.yaxis.set_major_locator(MultipleLocator(0.2))
+    res.yaxis.set_major_formatter(estilo.formatador(1))
+    res.set_ylabel(estilo.t("senoide_menos_modelo"))
+    res.legend(handles=[pologer], loc="upper left")
+    _eixo_log_frequencia(res, estilo, xmin, xmax)
+    fig.align_ylabels([mag, res])
+
+    difs = np.array([c.diferenca_db for c in validos])
+
+    def sem_polo(f):
+        return 10 * math.log10(1 + (f / polo) ** 2)
+
+    def rejeicao(f):
+        return DB_POR_NEPER * math.log(abs(complex(h_segunda_ordem(f, f0, q, polo))))
+
+    f_max = max(c.tom.f_hz for c in validos)
+    log.info(f"  {len(validos)} tons: diferença máxima {np.max(np.abs(difs)):.3f} dB, rms {np.sqrt(np.mean(difs ** 2)):.3f}"
+             f" dB; sem o polo, {sem_polo(f_max):+.2f} dB em {f_max / 1e3:.0f} kHz"
+             + "".join(f"; FM {c.diferenca_db:+.2f} dB" for c in fm_))
+    macros = {
+        "SenoidesN": str(len(validos)),
+        "SenoidesDifMax": rf"\qty{{{np.max(np.abs(difs)):.2f}}}{{\decibel}}",
+        "SenoidesDifRms": rf"\qty{{{np.sqrt(np.mean(difs ** 2)):.3f}}}{{\decibel}}",
+        "SenoidesFmax": rf"\qty{{{f_max / 1e3:.0f}}}{{\kilo\hertz}}",
+        "SenoidesSemPolo": rf"\qty{{{sem_polo(f_max):.2f}}}{{\decibel}}",
+        "SenoidesSemPoloMeio": rf"\qty{{{sem_polo(130e3):.2f}}}{{\decibel}}",
+        "AliasingRejeicaoA": rf"\qty{{{rejeicao(130e3):.1f}}}{{\decibel}}",
+        "AliasingRejeicaoB": rf"\qty{{{rejeicao(270e3):.1f}}}{{\decibel}}",
+        # a imagem de 270 kHz em 130 kHz (a 400 kS/s) contra um componente real de 130 kHz de mesma amplitude
+        "AliasingImagemDb": rf"\qty{{{rejeicao(130e3) - rejeicao(270e3):.1f}}}{{\decibel}}",
+    }
+    for c in fm_:
+        macros["SenoidesFmDif"] = rf"\qty{{{c.diferenca_db:.1f}}}{{\decibel}}"
+    comentarios = [f"Capturas: {_em_dados(PASTA_SH)} (60 Hz de 16 Vpp + o tom, ±2,56 V, 30 s a 400 kS/s, salvo "
+                   "indicação); a referência é a amplitude nominal do gerador (High-Z), sem osciloscópio",
+                   f"Modelo do T3f: f0 = {f0:.1f} Hz, Q = {q:.5f}, polo = {polo:.0f} Hz, K = {k:.5f}"]
+    comentarios += [f"{c.tom.arquivo} ({c.fs / 1e3:g} kS/s, {c.firmware}): {c.tom.f_hz / 1e3:g} kHz, {c.tom.vpp:g} Vpp, "
+                    f"{c.tom.modo}{' (dobrado)' if c.dobrado else ''}: {c.diferenca_db:+.3f} dB" for c in tons]
+    return Resultado(fig, macros, comentarios)
+
+
+def _envoltoria(f: np.ndarray, p: np.ndarray, bordas: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """O máximo de ``p`` entre bordas consecutivas, com a frequência dele: um espectro de milhões de bins desenhado
+    em poucos milhares de pontos, sem perder nenhum tom."""
+    inicios = np.unique(np.clip(np.searchsorted(f, bordas[:-1]), 0, len(f) - 1))
+    fins = np.append(inicios[1:], np.searchsorted(f, bordas[-1]))
+    idx = np.array([i + int(np.argmax(p[i:j])) for i, j in zip(inicios, fins) if j > i])
+    return f[idx], p[idx]
+
+
+def _dbc(f: np.ndarray, p: np.ndarray, h, corrigir: bool) -> np.ndarray:
+    """O espectro em dB relativos ao 60 Hz da mesma captura, com ou sem a correção da cadeia (|H| do T3f)."""
+    pc = p / h(f) ** 2 if corrigir else p
+    perto = np.abs(f - 60.0) < 10
+    return 10 * np.log10(np.maximum(pc, 1e-300) / float(pc[perto].max()))
+
+
+def _espectro_s1(n_faixas: int = 1500):
+    """O Welch de S1 (60 Hz de 16 Vpp + 25 kHz de 0,16 Vpp), resolução de 1 Hz, flat-top: (f, dBc sem correção,
+    f, dBc com o perfil, nível corrigido do tom em dBc, o mesmo sem correção, resolução)."""
+    from scipy.signal import welch
+
+    caminho = PASTA_SH / "S1_25k.bin"
+    _exigir(caminho)
+    h, *_ = _modelo_t3f()
+    x, fs, _ = _volts_no_pino(caminho)
+    n = int(fs)
+    f, p = welch(x, fs, window="flattop", nperseg=n, noverlap=n // 2, scaling="spectrum")
+    bordas = np.geomspace(20, fs / 2, n_faixas + 1)
+    fb, db_bruto = _envoltoria(f, _dbc(f, p, h, False), bordas)
+    fc, db_corr = _envoltoria(f, _dbc(f, p, h, True), bordas)
+    perto = np.abs(f - 25e3) < 20
+    tom = float(_dbc(f, p, h, True)[perto].max())
+    tom_bruto = float(_dbc(f, p, h, False)[perto].max())
+    return fb, db_bruto, fc, db_corr, tom, tom_bruto, fs / n
+
+
+@figura("espectro_supraharmonicos", "T9 (23/10): 60 Hz forte e supraharmônicos fracos, sem e com a correção da "
+        "cadeia (S1 inteiro; S5, AM e FM de perto)")
+def espectro_supraharmonicos(estilo: Estilo) -> Resultado:
+    nomes = ("S1_25k.bin", "S5_9k_5mV.bin", "S2_40k_AM.bin", "S3_75k_FM.bin", "S0_60Hz.bin")
+    _exigir(*(PASTA_SH / n for n in nomes))
+    h, k, gv, _ = _modelo_t3f()
+    fb, db_bruto, fc, db_corr, tom_s1, tom_s1_bruto, resolucao = _espectro_s1()
+    fino = estilo.formato.linha_pt * 0.55
+
+    fig = estilo.nova_figura(0.92)
+    grade = fig.add_gridspec(2, 3, height_ratios=[1.35, 1])
+    topo = fig.add_subplot(grade[0, :])
+    zooms = [fig.add_subplot(grade[1, i]) for i in range(3)]
+    for z in zooms[1:]:
+        z.sharey(zooms[0])
+
+    bruto, = topo.plot(fb, db_bruto, color=COR["secundaria"], alpha=0.55, linewidth=fino, zorder=2,
+                       label=estilo.t("sem_correcao"))
+    corrigido, = topo.plot(fc, db_corr, color=COR["tinta"], linewidth=fino, zorder=3, label=estilo.t("com_perfil"))
+    nominal_s1 = 20 * math.log10(0.16 / 16)
+    nominal, = topo.plot([25e3], [nominal_s1], linestyle="none", marker="o", markersize=estilo.formato.marcador_pt * 1.6,
+                         markerfacecolor="none", markeredgecolor=COR["modelo"], markeredgewidth=0.9, zorder=4,
+                         label=estilo.t("nominal"))
+    topo.annotate(estilo.qty(25, 0, r"\kilo\hertz", "kHz") + ": " + estilo.qty(tom_s1, 1, "dBc", "dBc"),
+                  xy=(25e3, tom_s1), xytext=(-7, 0), textcoords="offset points", ha="right", va="center",
+                  color=COR["tinta"], fontsize=estilo.formato.fonte_ticks_pt)
+    topo.set_xscale("log")
+    topo.set_xlim(20, fb.max())
+    topo.xaxis.set_major_locator(LogLocator(base=10))
+    topo.xaxis.set_minor_locator(LogLocator(base=10, subs=np.arange(2, 10)))
+    topo.xaxis.set_major_formatter(LogFormatterMathtext())
+    topo.set_xlabel(estilo.t("frequencia"))
+    topo.set_ylim(-135, 8)
+    topo.yaxis.set_major_locator(MultipleLocator(20))
+    topo.yaxis.set_major_formatter(estilo.formatador(0))
+    topo.set_ylabel(estilo.t("nivel_dbc"))
+    topo.legend(handles=[corrigido, bruto, nominal], loc="upper center", bbox_to_anchor=(0.47, 1.0))
+
+    def letra(eixo, texto: str) -> None:
+        eixo.text(0.02, 0.97, texto, transform=eixo.transAxes, ha="left", va="top", color=COR["tinta"],
+                  fontsize=estilo.formato.fonte_ticks_pt,
+                  bbox=dict(boxstyle="square,pad=0.15", facecolor="white", edgecolor="none"))
+
+    letra(topo, "(a)")
+    for eixo, texto in zip(zooms, ("(b)", "(c)", "(d)")):
+        letra(eixo, texto)
+
+    # de perto, numa FFT da captura inteira (0,03 Hz por bin): S5 (−70 dBc), a AM e a FM, com o esperado em azul
+    macros = {}
+    estilo_teoria = dict(linestyle="none", marker="o", markersize=estilo.formato.marcador_pt * 1.1, markerfacecolor="none",
+                         markeredgecolor=COR["modelo"], markeredgewidth=0.8, zorder=4)
+    casos = (("S5_9k_5mV.bin", 9e3, 40.0), ("S2_40k_AM.bin", 40e3, 400.0), ("S3_75k_FM.bin", 75e3, 3000.0))
+    for eixo, (nome, fcentro, meia) in zip(zooms, casos):
+        x, fs, _ = _volts_no_pino(PASTA_SH / nome)
+        f, p = _espectro_de_potencia(x, fs, "flattop")
+        db = _dbc(f, p, h, True)
+        # o centro no relógio do ADC (o tom, ou a portadora da AM); a FM não tem um pico: fica a nominal (3 Hz em 3 kHz)
+        centro = fcentro if nome.startswith("S3") else _pico(f, p, fcentro)
+        janela = np.abs(f - centro) <= meia
+        fz, dz = _envoltoria(f[janela], db[janela], np.linspace(centro - meia, centro + meia, 900))
+        eixo.plot(fz - centro, dz, color=COR["tinta"], linewidth=fino, zorder=3)
+        if nome.startswith("S5"):
+            teoria_f, teoria_db = np.array([0.0]), np.array([20 * math.log10(0.005 / 16)])
+            pico = float(db[np.abs(f - centro) < 1].max())
+            fora = janela & (np.abs(f - centro) > 2)
+            macros["EspectroFracoDbc"] = rf"\qty{{{pico:.1f}}}{{\decibel}}"
+            macros["EspectroFracoSnr"] = rf"\qty{{{pico - float(np.median(db[fora])):.0f}}}{{\decibel}}"
+        elif nome.startswith("S2"):
+            portadora = 20 * math.log10(0.5 / 16)
+            teoria_f = np.array([-120.0, 0.0, 120.0])
+            teoria_db = portadora + np.array([20 * math.log10(0.4), 0.0, 20 * math.log10(0.4)])
+            nivel = [float(db[np.abs(f - (centro + d)) < 1].max()) for d in (-120.0, 0.0, 120.0)]
+            macros["EspectroAmLateralA"] = rf"\qty{{{nivel[0] - nivel[1]:.2f}}}{{\decibel}}"
+            macros["EspectroAmLateralB"] = rf"\qty{{{nivel[2] - nivel[1]:.2f}}}{{\decibel}}"
+        else:
+            from scipy.special import jv
+
+            ordens = np.arange(-30, 31)
+            teoria_f = 100.0 * ordens
+            teoria_db = 20 * np.log10(np.maximum(np.abs(jv(ordens, 2000 / 100)), 1e-12)) + 20 * math.log10(0.5 / 16)
+            visivel = teoria_db > -75
+            teoria_f, teoria_db = teoria_f[visivel], teoria_db[visivel]
+        eixo.plot(teoria_f, teoria_db, **estilo_teoria)
+        eixo.set_xlim(-meia, meia)
+        eixo.xaxis.set_major_locator(MaxNLocator(nbins=3, symmetric=True, steps=[1, 2, 2.5, 5, 10]))
+        eixo.xaxis.set_major_formatter(estilo.formatador(0))
+        rotulo = estilo.qty(fcentro / 1e3, 0, r"\kilo\hertz", "kHz")
+        eixo.set_xlabel(estilo.t("desvio_de").format(f=rotulo))
+    zooms[0].set_ylim(-145, -15)
+    zooms[0].yaxis.set_major_locator(MultipleLocator(20))
+    zooms[0].yaxis.set_major_formatter(estilo.formatador(0))
+    zooms[0].set_ylabel(estilo.t("nivel_dbc"))
+    for z in zooms[1:]:
+        z.tick_params(labelleft=False)
+
+    # o menor tom detectável numa captura de 30 s: potência 10 vezes a do ruído nos 3 bins de um tom (Hann), em S0
+    x, fs, _ = _volts_no_pino(PASTA_SH / "S0_60Hz.bin")
+    f, p = _espectro_de_potencia(x, fs)
+    deteccao = {}
+    for fd in (9e3, 180e3):
+        perto = (np.abs(f - fd) < 1000) & (np.abs(f - fd) > 50)
+        rms_pino = math.sqrt(10 * 3 * float(np.median(p[perto])))
+        deteccao[fd] = rms_pino * gv / (k * float(h(fd))) * math.sqrt(2)      # V de pico na entrada do divisor
+    log.info(f"  S1: 25 kHz em {tom_s1:.2f} dBc (nominal {nominal_s1:.2f}; sem correção {tom_s1_bruto:.2f}); menor tom "
+             f"detectável {deteccao[9e3] * 1e6:.1f} µV (9 kHz) a {deteccao[180e3] * 1e6:.0f} µV (180 kHz) de pico")
+    macros.update({
+        "EspectroResolucao": rf"\qty{{{resolucao:.0f}}}{{\hertz}}",
+        "EspectroTomDbc": rf"\qty{{{tom_s1:.1f}}}{{\decibel}}",
+        "EspectroTomDbcBruto": rf"\qty{{{tom_s1_bruto:.1f}}}{{\decibel}}",
+        "EspectroDeteccaoBaixa": rf"\qty{{{deteccao[9e3] * 1e6:.0f}}}{{\micro\volt}}",
+        "EspectroDeteccaoAlta": rf"\qty{{{deteccao[180e3] * 1e6:.0f}}}{{\micro\volt}}",
+    })
+    comentarios = [f"Capturas: {_em_dados(PASTA_SH)}; correção pelo modelo do T3f (|H|); dBc relativos ao 60 Hz "
+                   "da mesma captura",
+                   f"Topo: S1, Welch flat-top de {resolucao:.0f} Hz; embaixo: FFT flat-top da captura inteira",
+                   "Menor tom detectável: potência 10 vezes a do ruído em 3 bins (Hann) de S0, 30 s; V de pico na "
+                   "entrada do divisor"]
+    return Resultado(fig, macros, comentarios)
+
+
 # ---- figuras de tela (README) ---------------------------------------------------------------------------
 # O GitHub mostra o README claro ou escuro conforme o visitante: fundo transparente e só cores legíveis nos dois
 # (contraste >= 3:1 contra o branco e contra o #0d1117 do tema escuro; laranja e azul separáveis também para
@@ -1164,60 +1565,96 @@ def _hz(valor: float, _pos=None) -> str:
     return f"{valor:.0f} Hz" if valor < 1e3 else f"{valor / 1e3:.0f} kHz"
 
 
-@figura("readme_cadeia_tensao", "A mesma resposta da cadeia de tensão, para o README (SVG transparente, tema claro e escuro)")
+def _readme_eixos(fig, *eixos) -> None:
+    fig.get_layout_engine().set(w_pad=0.25, h_pad=0.2)
+    for ax in eixos:
+        ax.spines[["top", "right"]].set_visible(False)
+
+
+def _readme_legenda(eixo, alcas, **kwargs) -> None:
+    legenda = eixo.legend(handles=alcas, borderpad=0.6, fancybox=False, **kwargs)
+    legenda.get_frame().set(facecolor="none", edgecolor=README_COR["grade"], linewidth=0.8)
+
+
+def _readme_eixo_x(eixo, xmin: float, xmax: float) -> None:
+    eixo.set_xscale("log")
+    eixo.set_xlim(xmin, xmax)
+    eixo.xaxis.set_major_locator(FixedLocator([10, 100, 1e3, 1e4, 1e5]))
+    eixo.xaxis.set_major_formatter(FuncFormatter(_hz))
+    eixo.xaxis.set_minor_locator(LogLocator(base=10, subs=np.arange(2, 10)))
+    eixo.xaxis.set_minor_formatter(NullFormatter())
+    eixo.set_xlabel("Frequência")
+
+
+@figura("readme_cadeia_tensao", "O Bode da cadeia de tensão por ondas quadradas (T3f), para o README (SVG transparente, "
+        "tema claro e escuro)")
 def readme_cadeia_tensao(_estilo: Estilo) -> Resultado:
-    """Mesmos dados e ajuste de ``perfil_cadeia_tensao``, desenhados para a tela (não usa o Estilo do documento)."""
-    _, f, g, ajustes = _cadeia_tensao()
-    aj = ajustes["ordem2"]
-    k, f0, q = aj.parametros
-    f3 = freq_menos_3db(f0, q)
-    y3 = 20 * math.log10(k) - 3
-    y = 20 * np.log10(g)
-    xmin, xmax = f.min() / 1.25, f.max() * 1.12
+    """Os dados e o modelo de ``perfil_cadeia_tensao_fase``, desenhados para a tela (não usa o Estilo do documento)."""
+    _, dados, f, g, _, fase, _, _, (f0, q, polo) = _cadeia_tensao_fase()
+    f3 = _freq_menos_3db_modelo(f0, q, polo)
+    xmin, xmax = f.min() / 1.3, f.max() * 1.25
     fm = np.geomspace(xmin, xmax, 600)
-    ym = mag_db_ordem2(fm, *aj.parametros)
+    hm = h_segunda_ordem(fm, f0, q, polo)
+    capturas = len(dados["resposta_fase"]["capturas"])
+    cor = README_COR
+    pontos = dict(linestyle="none", marker="o", markersize=6.5, markeredgewidth=0, color=cor["medido"], zorder=3)
+
+    with rc_sobre_padroes(README_RC):
+        fig = plt.figure(figsize=(9, 6.2), layout="constrained")
+        mag, ang = fig.subplots(2, 1, sharex=True, gridspec_kw={"height_ratios": [1.5, 1]})
+        _readme_eixos(fig, mag, ang)
+        curva, = mag.plot(fm, DB_POR_NEPER * np.log(np.abs(hm)), color=cor["modelo"], linewidth=2.2, zorder=2,
+                          label="Modelo: 2ª ordem × polo real")
+        medidos, = mag.plot(f, DB_POR_NEPER * np.log(g), label=f"Medido: harmônicos de {capturas} capturas de ondas quadradas", **pontos)
+        mag.plot([f3, f3], [-100, -3], color=cor["texto"], linewidth=1, linestyle=(0, (1.5, 2.5)), zorder=1)
+        mag.plot([f3], [-3], marker="o", markersize=8, markerfacecolor="none", markeredgecolor=cor["modelo"],
+                 markeredgewidth=1.8, linestyle="none", zorder=4)
+        mag.annotate(f"−3 dB em {f3 / 1e3:.1f} kHz".replace(".", ","), xy=(f3, -3), xytext=(-12, -6),
+                     textcoords="offset points", ha="right", va="top", fontsize=12)
+        mag.set_ylim(DB_POR_NEPER * math.log(g.min()) - 3, 3)
+        mag.yaxis.set_major_locator(MultipleLocator(10))
+        mag.yaxis.set_major_formatter(_virgula(0))
+        mag.set_ylabel("Ganho (dB)")
+        _readme_legenda(mag, [medidos, curva], loc="lower left")
+
+        ang.plot(fm, np.degrees(fase_do_modelo(fm, f0, q, polo)), color=cor["modelo"], linewidth=2.2, zorder=2)
+        ang.plot(f, np.degrees(fase), **pontos)
+        ang.set_ylim(-185, 5)
+        ang.yaxis.set_major_locator(MultipleLocator(45))
+        ang.yaxis.set_major_formatter(_virgula(0))
+        ang.set_ylabel("Fase (°)")
+        _readme_eixo_x(ang, xmin, xmax)
+        fig.align_ylabels([mag, ang])
+    return Resultado(fig, destino=PASTA_IMAGENS_README / "voltage-chain-response.svg", rc=README_RC)
+
+
+@figura("readme_espectro", "Um supraharmônico de 25 kHz a −40 dBc do 60 Hz, sem e com a correção da cadeia, para o "
+        "README (lê as capturas de 23/10)")
+def readme_espectro(_estilo: Estilo) -> Resultado:
+    fb, db_bruto, fc, db_corr, tom, _, _ = _espectro_s1(n_faixas=900)
     cor = README_COR
 
     with rc_sobre_padroes(README_RC):
-        fig = plt.figure(figsize=(9, 5.4), layout="constrained")
-        fig.get_layout_engine().set(w_pad=0.25, h_pad=0.2)
-        eixo, eixo_res = fig.subplots(2, 1, sharex=True, gridspec_kw={"height_ratios": [3.2, 1]})
-        for ax in (eixo, eixo_res):
-            ax.spines[["top", "right"]].set_visible(False)
-
-        curva, = eixo.plot(fm, ym, color=cor["modelo"], linewidth=2.2, zorder=2, label="Ajuste: passa-baixa de 2ª ordem")
-        medidos, = eixo.plot(f, y, linestyle="none", marker="o", markersize=7, markeredgewidth=0, color=cor["medido"],
-                             zorder=3, label=f"Medido ({len(f)} pontos)")
-        eixo.plot([f3, f3], [-100, y3], color=cor["texto"], linewidth=1, linestyle=(0, (1.5, 2.5)), zorder=1)
-        eixo.plot([f3], [y3], marker="o", markersize=8, markerfacecolor="none", markeredgecolor=cor["modelo"],
-                  markeredgewidth=1.8, linestyle="none", zorder=4)
-        eixo.annotate(f"−3 dB em {f3 / 1e3:.1f} kHz".replace(".", ","), xy=(f3, y3), xytext=(-12, -6),
-                      textcoords="offset points", ha="right", va="top", fontsize=12)
-        eixo.set_ylim(min(y.min(), ym.min()) - 0.8, 1.0)
-        eixo.yaxis.set_major_locator(MultipleLocator(3))
+        fig = plt.figure(figsize=(9, 4.6), layout="constrained")
+        eixo = fig.subplots()
+        _readme_eixos(fig, eixo)
+        bruto, = eixo.plot(fb, db_bruto, color=cor["texto"], alpha=0.75, linewidth=1.0, zorder=2,
+                           label="Sem correção (o que o ADC vê)")
+        corrigido, = eixo.plot(fc, db_corr, color=cor["medido"], linewidth=1.2, zorder=3,
+                               label="Com o perfil da cadeia")
+        nominal, = eixo.plot([25e3], [-40.0], linestyle="none", marker="o", markersize=11, markerfacecolor="none",
+                             markeredgecolor=cor["modelo"], markeredgewidth=1.8, zorder=4, label="Nominal do gerador")
+        eixo.annotate(f"25 kHz: {tom:.1f} dBc".replace(".", ",").replace("-", "−"), xy=(25e3, tom), xytext=(10, 0),
+                      textcoords="offset points", ha="left", va="center", fontsize=12)
+        eixo.annotate("60 Hz, 16 Vpp", xy=(60, 0), xytext=(10, -4), textcoords="offset points", ha="left", va="top",
+                      fontsize=12)
+        eixo.set_ylim(-125, 8)
+        eixo.yaxis.set_major_locator(MultipleLocator(20))
         eixo.yaxis.set_major_formatter(_virgula(0))
-        eixo.set_ylabel("Ganho normalizado (dB)")
-        legenda = eixo.legend(handles=[medidos, curva], loc="lower left", borderpad=0.6, fancybox=False)
-        legenda.get_frame().set(facecolor="none", edgecolor=cor["grade"], linewidth=0.8)
-
-        lim = max(0.3, 1.25 * float(np.max(np.abs(aj.residuos_db))))
-        eixo_res.axhline(0, color=cor["modelo"], linewidth=1.4, alpha=0.8, zorder=2)
-        eixo_res.plot(f, aj.residuos_db, linestyle="none", marker="o", markersize=5.5, markeredgewidth=0,
-                      color=cor["medido"], zorder=3)
-        eixo_res.set_ylim(-lim, lim)
-        eixo_res.yaxis.set_major_locator(MaxNLocator(nbins=3, symmetric=True, steps=[1, 2, 2.5, 5, 10]))
-        eixo_res.yaxis.set_major_formatter(_virgula(1))
-        eixo_res.set_ylabel("Resíduo (dB)")
-
-        eixo_res.set_xscale("log")
-        eixo_res.set_xlim(xmin, xmax)
-        eixo_res.xaxis.set_major_locator(FixedLocator([10, 100, 1e3, 1e4, 1e5]))
-        eixo_res.xaxis.set_major_formatter(FuncFormatter(_hz))
-        eixo_res.xaxis.set_minor_locator(LogLocator(base=10, subs=np.arange(2, 10)))
-        eixo_res.xaxis.set_minor_formatter(NullFormatter())
-        eixo_res.set_xlabel("Frequência")
-        fig.align_ylabels([eixo, eixo_res])
-    return Resultado(fig, destino=PASTA_IMAGENS_README / "voltage-chain-response.svg", rc=README_RC)
+        eixo.set_ylabel("Nível (dBc)")
+        _readme_legenda(eixo, [corrigido, bruto, nominal], loc="upper center", bbox_to_anchor=(0.5, 1.0))
+        _readme_eixo_x(eixo, 20, fb.max())
+    return Resultado(fig, destino=PASTA_IMAGENS_README / "supraharmonic-spectrum.svg", rc=README_RC)
 
 
 # =====================================================================================================

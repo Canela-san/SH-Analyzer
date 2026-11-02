@@ -4,7 +4,7 @@
 >
 > **Grau de confiança.** O que está sem marca vem do código, dos testes ou dos dados medidos e pode ser citado. O que tem ⚠️ depende da sua memória e precisa ser conferido. Os `[ ]` são imagens ou dados que ainda faltam.
 >
-> **Última atualização:** 22/10/2026. Cobre de jul/2026 (início do Assembly) até os resultados de bancada de 19/10 (Marcos 12 e 14), a revisão do firmware (Marco 13), a varredura das esperas do CS e da taxa de 21/10 (Marco 15) e a grade de tempo, o quadro que dependia do dado e o T3 até 140 kHz (Marco 16). Os achados de engenharia que não são matéria de relatório (robustez, higiene de código, organização do repositório) estão em [`improvement-proposals.md`](improvement-proposals.md).
+> **Última atualização:** 02/11/2026. Cobre de jul/2026 (início do Assembly) até os resultados de bancada de 19/10 (Marcos 12 e 14), a revisão do firmware (Marco 13), a varredura das esperas do CS e da taxa de 21/10 (Marco 15), a grade de tempo, o SPI rápido e a fase da cadeia de 22/10 (Marco 16), os sinais de espectro conhecido e o *aliasing* de 23/10 (Marco 17) e a calibração da sonda de corrente com fase de 24/10 (Marco 18). O plano do relatório final está em [`final-report-plan.md`](final-report-plan.md). Os achados de engenharia que não são matéria de relatório (robustez, higiene de código, organização do repositório) estão em [`improvement-proposals.md`](improvement-proposals.md).
 
 ---
 
@@ -17,7 +17,7 @@
 | **Montar a apresentação quinzenal** | A [seção 7](#7-apresentação-quinzenal-ao-orientador) (modelo de slides e registro por quinzena) e a tabela [Estado da campanha](lab-procedure.md#estado-da-campanha) do roteiro |
 | **Uma apresentação longa (1 hora)** | A [seção 5](#5-estrutura-sugerida-para-uma-apresentação-longa-1-hora) |
 | **Retomar o contexto** | A linha do tempo ([seção 2](#2-linha-do-tempo-cronológica)), uma vez, de ponta a ponta; a [seção 3](#3-síntese-por-marco-revisão-rápida-antes-da-apresentação) é a versão de uma linha por marco |
-| **Saber o que falta** | O [Marco 17](#marco-17--trabalho-pendente) e a [seção 4](#4-checklist-consolidado-de-capturas-de-tela-e-imagens) |
+| **Saber o que falta** | O [plano do relatório final](final-report-plan.md) (seção a seção, com as idas ao laboratório), o [Marco 19](#marco-19--trabalho-pendente) e a [seção 4](#4-checklist-consolidado-de-capturas-de-tela-e-imagens) |
 
 As datas dos marcos saem do `git log` (`git log --date=short --pretty='%ad %s'`). Preencha os ⚠️ com a sua memória e marque os `[ ]` à medida que gerar cada imagem.
 
@@ -34,13 +34,13 @@ As datas dos marcos saem do `git log` (`git log --date=short --pretty='%ad %s'`)
   - o ARM gravava CSV já convertido em volts, com um filtro AC digital;
   - 1 canal, com um filtro RC de 3,5 kHz no canal de tensão;
   - validação qualitativa, por FFT.
-- **Estado atual (20/10/2026):**
-  - **Firmware:** PRU em Assembly, ADS8688 em modo automático (até 8 canais) e *ping-pong* de 2 × 2 MB na DDR. O teto é de ~140 kS/s, com o gargalo localizado nas esperas do CS. Cada captura registra a própria integridade: amostras atrasadas, buffers sobrescritos e ruído na linha SDO (Marco 13).
-  - **Dados:** `.bin` com as amostras brutas e um cabeçalho autodescritivo (versão 4), com grandeza, sonda e faixa de entrada por canal. O arquivamento sem perdas fica em 11 % do tamanho.
-  - **Análise:** `adc_tool.py` faz FFT ciclo-sincronizada, Welch, bandas, picos e exporta HDF5. `medir_captura.py` calcula as métricas de bancada. `gerar_perfil_sonda.py` corrige a resposta em frequência da cadeia.
-  - **Bancada (19/10/2026), primeiros resultados quantitativos:** escala do ADC nas três faixas, ruído, razão do divisor, taxa de amostragem, diafonia e atraso entre canais, estabilidade em 10 min e a resposta em frequência da cadeia de tensão (−3 dB em 17,3 kHz). Ficou medido também o defeito de 6,97 µs a cada bloco do firmware antigo.
-  - **Software:** pacote Python com ~680 testes automáticos e integração contínua.
-  - **Falta:** a sonda de corrente (T10), o limite de taxa (T7e), distorção, *aliasing*, os ensaios ponta a ponta e a validação em hardware do firmware revisado (Marco 17).
+- **Estado atual (02/11/2026):**
+  - **Firmware:** PRU em Assembly, ADS8688 em modo automático (até 8 canais) e *ping-pong* de 2 × 2 MB na DDR. A PRU espera o ciclo exato de cada amostra e mede a própria folga: a grade de tempo é exata (jitter de 0,00 ns). Com o SPI rápido, **400 kS/s** é o padrão, e o período fica constante até 419,3 kS/s. Cada captura registra a própria integridade: amostras atrasadas, buffers sobrescritos e leituras divergentes do SDO (Marcos 13 e 16).
+  - **Dados:** `.bin` com as amostras brutas e um cabeçalho autodescritivo (versão 7), com grandeza, sonda e faixa de entrada por canal, a versão do firmware e a integridade. O arquivamento sem perdas fica em 11 % do tamanho.
+  - **Análise:** `adc_tool.py` faz FFT ciclo-sincronizada, Welch, bandas, picos e exporta HDF5. `medir_captura.py` calcula as métricas de bancada. `medir_fase.py` mede a magnitude e a fase de uma cadeia por ondas quadradas, sem instrumento de referência, e a sonda de corrente pela razão de dois canais. `gerar_perfil_sonda.py` gera perfis por senoides.
+  - **Bancada:** 19/10 (T0 a T4, T6, T7, com o firmware antigo), 21/10 (as esperas do CS e o teto), 22/10 (a grade de tempo, o SPI rápido e a fase da cadeia) e 23/10 (supraharmônicos conhecidos, *aliasing* e a alimentação).
+  - **Software:** pacote Python com ~1030 testes automáticos e integração contínua.
+  - **Falta:** a sonda de corrente (T10), a cadeia de tensão na faixa de produção, uma carga real (T11) e refazer T0, T2, T4 e T6 com o firmware atual ([plano](final-report-plan.md)).
 
 ### 1.1 Ponte com o Relatório Parcial
 
@@ -468,7 +468,7 @@ proposital acima da Nyquist efetiva de um canal) e o round-trip
 resolução espectral (exemplo: 15.321,3 Hz injetado → 15.321,37 Hz
 encontrado por `--picos`). Essa validação confirma a correção
 matemática/numérica da implementação — não ainda a fidelidade do hardware
-de aquisição sobre um sinal real: o plano de testes está no Marco 11, as medições nos Marcos 12 e 14 e o que falta no Marco 17.
+de aquisição sobre um sinal real: o plano de testes está no Marco 11, as medições nos Marcos 12, 14, 16 e 17 e o que falta no Marco 19.
 
 **Relevância para o relatório e a apresentação:** este é, dos marcos de
 software, o mais diretamente ligado à pergunta de pesquisa do projeto. O
@@ -1175,27 +1175,79 @@ contra a queda da referência); a defesa do método está na [seção 9](#9-defe
 mesmo método achou o erro do instrumento de referência da medida anterior. É o argumento para o relatório de que o
 perfil por quadradas é o de referência.
 
-### Marco 17 — Trabalho Pendente
+### Marco 17 — Supraharmônicos Conhecidos, *Aliasing* e a Alimentação da Placa (23/10/2026)
 
-Em ordem de prioridade, a mesma da tabela [Estado da campanha](lab-procedure.md#estado-da-campanha) do roteiro:
+**O que foi feito.** Um dia de bancada com o firmware de 22/10 (quadro fixo, SPI rápido, 400 kS/s), sem
+osciloscópio como referência:
 
-1. **Conferir a ponta do osciloscópio e a origem do polo de 800 kHz (T3f, ~30 min):** a foto da ponta no PROBE
-   COMP antes do ajuste, 6 senoides de 1 a 140 kHz com a ponta compensada e o Fluke até 50 kHz, e a subida da
-   quadrada do gerador ([roteiro](lab-procedure.md#passo-a-passo-da-próxima-ida-a-referência-do-t3-o-polo-de-800-khz-e-a-faixa-de-produção-1-h)).
-   Decide entre o perfil por quadradas e os por senoides, e se o polo fica no perfil. E o `--fase` na faixa de
-   produção (±10,24 V, `--faixa 20.48`): o perfil foi medido em ±2,56 V. A grade de tempo, o SPI
-   rápido e o limite de taxa foram medidos em 22/10 (Marco 16): a campanha `--limite` ficou superada.
-2. **Fotografar o CS no osciloscópio** (a anatomia do quadro, para o relatório).
-3. **Refazer na taxa padrão (400 kS/s)** o que depende da banda: T4 e T6, como manda a tabela [O que refazer com o firmware de out/2026](lab-procedure.md#o-que-refazer-com-o-firmware-de-out2026).
-4. **Calibração da sonda de corrente (T10)**, o objetivo central, **depois** do T7e: o perfil vale até 0,9 × Nyquist da taxa em que é medido. O fluxo já rodou com hardware real na cadeia de tensão (Marco 12); falta o SCT013 e a validação em frequências que não entraram no perfil (*hold-out*). A sensibilidade de 60 µV/A sobre o resistor de carga é o maior risco (roteiro, fato 5).
-5. **Completar a caracterização:**
-   * o contador de frequência no T4;
-   * o ponto de 20 kHz no T6a;
-   * o T5, com uma fonte de baixa distorção;
-   * *aliasing* (T8), espectros conhecidos (T9) e os ensaios ponta a ponta (T11).
-6. **Usar a fase na correção (S3):** o perfil `cadeia_tensao_fase` já traz a fase de cada ponto, mas a correção
-   ainda só usa a magnitude ([`improvement-proposals.md`](improvement-proposals.md)).
-7. **Investigar o offset do canal 1** (com o pino em curto direto). O transitório de troca de faixa já é descartado na análise (o `medir_captura.py` pula 200 µs); descartá-lo também no firmware fica como opção ([`improvement-proposals.md`](improvement-proposals.md), F9).
+* 11 capturas de um 60 Hz de 16 Vpp somado a um tom de amplitude conhecida: 9 kHz a −60 e −70 dBc, 25 kHz a
+  −40 dBc, uma AM a 40 kHz, uma FM a 75 kHz, e 130 e 270 kHz, também a 320 e a 100 kS/s, onde eles dobram;
+* a alimentação: a BeagleBone na fonte de 5 V ou no USB, com o notebook na tomada ou na bateria.
+
+**O que mostrou.**
+
+* **O perfil por quadradas confirmado por um segundo método.** Com a amplitude nominal do gerador como referência,
+  os 10 tons caem sobre o modelo do T3f a ±0,05 dB (0,027 dB rms), de 60 Hz a 270 kHz. Isso fechou, sem
+  osciloscópio, duas perguntas do Marco 16: os perfis por senoides de 19 e 22/10 erraram pela referência do
+  osciloscópio, e o polo de 800 kHz é da cadeia (se fosse da borda do gerador, as senoides sairiam 0,47 dB acima em
+  270 kHz).
+* **O *aliasing* é o próprio perfil.** O tom dobrado sai com a atenuação da cadeia na frequência real, a 0,01 dB:
+  −30,6 dB em 130 kHz e −43,5 dB em 270 kHz. Não há outro filtro.
+* **Supraharmônicos identificados e medidos no nível certo.** O 25 kHz sai a −40,0 dBc com a correção (−46,9 sem
+  ela); o 9 kHz a −70 dBc fica 59 dB acima do piso; as bandas laterais da AM, a 0,02 dB da teoria. O menor tom
+  detectável numa captura de 30 s vai de 8 µV (9 kHz) a 105 µV (180 kHz) de pico na entrada do divisor.
+* **A FM saiu 1,6 dB abaixo** do nominal, com o espectro certo: a suspeita é o gerador (falta uma captura de 75 kHz
+  sem FM).
+* **A placa de aquisição só funciona com a fonte de 5 V na BeagleBone.** Pelo USB, o pino de +5 V do conector fica
+  sem tensão e todas as amostras saem 0x0000. É do projeto da placa, e fica assim. Esse dia, com uma BeagleBone que
+  reiniciou e perdeu o `config-pin`, levou o `ler_adc` a conferir os pinos e a parar com o ADC mudo.
+
+- [ ] ⚠️ **Preencha:** como o 60 Hz e o tom foram somados (o *Combine* do gerador ou um somador). O caderno do dia
+  ficou vazio.
+
+**Relevância:** é a figura que faltava para a tese (um supraharmônico identificado e medido no nível certo, com a
+correção da cadeia) e a validação do perfil por um método independente. Figuras `espectro_supraharmonicos` e
+`validacao_cadeia_senoides`; os números em [`bench-results.md`](bench-results.md#t9-e-t8-sinais-de-espectro-conhecido-e-aliasing).
+
+### Marco 18 — A Calibração por Ondas Quadradas e a Sonda de Corrente com Fase (24/10/2026)
+
+**O que foi feito** (software, validado com dados sintéticos; tudo opcional, e sem as opções novas nada muda):
+
+* **O `calibrar`**, que era o `cadeia`, virou o método principal de calibrar uma cadeia: 17 quadradas (7
+  frequências e variantes de amplitude e de offset), duas taxas e duas faixas, com a opção de medir a entrada no
+  osciloscópio (`--referencia`, `medir_fase.py --entrada`).
+* **A sonda de corrente com magnitude e fase, pela razão de dois canais.** O TC no canal 0 e a tensão num resistor do
+  mesmo laço, pelo divisor, no canal 1, capturados juntos. A forma da corrente se cancela na razão, e a fase é
+  absoluta: não precisa de modelo nem de quadrada ideal. O atraso de multiplexação entre os canais é descontado, e a
+  diafonia é medida (com o condutor fora da garra) e subtraída. O perfil absoluto vem do perfil de tensão no canal
+  de referência, da impedância do resistor e das espiras.
+* **As conferências:** a âncora do método de um canal (para ir acima de 95 kHz) e o passa-alta do TC. Achado: o
+  passa-alta não vira atraso, porque a remoção do erro da fundamental absorve a parte linear dele.
+
+**Limite:** com dois canais a 400 kS/s, cada um tem a Nyquist em 100 kHz, e o perfil de corrente com fase vai a
+~95 kHz, a mesma banda da potência por componente em produção. A extensão até 190 kHz, por capturas de um canal
+ancoradas na de dois canais, foi simulada (0,09 dB e 0,55°) e está proposta.
+
+**Relevância:** é o método do T10, o objetivo central. Ele dispensa a ponta de corrente do osciloscópio, que não
+tem especificação acima de 5 kHz.
+
+### Marco 19 — Trabalho Pendente
+
+O plano completo, seção a seção do relatório, com as idas ao laboratório e o cronograma, está em
+[`final-report-plan.md`](final-report-plan.md). Em ordem de prioridade:
+
+1. **A sonda de corrente (T10)**, pela razão de dois canais, com um resistor puro e sem osciloscópio, e as
+   conferências (garra invertida, espiras, amplitude). Na [próxima ida](lab-procedure.md#passo-a-passo-da-próxima-ida-a-sonda-de-corrente-e-a-faixa-de-produção-sem-osciloscópio-2-h-30).
+2. **A cadeia de tensão na faixa de produção** (±10,24 V), pelo `calibrar`, na mesma ida.
+3. **Refazer com o firmware atual** o T0, o T2 (o K dos perfis), o T4 (com um contador) e o atraso entre canais do
+   T6.
+4. **Uma carga real (T11)**, com supervisão.
+5. **Completar:** o T5 (com uma fonte de baixa distorção), o T9b, 10 min de captura (T7c), 75 kHz sem FM e o pino
+   do canal 1 em curto (o offset).
+6. **No software:** a fase na correção (S3), a extensão da sonda de corrente até 190 kHz e a figura do perfil de
+   corrente.
+7. **Adiado:** a avaliação das sondas pelo osciloscópio (a ponta compensada, a referência do T3, o `medir_shunt.py`
+   e o T10 por senoides com a TCP0030A).
 
 Fechar cada apresentação com esta lista, objetiva e com prioridade, mostra que o estado do projeto e os próximos passos estão claros.
 
@@ -1227,7 +1279,9 @@ Fechar cada apresentação com esta lista, objetiva e com prioridade, mostra que
 15. **Esperas do CS e taxa (21/10):** as esperas descem ao piso do datasheet sem perda; o teto vai de 143 para 326 kS/s; o defeito do rebase do contador foi achado pela posição dos degraus no tempo.
 16. **Grade de tempo (22/10):** jitter de 8,5 ns achado nas capturas (o ruído crescia com a inclinação do tom); a PRU passou a esperar o ciclo exato e a medir a própria folga.
     * 2ª parte: o quadro fixo validado, o SPI rápido sem nenhuma leitura divergente e 400 kS/s como padrão; a fase da cadeia por ondas quadradas (três polos reais, fase mínima), que mostrou o erro da referência do osciloscópio no T3 por senoides.
-17. **Pendente:** conferir a ponta do osciloscópio, calibrar a sonda de corrente (o objetivo central) e completar a caracterização.
+17. **Supraharmônicos conhecidos (23/10):** 10 senoides confirmam o perfil por quadradas a ±0,05 dB até 270 kHz (o polo de 800 kHz é da cadeia); o *aliasing* é o próprio perfil; um 9 kHz a −70 dBc fica 59 dB acima do piso; a placa só funciona com a fonte de 5 V.
+18. **A sonda de corrente com fase (24/10):** a razão de dois canais, com a fase absoluta e a diafonia subtraída; o `calibrar` como método principal.
+19. **Pendente:** a sonda de corrente em bancada (o objetivo central), a faixa de produção, uma carga real e refazer T0, T2, T4 e T6 com o firmware atual.
 
 ---
 
@@ -1249,7 +1303,9 @@ Os marcados "**dados já existem**" dá para gerar hoje, com as capturas de `$DA
 - [ ] (Marco 7) Análise `--welch --agrupar-bandas --picos` sobre uma medição real, com supraharmônicos extraídos
 - [ ] (Marco 6) Gráfico dos 5 canais (2 com sinal, 3 com ruído) e a saída do terminal do `ler_adc`
 - [ ] (T10) Perfil da sonda de corrente e a tabela de validação *hold-out* (quando houver)
-- [ ] (T9a) Onda quadrada: teoria × ADC sem correção × ADC com perfil × osciloscópio (quando houver)
+- [x] (Marco 17) Senoides de amplitude conhecida contra o modelo do T3f, até 270 kHz, com o que se veria se o polo fosse do gerador: `gerar_figuras.py validacao_cadeia_senoides`
+- [x] (Marco 17) 60 Hz forte e supraharmônicos fracos, sem e com a correção; S5, AM e FM de perto: `gerar_figuras.py espectro_supraharmonicos`
+- [ ] (T9a) Onda quadrada: teoria × ADC sem correção × ADC com perfil (os dados do T3f já servem)
 
 **Fotografias** (não dá para gerar depois)
 
@@ -1287,7 +1343,7 @@ Comece pelo resultado e use a cronologia para explicar o caminho até ele. Numa 
    * a sensibilidade do canal de corrente;
    * a meta de taxa revista;
    * a correção dinâmica da taxa trocada por métodos off-line (seção 1.1).
-6. **Próximos passos (5 min):** o Marco 17.
+6. **Próximos passos (5 min):** o Marco 19.
 7. **Perguntas (5 min).**
 
 Os Marcos 8 a 10 (formato da captura, sondas, qualidade de software) valem um slide cada; se faltar tempo, são os primeiros a ir para os slides de apoio.
@@ -1296,32 +1352,11 @@ Os Marcos 8 a 10 (formato da captura, sondas, qualidade de software) valem um sl
 
 ## 6. Estrutura Sugerida para o Relatório Final
 
-Sugestão: manter os capítulos do relatório parcial, para que o leitor da FAPESP compare os dois períodos lado a lado, e dizer logo no resumo o que mudou. Para cada capítulo, o que entra e de onde tirar.
+O relatório está em LaTeX em `report/relatorio/latex/`, com as seções do roteiro da FAPESP. O plano, seção a seção,
+com o estado de cada uma, os dados que faltam, as limitações a declarar e o cronograma, está em
+[`final-report-plan.md`](final-report-plan.md) (02/11/2026), que substitui a estrutura sugerida que ficava aqui.
 
-| Capítulo | Conteúdo | Fonte |
-|---|---|---|
-| **Resumo** | O que foi feito no período (Assembly, modo automático, caracterização em bancada) e os 4 ou 5 números principais | Seções 1 e 8 |
-| **Introdução** | Curta, remetendo ao relatório parcial; o objetivo do período: cumprir o plano 7.1 a 7.3 e passar da validação qualitativa à quantitativa | Seção 1.1 |
-| **Fundamentação** (só o que é novo) | O ADS8688 por dentro: multiplexação (500 kS/s no total), faixas de entrada, o passa-baixa interno de 2ª ordem. Estimação espectral: FFT ciclo-sincronizada × Welch, normalização tom/ruído, janelas. Métricas de conversor: SINAD, SNR, ENOB e SFDR | Marcos 7 e 11; roteiro, fatos 1 a 3 |
-| **Hardware e condicionamento** (objetivos 1 e 2 do projeto) | Cadeia de tensão: o divisor de 5 resistores, com a razão calculada e a medida. Cadeia de corrente: SCT013 sobre 0,12 Ω, 60 µV/A e o piso de detecção. A remoção dos filtros (plano 7.2), a faixa de entrada por canal e a ligação direta das placas | Roteiro, fatos 4 e 5; Marcos 4 e 14 |
-| **Firmware** (plano 7.1) | Assembly e os problemas resolvidos; memória e *ping-pong*; modo automático; cabeçalho autodescritivo; a revisão de out/2026: grade de tempo, rebase do contador, integridade medida sem custo e a anatomia do quadro (o gargalo) | Marcos 2, 3, 6, 8, 9 e 13 |
-| **Software de análise e método de validação** | Só o necessário para entender os resultados: `medir_captura.py` (o que mede e com que limites), a correção por perfil e a validação sintética (auditoria, testes, contrato C↔Python) | Marcos 5, 7, 9, 10 e 11 |
-| **Resultados** | Uma seção por grupo de testes: (1) caracterização do ADC (T0, T1, T2; T5 quando houver); (2) taxa de amostragem e integridade (T4, T7, o defeito e a correção; T7e quando houver); (3) multiplexação (T6); (4) resposta em frequência da cadeia de tensão (T3); (5) sonda de corrente (T10); (6) supraharmônicos medidos (T9, T11) | Marcos 12 e 14; roteiro, parágrafos "Executado em" |
-| **Discussão e limitações** | A lista abaixo | — |
-| **Conclusões e trabalhos futuros** | O que o instrumento mede hoje, e com que exatidão. Futuro: esperas do CS reduzidas (~330 kS/s no papel), anti-aliasing externo, ganho antes do ADC no canal de corrente, medição de fase | Marco 17; `improvement-proposals.md` |
-| **Referências** | As do relatório parcial ([1] a [11]), mais: a ABNT NBR IEC 61000-4-30 (2023, a edição brasileira da IEC 61000-4-30) e o PRODIST, Módulo 8, da ANEEL (a regulação brasileira de qualidade de energia; confira as revisões vigentes); a IEC 61000-4-7 (harmônicos e bandas de 2 a 9 kHz); Welch (1967), sobre o método; Harris (1978), sobre janelas; IEEE Std 1241 (teste de ADCs: SINAD, ENOB) e IEEE Std 1057 (ajuste de senoide, usado com o `.m` do osciloscópio); o datasheet SBAS582C do ADS8688 e o *AM335x PRU-ICSS Reference Guide*, nas seções citadas | — |
-
-**Limitações a declarar** (a explicitação dos limites é parte do rigor do relatório):
-
-* **Banda:** 100 kS/s de trabalho cobrem até ~45 kHz dos 150 kHz da faixa de supraharmônicos. O que está acima de Nyquist dobra para dentro da banda (o filtro interno do ADC atenua pouco).
-* **O filtro interno do ADC** é corrigido pelo perfil, que amplifica o ruído na mesma proporção (+12,5 dB em 45 kHz na cadeia de tensão).
-* **Só magnitude:** a correção de sonda não restaura a fase, e a fase da cadeia não foi medida.
-* **Canal de corrente:** sensibilidade de 60 µV/A sobre a carga de 0,12 Ω, mesmo na menor faixa do ADC.
-* **Dados de 19/10:** feitos com o firmware anterior à correção do salto de 6,97 µs (as análises de um bloco não são afetadas).
-* **Transitório de 60 µs** depois de trocar a faixa de um canal.
-* **Offset de ~3 mV** no canal de tensão, de origem ainda não isolada (DC, fora da banda).
-* **Referências:** exatidão do osciloscópio (±1 %) e da TCP0030A (sem especificação acima de 5 kHz); o THD medido é o do gerador.
-* **Margens de tempo:** as esperas do CS foram calibradas empiricamente e não otimizadas.
+**Referências a acrescentar às do relatório parcial:** a ABNT NBR IEC 61000-4-30 (2023, a edição brasileira da IEC 61000-4-30) e o PRODIST, Módulo 8, da ANEEL (a regulação brasileira de qualidade de energia; confira as revisões vigentes); a IEC 61000-4-7 (harmônicos e bandas de 2 a 9 kHz); Welch (1967), sobre o método; Harris (1978), sobre janelas; IEEE Std 1241 (teste de ADCs: SINAD, ENOB) e IEEE Std 1057 (ajuste de senoide, usado com o `.m` do osciloscópio); o datasheet SBAS582C do ADS8688 e o *AM335x PRU-ICSS Reference Guide*, nas seções citadas.
 
 ---
 
@@ -1385,8 +1420,13 @@ Os números do projeto num lugar só, com a condição e a fonte. Os valores med
 | Razão do divisor | 0,051554 medida; 0,05157 calculada com a carga do ADC; 0,051662 sem ela | Fluke 289, ±10 V | T2; roteiro, fato 4 |
 | Linearidade | resíduo ≤ 0,22 LSB | ±0,5 V no pino | T2 |
 | Sensibilidade do canal de corrente | 60 µV/A (`$GI` = 16 667 A/V) | SCT013 100A:50mA sobre 0,12 Ω; ainda não medida | Roteiro, fato 5 |
-| Resposta da cadeia de tensão | −3 dB em 17,26 ± 0,16 kHz; f0 = 24,06 ± 0,21 kHz; Q = 0,540 ± 0,006; K = 0,9969 ± 0,0028; −12,5 dB em 45 kHz; resíduo de 0,13 dB | 48 pontos, 50 Hz a 45 kHz, 100 kS/s | T3; Marco 12 |
+| Resposta da cadeia de tensão (histórico: a referência do osciloscópio errou acima de ~40 kHz; use a linha seguinte) | −3 dB em 17,26 ± 0,16 kHz; f0 = 24,06 ± 0,21 kHz; Q = 0,540 ± 0,006; K = 0,9969 ± 0,0028; −12,5 dB em 45 kHz; resíduo de 0,13 dB | 48 pontos, 50 Hz a 45 kHz, 100 kS/s | T3; Marco 12 |
 | Resposta da cadeia de tensão, magnitude e fase (ondas quadradas, sem referência) | −3 dB em 14,68 kHz; 2ª ordem com f0 = 22,811 kHz e Q = 0,5001 (dois polos reais) × polo real em 800 ± 16 kHz; resíduo de 0,0105 dB e 0,136°; fase mínima (magnitude e fase dão o mesmo filtro) | 24 quadradas, 256 Hz a 180 kHz, 312,5 e 400 kS/s (diferem 0,0005 dB e 0,004°) | T3f; Marco 16 |
+| Validação do perfil por senoides | 10 tons de 60 Hz a 270 kHz a ±0,05 dB do modelo do T3f (0,027 dB rms); sem o polo de 800 kHz, +0,11 dB em 130 kHz e +0,47 dB em 270 kHz | gerador como referência (High-Z), 400, 320 e 100 kS/s, ±2,56 V | T8, T9; Marco 17 |
+| *Aliasing* | o tom dobrado sai com a atenuação da cadeia na frequência real, a 0,01 dB: −30,6 dB em 130 kHz, −43,5 dB em 270 kHz | 130 kHz a 100 kS/s; 270 kHz a 320 e 400 kS/s | T8; Marco 17 |
+| Supraharmônicos medidos | 25 kHz a −40,0 dBc com o perfil (−46,9 sem ele); 9 kHz a −70 dBc, 59 dB acima do piso; bandas laterais da AM de 80 % a −7,97 e −7,98 dB (teoria: −7,96) | 60 Hz de 16 Vpp somado ao tom, 30 s a 400 kS/s | T9; Marco 17 |
+| Menor tom detectável | 8 µV de pico na entrada do divisor em 9 kHz; 105 µV em 180 kHz | 30 s, ±2,56 V, 10 dB acima do piso | T9; Marco 17 |
+| Alimentação da placa | só com a fonte de 5 V na BeagleBone; pelo USB, o ADC fica sem alimentação | por projeto da placa | Marco 17 |
 | Taxa de amostragem | = 200 MHz ÷ ticks a 0,02 ppm; erro comum de −43,2 ppm (cristal + gerador) | 50 a 125 kS/s | T4 |
 | SINAD / ENOB | 61 dB / 14,4 bits | 10 kHz a −27,5 dBFS, gerador sem filtro | T4 (prévia do T5) |
 | THD medido | −71,6 dB (limitado pelo gerador; ADC: −102 dB no datasheet) | 10 kHz | T4 |
@@ -1406,8 +1446,8 @@ Os números do projeto num lugar só, com a condição e a fonte. Os valores med
 | Folga e teto com o quadro fixo (SPI lento) | folga de 25 ciclos a 312,5 kS/s com qualquer sinal; teto com período constante 327,9 kS/s (610 ticks) | quadro comum de 600 ciclos | T7f, 2ª rodada; Marco 16 |
 | SPI rápido (~15,4 MHz) | 0 leituras divergentes (margem do SDO ≥ 15 ns para cada lado); ruído 0,80 contra 0,79 LSB; teto 419,3 kS/s (477 ticks); folga de 18 ciclos a 400 kS/s | 69 capturas; o padrão desde 22/10 | T7g; Marco 16 |
 | Quadro SPI da PRU | 1 395 ciclos (6,98 µs; transação com o CS baixo: 1 166 ciclos), dos quais 800 (57 %) são as esperas do CS; em geral, 595 + 2 × (S + H + A) ciclos | simulador do `spi_core.asm` | Marco 13; roteiro, T7e |
-| Teto de taxa | ~130 kS/s observados e ~140 kS/s pelo simulador; ~330 kS/s no papel com as esperas mínimas do datasheet | a medir no T7e | Marco 13 |
-| Esperas do CS | 2,0 / 1,0 / 1,0 µs contra 30 / 10 / 30 ns do datasheet | tabela 7.6 do SBAS582C | Marco 13 |
+| Teto de taxa | 419,3 kS/s com período constante (SPI rápido; 327,9 kS/s com o lento); era ~140 kS/s antes das esperas do CS no piso do datasheet | 1 canal; o padrão é 400 kS/s | T7e, T7f, T7g; Marcos 15 e 16 |
+| Esperas do CS | 30 / 10 / 30 ns, o piso do datasheet, desde 21/10 (eram 2,0 / 1,0 / 1,0 µs) | tabela 7.6 do SBAS582C | Marcos 13 e 15 |
 | Buffers | 2 × 1 048 576 amostras (2 × 2 MB) na DDR; ~10 s por bloco a 100 kS/s | — | Marco 3 |
 | Código da PRU | 1 878 instruções, 91,7 % da IMEM de 8 KB | `tests/pru_sim.py` | `project-context.md` |
 | Arquivamento sem perdas | 11,0 % do tamanho (407 MB → 44,9 MB); 7-Zip: 14,6 % | capturas até o T3 | Marco 10 |
@@ -1522,11 +1562,13 @@ Sem o polo de 800 kHz, as duas discordavam a 6 σ, e o BIC prefere o polo por 63
   frequência, capacitivo em alta). Uma queda real no nó, por carga no gerador de 50 Ω, cresceria com a frequência,
   não ficaria num patamar, e pediria dezenas de nF na entrada de um divisor de alta impedância. E o filtro da
   quadrada bate com o datasheet; o da senoide (−3 dB em 16,8 kHz), não. A conferência da ponta (a foto no PROBE
-  COMP) fecha a questão.
+  COMP) fecha a questão. E as senoides de 23/10, com o **gerador** como referência, caem sobre a quadrada a
+  ±0,05 dB até 270 kHz (Marco 17): é a referência do osciloscópio que errou.
+* **"E se o polo de 800 kHz for a borda do gerador?"** Uma senoide não tem borda. Se o polo fosse do gerador, as
+  senoides de 130 e 270 kHz sairiam 0,11 e 0,47 dB acima do modelo; saíram −0,01 e +0,01 dB (Marco 17).
 * **"O que não foi verificado?"**
   * A faixa do ADC: o perfil é de ±2,56 V, e a produção usa ±10,24 V.
-  * A origem do polo de 800 kHz.
   * A reprodutibilidade em outro dia.
 
-  Os três estão na próxima ida do [roteiro](lab-procedure.md#passo-a-passo-da-próxima-ida-a-referência-do-t3-o-polo-de-800-khz-e-a-faixa-de-produção-1-h).
+  Os dois estão na [próxima ida](lab-procedure.md#passo-a-passo-da-próxima-ida-a-sonda-de-corrente-e-a-faixa-de-produção-sem-osciloscópio-2-h-30).
 
