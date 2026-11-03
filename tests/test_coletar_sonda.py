@@ -895,6 +895,16 @@ def test_firmware_antigo_sem_a_opcao_faixa_adc_falha_com_mensagem_do_ler_adc(ban
 
 
 @com_e2e
+def test_cabecalho_v8_e_aceito_com_o_crc_no_fim(bancada):
+    """A v8 mudou o título e a descrição de lugar e pôs o CRC no byte 1020; o resto que o script lê ficou onde estava."""
+    bancada.cenario("cab_v8", "cab_v8")
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", SONDA, "-y")
+    assert rc == 0, saida
+    assert all(m["status"] == "ok" for m in bancada.manifesto())
+    assert all(c.versao_cabecalho == 8 and c.crc32_valido for c in _cabecalhos(bancada))
+
+
+@com_e2e
 def test_cabecalho_v2_do_firmware_antigo_continua_aceito_sem_faixa_adc(bancada):
     bancada.cenario("cab_v2", "cab_v2")
     rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", SONDA, "-y", faixa_adc=False)

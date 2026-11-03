@@ -1,9 +1,9 @@
 """Cabeçalho binário do ``.bin`` (formato "SHAN").
 
 Interpreta e valida o cabeçalho fixo de 1024 bytes gravado por
-``firmware/ler_adc.c`` (``struct cabecalho_arquivo``): magic, versão (v1 a v6),
+``firmware/ler_adc.c`` (``struct cabecalho_arquivo``): magic, versão (v1 a v8),
 CRC-32, metadados da captura, grandeza, id de sonda e faixa de entrada do ADC
-por canal.
+por canal e, desde a v8, o sistema, a placa e o disco da BeagleBone.
 
 Depende de: ``constantes``, ``erros``. Quem o consome: ``contexto``,
 ``hdf5``, ``modos``, ``calibracao_sonda``, ``cli_medir_captura``."""
@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 
 CABECALHO_MAGIC = b"SHAN"
 CABECALHO_TAMANHO_TOTAL = 1024
-CABECALHO_VERSAO_SUPORTADA = 7  # versão mais recente do FORMATO do cabeçalho que este script sabe interpretar
+CABECALHO_VERSAO_SUPORTADA = 8  # versão mais recente do FORMATO do cabeçalho que este script sabe interpretar
 
 # [SONDA/GRANDEZA] Tamanho fixo (bytes, incluindo terminador nulo) do id de
 # sonda por canal na v2 do cabeçalho -- precisa bater com
@@ -51,6 +51,13 @@ CABECALHO_VERSAO_SUPORTADA = 7  # versão mais recente do FORMATO do cabeçalho 
 # compartilhado entre C e Python).
 CABECALHO_SONDA_ID_TAMANHO = 32
 CABECALHO_VERSAO_FIRMWARE_TAMANHO = 32   # [v5] CABECALHO_VERSAO_FIRMWARE_TAMANHO em firmware/ler_adc.c
+# [v8] Os mesmos nomes em firmware/ler_adc.c. Até a v7, o título tinha 64 bytes e a descrição 256.
+CABECALHO_TITULO_TAMANHO = 128
+CABECALHO_DESCRICAO_TAMANHO = 272
+CABECALHO_KERNEL_TAMANHO = 32
+CABECALHO_SISTEMA_TAMANHO = 64
+CABECALHO_PLACA_TAMANHO = 32
+VALOR_DESCONHECIDO = 0xFFFFFFFF   # [v8] num campo numérico do sistema: o ler_adc não conseguiu ler
 
 # Format strings para struct.unpack, campo a campo -- espelham EXATAMENTE
 # 'struct cabecalho_arquivo_campos' em firmware/ler_adc.c (packed, sem
@@ -122,6 +129,30 @@ CABECALHO_VERSAO_FIRMWARE_TAMANHO = 32   # [v5] CABECALHO_VERSAO_FIRMWARE_TAMANH
 #   I    divergencias_fase_a          (quadros do SPI rápido em que a leitura a 60 ns discordou da de 75 ns)
 #   I    divergencias_fase_c          (idem, a de 90 ns)
 #   I    header_crc32
+#
+# v8 (03/11/2026): o título vai de 64 para 128 bytes e a descrição de 256 para 272, e entram o sistema, a placa e o
+# disco. Os campos do byte 404 ao 771 (grandeza ... divergencias_fase_c) ficam onde estavam na v7, porque o
+# coletar.sh sonda os lê por offset: a descrição e parte do sistema vão para o lugar do título e da descrição antigos
+# (bytes 84 a 403), e o título e o resto para o do padding (772 a 1019). Não sobra padding; o CRC fica no byte 1020.
+#   (os campos da v1 até total_amostras_gravadas, bytes 0 a 83)
+#   272s descricao                    (bytes 84 a 355)
+#   32s  kernel                       (uname -r)
+#   I    timestamp_ns                 (a fração de segundo do início da captura)
+#   I    relogio_sincronizado         (1 = NTP sincronizado; 0 = não, e a data pode estar errada)
+#   I    uptime_s                     (há quanto tempo a placa estava ligada)
+#   I    carga_1min_milesimos         (a carga média do ARM no último minuto, x 1000)
+#   (grandeza_por_canal ... divergencias_fase_c, como na v7: bytes 404 a 771)
+#   128s titulo                       (bytes 772 a 899)
+#   64s  sistema_operacional          (/etc/dogtag da BeagleBone, ou o PRETTY_NAME do /etc/os-release)
+#   32s  placa                        (EEPROM: modelo, revisão e nº de série, ex. "A335BNLT 00C0 3714BBBK1234")
+#   I    disco_saida_total_kib        (o sistema de arquivos do .bin, como o df)
+#   I    disco_saida_livre_kib        (livre no início)
+#   I    disco_saida_livre_fim_kib    (livre no fim; regravado com o cabeçalho final)
+#   I    disco_programa_total_kib     (o sistema de arquivos do próprio ler_adc)
+#   I    disco_programa_livre_kib
+#   I    memoria_disponivel_kib       (MemAvailable do /proc/meminfo)
+#   I    header_crc32                 (byte 1020)
+# Nos campos numéricos do sistema, VALOR_DESCONHECIDO = não lido.
 _FORMATO_CABECALHO_V1 = "<4sIIQIII8BIIIIIdQQ64s256sI"
 _FORMATO_CABECALHO_V2 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "I"
 _FORMATO_CABECALHO_V3 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "8BI"
@@ -130,6 +161,12 @@ _FORMATO_CABECALHO_V5 = ("<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CA
                          + f"{CABECALHO_VERSAO_FIRMWARE_TAMANHO}sdII")
 _FORMATO_CABECALHO_V6 = _FORMATO_CABECALHO_V5[:-1] + "IIII" + "I"
 _FORMATO_CABECALHO_V7 = _FORMATO_CABECALHO_V6[:-1] + "III" + "I"
+_FORMATO_CABECALHO_V8 = ("<4sIIQIII8BIIIIIdQQ"
+                         + f"{CABECALHO_DESCRICAO_TAMANHO}s{CABECALHO_KERNEL_TAMANHO}sIIII"
+                         + "8B" + "32s" * ADS8688_MAX_CANAIS + "8BIII3I" + f"{CABECALHO_VERSAO_FIRMWARE_TAMANHO}sdI"
+                         + "IIII" + "III"
+                         + f"{CABECALHO_TITULO_TAMANHO}s{CABECALHO_SISTEMA_TAMANHO}s{CABECALHO_PLACA_TAMANHO}sIIIIII"
+                         + "I")
 
 # Contagens de valores por campo, na mesma ordem do format string -- usadas
 # por _consumir() para dividir a tupla plana devolvida por struct.unpack.
@@ -147,6 +184,9 @@ _CONTAGENS_CABECALHO_V4 = _CONTAGENS_CABECALHO_V3[:-1] + [1, 1, 1, 3, 1]  # v3 +
 _CONTAGENS_CABECALHO_V5 = _CONTAGENS_CABECALHO_V4[:-1] + [1, 1, 1, 1]  # v4 + versão, taxa medida e nº de buffers antes do crc
 _CONTAGENS_CABECALHO_V6 = _CONTAGENS_CABECALHO_V5[:-1] + [1, 1, 1, 1, 1]  # v5 + os 4 campos da grade de tempo antes do crc
 _CONTAGENS_CABECALHO_V7 = _CONTAGENS_CABECALHO_V6[:-1] + [1, 1, 1, 1]  # v6 + modo do SPI e as 2 divergências antes do crc
+# v8: os 16 campos da v1 até total_amostras_gravadas, a descrição e 5 do sistema, os 17 da v7 de grandeza_por_canal a
+# divergencias_fase_c, o título e 8 do sistema, e o crc.
+_CONTAGENS_CABECALHO_V8 = (_CONTAGENS_CABECALHO_V1[:16] + [1] * 6 + _CONTAGENS_CABECALHO_V7[18:-1] + [1] * 9 + [1])
 
 _TAMANHO_CAMPOS_V1 = struct.calcsize(_FORMATO_CABECALHO_V1)  # 408 bytes
 _TAMANHO_CAMPOS_V2 = struct.calcsize(_FORMATO_CABECALHO_V2)  # 408 + 8 + 8*32 = 672 bytes
@@ -155,6 +195,7 @@ _TAMANHO_CAMPOS_V4 = struct.calcsize(_FORMATO_CABECALHO_V4)  # 680 + 24 = 704 by
 _TAMANHO_CAMPOS_V5 = struct.calcsize(_FORMATO_CABECALHO_V5)  # 704 + 32 + 8 + 4 = 748 bytes
 _TAMANHO_CAMPOS_V6 = struct.calcsize(_FORMATO_CABECALHO_V6)  # 748 + 16 = 764 bytes
 _TAMANHO_CAMPOS_V7 = struct.calcsize(_FORMATO_CABECALHO_V7)  # 764 + 12 = 776 bytes
+_TAMANHO_CAMPOS_V8 = struct.calcsize(_FORMATO_CABECALHO_V8)  # 1024 bytes: sem padding
 _OFFSET_HEADER_CRC32_V1 = _TAMANHO_CAMPOS_V1 - struct.calcsize("I")  # 404
 _OFFSET_HEADER_CRC32_V2 = _TAMANHO_CAMPOS_V2 - struct.calcsize("I")  # 668
 _OFFSET_HEADER_CRC32_V3 = _TAMANHO_CAMPOS_V3 - struct.calcsize("I")  # 676
@@ -162,6 +203,7 @@ _OFFSET_HEADER_CRC32_V4 = _TAMANHO_CAMPOS_V4 - struct.calcsize("I")  # 700
 _OFFSET_HEADER_CRC32_V5 = _TAMANHO_CAMPOS_V5 - struct.calcsize("I")  # 744
 _OFFSET_HEADER_CRC32_V6 = _TAMANHO_CAMPOS_V6 - struct.calcsize("I")  # 760
 _OFFSET_HEADER_CRC32_V7 = _TAMANHO_CAMPOS_V7 - struct.calcsize("I")  # 772
+_OFFSET_HEADER_CRC32_V8 = _TAMANHO_CAMPOS_V8 - struct.calcsize("I")  # 1020
 
 
 def _consumir(campos_tupla: tuple, contagens: list[int]) -> list:
@@ -245,6 +287,21 @@ class CabecalhoArquivo:
     modo_spi: int | None = None
     divergencias_fase_a: int | None = None
     divergencias_fase_c: int | None = None
+    # [SISTEMA, v8] A BeagleBone no início da captura (ler_sistema em ler_adc.c). "" e None antes da v8, ou quando o
+    # ler_adc não conseguiu ler o campo.
+    kernel: str = ""
+    sistema_operacional: str = ""
+    placa: str = ""
+    timestamp_ns: int | None = None
+    relogio_sincronizado: bool | None = None
+    uptime_s: int | None = None
+    carga_1min: float | None = None
+    memoria_disponivel_kib: int | None = None
+    disco_saida_total_kib: int | None = None
+    disco_saida_livre_kib: int | None = None
+    disco_saida_livre_fim_kib: int | None = None
+    disco_programa_total_kib: int | None = None
+    disco_programa_livre_kib: int | None = None
 
     @property
     def _folga_publicada(self) -> bool:
@@ -389,7 +446,41 @@ class CabecalhoArquivo:
             attrs["modo_spi"] = self.modo_spi
             attrs["divergencias_fase_a"] = self.divergencias_fase_a
             attrs["divergencias_fase_c"] = self.divergencias_fase_c
+        if self.versao_cabecalho >= 8:  # só v8+; -1 = o ler_adc não conseguiu ler
+            attrs["kernel"] = self.kernel
+            attrs["sistema_operacional"] = self.sistema_operacional
+            attrs["placa"] = self.placa
+            attrs["timestamp_ns"] = self.timestamp_ns
+            attrs["relogio_sincronizado"] = -1 if self.relogio_sincronizado is None else int(self.relogio_sincronizado)
+            attrs["carga_1min"] = -1.0 if self.carga_1min is None else self.carga_1min
+            for nome in ("uptime_s", "memoria_disponivel_kib", "disco_saida_total_kib", "disco_saida_livre_kib",
+                         "disco_saida_livre_fim_kib", "disco_programa_total_kib", "disco_programa_livre_kib"):
+                valor = getattr(self, nome)
+                attrs[nome] = -1 if valor is None else valor
         return attrs
+
+    def descrever_sistema(self) -> list[str]:
+        """Linhas (sem prefixo) sobre a placa, o sistema, o relógio e o disco no início da captura (v8); vazio antes."""
+        if self.versao_cabecalho < 8:
+            return []
+
+        def gib(kib: int | None) -> str:
+            return "?" if kib is None else f"{kib / 2**20:.2f}"
+
+        linhas = [f"placa {self.placa or '?'} | {self.sistema_operacional or 'sistema ?'} | "
+                  f"kernel {self.kernel or '?'}"]
+        relogio = {True: "sincronizado (NTP)", False: "NÃO sincronizado: a data pode estar errada",
+                   None: "?"}[self.relogio_sincronizado]
+        ligada = "?" if self.uptime_s is None else f"{self.uptime_s // 3600} h {self.uptime_s % 3600 // 60:02d} min"
+        carga = "?" if self.carga_1min is None else f"{self.carga_1min:.2f}"
+        memoria = "?" if self.memoria_disponivel_kib is None else f"{self.memoria_disponivel_kib / 1024:.0f} MiB"
+        linhas.append(f"relógio {relogio}; ligada há {ligada}; carga do ARM {carga}; memória disponível {memoria}")
+        fim = ("" if self.disco_saida_livre_fim_kib is None
+               else f", {gib(self.disco_saida_livre_fim_kib)} no fim")
+        linhas.append(f"disco da captura: {gib(self.disco_saida_livre_kib)} de {gib(self.disco_saida_total_kib)} GiB "
+                      f"livres no início{fim}; disco do ler_adc: {gib(self.disco_programa_livre_kib)} de "
+                      f"{gib(self.disco_programa_total_kib)} GiB livres")
+        return linhas
 
     def descrever_grade(self) -> str | None:
         """Uma frase sobre o período entre amostras, do que a PRU publicou (v6); None antes da v6."""
@@ -433,9 +524,11 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
     v3) e 676 (v3 x v4); tentar sempre desempacotar com o formato mais novo
     quebraria a leitura de um '.bin' antigo (o header_crc32 apareceria no
     lugar errado, entre muitas outras coisas). A v5 acrescenta a versão do
-    firmware e a taxa medida pelo ARM no lugar do CRC da v4 (byte 700). Uma
-    versão > 5 (formato futuro que este script ainda não conhece) é tratada
-    como v5 na tentativa de leitura -- mais provável de funcionar
+    firmware e a taxa medida pelo ARM no lugar do CRC da v4 (byte 700); a v6
+    e a v7 seguem acrescentando antes do CRC. A v8 aumenta o título e a
+    descrição e muda os dois de lugar (ver o comentário dos formatos). Uma
+    versão maior que a suportada (formato futuro que este script ainda não
+    conhece) é lida como a mais nova -- mais provável de funcionar
     parcialmente do que assumir uma versão antiga -- mas com aviso.
     """
     try:
@@ -477,8 +570,12 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
         formato, contagens, offset_crc = _FORMATO_CABECALHO_V6, _CONTAGENS_CABECALHO_V6, _OFFSET_HEADER_CRC32_V6
         tem_grandeza_sonda = True
         tem_faixa_adc = True
-    else:
+    elif versao_cabecalho == 7:
         formato, contagens, offset_crc = _FORMATO_CABECALHO_V7, _CONTAGENS_CABECALHO_V7, _OFFSET_HEADER_CRC32_V7
+        tem_grandeza_sonda = True
+        tem_faixa_adc = True
+    else:
+        formato, contagens, offset_crc = _FORMATO_CABECALHO_V8, _CONTAGENS_CABECALHO_V8, _OFFSET_HEADER_CRC32_V8
         tem_grandeza_sonda = True
         tem_faixa_adc = True
     tem_integridade = versao_cabecalho >= 4
@@ -498,6 +595,16 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
 
     tamanho_campos = struct.calcsize(formato)
     campos = struct.unpack(formato, bruto[:tamanho_campos])
+    partes = _consumir(campos, contagens)
+
+    # [v8] A descrição e o título trocaram de lugar com parte do sistema: volta à ordem da v7 (o título, a descrição e
+    # os campos da v7) e separa o sistema, para os campos da v7 seguirem pelo mesmo caminho abaixo.
+    sistema = None
+    if versao_cabecalho >= 8:
+        prefixo, regiao_a, meio, regiao_b, crc = partes[:16], partes[16:22], partes[22:39], partes[39:48], partes[48]
+        (descricao_v8, *sistema_a), (titulo_v8, *sistema_b) = regiao_a, regiao_b
+        partes = [*prefixo, titulo_v8, descricao_v8, *meio, crc]
+        sistema = (*sistema_a, *sistema_b)
 
     faixa_adc_bytes = None
     integridade = (None, None, None, ())
@@ -514,7 +621,7 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
             grandeza_bytes, sonda_id_bytes_lista, faixa_adc_bytes,
             atrasadas, sobrescritos, preambulo, atrasos_cs, versao_bruta, taxa_medida, buffers_ping_pong,
             folga, atraso_max, ciclos_rebase, protocolo, modo_spi, div_a, div_c, header_crc32,
-        ) = _consumir(campos, contagens)
+        ) = partes
         integridade = (atrasadas, sobrescritos, preambulo, tuple(atrasos_cs))
         versao_firmware = versao_bruta.split(b"\x00", 1)[0].decode("ascii", errors="replace")
         taxa_medida_hz = float(taxa_medida) if taxa_medida > 0 else None
@@ -530,7 +637,7 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
             grandeza_bytes, sonda_id_bytes_lista, faixa_adc_bytes,
             atrasadas, sobrescritos, preambulo, atrasos_cs, versao_bruta, taxa_medida, buffers_ping_pong,
             folga, atraso_max, ciclos_rebase, protocolo, header_crc32,
-        ) = _consumir(campos, contagens)
+        ) = partes
         integridade = (atrasadas, sobrescritos, preambulo, tuple(atrasos_cs))
         versao_firmware = versao_bruta.split(b"\x00", 1)[0].decode("ascii", errors="replace")
         taxa_medida_hz = float(taxa_medida) if taxa_medida > 0 else None
@@ -544,7 +651,7 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
             total_amostras_gravadas, titulo_bruto, descricao_bruto,
             grandeza_bytes, sonda_id_bytes_lista, faixa_adc_bytes,
             atrasadas, sobrescritos, preambulo, atrasos_cs, versao_bruta, taxa_medida, buffers_ping_pong, header_crc32,
-        ) = _consumir(campos, contagens)
+        ) = partes
         integridade = (atrasadas, sobrescritos, preambulo, tuple(atrasos_cs))
         versao_firmware = versao_bruta.split(b"\x00", 1)[0].decode("ascii", errors="replace")
         taxa_medida_hz = float(taxa_medida) if taxa_medida > 0 else None
@@ -557,7 +664,7 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
             total_amostras_gravadas, titulo_bruto, descricao_bruto,
             grandeza_bytes, sonda_id_bytes_lista, faixa_adc_bytes,
             atrasadas, sobrescritos, preambulo, atrasos_cs, header_crc32,
-        ) = _consumir(campos, contagens)
+        ) = partes
         integridade = (atrasadas, sobrescritos, preambulo, tuple(atrasos_cs))
     elif tem_faixa_adc:
         (
@@ -567,7 +674,7 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
             primeira_amostra_descartada, duracao_pedida_segundos, blocos_gravados,
             total_amostras_gravadas, titulo_bruto, descricao_bruto,
             grandeza_bytes, sonda_id_bytes_lista, faixa_adc_bytes, header_crc32,
-        ) = _consumir(campos, contagens)
+        ) = partes
     elif tem_grandeza_sonda:
         (
             _magic, _versao, tamanho_cabecalho, timestamp_unix, frequencia_hz,
@@ -576,7 +683,7 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
             primeira_amostra_descartada, duracao_pedida_segundos, blocos_gravados,
             total_amostras_gravadas, titulo_bruto, descricao_bruto,
             grandeza_bytes, sonda_id_bytes_lista, header_crc32,
-        ) = _consumir(campos, contagens)
+        ) = partes
     else:
         (
             _magic, _versao, tamanho_cabecalho, timestamp_unix, frequencia_hz,
@@ -584,7 +691,7 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
             bytes_por_amostra, pru_clock_hz, sample_period_ticks,
             primeira_amostra_descartada, duracao_pedida_segundos, blocos_gravados,
             total_amostras_gravadas, titulo_bruto, descricao_bruto, header_crc32,
-        ) = _consumir(campos, contagens)
+        ) = partes
         grandeza_bytes = None
         sonda_id_bytes_lista = None
 
@@ -632,6 +739,8 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
     # que ninguém garantiu).
     faixa_adc_codigo_por_canal = tuple(faixa_adc_bytes[:num_canais]) if tem_faixa_adc else ()
 
+    campos_sistema = _campos_do_sistema(sistema) if sistema is not None else {}
+
     return CabecalhoArquivo(
         versao_cabecalho=versao_cabecalho,
         tamanho_cabecalho=tamanho_cabecalho,
@@ -669,7 +778,37 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
         modo_spi=spi[0],
         divergencias_fase_a=spi[1],
         divergencias_fase_c=spi[2],
+        **campos_sistema,
     )
+
+
+def _campos_do_sistema(sistema: tuple) -> dict[str, object]:
+    """Os campos do sistema da v8 (na ordem do arquivo) para o CabecalhoArquivo; VALOR_DESCONHECIDO vira None."""
+    (kernel, ns, relogio, uptime, carga,                          # depois da descrição
+     sistema_operacional, placa, saida_total, saida_livre, saida_livre_fim,  # depois do título
+     programa_total, programa_livre, memoria) = sistema
+
+    def texto(bruto: bytes) -> str:
+        return bruto.split(b"\x00", 1)[0].decode("ascii", errors="replace")
+
+    def numero(valor: int) -> int | None:
+        return None if valor == VALOR_DESCONHECIDO else valor
+
+    return {
+        "kernel": texto(kernel),
+        "sistema_operacional": texto(sistema_operacional),
+        "placa": texto(placa),
+        "timestamp_ns": ns,
+        "relogio_sincronizado": None if relogio == VALOR_DESCONHECIDO else bool(relogio),
+        "uptime_s": numero(uptime),
+        "carga_1min": None if carga == VALOR_DESCONHECIDO else carga / 1000.0,
+        "memoria_disponivel_kib": numero(memoria),
+        "disco_saida_total_kib": numero(saida_total),
+        "disco_saida_livre_kib": numero(saida_livre),
+        "disco_saida_livre_fim_kib": numero(saida_livre_fim),
+        "disco_programa_total_kib": numero(programa_total),
+        "disco_programa_livre_kib": numero(programa_livre),
+    }
 
 
 def imprimir_resumo_cabecalho(cabecalho: CabecalhoArquivo) -> None:
@@ -685,6 +824,8 @@ def imprimir_resumo_cabecalho(cabecalho: CabecalhoArquivo) -> None:
         )
     if cabecalho.versao_firmware:
         log.info(f"  Firmware: {cabecalho.versao_firmware}")
+    for linha in cabecalho.descrever_sistema():
+        log.info(f"  BeagleBone: {linha}")
     if cabecalho.titulo:
         log.info(f"  Título: {cabecalho.titulo}")
     if cabecalho.descricao:

@@ -373,10 +373,15 @@ while [ $# -gt 0 ]; do
         -o) saida=$2; shift ;; --atraso-cs) cs=$2; shift ;; --blocos) blocos=$2; shift ;;
         --duracao) duracao=$2; blocos=9; shift ;; --spi) spi=$2; shift ;; -d) descricao=$2; shift ;;
         --faixa-adc) faixa=$2; shift ;; --grandeza) grandeza=$2; shift ;; --sonda) sonda=$2; shift ;;
-        --forcar-taxa) forcar=1; shift; continue ;;
+        -t) titulo=$2; shift ;; --forcar-taxa) forcar=1; shift; continue ;;
     esac
     shift
 done
+# Os limites do cabeçalho v8, em bytes, como o ler_adc (até 03/11/2026 eram 63 e 255, e o calibrar passava deles).
+if [ "$(printf %s "${titulo:-}" | wc -c)" -gt 127 ] || [ "$(printf %s "${descricao:-}" | wc -c)" -gt 271 ]; then
+    echo "Erro: --titulo ou --descricao passa do limite do cabeçalho." >&2
+    exit 2
+fi
 IFS=, read -r s h a <<< "${cs:-3,1,3}"         # sem --atraso-cs: o padrão do firmware
 sleep "${LER_ADC_DEMORA:-0}"
 quadro=$((595 + 2 * (s + h + a)))
@@ -657,6 +662,9 @@ def test_coletar_calibrar_pede_cada_quadrada_em_cada_taxa_e_faixa(varredura):
     (pasta,) = varredura.pasta.glob("CAL_*")
     linhas = _resumo(pasta)
     assert len(linhas) == 68 and [linha["spi"] for linha in linhas] == ["lenta", "rapido"] * 34
+    # Todas as capturas saem: até 03/11/2026, o título das variantes (até 68 bytes) passava dos 63 do cabeçalho v7, e
+    # o ler_adc recusava 17 das 34 de cada faixa.
+    assert all(linha["codigo_saida"] == "0" for linha in linhas), [linha["arquivo"] for linha in linhas]
     assert r.stdout.count("ONDA QUADRADA de") == 17 and "ONDA QUADRADA de 25344 Hz, 20 Vpp, High-Z, offset 0 V" in r.stdout
     assert "ONDA QUADRADA de 1280 Hz, 10 Vpp, High-Z, offset 0 V" in r.stdout
     assert "ONDA QUADRADA de 256 Hz, 16 Vpp, High-Z, offset -2 V" in r.stdout and "osciloscópio" not in r.stdout

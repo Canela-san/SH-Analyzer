@@ -123,19 +123,20 @@ def test_codigo_de_faixa_desconhecido_vira_none_sem_quebrar(tmp_path):
     assert c.faixa_adc_codigo_por_canal == (0, 9) and c.faixa_adc_total_v_por_canal == (20.48, None)
 
 
-def test_versao_futura_avisa_e_e_lida_como_v7(tmp_path, caplog):
+def test_versao_futura_avisa_e_e_lida_como_v8(tmp_path, caplog):
     from capturas_sinteticas import montar_cabecalho
 
-    bruto = bytearray(montar_cabecalho(1000, (0, 1), (0, 1), ("", ""), 400_000, versao=7, versao_firmware="v9",
+    bruto = bytearray(montar_cabecalho(1000, (0, 1), (0, 1), ("", ""), 400_000, versao=8, versao_firmware="v9",
                                        spi=(2, 5, 0)))
-    bruto[4:8] = (8).to_bytes(4, "little")                      # "versão 8": formato que este código ainda não conhece
+    bruto[4:8] = (9).to_bytes(4, "little")                      # "versão 9": formato que este código ainda não conhece
     p = tmp_path / "futuro.bin"
     p.write_bytes(bytes(bruto))
     with caplog.at_level(logging.WARNING):
         c = ler_cabecalho(p)
-    assert c.versao_cabecalho == 8 and c.faixa_adc_total_v_por_canal == (20.48, 20.48) and c.buffers_sobrescritos == 0
+    assert c.versao_cabecalho == 9 and c.faixa_adc_total_v_por_canal == (20.48, 20.48) and c.buffers_sobrescritos == 0
     assert c.versao_firmware == "v9" and c.folga_minima_ciclos == 20 and c.modo_spi == 2
-    assert any("só conhece até a versão 7" in r.getMessage() for r in caplog.records)
+    assert c.placa == "A335BNLT 00C0 3714BBBK1234"
+    assert any("só conhece até a versão 8" in r.getMessage() for r in caplog.records)
 
 
 # --------------------------------------------------------------------------------------
@@ -205,6 +206,58 @@ def test_v6_com_amostras_atrasadas_ou_um_bloco_so_nao_garante_a_grade(tmp_path):
 # --------------------------------------------------------------------------------------
 # v5: versão do firmware e taxa medida pelo ARM (F5)
 # --------------------------------------------------------------------------------------
+def test_v8_le_titulo_e_descricao_maiores_e_o_sistema(tmp_path, caplog):
+    titulo = "CAL F cs padrao 312500 quadrada256Hz16Vpp+2V 30s spi lenta f20.48 " + "x" * 61    # 127 bytes
+    descricao = "d" * 271
+    p = escrever_bin(tmp_path / "v8.bin", SINAL, (0, 3), (GRANDEZA_TENSAO, GRANDEZA_CORRENTE), ("", "fluke_i30"),
+                     versao=8, titulo=titulo, descricao=descricao, codigos_faixa_adc=(2, 0), integridade=(0, 1, 0),
+                     versao_firmware="v0.7-18-gabcdef0", spi=(2, 0, 3))
+    c = ler_cabecalho(p)
+    assert c.crc32_valido and c.versao_cabecalho == 8
+    assert len(titulo.encode()) == 127 and c.titulo == titulo and c.descricao == descricao
+    # os campos da v7 continuam lidos no mesmo lugar
+    assert c.sonda_id_por_canal == ("", "fluke_i30") and c.faixa_adc_codigo_por_canal == (2, 0)
+    assert c.buffers_sobrescritos == 1 and c.versao_firmware == "v0.7-18-gabcdef0" and c.divergencias_fase_c == 3
+    assert c.kernel == "5.10.168-ti-r72" and c.placa == "A335BNLT 00C0 3714BBBK1234"
+    assert c.sistema_operacional == "BeagleBoard.org Debian Bullseye IoT Image 2023-09-02"
+    assert c.timestamp_ns == 123456789 and c.relogio_sincronizado is True and c.uptime_s == 3600
+    assert c.carga_1min == 0.25 and c.memoria_disponivel_kib == 300_000
+    assert (c.disco_saida_total_kib, c.disco_saida_livre_kib, c.disco_saida_livre_fim_kib) == (3_500_000, 2_000_000,
+                                                                                               1_900_000)
+    assert (c.disco_programa_total_kib, c.disco_programa_livre_kib) == (3_500_000, 2_000_000)
+    attrs = c.para_attrs_hdf5()
+    assert attrs["placa"] == c.placa and attrs["relogio_sincronizado"] == 1 and attrs["disco_saida_livre_kib"] == 2_000_000
+    with caplog.at_level(logging.INFO):
+        imprimir_resumo_cabecalho(c)
+    texto = "\n".join(r.getMessage() for r in caplog.records)
+    assert "BeagleBone: placa A335BNLT 00C0 3714BBBK1234 | BeagleBoard.org Debian" in texto
+    assert "relógio sincronizado (NTP); ligada há 1 h 00 min; carga do ARM 0.25; memória disponível 293 MiB" in texto
+    assert "disco da captura: 1.91 de 3.34 GiB livres no início, 1.81 no fim" in texto
+
+
+def test_v8_sem_o_que_o_ler_adc_nao_leu_e_relogio_sem_ntp(tmp_path, caplog):
+    desconhecido = 0xFFFFFFFF
+    p = escrever_bin(tmp_path / "v8.bin", SINAL, versao=8,
+                     sistema={"kernel": "", "placa": "", "relogio": 0, "uptime": desconhecido, "carga": desconhecido,
+                              "memoria": desconhecido, "saida": (desconhecido, desconhecido, desconhecido)})
+    c = ler_cabecalho(p)
+    assert c.crc32_valido and c.kernel == "" and c.placa == "" and c.relogio_sincronizado is False
+    assert c.uptime_s is None and c.carga_1min is None and c.memoria_disponivel_kib is None
+    assert c.disco_saida_total_kib is None and c.disco_saida_livre_fim_kib is None
+    assert c.para_attrs_hdf5()["uptime_s"] == -1
+    with caplog.at_level(logging.INFO):
+        imprimir_resumo_cabecalho(c)
+    texto = "\n".join(r.getMessage() for r in caplog.records)
+    assert "placa ? |" in texto and "kernel ?" in texto and "NÃO sincronizado: a data pode estar errada" in texto
+    assert "disco da captura: ? de ? GiB livres no início;" in texto
+
+
+def test_v7_nao_tem_o_sistema(tmp_path):
+    c = ler_cabecalho(escrever_bin(tmp_path / "v7.bin", SINAL, versao=7, titulo="t" * 63))
+    assert c.crc32_valido and c.titulo == "t" * 63 and c.placa == "" and c.relogio_sincronizado is None
+    assert c.descrever_sistema() == [] and "placa" not in c.para_attrs_hdf5()
+
+
 def test_v5_le_a_versao_do_firmware_e_a_taxa_medida(tmp_path, caplog):
     p = escrever_bin(tmp_path / "v5.bin", SINAL, versao=5, versao_firmware="v0.6-3-g1234abc-dirty",
                      taxa_medida_hz=399_990.0)

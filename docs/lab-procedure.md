@@ -68,11 +68,20 @@ puro, e a **cadeia de tensão na faixa de produção** (±10,24 V).
 * **O caderno** (`cp docs/lab-notes-template.md $DIA/anotacoes.md`), preenchido durante: o de 23/10 ficou vazio, e o
   relatório precisa da montagem de cada teste.
 
-**1. Conferir (5 min).** A BeagleBone na fonte, a quadrada do gerador na entrada do divisor:
+**1. Conferir (5 min).** A BeagleBone na fonte de 5 V e, no gerador, a mesma quadrada com que o `calibrar` começa
+(assim o passo 2 sai sem mexer no gerador): **onda quadrada de 256 Hz, 20 Vpp, offset 0 V, duty 50 %, carga em
+High-Z**, na entrada do divisor (canal 1). O `--ganho` é o do divisor, para o Vpp ser conferido na entrada:
 
 ```bash
-./coletar.sh conferir
+./coletar.sh conferir --esperado-vpp 20 --ganho 19.357
 ```
+
+* **OK:** ~1,03 Vpp no pino (≈ 20 Vpp na entrada), offset perto de 0 e nenhuma amostra fora da grade.
+* **O gerador não aceita 20 Vpp:** a carga dele está em 50 Ω (o máximo ali é 10 Vpp). Mude para High-Z: o divisor
+  é uma carga alta, e só em High-Z o valor do visor é o que chega a ele.
+* **"ADC mudo"** (todas as amostras iguais): a placa sem os 5 V da fonte, ou os pinos da PRU sem configuração
+  (`sudo ./setup.sh`).
+* **Quase só ruído:** a saída do gerador desligada, ou o cabo fora da entrada do divisor.
 
 **2. A faixa de produção da cadeia de tensão (~40 min, com 17 trocas de quadrada no gerador).** O `calibrar` mede as
 quadradas nas duas faixas, ±10,24 V (a de produção) e ±2,56 V (a do T3f, que repete o perfil em outro dia), a 312,5
@@ -887,7 +896,7 @@ Equipamentos do seu levantamento (`bench-notes.md`), com o que importa de cada u
 
 ### Nomes e pastas
 
-* **Na BeagleBone** (`firmware/`): `T<n><letra>_<descrição>.bin`, por exemplo `T5a_1k_m40dBFS.bin`, e título curto no cabeçalho com `-t "T5a 1kHz -40dBFS"` (até 63 bytes).
+* **Na BeagleBone** (`firmware/`): `T<n><letra>_<descrição>.bin`, por exemplo `T5a_1k_m40dBFS.bin`, e título curto no cabeçalho com `-t "T5a 1kHz -40dBFS"` (até 127 bytes).
 * **No computador:** copie tudo para `$DADOS/lab/AAAA-MM-DD/` (a pasta do dia, `$DIA` nos comandos), **fora do repositório**: dentro dele, um `git clean` apagaria os dados. As coletas do `coletar.sh sonda` (`firmware/capturas/<id>/` na BeagleBone) vão para `$DIA/capturas/<id>/`. Todos os resultados numéricos vão para **um único** `$DIA/resultados.csv`.
 * **Canais desta bancada, em todos os testes: canal 1 = tensão (divisor) e canal 0 = corrente (SCT013).** Os comandos abaixo já usam essa atribuição (para mudá-la, troque o número do canal no `ler_adc`, em `--faixa-adc`, `--grandeza`, `--sonda` e `--canal-sonda`). Nos comandos de captura, o argumento depois da taxa é a lista de canais. **Com os dois canais, o ADS8688 varre sempre em ordem crescente: o canal 0 (corrente) é convertido primeiro e o canal 1 (tensão) 1/taxa total depois** (10 µs a 100 kS/s; veja o T6b).
 * **Variáveis do roteiro (fish, no computador, na raiz do repositório).** Defina uma vez por sessão e use nos comandos de análise; assim, se o T2 ou o T10-0 mudarem um ganho, ou se você for analisar outro dia, troca só uma linha:

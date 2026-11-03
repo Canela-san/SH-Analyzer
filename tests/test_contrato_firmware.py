@@ -124,11 +124,34 @@ def normalizar(campos: list[tuple[str, int]]) -> list[tuple[str, int]]:
     return saida
 
 
-def test_layout_da_struct_v7_bate_com_o_formato_python(fonte_c, defines):
+def test_layout_da_struct_v8_bate_com_o_formato_python(fonte_c, defines):
     c = normalizar(formato_struct_c(fonte_c, defines))
-    py = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V7))
+    py = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V8))
     assert c == py
-    assert inteiro_c(defines["CABECALHO_VERSAO_FIRMWARE_TAMANHO"]) == cab.CABECALHO_VERSAO_FIRMWARE_TAMANHO
+    for nome in ("CABECALHO_VERSAO_FIRMWARE_TAMANHO", "CABECALHO_TITULO_TAMANHO", "CABECALHO_DESCRICAO_TAMANHO",
+                 "CABECALHO_KERNEL_TAMANHO", "CABECALHO_SISTEMA_TAMANHO", "CABECALHO_PLACA_TAMANHO",
+                 "VALOR_DESCONHECIDO"):
+        assert inteiro_c(defines[nome]) == getattr(cab, nome), nome
+
+
+def test_v8_ocupa_os_1024_bytes_e_mantem_os_campos_da_v7_do_byte_404_ao_771():
+    """Os scripts leem grandeza, sonda, faixa e contadores por offset: a v8 não pode tê-los mudado de lugar."""
+    v7 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V7))
+    v8 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V8))
+    assert cab._TAMANHO_CAMPOS_V8 == cab.CABECALHO_TAMANHO_TOTAL == 1024
+    assert cab._OFFSET_HEADER_CRC32_V8 == 1020
+
+    def offset(campos, i):
+        return struct.calcsize("<" + "".join(f"{n}{c}" for c, n in campos[:i]))
+
+    # v7: ... 64s titulo, 256s descricao, depois grandeza (8 B) até divergencias_fase_c, e o CRC
+    i7 = next(i for i, campo in enumerate(v7) if campo == ("s", 256)) + 1
+    i8 = next(i for i, campo in enumerate(v8) if campo == ("s", cab.CABECALHO_KERNEL_TAMANHO)) + 5
+    assert offset(v7, i7) == offset(v8, i8) == 404
+    meio = len(v7) - 1 - i7                                      # os campos da v7 entre a descrição e o CRC
+    assert v8[i8:i8 + meio] == v7[i7:-1]
+    assert offset(v8, i8 + meio) == 772 and v8[i8 + meio] == ("s", cab.CABECALHO_TITULO_TAMANHO)
+    assert offset(v8, i8 - 6) == 84 and v8[i8 - 6] == ("s", cab.CABECALHO_DESCRICAO_TAMANHO)
 
 
 def test_v4_e_o_prefixo_de_v5_sem_a_versao_do_firmware():
@@ -178,11 +201,14 @@ def test_tamanhos_derivados(fonte_c, defines):
     assert cab._TAMANHO_CAMPOS_V7 == struct.calcsize(cab._FORMATO_CABECALHO_V7) == 776
     assert cab._OFFSET_HEADER_CRC32_V7 == cab._TAMANHO_CAMPOS_V7 - 4 == 772
     assert cab._TAMANHO_CAMPOS_V7 < inteiro_c(defines["CABECALHO_TAMANHO_TOTAL"])
+    assert cab._TAMANHO_CAMPOS_V8 == struct.calcsize(cab._FORMATO_CABECALHO_V8) == 1024
+    assert cab._OFFSET_HEADER_CRC32_V8 == cab._TAMANHO_CAMPOS_V8 - 4 == 1020
     for fmt, contagens in ((cab._FORMATO_CABECALHO_V3, cab._CONTAGENS_CABECALHO_V3),
                            (cab._FORMATO_CABECALHO_V4, cab._CONTAGENS_CABECALHO_V4),
                            (cab._FORMATO_CABECALHO_V5, cab._CONTAGENS_CABECALHO_V5),
                            (cab._FORMATO_CABECALHO_V6, cab._CONTAGENS_CABECALHO_V6),
-                           (cab._FORMATO_CABECALHO_V7, cab._CONTAGENS_CABECALHO_V7)):
+                           (cab._FORMATO_CABECALHO_V7, cab._CONTAGENS_CABECALHO_V7),
+                           (cab._FORMATO_CABECALHO_V8, cab._CONTAGENS_CABECALHO_V8)):
         assert sum(contagens) == len(struct.unpack(fmt, bytes(struct.calcsize(fmt))))
 
 
@@ -208,6 +234,7 @@ def test_offsets_do_cabecalho_usados_pelo_coletar_sonda():
     assert offs["CAB_OFF_CRC_V5"] == cab._OFFSET_HEADER_CRC32_V5
     assert offs["CAB_OFF_CRC_V6"] == cab._OFFSET_HEADER_CRC32_V6
     assert offs["CAB_OFF_CRC_V7"] == cab._OFFSET_HEADER_CRC32_V7
+    assert offs["CAB_OFF_CRC_V8"] == cab._OFFSET_HEADER_CRC32_V8
     assert offs["CAB_OFF_SONDA_ID"] + const.ADS8688_MAX_CANAIS * cab.CABECALHO_SONDA_ID_TAMANHO == off_faixa
     assert offs["CAB_OFF_GRANDEZA"] + const.ADS8688_MAX_CANAIS == offs["CAB_OFF_SONDA_ID"]
     assert offs["CAB_TAM_SONDA_ID"] == cab.CABECALHO_SONDA_ID_TAMANHO

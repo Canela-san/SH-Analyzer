@@ -196,7 +196,7 @@ readonly AMOSTRAS_ANALISE_RAPIDA=262144   # amostras brutas (todos os canais) ol
 readonly AMOSTRAS_IGNORADAS_INICIO=4096   # descarta o começo da captura (transitório do arranque)
 readonly SPB_PADRAO=1048576                # SAMPLES_PER_BUFFER (só para estimar tempo; o valor real vem do cabeçalho)
 
-# Layout do cabeçalho .bin v2 a v6 (firmware/ler_adc.c; conferido por tests/test_contrato_firmware.py).
+# Layout do cabeçalho .bin v2 a v8 (firmware/ler_adc.c; conferido por tests/test_contrato_firmware.py).
 # A v3 acrescenta a faixa de entrada do ADC por canal (CAB_OFF_FAIXA_ADC); a v4, os contadores de integridade
 # que a PRU mede durante a captura; a v5, a versão do firmware, a taxa medida pelo ARM e o nº de buffers; a v6, a
 # grade de tempo publicada pela PRU (estes dois últimos, este script não lê).
@@ -224,6 +224,7 @@ readonly CAB_OFF_CRC_V4=700
 readonly CAB_OFF_CRC_V5=744
 readonly CAB_OFF_CRC_V6=760
 readonly CAB_OFF_CRC_V7=772     # v7: + o modo do SPI e as divergências entre as fases de leitura
+readonly CAB_OFF_CRC_V8=1020    # v8: título e descrição maiores, o sistema e o disco; do byte 404 ao 771, como na v7
 readonly GRANDEZA_TENSAO=0
 readonly GRANDEZA_CORRENTE=1
 
@@ -1052,7 +1053,7 @@ validar_cabecalho() {
         qc_erro "cabeçalho versão ${versao}: não registra grandeza/sonda por canal. Recompile o firmware (make em firmware/)" cabecalho_v1
         return
     fi
-    if [ "$versao" -gt 7 ]; then
+    if [ "$versao" -gt 8 ]; then
         qc_aviso "cabeçalho versão ${versao}, mais nova que a conhecida por este script: não conferi grandeza/sonda" cabecalho_desconhecido
         return
     fi
@@ -1063,6 +1064,7 @@ validar_cabecalho() {
     [ "$versao" -eq 5 ] && off_crc="$CAB_OFF_CRC_V5"
     [ "$versao" -eq 6 ] && off_crc="$CAB_OFF_CRC_V6"
     [ "$versao" -eq 7 ] && off_crc="$CAB_OFF_CRC_V7"
+    [ "$versao" -eq 8 ] && off_crc="$CAB_OFF_CRC_V8"
     crc_gravado="$(ler_u32 "$arq" "$off_crc")"
     crc_calculado="$(crc_cabecalho_calculado "$arq" "$off_crc")"
     if [ "$crc_gravado" != "$crc_calculado" ]; then

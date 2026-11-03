@@ -12,6 +12,7 @@
  */
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -19,6 +20,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/statvfs.h>
+#include <sys/sysinfo.h>
+#include <sys/timex.h>
+#include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -45,12 +50,16 @@
 
 // --- Cabeçalho do .bin --------------------------------------------------------------------------------------------
 #define CABECALHO_MAGIC "SHAN"
-#define CABECALHO_VERSAO 7u             // versão do FORMATO do cabeçalho (o histórico está em cabecalho.py)
+#define CABECALHO_VERSAO 8u             // versão do FORMATO do cabeçalho (o histórico está em cabecalho.py)
 #define CABECALHO_TAMANHO_TOTAL 1024u
-#define CABECALHO_TITULO_TAMANHO 64u
-#define CABECALHO_DESCRICAO_TAMANHO 256u
+#define CABECALHO_TITULO_TAMANHO 128u   // [v8] eram 64
+#define CABECALHO_DESCRICAO_TAMANHO 272u   // [v8] eram 256
 #define CABECALHO_SONDA_ID_TAMANHO 32u
 #define CABECALHO_VERSAO_FIRMWARE_TAMANHO 32u
+#define CABECALHO_KERNEL_TAMANHO 32u    // [v8]
+#define CABECALHO_SISTEMA_TAMANHO 64u   // [v8]
+#define CABECALHO_PLACA_TAMANHO 32u     // [v8]
+#define VALOR_DESCONHECIDO 0xFFFFFFFFu  // [v8] um campo numérico do sistema que não deu para ler
 #ifndef VERSAO_FIRMWARE
 #define VERSAO_FIRMWARE "desconhecida"  // o Makefile passa o 'git describe' (ou o arquivo VERSAO)
 #endif
@@ -89,8 +98,13 @@ static const double FAIXA_ADC_ESPAN_V[] = {20.48, 10.24, 5.12};
 // Cabeçalho do .bin
 // =====================================================================================================================
 // 1024 bytes, little-endian, sem padding entre campos (packed): o layout é o do arquivo, não o do compilador. Os
-// campos finais (blocos, contadores, taxa medida, grade) só valem depois da reescrita no fim da captura; o CRC-32
-// (zlib) cobre o cabeçalho inteiro com o próprio campo zerado.
+// campos finais (blocos, contadores, taxa medida, grade, disco no fim) só valem depois da reescrita no fim da captura;
+// o CRC-32 (zlib) cobre o cabeçalho inteiro com o próprio campo zerado.
+//
+// [v8, 03/11/2026] O título foi de 64 para 128 bytes e a descrição de 256 para 272, e entraram o sistema, a placa e o
+// disco. Para os campos do byte 404 ao 771 (grandeza, sonda, faixa, contadores...), que os scripts leem por offset,
+// ficarem onde estavam, a descrição e parte do sistema ocupam o lugar do título e da descrição antigos (bytes 84 a
+// 403), e o título e o resto, o do padding (772 a 1019). Não sobra padding: o CRC é o último campo, no byte 1020.
 struct cabecalho_arquivo_campos {
     char     magic[4];                                 // "SHAN"
     uint32_t versao_cabecalho;                         // CABECALHO_VERSAO
@@ -108,8 +122,12 @@ struct cabecalho_arquivo_campos {
     double   duracao_pedida_segundos;                  // --duracao, ou 0
     uint64_t blocos_gravados;                          // [final]
     uint64_t total_amostras_gravadas;                  // [final]
-    char     titulo[CABECALHO_TITULO_TAMANHO];         // UTF-8, terminado em '\0'
-    char     descricao[CABECALHO_DESCRICAO_TAMANHO];
+    char     descricao[CABECALHO_DESCRICAO_TAMANHO];   // UTF-8, terminada em '\0' (até a v7: 256 bytes, depois do título)
+    char     kernel[CABECALHO_KERNEL_TAMANHO];         // [v8] uname -r
+    uint32_t timestamp_ns;                             // [v8] a fração de segundo do início da captura
+    uint32_t relogio_sincronizado;                     // [v8] 1 = NTP sincronizado; 0 = não (a data pode estar errada)
+    uint32_t uptime_s;                                 // [v8] há quanto tempo a placa está ligada
+    uint32_t carga_1min_milesimos;                     // [v8] a carga média do ARM no último minuto, x 1000
     uint8_t  grandeza_por_canal[ADS8688_MAX_CANAIS];   // [v2] por posição de lista_canais
     char     sonda_id_por_canal[ADS8688_MAX_CANAIS][CABECALHO_SONDA_ID_TAMANHO];   // [v2]
     uint8_t  faixa_adc_por_canal[ADS8688_MAX_CANAIS];  // [v3] código de faixa que o ADC recebeu
@@ -127,12 +145,20 @@ struct cabecalho_arquivo_campos {
     uint32_t modo_spi;                                 // [v7] MODO_SPI_*
     uint32_t divergencias_fase_a;                      // [v7, final]
     uint32_t divergencias_fase_c;
+    char     titulo[CABECALHO_TITULO_TAMANHO];         // UTF-8, terminado em '\0' (até a v7: 64 bytes, no byte 84)
+    char     sistema_operacional[CABECALHO_SISTEMA_TAMANHO];   // [v8] /etc/dogtag, ou o PRETTY_NAME do os-release
+    char     placa[CABECALHO_PLACA_TAMANHO];           // [v8] EEPROM: modelo, revisão e nº de série da BeagleBone
+    uint32_t disco_saida_total_kib;                    // [v8] o sistema de arquivos do .bin (como o df)
+    uint32_t disco_saida_livre_kib;                    // [v8] livre no início
+    uint32_t disco_saida_livre_fim_kib;                // [v8, final]
+    uint32_t disco_programa_total_kib;                 // [v8] o sistema de arquivos do próprio ler_adc
+    uint32_t disco_programa_livre_kib;
+    uint32_t memoria_disponivel_kib;                   // [v8] MemAvailable do /proc/meminfo
     uint32_t header_crc32;
 } __attribute__((packed));
 
 struct cabecalho_arquivo {
-    struct cabecalho_arquivo_campos campos;
-    uint8_t padding[CABECALHO_TAMANHO_TOTAL - sizeof(struct cabecalho_arquivo_campos)];
+    struct cabecalho_arquivo_campos campos;            // desde a v8, os 1024 bytes inteiros (até a v7, mais um padding)
 } __attribute__((packed));
 
 _Static_assert(sizeof(struct cabecalho_arquivo) == CABECALHO_TAMANHO_TOTAL, "o cabeçalho tem de ter 1024 bytes");
@@ -625,6 +651,7 @@ struct configuracao {
     const char *arquivo;
     char arquivo_automatico[64];
     time_t instante;
+    uint32_t instante_ns;
     int forcar_taxa;
 };
 
@@ -644,7 +671,13 @@ static int analisar_argumentos(int argc, char *argv[], struct configuracao *c) {
 
     memset(c, 0, sizeof(*c));
     c->frequencia = FREQUENCIA_PADRAO_HZ;
-    c->instante = time(NULL);
+    struct timespec agora;
+    if (clock_gettime(CLOCK_REALTIME, &agora) == 0) {
+        c->instante = agora.tv_sec;
+        c->instante_ns = (uint32_t)agora.tv_nsec;
+    } else {
+        c->instante = time(NULL);
+    }
     int i = 1;
     if (argc > 1 && argv[1][0] != '-') {        // a frequência é o 1º argumento, quando há
         if (analisar_frequencia(argv[1], &c->frequencia) < 0) {
@@ -1043,7 +1076,179 @@ static void mostrar_progresso(unsigned long long feitos, unsigned long long tota
     progresso_ativo = 1;
 }
 
-static void imprimir_configuracao(const struct configuracao *c, double segundos_por_bloco) {
+// =====================================================================================================================
+// O sistema, a placa e o disco (cabeçalho v8)
+// =====================================================================================================================
+// Lidos uma vez, antes de a PRU começar: o que explica uma captura depois (qual imagem e kernel; qual placa, porque o
+// erro do cristal, e da taxa, é de cada uma; se a data do cabeçalho é confiável; quanto disco havia). O que não der
+// para ler fica vazio ou VALOR_DESCONHECIDO: nada aqui impede uma captura.
+
+#ifndef SI_LOAD_SHIFT
+#define SI_LOAD_SHIFT 16                // a escala de sysinfo.loads (linux/sysinfo.h)
+#endif
+
+struct sistema {
+    char sistema_operacional[CABECALHO_SISTEMA_TAMANHO];
+    char kernel[CABECALHO_KERNEL_TAMANHO];
+    char placa[CABECALHO_PLACA_TAMANHO];
+    uint32_t relogio_sincronizado;
+    uint32_t uptime_s;
+    uint32_t carga_1min_milesimos;
+    uint32_t memoria_disponivel_kib;
+    uint32_t disco_programa_total_kib;
+    uint32_t disco_programa_livre_kib;
+};
+
+// Copia até n bytes de 'origem' (para no '\0' ou no fim da linha), com '?' no que não é ASCII imprimível e sem os
+// espaços do fim: o texto vai para um campo de tamanho fixo do cabeçalho.
+static void copiar_texto(char *destino, size_t tamanho, const char *origem, size_t n) {
+    size_t k = 0;
+    for (size_t i = 0; i < n && origem[i] != '\0' && origem[i] != '\n' && k + 1 < tamanho; i++) {
+        unsigned char ch = (unsigned char)origem[i];
+        destino[k++] = (ch >= 0x20 && ch < 0x7F) ? (char)ch : '?';
+    }
+    while (k > 0 && destino[k - 1] == ' ') {
+        k--;
+    }
+    destino[k] = '\0';
+}
+
+// A imagem da BeagleBone (a 1ª linha do /etc/dogtag, ex.: "BeagleBoard.org Debian Bullseye IoT Image 2023-09-02") ou,
+// sem ela, o PRETTY_NAME do /etc/os-release.
+static void ler_sistema_operacional(const char *dogtag, const char *os_release, char *destino, size_t tamanho) {
+    char linha[256];
+    destino[0] = '\0';
+    FILE *f = fopen(dogtag, "r");
+    if (f != NULL) {
+        if (fgets(linha, sizeof(linha), f) != NULL) {
+            copiar_texto(destino, tamanho, linha, sizeof(linha));
+        }
+        fclose(f);
+        if (destino[0] != '\0') {
+            return;
+        }
+    }
+    f = fopen(os_release, "r");
+    if (f == NULL) {
+        return;
+    }
+    while (fgets(linha, sizeof(linha), f) != NULL) {
+        if (strncmp(linha, "PRETTY_NAME=", 12) == 0) {
+            const char *valor = linha + 12 + (linha[12] == '"');
+            copiar_texto(destino, tamanho, valor, strcspn(valor, "\"\n"));
+            break;
+        }
+    }
+    fclose(f);
+}
+
+// A EEPROM da placa (AM335x): 0xAA 0x55 0x33 0xEE, o nome (8 bytes; "A335BNLT" é a Black), a revisão (4) e o nº de
+// série (12), como "A335BNLT 00C0 3714BBBK1234". Sem ela, o modelo pelo device tree.
+static void ler_placa(const char *const eeproms[], size_t n_eeproms, const char *modelo, char *destino,
+                      size_t tamanho) {
+    char texto[64];
+    destino[0] = '\0';
+    for (size_t i = 0; i < n_eeproms; i++) {
+        unsigned char e[28];
+        FILE *f = fopen(eeproms[i], "rb");
+        if (f == NULL) {
+            continue;
+        }
+        size_t lidos = fread(e, 1, sizeof(e), f);
+        fclose(f);
+        if (lidos == sizeof(e) && e[0] == 0xAA && e[1] == 0x55 && e[2] == 0x33 && e[3] == 0xEE) {
+            snprintf(texto, sizeof(texto), "%.8s %.4s %.12s", (const char *)e + 4, (const char *)e + 12,
+                     (const char *)e + 16);
+            copiar_texto(destino, tamanho, texto, sizeof(texto));
+            return;
+        }
+    }
+    FILE *f = fopen(modelo, "r");
+    if (f != NULL) {
+        size_t lidos = fread(texto, 1, sizeof(texto) - 1, f);
+        texto[lidos] = '\0';
+        fclose(f);
+        copiar_texto(destino, tamanho, texto, sizeof(texto));
+    }
+}
+
+// 1 = o relógio do sistema está sincronizado (NTP) e a data do cabeçalho vale; 0 = não. A BeagleBone não tem RTC com
+// bateria: sem rede, a data pode estar errada.
+static uint32_t relogio_sincronizado(void) {
+    struct timex t;
+    memset(&t, 0, sizeof(t));           // modes = 0: só lê
+    int estado = adjtimex(&t);
+    if (estado < 0) {
+        return VALOR_DESCONHECIDO;
+    }
+    return (estado == TIME_ERROR || (t.status & STA_UNSYNC)) ? 0u : 1u;
+}
+
+static uint32_t memoria_disponivel_kib(const char *meminfo) {
+    uint32_t kib = VALOR_DESCONHECIDO;
+    FILE *f = fopen(meminfo, "r");
+    if (f == NULL) {
+        return kib;
+    }
+    char linha[128];
+    unsigned long valor;
+    while (fgets(linha, sizeof(linha), f) != NULL) {
+        if (sscanf(linha, "MemAvailable: %lu kB", &valor) == 1) {
+            kib = valor >= VALOR_DESCONHECIDO ? VALOR_DESCONHECIDO - 1u : (uint32_t)valor;
+            break;
+        }
+    }
+    fclose(f);
+    return kib;
+}
+
+// Total e livre (o livre do df: o que um usuário comum ainda pode gravar) de um sistema de arquivos, em KiB. 'ok' é o
+// retorno do statvfs/fstatvfs: sem ele, os dois ficam VALOR_DESCONHECIDO.
+static void espaco_em_disco(int ok, const struct statvfs *s, uint32_t *total_kib, uint32_t *livre_kib) {
+    *total_kib = *livre_kib = VALOR_DESCONHECIDO;
+    if (!ok) {
+        return;
+    }
+    unsigned long long bloco = s->f_frsize ? s->f_frsize : s->f_bsize;
+    unsigned long long total = (unsigned long long)s->f_blocks * bloco / 1024u;
+    unsigned long long livre = (unsigned long long)s->f_bavail * bloco / 1024u;
+    *total_kib = total >= VALOR_DESCONHECIDO ? VALOR_DESCONHECIDO - 1u : (uint32_t)total;
+    *livre_kib = livre >= VALOR_DESCONHECIDO ? VALOR_DESCONHECIDO - 1u : (uint32_t)livre;
+}
+
+static void ler_sistema(struct sistema *s) {
+    static const char *const eeproms[] = {"/sys/bus/nvmem/devices/0-00500/nvmem", "/sys/bus/i2c/devices/0-0050/eeprom"};
+    memset(s, 0, sizeof(*s));
+    ler_sistema_operacional("/etc/dogtag", "/etc/os-release", s->sistema_operacional, sizeof(s->sistema_operacional));
+    struct utsname u;
+    if (uname(&u) == 0) {
+        copiar_texto(s->kernel, sizeof(s->kernel), u.release, sizeof(u.release));
+    }
+    ler_placa(eeproms, sizeof(eeproms) / sizeof(eeproms[0]), "/proc/device-tree/model", s->placa, sizeof(s->placa));
+    s->relogio_sincronizado = relogio_sincronizado();
+    struct sysinfo si;
+    if (sysinfo(&si) == 0) {
+        s->uptime_s = si.uptime < 0 ? 0u : (uint32_t)si.uptime;
+        s->carga_1min_milesimos = (uint32_t)(((unsigned long long)si.loads[0] * 1000u) >> SI_LOAD_SHIFT);
+    } else {
+        s->uptime_s = s->carga_1min_milesimos = VALOR_DESCONHECIDO;
+    }
+    s->memoria_disponivel_kib = memoria_disponivel_kib("/proc/meminfo");
+    char programa[PATH_MAX];
+    ssize_t n = readlink("/proc/self/exe", programa, sizeof(programa) - 1);
+    struct statvfs disco;
+    if (n > 0) {
+        programa[n] = '\0';
+    }
+    espaco_em_disco(n > 0 && statvfs(programa, &disco) == 0, &disco, &s->disco_programa_total_kib,
+                    &s->disco_programa_livre_kib);
+}
+
+static double gib(uint32_t kib) {
+    return (double)kib / (1024.0 * 1024.0);
+}
+
+static void imprimir_configuracao(const struct configuracao *c, const struct sistema *s, double segundos_por_bloco) {
     printf("%sler_adc%s · SH-Analyzer · firmware %s\n", ansi(stdout, NEGRITO), fim_ansi(stdout), VERSAO_FIRMWARE);
     campo("Arquivo", "%s", c->arquivo);
     if (c->titulo) {
@@ -1098,6 +1303,14 @@ static void imprimir_configuracao(const struct configuracao *c, double segundos_
         detalhe("amostras intercaladas na ordem dos canais acima: a amostra i é do canal da posição i %% %d",
                 c->num_canais);
     }
+    detalhe("placa %s; %s; kernel %s", s->placa[0] ? s->placa : "desconhecida",
+            s->sistema_operacional[0] ? s->sistema_operacional : "sistema desconhecido",
+            s->kernel[0] ? s->kernel : "desconhecido");
+    detalhe("relógio %s; ligada há %u min; disco do ler_adc: %.2f de %.2f GiB livres",
+            s->relogio_sincronizado == 1u ? "sincronizado (NTP)"
+            : s->relogio_sincronizado == 0u ? "NÃO sincronizado (a data do cabeçalho pode estar errada)" : "?",
+            s->uptime_s == VALOR_DESCONHECIDO ? 0u : s->uptime_s / 60u,
+            gib(s->disco_programa_livre_kib), gib(s->disco_programa_total_kib));
     putchar('\n');
 }
 
@@ -1222,7 +1435,9 @@ int main(int argc, char *argv[]) {
         return SAIDA_ERRO;
     }
     double segundos_por_bloco = (double)SAMPLES_PER_BUFFER * (double)config.ticks / (double)PRU_CLOCK_HZ;
-    imprimir_configuracao(&config, segundos_por_bloco);
+    struct sistema sistema;
+    ler_sistema(&sistema);
+    imprimir_configuracao(&config, &sistema, segundos_por_bloco);
 
     // --- Placa --------------------------------------------------------------------------------------------------------
     size_t bytes_por_buffer = (size_t)SAMPLES_PER_BUFFER * sizeof(uint16_t);
@@ -1307,6 +1522,18 @@ int main(int argc, char *argv[]) {
              errno == ENOENT ? " (a pasta existe? crie-a com mkdir -p)" : "");
         return abortar_captura(NULL, ddr_map, bytes_por_buffer * BUFFERS_PING_PONG, ctrl_map, mem_fd);
     }
+    struct statvfs disco;
+    uint32_t disco_total_kib, disco_livre_kib;
+    espaco_em_disco(fstatvfs(fileno(arquivo), &disco) == 0, &disco, &disco_total_kib, &disco_livre_kib);
+    detalhe("disco da captura: %.2f de %.2f GiB livres", gib(disco_livre_kib), gib(disco_total_kib));
+    if (config.blocos != 0 && disco_livre_kib != VALOR_DESCONHECIDO) {
+        double precisa_kib = ((double)CABECALHO_TAMANHO_TOTAL +
+                              (double)config.blocos * (double)bytes_por_buffer) / 1024.0;
+        if ((double)disco_livre_kib < precisa_kib) {
+            aviso("a captura precisa de %.0f MiB e o disco de '%s' tem %.0f MiB livres: ela vai parar quando ele "
+                  "encher.", precisa_kib / 1024.0, config.arquivo, (double)disco_livre_kib / 1024.0);
+        }
+    }
 
     struct cabecalho_arquivo cabecalho;
     memset(&cabecalho, 0, sizeof(cabecalho));     // padding e campos não usados determinísticos (o CRC também)
@@ -1315,6 +1542,7 @@ int main(int argc, char *argv[]) {
     h->versao_cabecalho = CABECALHO_VERSAO;
     h->tamanho_cabecalho = (uint32_t)sizeof(cabecalho);
     h->timestamp_unix = (uint64_t)config.instante;
+    h->timestamp_ns = config.instante_ns;
     h->frequencia_hz = config.frequencia;
     h->auto_seq_mask = config.mascara;
     h->num_canais = (uint32_t)config.num_canais;
@@ -1341,6 +1569,18 @@ int main(int argc, char *argv[]) {
     snprintf(h->versao_firmware, sizeof(h->versao_firmware), "%s", VERSAO_FIRMWARE);
     h->buffers_ping_pong = BUFFERS_PING_PONG;
     h->modo_spi = config.modo_spi;
+    memcpy(h->kernel, sistema.kernel, sizeof(h->kernel));
+    memcpy(h->sistema_operacional, sistema.sistema_operacional, sizeof(h->sistema_operacional));
+    memcpy(h->placa, sistema.placa, sizeof(h->placa));
+    h->relogio_sincronizado = sistema.relogio_sincronizado;
+    h->uptime_s = sistema.uptime_s;
+    h->carga_1min_milesimos = sistema.carga_1min_milesimos;
+    h->memoria_disponivel_kib = sistema.memoria_disponivel_kib;
+    h->disco_programa_total_kib = sistema.disco_programa_total_kib;
+    h->disco_programa_livre_kib = sistema.disco_programa_livre_kib;
+    h->disco_saida_total_kib = disco_total_kib;
+    h->disco_saida_livre_kib = disco_livre_kib;
+    h->disco_saida_livre_fim_kib = VALOR_DESCONHECIDO;   // [final]
     h->header_crc32 = calcular_crc32(&cabecalho, sizeof(cabecalho));
     if (fwrite(&cabecalho, sizeof(cabecalho), 1, arquivo) != 1) {
         erro("não deu para gravar o cabeçalho em '%s'.", config.arquivo);
@@ -1430,6 +1670,10 @@ int main(int argc, char *argv[]) {
     h->versao_protocolo_pru = ctrl->versao_protocolo_pru;
     h->divergencias_fase_a = integridade.divergencias_fase_a;
     h->divergencias_fase_c = integridade.divergencias_fase_c;
+    fflush(arquivo);
+    uint32_t disco_livre_fim_kib;
+    espaco_em_disco(fstatvfs(fileno(arquivo), &disco) == 0, &disco, &disco_total_kib, &disco_livre_fim_kib);
+    h->disco_saida_livre_fim_kib = disco_livre_fim_kib;
     h->header_crc32 = 0;
     h->header_crc32 = calcular_crc32(&cabecalho, sizeof(cabecalho));
     if (fseek(arquivo, 0, SEEK_SET) != 0 || fwrite(&cabecalho, sizeof(cabecalho), 1, arquivo) != 1) {

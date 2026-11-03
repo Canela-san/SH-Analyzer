@@ -342,3 +342,102 @@ def test_ajuda_e_codigos_de_saida(ler_adc):
     if os.geteuid() != 0:
         r = subprocess.run([str(ler_adc), "400000", "1"], capture_output=True, text=True)
         assert r.returncode == 1 and "sudo" in r.stderr
+
+
+def test_titulo_e_descricao_cabem_no_cabecalho_v8(ler_adc):
+    """O título vai até 127 bytes e a descrição até 271 (eram 63 e 255): o '-t' de 66 bytes do calibrar de 03/11/2026
+    era recusado."""
+    titulo = "CAL F cs padrao 400000 quadrada256Hz16Vpp+2V 30s spi rapido f20.48"
+    assert len(titulo.encode()) == 66
+    for t, d, aceito in ((titulo, "d", True), ("t" * 127, "d" * 271, True), ("t" * 128, "d", False),
+                         ("t", "d" * 272, False)):
+        r = subprocess.run([str(ler_adc), "400000", "1", "-t", t, "-d", d], capture_output=True, text=True)
+        if aceito:      # passa da validação e só para no root (ou, como root, no hardware que não existe aqui)
+            assert r.returncode != 2, r.stderr
+        else:
+            assert r.returncode == 2 and ("o limite é 127" in r.stderr or "o limite é 271" in r.stderr), r.stderr
+
+
+HARNESS_SISTEMA = r"""
+#define main ler_adc_main
+#include "ler_adc.c"
+#undef main
+
+int main(int argc, char *argv[]) {
+    char texto[CABECALHO_PLACA_TAMANHO];
+    char sistema[CABECALHO_SISTEMA_TAMANHO];
+    if (strcmp(argv[1], "placa") == 0) {           // placa EEPROM... MODELO
+        ler_placa((const char *const *)argv + 2, (size_t)(argc - 3), argv[argc - 1], texto, sizeof(texto));
+        printf("[%s]\n", texto);
+    } else if (strcmp(argv[1], "so") == 0) {       // so DOGTAG OS_RELEASE
+        ler_sistema_operacional(argv[2], argv[3], sistema, sizeof(sistema));
+        printf("[%s]\n", sistema);
+    } else if (strcmp(argv[1], "disco") == 0) {    // disco CAMINHO
+        struct statvfs s;
+        uint32_t total, livre;
+        espaco_em_disco(statvfs(argv[2], &s) == 0, &s, &total, &livre);
+        printf("%u %u\n", total, livre);
+    } else if (strcmp(argv[1], "memoria") == 0) {  // memoria MEMINFO
+        printf("%u\n", memoria_disponivel_kib(argv[2]));
+    } else {                                       // sistema: a máquina de verdade
+        struct sistema s;
+        ler_sistema(&s);
+        printf("%s|%u|%u|%u\n", s.kernel, s.relogio_sincronizado, s.disco_programa_total_kib,
+               s.disco_programa_livre_kib);
+    }
+    return 0;
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def sistema(tmp_path_factory):
+    binario = _compilar(tmp_path_factory, "harness_sistema", HARNESS_SISTEMA)
+
+    def rodar(*args) -> str:
+        r = subprocess.run([str(binario), *map(str, args)], capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        return r.stdout.strip()
+    return rodar
+
+
+def test_placa_pela_eeprom_ou_pelo_modelo(sistema, tmp_path):
+    eeprom = tmp_path / "eeprom"
+    eeprom.write_bytes(b"\xaa\x55\x33\xee" + b"A335BNLT" + b"00C0" + b"3714BBBK1234" + b"\xff" * 40)
+    modelo = tmp_path / "model"
+    modelo.write_bytes(b"TI AM335x BeagleBone Black\x00")
+    assert sistema("placa", tmp_path / "nao_existe", eeprom, modelo) == "[A335BNLT 00C0 3714BBBK1234]"
+    lixo = tmp_path / "lixo"
+    lixo.write_bytes(b"\xff" * 64)                                        # EEPROM apagada: sem o cabeçalho 0xAA5533EE
+    assert sistema("placa", lixo, modelo) == "[TI AM335x BeagleBone Black]"
+    assert sistema("placa", lixo, tmp_path / "sem_modelo") == "[]"
+    estranha = tmp_path / "estranha"
+    estranha.write_bytes(b"\xaa\x55\x33\xee" + b"A335\x01NLT" + b"00C0" + b"3714BBBK\xff234" + b"\x00" * 40)
+    assert sistema("placa", estranha, modelo) == "[A335?NLT 00C0 3714BBBK?234]"   # o que não é imprimível vira '?'
+
+
+def test_sistema_pelo_dogtag_ou_pelo_os_release(sistema, tmp_path):
+    dogtag = tmp_path / "dogtag"
+    dogtag.write_text("BeagleBoard.org Debian Bullseye IoT Image 2023-09-02\n")
+    os_release = tmp_path / "os-release"
+    os_release.write_text('NAME="Debian GNU/Linux"\nPRETTY_NAME="Debian GNU/Linux 11 (bullseye)"\nID=debian\n')
+    assert sistema("so", dogtag, os_release) == "[BeagleBoard.org Debian Bullseye IoT Image 2023-09-02]"
+    assert sistema("so", tmp_path / "sem_dogtag", os_release) == "[Debian GNU/Linux 11 (bullseye)]"
+    assert sistema("so", tmp_path / "sem_dogtag", tmp_path / "sem_os_release") == "[]"
+    longo = tmp_path / "longo"
+    longo.write_text("x" * 100 + "\n")
+    assert sistema("so", longo, os_release) == "[" + "x" * 63 + "]"     # cabe no campo de 64 bytes, com o '\0'
+
+
+def test_disco_memoria_e_a_maquina_de_verdade(sistema, tmp_path):
+    total, livre = map(int, sistema("disco", tmp_path).split())
+    uso = shutil.disk_usage(tmp_path)
+    assert abs(total - uso.total // 1024) <= 1 and 0 < livre <= total
+    assert sistema("disco", tmp_path / "nao_existe") == "4294967295 4294967295"
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemTotal:  500000 kB\nMemFree:  100000 kB\nMemAvailable:  300000 kB\n")
+    assert sistema("memoria", meminfo) == "300000"
+    assert sistema("memoria", tmp_path / "nao_existe") == "4294967295"
+    kernel, relogio, total, livre = sistema("sistema").split("|")
+    assert kernel == os.uname().release[:31] and relogio in ("0", "1", "4294967295")
+    assert 0 < int(livre) <= int(total) < 4294967295

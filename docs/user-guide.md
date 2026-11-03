@@ -86,8 +86,8 @@ sudo ./ler_adc [frequencia_hz [lista_de_canais]] [opções]
 | `--blocos N` | Captura exatamente N blocos e para. `N=0` captura até você apertar `Ctrl+C`. Padrão: 1 bloco |
 | `--duracao T` | Alternativa a `--blocos`: captura por um tempo (`600`, `10m`, `1.5h`; sem sufixo = segundos). As duas flags são mutuamente exclusivas |
 | `-o ARQUIVO` | Nome do `.bin` de saída. Sem ele: `captura_AAAAMMDD_HHMMSS.bin` (hora local) |
-| `-t "título"` | Título curto gravado no cabeçalho (até 63 bytes em UTF-8) |
-| `-d "descrição"` | Descrição gravada no cabeçalho (até 255 bytes). Texto maior que o limite é **erro**, não é truncado |
+| `-t "título"` | Título curto gravado no cabeçalho (até 127 bytes em UTF-8) |
+| `-d "descrição"` | Descrição gravada no cabeçalho (até 271 bytes). Texto maior que o limite é **erro**, não é truncado |
 | `--grandeza C:G[,...]` | Grandeza de cada canal: `tensao`, `corrente` ou `temperatura` (ex.: `0:tensao,1:corrente`). Canal não citado = `tensao` |
 | `--sonda C:ID[,...]` | Id da sonda usada em cada canal (ex.: `1:fluke_i30_01`), até 31 caracteres. É só um texto no cabeçalho; a correção é feita depois, no `adc_tool.py` |
 | `--faixa-adc C:V[,...]` | **Faixa de entrada do ADC** de cada canal, como fundo de escala total em Volts: `20.48` (±10,24 V, o padrão), `10.24` (±5,12 V) ou `5.12` (±2,56 V). Ex.: `0:20.48,1:5.12`. Canal não citado = `20.48`. Veja [Faixa de entrada do ADC](#faixa-de-entrada-do-adc) |
@@ -979,10 +979,14 @@ O cabeçalho começa com o texto `SHAN` e termina com um **CRC-32**; se o `adc_t
 | `samples_per_buffer`, `bytes_por_amostra` | Geometria dos blocos: o tamanho de cada buffer do ping-pong em amostras **brutas** (1 048 576 = 2 MiB, ~10,5 s a 100 kS/s), gravado desde a versão 1 |
 | `buffers_ping_pong` | Quantos buffers a PRU alterna na DDR (2; versão 5). O `adc_tool.py info` mostra a geometria inteira: `Ping-pong: 2 buffers de 1048576 amostras brutas (2.0 MiB cada; ... por canal; cada bloco dura ... s)` |
 | `blocos_gravados`, `total_amostras_gravadas` | Totais reais, preenchidos ao final da captura |
-| `titulo`, `descricao` | Texto livre (`-t`, até 63 bytes; `-d`, até 255 bytes). Convenção para calibração: um trecho `ref: f=1000Hz amp=500mVpp` na descrição registra a frequência e a amplitude injetadas, e o `gerar_perfil_sonda.py` o lê; texto livre antes ou depois é ignorado |
+| `titulo`, `descricao` | Texto livre (`-t`, até 127 bytes; `-d`, até 271 bytes; até o cabeçalho v7, 63 e 255). Convenção para calibração: um trecho `ref: f=1000Hz amp=500mVpp` na descrição registra a frequência e a amplitude injetadas, e o `gerar_perfil_sonda.py` o lê; texto livre antes ou depois é ignorado |
+| `placa`, `sistema_operacional`, `kernel` | A BeagleBone da captura: modelo, revisão e nº de série (da EEPROM), a imagem do sistema e o kernel (versão 8). O nº de série separa uma placa da outra: o erro do cristal, e da taxa, é de cada uma |
+| `relogio_sincronizado`, `timestamp_ns` | Se o relógio estava sincronizado por NTP (sem isso a data pode estar errada: a placa não tem RTC) e a fração de segundo do início (versão 8) |
+| `uptime_s`, `carga_1min`, `memoria_disponivel_kib` | Há quanto tempo a placa estava ligada, a carga do ARM e a memória disponível no início (versão 8) |
+| `disco_saida_*_kib`, `disco_programa_*_kib` | Total e livre (como o `df`) do disco do `.bin`, no início e no fim, e do disco onde está o `ler_adc` (versão 8). O `ler_adc` avisa antes de começar se o disco não comporta a captura |
 | `header_crc32` | Detecta corrupção do cabeçalho |
 
-Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Capturas sem cabeçalho](#capturas-sem-cabeçalho-arquivos-antigos)), e os de versão 1 a 4 do cabeçalho também. A tabela completa, com os deslocamentos de cada campo, está em [`project-context.md`](project-context.md) (seção `formato_bin_v2`, que descreve também a v3 a v5).
+Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Capturas sem cabeçalho](#capturas-sem-cabeçalho-arquivos-antigos)), e os de versão 1 a 7 do cabeçalho também. A tabela completa, com os deslocamentos de cada campo, está em [`project-context.md`](project-context.md) (seção `formato_bin_v2`, que descreve todas as versões até a 8).
 
 **Capturas feitas antes de out/2026** (cabeçalho versão 3 ou anterior) têm um salto de ~7 µs a cada bloco (~0,7 amostra a 100 kS/s), um defeito do firmware antigo já corrigido. Numa análise de um bloco só, ele não aparece; numa que atravessa blocos, sim: além da fase e da continuidade, ele derruba o SINAD de uma FFT única (de 63 dB num bloco para ~22 dB em 4 blocos, no T7) e puxa a frequência e a amplitude medidas (+1,5 ppm e −0,3 % em 2 blocos, no T4). O `medir_captura.py` o aponta em qualquer nº de canais (`trocas de buffer : DESTOAM`). Para medir essas capturas, fique dentro do primeiro bloco (`--max-amostras` menor que 1 048 576 ÷ nº de canais).
 
@@ -1018,7 +1022,7 @@ Arquivos feitos antes do cabeçalho existir continuam sendo lidos (veja [Captura
 | `Erro: o ADC não está respondendo` (amostras todas 0x0000; código 4) | A placa de aquisição sem alimentação (a BeagleBone só no USB) ou os pinos da PRU sem configuração | Ligue a fonte de 5 V no conector da BeagleBone; se persistir, `sudo ./setup.sh` |
 | Timestamp do cabeçalho errado | Relógio da BeagleBone desatualizado | Rode `scripts/BeagleBone_Setup.sh hora` no computador |
 | `--fft` dá resultado estranho depois de aplicar passa-alta | Filtro removeu a fundamental | Veja o aviso em [FFT ou Welch?](#fft-ou-welch) e rode `--fft` e `--welch` separados |
-| `ler_adc` recusa o `-t` ou o `-d` com erro | Título acima de 63 bytes ou descrição acima de 255 (o texto não é truncado) | Encurte o texto (letras acentuadas ocupam 2 bytes) |
+| `ler_adc` recusa o `-t` ou o `-d` com erro | Título acima de 127 bytes ou descrição acima de 271 (o texto não é truncado) | Encurte o texto (letras acentuadas ocupam 2 bytes) |
 | Canais parecem trocados | Você digitou os canais fora de ordem | O ADC sempre varre em ordem crescente. Deixe a ordem vir do cabeçalho (não passe `--canais`) |
 | `Permission denied` ao rodar `coletar.sh sonda` | Arquivo sem permissão de execução | `chmod +x coletar.sh coleta/*.sh` |
 | `coletar.sh sonda`: "o `ler_adc` travou (estourou o tempo limite)" | PRU parada ou presa | Confira o `dmesg` e rode `./setup.sh` de novo; depois refaça o ponto (`R`) |
