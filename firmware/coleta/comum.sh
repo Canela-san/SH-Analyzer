@@ -163,6 +163,22 @@ ganho_do_filtro() {   # $1 = f (Hz)
     LC_ALL=C awk -v f="$1" -v f0="$F0_FILTRO_ADC" 'BEGIN { printf "%.4f\n", 1 / (1 + (f / f0) ^ 2) }'
 }
 
+# Campos do cabeçalho do .bin lidos pelo offset (struct cabecalho_arquivo_campos, em ler_adc.c;
+# tests/test_contrato_firmware.py confere estes números contra a struct). Os do sistema são do cabeçalho v8.
+CAB_VERSAO=4
+CAB_INSTANTE=12                 # uint64: o início da captura (s, UTC)
+CAB_KERNEL=356                  # char[32]
+CAB_RELOGIO=392                 # uint32: 1 = sincronizado por NTP, 0 = não
+CAB_VERSAO_FIRMWARE=700         # char[32]
+CAB_PROTOCOLO_PRU=756           # uint32
+CAB_SISTEMA=900                 # char[64]
+CAB_PLACA=964                   # char[32]
+CAB_DISCO_TOTAL=996             # uint32, KiB
+CAB_DISCO_LIVRE_FIM=1004        # uint32, KiB; 0xFFFFFFFF = não lido
+cab_u32() { od -An -tu4 -j "$2" -N 4 "$1" | tr -d ' \n'; }       # $1 = arquivo, $2 = offset
+cab_u64() { od -An -tu8 -j "$2" -N 8 "$1" | tr -d ' \n'; }
+cab_texto() { dd if="$1" bs=1 skip="$2" count="$3" 2>/dev/null | tr -d '\0'; }   # $3 = tamanho do campo
+
 # 0 se o arquivo começa com o "SHAN" de um .bin do ler_adc.
 e_um_bin() { [ "$(head -c 4 "$1" 2>/dev/null)" = SHAN ]; }
 

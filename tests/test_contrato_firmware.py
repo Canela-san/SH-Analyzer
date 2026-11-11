@@ -240,6 +240,32 @@ def test_offsets_do_cabecalho_usados_pelo_coletar_sonda():
     assert offs["CAB_TAM_SONDA_ID"] == cab.CABECALHO_SONDA_ID_TAMANHO
 
 
+def test_offsets_do_cabecalho_usados_pelo_coletar_conferir(fonte_c, defines):
+    """O coletar.sh conferir (coleta/comum.sh) lê os campos do sistema do cabeçalho v8 por offsets fixos (od, dd): têm
+    de ser os da struct do ler_adc.c."""
+    corpo = re.search(r"struct\s+cabecalho_arquivo_campos\s*\{(.*?)\}\s*__attribute__\(\(packed\)\)", fonte_c, re.S).group(1)
+    tamanhos = {"uint32_t": 4, "uint64_t": 8, "double": 8, "uint8_t": 1, "char": 1}
+    offsets, posicao = {}, 0
+    for linha in filter(None, (parte.strip() for parte in corpo.split(";"))):
+        tipo, nome, dims = re.fullmatch(r"(\w+)\s+(\w+)((?:\[[^\]]+\])*)", linha).groups()
+        offsets[nome] = posicao
+        n = tamanhos[tipo]
+        for d in re.findall(r"\[([^\]]+)\]", dims):
+            d = d.strip()
+            n *= max_canais_c() if d == "ADS8688_MAX_CANAIS" else inteiro_c(defines.get(d, d))
+        posicao += n
+    assert posicao == cab.CABECALHO_TAMANHO_TOTAL
+    sh = (FIRMWARE / "coleta" / "comum.sh").read_text(encoding="utf-8")
+    usados = {m.group(1): int(m.group(2)) for m in re.finditer(r"^(CAB_\w+)=(\d+)", sh, re.M)}
+    assert usados == {"CAB_VERSAO": offsets["versao_cabecalho"], "CAB_INSTANTE": offsets["timestamp_unix"],
+                      "CAB_KERNEL": offsets["kernel"], "CAB_RELOGIO": offsets["relogio_sincronizado"],
+                      "CAB_VERSAO_FIRMWARE": offsets["versao_firmware"],
+                      "CAB_PROTOCOLO_PRU": offsets["versao_protocolo_pru"],
+                      "CAB_SISTEMA": offsets["sistema_operacional"], "CAB_PLACA": offsets["placa"],
+                      "CAB_DISCO_TOTAL": offsets["disco_saida_total_kib"],
+                      "CAB_DISCO_LIVRE_FIM": offsets["disco_saida_livre_fim_kib"]}
+
+
 def test_v2_e_o_prefixo_de_v3_sem_faixa_adc():
     v2 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V2))
     v3 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V3))

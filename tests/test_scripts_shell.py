@@ -843,6 +843,14 @@ while i < len(args):
     opcoes[args[i]] = args[i + 1]
     i += 2
 faixas = dict((int(c), float(v)) for c, v in (p.split(":") for p in opcoes.get("--faixa-adc", "").split(",") if p))
+# FALSO_CABECALHO_V8: um cabeçalho v8, com o sistema de FALSO_SISTEMA (as chaves de capturas_sinteticas.SISTEMA_PADRAO
+# que mudam, em JSON) e a versão do firmware de FALSO_VERSAO.
+v8 = {{}}
+if os.environ.get("FALSO_CABECALHO_V8"):
+    import json
+    v8 = dict(versao=8, grade=(18, 0, 7, int(os.environ.get("FALSO_PROTOCOLO", "5"))),
+              versao_firmware=os.environ.get("FALSO_VERSAO", "v9.9"),
+              sistema=json.loads(os.environ.get("FALSO_SISTEMA", "{{}}")))
 blocos = int(opcoes.get("--blocos", "2"))
 n = 32768 * blocos // len(canais)
 t = np.arange(n) / (taxa / len(canais))
@@ -850,7 +858,7 @@ vpp, freq = da_vez("SINAL_VPP", "0.8"), da_vez("SINAL_F", "60")
 ruido = np.random.default_rng(len(args)).normal(0, 6e-5, n)
 sinais = [vpp / 2 * np.sin(2 * np.pi * freq * t) + ruido + 0.0026 for _ in canais]
 escrever_bin(opcoes["-o"], sinais, canais=tuple(canais), grandezas=(0,) * len(canais), sondas=("",) * len(canais),
-             fs_total=taxa, faixas_adc_total_v=[faixas.get(c, 20.48) for c in canais])
+             fs_total=taxa, faixas_adc_total_v=[faixas.get(c, 20.48) for c in canais], **v8)
 if os.environ.get("FALSO_MUDO") == "1":
     with open(opcoes["-o"], "r+b") as f:
         f.seek(1024)
@@ -1103,6 +1111,33 @@ def test_coletar_conferir_mede_e_confere_a_frequencia(coleta):
     assert r.returncode == 0 and "1000.0 Hz" in r.stdout and "a frequência bate com a esperada" in r.stdout, r.stdout
     r = coleta("conferir", "--esperado-hz", "256", SINAL_F=1000)
     assert r.returncode == 1 and "esperados 256 Hz, medida 1000.0 Hz" in r.stdout
+
+
+def test_coletar_conferir_mostra_o_sistema_do_cabecalho_v8(coleta):
+    """Os campos do sistema do cabeçalho v8 (a placa pela EEPROM, a imagem, o kernel, o relógio e o disco) entraram
+    sem nunca terem rodado na BeagleBone: o conferir os lê da própria captura, e a 1ª ida ao laboratório já os vê."""
+    r = coleta("conferir", FALSO_CABECALHO_V8=1)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert ("placa A335BNLT 00C0 3714BBBK1234 · BeagleBoard.org Debian Bullseye IoT Image 2023-09-02 · kernel "
+            "5.10.168-ti-r72") in r.stdout
+    assert "relógio sincronizado (NTP): a captura é de 2023-11-14 22:13:20 UTC" in r.stdout      # 1 700 000 000 s
+    assert "disco das capturas: 1.8 GiB livres de 3.3: cabem ~40 min a 400000 S/s" in r.stdout   # 1,9 GiB / 0,8 MB/s
+    assert "!" not in r.stdout
+
+
+def test_coletar_conferir_alerta_o_que_o_cabecalho_v8_nao_trouxe(coleta):
+    """O que só a placa mostra: a EEPROM que não foi lida, o relógio sem NTP (o normal no laboratório, sem internet:
+    a hora vem do 'BeagleBone_Setup.sh hora'), o disco quase cheio, o ler_adc de outra versão e a PRU sem a espera de
+    acomodação. Nada disso impede as capturas: o conferir alerta e sai com 0."""
+    import json
+    sistema = json.dumps({"placa": "", "relogio": 0, "saida": [3_500_000, 2_000_000, 150_000]})
+    r = coleta("conferir", FALSO_CABECALHO_V8=1, FALSO_SISTEMA=sistema, FALSO_VERSAO="v9.8-3-gabc1234", FALSO_PROTOCOLO=4)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "o cabeçalho não identificou tudo: placa ''" in r.stdout
+    assert "o relógio da placa não está sincronizado por NTP" in r.stdout and "BeagleBone_Setup.sh hora" in r.stdout
+    assert "disco das capturas quase cheio: 0.1 GiB livres" in r.stdout
+    assert "o ler_adc grava a versão 'v9.8-3-gabc1234', e a desta pasta é 'v9.9'" in r.stdout
+    assert "a PRU é do protocolo 4" in r.stdout and "Pronto para capturar" in r.stdout
 
 
 def test_coletar_teto_varre_em_frequencia_e_recomenda_a_taxa_de_trabalho(varredura):

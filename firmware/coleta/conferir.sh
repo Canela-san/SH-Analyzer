@@ -97,6 +97,44 @@ else
     problemas=$((problemas + 1))
 fi
 
+# [11/11/2026] O que o cabeçalho v8 guarda do sistema, lido da própria captura: os campos entraram em 03/11 sem nunca
+# terem rodado na placa, e é aqui que um campo vazio ou estranho aparece (não impede as capturas: só alerta).
+if e_um_bin "$ARQUIVO" && [ "$(cab_u32 "$ARQUIVO" "$CAB_VERSAO")" -ge 8 ]; then
+    placa=$(cab_texto "$ARQUIVO" "$CAB_PLACA" 32)
+    sistema=$(cab_texto "$ARQUIVO" "$CAB_SISTEMA" 64)
+    kernel=$(cab_texto "$ARQUIVO" "$CAB_KERNEL" 32)
+    if [ -n "$placa" ] && [ -n "$sistema" ] && [ -n "$kernel" ]; then
+        ok "placa $placa · $sistema · kernel $kernel"
+    else
+        alerta "o cabeçalho não identificou tudo: placa '${placa}', sistema '${sistema}', kernel '${kernel}' (o ler_adc -v diz o que ele leu)"
+    fi
+    gravada=$(cab_texto "$ARQUIVO" "$CAB_VERSAO_FIRMWARE" 32)
+    esperada=$(cut -c1-31 VERSAO 2>/dev/null || true)
+    if [ -n "$esperada" ] && [ "$gravada" != "$esperada" ]; then
+        alerta "o ler_adc grava a versão '$gravada', e a desta pasta é '$esperada': rode ./setup.sh (as capturas sairiam com a versão errada)"
+    fi
+    hora=$(date -u -d "@$(cab_u64 "$ARQUIVO" "$CAB_INSTANTE")" '+%Y-%m-%d %H:%M:%S UTC' 2>/dev/null || echo '?')
+    case "$(cab_u32 "$ARQUIVO" "$CAB_RELOGIO")" in
+        1) ok "relógio sincronizado (NTP): a captura é de $hora" ;;
+        0) alerta "o relógio da placa não está sincronizado por NTP (normal sem internet): o cabeçalho diz $hora. Se não for a hora certa, no computador:  scripts/BeagleBone_Setup.sh hora" ;;
+        *) alerta "o estado do relógio não foi lido (adjtimex); o cabeçalho diz $hora" ;;
+    esac
+    total_kib=$(cab_u32 "$ARQUIVO" "$CAB_DISCO_TOTAL")
+    livre_kib=$(cab_u32 "$ARQUIVO" "$CAB_DISCO_LIVRE_FIM")
+    if [ "$total_kib" = 4294967295 ] || [ "$livre_kib" = 4294967295 ] || [ "$total_kib" -eq 0 ]; then
+        alerta "o espaço em disco não foi lido para o cabeçalho (total $total_kib KiB, livre $livre_kib KiB)"
+    else
+        # Uma captura ocupa 2 bytes por amostra: os minutos que ainda cabem nesta taxa.
+        espaco=$(LC_ALL=C awk -v l="$livre_kib" -v t="$total_kib" -v taxa="$TAXA" \
+                     'BEGIN { printf "%.1f GiB livres de %.1f: cabem ~%d min a %d S/s", l / 1048576, t / 1048576, l * 1024 / (2 * taxa) / 60, taxa }')
+        if [ "$livre_kib" -lt 204800 ]; then alerta "disco das capturas quase cheio: $espaco"; else ok "disco das capturas: $espaco"; fi
+    fi
+    protocolo=$(cab_u32 "$ARQUIVO" "$CAB_PROTOCOLO_PRU")
+    if [ "$protocolo" -lt 5 ]; then
+        alerta "a PRU é do protocolo $protocolo (anterior a 11/11/2026): sem a espera de acomodação do ADC, pule o começo das capturas depois de trocar a faixa"
+    fi
+fi
+
 # Cada canal: nível, offset e ruído, em volts no pino (e na entrada, com --ganho).
 for ((pos = 0; pos < ${#LISTA_CANAIS[@]}; pos++)); do
     canal=${LISTA_CANAIS[$pos]}
