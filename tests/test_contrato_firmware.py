@@ -361,6 +361,24 @@ def sem_comentarios_asm(texto: str) -> str:
     return "\n".join(ln.split(";", 1)[0] for ln in texto.splitlines())
 
 
+def test_amostras_por_buffer_sao_as_mesmas_no_c_no_assembly_e_nos_scripts():
+    """SAMPLES_PER_BUFFER é sincronizado à mão: o assembly não enxerga o #define (o valor está escrito em dois LDI de
+    16 bits). Se um lado mudar sozinho, a PRU enche um buffer de um tamanho e o ARM grava blocos de outro."""
+    h = _memoria_pru_sem_comentarios()
+    no_c = inteiro_c(re.search(r"#\s*define\s+SAMPLES_PER_BUFFER\s+(\w+)", h).group(1))
+    asm = sem_comentarios_asm((FIRMWARE / "spi_core.asm").read_text(encoding="utf-8"))
+    baixo = int(re.search(r"LDI\s+r4\.w0\s*,\s*(\w+)", asm).group(1), 0)
+    alto = int(re.search(r"LDI\s+r4\.w2\s*,\s*(\w+)", asm).group(1), 0)
+    assert (alto << 16) | baixo == no_c
+    comum = (FIRMWARE / "coleta" / "comum.sh").read_text(encoding="utf-8")
+    assert int(re.search(r"^AMOSTRAS_POR_BLOCO=(\d+)", comum, re.M).group(1)) == no_c
+    from pru_falsa import AMOSTRAS_POR_BLOCO, CAMPOS
+    assert AMOSTRAS_POR_BLOCO == no_c
+    # ... e os offsets que a PRU falsa dos testes usa são os da struct shared_control.
+    campos = re.findall(r"volatile\s+uint32_t\s+(\w+)\s*;", h[h.index("struct shared_control"):])
+    assert CAMPOS == {nome: 4 * k for k, nome in enumerate(campos)}
+
+
 def test_atrasos_de_cs_padrao_do_c_e_do_assembly_sao_os_mesmos():
     """0 no campo = o padrão do assembly; o ler_adc grava o seu padrão: os dois têm de ser o mesmo (3/1/3, o mínimo do
     datasheet, desde 21/10/2026; era 200/100/100)."""

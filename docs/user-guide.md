@@ -138,8 +138,16 @@ e, no fim:
 * **O resultado** é `✓ Captura concluída`, `! Captura concluída, com avisos` (amostras atrasadas ou ruído no SDO),
   `! Captura interrompida antes do fim` (Ctrl+C numa captura com tamanho definido) ou `✗ ...` (amostras perdidas, erro
   de escrita, ADC sem resposta).
-* **Códigos de saída:** 0 ok, 1 erro, 2 argumento inválido, 3 buffers sobrescritos (amostras perdidas: refaça) e 4 ADC
-  sem resposta.
+* **Códigos de saída:** 0 ok, 1 erro, 2 argumento inválido, 3 buffers sobrescritos (amostras perdidas: refaça), 4 ADC
+  sem resposta e 5 captura **interrompida** por um sinal (Ctrl+C, `kill`, a queda da conexão) antes dos blocos
+  pedidos: o arquivo fecha inteiro, mas mais curto (com `--blocos 0`, "até Ctrl+C", o código é 0). O `coletar.sh`
+  refaz uma captura assim no `--continuar`.
+* **Capturas longas:** o arquivo pode passar de 2 GiB (~45 min a 400 kS/s; desde 11/11/2026), e no fim o `ler_adc`
+  manda os dados para o cartão (`fsync`) antes de dizer `Captura concluída`. Um `SIGHUP` que já chega ignorado
+  (`nohup`, ou o `coletar.sh`) não interrompe a captura.
+* **O começo da captura vale:** desde 11/11/2026 (protocolo 5 da PRU) a PRU espera 2 ms depois de configurar o ADC,
+  e o transitório de troca de faixa (~80 µs) não entra mais nas primeiras amostras. A hora do cabeçalho é a de quando
+  a PRU é solta.
 
 **O que o `ler_adc` confere sozinho, antes e durante a captura:**
 
@@ -216,7 +224,7 @@ tempo, todas as faixas, conforme o caso).
 
 | Modo | Para quê | Sem opções | Pasta | Análise no computador |
 |---|---|---|---|---|
-| `conferir` | **Antes de uma série de capturas** e depois de mexer na bancada: o firmware, os pinos e o ADC respondendo; o nível (Vpp), o offset e o ruído do sinal; a menor faixa que o comporta; com `--esperado-vpp`, se o sinal é o que o gerador manda | canal 1, 400 kS/s, ±10,24 V, 1 bloco (~10 s) | `conferencia.bin` | — (o veredito sai no terminal; código 1 = algo errado) |
+| `conferir` | **Antes de uma série de capturas** e depois de mexer na bancada: o firmware, os pinos e o ADC respondendo; o nível (Vpp), o offset e o ruído do sinal; a frequência; a menor faixa que o comporta; com `--esperado-vpp` e `--esperado-hz`, se o sinal é o que o gerador manda; e o que o cabeçalho guarda do sistema (a placa, a imagem, o kernel, o relógio, o disco) | canal 1, 400 kS/s, ±10,24 V, 1 bloco (~10 s) | `conferencia.bin` | — (o veredito sai no terminal; código 1 = algo errado) |
 | `calibrar` | **A calibração da cadeia** (sonda + frontend + ADC), magnitude e fase, por ondas quadradas; com `--referencia`, dividida pela entrada medida no osciloscópio; com `--canal-referencia`, dois canais juntos e a razão entre eles ([`medir_fase.py`](#a-calibração-por-ondas-quadradas-medir_fasepy)) | 17 quadradas × 2 taxas × 2 faixas (±10,24 e ±2,56 V), 30 s cada (pede cada uma; ~36 min) | `CAL_*` | `medir_fase.py`, uma vez por faixa |
 | `sonda` | A calibração por senoides, ponto a ponto ([Passo 1](#passo-1-coletar-os-pontos-na-beaglebone)): o ganho em baixa frequência (o K) e a conferência da curva do `calibrar` | interativo | `capturas/<id>/` | `gerar_perfil_sonda.py` |
 | `aliasing` | O mesmo sinal em várias taxas, para separar componentes reais de imagens ([abaixo](#real-ou-imagem-adc_toolpy-aliasing)) | 400, 390,625 e 320 kS/s, 10 s cada, faixa automática | `ALS_*` | `adc_tool.py aliasing` |
@@ -224,8 +232,18 @@ tempo, todas as faixas, conforme o caso).
 | `teto` | A maior taxa com toda amostra na grade, por varredura em frequência, e a taxa de trabalho | SPI rápido e lento, margem de 10 ticks | `TETO_*` | — (`teto.csv`) |
 | `bancada` | As varreduras de hardware do T7: esperas do CS, taxa, grade (`--grade`), SPI (`--spi`), limite (`--limite`), validação (`--validar`) | as partes A, B, D e C (~100 capturas, pede o curto) | `T7e_*`, `T7f_*`, `T7g_*` | `medir_captura.py` |
 
+**Cada captura é conferida na hora** (desde 11/11/2026). Nos modos em lote (`calibrar`, `bancada`, `aliasing`,
+`ruido`), o script mede o sinal de cada `.bin` logo depois de gravá-lo e mostra o pico a pico no pino e a frequência
+(`· 1.033 Vpp, 256.0 Hz`); os dois vão para o `resumo.csv` (colunas `vpp_pino_v`, `freq_medida_hz` e `sinal`). Ele
+acusa: a **frequência** diferente da quadrada pedida (ou do tom de 10 kHz da bancada) em mais de 1 %; o **nível** fora
+de ±25 % do esperado (na tensão, os Vpp pedidos pelo divisor de 19,357; na corrente, o `--esperado-vpp`: o pico a pico
+no pino com a quadrada de 20 Vpp); sem nível esperado, o **sinal fraco** (menos de 1 % da faixa); a **saturação**; e
+sinal numa entrada que devia estar em **curto**. Se a 1ª captura depois de uma pausa não bate, ele para e pergunta:
+Enter **repete** a captura (depois de corrigir a bancada), `s` segue assim mesmo (a captura fica marcada e é listada
+no fim) e `p` pula a parte. Sem ninguém no terminal, ele segue.
+
 ```bash
-./coletar.sh conferir --faixa 5.12 --esperado-vpp 16 --ganho 19.357   # 16 Vpp no divisor: chega certo?
+./coletar.sh conferir --faixa 5.12 --esperado-vpp 16 --ganho 19.357 --esperado-hz 256   # 16 Vpp e 256 Hz no divisor: chega certo?
 ./coletar.sh aliasing --grandeza 1:tensao --sonda 1:cadeia_tensao_fase
 ./coletar.sh teto
 ./coletar.sh calibrar --referencia --simular
