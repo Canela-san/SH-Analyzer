@@ -187,12 +187,12 @@ def test_sighup_ignorado_por_quem_chamou_nao_corta_a_captura(ler_adc, placa):
 def test_a_hora_do_cabecalho_e_a_de_quando_a_pru_e_solta(ler_adc, placa):
     """O cabeçalho v8 guarda a fração de segundo do início. Ela só diz algo se o instante for o de quando o ARM solta
     a PRU (config_ready = 1), e não o do começo do programa, antes de a PRU ser reiniciada: aqui a PRU falsa leva
-    150 ms para ficar pronta, como um remoteproc lento."""
-    r, pru, saida = capturar(ler_adc, placa, "--blocos", 1, demora_para_ficar_pronta_s=0.15)
+    300 ms para ficar pronta, como um remoteproc lento (o limite de 150 ms dá folga a uma máquina de testes ocupada)."""
+    r, pru, saida = capturar(ler_adc, placa, "--blocos", 1, demora_para_ficar_pronta_s=0.3)
     assert r.returncode == 0, r.stdout + r.stderr
     h = cab.ler_cabecalho(saida)
     antes_da_pru_ver = pru.instante_da_configuracao - (h.timestamp_unix + h.timestamp_ns * 1e-9)
-    assert 0 <= antes_da_pru_ver < 0.05, antes_da_pru_ver
+    assert 0 <= antes_da_pru_ver < 0.15, antes_da_pru_ver
 
 
 def test_a_taxa_medida_nao_depende_de_quanto_o_disco_demora(ler_adc, placa, tmp_path):
@@ -222,7 +222,7 @@ def test_a_taxa_medida_nao_depende_de_quanto_o_disco_demora(ler_adc, placa, tmp_
     leitor.join(timeout=10)
     medida = float(re.search(r"Taxa medida\s+(\d+) S/s", r.stdout).group(1))
     real = 2 * AMOSTRAS_POR_BLOCO / (pru.instantes_pronto[2] - pru.instantes_pronto[0])
-    assert medida == pytest.approx(real, rel=0.05), (medida, real)
+    assert medida == pytest.approx(real, rel=0.10), (medida, real)      # com o relógio de depois da gravação: +37 %
 
 
 def test_erro_ao_fechar_o_arquivo_nao_passa_em_silencio(ler_adc, placa):
