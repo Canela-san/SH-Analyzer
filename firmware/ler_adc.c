@@ -10,6 +10,11 @@
  * O contrato com a PRU está em memoria_pru.h; o formato do .bin, na struct cabecalho_arquivo_campos (lida por
  * scripts/supraharmonicos/cabecalho.py; tests/test_contrato_firmware.py confere os dois lados).
  */
+// [ARQUIVOS GRANDES, 11/11/2026] A BeagleBone é de 32 bits: sem isto, o off_t tem 32 bits e o fopen abre o .bin sem
+// O_LARGEFILE. A gravação parava com EFBIG ("File too large") quando o arquivo chegava a 2 GiB: 1023 blocos, ~45 min a
+// 400 kS/s (um --duracao 1h perdia o resto). Tem de vir antes do primeiro #include.
+#define _FILE_OFFSET_BITS 64
+
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -162,6 +167,7 @@ struct cabecalho_arquivo {
 } __attribute__((packed));
 
 _Static_assert(sizeof(struct cabecalho_arquivo) == CABECALHO_TAMANHO_TOTAL, "o cabeçalho tem de ter 1024 bytes");
+_Static_assert(sizeof(off_t) >= 8, "off_t de 32 bits: o .bin pararia em 2 GiB (ver _FILE_OFFSET_BITS no topo)");
 
 // CRC-32 refletido, polinômio 0xEDB88320 (o do zlib): o Python confere com zlib.crc32.
 static uint32_t calcular_crc32(const void *dados, size_t tamanho) {

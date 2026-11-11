@@ -441,3 +441,36 @@ def test_disco_memoria_e_a_maquina_de_verdade(sistema, tmp_path):
     kernel, relogio, total, livre = sistema("sistema").split("|")
     assert kernel == os.uname().release[:31] and relogio in ("0", "1", "4294967295")
     assert 0 < int(livre) <= int(total) < 4294967295
+
+
+# --------------------------------------------------------------------------------------
+# [11/11/2026] Arquivos acima de 2 GiB na BeagleBone (32 bits)
+# --------------------------------------------------------------------------------------
+def test_o_bin_pode_passar_de_2_gib_na_placa_de_32_bits():
+    """Uma captura de 1 h a 400 kS/s tem 2,9 GB. Num ARM de 32 bits (a BeagleBone), o off_t só tem 64 bits com
+    _FILE_OFFSET_BITS=64 definido ANTES do primeiro #include (POSIX, lfcompile(7)); sem isso, o write devolve EFBIG
+    em 2 GiB - 1 e a captura para. Confere o que o pré-processador vê com as opções do Makefile."""
+    fonte = (FIRMWARE / "ler_adc.c").read_text(encoding="utf-8")
+    opcoes = re.search(r"^CFLAGS_ARM\s*=\s*(.*)$", (FIRMWARE / "Makefile").read_text(encoding="utf-8"), re.M).group(1)
+    r = subprocess.run(["gcc", "-std=gnu11", *opcoes.split(), "-dM", "-E", str(FIRMWARE / "ler_adc.c")],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert re.search(r"^#define _FILE_OFFSET_BITS 64$", r.stdout, re.M), "o ler_adc.c compila com off_t de 32 bits"
+    if "_FILE_OFFSET_BITS" not in opcoes:                 # definido no fonte: tem de vir antes de qualquer cabeçalho
+        codigo = re.sub(r"/\*.*?\*/|//[^\n]*", "", fonte, flags=re.S)
+        assert codigo.index("#define _FILE_OFFSET_BITS 64") < codigo.index("#include")
+    # E a garantia em tempo de compilação, na própria placa: o gcc de lá recusa um off_t de 32 bits.
+    assert "_Static_assert(sizeof(off_t) >= 8" in fonte
+
+
+@pytest.mark.parametrize("compilador", [["gcc", "-m32"], ["arm-linux-gnueabihf-gcc"]], ids=["i386", "armhf"])
+def test_ler_adc_compila_para_32_bits_com_off_t_de_64(compilador, tmp_path):
+    """Com um compilador de 32 bits no computador (não há na CI: pulado), o _Static_assert do off_t tem de passar."""
+    teste = tmp_path / "t.c"
+    teste.write_text("#include <stdio.h>\nint main(void) { return 0; }\n")
+    if shutil.which(compilador[0]) is None or subprocess.run([*compilador, "-fsyntax-only", str(teste)],
+                                                             capture_output=True).returncode != 0:
+        pytest.skip(f"sem {' '.join(compilador)} com os cabeçalhos de 32 bits")
+    r = subprocess.run([*compilador, "-std=gnu11", "-Wall", "-Wextra", "-fsyntax-only", str(FIRMWARE / "ler_adc.c")],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
