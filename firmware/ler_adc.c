@@ -84,8 +84,21 @@ static const double FAIXA_ADC_ESPAN_V[] = {20.48, 10.24, 5.12};
 #define FAIXA_ADC_NUM_CODIGOS 3
 
 // --- Placa ------------------------------------------------------------------------------------------------------------
+// Os caminhos da placa podem ser trocados na compilação (#ifndef): tests/test_ler_adc_captura.py compila este arquivo
+// com eles apontando para uma placa falsa (um arquivo no lugar do /dev/mem e uma PRU em Python) e roda a captura
+// inteira no computador.
+#ifndef REMOTEPROC_PRU0_ESTADO
 #define REMOTEPROC_PRU0_ESTADO "/sys/class/remoteproc/remoteproc1/state"
+#endif
+#ifndef BASE_PINMUX
 #define BASE_PINMUX "/sys/devices/platform/ocp"     // onde o config-pin lê e escreve o modo de cada pino
+#endif
+#ifndef CAMINHO_DEV_MEM
+#define CAMINHO_DEV_MEM "/dev/mem"
+#endif
+#ifndef CAMINHO_IOMEM
+#define CAMINHO_IOMEM "/proc/iomem"
+#endif
 #define PRU_AINDA_NAO_INICIOU 0xFFFFFFFFu            // marca em versao_protocolo_pru, trocada por 0 pelo pru_main.c
 
 // Com o ruído do ADC (~0,8 LSB rms), tantas amostras iguais seguidas só acontecem com o ADC mudo (SDO parado em 0: a
@@ -1448,7 +1461,7 @@ int main(int argc, char *argv[]) {
     // --- Placa --------------------------------------------------------------------------------------------------------
     size_t bytes_por_buffer = (size_t)SAMPLES_PER_BUFFER * sizeof(uint16_t);
     unsigned long long fim_ddr = (unsigned long long)DDR_RESERVED_PHYS + bytes_por_buffer * BUFFERS_PING_PONG;
-    if (conferir_ddr_reservada("/proc/iomem", DDR_RESERVED_PHYS, fim_ddr) != 0) {
+    if (conferir_ddr_reservada(CAMINHO_IOMEM, DDR_RESERVED_PHYS, fim_ddr) != 0) {
         return SAIDA_ERRO;
     }
     detalhe("DDR dos buffers fora do Linux (0x%X-0x%llX)", DDR_RESERVED_PHYS, fim_ddr - 1);
@@ -1456,9 +1469,9 @@ int main(int argc, char *argv[]) {
         return SAIDA_ERRO;
     }
 
-    int mem_fd = open("/dev/mem", O_RDWR | O_SYNC);
+    int mem_fd = open(CAMINHO_DEV_MEM, O_RDWR | O_SYNC);
     if (mem_fd < 0) {
-        erro("não deu para abrir /dev/mem: %s.", strerror(errno));
+        erro("não deu para abrir %s: %s.", CAMINHO_DEV_MEM, strerror(errno));
         return SAIDA_ERRO;
     }
     void *ctrl_map = mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, mem_fd, PRU_SHARED_RAM_PHYS);
