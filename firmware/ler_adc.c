@@ -128,7 +128,7 @@ struct cabecalho_arquivo_campos {
     char     magic[4];                                 // "SHAN"
     uint32_t versao_cabecalho;                         // CABECALHO_VERSAO
     uint32_t tamanho_cabecalho;                        // 1024
-    uint64_t timestamp_unix;                           // início da captura (s, UTC; a placa não tem RTC: confira a hora)
+    uint64_t timestamp_unix;                           // o ARM soltou a PRU (s, UTC; a placa não tem RTC: confira a hora)
     uint32_t frequencia_hz;                            // taxa TOTAL pedida
     uint32_t auto_seq_mask;                            // bit N = canal N na varredura
     uint32_t num_canais;
@@ -143,7 +143,7 @@ struct cabecalho_arquivo_campos {
     uint64_t total_amostras_gravadas;                  // [final]
     char     descricao[CABECALHO_DESCRICAO_TAMANHO];   // UTF-8, terminada em '\0' (até a v7: 256 bytes, depois do título)
     char     kernel[CABECALHO_KERNEL_TAMANHO];         // [v8] uname -r
-    uint32_t timestamp_ns;                             // [v8] a fração de segundo do início da captura
+    uint32_t timestamp_ns;                             // [v8] a fração de segundo do timestamp_unix
     uint32_t relogio_sincronizado;                     // [v8] 1 = NTP sincronizado; 0 = não (a data pode estar errada)
     uint32_t uptime_s;                                 // [v8] há quanto tempo a placa está ligada
     uint32_t carga_1min_milesimos;                     // [v8] a carga média do ARM no último minuto, x 1000
@@ -1532,6 +1532,11 @@ int main(int argc, char *argv[]) {
     ctrl->folga_minima_ciclos = 0;
     ctrl->atraso_maximo_ciclos = 0;
     ctrl->ciclos_rebase = 0;
+    // [11/11/2026] O instante do cabeçalho é o de agora, quando o ARM solta a PRU: a 1ª amostra sai poucos ms depois
+    // (a configuração do ADC e a espera de acomodação da PRU). Até aqui era o do começo do programa, antes de a PRU ser
+    // reiniciada: de 60 a 600 ms adiantado, mais que a fração de segundo que o cabeçalho v8 guarda.
+    struct timespec inicio_captura = {config.instante, (long)config.instante_ns};
+    clock_gettime(CLOCK_REALTIME, &inicio_captura);     // se falhar, fica o instante do começo do programa
     ctrl->config_ready = 1;
 
     // A PRU escreve a versão do protocolo depois de configurar o ADS8688 (~0,1 ms): outro valor = o fw_pru.out
@@ -1572,8 +1577,8 @@ int main(int argc, char *argv[]) {
     memcpy(h->magic, CABECALHO_MAGIC, sizeof(h->magic));
     h->versao_cabecalho = CABECALHO_VERSAO;
     h->tamanho_cabecalho = (uint32_t)sizeof(cabecalho);
-    h->timestamp_unix = (uint64_t)config.instante;
-    h->timestamp_ns = config.instante_ns;
+    h->timestamp_unix = (uint64_t)inicio_captura.tv_sec;
+    h->timestamp_ns = (uint32_t)inicio_captura.tv_nsec;
     h->frequencia_hz = config.frequencia;
     h->auto_seq_mask = config.mascara;
     h->num_canais = (uint32_t)config.num_canais;
@@ -1633,7 +1638,7 @@ int main(int argc, char *argv[]) {
             if (!*prontos[b] || (config.blocos != 0 && resultado.blocos >= config.blocos)) {
                 continue;
             }
-            double inicio = segundos_monotonicos();
+            double inicio = segundos_monotonicos();     // o bloco foi visto pronto: no máximo uma volta (2 ms) depois da PRU
             int mudo = amostras_todas_iguais(buffers[b], AMOSTRAS_CONFERIDAS_ADC_MUDO);
             size_t gravadas = fwrite((const void *)buffers[b], sizeof(uint16_t), SAMPLES_PER_BUFFER, arquivo);
             *prontos[b] = 0;
@@ -1648,9 +1653,12 @@ int main(int argc, char *argv[]) {
             }
             resultado.blocos++;
             resultado.amostras += gravadas;
-            instante_ultimo = segundos_monotonicos();
+            // [11/11/2026] O relógio da taxa medida é o do instante em que o bloco foi VISTO pronto. Até aqui era o de
+            // depois da gravação: um bloco que demorasse 100 ms a mais no disco (o 1º, com o arquivo recém-criado)
+            // deslocava a taxa de uma captura de 2 blocos em 4 %.
+            instante_ultimo = inicio;
             if (resultado.blocos == 1) {
-                instante_primeiro = instante_ultimo;
+                instante_primeiro = inicio;
             }
             conferir_integridade(ctrl, &integridade);
             if (mudo) {
@@ -1684,7 +1692,8 @@ int main(int argc, char *argv[]) {
     // Com --blocos 0 (até Ctrl+C), parar por um sinal é o fim normal; com os blocos contados, é uma captura cortada.
     resultado.interrompida = sinal_recebido != 0 && config.blocos != 0 && resultado.blocos < config.blocos;
     if (resultado.blocos >= 2 && instante_ultimo > instante_primeiro) {
-        // Entre o 1º e o último bloco, pelo relógio do ARM (~0,02 % num bloco de ~2,6 s: o laço espera 2 ms).
+        // Entre o 1º e o último bloco, pelo relógio do ARM: cada instante tem até 2 ms de atraso (o passo do laço),
+        // ~0,1 % com 2 blocos de 2,6 s e proporcionalmente menos com mais blocos.
         resultado.taxa_medida = (double)(resultado.blocos - 1) * SAMPLES_PER_BUFFER / (instante_ultimo - instante_primeiro);
     }
     if (resultado.blocos == 0 && !resultado.adc_mudo) {
@@ -1715,7 +1724,21 @@ int main(int argc, char *argv[]) {
     } else {
         detalhe("cabeçalho final reescrito (%llu blocos, %llu amostras)", resultado.blocos, resultado.amostras);
     }
-    fclose(arquivo);
+    // [11/11/2026] "Captura concluída" tem de valer mesmo se a placa for desligada logo depois, e um erro de disco no
+    // fim tem de aparecer: até aqui o fclose não era conferido (o cabeçalho final fica no buffer do stdio até ele) e
+    // nada mandava os dados da memória para o cartão. O fsync devolve EINVAL num arquivo que não o aceita (um pipe).
+    errno = 0;
+    int falha_ao_fechar = fflush(arquivo) != 0 || (fsync(fileno(arquivo)) != 0 && errno != EINVAL);
+    int erro_ao_fechar = errno;
+    if (fclose(arquivo) != 0 && !falha_ao_fechar) {
+        falha_ao_fechar = 1;
+        erro_ao_fechar = errno;
+    }
+    if (falha_ao_fechar) {
+        erro("não deu para terminar de gravar '%s' (%s): o arquivo pode estar incompleto.", config.arquivo,
+             strerror(erro_ao_fechar));
+        resultado.erro_escrita = 1;
+    }
 
     imprimir_resultado(&config, ctrl, &integridade, &resultado);
 

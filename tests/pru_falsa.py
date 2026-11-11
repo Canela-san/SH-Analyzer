@@ -96,6 +96,8 @@ class PruFalsa(threading.Thread):
     preambulo_por_bloco: int = 0
     folga: int = 18
     max_blocos: int | None = None           # para de produzir depois de tantos blocos
+    demora_para_ficar_pronta_s: float = 0.0  # o tempo do start do remoteproc até o pru_main.c avisar
+    instante_da_configuracao: float = 0.0   # time.time() em que ela viu config_ready = 1
     configuracao: dict[str, int] = field(default_factory=dict)      # o que o ARM escreveu antes de config_ready = 1
     blocos_prontos: int = 0
     instantes_pronto: list[float] = field(default_factory=list)     # time.monotonic() de cada marca de pronto
@@ -143,10 +145,13 @@ class PruFalsa(threading.Thread):
         # pru_main.c: com a marca do ARM no lugar (ele acabou de dar o start), zera config_ready e só então avisa.
         if not self._esperar(lambda: self.ler("versao_protocolo_pru") == AINDA_NAO_INICIOU) or not self.responde:
             return
+        if self._parar.wait(self.demora_para_ficar_pronta_s):
+            return
         self.escrever("config_ready", 0)
         self.escrever("versao_protocolo_pru", 0)
         if not self._esperar(lambda: self.ler("config_ready") == 1):
             return
+        self.instante_da_configuracao = time.time()
         self.configuracao = {campo: self.ler(campo) for campo in CAMPOS}
         # spi_core.asm, antes da 1ª amostra: zera o que publica e escreve a versão do protocolo.
         for campo in ("amostras_atrasadas", "buffers_sobrescritos", "quadros_preambulo_ruim", "atraso_maximo_ciclos",

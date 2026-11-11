@@ -7,8 +7,10 @@ inteiro roda contra ``tests/pru_falsa.py`` (um arquivo no lugar do ``/dev/mem`` 
 """
 
 import os
+import re
 import signal
 import subprocess
+import threading
 import time
 
 import numpy as np
@@ -177,3 +179,68 @@ def test_sighup_ignorado_por_quem_chamou_nao_corta_a_captura(ler_adc, placa):
     codigo, stdout, _, saida = capturar_com_sinal(ler_adc, placa, signal.SIGHUP, "--blocos", 6, ignorar_hup=True)
     assert codigo == 0, stdout
     assert "Captura concluída" in stdout and cab.ler_cabecalho(saida).blocos_gravados == 6
+
+
+# --------------------------------------------------------------------------------------
+# A hora do cabeçalho, a taxa medida e o fechamento do arquivo
+# --------------------------------------------------------------------------------------
+def test_a_hora_do_cabecalho_e_a_de_quando_a_pru_e_solta(ler_adc, placa):
+    """O cabeçalho v8 guarda a fração de segundo do início. Ela só diz algo se o instante for o de quando o ARM solta
+    a PRU (config_ready = 1), e não o do começo do programa, antes de a PRU ser reiniciada: aqui a PRU falsa leva
+    150 ms para ficar pronta, como um remoteproc lento."""
+    r, pru, saida = capturar(ler_adc, placa, "--blocos", 1, demora_para_ficar_pronta_s=0.15)
+    assert r.returncode == 0, r.stdout + r.stderr
+    h = cab.ler_cabecalho(saida)
+    antes_da_pru_ver = pru.instante_da_configuracao - (h.timestamp_unix + h.timestamp_ns * 1e-9)
+    assert 0 <= antes_da_pru_ver < 0.05, antes_da_pru_ver
+
+
+def test_a_taxa_medida_nao_depende_de_quanto_o_disco_demora(ler_adc, placa, tmp_path):
+    """A taxa medida pelo relógio do ARM é (blocos - 1) x amostras por bloco / (tempo entre o 1º e o último ficarem
+    prontos). O tempo que o ARM leva para GRAVAR um bloco não entra: aqui a saída é um pipe, e o leitor segura o 1º
+    bloco por ~0,15 s (um cartão SD que demorou). A PRU falsa enche um bloco a cada 0,25 s."""
+    pipe = tmp_path / "saida.fifo"
+    os.mkfifo(pipe)
+
+    def leitor_lento():
+        with open(pipe, "rb") as f:
+            restam = cab.CABECALHO_TAMANHO_TOTAL + TAMANHO_BLOCO
+            while restam > 0:                                  # o cabeçalho e o 1º bloco, devagar
+                restam -= len(f.read(min(restam, 262144)))
+                time.sleep(0.015)
+            while f.read(1 << 20):
+                pass
+
+    leitor = threading.Thread(target=leitor_lento, daemon=True)
+    leitor.start()
+    pru = placa.pru(intervalo_s=0.25)
+    try:
+        r = subprocess.run([str(ler_adc), "--blocos", "3", "-o", str(pipe)], env=placa.ambiente, capture_output=True,
+                           text=True, timeout=60)
+    finally:
+        pru.parar()
+    leitor.join(timeout=10)
+    medida = float(re.search(r"Taxa medida\s+(\d+) S/s", r.stdout).group(1))
+    real = 2 * AMOSTRAS_POR_BLOCO / (pru.instantes_pronto[2] - pru.instantes_pronto[0])
+    assert medida == pytest.approx(real, rel=0.05), (medida, real)
+
+
+def test_erro_ao_fechar_o_arquivo_nao_passa_em_silencio(ler_adc, placa):
+    """O cabeçalho (1024 bytes) fica no buffer do stdio até o arquivo ser fechado. Num disco cheio (/dev/full), a
+    escrita só falha ali: sem conferir o fclose, a captura 'terminava' com um arquivo vazio e sem nenhum erro."""
+    if not os.path.exists("/dev/full"):
+        pytest.skip("sem /dev/full")
+    pru = placa.pru(max_blocos=0)                              # nenhum bloco: só o cabeçalho é escrito
+    processo = subprocess.Popen([str(ler_adc), "--blocos", "0", "-o", "/dev/full"], env=placa.ambiente,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        limite = time.monotonic() + 30
+        while not pru.configuracao and time.monotonic() < limite:
+            time.sleep(0.005)
+        time.sleep(0.1)
+        os.kill(processo.pid, signal.SIGINT)
+        _, stderr = processo.communicate(timeout=60)
+    finally:
+        processo.kill()
+        pru.parar()
+    assert processo.returncode == 1 and "não deu para terminar de gravar" in stderr, stderr
