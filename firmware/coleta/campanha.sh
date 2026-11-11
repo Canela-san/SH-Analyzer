@@ -552,15 +552,18 @@ nome_da_captura() {   # $1 = item do plano
     echo "${parte}_cs${cs//,/-}_${taxa}_${entrada}${canais}${faixa:+_f${faixa}}${segundos:+_${segundos}s}${spi:+_spi${spi/:/-}}.bin"
 }
 
-# --continuar: a mesma pasta; feita = com linha no resumo.csv e com os contadores lidos (uma que o ler_adc não
-# terminou, ou que foi cortada no meio, é refeita). As esperas e os canais vêm entre aspas, com vírgulas: a coluna
-# amostras_atrasadas é contada a partir do FIM da linha, quantas o cabeçalho tiver depois dela.
+# --continuar: a mesma pasta; feita = com linha no resumo.csv, com os contadores lidos e sem o código 5 (uma que o
+# ler_adc não terminou, ou que um sinal cortou no meio, é refeita: até 11/11/2026 a cortada saía com o código 0 e
+# ficava como feita, com menos blocos que os do plano). As esperas e os canais vêm entre aspas, com vírgulas: as
+# colunas amostras_atrasadas e codigo_saida são contadas a partir do FIM da linha, quantas o cabeçalho tiver depois.
 declare -A FEITA=()
 if [ -n "$CONTINUAR" ]; then
-    while read -r arquivo atrasadas; do
-        if [ "$atrasadas" != "?" ]; then FEITA[$arquivo]=1; fi
-    done < <(awk -F, 'NR == 1 { for (k = 1; k <= NF; k++) if ($k == "amostras_atrasadas") depois = NF - k; next }
-                      { print $2, $(NF - depois) }' "$CONTINUAR/resumo.csv")
+    while read -r arquivo atrasadas codigo; do
+        if [ "$atrasadas" != "?" ] && [ "$codigo" != 5 ]; then FEITA[$arquivo]=1; fi
+    done < <(awk -F, 'NR == 1 { for (k = 1; k <= NF; k++) { if ($k == "amostras_atrasadas") depois = NF - k
+                                                             if ($k == "codigo_saida") depois_c = NF - k }
+                                next }
+                      { print $2, $(NF - depois), $(NF - depois_c) }' "$CONTINUAR/resumo.csv")
 fi
 FALTAM=0
 for item in "${PLANO[@]}"; do
@@ -862,6 +865,8 @@ for item in "${PLANO[@]}"; do
         printf '%s✗ o ADC não respondeu (a placa de aquisição sem alimentação?): parado%s\n' "$VM" "$R"
         interrompido="ADC sem resposta (a placa de aquisição está alimentada pela fonte de 5 V do conector?)"
         break
+    elif [ "$codigo" -eq 5 ]; then
+        printf '%s! cortada antes do fim por um sinal (Ctrl+C, kill): o --continuar a refaz%s\n' "$AM" "$R"
     elif [ "$codigo" -ne 0 ] && [ "$atrasadas" = "?" ]; then
         printf '%s✗ o ler_adc falhou (código %d; veja o log.txt)%s\n' "$VM" "$codigo" "$R"
     elif [ "$atrasadas $sobrescritos $sdo" = "0 0 0" ]; then

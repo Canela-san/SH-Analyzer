@@ -6,6 +6,8 @@ inteiro roda contra ``tests/pru_falsa.py`` (um arquivo no lugar do ``/dev/mem`` 
 ``.bin`` que ele grava é lido pelo ``supraharmonicos.cabecalho``, como na análise.
 """
 
+import os
+import signal
 import subprocess
 import time
 
@@ -124,3 +126,54 @@ def test_amostras_atrasadas_e_ruido_no_sdo_vao_para_o_cabecalho_com_aviso(ler_ad
     h = cab.ler_cabecalho(saida)
     assert h.amostras_atrasadas == 10 and h.quadros_preambulo_ruim == 2 and h.atraso_maximo_ciclos == 77
     assert "fora da grade" in r.stderr and "ruído no SDO" in r.stderr
+
+
+# --------------------------------------------------------------------------------------
+# Sinais: Ctrl+C, kill e a queda da conexão
+# --------------------------------------------------------------------------------------
+def capturar_com_sinal(ler_adc, placa, sinal, *args, depois_de_blocos=2, ignorar_hup=False, **opcoes_da_pru):
+    """Manda ``sinal`` ao ler_adc depois de a PRU falsa encher ``depois_de_blocos`` blocos."""
+    saida = placa.pasta / "captura.bin"
+    pru = placa.pru(**opcoes_da_pru)
+    preparar = (lambda: signal.signal(signal.SIGHUP, signal.SIG_IGN)) if ignorar_hup else None
+    processo = subprocess.Popen([str(ler_adc), *map(str, args), "-o", str(saida)], env=placa.ambiente,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, preexec_fn=preparar)
+    try:
+        limite = time.monotonic() + 30
+        while pru.blocos_prontos < depois_de_blocos and time.monotonic() < limite and processo.poll() is None:
+            time.sleep(0.005)
+        os.kill(processo.pid, sinal)
+        stdout, stderr = processo.communicate(timeout=60)
+    finally:
+        processo.kill()
+        pru.parar()
+    return processo.returncode, stdout, stderr, saida
+
+
+@pytest.mark.parametrize("sinal", [signal.SIGINT, signal.SIGTERM, signal.SIGHUP], ids=["ctrl_c", "kill", "hup"])
+def test_captura_cortada_por_um_sinal_fecha_o_arquivo_e_sai_com_o_codigo_5(ler_adc, placa, sinal):
+    """Pedidos 200 blocos e parada no começo: o arquivo fecha inteiro (cabeçalho final, blocos completos), mas quem
+    chamou tem de saber que a captura NÃO é a pedida. Até 11/11/2026 o código era 0, e o coletar.sh a dava por feita."""
+    codigo, stdout, _, saida = capturar_com_sinal(ler_adc, placa, sinal, "--blocos", 200)
+    assert codigo == 5, stdout
+    assert "Captura interrompida antes do fim" in stdout
+    h = cab.ler_cabecalho(saida)
+    assert 1 <= h.blocos_gravados < 200          # a PRU já tinha enchido 2; o ARM pode estar 1 atrás
+    assert saida.stat().st_size == cab.CABECALHO_TAMANHO_TOTAL + h.blocos_gravados * TAMANHO_BLOCO
+    assert placa.remoteproc.read_text().startswith("stop")
+
+
+def test_captura_ate_o_ctrl_c_termina_com_o_codigo_0(ler_adc, placa):
+    """--blocos 0 é 'até Ctrl+C': parar por ele é o fim normal."""
+    codigo, stdout, _, saida = capturar_com_sinal(ler_adc, placa, signal.SIGINT, "--blocos", 0)
+    assert codigo == 0 and "Captura concluída" in stdout
+    assert cab.ler_cabecalho(saida).blocos_gravados >= 1
+
+
+def test_sighup_ignorado_por_quem_chamou_nao_corta_a_captura(ler_adc, placa):
+    """O coletar.sh ignora o SIGHUP ('trap "" HUP') para a coleta sobreviver à queda do ssh, e o ler_adc herda isso:
+    a captura em curso tem de ir até o fim. Até 11/11/2026 o ler_adc instalava o seu tratador por cima do ignorado, e a
+    queda da conexão cortava a captura."""
+    codigo, stdout, _, saida = capturar_com_sinal(ler_adc, placa, signal.SIGHUP, "--blocos", 6, ignorar_hup=True)
+    assert codigo == 0, stdout
+    assert "Captura concluída" in stdout and cab.ler_cabecalho(saida).blocos_gravados == 6

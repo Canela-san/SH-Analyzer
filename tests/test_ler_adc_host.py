@@ -79,10 +79,11 @@ def test_sem_root_os_enderecos_sao_zeros_e_so_avisa(conferir):
 
 
 def test_ler_adc_trata_sigterm_e_sighup_como_o_ctrl_c_e_para_a_pru_no_fim():
-    """F6: um kill ou a queda do ssh reescrevem o cabeçalho final; a PRU não fica gravando na DDR depois."""
+    """F6: um kill ou a queda do ssh reescrevem o cabeçalho final; a PRU não fica gravando na DDR depois. (O que cada
+    sinal faz com a captura está em tests/test_ler_adc_captura.py, com o programa rodando.)"""
     fonte = (FIRMWARE / "ler_adc.c").read_text(encoding="utf-8")
     for sinal in ("SIGINT", "SIGTERM", "SIGHUP"):
-        assert f"signal({sinal}, lidar_interrupcao);" in fonte
+        assert f"signal({sinal}, lidar_interrupcao)" in fonte
     assert "signal(SIGPIPE, SIG_IGN);" in fonte
     fim = fonte[fonte.index("imprimir_resultado(&config"):]
     assert 'escrever_estado_remoteproc("stop")' in fim
@@ -216,7 +217,7 @@ int main(int argc, char **argv) {
     struct contadores_integridade n = {atrasadas, 0, 0, atrasadas ? 0 : 18, atrasadas ? 77 : 0,
                                        (uint32_t)atoi(argv[3]), (uint32_t)atoi(argv[4])};
     unsigned long long blocos = (unsigned long long)atoi(argv[5]);
-    struct resultado r = {blocos, blocos * SAMPLES_PER_BUFFER, blocos >= 2 ? 399931.0 : 0.0, 0.15, 0, 0};
+    struct resultado r = {blocos, blocos * SAMPLES_PER_BUFFER, blocos >= 2 ? 399931.0 : 0.0, 0.15, 0, 0, 0};
     imprimir_resultado(&c, &ctrl, &n, &r);
     return 0;
 }

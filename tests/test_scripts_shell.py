@@ -416,6 +416,8 @@ if [ "$blocos" -ge 2 ]; then
         "$(awk -v r="$real" -v t="$taxa" 'BEGIN { print 100 * (r / t - 1) }')"
 fi
 [ -z "${LER_ADC_REGISTRO:-}" ] || pgrep -x dd > /dev/null && echo "dd rodando" >> "${LER_ADC_REGISTRO:-/dev/null}"
+# LER_ADC_CORTADA: um trecho do nome da captura que um sinal "cortou" (o ler_adc sai com 5, com o resumo impresso).
+case "$saida" in *"${LER_ADC_CORTADA:-@nenhuma@}"*) exit 5 ;; esac
 '''
 
 
@@ -754,6 +756,24 @@ def test_coletar_calibrar_com_canal_de_referencia_e_diafonia(varredura):
                          (("--canal-referencia", "2", "--espiras", "0"), "--espiras '0'")):
         r, _ = varredura("calibrar", "--canal", "1", *opcoes, "--simular")
         assert r.returncode == 1 and erro in r.stderr, (opcoes, r.stderr)
+
+
+def test_coletar_continuar_refaz_a_captura_que_um_sinal_cortou(varredura):
+    """O ler_adc sai com 5 quando um sinal (Ctrl+C, kill) corta a captura antes dos blocos pedidos: ela tem o resumo
+    inteiro (os contadores), mas menos amostras que as do plano, e o --continuar tem de refazê-la."""
+    opcoes = ("--faixa", "20.48", "--quadradas", "256", "--taxas", "400000,312500:lenta", "--segundos", "5")
+    varredura.env["LER_ADC_CORTADA"] = "_312500_"
+    r, _ = varredura("calibrar", *opcoes, entrada="\n")
+    assert r.returncode == 0 and "cortada antes do fim" in r.stdout, r.stdout + r.stderr
+    (pasta,) = varredura.pasta.glob("CAL_*")
+    assert [linha["codigo_saida"] for linha in _resumo(pasta)] == ["0", "5"]
+    del varredura.env["LER_ADC_CORTADA"]
+    r, _ = varredura("calibrar", "--continuar", entrada="\n")
+    assert r.returncode == 0 and "1 de 2 já feitas" in r.stdout, r.stdout + r.stderr
+    linhas = _resumo(pasta)
+    assert [linha["codigo_saida"] for linha in linhas] == ["0", "5", "0"] and "_312500_" in linhas[2]["arquivo"]
+    r, _ = varredura("calibrar", "--continuar")
+    assert "Nada a fazer" in r.stdout
 
 
 def test_coletar_calibrar_para_na_pausa_sem_terminal(varredura):

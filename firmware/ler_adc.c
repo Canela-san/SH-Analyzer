@@ -111,6 +111,7 @@ static const double FAIXA_ADC_ESPAN_V[] = {20.48, 10.24, 5.12};
 #define SAIDA_USO 2
 #define SAIDA_SOBRESCRITO 3             // buffers sobrescritos: amostras perdidas
 #define SAIDA_ADC_MUDO 4
+#define SAIDA_INTERROMPIDA 5            // um sinal parou a captura antes dos blocos pedidos: o .bin está mais curto
 
 // =====================================================================================================================
 // Cabeçalho do .bin
@@ -341,7 +342,7 @@ static void imprimir_ajuda(const char *argv0) {
            "respondendo.\n"
            "\n"
            "%sCódigos de saída%s  0 ok · 1 erro · 2 argumento inválido · 3 buffers sobrescritos (amostras\n"
-           "perdidas) · 4 ADC sem resposta\n"
+           "perdidas) · 4 ADC sem resposta · 5 interrompida (Ctrl+C, kill) antes dos blocos pedidos\n"
            "\n"
            "%sExemplos%s\n"
            "  sudo ./%s                       # 400 kS/s no canal 1, 1 bloco\n"
@@ -1034,6 +1035,19 @@ static void lidar_interrupcao(int sinal) {
     manter_execucao = 0;
 }
 
+// [11/11/2026] Um SIGHUP que já chega IGNORADO continua ignorado, como manda o costume (nohup): é assim que o
+// coletar.sh ('trap "" HUP') pede que a captura em curso termine mesmo se a conexão cair. Até aqui o ler_adc instalava
+// o seu tratador por cima, a queda do ssh cortava a captura no bloco seguinte e ela saía com o código 0, como se
+// estivesse inteira.
+static void instalar_sinais(void) {
+    signal(SIGINT, lidar_interrupcao);
+    signal(SIGTERM, lidar_interrupcao);
+    if (signal(SIGHUP, lidar_interrupcao) == SIG_IGN) {
+        signal(SIGHUP, SIG_IGN);
+    }
+    signal(SIGPIPE, SIG_IGN);       // um '| tee' que morreu com o ssh não pode matar o ler_adc antes do cabeçalho final
+}
+
 static double segundos_monotonicos(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
@@ -1342,6 +1356,7 @@ struct resultado {
     double pior_gravacao_s;
     int erro_escrita;
     int adc_mudo;
+    int interrompida;                       // um sinal parou a captura antes dos blocos pedidos
 };
 
 static void imprimir_resultado(const struct configuracao *c, volatile struct shared_control *ctrl,
@@ -1354,7 +1369,7 @@ static void imprimir_resultado(const struct configuracao *c, volatile struct sha
         simbolo = "✗"; cor = VERMELHO; texto = "Captura interrompida: erro de escrita";
     } else if (n->buffers_sobrescritos) {
         simbolo = "✗"; cor = VERMELHO; texto = "Captura com amostras perdidas";
-    } else if (sinal_recebido && c->blocos != 0) {
+    } else if (r->interrompida) {
         simbolo = "!"; cor = AMARELO; texto = "Captura interrompida antes do fim";
     } else if (n->amostras_atrasadas || n->quadros_preambulo_ruim) {
         simbolo = "!"; cor = AMARELO; texto = "Captura concluída, com avisos";
@@ -1427,10 +1442,7 @@ static void imprimir_resultado(const struct configuracao *c, volatile struct sha
 // =====================================================================================================================
 
 int main(int argc, char *argv[]) {
-    signal(SIGINT, lidar_interrupcao);
-    signal(SIGTERM, lidar_interrupcao);
-    signal(SIGHUP, lidar_interrupcao);
-    signal(SIGPIPE, SIG_IGN);       // um '| tee' que morreu com o ssh não pode matar o ler_adc antes do cabeçalho final
+    instalar_sinais();
     setvbuf(stdout, NULL, _IOLBF, 0);   // num log (2>&1), stdout e stderr na ordem em que aconteceram
 
     terminal_stdout = isatty(STDOUT_FILENO);
@@ -1612,7 +1624,7 @@ int main(int argc, char *argv[]) {
     // Sem descarte de amostra: no AUTO_RST, o quadro do próprio AUTO_RST (na configuração, nunca gravado) é o que traz
     // lixo; a 1ª amostra do laço já é do canal de menor número, e a amostra i é do canal da posição i % N.
     struct contadores_integridade integridade = {0, 0, 0, 0, 0, 0, 0};
-    struct resultado resultado = {0, 0, 0.0, 0.0, 0, 0};
+    struct resultado resultado = {0, 0, 0.0, 0.0, 0, 0, 0};
     double instante_primeiro = 0.0, instante_ultimo = 0.0;
     uint16_t valor_mudo = 0;
     mostrar_progresso(0, config.blocos, segundos_por_bloco);
@@ -1669,6 +1681,8 @@ int main(int argc, char *argv[]) {
 
     // --- Fim ----------------------------------------------------------------------------------------------------------
     conferir_integridade(ctrl, &integridade);
+    // Com --blocos 0 (até Ctrl+C), parar por um sinal é o fim normal; com os blocos contados, é uma captura cortada.
+    resultado.interrompida = sinal_recebido != 0 && config.blocos != 0 && resultado.blocos < config.blocos;
     if (resultado.blocos >= 2 && instante_ultimo > instante_primeiro) {
         // Entre o 1º e o último bloco, pelo relógio do ARM (~0,02 % num bloco de ~2,6 s: o laço espera 2 ms).
         resultado.taxa_medida = (double)(resultado.blocos - 1) * SAMPLES_PER_BUFFER / (instante_ultimo - instante_primeiro);
@@ -1718,5 +1732,10 @@ int main(int argc, char *argv[]) {
     if (resultado.adc_mudo) {
         return SAIDA_ADC_MUDO;
     }
-    return integridade.buffers_sobrescritos ? SAIDA_SOBRESCRITO : SAIDA_OK;
+    if (integridade.buffers_sobrescritos) {
+        return SAIDA_SOBRESCRITO;
+    }
+    // [11/11/2026] Até aqui uma captura cortada por um sinal saía com 0: o coletar.sh a dava por feita (e o
+    // --continuar não a refazia), com menos blocos que os do plano.
+    return resultado.interrompida ? SAIDA_INTERROMPIDA : SAIDA_OK;
 }
