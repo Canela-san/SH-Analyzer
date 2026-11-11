@@ -1,9 +1,12 @@
 """Cabeçalho binário do ``.bin`` (formato "SHAN").
 
 Interpreta e valida o cabeçalho fixo de 1024 bytes gravado por
-``firmware/ler_adc.c`` (``struct cabecalho_arquivo``): magic, versão (v1 a v8),
+``firmware/ler_adc.c`` (``struct cabecalho_arquivo``): magic, versão (v1 a v9),
 CRC-32, metadados da captura, grandeza, id de sonda e faixa de entrada do ADC
-por canal e, desde a v8, o sistema, a placa e o disco da BeagleBone.
+por canal; desde a v8, o sistema, a placa e o disco da BeagleBone; e, desde a
+v9 (cabeçalho de 4096 bytes), a extensão: o CRC-32 das amostras
+(``conferir_crc_das_amostras``), o fim da captura, o identificador, a máquina,
+a linha de comando, o ganho declarado e o sinal medido em cada canal.
 
 Depende de: ``constantes``, ``erros``. Quem o consome: ``contexto``,
 ``hdf5``, ``modos``, ``calibracao_sonda``, ``cli_medir_captura``."""
@@ -41,8 +44,14 @@ log = logging.getLogger(__name__)
 # pré-cabeçalho.
 
 CABECALHO_MAGIC = b"SHAN"
+# O tamanho do cabeçalho até a v8 e, desde a v9, o da parte fixa (os campos da v8, que não mudaram de lugar). As
+# amostras começam em CabecalhoArquivo.tamanho_cabecalho: 1024 até a v8, CABECALHO_TAMANHO_V9 desde a v9.
 CABECALHO_TAMANHO_TOTAL = 1024
-CABECALHO_VERSAO_SUPORTADA = 8  # versão mais recente do FORMATO do cabeçalho que este script sabe interpretar
+CABECALHO_TAMANHO_V9 = 4096      # CABECALHO_TAMANHO_TOTAL em firmware/ler_adc.c
+CABECALHO_ID_TAMANHO = 16        # [v9] os mesmos nomes em firmware/ler_adc.c
+CABECALHO_HOSTNAME_TAMANHO = 32
+CABECALHO_COMANDO_TAMANHO = 512
+CABECALHO_VERSAO_SUPORTADA = 9  # versão mais recente do FORMATO do cabeçalho que este script sabe interpretar
 
 # [SONDA/GRANDEZA] Tamanho fixo (bytes, incluindo terminador nulo) do id de
 # sonda por canal na v2 do cabeçalho -- precisa bater com
@@ -58,6 +67,9 @@ CABECALHO_KERNEL_TAMANHO = 32
 CABECALHO_SISTEMA_TAMANHO = 64
 CABECALHO_PLACA_TAMANHO = 32
 VALOR_DESCONHECIDO = 0xFFFFFFFF   # [v8] num campo numérico do sistema: o ler_adc não conseguiu ler
+# As esperas do CS (setup, hold, alto) que o firmware usa sem --atraso-cs, desde 21/10/2026: ATRASO_CS_*_PADRAO em
+# firmware/memoria_pru.h (tests/test_contrato_firmware.py confere). Até então eram 200/100/100.
+ATRASOS_CS_PADRAO = (3, 1, 3)
 
 # Format strings para struct.unpack, campo a campo -- espelham EXATAMENTE
 # 'struct cabecalho_arquivo_campos' em firmware/ler_adc.c (packed, sem
@@ -153,6 +165,29 @@ VALOR_DESCONHECIDO = 0xFFFFFFFF   # [v8] num campo numérico do sistema: o ler_a
 #   I    memoria_disponivel_kib       (MemAvailable do /proc/meminfo)
 #   I    header_crc32                 (byte 1020)
 # Nos campos numéricos do sistema, VALOR_DESCONHECIDO = não lido.
+#
+# v9 (11/11/2026): o cabeçalho passa a 4096 bytes. Os 1024 primeiros são os da v8, campo a campo (nada saiu nem mudou
+# de lugar; o header_crc32 continua no byte 1020 e passa a cobrir os 4096 bytes). Do byte 1024 em diante vem a extensão
+# (struct cabecalho_extensao_campos em ler_adc.c), e o resto é reserva, zerada, para os próximos campos:
+#   I    crc32_amostras               ([final] CRC-32 (zlib) de todas as amostras gravadas, na ordem do arquivo)
+#   Q    timestamp_fim_unix           ([final] o último bloco visto pronto; s, UTC)
+#   I    timestamp_fim_ns             ([final])
+#   I    pior_bloco_ms                ([final] o bloco que mais demorou no ARM: cópia, CRC e gravação)
+#   d    duracao_monotonica_s         ([final] de soltar a PRU ao último bloco visto pronto, pelo relógio monotônico)
+#   16s  id_captura                   (16 bytes aleatórios: identifica a captura mesmo com o arquivo renomeado)
+#   32s  hostname                     (uname -n: em qual BeagleBone)
+#   512s linha_de_comando             (os argumentos do ler_adc, como digitados)
+#   8d   ganho_por_canal              (ler_adc --ganho: unidades físicas por volt no pino; 0 = não declarado)
+#   8H   codigo_minimo                ([final] o sinal de cada canal em TODAS as amostras, em códigos do ADC)
+#   8H   codigo_maximo                ([final])
+#   8Q   amostras_saturadas           ([final] códigos 0 ou 65535)
+#   8d   media_codigos                ([final])
+#   8d   desvio_codigos               ([final] desvio padrão = RMS sem o DC, em LSB)
+# Os campos [final] só valem com blocos gravados (o cabeçalho final foi reescrito).
+_FORMATO_EXTENSAO_V9 = (f"<IQIId{CABECALHO_ID_TAMANHO}s{CABECALHO_HOSTNAME_TAMANHO}s{CABECALHO_COMANDO_TAMANHO}s"
+                        + f"{ADS8688_MAX_CANAIS}d" + f"{ADS8688_MAX_CANAIS}H" * 2 + f"{ADS8688_MAX_CANAIS}Q"
+                        + f"{ADS8688_MAX_CANAIS}d" * 2)
+_CONTAGENS_EXTENSAO_V9 = [1] * 8 + [ADS8688_MAX_CANAIS] * 6
 _FORMATO_CABECALHO_V1 = "<4sIIQIII8BIIIIIdQQ64s256sI"
 _FORMATO_CABECALHO_V2 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "I"
 _FORMATO_CABECALHO_V3 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "8BI"
@@ -289,6 +324,22 @@ class CabecalhoArquivo:
     divergencias_fase_c: int | None = None
     # [SISTEMA, v8] A BeagleBone no início da captura (ler_sistema em ler_adc.c). "" e None antes da v8, ou quando o
     # ler_adc não conseguiu ler o campo.
+    # [v9] A extensão. Os campos [final] (CRC, fim, pior bloco, duração e o sinal por canal) são None ou () antes da
+    # v9 e numa captura que não chegou ao cabeçalho final (0 blocos).
+    crc32_amostras: int | None = None                 # CRC-32 (zlib) das amostras: conferir_crc_das_amostras()
+    timestamp_fim_unix: int | None = None             # o último bloco visto pronto (s, UTC)
+    timestamp_fim_ns: int | None = None
+    pior_bloco_ms: int | None = None                  # o bloco que mais demorou no ARM (cópia, CRC e gravação)
+    duracao_monotonica_s: float | None = None         # de soltar a PRU ao último bloco, pelo relógio monotônico do ARM
+    id_captura: str = ""                              # 32 dígitos hexadecimais; "" antes da v9
+    hostname: str = ""
+    linha_de_comando: str = ""
+    ganho_por_canal: tuple[float | None, ...] = ()    # ler_adc --ganho, por posição de lista_canais; None = não declarado
+    codigo_minimo_por_canal: tuple[int, ...] = ()     # o sinal de cada canal em todas as amostras, em códigos do ADC
+    codigo_maximo_por_canal: tuple[int, ...] = ()
+    amostras_saturadas_por_canal: tuple[int, ...] = ()
+    media_codigos_por_canal: tuple[float, ...] = ()
+    desvio_codigos_por_canal: tuple[float, ...] = ()
     kernel: str = ""
     sistema_operacional: str = ""
     placa: str = ""
@@ -446,6 +497,22 @@ class CabecalhoArquivo:
             attrs["modo_spi"] = self.modo_spi
             attrs["divergencias_fase_a"] = self.divergencias_fase_a
             attrs["divergencias_fase_c"] = self.divergencias_fase_c
+        if self.versao_cabecalho >= 9:  # só v9+; -1 = não gravado (a captura não chegou ao cabeçalho final)
+            attrs["id_captura"] = self.id_captura
+            attrs["hostname"] = self.hostname
+            attrs["linha_de_comando"] = self.linha_de_comando
+            attrs["ganho_por_canal"] = np.array([g if g is not None else 0.0 for g in self.ganho_por_canal])
+            attrs["crc32_amostras"] = -1 if self.crc32_amostras is None else self.crc32_amostras
+            attrs["timestamp_fim_unix"] = -1 if self.timestamp_fim_unix is None else self.timestamp_fim_unix
+            attrs["timestamp_fim_ns"] = -1 if self.timestamp_fim_ns is None else self.timestamp_fim_ns
+            attrs["pior_bloco_ms"] = -1 if self.pior_bloco_ms is None else self.pior_bloco_ms
+            attrs["duracao_monotonica_s"] = -1.0 if self.duracao_monotonica_s is None else self.duracao_monotonica_s
+            if self.amostras_saturadas_por_canal:
+                attrs["codigo_minimo_por_canal"] = np.array(self.codigo_minimo_por_canal, dtype=np.uint16)
+                attrs["codigo_maximo_por_canal"] = np.array(self.codigo_maximo_por_canal, dtype=np.uint16)
+                attrs["amostras_saturadas_por_canal"] = np.array(self.amostras_saturadas_por_canal, dtype=np.uint64)
+                attrs["media_codigos_por_canal"] = np.array(self.media_codigos_por_canal)
+                attrs["desvio_codigos_por_canal"] = np.array(self.desvio_codigos_por_canal)
         if self.versao_cabecalho >= 8:  # só v8+; -1 = o ler_adc não conseguiu ler
             attrs["kernel"] = self.kernel
             attrs["sistema_operacional"] = self.sistema_operacional
@@ -480,6 +547,26 @@ class CabecalhoArquivo:
         linhas.append(f"disco da captura: {gib(self.disco_saida_livre_kib)} de {gib(self.disco_saida_total_kib)} GiB "
                       f"livres no início{fim}; disco do ler_adc: {gib(self.disco_programa_livre_kib)} de "
                       f"{gib(self.disco_programa_total_kib)} GiB livres")
+        return linhas
+
+    def descrever_sinal_por_canal(self) -> list[str]:
+        """[v9] Uma linha por canal com o que o ler_adc mediu em todas as amostras, em volts no pino do ADC (e na
+        grandeza física, se o ganho foi declarado na captura). Vazia antes da v9 ou sem o cabeçalho final."""
+        linhas = []
+        faixas = self.faixa_adc_total_v_por_canal
+        for i, canal in enumerate(self.lista_canais[:len(self.amostras_saturadas_por_canal)]):
+            faixa = faixas[i] if i < len(faixas) else None
+            if faixa is None:
+                continue
+            lsb = faixa / 65536.0
+            minimo = (self.codigo_minimo_por_canal[i] - 32768) * lsb
+            maximo = (self.codigo_maximo_por_canal[i] - 32768) * lsb
+            ganho = self.ganho_por_canal[i] if i < len(self.ganho_por_canal) else None
+            fisico = f" = {(maximo - minimo) * ganho:.5g} pico a pico com o ganho {ganho:g}" if ganho else ""
+            linhas.append(f"canal {canal}: de {minimo:+.4f} a {maximo:+.4f} V no pino ({maximo - minimo:.4f} Vpp{fisico}), "
+                          f"média {1e3 * (self.media_codigos_por_canal[i] - 32768) * lsb:+.2f} mV, "
+                          f"{1e3 * self.desvio_codigos_por_canal[i] * lsb:.3f} mV rms sem o DC, "
+                          f"{self.amostras_saturadas_por_canal[i]} saturada(s)")
         return linhas
 
     def descrever_grade(self) -> str | None:
@@ -534,6 +621,17 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
     try:
         with open(caminho, "rb") as f:
             bruto = f.read(CABECALHO_TAMANHO_TOTAL)
+            # [v9] O cabeçalho é maior que os 1024 bytes da parte fixa: o tamanho está no próprio cabeçalho (byte 8).
+            tamanho_total = CABECALHO_TAMANHO_TOTAL
+            if len(bruto) == CABECALHO_TAMANHO_TOTAL and bruto[:4] == CABECALHO_MAGIC \
+                    and struct.unpack_from("<I", bruto, 4)[0] >= 9:
+                (tamanho_total,) = struct.unpack_from("<I", bruto, 8)
+                if not (CABECALHO_TAMANHO_TOTAL + struct.calcsize(_FORMATO_EXTENSAO_V9) <= tamanho_total <= 1 << 20) \
+                        or tamanho_total % 2:
+                    log.warning(f"cabeçalho de '{caminho}': tamanho {tamanho_total} bytes não é plausível para a "
+                                f"versão 9; assumindo {CABECALHO_TAMANHO_V9}.")
+                    tamanho_total = CABECALHO_TAMANHO_V9
+                bruto += f.read(tamanho_total - CABECALHO_TAMANHO_TOTAL)
     except FileNotFoundError:
         return None  # deixa o erro "arquivo não encontrado" aparecer mais tarde, no carregamento de verdade (carregar_amostras)
 
@@ -740,6 +838,14 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
     faixa_adc_codigo_por_canal = tuple(faixa_adc_bytes[:num_canais]) if tem_faixa_adc else ()
 
     campos_sistema = _campos_do_sistema(sistema) if sistema is not None else {}
+    # [v9] A extensão, do byte 1024 em diante (se o arquivo foi cortado dentro do cabeçalho, fica sem ela e o CRC acusa).
+    campos_extensao = {}
+    if versao_cabecalho >= 9 and len(bruto) >= CABECALHO_TAMANHO_TOTAL + struct.calcsize(_FORMATO_EXTENSAO_V9):
+        campos_extensao = _campos_da_extensao(
+            _consumir(struct.unpack_from(_FORMATO_EXTENSAO_V9, bruto, CABECALHO_TAMANHO_TOTAL), _CONTAGENS_EXTENSAO_V9),
+            num_canais, blocos_gravados > 0)
+    # O deslocamento das amostras: até a v8 o cabeçalho tem sempre 1024 bytes (um campo corrompido não pode mudar isso).
+    tamanho_cabecalho = tamanho_total if versao_cabecalho >= 9 else CABECALHO_TAMANHO_TOTAL
 
     return CabecalhoArquivo(
         versao_cabecalho=versao_cabecalho,
@@ -778,8 +884,55 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
         modo_spi=spi[0],
         divergencias_fase_a=spi[1],
         divergencias_fase_c=spi[2],
+        **campos_extensao,
         **campos_sistema,
     )
+
+
+def _campos_da_extensao(partes: list, num_canais: int, tem_final: bool) -> dict[str, object]:
+    """Os campos da extensão da v9 (na ordem do arquivo) para o CabecalhoArquivo. ``tem_final``: o cabeçalho final foi
+    reescrito (há blocos gravados); sem ele, os campos [final] estão zerados e viram None ou ()."""
+    (crc, fim_s, fim_ns, pior_ms, duracao, id_captura, hostname, comando,
+     ganhos, minimos, maximos, saturadas, medias, desvios) = partes
+
+    def texto(bruto: bytes) -> str:
+        return bruto.split(b"\x00", 1)[0].decode("utf-8", errors="replace")
+
+    campos: dict[str, object] = {
+        "id_captura": id_captura.hex(),
+        "hostname": texto(hostname),
+        "linha_de_comando": texto(comando),
+        "ganho_por_canal": tuple(float(g) if g > 0 else None for g in ganhos[:num_canais]),
+    }
+    if tem_final:
+        campos.update(
+            crc32_amostras=crc, timestamp_fim_unix=fim_s, timestamp_fim_ns=fim_ns, pior_bloco_ms=pior_ms,
+            duracao_monotonica_s=float(duracao),
+            codigo_minimo_por_canal=tuple(minimos[:num_canais]), codigo_maximo_por_canal=tuple(maximos[:num_canais]),
+            amostras_saturadas_por_canal=tuple(saturadas[:num_canais]),
+            media_codigos_por_canal=tuple(float(m) for m in medias[:num_canais]),
+            desvio_codigos_por_canal=tuple(float(d) for d in desvios[:num_canais]),
+        )
+    return campos
+
+
+def conferir_crc_das_amostras(caminho: Path, cabecalho: CabecalhoArquivo) -> bool | None:
+    """True se as amostras de 'caminho' têm o CRC-32 gravado no cabeçalho (v9), False se não têm (o arquivo foi
+    corrompido, truncado ou editado depois da captura) e None se o cabeçalho não traz o CRC (até a v8, ou uma captura
+    que não chegou ao cabeçalho final). Lê o arquivo em blocos: memória constante, ~1 s por GiB."""
+    if cabecalho.crc32_amostras is None:
+        return None
+    restam = cabecalho.total_amostras_gravadas * max(cabecalho.bytes_por_amostra, 1)
+    crc = 0
+    with open(caminho, "rb") as f:
+        f.seek(cabecalho.tamanho_cabecalho)
+        while restam > 0:
+            bloco = f.read(min(restam, 1 << 24))
+            if not bloco:
+                return False                        # menos amostras que as do cabeçalho
+            crc = zlib.crc32(bloco, crc)
+            restam -= len(bloco)
+    return crc == cabecalho.crc32_amostras
 
 
 def _campos_do_sistema(sistema: tuple) -> dict[str, object]:
@@ -826,6 +979,10 @@ def imprimir_resumo_cabecalho(cabecalho: CabecalhoArquivo) -> None:
         log.info(f"  Firmware: {cabecalho.versao_firmware}")
     for linha in cabecalho.descrever_sistema():
         log.info(f"  BeagleBone: {linha}")
+    if cabecalho.id_captura:
+        log.info(f"  Captura {cabecalho.id_captura[:8]}-{cabecalho.id_captura[8:]}"
+                 + (f" em '{cabecalho.hostname}'" if cabecalho.hostname else "")
+                 + (f": ler_adc {cabecalho.linha_de_comando}" if cabecalho.linha_de_comando else ""))
     if cabecalho.titulo:
         log.info(f"  Título: {cabecalho.titulo}")
     if cabecalho.descricao:
@@ -850,7 +1007,8 @@ def imprimir_resumo_cabecalho(cabecalho: CabecalhoArquivo) -> None:
                  + ("" if n_buf is not None else " -- o nº de buffers só é gravado desde a v5; o firmware sempre usou 2"))
     if cabecalho.taxa_medida_hz is not None and fs_pru:
         log.info(f"  Taxa medida pelo ARM: {cabecalho.taxa_medida_hz:.0f} Hz "
-                 f"({(cabecalho.taxa_medida_hz / fs_pru - 1) * 100:+.3f} % da que a PRU gera; incerteza ~0,02 %)")
+                 f"({(cabecalho.taxa_medida_hz / fs_pru - 1) * 100:+.3f} % da que a PRU gera; o relógio do ARM tem "
+                 f"até 2 ms de atraso em cada ponta)")
     grade = cabecalho.descrever_grade()
     if grade:
         log.info(f"  Grade de tempo (PRU): {grade}")
@@ -872,11 +1030,22 @@ def imprimir_resumo_cabecalho(cabecalho: CabecalhoArquivo) -> None:
             partes.append(f"canal {canal}: ±{total_v / 2:g} V" if total_v is not None
                           else f"canal {canal}: código {codigo} (desconhecido)")
         log.info("  Faixa de entrada do ADC por canal: " + " | ".join(partes))
-    if cabecalho.atraso_cs_iteracoes and tuple(cabecalho.atraso_cs_iteracoes) != (200, 100, 100):
-        log.info("  Atrasos de CS da PRU: " + "/".join(str(a) for a in cabecalho.atraso_cs_iteracoes)
-                 + " iterações (o padrão validado é 200/100/100)")
+    if cabecalho.atraso_cs_iteracoes and tuple(cabecalho.atraso_cs_iteracoes) != ATRASOS_CS_PADRAO:
+        log.info("  Esperas do CS na PRU: " + "/".join(str(a) for a in cabecalho.atraso_cs_iteracoes)
+                 + " iterações de 10 ns (o padrão do firmware é "
+                 + "/".join(str(a) for a in ATRASOS_CS_PADRAO) + ", o mínimo do datasheet, desde 21/10/2026)")
     for problema in cabecalho.problemas_integridade:
         log.warning(f"integridade da captura: {problema}.")
+    # [v9] O sinal de cada canal, medido pelo ler_adc em TODAS as amostras, e a saturação.
+    for linha in cabecalho.descrever_sinal_por_canal():
+        log.info(f"  Sinal do {linha}")
+    for canal, saturadas in zip(cabecalho.lista_canais, cabecalho.amostras_saturadas_por_canal):
+        if saturadas:
+            log.warning(f"o canal {canal} SATUROU em {saturadas} amostra(s) (códigos 0 ou 65535): o que passa do fundo "
+                        f"de escala foi cortado, e o espectro ganha harmônicos que não existem no sinal.")
+    if cabecalho.duracao_monotonica_s is not None and cabecalho.pior_bloco_ms is not None:
+        log.info(f"  ARM: {cabecalho.duracao_monotonica_s:.3f} s da largada ao último bloco; o bloco mais lento levou "
+                 f"{cabecalho.pior_bloco_ms} ms (cópia, CRC e gravação)")
     if cabecalho.total_amostras_gravadas > 0:
         duracao_real = cabecalho.duracao_real_segundos
         texto_duracao = f"{duracao_real:.3f} s reais" if duracao_real is not None else "duração real desconhecida"

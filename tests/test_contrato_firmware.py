@@ -57,7 +57,9 @@ def max_canais_c() -> int | None:
 def test_constantes_numericas_do_cabecalho(defines):
     assert defines["CABECALHO_MAGIC"].strip('"').encode() == cab.CABECALHO_MAGIC
     assert inteiro_c(defines["CABECALHO_VERSAO"]) == cab.CABECALHO_VERSAO_SUPORTADA
-    assert inteiro_c(defines["CABECALHO_TAMANHO_TOTAL"]) == cab.CABECALHO_TAMANHO_TOTAL
+    # [v9] O cabeçalho tem 4096 bytes; os 1024 primeiros são os da v8 (CABECALHO_TAMANHO_TOTAL no Python: a parte fixa).
+    assert inteiro_c(defines["CABECALHO_TAMANHO_TOTAL"]) == cab.CABECALHO_TAMANHO_V9
+    assert inteiro_c(defines["CABECALHO_TAMANHO_V8"]) == cab.CABECALHO_TAMANHO_TOTAL
     assert inteiro_c(defines["CABECALHO_SONDA_ID_TAMANHO"]) == cab.CABECALHO_SONDA_ID_TAMANHO
 
 
@@ -87,9 +89,21 @@ def formato_struct_c(fonte_c: str, defines: dict[str, str]) -> list[tuple[str, i
             return max_canais
         return inteiro_c(defines[expr]) if expr in defines else inteiro_c(expr)
 
-    tipos = {"uint32_t": "I", "uint64_t": "Q", "double": "d", "uint8_t": "B", "char": "s"}
+    return _campos_do_corpo(corpo.group(1), defines)
+
+
+def _campos_do_corpo(corpo: str, defines: dict[str, str]) -> list[tuple[str, int]]:
+    max_canais = max_canais_c() or const.ADS8688_MAX_CANAIS
+
+    def valor(expr: str) -> int:
+        expr = expr.strip()
+        if expr == "ADS8688_MAX_CANAIS":
+            return max_canais
+        return inteiro_c(defines[expr]) if expr in defines else inteiro_c(expr)
+
+    tipos = {"uint32_t": "I", "uint64_t": "Q", "double": "d", "uint8_t": "B", "char": "s", "uint16_t": "H"}
     campos: list[tuple[str, int]] = []
-    for linha in corpo.group(1).split(";"):
+    for linha in corpo.split(";"):
         linha = linha.strip()
         if not linha:
             continue
@@ -132,6 +146,39 @@ def test_layout_da_struct_v8_bate_com_o_formato_python(fonte_c, defines):
                  "CABECALHO_KERNEL_TAMANHO", "CABECALHO_SISTEMA_TAMANHO", "CABECALHO_PLACA_TAMANHO",
                  "VALOR_DESCONHECIDO"):
         assert inteiro_c(defines[nome]) == getattr(cab, nome), nome
+
+
+def test_extensao_da_v9_bate_com_o_formato_python_e_cabe_nos_4096_bytes(fonte_c, defines):
+    """Do byte 1024 em diante, a v9 tem a struct cabecalho_extensao_campos e a reserva; o Python lê a extensão com
+    _FORMATO_EXTENSAO_V9. (O id_captura é uint8_t[16] no C e '16s' no Python: os mesmos 16 bytes.)"""
+    import struct
+    corpo = re.search(r"struct\s+cabecalho_extensao_campos\s*\{(.*?)\}\s*__attribute__\(\(packed\)\)", fonte_c, re.S)
+    assert corpo, "struct cabecalho_extensao_campos (packed) não encontrada em ler_adc.c"
+    c = normalizar(_campos_do_corpo(corpo.group(1), defines))
+    py = normalizar(formato_struct_python(cab._FORMATO_EXTENSAO_V9))
+    em_bytes = {"I": 4, "Q": 8, "d": 8, "B": 1, "H": 2}
+
+    def tamanhos(campos):                              # só os tamanhos, na ordem: uint8_t[16] e '16s' são 16 bytes
+        saida, pendente = [], 0
+        for codigo, n in campos:
+            if codigo == "B":
+                pendente += 1
+                continue
+            if pendente:
+                saida.append(pendente)
+                pendente = 0
+            saida.append(n if codigo == "s" else em_bytes[codigo])
+        return saida + ([pendente] if pendente else [])
+    assert tamanhos(c) == tamanhos(py)
+    extensao = struct.calcsize(cab._FORMATO_EXTENSAO_V9)
+    assert cab.CABECALHO_TAMANHO_TOTAL + extensao <= cab.CABECALHO_TAMANHO_V9      # o resto é reserva
+    for nome in ("CABECALHO_ID_TAMANHO", "CABECALHO_HOSTNAME_TAMANHO", "CABECALHO_COMANDO_TAMANHO"):
+        assert inteiro_c(defines[nome]) == getattr(cab, nome), nome
+    # as esperas de CS padrão que o resumo do cabeçalho cita são as do firmware
+    h = _memoria_pru_sem_comentarios()
+    padrao = tuple(inteiro_c(re.search(rf"#\s*define\s+ATRASO_CS_{n}_PADRAO\s+(\w+)", h).group(1))
+                   for n in ("SETUP", "HOLD", "ALTO"))
+    assert padrao == cab.ATRASOS_CS_PADRAO
 
 
 def test_v8_ocupa_os_1024_bytes_e_mantem_os_campos_da_v7_do_byte_404_ao_771():
@@ -257,7 +304,8 @@ def test_offsets_do_cabecalho_usados_pelo_coletar_conferir(fonte_c, defines):
     assert posicao == cab.CABECALHO_TAMANHO_TOTAL
     sh = (FIRMWARE / "coleta" / "comum.sh").read_text(encoding="utf-8")
     usados = {m.group(1): int(m.group(2)) for m in re.finditer(r"^(CAB_\w+)=(\d+)", sh, re.M)}
-    assert usados == {"CAB_VERSAO": offsets["versao_cabecalho"], "CAB_INSTANTE": offsets["timestamp_unix"],
+    assert usados == {"CAB_VERSAO": offsets["versao_cabecalho"], "CAB_TAMANHO": offsets["tamanho_cabecalho"],
+                      "CAB_INSTANTE": offsets["timestamp_unix"],
                       "CAB_KERNEL": offsets["kernel"], "CAB_RELOGIO": offsets["relogio_sincronizado"],
                       "CAB_VERSAO_FIRMWARE": offsets["versao_firmware"],
                       "CAB_PROTOCOLO_PRU": offsets["versao_protocolo_pru"],

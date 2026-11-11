@@ -843,12 +843,13 @@ while i < len(args):
     opcoes[args[i]] = args[i + 1]
     i += 2
 faixas = dict((int(c), float(v)) for c, v in (p.split(":") for p in opcoes.get("--faixa-adc", "").split(",") if p))
-# FALSO_CABECALHO_V8: um cabeçalho v8, com o sistema de FALSO_SISTEMA (as chaves de capturas_sinteticas.SISTEMA_PADRAO
+# FALSO_CABECALHO_V8: um cabeçalho v8 (ou, com o valor 9, v9: 4096 bytes), com o sistema de FALSO_SISTEMA (as chaves de capturas_sinteticas.SISTEMA_PADRAO
 # que mudam, em JSON) e a versão do firmware de FALSO_VERSAO.
 v8 = {{}}
 if os.environ.get("FALSO_CABECALHO_V8"):
     import json
-    v8 = dict(versao=8, grade=(18, 0, 7, int(os.environ.get("FALSO_PROTOCOLO", "5"))),
+    v8 = dict(versao=int(os.environ["FALSO_CABECALHO_V8"]) if os.environ["FALSO_CABECALHO_V8"] == "9" else 8,
+              grade=(18, 0, 7, int(os.environ.get("FALSO_PROTOCOLO", "5"))),
               versao_firmware=os.environ.get("FALSO_VERSAO", "v9.9"),
               sistema=json.loads(os.environ.get("FALSO_SISTEMA", "{{}}")))
 blocos = int(opcoes.get("--blocos", "2"))
@@ -1138,6 +1139,20 @@ def test_coletar_conferir_alerta_o_que_o_cabecalho_v8_nao_trouxe(coleta):
     assert "disco das capturas quase cheio: 0.1 GiB livres" in r.stdout
     assert "o ler_adc grava a versão 'v9.8-3-gabc1234', e a desta pasta é 'v9.9'" in r.stdout
     assert "a PRU é do protocolo 4" in r.stdout and "Pronto para capturar" in r.stdout
+
+
+def test_coletar_le_as_amostras_depois_do_cabecalho_de_4096_bytes_da_v9(coleta):
+    """O cabeçalho v9 tem 4096 bytes: os scripts leem o tamanho no próprio cabeçalho. Com os 1024 fixos de antes, as
+    1536 primeiras "amostras" seriam bytes do cabeçalho (zeros da reserva: o canal pareceria saturado em 0)."""
+    r = coleta("conferir", "--esperado-vpp", "0.8", "--esperado-hz", "1220.703125", FALSO_CABECALHO_V8=9,
+               SINAL_F="1220.703125")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "canal 1: 0.80" in r.stdout and "offset +2.6" in r.stdout and "saturou" not in r.stdout
+    assert "placa A335BNLT 00C0 3714BBBK1234" in r.stdout and "a frequência bate com a esperada" in r.stdout
+    r = coleta(*CALIBRAR_256, entrada="\n", SINAL_VPP=20 / DIVISOR, SINAL_F=256, FALSO_CABECALHO_V8=9)
+    assert r.returncode == 0 and "O sinal não é o esperado" not in r.stdout, r.stdout + r.stderr
+    (pasta,) = coleta.pasta.glob("CAL_*")
+    assert [linha["sinal"] for linha in _resumo(pasta)] == ["ok"]
 
 
 def test_coletar_teto_varre_em_frequencia_e_recomenda_a_taxa_de_trabalho(varredura):

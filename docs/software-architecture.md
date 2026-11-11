@@ -9,7 +9,7 @@ Guia para quem vai **modificar** o código Python do projeto. Cobre: onde cada c
 ## 1. Visão geral em 30 segundos
 
 ```
-firmware/ler_adc  ──grava──▶  captura.bin  (cabeçalho "SHAN" de 1024 B + amostras uint16 intercaladas)
+firmware/ler_adc  ──grava──▶  captura.bin  (cabeçalho "SHAN" de 4096 B + amostras uint16 intercaladas)
                                    │
 firmware/coletar.sh sonda ──▶ capturas/<sonda>/calibracao_*.bin   (os outros modos: CAL_*, ALS_*, RUIDO_*, TETO_*, T7*_)
                                    │
@@ -81,7 +81,7 @@ Camada = quem pode importar quem (um módulo só importa camadas **menores**).
 | 0 | `erros` | Hierarquia de exceções | `ErroSHAN`, `ErroUso` |
 | 0 | `constantes` | Constantes compartilhadas (inclusive as que espelham o firmware) | `FORMATOS_NUMPY`, `GRANDEZA_*`, `ADS8688_MAX_CANAIS`, defaults de Welch/filtro |
 | 0 | `registro` | Liga o `logging` ao console no formato histórico (stdout/stderr) | `configurar_logging_cli` |
-| 1 | `cabecalho` | Lê/valida o cabeçalho "SHAN" v1 a v8 (magic, CRC-32, campos, faixa do ADC por canal, contadores de integridade, versão do firmware, taxa medida pelo ARM, a grade de tempo publicada pela PRU, o modo do SPI e as divergências; na v8, o sistema, a placa, o relógio e o disco da BeagleBone; consistência); a taxa que a PRU gera (`frequencia_pru_hz` = clock ÷ ticks) | `ler_cabecalho`, `CabecalhoArquivo`, `conferir_consistencia_cabecalho` |
+| 1 | `cabecalho` | Lê/valida o cabeçalho "SHAN" v1 a v9 (4096 bytes desde a v9: as amostras começam em `CabecalhoArquivo.tamanho_cabecalho`; a extensão da v9 traz o CRC-32 das amostras, `conferir_crc_das_amostras`, o ganho declarado e o sinal de cada canal) (magic, CRC-32, campos, faixa do ADC por canal, contadores de integridade, versão do firmware, taxa medida pelo ARM, a grade de tempo publicada pela PRU, o modo do SPI e as divergências; na v8, o sistema, a placa, o relógio e o disco da BeagleBone; consistência); a taxa que a PRU gera (`frequencia_pru_hz` = clock ÷ ticks) | `ler_cabecalho`, `CabecalhoArquivo`, `conferir_consistencia_cabecalho` |
 | 1 | `amostras` | Lê `.bin` (memmap) e `.csv`; código → volts; acha o transitório de uma troca de faixa no começo de um canal | `carregar_amostras_bin`, `converter_para_tensao`, `selecionar_intervalo`, `detectar_transitorio_inicial` |
 | 1 | `canais` | Listas de canais/calibração, desintercalação, offsets, `--faixa` por canal | `analisar_lista_canais`, `desintercalar`, `resolver_faixas`, `resolver_offsets_por_canal` |
 | 1 | `filtros` | Butterworth SOS, fase zero | `aplicar_filtro_digital`, `validar_corte_filtro` |

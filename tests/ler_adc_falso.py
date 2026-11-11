@@ -36,7 +36,8 @@ Variáveis de ambiente:
     cab_v2           cabeçalho versão 2 (firmware antigo: sem a faixa do ADC; ``--faixa-adc`` é recusada)
     cab_v3           cabeçalho versão 3 (firmware anterior aos contadores de integridade)
     cab_v4           cabeçalho versão 4 (firmware anterior à versão do firmware no cabeçalho)
-    cab_v8           cabeçalho versão 8 (o atual: título e descrição maiores, o sistema e o disco)
+    cab_v8           cabeçalho versão 8 (título e descrição maiores, o sistema e o disco)
+    cab_v9           cabeçalho versão 9 (o atual: o da v8 com o CRC-32 das amostras)
     atrasada         cabeçalho v4 com 5000 amostras atrasadas (taxa acima do que a PRU alcança)
     sobrescrita      cabeçalho v4 com 1 buffer sobrescrito (amostras perdidas)
     preambulo        cabeçalho v4 com 3 quadros com ruído no SDO
@@ -173,16 +174,23 @@ def main(argv: list[str]) -> int:
         grandezas = [CODIGO_GRANDEZA["tensao"]] * k
     if diretiva == "grandeza_corrente":
         grandezas = [CODIGO_GRANDEZA["corrente"]] * k
-    versao = {"cab_v1": 1, "cab_v2": 2, "cab_v3": 3, "cab_v4": 4, "cab_v8": 8}.get(diretiva, 5)
+    versao = {"cab_v1": 1, "cab_v2": 2, "cab_v3": 3, "cab_v4": 4, "cab_v8": 8, "cab_v9": 9}.get(diretiva, 5)
     if diretiva == "faixa_errada":
         codigos_faixa = [(c + 1) % 3 for c in codigos_faixa]           # o cabeçalho diz outra faixa que a pedida
     cabecalho = bytearray(montar_cabecalho(n_por_canal, canais, grandezas, sondas, taxa, versao=versao, titulo=titulo,
                                          descricao=descricao, codigos_faixa_adc=codigos_faixa,
                                          integridade=INTEGRIDADE.get(diretiva, (0, 0, 0)),
+                                         crc_amostras=zlib.crc32(amostras),
+                                         extensao={"minimos": [int(intercalado[i::k].min()) for i in range(k)],
+                                                   "maximos": [int(intercalado[i::k].max()) for i in range(k)],
+                                                   "saturadas": [0] * k,
+                                                   "medias": [float(intercalado[i::k].mean()) for i in range(k)],
+                                                   "desvios": [float(intercalado[i::k].std()) for i in range(k)]},
                                          atrasos_cs=(1, 1, 1) if diretiva == "atraso_errado" else atrasos_cs))
     struct.pack_into("<I", cabecalho, 40, spb)  # samples_per_buffer
     if versao >= 2:
-        offset_crc = {2: OFFSET_CRC_V2, 3: OFFSET_CRC_V3, 4: OFFSET_CRC_V4, 8: OFFSET_CRC_V8}.get(versao, OFFSET_CRC_V5)
+        offset_crc = {2: OFFSET_CRC_V2, 3: OFFSET_CRC_V3, 4: OFFSET_CRC_V4, 8: OFFSET_CRC_V8,
+                      9: OFFSET_CRC_V8}.get(versao, OFFSET_CRC_V5)
         struct.pack_into("<Q", cabecalho, OFFSET_BLOCOS, 0 if diretiva == "cab_zero" else blocos)
         struct.pack_into("<I", cabecalho, offset_crc, 0)
         crc = zlib.crc32(bytes(cabecalho))

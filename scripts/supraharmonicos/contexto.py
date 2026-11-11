@@ -27,7 +27,6 @@ from pathlib import Path
 import numpy as np
 
 from .cabecalho import (
-    CABECALHO_TAMANHO_TOTAL,
     CabecalhoArquivo,
     conferir_consistencia_cabecalho,
     contar_amostras_arquivo_bin,
@@ -121,7 +120,7 @@ def resolver_contexto(args: argparse.Namespace) -> ContextoCaptura:
     if caminho_entrada is not None and caminho_entrada.suffix.lower() == ".bin" and caminho_entrada.exists():
         cabecalho = ler_cabecalho(caminho_entrada)
         if cabecalho is not None:
-            offset_amostras = CABECALHO_TAMANHO_TOTAL
+            offset_amostras = cabecalho.tamanho_cabecalho      # 1024 até a v8; 4096 na v9
 
     # --canais: explícito (CLI) > cabeçalho da captura > padrão histórico.
     if args.canais is not None:
@@ -149,7 +148,16 @@ def resolver_contexto(args: argparse.Namespace) -> ContextoCaptura:
     if cabecalho is not None and len(cabecalho.lista_canais) == len(canais):
         faixas_cabecalho = cabecalho.faixa_adc_total_v_por_canal
     faixas, faixas_confiaveis = resolver_faixas(args.faixa, canais, args.formato, faixas_cabecalho)
-    ganhos = analisar_lista_calibracao(args.ganho, len(canais), "--ganho")
+    # --ganho: explícito (CLI) > o declarado na captura (ler_adc --ganho, cabeçalho v9) > 1.0 (volts no pino).
+    if args.ganho is not None:
+        ganhos = analisar_lista_calibracao(args.ganho, len(canais), "--ganho")
+    else:
+        declarados = cabecalho.ganho_por_canal if cabecalho is not None and len(cabecalho.lista_canais) == len(canais) else ()
+        ganhos = [float(g) if g else 1.0 for g in declarados] or [1.0] * len(canais)
+        if any(declarados):
+            log.info("Ganho por canal: o declarado na captura (ler_adc --ganho) -- "
+                     + ", ".join(f"canal {c}: {g:g}" if g else f"canal {c}: 1 (não declarado)"
+                                 for c, g in zip(canais, declarados)))
     offsets = resolver_offsets_por_canal(args.offset, faixas, args.formato, len(canais))
 
     # --grandeza/--sonda-perfil: mesma hierarquia de 3 níveis, mas resolvida

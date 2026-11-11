@@ -142,6 +142,10 @@ e, no fim:
   sem resposta e 5 captura **interrompida** por um sinal (Ctrl+C, `kill`, a queda da conexão) antes dos blocos
   pedidos: o arquivo fecha inteiro, mas mais curto (com `--blocos 0`, "até Ctrl+C", o código é 0). O `coletar.sh`
   refaz uma captura assim no `--continuar`.
+* **O sinal de cada canal no resumo** (cabeçalho versão 9): `Canal 1  de -0.5142 a +0.5194 V no pino (1.0336 Vpp), média
+  +2.73 mV, 365.5 mV rms sem o DC`, medido em todas as amostras, e um aviso se alguma bateu no fundo de escala
+  (`o canal 1 SATUROU`). Com `--ganho C:G` (ex.: `--ganho 1:19.357,0:19.65`), o ganho de cada canal fica no cabeçalho
+  e a análise o usa sem ninguém digitar de novo.
 * **Capturas longas:** o arquivo pode passar de 2 GiB (~45 min a 400 kS/s; desde 11/11/2026), e no fim o `ler_adc`
   manda os dados para o cartão (`fsync`) antes de dizer `Captura concluída`. Um `SIGHUP` que já chega ignorado
   (`nohup`, ou o `coletar.sh`) não interrompe a captura.
@@ -389,7 +393,7 @@ uv run scripts/adc_tool.py captura.bin --export-hdf5 captura.h5 --incluir-tensao
 
 * O **HDF5** tem `/amostras` (códigos brutos, matriz amostras × canais) e, com `--incluir-tensao`, `/tensao_v` (em Volts). Junto, sem mexer nesses dados:
   * todos os campos do cabeçalho como atributos da raiz, mais a taxa que a PRU gera (`frequencia_pru_hz`), o trecho exportado, a versão do código e `correcao_sonda_aplicada_por_canal` (sempre 0: `/tensao_v` não é corrigida pela sonda);
-  * `/cabecalho_bruto`: os 1024 bytes do cabeçalho do `.bin`, como gravados (nada do `.bin` se perde, nem um campo que esta versão não conheça);
+  * `/cabecalho_bruto`: os bytes do cabeçalho do `.bin` (1024 até a versão 8, 4096 na 9), como gravados (nada do `.bin` se perde, nem um campo que esta versão não conheça);
   * `/sondas/canalN`, para cada canal com sonda registrada (no cabeçalho ou por `--sonda-perfil`; `--sondas-dir` diz onde procurar): o JSON do perfil, inteiro (`perfil_json`), os pontos (`freq_hz`, `ganho`), a data de calibração, o SHA-256 do arquivo e, em `como_aplicar`, a receita da correção. Com isso, quem tem só o `.h5` aplica a correção no MATLAB ou no Python sem procurar o arquivo de sonda. Perfil não encontrado: o HDF5 sai sem ele, com aviso.
 
   No MATLAB: `h5read('c.h5','/amostras')`, `h5readatt('c.h5','/','frequencia_pru_hz')`, `jsondecode(h5readatt('c.h5','/sondas/canal1','perfil_json'))`. O arquivo é escrito em blocos, então funciona mesmo com capturas de dezenas de GB.
@@ -976,7 +980,7 @@ uv run scripts/compactar_amostras.py verificar $P               # confere o paco
 
 ## O arquivo `.bin`
 
-Um `.bin` é um **cabeçalho fixo de 1024 bytes** seguido das **amostras brutas** (2 bytes cada, intercaladas por canal: com N canais, a amostra `i` pertence ao canal `lista_canais[i % N]`).
+Um `.bin` é um **cabeçalho de 4096 bytes** (1024 até a versão 8; o tamanho está no próprio cabeçalho) seguido das **amostras brutas** (2 bytes cada, intercaladas por canal: com N canais, a amostra `i` pertence ao canal `lista_canais[i % N]`).
 
 O cabeçalho começa com o texto `SHAN` e termina com um **CRC-32**; se o `adc_tool.py` perceber que o CRC não confere (arquivo truncado ou corrompido), ele avisa. Campos principais:
 
@@ -1001,6 +1005,11 @@ O cabeçalho começa com o texto `SHAN` e termina com um **CRC-32**; se o `adc_t
 | `placa`, `sistema_operacional`, `kernel` | A BeagleBone da captura: modelo, revisão e nº de série (da EEPROM), a imagem do sistema e o kernel (versão 8). O nº de série separa uma placa da outra: o erro do cristal, e da taxa, é de cada uma |
 | `relogio_sincronizado`, `timestamp_ns` | Se o relógio estava sincronizado por NTP (sem isso a data pode estar errada: a placa não tem RTC) e a fração de segundo do início (versão 8) |
 | `uptime_s`, `carga_1min`, `memoria_disponivel_kib` | Há quanto tempo a placa estava ligada, a carga do ARM e a memória disponível no início (versão 8) |
+| `crc32_amostras` | O CRC-32 de todas as amostras gravadas (versão 9). O `adc_tool.py info` o confere contra o arquivo: diz se a captura no computador é, bit a bit, a que a BeagleBone gravou (cópia interrompida, disco com defeito, arquivo editado) |
+| `id_captura`, `hostname`, `linha_de_comando` | Um identificador aleatório por captura (continua valendo se o arquivo for renomeado), a BeagleBone e os argumentos exatos do `ler_adc` (versão 9) |
+| `ganho_por_canal` | O `--ganho` declarado no `ler_adc` (unidades físicas por volt no pino: 19.357 no divisor de tensão, 19.65 na sonda de corrente). É o padrão do `--ganho` do `adc_tool.py` e do `medir_captura.py` (versão 9) |
+| `codigo_minimo/maximo_por_canal`, `media/desvio_codigos_por_canal`, `amostras_saturadas_por_canal` | O sinal de cada canal medido pelo `ler_adc` em **todas** as amostras: pico a pico, média, RMS sem o DC e quantas bateram no fundo de escala (versão 9). O `ler_adc` avisa a saturação no fim da captura |
+| `timestamp_fim_*`, `duracao_monotonica_s`, `pior_bloco_ms` | Quando o último bloco ficou pronto, quanto a captura durou pelo relógio do ARM e o bloco que mais demorou para ser copiado e gravado (versão 9) |
 | `disco_saida_*_kib`, `disco_programa_*_kib` | Total e livre (como o `df`) do disco do `.bin`, no início e no fim, e do disco onde está o `ler_adc` (versão 8). O `ler_adc` avisa antes de começar se o disco não comporta a captura |
 | `header_crc32` | Detecta corrupção do cabeçalho |
 

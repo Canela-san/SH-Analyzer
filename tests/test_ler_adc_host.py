@@ -217,7 +217,12 @@ int main(int argc, char **argv) {
     struct contadores_integridade n = {atrasadas, 0, 0, atrasadas ? 0 : 18, atrasadas ? 77 : 0,
                                        (uint32_t)atoi(argv[3]), (uint32_t)atoi(argv[4])};
     unsigned long long blocos = (unsigned long long)atoi(argv[5]);
-    struct resultado r = {blocos, blocos * SAMPLES_PER_BUFFER, blocos >= 2 ? 399931.0 : 0.0, 0.15, 0, 0, 0};
+    struct resultado r;
+    memset(&r, 0, sizeof(r));
+    r.blocos = blocos;
+    r.amostras = blocos * SAMPLES_PER_BUFFER;
+    r.taxa_medida = blocos >= 2 ? 399931.0 : 0.0;
+    r.pior_gravacao_s = 0.15;
     imprimir_resultado(&c, &ctrl, &n, &r);
     return 0;
 }

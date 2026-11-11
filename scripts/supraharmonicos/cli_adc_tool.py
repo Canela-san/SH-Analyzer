@@ -455,8 +455,9 @@ def montar_parser() -> argparse.ArgumentParser:
              "que não registram a faixa, usam a de reset do ADC, 20.48 (±10,24 V)."
     )
     parser.add_argument(
-        "--ganho", type=str, default="1.0", metavar="FATOR",
-        help="Ganho do sensor/PCB (padrão: 1.0). Um valor ou lista por canal."
+        "--ganho", type=str, default=None, metavar="FATOR",
+        help="Ganho do sensor/PCB: unidades físicas por volt no pino do ADC (ex.: 19.357 no divisor de tensão). Um "
+             "valor ou lista por canal. Padrão: o declarado na captura (ler_adc --ganho, cabeçalho v9) ou 1.0."
     )
     parser.add_argument(
         "--offset", type=str, default=None, metavar="VOLTS",

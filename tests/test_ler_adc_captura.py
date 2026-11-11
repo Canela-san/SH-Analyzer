@@ -29,6 +29,7 @@ from supraharmonicos import cabecalho as cab
 pytestmark = pytest.mark.skipif(not tem_gcc(), reason="sem gcc no computador")
 
 TAMANHO_BLOCO = 2 * AMOSTRAS_POR_BLOCO
+CABECALHO = cab.CABECALHO_TAMANHO_V9          # o ler_adc grava a v9: 4096 bytes antes das amostras
 
 
 @pytest.fixture(scope="module")
@@ -54,7 +55,7 @@ def capturar(ler_adc, placa, *args, pru=None, **opcoes_da_pru):
 
 
 def blocos_do_arquivo(caminho) -> list[np.ndarray]:
-    dados = np.fromfile(caminho, dtype="<u2", offset=cab.CABECALHO_TAMANHO_TOTAL)
+    dados = np.fromfile(caminho, dtype="<u2", offset=CABECALHO)
     return [dados[i:i + AMOSTRAS_POR_BLOCO] for i in range(0, len(dados), AMOSTRAS_POR_BLOCO)]
 
 
@@ -75,12 +76,12 @@ def test_captura_inteira_o_que_a_pru_recebe_e_o_que_o_bin_guarda(ler_adc, placa)
     assert c["modo_spi"] == 2 and c["buffer_0_ready"] == 0 and c["buffer_1_ready"] == 0
 
     # O arquivo: cabeçalho + 3 blocos inteiros, na ordem em que a PRU os encheu (buffers 0, 1, 0).
-    assert saida.stat().st_size == cab.CABECALHO_TAMANHO_TOTAL + 3 * TAMANHO_BLOCO
+    assert saida.stat().st_size == CABECALHO + 3 * TAMANHO_BLOCO
     for k, bloco in enumerate(blocos_do_arquivo(saida)):
         assert np.array_equal(bloco, bloco_esperado(k)), f"bloco {k}"
 
     h = cab.ler_cabecalho(saida)
-    assert h.versao_cabecalho == 8 and h.frequencia_hz == 400000 and h.sample_period_ticks == 500
+    assert h.versao_cabecalho == 9 and h.frequencia_hz == 400000 and h.sample_period_ticks == 500
     assert h.lista_canais[:2] == (0, 1) and h.num_canais == 2                 # ordem crescente: a da varredura
     assert h.blocos_gravados == 3 and h.total_amostras_gravadas == 3 * AMOSTRAS_POR_BLOCO
     assert (h.amostras_atrasadas, h.buffers_sobrescritos, h.quadros_preambulo_ruim) == (0, 0, 0)
@@ -89,6 +90,7 @@ def test_captura_inteira_o_que_a_pru_recebe_e_o_que_o_bin_guarda(ler_adc, placa)
     assert h.titulo == "título é UTF-8" and h.descricao == "ref: f=1000Hz"
     assert h.versao_firmware == "teste-placa-falsa" and h.modo_spi == 2
     assert h.kernel and h.disco_saida_total_kib and h.disco_saida_livre_fim_kib is not None    # o sistema, de verdade
+    assert h.tamanho_cabecalho == CABECALHO and h.primeira_amostra_descartada is False
     assert placa.remoteproc.read_text().startswith("stop")                    # a PRU não fica ligada depois
 
 
@@ -161,7 +163,7 @@ def test_captura_cortada_por_um_sinal_fecha_o_arquivo_e_sai_com_o_codigo_5(ler_a
     assert "Captura interrompida antes do fim" in stdout
     h = cab.ler_cabecalho(saida)
     assert 1 <= h.blocos_gravados < 200          # a PRU já tinha enchido 2; o ARM pode estar 1 atrás
-    assert saida.stat().st_size == cab.CABECALHO_TAMANHO_TOTAL + h.blocos_gravados * TAMANHO_BLOCO
+    assert saida.stat().st_size == CABECALHO + h.blocos_gravados * TAMANHO_BLOCO
     assert placa.remoteproc.read_text().startswith("stop")
 
 
@@ -204,7 +206,7 @@ def test_a_taxa_medida_nao_depende_de_quanto_o_disco_demora(ler_adc, placa, tmp_
 
     def leitor_lento():
         with open(pipe, "rb") as f:
-            restam = cab.CABECALHO_TAMANHO_TOTAL + TAMANHO_BLOCO
+            restam = CABECALHO + TAMANHO_BLOCO
             while restam > 0:                                  # o cabeçalho e o 1º bloco, devagar
                 restam -= len(f.read(min(restam, 262144)))
                 time.sleep(0.015)
@@ -226,8 +228,9 @@ def test_a_taxa_medida_nao_depende_de_quanto_o_disco_demora(ler_adc, placa, tmp_
 
 
 def test_erro_ao_fechar_o_arquivo_nao_passa_em_silencio(ler_adc, placa):
-    """O cabeçalho (1024 bytes) fica no buffer do stdio até o arquivo ser fechado. Num disco cheio (/dev/full), a
-    escrita só falha ali: sem conferir o fclose, a captura 'terminava' com um arquivo vazio e sem nenhum erro."""
+    """Num disco cheio (/dev/full) nada é gravado. Com o cabeçalho de 1024 bytes (até a v8), ele ficava no buffer do
+    stdio até o fclose, que não era conferido: a captura 'terminava' com um arquivo vazio e sem nenhum erro. Com o de
+    4096 bytes a escrita já falha no cabeçalho; nos dois casos, é erro (código 1)."""
     if not os.path.exists("/dev/full"):
         pytest.skip("sem /dev/full")
     pru = placa.pru(max_blocos=0)                              # nenhum bloco: só o cabeçalho é escrito
@@ -243,4 +246,64 @@ def test_erro_ao_fechar_o_arquivo_nao_passa_em_silencio(ler_adc, placa):
     finally:
         processo.kill()
         pru.parar()
-    assert processo.returncode == 1 and "não deu para terminar de gravar" in stderr, stderr
+    assert processo.returncode == 1, stderr
+    assert "não deu para terminar de gravar" in stderr or "não deu para gravar o cabeçalho" in stderr, stderr
+
+
+# --------------------------------------------------------------------------------------
+# [11/11/2026] Cabeçalho v9: a extensão que o ler_adc grava
+# --------------------------------------------------------------------------------------
+def test_v9_o_crc_das_amostras_a_identificacao_e_o_ganho_declarado(ler_adc, placa):
+    """O ler_adc de verdade grava a extensão da v9: o CRC-32 das amostras (conferido pelo Python contra o arquivo), o
+    identificador (um por captura), a máquina, a linha de comando, o ganho e o fim da captura."""
+    r, pru, saida = capturar(ler_adc, placa, 400000, 1, "--blocos", 2, "--ganho", "1:19.357")
+    assert r.returncode == 0 and r.stderr == "", r.stdout + r.stderr
+    h = cab.ler_cabecalho(saida)
+    assert h.crc32_valido and cab.conferir_crc_das_amostras(saida, h) is True
+    assert h.hostname == os.uname().nodename[:31] and len(h.id_captura) == 32 and int(h.id_captura, 16) != 0
+    assert h.linha_de_comando == f"400000 1 --blocos 2 --ganho 1:19.357 -o {saida}"
+    assert h.ganho_por_canal == (19.357,) and "ganho 19.357" in r.stdout
+    inicio = h.timestamp_unix + h.timestamp_ns * 1e-9
+    fim = h.timestamp_fim_unix + h.timestamp_fim_ns * 1e-9
+    assert 0 < fim - inicio < 10 and h.duracao_monotonica_s == pytest.approx(fim - inicio, abs=0.05)
+    assert h.pior_bloco_ms is not None and h.pior_bloco_ms < 5000
+    # um bit trocado numa amostra, depois da captura: o cabeçalho continua válido, e o CRC das amostras acusa
+    bruto = bytearray(saida.read_bytes())
+    bruto[CABECALHO + 123457] ^= 0x10
+    saida.write_bytes(bytes(bruto))
+    assert cab.ler_cabecalho(saida).crc32_valido and cab.conferir_crc_das_amostras(saida, h) is False
+    # outra captura, outro identificador
+    r2, _, saida2 = capturar(ler_adc, placa, 400000, 1, "--blocos", 1)
+    assert cab.ler_cabecalho(saida2).id_captura != h.id_captura
+
+
+@pytest.mark.parametrize("canais", ["1", "0,1,2", "0,1,2,3,4,5,6"])
+def test_v9_o_sinal_de_cada_canal_e_o_das_amostras_do_arquivo(ler_adc, placa, canais):
+    """Mínimo, máximo, média, desvio e saturadas de cada canal, medidos pelo ler_adc em todas as amostras. O bloco
+    (1.048.576 amostras) não tem um número inteiro de varreduras com 3 ou 7 canais: o canal de cada amostra é o da
+    posição dela no ARQUIVO, e o numpy sobre o arquivo desintercalado tem de dar os mesmos números."""
+    r, _, saida = capturar(ler_adc, placa, 100000, canais, "--blocos", 3)
+    assert r.returncode == 0, r.stdout + r.stderr
+    h = cab.ler_cabecalho(saida)
+    k = h.num_canais
+    dados = np.fromfile(saida, dtype="<u2", offset=CABECALHO)
+    for i in range(k):
+        canal = dados[i::k].astype(np.float64)
+        assert h.codigo_minimo_por_canal[i] == canal.min() and h.codigo_maximo_por_canal[i] == canal.max()
+        assert h.media_codigos_por_canal[i] == pytest.approx(canal.mean(), abs=1e-6)
+        assert h.desvio_codigos_por_canal[i] == pytest.approx(canal.std(), rel=1e-9)
+    assert h.amostras_saturadas_por_canal == (0,) * k and "SATUROU" not in r.stderr
+    assert r.stdout.count(" V no pino (") == k                 # uma linha de sinal por canal no resumo
+
+
+def test_v9_a_saturacao_aparece_no_fim_da_captura_e_no_cabecalho(ler_adc, placa):
+    """Uma amostra no fundo de escala é um sinal cortado. O ler_adc conta as de cada canal em todas as amostras, avisa
+    no fim da captura (e não só na análise) e grava a contagem no cabeçalho."""
+    r, _, saida = capturar(ler_adc, placa, 400000, "0,1", "--blocos", 1, "--faixa-adc", "0:5.12", satura=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "o canal 0 SATUROU" in r.stderr and "Use uma faixa maior" in r.stderr
+    assert "o canal 1 SATUROU" in r.stderr and "É a maior faixa do ADC" in r.stderr
+    h = cab.ler_cabecalho(saida)
+    dados = np.fromfile(saida, dtype="<u2", offset=CABECALHO)
+    esperadas = tuple(int(np.count_nonzero((dados[i::2] == 0) | (dados[i::2] == 65535))) for i in range(2))
+    assert h.amostras_saturadas_por_canal == esperadas and sum(esperadas) > 0

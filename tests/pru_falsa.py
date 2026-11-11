@@ -76,10 +76,12 @@ def compilar_ler_adc(pasta: Path) -> Path:
     return binario
 
 
-def bloco_esperado(k: int) -> np.ndarray:
-    """As amostras do bloco k (a partir de 0) que a PRU falsa grava: uma rampa que começa em k (cada bloco é
-    diferente, e a posição de cada amostra dentro dele é conferível)."""
-    return (np.arange(AMOSTRAS_POR_BLOCO, dtype=np.uint32) + k).astype("<u2")
+def bloco_esperado(k: int, satura: bool = False) -> np.ndarray:
+    """As amostras do bloco k (a partir de 0) que a PRU falsa grava: uma rampa de 1 a 65534 que começa em 1 + k (cada
+    bloco é diferente, a posição de cada amostra dentro dele é conferível, e nenhuma toca o fundo de escala: o ler_adc
+    acusa a saturação). ``satura``: a rampa inteira, de 0 a 65535."""
+    rampa = np.arange(AMOSTRAS_POR_BLOCO, dtype=np.uint32) + k
+    return (rampa % 65536 if satura else 1 + rampa % 65534).astype("<u2")
 
 
 @dataclass
@@ -92,6 +94,7 @@ class PruFalsa(threading.Thread):
     responde: bool = True                   # False: nunca avisa que está pronta (firmware antigo, PRU travada)
     da_uma_volta_no_arm: bool = False       # enche os 2 buffers e começa a reescrever o 1º antes de o ARM gravá-lo
     mudo: bool = False                      # o ADC sem resposta: amostras todas 0
+    satura: bool = False                    # o sinal bate no fundo de escala (códigos 0 e 65535)
     atrasadas_por_bloco: int = 0
     preambulo_por_bloco: int = 0
     folga: int = 18
@@ -168,7 +171,7 @@ class PruFalsa(threading.Thread):
             pronto = f"buffer_{b}_ready"
             if self.ler(pronto) != 0 and not self._esperar(lambda: self.ler(pronto) == 0):      # noqa: B023
                 return
-            dados = np.zeros(AMOSTRAS_POR_BLOCO, dtype="<u2") if self.mudo else bloco_esperado(k)
+            dados = np.zeros(AMOSTRAS_POR_BLOCO, dtype="<u2") if self.mudo else bloco_esperado(k, self.satura)
             self._ddr[b * BYTES_POR_BUFFER:(b + 1) * BYTES_POR_BUFFER] = dados.tobytes()
             if self._parar.wait(self.intervalo_s):
                 return

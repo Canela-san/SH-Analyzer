@@ -1020,14 +1020,21 @@ codigo_faixa_adc() {
     }'
 }
 
-# CRC-32 do cabeçalho (v2 ou v3, conforme $2 = offset do campo do CRC): o do zlib/gzip sobre os
-# 1024 bytes com o campo do CRC zerado (o trailer do gzip guarda exatamente esse CRC-32, em little-endian).
+# O tamanho do cabeçalho de um .bin: 1024 bytes até a v8; desde a v9 (4096), o que o próprio cabeçalho diz (byte 8).
+tamanho_cabecalho_de() {
+    local tamanho="$CAB_TAMANHO"
+    if [ "$(ler_u32 "$1" 4)" -ge 9 ] 2>/dev/null; then tamanho="$(ler_u32 "$1" 8)"; fi
+    echo "$tamanho"
+}
+
+# CRC-32 do cabeçalho (conforme $2 = offset do campo do CRC): o do zlib/gzip sobre o cabeçalho inteiro (1024 bytes
+# até a v8, 4096 na v9) com o campo do CRC zerado (o trailer do gzip guarda exatamente esse CRC-32, em little-endian).
 crc_cabecalho_calculado() {
     local off="${2:-$CAB_OFF_CRC_V2}"
     {
         head -c "$off" "$1"
         printf '\0\0\0\0'
-        head -c "$CAB_TAMANHO" "$1" | tail -c +"$((off + 5))"
+        head -c "$(tamanho_cabecalho_de "$1")" "$1" | tail -c +"$((off + 5))"
     } | gzip -1 -c | tail -c 8 | head -c 4 | od -An -tu4 | tr -d ' \n'
 }
 
@@ -1053,7 +1060,7 @@ validar_cabecalho() {
         qc_erro "cabeçalho versão ${versao}: não registra grandeza/sonda por canal. Recompile o firmware (make em firmware/)" cabecalho_v1
         return
     fi
-    if [ "$versao" -gt 8 ]; then
+    if [ "$versao" -gt 9 ]; then
         qc_aviso "cabeçalho versão ${versao}, mais nova que a conhecida por este script: não conferi grandeza/sonda" cabecalho_desconhecido
         return
     fi
@@ -1064,7 +1071,7 @@ validar_cabecalho() {
     [ "$versao" -eq 5 ] && off_crc="$CAB_OFF_CRC_V5"
     [ "$versao" -eq 6 ] && off_crc="$CAB_OFF_CRC_V6"
     [ "$versao" -eq 7 ] && off_crc="$CAB_OFF_CRC_V7"
-    [ "$versao" -eq 8 ] && off_crc="$CAB_OFF_CRC_V8"
+    [ "$versao" -ge 8 ] && off_crc="$CAB_OFF_CRC_V8"     # a v9 tem o layout da v8 (só o campo do byte 56 mudou)
     crc_gravado="$(ler_u32 "$arq" "$off_crc")"
     crc_calculado="$(crc_cabecalho_calculado "$arq" "$off_crc")"
     if [ "$crc_gravado" != "$crc_calculado" ]; then
@@ -1164,7 +1171,7 @@ validar_cabecalho() {
     blocos="$(ler_u64 "$arq" "$CAB_OFF_BLOCOS")"
     total="$(ler_u64 "$arq" "$CAB_OFF_TOTAL_AMOSTRAS")"
     esperado_total=$((BLOCOS * spb))
-    esperado_tamanho=$((CAB_TAMANHO + esperado_total * bytes_amostra))
+    esperado_tamanho=$(($(tamanho_cabecalho_de "$arq") + esperado_total * bytes_amostra))
     if [ "$tamanho" -ne "$esperado_tamanho" ]; then
         qc_erro "tamanho do arquivo ${tamanho} B; esperado ${esperado_tamanho} B para ${BLOCOS} bloco(s) -- captura incompleta (disco cheio?)" tamanho
     elif [ "$blocos" != "$BLOCOS" ] || [ "$total" != "$esperado_total" ]; then
@@ -1190,7 +1197,7 @@ validar_cabecalho() {
 analisar_rapido() {
     local arq="$1" pos_ref="$2" pos_sonda="$3" freq_plano="$4" fs_canal
     fs_canal="$(awk -v t="$TAXA" -v n="$NUM_CANAIS_CAPTURA" 'BEGIN { printf "%.6f", t / n }')"
-    od -An -v -tu2 -w32 -j "$((CAB_TAMANHO + AMOSTRAS_IGNORADAS_INICIO * 2))" -N "$((AMOSTRAS_ANALISE_RAPIDA * 2))" "$arq" \
+    od -An -v -tu2 -w32 -j "$(($(tamanho_cabecalho_de "$arq") + AMOSTRAS_IGNORADAS_INICIO * 2))" -N "$((AMOSTRAS_ANALISE_RAPIDA * 2))" "$arq" \
         | awk -v fs="$fs_canal" -v nc="$NUM_CANAIS_CAPTURA" -v pr="$pos_ref" -v ps="$pos_sonda" -v fp="$freq_plano" '
     function analisa(pos,   j, x, s, ss, mn, mx, rail, mean, rms, amp, h, arm, prev, cruz, t, tf, tl) {
         s = 0; ss = 0; mn = 1e9; mx = -1; rail = 0

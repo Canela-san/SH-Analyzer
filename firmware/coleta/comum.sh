@@ -97,12 +97,12 @@ argumento_de_faixa() {   # $1 = canais, $2 = faixa total (V)
 
 valida_faixa() { case "$1" in 20.48|10.24|5.12) return 0 ;; esac; return 1; }
 
-# Estatísticas de um canal de um .bin (cabeçalho de 1024 bytes), nas primeiras N amostras brutas (padrão 262144:
+# Estatísticas de um canal de um .bin, nas primeiras N amostras brutas depois do cabeçalho (padrão 262144:
 # ~0,65 s a 400 kS/s, ~40 ciclos de 60 Hz): "mínimo máximo média rms_ac vpp saturadas constante", em volts no pino
 # (constante = 1 se todas as amostras do canal são iguais: o ADC mudo).
 estatisticas_do_canal() {   # $1 = arquivo, $2 = nº de canais, $3 = posição do canal (0..), $4 = faixa total (V), [$5 = N]
     local n=${5:-262144}
-    od -An -tu2 -v -j 1024 -N $((n * 2)) "$1" | tr -s ' ' '\n' \
+    od -An -tu2 -v -j "$(tamanho_do_cabecalho "$1")" -N $((n * 2)) "$1" | tr -s ' ' '\n' \
         | LC_ALL=C awk -v nc="$2" -v pos="$3" -v faixa="$4" '
             NF { if ((k++ % nc) != pos) next
                  v = ($1 - 32768) * faixa / 65536
@@ -122,7 +122,7 @@ estatisticas_do_canal() {   # $1 = arquivo, $2 = nº de canais, $3 = posição d
 # sem um sinal periódico claro (menos de 16 LSB de pico a pico ou menos de 4 subidas).
 medir_sinal() {   # $1 = arquivo, $2 = nº de canais, $3 = posição do canal (0..), $4 = faixa total (V), $5 = taxa total (Hz), [$6 = N]
     local n=${6:-131072}
-    od -An -tu2 -v -j 1024 -N $((n * 2)) "$1" | tr -s ' ' '\n' \
+    od -An -tu2 -v -j "$(tamanho_do_cabecalho "$1")" -N $((n * 2)) "$1" | tr -s ' ' '\n' \
         | LC_ALL=C awk -v nc="$2" -v pos="$3" -v faixa="$4" -v fs="$5" '
             NF { if ((k++ % nc) != pos) next
                  c[n++] = $1
@@ -166,6 +166,7 @@ ganho_do_filtro() {   # $1 = f (Hz)
 # Campos do cabeçalho do .bin lidos pelo offset (struct cabecalho_arquivo_campos, em ler_adc.c;
 # tests/test_contrato_firmware.py confere estes números contra a struct). Os do sistema são do cabeçalho v8.
 CAB_VERSAO=4
+CAB_TAMANHO=8                   # uint32: o tamanho do cabeçalho (onde as amostras começam): 1024 até a v8, 4096 na v9
 CAB_INSTANTE=12                 # uint64: o início da captura (s, UTC)
 CAB_KERNEL=356                  # char[32]
 CAB_RELOGIO=392                 # uint32: 1 = sincronizado por NTP, 0 = não
@@ -178,6 +179,13 @@ CAB_DISCO_LIVRE_FIM=1004        # uint32, KiB; 0xFFFFFFFF = não lido
 cab_u32() { od -An -tu4 -j "$2" -N 4 "$1" | tr -d ' \n'; }       # $1 = arquivo, $2 = offset
 cab_u64() { od -An -tu8 -j "$2" -N 8 "$1" | tr -d ' \n'; }
 cab_texto() { dd if="$1" bs=1 skip="$2" count="$3" 2>/dev/null | tr -d '\0'; }   # $3 = tamanho do campo
+
+# Onde as amostras de um .bin começam: 1024 bytes até o cabeçalho v8; desde a v9, o que o próprio cabeçalho diz.
+tamanho_do_cabecalho() {   # $1 = arquivo
+    local tamanho=1024
+    if [ "$(cab_u32 "$1" "$CAB_VERSAO")" -ge 9 ] 2>/dev/null; then tamanho=$(cab_u32 "$1" "$CAB_TAMANHO"); fi
+    echo "$tamanho"
+}
 
 # 0 se o arquivo começa com o "SHAN" de um .bin do ler_adc.
 e_um_bin() { [ "$(head -c 4 "$1" 2>/dev/null)" = SHAN ]; }

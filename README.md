@@ -57,7 +57,7 @@ flowchart LR
 2. O **ARM** (o Linux) só copia os blocos prontos para um arquivo `.bin`. Nada é processado durante a captura.
 3. A análise acontece **depois**, no seu computador.
 
-Essa separação é proposital: o projeto põe a **integridade dos dados** acima de tudo. Cada `.bin` começa com um cabeçalho de 1024 bytes protegido por CRC-32, com a taxa, os canais, a grandeza, a sonda e a faixa de entrada de cada canal, a versão do firmware e os contadores de integridade da captura (amostras atrasadas, buffers sobrescritos). O arquivo se descreve sozinho.
+Essa separação é proposital: o projeto põe a **integridade dos dados** acima de tudo. Cada `.bin` começa com um cabeçalho de 4096 bytes protegido por CRC-32 (que guarda também o CRC-32 das amostras), com a taxa, os canais, a grandeza, a sonda e a faixa de entrada de cada canal, a versão do firmware e os contadores de integridade da captura (amostras atrasadas, buffers sobrescritos). O arquivo se descreve sozinho.
 
 ## ✨ O que ele faz
 

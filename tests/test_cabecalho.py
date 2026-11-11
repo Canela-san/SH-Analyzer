@@ -123,20 +123,20 @@ def test_codigo_de_faixa_desconhecido_vira_none_sem_quebrar(tmp_path):
     assert c.faixa_adc_codigo_por_canal == (0, 9) and c.faixa_adc_total_v_por_canal == (20.48, None)
 
 
-def test_versao_futura_avisa_e_e_lida_como_v8(tmp_path, caplog):
+def test_versao_futura_avisa_e_e_lida_como_v9(tmp_path, caplog):
     from capturas_sinteticas import montar_cabecalho
 
-    bruto = bytearray(montar_cabecalho(1000, (0, 1), (0, 1), ("", ""), 400_000, versao=8, versao_firmware="v9",
+    bruto = bytearray(montar_cabecalho(1000, (0, 1), (0, 1), ("", ""), 400_000, versao=9, versao_firmware="v9",
                                        spi=(2, 5, 0)))
-    bruto[4:8] = (9).to_bytes(4, "little")                      # "versão 9": formato que este código ainda não conhece
+    bruto[4:8] = (10).to_bytes(4, "little")                     # "versão 10": formato que este código ainda não conhece
     p = tmp_path / "futuro.bin"
     p.write_bytes(bytes(bruto))
     with caplog.at_level(logging.WARNING):
         c = ler_cabecalho(p)
-    assert c.versao_cabecalho == 9 and c.faixa_adc_total_v_por_canal == (20.48, 20.48) and c.buffers_sobrescritos == 0
+    assert c.versao_cabecalho == 10 and c.faixa_adc_total_v_por_canal == (20.48, 20.48) and c.buffers_sobrescritos == 0
     assert c.versao_firmware == "v9" and c.folga_minima_ciclos == 20 and c.modo_spi == 2
-    assert c.placa == "A335BNLT 00C0 3714BBBK1234"
-    assert any("só conhece até a versão 8" in r.getMessage() for r in caplog.records)
+    assert c.placa == "A335BNLT 00C0 3714BBBK1234" and c.tamanho_cabecalho == 4096 and c.hostname == "beaglebone"
+    assert any("só conhece até a versão 9" in r.getMessage() for r in caplog.records)
 
 
 # --------------------------------------------------------------------------------------
@@ -325,3 +325,99 @@ def test_resumo_mostra_a_faixa_por_canal(tmp_path, caplog):
 
 def test_tabela_de_faixas_cobre_os_tres_codigos_do_ads8688():
     assert FAIXAS_ADC_TOTAL_V == {0: 20.48, 1: 10.24, 2: 5.12}
+
+
+# ---------------------------------------------------------------------------
+# [11/11/2026] Cabeçalho v9: 4096 bytes, os campos da v8 onde estavam e a extensão
+# ---------------------------------------------------------------------------
+def _captura_v9(tmp_path, nome="v9.bin", **kw):
+    import numpy as np
+    from capturas_sinteticas import escrever_bin
+    t = np.arange(4000) / 200_000.0
+    sinais = [3.0 * np.sin(2 * np.pi * 1000 * t), 0.5 * np.sin(2 * np.pi * 1000 * t) + 0.1]
+    return escrever_bin(tmp_path / nome, sinais, versao=9, faixas_adc_total_v=[20.48, 5.12], **kw), sinais
+
+
+def test_v9_tem_4096_bytes_e_nada_da_v8_mudou_de_lugar(tmp_path):
+    """A v9 aumenta o cabeçalho para 4096 bytes SEM tirar nem mover campo: os 1024 primeiros bytes são os da v8 (os
+    scripts leem campos por offset), inclusive primeira_amostra_descartada, e as amostras começam no byte 4096."""
+    import struct
+
+    import numpy as np
+    from capturas_sinteticas import montar_cabecalho
+    v8 = montar_cabecalho(1000, (0, 1), (0, 1), ("", "s"), 400_000, versao=8, titulo="t", descricao="d")
+    v9 = montar_cabecalho(1000, (0, 1), (0, 1), ("", "s"), 400_000, versao=9, titulo="t", descricao="d")
+    assert len(v8) == 1024 and len(v9) == 4096
+    # iguais byte a byte, menos a versão (4), o tamanho (8) e o CRC (1020)
+    diferentes = {i for i in range(1024) if v8[i] != v9[i]}
+    assert diferentes <= {4, 8, 9, *range(1020, 1024)}
+    assert struct.unpack_from("<I", v9, 8)[0] == 4096 and struct.unpack_from("<I", v9, 56)[0] == 0
+    p, sinais = _captura_v9(tmp_path)
+    c = ler_cabecalho(p)
+    assert c.versao_cabecalho == 9 and c.crc32_valido and c.tamanho_cabecalho == 4096
+    assert c.primeira_amostra_descartada is False
+    codigos = np.fromfile(p, dtype="<u2", offset=c.tamanho_cabecalho)
+    assert len(codigos) == 2 * 4000 == c.total_amostras_gravadas
+    assert codigos[0] == 32768                                  # a 1ª amostra do canal 0: seno em zero, meio da escala
+
+
+def test_v9_extensao_o_crc_das_amostras_e_o_sinal_de_cada_canal(tmp_path):
+    """O que a extensão guarda: o CRC-32 das amostras (o arquivo é o que a captura gravou?), o fim da captura, o
+    identificador, a máquina, o comando, o ganho declarado e o sinal de cada canal, medido em todas as amostras."""
+    import numpy as np
+    from supraharmonicos.cabecalho import conferir_crc_das_amostras
+    p, sinais = _captura_v9(tmp_path, extensao={"ganhos": [19.357], "comando": "400000 0,1 --ganho 0:19.357"})
+    c = ler_cabecalho(p)
+    assert conferir_crc_das_amostras(p, c) is True
+    assert c.id_captura == "00112233445566778899aabbccddeeff" and c.hostname == "beaglebone"
+    assert c.linha_de_comando == "400000 0,1 --ganho 0:19.357" and c.ganho_por_canal == (19.357, None)
+    assert c.timestamp_fim_unix == 1_700_000_010 and c.duracao_monotonica_s == 10.5 and c.pior_bloco_ms == 160
+    # o sinal: 3 V de pico em ±10,24 V (LSB de 312,5 µV) e 0,5 V de pico com 0,1 V de offset em ±2,56 V (78,1 µV)
+    lsb = (20.48 / 65536, 5.12 / 65536)
+    for i, (pico, offset) in enumerate(((3.0, 0.0), (0.5, 0.1))):
+        assert (c.codigo_maximo_por_canal[i] - 32768) * lsb[i] == pytest.approx(offset + pico, abs=2 * lsb[i])
+        assert (c.codigo_minimo_por_canal[i] - 32768) * lsb[i] == pytest.approx(offset - pico, abs=2 * lsb[i])
+        assert (c.media_codigos_por_canal[i] - 32768) * lsb[i] == pytest.approx(offset, abs=2 * lsb[i])
+        assert c.desvio_codigos_por_canal[i] * lsb[i] == pytest.approx(pico / np.sqrt(2), rel=1e-3)   # RMS de uma senoide
+    assert c.amostras_saturadas_por_canal == (0, 0)
+    linhas = c.descrever_sinal_por_canal()
+    assert "canal 0: de -3.0000 a +3.0000 V no pino (6.0000 Vpp = 116.14 pico a pico com o ganho 19.357)" in linhas[0]
+    attrs = c.para_attrs_hdf5()
+    assert attrs["id_captura"] == c.id_captura and attrs["crc32_amostras"] == c.crc32_amostras
+
+
+def test_v9_amostra_alterada_ou_arquivo_cortado_nao_confere_com_o_crc(tmp_path):
+    from supraharmonicos.cabecalho import conferir_crc_das_amostras
+    p, _ = _captura_v9(tmp_path)
+    c = ler_cabecalho(p)
+    bruto = bytearray(p.read_bytes())
+    bruto[4096 + 2000] ^= 0x01                                  # um bit de uma amostra, no meio do arquivo
+    alterado = tmp_path / "alterado.bin"
+    alterado.write_bytes(bytes(bruto))
+    assert ler_cabecalho(alterado).crc32_valido and conferir_crc_das_amostras(alterado, c) is False
+    cortado = tmp_path / "cortado.bin"
+    cortado.write_bytes(p.read_bytes()[:-100])
+    assert conferir_crc_das_amostras(cortado, c) is False
+    # até a v8 não há CRC das amostras: nada a conferir
+    from capturas_sinteticas import escrever_bin
+    v8 = escrever_bin(tmp_path / "v8b.bin", SINAL, versao=8)
+    assert conferir_crc_das_amostras(v8, ler_cabecalho(v8)) is None
+
+
+def test_v9_sem_o_cabecalho_final_os_campos_finais_ficam_desconhecidos(tmp_path):
+    """Uma captura que não chegou ao cabeçalho final (0 blocos) tem a extensão zerada: o CRC e o sinal são
+    desconhecidos (None e ()), e não um CRC 0 ou um sinal de 0 V."""
+    from capturas_sinteticas import montar_cabecalho
+    p = tmp_path / "sem_final.bin"
+    p.write_bytes(montar_cabecalho(1000, (1,), (0,), ("",), 400_000, versao=9, blocos=0, total_amostras=0))
+    c = ler_cabecalho(p)
+    assert c.crc32_valido and c.crc32_amostras is None and c.amostras_saturadas_por_canal == ()
+    assert c.timestamp_fim_unix is None and c.descrever_sinal_por_canal() == [] and c.id_captura
+
+
+def test_v9_cabecalho_cortado_e_acusado_pelo_crc(tmp_path):
+    p, _ = _captura_v9(tmp_path)
+    cortado = tmp_path / "cabecalho_cortado.bin"
+    cortado.write_bytes(p.read_bytes()[:3000])                  # o arquivo acaba dentro do cabeçalho
+    c = ler_cabecalho(cortado)
+    assert c is not None and not c.crc32_valido
