@@ -2,8 +2,9 @@
 # ==============================================================================
 # coleta/conferir.sh -- ./coletar.sh conferir: a bancada está pronta para capturar? Em ~10 s: o firmware compilado e
 # carregado, uma captura curta (o ler_adc confere os pinos da PRU, a memória e o ADC respondendo), a integridade e,
-# em cada canal, o nível, o offset e o ruído do sinal, a faixa certa para ele e, com --esperado-vpp, se ele é o que
-# o gerador deveria estar mandando (pega a ligação errada antes de uma série inteira de capturas).
+# em cada canal, o nível, a frequência, o offset e o ruído do sinal, a faixa certa para ele e, com --esperado-vpp e
+# --esperado-hz, se ele é o que o gerador deveria estar mandando (pega a ligação, a amplitude ou a frequência errada
+# antes de uma série inteira de capturas).
 # ==============================================================================
 
 set -uo pipefail
@@ -16,7 +17,8 @@ ajuda() {
 Uso: ./coletar.sh conferir [opções]
 
 Confere a bancada em ~10 s: o firmware, os pinos e o ADC, a integridade de uma captura curta e, em cada canal, o
-nível (Vpp), o offset e o ruído do sinal e a menor faixa do ADC que o comporta. Sai com 1 se algo estiver errado.
+nível (Vpp), a frequência, o offset e o ruído do sinal e a menor faixa do ADC que o comporta. Sai com 1 se algo
+estiver errado.
 
 Opções
   --canais LISTA     canais (padrão: 1)
@@ -27,6 +29,7 @@ Opções
   --esperado-vpp V   o Vpp esperado (no pino do ADC; com --ganho, na entrada da sonda ou do divisor)
   --ganho G          ganho da sonda/divisor para mostrar o sinal na entrada (ex.: 19.357, o divisor de tensão)
   --tolerancia PCT   desvio aceito em --esperado-vpp (padrão: 10)
+  --esperado-hz F    a frequência esperada do sinal (Hz); o desvio aceito é de 1 %
   -o ARQUIVO         a captura (padrão: conferencia.bin, nesta pasta)
 FIM
 }
@@ -37,6 +40,7 @@ TAXA=400000
 BLOCOS=1
 SPI=rapido
 ESPERADO=''
+ESPERADO_HZ=''
 GANHO=1
 TOLERANCIA=10
 ARQUIVO=conferencia.bin
@@ -51,6 +55,7 @@ while [ $# -gt 0 ]; do
         --blocos) [ $# -ge 2 ] && [[ "$2" =~ ^[1-9][0-9]*$ ]] || falha "--blocos precisa de um inteiro positivo."; BLOCOS=$2; shift ;;
         --spi) [ $# -ge 2 ] && [[ "$2" =~ ^(rapido|lenta)$ ]] || falha "--spi: use rapido ou lenta."; SPI=$2; shift ;;
         --esperado-vpp) { [ $# -ge 2 ] && numero "$2"; } || falha "--esperado-vpp precisa de um número (V)."; ESPERADO=$2; shift ;;
+        --esperado-hz) { [ $# -ge 2 ] && numero "$2"; } || falha "--esperado-hz precisa de um número (Hz)."; ESPERADO_HZ=$2; shift ;;
         --ganho) { [ $# -ge 2 ] && numero "$2"; } || falha "--ganho precisa de um número."; GANHO=$2; shift ;;
         --tolerancia) { [ $# -ge 2 ] && numero "$2"; } || falha "--tolerancia precisa de um número (%)."; TOLERANCIA=$2; shift ;;
         -o) [ $# -ge 2 ] || falha "-o precisa de um arquivo."; ARQUIVO=$2; shift ;;
@@ -95,14 +100,15 @@ fi
 # Cada canal: nível, offset e ruído, em volts no pino (e na entrada, com --ganho).
 for ((pos = 0; pos < ${#LISTA_CANAIS[@]}; pos++)); do
     canal=${LISTA_CANAIS[$pos]}
-    read -r minimo maximo media rms vpp saturadas constante \
-        <<< "$(estatisticas_do_canal "$ARQUIVO" "${#LISTA_CANAIS[@]}" "$pos" "$FAIXA")"
+    read -r minimo maximo media rms vpp saturadas constante frequencia \
+        <<< "$(medir_sinal "$ARQUIVO" "${#LISTA_CANAIS[@]}" "$pos" "$FAIXA" "$TAXA" 262144)"
     pico=$(LC_ALL=C awk -v a="$minimo" -v b="$maximo" 'BEGIN { a = a < 0 ? -a : a; b = b < 0 ? -b : b; print (a > b) ? a : b }')
     ideal=$(faixa_para_o_pico "$pico")
     lsb=$(LC_ALL=C awk -v f="$FAIXA" 'BEGIN { print f / 65536 }')
-    descricao=$(LC_ALL=C awk -v vpp="$vpp" -v g="$GANHO" -v m="$media" -v r="$rms" -v lsb="$lsb" 'BEGIN {
+    descricao=$(LC_ALL=C awk -v vpp="$vpp" -v g="$GANHO" -v m="$media" -v r="$rms" -v lsb="$lsb" -v f="$frequencia" 'BEGIN {
         texto = sprintf("%.4f Vpp no pino", vpp)
         if (g != 1) texto = texto sprintf(" (%.3f Vpp na entrada, ×%g)", vpp * g, g)
+        if (f != "nan") texto = texto sprintf(" · %.1f Hz", f)
         printf "%s · offset %+.2f mV · %.3f mV rms sem o DC (%.1f LSB)", texto, 1e3 * m, 1e3 * r, r / lsb }')
     if [ "$constante" -eq 1 ]; then
         printf '    %s✗ canal %s: todas as amostras iguais (o ADC mudo ou a entrada saturada)%s\n' "$VM" "$canal" "$R"
@@ -129,6 +135,16 @@ for ((pos = 0; pos < ${#LISTA_CANAIS[@]}; pos++)); do
             desvio=$(LC_ALL=C awk -v v="$vpp" -v g="$GANHO" -v e="$ESPERADO" 'BEGIN { printf "%+.1f", 100 * (v * g / e - 1) }')
             printf '    %s✗ canal %s: esperado %s Vpp, medido %s (%s %%): confira o plugue e o cabo da entrada, o gerador\n      (amplitude, High-Z, saída ligada) e o --ganho%s\n' \
                 "$VM" "$canal" "$ESPERADO" "$(LC_ALL=C awk -v v="$vpp" -v g="$GANHO" 'BEGIN { printf "%.4f", v * g }')" "$desvio" "$R"
+            problemas=$((problemas + 1))
+        fi
+    fi
+    if [ -n "$ESPERADO_HZ" ]; then
+        if [ "$frequencia" != nan ] && LC_ALL=C awk -v f="$frequencia" -v e="$ESPERADO_HZ" 'BEGIN { d = 100 * (f / e - 1); exit !(d <= 1 && d >= -1) }'; then
+            ok "canal $canal: a frequência bate com a esperada ($ESPERADO_HZ Hz, ±1 %)"
+        else
+            medida='nenhuma (sem sinal periódico)'
+            [ "$frequencia" = nan ] || medida=$(LC_ALL=C awk -v f="$frequencia" 'BEGIN { printf "%.1f Hz", f }')
+            printf '    %s✗ canal %s: esperados %s Hz, medida %s: confira a frequência do gerador%s\n' "$VM" "$canal" "$ESPERADO_HZ" "$medida" "$R"
             problemas=$((problemas + 1))
         fi
     fi
