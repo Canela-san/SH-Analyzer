@@ -1539,7 +1539,7 @@ int main(int argc, char *argv[]) {
     clock_gettime(CLOCK_REALTIME, &inicio_captura);     // se falhar, fica o instante do começo do programa
     ctrl->config_ready = 1;
 
-    // A PRU escreve a versão do protocolo depois de configurar o ADS8688 (~0,1 ms): outro valor = o fw_pru.out
+    // A PRU escreve a versão do protocolo depois de configurar o ADS8688 e de esperá-lo acomodar (~2 ms): outro valor = o fw_pru.out
     // carregado não é o deste ler_adc (o 'make' foi feito, mas a PRU não recebeu o firmware novo, ou o contrário).
     for (int espera_ms = 0; espera_ms < 500 && ctrl->versao_protocolo_pru == 0; espera_ms++) {
         usleep(1000);

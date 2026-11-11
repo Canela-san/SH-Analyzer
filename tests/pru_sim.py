@@ -27,6 +27,11 @@ O que NÃO garante
 Verificações estáticas feitas ao carregar: tamanho em instruções (a IMEM da PRU0 tem 2048) e alcance dos
 desvios ``QB*`` (10 bits com sinal: +-511 instruções; desvios mais longos têm que usar ``JMP``).
 
+Laços de espera
+    Um laço ``SUB rX, rX, 1`` / ``QBNE (o próprio SUB), rX, 0`` é adiantado de uma vez (o registrador vai a 2 e os
+    ciclos pulados são somados): o resultado é o mesmo, ciclo a ciclo, e a espera de 2 ms do começo da captura
+    (400.000 ciclos) não custa 400.000 passos do simulador a cada teste. ``atalho_nas_esperas=False`` desliga.
+
 Instruções suportadas: ``LDI MOV ADD SUB OR AND XOR LSL LSR MIN MAX SET CLR NOP LBBO SBBO QBA QBBC QBBS QBEQ QBNE
 QBGT QBGE QBLT QBLE JMP``. Uma instrução fora dessa lista levanta :class:`ErroSimulacao` -- amplie ``_EXECUTORES`` se
 precisar de outra. Nas comparações ``QBGT/QBGE/QBLT/QBLE rótulo, REG1, OP`` o operando da DIREITA é o primeiro da
@@ -219,8 +224,9 @@ _CAMPOS = {"b0": (0, 8), "b1": (8, 8), "b2": (16, 8), "b3": (24, 8), "w0": (0, 1
 
 class PRU:
     def __init__(self, caminho_asm: Path, memoria_inicial: dict[int, int] | None = None, adc: ModeloADC | None = None,
-                 latencias: Latencias | None = None):
+                 latencias: Latencias | None = None, atalho_nas_esperas: bool = True):
         self.instrucoes, self.rotulos = carregar_programa(caminho_asm)
+        self._esperas = self._lacos_de_espera() if atalho_nas_esperas else {}
         self.regs = [0] * 32
         self.memoria: dict[int, int] = {}
         self.latencias = latencias or Latencias()
@@ -260,6 +266,18 @@ class PRU:
                 if abs(distancia) > LIMITE_DESVIO_QB:
                     self.violacoes_desvio.append(
                         f"linha {ins.linha}: '{ins.texto}' salta {distancia:+d} instruções (limite +-{LIMITE_DESVIO_QB}); use JMP")
+
+    def _lacos_de_espera(self) -> dict[int, int]:
+        """Índice do SUB -> número do registrador, para cada laço ``X: SUB r, r, 1`` / ``QBNE X, r, 0``."""
+        lacos = {}
+        for indice, (sub, qbne) in enumerate(zip(self.instrucoes, self.instrucoes[1:])):
+            if sub.mnemonico != "SUB" or qbne.mnemonico != "QBNE":
+                continue
+            m = re.fullmatch(r"r(\d+)", sub.operandos[0], re.IGNORECASE)
+            if (m and sub.operandos[1:] == [sub.operandos[0], "1"] and qbne.operandos[1:] == [sub.operandos[0], "0"]
+                    and self.rotulos.get(qbne.operandos[0]) == indice):
+                lacos[indice] = int(m.group(1))
+        return lacos
 
     # -- registradores -------------------------------------------------------
     def _decodificar(self, operando: str) -> tuple[int, int, int] | None:
@@ -345,6 +363,11 @@ class PRU:
             if self.pc >= len(self.instrucoes):
                 raise ErroSimulacao("PC fora do programa")
             ins = self.instrucoes[self.pc]
+            registrador = self._esperas.get(self.pc)
+            if registrador is not None and self.regs[registrador] > 2:
+                # Um laço de espera com v voltas pela frente (2 ciclos cada): pula v - 2 e deixa as 2 últimas rodarem.
+                self.ciclo += 2 * (self.regs[registrador] - 2)
+                self.regs[registrador] = 2
             executor = _EXECUTORES.get(ins.mnemonico)
             if executor is None:
                 raise ErroSimulacao(f"linha {ins.linha}: instrução não suportada: {ins.texto}")

@@ -11,11 +11,12 @@
 // ==============================================================================
 // Amostras por buffer (versão de produção, sem captura de preâmbulo - cada
 // amostra ocupa 2 bytes, só o dado real do ADC). Este valor TEM que bater
-// exatamente com o "LDI r21" hardcoded em spi_core.asm - lá não dá pra usar
+// exatamente com o "LDI r4" hardcoded em spi_core.asm - lá não dá pra usar
 // #define, o valor está escrito diretamente em hexadecimal:
-//   LDI r21.w0, 0x0000
-//   LDI r21.w2, 0x0010   ; 0x00100000 = 1.048.576
-// Se um dia mudar esse número, tem que mudar dos dois lados.
+//   LDI r4.w0, 0x0000
+//   LDI r4.w2, 0x0010    ; 0x00100000 = 1.048.576
+// Se um dia mudar esse número, tem que mudar dos dois lados
+// (tests/test_contrato_firmware.py confere que os dois são o mesmo).
 //
 // [MODO AUTOMÁTICO] Isto não muda com a migração do modo manual para o modo
 // automático (AUTO_RST) do ADS8688: continua sendo o número TOTAL de
@@ -66,7 +67,7 @@ struct shared_control {
     // de 0 a 7, então os bits acima nunca vêm ligados.
     //
     // Efeito colateral positivo desta simplificação: a struct caiu de 64
-    // para 32 bytes (hoje são 76, com range_sel, os contadores, os atrasos e a grade de tempo abaixo) -- menos RAM compartilhada sincronizada manualmente
+    // para 32 bytes (hoje são 88, com range_sel, os contadores, os atrasos, a grade de tempo e o SPI abaixo) -- menos RAM compartilhada sincronizada manualmente
     // entre ARM e PRU, e um handshake de configuração inicial mais rápido
     // (uma palavra de 32 bits a menos para escrever antes de sinalizar
     // config_ready=1).
@@ -102,8 +103,8 @@ struct shared_control {
     //
     //   amostras_atrasadas: amostras cujo instante já tinha passado quando a
     //     PRU chegou para tomá-las -- a taxa pedida passou do que o laço
-    //     consegue (~326 kS/s com os atrasos de CS padrão, medido em 21/10/2026) e a taxa real do
-    //     arquivo é MENOR que a do cabeçalho.
+    //     consegue (419,3 kS/s com o SPI rápido e 327,9 com o lento, nas esperas de CS padrão: T7g e T7f)
+    //     e a taxa real do arquivo é MENOR que a do cabeçalho.
     //   buffers_sobrescritos: trocas de buffer em que o buffer que a PRU ia
     //     começar a encher ainda estava marcado como pronto (o ARM não tinha
     //     terminado de copiá-lo): amostras perdidas e um bloco misturado.
@@ -179,7 +180,10 @@ struct shared_control {
 // 3 = 22/10/2026, 2ª revisão: o SPI rápido (modo_spi e as divergências).
 // 4 = 23/10/2026: o aviso de "pronta" no início (pru_main.c) e os registradores 02h e 03h do ADS8688 escritos na
 //     configuração (spi_core.asm). O laço principal é o mesmo do protocolo 3.
-#define VERSAO_PROTOCOLO_PRU 4u
+// 5 = 11/11/2026: a PRU espera 2 ms depois de configurar o ADS8688 (o transitório de troca de faixa já acabou na 1ª
+//     amostra). O laço principal e esta struct são os mesmos do protocolo 4; o número muda para o ler_adc recusar um
+//     fw_pru.out sem a espera, e para a análise saber, pelo cabeçalho, se o começo da captura vale.
+#define VERSAO_PROTOCOLO_PRU 5u
 
 // Atrasos de CS padrão (iterações de 2 ciclos): o mínimo do datasheet (30/10/30 ns), desde 21/10/2026.
 #define ATRASO_CS_SETUP_PADRAO 3u
