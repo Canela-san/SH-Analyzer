@@ -749,6 +749,11 @@ def test_coletar_calibrar_com_canal_de_referencia_e_diafonia(varredura):
     assert "a DIAFONIA: tire o condutor de dentro da garra do sensor do canal 0" in r.stdout
     assert "o resistor (a tensão dele pelo divisor no canal 1)" in r.stdout and "TCP0030A" not in r.stdout
     assert "--canal 0 --canal-referencia 1" in r.stdout and "--resistencia 10.02 --espiras 20" in r.stdout
+    # [11/11/2026] O canal de corrente tem 50,9 mV/A (e não os 60 µV/A que davam --ganho 16667): o ganho do comando
+    # da análise é 1/0,0509, e o nível esperado no pino com o gerador de 50 Ω em 20 Vpp, 10,02 Ω e 20 espiras é
+    # 20/(50 + 10,02) x 20 x 0,0509 = 0,34 Vpp.
+    assert "--ganho 19.65" in r.stdout and "16667" not in r.stdout
+    assert "--esperado-vpp 0.34" in r.stdout and "±2,56 V satura acima de 50 A·espira de pico" in r.stdout
     assert "--diafonia $DIA/" + pasta.name + "/W_*_f5.12_*.bin" in r.stdout and "medir_shunt.py" in r.stdout
     for opcoes, erro in ((("--diafonia",), "precisa de --canal-referencia"),
                          (("--canal-referencia", "1"), "é o próprio canal medido"),

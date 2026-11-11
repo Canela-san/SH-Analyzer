@@ -718,9 +718,10 @@ e magnetiza o núcleo), e a faixa padrão é a menor (±2,56 V): passe a de prod
 
 O passa-alta do TC (alguns Hz) não estraga a fase: a parte linear do adiantamento dele, o erro da fundamental tirado
 de cada captura já absorve. O que sobra é uma curvatura de ~0,1 a 0,2° nos harmônicos mais baixos; `--passa-alta` a
-mede (ajusta o passa-alta e relata, sem mudar o perfil). O limite real é o **sinal**: 60 µV/A (SCT013 sobre 0,12 Ω).
-Com o gerador sozinho (~1,6 A·espira), o perfil é bom até ~50 kHz; para ir a 150 kHz e além, são precisas dezenas de
-ampère-espira (uma fonte de corrente quadrada de 1 a 2 A e 20 espiras).
+mede (ajusta o passa-alta e relata, sem mudar o perfil). A sensibilidade do canal é de **50,9 mV/A** no pino (medida; até 11/11/2026 este guia supunha 60 µV/A, o SCT013
+sobre 0,12 Ω): o gerador sozinho com 20 espiras (~3 A·espira) dá ~0,3 Vpp, e o que limita é a **faixa**: ±2,56 V
+satura acima de 50 A·espira de pico (±5,12 V, de 101; ±10,24 V, de 201). O `calibrar` confere o nível de cada captura
+com `--esperado-vpp` (o pico a pico no pino com a quadrada de 20 Vpp) e, sem ele, acusa o sinal fraco.
 
 #### A razão de dois canais: `--canal-referencia`
 
@@ -752,8 +753,7 @@ mesmo limite de qualquer análise V×I em produção.
 
    Com um resistor de filme não indutivo medido a 4 fios, `--resistencia 10.02` basta.
 2. **Na bancada:** o calibrar com o canal de referência (e, com `--diafonia`, 3 quadradas com o condutor fora da
-   garra: o vazamento da tensão no canal de corrente, que a análise subtrai; o canal de corrente é 30 a 40 dB mais
-   fraco, e a diafonia cresce com a frequência):
+   garra: o vazamento da tensão no canal de corrente, que a análise subtrai; a diafonia cresce com a frequência):
 
    ```bash
    ./coletar.sh calibrar --grandeza corrente --canal 0 --canal-referencia 1 --diafonia --resistencia 10.02 --espiras 20 --sonda sct013_100a_sn001
@@ -762,7 +762,7 @@ mesmo limite de qualquer análise V×I em produção.
 3. **No computador**, com o perfil COM fase da cadeia de tensão na faixa do canal de referência:
 
    ```fish
-   uv run scripts/medir_fase.py $DIA/CAL_*/F_*_f5.12_*.bin --canal 0 --canal-referencia 1 --perfil-referencia scripts/sondas/cadeia_tensao_fase_1024.json --shunt scripts/sondas/shunt_laco.csv --espiras 20 --ganho 16667 --diafonia $DIA/CAL_*/W_*_f5.12_*.bin --csv $DIA/razao.csv --plot $DIA/razao.png --saida-perfil scripts/sondas/sct013_100a_sn001.json
+   uv run scripts/medir_fase.py $DIA/CAL_*/F_*_f5.12_*.bin --canal 0 --canal-referencia 1 --perfil-referencia scripts/sondas/cadeia_tensao_fase_1024.json --shunt scripts/sondas/shunt_laco.csv --espiras 20 --ganho 19.65 --diafonia $DIA/CAL_*/W_*_f5.12_*.bin --csv $DIA/razao.csv --plot $DIA/razao.png --saida-perfil scripts/sondas/sct013_100a_sn001.json
    ```
 
    O perfil sai absoluto (K incluso: o R a 4 fios e o K da tensão do T2 dão ~0,1 a 0,2 %, melhor que a ponta), com a

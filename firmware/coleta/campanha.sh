@@ -72,7 +72,9 @@ CAL_QUADRADAS_CORRENTE="256 768 1280 2304 6400 6912 20736 25344 256:14 1280:10 6
 # aliasing de lugar; o SPI lento numa e o rápido na outra conferem que o modo do SPI não muda nada.
 CAL_TAXAS="312500:lenta 400000:rapido"
 # A de produção do canal de tensão (±10,24 V) e a do T3f (±2,56 V): o PGA do ADC muda de ganho com a faixa, e o filtro
-# pode mudar com ele. Na corrente, a menor (o sinal do TC é pequeno): passe a de produção do canal com --faixas.
+# pode mudar com ele. Na corrente, a menor: o gerador com 20 espiras dá ~0,3 Vpp no pino (50,9 mV/A), 6,5 % dela. A
+# de produção depende da corrente da carga (±2,56 V satura acima de 50 A de pico; ±5,12 V, de 101 A; ±10,24 V, de
+# 201 A): passe-a com --faixas, e cuide para o sinal da calibração não ficar fraco demais nela.
 CAL_FAIXAS_TENSAO="20.48 5.12"
 CAL_FAIXAS_CORRENTE="5.12"
 CAL_QUADRADAS=''
@@ -168,7 +170,8 @@ Opções (padrão: uma boa análise sem nenhuma)
                     faixa padrão e o cabeçalho das capturas
   --canal N         o canal com a sonda (padrão: 1)
   --sonda ID        o id da sonda, gravado no cabeçalho
-  --faixas LISTA    faixas totais do ADC, separadas por vírgula (padrão: 20.48,5.12; na corrente, 5.12)
+  --faixas LISTA    faixas totais do ADC, separadas por vírgula (padrão: 20.48,5.12; na corrente, 5.12, que satura
+                    acima de 50 A·espira de pico: a 50,9 mV/A, 10.24 vai a 101 A e 20.48 a 201 A)
   --faixa F         o mesmo, com uma faixa só
   --taxas LISTA     taxa:SPI, separadas por vírgula (padrão: 312500:lenta,400000:rapido; sem :SPI, rapido)
   --quadradas LISTA f₁[:Vpp[:offset]] em Hz, V e V, separadas por vírgula (padrão: as 17 acima; use múltiplos ímpares
@@ -645,6 +648,18 @@ if [ "$MODO" = bancada ]; then
 else
     printf '    %d capturas · ~%d min · ~%d MB (livres: %d MB)\n' "$FALTAM" $(( (TOTAL_S + 59) / 60 )) "$MB_TOTAL" "$LIVRE_MB"
 fi
+if [ "$MODO" = calibrar ] && [ "$CAL_GRANDEZA" = corrente ]; then
+    # O que o operador precisa saber da corrente antes de começar: onde cada faixa satura e o nível que deve chegar.
+    printf '    %scanal de corrente a 50,9 mV/A no pino: ±2,56 V satura acima de 50 A·espira de pico, ±5,12 V de 101 e ±10,24 V de 201%s\n' "$F" "$R"
+    if [ -z "$ESPERADO_VPP" ] && [ -n "$CAL_RESISTENCIA" ] && [ -n "$CAL_ESPIRAS" ]; then
+        estimado=$(LC_ALL=C awk -v v="$VPP_NOMINAL" -v z="$IMPEDANCIA_GERADOR" -v r="$CAL_RESISTENCIA" -v n="$CAL_ESPIRAS" -v s="$SENSIBILIDADE_CORRENTE" \
+                       'BEGIN { printf "%.2f", v / (z + r) * n * s }')
+        printf '    %so nível não é conferido sem --esperado-vpp. Com o gerador (%s Ω) em %s Vpp direto no laço: ~%s Vpp no pino (--esperado-vpp %s)%s\n' \
+            "$F" "$IMPEDANCIA_GERADOR" "$VPP_NOMINAL" "$estimado" "$estimado" "$R"
+    elif [ -z "$ESPERADO_VPP" ]; then
+        printf '    %so nível não é conferido sem --esperado-vpp (o pico a pico no pino com a quadrada de %s Vpp): só o sinal fraco e a saturação%s\n' "$F" "$VPP_NOMINAL" "$R"
+    fi
+fi
 if [ -n "$CONTINUAR" ]; then
     printf '    continuando %s: %d de %d já feitas\n' "$CONTINUAR" $(( ${#PLANO[@]} - FALTAM )) "${#PLANO[@]}"
 fi
@@ -1059,7 +1074,7 @@ case "$PREFIXO" in
         [ "$CAL_REFERENCIA" -eq 0 ] || echo "    Copie os ref_*.csv do osciloscópio para \$DIA/${PASTA}; a análise, uma por faixa:"
         if [ -n "$CAL_CANAL_REF" ]; then
             for faixa_f in $CAL_FAIXAS; do
-                echo "    E a análise (±$(LC_ALL=C awk -v f="$faixa_f" 'BEGIN { printf "%g", f / 2 }') V):  uv run scripts/medir_fase.py \$DIA/${PASTA}/F_*_f${faixa_f}_*.bin --canal $CAL_CANAL --canal-referencia $CAL_CANAL_REF --perfil-referencia scripts/sondas/<perfil com fase do canal $CAL_CANAL_REF em $CAL_FAIXA_REF>.json --resistencia ${CAL_RESISTENCIA:-<R em ohms>} --espiras ${CAL_ESPIRAS:-<N>} --ganho <o nominal do canal $CAL_CANAL>$( [ "$CAL_DIAFONIA" -eq 0 ] || echo " --diafonia \$DIA/${PASTA}/W_*_f${faixa_f}_*.bin") --csv \$DIA/${PASTA}/razao_f${faixa_f}.csv --plot \$DIA/${PASTA}/razao_f${faixa_f}.png --saida-perfil scripts/sondas/<id>.json"
+                echo "    E a análise (±$(LC_ALL=C awk -v f="$faixa_f" 'BEGIN { printf "%g", f / 2 }') V):  uv run scripts/medir_fase.py \$DIA/${PASTA}/F_*_f${faixa_f}_*.bin --canal $CAL_CANAL --canal-referencia $CAL_CANAL_REF --perfil-referencia scripts/sondas/<perfil com fase do canal $CAL_CANAL_REF em $CAL_FAIXA_REF>.json --resistencia ${CAL_RESISTENCIA:-<R em ohms>} --espiras ${CAL_ESPIRAS:-<N>} --ganho $( [ "$CAL_GRANDEZA" = corrente ] && echo "$GANHO_CORRENTE" || echo "<o nominal do canal $CAL_CANAL>")$( [ "$CAL_DIAFONIA" -eq 0 ] || echo " --diafonia \$DIA/${PASTA}/W_*_f${faixa_f}_*.bin") --csv \$DIA/${PASTA}/razao_f${faixa_f}.csv --plot \$DIA/${PASTA}/razao_f${faixa_f}.png --saida-perfil scripts/sondas/<id>.json"
                 [ "$CAL_REFERENCIA" -eq 0 ] || echo "    e a conferência pelo método de um canal:  uv run scripts/medir_fase.py \$DIA/${PASTA}/F_*_f${faixa_f}_*.bin --canal $CAL_CANAL --entrada \$DIA/${PASTA}/ref_*.csv --ancora scripts/sondas/<id>.json --passa-alta"
             done
             echo "    (um resistor de fio é indutivo: meça a impedância dele com o medir_shunt.py e troque --resistencia por --shunt)"

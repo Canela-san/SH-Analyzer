@@ -405,7 +405,8 @@ quadrada na entrada, a faixa do ADC, o K e o INL. Mais f₁ na mesma amplitude n
   modelo, que só relata).
 
 **Estado (24/10/2026, 2ª parte): a sonda de corrente com magnitude e fase.** O limite é o sinal (60 µV/A: com o gerador
-sozinho, ~1,6 A·espira, o perfil vale até ~50 kHz) e, para a fase entre tensão e corrente, o método é a **razão de
+sozinho, ~1,6 A·espira, o perfil vale até ~50 kHz; [11/11/2026: a sensibilidade medida é 50,9 mV/A, e o sinal deixou
+de ser o limite]) e, para a fase entre tensão e corrente, o método é a **razão de
 dois canais capturados juntos**:
 
 * `fase_quadrada` ganhou o passa-alta opcional no modelo; `razao_quadrada`, a razão por harmônico entre dois canais
@@ -421,7 +422,8 @@ dois canais capturados juntos**:
 
 Falta: a fonte de corrente (1 a 2 A, bipolar) e o resistor não indutivo na bancada, a ida do T10 e o S3. Em
 hardware, a carga de 0,12 Ω do SCT013 usa 0,2 % da faixa a 100 A; uma de ~10 Ω daria +38 dB de sinal (decisão de
-projeto; pede recalibrar).
+projeto; pede recalibrar). [11/11/2026: a carga da placa já é de ~100 Ω (50,9 mV/A medidos); esta proposta perdeu o
+objeto, e a questão virou a escolha da faixa: ±2,56 V satura acima de 50 A de pico.]
 
 Depois: o S3 (usar a fase na correção).
 

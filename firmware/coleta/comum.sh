@@ -13,6 +13,11 @@ TETO_TICKS_RAPIDO=477                               # o teto medido da PRU (ler_
 TETO_TICKS_LENTO=610
 GANHO_DIVISOR_TENSAO=19.357                         # o divisor resistivo do canal de tensão: entrada ÷ 19,357 = pino
 F0_FILTRO_ADC=22811                                 # os dois polos reais do filtro do ADS8688 (Hz), medidos no T3f
+# A sensibilidade do canal de corrente no pino do ADC (V por ampère no primário do SCT013, por espira): 50,9 mV/A,
+# medida. Até 11/11/2026 os scripts e os documentos supunham 60 µV/A (o TC sobre 0,12 Ω): a carga é de ~100 Ω.
+SENSIBILIDADE_CORRENTE=0.0509
+GANHO_CORRENTE=19.65                                # o --ganho do canal de corrente: 1 ÷ 50,9 mV/A
+IMPEDANCIA_GERADOR=50                               # a saída do gerador de funções (Ω)
 
 # Cores só num terminal (NO_COLOR desliga).
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
