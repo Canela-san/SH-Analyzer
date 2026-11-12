@@ -42,6 +42,8 @@ scripts/
   compactar_amostras.py   entrada fina: arquivar/restaurar capturas sem perdas (pacote .zpaq.tar)
   sondas/*.json           perfis de sonda gerados (dados, não código); a pasta nasce no 1º perfil
   supraharmonicos/        ← TODA a lógica Python (seção 3)
+  sh_analyzer_gui/        a interface gráfica (PySide6), em construção: chama o supraharmonicos, nunca o contrário
+                          (docs/gui-plan.md); recursos/ leva uma cópia do ícone da marca
   ci.sh                   o que a CI roda, igual na sua máquina (seção 7.1)
 tests/                    pytest (seção 7)
 report/gerar_figuras.py   figuras do relatório/artigo (estilo único, PDF vetorial + macros siunitx);
@@ -204,7 +206,7 @@ Cada comando carrega só o que usa. Antes desta regra, `adc_tool.py --help` leva
 | Rodar uma ferramenta sem instalar nada | `uv run scripts/adc_tool.py captura.bin --welch ...` (usa o bloco PEP 723), ou direto `./scripts/adc_tool.py ...` (o shebang `#!/usr/bin/env -S uv run --script` chama o uv) |
 | Ambiente de desenvolvimento | `uv sync --extra dev` **ou** `pip install -e ".[dev]"` |
 | Usar o pacote em um notebook | `pip install -e .` e `from supraharmonicos.espectro import calcular_espectro_welch` |
-| Backend gráfico interativo (`plt.show()`) | extra `gui` (`PyQt6`); para salvar PNG (`-o`) não precisa |
+| Backend gráfico interativo (`plt.show()`) | extra `gui` (`PySide6`, também a base da interface gráfica); para salvar PNG (`-o`) não precisa |
 
 O `.gitignore` do repositório já ignora `.venv/`, `__pycache__/`, `.pytest_cache/`, `.ruff_cache/`, `*.egg-info/` e `uv.lock`. O `uv.lock` é ignorado de propósito: o projeto fixa só limites mínimos de versão (`pyproject.toml`), e a CI testa sempre contra as versões mais recentes que o `uv` resolver.
 
@@ -270,7 +272,8 @@ Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `c
 | `test_dependencias.py` | todo script com `if __name__ == "__main__"` (em `scripts/`, `relatorio/`, `tests/`, `firmware/`) roda com `uv run`: shebang do uv, permissão de execução, bloco PEP 723 com tudo o que ele importa ao carregar (seguindo o pacote e os módulos vizinhos) e versões iguais às do `pyproject.toml` |
 | `test_coletar_sonda.py` (+ `ler_adc_falso.py`) | `firmware/coleta/sonda.sh` de ponta a ponta contra um `ler_adc` falso: plano de frequências, conferência de cada captura (saturação, nível, frequência, CRC, disco cheio), menu C/R/P/A, modos `retomar`/`refinar`/`adensar`/`refazer`/`resumo`, Ctrl+C, `--amplitude`/`--amplitude-por-ponto` (metadados `ref:` no `.bin`, manifesto, plano, menu interativo, perfil gerado sem flag), `--grandeza tensao` (cabeçalho, textos, coluna `tensao_rms_V`, 2 canais, plano antigo = corrente), e que as constantes do cabeçalho e a gramática de amplitude batem com o firmware e o Python. Marcado `e2e` (usa `bash`; é pulado fora do Linux) |
 | `test_relatorio.py` | `report/gerar_figuras.py`: o ajuste do passa-baixa recupera K, f0 e Q conhecidos (com e sem pesos medidos) e vence os outros modelos pelo BIC; f−3dB, polos e incerteza no formato do siunitx; a figura e as macros são geradas (sem LaTeX, para rodar no CI); a figura do README sai em SVG, igual a cada execução; as figuras de 23/10 (`validacao_cadeia_senoides`, `espectro_supraharmonicos`) com capturas sintéticas na amplitude do modelo do T3f dão ~0 dB, diretas e dobradas, e as bandas laterais de uma AM de 80 %; sem as capturas, são puladas |
-| `test_marca.py` | `report/gerar_marca.py`: os SVGs da marca commitados em `docs/images/` são byte a byte os que o script gera (nenhum editado à mão nem esquecido depois de mudar o desenho); XML válido com título e descrição; `--saida` grava os seis arquivos |
+| `test_marca.py` | `report/gerar_marca.py`: os SVGs da marca commitados em `docs/images/` são byte a byte os que o script gera (nenhum editado à mão nem esquecido depois de mudar o desenho); XML válido com título e descrição; `--saida` grava os seis arquivos; a cópia do ícone em `scripts/sh_analyzer_gui/recursos/` é a de `docs/images/` |
+| `test_interface.py` | a interface gráfica sem tela (pytest-qt, `QT_QPA_PLATFORM=offscreen` no `conftest.py`): a aplicação com o nome, a versão e o ícone desenhado em cada tamanho, e a janela principal. Pulado sem o extra `gui-dev`: roda no `scripts/ci.sh interface` |
 | `test_analise_pesquisa.py` | As ferramentas para pesquisa: harmônicos (amplitudes, fases no referencial seno em qualquer início, THD, grupo com inter-harmônico, Nyquist, erro sem fundamental e com f0 fora da busca), bandas IEC (centros e bordas da norma, estatísticas de um tom que liga no meio), espectrograma (quando o tom liga, mesmo nível do Welch), exportação CSV/JSON/MAT (lida de volta com `loadmat`), a análise completa pela CLI, as figuras extras, os subcomandos e o que cada comando carrega (SciPy, matplotlib, h5py, rich) num processo limpo |
 | `test_compactacao.py` | `compactar_amostras`: desentrelaçar e voltar é exato com cortes em qualquer byte; a receita do `LEIA-ME.txt` (só numpy) reconstrói o original; ida e volta devolve bytes, datas e permissões; peça corrompida é detectada e o arquivo estragado não é gravado; falha ou Ctrl+C no meio não deixa pacote nem temporários nem `zpaq` órfão; caminho malicioso no manifesto é recusado; `--remover-originais` só apaga o que continua idêntico; CLI. Os testes com o `zpaq` de verdade são `e2e` (pulados sem ele) |
 | `test_plotagem.py` | `supraharmonicos.plotagem`: a forma de onda mostra todas as amostras por padrão; a envoltória mín/máx só com `max_pontos`; o zoom (limites do eixo X) refaz o trecho visível com as amostras de verdade e marca cada uma quando são até 400 |
@@ -289,18 +292,20 @@ Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `c
 **Rodar a CI na sua máquina:** `scripts/ci.sh`. O workflow chama esse mesmo script, então os comandos e as versões das ferramentas ficam num lugar só, e o que passa local passa no GitHub:
 
 ```bash
-scripts/ci.sh                 # tudo: ruff + pytest em Python 3.10 e 3.13 (com e2e) + firmware (~3 min)
+scripts/ci.sh                 # tudo: ruff + pytest em Python 3.10 e 3.13 (com e2e) + firmware + interface (~3 min)
 scripts/ci.sh rapido          # ruff + pytest -m "not e2e" (3.13) + firmware: antes de cada commit (~30 s)
 scripts/ci.sh testes 3.10     # uma versão do Python, suíte completa
 scripts/ci.sh firmware        # gcc -Werror no ler_adc.c + shellcheck
+scripts/ci.sh interface       # os testes da interface gráfica (PySide6 e pytest-qt, sem tela)
 ```
 
 Precisa do `uv` (ele baixa sozinho o Python 3.10 e o `shellcheck`) e do `gcc`. Sem o `zpaq`, os testes do `compactar_amostras` são pulados e o script avisa (a CI o instala).
 
-`.github/workflows/ci.yml` tem dois jobs, a cada push na `main` e a cada pull request, num Ubuntu de versão fixa (`ubuntu-24.04`, não `ubuntu-latest`, para que uma troca de imagem não mude as ferramentas sem aviso):
+`.github/workflows/ci.yml` tem três jobs, a cada push na `main` e no `feat/interface` (a interface gráfica até a v0.9) e a cada pull request, num Ubuntu de versão fixa (`ubuntu-24.04`, não `ubuntu-latest`, para que uma troca de imagem não mude as ferramentas sem aviso):
 
 * **testes:** instala o `uv` e o `zpaq` e roda `scripts/ci.sh testes <versão>` em duas versões do Python: **3.10** (o mínimo declarado em `requires-python`) e **3.13**. Leva cerca de 1 a 2 minutos.
 * **firmware:** `scripts/ci.sh firmware`: compila o `firmware/ler_adc.c` no x86 com `gcc -Wall -Wextra -Werror -fsyntax-only` (pega erros que só apareceriam no `make` da BeagleBone) e passa o `shellcheck` em `firmware/*.sh` e `scripts/*.sh`. O `shellcheck` vem numa **versão fixa** (`shellcheck-py`, pelo `uvx`): o do `apt` do Ubuntu era o 0.9, que acusava um `A && B || C` que o 0.11 local não via, e a CI falhou por isso. O `spi_core.asm` e o `pru_main.c` precisam do `clpru` (proprietário, da TI): ficam de fora, e o simulador `tests/pru_sim.py` cobre a lógica do assembly.
+* **interface:** `scripts/ci.sh interface`: instala o extra `gui-dev` (PySide6, pyqtgraph e pytest-qt) e as bibliotecas do sistema que o Qt usa sem tela, e roda os testes da interface, da arquitetura (o motor sem o Qt) e da marca. Os outros jobs não instalam o Qt: o motor não depende dele.
 
 Para o CI *impedir* um merge que quebra algo, o resultado precisa ser exigido nas configurações do repositório (**Settings → Rules → Rulesets** ou **Branches → Branch protection rule**, na branch `main`): marcar *Require a pull request before merging* e *Require status checks to pass before merging*, e escolher os checks `testes (Python 3.10)`, `testes (Python 3.13)` e `firmware (C do ARM e scripts de shell)` (eles só aparecem na lista depois da primeira execução do workflow).
 
