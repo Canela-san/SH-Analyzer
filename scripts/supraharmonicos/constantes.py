@@ -100,6 +100,11 @@ TOLERANCIA_FAIXA_V = 0.005
 # dado sem pedir).
 DURACAO_TRANSITORIO_FAIXA_S = 200e-6
 
+# A forma de onda mostra TODAS as amostras do intervalo, por padrão. Só com --simplificar (ou --max-pontos N) ela
+# vira a envoltória mín/máx de MAX_PONTOS_TEMPO pontos, que desenha uma captura de 10 min a 100 kS/s (60 milhões de
+# amostras) em segundos, em vez de ~30 s e ~4 GB de RAM (ver plotagem.pontos_para_plot).
+MAX_PONTOS_TEMPO = 20_000
+
 ORDEM_FILTRO_MINIMA = 4
 ORDEM_FILTRO_MAXIMA = 8
 ORDEM_FILTRO_PADRAO = 5

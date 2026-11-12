@@ -335,10 +335,11 @@ def test_subcomandos_e_o_caminho_antigo(cli, captura, tmp_path):
 
 
 @pytest.mark.parametrize("argumentos, proibidas", [
-    (["--help"], {"scipy", "matplotlib", "h5py", "rich"}),
-    (["info", "{captura}", "--estatisticas"], {"scipy", "matplotlib", "h5py", "rich"}),
-    (["{captura}", "--sem-grafico"], {"scipy", "matplotlib", "h5py", "rich"}),
-    (["{captura}", "--sem-grafico", "--welch"], {"matplotlib", "h5py", "rich"}),
+    (["--help"], {"scipy", "matplotlib", "h5py", "rich", "PyQt6"}),
+    (["info", "{captura}", "--estatisticas"], {"scipy", "matplotlib", "h5py", "rich", "PyQt6"}),
+    (["{captura}", "--sem-grafico"], {"scipy", "matplotlib", "h5py", "rich", "PyQt6"}),
+    (["{captura}", "--sem-grafico", "--welch"], {"matplotlib", "h5py", "rich", "PyQt6"}),
+    (["gui", "--help"], {"scipy", "matplotlib", "h5py", "rich", "PyQt6"}),
 ])
 def test_cada_comando_so_carrega_o_que_usa(captura, argumentos, proibidas):
     """Num processo limpo: o que cada comando deixa em sys.modules. O SciPy custa ~2 s e o matplotlib ~1 s."""

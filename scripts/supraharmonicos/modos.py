@@ -14,6 +14,10 @@ sonda)::
     frequência -> validação dos parâmetros -> carga/conversão a volts
     -> correção de sonda -> filtro Butterworth -> resumo -> FFT/Welch -> gráfico
 
+O cálculo (:func:`analisar_captura`, que devolve um :class:`ResultadoAnalise`) é
+separado do gráfico e da exportação: a CLI (:func:`executar_plotagem`) e a
+interface gráfica (``gui``) usam o mesmo resultado.
+
 Depende de: ``contexto`` e de todas as camadas de processamento
 (``amostras``, ``sonda``, ``filtros``, ``espectro``, ``fundamental``,
 ``conversao``, ``hdf5``); ``plotagem`` só é importado quando o modo de
@@ -49,6 +53,7 @@ from .canais import alinhar_ao_ciclo, desintercalar
 from .constantes import (
     JANELA_PADRAO_FFT,
     JANELA_PADRAO_WELCH,
+    MAX_PONTOS_TEMPO,
     NOMES_GRANDEZA,
     UNIDADE_GRANDEZA,
 )
@@ -178,13 +183,50 @@ class SinalCarregado:
     tipo_arquivo: str                  # 'bin' | 'csv'
 
 
-def executar_plotagem(args: argparse.Namespace, ctx: ContextoCaptura) -> None:
+@dataclass(frozen=True)
+class ResultadoAnalise:
+    """Tudo o que :func:`analisar_captura` produziu, pronto para desenhar (``plotagem``), exportar
+    (:func:`exportar_resultados`) ou mostrar numa interface. Sem nada do matplotlib: só números e rótulos."""
+    args: argparse.Namespace
+    ctx: ContextoCaptura
+    sinal: SinalCarregado
+    frequencia_total: float
+    fs_efetiva: float
+    params: ParametrosEspectro
+    grandeza_por_canal: dict[int, int]            # dos canais exibidos (o gráfico rotula os eixos com isso)
+    resultados: dict                              # por canal: fft, welch, *_bandas, harmonicos, bandas_iec, espectrograma; e os picos
+    infos_espectro: dict | None                   # o que o gráfico do espectro desenha (None sem --fft/--welch)
+    titulo: str                                   # o título da captura (do cabeçalho) e o nome do arquivo
+    rotulo_espectro_y: str
+    limite_inferior_db: float | None
+
+    @property
+    def por_canal_tensao(self) -> dict[int, np.ndarray]:
+        """O trecho em volts (ou na unidade do canal), já corrigido pela sonda e filtrado."""
+        return self.sinal.por_canal_tensao
+
+    @property
+    def idx_fim_arquivo(self) -> int:
+        n_por_canal = len(next(iter(self.sinal.por_canal_tensao.values())))
+        return self.sinal.idx_inicio + n_por_canal * self.ctx.num_canais
+
+    @property
+    def max_pontos(self) -> int | None:
+        """--max-pontos/--simplificar: None desenha todas as amostras; um número, a envoltória mín/máx."""
+        if self.args.max_pontos:
+            return self.args.max_pontos
+        return MAX_PONTOS_TEMPO if self.args.simplificar else None
+
+    def rotulo_nivel(self, bandas: bool) -> str:
+        return _rotulo_espectro_unidades(self.args, self.resultados, bandas)
+
+
+def analisar_captura(args: argparse.Namespace, ctx: ContextoCaptura) -> ResultadoAnalise:
+    """O modo de plotagem sem o gráfico e sem a exportação: carrega o trecho, corrige a sonda, filtra e calcula o
+    que as flags pedem (FFT, Welch, harmônicos, bandas IEC, espectrograma, picos). Não importa o matplotlib: quem
+    desenha é :func:`executar_plotagem` (a CLI) ou a interface gráfica, com o resultado daqui."""
     if args.arquivo is None:
         raise ErroUso("o argumento 'arquivo' é obrigatório no modo de plotagem.")
-
-    desenhar = _vai_desenhar(args)
-    if desenhar:
-        from . import plotagem  # só aqui o matplotlib é carregado; falha rápido, antes de ler a captura
 
     frequencia_total = _resolver_frequencia(args, ctx)
     fs_efetiva = frequencia_total / ctx.num_canais
@@ -215,8 +257,6 @@ def executar_plotagem(args: argparse.Namespace, ctx: ContextoCaptura) -> None:
         _analisar_bandas_iec(args, ctx, por_canal_tensao, fs_efetiva, resultados)
     if args.espectrograma:
         _analisar_espectrograma(args, ctx, por_canal_tensao, fs_efetiva, params, resultados)
-    if args.exportar is not None or args.exportar_mat is not None:
-        _exportar(args, ctx, sinal, frequencia_total, fs_efetiva, params, resultados)
 
     rotulo_espectro_y = _rotulo_espectro(args, grandeza_por_canal_exibir)
     limite_inferior_db = -100.0 if (args.modo_espectro == "tom" and args.agrupar_bandas is None) else None
@@ -229,25 +269,57 @@ def executar_plotagem(args: argparse.Namespace, ctx: ContextoCaptura) -> None:
         if (cabecalho is not None and cabecalho.titulo)
         else args.arquivo.name
     )
+    return ResultadoAnalise(args, ctx, sinal, frequencia_total, fs_efetiva, params, grandeza_por_canal_exibir,
+                            resultados, infos_espectro, titulo_exibicao, rotulo_espectro_y, limite_inferior_db)
+
+
+def exportar_resultados(res: ResultadoAnalise, prefixo_csv: Path | None, arquivo_mat: Path | None) -> list[Path]:
+    """--exportar PREFIXO (CSVs + JSON de metadados) e/ou --exportar-mat ARQUIVO.mat de um resultado já calculado,
+    com tudo o que o produziu (ver ``exportacao`` e :func:`montar_metadados`). Devolve os arquivos escritos."""
+    escritos: list[Path] = []
+    if prefixo_csv is None and arquivo_mat is None:
+        return escritos
+    metadados = montar_metadados(res.args, res.ctx, res.sinal, res.frequencia_total, res.fs_efetiva, res.params,
+                                 res.resultados)
+    if prefixo_csv is not None:
+        escritos += exportar_csv(prefixo_csv, res.resultados, metadados)
+        log.info(f"Exportado: {len(escritos)} arquivo(s) com o prefixo '{prefixo_csv}' "
+                 f"({', '.join(p.name for p in escritos[:4])}{', ...' if len(escritos) > 4 else ''})")
+    if arquivo_mat is not None:
+        escritos.append(exportar_mat(arquivo_mat, res.resultados, metadados))
+        log.info(f"Exportado para o MATLAB/Octave: '{escritos[-1]}' (estrutura 'sh')")
+    return escritos
+
+
+def executar_plotagem(args: argparse.Namespace, ctx: ContextoCaptura) -> None:
+    """O modo de plotagem da CLI: :func:`analisar_captura`, a exportação (antes do gráfico: os arquivos ficam
+    prontos mesmo que a janela fique aberta) e os gráficos, se há onde desenhá-los."""
+    if args.arquivo is None:
+        raise ErroUso("o argumento 'arquivo' é obrigatório no modo de plotagem.")
+
+    desenhar = _vai_desenhar(args)
+    if desenhar:
+        from . import plotagem  # só aqui o matplotlib é carregado; falha rápido, antes de ler a captura
+
+    res = analisar_captura(args, ctx)
+    exportar_resultados(res, args.exportar, args.exportar_mat)
 
     if not desenhar:
         return
-    n_por_canal = len(next(iter(por_canal_tensao.values())))
+    resultados = res.resultados
     plotagem.plotar_multicanal(
-        por_canal_tensao, fs_efetiva, sinal.idx_inicio, infos_espectro, titulo_exibicao,
-        args.saida, args.layout_canais, rotulo_espectro_y, limite_inferior_db,
-        grandeza_por_canal_exibir, idx_fim_arquivo=sinal.idx_inicio + n_por_canal * ctx.num_canais,
-        max_pontos=args.max_pontos or (plotagem.MAX_PONTOS_TEMPO if args.simplificar else None),
+        res.por_canal_tensao, res.fs_efetiva, res.sinal.idx_inicio, res.infos_espectro, res.titulo,
+        args.saida, args.layout_canais, res.rotulo_espectro_y, res.limite_inferior_db,
+        res.grandeza_por_canal, idx_fim_arquivo=res.idx_fim_arquivo, max_pontos=res.max_pontos,
     )
     if args.espectrograma:
         plotagem.plotar_espectrogramas(
-            {c: r["espectrograma"] for c, r in resultados["canais"].items()}, titulo_exibicao,
-            _caminho_extra(args.saida, "espectrograma"), _rotulo_espectro_unidades(args, resultados, bandas=False),
-            params.rotulo_welch)
+            {c: r["espectrograma"] for c, r in resultados["canais"].items()}, res.titulo,
+            _caminho_extra(args.saida, "espectrograma"), res.rotulo_nivel(bandas=False), res.params.rotulo_welch)
     if args.bandas_iec:
         plotagem.plotar_bandas_iec(
             {c: r["bandas_iec"] for c, r in resultados["canais"].items()},
-            {c: r["unidade"] for c, r in resultados["canais"].items()}, titulo_exibicao,
+            {c: r["unidade"] for c, r in resultados["canais"].items()}, res.titulo,
             _caminho_extra(args.saida, "bandas_iec"))
 
 
@@ -644,18 +716,6 @@ def _analisar_espectrograma(args: argparse.Namespace, ctx: ContextoCaptura,
         prefixo = f"  Canal {canal} " if ctx.num_canais > 1 else ""
         log.info(f"{prefixo}Espectrograma: {len(tempos)} colunas de {tempos[1] - tempos[0] if len(tempos) > 1 else 0:.3g} s "
                  f"x {len(freqs)} frequências (resolução {args.resolucao_welch:g} Hz, janela {params.rotulo_welch})")
-
-
-def _exportar(args: argparse.Namespace, ctx: ContextoCaptura, sinal: SinalCarregado, frequencia_total: float,
-              fs_efetiva: float, params: ParametrosEspectro, resultados: dict) -> None:
-    """--exportar/--exportar-mat: os resultados e tudo o que os produziu (ver ``exportacao``)."""
-    metadados = montar_metadados(args, ctx, sinal, frequencia_total, fs_efetiva, params, resultados)
-    if args.exportar is not None:
-        escritos = exportar_csv(args.exportar, resultados, metadados)
-        log.info(f"Exportado: {len(escritos)} arquivo(s) com o prefixo '{args.exportar}' "
-                 f"({', '.join(p.name for p in escritos[:4])}{', ...' if len(escritos) > 4 else ''})")
-    if args.exportar_mat is not None:
-        log.info(f"Exportado para o MATLAB/Octave: '{exportar_mat(args.exportar_mat, resultados, metadados)}' (estrutura 'sh')")
 
 
 def _versao_do_codigo() -> str | None:

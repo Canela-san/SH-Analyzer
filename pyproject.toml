@@ -26,7 +26,8 @@ Repository = "https://github.com/Canela-san/SH-Analyzer"
 Documentation = "https://github.com/Canela-san/SH-Analyzer/tree/main/docs"
 
 [project.optional-dependencies]
-# Backend gráfico interativo (plt.show() sem -o); não é necessário para salvar PNG.
+# A interface gráfica (scripts/adc_gui.py, adc_tool.py gui) e o backend interativo do matplotlib (plt.show() sem -o);
+# não é necessário para salvar PNG nem para a análise pela linha de comando.
 gui = ["PyQt6"]
 # tomli: leitor de TOML dos testes na Python 3.10 (a partir da 3.11 ele vem na biblioteca padrão).
 # pytest-xdist: a suíte roda em paralelo (-n auto, em addopts); pytest-cov: cobertura (--cov=scripts/supraharmonicos).
@@ -49,6 +50,7 @@ pythonpath = ["scripts", "tests"]
 addopts = "-ra -n auto --dist worksteal"
 markers = [
     "e2e: roda os scripts de ponta a ponta via subprocess (lento, dezenas de segundos)",
+    "gui: a interface gráfica, com o Qt sem tela (QT_QPA_PLATFORM=offscreen); pulado sem o PyQt6 (extra gui)",
 ]
 
 [tool.ruff]

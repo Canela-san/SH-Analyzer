@@ -77,6 +77,7 @@ Essa separação é proposital: o projeto põe a **integridade dos dados** acima
 * **Sonda de corrente com magnitude e fase** (`medir_fase.py --canal-referencia`): a razão de dois canais capturados juntos (o TC e a tensão num resistor do laço), com a fase absoluta e a diafonia subtraída.
 * **Métricas de bancada** (`medir_captura.py`): ruído, THD, SINAD, ENOB, SFDR, diafonia e a continuidade da grade de tempo.
 * **Exportação reprodutível:** CSV, JSON com os metadados que geraram o resultado, MATLAB e um HDF5 autossuficiente, que leva o cabeçalho original, os perfis das sondas e a proveniência.
+* **Uma interface gráfica** (`adc_gui.py`): a mesma análise numa janela, com os gráficos, as tabelas de harmônicos, picos e bandas IEC, a exportação e, sempre à vista, o comando equivalente do `adc_tool.py`, para reproduzir no terminal o que a janela mostra.
 
 ## 📏 Medido em bancada
 
@@ -153,11 +154,14 @@ uv run scripts/adc_tool.py captura.bin --export-hdf5 captura.h5  # tudo num HDF5
 
 A taxa, os canais e as faixas vêm do cabeçalho, então não é preciso informá-los. A ajuda completa está em `uv run scripts/adc_tool.py --help`.
 
+Prefere uma janela? `uv run scripts/adc_gui.py captura.bin` abre a mesma análise na interface gráfica (PyQt6), com o comando equivalente do `adc_tool.py` à vista ([guia de uso](docs/user-guide.md#a-interface-gráfica-adc_guipy)).
+
 ### Para ir além
 
 | Quero... | Use | Onde ler |
 |---|---|---|
 | Harmônicos com grupos e fases, bandas IEC, espectrograma, exportar para MATLAB | `adc_tool.py` | [Análise para pesquisa](docs/user-guide.md#análise-para-pesquisa-harmônicos-bandas-iec-espectrograma-e-exportação) |
+| Explorar uma captura numa janela, com os gráficos, as tabelas e o comando equivalente | `adc_gui.py` | [A interface gráfica](docs/user-guide.md#a-interface-gráfica-adc_guipy) |
 | Conferir a bancada antes de uma série de capturas | `coletar.sh conferir` | [Guia de uso](docs/user-guide.md) |
 | Calibrar a cadeia (magnitude e fase) por ondas quadradas, sem instrumento de referência | `coletar.sh calibrar` e `medir_fase.py` | [A calibração por ondas quadradas](docs/user-guide.md#a-calibração-por-ondas-quadradas-medir_fasepy) |
 | Calibrar a sonda de corrente com a fase (dois canais juntos) | `coletar.sh calibrar --canal-referencia` e `medir_fase.py --canal-referencia` | [A razão de dois canais](docs/user-guide.md#a-razão-de-dois-canais---canal-referencia) |
@@ -193,7 +197,7 @@ O andamento, teste a teste, está no [Estado da campanha](docs/lab-procedure.md#
 ```text
 .
 ├── firmware/          # BeagleBone: PRU (spi_core.asm, pru_main.c), ler_adc.c, Makefile, setup.sh, coletar.sh (+ coleta/)
-├── scripts/           # Computador: adc_tool.py e as outras entradas, o pacote supraharmonicos/, os perfis de sonda
+├── scripts/           # Computador: adc_tool.py, adc_gui.py (a janela) e as outras entradas, o pacote supraharmonicos/, os perfis de sonda
 │                      #   (sondas/), BeagleBone_Setup.sh (a interface com a placa) e ci.sh (a CI local)
 ├── tests/             # Testes automáticos (pytest), sem precisar de hardware, e o simulador da PRU
 ├── report/            # gerar_figuras.py: as figuras do relatório num estilo só; gerar_marca.py: banner, logo e ícone

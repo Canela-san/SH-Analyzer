@@ -1,7 +1,12 @@
 """Plotagem de forma de onda e espectro (matplotlib).
 
-Único módulo do pacote que importa ``matplotlib`` -- quem não plota (conversão,
-exportação HDF5, testes unitários de DSP) não paga o custo de importá-lo.
+Quem não plota (conversão, exportação HDF5, testes unitários de DSP) não paga o
+custo de importar o ``matplotlib``: só este módulo (e a interface gráfica, ``gui``,
+que desenha nas mesmas funções) o importa.
+
+Cada figura tem duas funções: ``desenhar_*(fig, ...)`` desenha numa ``Figure``
+dada (a da janela da GUI, ou uma recém-criada) e ``plotar_*`` cria a figura,
+desenha e salva (``-o``) ou mostra (``plt.show()``) -- o que a CLI usa.
 
 Depende de: ``constantes``."""
 
@@ -11,7 +16,11 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from .constantes import GRANDEZA_TENSAO, NOMES_GRANDEZA, UNIDADE_GRANDEZA
+from .constantes import GRANDEZA_TENSAO, MAX_PONTOS_TEMPO, NOMES_GRANDEZA, UNIDADE_GRANDEZA
+
+__all__ = ["MAX_PONTOS_TEMPO", "MAX_PONTOS_COM_MARCADOR", "AVISO_PONTOS", "pontos_para_plot", "trecho_visivel",
+           "desenhar_forma_de_onda", "desenhar_multicanal", "plotar_multicanal", "desenhar_espectrogramas",
+           "plotar_espectrogramas", "desenhar_bandas_iec", "plotar_bandas_iec"]
 
 log = logging.getLogger(__name__)
 
@@ -20,11 +29,8 @@ log = logging.getLogger(__name__)
 # 8. Plotagem
 # ---------------------------------------------------------------------------
 
-# A forma de onda mostra TODAS as amostras do intervalo, por padrão. Só com --simplificar (ou --max-pontos N) ela
-# vira a envoltória mín/máx de MAX_PONTOS_TEMPO pontos, que desenha uma captura de 10 min a 100 kS/s (60 milhões de
-# amostras) em segundos, em vez de ~30 s e ~4 GB de RAM. Acima de AVISO_PONTOS amostras por canal, o adc_tool lembra
-# dessa opção.
-MAX_PONTOS_TEMPO = 20_000
+# Acima de AVISO_PONTOS amostras por canal, o adc_tool lembra do --simplificar (a envoltória de MAX_PONTOS_TEMPO
+# pontos, em constantes).
 AVISO_PONTOS = 5_000_000
 
 # Com até tantas amostras visíveis, cada uma ganha um marcador: dá para ver onde o sinal foi amostrado (com 10
@@ -115,6 +121,15 @@ def rotulo_eixo_grandeza(canais: list[int], grandeza_por_canal: dict[int, int]) 
     return "Valor (unidades mistas -- ver rótulo de cada canal)"
 
 
+def tamanho_multicanal(n_canais: int, tem_espectro: bool, layout: str) -> tuple[float, float]:
+    """O tamanho (polegadas) da figura de :func:`plotar_multicanal`: um eixo só (1 canal ou sobrepostos) ou uma linha
+    por canal, com a coluna do espectro se houver."""
+    if n_canais == 1 or layout == "sobrepostos":
+        return (10, 8) if tem_espectro else (10, 5)
+    n_colunas = 2 if tem_espectro else 1
+    return (6.5 * n_colunas, 3.2 * n_canais)
+
+
 def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: float,
                        idx_inicio_arquivo: int, infos_espectro: dict | None,
                        titulo_arquivo: str, caminho_saida: Path | None,
@@ -122,7 +137,22 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
                        limite_inferior_db: float | None,
                        grandeza_por_canal: dict[int, int] | None = None,
                        idx_fim_arquivo: int | None = None, max_pontos: int | None = None) -> None:
-    """Plota forma de onda e, se disponível, espectro(s) de 1+ canais. Um
+    """Plota forma de onda e, se disponível, espectro(s) de 1+ canais, e salva (``caminho_saida``) ou mostra a
+    janela. O desenho em si está em :func:`desenhar_multicanal`."""
+    fig = plt.figure(figsize=tamanho_multicanal(len(tensoes_por_canal), infos_espectro is not None, layout))
+    desenhar_multicanal(fig, tensoes_por_canal, fs_efetiva, idx_inicio_arquivo, infos_espectro, titulo_arquivo,
+                        layout, rotulo_espectro_y, limite_inferior_db, grandeza_por_canal, idx_fim_arquivo,
+                        max_pontos)
+    _salvar_ou_mostrar(fig, caminho_saida)
+
+
+def desenhar_multicanal(fig, tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: float,
+                        idx_inicio_arquivo: int, infos_espectro: dict | None,
+                        titulo_arquivo: str, layout: str, rotulo_espectro_y: str,
+                        limite_inferior_db: float | None,
+                        grandeza_por_canal: dict[int, int] | None = None,
+                        idx_fim_arquivo: int | None = None, max_pontos: int | None = None) -> None:
+    """Desenha em ``fig`` (vazia) a forma de onda e, se disponível, espectro(s) de 1+ canais. Um
     canal pode ter até 2 espectros simultâneos (--fft e --welch, chaves
     "ciclo"/"welch" em infos_espectro[canal]) -- plotados como curvas
     distintas no mesmo eixo, já que respondem perguntas diferentes
@@ -162,9 +192,9 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
 
     if usar_eixo_unico:
         if tem_espectro:
-            fig, (ax_tempo, ax_espectro) = plt.subplots(2, 1, figsize=(10, 8))
+            ax_tempo, ax_espectro = fig.subplots(2, 1)
         else:
-            fig, ax_tempo = plt.subplots(figsize=(10, 5))
+            ax_tempo = fig.subplots()
             ax_espectro = None
 
         for i, canal in enumerate(canais):
@@ -232,11 +262,11 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
             if limite_inferior_db is not None:
                 ax_espectro.set_ylim(bottom=limite_inferior_db)
 
-        plt.tight_layout()
+        fig.tight_layout()
 
     else:
         n_colunas = 2 if tem_espectro else 1
-        fig, eixos = plt.subplots(n_canais, n_colunas, figsize=(6.5 * n_colunas, 3.2 * n_canais), squeeze=False)
+        eixos = fig.subplots(n_canais, n_colunas, squeeze=False)
 
         for i, canal in enumerate(canais):
             cor = cores[i % len(cores)]
@@ -279,14 +309,7 @@ def plotar_multicanal(tensoes_por_canal: dict[int, np.ndarray], fs_efetiva: floa
                     ax_espectro.set_ylim(bottom=limite_inferior_db)
 
         fig.suptitle(f"'{titulo_arquivo}' -- canais {canais} (separados)")
-        plt.tight_layout(rect=[0, 0, 1, 0.97])
-
-    if caminho_saida is not None:
-        fig.savefig(caminho_saida, dpi=150)
-        log.info(f"Gráfico salvo em '{caminho_saida}'.")
-    else:
-        plt.show()
-    plt.close(fig)     # o pyplot guarda toda figura aberta: sem isto, quem chama várias vezes (notebook, testes) acumula memória
+        fig.tight_layout(rect=[0, 0, 1, 0.97])
 
 
 def _salvar_ou_mostrar(fig, caminho_saida: Path | None) -> None:
@@ -295,14 +318,22 @@ def _salvar_ou_mostrar(fig, caminho_saida: Path | None) -> None:
         log.info(f"Gráfico salvo em '{caminho_saida}'.")
     else:
         plt.show()
-    plt.close(fig)
+    plt.close(fig)     # o pyplot guarda toda figura aberta: sem isto, quem chama várias vezes (notebook, testes) acumula memória
 
 
 def plotar_espectrogramas(dados_por_canal: dict[int, dict], titulo_arquivo: str, caminho_saida: Path | None,
                           rotulo_nivel: str, rotulo_janela: str | None) -> None:
-    """Um espectrograma por canal (tempo × frequência, cor = nível em dB), um abaixo do outro."""
+    """Um espectrograma por canal, salvo ou mostrado (ver :func:`desenhar_espectrogramas`)."""
+    fig = plt.figure(figsize=(11, 3.6 * len(dados_por_canal)))
+    desenhar_espectrogramas(fig, dados_por_canal, titulo_arquivo, rotulo_nivel, rotulo_janela)
+    _salvar_ou_mostrar(fig, caminho_saida)
+
+
+def desenhar_espectrogramas(fig, dados_por_canal: dict[int, dict], titulo_arquivo: str,
+                            rotulo_nivel: str, rotulo_janela: str | None) -> None:
+    """Um espectrograma por canal (tempo × frequência, cor = nível em dB), um abaixo do outro, em ``fig``."""
     canais = list(dados_por_canal)
-    fig, eixos = plt.subplots(len(canais), 1, figsize=(11, 3.6 * len(canais)), squeeze=False)
+    eixos = fig.subplots(len(canais), 1, squeeze=False)
     for ax, canal in zip(eixos[:, 0], canais):
         d = dados_por_canal[canal]
         nivel = d["db"]
@@ -315,16 +346,22 @@ def plotar_espectrogramas(dados_por_canal: dict[int, dict], titulo_arquivo: str,
     eixos[-1, 0].set_xlabel("Tempo (s)")
     if len(canais) > 1:
         fig.suptitle(f"Espectrograma -- '{titulo_arquivo}'" + (f" | janela {rotulo_janela}" if rotulo_janela else ""))
-    plt.tight_layout()
-    _salvar_ou_mostrar(fig, caminho_saida)
+    fig.tight_layout()
 
 
 def plotar_bandas_iec(bandas_por_canal: dict, unidade_por_canal: dict[int, str], titulo_arquivo: str,
                       caminho_saida: Path | None) -> None:
-    """Para cada canal: o máximo, o P95 e o RMS de cada banda de 200 Hz (dB re 1 unidade, RMS), e a série no tempo
-    das bandas como mapa de cor."""
+    """As bandas IEC de cada canal, salvas ou mostradas (ver :func:`desenhar_bandas_iec`)."""
+    fig = plt.figure(figsize=(13, 3.8 * len(bandas_por_canal)))
+    desenhar_bandas_iec(fig, bandas_por_canal, unidade_por_canal, titulo_arquivo)
+    _salvar_ou_mostrar(fig, caminho_saida)
+
+
+def desenhar_bandas_iec(fig, bandas_por_canal: dict, unidade_por_canal: dict[int, str], titulo_arquivo: str) -> None:
+    """Em ``fig``, para cada canal: o máximo, o P95 e o RMS de cada banda de 200 Hz (dB re 1 unidade, RMS), e a
+    série no tempo das bandas como mapa de cor."""
     canais = list(bandas_por_canal)
-    fig, eixos = plt.subplots(len(canais), 2, figsize=(13, 3.8 * len(canais)), squeeze=False)
+    eixos = fig.subplots(len(canais), 2, squeeze=False)
     for (ax_est, ax_tempo), canal in zip(eixos, canais):
         b = bandas_por_canal[canal]
         u = unidade_por_canal[canal]
@@ -351,5 +388,4 @@ def plotar_bandas_iec(bandas_por_canal: dict, unidade_por_canal: dict[int, str],
         ax_tempo.set_ylabel("Centro da banda (kHz)")
         ax_tempo.set_title("Série no tempo")
     fig.suptitle(f"Bandas IEC 61000-4-7 (anexo B) -- '{titulo_arquivo}'")
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
-    _salvar_ou_mostrar(fig, caminho_saida)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])

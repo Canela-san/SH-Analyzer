@@ -22,26 +22,30 @@ PACOTE = SCRIPTS / "supraharmonicos"
 CAMADAS = {
     # 0 -- fundações (não dependem de ninguém do pacote)
     "erros": 0, "constantes": 0, "registro": 0,
-    # 1 -- formatos e algoritmos puros
+    # 1 -- formatos e algoritmos puros (e as flags do adc_tool, que a CLI e a GUI compartilham)
     "cabecalho": 1, "amostras": 1, "canais": 1, "filtros": 1, "fundamental": 1, "sonda": 1, "plotagem": 1,
     "referencia": 1, "osciloscopio": 1, "harmonicos": 1, "bandas_iec": 1, "fase_quadrada": 1, "perfil_complexo": 1,
+    "opcoes_analise": 1,
     # 2 -- composições de camada 1
     "espectro": 2, "conversao": 2, "hdf5": 2, "contexto": 2, "metricas_captura": 2, "compactacao": 2, "exportacao": 2,
     "razao_quadrada": 2, "ancora_perfil": 2,
     # 3 -- aplicação
     "calibracao_sonda": 3, "modos": 3, "aliasing": 3,
-    # 4
+    # 4 (gui: a janela, sobre os modos e a plotagem; a borda dela é a cli_gui)
     "escrita_perfil": 4, "cli_adc_tool": 4, "cli_medir_captura": 4, "cli_compactar": 4, "cli_info": 4,
-    "cli_aliasing": 4,
+    "cli_aliasing": 4, "gui": 4,
     # 5
-    "cli_gerar_perfil": 5, "analise_razao": 5, "cli_medir_shunt": 5,
+    "cli_gerar_perfil": 5, "analise_razao": 5, "cli_medir_shunt": 5, "cli_gui": 5,
     # 6 -- o medir_fase.py (o modo de dois canais mora no analise_razao)
     "cli_medir_fase": 6,
     # 6 -- a porta de entrada (adc_tool.py SUBCOMANDO): escolhe a CLI e a importa só quando pedida
     "cli_principal": 6,
 }
 MODULOS_CLI = {"cli_adc_tool", "cli_gerar_perfil", "cli_medir_captura", "cli_compactar", "cli_info", "cli_principal",
-               "cli_medir_fase", "cli_aliasing", "cli_medir_shunt"}
+               "cli_medir_fase", "cli_aliasing", "cli_medir_shunt", "cli_gui"}
+# Quem pode desenhar: a plotagem e a GUI (que desenha nas funções dela, em figuras embutidas na janela).
+MODULOS_GRAFICOS = {"plotagem", "gui"}
+MODULOS_QT = {"gui"}      # o PyQt6 (extra 'gui' do pyproject) só entra aqui; a cli_gui o importa sob demanda
 
 
 def modulos_do_pacote() -> list[str]:
@@ -129,7 +133,8 @@ def test_biblioteca_nao_imprime_nem_encerra_o_processo(modulo):
 
 def test_dependencias_pesadas_ficam_confinadas():
     com_matplotlib = {m for m in modulos_do_pacote() if "matplotlib" in importados_externos(m)}
-    assert com_matplotlib == {"plotagem", "escrita_perfil"}, com_matplotlib
+    assert com_matplotlib == MODULOS_GRAFICOS | {"escrita_perfil"}, com_matplotlib
+    assert {m for m in modulos_do_pacote() if "PyQt6" in importados_externos(m)} == MODULOS_QT
     # escrita_perfil só importa matplotlib DENTRO de gerar_grafico (uso de --plot), nunca no topo
     topo = ast.parse((PACOTE / "escrita_perfil.py").read_text(encoding="utf-8")).body
     assert not any(isinstance(n, (ast.Import, ast.ImportFrom)) and "matplotlib" in ast.dump(n) for n in topo)
@@ -145,12 +150,21 @@ def test_plotagem_so_e_importada_pelo_modo_de_plotagem_de_forma_tardia():
             topo = ast.parse((PACOTE / "modos.py").read_text(encoding="utf-8")).body
             assert not any(isinstance(n, ast.ImportFrom) and any(a.name == "plotagem" for a in n.names) for n in topo), \
                 "modos deve importar plotagem dentro de executar_plotagem (quem converte não paga o matplotlib)"
-        else:
+        elif modulo not in MODULOS_GRAFICOS:
             assert "plotagem" not in importados_internos(modulo)
 
 
+def test_a_gui_e_o_mesmo_pipeline_da_cli():
+    """A janela não tem análise própria: usa o parser da CLI (opcoes_analise), os modos e a plotagem. E a cli_gui só
+    importa a janela (e o PyQt6) dentro de main(): 'adc_tool.py gui --help' e o erro sem o PyQt6 saem sem carregá-los."""
+    assert {"opcoes_analise", "modos", "plotagem", "contexto"} <= importados_internos("gui")
+    topo = ast.parse((PACOTE / "cli_gui.py").read_text(encoding="utf-8")).body
+    assert not any(isinstance(n, ast.ImportFrom) and n.module == "gui" for n in topo)
+    assert "montar_parser" in (PACOTE / "cli_adc_tool.py").read_text(encoding="utf-8")   # continua importável de lá
+
+
 @pytest.mark.parametrize("entrada", ["adc_tool.py", "gerar_perfil_sonda.py", "medir_captura.py", "compactar_amostras.py",
-                                     "medir_fase.py"])
+                                     "medir_fase.py", "adc_gui.py"])
 def test_entradas_em_scripts_sao_finas(entrada):
     texto = (SCRIPTS / entrada).read_text(encoding="utf-8")
     codigo = [ln for ln in ast.parse(texto).body if not isinstance(ln, ast.Expr)]   # tira o docstring
