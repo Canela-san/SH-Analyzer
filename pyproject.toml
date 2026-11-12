@@ -26,19 +26,33 @@ Repository = "https://github.com/Canela-san/SH-Analyzer"
 Documentation = "https://github.com/Canela-san/SH-Analyzer/tree/main/docs"
 
 [project.optional-dependencies]
-# Backend gráfico interativo (plt.show() sem -o); não é necessário para salvar PNG.
-gui = ["PyQt6"]
+# A interface gráfica (sh-analyzer-gui) e o backend interativo do matplotlib (plt.show() sem -o; para salvar PNG
+# não é necessário). PySide6, e não PyQt6: a LGPL do Qt for Python é compatível com a licença MIT do projeto, e a
+# GPL do PyQt6 não (docs/gui-plan.md, seção 3).
+gui = ["PySide6>=6.8", "pyqtgraph>=0.13.7"]
 # tomli: leitor de TOML dos testes na Python 3.10 (a partir da 3.11 ele vem na biblioteca padrão).
 # pytest-xdist: a suíte roda em paralelo (-n auto, em addopts); pytest-cov: cobertura (--cov=scripts/supraharmonicos).
 dev = ["pytest>=8", "pytest-xdist>=3.5", "pytest-cov>=5", "ruff>=0.6", "tomli>=2; python_version < '3.11'"]
+# Os testes da interface (pytest-qt). Fora do dev: o pytest-qt recusa iniciar sem um Qt instalado, e os jobs da CI
+# que não testam a interface não instalam o Qt.
+gui-dev = ["sh-analyzer[gui,dev]", "pytest-qt>=4.4"]
+
+# A interface gráfica: no Windows, um gui-script abre sem a janela do console.
+[project.gui-scripts]
+sh-analyzer-gui = "sh_analyzer_gui.app:main"
 
 # A lógica mora no pacote scripts/supraharmonicos; scripts/adc_tool.py, scripts/gerar_perfil_sonda.py,
-# scripts/medir_captura.py e scripts/compactar_amostras.py são só entradas de linha de comando. Para usar o
-# pacote como biblioteca (notebooks, outros scripts):  pip install -e .
+# scripts/medir_captura.py e scripts/compactar_amostras.py são só entradas de linha de comando. A interface gráfica
+# é o pacote scripts/sh_analyzer_gui, que chama o supraharmonicos (nunca o contrário). Para usar o pacote como
+# biblioteca (notebooks, outros scripts):  pip install -e .
 # (modo editável: a pasta padrão de perfis, scripts/sondas/, fica ao lado do pacote).
 [tool.setuptools.packages.find]
 where = ["scripts"]
-include = ["supraharmonicos*"]
+include = ["supraharmonicos*", "sh_analyzer_gui*"]
+
+# O ícone da marca vai junto do pacote da interface (cópia de docs/images/, conferida por tests/test_marca.py).
+[tool.setuptools.package-data]
+sh_analyzer_gui = ["recursos/*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

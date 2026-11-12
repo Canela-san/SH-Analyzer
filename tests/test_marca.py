@@ -41,3 +41,12 @@ def test_svgs_sao_xml_valido_com_titulo_e_descricao(gm):
 def test_main_grava_os_seis_arquivos_na_pasta_pedida(gm, tmp_path):
     assert gm.main(["--saida", str(tmp_path)]) == 0
     assert sorted(p.name for p in tmp_path.iterdir()) == sorted(gm.svgs())
+
+
+def test_a_interface_grafica_leva_o_icone_atual():
+    """O pacote da interface (``scripts/sh_analyzer_gui/recursos/``) leva uma cópia do ícone, para funcionar
+    instalado; a cópia tem de ser a de ``docs/images/``, a que o ``gerar_marca.py`` gera."""
+    for nome in ("app-icon.svg", "app-icon-small.svg"):
+        copia = RAIZ / "scripts" / "sh_analyzer_gui" / "recursos" / nome
+        assert copia.read_bytes() == (RAIZ / "docs" / "images" / nome).read_bytes(), (
+            f"{copia.relative_to(RAIZ)} difere de docs/images/{nome}: copie o de docs/images/")

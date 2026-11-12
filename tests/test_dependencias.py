@@ -28,7 +28,7 @@ SCRIPTS = RAIZ / "scripts"
 PACOTE = SCRIPTS / "supraharmonicos"
 SHEBANG_UV = "#!/usr/bin/env -S uv run --script"
 # nome no 'import' -> nome da distribuição no PyPI, quando diferem
-DISTRIBUICAO = {"PyQt6": "pyqt6"}
+DISTRIBUICAO: dict[str, str] = {}
 
 
 def _executaveis() -> list[Path]:

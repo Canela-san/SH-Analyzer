@@ -139,6 +139,16 @@ def test_dependencias_pesadas_ficam_confinadas():
     assert not any(isinstance(n, (ast.Import, ast.ImportFrom)) and "h5py" in ast.dump(n) for n in topo)
 
 
+QT = {"PySide6", "shiboken6", "PyQt6", "PyQt5", "PySide2", "pyqtgraph"}
+
+
+def test_o_motor_nao_importa_o_qt():
+    """A interface gráfica (``scripts/sh_analyzer_gui``) chama o motor; o motor nunca depende do Qt
+    (docs/gui-plan.md, seção 4). Assim a CLI, a CI e a BeagleBone não precisam do Qt instalado."""
+    for modulo in modulos_do_pacote():
+        assert not (importados_externos(modulo) & QT), f"{modulo} importa o Qt: a interface mora em sh_analyzer_gui"
+
+
 def test_plotagem_so_e_importada_pelo_modo_de_plotagem_de_forma_tardia():
     for modulo in modulos_do_pacote():
         if modulo == "modos":

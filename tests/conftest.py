@@ -12,6 +12,8 @@ import logging
 import os
 
 os.environ.setdefault("MPLBACKEND", "Agg")
+# A interface gráfica sem tela (tests/test_interface.py): na CI não há monitor, e na sua máquina nenhuma janela pisca.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
 
