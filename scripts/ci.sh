@@ -6,6 +6,7 @@
 #   scripts/ci.sh rapido           ruff + pytest sem os e2e (Python 3.13) + firmware: antes de cada commit (~30 s)
 #   scripts/ci.sh testes [VERSAO]  ruff + pytest completo numa versão do Python (padrão 3.13)
 #   scripts/ci.sh firmware         gcc -Werror no ler_adc.c e shellcheck nos scripts de shell
+#   scripts/ci.sh interface        os testes da interface gráfica (PySide6 e pytest-qt, sem tela)
 #
 # Precisa do uv (que baixa sozinho as versões do Python e o shellcheck) e do gcc. Sem o zpaq, os testes do
 # compactar_amostras são pulados (a CI os roda: sudo apt install zpaq); sem o gcc-arm-linux-gnueabihf, o ler_adc.c
@@ -43,14 +44,24 @@ firmware() {
     uvx --quiet --from "$SHELLCHECK" shellcheck -x firmware/*.sh firmware/coleta/*.sh scripts/*.sh
 }
 
+interface() {
+    # O extra gui-dev traz o PySide6 e o pytest-qt, que os outros jobs não instalam (o motor não depende do Qt).
+    # Os testes da arquitetura e da marca entram junto: o motor sem o Qt e o ícone do pacote igual ao da marca.
+    # -n 0: poucos testes, e cada processo do xdist abriria o Qt de novo.
+    etapa "pytest da interface gráfica (PySide6, sem tela)"
+    QT_QPA_PLATFORM=offscreen uv run --python 3.13 --extra gui-dev pytest -n 0 \
+        tests/test_interface.py tests/test_arquitetura.py tests/test_marca.py
+}
+
 command -v zpaq > /dev/null || echo "Aviso: sem o zpaq, os testes do compactar_amostras são pulados (sudo apt install zpaq)." >&2
 
 case "${1:-tudo}" in
-    tudo)      for py in "${VERSOES_PYTHON[@]}"; do testes "$py"; done; firmware ;;
+    tudo)      for py in "${VERSOES_PYTHON[@]}"; do testes "$py"; done; firmware; interface ;;
     rapido)    testes 3.13 -m "not e2e"; firmware ;;
     testes)    testes "${2:-3.13}" ;;
     firmware)  firmware ;;
-    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *)         echo "Uso: scripts/ci.sh [tudo | rapido | testes [VERSAO] | firmware]  (--help para detalhes)" >&2; exit 2 ;;
+    interface) interface ;;
+    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *)         echo "Uso: scripts/ci.sh [tudo | rapido | testes [VERSAO] | firmware | interface]  (--help para detalhes)" >&2; exit 2 ;;
 esac
 etapa "tudo certo"
