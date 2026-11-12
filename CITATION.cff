@@ -12,8 +12,8 @@ authors:
     family-names: Canela
 license: MIT
 repository-code: "https://github.com/Canela-san/SH-Analyzer"
-version: 0.6.0
-date-released: "2026-10-21"
+version: 0.8.0
+date-released: "2026-11-12"
 keywords:
   - supraharmonics
   - power quality
