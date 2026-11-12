@@ -8,11 +8,15 @@ IEC 61000-4-7 (que usa 10 ou 12 ciclos). Para cada ordem a tabela dá:
 * o **grupo harmônico** da IEC 61000-4-7, que soma também o conteúdo entre harmônicos até a metade do caminho para
   os vizinhos (os bins das bordas, compartilhados por dois grupos, entram com metade da potência) -- é o que a norma
   manda usar quando há inter-harmônicos ou a frequência varia;
+* o **subgrupo harmônico** da IEC 61000-4-7: o harmônico e os dois bins de 5 Hz vizinhos (um de cada lado). É a
+  grandeza que a IEC 61000-4-30 pede na medição de harmônicos (classe A). Com um trecho de outro comprimento, os
+  bins têm outra largura, e o subgrupo soma os que ficam a até 5 Hz do harmônico (a mesma banda da norma);
 * a porcentagem da fundamental e a **fase relativa à fundamental**, no referencial seno usual em sistemas de
   potência: ``v(t) = Σ √2·V_h·sin(h·ω·t + θ_h)`` com ``θ_1 = 0``. É ``θ_h − h·θ_1``, que não depende de onde o
   trecho começa. (Um 3º harmônico "em fase" com a fundamental, ``sin(3ωt)`` junto de ``sin(ωt)``, dá 0°.)
 
-THD (componentes) e THDG (grupos) usam as ordens 2 até a última calculada.
+THD (componentes), THDG (grupos) e THDS (subgrupos) usam as ordens 2 até a última calculada (a IEC 61000-4-7
+define o THD até a ordem 40: peça ``--harmonicos 40`` para o número da norma).
 
 Depende de: ``erros``. Só numpy (sem SciPy)."""
 
@@ -30,6 +34,7 @@ class Harmonico:
     frequencia_hz: float
     rms: float                 # componente: o bin do harmônico, em valor RMS (unidade do canal)
     rms_grupo: float           # grupo harmônico (IEC 61000-4-7)
+    rms_subgrupo: float        # subgrupo harmônico (IEC 61000-4-7): o harmônico e os bins a até 5 Hz dele
     pct_fundamental: float     # componente ÷ componente da fundamental, em %
     fase_graus: float          # θh − h·θ1 no referencial seno, em (−180, 180]; a da fundamental é 0 por definição
 
@@ -41,17 +46,19 @@ class TabelaHarmonicos:
     harmonicos: list[Harmonico]   # ordem 1 até a última abaixo de Nyquist (ou a pedida)
     thd_pct: float
     thdg_pct: float
+    thds_pct: float               # pelos subgrupos (IEC 61000-4-7): o THD que a IEC 61000-4-30 classe A usa
     rms_total: float              # RMS do trecho inteiro, sem DC (inclui tudo: harmônicos, inter-harmônicos, ruído)
 
     def linhas(self, unidade: str) -> list[str]:
         """A tabela pronta para o console."""
         saida = [f"Harmônicos (f0 = {self.f0_hz:.4f} Hz, {self.n_ciclos} ciclos, janela retangular síncrona):",
-                 f"  {'h':>3} {'f (Hz)':>11} {'RMS (' + unidade + ')':>14} {'grupo (' + unidade + ')':>15} "
-                 f"{'% h1':>9} {'fase (°)':>9}"]
+                 f"  {'h':>3} {'f (Hz)':>11} {'RMS (' + unidade + ')':>14} {'subgrupo (' + unidade + ')':>17} "
+                 f"{'grupo (' + unidade + ')':>15} {'% h1':>9} {'fase (°)':>9}"]
         for h in self.harmonicos:
-            saida.append(f"  {h.ordem:>3} {h.frequencia_hz:>11.3f} {h.rms:>14.6g} {h.rms_grupo:>15.6g} "
-                         f"{h.pct_fundamental:>9.4f} {h.fase_graus:>9.2f}")
-        saida.append(f"  THD (componentes) = {self.thd_pct:.4f} % | THDG (grupos, IEC 61000-4-7) = {self.thdg_pct:.4f} % "
+            saida.append(f"  {h.ordem:>3} {h.frequencia_hz:>11.3f} {h.rms:>14.6g} {h.rms_subgrupo:>17.6g} "
+                         f"{h.rms_grupo:>15.6g} {h.pct_fundamental:>9.4f} {h.fase_graus:>9.2f}")
+        saida.append(f"  THD (componentes) = {self.thd_pct:.4f} % | THDS (subgrupos) = {self.thds_pct:.4f} % | "
+                     f"THDG (grupos) = {self.thdg_pct:.4f} % (IEC 61000-4-7) "
                      f"| RMS total (sem DC) = {self.rms_total:.6g} {unidade}")
         return saida
 
@@ -81,6 +88,9 @@ def calcular_harmonicos(trecho: np.ndarray, fs: float, f0_hz: float, n_ciclos: i
     ultimo_bin = len(espectro) - 1 if n % 2 else len(espectro) - 2     # o de Nyquist não tem par: fora
 
     meio = n_ciclos / 2.0
+    # Subgrupo: ±1 bin na janela da norma (10 ciclos a 50 Hz, 12 a 60 Hz: bins de 5 Hz). Neste trecho, os bins a até
+    # 5 Hz do harmônico: n_ciclos ÷ (ciclos da norma), pelo menos 1.
+    meia_largura_subgrupo = max(1, int(round(n_ciclos / (10 if f0_hz < 55.0 else 12))))
     harmonicos: list[Harmonico] = []
     fase_1 = float(np.angle(espectro[n_ciclos]))
     rms_1 = float(rms_bin[n_ciclos])
@@ -99,8 +109,10 @@ def calcular_harmonicos(trecho: np.ndarray, fs: float, f0_hz: float, n_ciclos: i
                 if lo <= borda <= hi:
                     soma -= 0.5 * float(potencia[borda])
         rms = float(rms_bin[k])
+        subgrupo = float(np.sum(potencia[max(1, k - meia_largura_subgrupo):min(ultimo_bin, k + meia_largura_subgrupo) + 1]))
         harmonicos.append(Harmonico(
             ordem=ordem, frequencia_hz=ordem * f0_hz, rms=rms, rms_grupo=math.sqrt(max(soma, 0.0)),
+            rms_subgrupo=math.sqrt(max(subgrupo, 0.0)),
             pct_fundamental=100.0 * rms / rms_1,
             fase_graus=0.0 if ordem == 1 else _fase_relativa(float(np.angle(espectro[k])), fase_1, ordem),
         ))
@@ -108,5 +120,9 @@ def calcular_harmonicos(trecho: np.ndarray, fs: float, f0_hz: float, n_ciclos: i
     thd = 100.0 * math.sqrt(sum(h.rms ** 2 for h in distorcao)) / rms_1
     grupo_1 = harmonicos[0].rms_grupo
     thdg = 100.0 * math.sqrt(sum(h.rms_grupo ** 2 for h in distorcao)) / grupo_1 if grupo_1 > 0 else math.nan
+    subgrupo_1 = harmonicos[0].rms_subgrupo
+    thds = (100.0 * math.sqrt(sum(h.rms_subgrupo ** 2 for h in distorcao)) / subgrupo_1 if subgrupo_1 > 0
+            else math.nan)
     return TabelaHarmonicos(f0_hz=f0_hz, n_ciclos=n_ciclos, harmonicos=harmonicos, thd_pct=thd, thdg_pct=thdg,
+                            thds_pct=thds,
                             rms_total=float(np.sqrt(np.mean(x ** 2))))

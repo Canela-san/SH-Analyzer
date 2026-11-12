@@ -3,13 +3,18 @@
  *
  * A PRU0 (spi_core.asm) lê o ADS8688 pelo SPI numa grade de tempo exata e enche, alternando, dois buffers na DDR. Este
  * programa prepara a placa (pinos da PRU, memória reservada), configura e reinicia a PRU, grava cada buffer cheio num
- * .bin (cabeçalho de 1024 bytes + amostras de 16 bits intercaladas por canal) e confere a integridade da captura.
+ * .bin (cabeçalho de 4096 bytes + amostras de 16 bits intercaladas por canal) e confere a integridade da captura.
  *
  *   sudo ./ler_adc [FREQUENCIA [CANAIS]] [opções]        (./ler_adc --help)
  *
  * O contrato com a PRU está em memoria_pru.h; o formato do .bin, na struct cabecalho_arquivo_campos (lida por
  * scripts/supraharmonicos/cabecalho.py; tests/test_contrato_firmware.py confere os dois lados).
  */
+// [ARQUIVOS GRANDES, 11/11/2026] A BeagleBone é de 32 bits: sem isto, o off_t tem 32 bits e o fopen abre o .bin sem
+// O_LARGEFILE. A gravação parava com EFBIG ("File too large") quando o arquivo chegava a 2 GiB: 1023 blocos, ~45 min a
+// 400 kS/s (um --duracao 1h perdia o resto). Tem de vir antes do primeiro #include.
+#define _FILE_OFFSET_BITS 64
+
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -50,8 +55,12 @@
 
 // --- Cabeçalho do .bin --------------------------------------------------------------------------------------------
 #define CABECALHO_MAGIC "SHAN"
-#define CABECALHO_VERSAO 8u             // versão do FORMATO do cabeçalho (o histórico está em cabecalho.py)
-#define CABECALHO_TAMANHO_TOTAL 1024u
+#define CABECALHO_VERSAO 9u             // versão do FORMATO do cabeçalho (o histórico está em cabecalho.py)
+#define CABECALHO_TAMANHO_TOTAL 4096u   // [v9] eram 1024: os campos da v8 onde estavam, e a extensão do byte 1024 em diante
+#define CABECALHO_TAMANHO_V8 1024u
+#define CABECALHO_ID_TAMANHO 16u        // [v9]
+#define CABECALHO_HOSTNAME_TAMANHO 32u  // [v9]
+#define CABECALHO_COMANDO_TAMANHO 512u  // [v9]
 #define CABECALHO_TITULO_TAMANHO 128u   // [v8] eram 64
 #define CABECALHO_DESCRICAO_TAMANHO 272u   // [v8] eram 256
 #define CABECALHO_SONDA_ID_TAMANHO 32u
@@ -79,8 +88,21 @@ static const double FAIXA_ADC_ESPAN_V[] = {20.48, 10.24, 5.12};
 #define FAIXA_ADC_NUM_CODIGOS 3
 
 // --- Placa ------------------------------------------------------------------------------------------------------------
+// Os caminhos da placa podem ser trocados na compilação (#ifndef): tests/test_ler_adc_captura.py compila este arquivo
+// com eles apontando para uma placa falsa (um arquivo no lugar do /dev/mem e uma PRU em Python) e roda a captura
+// inteira no computador.
+#ifndef REMOTEPROC_PRU0_ESTADO
 #define REMOTEPROC_PRU0_ESTADO "/sys/class/remoteproc/remoteproc1/state"
+#endif
+#ifndef BASE_PINMUX
 #define BASE_PINMUX "/sys/devices/platform/ocp"     // onde o config-pin lê e escreve o modo de cada pino
+#endif
+#ifndef CAMINHO_DEV_MEM
+#define CAMINHO_DEV_MEM "/dev/mem"
+#endif
+#ifndef CAMINHO_IOMEM
+#define CAMINHO_IOMEM "/proc/iomem"
+#endif
 #define PRU_AINDA_NAO_INICIOU 0xFFFFFFFFu            // marca em versao_protocolo_pru, trocada por 0 pelo pru_main.c
 
 // Com o ruído do ADC (~0,8 LSB rms), tantas amostras iguais seguidas só acontecem com o ADC mudo (SDO parado em 0: a
@@ -93,11 +115,13 @@ static const double FAIXA_ADC_ESPAN_V[] = {20.48, 10.24, 5.12};
 #define SAIDA_USO 2
 #define SAIDA_SOBRESCRITO 3             // buffers sobrescritos: amostras perdidas
 #define SAIDA_ADC_MUDO 4
+#define SAIDA_INTERROMPIDA 5            // um sinal parou a captura antes dos blocos pedidos: o .bin está mais curto
 
 // =====================================================================================================================
 // Cabeçalho do .bin
 // =====================================================================================================================
-// 1024 bytes, little-endian, sem padding entre campos (packed): o layout é o do arquivo, não o do compilador. Os
+// 4096 bytes desde a v9 (1024 até a v8), little-endian, sem padding entre campos (packed): o layout é o do arquivo,
+// não o do compilador. Os
 // campos finais (blocos, contadores, taxa medida, grade, disco no fim) só valem depois da reescrita no fim da captura;
 // o CRC-32 (zlib) cobre o cabeçalho inteiro com o próprio campo zerado.
 //
@@ -109,7 +133,7 @@ struct cabecalho_arquivo_campos {
     char     magic[4];                                 // "SHAN"
     uint32_t versao_cabecalho;                         // CABECALHO_VERSAO
     uint32_t tamanho_cabecalho;                        // 1024
-    uint64_t timestamp_unix;                           // início da captura (s, UTC; a placa não tem RTC: confira a hora)
+    uint64_t timestamp_unix;                           // o ARM soltou a PRU (s, UTC; a placa não tem RTC: confira a hora)
     uint32_t frequencia_hz;                            // taxa TOTAL pedida
     uint32_t auto_seq_mask;                            // bit N = canal N na varredura
     uint32_t num_canais;
@@ -124,7 +148,7 @@ struct cabecalho_arquivo_campos {
     uint64_t total_amostras_gravadas;                  // [final]
     char     descricao[CABECALHO_DESCRICAO_TAMANHO];   // UTF-8, terminada em '\0' (até a v7: 256 bytes, depois do título)
     char     kernel[CABECALHO_KERNEL_TAMANHO];         // [v8] uname -r
-    uint32_t timestamp_ns;                             // [v8] a fração de segundo do início da captura
+    uint32_t timestamp_ns;                             // [v8] a fração de segundo do timestamp_unix
     uint32_t relogio_sincronizado;                     // [v8] 1 = NTP sincronizado; 0 = não (a data pode estar errada)
     uint32_t uptime_s;                                 // [v8] há quanto tempo a placa está ligada
     uint32_t carga_1min_milesimos;                     // [v8] a carga média do ARM no último minuto, x 1000
@@ -157,23 +181,64 @@ struct cabecalho_arquivo_campos {
     uint32_t header_crc32;
 } __attribute__((packed));
 
-struct cabecalho_arquivo {
-    struct cabecalho_arquivo_campos campos;            // desde a v8, os 1024 bytes inteiros (até a v7, mais um padding)
+// [v9, 11/11/2026] A extensão do cabeçalho, do byte 1024 em diante. Nada saiu nem mudou de lugar nos 1024 bytes da v8
+// (os scripts leem campos por offset); o cabeçalho passou a 4096 bytes (as amostras começam alinhadas a uma página) e
+// o que sobra depois destes campos é reserva, zerada, para os próximos entrarem sem outro aumento. O header_crc32
+// continua no byte 1020 e cobre os 4096 bytes. Os campos [final] só valem com blocos gravados.
+struct cabecalho_extensao_campos {
+    uint32_t crc32_amostras;                           // [final] CRC-32 (zlib) de todas as amostras gravadas, na ordem do arquivo
+    uint64_t timestamp_fim_unix;                       // [final] o último bloco visto pronto (s, UTC)
+    uint32_t timestamp_fim_ns;                         // [final]
+    uint32_t pior_bloco_ms;                            // [final] o bloco que mais demorou no ARM (cópia, CRC e gravação)
+    double   duracao_monotonica_s;                     // [final] de soltar a PRU ao último bloco visto pronto (CLOCK_MONOTONIC)
+    uint8_t  id_captura[CABECALHO_ID_TAMANHO];         // 16 bytes aleatórios: a captura segue identificável se o arquivo for renomeado
+    char     hostname[CABECALHO_HOSTNAME_TAMANHO];     // uname -n: em qual BeagleBone
+    char     linha_de_comando[CABECALHO_COMANDO_TAMANHO];   // os argumentos do ler_adc, como digitados (cortados se não couberem)
+    double   ganho_por_canal[ADS8688_MAX_CANAIS];      // --ganho: unidades físicas por volt no pino; 0 = não declarado
+    uint16_t codigo_minimo[ADS8688_MAX_CANAIS];        // [final] o sinal de cada canal em TODAS as amostras, por posição de
+    uint16_t codigo_maximo[ADS8688_MAX_CANAIS];        // [final] lista_canais, em códigos do ADC
+    uint64_t amostras_saturadas[ADS8688_MAX_CANAIS];   // [final] códigos 0 ou 65535
+    double   media_codigos[ADS8688_MAX_CANAIS];        // [final]
+    double   desvio_codigos[ADS8688_MAX_CANAIS];       // [final] o desvio padrão (o RMS sem o DC), em LSB
 } __attribute__((packed));
 
-_Static_assert(sizeof(struct cabecalho_arquivo) == CABECALHO_TAMANHO_TOTAL, "o cabeçalho tem de ter 1024 bytes");
+struct cabecalho_arquivo {
+    struct cabecalho_arquivo_campos campos;            // bytes 0 a 1023: os da v8, onde estavam
+    struct cabecalho_extensao_campos extensao;         // [v9] do byte 1024 em diante
+    uint8_t reservado[CABECALHO_TAMANHO_TOTAL - sizeof(struct cabecalho_arquivo_campos)
+                      - sizeof(struct cabecalho_extensao_campos)];   // [v9] zeros: os próximos campos entram aqui
+} __attribute__((packed));
 
-// CRC-32 refletido, polinômio 0xEDB88320 (o do zlib): o Python confere com zlib.crc32.
-static uint32_t calcular_crc32(const void *dados, size_t tamanho) {
-    const uint8_t *bytes = (const uint8_t *)dados;
-    uint32_t crc = 0xFFFFFFFFu;
-    for (size_t i = 0; i < tamanho; i++) {
-        crc ^= bytes[i];
-        for (int bit = 0; bit < 8; bit++) {
-            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+_Static_assert(sizeof(struct cabecalho_arquivo_campos) == CABECALHO_TAMANHO_V8, "os campos da v8 têm de ocupar 1024 bytes");
+_Static_assert(sizeof(struct cabecalho_arquivo) == CABECALHO_TAMANHO_TOTAL, "o cabeçalho tem de ter 4096 bytes");
+_Static_assert(sizeof(off_t) >= 8, "off_t de 32 bits: o .bin pararia em 2 GiB (ver _FILE_OFFSET_BITS no topo)");
+
+// CRC-32 refletido, polinômio 0xEDB88320 (o do zlib): o Python confere com zlib.crc32. Incremental, como o do zlib:
+// comece com 0 e passe o valor devolvido à chamada seguinte. Por tabela (1 KiB, montada no 1º uso): desde a v9 o CRC
+// das amostras passa por 2 MB a cada bloco, e bit a bit isso custaria ~0,2 s por bloco no Cortex-A8.
+static uint32_t atualizar_crc32(uint32_t crc, const void *dados, size_t tamanho) {
+    static uint32_t tabela[256];
+    static int tabela_pronta = 0;
+    if (!tabela_pronta) {
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t c = i;
+            for (int bit = 0; bit < 8; bit++) {
+                c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
+            }
+            tabela[i] = c;
         }
+        tabela_pronta = 1;
+    }
+    const uint8_t *bytes = (const uint8_t *)dados;
+    crc = ~crc;
+    for (size_t i = 0; i < tamanho; i++) {
+        crc = tabela[(crc ^ bytes[i]) & 0xFFu] ^ (crc >> 8);
     }
     return ~crc;
+}
+
+static uint32_t calcular_crc32(const void *dados, size_t tamanho) {
+    return atualizar_crc32(0u, dados, tamanho);
 }
 
 // =====================================================================================================================
@@ -285,7 +350,7 @@ static void imprimir_ajuda(const char *argv0) {
     const char *programa = strrchr(argv0, '/') ? strrchr(argv0, '/') + 1 : argv0;
     printf("%sUso:%s sudo ./%s [FREQUENCIA [CANAIS]] [opções]\n"
            "\n"
-           "Captura o ADS8688 pela PRU0 e grava um .bin (cabeçalho de 1024 bytes + amostras de 16 bits).\n"
+           "Captura o ADS8688 pela PRU0 e grava um .bin (cabeçalho de 4096 bytes + amostras de 16 bits).\n"
            "\n"
            "%sArgumentos%s\n"
            "  FREQUENCIA            taxa TOTAL em Hz, inteiro (padrão: %u). Teto da PRU com as esperas\n"
@@ -306,6 +371,9 @@ static void imprimir_ajuda(const char *argv0) {
            "  --sonda C:ID,...      id do perfil de sonda por canal (até %u bytes), para o adc_tool.py\n"
            "\n"
            "%sADC e PRU%s\n"
+           "  --ganho C:G,...       unidades físicas por volt no pino, por canal (ex.: 1:19.357 no divisor de\n"
+           "                        tensão, 0:19.65 na sonda de corrente): fica no cabeçalho e vira o padrão\n"
+           "                        do --ganho da análise\n"
            "  --faixa-adc C:V,...   faixa total por canal: 20.48 (±10,24 V, padrão), 10.24 ou 5.12\n"
            "  --spi MODO            rapido (padrão, ~15,4 MHz, lê na fase B), rapido:a, rapido:c ou\n"
            "                        lenta (~10,7 MHz, o SPI de antes de 22/10/2026)\n"
@@ -322,7 +390,7 @@ static void imprimir_ajuda(const char *argv0) {
            "respondendo.\n"
            "\n"
            "%sCódigos de saída%s  0 ok · 1 erro · 2 argumento inválido · 3 buffers sobrescritos (amostras\n"
-           "perdidas) · 4 ADC sem resposta\n"
+           "perdidas) · 4 ADC sem resposta · 5 interrompida (Ctrl+C, kill) antes dos blocos pedidos\n"
            "\n"
            "%sExemplos%s\n"
            "  sudo ./%s                       # 400 kS/s no canal 1, 1 bloco\n"
@@ -522,6 +590,28 @@ static int analisar_lista_faixas(const char *texto, const int *canais, int num_c
     return 0;
 }
 
+// [v9] --ganho C:G: o fator que leva volts no pino à grandeza física do canal (o --ganho da análise). Só é gravado no
+// cabeçalho: o ler_adc não o usa. Tem de ser um número positivo e finito.
+static int analisar_lista_ganhos(const char *texto, const int *canais, int num_canais, double *ganhos) {
+    char copia[512];
+    snprintf(copia, sizeof(copia), "%s", texto);
+    for (char *token = strtok(copia, ","); token != NULL; token = strtok(NULL, ",")) {
+        const char *valor;
+        int posicao = canal_do_par(token, "--ganho", "1:19.357", canais, num_canais, &valor);
+        if (posicao < 0) {
+            return -1;
+        }
+        char *fim;
+        double ganho = strtod(valor, &fim);
+        if (fim == valor || *fim != '\0' || !(ganho > 0.0) || ganho > 1e12) {
+            erro("ganho '%s' em --ganho: use um número positivo (ex.: 19.357).", valor);
+            return -1;
+        }
+        ganhos[posicao] = ganho;
+    }
+    return 0;
+}
+
 static int analisar_modo_spi(const char *texto) {
     if (strcmp(texto, "rapido") == 0 || strcmp(texto, "rápido") == 0 || strcmp(texto, "rapido:b") == 0) {
         return (int)MODO_SPI_RAPIDO_B;
@@ -641,6 +731,7 @@ struct configuracao {
     uint8_t grandezas[ADS8688_MAX_CANAIS];                // por posição de canais[]
     char sondas[ADS8688_MAX_CANAIS][CABECALHO_SONDA_ID_TAMANHO];
     uint8_t faixas[ADS8688_MAX_CANAIS];
+    double ganhos[ADS8688_MAX_CANAIS];                    // [v9] --ganho por posição de canais[]; 0 = não declarado
     uint32_t range_sel;                                   // 4 bits por canal, indexado pelo NÚMERO do canal
     uint32_t atrasos_cs[3];
     uint32_t modo_spi;
@@ -667,7 +758,7 @@ static const char *valor_da_opcao(int argc, char *argv[], int *i) {
 // Devolve SAIDA_OK ou SAIDA_USO (com o erro impresso).
 static int analisar_argumentos(int argc, char *argv[], struct configuracao *c) {
     const char *texto_canais = NULL, *texto_blocos = NULL, *texto_duracao = NULL, *texto_grandeza = NULL;
-    const char *texto_sonda = NULL, *texto_faixa = NULL, *texto_atraso = NULL, *texto_spi = NULL;
+    const char *texto_sonda = NULL, *texto_faixa = NULL, *texto_atraso = NULL, *texto_spi = NULL, *texto_ganho = NULL;
 
     memset(c, 0, sizeof(*c));
     c->frequencia = FREQUENCIA_PADRAO_HZ;
@@ -702,6 +793,8 @@ static int analisar_argumentos(int argc, char *argv[], struct configuracao *c) {
             destino = &texto_grandeza;
         } else if (strcmp(a, "--sonda") == 0) {
             destino = &texto_sonda;
+        } else if (strcmp(a, "--ganho") == 0) {
+            destino = &texto_ganho;
         } else if (strcmp(a, "--faixa-adc") == 0) {
             destino = &texto_faixa;
         } else if (strcmp(a, "--atraso-cs") == 0) {
@@ -744,7 +837,8 @@ static int analisar_argumentos(int argc, char *argv[], struct configuracao *c) {
     }
     if ((texto_grandeza && analisar_lista_grandezas(texto_grandeza, c->canais, c->num_canais, c->grandezas) < 0) ||
         (texto_sonda && analisar_lista_sondas(texto_sonda, c->canais, c->num_canais, c->sondas) < 0) ||
-        (texto_faixa && analisar_lista_faixas(texto_faixa, c->canais, c->num_canais, c->faixas) < 0)) {
+        (texto_faixa && analisar_lista_faixas(texto_faixa, c->canais, c->num_canais, c->faixas) < 0) ||
+        (texto_ganho && analisar_lista_ganhos(texto_ganho, c->canais, c->num_canais, c->ganhos) < 0)) {
         return SAIDA_USO;
     }
     for (int k = 0; k < c->num_canais; k++) {
@@ -1015,6 +1109,19 @@ static void lidar_interrupcao(int sinal) {
     manter_execucao = 0;
 }
 
+// [11/11/2026] Um SIGHUP que já chega IGNORADO continua ignorado, como manda o costume (nohup): é assim que o
+// coletar.sh ('trap "" HUP') pede que a captura em curso termine mesmo se a conexão cair. Até aqui o ler_adc instalava
+// o seu tratador por cima, a queda do ssh cortava a captura no bloco seguinte e ela saía com o código 0, como se
+// estivesse inteira.
+static void instalar_sinais(void) {
+    signal(SIGINT, lidar_interrupcao);
+    signal(SIGTERM, lidar_interrupcao);
+    if (signal(SIGHUP, lidar_interrupcao) == SIG_IGN) {
+        signal(SIGHUP, SIG_IGN);
+    }
+    signal(SIGPIPE, SIG_IGN);       // um '| tee' que morreu com o ssh não pode matar o ler_adc antes do cabeçalho final
+}
+
 static double segundos_monotonicos(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
@@ -1090,6 +1197,7 @@ static void mostrar_progresso(unsigned long long feitos, unsigned long long tota
 struct sistema {
     char sistema_operacional[CABECALHO_SISTEMA_TAMANHO];
     char kernel[CABECALHO_KERNEL_TAMANHO];
+    char hostname[CABECALHO_HOSTNAME_TAMANHO];            // [v9]
     char placa[CABECALHO_PLACA_TAMANHO];
     uint32_t relogio_sincronizado;
     uint32_t uptime_s;
@@ -1223,6 +1331,7 @@ static void ler_sistema(struct sistema *s) {
     struct utsname u;
     if (uname(&u) == 0) {
         copiar_texto(s->kernel, sizeof(s->kernel), u.release, sizeof(u.release));
+        copiar_texto(s->hostname, sizeof(s->hostname), u.nodename, sizeof(u.nodename));
     }
     ler_placa(eeproms, sizeof(eeproms) / sizeof(eeproms[0]), "/proc/device-tree/model", s->placa, sizeof(s->placa));
     s->relogio_sincronizado = relogio_sincronizado();
@@ -1280,7 +1389,12 @@ static void imprimir_configuracao(const struct configuracao *c, const struct sis
         if (c->sondas[k][0]) {
             snprintf(sonda, sizeof(sonda), ", sonda %s", c->sondas[k]);
         }
-        campo(rotulo, "%s, ±%.2f V%s", nome_da_grandeza(c->grandezas[k]), FAIXA_ADC_ESPAN_V[c->faixas[k]] / 2.0, sonda);
+        char ganho[48] = "";
+        if (c->ganhos[k] > 0.0) {
+            snprintf(ganho, sizeof(ganho), ", ganho %g", c->ganhos[k]);
+        }
+        campo(rotulo, "%s, ±%.2f V%s%s", nome_da_grandeza(c->grandezas[k]), FAIXA_ADC_ESPAN_V[c->faixas[k]] / 2.0, sonda,
+              ganho);
     }
     if (c->blocos == 0) {
         campo("Duração", "até Ctrl+C (blocos de %.3f s)", segundos_por_bloco);
@@ -1314,6 +1428,67 @@ static void imprimir_configuracao(const struct configuracao *c, const struct sis
     putchar('\n');
 }
 
+// [v9] O sinal de cada canal, acumulado em TODAS as amostras gravadas: mínimo, máximo, saturadas, média e desvio padrão.
+// Vai para o cabeçalho e para o resumo: a saturação ou um nível absurdo aparecem no fim de toda captura, e não só na
+// análise. A soma é exata (inteira, em torno do meio da escala); a dos quadrados, em double.
+struct estatistica_canal {
+    uint16_t minimo, maximo;
+    uint64_t saturadas, n;
+    int64_t soma;                           // de (código - 32768)
+    double soma2;
+};
+
+// Acumula um bloco. As amostras vêm intercaladas e o bloco não tem um número inteiro de varreduras (1.048.576 não é
+// múltiplo de 3, 5, 6 nem 7 canais): a posição de cada amostra é a do ARQUIVO, (ja_gravadas + i) % num_canais.
+static void acumular_estatisticas(const uint16_t *amostras, size_t n, int num_canais, unsigned long long ja_gravadas,
+                                  struct estatistica_canal *e) {
+    size_t fase = (size_t)(ja_gravadas % (unsigned long long)num_canais);
+    for (int p = 0; p < num_canais; p++) {
+        uint16_t minimo = e[p].minimo, maximo = e[p].maximo;
+        uint64_t saturadas = 0, contadas = 0;
+        int64_t soma = 0;
+        double soma2 = 0.0;
+        for (size_t i = ((size_t)p + (size_t)num_canais - fase) % (size_t)num_canais; i < n; i += (size_t)num_canais) {
+            uint16_t codigo = amostras[i];
+            minimo = codigo < minimo ? codigo : minimo;
+            maximo = codigo > maximo ? codigo : maximo;
+            saturadas += (codigo == 0u) | (codigo == 0xFFFFu);
+            int32_t x = (int32_t)codigo - 32768;
+            soma += x;
+            soma2 += (double)x * (double)x;
+            contadas++;
+        }
+        e[p].minimo = minimo;
+        e[p].maximo = maximo;
+        e[p].saturadas += saturadas;
+        e[p].n += contadas;
+        e[p].soma += soma;
+        e[p].soma2 += soma2;
+    }
+}
+
+static double media_dos_codigos(const struct estatistica_canal *e) {
+    return e->n ? 32768.0 + (double)e->soma / (double)e->n : 0.0;
+}
+
+static double desvio_dos_codigos(const struct estatistica_canal *e) {
+    if (e->n == 0) {
+        return 0.0;
+    }
+    double media = (double)e->soma / (double)e->n;
+    double variancia = e->soma2 / (double)e->n - media * media;
+    double raiz = variancia > 0.0 ? variancia : 0.0;
+    // Newton: o <math.h> pediria -lm no Makefile só para esta raiz.
+    if (raiz > 0.0) {
+        double x = raiz > 1.0 ? raiz : 1.0;
+        for (int k = 0; k < 60; k++) {
+            x = 0.5 * (x + raiz / x);
+        }
+        raiz = x;
+    }
+    return raiz;
+}
+
 // O que a captura deixou: um resultado e os números, sempre no mesmo formato (o varrer_taxa.sh lê as linhas
 // Integridade, Grade, SPI e Taxa medida).
 struct resultado {
@@ -1323,6 +1498,8 @@ struct resultado {
     double pior_gravacao_s;
     int erro_escrita;
     int adc_mudo;
+    int interrompida;                       // um sinal parou a captura antes dos blocos pedidos
+    struct estatistica_canal canais[ADS8688_MAX_CANAIS];    // [v9] o sinal de cada canal (por posição)
 };
 
 static void imprimir_resultado(const struct configuracao *c, volatile struct shared_control *ctrl,
@@ -1335,7 +1512,7 @@ static void imprimir_resultado(const struct configuracao *c, volatile struct sha
         simbolo = "✗"; cor = VERMELHO; texto = "Captura interrompida: erro de escrita";
     } else if (n->buffers_sobrescritos) {
         simbolo = "✗"; cor = VERMELHO; texto = "Captura com amostras perdidas";
-    } else if (sinal_recebido && c->blocos != 0) {
+    } else if (r->interrompida) {
         simbolo = "!"; cor = AMARELO; texto = "Captura interrompida antes do fim";
     } else if (n->amostras_atrasadas || n->quadros_preambulo_ruim) {
         simbolo = "!"; cor = AMARELO; texto = "Captura concluída, com avisos";
@@ -1385,6 +1562,28 @@ static void imprimir_resultado(const struct configuracao *c, volatile struct sha
         }
     }
 
+    // [v9] O sinal de cada canal, em volts no pino (e na grandeza física, com --ganho).
+    for (int k = 0; k < c->num_canais && r->canais[k].n > 0; k++) {
+        const struct estatistica_canal *e = &r->canais[k];
+        double lsb = FAIXA_ADC_ESPAN_V[c->faixas[k]] / 65536.0;
+        double minimo = ((double)e->minimo - 32768.0) * lsb, maximo = ((double)e->maximo - 32768.0) * lsb;
+        char rotulo[16], fisico[64] = "";
+        snprintf(rotulo, sizeof(rotulo), "Canal %d", c->canais[k]);
+        if (c->ganhos[k] > 0.0) {
+            snprintf(fisico, sizeof(fisico), " = %.4g %s pico a pico", (maximo - minimo) * c->ganhos[k],
+                     c->grandezas[k] == GRANDEZA_CORRENTE ? "A" : c->grandezas[k] == GRANDEZA_TENSAO ? "V" : "un.");
+        }
+        campo(rotulo, "de %+.4f a %+.4f V no pino (%.4f Vpp%s), média %+.2f mV, %.3f mV rms sem o DC", minimo, maximo,
+              maximo - minimo, fisico, 1e3 * (media_dos_codigos(e) - 32768.0) * lsb, 1e3 * desvio_dos_codigos(e) * lsb);
+        if (e->saturadas > 0) {
+            aviso("o canal %d SATUROU: %llu %s (%.4f %%) no fundo de escala de ±%.2f V. %s", c->canais[k],
+                  (unsigned long long)e->saturadas, plural(e->saturadas, "amostra", "amostras"),
+                  100.0 * (double)e->saturadas / (double)e->n, FAIXA_ADC_ESPAN_V[c->faixas[k]] / 2.0,
+                  c->faixas[k] == ADS8688_FAIXA_2_5_VREF ? "É a maior faixa do ADC: reduza o sinal na entrada."
+                  : "Use uma faixa maior (--faixa-adc) ou reduza o sinal.");
+        }
+    }
+
     if (r->taxa_medida > 0.0) {
         double desvio = 100.0 * (r->taxa_medida / c->frequencia - 1.0);
         campo("Taxa medida", "%.0f S/s pelo relógio do ARM (%+.2f %% da pedida)%s", r->taxa_medida, desvio,
@@ -1394,7 +1593,7 @@ static void imprimir_resultado(const struct configuracao *c, volatile struct sha
     if (r->blocos > 0) {
         double margem = segundos_por_bloco / (r->pior_gravacao_s + 0.002);   // + a espera do laço (2 ms)
         detalhe("rebase do contador: %u ciclos entre as leituras", ctrl->ciclos_rebase);
-        detalhe("gravação no ARM: o pior bloco levou %.0f ms; cada bloco enche em %.0f ms (margem de %.0fx)",
+        detalhe("cópia, CRC e gravação no ARM: o pior bloco levou %.0f ms; cada bloco enche em %.0f ms (margem de %.0fx)",
                 1e3 * r->pior_gravacao_s, 1e3 * segundos_por_bloco, margem);
         if (margem < 3.0) {
             aviso("o ARM levou %.0f ms para gravar um bloco que enche em %.0f ms: pouca margem antes de perder "
@@ -1408,10 +1607,7 @@ static void imprimir_resultado(const struct configuracao *c, volatile struct sha
 // =====================================================================================================================
 
 int main(int argc, char *argv[]) {
-    signal(SIGINT, lidar_interrupcao);
-    signal(SIGTERM, lidar_interrupcao);
-    signal(SIGHUP, lidar_interrupcao);
-    signal(SIGPIPE, SIG_IGN);       // um '| tee' que morreu com o ssh não pode matar o ler_adc antes do cabeçalho final
+    instalar_sinais();
     setvbuf(stdout, NULL, _IOLBF, 0);   // num log (2>&1), stdout e stderr na ordem em que aconteceram
 
     terminal_stdout = isatty(STDOUT_FILENO);
@@ -1442,7 +1638,7 @@ int main(int argc, char *argv[]) {
     // --- Placa --------------------------------------------------------------------------------------------------------
     size_t bytes_por_buffer = (size_t)SAMPLES_PER_BUFFER * sizeof(uint16_t);
     unsigned long long fim_ddr = (unsigned long long)DDR_RESERVED_PHYS + bytes_por_buffer * BUFFERS_PING_PONG;
-    if (conferir_ddr_reservada("/proc/iomem", DDR_RESERVED_PHYS, fim_ddr) != 0) {
+    if (conferir_ddr_reservada(CAMINHO_IOMEM, DDR_RESERVED_PHYS, fim_ddr) != 0) {
         return SAIDA_ERRO;
     }
     detalhe("DDR dos buffers fora do Linux (0x%X-0x%llX)", DDR_RESERVED_PHYS, fim_ddr - 1);
@@ -1450,9 +1646,9 @@ int main(int argc, char *argv[]) {
         return SAIDA_ERRO;
     }
 
-    int mem_fd = open("/dev/mem", O_RDWR | O_SYNC);
+    int mem_fd = open(CAMINHO_DEV_MEM, O_RDWR | O_SYNC);
     if (mem_fd < 0) {
-        erro("não deu para abrir /dev/mem: %s.", strerror(errno));
+        erro("não deu para abrir %s: %s.", CAMINHO_DEV_MEM, strerror(errno));
         return SAIDA_ERRO;
     }
     void *ctrl_map = mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, mem_fd, PRU_SHARED_RAM_PHYS);
@@ -1501,9 +1697,15 @@ int main(int argc, char *argv[]) {
     ctrl->folga_minima_ciclos = 0;
     ctrl->atraso_maximo_ciclos = 0;
     ctrl->ciclos_rebase = 0;
+    // [11/11/2026] O instante do cabeçalho é o de agora, quando o ARM solta a PRU: a 1ª amostra sai poucos ms depois
+    // (a configuração do ADC e a espera de acomodação da PRU). Até aqui era o do começo do programa, antes de a PRU ser
+    // reiniciada: de 60 a 600 ms adiantado, mais que a fração de segundo que o cabeçalho v8 guarda.
+    struct timespec inicio_captura = {config.instante, (long)config.instante_ns};
+    clock_gettime(CLOCK_REALTIME, &inicio_captura);     // se falhar, fica o instante do começo do programa
+    double instante_da_largada = segundos_monotonicos();
     ctrl->config_ready = 1;
 
-    // A PRU escreve a versão do protocolo depois de configurar o ADS8688 (~0,1 ms): outro valor = o fw_pru.out
+    // A PRU escreve a versão do protocolo depois de configurar o ADS8688 e de esperá-lo acomodar (~2 ms): outro valor = o fw_pru.out
     // carregado não é o deste ler_adc (o 'make' foi feito, mas a PRU não recebeu o firmware novo, ou o contrário).
     for (int espera_ms = 0; espera_ms < 500 && ctrl->versao_protocolo_pru == 0; espera_ms++) {
         usleep(1000);
@@ -1541,8 +1743,8 @@ int main(int argc, char *argv[]) {
     memcpy(h->magic, CABECALHO_MAGIC, sizeof(h->magic));
     h->versao_cabecalho = CABECALHO_VERSAO;
     h->tamanho_cabecalho = (uint32_t)sizeof(cabecalho);
-    h->timestamp_unix = (uint64_t)config.instante;
-    h->timestamp_ns = config.instante_ns;
+    h->timestamp_unix = (uint64_t)inicio_captura.tv_sec;
+    h->timestamp_ns = (uint32_t)inicio_captura.tv_nsec;
     h->frequencia_hz = config.frequencia;
     h->auto_seq_mask = config.mascara;
     h->num_canais = (uint32_t)config.num_canais;
@@ -1581,6 +1783,26 @@ int main(int argc, char *argv[]) {
     h->disco_saida_total_kib = disco_total_kib;
     h->disco_saida_livre_kib = disco_livre_kib;
     h->disco_saida_livre_fim_kib = VALOR_DESCONHECIDO;   // [final]
+    // [v9] A extensão: o que identifica a captura já vai no cabeçalho inicial; o resto, no final.
+    struct cabecalho_extensao_campos *x = &cabecalho.extensao;
+    FILE *aleatorio = fopen("/dev/urandom", "rb");
+    if (aleatorio == NULL || fread(x->id_captura, 1, sizeof(x->id_captura), aleatorio) != sizeof(x->id_captura)) {
+        // sem /dev/urandom: o instante, o processo e a taxa bastam para não repetir
+        uint64_t semente[2] = {(uint64_t)inicio_captura.tv_sec * 1000000000ull + (uint64_t)inicio_captura.tv_nsec,
+                               ((uint64_t)getpid() << 32) ^ config.frequencia};
+        memcpy(x->id_captura, semente, sizeof(x->id_captura));
+    }
+    if (aleatorio != NULL) {
+        fclose(aleatorio);
+    }
+    memcpy(x->hostname, sistema.hostname, sizeof(x->hostname));
+    size_t usado = 0;
+    for (int k = 1; k < argc && usado + 1 < sizeof(x->linha_de_comando); k++) {
+        int escrito = snprintf(x->linha_de_comando + usado, sizeof(x->linha_de_comando) - usado, "%s%s", k > 1 ? " " : "",
+                               argv[k]);
+        usado += escrito > 0 ? (size_t)escrito : 0;
+    }
+    memcpy(x->ganho_por_canal, config.ganhos, sizeof(x->ganho_por_canal));
     h->header_crc32 = calcular_crc32(&cabecalho, sizeof(cabecalho));
     if (fwrite(&cabecalho, sizeof(cabecalho), 1, arquivo) != 1) {
         erro("não deu para gravar o cabeçalho em '%s'.", config.arquivo);
@@ -1593,19 +1815,32 @@ int main(int argc, char *argv[]) {
     // Sem descarte de amostra: no AUTO_RST, o quadro do próprio AUTO_RST (na configuração, nunca gravado) é o que traz
     // lixo; a 1ª amostra do laço já é do canal de menor número, e a amostra i é do canal da posição i % N.
     struct contadores_integridade integridade = {0, 0, 0, 0, 0, 0, 0};
-    struct resultado resultado = {0, 0, 0.0, 0.0, 0, 0};
+    struct resultado resultado;
+    memset(&resultado, 0, sizeof(resultado));
+    for (int k = 0; k < ADS8688_MAX_CANAIS; k++) {
+        resultado.canais[k].minimo = 0xFFFFu;
+    }
+    struct timespec fim_captura = inicio_captura;
     double instante_primeiro = 0.0, instante_ultimo = 0.0;
     uint16_t valor_mudo = 0;
+    // [v9, 11/11/2026] Cada bloco é copiado UMA vez da DDR (mapeada sem cache: é a parte lenta, ~150 ms por 2 MB) para
+    // a memória do programa, e é a cópia que vai para o disco e para o CRC das amostras. O buffer da PRU fica livre
+    // assim que a cópia termina, e não depois da gravação: um cartão que trave por 2 s não vira mais sobrescrita.
+    static uint16_t copia_do_bloco[SAMPLES_PER_BUFFER];
+    uint32_t crc_amostras = 0u;
     mostrar_progresso(0, config.blocos, segundos_por_bloco);
     while (manter_execucao && (config.blocos == 0 || resultado.blocos < config.blocos)) {
         for (unsigned b = 0; b < BUFFERS_PING_PONG && manter_execucao; b++) {
             if (!*prontos[b] || (config.blocos != 0 && resultado.blocos >= config.blocos)) {
                 continue;
             }
-            double inicio = segundos_monotonicos();
-            int mudo = amostras_todas_iguais(buffers[b], AMOSTRAS_CONFERIDAS_ADC_MUDO);
-            size_t gravadas = fwrite((const void *)buffers[b], sizeof(uint16_t), SAMPLES_PER_BUFFER, arquivo);
+            double inicio = segundos_monotonicos();     // o bloco foi visto pronto: no máximo uma volta (2 ms) depois da PRU
+            struct timespec visto;
+            clock_gettime(CLOCK_REALTIME, &visto);
+            memcpy(copia_do_bloco, (const void *)buffers[b], bytes_por_buffer);
             *prontos[b] = 0;
+            int mudo = amostras_todas_iguais(copia_do_bloco, AMOSTRAS_CONFERIDAS_ADC_MUDO);
+            size_t gravadas = fwrite(copia_do_bloco, sizeof(uint16_t), SAMPLES_PER_BUFFER, arquivo);
             double gasto = segundos_monotonicos() - inicio;
             resultado.pior_gravacao_s = gasto > resultado.pior_gravacao_s ? gasto : resultado.pior_gravacao_s;
             if (gravadas != SAMPLES_PER_BUFFER) {
@@ -1615,15 +1850,22 @@ int main(int argc, char *argv[]) {
                 manter_execucao = 0;
                 break;
             }
+            acumular_estatisticas(copia_do_bloco, SAMPLES_PER_BUFFER, config.num_canais, resultado.amostras,
+                                  resultado.canais);
             resultado.blocos++;
             resultado.amostras += gravadas;
-            instante_ultimo = segundos_monotonicos();
+            crc_amostras = atualizar_crc32(crc_amostras, copia_do_bloco, bytes_por_buffer);
+            fim_captura = visto;
+            // [11/11/2026] O relógio da taxa medida é o do instante em que o bloco foi VISTO pronto. Até aqui era o de
+            // depois da gravação: um bloco que demorasse 100 ms a mais no disco (o 1º, com o arquivo recém-criado)
+            // deslocava a taxa de uma captura de 2 blocos em 4 %.
+            instante_ultimo = inicio;
             if (resultado.blocos == 1) {
-                instante_primeiro = instante_ultimo;
+                instante_primeiro = inicio;
             }
             conferir_integridade(ctrl, &integridade);
             if (mudo) {
-                valor_mudo = buffers[b][0];
+                valor_mudo = copia_do_bloco[0];
                 resultado.adc_mudo = 1;
                 manter_execucao = 0;
                 break;
@@ -1650,8 +1892,11 @@ int main(int argc, char *argv[]) {
 
     // --- Fim ----------------------------------------------------------------------------------------------------------
     conferir_integridade(ctrl, &integridade);
+    // Com --blocos 0 (até Ctrl+C), parar por um sinal é o fim normal; com os blocos contados, é uma captura cortada.
+    resultado.interrompida = sinal_recebido != 0 && config.blocos != 0 && resultado.blocos < config.blocos;
     if (resultado.blocos >= 2 && instante_ultimo > instante_primeiro) {
-        // Entre o 1º e o último bloco, pelo relógio do ARM (~0,02 % num bloco de ~2,6 s: o laço espera 2 ms).
+        // Entre o 1º e o último bloco, pelo relógio do ARM: cada instante tem até 2 ms de atraso (o passo do laço),
+        // ~0,1 % com 2 blocos de 2,6 s e proporcionalmente menos com mais blocos.
         resultado.taxa_medida = (double)(resultado.blocos - 1) * SAMPLES_PER_BUFFER / (instante_ultimo - instante_primeiro);
     }
     if (resultado.blocos == 0 && !resultado.adc_mudo) {
@@ -1660,6 +1905,20 @@ int main(int argc, char *argv[]) {
 
     h->blocos_gravados = resultado.blocos;
     h->total_amostras_gravadas = resultado.amostras;
+    x->crc32_amostras = crc_amostras;
+    if (resultado.blocos > 0) {
+        x->timestamp_fim_unix = (uint64_t)fim_captura.tv_sec;
+        x->timestamp_fim_ns = (uint32_t)fim_captura.tv_nsec;
+        x->duracao_monotonica_s = instante_ultimo - instante_da_largada;
+        x->pior_bloco_ms = (uint32_t)(1e3 * resultado.pior_gravacao_s + 0.5);
+        for (int k = 0; k < config.num_canais; k++) {
+            x->codigo_minimo[k] = resultado.canais[k].minimo;
+            x->codigo_maximo[k] = resultado.canais[k].maximo;
+            x->amostras_saturadas[k] = resultado.canais[k].saturadas;
+            x->media_codigos[k] = media_dos_codigos(&resultado.canais[k]);
+            x->desvio_codigos[k] = desvio_dos_codigos(&resultado.canais[k]);
+        }
+    }
     h->amostras_atrasadas = integridade.amostras_atrasadas;
     h->buffers_sobrescritos = integridade.buffers_sobrescritos;
     h->quadros_preambulo_ruim = integridade.quadros_preambulo_ruim;
@@ -1682,7 +1941,21 @@ int main(int argc, char *argv[]) {
     } else {
         detalhe("cabeçalho final reescrito (%llu blocos, %llu amostras)", resultado.blocos, resultado.amostras);
     }
-    fclose(arquivo);
+    // [11/11/2026] "Captura concluída" tem de valer mesmo se a placa for desligada logo depois, e um erro de disco no
+    // fim tem de aparecer: até aqui o fclose não era conferido (o cabeçalho final fica no buffer do stdio até ele) e
+    // nada mandava os dados da memória para o cartão. O fsync devolve EINVAL num arquivo que não o aceita (um pipe).
+    errno = 0;
+    int falha_ao_fechar = fflush(arquivo) != 0 || (fsync(fileno(arquivo)) != 0 && errno != EINVAL);
+    int erro_ao_fechar = errno;
+    if (fclose(arquivo) != 0 && !falha_ao_fechar) {
+        falha_ao_fechar = 1;
+        erro_ao_fechar = errno;
+    }
+    if (falha_ao_fechar) {
+        erro("não deu para terminar de gravar '%s' (%s): o arquivo pode estar incompleto.", config.arquivo,
+             strerror(erro_ao_fechar));
+        resultado.erro_escrita = 1;
+    }
 
     imprimir_resultado(&config, ctrl, &integridade, &resultado);
 
@@ -1699,5 +1972,10 @@ int main(int argc, char *argv[]) {
     if (resultado.adc_mudo) {
         return SAIDA_ADC_MUDO;
     }
-    return integridade.buffers_sobrescritos ? SAIDA_SOBRESCRITO : SAIDA_OK;
+    if (integridade.buffers_sobrescritos) {
+        return SAIDA_SOBRESCRITO;
+    }
+    // [11/11/2026] Até aqui uma captura cortada por um sinal saía com 0: o coletar.sh a dava por feita (e o
+    // --continuar não a refazia), com menos blocos que os do plano.
+    return resultado.interrompida ? SAIDA_INTERROMPIDA : SAIDA_OK;
 }

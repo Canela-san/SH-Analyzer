@@ -4,7 +4,7 @@
 pesada e opcional para os demais modos).
 
 Além das amostras, o arquivo leva tudo o que é preciso para usá-las sem o ``.bin`` nem este programa: os campos do
-cabeçalho como atributos, o próprio cabeçalho de 1024 bytes (``/cabecalho_bruto``) e o perfil de cada sonda
+cabeçalho como atributos, o próprio cabeçalho, byte a byte (``/cabecalho_bruto``: 1024 bytes até a v8, 4096 na v9) e o perfil de cada sonda
 registrada (``/sondas/canalN``: o JSON integral, os pontos e o hash do arquivo). Nada disso mexe nos datasets
 de amostras: cada coisa é um atributo ou um dataset à parte.
 
@@ -83,7 +83,7 @@ def exportar_hdf5(caminho_bin: Path, caminho_h5: Path, formato: str,
                   do código) + 'correcao_sonda_aplicada_por_canal' (sempre
                   0: quem abre o .h5 fora do adc_tool sabe que /tensao_v
                   NÃO foi corrigida pelo perfil da sonda).
-      /cabecalho_bruto  [só com cabeçalho] os 1024 bytes do cabeçalho do
+      /cabecalho_bruto  [só com cabeçalho] os bytes (1024 até a v8, 4096 na v9) do cabeçalho do
                   .bin, como gravados (relê-se com a mesma especificação,
                   inclusive campos que esta versão não conheça).
       /sondas/canalN  [um grupo por canal com perfil resolvido, ver

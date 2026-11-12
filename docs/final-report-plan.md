@@ -133,7 +133,7 @@ Combine com o orientador antes.
 | O K com o firmware atual (T2) | ⏳ ida A |
 | A reprodutibilidade em outro dia | ⏳ ida A (o `calibrar` repete ±2,56 V) |
 
-### Sonda de corrente (SCT013 + carga de 0,12 Ω + ADC)
+### Sonda de corrente (SCT013 + carga de ~100 Ω + ADC)
 
 | Item | Estado |
 |---|---|
@@ -162,8 +162,9 @@ Declarar os limites com o efeito de cada um é parte do rigor do relatório (se�
   270 kHz aparece em 130 kHz atenuado só 43,5 dB (23/10).
 * **O filtro interno do ADC.** A correção pelo perfil devolve a amplitude, mas multiplica o ruído pelo mesmo fator
   (×63 em 178 kHz): o menor tom detectável sobe de 8 µV em 9 kHz para 105 µV em 180 kHz.
-* **Canal de corrente.** 60 µV/A sobre a carga de 0,12 Ω, mesmo na menor faixa do ADC: o piso de detecção em
-  corrente é de miliampères (o número sai do T10).
+* **Canal de corrente.** 50,9 mV/A (medido; supunham-se 60 µV/A sobre 0,12 Ω): o ruído em ±2,56 V é de ~1,2 mA RMS
+  em banda larga, e a faixa limita a corrente (±2,56 V satura acima de 50 A de pico; os 100 A RMS do SCT013 só cabem
+  em ±10,24 V). O piso de detecção por componente sai do T10.
 * **Faixa de produção.** O perfil de tensão é de ±2,56 V; o de ±10,24 V sai da ida A.
 * **Alimentação.** A placa de aquisição só funciona com a fonte de 5 V da BeagleBone (por projeto da placa).
 * **Offset de ~2,6 mV** no canal 1 (DC, fora da banda), de origem ainda não isolada.

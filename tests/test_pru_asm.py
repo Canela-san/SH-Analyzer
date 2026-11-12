@@ -39,6 +39,7 @@ from pru_sim import (
     ModeloADC,
     memoria_configurada,
 )
+from supraharmonicos.constantes import DURACAO_TRANSITORIO_FAIXA_S
 
 ASM = Path(__file__).resolve().parents[1] / "firmware" / "spi_core.asm"
 
@@ -502,7 +503,7 @@ def test_cs_alto_minimo_garantido_pelo_caminho_mesmo_com_amostras_atrasadas():
 def test_versao_do_protocolo_e_publicada_antes_da_primeira_amostra():
     pru = pru_laco()
     pru.executar(max_transacoes=CONFIG_1CANAL + 1)
-    assert contador(pru, OFFSET_VERSAO_PROTOCOLO) == 4 and contador(pru, OFFSET_CICLOS_REBASE) == 2
+    assert contador(pru, OFFSET_VERSAO_PROTOCOLO) == 5 and contador(pru, OFFSET_CICLOS_REBASE) == 2
 
 
 def test_auto_rst_sai_do_mesmo_corpo_da_configuracao_e_libera_a_imem():
@@ -615,3 +616,45 @@ def test_modo_padrao_com_o_caminho_do_sdo_da_placa_le_certo():
         pru.executar(max_transacoes=CONFIG_1CANAL + 3)
         assert pru.escritas_ddr[0][1] == 0xABCD, atraso
 
+
+
+# --------------------------------------------------------------------------------------
+# [11/11/2026] A 1ª amostra espera o ADC acomodar depois da configuração (o transitório de troca de faixa)
+# --------------------------------------------------------------------------------------
+CICLO_S = 5e-9
+
+
+@pytest.mark.parametrize("periodo", [PERIODO_400K, PERIODO, 40000])
+@pytest.mark.parametrize("mascara", [0b10, 0b11111111])
+def test_a_primeira_amostra_espera_o_adc_acomodar_depois_da_troca_de_faixa(periodo, mascara):
+    """Trocar a faixa de um canal dá um degrau na saída do PGA do ADS8688, e o filtro do canal leva ~80 µs para
+    acomodar (medido em 19/10/2026: por isso a análise pula DURACAO_TRANSITORIO_FAIXA_S = 200 µs do começo). A 1ª
+    amostra tem de sair pelo menos 5 vezes esse tempo (1 ms) depois da última escrita de faixa, em qualquer taxa.
+    Antes de 11/11/2026 ela saía ~1 transação e 1 período depois: 17 µs a 400 kS/s."""
+    mem = memoria_configurada(mascara, 0, periodo_ticks=periodo)
+    mem[ENDERECO_SHARED_RAM + OFFSET_MODO_SPI] = MODO_RAPIDO_B
+    pru = PRU(ASM, mem)
+    canais = bin(mascara).count("1")
+    configuracao_ = 3 + canais + 1                     # 02h, 03h, AUTO_SEQ_EN, um RANGE_SEL por canal e o AUTO_RST
+    pru.executar(max_transacoes=configuracao_ + 3)
+    assert pru.transacoes[configuracao_ - 1].palavra16 == CMD_AUTO_RST
+    fim_da_ultima_faixa = pru.instantes_cs_sobe[configuracao_ - 2]
+    primeira_amostra = pru.instantes_cs[configuracao_]
+    assert (primeira_amostra - fim_da_ultima_faixa) * CICLO_S >= 5 * DURACAO_TRANSITORIO_FAIXA_S
+    # ... e a grade começa certa depois dela: um período entre a 1ª amostra e as seguintes.
+    assert {b - a for a, b in zip(pru.instantes_cs[configuracao_:], pru.instantes_cs[configuracao_ + 1:])} == {periodo}
+
+
+def test_o_atalho_do_simulador_nas_esperas_nao_muda_nenhum_instante():
+    """O simulador adianta os laços de espera (SUB/QBNE) de uma vez. Passo a passo, sem o atalho, todo CS desce e
+    sobe nos mesmos ciclos e a memória fica igual."""
+    def rodar(atalho: bool) -> PRU:
+        mem = memoria_configurada(0b101, nibbles(c0=2, c2=1), periodo_ticks=PERIODO)
+        for k, valor in enumerate((20, 10, 12)):          # esperas de CS que também passam pelos laços
+            mem[ENDERECO_SHARED_RAM + OFFSET_ATRASO_CS_SETUP + 4 * k] = valor
+        pru = PRU(ASM, mem, atalho_nas_esperas=atalho)
+        pru.executar(max_transacoes=6 + 8)
+        return pru
+    com, sem = rodar(True), rodar(False)
+    assert com.instantes_cs == sem.instantes_cs and com.instantes_cs_sobe == sem.instantes_cs_sobe
+    assert com.ciclo == sem.ciclo and com.memoria == sem.memoria and com.regs == sem.regs

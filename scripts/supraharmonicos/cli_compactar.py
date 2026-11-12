@@ -444,7 +444,7 @@ def _bits_por_amostra(es: list[Entrada]) -> str:
     capturas = [e for e in es if e.captura is not None and e.tamanho > 1024]
     if not capturas:
         return ""
-    amostras = sum((e.tamanho - 1024) // 2 for e in capturas)
+    amostras = sum((e.tamanho - e.captura.get("tamanho_cabecalho", 1024)) // 2 for e in capturas)
     return f"{8 * sum(e.bytes_comprimidos for e in capturas) / max(amostras, 1):.2f}".replace(".", ",")
 
 

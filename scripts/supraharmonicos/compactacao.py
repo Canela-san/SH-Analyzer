@@ -163,13 +163,14 @@ def escolher_transformacao(caminho: Path, tamanho: int) -> tuple[Desentrelacamen
         "data_utc": cab.timestamp_iso_utc,
         "titulo": cab.titulo,
         "crc_ok": cab.crc32_valido,
+        "tamanho_cabecalho": cab.tamanho_cabecalho,
     }
     if cab.bytes_por_amostra != 2 or n < 2:
         return None, resumo
-    quadros = (tamanho - CABECALHO_TAMANHO_TOTAL) // (2 * n)
+    quadros = (tamanho - cab.tamanho_cabecalho) // (2 * n)     # as amostras começam depois do cabeçalho (1024 ou 4096)
     if quadros < 1:
         return None, resumo
-    return Desentrelacamento(CABECALHO_TAMANHO_TOTAL, n, quadros), resumo
+    return Desentrelacamento(cab.tamanho_cabecalho, n, quadros), resumo
 
 
 def ler_fluxo(caminho: Path, transf: Desentrelacamento | None, ini: int, fim: int) -> bytes:

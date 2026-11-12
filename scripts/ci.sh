@@ -8,7 +8,8 @@
 #   scripts/ci.sh firmware         gcc -Werror no ler_adc.c e shellcheck nos scripts de shell
 #
 # Precisa do uv (que baixa sozinho as versões do Python e o shellcheck) e do gcc. Sem o zpaq, os testes do
-# compactar_amostras são pulados (a CI os roda: sudo apt install zpaq).
+# compactar_amostras são pulados (a CI os roda: sudo apt install zpaq); sem o gcc-arm-linux-gnueabihf, o ler_adc.c
+# não é compilado para o ARM de 32 bits (a CI compila).
 set -euo pipefail
 
 readonly VERSOES_PYTHON=(3.10 3.13)            # a matriz da CI: o mínimo do pyproject.toml e a mais nova
@@ -30,6 +31,14 @@ testes() {   # $1 = versão do Python; o resto vai para o pytest
 firmware() {
     etapa "gcc -Werror: firmware/ler_adc.c (o clpru da PRU é proprietário e fica de fora)"
     gcc -std=gnu11 -Wall -Wextra -Werror -fsyntax-only firmware/ler_adc.c
+    # A BeagleBone é um ARM de 32 bits: tipos de outro tamanho (off_t, time_t, long) e o _Static_assert do off_t de
+    # 64 bits só aparecem compilando para ela. Sem o compilador cruzado, só avisa (a CI do GitHub o instala).
+    if command -v arm-linux-gnueabihf-gcc > /dev/null; then
+        etapa "arm-linux-gnueabihf-gcc: firmware/ler_adc.c para o ARM de 32 bits da BeagleBone"
+        arm-linux-gnueabihf-gcc -std=gnu11 -Wall -Wextra -fsyntax-only firmware/ler_adc.c
+    else
+        echo "Aviso: sem o arm-linux-gnueabihf-gcc, o ler_adc.c não é compilado para 32 bits (sudo apt install gcc-arm-linux-gnueabihf)." >&2
+    fi
     etapa "shellcheck (${SHELLCHECK}): firmware/*.sh firmware/coleta/*.sh scripts/*.sh"
     uvx --quiet --from "$SHELLCHECK" shellcheck -x firmware/*.sh firmware/coleta/*.sh scripts/*.sh
 }

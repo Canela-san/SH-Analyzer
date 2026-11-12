@@ -72,7 +72,9 @@ CAL_QUADRADAS_CORRENTE="256 768 1280 2304 6400 6912 20736 25344 256:14 1280:10 6
 # aliasing de lugar; o SPI lento numa e o rápido na outra conferem que o modo do SPI não muda nada.
 CAL_TAXAS="312500:lenta 400000:rapido"
 # A de produção do canal de tensão (±10,24 V) e a do T3f (±2,56 V): o PGA do ADC muda de ganho com a faixa, e o filtro
-# pode mudar com ele. Na corrente, a menor (o sinal do TC é pequeno): passe a de produção do canal com --faixas.
+# pode mudar com ele. Na corrente, a menor: o gerador com 20 espiras dá ~0,3 Vpp no pino (50,9 mV/A), 6,5 % dela. A
+# de produção depende da corrente da carga (±2,56 V satura acima de 50 A de pico; ±5,12 V, de 101 A; ±10,24 V, de
+# 201 A): passe-a com --faixas, e cuide para o sinal da calibração não ficar fraco demais nela.
 CAL_FAIXAS_TENSAO="20.48 5.12"
 CAL_FAIXAS_CORRENTE="5.12"
 CAL_QUADRADAS=''
@@ -92,6 +94,17 @@ CAL_DIAFONIA=0
 CAL_DIAFONIA_QUADRADAS="256 6912 20736"
 CAL_RESISTENCIA=''
 CAL_ESPIRAS=''
+
+# A conferência do sinal de cada captura (11/11/2026): o nível e a frequência medidos no próprio .bin, contra o que a
+# bancada deveria estar mandando. ESPERADO_VPP é o pico a pico NO PINO do canal medido com a quadrada nominal de
+# 20 Vpp (as variantes escalam com a amplitude, e as quadradas rápidas com o filtro do ADC): na tensão, vazio = 20 V
+# pelo divisor; na corrente, vazio = o nível não é conferido (depende do laço), só o sinal fraco e a saturação.
+ESPERADO_VPP=''
+TOLERANCIA_NIVEL=25                 # % de desvio aceito no nível
+TOLERANCIA_FREQ=1                   # % de desvio aceito na frequência
+FRACO_PCT=1                         # abaixo de 1 % da faixa, "sinal fraco"; acima disso numa entrada em curto, "há sinal"
+VPP_NOMINAL=20                      # a amplitude das quadradas e do tom de 10 kHz sem variante (V, em High-Z)
+TOM_HZ=10000                        # o tom das varreduras da bancada
 
 # aliasing: 3 taxas exatas (divisores de 200 MHz) com Nyquist >= 160 kHz. Duas já separam a maioria das imagens; a
 # 3ª desfaz as posições em que as duas coincidem (com 400 e 320 kS/s, 360 kHz aparece em 40 kHz nas duas).
@@ -134,6 +147,10 @@ da captura. Uma ONDA QUADRADA na entrada; o script para e pede cada uma: 256, 76
 (SPI lento) e a 400 kS/s (rápido), nas faixas ±10,24 V (a de produção) e ±2,56 V. 68 capturas de 30 s, ~36 min de
 captura e 17 trocas no gerador. No computador: scripts/medir_fase.py, uma vez por faixa (os comandos saem no fim).
 
+Cada captura é conferida na hora: o nível (contra os 20 Vpp pelo divisor, ou o --esperado-vpp) e a frequência da
+quadrada medidos no próprio .bin, a saturação e o sinal fraco. Se a 1ª captura depois de uma pausa não bate, o script
+para e pergunta (o gerador ficou em outra amplitude ou frequência?), antes de gastar a série inteira.
+
 Sem osciloscópio, a análise supõe a quadrada IDEAL na entrada (a borda do gerador entra como se fosse da cadeia).
 Com --referencia, cada pausa pede também a forma de onda da entrada no osciloscópio, e a análise divide por ela:
 a forma da entrada deixa de importar. Na corrente (--grandeza corrente) ela é obrigatória: uma corrente quadrada
@@ -146,11 +163,15 @@ Opções (padrão: uma boa análise sem nenhuma)
   --faixa-referencia F   a faixa do canal de referência (padrão: 20.48, a de produção do canal de tensão)
   --diafonia        com --canal-referencia: mais 3 quadradas com o condutor FORA da garra (o vazamento entre canais)
   --resistencia OHMS e --espiras N   o resistor do laço e as espiras pela sonda: só vão para o comando da análise
+  --esperado-vpp V  o pico a pico esperado NO PINO do canal medido com a quadrada de 20 Vpp (padrão na tensão: 20 V
+                    pelo divisor de 19,357 = 1,033; na corrente não há padrão: passe-o, ou só o sinal fraco é acusado)
+  --tolerancia PCT  o desvio aceito no nível (padrão: 25)
   --grandeza G      tensao (padrão) ou corrente: os textos da bancada, as variantes (na corrente, sem offset), a
                     faixa padrão e o cabeçalho das capturas
   --canal N         o canal com a sonda (padrão: 1)
   --sonda ID        o id da sonda, gravado no cabeçalho
-  --faixas LISTA    faixas totais do ADC, separadas por vírgula (padrão: 20.48,5.12; na corrente, 5.12)
+  --faixas LISTA    faixas totais do ADC, separadas por vírgula (padrão: 20.48,5.12; na corrente, 5.12, que satura
+                    acima de 50 A·espira de pico: a 50,9 mV/A, 10.24 vai a 101 A e 20.48 a 201 A)
   --faixa F         o mesmo, com uma faixa só
   --taxas LISTA     taxa:SPI, separadas por vírgula (padrão: 312500:lenta,400000:rapido; sem :SPI, rapido)
   --quadradas LISTA f₁[:Vpp[:offset]] em Hz, V e V, separadas por vírgula (padrão: as 17 acima; use múltiplos ímpares
@@ -311,6 +332,14 @@ while [ $# -gt 0 ]; do
             so_em calibrar "$1"; precisa_valor $# "$1"
             case "$2" in ''|*[!0-9]*|0) falha "--espiras '$2': use um inteiro positivo." ;; esac
             CAL_ESPIRAS=$2; EXPLICITA[espiras]=1; shift ;;
+        --esperado-vpp)
+            so_em calibrar "$1"; precisa_valor $# "$1"
+            [[ "$2" =~ ^[0-9]+(\.[0-9]+)?$ ]] || falha "--esperado-vpp '$2': um número em volts (o pico a pico no pino)."
+            ESPERADO_VPP=$2; EXPLICITA[esperado_vpp]=1; shift ;;
+        --tolerancia)
+            so_em calibrar "$1"; precisa_valor $# "$1"
+            [[ "$2" =~ ^[0-9]+(\.[0-9]+)?$ ]] || falha "--tolerancia '$2': um número em %."
+            TOLERANCIA_NIVEL=$2; EXPLICITA[tolerancia]=1; shift ;;
         --blocos)
             so_em ruido "$1"; precisa_valor $# "$1"
             case "$2" in ''|*[!0-9]*|0) falha "--blocos '$2': use um inteiro positivo." ;; esac
@@ -400,6 +429,8 @@ if [ -n "$CONTINUAR" ] && [ -f "$CONTINUAR/log.txt" ]; then
             diafonia) CAL_DIAFONIA=$valor ;;
             resistencia) CAL_RESISTENCIA=$valor ;;
             espiras) CAL_ESPIRAS=$valor ;;
+            esperado_vpp) ESPERADO_VPP=$valor ;;
+            tolerancia) TOLERANCIA_NIVEL=$valor ;;
             extra) [ -z "${EXPLICITA[extra]:-}" ] && [ -n "$valor" ] && read -ra EXTRA <<< "${valor//;/ }" ;;
         esac
     done
@@ -552,15 +583,18 @@ nome_da_captura() {   # $1 = item do plano
     echo "${parte}_cs${cs//,/-}_${taxa}_${entrada}${canais}${faixa:+_f${faixa}}${segundos:+_${segundos}s}${spi:+_spi${spi/:/-}}.bin"
 }
 
-# --continuar: a mesma pasta; feita = com linha no resumo.csv e com os contadores lidos (uma que o ler_adc não
-# terminou, ou que foi cortada no meio, é refeita). As esperas e os canais vêm entre aspas, com vírgulas: a coluna
-# amostras_atrasadas é contada a partir do FIM da linha, quantas o cabeçalho tiver depois dela.
+# --continuar: a mesma pasta; feita = com linha no resumo.csv, com os contadores lidos e sem o código 5 (uma que o
+# ler_adc não terminou, ou que um sinal cortou no meio, é refeita: até 11/11/2026 a cortada saía com o código 0 e
+# ficava como feita, com menos blocos que os do plano). As esperas e os canais vêm entre aspas, com vírgulas: as
+# colunas amostras_atrasadas e codigo_saida são contadas a partir do FIM da linha, quantas o cabeçalho tiver depois.
 declare -A FEITA=()
 if [ -n "$CONTINUAR" ]; then
-    while read -r arquivo atrasadas; do
-        if [ "$atrasadas" != "?" ]; then FEITA[$arquivo]=1; fi
-    done < <(awk -F, 'NR == 1 { for (k = 1; k <= NF; k++) if ($k == "amostras_atrasadas") depois = NF - k; next }
-                      { print $2, $(NF - depois) }' "$CONTINUAR/resumo.csv")
+    while read -r arquivo atrasadas codigo; do
+        if [ "$atrasadas" != "?" ] && [ "$codigo" != 5 ]; then FEITA[$arquivo]=1; fi
+    done < <(awk -F, 'NR == 1 { for (k = 1; k <= NF; k++) { if ($k == "amostras_atrasadas") depois = NF - k
+                                                             if ($k == "codigo_saida") depois_c = NF - k }
+                                next }
+                      { print $2, $(NF - depois), $(NF - depois_c) }' "$CONTINUAR/resumo.csv")
 fi
 FALTAM=0
 for item in "${PLANO[@]}"; do
@@ -613,6 +647,18 @@ if [ "$MODO" = bancada ]; then
     [ "${#ORDEM_PARTES}" -lt 2 ] || printf '    %s(%s)%s\n' "$F" "$(por_parte)" "$R"
 else
     printf '    %d capturas · ~%d min · ~%d MB (livres: %d MB)\n' "$FALTAM" $(( (TOTAL_S + 59) / 60 )) "$MB_TOTAL" "$LIVRE_MB"
+fi
+if [ "$MODO" = calibrar ] && [ "$CAL_GRANDEZA" = corrente ]; then
+    # O que o operador precisa saber da corrente antes de começar: onde cada faixa satura e o nível que deve chegar.
+    printf '    %scanal de corrente a 50,9 mV/A no pino: ±2,56 V satura acima de 50 A·espira de pico, ±5,12 V de 101 e ±10,24 V de 201%s\n' "$F" "$R"
+    if [ -z "$ESPERADO_VPP" ] && [ -n "$CAL_RESISTENCIA" ] && [ -n "$CAL_ESPIRAS" ]; then
+        estimado=$(LC_ALL=C awk -v v="$VPP_NOMINAL" -v z="$IMPEDANCIA_GERADOR" -v r="$CAL_RESISTENCIA" -v n="$CAL_ESPIRAS" -v s="$SENSIBILIDADE_CORRENTE" \
+                       'BEGIN { printf "%.2f", v / (z + r) * n * s }')
+        printf '    %so nível não é conferido sem --esperado-vpp. Com o gerador (%s Ω) em %s Vpp direto no laço: ~%s Vpp no pino (--esperado-vpp %s)%s\n' \
+            "$F" "$IMPEDANCIA_GERADOR" "$VPP_NOMINAL" "$estimado" "$estimado" "$R"
+    elif [ -z "$ESPERADO_VPP" ]; then
+        printf '    %so nível não é conferido sem --esperado-vpp (o pico a pico no pino com a quadrada de %s Vpp): só o sinal fraco e a saturação%s\n' "$F" "$VPP_NOMINAL" "$R"
+    fi
 fi
 if [ -n "$CONTINUAR" ]; then
     printf '    continuando %s: %d de %d já feitas\n' "$CONTINUAR" $(( ${#PLANO[@]} - FALTAM )) "${#PLANO[@]}"
@@ -692,9 +738,10 @@ mkdir -p "$PASTA"
 LOG="$PASTA/log.txt"
 RESUMO="$PASTA/resumo.csv"
 if [ -z "$CONTINUAR" ]; then
-    echo "parte,arquivo,esperas_cs,taxa_pedida_hz,canais,entrada,amostras_atrasadas,buffers_sobrescritos,quadros_sdo_ruido,taxa_arm_hz,desvio_arm_pct,codigo_saida,folga_ciclos,atraso_max_ciclos,spi,divergencias_a,divergencias_c" > "$RESUMO"
+    echo "parte,arquivo,esperas_cs,taxa_pedida_hz,canais,entrada,amostras_atrasadas,buffers_sobrescritos,quadros_sdo_ruido,taxa_arm_hz,desvio_arm_pct,codigo_saida,folga_ciclos,atraso_max_ciclos,spi,divergencias_a,divergencias_c,vpp_pino_v,freq_medida_hz,sinal" > "$RESUMO"
 fi
-# 12 numa varredura retomada de antes de 22/10/2026; 14 antes do SPI rápido (2ª revisão de 22/10/2026)
+# 12 numa varredura retomada de antes de 22/10/2026; 14 antes do SPI rápido (2ª revisão de 22/10/2026); 17 antes da
+# conferência do sinal (11/11/2026)
 COLUNAS_RESUMO=$(head -n 1 "$RESUMO" | awk -F, '{ print NF }')
 
 # A faixa automática (aliasing): uma captura curta em ±10,24 V e a menor faixa em que o pico cabe.
@@ -715,7 +762,7 @@ fi
         aliasing) extra="${EXTRA[*]+${EXTRA[*]}}"
                   echo "== opções taxas=${ALIASING_TAXAS// /,} segundos=$ALIASING_SEGUNDOS canais=$CANAIS repeticoes=$REPETICOES spi=$SPI_MODO extra=${extra// /;}" ;;
         ruido) echo "== opções taxas=${RUIDO_TAXAS// /,} faixas=${RUIDO_FAIXAS// /,} blocos=$RUIDO_BLOCOS canais=$CANAIS spi=$SPI_MODO" ;;
-        calibrar) echo "== opções segundos=$CAL_SEGUNDOS faixas=${CAL_FAIXAS// /,} taxas=${CAL_TAXAS// /,} quadradas=${CAL_QUADRADAS// /,} canal=$CAL_CANAL grandeza=$CAL_GRANDEZA sonda=$CAL_SONDA referencia=$CAL_REFERENCIA canal_ref=$CAL_CANAL_REF faixa_ref=$CAL_FAIXA_REF diafonia=$CAL_DIAFONIA resistencia=$CAL_RESISTENCIA espiras=$CAL_ESPIRAS" ;;
+        calibrar) echo "== opções segundos=$CAL_SEGUNDOS faixas=${CAL_FAIXAS// /,} taxas=${CAL_TAXAS// /,} quadradas=${CAL_QUADRADAS// /,} canal=$CAL_CANAL grandeza=$CAL_GRANDEZA sonda=$CAL_SONDA referencia=$CAL_REFERENCIA canal_ref=$CAL_CANAL_REF faixa_ref=$CAL_FAIXA_REF diafonia=$CAL_DIAFONIA resistencia=$CAL_RESISTENCIA espiras=$CAL_ESPIRAS esperado_vpp=$ESPERADO_VPP tolerancia=$TOLERANCIA_NIVEL" ;;
     esac
 } >> "$LOG"
 printf '    pasta: %s\n' "$PASTA"
@@ -730,6 +777,7 @@ pausa() {   # $1 = o que mudar na bancada; $2 = uma 2ª linha. Devolve 0 = segui
     printf '\n  %s▸ Mude a bancada:%s %s\n' "$N$AM" "$R" "$1"
     [ -z "${2:-}" ] || printf '    %s\n' "$2"
     printf '    Enter quando estiver pronto, ou p e Enter para pular esta parte: '
+    bancada_mudou=1
     local resposta=''
     if ! read -r resposta; then
         echo "== pausa: $1 -> sem terminal (a conexão caiu?): parado aqui" >> "$LOG"
@@ -739,9 +787,110 @@ pausa() {   # $1 = o que mudar na bancada; $2 = uma 2ª linha. Devolve 0 = segui
     [ "$resposta" != p ] || return 1
 }
 
+# A conferência do sinal de uma captura. Deixa em SINAL_ESTADO: ok, alerta, erro ou "?" (não é um .bin: nada a medir);
+# em SINAL_CODIGO, a palavra do resumo.csv (ok, nivel, frequencia, saturado, fraco, sem_curto); em SINAL_TEXTO, o que
+# foi medido; em SINAL_PROBLEMA, o que está errado; e VPP_MEDIDO e FREQ_MEDIDA (o canal principal: o medido no calibrar,
+# o do tom na bancada, o 1º nos outros modos). (Os nomes não começam com SINAL_ de propósito: os testes passam
+# SINAL_VPP e SINAL_F ao ler_adc falso pelo ambiente, e uma variável do script com o mesmo nome seria reexportada.)
+conferir_sinal() {   # $1 = arquivo, $2 = canais, $3 = entrada do plano, $4 = faixa do canal principal (V), $5 = taxa total
+    local arquivo=$1 entrada=$3 faixa=$4 taxa=$5 pos principal=0 principal_canal esperado_vpp='' esperado_hz='' f1 vpp_q resto
+    local minimo maximo media rms vpp saturadas constante freq medida
+    local -a lista
+    SINAL_ESTADO='?' SINAL_CODIGO='' SINAL_TEXTO='' SINAL_PROBLEMA='' VPP_MEDIDO='' FREQ_MEDIDA=''
+    e_um_bin "$arquivo" || return 0
+    IFS=, read -ra lista <<< "$2"
+    case "$MODO" in
+        calibrar) principal_canal=$CAL_CANAL ;;
+        bancada) principal_canal=1 ;;
+        *) principal_canal=${lista[0]} ;;
+    esac
+    for ((pos = 0; pos < ${#lista[@]}; pos++)); do
+        [ "${lista[$pos]}" != "$principal_canal" ] || principal=$pos
+    done
+    SINAL_ESTADO=ok SINAL_CODIGO=ok
+    # A saturação, em todos os canais (um canal de referência saturado estraga a razão).
+    for ((pos = 0; pos < ${#lista[@]}; pos++)); do
+        # shellcheck disable=SC2034  # só o pico a pico, a saturação e a frequência são usados
+        read -r minimo maximo media rms vpp saturadas constante freq <<< "$(medir_sinal "$arquivo" "${#lista[@]}" "$pos" "$faixa" "$taxa")"
+        if [ "$saturadas" -gt 0 ]; then
+            SINAL_ESTADO=erro SINAL_CODIGO=saturado
+            SINAL_PROBLEMA="o canal ${lista[$pos]} saturou ($saturadas amostras no fundo de escala): baixe a amplitude ou use uma faixa maior"
+        fi
+        [ "$pos" -ne "$principal" ] || { VPP_MEDIDO=$vpp; FREQ_MEDIDA=$freq; }
+    done
+    SINAL_TEXTO="$(LC_ALL=C awk -v v="$VPP_MEDIDO" 'BEGIN { printf (v < 0.1 ? "%.4f" : "%.3f"), v }') Vpp$( [ "$FREQ_MEDIDA" = nan ] || LC_ALL=C awk -v f="$FREQ_MEDIDA" 'BEGIN { printf ", %.1f Hz", f }')"
+    [ "$SINAL_ESTADO" = ok ] || return 0
+
+    # O que a bancada deveria estar mandando, pela entrada do plano.
+    case "$entrada" in
+        curto)
+            if LC_ALL=C awk -v v="$VPP_MEDIDO" -v f="$faixa" -v p="$FRACO_PCT" 'BEGIN { exit !(v > f * p / 100) }'; then
+                SINAL_ESTADO=erro SINAL_CODIGO=sem_curto
+                SINAL_PROBLEMA="há $SINAL_TEXTO no canal $principal_canal, que deveria estar em curto: o gerador ainda está ligado?"
+            fi
+            return 0 ;;
+        quadrada*)
+            f1=${entrada#quadrada}; f1=${f1%%Hz*}
+            resto=${entrada#*Hz}
+            vpp_q=$VPP_NOMINAL
+            case "$resto" in *Vpp*) vpp_q=${resto%%Vpp*} ;; esac
+            esperado_hz=$f1
+            if [ "$parte" != W ]; then        # na diafonia, o condutor está fora da garra: não há nível a esperar
+                if [ -n "$ESPERADO_VPP" ]; then
+                    esperado_vpp=$(LC_ALL=C awk -v e="$ESPERADO_VPP" -v v="$vpp_q" -v n="$VPP_NOMINAL" -v q="$(queda_da_quadrada "$f1")" 'BEGIN { print e * v / n * q }')
+                elif [ "$CAL_GRANDEZA" = tensao ]; then
+                    esperado_vpp=$(LC_ALL=C awk -v v="$vpp_q" -v g="$GANHO_DIVISOR_TENSAO" -v q="$(queda_da_quadrada "$f1")" 'BEGIN { print v / g * q }')
+                fi
+            fi ;;
+        tom)
+            esperado_hz=$TOM_HZ
+            esperado_vpp=$(LC_ALL=C awk -v v="$VPP_NOMINAL" -v g="$GANHO_DIVISOR_TENSAO" -v q="$(ganho_do_filtro "$TOM_HZ")" 'BEGIN { print v / g * q }') ;;
+    esac
+    if [ -n "$esperado_vpp" ]; then
+        if ! LC_ALL=C awk -v v="$VPP_MEDIDO" -v e="$esperado_vpp" -v t="$TOLERANCIA_NIVEL" 'BEGIN { d = 100 * (v / e - 1); exit !(d <= t && d >= -t) }'; then
+            SINAL_ESTADO=erro SINAL_CODIGO=nivel
+            SINAL_PROBLEMA="o nível no canal $principal_canal: esperado ~$(LC_ALL=C awk -v e="$esperado_vpp" 'BEGIN { printf "%.3f", e }') Vpp no pino, medido $(LC_ALL=C awk -v v="$VPP_MEDIDO" -v e="$esperado_vpp" 'BEGIN { printf (v < 0.1 ? "%.4f" : "%.3f") " (%+.0f %%)", v, 100 * (v / e - 1) }'): confira a amplitude do gerador (High-Z, saída ligada), o cabo e o canal"
+            return 0
+        fi
+    elif [ "$parte" != W ] && LC_ALL=C awk -v v="$VPP_MEDIDO" -v f="$faixa" -v p="$FRACO_PCT" 'BEGIN { exit !(v < f * p / 100) }'; then
+        # Sem um nível esperado, o que dá para acusar é o sinal que mal sai do zero: no calibrar, é o gerador na
+        # amplitude errada até prova em contrário (o caso da sonda de corrente, em que 0,5 Vpp passou por 20 Vpp).
+        SINAL_CODIGO=fraco
+        SINAL_PROBLEMA="sinal fraco no canal $principal_canal: $SINAL_TEXTO, $(LC_ALL=C awk -v v="$VPP_MEDIDO" -v f="$faixa" 'BEGIN { printf "%.2f", 100 * v / f }') % da faixa. O gerador está na amplitude pedida (e em High-Z, com a saída ligada)?"
+        if [ "$MODO" = calibrar ]; then SINAL_ESTADO=erro; else SINAL_ESTADO=alerta; fi
+        [ "$MODO" != calibrar ] || return 0
+    fi
+    if [ -n "$esperado_hz" ] && [ "$parte" != W ]; then
+        if [ "$FREQ_MEDIDA" = nan ] || ! LC_ALL=C awk -v f="$FREQ_MEDIDA" -v e="$esperado_hz" -v t="$TOLERANCIA_FREQ" 'BEGIN { d = 100 * (f / e - 1); exit !(d <= t && d >= -t) }'; then
+            SINAL_ESTADO=erro SINAL_CODIGO=frequencia
+            medida='nenhuma (sem sinal periódico)'
+            [ "$FREQ_MEDIDA" = nan ] || medida=$(LC_ALL=C awk -v f="$FREQ_MEDIDA" 'BEGIN { printf "%.1f Hz", f }')
+            SINAL_PROBLEMA="a frequência no canal $principal_canal: esperada $esperado_hz Hz, medida $medida: confira a frequência do gerador"
+        fi
+    fi
+}
+
+# Pergunta o que fazer com a 1ª captura depois de uma mudança na bancada cujo sinal não bate. Devolve 0 = repetir,
+# 1 = seguir assim mesmo, 2 = pular a parte. Sem terminal (a conexão caiu), segue: a captura fica marcada no resumo.
+perguntar_sinal() {
+    printf '\n  %s▸ O sinal não é o esperado:%s %s.\n' "$N$VM" "$R" "$SINAL_PROBLEMA"
+    printf '    Enter para REPETIR esta captura (depois de corrigir a bancada), s e Enter para seguir assim mesmo, p para pular esta parte: '
+    local resposta=''
+    if ! read -r resposta; then
+        echo "== sinal: $SINAL_PROBLEMA -> sem terminal: segue, marcada no resumo" >> "$LOG"
+        printf '\n'
+        return 1
+    fi
+    echo "== sinal: $SINAL_PROBLEMA -> '${resposta}'" >> "$LOG"
+    case "$resposta" in s|S) return 1 ;; p|P) return 2 ;; esac
+    return 0
+}
+
 pular_parte=''
 parte_anterior=''
 entrada_anterior=''
+bancada_mudou=1                     # a 1ª captura desta rodada, e a 1ª depois de cada pausa
+SUSPEITAS=()                        # as capturas cujo sinal não bateu e ficaram assim
 i=0
 for item in "${PLANO[@]}"; do
     [ -z "$interrompido" ] || break
@@ -821,6 +970,7 @@ for item in "${PLANO[@]}"; do
         esac
     fi
 
+    while :; do            # repete a captura enquanto o operador pedir (o sinal não era o esperado)
     printf '    %s[%3d/%d]%s cs %-12s %7s Hz %-9s ' "$F" "$i" "${#PLANO[@]}" "$R" "$cs" "$taxa" \
         "$( [ "$canais" = 1 ] || echo "${canais} " )${faixa_item:+±$(LC_ALL=C awk -v f="$faixa_item" 'BEGIN { printf "%g", f / 2 }') V}"
     echo "== [$i/${#PLANO[@]}] $nome" >> "$LOG"
@@ -853,23 +1003,56 @@ for item in "${PLANO[@]}"; do
     printf '%s\n' "$saida" >> "$LOG"
 
     ler_resumo "$saida"
-    linha="$parte,$nome,\"$cs\",$taxa,\"$canais\",$entrada,$atrasadas,$sobrescritos,$sdo,$arm,$desvio,$codigo"
-    [ "$COLUNAS_RESUMO" -le 12 ] || linha+=",$folga,$pior"
-    [ "$COLUNAS_RESUMO" -le 14 ] || linha+=",${spi:-lenta},${div_a:-},${div_c:-}"
-    echo "$linha" >> "$RESUMO"
+    # [11/11/2026] O sinal da captura, medido agora: na 1ª medida da sonda de corrente o gerador ficou em 0,5 Vpp em
+    # vez de 20 Vpp, e nada avisou até a análise no computador.
+    SINAL_ESTADO='?' SINAL_CODIGO='' SINAL_TEXTO='' SINAL_PROBLEMA='' VPP_MEDIDO='' FREQ_MEDIDA=''
+    if [ "$codigo" -eq 0 ] || [ "$codigo" -eq 3 ]; then
+        conferir_sinal "$PASTA/$nome" "$canais" "$entrada" "${faixa_item:-$FAIXA_TOTAL}" "$taxa"
+    fi
 
     if [ "$codigo" -eq 4 ]; then
         printf '%s✗ o ADC não respondeu (a placa de aquisição sem alimentação?): parado%s\n' "$VM" "$R"
-        interrompido="ADC sem resposta (a placa de aquisição está alimentada pela fonte de 5 V do conector?)"
-        break
+    elif [ "$codigo" -eq 5 ]; then
+        printf '%s! cortada antes do fim por um sinal (Ctrl+C, kill): o --continuar a refaz%s\n' "$AM" "$R"
     elif [ "$codigo" -ne 0 ] && [ "$atrasadas" = "?" ]; then
         printf '%s✗ o ler_adc falhou (código %d; veja o log.txt)%s\n' "$VM" "$codigo" "$R"
     elif [ "$atrasadas $sobrescritos $sdo" = "0 0 0" ]; then
-        printf '%s✓%s %s%sARM %s Hz (%s %%)\n' "$V" "$R" "${folga:+folga $folga ciclos · }" \
-            "${div_a:+divergências A $div_a, C $div_c · }" "$arm" "$desvio"
+        printf '%s✓%s %s%sARM %s Hz (%s %%)%s\n' "$V" "$R" "${folga:+folga $folga ciclos · }" \
+            "${div_a:+divergências A $div_a, C $div_c · }" "$arm" "$desvio" "${SINAL_TEXTO:+ · $SINAL_TEXTO}"
     else
-        printf '%s! atrasadas %s%s · sobrescritos %s · SDO %s%s · ARM %s Hz\n' "$AM" "$atrasadas" "${pior:+ (até $pior ciclos)}" \
-            "$sobrescritos" "$sdo" "$R" "$arm"
+        printf '%s! atrasadas %s%s · sobrescritos %s · SDO %s%s · ARM %s Hz%s\n' "$AM" "$atrasadas" "${pior:+ (até $pior ciclos)}" \
+            "$sobrescritos" "$sdo" "$R" "$arm" "${SINAL_TEXTO:+ · $SINAL_TEXTO}"
+    fi
+    case "$SINAL_ESTADO" in
+        erro) printf '          %s✗ sinal: %s%s\n' "$VM" "$SINAL_PROBLEMA" "$R" ;;
+        alerta) printf '          %s! %s%s\n' "$AM" "$SINAL_PROBLEMA" "$R" ;;
+    esac
+    [ -z "$SINAL_PROBLEMA" ] || echo "== sinal [$SINAL_CODIGO]: $SINAL_PROBLEMA" >> "$LOG"
+    decisao=1
+    if [ "$SINAL_ESTADO" = erro ] && [ "$bancada_mudou" -eq 1 ] && [ -z "$interrompido" ]; then
+        decisao=0
+        perguntar_sinal || decisao=$?
+        [ "$decisao" -ne 0 ] || continue          # repetir: a mesma captura, por cima
+    fi
+    break
+    done
+    bancada_mudou=0
+    if [ "$decisao" -eq 2 ]; then                 # pular a parte: a captura errada não fica
+        rm -f -- "${PASTA:?}/${nome:?}"
+        pular_parte=$parte
+        continue
+    fi
+    [ "$SINAL_ESTADO" != erro ] || SUSPEITAS+=("$nome: $SINAL_PROBLEMA")
+
+    linha="$parte,$nome,\"$cs\",$taxa,\"$canais\",$entrada,$atrasadas,$sobrescritos,$sdo,$arm,$desvio,$codigo"
+    [ "$COLUNAS_RESUMO" -le 12 ] || linha+=",$folga,$pior"
+    [ "$COLUNAS_RESUMO" -le 14 ] || linha+=",${spi:-lenta},${div_a:-},${div_c:-}"
+    [ "$COLUNAS_RESUMO" -le 17 ] || linha+=",$VPP_MEDIDO,$( [ "$FREQ_MEDIDA" = nan ] || echo "$FREQ_MEDIDA"),$SINAL_CODIGO"
+    echo "$linha" >> "$RESUMO"
+
+    if [ "$codigo" -eq 4 ]; then
+        interrompido="ADC sem resposta (a placa de aquisição está alimentada pela fonte de 5 V do conector?)"
+        break
     fi
 done
 
@@ -880,13 +1063,18 @@ if [ -n "$interrompido" ]; then
 else
     printf '\n  %s◆ Pronto%s: %s\n' "$N" "$R" "$PASTA"
 fi
+if [ "${#SUSPEITAS[@]}" -gt 0 ]; then
+    printf '\n  %s! %d captura(s) com o sinal fora do esperado%s (a coluna "sinal" do resumo.csv):\n' "$AM" "${#SUSPEITAS[@]}" "$R"
+    printf '    %s\n' "${SUSPEITAS[@]}"
+    echo "    Para refazê-las: apague as linhas delas do $PASTA/resumo.csv e rode ./coletar.sh $MODO --continuar"
+fi
 echo "    No computador:  scripts/BeagleBone_Setup.sh trazer '${PREFIXO}_*' \$DIA"
 case "$PREFIXO" in
     CAL)
         [ "$CAL_REFERENCIA" -eq 0 ] || echo "    Copie os ref_*.csv do osciloscópio para \$DIA/${PASTA}; a análise, uma por faixa:"
         if [ -n "$CAL_CANAL_REF" ]; then
             for faixa_f in $CAL_FAIXAS; do
-                echo "    E a análise (±$(LC_ALL=C awk -v f="$faixa_f" 'BEGIN { printf "%g", f / 2 }') V):  uv run scripts/medir_fase.py \$DIA/${PASTA}/F_*_f${faixa_f}_*.bin --canal $CAL_CANAL --canal-referencia $CAL_CANAL_REF --perfil-referencia scripts/sondas/<perfil com fase do canal $CAL_CANAL_REF em $CAL_FAIXA_REF>.json --resistencia ${CAL_RESISTENCIA:-<R em ohms>} --espiras ${CAL_ESPIRAS:-<N>} --ganho <o nominal do canal $CAL_CANAL>$( [ "$CAL_DIAFONIA" -eq 0 ] || echo " --diafonia \$DIA/${PASTA}/W_*_f${faixa_f}_*.bin") --csv \$DIA/${PASTA}/razao_f${faixa_f}.csv --plot \$DIA/${PASTA}/razao_f${faixa_f}.png --saida-perfil scripts/sondas/<id>.json"
+                echo "    E a análise (±$(LC_ALL=C awk -v f="$faixa_f" 'BEGIN { printf "%g", f / 2 }') V):  uv run scripts/medir_fase.py \$DIA/${PASTA}/F_*_f${faixa_f}_*.bin --canal $CAL_CANAL --canal-referencia $CAL_CANAL_REF --perfil-referencia scripts/sondas/<perfil com fase do canal $CAL_CANAL_REF em $CAL_FAIXA_REF>.json --resistencia ${CAL_RESISTENCIA:-<R em ohms>} --espiras ${CAL_ESPIRAS:-<N>} --ganho $( [ "$CAL_GRANDEZA" = corrente ] && echo "$GANHO_CORRENTE" || echo "<o nominal do canal $CAL_CANAL>")$( [ "$CAL_DIAFONIA" -eq 0 ] || echo " --diafonia \$DIA/${PASTA}/W_*_f${faixa_f}_*.bin") --csv \$DIA/${PASTA}/razao_f${faixa_f}.csv --plot \$DIA/${PASTA}/razao_f${faixa_f}.png --saida-perfil scripts/sondas/<id>.json"
                 [ "$CAL_REFERENCIA" -eq 0 ] || echo "    e a conferência pelo método de um canal:  uv run scripts/medir_fase.py \$DIA/${PASTA}/F_*_f${faixa_f}_*.bin --canal $CAL_CANAL --entrada \$DIA/${PASTA}/ref_*.csv --ancora scripts/sondas/<id>.json --passa-alta"
             done
             echo "    (um resistor de fio é indutivo: meça a impedância dele com o medir_shunt.py e troque --resistencia por --shunt)"

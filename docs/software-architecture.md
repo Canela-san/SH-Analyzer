@@ -9,7 +9,7 @@ Guia para quem vai **modificar** o código Python do projeto. Cobre: onde cada c
 ## 1. Visão geral em 30 segundos
 
 ```
-firmware/ler_adc  ──grava──▶  captura.bin  (cabeçalho "SHAN" de 1024 B + amostras uint16 intercaladas)
+firmware/ler_adc  ──grava──▶  captura.bin  (cabeçalho "SHAN" de 4096 B + amostras uint16 intercaladas)
                                    │
 firmware/coletar.sh sonda ──▶ capturas/<sonda>/calibracao_*.bin   (os outros modos: CAL_*, ALS_*, RUIDO_*, TETO_*, T7*_)
                                    │
@@ -81,7 +81,7 @@ Camada = quem pode importar quem (um módulo só importa camadas **menores**).
 | 0 | `erros` | Hierarquia de exceções | `ErroSHAN`, `ErroUso` |
 | 0 | `constantes` | Constantes compartilhadas (inclusive as que espelham o firmware) | `FORMATOS_NUMPY`, `GRANDEZA_*`, `ADS8688_MAX_CANAIS`, defaults de Welch/filtro |
 | 0 | `registro` | Liga o `logging` ao console no formato histórico (stdout/stderr) | `configurar_logging_cli` |
-| 1 | `cabecalho` | Lê/valida o cabeçalho "SHAN" v1 a v8 (magic, CRC-32, campos, faixa do ADC por canal, contadores de integridade, versão do firmware, taxa medida pelo ARM, a grade de tempo publicada pela PRU, o modo do SPI e as divergências; na v8, o sistema, a placa, o relógio e o disco da BeagleBone; consistência); a taxa que a PRU gera (`frequencia_pru_hz` = clock ÷ ticks) | `ler_cabecalho`, `CabecalhoArquivo`, `conferir_consistencia_cabecalho` |
+| 1 | `cabecalho` | Lê/valida o cabeçalho "SHAN" v1 a v9 (4096 bytes desde a v9: as amostras começam em `CabecalhoArquivo.tamanho_cabecalho`; a extensão da v9 traz o CRC-32 das amostras, `conferir_crc_das_amostras`, o ganho declarado e o sinal de cada canal) (magic, CRC-32, campos, faixa do ADC por canal, contadores de integridade, versão do firmware, taxa medida pelo ARM, a grade de tempo publicada pela PRU, o modo do SPI e as divergências; na v8, o sistema, a placa, o relógio e o disco da BeagleBone; consistência); a taxa que a PRU gera (`frequencia_pru_hz` = clock ÷ ticks) | `ler_cabecalho`, `CabecalhoArquivo`, `conferir_consistencia_cabecalho` |
 | 1 | `amostras` | Lê `.bin` (memmap) e `.csv`; código → volts; acha o transitório de uma troca de faixa no começo de um canal | `carregar_amostras_bin`, `converter_para_tensao`, `selecionar_intervalo`, `detectar_transitorio_inicial` |
 | 1 | `canais` | Listas de canais/calibração, desintercalação, offsets, `--faixa` por canal | `analisar_lista_canais`, `desintercalar`, `resolver_faixas`, `resolver_offsets_por_canal` |
 | 1 | `filtros` | Butterworth SOS, fase zero | `aplicar_filtro_digital`, `validar_corte_filtro` |
@@ -229,9 +229,9 @@ O caminho quente é tudo que toca **todas** as amostras de uma captura (dezenas 
 ## 7. Testes
 
 ```bash
-uv run --extra dev pytest                 # tudo: 771 testes (~1 min 20 s)
-uv run --extra dev pytest -m "not e2e"    # rápido: 638 testes (~30 s) — use no dia a dia
-uv run --extra dev pytest -m e2e          # só ponta a ponta: 133 testes (a maior parte do tempo)
+uv run --extra dev pytest                 # tudo: 1106 testes (~3 min)
+uv run --extra dev pytest -m "not e2e"    # rápido: 895 testes (~1 min) — use no dia a dia
+uv run --extra dev pytest -m e2e          # só ponta a ponta: 192 testes (a maior parte do tempo)
 uv run --extra dev pytest -n0 tests/test_dsp.py::TestFiltros   # um teste só, sem paralelismo (pdb/breakpoint)
 uv run --extra dev pytest --cov=scripts/supraharmonicos --cov-report=term-missing   # cobertura (~90 %)
 uv run --extra dev ruff check .
@@ -264,6 +264,7 @@ Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `c
 | `test_faixa_adc.py` | `--faixa` por canal: cabeçalho (v3+) > padrão, aviso se divergir, amplitude certa em cada faixa, perfil de sonda e `faixa_v_confiavel` |
 | `test_pru_asm.py` (+ `pru_sim.py`) | lógica do `firmware/spi_core.asm` num mini-simulador de PRU: palavras enviadas na configuração (`AUTO_SEQ_EN`, `RANGE_SELn`, `AUTO_RST`), ordem, ciclos de SCLK, laço gravando na DDR, IMEM e alcance dos desvios; a **grade de tempo** das amostras em ciclos: desde 22/10/2026, **exata** (todo intervalo entre descidas do CS = o período, ao ciclo), na troca de buffer, no rebase do contador (que trava em 2³² e que uma escrita zera, como na BeagleBone), com latências de memória hipotéticas (`Latencias`: custo de LBBO/SBBO, ciclo da leitura do contador, atraso do zero) e escritas na DDR que demoram ao acaso; a folga publicada é a margem de verdade (com o período `folga` ciclos mais curto, nenhuma atrasada; 1 a menos, atrasadas); amostra atrasada volta à grade e os contadores de integridade (atrasadas, buffers sobrescritos, preâmbulo); atrasos de CS configuráveis com o padrão igual ao validado (transação de 1.165 ciclos); o **quadro de duração fixa** (o mesmo tempo para 0x0000 e 0xFFFF), o **SPI rápido** (bits de 13 ciclos, a palavra certa nas 3 fases de leitura, as divergências quando o caminho de volta do SDO, modelado em `ModeloADC.atraso_ciclos`, é longo ou curto demais, a grade exata a 400 kS/s), a troca de buffer espalhada (no máximo 1 acesso à RAM compartilhada por amostra, o rebase adiado numa amostra com evento) e as latências calibradas na placa (`LATENCIAS_PRU_REAL`: o simulador reproduz a folga do T7f e prevê a do firmware novo). Não substitui compilar com `clpru` nem testar no hardware |
 | `test_ler_adc_host.py` | partes do `firmware/ler_adc.c` compiladas no PC por um harness: a reserva da DDR no `/proc/iomem`, a frequência lida inteira, o teto da PRU contra o simulador (16 combinações de SPI e esperas de CS), os pinos da PRU num sysfs falso (reconfigurados depois de um reinício, já certos sem escrita, sem o pinmux só um aviso, modo recusado = erro) e iguais aos do `setup.sh`, o ADC mudo, o resumo final lido com os mesmos `sed` do `coletar.sh bancada`, a ajuda e os códigos de saída do binário |
+| `test_ler_adc_captura.py` (+ `pru_falsa.py`) | **o `main` do `ler_adc` de ponta a ponta** (11/11/2026): o programa de verdade, compilado com os caminhos da placa trocados (`#ifndef` no `ler_adc.c`), contra um arquivo esparso no lugar do `/dev/mem` e uma thread que faz o papel da PRU (o aviso de "pronta", a configuração, a versão do protocolo, os buffers alternados, os contadores). Confere a configuração que chega à PRU, os blocos na ordem em que encheram, o cabeçalho v8 lido pelo `supraharmonicos.cabecalho`, os códigos de saída 1 (outro protocolo, PRU sem resposta, erro ao fechar em `/dev/full`), 3 (buffer sobrescrito, com o bloco misturado), 4 (ADC mudo) e 5 (Ctrl+C, kill e SIGHUP numa captura de blocos contados), o SIGHUP herdado como ignorado, a hora do cabeçalho (a de quando a PRU é solta) e a taxa medida com um disco que demora (a saída num pipe lido devagar) |
 | `test_aliasing.py` | onde uma entrada aparece em cada taxa, as entradas possíveis e as ambíguas (360 kHz em 40 kHz com 400 e 320 kS/s), o pareamento (real, imagem nas duas, real em A e imagem acima da Nyquist de B, sem par, ambíguo, amplitude que bate primeiro) e a CLI de ponta a ponta com capturas sintéticas a 400 e 320 kS/s (CSV, aviso das ambíguas, mesma taxa recusada) |
 | `test_arquitetura.py` | camadas sem ciclo, sem `print`/`SystemExit` em biblioteca, matplotlib/h5py confinados, entradas finas |
 | `test_dependencias.py` | todo script com `if __name__ == "__main__"` (em `scripts/`, `relatorio/`, `tests/`, `firmware/`) roda com `uv run`: shebang do uv, permissão de execução, bloco PEP 723 com tudo o que ele importa ao carregar (seguindo o pacote e os módulos vizinhos) e versões iguais às do `pyproject.toml` |

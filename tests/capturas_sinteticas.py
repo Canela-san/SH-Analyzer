@@ -64,13 +64,21 @@ def volts_para_codigos(v: np.ndarray, formato: str = "uint16", faixa: float = FA
     return np.clip(np.round(v / faixa * 32768), -32768, 32767).astype("<i2")
 
 
+# v9: os 1024 bytes da v8 e, do byte 1024 em diante, a extensão (o resto dos 4096 bytes é reserva, zerada).
+FMT_EXTENSAO_V9 = "<IQIId16s32s512s8d8H8H8Q8d8d"
+EXTENSAO_PADRAO = {"fim": (1_700_000_010, 500_000_000), "pior_bloco_ms": 160, "duracao": 10.5,
+                   "id": "00112233445566778899aabbccddeeff", "hostname": "beaglebone",
+                   "comando": "400000 1 --blocos 4 -o teste.bin", "ganhos": [], "minimos": [], "maximos": [],
+                   "saturadas": [], "medias": [], "desvios": []}
+
+
 def montar_cabecalho(n_por_canal: int, canais, grandezas, sondas, fs_total: int,
                      versao: int = 2, titulo: str = "teste", descricao: str = "sintetico",
                      crc_valido: bool = True, total_amostras: int | None = None,
                      codigos_faixa_adc=None, integridade=(0, 0, 0), atrasos_cs=(200, 100, 100),
                      amostras_por_buffer: int = 1048576, versao_firmware: str = "v0.0-teste",
                      taxa_medida_hz: float = 0.0, grade=(20, 0, 2, 2), blocos: int = 1, spi=(0, 0, 0),
-                     sistema: dict | None = None) -> bytes:
+                     sistema: dict | None = None, crc_amostras: int = 0, extensao: dict | None = None) -> bytes:
     """Cabeçalho de 1024 bytes (v1 a v8) com CRC-32 correto (ou propositalmente errado).
 
     ``codigos_faixa_adc`` (v3+): um código de faixa por canal (padrão: 0 = ±10,24 V em todos).
@@ -80,7 +88,9 @@ def montar_cabecalho(n_por_canal: int, canais, grandezas, sondas, fs_total: int,
     ``taxa_medida_hz`` (v5): o git describe do build e a taxa medida pelo ARM (0 = não medida). ``grade`` (v6):
     (folga_minima_ciclos, atraso_maximo_ciclos, ciclos_rebase, versao_protocolo_pru). ``blocos``: blocos_gravados (a
     PRU só publica a folga na troca de buffer: com 1 bloco ela não vale, na v6). ``spi`` (v7): (modo_spi,
-    divergencias_fase_a, divergencias_fase_c). ``sistema`` (v8): as chaves de ``SISTEMA_PADRAO`` que mudam."""
+    divergencias_fase_a, divergencias_fase_c). ``sistema`` (v8): as chaves de ``SISTEMA_PADRAO`` que mudam.
+    ``crc_amostras`` e ``extensao`` (v9, cabeçalho de 4096 bytes): o CRC-32 das amostras e as chaves de
+    ``EXTENSAO_PADRAO`` que mudam (o identificador, a máquina, o comando, o ganho e o sinal de cada canal)."""
     k = len(canais)
     lista = list(canais) + [0xFF] * (8 - k)
     mascara = sum(1 << c for c in canais)
@@ -122,6 +132,18 @@ def montar_cabecalho(n_por_canal: int, canais, grandezas, sondas, fs_total: int,
     bruto = bytearray(struct.pack(fmt, *vals))
     deslocamento_crc = struct.calcsize(fmt) - 4
     bruto += b"\x00" * (1024 - len(bruto))
+    if versao >= 9:                                   # os 1024 bytes da v8 e a extensão, até 4096 bytes
+        x = {**EXTENSAO_PADRAO, **(extensao or {})}
+
+        def oito(valores, vazio=0):
+            return [*valores, *[vazio] * (8 - len(valores))]
+
+        struct.pack_into("<I", bruto, 8, 4096)
+        bruto += struct.pack(FMT_EXTENSAO_V9, crc_amostras, *x["fim"], x["pior_bloco_ms"], x["duracao"],
+                             bytes.fromhex(x["id"]), x["hostname"].encode(), x["comando"].encode(),
+                             *oito(x["ganhos"], 0.0), *oito(x["minimos"]), *oito(x["maximos"]), *oito(x["saturadas"]),
+                             *oito(x["medias"], 0.0), *oito(x["desvios"], 0.0))
+        bruto += b"\x00" * (4096 - len(bruto))
     crc = zlib.crc32(bytes(bruto))
     if not crc_valido:
         crc ^= 0xDEADBEEF
@@ -138,7 +160,8 @@ def regravar_crc(caminho: Path) -> None:
            else FMT_V2 if versao == 2 else FMT_V1)
     deslocamento_crc = struct.calcsize(fmt) - 4
     struct.pack_into("<I", bruto, deslocamento_crc, 0)
-    struct.pack_into("<I", bruto, deslocamento_crc, zlib.crc32(bytes(bruto[:1024])))
+    tamanho = struct.unpack_from("<I", bruto, 8)[0] if versao >= 9 else 1024
+    struct.pack_into("<I", bruto, deslocamento_crc, zlib.crc32(bytes(bruto[:tamanho])))
     Path(caminho).write_bytes(bytes(bruto))
 
 
@@ -163,6 +186,13 @@ def escrever_bin(caminho: Path, canais_v, canais=(0, 1), grandezas=(0, 1), sonda
         codigos[i::k] = volts_para_codigos(np.asarray(c[:n], dtype=np.float64), formato, faixas[i])
     with open(caminho, "wb") as f:
         if com_cabecalho:
+            if kw_cabecalho.get("versao", 2) >= 9:    # o que o ler_adc mede e grava na extensão: o CRC e o sinal por canal
+                kw_cabecalho.setdefault("crc_amostras", zlib.crc32(codigos.tobytes()))
+                por_canal = [codigos[i::k].astype(np.float64) for i in range(k)]
+                medido = {"minimos": [int(c.min()) for c in por_canal], "maximos": [int(c.max()) for c in por_canal],
+                          "saturadas": [int(np.count_nonzero((c == 0) | (c == 65535))) for c in por_canal],
+                          "medias": [float(c.mean()) for c in por_canal], "desvios": [float(c.std()) for c in por_canal]}
+                kw_cabecalho["extensao"] = {**medido, **kw_cabecalho.get("extensao", {})}
             f.write(montar_cabecalho(n, canais, grandezas, sondas, fs_total, **kw_cabecalho))
         f.write(codigos.tobytes())
     return caminho

@@ -151,7 +151,7 @@ def montar_parser() -> argparse.ArgumentParser:
     d.add_argument("--shunt", type=Path, metavar="CSV", help="A impedância Z(f) do resistor do laço (o medir_shunt.py).")
     d.add_argument("--espiras", type=int, default=1, help="Espiras do laço pela sonda (padrão: %(default)s).")
     d.add_argument("--ganho", type=float, metavar="G",
-                   help="O --ganho nominal do canal medido (o do adc_tool; no SCT013 sobre 0,12 Ω, 16667): o perfil "
+                   help="O --ganho nominal do canal medido (o do adc_tool; no canal de corrente, 19.65 = 1 ÷ 50,9 mV/A): o perfil "
                         "é relativo a ele.")
     c = p.add_argument_group("conferências do método de um canal (opcional)")
     c.add_argument("--passa-alta", action="store_true",

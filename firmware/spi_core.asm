@@ -154,6 +154,18 @@
 ;     por alguns µs e provocaria o transitório de troca de faixa (F9) em toda
 ;     captura. ~2 µs a mais por captura, antes do contador ser zerado; o laço
 ;     principal não muda.
+;
+; --- REVISÃO DE 11/11/2026: ACOMODAÇÃO DO ADC ANTES DA 1ª AMOSTRA (PROTOCOLO 5) -
+;   - [TRANSITÓRIO DE FAIXA] Quando a faixa de um canal muda de uma captura para
+;     a seguinte, a saída do PGA do ADS8688 dá um degrau, e o filtro do canal
+;     leva ~80 µs para acomodar (medido em 19/10/2026: as primeiras amostras
+;     decaem de até ~4600 LSB, com ~8 µs de constante de tempo no fim; o mesmo
+;     TEMPO com 1 e 2 canais). A 1ª amostra saía ~15 a 30 µs depois da escrita
+;     do RANGE_SELn: o começo de toda captura com troca de faixa vinha errado,
+;     e a análise tinha de pular 200 µs. Agora a PRU espera 2 ms depois do
+;     AUTO_RST (espera_acomodacao), antes de zerar o contador: a 1ª amostra já
+;     vale. 4 instruções, fora do laço principal: nenhum ciclo a mais por amostra.
+;     Falta a bancada (uma captura logo depois de trocar a faixa).
 ; ==============================================================================
 ; PINOS (inalterado):
 ;   Bit 0 (r30) = SCLK   | Bit 1 (r30) = SDI/MOSI
@@ -375,9 +387,9 @@ espera_configuracao:
     ; separadas (02h e 03h desde 23/10/2026, AUTO_SEQ_EN, RANGE_SELn de cada
     ; canal habilitado e AUTO_RST),
     ; executadas uma única vez, ANTES do laço principal. Nenhum
-    ; resultado lido via SDO aqui é gravado na DDR (ver descarte da primeira
-    ; amostra do lado ARM em ler_adc.c, que cobre qualquer resíduo que ainda
-    ; escape para o primeiro quadro do laço principal).
+    ; resultado lido via SDO aqui é gravado na DDR (o quadro do AUTO_RST é o
+    ; que traz o dado indefinido; a 1ª amostra do laço principal já é do canal
+    ; de menor número, e nenhuma é descartada).
     ;
     ; ⚠️ CORREÇÃO (após bug observado em hardware, captura multi-canal
     ; saindo com todos os "canais" idênticos -- sinal de que a varredura
@@ -548,6 +560,15 @@ cfg_sem_nibble:
     JMP cfg_proximo_comando
 cfg_fim:
 
+    ; [ACOMODAÇÃO, 11/11/2026] 2 ms com o ADC parado (em aquisição do 1º canal da varredura) antes da 1ª amostra: o
+    ; tempo de o filtro de cada canal acomodar depois de uma troca de faixa (~80 µs medidos; ver o cabeçalho do
+    ; arquivo). 200.000 voltas de 2 ciclos = 400.000 ciclos de 5 ns. O contador de ciclos é zerado depois (abaixo).
+    LDI r1.w0, 0x0D40        ; 0x00030D40 = 200.000
+    LDI r1.w2, 0x0003
+espera_acomodacao:
+    SUB r1, r1, 1
+    QBNE espera_acomodacao, r1, 0
+
     ; --- Fim da configuração do ADS8688 — início da captura de verdade ---
     ;
     ; Registradores do laço principal (r6-r13 ficaram livres com o fim da configuração):
@@ -608,7 +629,7 @@ atraso_alto_pedido:
     LBBO &r20, r18, 0, 4
     SUB r29, r20, r1
     SBBO &r29, r14, 68, 4    ; ctrl->ciclos_rebase (diagnóstico)
-    LDI r20, 4               ; VERSAO_PROTOCOLO_PRU (memoria_pru.h): o ler_adc confere que é este firmware
+    LDI r20, 5               ; VERSAO_PROTOCOLO_PRU (memoria_pru.h): o ler_adc confere que é este firmware
     SBBO &r20, r14, 72, 4
 
     MOV r19, r24

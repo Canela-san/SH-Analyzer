@@ -8,7 +8,7 @@ Pré-requisito: [`user-guide.md`](user-guide.md) (capturar e analisar). Este rot
 
 * **Taxa: o padrão do firmware é 400 kS/s com o SPI rápido desde 22/10/2026** (período constante até 419,3 kS/s e 0 divergências de leitura no [T7g](bench-results.md#t7g-o-spi-rápido)); `--spi lenta` volta ao SPI de antes, que vai até 327,9 kS/s. De 21 a 22/10/2026 o padrão foi 312,5 kS/s com esse SPI e as esperas do CS no mínimo do datasheet (3,1,3), que continuam valendo. Os comandos deste roteiro que ainda dizem `100000` são de antes da mudança: valem como estão (a banda fica em 45 kHz) e serão recalibrados para 312,5 kS/s depois da [campanha do limite](#passo-a-passo-da-próxima-ida-a-campanha-do-limite-3125-kss).
 * **Canal de tensão (canal 1 do ADC) = divisor resistivo de 5 resistores ligado direto ao ADS8688**, sem sonda. "Sonda de tensão", neste roteiro, é o **divisor + o filtro de ~15 kHz do ADC**, e o perfil dela corrige os dois.
-* **Canal de corrente (canal 0 do ADC) = SCT013 100A:50mA + resistor de 0,12 Ω + 2 resistores em série + ADC**, **com o capacitor de filtro removido** (o capacitor existente é um passa-baixa de frequência de corte baixíssima, incompatível com supraharmônicos).
+* **Canal de corrente (canal 0 do ADC) = SCT013 100A:50mA + resistor de carga (~100 Ω pela sensibilidade medida, 50,9 mV/A; até 11/11/2026 este roteiro supunha 0,12 Ω) + 2 resistores em série + ADC**, **com o capacitor de filtro removido** (o capacitor existente é um passa-baixa de frequência de corte baixíssima, incompatível com supraharmônicos).
 * **Faixa de entrada do ADC escolhida por canal** (`--faixa-adc`): **canal de tensão em ±10,24 V** (o padrão, `20.48`: o divisor já usa 91% dela com 127 V RMS) e **canal de corrente em ±2,56 V** (`--faixa-adc 0:5.12`: o sinal tem dezenas de µV e a faixa menor reduz o ruído em volts). O firmware escreve a faixa no ADC e a registra no cabeçalho, e as ferramentas de análise a leem de lá (nada de `--faixa` nos comandos). **A escala em si (referência de 4,096 V, mapeamento do código) foi confirmada nas três faixas no T0 de 19/10/2026**; veja o fato 3.
 
 **Índice**
@@ -46,6 +46,36 @@ Os números de cada teste executado, com a data, o firmware e a pasta dos dados,
 | [T10](#t10-perfil-da-sonda-de-corrente) | ⏳ | — | Tudo: é o objetivo central ([próxima ida](#passo-a-passo-da-próxima-ida-a-sonda-de-corrente-e-a-faixa-de-produção-sem-osciloscópio-2-h-30)) |
 | [T11](#t11-ponta-a-ponta) | ⏳ | — | Depois do T10 |
 
+### Validação da revisão de 11/11/2026 do firmware (~40 min, ANTES do resto da próxima ida)
+
+A revisão de 11/11/2026 só foi conferida no computador (o simulador da PRU, o `ler_adc` contra uma placa falsa e os
+scripts contra um `ler_adc` falso). O laço principal da PRU não mudou; mudaram o começo da captura (2 ms de espera
+depois de configurar o ADC, protocolo 5), o `ler_adc` (arquivos acima de 2 GiB, o código 5, o SIGHUP, a hora, a taxa
+medida, o `fsync`) e o `coletar.sh` (a conferência do sinal de cada captura, os campos do cabeçalho v8 no `conferir`).
+Depois veio o cabeçalho v9 (4096 bytes, com o CRC das amostras, o sinal de cada canal e o ganho declarado), que mudou o
+caminho de cada bloco no ARM (cópia da DDR, CRC e gravação): o passo 10 o confere. Cada passo abaixo diz o comando, o
+que esperar e o que fazer se der diferente. Faça-os em ordem: se o passo 1 ou o 2
+falhar, volte ao firmware anterior (no computador, `git checkout 018c500`, o `main` de antes da revisão, e
+`scripts/BeagleBone_Setup.sh preparar`; `git checkout -` desfaz) e siga a ida com ele.
+
+| # | Comando | Esperado | Se der diferente |
+|---|---|---|---|
+| 1 | No computador: `scripts/BeagleBone_Setup.sh preparar` | O `make` termina sem erro (o `clpru` aceita as 4 instruções novas do `spi_core.asm`; o gcc da placa aceita o `_Static_assert` do `off_t` de 64 bits) e "PRU0 rodando o firmware novo" | Erro do `clpru` em `LDI r1.w0`/`r1.w2` ou em `espera_acomodacao`: anote a linha e a mensagem. Erro do `_Static_assert`: anote a versão do gcc (`gcc --version`). Nos dois casos, volte ao firmware anterior |
+| 2 | Na placa: `./coletar.sh conferir` (o gerador como estiver) | `captura íntegra, grade exata (folga de 18 a 23 ciclos), 0 divergências de leitura`: a folga a 400 kS/s é a do T7g e das capturas de 03/11, porque o laço não mudou. Uma linha `placa A335BNLT ... · BeagleBoard.org Debian ... · kernel ...`; a linha do relógio (o alerta de "não sincronizado por NTP" é normal sem internet: confira se a hora mostrada está certa); a linha do disco. Nenhum alerta de "protocolo 4" | Folga fora de 18 a 23: o laço mudou sem querer; não siga, anote a folga e a saída do `make`. `o firmware da PRU não é o deste ler_adc`: o `setup.sh` não carregou o fw novo, rode `sudo ./setup.sh`. Placa, imagem ou kernel vazios: rode `sudo ./ler_adc --blocos 1 -v -o /tmp/x.bin` e `ls -l /sys/bus/nvmem/devices/ /sys/bus/i2c/devices/0-0050/ /etc/dogtag` e anote (o caminho da EEPROM nesta imagem é outro); as capturas valem assim mesmo. Hora errada: `scripts/BeagleBone_Setup.sh hora` |
+| 3 | Tom de 10,000 kHz, 20 Vpp, High-Z, no canal 1: `./coletar.sh bancada --partes S` (2 capturas de 60 s a 400 kS/s, com 1 e 2 canais) | Nas duas: `✓ folga 18 ciclos · divergências A 0, C 0 · ARM 400000 Hz (±0,05 %) · 0.867 Vpp, 10000.0 Hz` (a folga, de 18 a 23; o nível, perto disso), sem pergunta sobre o sinal (20 Vpp ÷ 19,357 × 0,839 do filtro em 10 kHz = 0,867 Vpp). No computador, `uv run scripts/medir_captura.py $DIA/T7g_*/S_*.bin --max-amostras 3145000`: jitter 0,00 ns e degraus de 0 ciclo nas trocas e nos rebases, como no T7f | Amostras atrasadas ou folga menor: compare com a mesma captura no firmware anterior. O script pergunta do sinal com o gerador certo: anote o Vpp e a frequência medidos e responda `s`; o nível esperado ou a tolerância (25 %) precisam de ajuste, e as capturas valem |
+| 4 | Entrada do canal 1 em curto (ou o gerador desligado). `for f in 20.48 5.12 20.48 5.12; do sudo ./ler_adc 400000 1 --faixa-adc 1:$f --blocos 1 -o TRANS_${f}_$(date +%s).bin -t "transitorio $f"; sleep 1; done` e depois `for a in TRANS_*.bin; do echo "$a: $(od -An -tu2 -j 4096 -N 16 "$a") \| $(od -An -tu2 -j 12096 -N 16 "$a")"; done` | Em cada captura, as 8 primeiras amostras (à esquerda da barra) valem o mesmo que as 8 tomadas 4000 amostras depois (à direita), a menos do ruído (±3 LSB): a troca de faixa não deixa mais transitório. Antes da revisão, as primeiras decaíam de centenas a milhares de LSB | As primeiras amostras ainda decaem: a espera de 2 ms não bastou ou o transitório não é só de tempo. Anote os números das 4 capturas e continue pulando o começo nas medidas de ruído e DC (`--inicio 100`, como até aqui) |
+| 5 | `sudo ./ler_adc --blocos 20 -o INT.bin; echo "codigo $?"` e, depois de ~6 s, Ctrl+C | `! Captura interrompida antes do fim` e `codigo 5`; `ls -l INT.bin` = 4096 + 2 097 152 × os blocos da linha `Arquivo` | Código 0: o `ler_adc` em uso não é o novo (`./ler_adc --help` tem de citar o código 5) |
+| 6 | `./coletar.sh aliasing --segundos 30` (3 capturas, ~2 min) e, durante a 1ª, **feche a janela do ssh**. Reconecte depois de 2 min e veja `cat ALS_*/resumo.csv` e `ls -l ALS_*/` | As 3 linhas com `codigo_saida` 0 e os arquivos inteiros: 25 169 920 bytes a 400 e a 390,625 kS/s (12 blocos) e 20 975 616 a 320 kS/s (10 blocos). A queda da conexão não cortou a captura em curso | Uma linha com o código 5 ou um arquivo menor: a captura foi cortada; anote qual e rode `./coletar.sh aliasing --continuar` (ele a refaz). Diga também como a conexão caiu (USB, Wi-Fi) |
+| 7 | Onda quadrada de 256 Hz, 20 Vpp, High-Z, no canal 1: `./coletar.sh calibrar --quadradas 256,25344 --taxas 400000 --faixa 5.12 --segundos 10` (ele pede cada quadrada) | perto de `· 1.033 Vpp, 256.0 Hz` e, na de 25344 Hz, de `· 0.633 Vpp, 25344.0 Hz` (o filtro do ADC deixa 61 % do pico a pico dela), sem pergunta sobre o sinal | Pergunta com o gerador certo: anote o medido, responda `s`. Se for só a de 25344 Hz, é o modelo do filtro (`queda_da_quadrada`); se forem as duas, o divisor ou o High-Z do gerador |
+| 8 | A mesma quadrada de 256 Hz com o gerador em **0,5 Vpp**: `./coletar.sh calibrar --quadradas 256 --taxas 400000 --faixa 5.12 --segundos 10` | O script para: `O sinal não é o esperado: o nível no canal 1: esperado ~1.033 Vpp no pino, medido 0.026 (-97 %)`. Ponha o gerador em 20 Vpp e dê Enter: a captura é repetida e passa | Não parou: a conferência não rodou (o `resumo.csv` tem a coluna `sinal`?). Anote a linha da captura |
+| 9 | Opcional, se houver 2,3 GB livres e 46 min (no almoço): `sudo ./ler_adc 400000 1 --duracao 46m -o GRANDE.bin -t "mais de 2 GiB"; echo "codigo $?"` | `✓ Captura concluída`, 1053 blocos, `codigo 0`, e `ls -l GRANDE.bin` com 2 208 305 152 bytes | `a gravação do bloco 1024 parou ... (File too large)`: o `off_t` continua de 32 bits nesta placa; anote `gcc --version` e `getconf LONG_BIT`. Apague o arquivo depois de conferir |
+| 10 | Com o tom do passo 3: `sudo ./ler_adc 400000 1 --faixa-adc 1:5.12 --ganho 1:19.357 --blocos 12 -v -o V9.bin`; depois, no computador (`lab trazer V9.bin`), `uv run scripts/adc_tool.py info $DIA/V9.bin` | Na placa: a linha `Canal 1  de ... a ... V no pino (~0.867 Vpp = ~16.8 V pico a pico), média ..., ~306 mV rms sem o DC`, sem aviso de saturação, e, com `-v`, `cópia, CRC e gravação no ARM: o pior bloco levou ~170 a 250 ms ... (margem de 10x ou mais)`. No computador: `CRC-32 das amostras: confere`, a linha `Captura <id> em '<nome da placa>': ler_adc 400000 1 ...` e o sinal do canal | Margem abaixo de 5x: o caminho novo de cada bloco (cópia da DDR, CRC, gravação) ficou lento nesta placa; anote os ms e avise antes de capturas longas. CRC que não confere: copie de novo; se persistir, compare `md5sum` na placa e no computador e anote. Aviso de saturação com o tom de 20 Vpp em ±2,56 V: confira a faixa |
+| 11 | O T10-0 do passo a passo abaixo, já com `--esperado-vpp` e `--ganho 19.65` | O K de baixa frequência perto de 1: a sensibilidade de 50,9 mV/A confirmada, com a data e a pasta para o `bench-results.md` | K longe de 1: a sensibilidade é K × 50,9 mV/A; corrija o `$GI` (1 ÷ a sensibilidade), o `SENSIBILIDADE_CORRENTE` do `coleta/comum.sh` e o fato 5 |
+
+Anote também quanto tempo cada captura das coletas passou a levar a mais (a conferência do sinal lê 131 072 amostras
+com `od` e `awk`, ~1 a 2 s na BeagleBone, e o `fsync` do fim de cada captura depende do cartão): se passar de ~5 s por
+captura, avise.
+
 ### Passo a passo da próxima ida: a sonda de corrente e a faixa de produção, sem osciloscópio (~2 h 30)
 
 As senoides de 23/10 ([T9 e T8](bench-results.md#t9-e-t8-sinais-de-espectro-conhecido-e-aliasing)) fecharam duas
@@ -62,8 +92,9 @@ puro, e a **cadeia de tensão na faixa de produção** (±10,24 V).
   Meça-o a 4 fios no Fluke e anote R com 4 algarismos: ele entra como `--resistencia R`, no lugar do
   `medir_shunt.py`. Um resíduo de 50 nH em 10 Ω dá 0,2° em 100 kHz.
 * **Fio para 20 espiras** no SCT013 (e fita para fixá-las) e, se houver, a **fonte de corrente quadrada bipolar** de
-  1 a 2 A (uma meia-ponte de MOSFET acionada pelo gerador, ou um amplificador de banda larga). Só com o gerador
-  (~3 A·espira com 20 espiras e 10 Ω), o perfil fica bom até ~50 kHz.
+  1 a 2 A (uma meia-ponte de MOSFET acionada pelo gerador, ou um amplificador de banda larga). Com a sensibilidade medida
+  (50,9 mV/A), o gerador sozinho (~3 A·espira com 20 espiras e 10 Ω) já dá ~0,3 Vpp no pino: a fonte deixou de ser
+  necessária pelo sinal (o T10-0 confirma). Com ela, cuide da saturação: ±2 A com 20 espiras são 2,0 V de pico em ±2,56 V.
 * **Espaço na placa:** ~2,1 GB (1,4 GB da tensão e 0,7 GB da corrente). Traga as capturas anteriores antes.
 * **O caderno** (`cp docs/lab-notes-template.md $DIA/anotacoes.md`), preenchido durante: o de 23/10 ficou vazio, e o
   relatório precisa da montagem de cada teste.
@@ -129,11 +160,12 @@ DC, um capacitor grande em série).
 ```
 
 ```fish
-uv run scripts/medir_fase.py $DIA/CAL_*/F_*.bin --canal 0 --canal-referencia 1 --perfil-referencia scripts/sondas/cadeia_tensao_fase.json --resistencia <R> --espiras 20 --ganho 16667
+uv run scripts/medir_fase.py $DIA/CAL_*/F_*.bin --canal 0 --canal-referencia 1 --perfil-referencia scripts/sondas/cadeia_tensao_fase.json --resistencia <R> --espiras 20 --ganho 19.65
 ```
 
-O K de baixa frequência deve sair perto de 1 (os 60 µV/A nominais: `--ganho 16667`). Longe disso, confira as
-espiras e o resistor de carga da placa. Se os harmônicos perderem o SNR antes de ~50 kHz, aumente a corrente.
+O K de baixa frequência deve sair perto de 1 (os 50,9 mV/A medidos: `--ganho 19.65`). Longe disso, confira as
+espiras e o resistor de carga da placa. O `calibrar` confere o nível de cada captura na hora: passe `--esperado-vpp`
+(com o gerador direto no laço, 20 Vpp ÷ (50 Ω + R) × 20 espiras × 50,9 mV/A; 0,34 V com 10 Ω). Se os harmônicos perderem o SNR antes de ~50 kHz, aumente a corrente.
 
 **5. A coleta do T10 (~25 min).** Com `--faixa-referencia 5.12`, o canal de tensão fica em ±2,56 V e o perfil de
 referência é o `cadeia_tensao_fase`, já validado; a parte W pede o condutor fora da garra (a diafonia):
@@ -143,7 +175,7 @@ referência é o `cadeia_tensao_fase`, já validado; a parte W pede o condutor f
 ```
 
 O comando da análise sai no fim (`medir_fase.py --canal 0 --canal-referencia 1 --perfil-referencia
-scripts/sondas/cadeia_tensao_fase.json --resistencia <R> --espiras 20 --ganho 16667 --diafonia ... --saida-perfil
+scripts/sondas/cadeia_tensao_fase.json --resistencia <R> --espiras 20 --ganho 19.65 --diafonia ... --saida-perfil
 scripts/sondas/sct013_100a_sn001.json`). O perfil sai com magnitude e fase até ~95 kHz, a Nyquist de cada canal com
 dois canais a 400 kS/s, que é também a banda da potência por componente em produção.
 
@@ -811,20 +843,21 @@ Capturas **antigas** (cabeçalho v1/v2, sem registro da faixa): o ADC estava na 
 
 **Não reduza a faixa do canal de tensão:** com `--faixa-adc 1:10.24` (±5,12 V) todas as linhas de "faixa" caem pela metade, o fundo de escala passa a ±99 V de pico (70 V RMS) e **nem 127 V RMS cabe**. O `--ganho` nominal do canal de tensão é **19,357** (o perfil sai relativo a ele; a carga de 1 MΩ aparece como ganho de baixa frequência ~0,998).
 
-**5. Cadeia de corrente: o SCT013 sobre 0,12 Ω rende pouquíssimo sinal.** Premissa (confirme no T10-0): o SCT013 100A:50mA é um transformador de corrente de 2000:1 e o resistor de 0,12 Ω da placa é a carga (burden) dele. Então:
+**5. Cadeia de corrente: 50,9 mV por ampère, e é a faixa do ADC que limita a corrente.** [Corrigido em 11/11/2026] A sensibilidade medida do canal de corrente é de **50,9 mV/A**, e não os 60 µV/A que este roteiro supunha: o SCT013 100A:50mA é um transformador de corrente de 2000:1, e a carga (burden) dele na placa é de ~100 Ω (100 Ω × 0,5 mA/A = 50 mV/A), não de 0,12 Ω. Confira o resistor na placa e registre a medida no T10-0. Então:
 
 | Item | Valor |
 |---|---|
-| Sensibilidade nominal | 0,12 Ω × 0,5 mA/A = **60 µV por ampère** de corrente primária (por espira) |
-| `--ganho` nominal | **16 667** A/V (1 ÷ 60 µV/A) |
+| Sensibilidade medida | **50,9 mV por ampère** de corrente primária (por espira) |
+| `--ganho` nominal | **19,65** A/V (1 ÷ 50,9 mV/A) |
+| Maior corrente em cada faixa (o pico no pino) | ±2,56 V: **50 A de pico** (35,6 A RMS de senoide); ±5,12 V: 101 A de pico (71 A RMS); ±10,24 V: 201 A de pico (142 A RMS: os 100 A RMS do SCT013 só cabem nesta) |
 | Resistores em série (1,79 kΩ + 1,7929 kΩ) sobre 1 MΩ do ADC | −0,36% (aparece no perfil) |
-| 1 LSB | ±10,24 V: 312,5 µV = 5,2 A com 1 espira (0,52 A com 10). **±2,56 V (`--faixa-adc 0:5.12`, a deste roteiro): 78,1 µV = 1,3 A** com 1 espira (0,13 A com 10) |
-| Ruído do ADC (datasheet) | ±10,24 V: 170 a 220 µV RMS = ~3 a 4 A RMS equivalentes em banda larga (0 a 50 kHz), ~5 mA por bin de 0,1 Hz numa captura de 10 s. **±2,56 V: ~61 µV RMS = ~1 A RMS** (banda larga), **~1,8 mA por bin** (≈ 9 dB melhor) |
+| 1 LSB | ±10,24 V: 312,5 µV = 6,1 mA com 1 espira; ±5,12 V: 3,1 mA; **±2,56 V (`--faixa-adc 0:5.12`): 78,1 µV = 1,5 mA** |
+| Ruído do ADC (datasheet) | ±10,24 V: 170 a 220 µV RMS = 3,3 a 4,3 mA RMS em banda larga; **±2,56 V: ~61 µV RMS = 1,2 mA RMS** |
 | Corrente máxima do gerador (20 Vpp High-Z, 50 Ω de saída) | 200 mA de pico sem carga; **~116 mA RMS** com o resistor de 10,92 Ω |
-| 116 mA RMS com 10 espiras | 1,16 A·espira = 70 µV RMS = **0,9 LSB** em ±2,56 V (0,22 LSB em ±10,24 V), ~55 a 57 dB acima do ruído por bin em ±2,56 V (46 a 48 dB em ±10,24 V; captura de 10 s); em 40 kHz o filtro derruba ~17 dB e sobram ~38 a 40 dB (29 a 31 dB em ±10,24 V) |
-| Rede 127 V sobre os dois resistores de 22,12 Ω em série (44,24 Ω) | 2,87 A RMS, 172 µV RMS (2,2 LSB em ±2,56 V): serve para o ponto de **60 Hz** |
+| 116 mA RMS com 20 espiras | 2,3 A·espira = 118 mV RMS no pino (0,33 Vpp): ~1500 LSB RMS em ±2,56 V, 6,5 % da faixa |
+| Rede 127 V sobre os dois resistores de 22,12 Ω em série (44,24 Ω) | 2,87 A RMS, 146 mV RMS no pino com 1 espira: serve para o ponto de **60 Hz** |
 
-Ou seja: o canal funciona, mas só por causa do **ganho de processamento da FFT** (cada bin vê uma fração minúscula do ruído); um tom tem que ter de dezenas de µV para cima. Por isso o T10 usa **várias espiras no SCT013**, capturas longas e a corrente de referência medida pela ponta TCP0030A. O pior sinal detectável é uma propriedade do projeto (para o relatório e para uma melhoria futura: resistor de carga maior ou ganho antes do ADC; a faixa de ±2,56 V, a menor do ADC, **já está em uso**). **O capacitor** do filtro, que será removido, tem R = 1,79 kΩ + 1,7929 kΩ = 3,583 kΩ: fc = 1 ÷ (2π · 3,583 kΩ · C) é 705 Hz para 63 nF, 7 Hz para 6,3 µF e 0,7 Hz para 63 µF. **Anote o valor medido e fotografe a placa antes de tirá-lo.**
+Ou seja: sinal não falta (a calibração com o gerador e 20 espiras usa 6,5 % da menor faixa), e o que a faixa decide é a **maior corrente**. ±2,56 V satura acima de 50 A de pico: escolha a faixa de produção pela corrente de pico da carga, com folga para os picos de partida, e calibre o perfil nela (`./coletar.sh calibrar --grandeza corrente --faixas ...`; o PGA do ADC muda com a faixa). Uma fonte de corrente de ±2 A com 20 espiras são 40 A·espira, 2,0 V de pico no pino: cabe em ±2,56 V com pouca folga (use 10 espiras, ou ±5,12 V). O `coletar.sh calibrar` confere o nível de cada captura: passe `--esperado-vpp` (com o gerador de 50 Ω em 20 Vpp direto no laço, 20 Vpp ÷ (50 Ω + R) × N × 50,9 mV/A: 0,34 V com 10 Ω e 20 espiras). **O capacitor** do filtro, que será removido, tem R = 1,79 kΩ + 1,7929 kΩ = 3,583 kΩ: fc = 1 ÷ (2π · 3,583 kΩ · C) é 705 Hz para 63 nF, 7 Hz para 6,3 µF e 0,7 Hz para 63 µF. **Anote o valor medido e fotografe a placa antes de tirá-lo.**
 
 **6. A taxa de amostragem real pode diferir da pedida.** O `ler_adc` calcula `ticks = 200 MHz ÷ taxa` com divisão **inteira**. Taxas que dividem 200 MHz exatamente saem exatas; as outras não:
 
@@ -876,7 +909,7 @@ Equipamentos do seu levantamento (`bench-notes.md`), com o que importa de cada u
 * **Limite do ADC.** O máximo absoluto na entrada é de ±20 V (com a placa alimentada e fonte de baixa impedância) e **apenas ±11 V se o ADC estiver sem alimentação**. Nunca injete sinal com a placa desligada. Comece sempre com amplitude mínima no gerador e suba. **Rede de 220 V não cabe** no divisor (fato 4: satura em 157% da faixa), e uma faixa menor que ±10,24 V no canal de tensão (`--faixa-adc 1:10.24`) tira até os 127 V. A faixa escolhida muda só o ponto de saturação: o limite de ±20 V nos pinos é o mesmo em todas.
 * **Rede elétrica.** Só nas etapas marcadas (T2c, T11c), com supervisão do orientador ou do técnico. A BeagleBone, o notebook e o osciloscópio estão ligados à terra: a garra de terra da ponta **em curto com a terra** de qualquer ponto da rede danifica o equipamento e machuca. Use transformador de isolamento, ponta diferencial ou osciloscópio isolado. O isolamento galvânico do frontend (DAQ_Module) protege o ADC, não o osciloscópio.
 * **Resistores de potência.** 400 W viram calor: deixe longe de fios e de plástico, não encoste, e respeite 93 V e 4,2 A. Com o gerador (≤ 0,2 A) não há risco; na rede, sim.
-* **SCT013.** É um transformador de corrente: **nunca deixe o secundário aberto** com corrente no primário (tensão perigosa e saturação). Mantenha o resistor de 0,12 Ω ligado sempre; só mexa na placa com o primário desenergizado.
+* **SCT013.** É um transformador de corrente: **nunca deixe o secundário aberto** com corrente no primário (tensão perigosa e saturação). Mantenha o resistor de carga ligado sempre; só mexa na placa com o primário desenergizado.
 * **TCP0030A.** Não passe mais que 30 A RMS (e 50 A de pico) por ela; **desmagnetize (botão DEGAUSS) e faça o zero** a cada ligação, com o condutor fora da garra.
 * Desligue a saída do gerador antes de trocar ligações e descarregue capacitores antes de mexer na placa (inclusive antes de remover o capacitor do filtro).
 
@@ -906,7 +939,7 @@ set -q DADOS; or set -Ux DADOS ~/Documents/sh-analyzer-data   # a pasta de dados
 set DIA $DADOS/lab/(date +%F)   # a pasta do dia de bancada; para outro dia: set DIA $DADOS/lab/2026-10-19
 mkdir -p $DIA
 set GV 19.357      # --ganho do canal de tensão: 1 ÷ razão do divisor (34,629 kΩ ÷ 1,789 kΩ)
-set GI 16667       # --ganho do canal de corrente: 1 ÷ 60 µV/A (SCT013 100A:50mA sobre 0,12 Ω)
+set GI 19.65       # --ganho do canal de corrente: 1 ÷ 50,9 mV/A (medido; até 11/11/2026 este roteiro usava 16667)
 ```
 
 * **Faixa do ADC nos comandos.** Na **captura** (BeagleBone), o canal de tensão usa o padrão (nada a passar, ±10,24 V) e o de corrente leva `--faixa-adc 0:5.12` (±2,56 V). Na **análise** (computador), **não** se passa `--faixa`: ela vem do cabeçalho de cada captura (a primeira linha da saída mostra `canal 0: ±10.24 V` e `canal 1: ±2.56 V`). Se a captura for de um `ler_adc` antigo (sem faixa no cabeçalho), as ferramentas usam a faixa de reset, 20.48 (±10,24 V), e avisam.
@@ -1110,7 +1143,7 @@ uv run scripts/adc_tool.py $DIA/T1_curto_100k_1ch.bin --welch --modo-espectro ru
 * **O ruído segue o datasheet nas três faixas** (5 a 7 % abaixo do típico) e cai 1,8× e 2,8× em volts com a faixa, como previsto: a faixa menor ajuda o canal de corrente.
 * **Não depende da taxa nem do número de canais.** Acima de ~140 kS/s a taxa real é menor que a pedida (T7e); a densidade em nV/√Hz dessas capturas só vale com a taxa real.
 * **Sonda ligada = curto:** com 0,71 LSB nos dois casos, o SCT013 sem condutor não acrescenta ruído de ambiente mensurável em banda larga. Picos fixos (60 Hz, rádio), se houver, só aparecem na PSD: gere a `fig_T1_psd` também para `T1_sonda_100k_1ch.bin`.
-* **O offset do canal 1 (+2,5 a +3,5 mV no pino, 50 a 67 mV referidos à entrada do divisor) é de 10 a 70 vezes o do canal 0 (+0,05 a +0,21 mV) e passa do máximo do datasheet (±0,75 mV).** O canal 0 tem 0,12 Ω de impedância de fonte e o canal 1, 1,7 kΩ (o divisor). A hipótese é que o offset venha da ligação do divisor (retorno ou terra), e não do ADC. Para conferir, faça uma rodada com o pino do canal 1 (R5) em curto direto. Na banda de supraharmônicos ele não importa: o filtro passa-alta e a FFT o removem.
+* **O offset do canal 1 (+2,5 a +3,5 mV no pino, 50 a 67 mV referidos à entrada do divisor) é de 10 a 70 vezes o do canal 0 (+0,05 a +0,21 mV) e passa do máximo do datasheet (±0,75 mV).** O canal 0 tem ~100 Ω de impedância de fonte (a carga do TC; supunham-se 0,12 Ω) e o canal 1, 1,7 kΩ (o divisor). A hipótese é que o offset venha da ligação do divisor (retorno ou terra), e não do ADC. Para conferir, faça uma rodada com o pino do canal 1 (R5) em curto direto. Na banda de supraharmônicos ele não importa: o filtro passa-alta e a FFT o removem.
 
 ### T2: tensão contínua (ganho, offset e linearidade)
 
@@ -1742,7 +1775,7 @@ uv run scripts/adc_tool.py $DIA/T9c.bin --fft --janela hann --ganho $GV -o $DIA/
 
 ### T10: perfil da sonda de corrente
 
-**Objetivo.** Medir a resposta em frequência da **sonda mais a cadeia de aquisição** (SCT013 + resistor de 0,12 Ω + resistores em série + ADS8688, com o capacitor removido) do canal de produção, gerar `scripts/sondas/<id>.json` e **validar** o perfil em frequências que não entraram nele. É o objetivo central do projeto.
+**Objetivo.** Medir a resposta em frequência da **sonda mais a cadeia de aquisição** (SCT013 + resistor de carga + resistores em série + ADS8688, com o capacitor removido) do canal de produção, gerar `scripts/sondas/<id>.json` e **validar** o perfil em frequências que não entraram nele. É o objetivo central do projeto.
 
 **O método com magnitude e fase (24/10/2026): a razão de dois canais.** O roteiro abaixo (senoides com a TCP0030A, um
 canal a 100 kS/s) dá só a magnitude, até 45 kHz, e continua valendo como conferência. Para a magnitude **e a fase**
@@ -1753,8 +1786,8 @@ A forma da corrente se cancela na razão, e o osciloscópio fica só para a impe
 * **Bancada.** Uma fonte de corrente quadrada **bipolar** de 1 a 2 A (uma meia-ponte de MOSFET em ±12 V acionada pelo
   gerador, ou um amplificador de potência de banda larga; sem corrente contínua, que magnetiza o núcleo do TC; com DC,
   um capacitor grande em série), um resistor de **5 a 10 Ω não indutivo** (filme de potência, ou vários SMD em
-  paralelo; 2 A em 5 Ω são 20 W: dissipador) e **20 espiras** no SCT013, no condutor do lado do terra. O gerador
-  sozinho (~1,6 A·espira) dá um perfil bom só até ~50 kHz.
+  paralelo; 2 A em 5 Ω são 20 W: dissipador) e **20 espiras** no SCT013, no condutor do lado do terra. Com 50,9 mV/A, o gerador
+  sozinho com 20 espiras já dá ~0,3 Vpp no pino (a fonte deixou de ser necessária pelo sinal; o T10-0 confirma).
 * **1. O resistor (osciloscópio, 10 min).** A THDP0200 sobre ele e a TCP0030A pelo fio, na mesma captura, numa quadrada
   de 1280 Hz e numa de 20736 Hz; salve as duas formas de onda (CSV com os dois canais) e meça R a 4 fios com o Fluke:
   `uv run scripts/medir_shunt.py $DIA/shunt_*.csv --resistencia-dc <R> --csv scripts/sondas/shunt_laco.csv --plot $DIA/shunt.png`.
@@ -1763,7 +1796,7 @@ A forma da corrente se cancela na razão, e o osciloscópio fica só para a impe
   osciloscópio, para o método de um canal (acima de 95 kHz).
 * **3. A análise.** O comando sai no fim da coleta: `medir_fase.py --canal 0 --canal-referencia 1 --perfil-referencia
   <o perfil com fase da tensão em ±10,24 V> --shunt scripts/sondas/shunt_laco.csv --espiras 20 --ganho $GI --diafonia ...`.
-  O K de baixa frequência deve sair perto de 1 (o `--ganho` nominal de 60 µV/A); longe disso, confira as espiras e o shunt.
+  O K de baixa frequência deve sair perto de 1 (o `--ganho` dos 50,9 mV/A medidos: `$GI` = 19,65); longe disso, confira as espiras e o shunt.
 * **4. As conferências.** A garra invertida (o sinal indutivo troca de sinal; o acoplamento capacitivo, não), N = 10 e
   N = 20, duas amplitudes, reabrir a garra e repetir; e as senoides abaixo como hold-out:
   `gerar_perfil_sonda.py ... --comparar-com scripts/sondas/sct013_100a_sn001.json`.
@@ -1786,12 +1819,12 @@ SCT013 ─► placa (0,12 Ω ∥ 1,79 kΩ + 1,7929 kΩ, sem o capacitor) ─► 
 ```
 
 * O resistor de 10,92 Ω (derivação central do de 22,12 Ω) limita a corrente a ~164 mA de pico (116 mA RMS): `I_pico ≈ V_pico(aberto) ÷ (50 Ω + R)`. Dá para usar o de 22,12 Ω (98 mA RMS) ou os dois em paralelo (~116 mA RMS). **Não** ultrapasse 4,2 A por resistor (só importa na rede).
-* **Várias espiras no SCT013 (N = 10 de início; 20 se o SNR faltar).** O sinal do SCT013 por espira é de 60 µV/A (fato 5): com 116 mA RMS e N = 10, são ~70 µV RMS no pino (0,9 LSB em ±2,56 V). Passe o fio N vezes **no mesmo sentido**, centrado e fixo com fita; confira que o resultado **não** depende de N (veja a linearidade abaixo): se depender em alta frequência, a capacitância e a indutância entre espiras estão atrapalhando.
+* **Várias espiras no SCT013 (N = 10 de início; 20 se o SNR faltar).** O sinal do SCT013 por espira é de 50,9 mV/A (fato 5): com 116 mA RMS e N = 10, são ~59 mV RMS no pino (~760 LSB RMS em ±2,56 V); as espiras servem para usar mais da faixa, e o limite passa a ser a saturação (50 A·espira de pico em ±2,56 V). Passe o fio N vezes **no mesmo sentido**, centrado e fixo com fita; confira que o resultado **não** depende de N (veja a linearidade abaixo): se depender em alta frequência, a capacitância e a indutância entre espiras estão atrapalhando.
 * **TCP0030A:** aqueça 20 minutos, **desmagnetize (DEGAUSS) e faça o zero** com o condutor **fora** da garra, depois feche a garra no fio, no sentido da seta. Com 116 mA RMS ela está em 2% da faixa de 5 A: use média de 16 ou mais aquisições (ou Hi-Res), limite de banda de 20 MHz ou menos e RMS de ciclos inteiros, e anote o ruído dela sem corrente (é o piso da sua referência).
 * O SCT013 é um **transformador** (só AC; não há zero a fazer) e o secundário **não pode ficar aberto** (fio solto da placa) com corrente no primário.
 * Mantenha o laço de corrente pequeno: cada microhenry de laço a 45 kHz vale ~0,3 Ω, o que só limita a corrente (somado aos 50 Ω do gerador) e **não** afeta o resultado, porque a corrente real é medida na TCP0030A.
 
-**T10-0: o sinal é suficiente? (15 minutos, antes da coleta)**. Confirma a premissa de 60 µV/A e escolhe N. Em 1 kHz e 20 Vpp, N = 10, capture 2 blocos e compare com a TCP0030A (RMS em A lido no osciloscópio, multiplicado por N):
+**T10-0: o sinal é suficiente? (15 minutos, antes da coleta)**. Confirma os 50,9 mV/A medidos (até 11/11/2026 a premissa era 60 µV/A) e escolhe N. Em 1 kHz e 20 Vpp, N = 10, capture 2 blocos e compare com a TCP0030A (RMS em A lido no osciloscópio, multiplicado por N):
 
 ```bash
 sudo ./ler_adc 100000 0 --faixa-adc 0:5.12 --blocos 2 -o T10_0_1k_N10.bin -t "T10-0 1kHz N10" --grandeza 0:corrente
@@ -1949,7 +1982,7 @@ A coluna "Situação" diz o que já existe (✅), o que existe mas tem de ser re
 
 **Sugestão de estrutura:** uma tabela "requisito do projeto → teste → resultado → critério" com os testes T7 (não perder dados e limite de taxa), T10 (perfil da sonda), T3 (banda de supraharmônicos de tensão) e T11 (ponta a ponta).
 
-**Declare no relatório** as limitações que você encontrou: a taxa de trabalho de 100 kS/s (teto de ~140 kS/s no firmware atual) e, com ela, a banda coberta (até 45 kHz de 150 kHz) e o aliasing do que está acima; o filtro de 15 kHz do ADC e sua correção (que amplifica o ruído); a baixa sensibilidade do canal de corrente (60 µV/A) e o piso de detecção resultante (mesmo na menor faixa do ADC, ±2,56 V); a faixa de ±10,24 V do canal de tensão, sem margem para reduzir (127 V RMS = 91%); o aliasing de componentes acima de Nyquist; a taxa de amostragem real; a exatidão do osciloscópio e da TCP0030A (sem especificação acima de 5 kHz); o fato de a correção de sonda restaurar só a amplitude (não a fase); o transitório de ~60 µs depois de trocar a faixa de um canal; e que as capturas de 19/10 têm o salto de 6,97 µs a cada bloco do firmware antigo (as análises de um bloco não são afetadas; as de fase e de continuidade, sim). **Sugestões de melhoria** que saem daqui: reduzir as esperas do CS e acelerar o SPI da PRU (T7e) para chegar a ≥ 300 kS/s; mais ganho (ou carga maior) antes do ADC no canal de corrente; um anti-aliasing externo mais forte.
+**Declare no relatório** as limitações que você encontrou: a taxa de trabalho de 100 kS/s (teto de ~140 kS/s no firmware atual) e, com ela, a banda coberta (até 45 kHz de 150 kHz) e o aliasing do que está acima; o filtro de 15 kHz do ADC e sua correção (que amplifica o ruído); a sensibilidade do canal de corrente (50,9 mV/A medidos), o piso de detecção resultante e a corrente máxima de cada faixa do ADC (±2,56 V satura acima de 50 A de pico); a faixa de ±10,24 V do canal de tensão, sem margem para reduzir (127 V RMS = 91%); o aliasing de componentes acima de Nyquist; a taxa de amostragem real; a exatidão do osciloscópio e da TCP0030A (sem especificação acima de 5 kHz); o fato de a correção de sonda restaurar só a amplitude (não a fase); o transitório de ~60 µs depois de trocar a faixa de um canal; e que as capturas de 19/10 têm o salto de 6,97 µs a cada bloco do firmware antigo (as análises de um bloco não são afetadas; as de fase e de continuidade, sim). **Sugestões de melhoria** que saem daqui: reduzir as esperas do CS e acelerar o SPI da PRU (T7e) para chegar a ≥ 300 kS/s; a escolha da faixa do canal de corrente pela corrente da carga; um anti-aliasing externo mais forte.
 
 ---
 
@@ -1984,7 +2017,7 @@ Os limites abaixo são **propostas** (baseadas no datasheet e em boas práticas)
 | Amplitude no ADC o dobro (ou a metade) do esperado, só com o gerador | Gerador em 50 Ω com carga High-Z (ou o contrário) | Ajuste a carga do gerador (High-Z) e **leia o osciloscópio**, não o painel |
 | `saturou o ADC` | Amplitude acima da faixa pedida (rede de 220 V; `--faixa-adc 1:10.24` com 127 V; ou o canal de corrente em ±2,56 V com sinal alto) | Reduza o sinal ou aumente a faixa (`--faixa-adc`); no canal de tensão, ±10,24 V cobre até 140 V RMS |
 | `sinal fraco` em todo ponto do canal de tensão | Máximo de 5% da escala pelo divisor | Esperado; aceite com `C` |
-| `praticamente sem sinal` em todo ponto do canal de corrente | Sensibilidade de 60 µV/A (limiar 0,2% da escala = ~10 mV pico a pico em ±2,56 V) | Esperado: digite `C` (ENTER refaz). Confira o SNR com o T10-0 |
+| `praticamente sem sinal` em todo ponto do canal de corrente | Com 50,9 mV/A, o limiar (0,2% da escala = ~10 mV pico a pico em ±2,56 V) são 0,2 A·espira de pico a pico: o sinal não chegou | Confira a amplitude do gerador (High-Z, saída ligada), o laço e as espiras (`./coletar.sh conferir --canais 0 --faixa 5.12`) |
 | Sinal de corrente nulo (só ruído) mesmo com N = 20 | SCT013 aberto ou fora da garra; fio fora do centro; resistor de 0,12 Ω ou resistores em série dessoldados; gerador desligado | Confira a ligação com a TCP0030A; meça a tensão sobre o 0,12 Ω com o osciloscópio |
 | Perfil de tensão com ganho de baixa frequência ~0,05 (em vez de ~1) | `--amplitude` em volts na **entrada** do divisor com `--ganho 19.357` | Informe a amplitude do **pino** (1,0332Vpp) ou use `--referencia-externa` |
 | `frequência medida fora da planejada` | Gerador mal ajustado, ou taxa pedida ≠ gerada | Confira o contador do osciloscópio; veja T4 |
@@ -2017,5 +2050,5 @@ Os limites abaixo são **propostas** (baseadas no datasheet e em boas práticas)
 - [ ] Fotos da bancada (e da placa antes de remover o capacitor) e prints do osciloscópio de cada teste (com a escala visível).
 - [ ] Caderno: instrumentos e ajustes, temperatura, anomalias, o que **ficou por fazer**; o que estava ligado em cada canal (inclusive os que não são o 0 e o 1).
 - [ ] A tabela [Estado da campanha](#estado-da-campanha) atualizada.
-- [ ] Hipóteses confirmadas ou refutadas: escala e faixas do ADC (T0, T1), filtro de 15 kHz (T3), taxa real e ticks (T4), diafonia (T6), perda de amostras e gargalo (T7), sensibilidade de 60 µV/A (T10-0).
+- [ ] Hipóteses confirmadas ou refutadas: escala e faixas do ADC (T0, T1), filtro de 15 kHz (T3), taxa real e ticks (T4), diafonia (T6), perda de amostras e gargalo (T7), sensibilidade do canal de corrente, 50,9 mV/A (T10-0).
 - [ ] Se algo mudou (outro `--ganho`, outro canal, nova taxa, outro número de espiras), anote: o perfil só vale para a cadeia em que foi medido.

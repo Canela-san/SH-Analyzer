@@ -77,9 +77,10 @@ def exportar_csv(prefixo: Path, resultados: dict, metadados: dict) -> list[Path]
         if tabela is not None:
             escritos.append(_escrever_csv(
                 Path(f"{base}_harmonicos.csv"),
-                ["ordem", "frequencia_hz", f"rms_{unidade}", f"rms_grupo_{unidade}", "pct_fundamental", "fase_graus"],
-                ((h.ordem, _num(h.frequencia_hz), _num(h.rms), _num(h.rms_grupo), _num(h.pct_fundamental),
-                  _num(h.fase_graus)) for h in tabela.harmonicos)))
+                ["ordem", "frequencia_hz", f"rms_{unidade}", f"rms_subgrupo_{unidade}", f"rms_grupo_{unidade}",
+                 "pct_fundamental", "fase_graus"],
+                ((h.ordem, _num(h.frequencia_hz), _num(h.rms), _num(h.rms_subgrupo), _num(h.rms_grupo),
+                  _num(h.pct_fundamental), _num(h.fase_graus)) for h in tabela.harmonicos)))
         iec: BandasIEC | None = r.get("bandas_iec")
         if iec is not None:
             est = iec.estatisticas()
@@ -145,6 +146,7 @@ def _para_mat(valor):
     if isinstance(valor, TabelaHarmonicos):
         h = valor.harmonicos
         return {"f0_hz": valor.f0_hz, "n_ciclos": valor.n_ciclos, "thd_pct": valor.thd_pct, "thdg_pct": valor.thdg_pct,
+                "thds_pct": valor.thds_pct, "rms_subgrupo": np.array([x.rms_subgrupo for x in h]),
                 "rms_total": valor.rms_total, "ordem": np.array([x.ordem for x in h], dtype=float),
                 "f": np.array([x.frequencia_hz for x in h]), "rms": np.array([x.rms for x in h]),
                 "rms_grupo": np.array([x.rms_grupo for x in h]), "pct_fundamental": np.array([x.pct_fundamental for x in h]),

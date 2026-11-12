@@ -1,6 +1,9 @@
 """Bandas de supraharmônicos no tempo, pelo método da IEC 61000-4-7, anexo B (``--bandas-iec``).
 
-É o método normalizado para 2 a 9 kHz, e o que a IEC 61000-4-30 (anexo C) estende até 150 kHz:
+É o método que a IEC 61000-4-30 (anexo C, informativo) indica para 2 a 9 kHz. Acima de 9 kHz, as mesmas bandas de
+200 Hz são a extensão usual na literatura de supraharmônicos, e é o que este módulo calcula até a Nyquist do canal;
+NÃO é o método que o anexo C descreve para 9 a 150 kHz (janelas de 0,5 ms com lacunas e bins de 2 kHz, ou o receptor
+da CISPR 16-1-1). Num trabalho, diga qual foi usado; ``largura`` aceita 2000 Hz para bandas de 2 kHz. O método:
 
 1. o sinal é cortado em janelas de 200 ms **sem lacunas** (10 ciclos a 50 Hz, 12 a 60 Hz), com janela retangular;
 2. a FFT de cada janela tem bins de 5 Hz, em valor RMS;
@@ -15,7 +18,7 @@ mais perto da IEC 61000-4-30 (classe A), sem mudar esse padrão:
 * **janelas sincronizadas** (``limites`` em :func:`calcular_bandas_iec`, montados por quem chama a partir dos
   cruzamentos por zero da fundamental): cada janela tem exatamente 10 ciclos (50 Hz) ou 12 ciclos (60 Hz) da rede,
   e os bins têm f0/12 Hz em vez de 5 Hz. Com a janela fixa, a rede a 60 Hz ± 0,1 Hz desalinha a janela em até
-  0,2 %, e a norma admite ±0,03 %;
+  0,2 %, e a IEC 61000-4-7 (4.4.1) admite ±0,03 % de erro de sincronismo;
 * **agregação** (:func:`agregar_iec`): séries de 150/180 ciclos (15 janelas, ~3 s) e de 10 min (as janelas de cada
   intervalo de 600 s a partir do início do trecho), cada valor sendo o RMS das janelas que ele reúne, como na norma.
   Os intervalos incompletos no fim são descartados. Diferença que resta: os intervalos de 10 min não são alinhados
@@ -187,7 +190,7 @@ def _bandas_janelas_variaveis(sinal: np.ndarray, fs: float, freq_min: float, fre
                      ciclos_por_janela=ciclos_por_janela, f0_hz=f0_hz)
 
 
-TOLERANCIA_SINCRONISMO = 3e-4          # ±0,03 %: o erro de sincronismo que a IEC 61000-4-30 admite numa janela
+TOLERANCIA_SINCRONISMO = 3e-4          # ±0,03 %: o erro de sincronismo que a IEC 61000-4-7 (4.4.1) admite numa janela
 
 
 def janelas_dos_cruzamentos(cruzamentos: np.ndarray, ciclos: int) -> tuple[np.ndarray, int]:
