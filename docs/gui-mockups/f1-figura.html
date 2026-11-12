@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="pt-BR" data-tema="escuro">
+<head>
+<meta charset="utf-8">
+<title>F1 · Figuras · SH-Analyzer</title>
+<link rel="stylesheet" href="tema.css">
+<script>if (location.hash === "#claro") document.documentElement.dataset.tema = "claro";</script>
+<style>
+  .corpo { grid-template-columns: 248px 1fr 320px; }
+  .mesa { position: relative; background: color-mix(in srgb, var(--fundo) 70%, #000); display: grid; place-items: center; overflow: hidden; }
+  .regua { position: absolute; left: 0; right: 0; top: 0; height: 22px; background: var(--superficie); border-bottom: 1px solid var(--borda); font-size: 10px; color: var(--mudo); }
+  .papel { position: relative; width: 560px; height: 690px; background: #fff; color: #111; box-shadow: 0 20px 60px rgba(0,0,0,.45); font-family: "Latin Modern Roman", "Times New Roman", "Liberation Serif", serif; }
+  .papel .painel-fig { position: absolute; left: 34px; right: 22px; }
+  .papel .rot { position: absolute; left: 6px; font: 600 15px "Latin Modern Roman", "Times New Roman", serif; }
+  .papel .grafico { background: #fff; }
+  .alcas { position: absolute; border: 1.5px solid #0369a1; pointer-events: none; }
+  .alcas i { position: absolute; width: 8px; height: 8px; background: #fff; border: 1.5px solid #0369a1; }
+  .legenda-papel { position: absolute; right: 30px; font-size: 11px; display: flex; flex-direction: column; gap: 2px; background: #fff; border: 0.6px solid #333; padding: 3px 6px; }
+  .legenda-papel span { display: flex; align-items: center; gap: 6px; }
+  .legenda-papel b { display: inline-block; width: 16px; height: 0; border-top: 1.6px solid; }
+  .legenda-papel b.tr { border-top-style: dashed; }
+  .zoom-mesa { position: absolute; right: 14px; bottom: 14px; display: flex; gap: 4px; padding: 4px; border-radius: 10px; background: var(--elevada); border: 1px solid var(--borda); }
+  .modelo { display: grid; grid-template-columns: 36px 1fr; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; margin: 0 8px; }
+  .modelo .mini { width: 36px; height: 44px; border-radius: 3px; background: var(--afundada); border: 1px solid var(--borda); display: grid; place-items: center; color: var(--mudo); font-size: 9px; }
+  .modelo.sel { background: var(--acento-suave); box-shadow: inset 2px 0 0 var(--acento); }
+  .modelo .sub { color: var(--mudo); font-size: 11.5px; }
+  .formatos { display: flex; flex-wrap: wrap; gap: 6px; }
+  .formatos span { padding: 4px 10px; border-radius: 6px; border: 1px solid var(--borda); background: var(--afundada); font-weight: 600; font-size: 12px; }
+  .formatos span.on { border-color: var(--acento); color: var(--acento); background: var(--acento-suave); }
+  .garantia { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--texto2); }
+  .garantia + .garantia { margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="janela">
+  <header class="barra-titulo">
+    <div class="marca"><img src="../images/app-icon-small.svg" alt="">SH-Analyzer</div>
+    <div class="projeto">Projeto <b>Rede do bloco E</b><i data-i="baixo" data-t="14"></i></div>
+    <div class="espaco"></div>
+    <div class="seg"><span><i data-i="onda"></i>Análise</span><span class="ativo"><i data-i="pagina"></i>Figuras</span><span><i data-i="chip"></i>Aquisição</span></div>
+    <div class="espaco"></div>
+    <div class="busca"><i data-i="busca"></i>Buscar comando ou dado…<span class="kbd">Ctrl K</span></div>
+    <span class="icone-botao"><i data-i="desfazer"></i></span><span class="icone-botao"><i data-i="refazer"></i></span><span class="icone-botao"><i data-i="ajustes"></i></span>
+  </header>
+  <main class="corpo">
+    <aside class="painel">
+      <div class="painel-cab">Figuras do projeto<span class="espaco"></span><span class="icone-botao"><i data-i="mais"></i></span></div>
+      <div class="modelo sel"><span class="mini">a<br>b</span><div><div>Fig. 3 · afundamento</div><div class="sub">IEEE · 1 coluna · 2 painéis</div></div></div>
+      <div class="modelo"><span class="mini">a b</span><div><div>Fig. 4 · manhã × tarde</div><div class="sub">Elsevier · 2 colunas</div></div></div>
+      <div class="modelo"><span class="mini">—</span><div><div>Slide · espectro</div><div class="sub">16:9 · tema escuro</div></div></div>
+      <div class="painel-cab" style="margin-top:12px">Modelos</div>
+      <div class="arvore">
+        <div class="item"><i data-i="pagina" data-t="14"></i>IEEE<span class="sub">88 / 181 mm</span></div>
+        <div class="item"><i data-i="pagina" data-t="14"></i>Elsevier<span class="sub">90 / 190 mm</span></div>
+        <div class="item"><i data-i="pagina" data-t="14"></i>Relatório FAPESP (ABNT)<span class="sub">A4</span></div>
+        <div class="item"><i data-i="pagina" data-t="14"></i>Pôster<span class="sub">A0</span></div>
+        <div class="item"><i data-i="pagina" data-t="14"></i>Slide<span class="sub">16:9</span></div>
+        <div class="item" style="color:var(--acento)"><i data-i="mais" data-t="14"></i>Salvar o estilo atual como modelo</div>
+      </div>
+    </aside>
+    <section class="mesa">
+      <div class="regua" id="regua"></div>
+      <div class="papel" id="papel" data-tema="claro">
+        <span class="rot" style="top:18px">(a)</span>
+        <div class="painel-fig grafico" id="p1" style="top:14px;height:318px"></div>
+        <div class="legenda-papel" style="top:30px"><span><b style="border-color:#0284c7"></b>09h30</span><span><b class="tr" style="border-color:#3730a3"></b>14h10</span></div>
+        <span class="rot" style="top:352px">(b)</span>
+        <div class="painel-fig grafico" id="p2" style="top:348px;height:324px"></div>
+        <div class="alcas" id="alcas"><i style="left:-5px;top:-5px"></i><i style="right:-5px;top:-5px"></i><i style="left:-5px;bottom:-5px"></i><i style="right:-5px;bottom:-5px"></i></div>
+      </div>
+      <div class="zoom-mesa"><span class="icone-botao"><i data-i="zoom"></i></span><span class="botao fantasma num" style="height:28px">100 % · tamanho real</span><span class="icone-botao"><i data-i="expandir"></i></span></div>
+    </section>
+    <aside class="painel dir">
+      <div class="painel-cab">Painel (b) · espectro<span class="espaco"></span><span class="icone-botao"><i data-i="mais_h"></i></span></div>
+      <div class="rolar">
+        <div class="secao" style="border-top:0">
+          <div class="secao-tit">Página</div>
+          <div class="linha"><span class="rotulo">Modelo</span><span class="campo">IEEE · 1 coluna<i data-i="baixo" data-t="12" style="margin-left:auto;color:var(--mudo)"></i></span></div>
+          <div class="linha"><span class="rotulo">Tamanho</span><div class="dupla"><span class="campo num">88<span class="un">mm</span></span><span class="campo num">108<span class="un">mm</span></span></div></div>
+          <div class="linha"><span class="rotulo">Fonte</span><div class="dupla"><span class="campo">Times<i data-i="baixo" data-t="12" style="margin-left:auto;color:var(--mudo)"></i></span><span class="campo num">8<span class="un">pt</span></span></div></div>
+          <div class="linha"><span class="rotulo">Números</span><div class="seg" style="font-size:12px;width:max-content"><span class="ativo">1,5 (pt-BR)</span><span>1.5 (en)</span></div></div>
+        </div>
+        <div class="secao">
+          <div class="secao-tit">Eixos</div>
+          <div class="linha"><span class="rotulo">Frequência</span><div class="dupla"><span class="campo num">50 Hz<span class="un">a</span></span><span class="campo num">200 kHz</span></div></div>
+          <div class="linha"><span class="rotulo">Escala</span><div class="seg" style="font-size:12px;width:max-content"><span>linear</span><span class="ativo">log</span></div></div>
+          <div class="linha"><span class="rotulo">Rótulo Y</span><span class="campo foco">Tensão (dBV)</span></div>
+        </div>
+        <div class="secao">
+          <div class="secao-tit">Traços<span class="sub">só a aparência; os dados vêm da vista</span></div>
+          <div class="linha"><span class="rotulo">Paleta</span><span class="campo">SH-Analyzer (daltônicos ✓)<i data-i="baixo" data-t="12" style="margin-left:auto;color:var(--mudo)"></i></span></div>
+          <div class="linha"><span class="rotulo">Linha</span><div class="dupla"><span class="campo num">0,8<span class="un">pt</span></span><span class="campo">2º: tracejado<i data-i="baixo" data-t="12" style="margin-left:auto;color:var(--mudo)"></i></span></div></div>
+          <div class="linha"><span class="rotulo">Impressão P&B</span><div style="display:flex;gap:8px;align-items:center"><span class="chave on"></span><span class="rotulo">conferir em tons de cinza</span></div></div>
+        </div>
+        <div class="secao">
+          <div class="secao-tit">Exportar</div>
+          <div class="formatos"><span class="on">PDF</span><span class="on">SVG</span><span>EPS</span><span class="on">PGF</span><span>PNG</span><span>TIFF</span></div>
+          <div style="margin-top:10px">
+            <div class="garantia"><i data-i="escudo" data-t="14" style="color:var(--ok)"></i><span>Todos os extremos na resolução de saída (M4, 600 dpi): nenhum pico some.</span></div>
+            <div class="garantia"><i data-i="escudo" data-t="14" style="color:var(--ok)"></i><span>Texto como texto, fontes embutidas; eixos e rótulos vetoriais.</span></div>
+            <div class="garantia"><i data-i="escudo" data-t="14" style="color:var(--ok)"></i><span>Junto: os dados de cada painel (HDF5), o script em Python que refaz a figura e a proveniência.</span></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:12px"><span class="botao primario grande" style="justify-content:center"><i data-i="baixar"></i>Exportar figura</span><span class="botao grande"><i data-i="copiar"></i></span></div>
+        </div>
+      </div>
+    </aside>
+  </main>
+  <footer class="barra-status"><span>Fig. 3 · 88 × 108 mm · 2 painéis · ligada às vistas "Afundamento das 09h30" e "Espectro 2–150 kHz"</span><span class="espaco"></span><span>salvo</span></footer>
+</div>
+<script src="desenho.js"></script>
+<script>
+  const papel = document.getElementById("papel");
+  const vt = (t, r) => tensao(t, r);
+  const v2 = (t, r) => 0.992 * 179.6 * Math.sin(TAU * 60 * t + 1.58);
+  grafico(document.getElementById("p1"), {
+    x0: 1262.85, x1: 1263.40, unX: "t (s)", fmtX: (v) => br(v, 1).replace(/^1\.?2/, "1 2"), margem: { l: 44, r: 8, t: 8, b: 32 },
+    faixas: [{ y0: -220, y1: 220, unY: "V", ticksY: [-200, -100, 0, 100, 200], tracos: [
+      { f: v2, cor: "--t4", larg: 1, traco: "4 2.5", passo: 0.5 },
+      { modo: "banda", f: vt, cor: "--t1", opac: 1, semente: 5 }] }],
+  });
+  espectro(document.getElementById("p2"), {
+    f0: 50, f1: 200000, log: true, y0: -90, y1: 60, faixa: [2000, 150000], rotFaixa: "2–150 kHz", unY: "dBV",
+    margem: { l: 44, r: 8, t: 8, b: 32 },
+    tracos: [{ cor: "--t4", semente: 4, supra: -14, base: 42.4, piso: -114, hump: 0.4, larg: 0.9 }, { cor: "--t1", semente: 2, base: 42.1, larg: 1 }],
+  });
+  papel.querySelectorAll("text").forEach((t) => { t.setAttribute("fill", "#111"); t.style.fontFamily = '"Latin Modern Roman","Times New Roman",serif'; t.setAttribute("font-size", "11"); });
+  papel.querySelectorAll("line").forEach((l) => { if (l.getAttribute("stroke") !== null && !l.style.stroke) l.setAttribute("stroke", "#e6e6e6"); });
+  papel.querySelectorAll("rect[fill=none]").forEach((r) => r.setAttribute("stroke", "#222"));
+  const p2 = document.getElementById("p2").getBoundingClientRect(), pp = papel.getBoundingClientRect();
+  Object.assign(document.getElementById("alcas").style, { left: p2.left - pp.left - 30 + "px", top: p2.top - pp.top - 6 + "px", width: p2.width + 36 + "px", height: p2.height + 10 + "px" });
+  // régua em milímetros
+  const regua = document.getElementById("regua"), mm = 560 / 88, x0 = pp.left - regua.getBoundingClientRect().left;
+  for (let k = 0; k <= 88; k += 10) {
+    const s = document.createElement("span");
+    Object.assign(s.style, { position: "absolute", left: x0 + k * mm + "px", top: "5px" });
+    s.textContent = k;
+    regua.appendChild(s);
+  }
+</script>
+</body>
+</html>

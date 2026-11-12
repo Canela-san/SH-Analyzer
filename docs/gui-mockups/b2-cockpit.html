@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="pt-BR" data-tema="escuro">
+<head>
+<meta charset="utf-8">
+<title>B2 · Cockpit de captura · SH-Analyzer</title>
+<link rel="stylesheet" href="tema.css">
+<script>if (location.hash === "#claro") document.documentElement.dataset.tema = "claro";</script>
+<style>
+  .corpo { grid-template-columns: 372px 1fr 300px; grid-template-rows: 1fr 150px; }
+  .form { grid-column: 1; grid-row: 1 / 3; overflow: hidden; }
+  .vivo-area { grid-column: 2; grid-row: 1; }
+  .chave.p { width: 26px; height: 16px; }
+  .chave.p::after { width: 12px; height: 12px; }
+  .chave.p.on::after { left: 12px; }
+  .vivo-area { display: grid; grid-template-rows: 64px 1fr 1fr; min-height: 0; border-right: 1px solid var(--borda); }
+  .estado { display: flex; align-items: center; gap: 14px; padding: 0 16px; background: var(--superficie); border-bottom: 1px solid var(--borda); }
+  .rec { display: flex; align-items: center; gap: 8px; font-weight: 650; color: var(--erro); }
+  .rec::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--erro); box-shadow: 0 0 0 5px color-mix(in srgb, var(--erro) 22%, transparent); }
+  .prog { flex: 1; height: 8px; border-radius: 8px; background: var(--afundada); overflow: hidden; border: 1px solid var(--borda); }
+  .prog span { display: block; height: 100%; width: 32%; background: linear-gradient(90deg, var(--acento), color-mix(in srgb, var(--acento) 60%, var(--t4))); }
+  .cont { display: flex; gap: 14px; color: var(--texto2); font-size: 12px; }
+  .cont b { color: var(--texto); font-variant-numeric: tabular-nums; }
+  .canais { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .canais td { padding: 4px 4px; border-bottom: 1px solid color-mix(in srgb, var(--borda) 60%, transparent); white-space: nowrap; }
+  .canais th { font-size: 10.5px; color: var(--mudo); text-transform: uppercase; letter-spacing: .4px; text-align: left; padding: 4px; font-weight: 650; }
+  .mini-campo { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 6px; border-radius: 5px; border: 1px solid var(--borda); background: var(--afundada); }
+  .contador { font-size: 11px; color: var(--mudo); margin-left: auto; font-variant-numeric: tabular-nums; }
+  .direita { background: var(--superficie); grid-column: 3; grid-row: 1 / 3; border-left: 1px solid var(--borda); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .nota { padding: 10px 12px; border-top: 1px solid var(--borda); font-size: 12px; }
+  .nota .h { color: var(--mudo); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .term { grid-column: 2; grid-row: 2; border-top: 1px solid var(--borda); border-right: 1px solid var(--borda); display: grid; grid-template-rows: 30px 1fr; min-height: 0; }
+  .term-cab { display: flex; align-items: center; gap: 8px; padding: 0 12px; background: var(--superficie); font-size: 12px; color: var(--texto2); border-bottom: 1px solid var(--borda); }
+</style>
+</head>
+<body>
+<div class="janela">
+  <header class="barra-titulo">
+    <div class="marca"><img src="../images/app-icon-small.svg" alt="">SH-Analyzer</div>
+    <div class="projeto">Projeto <b>Rede do bloco E</b><i data-i="baixo" data-t="14"></i></div>
+    <div class="espaco"></div>
+    <div class="seg"><span><i data-i="onda"></i>Análise</span><span><i data-i="pagina"></i>Figuras</span><span class="ativo"><i data-i="chip"></i>Aquisição</span></div>
+    <div class="espaco"></div>
+    <span class="badge ok" style="display:flex;align-items:center;gap:5px;height:24px"><i data-i="usb" data-t="13"></i>BeagleBone · USB · 2 ms</span>
+    <div class="seg" style="font-size:12px"><span class="ativo">Capturar</span><span>Arquivos</span><span>Terminal</span><span>Diagnóstico</span><span>Manutenção</span></div>
+    <span class="icone-botao"><i data-i="ajustes"></i></span>
+  </header>
+  <main class="corpo">
+    <aside class="painel form">
+      <div class="painel-cab">Nova captura<span class="espaco"></span><span class="botao fantasma" style="height:24px;font-size:12px;text-transform:none;letter-spacing:0">Modelo: Rede V + I<i data-i="baixo" data-t="12"></i></span></div>
+      <div class="secao" style="border-top:0">
+        <div class="secao-tit">Cabeçalho</div>
+        <div class="rotulo" style="display:flex">Título<span class="contador">29 / 127 bytes</span></div>
+        <div class="campo" style="margin:4px 0 8px">Rede do bloco E · tarde · V+I</div>
+        <div class="rotulo" style="display:flex">Descrição<span class="contador">96 / 271 bytes</span></div>
+        <div class="campo" style="height:52px;align-items:flex-start;padding-top:6px;line-height:1.35">Quadro QD-3, fase A, inversor do ar-condicionado ligado. Sonda de corrente no cabo de 6 mm².</div>
+      </div>
+      <div class="secao">
+        <div class="secao-tit">Canais<span class="sub">2 de 8</span></div>
+        <table class="canais">
+          <tr><th></th><th>Canal</th><th>Grandeza</th><th>Sonda</th><th>Faixa</th></tr>
+          <tr><td><span class="chave p on"></span></td><td><span class="ponto" style="background:var(--t1);display:inline-block;margin-right:5px"></span>0</td><td><span class="mini-campo">tensão</span></td><td><span class="mini-campo">cadeia_tensao_fase</span></td><td><span class="mini-campo">±10,24 V</span></td></tr>
+          <tr><td><span class="chave p on"></span></td><td><span class="ponto" style="background:var(--t2);display:inline-block;margin-right:5px"></span>1</td><td><span class="mini-campo">corrente</span></td><td><span class="mini-campo">sct013_100a_sn001</span></td><td><span class="mini-campo">±5,12 V</span></td></tr>
+          <tr style="color:var(--mudo)"><td><span class="chave p"></span></td><td>2</td><td>—</td><td>—</td><td>—</td></tr>
+          <tr style="color:var(--mudo)"><td><span class="chave p"></span></td><td>3–7</td><td>—</td><td>—</td><td>—</td></tr>
+        </table>
+      </div>
+      <div class="secao">
+        <div class="secao-tit">Taxa e duração</div>
+        <div class="linha"><span class="rotulo">Taxa total</span><span class="campo num">400 000<span class="un">S/s · 200 k por canal</span></span></div>
+        <div class="linha"><span class="rotulo">Duração</span><span class="campo num">10<span class="un">min · 480 MB</span></span></div>
+        <div style="color:var(--mudo);font-size:11.5px;margin:6px 0 0 100px">Teto da PRU: 418 kS/s com o SPI rápido ✓</div>
+        <div style="display:flex;gap:6px;align-items:flex-start;color:var(--aviso);font-size:12px;margin:6px 0 0 100px"><i data-i="alerta" data-t="14"></i><span>Com 2 canais, cada um vai até 100 kHz: a faixa de 2–150 kHz pede 300 kS/s por canal.</span></div>
+      </div>
+      <div class="secao">
+        <div class="secao-tit">Destino</div>
+        <div class="seg" style="width:100%;display:grid;grid-template-columns:1fr 1fr;white-space:nowrap;font-size:12.5px"><span class="ativo" style="justify-content:center"><i data-i="baixar" data-t="14"></i>Direto no computador</span><span style="justify-content:center"><i data-i="disco" data-t="14"></i>No cartão da placa</span></div>
+        <div style="color:var(--texto2);font-size:12px;margin-top:8px">Sem limite do cartão. Vai para <span class="mono">$DADOS/lab/2026-11-12/</span>; se a conexão cair, a captura para e o que chegou fica válido.</div>
+      </div>
+      <div class="secao"><div class="secao-tit" style="margin:0"><i data-i="direita" data-t="12"></i>Avançado<span class="sub">SPI rápido · CS 3/1/3</span></div></div>
+    </aside>
+
+    <section class="vivo-area">
+      <div class="estado">
+        <span class="rec">Gravando</span>
+        <span class="num" style="font-size:18px;font-weight:650">03:12<span style="color:var(--mudo);font-weight:500;font-size:13px"> / 10:00</span></span>
+        <div class="prog"><span></span></div>
+        <div class="cont"><span>recebido <b>153 MB</b></span><span>fluxo <b>802 kB/s</b></span><span>atrasadas <b style="color:var(--ok)">0</b></span><span>sobrescritos <b style="color:var(--ok)">0</b></span></div>
+        <span class="botao perigo grande"><i data-i="stop"></i>Parar</span>
+      </div>
+      <div class="grafico" id="g1">
+        <div class="legenda" style="left:66px;top:10px"><span class="chip-traco"><span class="ponto" style="background:var(--t1)"></span>canal 0 · tensão</span><span class="chip-traco"><span class="ponto" style="background:var(--t2)"></span>canal 1 · corrente</span><span class="chip-traco" style="color:var(--mudo)">ao vivo · últimos 50 ms</span></div>
+      </div>
+      <div class="grafico" id="g2" style="border-top:1px solid var(--grade-forte)">
+        <div class="legenda" style="left:62px;top:10px"><span class="chip-traco"><span class="ponto" style="background:var(--t1)"></span>espectro ao vivo · canal 0 · média de 8</span></div>
+      </div>
+    </section>
+
+    <aside class="direita">
+      <div class="painel-cab">Caderno de bancada<span class="espaco"></span><span class="icone-botao"><i data-i="livro"></i></span></div>
+      <div class="nota"><div class="h">14:10:03 · automático</div>Captura <b>rede_bloco_E_1410</b> iniciada: 2 canais, 400 kS/s, 10 min, direto no computador.</div>
+      <div class="nota"><div class="h">14:08:40 · você</div>Ar-condicionado ligado às 14h05. Compressor em regime.</div>
+      <div class="nota"><div class="h">14:07:55 · automático</div>Conferência: canal 0 em ±10,24 V usa 63 % da faixa; canal 1 em ±5,12 V usa 71 %. Nada saturado.</div>
+      <div class="nota"><div class="h">09:30:12 · automático</div>Captura <b>rede_bloco_E_0930</b> concluída (1 h 02). Integridade: tudo certo.</div>
+      <div style="padding:10px 12px;margin-top:auto;border-top:1px solid var(--borda)"><div class="campo" style="color:var(--mudo)">Escrever uma nota…</div></div>
+      <div style="padding:0 12px 12px;display:grid;gap:8px">
+        <div class="cartao pad" style="background:var(--afundada);padding:10px 12px">
+          <div class="tit-cartao" style="font-size:12px"><i data-i="escudo" data-t="14" style="color:var(--ok)"></i>Antes de capturar<span class="sub">08h44</span></div>
+          <div style="color:var(--texto2);font-size:12px;margin-top:4px">relógio ✓ · PRU ✓ · pinos ✓ · ADC ✓ · disco do PC 212 GB ✓</div>
+        </div>
+      </div>
+    </aside>
+
+    <section class="term">
+      <div class="term-cab"><i data-i="terminal" data-t="14"></i>Saída do ler_adc<span class="espaco"></span><span>abrir o terminal</span></div>
+      <div class="terminal"><span class="m">ler_adc · SH-Analyzer · firmware v0.8.0</span>
+<span class="c">Arquivo </span>  (saída contínua para o computador)     <span class="c">Taxa</span>  400 000 S/s total · 200 000 S/s por canal
+<span class="c">Canal 0</span>  tensão · cadeia_tensao_fase · ±10,24 V    <span class="c">Canal 1</span>  corrente · sct013_100a_sn001 · ±5,12 V
+<span class="m">bloco 92/229 · 3 min 12 s · integridade: 0 atrasadas, 0 sobrescritos, 0 preâmbulos ruins</span></div>
+    </section>
+  </main>
+  <footer class="barra-status"><span style="color:var(--erro)">● gravando</span><span class="sep"></span><span>rede_bloco_E_1410.bin → $DADOS/lab/2026-11-12/</span><span class="espaco"></span><span>PC: 212 GB livres</span><span class="sep"></span><span class="num">30 q/s ao vivo</span></footer>
+</div>
+<script src="desenho.js"></script>
+<script>
+  const t0 = 2100.000;
+  grafico(document.getElementById("g1"), {
+    x0: t0, x1: t0 + 0.05, unX: "ms", fmtX: (v) => br((v - t0) * 1000 - 50), margem: { l: 58, r: 14, t: 42, b: 26 },
+    faixas: [
+      { y0: -240, y1: 240, unY: "V", tracos: [{ modo: "banda", f: tensao, cor: "--t1", semente: 4 }] },
+      { y0: -60, y1: 60, unY: "A", tracos: [{ modo: "banda", f: (t, r) => corrente(t, r) * 1.6, cor: "--t2", semente: 8 }] },
+    ],
+  });
+  espectro(document.getElementById("g2"), {
+    f0: 0, f1: 100000, log: false, y0: -90, y1: 50, faixa: [2000, 100000], rotFaixa: "2–150 kHz (até a metade da taxa por canal)",
+    margem: { l: 52, t: 38 },
+    tracos: [{ cor: "--t1", semente: 6, base: 42, larg: 1.2 }],
+    marcadores: [{ f: 20000, v: -4.9, rot: "20,0 kHz" }],
+  });
+</script>
+</body>
+</html>

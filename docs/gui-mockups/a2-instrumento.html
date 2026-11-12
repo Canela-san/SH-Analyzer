@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="pt-BR" data-tema="escuro">
+<head>
+<meta charset="utf-8">
+<title>A2 · Instrumento · SH-Analyzer</title>
+<link rel="stylesheet" href="tema.css">
+<script>if (location.hash === "#claro") document.documentElement.dataset.tema = "claro";</script>
+<style>
+  .corpo { grid-template-columns: 1fr 340px; }
+  .centro { display: grid; grid-template-rows: 48px 34px 1fr 64px; min-width: 0; min-height: 0; border-right: 1px solid var(--borda); }
+  .controles { display: flex; align-items: center; gap: 10px; padding: 0 12px; background: var(--superficie); border-bottom: 1px solid var(--borda); }
+  .controle { display: flex; align-items: center; gap: 8px; }
+  .controle .rotulo { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+  .registro { position: relative; background: var(--afundada); border-bottom: 1px solid var(--grade-forte); }
+  .tira { display: flex; align-items: center; gap: 8px; padding: 0 12px; background: var(--superficie); border-top: 1px solid var(--borda); overflow: hidden; }
+  .med { display: flex; flex-direction: column; justify-content: center; padding: 6px 12px; border-radius: 8px; background: var(--afundada); border: 1px solid var(--borda); min-width: 118px; }
+  .med .r { font-size: 11px; color: var(--mudo); display: flex; align-items: center; gap: 5px; }
+  .med .v { font-weight: 650; font-size: 15px; font-variant-numeric: tabular-nums; }
+  .med .v small { color: var(--texto2); font-weight: 500; font-size: 11px; margin-left: 2px; }
+  .trilho { padding: 10px; display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
+  .canal { border-radius: 10px; border: 1px solid var(--borda); background: var(--afundada); overflow: hidden; }
+  .canal .cab { display: flex; align-items: center; gap: 8px; padding: 9px 10px; }
+  .canal .barra { width: 4px; align-self: stretch; border-radius: 4px; }
+  .canal .nome { font-weight: 650; }
+  .canal .sub { color: var(--mudo); font-size: 11.5px; }
+  .canal .escala { margin-left: auto; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .canal.sel { border-color: var(--acento); box-shadow: 0 0 0 3px var(--acento-suave); }
+  .canal .corpo-canal { border-top: 1px solid var(--borda); padding: 10px; display: grid; gap: 6px; background: var(--superficie); }
+  .marcador { position: absolute; left: 4px; z-index: 3; font-size: 10.5px; font-weight: 700; color: #0c1526; padding: 1px 5px 1px 4px; border-radius: 3px 0 0 3px; clip-path: polygon(0 0, 78% 0, 100% 50%, 78% 100%, 0 100%); width: 24px; }
+  .escalas { position: absolute; left: 44px; top: 22px; z-index: 3; display: flex; gap: 6px; }
+  .escalas span { font-size: 11.5px; font-weight: 650; padding: 2px 7px; border-radius: 5px; background: color-mix(in srgb, var(--superficie) 88%, transparent); border: 1px solid var(--borda); font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div class="janela">
+  <header class="barra-titulo">
+    <div class="marca"><img src="../images/app-icon-small.svg" alt="">SH-Analyzer</div>
+    <div class="projeto">Projeto <b>Rede do bloco E</b><i data-i="baixo" data-t="14"></i></div>
+    <div class="espaco"></div>
+    <div class="seg"><span class="ativo"><i data-i="onda"></i>Análise</span><span><i data-i="pagina"></i>Figuras</span><span><i data-i="chip"></i>Aquisição</span></div>
+    <div class="espaco"></div>
+    <div class="busca"><i data-i="busca"></i>Buscar comando ou dado…<span class="kbd">Ctrl K</span></div>
+    <span class="badge ok" style="display:flex;align-items:center;gap:5px;height:24px"><i data-i="usb" data-t="13"></i>BeagleBone · USB</span>
+    <span class="icone-botao"><i data-i="lua"></i></span><span class="icone-botao"><i data-i="ajustes"></i></span>
+  </header>
+  <main class="corpo">
+    <section class="centro">
+      <div class="controles">
+        <span class="icone-botao ativo"><i data-i="ponteiro"></i></span><span class="icone-botao"><i data-i="zoom"></i></span><span class="icone-botao"><i data-i="cursores"></i></span><span class="icone-botao"><i data-i="regua"></i></span>
+        <span style="width:1px;height:20px;background:var(--borda);margin:0 4px"></span>
+        <div class="controle"><span class="rotulo">Tempo/div</span><span class="campo num" style="width:110px">1,667<span class="un">ms</span></span></div>
+        <div class="controle"><span class="rotulo">Posição</span><span class="campo num" style="width:150px">1 262,508 3<span class="un">s</span></span></div>
+        <div class="controle"><span class="rotulo">Sincronismo</span><span class="campo" style="width:230px;white-space:nowrap">Cruzamento por zero ↑ · V_A<i data-i="baixo" data-t="12" style="margin-left:auto;color:var(--mudo)"></i></span></div>
+        <span class="espaco"></span>
+        <div class="seg" style="font-size:12px"><span>Envoltória</span><span class="ativo">Persistência</span></div>
+        <span class="icone-botao"><i data-i="imagem"></i></span>
+      </div>
+      <div class="registro" id="registro"></div>
+      <div class="grafico" id="g">
+        <span class="marcador" id="m1" style="background:var(--t1)">1</span>
+        <span class="marcador" id="m2" style="background:var(--t2)">2</span>
+        <span class="marcador" id="m3" style="background:var(--t3)">M</span>
+        <div class="escalas">
+          <span style="color:var(--t1)">1 · 50 V/div</span><span style="color:var(--t2)">2 · 10 A/div</span><span style="color:var(--t3)">M · 5 V/div</span><span style="color:var(--texto2)">1,667 ms/div · 400 kS/s</span>
+        </div>
+      </div>
+      <div class="tira">
+        <div class="med"><span class="r"><span class="ponto" style="background:var(--t1)"></span>RMS</span><span class="v">127,4<small>V</small></span></div>
+        <div class="med"><span class="r"><span class="ponto" style="background:var(--t1)"></span>Frequência</span><span class="v">59,998<small>Hz</small></span></div>
+        <div class="med"><span class="r"><span class="ponto" style="background:var(--t2)"></span>RMS</span><span class="v">18,92<small>A</small></span></div>
+        <div class="med"><span class="r"><span class="ponto" style="background:var(--t2)"></span>Crista</span><span class="v">1,74</span></div>
+        <div class="med"><span class="r">1 × 2 · potência ativa</span><span class="v">2,214<small>kW</small></span></div>
+        <div class="med"><span class="r">Fator de potência</span><span class="v">0,918</span></div>
+        <div class="med"><span class="r"><span class="ponto" style="background:var(--t3)"></span>Supra 2–150 kHz</span><span class="v">3,71<small>V</small></span></div>
+        <span class="botao fantasma" style="color:var(--acento)"><i data-i="mais"></i>Medida</span>
+      </div>
+    </section>
+    <aside class="painel dir">
+      <div class="painel-cab">Traços<span class="espaco"></span><span class="icone-botao"><i data-i="mais"></i></span></div>
+      <div class="trilho">
+        <div class="canal sel">
+          <div class="cab"><span class="barra" style="background:var(--t1)"></span><div><div class="nome">1 · V_A · 09h30</div><div class="sub">captura_0930.bin · canal 0</div></div><div class="escala">50 V/div<div class="sub">offset 0 V</div></div></div>
+          <div class="corpo-canal">
+            <div class="linha"><span class="rotulo">Escala</span><div class="dupla"><span class="campo num foco">50<span class="un">V/div</span></span><span class="campo num">0,0<span class="un">V</span></span></div></div>
+            <div class="linha"><span class="rotulo">Sonda</span><span class="campo">cadeia_tensao_fase<span class="badge ok" style="margin-left:auto">válida</span></span></div>
+            <div class="linha"><span class="rotulo">Filtros</span><div style="display:flex;gap:5px;flex-wrap:wrap"><span class="badge acento">−DC</span><span class="badge">+ filtro</span></div></div>
+            <div class="linha"><span class="rotulo">Mostrar</span><div style="display:flex;gap:10px;align-items:center"><span class="chave on"></span><span class="rotulo">invertido</span><span class="chave"></span></div></div>
+          </div>
+        </div>
+        <div class="canal"><div class="cab"><span class="barra" style="background:var(--t2)"></span><div><div class="nome">2 · I_A · 09h30</div><div class="sub">canal 1 · sct013_100a_sn001</div></div><div class="escala">10 A/div<div class="sub">offset 0 A</div></div></div></div>
+        <div class="canal"><div class="cab"><span class="barra" style="background:var(--t3)"></span><div><div class="nome">M · supraharmônicos de 1</div><div class="sub">passa-altas 2 kHz · fase zero</div></div><div class="escala">5 V/div<div class="sub">offset −3 div</div></div></div></div>
+        <div class="canal" style="opacity:.7"><div class="cab"><span class="barra" style="background:var(--t4)"></span><div><div class="nome">3 · V_A · 14h10</div><div class="sub">oculto · captura_1410.bin</div></div><div class="escala">50 V/div<div class="sub"><i data-i="olho" data-t="13"></i></div></div></div></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px">
+          <span class="botao" style="justify-content:center"><i data-i="mais"></i>Traço</span><span class="botao" style="justify-content:center"><i data-i="raio"></i>Matemática</span>
+        </div>
+        <div class="cartao pad" style="margin-top:6px;background:var(--afundada)">
+          <div class="tit-cartao"><i data-i="espectro" style="color:var(--acento)"></i>Espectro ao lado<span class="sub">Ctrl+2</span></div>
+          <div style="color:var(--texto2);font-size:12px;margin-top:6px">Divide a área do gráfico com o espectro da janela visível, ligado aos mesmos traços.</div>
+        </div>
+      </div>
+    </aside>
+  </main>
+  <footer class="barra-status">
+    <span>3 traços visíveis · 2 fontes</span><span class="sep"></span><span>persistência: 120 ciclos sobrepostos</span>
+    <span class="espaco"></span><span class="num">60 q/s</span>
+  </footer>
+</div>
+<script src="desenho.js"></script>
+<script>
+  const t0 = 1262.5083, div = 1 / 600;
+  const tx = Array.from({ length: 11 }, (_, k) => t0 + k * div);
+  const supra = (t, r) => (Math.sin(TAU * 60 * t) < 0 ? 5.6 : 1.1) * Math.sin(TAU * 20000 * t) + 1.7 * Math.sin(TAU * 40040 * t) + (r() - 0.5) * 0.5;
+  const tr = [];
+  // "persistência": ciclos sobrepostos, os mais antigos mais apagados
+  for (let k = 8; k >= 1; k--) {
+    tr.push({ f: (t, r) => tensao(t - k / 60 * 13, r) / 50 * 25, cor: "--t1", larg: 1, opac: 0.07 + 0.02 * (8 - k), semente: 40 + k, passo: 1 });
+    tr.push({ f: (t, r) => corrente(t - k / 60 * 13, r) / 10 * 25 * (1 + 0.04 * k), cor: "--t2", larg: 1, opac: 0.07 + 0.02 * (8 - k), semente: 60 + k, passo: 1 });
+  }
+  tr.push({ f: (t, r) => tensao(t, r) / 50 * 25, cor: "--t1", larg: 1.6, sel: true, semente: 5, passo: 0.4 });
+  tr.push({ f: (t, r) => corrente(t, r) / 10 * 25, cor: "--t2", larg: 1.5, semente: 9, passo: 0.4 });
+  tr.push({ f: (t, r) => supra(t, r) / 5 * 25 - 75, cor: "--t3", larg: 1.1, semente: 13, passo: 0.25 });
+  const g = grafico(document.getElementById("g"), {
+    x0: t0, x1: t0 + 10 * div, ticksX: tx, fmtX: (v) => br((v - t0) * 1000, 2), unX: "ms",
+    margem: { l: 34, r: 16, t: 14, b: 60 },
+    faixas: [{ y0: -100, y1: 100, unY: "", ticksY: [-75, -50, -25, 0, 25, 50, 75], fmtY: () => "", tracos: tr }],
+  });
+  const zero = g.caixas[0].yPix(0), zm = g.caixas[0].yPix(-75);
+  document.getElementById("m1").style.top = zero - 9 + "px";
+  document.getElementById("m2").style.top = zero + 6 + "px";
+  document.getElementById("m3").style.top = zm - 9 + "px";
+  // barra de registro: a captura inteira e onde a tela está
+  const gr = grafico(document.getElementById("registro"), {
+    x0: 0, x1: 3720, margem: { l: 34, r: 16, t: 5, b: 5 }, semGradeX: true, vao: 0, fmtX: () => "",
+    faixas: [{ y0: -230, y1: 230, unY: "", ticksY: [], tracos: [{ modo: "banda", env: envTensao, cor: "--t1", opac: 0.45 }] }],
+  });
+  const s = document.querySelector("#registro svg");
+  const x = gr.xPix(1262.5);
+  const m = svgEl("path", { d: `M${x - 6} 2 h12 l-6 7 z` }, s);
+  m.style.fill = "var(--destaque)";
+  svgEl("line", { x1: x, x2: x, y1: 2, y2: 32, "stroke-width": 1.5 }, s).style.stroke = "var(--destaque)";
+</script>
+</body>
+</html>

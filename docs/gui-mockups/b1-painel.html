@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="pt-BR" data-tema="escuro">
+<head>
+<meta charset="utf-8">
+<title>B1 · Aquisição em painel · SH-Analyzer</title>
+<link rel="stylesheet" href="tema.css">
+<script>if (location.hash === "#claro") document.documentElement.dataset.tema = "claro";</script>
+<style>
+  .corpo { grid-template-columns: 248px 1fr; }
+  .nav { background: var(--superficie); border-right: 1px solid var(--borda); display: flex; flex-direction: column; min-height: 0; }
+  .disp { margin: 10px; padding: 12px; border-radius: 10px; background: var(--afundada); border: 1px solid var(--borda); }
+  .disp .nome { font-weight: 650; display: flex; align-items: center; gap: 8px; }
+  .disp .sub { color: var(--mudo); font-size: 12px; margin-top: 2px; }
+  .vivo { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 20%, transparent); }
+  .nav .item { height: 34px; margin: 0 8px; padding: 0 10px; gap: 10px; }
+  .nav .item.sel { font-weight: 600; }
+  .nav h6 { font-size: 11px; color: var(--mudo); text-transform: uppercase; letter-spacing: .6px; padding: 16px 18px 6px; font-weight: 650; }
+  .conteudo { overflow: hidden; padding: 20px 24px; display: grid; grid-template-rows: auto auto 1fr; gap: 16px; min-height: 0; }
+  .cab-pag { display: flex; align-items: center; gap: 10px; }
+  .cab-pag h1 { font-size: 22px; font-weight: 650; letter-spacing: -0.2px; }
+  .cab-pag .sub { color: var(--texto2); }
+  .faixa { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+  .kpi { padding: 12px 14px; }
+  .kpi .r { color: var(--mudo); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+  .kpi .v { font-size: 20px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .kpi .v small { font-size: 12px; color: var(--texto2); font-weight: 500; margin-left: 3px; }
+  .kpi .d { color: var(--texto2); font-size: 12px; margin-top: 2px; }
+  .duas { display: grid; grid-template-columns: 1fr 1.25fr; gap: 16px; min-height: 0; }
+  .barra-uso { height: 6px; border-radius: 6px; background: var(--afundada); overflow: hidden; margin-top: 8px; }
+  .barra-uso span { display: block; height: 100%; border-radius: 6px; }
+</style>
+</head>
+<body>
+<div class="janela">
+  <header class="barra-titulo">
+    <div class="marca"><img src="../images/app-icon-small.svg" alt="">SH-Analyzer</div>
+    <div class="projeto">Projeto <b>Rede do bloco E</b><i data-i="baixo" data-t="14"></i></div>
+    <div class="espaco"></div>
+    <div class="seg"><span><i data-i="onda"></i>Análise</span><span><i data-i="pagina"></i>Figuras</span><span class="ativo"><i data-i="chip"></i>Aquisição</span></div>
+    <div class="espaco"></div>
+    <div class="busca"><i data-i="busca"></i>Buscar comando ou dado…<span class="kbd">Ctrl K</span></div>
+    <span class="icone-botao"><i data-i="lua"></i></span><span class="icone-botao"><i data-i="ajustes"></i></span>
+  </header>
+  <main class="corpo">
+    <nav class="nav">
+      <div class="disp">
+        <div class="nome"><span class="vivo"></span>BeagleBone Black</div>
+        <div class="sub">nº 3714BBBK1234 · USB · 192.168.7.2</div>
+        <div class="sub">latência 2 ms · ligada há 2 h 14</div>
+      </div>
+      <div class="item sel"><i data-i="pulso"></i>Visão geral</div>
+      <div class="item"><i data-i="play"></i>Capturar</div>
+      <div class="item"><i data-i="pasta"></i>Arquivos<span class="sub"><span class="badge aviso">3 novas</span></span></div>
+      <div class="item"><i data-i="terminal"></i>Terminal</div>
+      <div class="item"><i data-i="escudo"></i>Diagnóstico</div>
+      <div class="item"><i data-i="chave"></i>Manutenção</div>
+      <h6>Dispositivos</h6>
+      <div class="item"><span class="ponto" style="background:var(--ok)"></span>BBB · USB<span class="sub">conectada</span></div>
+      <div class="item"><span class="ponto vazio"></span>bbb-lab-e.local<span class="sub">LAN</span></div>
+      <div class="item"><span class="ponto vazio"></span>Simulador<span class="sub">demonstração</span></div>
+      <div class="item" style="color:var(--acento)"><i data-i="mais"></i>Conectar por IP…</div>
+      <span class="espaco"></span>
+      <div style="padding:10px;border-top:1px solid var(--borda);display:flex;gap:8px"><span class="botao" style="flex:1;justify-content:center"><i data-i="energia"></i>Desligar a placa</span></div>
+    </nav>
+    <section class="conteudo">
+      <div class="cab-pag">
+        <div><h1>Visão geral</h1><div class="sub">BeagleBone Black · Debian 11.7 · kernel 5.10.168-ti-r71 · firmware v0.8.0 (igual ao do aplicativo)</div></div>
+        <span class="espaco"></span>
+        <span class="botao"><i data-i="terminal"></i>Terminal</span>
+        <span class="botao"><i data-i="pasta"></i>Abrir no gerenciador de arquivos</span>
+        <span class="botao primario grande"><i data-i="play"></i>Nova captura</span>
+      </div>
+      <div class="faixa">
+        <div class="cartao kpi"><div class="r"><i data-i="relogio" data-t="14"></i>Relógio</div><div class="v">−0,02<small>s</small></div><div class="d">acertado pelo do computador às 08h41</div></div>
+        <div class="cartao kpi"><div class="r"><i data-i="chip" data-t="14"></i>PRU0</div><div class="v" style="color:var(--ok)">Rodando</div><div class="d">protocolo 5 · fw_pru de 11/11</div></div>
+        <div class="cartao kpi"><div class="r"><i data-i="disco" data-t="14"></i>Cartão SD</div><div class="v">1,1<small>GB livres</small></div><div class="d">≈ 23 min a 400 kS/s</div><div class="barra-uso"><span style="width:86%;background:var(--aviso)"></span></div></div>
+        <div class="cartao kpi"><div class="r"><i data-i="termometro" data-t="14"></i>Processador</div><div class="v">52<small>°C</small></div><div class="d">carga 0,31 · memória 312 MB livres</div></div>
+        <div class="cartao kpi"><div class="r"><i data-i="raio" data-t="14"></i>Placa de aquisição</div><div class="v" style="color:var(--ok)">ADC responde</div><div class="d">conferida às 08h44 · ruído 0,9 LSB</div></div>
+      </div>
+      <div class="duas">
+        <div class="cartao" style="display:flex;flex-direction:column;min-height:0">
+          <div class="tit-cartao" style="padding:14px 14px 6px">Saúde da placa<span class="sub">conferida há 40 s · <span style="color:var(--acento)">conferir de novo</span></span></div>
+          <div class="saude"><span class="ic ok"><i data-i="ok"></i></span><div class="t">Conexão<small>USB (RNDIS) · 192.168.7.2 · chave SSH · impressão digital confere</small></div><span class="badge ok">ok</span></div>
+          <div class="saude"><span class="ic ok"><i data-i="ok"></i></span><div class="t">Firmware<small>v0.8.0 na placa = v0.8.0 do aplicativo · ler_adc compilado</small></div><span class="badge ok">ok</span></div>
+          <div class="saude"><span class="ic ok"><i data-i="ok"></i></span><div class="t">Pinos da PRU<small>P9_28, P9_29, P9_30, P9_31 no modo pruout/pruin</small></div><span class="badge ok">ok</span></div>
+          <div class="saude"><span class="ic ok"><i data-i="ok"></i></span><div class="t">Memória dos buffers<small>mem=496M · 0x9F000000–0x9F3FFFFF fora do Linux</small></div><span class="badge ok">ok</span></div>
+          <div class="saude"><span class="ic aviso"><i data-i="alerta"></i></span><div class="t">Overlay de áudio do HDMI ativo<small>usa o McASP0, que divide os pinos P9_28, P9_29 e P9_31 com a PRU</small></div><span class="botao" style="height:26px">Corrigir…</span></div>
+          <div class="saude"><span class="ic aviso"><i data-i="alerta"></i></span><div class="t">3 capturas ainda não vieram para o computador<small>1,8 GB · o cartão está 86 % cheio</small></div><span class="botao" style="height:26px">Transferir</span></div>
+        </div>
+        <div class="cartao" style="display:flex;flex-direction:column;min-height:0;overflow:hidden">
+          <div class="tit-cartao" style="padding:14px 14px 8px">Capturas na placa<span class="sub">~/sh-analyzer/firmware</span></div>
+          <table class="tabela">
+            <tr><th>Arquivo</th><th>Início</th><th class="d">Duração</th><th class="d">Taxa</th><th class="d">Tamanho</th><th>Estado</th></tr>
+            <tr><td>rede_bloco_E_0930.bin</td><td>12/11 09:30</td><td class="d">1 h 02</td><td class="d">400 kS/s</td><td class="d">2,98 GB</td><td><span class="badge ok">✓ no computador</span></td></tr>
+            <tr><td>rede_bloco_E_1410.bin</td><td>12/11 14:10</td><td class="d">10 min</td><td class="d">400 kS/s</td><td class="d">480 MB</td><td><span class="badge acento">↓ 62 % · 9,8 MB/s</span></td></tr>
+            <tr><td>CAL_tensao/ (32)</td><td>12/11 08:52</td><td class="d">—</td><td class="d">400 kS/s</td><td class="d">812 MB</td><td><span class="badge aviso">não transferida</span></td></tr>
+            <tr><td>conferir_0844.bin</td><td>12/11 08:44</td><td class="d">10 s</td><td class="d">400 kS/s</td><td class="d">7,6 MB</td><td><span class="badge aviso">não transferida</span></td></tr>
+            <tr><td>ruido_curto.bin</td><td>11/11 17:03</td><td class="d">30 s</td><td class="d">400 kS/s</td><td class="d">22,9 MB</td><td><span class="badge aviso">não transferida</span></td></tr>
+          </table>
+          <div class="tit-cartao" style="padding:16px 14px 8px;border-top:1px solid var(--borda);margin-top:auto">Atividade<span class="sub">tudo o que o aplicativo fez na placa</span></div>
+          <div style="padding:0 14px 12px;color:var(--texto2);font-size:12px;line-height:1.9" class="num">
+            <div><span class="mono" style="color:var(--mudo)">14:21:07</span>  Transferência de rede_bloco_E_1410.bin iniciada (SFTP, CRC no fim)</div>
+            <div><span class="mono" style="color:var(--mudo)">14:20:58</span>  Captura concluída · integridade: tudo certo · código 0</div>
+            <div><span class="mono" style="color:var(--mudo)">08:44:12</span>  Conferência do ADC · faixa sugerida ±5,12 V no canal 1</div>
+            <div><span class="mono" style="color:var(--mudo)">08:41:03</span>  Relógio acertado (+41,7 s) · você autorizou ao conectar</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer class="barra-status"><span style="color:var(--ok)">● conectada · USB</span><span class="sep"></span><span>SSH · chave ed25519</span><span class="sep"></span><span>1 transferência em andamento</span><span class="espaco"></span><span>sessão de laboratório: 2026-11-12</span></footer>
+</div>
+<script src="desenho.js"></script>
+</body>
+</html>

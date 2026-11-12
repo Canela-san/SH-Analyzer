@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="pt-BR" data-tema="escuro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockups da GUI · SH-Analyzer</title>
+<link rel="stylesheet" href="tema.css">
+<style>
+  body { overflow: auto; }
+  .pagina { max-width: 1240px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.3px; display: flex; align-items: center; gap: 12px; }
+  h1 img { width: 36px; height: 36px; }
+  h2 { font-size: 17px; font-weight: 650; margin: 36px 0 4px; }
+  p.lead { color: var(--texto2); max-width: 820px; margin-top: 8px; line-height: 1.55; }
+  p.sub { color: var(--texto2); margin-bottom: 14px; }
+  .grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; }
+  a.cartao { display: block; text-decoration: none; color: inherit; overflow: hidden; transition: border-color .12s, transform .12s; }
+  a.cartao:hover { border-color: var(--acento); transform: translateY(-2px); }
+  a.cartao img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-bottom: 1px solid var(--borda); background: var(--afundada); }
+  .txt { padding: 12px 14px 14px; }
+  .txt b { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .txt p { color: var(--texto2); font-size: 12.5px; margin-top: 6px; line-height: 1.5; }
+  .rec { color: var(--acento-texto); background: var(--acento); font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
+  .tema { position: fixed; top: 16px; right: 16px; }
+</style>
+</head>
+<body>
+<span class="botao tema" onclick="const h=document.documentElement;h.dataset.tema=h.dataset.tema==='claro'?'escuro':'claro'"><i data-i="sol"></i>Tema</span>
+<div class="pagina">
+  <h1><img src="../images/app-icon.svg" alt="">Mockups da interface gráfica</h1>
+  <p class="lead">Desenhos das telas do SH-Analyzer para escolher a disposição antes de programar (plano em <span class="mono">docs/gui-plan.md</span>, seção 13). Os dados são sintéticos; as cores, as fontes e os espaçamentos são os do sistema de design proposto. Clique numa imagem para abrir a tela em tamanho real; numa tela, acrescente <span class="mono">#claro</span> ao endereço para vê-la no tema claro.</p>
+
+  <h2>Área de análise: três disposições</h2>
+  <p class="sub">O lugar onde se abrem as capturas, se sobrepõem traços, se mede e se compara.</p>
+  <div class="grade">
+    <a class="cartao" href="a1-estudio.html"><img src="../images/gui/a1-estudio.webp" alt=""><div class="txt"><b>A1 · Estúdio <span class="rec">recomendado</span></b><p>Três colunas fixas: o projeto (fontes, vistas, figuras) à esquerda, os gráficos no centro, o inspetor do traço selecionado à direita, as medidas embaixo. O mais familiar (IDEs, Saleae, Origin) e o que escala para muitos traços.</p></div></a>
+    <a class="cartao" href="a1-estudio.html#claro"><img src="../images/gui/a1-estudio-claro.webp" alt=""><div class="txt"><b>A1 · Estúdio, tema claro</b><p>A mesma tela no tema claro: as cores dos traços mudam de tom, não de matiz (o traço 1 é sempre o "céu").</p></div></a>
+    <a class="cartao" href="a2-instrumento.html"><img src="../images/gui/a2-instrumento.webp" alt=""><div class="txt"><b>A2 · Instrumento</b><p>Um osciloscópio: o gráfico ocupa quase tudo, cada traço tem a sua escala por divisão, a persistência sobrepõe ciclos, e os traços viram cartões à direita. Ótimo para quem vem da bancada; pior para comparar muitas capturas.</p></div></a>
+    <a class="cartao" href="a3-canvas.html"><img src="../images/gui/a3-canvas.webp" alt=""><div class="txt"><b>A3 · Canvas</b><p>Painéis livres em grade (forma de onda, espectro, espectrograma, XY), com os eixos ligados, o inspetor flutuante junto do traço e a barra de ferramentas flutuante. O melhor para comparar vistas diferentes; o mais difícil de organizar.</p></div></a>
+  </div>
+
+  <h2>Área de aquisição (BeagleBone): duas disposições</h2>
+  <p class="sub">Conectar, conferir, capturar, trazer os dados e cuidar da placa.</p>
+  <div class="grade">
+    <a class="cartao" href="b1-painel.html"><img src="../images/gui/b1-painel.webp" alt=""><div class="txt"><b>B1 · Painel com seções <span class="rec">recomendado</span></b><p>Navegação lateral (visão geral, capturar, arquivos, terminal, diagnóstico, manutenção) e a lista de placas. A visão geral mostra a saúde da placa, com o botão "Corrigir" em cada problema, e as capturas que ainda estão nela.</p></div></a>
+    <a class="cartao" href="b2-cockpit.html"><img src="../images/gui/b2-cockpit.webp" alt=""><div class="txt"><b>B2 · Cockpit de captura</b><p>Tudo de uma captura numa tela: o cabeçalho e os canais à esquerda, o sinal e o espectro ao vivo no centro, o caderno de bancada à direita e a saída do ler_adc embaixo. Na recomendação, esta é a seção "Capturar" do B1.</p></div></a>
+  </div>
+
+  <h2>Figuras para publicação</h2>
+  <div class="grade">
+    <a class="cartao" href="f1-figura.html"><img src="../images/gui/f1-figura.webp" alt=""><div class="txt"><b>F1 · Compositor de figuras</b><p>A página no tamanho real da revista (IEEE, Elsevier, ABNT, slide), os painéis ligados às vistas da análise, o estilo de cada elemento e a exportação vetorial com a fidelidade dos dados garantida.</p></div></a>
+  </div>
+</div>
+<script src="desenho.js"></script>
+</body>
+</html>

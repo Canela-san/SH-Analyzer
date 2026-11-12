@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="pt-BR" data-tema="escuro">
+<head>
+<meta charset="utf-8">
+<title>A3 · Canvas · SH-Analyzer</title>
+<link rel="stylesheet" href="tema.css">
+<script>if (location.hash === "#claro") document.documentElement.dataset.tema = "claro";</script>
+<style>
+  .corpo { grid-template-columns: 52px 1fr; }
+  .trilho { background: var(--superficie); border-right: 1px solid var(--borda); display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 0; }
+  .trilho .icone-botao { width: 36px; height: 36px; border-radius: 9px; }
+  .area { position: relative; display: grid; grid-template-columns: 1.25fr 1fr; grid-template-rows: 1fr 1fr; gap: 10px; padding: 10px; min-height: 0; }
+  .card { display: grid; grid-template-rows: 38px 1fr; background: var(--afundada); border: 1px solid var(--borda); border-radius: 12px; overflow: hidden; min-height: 0; }
+  .card.sel { border-color: color-mix(in srgb, var(--acento) 60%, var(--borda)); }
+  .card-cab { display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; background: var(--superficie); border-bottom: 1px solid var(--borda); }
+  .card-cab b { font-weight: 600; }
+  .card-cab .ponto { width: 8px; height: 8px; }
+  .card-cab .sub { color: var(--mudo); font-size: 12px; }
+  .vinculo { color: var(--acento); display: flex; align-items: center; gap: 4px; font-size: 11.5px; }
+  .flutuante { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; padding: 6px; border-radius: 12px; background: var(--elevada); border: 1px solid var(--borda-forte); box-shadow: var(--sombra); z-index: 6; }
+  .flutuante .div { width: 1px; height: 20px; background: var(--borda); margin: 0 4px; }
+  .pop { position: absolute; z-index: 7; width: 340px; background: var(--elevada); border: 1px solid var(--borda-forte); border-radius: 12px; box-shadow: var(--sombra); overflow: hidden; }
+  .pop .secao { border-color: var(--borda); }
+  .pop::before { content: ""; position: absolute; left: 22px; top: -7px; transform: rotate(135deg) !important; width: 12px; height: 12px; background: var(--elevada); border-left: 1px solid var(--borda-forte); border-bottom: 1px solid var(--borda-forte); transform: rotate(45deg); }
+</style>
+</head>
+<body>
+<div class="janela">
+  <header class="barra-titulo">
+    <div class="marca"><img src="../images/app-icon-small.svg" alt="">SH-Analyzer</div>
+    <div class="projeto">Projeto <b>Rede do bloco E</b> · <span style="color:var(--texto)">Comparação manhã × tarde</span><i data-i="baixo" data-t="14"></i></div>
+    <div class="espaco"></div>
+    <div class="seg"><span class="ativo"><i data-i="onda"></i>Análise</span><span><i data-i="pagina"></i>Figuras</span><span><i data-i="chip"></i>Aquisição</span></div>
+    <div class="espaco"></div>
+    <div class="busca"><i data-i="busca"></i>Buscar comando ou dado…<span class="kbd">Ctrl K</span></div>
+    <span class="badge" style="display:flex;align-items:center;gap:5px;height:24px"><i data-i="usb" data-t="13"></i>Sem placa</span>
+    <span class="icone-botao"><i data-i="lua"></i></span><span class="icone-botao"><i data-i="ajustes"></i></span>
+  </header>
+  <main class="corpo">
+    <nav class="trilho">
+      <span class="icone-botao ativo"><i data-i="camadas" data-t="18"></i></span>
+      <span class="icone-botao"><i data-i="pasta" data-t="18"></i></span>
+      <span class="icone-botao"><i data-i="pagina" data-t="18"></i></span>
+      <span class="icone-botao"><i data-i="livro" data-t="18"></i></span>
+      <span class="espaco"></span>
+      <span class="icone-botao"><i data-i="pulso" data-t="18"></i></span>
+    </nav>
+    <section class="area">
+      <div class="card">
+        <div class="card-cab"><i data-i="onda" style="color:var(--acento)"></i><b>Forma de onda</b><span class="sub">captura inteira · 1 h 02</span><span class="espaco"></span><span class="vinculo"><i data-i="link" data-t="13"></i>tempo ligado</span><span class="icone-botao"><i data-i="mais_h"></i></span></div>
+        <div class="grafico" id="g1">
+          <div class="legenda" style="left:66px;top:10px"><span class="chip-traco"><span class="ponto" style="background:var(--t1)"></span>V_A 09h30</span><span class="chip-traco"><span class="ponto" style="background:var(--t2)"></span>I_A 09h30</span></div>
+          <span class="rotulo-cursor" id="ev" style="background:var(--elevada);color:var(--texto);border:1px solid var(--borda-forte)">⚠ afundamento · 1 262,9 s</span>
+        </div>
+      </div>
+      <div class="card sel">
+        <div class="card-cab"><i data-i="espectro" style="color:var(--acento)"></i><b>Espectro</b><span class="sub">Welch · Hann · 1 Hz · janela visível</span><span class="espaco"></span><span class="icone-botao"><i data-i="mais_h"></i></span></div>
+        <div class="grafico" id="g2">
+          <div class="legenda" style="left:62px;top:24px;flex-direction:column;align-items:flex-start;gap:4px">
+            <span class="chip-traco sel"><span class="ponto" style="background:var(--t1)"></span>V_A 09h30 · corrigido</span>
+            <span class="chip-traco"><span class="ponto" style="background:var(--t4)"></span>V_A 14h10 · corrigido</span>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-cab"><i data-i="grade" style="color:var(--acento)"></i><b>Espectrograma</b><span class="sub">V_A 09h30 · 0–100 kHz</span><span class="espaco"></span><span class="vinculo"><i data-i="link" data-t="13"></i>tempo ligado</span><span class="icone-botao"><i data-i="mais_h"></i></span></div>
+        <div class="grafico" id="g3"></div>
+      </div>
+      <div class="card">
+        <div class="card-cab"><i data-i="mira" style="color:var(--acento)"></i><b>XY</b><span class="sub">V_A × I_A · 3 ciclos</span><span class="espaco"></span><span class="icone-botao"><i data-i="mais_h"></i></span></div>
+        <div class="grafico" id="g4"></div>
+      </div>
+      <div class="pop" id="pop">
+        <div style="display:flex;align-items:center;gap:10px;padding:12px">
+          <span class="ponto" style="background:var(--t1);width:12px;height:12px"></span>
+          <div><div style="font-weight:650">V_A 09h30 · corrigido</div><div style="color:var(--mudo);font-size:12px">espectro de captura_0930.bin · canal 0</div></div>
+          <span class="espaco"></span><span class="icone-botao"><i data-i="x"></i></span>
+        </div>
+        <div class="secao">
+          <div class="linha"><span class="rotulo">Método</span><div class="seg" style="font-size:12px;width:max-content"><span>FFT</span><span class="ativo">Welch</span><span>IEC 200 Hz</span></div></div>
+          <div class="linha"><span class="rotulo">Janela</span><div class="dupla"><span class="campo">Hann<i data-i="baixo" data-t="12" style="margin-left:auto;color:var(--mudo)"></i></span><span class="campo num">1,0<span class="un">Hz</span></span></div></div>
+          <div class="linha"><span class="rotulo">Escala</span><div class="dupla"><span class="campo">dBV<i data-i="baixo" data-t="12" style="margin-left:auto;color:var(--mudo)"></i></span><span class="campo">log f<i data-i="baixo" data-t="12" style="margin-left:auto;color:var(--mudo)"></i></span></div></div>
+          <div class="linha"><span class="rotulo">Sonda</span><span class="campo">cadeia_tensao_fase<span class="badge ok" style="margin-left:auto">2–150 kHz ✓</span></span></div>
+          <div class="linha"><span class="rotulo">Picos</span><div style="display:flex;gap:8px;align-items:center"><span class="chave on"></span><span class="rotulo">marcar os 3 maiores acima de 2 kHz</span></div></div>
+        </div>
+      </div>
+      <div class="flutuante">
+        <span class="icone-botao ativo"><i data-i="ponteiro"></i></span><span class="icone-botao"><i data-i="zoom"></i></span><span class="icone-botao"><i data-i="mao"></i></span><span class="icone-botao"><i data-i="cursores"></i></span><span class="icone-botao"><i data-i="texto"></i></span>
+        <span class="div"></span>
+        <span class="botao fantasma"><i data-i="grade"></i>Grade 2 × 2<i data-i="baixo" data-t="12"></i></span>
+        <span class="botao fantasma"><i data-i="mais"></i>Painel</span>
+        <span class="div"></span>
+        <span class="botao primario"><i data-i="pagina"></i>Virar figura</span>
+      </div>
+    </section>
+  </main>
+  <footer class="barra-status"><span>4 painéis · 2 fontes · tempo ligado entre forma de onda e espectrograma</span><span class="espaco"></span><span>Welch · 100 %</span><span class="sep"></span><span class="num">60 q/s</span></footer>
+</div>
+<script src="desenho.js"></script>
+<script>
+  const g1 = grafico(document.getElementById("g1"), {
+    x0: 0, x1: 3720, unX: "s", fmtX: (v) => br(v), margem: { l: 58, r: 14, t: 44, b: 26 },
+    faixas: [
+      { y0: -240, y1: 240, unY: "V", tracos: [{ modo: "banda", env: envTensao, cor: "--t1", opac: 0.75 }] },
+      { y0: -80, y1: 80, unY: "A", tracos: [{ modo: "banda", env: envCorrente, cor: "--t2", opac: 0.75 }] },
+    ], cursores: [{ t: 1263 }],
+  });
+  Object.assign(document.getElementById("ev").style, { left: g1.xPix(1263) + 6 + "px", top: "40px" });
+  const g2 = espectro(document.getElementById("g2"), {
+    f0: 50, f1: 200000, log: true, y0: -90, y1: 60, faixa: [2000, 150000], rotFaixa: "faixa supraharmônica · 2–150 kHz",
+    margem: { l: 52, t: 14 },
+    tracos: [
+      { cor: "--t4", semente: 4, supra: -14, base: 42.4, piso: -114, hump: 0.4, larg: 1.1, opac: 0.85 },
+      { cor: "--t1", semente: 2, supra: 0, base: 42.1, larg: 1.3 },
+    ],
+    marcadores: [{ f: 20000, v: -4.9, rot: "20,0 kHz · −4,9 dBV" }, { f: 40040, v: -21, rot: "40,0 kHz" }, { f: 60060, v: -34, rot: "60,1 kHz", dx: 6 }],
+  });
+  espectrograma(document.getElementById("g3"), { fmax: 100000, t0: 0, t1: 3720, margem: { l: 58, r: 14, t: 10, b: 26 } });
+  lissajous(document.getElementById("g4"), { x0: -240, x1: 240, y0: -60, y1: 60, unX: "V", unY: "A", margem: { l: 52, t: 10 } });
+  // o popover do inspetor nasce do chip selecionado
+  const chip = document.querySelector("#g2 .chip-traco.sel").getBoundingClientRect();
+  Object.assign(document.getElementById("pop").style, { left: chip.left - 4 + "px", top: chip.bottom + 52 + "px" });
+</script>
+</body>
+</html>

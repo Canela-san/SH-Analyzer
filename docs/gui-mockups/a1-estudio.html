@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="pt-BR" data-tema="escuro">
+<head>
+<meta charset="utf-8">
+<title>A1 · Estúdio · SH-Analyzer</title>
+<link rel="stylesheet" href="tema.css">
+<script>if (location.hash === "#claro") document.documentElement.dataset.tema = "claro";</script>
+<style>
+  .corpo { grid-template-columns: 268px 1fr 324px; }
+  .centro { display: grid; grid-template-rows: 36px 40px 1fr 58px 178px; min-width: 0; min-height: 0; border-right: 1px solid var(--borda); }
+  .mini { position: relative; background: var(--afundada); border-top: 1px solid var(--grade-forte); }
+  .inferior { background: var(--superficie); border-top: 1px solid var(--borda); display: grid; grid-template-rows: 34px 1fr; min-height: 0; }
+  .inferior .abas { height: 34px; background: var(--superficie); }
+  .inferior .aba { height: 28px; }
+</style>
+</head>
+<body>
+<div class="janela">
+  <header class="barra-titulo">
+    <div class="marca"><img src="../images/app-icon-small.svg" alt="">SH-Analyzer</div>
+    <div class="projeto">Projeto <b>Rede do bloco E</b><i data-i="baixo" data-t="14"></i></div>
+    <div class="espaco"></div>
+    <div class="seg"><span class="ativo"><i data-i="onda"></i>Análise</span><span><i data-i="pagina"></i>Figuras</span><span><i data-i="chip"></i>Aquisição</span></div>
+    <div class="espaco"></div>
+    <div class="busca"><i data-i="busca"></i>Buscar comando ou dado…<span class="kbd">Ctrl K</span></div>
+    <span class="badge ok" style="display:flex;align-items:center;gap:5px;height:24px"><i data-i="usb" data-t="13"></i>BeagleBone · USB</span>
+    <span class="icone-botao"><i data-i="desfazer"></i></span><span class="icone-botao"><i data-i="refazer"></i></span>
+    <span class="icone-botao"><i data-i="lua"></i></span><span class="icone-botao"><i data-i="ajustes"></i></span>
+  </header>
+
+  <main class="corpo">
+    <!-- PROJETO -->
+    <aside class="painel">
+      <div class="painel-cab">Projeto<span class="espaco"></span><span class="icone-botao"><i data-i="mais"></i></span></div>
+      <div style="padding:0 10px 8px"><div class="campo" style="color:var(--mudo)"><i data-i="busca" data-t="14"></i>Filtrar</div></div>
+      <div class="rolar arvore">
+        <div class="item"><span class="seta"><i data-i="baixo" data-t="12"></i></span><b style="font-weight:600">Fontes</b><span class="sub">3</span></div>
+        <div class="item n2"><i data-i="arquivo" data-t="14" style="color:var(--texto2)"></i>captura_0930.bin<span class="sub"><span class="badge ok">✓</span></span></div>
+        <div class="item n3" style="color:var(--mudo);font-size:11.5px;height:20px">400 kS/s · 2 canais · 1 h 02 · 2,98 GB</div>
+        <div class="item n3 sel"><span class="ponto" style="background:var(--t1)"></span>V_A<span class="sub">tensão · cadeia_tensao</span></div>
+        <div class="item n3"><span class="ponto" style="background:var(--t2)"></span>I_A<span class="sub">corrente · sct013</span></div>
+        <div class="item n2"><i data-i="arquivo" data-t="14" style="color:var(--texto2)"></i>captura_1410.bin<span class="sub"><span class="badge ok">✓</span></span></div>
+        <div class="item n3"><span class="ponto" style="background:var(--t4)"></span>V_A<span class="sub">tensão</span></div>
+        <div class="item n3"><span class="ponto vazio"></span>I_A<span class="sub">corrente</span></div>
+        <div class="item n2"><i data-i="arquivo" data-t="14" style="color:var(--texto2)"></i>tek_0931.csv<span class="sub"><span class="badge">osciloscópio</span></span></div>
+        <div class="item" style="margin-top:8px"><span class="seta"><i data-i="baixo" data-t="12"></i></span><b style="font-weight:600">Vistas</b><span class="sub">3</span></div>
+        <div class="item n2"><i data-i="onda" data-t="14" style="color:var(--acento)"></i>Afundamento das 09h30</div>
+        <div class="item n2"><i data-i="espectro" data-t="14" style="color:var(--texto2)"></i>Espectro 2–150 kHz</div>
+        <div class="item n2"><i data-i="grade" data-t="14" style="color:var(--texto2)"></i>Bandas IEC × tempo</div>
+        <div class="item" style="margin-top:8px"><span class="seta"><i data-i="baixo" data-t="12"></i></span><b style="font-weight:600">Figuras</b><span class="sub">1</span></div>
+        <div class="item n2"><i data-i="pagina" data-t="14" style="color:var(--texto2)"></i>Fig. 3 · afundamento<span class="sub">IEEE</span></div>
+        <div class="item" style="margin-top:8px"><span class="seta"><i data-i="direita" data-t="12"></i></span><b style="font-weight:600">Caderno de bancada</b><span class="sub">12/11</span></div>
+      </div>
+      <div style="padding:10px;border-top:1px solid var(--borda)"><span class="botao" style="width:100%;justify-content:center"><i data-i="baixar"></i>Importar dados…</span></div>
+    </aside>
+
+    <!-- CENTRO -->
+    <section class="centro">
+      <div class="abas">
+        <span class="aba ativa"><i data-i="onda" data-t="14"></i>Afundamento das 09h30</span>
+        <span class="aba"><i data-i="espectro" data-t="14"></i>Espectro 2–150 kHz</span>
+        <span class="aba"><i data-i="grade" data-t="14"></i>Bandas IEC × tempo</span>
+        <span class="aba" style="color:var(--mudo)"><i data-i="mais" data-t="14"></i></span>
+      </div>
+      <div class="ferramentas">
+        <span class="icone-botao ativo"><i data-i="ponteiro"></i></span><span class="icone-botao"><i data-i="zoom"></i></span>
+        <span class="icone-botao"><i data-i="mao"></i></span><span class="icone-botao ativo"><i data-i="cursores"></i></span>
+        <span class="icone-botao"><i data-i="regua"></i></span><span class="icone-botao"><i data-i="texto"></i></span>
+        <span class="div"></span>
+        <div class="seg" style="font-size:12px"><span class="ativo">Envoltória</span><span>Densidade</span></div>
+        <div class="seg" style="font-size:12px;margin-left:6px"><span>Sobrepor</span><span class="ativo">Faixas</span></div>
+        <span class="espaco"></span>
+        <span class="info num" style="white-space:nowrap">1 262,80–1 263,45 s · 650 ms · 260 k amostras</span>
+        <span class="div"></span>
+        <span class="icone-botao"><i data-i="expandir"></i></span><span class="icone-botao"><i data-i="imagem"></i></span><span class="icone-botao"><i data-i="mais_h"></i></span>
+      </div>
+      <div class="grafico" id="g1">
+        <div class="legenda" style="left:72px;top:18px">
+          <span class="chip-traco sel"><span class="ponto" style="background:var(--t1)"></span>V_A · 09h30<span class="fx">sonda · −DC</span></span>
+          <span class="chip-traco"><span class="ponto" style="background:var(--t4)"></span>V_A · 14h10<span class="fx">+4,2 ms</span></span>
+        </div>
+        <div class="legenda" id="leg2" style="left:72px"><span class="chip-traco"><span class="ponto" style="background:var(--t2)"></span>I_A · 09h30<span class="fx">sonda</span></span></div>
+        <div class="legenda" id="leg3" style="left:72px"><span class="chip-traco prog"><span class="ponto" style="background:var(--t3)"></span>V_A · supraharmônicos<span class="fx">passa-altas 2 kHz · 62 %</span></span></div>
+        <span class="rotulo-cursor" id="rc1">C1 · 1 262,900 s</span>
+        <span class="rotulo-cursor" id="rc2">C2 · 1 263,350 s</span>
+        <div class="dica" id="dica" style="width:206px">
+          <div class="l" style="color:var(--texto2)">t = 1 263,0917 s</div>
+          <div class="l"><span class="ponto" style="background:var(--t1)"></span>V_A 09h30<span class="espaco"></span><b>−121,6 V</b></div>
+          <div class="l"><span class="ponto" style="background:var(--t4)"></span>V_A 14h10<span class="espaco"></span><b>−168,9 V</b></div>
+          <div class="l"><span class="ponto" style="background:var(--t2)"></span>I_A 09h30<span class="espaco"></span><b>−38,4 A</b></div>
+        </div>
+      </div>
+      <div class="mini" id="mini"></div>
+      <div class="inferior">
+        <div class="abas"><span class="aba ativa">Medidas</span><span class="aba">Cursores</span><span class="aba">Tarefas <span class="badge acento">2</span></span><span class="aba">Avisos <span class="badge aviso">1</span></span></div>
+        <div style="overflow:hidden">
+          <table class="tabela">
+            <tr><th>Traço</th><th>Região</th><th class="d">RMS</th><th class="d">Pico</th><th class="d">Pico a pico</th><th class="d">f₁</th><th class="d">THD</th><th class="d">Supra (2–150 kHz)</th></tr>
+            <tr><td><span class="ponto" style="background:var(--t1);display:inline-block;margin-right:6px"></span>V_A · 09h30</td><td>C1 → C2 · 450 ms</td><td class="d">98,7 V</td><td class="d">185,9 V</td><td class="d">322,4 V</td><td class="d">59,998 Hz</td><td class="d">2,1 %</td><td class="d">3,92 V</td></tr>
+            <tr><td><span class="ponto" style="background:var(--t4);display:inline-block;margin-right:6px"></span>V_A · 14h10</td><td>C1 → C2 · 450 ms</td><td class="d">125,8 V</td><td class="d">180,2 V</td><td class="d">359,7 V</td><td class="d">60,003 Hz</td><td class="d">1,8 %</td><td class="d">1,07 V</td></tr>
+            <tr><td><span class="ponto" style="background:var(--t2);display:inline-block;margin-right:6px"></span>I_A · 09h30</td><td>C1 → C2 · 450 ms</td><td class="d">29,4 A</td><td class="d">71,3 A</td><td class="d">139,8 A</td><td class="d">59,998 Hz</td><td class="d">31,7 %</td><td class="d">0,64 A</td></tr>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- INSPETOR -->
+    <aside class="painel dir">
+      <div class="painel-cab">Inspetor<span class="espaco"></span><span class="icone-botao"><i data-i="mais_h"></i></span></div>
+      <div style="padding:0 12px 10px;display:flex;align-items:center;gap:10px">
+        <span class="ponto" style="background:var(--t1);width:12px;height:12px"></span>
+        <div><div style="font-weight:650;font-size:14px">V_A · 09h30</div><div style="color:var(--mudo);font-size:12px">captura_0930.bin · canal 0 · tensão</div></div>
+      </div>
+      <div class="rolar">
+        <div class="secao">
+          <div class="secao-tit">Aparência</div>
+          <div class="linha"><span class="rotulo">Cor</span><div class="cores"><span class="sel" style="background:var(--t1)"></span><span style="background:var(--t2)"></span><span style="background:var(--t3)"></span><span style="background:var(--t4)"></span><span style="background:var(--t5)"></span><span style="background:var(--t6)"></span></div></div>
+          <div class="linha"><span class="rotulo">Linha</span><div class="dupla"><span class="campo num">1,5<span class="un">px</span></span><span class="campo">Contínua<i data-i="baixo" data-t="12" style="margin-left:auto;color:var(--mudo)"></i></span></div></div>
+        </div>
+        <div class="secao">
+          <div class="secao-tit">Escala e tempo</div>
+          <div class="linha"><span class="rotulo">Eixo Y</span><span class="campo">Faixa 1 · Tensão<i data-i="baixo" data-t="12" style="margin-left:auto;color:var(--mudo)"></i></span></div>
+          <div class="linha"><span class="rotulo">Ganho · offset</span><div class="dupla"><span class="campo num">× 1,000</span><span class="campo num">0,00<span class="un">V</span></span></div></div>
+          <div class="linha"><span class="rotulo">Deslocamento</span><div class="dupla"><span class="campo num foco">0,000<span class="un">ms</span></span><span class="botao" style="justify-content:center">Alinhar…</span></div></div>
+        </div>
+        <div class="secao">
+          <div class="secao-tit">Processamento<span class="sub">na ordem</span></div>
+          <div class="etapa"><span class="alca"><i data-i="alca" data-t="14"></i></span><i data-i="sonda" style="color:var(--acento)"></i><div class="txt">Correção da sonda<small>cadeia_tensao_fase · válida 30 Hz–150 kHz</small></div><span class="chave on"></span></div>
+          <div class="etapa"><span class="alca"><i data-i="alca" data-t="14"></i></span><i data-i="filtro" style="color:var(--acento)"></i><div class="txt">Remover o nível DC<small>média móvel de 1 ciclo</small></div><span class="chave on"></span></div>
+          <div class="etapa off"><span class="alca"><i data-i="alca" data-t="14"></i></span><i data-i="filtro"></i><div class="txt">Passa-baixas 150 kHz<small>Butterworth 4ª ordem · fase zero</small></div><span class="chave"></span></div>
+          <div style="margin-top:8px"><span class="botao fantasma" style="padding:0 4px;color:var(--acento)"><i data-i="mais"></i>Adicionar etapa</span></div>
+        </div>
+        <div class="secao">
+          <div class="secao-tit">Na região C1 → C2<span class="sub">450 ms</span></div>
+          <div class="metricas">
+            <div class="metrica"><div class="r">RMS</div><div class="v">98,7<small>V</small></div></div>
+            <div class="metrica"><div class="r">f₁</div><div class="v">59,998<small>Hz</small></div></div>
+            <div class="metrica"><div class="r">Afundamento</div><div class="v">71<small>% · 450 ms</small></div></div>
+            <div class="metrica"><div class="r">Supra 2–150 kHz</div><div class="v">3,92<small>V</small></div></div>
+          </div>
+        </div>
+        <div class="secao" style="display:flex;align-items:center;gap:8px"><i data-i="escudo" style="color:var(--ok)"></i><span style="color:var(--texto2);font-size:12px">CRC das amostras conferido</span><span class="espaco"></span><span class="botao fantasma" style="padding:0 2px;color:var(--acento);font-size:12px"><i data-i="copiar" data-t="14"></i>Comando da CLI</span></div>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="barra-status">
+    <span>captura_0930.bin · 400 kS/s · 2 canais · cabeçalho v9</span><span class="sep"></span>
+    <span style="color:var(--ok)">✓ integridade</span><span class="sep"></span><span>pirâmide pronta · 7 níveis</span>
+    <span class="espaco"></span>
+    <span>Welch da captura inteira · 64 %</span><span class="sep"></span><span class="num">60 q/s</span>
+  </footer>
+</div>
+<script src="desenho.js"></script>
+<script>
+  const supra = (t, r) => {
+    const fase = Math.sin(TAU * 60 * t);
+    return ((fase < 0 ? 5.6 : 1.1) * Math.sin(TAU * 20000 * t) + 1.7 * Math.sin(TAU * 40040 * t)) * (t > 1262.9 && t < 1263.35 ? 1.35 : 1) + (r() - 0.5) * 0.7;
+  };
+  const v1410 = (t, r) => 0.992 * 179.6 * Math.sin(TAU * 60 * t + 1.58) + 1.1 * Math.sin(TAU * 20000 * t) + (r() - 0.5) * 1.1;
+  const g = grafico(document.getElementById("g1"), {
+    x0: 1262.80, x1: 1263.45, unX: "s", fmtX: (v) => br(v, 2),
+    cursores: [{ t: 1262.9 }, { t: 1263.35 }], regiao: [1262.9, 1263.35],
+    faixas: [
+      { peso: 1.35, y0: -240, y1: 240, unY: "V", tracos: [
+        { f: v1410, cor: "--t4", larg: 1.3, traco: "4 3", semente: 3 },
+        { modo: "banda", f: tensao, cor: "--t1", sel: true, semente: 5 }] },
+      { peso: 1, y0: -90, y1: 90, unY: "A", tracos: [{ modo: "banda", f: corrente, cor: "--t2", semente: 9 }] },
+      { peso: 0.8, y0: -12, y1: 12, unY: "V", tracos: [{ modo: "banda", f: supra, cor: "--t3", semente: 13 }] },
+    ],
+  });
+  document.getElementById("leg2").style.top = g.caixas[1].y + 6 + "px";
+  document.getElementById("leg3").style.top = g.caixas[2].y + 6 + "px";
+  const c1 = g.xPix(1262.9), c2 = g.xPix(1263.35);
+  Object.assign(document.getElementById("rc1").style, { left: c1 - 50 + "px", top: "-1px" });
+  Object.assign(document.getElementById("rc2").style, { left: c2 - 50 + "px", top: "-1px" });
+  const xd = g.xPix(1263.0917);
+  Object.assign(document.getElementById("dica").style, { left: xd + 14 + "px", top: g.caixas[0].y + g.caixas[0].h * 0.55 + "px" });
+  const svg = document.querySelector("#g1 svg");
+  svgEl("line", { x1: xd, x2: xd, y1: 12, y2: g.H - 28, stroke: cssVar(document.body, "--texto2"), "stroke-width": 1, opacity: 0.55 }, svg);
+  // minimapa: a captura inteira, com a janela visível
+  const gm = grafico(document.getElementById("mini"), {
+    x0: 0, x1: 3720, margem: { l: 62, r: 16, t: 6, b: 6 }, semGradeX: true, vao: 0, fmtX: () => "",
+    faixas: [{ y0: -230, y1: 230, unY: "", ticksY: [], tracos: [{ modo: "banda", env: envTensao, cor: "--t1", opac: 0.55 }] }],
+  });
+  const ms = document.querySelector("#mini svg");
+  const xa = gm.xPix(1262.8);
+  const janela = svgEl("rect", { x: xa - 3, y: 3, width: 6, height: 52, rx: 2, fill: "none", "stroke-width": 1.5 }, ms);
+  janela.style.stroke = "var(--destaque)";
+  const rot = svgEl("text", { x: 8, y: 33, "font-size": 10.5, "font-weight": 600 }, ms);
+  rot.style.fill = "var(--mudo)";
+  rot.textContent = "1 h 02";
+</script>
+</body>
+</html>
