@@ -44,6 +44,7 @@ scripts/
   supraharmonicos/        ← TODA a lógica Python (seção 3)
   sh_analyzer_gui/        a interface gráfica (PySide6), em construção: chama o supraharmonicos, nunca o contrário
                           (docs/gui-plan.md); recursos/ leva uma cópia do ícone da marca
+  benchmarks/             as medidas que decidiram o motor de gráficos da interface (docs/gui-plan.md, seção 6.2)
   ci.sh                   o que a CI roda, igual na sua máquina (seção 7.1)
 tests/                    pytest (seção 7)
 report/gerar_figuras.py   figuras do relatório/artigo (estilo único, PDF vetorial + macros siunitx);
@@ -52,7 +53,7 @@ report/figures/           saída do script acima (gerada, fora do git)
 report/gerar_marca.py     a marca em SVG (banner do README, logo, ícone do aplicativo), gravada em docs/images/;
                           só biblioteca padrão, saída determinística (os SVGs são commitados)
 docs/                     documentação (este arquivo, user-guide.md, lab-procedure.md, project-context.md...)
-                          e referências (datasheets/, fapesp/, images/)
+                          e referências (datasheets/, fapesp/, images/); os mockups da interface em gui-mockups/
 hardware/DAQ_Module/      projeto da PCB (Altium)
 .github/workflows/ci.yml  testes automáticos no GitHub (seção 7.1)
 pyproject.toml            dependências, configuração de pytest e ruff
