@@ -23,8 +23,10 @@ testes() {   # $1 = versão do Python; o resto vai para o pytest
     shift
     etapa "ruff (Python ${py})"
     uv run --python "$py" --extra dev ruff check .
+    # --extra gui: o PyQt6, para os testes da interface gráfica (sem tela: QT_QPA_PLATFORM=offscreen, que o
+    # tests/test_gui.py liga sozinho). Sem o extra, esses testes são pulados.
     etapa "pytest (Python ${py}) $*"
-    uv run --python "$py" --extra dev pytest "$@"
+    uv run --python "$py" --extra dev --extra gui pytest "$@"
 }
 
 firmware() {

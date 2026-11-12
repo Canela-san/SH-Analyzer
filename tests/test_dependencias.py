@@ -109,7 +109,7 @@ def pyproject() -> dict:
 def test_os_scripts_executaveis_foram_encontrados():
     nomes = {p.name for p in EXECUTAVEIS}
     assert {"adc_tool.py", "gerar_perfil_sonda.py", "medir_captura.py", "compactar_amostras.py",
-            "gerar_figuras.py", "ler_adc_falso.py"} <= nomes
+            "gerar_figuras.py", "ler_adc_falso.py", "adc_gui.py"} <= nomes
 
 
 @pytest.mark.parametrize("script", EXECUTAVEIS, ids=IDS)
@@ -142,16 +142,20 @@ def test_detector_de_imports_enxerga_o_pacote_e_ignora_imports_sob_demanda():
     """Sanidade do próprio teste: o fecho do adc_tool passa pelo pacote (o numpy vem de lá, não da entrada) e não
     inclui o que só é importado dentro de uma função -- SciPy, matplotlib e h5py são carregados sob demanda."""
     assert "numpy" in _externos_ao_carregar(SCRIPTS / "medir_captura.py")      # o detector segue o pacote
-    for script in ("adc_tool.py", "medir_captura.py", "gerar_perfil_sonda.py"):
+    for script in ("adc_tool.py", "medir_captura.py", "gerar_perfil_sonda.py", "adc_gui.py"):
         externos = _externos_ao_carregar(SCRIPTS / script)
-        assert not externos & {"scipy", "matplotlib", "h5py", "rich"}, (script, externos)
+        assert not externos & {"scipy", "matplotlib", "h5py", "rich", "PyQt6"}, (script, externos)
 
 
 def test_pacote_nao_importa_nada_fora_das_dependencias_declaradas(pyproject):
     declaradas = {nome_e_spec(r)[0] for r in pyproject["project"]["dependencies"]}
     permitidos = {"numpy", "scipy", "matplotlib", "h5py", "rich"}
     assert permitidos == declaradas
+    # O PyQt6 é o extra 'gui': só a interface gráfica (gui.py e a sua borda, cli_gui.py) pode importá-lo.
+    extra_gui = {nome_e_spec(r)[0] for r in pyproject["project"]["optional-dependencies"]["gui"]}
+    assert extra_gui == {"pyqt6"}
     for p in PACOTE.glob("*.py"):
+        permitidos_aqui = permitidos | ({"PyQt6"} if p.stem in ("gui", "cli_gui") else set())
         for no in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
             if isinstance(no, ast.Import):
                 nomes = [a.name.split(".")[0] for a in no.names]
@@ -160,4 +164,4 @@ def test_pacote_nao_importa_nada_fora_das_dependencias_declaradas(pyproject):
             else:
                 continue
             for n in nomes:
-                assert n in sys.stdlib_module_names or n in permitidos, f"{p.name}: dependência não declarada '{n}'"
+                assert n in sys.stdlib_module_names or n in permitidos_aqui, f"{p.name}: dependência não declarada '{n}'"

@@ -8,7 +8,7 @@ Passo a passo para quem vai **operar** o SH-Analyzer: capturar na BeagleBone, an
 2. [Preparar a BeagleBone](#preparar-a-beaglebone)
 3. [Capturar com `ler_adc`](#capturar-com-ler_adc)
 4. [Levar a captura para o computador](#levar-a-captura-para-o-computador) e [onde guardar os dados](#onde-guardar-os-dados)
-5. [Analisar com `adc_tool.py`](#analisar-com-adc_toolpy)
+5. [Analisar com `adc_tool.py`](#analisar-com-adc_toolpy) e [numa janela: `adc_gui.py`](#a-interface-gráfica-adc_guipy)
 6. [FFT ou Welch?](#fft-ou-welch)
 7. [Sondas de corrente: calibração e correção](#sondas-de-corrente-calibração-e-correção)
 8. [Medir uma captura para o relatório: `medir_captura.py`](#medir-uma-captura-para-o-relatório-medir_capturapy)
@@ -386,6 +386,36 @@ Sem cabeçalho, informe você mesmo a frequência total e a lista de canais, na 
 # Captura feita com: sudo ./ler_adc 102400 0,1,3
 uv run scripts/adc_tool.py captura.bin -f 102400 --canais 0,1,3 --fft
 ```
+
+---
+
+## A interface gráfica: `adc_gui.py`
+
+A mesma análise, numa janela:
+
+```bash
+uv run scripts/adc_gui.py                  # abre a janela; depois Arquivo > Abrir, ou arraste o .bin para ela
+uv run scripts/adc_gui.py captura.bin      # já abre a captura
+uv run scripts/adc_tool.py gui captura.bin # o mesmo, como subcomando
+```
+
+O `uv` traz o PyQt6 na primeira execução (é o extra `gui` do projeto; a análise pela linha de comando não precisa dele). A janela precisa de uma tela: por SSH, use o `adc_tool.py` com `-o`.
+
+<p align="center">
+  <img src="images/adc-gui.png" alt="A janela do SH-Analyzer: à esquerda o painel de parâmetros, com o resumo da captura e o comando equivalente; à direita as abas com a forma de onda e o espectro, o espectrograma, as bandas IEC, as tabelas e o console" width="900">
+</p>
+
+**O que há nela.**
+
+* **À esquerda, o painel de parâmetros**: o resumo do cabeçalho da captura (título, data, taxa, canais com grandeza, faixa e sonda, integridade, CRC) e os mesmos controles do `adc_tool.py`, agrupados como no `--help`: canais e trecho, calibração e sonda, filtros, FFT (com a tabela de harmônicos), Welch (com o espectrograma), janela e modo do espectro, bandas e picos, bandas IEC, forma de onda. Uma captura sem cabeçalho pede a taxa e os canais, como a CLI.
+* **No rodapé do painel, o comando equivalente**: a linha de comando do `adc_tool.py` que faz exatamente o que a janela vai fazer, atualizada a cada mudança, com o botão **Copiar** (ou Ctrl+Shift+C). É ela que a janela executa: os controles viram flags, as flags passam pelo mesmo parser e pelo mesmo pipeline da CLI, e o resultado é reproduzível no terminal, num script ou no roteiro de laboratório.
+* **À direita, as abas**: *Forma de onda e espectro* (o mesmo gráfico do `adc_tool.py`, com a barra do matplotlib: zoom, arrasto, salvar), *Espectrograma*, *Bandas IEC* (as figuras do `--espectrograma` e do `--bandas-iec`), *Harmônicos* (a tabela do `--harmonicos`, com THD e THDG, por canal), *Picos* (os do `--picos`, por canal e método), *Bandas IEC (tabela)* (P95, máximo, RMS e mínimo de cada banda, e os P95 de 3 s e 10 min quando agregados) e *Console* (tudo o que a CLI imprimiria, inclusive os avisos).
+* **No menu Análise, três atalhos**: só a forma de onda; a rede (FFT e harmônicos); os supraharmônicos (Welch, picos e bandas IEC, com o passa-alta de 2 kHz). Eles só marcam os controles: ajuste o que quiser antes de **Analisar** (F5).
+* **No menu Arquivo, a exportação**: a figura da aba atual (PNG, PDF ou SVG), os CSVs com o JSON de metadados (o `--exportar`), o `.mat` (o `--exportar-mat`) e o HDF5 (o `--export-hdf5`, com a calibração e o trecho do painel). Os arquivos são os mesmos da CLI.
+
+**Como ela funciona, para saber o que esperar.** A análise roda fora da thread da janela (a barra de progresso aparece e o botão trava até ela acabar), mas uma captura longa demora o mesmo que na CLI, e ainda não dá para cancelá-la: numa captura de minutos, marque **Envoltória mín/máx** (o `--simplificar`) ou limite o trecho antes. Uma captura de até 2 blocos (~5 s a 400 kS/s) é analisada ao abrir, só a forma de onda; as maiores esperam o F5. Um erro de dados ou de flags (a fundamental fora da busca, um `--faixa` inválido) aparece numa caixa de diálogo e no console, com a mesma mensagem da CLI. A janela lembra os últimos arquivos abertos e o tamanho dela entre sessões.
+
+**O que ela não faz.** Capturar: a captura continua sendo o `ler_adc` na BeagleBone (e o `coletar.sh` para as coletas); a janela analisa o `.bin` depois de trazido. As outras ferramentas (`medir_captura.py`, `medir_fase.py`, `gerar_perfil_sonda.py`, `compactar_amostras.py`, `adc_tool.py aliasing`) continuam na linha de comando.
 
 ---
 

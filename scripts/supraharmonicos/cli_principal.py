@@ -1,8 +1,9 @@
 """Porta de entrada única do SH-Analyzer: ``adc_tool.py [SUBCOMANDO] ...``.
 
 Cada subcomando é uma das CLIs do pacote, carregada só quando pedida -- ``adc_tool.py info`` não carrega o SciPy
-nem o matplotlib, e ``adc_tool.py compactar`` é o único que carrega o ``rich``. Sem subcomando (o primeiro argumento
-é um arquivo ou uma opção), é a análise, como sempre foi: ``adc_tool.py captura.bin --fft`` continua valendo.
+nem o matplotlib, ``adc_tool.py compactar`` é o único que carrega o ``rich`` e ``adc_tool.py gui``, o único que
+carrega o PyQt6. Sem subcomando (o primeiro argumento é um arquivo ou uma opção), é a análise, como sempre foi:
+``adc_tool.py captura.bin --fft`` continua valendo.
 
 Os scripts antigos (``medir_captura.py``, ``gerar_perfil_sonda.py``, ``compactar_amostras.py``) continuam
 funcionando e chamam as mesmas CLIs: os comandos do roteiro de laboratório não mudam.
@@ -48,6 +49,11 @@ def _aliasing(argv: list[str]) -> int:
     return main(argv)
 
 
+def _gui(argv: list[str]) -> int:
+    from .cli_gui import main
+    return main(argv)
+
+
 SUBCOMANDOS: dict[str, tuple[Callable[[list[str]], int], str]] = {
     "analisar": (_analisar, "(o padrão) forma de onda, FFT, Welch, harmônicos, bandas IEC, espectrograma, picos e "
                             "exportação (CSV/JSON/MATLAB) de uma captura"),
@@ -61,6 +67,8 @@ SUBCOMANDOS: dict[str, tuple[Callable[[list[str]], int], str]] = {
                               "verifica pacotes -- o mesmo que compactar_amostras.py"),
     "aliasing": (_aliasing, "separa componentes reais de imagens de aliasing com duas capturas do mesmo sinal em "
                             "taxas diferentes"),
+    "gui": (_gui, "a análise numa janela (PyQt6): gráficos, tabelas e exportação, com o comando equivalente à "
+                  "vista -- o mesmo que adc_gui.py"),
 }
 
 

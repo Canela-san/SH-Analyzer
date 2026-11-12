@@ -44,7 +44,8 @@ def montar_parser() -> argparse.ArgumentParser:
     p.add_argument("--freq-min", type=float, default=CORTE_SUPRAHARMONICOS_PADRAO, metavar="HZ",
                    help="Menor frequência analisada (padrão: %(default)g Hz, abaixo fica a rede e os harmônicos dela).")
     p.add_argument("--freq-max", type=float, metavar="HZ",
-                   help=f"Maior frequência analisada (padrão: {FRACAO_DA_NYQUIST:.0%} da Nyquist de cada captura).")
+                   help=f"Maior frequência analisada (padrão: {FRACAO_DA_NYQUIST * 100:.0f} %% da Nyquist de cada "
+                        f"captura).")      # %%: o argparse formata a ajuda com %, e um % solto quebra (Python 3.14 confere ao declarar)
     p.add_argument("--acima-do-piso", type=float, default=20.0, metavar="DB",
                    help="Um pico conta se passar este tanto da mediana do espectro na faixa (padrão: %(default)g dB).")
     p.add_argument("--resolucao", type=float, default=25.0, metavar="HZ",

@@ -16,11 +16,12 @@ firmware/coletar.sh sonda ──▶ capturas/<sonda>/calibracao_*.bin   (os outr
 scripts/gerar_perfil_sonda.py ──▶ scripts/sondas/<id>.json   (perfil de resposta em frequência da sonda)
                                    │
 scripts/adc_tool.py captura.bin  ──▶ gráfico / espectro (FFT, Welch, picos, bandas) / .csv / .h5
+scripts/adc_gui.py captura.bin   ──▶ a mesma análise numa janela (PyQt6): gráficos, tabelas, exportação, o comando equivalente
 scripts/medir_captura.py captura.bin ──▶ números para o relatório (ruído, THD, SINAD, ENOB, SFDR, continuidade, jitter, diafonia) / .csv
 scripts/compactar_amostras.py pasta/ ──▶ pasta_<data>.zpaq.tar  (arquivamento sem perdas, conferido pelo SHA-256)
 ```
 
-Todo o código Python vive no **pacote `scripts/supraharmonicos/`**. Os quatro arquivos `scripts/adc_tool.py`, `scripts/gerar_perfil_sonda.py`, `scripts/medir_captura.py` e `scripts/compactar_amostras.py` são **entradas finas** (menos de 40 linhas): só chamam `main()` do pacote. Eles mantêm o bloco PEP 723 (`# /// script`), então `uv run scripts/adc_tool.py ...` continua funcionando sem instalar nada.
+Todo o código Python vive no **pacote `scripts/supraharmonicos/`**. Os arquivos `scripts/adc_tool.py`, `scripts/adc_gui.py`, `scripts/gerar_perfil_sonda.py`, `scripts/medir_captura.py`, `scripts/medir_fase.py` e `scripts/compactar_amostras.py` são **entradas finas** (menos de 40 linhas): só chamam `main()` do pacote. Eles mantêm o bloco PEP 723 (`# /// script`), então `uv run scripts/adc_tool.py ...` continua funcionando sem instalar nada.
 
 Três ideias organizam tudo:
 
@@ -36,7 +37,8 @@ Três ideias organizam tudo:
 firmware/                 C/Assembly (ARM + PRU) — fora deste guia — e o coletar.sh (bash; os modos em coleta/)
                           (coleta interativa de calibração de sonda, bash puro)
 scripts/
-  adc_tool.py             entrada fina: CLI de análise/conversão/exportação
+  adc_tool.py             entrada fina: CLI de análise/conversão/exportação (e os subcomandos, inclusive `gui`)
+  adc_gui.py              entrada fina: a interface gráfica (PyQt6) da análise; = `adc_tool.py gui`
   gerar_perfil_sonda.py   entrada fina: CLI do gerador de perfis de sonda
   medir_captura.py        entrada fina: CLI das métricas de captura (para o relatório)
   compactar_amostras.py   entrada fina: arquivar/restaurar capturas sem perdas (pacote .zpaq.tar)
@@ -87,7 +89,8 @@ Camada = quem pode importar quem (um módulo só importa camadas **menores**).
 | 1 | `filtros` | Butterworth SOS, fase zero | `aplicar_filtro_digital`, `validar_corte_filtro` |
 | 1 | `fundamental` | Fundamental da rede: cruzamentos por zero (base da `--fft` e das janelas sincronizadas), corte em ciclos inteiros, refino parabólico | `cruzamentos_da_fundamental`, `recortar_ciclos_inteiros`, `refinar_pico_parabolico` |
 | 1 | `sonda` | Perfil de sonda (JSON), interpolação PCHIP, correção em frequência, idade do perfil | `PerfilSonda`, `carregar_perfil_sonda`, `resolver_perfil_canal`, `aplicar_correcao_sonda`, `conferir_idade_perfil` |
-| 1 | `plotagem` | Gráficos (único módulo que importa `matplotlib` no topo) | `plotar_multicanal` |
+| 1 | `plotagem` | Gráficos (importa `matplotlib` no topo; só a `gui` o faz também). Cada figura em duas funções: `desenhar_*(fig, ...)` desenha numa `Figure` dada (a da janela da GUI) e `plotar_*` cria a figura, desenha e salva (`-o`) ou mostra | `desenhar_multicanal`, `plotar_multicanal`, `desenhar_espectrogramas`, `desenhar_bandas_iec`, `desenhar_forma_de_onda` |
+| 1 | `opcoes_analise` | As flags do `adc_tool` (o parser) e a validação dos números que o argparse aceita mas quebrariam adiante; compartilhado pela CLI (`cli_adc_tool`) e pela GUI, que monta uma linha de comando e a passa pelo mesmo parser | `montar_parser`, `validar_flags_numericas` |
 | 1 | `referencia` | O que foi injetado numa calibração: amplitude com unidade e tipo (`500mVpp`), frequência e o marcador `ref: f=.. amp=..` dos metadados | `analisar_amplitude`, `pico_fisico`, `extrair_referencia`, `formatar_referencia` |
 | 1 | `harmonicos` | Tabela de harmônicos sobre ciclos inteiros: componente e grupo (IEC 61000-4-7), % da fundamental, fase no referencial seno, THD/THDG (só numpy) | `calcular_harmonicos`, `TabelaHarmonicos` |
 | 1 | `bandas_iec` | Bandas de 200 Hz em janelas sem lacunas (IEC 61000-4-7, anexo B): 200 ms fixos ou, como extra, 10/12 ciclos sincronizados (as janelas vêm de quem chama); série no tempo, estatísticas (RMS, máximo, P95, mínimo) e, como extra, a agregação de 3 s/10 min da IEC 61000-4-30 (só numpy) | `calcular_bandas_iec`, `BandasIEC`, `janelas_dos_cruzamentos`, `agregar_iec` |
@@ -104,10 +107,11 @@ Camada = quem pode importar quem (um módulo só importa camadas **menores**).
 | 2 | `razao_quadrada` | A razão H_a/H_b por harmônico entre dois canais capturados juntos (a mesma onda nos dois): média coerente por blocos, o atraso entre os canais da varredura descontado, a fase absoluta sem modelo nem fase mínima; a subtração da diafonia | `medir_razao`, `RazaoQuadrada`, `subtrair_diafonia`, `pontos_da_razao` |
 | 2 | `ancora_perfil` | A âncora do método de um canal num perfil com fase absoluta: K e o atraso pela sobreposição, e o perfil combinado | `ajustar_a_ancora`, `curva_ancorada`, `pontos_combinados` |
 | 3 | `aliasing` | Imagens de aliasing por duas capturas em taxas diferentes: onde uma entrada aparece em cada taxa (`dobrar`), as entradas que explicam um pico, o pareamento dos picos das duas (amplitude que bate primeiro, a entrada mais baixa depois) e as posições que duas taxas não separam | `dobrar`, `entradas_possiveis`, `picos_do_sinal`, `parear`, `entradas_ambiguas`, `Componente` |
-| 3 | `modos` | Os 3 modos do `adc_tool` (plotagem, conversão, HDF5); a plotagem é um pipeline de etapas pequenas (espectros, harmônicos, bandas IEC, espectrograma, exportação, gráficos) | `executar_plotagem`, `executar_conversao`, `executar_exportacao_hdf5`, `montar_metadados` |
+| 3 | `modos` | Os 3 modos do `adc_tool` (plotagem, conversão, HDF5); a plotagem é um pipeline de etapas pequenas (espectros, harmônicos, bandas IEC, espectrograma). O cálculo (`analisar_captura`, que devolve um `ResultadoAnalise`: sinal em volts, espectros, tabelas, rótulos) é separado da exportação (`exportar_resultados`) e do gráfico: `executar_plotagem` (a CLI) e a `gui` usam o mesmo resultado | `analisar_captura`, `ResultadoAnalise`, `exportar_resultados`, `executar_plotagem`, `executar_conversao`, `executar_exportacao_hdf5`, `montar_metadados` |
 | 3 | `calibracao_sonda` | Medir tons de calibração (Welch localiza, FFT única mede), ganho vs o que foi injetado (amplitude conhecida, osciloscópio, shunt), agregar repetições, resumir a resposta do conjunto | `medir_tom`, `processar_captura`, `agregar_por_frequencia`, `resumir_resposta` |
 | 4 | `escrita_perfil` | Monta o JSON do perfil, grava com segurança (`.tmp` → validação → `.bak` → troca), gráfico de diagnóstico e o diagrama de Bode das quadradas | `montar_perfil_json`, `gravar_perfil_validado`, `gerar_grafico_bode` |
-| 4 | `cli_adc_tool` | **Borda**: flags do `adc_tool` e `main()` | `montar_parser`, `main` |
+| 4 | `cli_adc_tool` | **Borda**: `main()` do `adc_tool` (roda o parser de `opcoes_analise`, escolhe o modo, traduz exceções em código de saída); reexporta `montar_parser` | `main`, `montar_parser` |
+| 4 | `gui` | **A interface gráfica** (PyQt6 + matplotlib embutido): o painel de parâmetros vira uma linha de comando do `adc_tool` (`PainelParametros.argv`), que passa pelo parser de `opcoes_analise` e por `modos.analisar_captura` numa thread à parte; o resultado é desenhado por `plotagem.desenhar_*` e mostrado em tabelas (harmônicos, picos, bandas IEC); o `logging` do pacote vai para a aba "Console" por um handler que emite um sinal do Qt; exportação (CSV/JSON, `.mat`, HDF5, figuras) e o comando equivalente copiável. Sem análise própria | `JanelaPrincipal`, `PainelParametros`, `PainelFigura`, `executar` |
 | 4 | `cli_aliasing` | **Borda**: `adc_tool.py aliasing`: lê as duas capturas (a taxa do cabeçalho, o sinal em V no pino), acha os picos, pareia, imprime a tabela e as posições ambíguas, grava o CSV | `montar_parser`, `main` |
 | 4 | `cli_info` | **Borda**: `adc_tool.py info`, o resumo de cada captura e as estatísticas por canal em blocos (só numpy) | `montar_parser`, `main` |
 | 4 | `cli_compactar` | **Borda**: comandos `compactar`/`extrair`/`listar`/`verificar` e a interface (`rich`: tabelas, barras com estimativa de tempo, confirmações) | `montar_parser`, `main`, `Painel` |
@@ -115,8 +119,9 @@ Camada = quem pode importar quem (um módulo só importa camadas **menores**).
 | 5 | `cli_gerar_perfil` | **Borda**: flags do gerador e `main()`; `--reter` (hold-out) e `--comparar-com` (outro perfil) | `montar_parser`, `main`, `executar_geracao`, `relatar_erros` |
 | 5 | `analise_razao` | O modo de dois canais do `medir_fase.py` (`--canal-referencia`): lê os dois canais, mede a razão, subtrai a diafonia, compara as taxas, a resposta absoluta pelo perfil de referência e o shunt, o CSV, o gráfico e o perfil com a razão | `executar_razao`, `montar_perfil_da_razao` |
 | 5 | `cli_medir_shunt` | **Borda**: `medir_shunt.py`, Z(f) de um resistor pelo osciloscópio (tensão e corrente na mesma captura), R + jωL e o CSV do `--shunt` | `montar_parser`, `main`, `ajustar_r_l` |
+| 5 | `cli_gui` | **Borda**: `adc_tool.py gui` / `adc_gui.py`: a captura a abrir (opcional), o logging no console e o código de saída; importa a `gui` (e o PyQt6) só dentro de `main()`, e sem o PyQt6 diz como instalar o extra `gui` | `montar_parser`, `main` |
 | 6 | `cli_medir_fase` | **Borda**: `medir_fase.py`: lê as capturas de quadrada, mede em passadas (o modelo de partida, o ajustado, o piso das variantes, o polo), com `--entrada`, mede as formas de onda da entrada (modelo plano, sem aliasing previsto), casa cada captura com a sua (a f₁ e o nome `ref_<entrada>`) e divide; escolhe o polo real a mais pelo BIC (`--polo`), ajusta, confere a coerência, grava o CSV, o Bode e o perfil com a fase (`fase_rad` por ponto); `--ancora` (K e o atraso por um perfil absoluto), `--passa-alta` (a conferência do TC) e, com `--canal-referencia`, o modo de dois canais (`analise_razao`) | `montar_parser`, `main`, `montar_perfil_com_fase` |
-| 6 | `cli_principal` | **Porta de entrada** do `adc_tool.py`: escolhe o subcomando (`analisar`, `info`, `medir`, `perfil`, `compactar`) e importa a CLI dele só nessa hora; sem subcomando, a análise. Único módulo que pode importar as outras CLIs | `main`, `SUBCOMANDOS` |
+| 6 | `cli_principal` | **Porta de entrada** do `adc_tool.py`: escolhe o subcomando (`analisar`, `info`, `medir`, `perfil`, `compactar`, `aliasing`, `gui`) e importa a CLI dele só nessa hora; sem subcomando, a análise. Único módulo que pode importar as outras CLIs | `main`, `SUBCOMANDOS` |
 
 ### Pipeline do modo de plotagem (`modos.executar_plotagem`)
 
@@ -134,6 +139,8 @@ _resolver_frequencia → _validar_parametros → _avisar_combinacoes_arriscadas
 ```
 
 Os resultados de cada etapa vão para um dicionário `resultados` (por canal: `fft`, `welch`, `*_bandas`, `harmonicos`, `bandas_iec`, `espectrograma`, mais os `picos`), que a exportação grava e os gráficos desenham. A exportação vem antes do gráfico: os arquivos ficam prontos mesmo que a janela do gráfico fique aberta.
+
+Tudo até a exportação é `modos.analisar_captura(args, ctx)`, que devolve um `ResultadoAnalise` (o sinal em volts por canal, `resultados`, `infos_espectro`, os rótulos e o título) sem importar o matplotlib. `executar_plotagem` (a CLI) chama `analisar_captura`, `exportar_resultados` e os `plotagem.plotar_*`; a interface gráfica (`gui`) chama `analisar_captura` numa thread e desenha o mesmo resultado nos `plotagem.desenhar_*`, em figuras embutidas na janela. Uma etapa nova entra em `analisar_captura` e aparece nos dois.
 
 A correção de sonda vem antes do filtro e do espectro para que nenhuma dessas etapas precise saber que existe uma sonda. Ela corrige só a **magnitude** (não a fase): serve para espectro/picos, **não** para potência ou impedância entre canais (`docs/probe-profile-audit.md`, §4.1).
 
@@ -179,7 +186,8 @@ log.warning("--welch sem filtro")  # aviso → stderr, o handler põe "Aviso: " 
 Cada comando carrega só o que usa. Antes desta regra, `adc_tool.py --help` levava 2,5 s, quase tudo para importar o SciPy; hoje leva 0,4 s, e o `info`, a conversão, o HDF5 e a análise sem espectro não carregam nem o SciPy nem o matplotlib. `tests/test_analise_pesquisa.py` confere isso num processo limpo, comando a comando.
 
 * **SciPy:** nunca no topo de um módulo (`tests/test_arquitetura.py` confere). Cada função importa a parte que usa, na primeira linha que precisa dela: `from scipy.signal import butter, sosfiltfilt  # sob demanda`. O Python guarda o módulo depois da primeira importação, então chamar a função de novo não custa nada.
-* `matplotlib`: só em `plotagem.py` (topo) e dentro de `escrita_perfil.gerar_grafico` (para `--plot`). `modos` importa `plotagem` **dentro** de `executar_plotagem`, e só quando vai desenhar (há `-o` ou uma tela, e não há `--sem-grafico`).
+* `matplotlib`: só em `plotagem.py` (topo), em `gui.py` (topo: a janela embute as figuras) e dentro de `escrita_perfil.gerar_grafico` (para `--plot`). `modos` importa `plotagem` **dentro** de `executar_plotagem`, e só quando vai desenhar (há `-o` ou uma tela, e não há `--sem-grafico`).
+* `PyQt6` (o extra `gui` do `pyproject.toml`, não uma dependência obrigatória): só em `gui.py`; a `cli_gui` importa a `gui` dentro de `main()`, para `adc_tool.py gui --help` e a mensagem "instale o extra gui" saírem sem ele.
 * As CLIs: `cli_principal` importa a de cada subcomando dentro de uma função, só quando ele é pedido.
 * `h5py`: só dentro de `hdf5.exportar_hdf5`.
 * `rich` (interface do `compactar_amostras`): só em `cli_compactar`. O formato e a verificação (`compactacao`) não dependem dele.
@@ -204,6 +212,7 @@ Cada comando carrega só o que usa. Antes desta regra, `adc_tool.py --help` leva
 | Rodar uma ferramenta sem instalar nada | `uv run scripts/adc_tool.py captura.bin --welch ...` (usa o bloco PEP 723), ou direto `./scripts/adc_tool.py ...` (o shebang `#!/usr/bin/env -S uv run --script` chama o uv) |
 | Ambiente de desenvolvimento | `uv sync --extra dev` **ou** `pip install -e ".[dev]"` |
 | Usar o pacote em um notebook | `pip install -e .` e `from supraharmonicos.espectro import calcular_espectro_welch` |
+| A interface gráfica | `uv run scripts/adc_gui.py [captura.bin]` (o bloco PEP 723 traz o PyQt6) ou, instalado com o extra `gui`, `adc_tool.py gui` |
 | Backend gráfico interativo (`plt.show()`) | extra `gui` (`PyQt6`); para salvar PNG (`-o`) não precisa |
 
 O `.gitignore` do repositório já ignora `.venv/`, `__pycache__/`, `.pytest_cache/`, `.ruff_cache/`, `*.egg-info/` e `uv.lock`. O `uv.lock` é ignorado de propósito: o projeto fixa só limites mínimos de versão (`pyproject.toml`), e a CI testa sempre contra as versões mais recentes que o `uv` resolver.
@@ -229,9 +238,10 @@ O caminho quente é tudo que toca **todas** as amostras de uma captura (dezenas 
 ## 7. Testes
 
 ```bash
-uv run --extra dev pytest                 # tudo: 771 testes (~1 min 20 s)
-uv run --extra dev pytest -m "not e2e"    # rápido: 638 testes (~30 s) — use no dia a dia
-uv run --extra dev pytest -m e2e          # só ponta a ponta: 133 testes (a maior parte do tempo)
+uv run --extra dev --extra gui pytest                 # tudo: 1065 testes (~1 min 10 s)
+uv run --extra dev --extra gui pytest -m "not e2e"    # rápido: 888 testes (~35 s) — use no dia a dia
+uv run --extra dev --extra gui pytest -m e2e          # só ponta a ponta: 177 testes (a maior parte do tempo)
+uv run --extra dev --extra gui pytest -m gui          # só a interface gráfica (sem tela); sem --extra gui, é pulada
 uv run --extra dev pytest -n0 tests/test_dsp.py::TestFiltros   # um teste só, sem paralelismo (pdb/breakpoint)
 uv run --extra dev pytest --cov=scripts/supraharmonicos --cov-report=term-missing   # cobertura (~90 %)
 uv run --extra dev ruff check .
@@ -273,6 +283,7 @@ Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `c
 | `test_analise_pesquisa.py` | As ferramentas para pesquisa: harmônicos (amplitudes, fases no referencial seno em qualquer início, THD, grupo com inter-harmônico, Nyquist, erro sem fundamental e com f0 fora da busca), bandas IEC (centros e bordas da norma, estatísticas de um tom que liga no meio), espectrograma (quando o tom liga, mesmo nível do Welch), exportação CSV/JSON/MAT (lida de volta com `loadmat`), a análise completa pela CLI, as figuras extras, os subcomandos e o que cada comando carrega (SciPy, matplotlib, h5py, rich) num processo limpo |
 | `test_compactacao.py` | `compactar_amostras`: desentrelaçar e voltar é exato com cortes em qualquer byte; a receita do `LEIA-ME.txt` (só numpy) reconstrói o original; ida e volta devolve bytes, datas e permissões; peça corrompida é detectada e o arquivo estragado não é gravado; falha ou Ctrl+C no meio não deixa pacote nem temporários nem `zpaq` órfão; caminho malicioso no manifesto é recusado; `--remover-originais` só apaga o que continua idêntico; CLI. Os testes com o `zpaq` de verdade são `e2e` (pulados sem ele) |
 | `test_plotagem.py` | `supraharmonicos.plotagem`: a forma de onda mostra todas as amostras por padrão; a envoltória mín/máx só com `max_pontos`; o zoom (limites do eixo X) refaz o trecho visível com as amostras de verdade e marca cada uma quando são até 400 |
+| `test_gui.py` | `supraharmonicos.gui`, com o Qt sem tela (`QT_QPA_PLATFORM=offscreen`; pulado sem o PyQt6): abrir uma captura preenche o painel e o comando equivalente; os controles viram as flags certas (o parser da CLI as aceita e lê os mesmos valores); a análise roda na thread e chega às figuras (os eixos) e às tabelas (harmônicos, picos, bandas IEC); um erro de domínio vira mensagem, sem traceback, e o botão volta; a exportação (CSV/JSON, `.mat`, figura, HDF5) grava os mesmos arquivos da CLI. Marcado `gui` |
 | `test_scripts_shell.py` | `scripts/BeagleBone_Setup.sh`, num repositório de brinquedo, com `ssh`, `sudo`, `date` e `sshfs` falsos (o ssh falso roda o comando num home falso): a ordem de prioridade do acesso (opção, variável, arquivo, padrão), o askpass, o `hora` (o tempo do sudo descontado), o `enviar` (só arquivos versionados, a versão, o plano B sem as capturas, a recusa com mudanças não commitadas), o `setup` e o `ssh` com a senha do sudo sem perguntar e sem deixá-la para trás, o `status`, o `montar` (recusa dentro do repositório; as opções do sshfs) e o `preparar`; o `firmware/Makefile` (acha a instalação do clpru, não o `/usr/include` do Linux); e o `firmware/coleta/campanha.sh` com um `ler_adc` falso (o plano inteiro, o resumo, as pausas, 1 bloco no curto). Marcado `e2e` |
 | `test_scripts_shell.py` (o `coletar.sh`) | os modos em lote numa pasta de firmware falsa (o `coletar.sh` e `coleta/` copiados, `sudo` e `ler_adc` falsos): o `bancada` (as partes do T7, `--grade`, `--spi`, `--limite`, `--validar`, as recusas de firmware antigo, a pausa sem terminal, `--continuar`, a queda do ssh) e o `calibrar` (as 17 quadradas × 2 taxas × 2 faixas, `--referencia` e a corrente, as opções e o `--continuar` com as opções da coleta, as recusas); com um `ler_adc` falso que grava `.bin` de verdade, o `conferir` (nível, offset, a faixa sugerida, o sinal errado na entrada, o ADC mudo, a saturação), o `aliasing` (a faixa automática, as 3 taxas sem `--forcar-taxa`, as opções e o `--continuar` com as opções da coleta), o `ruido` (o curto e as 3 faixas) e o `teto` (a estimativa pela folga, a varredura de 1 tick, a confirmação longa e a taxa de trabalho); a ajuda de cada modo |
 | `e2e/test_perfil_sonda_e2e.py` | fluxo completo (o perfil base e a correção principal por subprocess nas entradas reais; o resto com `main()` no mesmo processo): calibração → perfil → correção (inclui as 7 correções da auditoria) |
@@ -309,7 +320,9 @@ Os testes não precisam de hardware nem de arquivos `.bin` do repositório (`*.b
 
 ## 8. Receitas
 
-**Adicionar uma flag ao `adc_tool`.** (1) `cli_adc_tool.montar_parser`: declare a flag; (2) leia-a em `modos.py` (ou em `contexto.resolver_contexto` se for sobre "o que é a captura"); (3) valide cedo — antes de abrir a captura — levantando `ErroSHAN`/`ErroUso`; (4) teste em `test_cli_adc_tool.py`; (5) documente em `docs/project-context.md` (`<pipeline_dsp_python>`).
+**Adicionar uma flag ao `adc_tool`.** (1) `opcoes_analise.montar_parser`: declare a flag; (2) leia-a em `modos.py` (ou em `contexto.resolver_contexto` se for sobre "o que é a captura"); (3) valide cedo — antes de abrir a captura — levantando `ErroSHAN`/`ErroUso`; (4) teste em `test_cli_adc_tool.py`; (5) documente em `docs/project-context.md` (`<pipeline_dsp_python>`); (6) se ela faz sentido na janela, um controle em `gui.PainelParametros._montar` e a tradução dele em `PainelParametros.argv` (a GUI não lê a flag: ela a escreve na linha de comando, que passa pelo mesmo parser), com um caso em `test_gui.py`.
+
+**Mexer na interface gráfica.** A janela não calcula nada: `PainelParametros.argv()` escreve a linha de comando, `JanelaPrincipal.analisar` a passa por `montar_parser` + `resolver_contexto` + `analisar_captura` (na thread `_Trabalhador`) e `_mostrar_resultado` desenha e preenche as tabelas. Se um resultado novo precisa aparecer, ele já vem no `ResultadoAnalise`: acrescente a aba/tabela em `_montar` e o preenchimento em `_mostrar_resultado`. Nada de `print`, `sys.exit` nem caixa de diálogo fora de `_erro` (os testes rodam com `silencioso=True`, sem tela). Para testar à mão sem tela: `QT_QPA_PLATFORM=offscreen`.
 
 **Novo tipo de perfil de sonda** (ex.: `polinomio`/`tabela` para temperatura — hoje não implementado). Em `sonda.py`: acrescente o tipo em `TIPOS_PERFIL_SUPORTADOS`, valide os campos em `carregar_perfil_sonda`, trate-o em `PerfilSonda.ganho_em`, e decida em `contexto.aplicar_correcao_sondas` a quais grandezas se aplica. Teste em `test_sonda.py`.
 
@@ -325,7 +338,7 @@ Os testes não precisam de hardware nem de arquivos `.bin` do repositório (`*.b
 
 **Nova etapa no pipeline de plotagem.** Uma função `_nome_da_etapa` em `modos.py`, chamada na ordem certa em `executar_plotagem`; se mexe no sinal, pense onde ela entra em relação à correção de sonda e ao filtro.
 
-**Novo gráfico / backend.** Só em `plotagem.py` (ou `escrita_perfil.gerar_grafico`), com `matplotlib` importado ali.
+**Novo gráfico / backend.** Só em `plotagem.py` (ou `escrita_perfil.gerar_grafico`), com `matplotlib` importado ali. Escreva o gráfico como `desenhar_nome(fig, ...)` (numa `Figure` dada) e um `plotar_nome(...)` que cria a figura, chama o primeiro e `_salvar_ou_mostrar`: assim a CLI e a GUI (que chama o `desenhar_*` na figura da janela) mostram a mesma coisa.
 
 ---
 

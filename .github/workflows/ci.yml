@@ -34,8 +34,13 @@ jobs:
         run: pipx install uv
 
       # zpaq: o compressor do scripts/compactar_amostras.py (sem ele, os testes que o usam são pulados).
-      - name: Instalar o zpaq
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq zpaq
+      # As bibliotecas do sistema que o Qt (PyQt6, a interface gráfica) precisa para rodar sem tela
+      # (QT_QPA_PLATFORM=offscreen) nos testes do tests/test_gui.py.
+      - name: Instalar o zpaq e as bibliotecas do Qt
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zpaq libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libxcb-cursor0 \
+            libdbus-1-3 libfontconfig1
 
       - name: ruff e pytest
         run: scripts/ci.sh testes ${{ matrix.python }}
