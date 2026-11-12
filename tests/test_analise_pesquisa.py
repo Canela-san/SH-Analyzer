@@ -67,6 +67,26 @@ class TestHarmonicos:
         assert h3.rms < 1e-9                                  # a componente de 180 Hz não existe
         assert h3.rms_grupo == pytest.approx(3.0, rel=1e-9)   # o grupo de 180 Hz (150..210 Hz) contém os 185 Hz
 
+    @pytest.mark.parametrize("n_ciclos", [12, 60, 120])
+    def test_subgrupo_soma_so_o_que_fica_a_5_hz_do_harmonico(self, n_ciclos):
+        """IEC 61000-4-7: com a janela de 12 ciclos a 60 Hz (bins de 5 Hz), o subgrupo harmônico é a raiz da soma
+        dos quadrados do harmônico e dos dois bins vizinhos; o grupo vai até a metade do caminho para os harmônicos
+        vizinhos. 3º harmônico de 4 V com inter-harmônicos de 3 V em 185 Hz (dentro do subgrupo) e de 2 V em 195 Hz
+        (só no grupo): subgrupo = √(4² + 3²) = 5 V, grupo = √(4² + 3² + 2²). Com um trecho mais longo (bins mais
+        estreitos), a banda do subgrupo é a mesma, ±5 Hz."""
+        n = int(round(n_ciclos * FS / 60.0))
+        t = np.arange(n) / FS
+        x = np.sqrt(2) * (100 * np.sin(2 * np.pi * 60 * t) + 4 * np.sin(2 * np.pi * 180 * t)
+                          + 3 * np.sin(2 * np.pi * 185 * t) + 2 * np.sin(2 * np.pi * 195 * t))
+        tabela = calcular_harmonicos(x, FS, 60.0, n_ciclos, 3)
+        h1, _, h3 = tabela.harmonicos
+        assert h3.rms == pytest.approx(4.0, rel=1e-9)
+        assert h3.rms_subgrupo == pytest.approx(5.0, rel=1e-9)
+        assert h3.rms_grupo == pytest.approx(math.sqrt(4 ** 2 + 3 ** 2 + 2 ** 2), rel=1e-9)
+        assert h1.rms_subgrupo == pytest.approx(100.0, rel=1e-9)
+        assert tabela.thd_pct == pytest.approx(4.0, rel=1e-9) and tabela.thds_pct == pytest.approx(5.0, rel=1e-9)
+        assert any("subgrupo" in linha for linha in tabela.linhas("V")) and "THDS" in tabela.linhas("V")[-1]
+
     def test_ordens_acima_de_nyquist_sao_omitidas(self):
         n = int(round(10 * 2000 / 60.0))
         t = np.arange(n) / 2000.0
@@ -206,6 +226,7 @@ def test_exportar_csv_e_json(tmp_path):
     with open(tmp_path / "x_canal1_harmonicos.csv", encoding="utf-8") as f:
         h3 = list(csv.DictReader(f))[2]
     assert float(h3["rms_V"]) == pytest.approx(6.35) and float(h3["fase_graus"]) == pytest.approx(30.0)
+    assert float(h3["rms_subgrupo_V"]) == pytest.approx(6.35) and float(h3["rms_grupo_V"]) == pytest.approx(6.35)
     meta = json.loads((tmp_path / "x_metadados.json").read_text(encoding="utf-8"))
     assert meta == {"comando": "teste", "valor": None}                                   # NaN vira null
 

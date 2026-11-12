@@ -421,3 +421,25 @@ def test_v9_cabecalho_cortado_e_acusado_pelo_crc(tmp_path):
     cortado.write_bytes(p.read_bytes()[:3000])                  # o arquivo acaba dentro do cabeçalho
     c = ler_cabecalho(cortado)
     assert c is not None and not c.crc32_valido
+
+
+def test_os_canais_saem_em_sequencia_e_o_atraso_de_cada_um_vai_para_as_exportacoes(tmp_path, caplog):
+    """O ADS8688 converte um canal por quadro: com 3 canais a 250 kS/s (800 ticks de 5 ns), o da posição k é amostrado
+    k × 4 µs depois do primeiro (medido no T6b: 9,954 µs contra 10,000 a 100 kS/s). Sem esse número, quem compara a
+    fase de dois canais erra 360°·f·Δt (72° em 50 kHz)."""
+    import numpy as np
+    from capturas_sinteticas import escrever_bin
+    from supraharmonicos.cabecalho import imprimir_resumo_cabecalho
+    t = np.arange(3000) / 100_000.0
+    p = escrever_bin(tmp_path / "tres.bin", [np.sin(2 * np.pi * 1000 * t)] * 3, canais=(0, 1, 5), grandezas=(1, 0, 0),
+                     sondas=("", "", ""), fs_total=250_000, versao=9, faixas_adc_total_v=[5.12] * 3)
+    c = ler_cabecalho(p)
+    assert c.atraso_de_amostragem_por_canal_s == pytest.approx((0.0, 4e-6, 8e-6))
+    assert c.para_attrs_hdf5()["atraso_de_amostragem_por_canal_s"] == pytest.approx([0.0, 4e-6, 8e-6])
+    with caplog.at_level(logging.INFO):
+        imprimir_resumo_cabecalho(c)
+    texto = " ".join(r.getMessage() for r in caplog.records)
+    assert "canal 1 a +4.000 µs" in texto and "canal 5 a +8.000 µs" in texto
+    um = escrever_bin(tmp_path / "um.bin", [np.sin(2 * np.pi * 1000 * t)], canais=(1,), grandezas=(0,), sondas=("",),
+                      fs_total=100_000, versao=9, faixas_adc_total_v=[5.12])
+    assert ler_cabecalho(um).atraso_de_amostragem_por_canal_s == (0.0,)

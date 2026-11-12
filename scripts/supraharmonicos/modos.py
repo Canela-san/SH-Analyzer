@@ -696,6 +696,7 @@ def montar_metadados(args: argparse.Namespace, ctx: ContextoCaptura, sinal: Sina
             resumo["welch"] = {"n_segmentos": r["welch"]["n_segmentos"]}
         if "harmonicos" in r:
             resumo["harmonicos"] = {"thd_pct": r["harmonicos"].thd_pct, "thdg_pct": r["harmonicos"].thdg_pct,
+                                    "thds_pct": r["harmonicos"].thds_pct,
                                     "rms_total": r["harmonicos"].rms_total}
         por_canal[f"canal{canal}"] = resumo
     segmento_welch = tamanho_segmento_welch(fs_efetiva, args.resolucao_welch) if params.janela_welch else None
@@ -719,6 +720,13 @@ def montar_metadados(args: argparse.Namespace, ctx: ContextoCaptura, sinal: Sina
             "origem_da_frequencia": ("-f" if args.frequencia is not None else "pedida (--fs-pedida)" if args.fs_pedida
                                      else "PRU (clock ÷ ticks)" if cab and cab.frequencia_pru_hz else "pedida"),
             "integridade": cab.problemas_integridade if cab else None,
+            # Os canais são amostrados em SEQUÊNCIA: o da posição k sai k ÷ (taxa total) depois do primeiro. As séries
+            # e os espectros de cada canal estão no relógio do próprio canal; para comparar a fase de dois canais
+            # (potência, impedância), desconte a diferença destes atrasos: 360°·f·Δt.
+            "atraso_de_amostragem_por_canal_s": [k / frequencia_total for k in range(len(ctx.canais))],
+            "id_captura": cab.id_captura if cab else "",
+            "crc32_amostras": cab.crc32_amostras if cab else None,
+            "ganho_declarado_por_canal": list(cab.ganho_por_canal) if cab else [],
         },
         "trecho": {"inicio_amostra_bruta": sinal.idx_inicio, "fim_amostra_bruta": sinal.idx_fim,
                    "amostras_por_canal": n_por_canal, "duracao_s": n_por_canal / fs_efetiva},

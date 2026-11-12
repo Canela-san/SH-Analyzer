@@ -70,7 +70,7 @@ Essa separação é proposital: o projeto põe a **integridade dos dados** acima
 
 **No computador**
 
-* **Harmônicos:** FFT sincronizada com a rede, componentes e grupos da IEC 61000-4-7, THD e THDG.
+* **Harmônicos:** FFT sincronizada com a rede, componentes, subgrupos e grupos da IEC 61000-4-7, THD, THDS e THDG.
 * **Supraharmônicos:** espectro médio (Welch), lista de picos, espectrograma e bandas de 200 Hz de 2 a 9 kHz, com a agregação de 3 s e 10 min da IEC 61000-4-30.
 * **Correção da cadeia:** cada canal é corrigido pela resposta em frequência medida da cadeia inteira (sonda, condicionamento e o filtro interno do ADC).
 * **Calibração sem instrumento de referência** (`medir_fase.py`): magnitude e fase da cadeia pelos harmônicos de ondas quadradas, com o ajuste do modelo e o teste de fase mínima.

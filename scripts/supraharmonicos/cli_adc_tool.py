@@ -391,13 +391,16 @@ def montar_parser() -> argparse.ArgumentParser:
     grupo_pesquisa.add_argument(
         "--harmonicos", type=int, default=None, metavar="N",
         help="[--fft] Tabela dos harmônicos 1..N: frequência, valor RMS da componente e do grupo harmônico "
-             "(IEC 61000-4-7), %% da fundamental e fase relativa à fundamental (referencial seno), mais THD e THDG. "
+             "(IEC 61000-4-7), %% da fundamental e fase relativa à fundamental (referencial seno), mais THD, THDS (subgrupos, "
+             "o da IEC 61000-4-30) e THDG. "
              "Usa o trecho sincronizado em ciclos inteiros da --fft (sem vazamento entre harmônicos)."
     )
     grupo_pesquisa.add_argument(
         "--bandas-iec", action="store_true",
-        help="Bandas de supraharmônicos pelo método da IEC 61000-4-7, anexo B (e IEC 61000-4-30, anexo C): janelas "
-             "de 200 ms sem lacunas, bins de 5 Hz, bandas de 200 Hz centradas em 2100, 2300... Hz. Para cada banda, "
+        help="Bandas de supraharmônicos pelo método da IEC 61000-4-7, anexo B (o que a IEC 61000-4-30, anexo C, "
+             "indica de 2 a 9 kHz): janelas de 200 ms sem lacunas, bins de 5 Hz, bandas de 200 Hz centradas em 2100, "
+             "2300... Hz. Acima de 9 kHz as bandas de 200 Hz são a extensão usual na literatura, não o método do "
+             "anexo C (janelas de 0,5 ms e bins de 2 kHz, ou o receptor da CISPR 16-1-1). Para cada banda, "
              "a série no tempo e as estatísticas: RMS das janelas, máximo, percentil 95 (CP95) e mínimo."
     )
     grupo_pesquisa.add_argument(
@@ -411,7 +414,7 @@ def montar_parser() -> argparse.ArgumentParser:
     grupo_pesquisa.add_argument(
         "--bandas-iec-sincronizar", action="store_true",
         help="[--bandas-iec, extra] Janelas de 10 ciclos (rede de 50 Hz) ou 12 ciclos (60 Hz) da fundamental MEDIDA, "
-             "como na IEC 61000-4-30 classe A, em vez de 200 ms fixos. Com a rede fora da frequência nominal, a "
+             "como na IEC 61000-4-7 e na IEC 61000-4-30 classe A, em vez de 200 ms fixos. Com a rede fora da frequência nominal, a "
              "janela fixa não tem ciclos inteiros e a fundamental vaza para as bandas (com a rede a 60,1 Hz, ~46 mV "
              "numa banda vazia de 2,5 kHz; sincronizada, ~1,7 mV). A referência é o primeiro canal de tensão; "
              "precisa da fundamental no sinal (sem --filtro-passa-alta acima dela)."

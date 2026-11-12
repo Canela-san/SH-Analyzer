@@ -436,6 +436,18 @@ class CabecalhoArquivo:
         return self.pru_clock_hz / self.sample_period_ticks
 
     @property
+    def atraso_de_amostragem_por_canal_s(self) -> tuple[float, ...]:
+        """Quanto depois do primeiro canal cada canal é amostrado, em segundos, por posição de ``lista_canais``. O
+        ADS8688 converte um canal por quadro, em sequência: o canal da posição k sai k ÷ (taxa total) depois do
+        primeiro (2,5 µs por posição a 400 kS/s; 9,954 µs medidos contra 10,000 a 100 kS/s, T6b). Para comparar a fase
+        de dois canais num componente de frequência f, desconte 360°·f·(diferença dos atrasos): em 50 kHz, 2,5 µs são
+        45°. () sem a taxa no cabeçalho."""
+        fs_total = self.frequencia_pru_hz or (float(self.frequencia_hz) if self.frequencia_hz > 0 else None)
+        if fs_total is None:
+            return ()
+        return tuple(k / fs_total for k in range(self.num_canais))
+
+    @property
     def duracao_real_segundos(self) -> float | None:
         """total_amostras_gravadas / frequencia_hz -- duração de fato
         capturada, para comparar com duracao_pedida_segundos (só preenchida
@@ -497,11 +509,14 @@ class CabecalhoArquivo:
             attrs["modo_spi"] = self.modo_spi
             attrs["divergencias_fase_a"] = self.divergencias_fase_a
             attrs["divergencias_fase_c"] = self.divergencias_fase_c
+        if self.atraso_de_amostragem_por_canal_s:      # os canais saem em sequência, não ao mesmo tempo
+            attrs["atraso_de_amostragem_por_canal_s"] = np.array(self.atraso_de_amostragem_por_canal_s)
         if self.versao_cabecalho >= 9:  # só v9+; -1 = não gravado (a captura não chegou ao cabeçalho final)
             attrs["id_captura"] = self.id_captura
             attrs["hostname"] = self.hostname
             attrs["linha_de_comando"] = self.linha_de_comando
-            attrs["ganho_por_canal"] = np.array([g if g is not None else 0.0 for g in self.ganho_por_canal])
+            # (o 'ganho_por_canal' do HDF5 é o ganho USADO na exportação; este é o declarado no ler_adc; 0 = não)
+            attrs["ganho_declarado_por_canal"] = np.array([g if g is not None else 0.0 for g in self.ganho_por_canal])
             attrs["crc32_amostras"] = -1 if self.crc32_amostras is None else self.crc32_amostras
             attrs["timestamp_fim_unix"] = -1 if self.timestamp_fim_unix is None else self.timestamp_fim_unix
             attrs["timestamp_fim_ns"] = -1 if self.timestamp_fim_ns is None else self.timestamp_fim_ns
@@ -997,6 +1012,11 @@ def imprimir_resumo_cabecalho(cabecalho: CabecalhoArquivo) -> None:
         gerada = (f" (a PRU gera {fs_pru:.2f} Hz = {cabecalho.sample_period_ticks} ticks, "
                   f"{(fs_pru / cabecalho.frequencia_hz - 1) * 1e6:+.1f} ppm)")
     log.info(f"  Frequência: {cabecalho.frequencia_hz} Hz total{gerada} | canais: {list(cabecalho.lista_canais)}")
+    atrasos = cabecalho.atraso_de_amostragem_por_canal_s
+    if len(atrasos) > 1:
+        log.info("  Canais amostrados em sequência, não ao mesmo tempo: "
+                 + ", ".join(f"canal {c} a +{1e6 * a:.3f} µs" for c, a in zip(cabecalho.lista_canais, atrasos))
+                 + " (desconte 360°·f·Δt ao comparar fases entre canais)")
     if cabecalho.samples_per_buffer > 0 and cabecalho.num_canais > 0:
         n_buf = cabecalho.buffers_ping_pong
         por_bloco = (f"; cada bloco dura {cabecalho.samples_per_buffer / (fs_pru or cabecalho.frequencia_hz):.3f} s"
