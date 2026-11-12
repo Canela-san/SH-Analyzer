@@ -57,7 +57,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import plotagem
-from .cabecalho import CABECALHO_TAMANHO_TOTAL, CabecalhoArquivo, contar_amostras_arquivo_bin, ler_cabecalho
+from .cabecalho import CabecalhoArquivo, contar_amostras_arquivo_bin, ler_cabecalho
 from .constantes import (
     CORTE_SUPRAHARMONICOS_PADRAO,
     DISTANCIA_MINIMA_PICOS_PADRAO,
@@ -281,8 +281,10 @@ class PainelParametros(QWidget):
         raiz.addWidget(grupo)
 
         grupo, form = _grupo("Calibração e sonda")
-        self.ganho = QLineEdit("1.0")
-        self.ganho.setToolTip("Ganho do sensor/PCB: um valor, ou um por canal (ex.: 19.357,0.1).")
+        self.ganho = QLineEdit()
+        self.ganho.setPlaceholderText("o declarado na captura (cabeçalho v9) ou 1.0")
+        self.ganho.setToolTip("Ganho do sensor/PCB, em unidades físicas por volt no pino do ADC: um valor, ou um por "
+                              "canal (ex.: 19.357,0.1). Vazio: o que o ler_adc --ganho declarou na captura, ou 1.0.")
         self.faixa = QLineEdit()
         self.faixa.setPlaceholderText("a do cabeçalho (20.48, 10.24 ou 5.12 V)")
         self.offset = QLineEdit()
@@ -477,10 +479,8 @@ class PainelParametros(QWidget):
             argv += ["-f", _num(self.frequencia.value()), "--canais", ",".join(map(str, self.canais))]
         if self.fs_pedida.isChecked():
             argv.append("--fs-pedida")
-        ganho = self.ganho.text().strip()
-        if ganho and ganho not in ("1", "1.0"):
-            argv += ["--ganho", ganho]
-        for flag, campo in (("--faixa", self.faixa), ("--offset", self.offset), ("--grandeza", self.grandeza),
+        for flag, campo in (("--ganho", self.ganho), ("--faixa", self.faixa), ("--offset", self.offset),
+                            ("--grandeza", self.grandeza),
                             ("--sondas-dir", self.sondas_dir), ("--sonda-perfil", self.sonda_perfil)):
             if campo.text().strip():
                 argv += [flag, campo.text().strip()]
@@ -850,8 +850,8 @@ class JanelaPrincipal(QMainWindow):
             if not caminho.is_file():
                 raise ErroSHAN(f"arquivo '{caminho}' não encontrado.")
             cabecalho = ler_cabecalho(caminho) if caminho.suffix.lower() == ".bin" else None
-            n_amostras = (contar_amostras_arquivo_bin(caminho, "uint16", CABECALHO_TAMANHO_TOTAL if cabecalho else 0)
-                          if caminho.suffix.lower() == ".bin" else 0)
+            offset = cabecalho.tamanho_cabecalho if cabecalho is not None else 0     # 1024 até a v8; 4096 na v9
+            n_amostras = contar_amostras_arquivo_bin(caminho, "uint16", offset) if caminho.suffix.lower() == ".bin" else 0
         except ErroSHAN as e:
             self._erro(str(e))
             return False
@@ -1023,10 +1023,12 @@ class JanelaPrincipal(QMainWindow):
         tabela, u = r["harmonicos"], r["unidade"]
         self.resumo_harmonicos.setText(
             f"f0 = {tabela.f0_hz:.4f} Hz, {tabela.n_ciclos} ciclos | THD = {tabela.thd_pct:.4f} % | "
-            f"THDG (IEC 61000-4-7) = {tabela.thdg_pct:.4f} % | RMS total (sem DC) = {tabela.rms_total:.6g} {u}")
+            f"THDS (subgrupos) = {tabela.thds_pct:.4f} % | THDG (grupos) = {tabela.thdg_pct:.4f} % (IEC 61000-4-7) | "
+            f"RMS total (sem DC) = {tabela.rms_total:.6g} {u}")
         self.tabela_harmonicos.preencher(
-            ["h", "f (Hz)", f"RMS ({u})", f"grupo ({u})", "% da fundamental", "fase (°)"],
-            [[h.ordem, h.frequencia_hz, h.rms, h.rms_grupo, h.pct_fundamental, h.fase_graus] for h in tabela.harmonicos])
+            ["h", "f (Hz)", f"RMS ({u})", f"subgrupo ({u})", f"grupo ({u})", "% da fundamental", "fase (°)"],
+            [[h.ordem, h.frequencia_hz, h.rms, h.rms_subgrupo, h.rms_grupo, h.pct_fundamental, h.fase_graus]
+             for h in tabela.harmonicos])
 
     def _preencher_picos(self, res: ResultadoAnalise) -> None:
         picos = sorted(res.resultados["picos"], key=lambda p: (p["canal"], p["metodo"], -p["amplitude_db"]))

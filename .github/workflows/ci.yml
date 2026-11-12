@@ -34,13 +34,14 @@ jobs:
         run: pipx install uv
 
       # zpaq: o compressor do scripts/compactar_amostras.py (sem ele, os testes que o usam são pulados).
+      # gcc-arm-linux-gnueabihf: o teste que compila o ler_adc.c para o ARM de 32 bits da BeagleBone (sem ele, pulado).
       # As bibliotecas do sistema que o Qt (PyQt6, a interface gráfica) precisa para rodar sem tela
       # (QT_QPA_PLATFORM=offscreen) nos testes do tests/test_gui.py.
-      - name: Instalar o zpaq e as bibliotecas do Qt
+      - name: Instalar o zpaq, o compilador cruzado do ARM e as bibliotecas do Qt
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq zpaq libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libxcb-cursor0 \
-            libdbus-1-3 libfontconfig1
+          sudo apt-get install -y -qq zpaq gcc-arm-linux-gnueabihf libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 \
+            libxcb-cursor0 libdbus-1-3 libfontconfig1
 
       - name: ruff e pytest
         run: scripts/ci.sh testes ${{ matrix.python }}
@@ -56,7 +57,11 @@ jobs:
       - name: Instalar o uv
         run: pipx install uv
 
+      # O compilador cruzado: o ler_adc.c também é compilado para o ARM de 32 bits (o off_t de 64 bits, os tipos).
+      - name: Instalar o compilador cruzado do ARM
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-arm-linux-gnueabihf
+
       # O ler_adc roda num Cortex-A8, mas o código é C/POSIX portável: compilar no x86 já pega erro de sintaxe,
       # de tipo e aviso que só apareceriam no `make` da BeagleBone.
-      - name: gcc -Werror no ler_adc.c e shellcheck
+      - name: gcc -Werror no ler_adc.c (x86 e ARM de 32 bits) e shellcheck
         run: scripts/ci.sh firmware

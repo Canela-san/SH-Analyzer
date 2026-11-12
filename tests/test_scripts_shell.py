@@ -416,6 +416,8 @@ if [ "$blocos" -ge 2 ]; then
         "$(awk -v r="$real" -v t="$taxa" 'BEGIN { print 100 * (r / t - 1) }')"
 fi
 [ -z "${LER_ADC_REGISTRO:-}" ] || pgrep -x dd > /dev/null && echo "dd rodando" >> "${LER_ADC_REGISTRO:-/dev/null}"
+# LER_ADC_CORTADA: um trecho do nome da captura que um sinal "cortou" (o ler_adc sai com 5, com o resumo impresso).
+case "$saida" in *"${LER_ADC_CORTADA:-@nenhuma@}"*) exit 5 ;; esac
 '''
 
 
@@ -494,7 +496,7 @@ def test_coletar_bancada_para_sem_terminal_na_pausa_e_continua_de_onde_parou(var
 
     texto = (pasta / "resumo.csv").read_text().splitlines()   # uma captura que o ler_adc não terminou: refeita
     cortada = texto[5].split(",")
-    cortada[-11] = "?"                                        # amostras_atrasadas (folga, atraso e o SPI vêm depois)
+    cortada[-14] = "?"                                        # amostras_atrasadas (folga, atraso, SPI e sinal vêm depois)
     texto[5] = ",".join(cortada)
     (pasta / "resumo.csv").write_text("\n".join(texto) + "\n")
 
@@ -747,6 +749,11 @@ def test_coletar_calibrar_com_canal_de_referencia_e_diafonia(varredura):
     assert "a DIAFONIA: tire o condutor de dentro da garra do sensor do canal 0" in r.stdout
     assert "o resistor (a tensão dele pelo divisor no canal 1)" in r.stdout and "TCP0030A" not in r.stdout
     assert "--canal 0 --canal-referencia 1" in r.stdout and "--resistencia 10.02 --espiras 20" in r.stdout
+    # [11/11/2026] O canal de corrente tem 50,9 mV/A (e não os 60 µV/A que davam --ganho 16667): o ganho do comando
+    # da análise é 1/0,0509, e o nível esperado no pino com o gerador de 50 Ω em 20 Vpp, 10,02 Ω e 20 espiras é
+    # 20/(50 + 10,02) x 20 x 0,0509 = 0,34 Vpp.
+    assert "--ganho 19.65" in r.stdout and "16667" not in r.stdout
+    assert "--esperado-vpp 0.34" in r.stdout and "±2,56 V satura acima de 50 A·espira de pico" in r.stdout
     assert "--diafonia $DIA/" + pasta.name + "/W_*_f5.12_*.bin" in r.stdout and "medir_shunt.py" in r.stdout
     for opcoes, erro in ((("--diafonia",), "precisa de --canal-referencia"),
                          (("--canal-referencia", "1"), "é o próprio canal medido"),
@@ -754,6 +761,24 @@ def test_coletar_calibrar_com_canal_de_referencia_e_diafonia(varredura):
                          (("--canal-referencia", "2", "--espiras", "0"), "--espiras '0'")):
         r, _ = varredura("calibrar", "--canal", "1", *opcoes, "--simular")
         assert r.returncode == 1 and erro in r.stderr, (opcoes, r.stderr)
+
+
+def test_coletar_continuar_refaz_a_captura_que_um_sinal_cortou(varredura):
+    """O ler_adc sai com 5 quando um sinal (Ctrl+C, kill) corta a captura antes dos blocos pedidos: ela tem o resumo
+    inteiro (os contadores), mas menos amostras que as do plano, e o --continuar tem de refazê-la."""
+    opcoes = ("--faixa", "20.48", "--quadradas", "256", "--taxas", "400000,312500:lenta", "--segundos", "5")
+    varredura.env["LER_ADC_CORTADA"] = "_312500_"
+    r, _ = varredura("calibrar", *opcoes, entrada="\n")
+    assert r.returncode == 0 and "cortada antes do fim" in r.stdout, r.stdout + r.stderr
+    (pasta,) = varredura.pasta.glob("CAL_*")
+    assert [linha["codigo_saida"] for linha in _resumo(pasta)] == ["0", "5"]
+    del varredura.env["LER_ADC_CORTADA"]
+    r, _ = varredura("calibrar", "--continuar", entrada="\n")
+    assert r.returncode == 0 and "1 de 2 já feitas" in r.stdout, r.stdout + r.stderr
+    linhas = _resumo(pasta)
+    assert [linha["codigo_saida"] for linha in linhas] == ["0", "5", "0"] and "_312500_" in linhas[2]["arquivo"]
+    r, _ = varredura("calibrar", "--continuar")
+    assert "Nada a fazer" in r.stdout
 
 
 def test_coletar_calibrar_para_na_pausa_sem_terminal(varredura):
@@ -787,7 +812,8 @@ def test_coletar_bancada_grade_recusa_o_firmware_sem_a_espera_de_precisao(varred
 
 
 # Um ler_adc falso que grava um .bin DE VERDADE (cabeçalho e amostras, pelo capturas_sinteticas): um seno de
-# SINAL_VPP volts pico a pico no pino (padrão 0,8) a SINAL_F Hz, com o ruído do ADC e o offset da placa; FALSO_MUDO=1
+# SINAL_VPP volts pico a pico no pino (padrão 0,8) a SINAL_F Hz (os dois aceitam uma lista, um valor por chamada),
+# com o ruído do ADC e o offset da placa; FALSO_MUDO=1
 # imita o ADC sem resposta (amostras todas 0 e o código 4). Cada chamada vai para FALSO_REGISTRO.
 LER_ADC_BINARIO = r"""#!{python}
 import os, sys
@@ -796,8 +822,18 @@ import numpy as np
 from capturas_sinteticas import escrever_bin
 
 args = sys.argv[1:]
-with open(os.environ.get("FALSO_REGISTRO", os.devnull), "a") as f:
+registro = os.environ.get("FALSO_REGISTRO", os.devnull)
+chamada = sum(1 for _ in open(registro)) if os.path.isfile(registro) else 0
+with open(registro, "a") as f:
     f.write(" ".join(args) + "\n")
+
+
+def da_vez(nome, padrao):
+    # "a,b,c": um valor por chamada do ler_adc (o último vale para as seguintes), como um gerador que alguém acerta
+    valores = os.environ.get(nome, padrao).split(",")
+    return float(valores[min(chamada, len(valores) - 1)])
+
+
 taxa, canais = int(args[0]), [int(c) for c in args[1].split(",")]
 opcoes, i = {{}}, 2
 while i < len(args):
@@ -807,14 +843,23 @@ while i < len(args):
     opcoes[args[i]] = args[i + 1]
     i += 2
 faixas = dict((int(c), float(v)) for c, v in (p.split(":") for p in opcoes.get("--faixa-adc", "").split(",") if p))
+# FALSO_CABECALHO_V8: um cabeçalho v8 (ou, com o valor 9, v9: 4096 bytes), com o sistema de FALSO_SISTEMA (as chaves de capturas_sinteticas.SISTEMA_PADRAO
+# que mudam, em JSON) e a versão do firmware de FALSO_VERSAO.
+v8 = {{}}
+if os.environ.get("FALSO_CABECALHO_V8"):
+    import json
+    v8 = dict(versao=int(os.environ["FALSO_CABECALHO_V8"]) if os.environ["FALSO_CABECALHO_V8"] == "9" else 8,
+              grade=(18, 0, 7, int(os.environ.get("FALSO_PROTOCOLO", "5"))),
+              versao_firmware=os.environ.get("FALSO_VERSAO", "v9.9"),
+              sistema=json.loads(os.environ.get("FALSO_SISTEMA", "{{}}")))
 blocos = int(opcoes.get("--blocos", "2"))
 n = 32768 * blocos // len(canais)
 t = np.arange(n) / (taxa / len(canais))
-vpp, freq = float(os.environ.get("SINAL_VPP", "0.8")), float(os.environ.get("SINAL_F", "60"))
+vpp, freq = da_vez("SINAL_VPP", "0.8"), da_vez("SINAL_F", "60")
 ruido = np.random.default_rng(len(args)).normal(0, 6e-5, n)
 sinais = [vpp / 2 * np.sin(2 * np.pi * freq * t) + ruido + 0.0026 for _ in canais]
 escrever_bin(opcoes["-o"], sinais, canais=tuple(canais), grandezas=(0,) * len(canais), sondas=("",) * len(canais),
-             fs_total=taxa, faixas_adc_total_v=[faixas.get(c, 20.48) for c in canais])
+             fs_total=taxa, faixas_adc_total_v=[faixas.get(c, 20.48) for c in canais], **v8)
 if os.environ.get("FALSO_MUDO") == "1":
     with open(opcoes["-o"], "r+b") as f:
         f.seek(1024)
@@ -923,15 +968,191 @@ def test_coletar_aliasing_com_opcoes_e_continuar(coleta):
 
 
 def test_coletar_ruido_pede_o_curto_e_captura_cada_faixa(coleta):
-    r = coleta("ruido", entrada="\n")
+    r = coleta("ruido", entrada="\n", SINAL_VPP="0")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "CURTO" in r.stdout and "medir_captura.py" in r.stdout
+    assert "CURTO" in r.stdout and "medir_captura.py" in r.stdout and "sinal" not in r.stdout
     (pasta,) = coleta.pasta.glob("RUIDO_*")
     linhas = _resumo(pasta)
     assert [linha["arquivo"] for linha in linhas] == [f"Z_cspadrao_400000_curto_f{f}_spirapido.bin" for f in ("20.48", "10.24", "5.12")]
     chamadas = coleta.registro.read_text().splitlines()
     assert [c.split("--faixa-adc ")[1].split()[0] for c in chamadas] == ["1:20.48", "1:10.24", "1:5.12"]
     assert all("--blocos 4" in c for c in chamadas)
+
+
+# ---------------------------------------------------------------------------
+# [11/11/2026] A conferência do sinal de cada captura (o nível e a frequência, medidos no próprio .bin)
+# ---------------------------------------------------------------------------
+DIVISOR = 19.357                # o divisor do canal de tensão: 20 Vpp no gerador são 1,033 Vpp no pino
+F0_ADC = 22811.0                # os dois polos reais do filtro do ADS8688 (T3f)
+CALIBRAR_256 = ("calibrar", "--quadradas", "256", "--taxas", "400000", "--faixa", "5.12", "--segundos", "5")
+
+
+def _comum(pasta: Path, comando: str) -> str:
+    r = subprocess.run(["bash", "-c", f'source "{pasta}/coleta/comum.sh"; {comando}'], capture_output=True, text=True,
+                       env={**os.environ, "LC_ALL": "C", "NO_COLOR": "1"}, timeout=60)
+    assert r.returncode == 0, r.stderr
+    return r.stdout.strip()
+
+
+def _quadrada_filtrada(f1: float, t, amplitude: float = 1.0):
+    """Uma quadrada de ±amplitude e f₁ Hz depois de H(f) = 1/(1 + j·f/f0)², pela série de Fourier (a física: o
+    filtro de 2ª ordem do ADS8688, com os dois polos em f0)."""
+    import numpy as np
+    v = np.zeros_like(t)
+    for n in range(1, int(3e6 / f1), 2):
+        h = 1 / (1 + 1j * n * f1 / F0_ADC) ** 2
+        v += 4 * amplitude / (n * np.pi) * abs(h) * np.sin(2 * np.pi * n * f1 * t + np.angle(h))
+    return v
+
+
+@pytest.mark.parametrize("f1", [256, 6912, 20736, 25344])
+def test_medir_sinal_e_queda_da_quadrada_contra_a_quadrada_filtrada(varredura, tmp_path, f1):
+    """O nível esperado de cada quadrada do calibrar é 20 Vpp pelo divisor vezes o que o filtro do ADC deixa do pico
+    a pico (queda_da_quadrada); o medido vem do medir_sinal. Os dois contra uma quadrada filtrada de verdade."""
+    import numpy as np
+    from capturas_sinteticas import escrever_bin
+    fino = np.arange(0, 3 / f1, 1 / 50e6)
+    v = _quadrada_filtrada(f1, fino)
+    queda = (v.max() - v.min()) / 2
+    assert float(_comum(varredura.pasta, f"queda_da_quadrada {f1}")) == pytest.approx(queda, rel=0.01)
+    t = np.arange(65536) / 400e3
+    arquivo = escrever_bin(tmp_path / "q.bin", [_quadrada_filtrada(f1, t, 0.5) + 0.003], canais=(1,), grandezas=(0,),
+                           sondas=("",), fs_total=400000, faixas_adc_total_v=[5.12])
+    campos = _comum(varredura.pasta, f'medir_sinal "{arquivo}" 1 0 5.12 400000').split()
+    vpp, saturadas, frequencia = float(campos[4]), int(campos[5]), float(campos[7])
+    assert frequencia == pytest.approx(f1, rel=1e-3) and saturadas == 0
+    assert vpp == pytest.approx(queda, rel=0.03)                # ±0,5 V: 1 Vpp vezes a queda (as amostras não pegam o pico exato)
+    assert float(campos[2]) == pytest.approx(0.003, abs=0.002)  # a média: o offset
+
+
+def test_coletar_calibrar_confere_o_nivel_e_a_frequencia_e_grava_no_resumo(coleta):
+    """20 Vpp pelo divisor são 1,033 Vpp no pino: a captura passa, e o que foi medido fica na tela e no resumo.csv
+    (o operador não precisa lembrar a frequência da quadrada)."""
+    r = coleta(*CALIBRAR_256, entrada="\n", SINAL_VPP=20 / DIVISOR, SINAL_F=256)
+    assert r.returncode == 0 and "O sinal não é o esperado" not in r.stdout, r.stdout + r.stderr
+    assert " Vpp, 256.0 Hz" in r.stdout
+    (pasta,) = coleta.pasta.glob("CAL_*")
+    (linha,) = _resumo(pasta)
+    assert linha["sinal"] == "ok" and float(linha["vpp_pino_v"]) == pytest.approx(1.033, abs=0.003)
+    assert f"· {float(linha['vpp_pino_v']):.3f} Vpp, 256.0 Hz" in r.stdout          # o que está na tela é o do resumo
+    assert float(linha["freq_medida_hz"]) == pytest.approx(256, rel=1e-3)
+
+
+def test_coletar_calibrar_para_no_gerador_com_a_amplitude_errada_e_repete_a_captura(coleta):
+    """O erro de bancada da 1ª medida da sonda de corrente: o gerador em 0,5 Vpp em vez de 20 Vpp, e nada avisou até a
+    análise. Agora a 1ª captura depois da pausa mede o nível, para e pergunta; com o gerador acertado, a repetição
+    passa e é ela que fica."""
+    r = coleta(*CALIBRAR_256, entrada="\n\n", SINAL_VPP=f"{0.5 / DIVISOR},{20 / DIVISOR}", SINAL_F=256)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "O sinal não é o esperado" in r.stdout and "esperado ~1.033 Vpp no pino, medido 0.026" in r.stdout
+    assert "(-97 %)" in r.stdout                               # 0,5 Vpp em vez de 20 Vpp: 40 vezes menos
+    assert "confira a amplitude do gerador" in r.stdout and "fora do esperado" not in r.stdout
+    (pasta,) = coleta.pasta.glob("CAL_*")
+    (linha,) = _resumo(pasta)                                  # uma linha só: a da captura repetida
+    assert linha["sinal"] == "ok" and float(linha["vpp_pino_v"]) == pytest.approx(1.033, abs=0.003)
+    assert len(coleta.registro.read_text().splitlines()) == 2 and "sinal [nivel]" in (pasta / "log.txt").read_text()
+
+
+def test_coletar_calibrar_seguir_assim_mesmo_marca_a_captura_e_sem_terminal_nao_trava(coleta):
+    r = coleta(*CALIBRAR_256, entrada="\ns\n", SINAL_VPP=0.5 / DIVISOR, SINAL_F=256)
+    assert r.returncode == 0 and "1 captura(s) com o sinal fora do esperado" in r.stdout, r.stdout + r.stderr
+    (pasta,) = coleta.pasta.glob("CAL_*")
+    assert [linha["sinal"] for linha in _resumo(pasta)] == ["nivel"]
+    # Sem ninguém no terminal (a conexão caiu), a coleta segue, com a captura marcada.
+    r = coleta(*CALIBRAR_256, "--quadradas", "768", entrada="\n", SINAL_VPP=0.5 / DIVISOR, SINAL_F=768)
+    assert r.returncode == 0 and "fora do esperado" in r.stdout, r.stdout + r.stderr
+
+
+def test_coletar_calibrar_acusa_a_frequencia_errada_e_p_pula_a_parte(coleta):
+    r = coleta(*CALIBRAR_256, entrada="\np\n", SINAL_VPP=20 / DIVISOR, SINAL_F=1000)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "a frequência no canal 1: esperada 256 Hz, medida 1000.0 Hz" in r.stdout
+    (pasta,) = coleta.pasta.glob("CAL_*")
+    assert _resumo(pasta) == [] and not list(pasta.glob("F_*.bin"))      # a captura errada não fica
+
+
+def test_coletar_calibrar_na_corrente_acusa_o_sinal_fraco_e_confere_o_esperado_vpp(coleta):
+    """Na corrente o nível depende do laço: sem --esperado-vpp, o que dá para acusar é o sinal que mal sai do zero
+    (o gerador em 0,5 Vpp dava ~0,2 % da faixa); com ele, o nível é conferido como na tensão."""
+    corrente = ("calibrar", "--grandeza", "corrente", "--canal", "0", "--sonda", "sct013_100a_sn001", "--quadradas",
+                "256", "--taxas", "400000", "--segundos", "5")
+    r = coleta(*corrente, entrada="\ns\n", SINAL_VPP=0.0085, SINAL_F=256)
+    assert r.returncode == 0 and "sinal fraco no canal 0" in r.stdout and "0.17 % da faixa" in r.stdout, r.stdout
+    r = coleta(*corrente, "--esperado-vpp", "0.34", entrada="\n", SINAL_VPP=0.34, SINAL_F=256)
+    assert r.returncode == 0 and "O sinal não é o esperado" not in r.stdout, r.stdout + r.stderr
+    r = coleta(*corrente, "--esperado-vpp", "0.34", entrada="\ns\n", SINAL_VPP=0.17, SINAL_F=256)
+    assert "esperado ~0.340 Vpp no pino, medido 0.17" in r.stdout and "(-50 %)" in r.stdout
+    r = coleta(*corrente, "--esperado-vpp", "x", "--simular")
+    assert r.returncode == 1 and "--esperado-vpp 'x'" in r.stderr
+
+
+def test_coletar_acusa_a_saturacao_e_o_sinal_numa_entrada_que_devia_estar_em_curto(coleta):
+    r = coleta(*CALIBRAR_256, "--esperado-vpp", "8", entrada="\ns\n", SINAL_VPP=8, SINAL_F=256)
+    assert "o canal 1 saturou" in r.stdout, r.stdout + r.stderr
+    r = coleta("ruido", "--faixas", "5.12", entrada="\ns\n", SINAL_VPP=0.8)
+    assert r.returncode == 0 and "que deveria estar em curto" in r.stdout, r.stdout + r.stderr
+    (pasta,) = coleta.pasta.glob("RUIDO_*")
+    assert [linha["sinal"] for linha in _resumo(pasta)] == ["sem_curto"]
+
+
+def test_coletar_bancada_confere_o_tom_de_10_khz(coleta):
+    """As varreduras do T7 pedem um tom de 10 kHz, 20 Vpp: no pino, 20/19,357 vezes o ganho do filtro em 10 kHz
+    (1/(1 + (10/22,811)²) = 0,839)."""
+    no_pino = 20 / DIVISOR / (1 + (10000 / F0_ADC) ** 2)
+    r = coleta("bancada", "--partes", "P", SINAL_VPP=no_pino, SINAL_F=10000)
+    assert r.returncode == 0 and "O sinal não é o esperado" not in r.stdout, r.stdout + r.stderr
+    (pasta,) = coleta.pasta.glob("T7g_*")
+    assert [linha["sinal"] for linha in _resumo(pasta)] == ["ok"] * 4
+    r = coleta("bancada", "--partes", "P", entrada="s\n", SINAL_VPP=no_pino, SINAL_F=1000)
+    assert "esperada 10000 Hz, medida 1000.0 Hz" in r.stdout
+
+
+def test_coletar_conferir_mede_e_confere_a_frequencia(coleta):
+    r = coleta("conferir", "--esperado-hz", "1000", SINAL_F=1000)
+    assert r.returncode == 0 and "1000.0 Hz" in r.stdout and "a frequência bate com a esperada" in r.stdout, r.stdout
+    r = coleta("conferir", "--esperado-hz", "256", SINAL_F=1000)
+    assert r.returncode == 1 and "esperados 256 Hz, medida 1000.0 Hz" in r.stdout
+
+
+def test_coletar_conferir_mostra_o_sistema_do_cabecalho_v8(coleta):
+    """Os campos do sistema do cabeçalho v8 (a placa pela EEPROM, a imagem, o kernel, o relógio e o disco) entraram
+    sem nunca terem rodado na BeagleBone: o conferir os lê da própria captura, e a 1ª ida ao laboratório já os vê."""
+    r = coleta("conferir", FALSO_CABECALHO_V8=1)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert ("placa A335BNLT 00C0 3714BBBK1234 · BeagleBoard.org Debian Bullseye IoT Image 2023-09-02 · kernel "
+            "5.10.168-ti-r72") in r.stdout
+    assert "relógio sincronizado (NTP): a captura é de 2023-11-14 22:13:20 UTC" in r.stdout      # 1 700 000 000 s
+    assert "disco das capturas: 1.8 GiB livres de 3.3: cabem ~40 min a 400000 S/s" in r.stdout   # 1,9 GiB / 0,8 MB/s
+    assert "!" not in r.stdout
+
+
+def test_coletar_conferir_alerta_o_que_o_cabecalho_v8_nao_trouxe(coleta):
+    """O que só a placa mostra: a EEPROM que não foi lida, o relógio sem NTP (o normal no laboratório, sem internet:
+    a hora vem do 'BeagleBone_Setup.sh hora'), o disco quase cheio, o ler_adc de outra versão e a PRU sem a espera de
+    acomodação. Nada disso impede as capturas: o conferir alerta e sai com 0."""
+    import json
+    sistema = json.dumps({"placa": "", "relogio": 0, "saida": [3_500_000, 2_000_000, 150_000]})
+    r = coleta("conferir", FALSO_CABECALHO_V8=1, FALSO_SISTEMA=sistema, FALSO_VERSAO="v9.8-3-gabc1234", FALSO_PROTOCOLO=4)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "o cabeçalho não identificou tudo: placa ''" in r.stdout
+    assert "o relógio da placa não está sincronizado por NTP" in r.stdout and "BeagleBone_Setup.sh hora" in r.stdout
+    assert "disco das capturas quase cheio: 0.1 GiB livres" in r.stdout
+    assert "o ler_adc grava a versão 'v9.8-3-gabc1234', e a desta pasta é 'v9.9'" in r.stdout
+    assert "a PRU é do protocolo 4" in r.stdout and "Pronto para capturar" in r.stdout
+
+
+def test_coletar_le_as_amostras_depois_do_cabecalho_de_4096_bytes_da_v9(coleta):
+    """O cabeçalho v9 tem 4096 bytes: os scripts leem o tamanho no próprio cabeçalho. Com os 1024 fixos de antes, as
+    1536 primeiras "amostras" seriam bytes do cabeçalho (zeros da reserva: o canal pareceria saturado em 0)."""
+    r = coleta("conferir", "--esperado-vpp", "0.8", "--esperado-hz", "1220.703125", FALSO_CABECALHO_V8=9,
+               SINAL_F="1220.703125")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "canal 1: 0.80" in r.stdout and "offset +2.6" in r.stdout and "saturou" not in r.stdout
+    assert "placa A335BNLT 00C0 3714BBBK1234" in r.stdout and "a frequência bate com a esperada" in r.stdout
+    r = coleta(*CALIBRAR_256, entrada="\n", SINAL_VPP=20 / DIVISOR, SINAL_F=256, FALSO_CABECALHO_V8=9)
+    assert r.returncode == 0 and "O sinal não é o esperado" not in r.stdout, r.stdout + r.stderr
+    (pasta,) = coleta.pasta.glob("CAL_*")
+    assert [linha["sinal"] for linha in _resumo(pasta)] == ["ok"]
 
 
 def test_coletar_teto_varre_em_frequencia_e_recomenda_a_taxa_de_trabalho(varredura):

@@ -57,7 +57,7 @@ flowchart LR
 2. O **ARM** (o Linux) só copia os blocos prontos para um arquivo `.bin`. Nada é processado durante a captura.
 3. A análise acontece **depois**, no seu computador.
 
-Essa separação é proposital: o projeto põe a **integridade dos dados** acima de tudo. Cada `.bin` começa com um cabeçalho de 1024 bytes protegido por CRC-32, com a taxa, os canais, a grandeza, a sonda e a faixa de entrada de cada canal, a versão do firmware e os contadores de integridade da captura (amostras atrasadas, buffers sobrescritos). O arquivo se descreve sozinho.
+Essa separação é proposital: o projeto põe a **integridade dos dados** acima de tudo. Cada `.bin` começa com um cabeçalho de 4096 bytes protegido por CRC-32 (que guarda também o CRC-32 das amostras), com a taxa, os canais, a grandeza, a sonda e a faixa de entrada de cada canal, a versão do firmware e os contadores de integridade da captura (amostras atrasadas, buffers sobrescritos). O arquivo se descreve sozinho.
 
 ## ✨ O que ele faz
 
@@ -70,7 +70,7 @@ Essa separação é proposital: o projeto põe a **integridade dos dados** acima
 
 **No computador**
 
-* **Harmônicos:** FFT sincronizada com a rede, componentes e grupos da IEC 61000-4-7, THD e THDG.
+* **Harmônicos:** FFT sincronizada com a rede, componentes, subgrupos e grupos da IEC 61000-4-7, THD, THDS e THDG.
 * **Supraharmônicos:** espectro médio (Welch), lista de picos, espectrograma e bandas de 200 Hz de 2 a 9 kHz, com a agregação de 3 s e 10 min da IEC 61000-4-30.
 * **Correção da cadeia:** cada canal é corrigido pela resposta em frequência medida da cadeia inteira (sonda, condicionamento e o filtro interno do ADC).
 * **Calibração sem instrumento de referência** (`medir_fase.py`): magnitude e fase da cadeia pelos harmônicos de ondas quadradas, com o ajuste do modelo e o teste de fase mínima.

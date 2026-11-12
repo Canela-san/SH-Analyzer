@@ -905,6 +905,17 @@ def test_cabecalho_v8_e_aceito_com_o_crc_no_fim(bancada):
 
 
 @com_e2e
+def test_cabecalho_v9_de_4096_bytes_e_aceito(bancada):
+    """A v9 (11/11/2026) tem 4096 bytes: o tamanho do arquivo, o CRC do cabeçalho (sobre os 4096 bytes) e as amostras
+    conferidas pelo script têm de partir do tamanho que o próprio cabeçalho diz, e não de 1024."""
+    bancada.cenario("cab_v9", "cab_v9")
+    rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", SONDA, "-y")
+    assert rc == 0, saida
+    assert all(m["status"] == "ok" for m in bancada.manifesto())
+    assert all(c.versao_cabecalho == 9 and c.crc32_valido and c.tamanho_cabecalho == 4096 for c in _cabecalhos(bancada))
+
+
+@com_e2e
 def test_cabecalho_v2_do_firmware_antigo_continua_aceito_sem_faixa_adc(bancada):
     bancada.cenario("cab_v2", "cab_v2")
     rc, saida = bancada.rodar("--taxa", TAXA, "--canal-sonda", 1, "--pontos", 2, "--sonda", SONDA, "-y", faixa_adc=False)

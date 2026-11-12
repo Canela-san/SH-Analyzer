@@ -219,7 +219,7 @@ def converter_arquivo(caminho_entrada: Path, caminho_saida: Path, formato: str,
         log.info(f"Convertido: '{caminho_entrada}' (.csv) -> '{caminho_saida}' (.bin) | "
               f"{n} amostra(s) | --formato {formato}")
         log.warning(
-            "o '.bin' reconstruído NÃO tem o cabeçalho de 1024 bytes "
+            "o '.bin' reconstruído NÃO tem o cabeçalho SHAN "
             "(magic 'SHAN', título, timestamp, etc.) -- essa informação não "
             "sobrevive a uma ida por '.csv', que não tem onde guardá-la. "
             "Ferramentas que leem este arquivo de volta vão tratá-lo como "

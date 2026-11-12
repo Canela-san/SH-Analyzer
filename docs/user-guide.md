@@ -138,8 +138,20 @@ e, no fim:
 * **O resultado** é `✓ Captura concluída`, `! Captura concluída, com avisos` (amostras atrasadas ou ruído no SDO),
   `! Captura interrompida antes do fim` (Ctrl+C numa captura com tamanho definido) ou `✗ ...` (amostras perdidas, erro
   de escrita, ADC sem resposta).
-* **Códigos de saída:** 0 ok, 1 erro, 2 argumento inválido, 3 buffers sobrescritos (amostras perdidas: refaça) e 4 ADC
-  sem resposta.
+* **Códigos de saída:** 0 ok, 1 erro, 2 argumento inválido, 3 buffers sobrescritos (amostras perdidas: refaça), 4 ADC
+  sem resposta e 5 captura **interrompida** por um sinal (Ctrl+C, `kill`, a queda da conexão) antes dos blocos
+  pedidos: o arquivo fecha inteiro, mas mais curto (com `--blocos 0`, "até Ctrl+C", o código é 0). O `coletar.sh`
+  refaz uma captura assim no `--continuar`.
+* **O sinal de cada canal no resumo** (cabeçalho versão 9): `Canal 1  de -0.5142 a +0.5194 V no pino (1.0336 Vpp), média
+  +2.73 mV, 365.5 mV rms sem o DC`, medido em todas as amostras, e um aviso se alguma bateu no fundo de escala
+  (`o canal 1 SATUROU`). Com `--ganho C:G` (ex.: `--ganho 1:19.357,0:19.65`), o ganho de cada canal fica no cabeçalho
+  e a análise o usa sem ninguém digitar de novo.
+* **Capturas longas:** o arquivo pode passar de 2 GiB (~45 min a 400 kS/s; desde 11/11/2026), e no fim o `ler_adc`
+  manda os dados para o cartão (`fsync`) antes de dizer `Captura concluída`. Um `SIGHUP` que já chega ignorado
+  (`nohup`, ou o `coletar.sh`) não interrompe a captura.
+* **O começo da captura vale:** desde 11/11/2026 (protocolo 5 da PRU) a PRU espera 2 ms depois de configurar o ADC,
+  e o transitório de troca de faixa (~80 µs) não entra mais nas primeiras amostras. A hora do cabeçalho é a de quando
+  a PRU é solta.
 
 **O que o `ler_adc` confere sozinho, antes e durante a captura:**
 
@@ -216,7 +228,7 @@ tempo, todas as faixas, conforme o caso).
 
 | Modo | Para quê | Sem opções | Pasta | Análise no computador |
 |---|---|---|---|---|
-| `conferir` | **Antes de uma série de capturas** e depois de mexer na bancada: o firmware, os pinos e o ADC respondendo; o nível (Vpp), o offset e o ruído do sinal; a menor faixa que o comporta; com `--esperado-vpp`, se o sinal é o que o gerador manda | canal 1, 400 kS/s, ±10,24 V, 1 bloco (~10 s) | `conferencia.bin` | — (o veredito sai no terminal; código 1 = algo errado) |
+| `conferir` | **Antes de uma série de capturas** e depois de mexer na bancada: o firmware, os pinos e o ADC respondendo; o nível (Vpp), o offset e o ruído do sinal; a frequência; a menor faixa que o comporta; com `--esperado-vpp` e `--esperado-hz`, se o sinal é o que o gerador manda; e o que o cabeçalho guarda do sistema (a placa, a imagem, o kernel, o relógio, o disco) | canal 1, 400 kS/s, ±10,24 V, 1 bloco (~10 s) | `conferencia.bin` | — (o veredito sai no terminal; código 1 = algo errado) |
 | `calibrar` | **A calibração da cadeia** (sonda + frontend + ADC), magnitude e fase, por ondas quadradas; com `--referencia`, dividida pela entrada medida no osciloscópio; com `--canal-referencia`, dois canais juntos e a razão entre eles ([`medir_fase.py`](#a-calibração-por-ondas-quadradas-medir_fasepy)) | 17 quadradas × 2 taxas × 2 faixas (±10,24 e ±2,56 V), 30 s cada (pede cada uma; ~36 min) | `CAL_*` | `medir_fase.py`, uma vez por faixa |
 | `sonda` | A calibração por senoides, ponto a ponto ([Passo 1](#passo-1-coletar-os-pontos-na-beaglebone)): o ganho em baixa frequência (o K) e a conferência da curva do `calibrar` | interativo | `capturas/<id>/` | `gerar_perfil_sonda.py` |
 | `aliasing` | O mesmo sinal em várias taxas, para separar componentes reais de imagens ([abaixo](#real-ou-imagem-adc_toolpy-aliasing)) | 400, 390,625 e 320 kS/s, 10 s cada, faixa automática | `ALS_*` | `adc_tool.py aliasing` |
@@ -224,8 +236,18 @@ tempo, todas as faixas, conforme o caso).
 | `teto` | A maior taxa com toda amostra na grade, por varredura em frequência, e a taxa de trabalho | SPI rápido e lento, margem de 10 ticks | `TETO_*` | — (`teto.csv`) |
 | `bancada` | As varreduras de hardware do T7: esperas do CS, taxa, grade (`--grade`), SPI (`--spi`), limite (`--limite`), validação (`--validar`) | as partes A, B, D e C (~100 capturas, pede o curto) | `T7e_*`, `T7f_*`, `T7g_*` | `medir_captura.py` |
 
+**Cada captura é conferida na hora** (desde 11/11/2026). Nos modos em lote (`calibrar`, `bancada`, `aliasing`,
+`ruido`), o script mede o sinal de cada `.bin` logo depois de gravá-lo e mostra o pico a pico no pino e a frequência
+(`· 1.033 Vpp, 256.0 Hz`); os dois vão para o `resumo.csv` (colunas `vpp_pino_v`, `freq_medida_hz` e `sinal`). Ele
+acusa: a **frequência** diferente da quadrada pedida (ou do tom de 10 kHz da bancada) em mais de 1 %; o **nível** fora
+de ±25 % do esperado (na tensão, os Vpp pedidos pelo divisor de 19,357; na corrente, o `--esperado-vpp`: o pico a pico
+no pino com a quadrada de 20 Vpp); sem nível esperado, o **sinal fraco** (menos de 1 % da faixa); a **saturação**; e
+sinal numa entrada que devia estar em **curto**. Se a 1ª captura depois de uma pausa não bate, ele para e pergunta:
+Enter **repete** a captura (depois de corrigir a bancada), `s` segue assim mesmo (a captura fica marcada e é listada
+no fim) e `p` pula a parte. Sem ninguém no terminal, ele segue.
+
 ```bash
-./coletar.sh conferir --faixa 5.12 --esperado-vpp 16 --ganho 19.357   # 16 Vpp no divisor: chega certo?
+./coletar.sh conferir --faixa 5.12 --esperado-vpp 16 --ganho 19.357 --esperado-hz 256   # 16 Vpp e 256 Hz no divisor: chega certo?
 ./coletar.sh aliasing --grandeza 1:tensao --sonda 1:cadeia_tensao_fase
 ./coletar.sh teto
 ./coletar.sh calibrar --referencia --simular
@@ -371,7 +393,7 @@ uv run scripts/adc_tool.py captura.bin --export-hdf5 captura.h5 --incluir-tensao
 
 * O **HDF5** tem `/amostras` (códigos brutos, matriz amostras × canais) e, com `--incluir-tensao`, `/tensao_v` (em Volts). Junto, sem mexer nesses dados:
   * todos os campos do cabeçalho como atributos da raiz, mais a taxa que a PRU gera (`frequencia_pru_hz`), o trecho exportado, a versão do código e `correcao_sonda_aplicada_por_canal` (sempre 0: `/tensao_v` não é corrigida pela sonda);
-  * `/cabecalho_bruto`: os 1024 bytes do cabeçalho do `.bin`, como gravados (nada do `.bin` se perde, nem um campo que esta versão não conheça);
+  * `/cabecalho_bruto`: os bytes do cabeçalho do `.bin` (1024 até a versão 8, 4096 na 9), como gravados (nada do `.bin` se perde, nem um campo que esta versão não conheça);
   * `/sondas/canalN`, para cada canal com sonda registrada (no cabeçalho ou por `--sonda-perfil`; `--sondas-dir` diz onde procurar): o JSON do perfil, inteiro (`perfil_json`), os pontos (`freq_hz`, `ganho`), a data de calibração, o SHA-256 do arquivo e, em `como_aplicar`, a receita da correção. Com isso, quem tem só o `.h5` aplica a correção no MATLAB ou no Python sem procurar o arquivo de sonda. Perfil não encontrado: o HDF5 sai sem ele, com aviso.
 
   No MATLAB: `h5read('c.h5','/amostras')`, `h5readatt('c.h5','/','frequencia_pru_hz')`, `jsondecode(h5readatt('c.h5','/sondas/canal1','perfil_json'))`. O arquivo é escrito em blocos, então funciona mesmo com capturas de dezenas de GB.
@@ -454,15 +476,17 @@ uv run scripts/adc_tool.py captura.bin --ganho 19.357 --fft --harmonicos 40 --we
 
 | Opção | O que dá | Método |
 |---|---|---|
-| `--harmonicos N` (com `--fft`) | Tabela dos harmônicos 1..N: frequência, RMS da **componente** e do **grupo harmônico**, % da fundamental e **fase** relativa à fundamental; THD e THDG | FFT retangular sobre ciclos inteiros: o harmônico h cai exatamente no bin h·n. O grupo soma o conteúdo até a metade do caminho para os vizinhos, com metade da potência nos bins de borda (IEC 61000-4-7). A fase está no referencial seno, `v(t) = Σ √2·V_h·sin(h·ω·t + θ_h)` com θ₁ = 0, e não depende de onde o trecho começa |
-| `--bandas-iec` | Bandas de 200 Hz (centros 2100, 2300... Hz) **ao longo do tempo**, com o RMS das janelas, o máximo, o percentil 95 (CP95) e o mínimo de cada banda; figura com as estatísticas e o mapa tempo × banda | IEC 61000-4-7, anexo B (e IEC 61000-4-30, anexo C): janelas de 200 ms sem lacunas, retangular, bins de 5 Hz, banda b = (b − 100, b + 100] Hz. `--bandas-iec-min`/`--bandas-iec-max` limitam a faixa (a norma de 2 a 9 kHz para em 9000 Hz) |
+| `--harmonicos N` (com `--fft`) | Tabela dos harmônicos 1..N: frequência, RMS da **componente**, do **subgrupo** e do **grupo harmônico**, % da fundamental e **fase** relativa à fundamental; THD, THDS e THDG | FFT retangular sobre ciclos inteiros: o harmônico h cai exatamente no bin h·n. O subgrupo soma o harmônico e o que fica a até 5 Hz dele (os bins vizinhos da janela de 10/12 ciclos da IEC 61000-4-7): é a grandeza que a IEC 61000-4-30 classe A pede, e o THDS é o THD dela. O grupo soma o conteúdo até a metade do caminho para os vizinhos, com metade da potência nos bins de borda (IEC 61000-4-7). A norma define o THD até a ordem 40 (`--harmonicos 40`). A fase está no referencial seno, `v(t) = Σ √2·V_h·sin(h·ω·t + θ_h)` com θ₁ = 0, e não depende de onde o trecho começa |
+| `--bandas-iec` | Bandas de 200 Hz (centros 2100, 2300... Hz) **ao longo do tempo**, com o RMS das janelas, o máximo, o percentil 95 (CP95) e o mínimo de cada banda; figura com as estatísticas e o mapa tempo × banda | IEC 61000-4-7, anexo B, que a IEC 61000-4-30 (anexo C, informativo) indica de 2 a 9 kHz: janelas de 200 ms sem lacunas, retangular, bins de 5 Hz, banda b = (b − 100, b + 100] Hz. **Acima de 9 kHz**, as bandas de 200 Hz são a extensão usual na literatura, e não o método que o anexo C descreve para 9 a 150 kHz (janelas de 0,5 ms com lacunas e bins de 2 kHz, ou o receptor da CISPR 16-1-1): diga num trabalho qual foi usado. `--bandas-iec-min`/`--bandas-iec-max` limitam a faixa (a norma de 2 a 9 kHz para em 9000 Hz) |
 | `--bandas-iec-sincronizar` (extra) | As mesmas bandas, com cada janela de exatamente 10 ciclos (rede de 50 Hz) ou 12 ciclos (60 Hz) da fundamental **medida** | IEC 61000-4-30, classe A. Com a rede fora da frequência nominal, a janela fixa de 200 ms não tem ciclos inteiros e a fundamental vaza para as bandas: com a rede a 60,1 Hz, 46 mV numa banda vazia de 2,5 kHz, contra 1,7 mV sincronizada. A referência é o primeiro canal de tensão; janelas que não têm os ciclos dentro de ±0,03 % (a da borda do trecho, ou um salto de fase) são descartadas com aviso |
 | `--bandas-iec-agregar` (extra) | Também as séries de 150/180 ciclos (~3 s) e de 10 min, com as mesmas estatísticas (o P95 dos valores agregados aparece no console, no gráfico e na exportação) | IEC 61000-4-30: cada valor é o RMS das janelas do intervalo; só intervalos completos; a de 10 min só com 10 min de captura ou mais |
 | `--espectrograma` | O espectro ao longo do tempo: quando cada supraharmônico aparece, some ou muda de frequência | Os segmentos do Welch (`--resolucao-welch`, `--sobreposicao-welch`, janela Hann), sem a média de todos: são reunidos em até 600 colunas, cada uma a média dos seus segmentos |
 | `--exportar PREFIXO` | Um CSV por resultado e por canal (`PREFIXO_canal1_welch.csv`, `..._harmonicos.csv`, `..._bandas_iec.csv` e `..._bandas_iec_serie.csv`, `..._espectrograma.csv`, `PREFIXO_picos.csv`) e `PREFIXO_metadados.json` | Os metadados dizem tudo o que produziu o número: arquivo e cabeçalho da captura, calibração e sonda de cada canal, janela, resolução, ENBW, filtros, versão do código (commit), Python/NumPy/SciPy e o comando exato |
 | `--exportar-mat ARQ.mat` | Os mesmos resultados no MATLAB/Octave: `load('ARQ.mat')`, depois `sh.canal1.welch.f`, `sh.canal1.harmonicos.thd_pct`, `sh.canal1.bandas_iec.niveis`, `sh.metadados` | Formato `.mat` v5 (scipy.io) |
 
-Por padrão, o `--bandas-iec` usa janelas de 200 ms fixas e as estatísticas são sobre elas; `--bandas-iec-sincronizar` e `--bandas-iec-agregar` são extras, para quem precisa do método da IEC 61000-4-30. Diferenças que restam em relação às normas, a declarar num trabalho: a borda de cada janela sincronizada é arredondada à amostra (0,005 % a 100 kS/s, dentro dos ±0,03 % da norma); os intervalos de 10 min contam a partir do início da captura, e não do relógio UTC (00:00, 00:10...) como na classe A; e a correção de sonda é só de amplitude, então a fase dos harmônicos de um canal corrigido inclui a fase da sonda.
+Por padrão, o `--bandas-iec` usa janelas de 200 ms fixas e as estatísticas são sobre elas; `--bandas-iec-sincronizar` e `--bandas-iec-agregar` são extras, para quem precisa do método da IEC 61000-4-30. **Os canais não são simultâneos.** O ADC converte um canal por quadro, em sequência: com 2 canais a 400 kS/s, o segundo sai 2,5 µs depois do primeiro. Cada canal é analisado no próprio relógio (as amplitudes não mudam), mas a **fase entre dois canais** de um componente de frequência f carrega 360°·f·Δt: 0,05° em 60 Hz e 45° em 50 kHz. O cabeçalho mostra o atraso de cada canal, e ele vai para o HDF5 (`atraso_de_amostragem_por_canal_s`) e para os metadados de `--exportar`; o `medir_fase.py --canal-referencia` já o desconta.
+
+Diferenças que restam em relação às normas, a declarar num trabalho: a borda de cada janela sincronizada é arredondada à amostra (0,005 % a 100 kS/s, dentro dos ±0,03 % da norma); os intervalos de 10 min contam a partir do início da captura, e não do relógio UTC (00:00, 00:10...) como na classe A; e a correção de sonda é só de amplitude, então a fase dos harmônicos de um canal corrigido inclui a fase da sonda.
 
 **As normas e o Brasil.** As normas citadas aqui são **internacionais**, da IEC (International Electrotechnical Commission). A IEC 61000-4-30 tem edição brasileira, a [ABNT NBR IEC 61000-4-30](https://www.normas.com.br/visualizar/abnt-nbr-nm/30581/abnt-nbriec61000-4-30-compatibilidade-electromagnetica-emc-parte-4-30-tecnicas-de-ensaio-e-medicao-metodos-de-medicao-de-qualidade-de-energia) (edição de 09/2023, que substituiu a de 2011). A regulação brasileira da qualidade de energia é o **PRODIST, Módulo 8**, da ANEEL. Para harmônicos, ele define indicadores como o DTT95% (distorção harmônica total de tensão): o valor superado por só 5 % das 1008 leituras válidas de 10 min de uma semana, ou seja, um P95 de valores de 10 min, como os que o `--bandas-iec-agregar` calcula para as bandas. O PRODIST trata dos harmônicos, e não da faixa de 2 a 150 kHz. Antes de citar, confira as edições vigentes: o PRODIST é revisado periodicamente, e a edição de 2015 da IEC 61000-4-30 consta como cancelada em 2025 num catálogo de normas europeu.
 
@@ -748,9 +772,10 @@ e magnetiza o núcleo), e a faixa padrão é a menor (±2,56 V): passe a de prod
 
 O passa-alta do TC (alguns Hz) não estraga a fase: a parte linear do adiantamento dele, o erro da fundamental tirado
 de cada captura já absorve. O que sobra é uma curvatura de ~0,1 a 0,2° nos harmônicos mais baixos; `--passa-alta` a
-mede (ajusta o passa-alta e relata, sem mudar o perfil). O limite real é o **sinal**: 60 µV/A (SCT013 sobre 0,12 Ω).
-Com o gerador sozinho (~1,6 A·espira), o perfil é bom até ~50 kHz; para ir a 150 kHz e além, são precisas dezenas de
-ampère-espira (uma fonte de corrente quadrada de 1 a 2 A e 20 espiras).
+mede (ajusta o passa-alta e relata, sem mudar o perfil). A sensibilidade do canal é de **50,9 mV/A** no pino (medida; até 11/11/2026 este guia supunha 60 µV/A, o SCT013
+sobre 0,12 Ω): o gerador sozinho com 20 espiras (~3 A·espira) dá ~0,3 Vpp, e o que limita é a **faixa**: ±2,56 V
+satura acima de 50 A·espira de pico (±5,12 V, de 101; ±10,24 V, de 201). O `calibrar` confere o nível de cada captura
+com `--esperado-vpp` (o pico a pico no pino com a quadrada de 20 Vpp) e, sem ele, acusa o sinal fraco.
 
 #### A razão de dois canais: `--canal-referencia`
 
@@ -782,8 +807,7 @@ mesmo limite de qualquer análise V×I em produção.
 
    Com um resistor de filme não indutivo medido a 4 fios, `--resistencia 10.02` basta.
 2. **Na bancada:** o calibrar com o canal de referência (e, com `--diafonia`, 3 quadradas com o condutor fora da
-   garra: o vazamento da tensão no canal de corrente, que a análise subtrai; o canal de corrente é 30 a 40 dB mais
-   fraco, e a diafonia cresce com a frequência):
+   garra: o vazamento da tensão no canal de corrente, que a análise subtrai; a diafonia cresce com a frequência):
 
    ```bash
    ./coletar.sh calibrar --grandeza corrente --canal 0 --canal-referencia 1 --diafonia --resistencia 10.02 --espiras 20 --sonda sct013_100a_sn001
@@ -792,7 +816,7 @@ mesmo limite de qualquer análise V×I em produção.
 3. **No computador**, com o perfil COM fase da cadeia de tensão na faixa do canal de referência:
 
    ```fish
-   uv run scripts/medir_fase.py $DIA/CAL_*/F_*_f5.12_*.bin --canal 0 --canal-referencia 1 --perfil-referencia scripts/sondas/cadeia_tensao_fase_1024.json --shunt scripts/sondas/shunt_laco.csv --espiras 20 --ganho 16667 --diafonia $DIA/CAL_*/W_*_f5.12_*.bin --csv $DIA/razao.csv --plot $DIA/razao.png --saida-perfil scripts/sondas/sct013_100a_sn001.json
+   uv run scripts/medir_fase.py $DIA/CAL_*/F_*_f5.12_*.bin --canal 0 --canal-referencia 1 --perfil-referencia scripts/sondas/cadeia_tensao_fase_1024.json --shunt scripts/sondas/shunt_laco.csv --espiras 20 --ganho 19.65 --diafonia $DIA/CAL_*/W_*_f5.12_*.bin --csv $DIA/razao.csv --plot $DIA/razao.png --saida-perfil scripts/sondas/sct013_100a_sn001.json
    ```
 
    O perfil sai absoluto (K incluso: o R a 4 fios e o K da tensão do T2 dão ~0,1 a 0,2 %, melhor que a ponta), com a
@@ -988,7 +1012,7 @@ uv run scripts/compactar_amostras.py verificar $P               # confere o paco
 
 ## O arquivo `.bin`
 
-Um `.bin` é um **cabeçalho fixo de 1024 bytes** seguido das **amostras brutas** (2 bytes cada, intercaladas por canal: com N canais, a amostra `i` pertence ao canal `lista_canais[i % N]`).
+Um `.bin` é um **cabeçalho de 4096 bytes** (1024 até a versão 8; o tamanho está no próprio cabeçalho) seguido das **amostras brutas** (2 bytes cada, intercaladas por canal: com N canais, a amostra `i` pertence ao canal `lista_canais[i % N]`).
 
 O cabeçalho começa com o texto `SHAN` e termina com um **CRC-32**; se o `adc_tool.py` perceber que o CRC não confere (arquivo truncado ou corrompido), ele avisa. Campos principais:
 
@@ -1013,6 +1037,11 @@ O cabeçalho começa com o texto `SHAN` e termina com um **CRC-32**; se o `adc_t
 | `placa`, `sistema_operacional`, `kernel` | A BeagleBone da captura: modelo, revisão e nº de série (da EEPROM), a imagem do sistema e o kernel (versão 8). O nº de série separa uma placa da outra: o erro do cristal, e da taxa, é de cada uma |
 | `relogio_sincronizado`, `timestamp_ns` | Se o relógio estava sincronizado por NTP (sem isso a data pode estar errada: a placa não tem RTC) e a fração de segundo do início (versão 8) |
 | `uptime_s`, `carga_1min`, `memoria_disponivel_kib` | Há quanto tempo a placa estava ligada, a carga do ARM e a memória disponível no início (versão 8) |
+| `crc32_amostras` | O CRC-32 de todas as amostras gravadas (versão 9). O `adc_tool.py info` o confere contra o arquivo: diz se a captura no computador é, bit a bit, a que a BeagleBone gravou (cópia interrompida, disco com defeito, arquivo editado) |
+| `id_captura`, `hostname`, `linha_de_comando` | Um identificador aleatório por captura (continua valendo se o arquivo for renomeado), a BeagleBone e os argumentos exatos do `ler_adc` (versão 9) |
+| `ganho_por_canal` | O `--ganho` declarado no `ler_adc` (unidades físicas por volt no pino: 19.357 no divisor de tensão, 19.65 na sonda de corrente). É o padrão do `--ganho` do `adc_tool.py` e do `medir_captura.py` (versão 9) |
+| `codigo_minimo/maximo_por_canal`, `media/desvio_codigos_por_canal`, `amostras_saturadas_por_canal` | O sinal de cada canal medido pelo `ler_adc` em **todas** as amostras: pico a pico, média, RMS sem o DC e quantas bateram no fundo de escala (versão 9). O `ler_adc` avisa a saturação no fim da captura |
+| `timestamp_fim_*`, `duracao_monotonica_s`, `pior_bloco_ms` | Quando o último bloco ficou pronto, quanto a captura durou pelo relógio do ARM e o bloco que mais demorou para ser copiado e gravado (versão 9) |
 | `disco_saida_*_kib`, `disco_programa_*_kib` | Total e livre (como o `df`) do disco do `.bin`, no início e no fim, e do disco onde está o `ler_adc` (versão 8). O `ler_adc` avisa antes de começar se o disco não comporta a captura |
 | `header_crc32` | Detecta corrupção do cabeçalho |
 

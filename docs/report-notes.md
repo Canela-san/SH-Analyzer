@@ -1419,7 +1419,7 @@ Os números do projeto num lugar só, com a condição e a fonte. Os valores med
 | Offset no pino | canal 1: +2,5 a +3,5 mV; canal 0: +0,05 a +0,21 mV | entrada em curto | T1, T2 |
 | Razão do divisor | 0,051554 medida; 0,05157 calculada com a carga do ADC; 0,051662 sem ela | Fluke 289, ±10 V | T2; roteiro, fato 4 |
 | Linearidade | resíduo ≤ 0,22 LSB | ±0,5 V no pino | T2 |
-| Sensibilidade do canal de corrente | 60 µV/A (`$GI` = 16 667 A/V) | SCT013 100A:50mA sobre 0,12 Ω; ainda não medida | Roteiro, fato 5 |
+| Sensibilidade do canal de corrente | 50,9 mV/A (`$GI` = 19,65 A/V) | medida; até 11/11/2026 supunham-se 60 µV/A (o SCT013 sobre 0,12 Ω): a carga é de ~100 Ω. Falta registrar a medida no `bench-results.md` (T10-0) | Roteiro, fato 5 |
 | Resposta da cadeia de tensão (histórico: a referência do osciloscópio errou acima de ~40 kHz; use a linha seguinte) | −3 dB em 17,26 ± 0,16 kHz; f0 = 24,06 ± 0,21 kHz; Q = 0,540 ± 0,006; K = 0,9969 ± 0,0028; −12,5 dB em 45 kHz; resíduo de 0,13 dB | 48 pontos, 50 Hz a 45 kHz, 100 kS/s | T3; Marco 12 |
 | Resposta da cadeia de tensão, magnitude e fase (ondas quadradas, sem referência) | −3 dB em 14,68 kHz; 2ª ordem com f0 = 22,811 kHz e Q = 0,5001 (dois polos reais) × polo real em 800 ± 16 kHz; resíduo de 0,0105 dB e 0,136°; fase mínima (magnitude e fase dão o mesmo filtro) | 24 quadradas, 256 Hz a 180 kHz, 312,5 e 400 kS/s (diferem 0,0005 dB e 0,004°) | T3f; Marco 16 |
 | Validação do perfil por senoides | 10 tons de 60 Hz a 270 kHz a ±0,05 dB do modelo do T3f (0,027 dB rms); sem o polo de 800 kHz, +0,11 dB em 130 kHz e +0,47 dB em 270 kHz | gerador como referência (High-Z), 400, 320 e 100 kS/s, ±2,56 V | T8, T9; Marco 17 |

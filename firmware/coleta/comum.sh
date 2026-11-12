@@ -11,6 +11,13 @@ CLOCK_PRU=200000000
 AMOSTRAS_POR_BLOCO=1048576
 TETO_TICKS_RAPIDO=477                               # o teto medido da PRU (ler_adc.c): só para as estimativas
 TETO_TICKS_LENTO=610
+GANHO_DIVISOR_TENSAO=19.357                         # o divisor resistivo do canal de tensão: entrada ÷ 19,357 = pino
+F0_FILTRO_ADC=22811                                 # os dois polos reais do filtro do ADS8688 (Hz), medidos no T3f
+# A sensibilidade do canal de corrente no pino do ADC (V por ampère no primário do SCT013, por espira): 50,9 mV/A,
+# medida. Até 11/11/2026 os scripts e os documentos supunham 60 µV/A (o TC sobre 0,12 Ω): a carga é de ~100 Ω.
+SENSIBILIDADE_CORRENTE=0.0509
+GANHO_CORRENTE=19.65                                # o --ganho do canal de corrente: 1 ÷ 50,9 mV/A
+IMPEDANCIA_GERADOR=50                               # a saída do gerador de funções (Ω)
 
 # Cores só num terminal (NO_COLOR desliga).
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -90,12 +97,12 @@ argumento_de_faixa() {   # $1 = canais, $2 = faixa total (V)
 
 valida_faixa() { case "$1" in 20.48|10.24|5.12) return 0 ;; esac; return 1; }
 
-# Estatísticas de um canal de um .bin (cabeçalho de 1024 bytes), nas primeiras N amostras brutas (padrão 262144:
+# Estatísticas de um canal de um .bin, nas primeiras N amostras brutas depois do cabeçalho (padrão 262144:
 # ~0,65 s a 400 kS/s, ~40 ciclos de 60 Hz): "mínimo máximo média rms_ac vpp saturadas constante", em volts no pino
 # (constante = 1 se todas as amostras do canal são iguais: o ADC mudo).
 estatisticas_do_canal() {   # $1 = arquivo, $2 = nº de canais, $3 = posição do canal (0..), $4 = faixa total (V), [$5 = N]
     local n=${5:-262144}
-    od -An -tu2 -v -j 1024 -N $((n * 2)) "$1" | tr -s ' ' '\n' \
+    od -An -tu2 -v -j "$(tamanho_do_cabecalho "$1")" -N $((n * 2)) "$1" | tr -s ' ' '\n' \
         | LC_ALL=C awk -v nc="$2" -v pos="$3" -v faixa="$4" '
             NF { if ((k++ % nc) != pos) next
                  v = ($1 - 32768) * faixa / 65536
@@ -108,6 +115,80 @@ estatisticas_do_canal() {   # $1 = arquivo, $2 = nº de canais, $3 = posição d
                   media = soma / cont; var = soma2 / cont - media * media; if (var < 0) var = 0
                   printf "%.6f %.6f %.6f %.6f %.6f %d %d\n", min, max, media, sqrt(var), max - min, sat, !diferentes }'
 }
+
+# O sinal de um canal de um .bin: "mínimo máximo média rms_ac vpp saturadas constante frequência", em volts no pino e
+# em Hz, nas primeiras N amostras brutas (padrão 131072: ~0,33 s a 400 kS/s). A frequência vem das subidas pelo meio do
+# sinal (entre o mínimo e o máximo), com 10 % do pico a pico de histerese e interpoladas entre duas amostras; "nan"
+# sem um sinal periódico claro (menos de 16 LSB de pico a pico ou menos de 4 subidas).
+medir_sinal() {   # $1 = arquivo, $2 = nº de canais, $3 = posição do canal (0..), $4 = faixa total (V), $5 = taxa total (Hz), [$6 = N]
+    local n=${6:-131072}
+    od -An -tu2 -v -j "$(tamanho_do_cabecalho "$1")" -N $((n * 2)) "$1" | tr -s ' ' '\n' \
+        | LC_ALL=C awk -v nc="$2" -v pos="$3" -v faixa="$4" -v fs="$5" '
+            NF { if ((k++ % nc) != pos) next
+                 c[n++] = $1
+                 if (n == 1 || $1 < min) min = $1
+                 if (n == 1 || $1 > max) max = $1
+                 soma += $1; soma2 += $1 * $1
+                 if ($1 == 0 || $1 == 65535) sat++ }
+            END { if (n == 0) { print "nan nan nan nan nan 0 1 nan"; exit }
+                  lsb = faixa / 65536; media = soma / n; var = soma2 / n - media * media; if (var < 0) var = 0
+                  freq = "nan"; pp = max - min
+                  if (pp >= 16) {
+                      meio = (min + max) / 2; h = 0.1 * pp
+                      for (i = 1; i < n; i++) {
+                          if (c[i - 1] < meio - h) armado = 1
+                          if (armado && c[i - 1] < meio && c[i] >= meio) {
+                              t = (i - 1) + (meio - c[i - 1]) / (c[i] - c[i - 1])
+                              if (subidas == 0) t0 = t
+                              t1 = t; subidas++; armado = 0
+                          }
+                      }
+                      if (subidas >= 4 && t1 > t0) freq = sprintf("%.3f", (subidas - 1) * (fs / nc) / (t1 - t0))
+                  }
+                  printf "%.6f %.6f %.6f %.6f %.6f %d %d %s\n", (min - 32768) * lsb, (max - 32768) * lsb,
+                         (media - 32768) * lsb, sqrt(var) * lsb, pp * lsb, sat, (pp == 0), freq }'
+}
+
+# Quanto do pico a pico de uma onda quadrada de f₁ Hz sobra no pino, depois do filtro de 2ª ordem do ADS8688 (dois
+# polos reais em F0_FILTRO_ADC): 1,00 até ~7 kHz, 0,74 em 20736 Hz e 0,61 em 25344 Hz. É a solução em regime de
+# 1/(1 + s·τ)² para a quadrada, com x = meio período ÷ τ: 2·exp(−x·E/(1 + E))/(1 + E) − 1, E = exp(−x). Só serve para
+# conferir o nível de uma captura (tests/test_scripts_shell.py a compara com a quadrada filtrada numericamente).
+queda_da_quadrada() {   # $1 = f₁ (Hz)
+    LC_ALL=C awk -v f="$1" -v f0="$F0_FILTRO_ADC" 'BEGIN { x = atan2(0, -1) * f0 / f; e = exp(-x)
+                                                          printf "%.4f\n", 2 * exp(-x * e / (1 + e)) / (1 + e) - 1 }'
+}
+
+# O ganho (em módulo) do mesmo filtro para um tom de f Hz: 1/(1 + (f/f0)²).
+ganho_do_filtro() {   # $1 = f (Hz)
+    LC_ALL=C awk -v f="$1" -v f0="$F0_FILTRO_ADC" 'BEGIN { printf "%.4f\n", 1 / (1 + (f / f0) ^ 2) }'
+}
+
+# Campos do cabeçalho do .bin lidos pelo offset (struct cabecalho_arquivo_campos, em ler_adc.c;
+# tests/test_contrato_firmware.py confere estes números contra a struct). Os do sistema são do cabeçalho v8.
+CAB_VERSAO=4
+CAB_TAMANHO=8                   # uint32: o tamanho do cabeçalho (onde as amostras começam): 1024 até a v8, 4096 na v9
+CAB_INSTANTE=12                 # uint64: o início da captura (s, UTC)
+CAB_KERNEL=356                  # char[32]
+CAB_RELOGIO=392                 # uint32: 1 = sincronizado por NTP, 0 = não
+CAB_VERSAO_FIRMWARE=700         # char[32]
+CAB_PROTOCOLO_PRU=756           # uint32
+CAB_SISTEMA=900                 # char[64]
+CAB_PLACA=964                   # char[32]
+CAB_DISCO_TOTAL=996             # uint32, KiB
+CAB_DISCO_LIVRE_FIM=1004        # uint32, KiB; 0xFFFFFFFF = não lido
+cab_u32() { od -An -tu4 -j "$2" -N 4 "$1" | tr -d ' \n'; }       # $1 = arquivo, $2 = offset
+cab_u64() { od -An -tu8 -j "$2" -N 8 "$1" | tr -d ' \n'; }
+cab_texto() { dd if="$1" bs=1 skip="$2" count="$3" 2>/dev/null | tr -d '\0'; }   # $3 = tamanho do campo
+
+# Onde as amostras de um .bin começam: 1024 bytes até o cabeçalho v8; desde a v9, o que o próprio cabeçalho diz.
+tamanho_do_cabecalho() {   # $1 = arquivo
+    local tamanho=1024
+    if [ "$(cab_u32 "$1" "$CAB_VERSAO")" -ge 9 ] 2>/dev/null; then tamanho=$(cab_u32 "$1" "$CAB_TAMANHO"); fi
+    echo "$tamanho"
+}
+
+# 0 se o arquivo começa com o "SHAN" de um .bin do ler_adc.
+e_um_bin() { [ "$(head -c 4 "$1" 2>/dev/null)" = SHAN ]; }
 
 # A menor faixa do ADC em que o pico do sinal (|V| no pino) cabe com 15 % de folga.
 faixa_para_o_pico() {   # $1 = pico (V)

@@ -35,7 +35,7 @@ def carregar_amostras_bin(caminho: Path, formato: str, offset: int = 0) -> np.me
     """Memory-map: só as páginas efetivamente acessadas (--inicio/--fim, ou
     o processamento em blocos da conversão/exportação) são carregadas na
     RAM. 'offset' pula os primeiros N bytes do arquivo antes de começar a
-    interpretar amostras -- usado para pular o cabeçalho de 1024 bytes dos
+    interpretar amostras -- usado para pular o cabeçalho (1024 bytes até a v8, 4096 na v9) dos
     '.bin' novos (ver CABECALHO_TAMANHO_TOTAL/ler_cabecalho).
 
     offset=1024 funciona normalmente mesmo sem estar alinhado ao tamanho de

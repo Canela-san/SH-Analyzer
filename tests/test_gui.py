@@ -152,3 +152,21 @@ def test_exportacao_grava_os_mesmos_arquivos_da_cli(janela, ambiente, tmp_path):
 
 def test_resumo_sem_cabecalho_pede_taxa_e_canais(tmp_path):
     assert "informe a taxa e os canais" in resumo_html(tmp_path / "antiga.bin", None, 0)
+
+
+def test_captura_v9_usa_o_ganho_declarado_com_o_campo_vazio(janela, tmp_path):
+    """Cabeçalho v9 (4096 bytes, com o ler_adc --ganho): o campo de ganho vazio não escreve --ganho, e a análise usa
+    o ganho declarado na captura (1 V de pico no pino × 19,357)."""
+    import numpy as np
+    from capturas_sinteticas import escrever_bin
+    t = np.arange(20_000) / 100_000.0
+    caminho = escrever_bin(tmp_path / "v9.bin", [1.0 * np.sin(2 * np.pi * 1000 * t)], canais=(1,), grandezas=(0,),
+                           sondas=("",), fs_total=100_000, faixas_adc_total_v=[5.12], versao=9,
+                           extensao={"ganhos": [19.357]})
+    assert janela.abrir(caminho) and janela.aguardar()
+    assert janela.parametros.cabecalho.tamanho_cabecalho == 4096
+    assert "--ganho" not in janela.parametros.argv()
+    assert janela.ultimo_erro is None
+    pico = float(np.max(np.abs(janela.resultado.por_canal_tensao[1])))
+    assert pico == pytest.approx(19.357, rel=2e-3)
+    assert "20000 brutas" in janela.parametros.resumo.text()          # amostras contadas depois dos 4096 bytes

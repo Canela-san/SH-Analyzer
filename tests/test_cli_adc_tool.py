@@ -249,3 +249,49 @@ def test_frequencia_padrao_e_a_que_a_pru_gera(cli, tmp_path):
     assert "usando a frequência: 102406.55 Hz (a que a PRU gera, clock ÷ 1953 ticks" in out
     rc, out, _ = cli(main, caminho, "--sem-grafico", "--fs-pedida")
     assert rc == 0 and "usando a frequência: 102400 Hz (a pedida, por --fs-pedida" in out
+
+
+# ---------------------------------------------------------------------------
+# [11/11/2026] Cabeçalho v9 (4096 bytes): as amostras no lugar certo, o ganho declarado na captura e o adc_tool info
+# ---------------------------------------------------------------------------
+def _captura_v9_com_ganho(pasta, nome="v9.bin", versao=9):
+    t = np.arange(20_000) / 100_000.0
+    return escrever_bin(pasta / nome, [1.0 * np.sin(2 * np.pi * 1000 * t)], canais=(1,), grandezas=(0,), sondas=("",),
+                        fs_total=100_000, faixas_adc_total_v=[5.12], versao=versao, extensao={"ganhos": [19.357]})
+
+
+def _pico_do_csv(caminho) -> float:
+    with open(caminho, newline="", encoding="utf-8") as f:
+        return max(float(ln["tensao_v"]) for ln in csv.DictReader(f))
+
+
+def test_v9_o_ganho_declarado_na_captura_e_o_padrao_do_ganho(cli, tmp_path):
+    """1 V de pico no pino com --ganho 1:19.357 declarado no ler_adc (o divisor de tensão): sem --ganho na análise, sai
+    19,357 V de pico (a entrada do divisor); o --ganho digitado vence; e uma captura sem ganho declarado continua em
+    volts no pino. As amostras da v9 começam no byte 4096."""
+    captura = _captura_v9_com_ganho(tmp_path)
+    rc, out, err = cli(main, "-c", captura, "-o", tmp_path / "declarado.csv", "--incluir-tensao")
+    assert rc == 0 and "o declarado na captura" in out + err, err
+    assert _pico_do_csv(tmp_path / "declarado.csv") == pytest.approx(19.357, abs=0.01)
+    rc, _, err = cli(main, "-c", captura, "-o", tmp_path / "digitado.csv", "--incluir-tensao", "--ganho", "2")
+    assert rc == 0 and _pico_do_csv(tmp_path / "digitado.csv") == pytest.approx(2.0, abs=0.002), err
+    antiga = _captura_v9_com_ganho(tmp_path, "v8.bin", versao=8)
+    rc, _, err = cli(main, "-c", antiga, "-o", tmp_path / "antiga.csv", "--incluir-tensao")
+    assert rc == 0 and _pico_do_csv(tmp_path / "antiga.csv") == pytest.approx(1.0, abs=0.001), err
+
+
+def test_info_mostra_a_extensao_da_v9_e_confere_o_crc_das_amostras(cli, tmp_path):
+    from supraharmonicos.cli_info import main as info
+    captura = _captura_v9_com_ganho(tmp_path)
+    rc, out, err = cli(info, captura, "--estatisticas")
+    assert rc == 0, err
+    assert "CRC-32 das amostras: confere" in out and "Captura 00112233-" in out and "em 'beaglebone'" in out
+    assert "Sinal do canal 1: de -1.0000 a +1.0000 V no pino (2.0000 Vpp" in out and "0 saturada(s)" in out
+    assert "RMS sem DC 0.7071" in out                          # 1 V de pico: lido a partir do byte 4096
+    bruto = bytearray(captura.read_bytes())
+    bruto[4096 + 5000] ^= 0x40                                  # uma amostra alterada depois da captura
+    alterada = tmp_path / "alterada.bin"
+    alterada.write_bytes(bytes(bruto))
+    rc, out, err = cli(info, alterada)
+    assert rc == 1 and "o CRC-32 das amostras NÃO confere" in err
+

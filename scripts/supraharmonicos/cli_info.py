@@ -1,6 +1,7 @@
 """``adc_tool.py info``: o que cada captura é, sem análise espectral nem gráfico.
 
-Lê o cabeçalho (taxa, canais, faixa, grandeza, sonda, integridade da captura, CRC), confere o tamanho do arquivo e,
+Lê o cabeçalho (taxa, canais, faixa, grandeza, sonda, integridade da captura, CRC), confere o tamanho do arquivo, as
+amostras contra o CRC-32 gravado pelo ``ler_adc`` (cabeçalho v9) e,
 com ``--estatisticas``, percorre as amostras em blocos sobre o arquivo mapeado (memória constante, só numpy) para
 dar, por canal: média, RMS sem DC, mínimo, máximo, fator de crista e saturação. É o primeiro comando a rodar numa
 captura nova, e cabe em lote (``info *.bin``). Não carrega SciPy nem matplotlib.
@@ -15,7 +16,12 @@ from pathlib import Path
 import numpy as np
 
 from .amostras import carregar_amostras_bin
-from .cabecalho import CABECALHO_TAMANHO_TOTAL, contar_amostras_arquivo_bin, imprimir_resumo_cabecalho, ler_cabecalho
+from .cabecalho import (
+    conferir_crc_das_amostras,
+    contar_amostras_arquivo_bin,
+    imprimir_resumo_cabecalho,
+    ler_cabecalho,
+)
 from .canais import analisar_lista_calibracao, resolver_faixas, resolver_offsets_por_canal
 from .erros import ErroSHAN, ErroUso
 from .registro import configurar_logging_cli
@@ -42,8 +48,8 @@ def montar_parser() -> argparse.ArgumentParser:
 
 
 def _estatisticas(caminho: Path, canais: list[int], faixas: list[float], offsets: list[float],
-                  ganhos: list[float]) -> list[str]:
-    amostras = carregar_amostras_bin(caminho, "uint16", offset=CABECALHO_TAMANHO_TOTAL)
+                  ganhos: list[float], offset_amostras: int) -> list[str]:
+    amostras = carregar_amostras_bin(caminho, "uint16", offset=offset_amostras)
     k = len(canais)
     n_total = (len(amostras) // k) * k
     soma = np.zeros(k)
@@ -86,10 +92,19 @@ def _informar(caminho: Path, args: argparse.Namespace) -> None:
                  "comando na análise (-f, --canais).")
         return
     imprimir_resumo_cabecalho(cab)
-    n_arquivo = contar_amostras_arquivo_bin(caminho, "uint16", CABECALHO_TAMANHO_TOTAL)
+    n_arquivo = contar_amostras_arquivo_bin(caminho, "uint16", cab.tamanho_cabecalho)
     if n_arquivo != cab.total_amostras_gravadas:
         log.warning(f"{caminho.name}: o arquivo tem {n_arquivo} amostras, o cabeçalho diz {cab.total_amostras_gravadas} "
                     f"(cópia truncada ou captura interrompida?).")
+    # [v9] As amostras conferidas contra o CRC-32 que o ler_adc gravou: o arquivo é o que saiu da captura?
+    confere = conferir_crc_das_amostras(caminho, cab)
+    if confere is True:
+        log.info(f"  CRC-32 das amostras: confere (0x{cab.crc32_amostras:08X}): o arquivo é o que a captura gravou")
+    elif confere is False:
+        raise ErroSHAN(f"o CRC-32 das amostras NÃO confere com o do cabeçalho (0x{cab.crc32_amostras:08X}): o arquivo "
+                       f"foi corrompido, truncado ou alterado depois da captura. Traga-o de novo da BeagleBone.")
+    elif cab.versao_cabecalho >= 9:
+        log.info("  CRC-32 das amostras: não gravado (a captura não chegou ao cabeçalho final)")
     if args.estatisticas:
         canais = list(cab.lista_canais)
         faixas, _ = resolver_faixas(None, canais, "uint16", cab.faixa_adc_total_v_por_canal)
@@ -97,7 +112,7 @@ def _informar(caminho: Path, args: argparse.Namespace) -> None:
         ganhos = analisar_lista_calibracao(args.ganho, len(canais), "--ganho")
         unidade = "V no pino do ADC" if args.ganho == "1.0" else "unidade de --ganho"
         log.info(f"Estatísticas ({unidade}):")
-        for linha in _estatisticas(caminho, canais, faixas, offsets, ganhos):
+        for linha in _estatisticas(caminho, canais, faixas, offsets, ganhos, cab.tamanho_cabecalho):
             log.info(linha)
 
 
