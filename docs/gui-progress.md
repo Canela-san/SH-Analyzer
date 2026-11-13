@@ -10,9 +10,6 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 > **F0.10: o `sh_placa`, o agente e o simulador** (seção 4).
 >
-> **Pendente da F0.8, precisa do seu OK:** baixar as fontes Inter e JetBrains Mono (OFL) para `scripts/sh_analyzer_gui/recursos/fontes/`. Sem elas, o aplicativo usa as fontes do sistema (a Inter está instalada nesta máquina).
->
-> **Para você, quando puder (5 minutos):** medir o protótipo na sua tela, os portões G1 e G2 da F0.6 (o comando está lá). Sem tela, o G1 com 8 faixas está no limite.
 >
 > **No laboratório (opcional, 5 minutos):** a F0.2 colhe da BeagleBone os dados que a Aquisição vai usar (seção 6).
 
@@ -225,7 +222,7 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
     - o eixo do tempo repetido em cada faixa (fica só na última);
     - a consulta deixou de usar `np.unique`.
 
-### ◐ F0.6: os portões G1 a G5 (a parte automática feita; falta medir numa tela de verdade)
+### ◐ F0.6: os portões G1 a G5 (G1, G3 e G4 aprovados; falta o G2 em 4K e o G5 com o disco frio)
 
 - **Arquivos:**
   - `tests/test_gui_desempenho.py`, marcado `desempenho` e fora do conjunto padrão. Registre o marcador no `pyproject.toml`.
@@ -237,8 +234,9 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
   - **G4:** a fidelidade;
   - **G1 sem tela, com 2 faixas:** p95 ≤ 16 ms, num teste marcado `desempenho` (`tests/test_gui_desempenho.py`, que roda com `pytest --desempenho`);
   - as funções do protótipo que o teste usa: `montar_faixas`, `percorrer_zoom` e `resumo_dos_quadros`.
+- **G1 na tela do usuário (13/11/2026): aprovado** com 8 faixas, numa captura sintética de 1 h (2,88 GB). A área era de 1 280 × 626 px; a mediana foi de 11,7 ms e o p95, de 14,4 ms.
 - **Falta (pede uma tela de verdade):**
-  - o G1 com 8 faixas e o G2 (4K a 200 %), pelo comando acima;
+  - o G2 (4K a 200 %), pelo comando acima;
   - o G5 (disco frio): reinicie o computador e abra a captura de 1 h no protótipo;
   - o Windows.
 - **Se reprovar:**
@@ -264,7 +262,7 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
     - o protótipo abre as capturas por ela;
     - `test_arquitetura.py` confere que a interface só importa do motor a `supraharmonicos.api`.
 
-### ◐ F0.8: o tema (falta embutir as fontes)
+### ☑ F0.8: o tema
 
 - **Arquivos:** `scripts/sh_analyzer_gui/tema/tokens.py`, `tema/qss.py`, `tema/icones.py` e `tema/fontes.py`.
 - **Os tokens:** os valores de `docs/gui-mockups/tema.css`.
@@ -287,7 +285,14 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
     - a janela aplica o tema na partida, e o botão sol/lua da barra de status troca o tema sem reiniciar;
     - `tests/test_gui_tema.py`;
   - **uma armadilha evitada:** o QSS não define `font-size`, que passaria por cima do `setFont` de cada widget.
-- **Falta:** embutir as fontes (ver "Próxima tarefa") e guardar a escolha do tema nas configurações (GE-05, Fase 2).
+- **As fontes embutidas (13/11/2026):** o usuário baixou e mandou os arquivos.
+  - **Inter 4.001**, o arquivo variável do Google Fonts. Os estáticos se registram como "Inter 18pt", "Inter 18pt SemiBold"…; o variável, como "Inter", com todos os pesos, e é menor que quatro estáticos.
+  - **JetBrains Mono 2.304**: Regular, Medium e Bold.
+  - **As licenças OFL** ficam ao lado, em `recursos/fontes/`.
+  - **A lista sem Qt** (`tema/fontes_embutidas.py`): o teste confere que cada arquivo da pasta está nela e tem licença.
+  - **A troca de fonte** fica pronta para as configurações: `escolher_fonte` e `familias_disponiveis`.
+  - O `.gitattributes` marca `*.ttf` e `*.otf` como binários.
+- **Falta (Fase 2, GE-05):** guardar nas configurações a escolha do tema e da fonte.
 
 ### ☑ F0.9: a galeria de componentes
 
@@ -348,6 +353,7 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
 | 13/11/2026 | G4: fidelidade do `TracoLOD` (extremos por coluna de pixel, ±1 px; nada inventado; colunas nos pixels) | Aprovado, em 3 zooms | `tests/test_gui_traco_lod.py` |
 | 13/11/2026 | G1 sem tela, 1 400 × 790 px, zoom e pan da captura inteira até 50 amostras: **2 faixas** | Aprovado: mediana de 6,1 ms, p95 de 10,2 ms | `navegar --sintetico 10 --canais 2 --medir` |
 | 13/11/2026 | G1 sem tela, mesmo percurso: **8 faixas** | **No limite:** mediana de 12,7 ms, p95 de 16,0 ms. Os traços custam ~1,5 ms; o resto são os eixos e as caixas de vista do PyQtGraph | `navegar --sintetico 10 --canais 8 --medir` |
+| 13/11/2026 | **G1 na tela do usuário: 8 faixas**, captura sintética de 1 h (2,88 GB), 1 280 × 626 px | **Aprovado:** mediana de 11,7 ms, p95 de 14,4 ms | `navegar --sintetico 60 --canais 8 --medir` |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
 ---
@@ -409,7 +415,10 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     - a F0.7: a `api` do motor (um commit só do motor) e a interface abrindo as capturas por ela;
     - a F0.8, o tema, menos as fontes embutidas;
     - a F0.9, os 6 componentes e a galeria.
-  - **Próximo:** a F0.10, a placa: o agente, o `sh_placa` e o simulador. Ficam com você medir o protótipo numa tela de verdade (F0.6) e o OK para baixar as fontes (F0.8).
+  - **Depois, no mesmo dia:**
+    - o G1 medido na tela do usuário, aprovado com 8 faixas;
+    - as fontes Inter e JetBrains Mono embutidas, com os arquivos que ele baixou.
+  - **Próximo:** a F0.10, a placa: o agente, o `sh_placa` e o simulador.
 
 ---
 

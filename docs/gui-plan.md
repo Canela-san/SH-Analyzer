@@ -521,7 +521,7 @@ O protótipo (`interface/piramide`) tem de passar nestes portões, no Windows e 
 
 | Portão | Critério |
 |---|---|
-| G1 | Captura sintética de 1 h, 2 canais, 400 kS/s: pan e zoom com 8 traços a ≥ 60 q/s (p95 ≤ 16 ms), da captura inteira até a amostra |
+| G1 | Captura sintética de 1 h, 2 canais, 400 kS/s: pan e zoom com 8 traços a ≥ 60 q/s (p95 ≤ 16 ms), da captura inteira até a amostra. **Aprovado em 13/11/2026** na tela do usuário: 8 faixas, p95 de 14,4 ms |
 | G2 | A mesma coisa em tela de 4K com escala de 200 % (o custo da pintura cresce com os pixels) |
 | G3 | A pirâmide do arquivo de 2,9 GB em < 8 s, com memória < 500 MB |
 | G4 | Fidelidade (`tests/test_gui_traco_lod.py`): em cada coluna de pixel, o mínimo e o máximo das amostras aparecem pintados por inteiro (nela ou numa vizinha), nada passa do que as vizinhas têm, e as colunas estão nos seus pixels |
