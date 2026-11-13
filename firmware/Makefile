@@ -3,6 +3,7 @@
 
 CC_ARM = gcc
 CFLAGS_ARM = -Wall -Wextra -O3
+LIBS_ARM = -lm      # o 'ler_adc verificar' (a FFT: cos, sin, log10)
 
 # Versão gravada em cada captura (cabeçalho v5): o arquivo VERSAO, que o PC escreve com 'git describe' antes de
 # copiar a pasta para a BeagleBone (ver o roteiro de laboratório); sem ele, o git describe de onde se compila.
@@ -36,7 +37,7 @@ SEM_CGT = a instalação do compilador da TI (com lib/rtspru*) não foi achada e
 all: arm pru
 
 arm:
-	$(CC_ARM) $(CFLAGS_ARM) -DVERSAO_FIRMWARE='"$(VERSAO)"' ler_adc.c -o ler_adc
+	$(CC_ARM) $(CFLAGS_ARM) -DVERSAO_FIRMWARE='"$(VERSAO)"' ler_adc.c -o ler_adc $(LIBS_ARM)
 
 pru:
 	$(if $(CGT_PRU)$(PRU_C_DIR)$(C_DIR),,$(warning $(SEM_CGT)))

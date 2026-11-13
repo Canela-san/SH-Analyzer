@@ -22,7 +22,8 @@ from capturas_sinteticas import (
 from supraharmonicos import fase_quadrada as fq
 from supraharmonicos.cli_medir_fase import main
 from supraharmonicos.cli_medir_shunt import main as main_shunt
-from supraharmonicos.razao_quadrada import medir_razao, subtrair_diafonia
+from supraharmonicos.erros import ErroSHAN
+from supraharmonicos.razao_quadrada import ancorar_na_dupla, medir_razao, medir_razao_separada, subtrair_diafonia
 from supraharmonicos.sonda import carregar_perfil_sonda
 
 FS_TOTAL = 400_000.0
@@ -98,6 +99,42 @@ def test_a_diafonia_e_medida_e_subtraida():
     assert limpa.diafonia is not None
 
 
+def separadas(f1, dur_s, amp_a, amp_b, seeds, ganho_a=1.0):
+    """Duas capturas de UM canal da mesma quadrada a 400 kS/s (o canal a de uma, o b de outra, com instantes de
+    começo diferentes); ``ganho_a``: o gerador mais alto na do canal a (a amplitude que muda entre as duas)."""
+    a, _ = quadrada_em_dois_canais(2 * FS_TOTAL, f1, dur_s, h_corrente, h_tensao, amp_a * ganho_a, amp_b, duty=0.51,
+                                   borda_hz=150e3, seed=seeds[0])
+    _, b = quadrada_em_dois_canais(2 * FS_TOTAL, f1, dur_s, h_corrente, h_tensao, amp_a, amp_b, duty=0.51,
+                                   borda_hz=150e3, seed=seeds[1])
+    return a, b
+
+
+def test_capturas_separadas_levam_a_razao_acima_da_nyquist_de_dois_canais():
+    """Cada canal sozinho a 400 kS/s vai ao dobro da Nyquist de dois canais. A razão das capturas separadas tem a
+    fase a menos de n·θ₁ e o módulo a menos da mudança de amplitude entre elas; a captura de dois canais da mesma
+    quadrada devolve as duas coisas, e acima de 95 kHz sai H_a/H_b com a fase absoluta."""
+    f1 = 20736.0
+    a, b = separadas(f1, 0.5, 300.0, 1500.0, (51, 52), ganho_a=1.003)
+    a2, b2 = quadrada_em_dois_canais(FS_TOTAL, f1, 0.5, h_corrente, h_tensao, 300.0, 1500.0, duty=0.51, borda_hz=150e3,
+                                     seed=53)
+    dupla = medir_razao(a2.astype(float), b2.astype(float), FS, f1, atraso_s=-1 / FS_TOTAL)
+    sep = medir_razao_separada(a.astype(float), b.astype(float), FS_TOTAL, f1)
+    assert sep.fase_relativa and abs(np.angle(sep.razao[0])) < 1e-12
+    ancorada, mudanca = ancorar_na_dupla(sep, dupla)
+    assert not ancorada.fase_relativa and mudanca == pytest.approx(math.log(1.003), abs=3e-4)
+    mag, fase = erros(ancorada, 300.0, 1500.0)
+    u = ancorada.usado
+    assert np.max(np.abs(mag / (8.686 * ancorada.sigma_ln[u]))) < 5
+    assert np.max(np.abs(np.radians(fase) / ancorada.sigma_fase[u])) < 5
+    alto = ancorada.freq_hz[u] > 0.95 * FS / 2
+    assert np.sum(alto) >= 2 and np.max(np.abs(mag[alto])) < 0.1 and np.max(np.abs(fase[alto])) < 0.5
+    with pytest.raises(ErroSHAN, match="já está ancorada"):
+        ancorar_na_dupla(ancorada, dupla)
+    a3, b3 = quadrada_em_dois_canais(FS_TOTAL, 6912.0, 0.3, h_corrente, h_tensao, 300.0, 1500.0, seed=54)
+    with pytest.raises(ErroSHAN, match="não é da mesma quadrada"):
+        ancorar_na_dupla(sep, medir_razao(a3.astype(float), b3.astype(float), FS, 6912.0, atraso_s=-1 / FS_TOTAL))
+
+
 # --------------------------------------------------------------------------------------
 # A CLI: medir_fase.py --canal-referencia
 # --------------------------------------------------------------------------------------
@@ -116,6 +153,16 @@ def gravar_dupla(pasta, nome, f1, seed, amp_i=AMP_I, vazamento=None):
     caminho.write_bytes(montar_cabecalho(len(a), (0, 1), (1, 0), ("", ""), int(FS_TOTAL), versao=7,
                                          descricao=f"quadrada f={f1:g}Hz", codigos_faixa_adc=(2, 0), spi=(2, 0, 0))
                         + intercalado.tobytes())
+    return caminho
+
+
+def gravar_um(pasta, nome, canal, codigos, f1):
+    """Uma captura de um canal só a 400 kS/s: o 0 (corrente, ±2,56 V) ou o 1 (tensão, ±10,24 V)."""
+    caminho = pasta / nome
+    caminho.write_bytes(montar_cabecalho(len(codigos), (canal,), (1 if canal == 0 else 0,), ("",), int(FS_TOTAL),
+                                         versao=7, descricao=f"quadrada f={f1:g}Hz",
+                                         codigos_faixa_adc=(2 if canal == 0 else 0,), spi=(2, 0, 0))
+                        + codigos.tobytes())
     return caminho
 
 
@@ -201,6 +248,83 @@ def test_medir_fase_de_dois_canais_recusa_o_que_nao_vale(cli, bancada_dupla, tmp
     rc, _, err = cli(main, capturas[0], "--canal-referencia", "3")
     assert rc == 1 and "não está na captura" in err
     rc, _, err = cli(main, capturas[0], "--resistencia", "10")          # sem o modo de dois canais
+    assert rc == 2 and "só vale(m) com --canal-referencia" in err
+
+
+def test_medir_fase_com_separadas_estende_o_perfil_e_emenda_numa_ancora(cli, bancada_dupla, tmp_path):
+    """--separadas: o par da quadrada de 20736 Hz (cada canal sozinho, a 400 kS/s) leva o perfil acima de 95 kHz,
+    ancorado na captura de dois canais da mesma quadrada; --ancora emenda o resultado num perfil de outra sessão. O
+    gerador está 5 vezes mais alto nas separadas: a razão entre os canais não muda com a amplitude."""
+    capturas, referencia = bancada_dupla
+    f1 = 20736.0
+    dupla = gravar_dupla(tmp_path, "IV_quadrada20736Hz.bin", f1, 61)
+    a, b = separadas(f1, 1.0, 5 * AMP_I, 5 * AMP_V, (62, 63))
+    i_sep = gravar_um(tmp_path, "I_quadrada20736Hz.bin", 0, a, f1)
+    v_sep = gravar_um(tmp_path, "V_quadrada20736Hz.bin", 1, b, f1)
+    comum = [*capturas, dupla, "--canal", "0", "--canal-referencia", "1", "--perfil-referencia", referencia,
+             "--resistencia", R_LACO, "--espiras", ESPIRAS, "--ganho", 1 / S_TC, "--separadas", i_sep, v_sep]
+    saida = tmp_path / "estendido.json"
+    rc, out, err = cli(main, *comum, "--csv", tmp_path / "e.csv", "--saida-perfil", saida)
+    assert rc == 0, err
+    m = re.search(r"ancoradas em IV_quadrada20736Hz\.bin .*diferença rms de ([0-9.]+) dB e ([0-9.]+)°", out)
+    assert m, out
+    assert float(m.group(1)) < 0.05 and float(m.group(2)) < 0.5
+    perfil = json.loads(saida.read_text(encoding="utf-8"))
+    f = np.array([p["freq_hz"] for p in perfil["pontos"]])
+    erro_ln = np.log(np.array([p["ganho"] for p in perfil["pontos"]]) / np.abs(h_corrente(f)))
+    erro_fase = np.unwrap(np.array([p["fase_rad"] for p in perfil["pontos"]])) - np.unwrap(np.angle(h_corrente(f)))
+    sigma_ln = np.array([p["desvio_pct"] for p in perfil["pontos"]]) / 100
+    sigma_fase = np.array([p["sigma_fase_rad"] for p in perfil["pontos"]])
+    alto = f > 100e3                     # os harmônicos fracos do TC: o piso do INL (0,02 LSB) domina a incerteza
+    assert f[-1] > 140e3 and np.sum(alto) >= 2
+    assert np.max(np.abs(erro_ln / sigma_ln)[alto]) < 5 and np.max(np.abs(erro_fase / sigma_fase)[alto]) < 5
+    assert np.max(np.abs(8.686 * erro_ln[alto])) < 0.3 and np.max(np.abs(np.degrees(erro_fase[alto]))) < 2.0
+    assert any(c.get("separadas") for c in perfil["resposta_fase"]["capturas"])
+    assert "capturas de um canal só" in perfil["resposta_fase"]["metodo"]
+    assert perfil["resposta_fase"]["atraso_entre_canais_s"] == [-2.5e-06]
+    carregar_perfil_sonda(saida)
+    linhas = list(csv.DictReader(open(tmp_path / "e.csv", encoding="utf-8")))
+    par = [x for x in linhas if x["arquivo"] == "I_quadrada20736Hz.bin + V_quadrada20736Hz.bin"]
+    assert par and {x["motivo"] for x in par if float(x["freq_hz"]) < 95e3} == {"medido na captura de dois canais"}
+
+    # a âncora: um perfil absoluto da mesma sonda até 95 kHz, 0,5 % acima (o K de outra sessão)
+    fa = np.geomspace(256, 95e3, 60)
+    ancora = tmp_path / "ancora.json"
+    ancora.write_text(json.dumps({
+        "id": "ancora", "tipo": "resposta_frequencia",
+        "calibracao_adc": {"formato": "uint16", "ganho": {"sonda": 1 / S_TC}, "faixa_v": {"sonda": FAIXA_I}},
+        "pontos": [{"freq_hz": float(x), "ganho": float(1.005 * abs(h_corrente(x))), "fase_rad": float(p)}
+                   for x, p in zip(fa, np.unwrap(np.angle(h_corrente(fa))))]}), encoding="utf-8")
+    emendado = tmp_path / "emendado.json"
+    rc, out, err = cli(main, *comum, "--ancora", ancora, "--ancora-ate", 90000, "--saida-perfil", emendado)
+    assert rc == 0, err
+    m = re.search(r"Âncora 'ancora'.* K = ([0-9.]+) .*resíduo de ([0-9.]+) dB", out)
+    assert m and float(m.group(1)) == pytest.approx(1.005, abs=2e-3), out
+    assert float(m.group(2)) < 0.15                      # o ruído desta análise: incerteza mediana de ~0,08 dB
+    perfil = json.loads(emendado.read_text(encoding="utf-8"))
+    f = np.array([p["freq_hz"] for p in perfil["pontos"]])
+    g = np.array([p["ganho"] for p in perfil["pontos"]])
+    assert np.any(f <= 90e3) and np.any(f > 100e3)
+    erro_db = np.abs(20 * np.log10(g / (1.005 * np.abs(h_corrente(f)))))
+    assert np.max(erro_db[f <= 90e3]) < 1e-6 and np.max(erro_db[f > 100e3]) < 0.3     # a âncora e, acima, a curva × K
+    assert perfil["resposta_fase"]["ancora"]["perfil"] == "ancora" and perfil["faixa_freq_valida_hz"][0] == 256.0
+    carregar_perfil_sonda(emendado)
+
+
+def test_separadas_recusam_o_que_nao_vale(cli, bancada_dupla, tmp_path):
+    capturas, referencia = bancada_dupla
+    a, b = separadas(20736.0, 0.2, AMP_I, AMP_V, (71, 72))
+    i_sep = gravar_um(tmp_path, "I.bin", 0, a, 20736.0)
+    v_sep = gravar_um(tmp_path, "V.bin", 1, b, 20736.0)
+    rc, _, err = cli(main, *capturas, "--canal-referencia", "1", "--separadas", i_sep)
+    assert rc == 2 and "falta a do canal 1" in err
+    rc, _, err = cli(main, *capturas, "--canal-referencia", "1", "--separadas", i_sep, v_sep)
+    assert rc == 2 and "nenhuma captura de dois canais da quadrada" in err
+    rc, _, err = cli(main, *capturas, "--canal-referencia", "1", "--separadas", capturas[0])
+    assert rc == 2 and "um canal só" in err
+    rc, _, err = cli(main, capturas[0], "--canal-referencia", "1", "--ancora", referencia)
+    assert rc == 2 and "--perfil-referencia" in err
+    rc, _, err = cli(main, capturas[0], "--separadas", i_sep, v_sep)
     assert rc == 2 and "só vale(m) com --canal-referencia" in err
 
 

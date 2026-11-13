@@ -1,0 +1,563 @@
+{
+  "id": "sct013_100a_sn001",
+  "tipo": "resposta_frequencia",
+  "data_calibracao": "2026-11-13",
+  "calibrado_com": "cadeia completa SH-Analyzer (sonda + frontend + ADS8688), pela razão com um canal de referência capturado junto",
+  "calibracao_adc": {
+    "formato": "uint16",
+    "ganho": {
+      "sonda": 19.65
+    },
+    "modo_referencia": "razão de dois canais simultâneos (canal de referência com o perfil 'cadeia_tensao_fase'; shunt shunt_laco_lcr.csv; 16 espira(s)); emendado no perfil 'sct013_coleta_0526', cujos pontos valem até 89.8 kHz (K e o atraso desta análise saem dele na sobreposição)",
+    "gerado_em": "2026-11-13T08:11:19.642392+00:00",
+    "n_pontos": 43,
+    "faixa_v": {
+      "sonda": 5.12
+    },
+    "faixa_v_confiavel": {
+      "sonda": true
+    },
+    "resposta_conjunto": {
+      "ganho_baixa_frequencia": 1.000502,
+      "freq_menos3db_hz": 14637.1,
+      "inclinacao_db_por_oitava": -11.93,
+      "ganho_na_maior_frequencia_db": -35.37
+    }
+  },
+  "faixa_freq_valida_hz": [
+    255.9892,
+    173234.9627
+  ],
+  "pontos": [
+    {
+      "freq_hz": 255.9892,
+      "ganho": 1.0007227,
+      "n": 1,
+      "desvio_pct": 0.01742,
+      "fase_rad": 0.0004424,
+      "sigma_fase_rad": 0.0001741
+    },
+    {
+      "freq_hz": 767.9675,
+      "ganho": 1.0002809,
+      "n": 1,
+      "desvio_pct": 0.01328,
+      "fase_rad": -0.0605345,
+      "sigma_fase_rad": 0.0001318
+    },
+    {
+      "freq_hz": 1279.9459,
+      "ganho": 0.9980438,
+      "n": 1,
+      "desvio_pct": 0.0118,
+      "fase_rad": -0.1090689,
+      "sigma_fase_rad": 0.0001171
+    },
+    {
+      "freq_hz": 1791.9242,
+      "ganho": 0.9953364,
+      "n": 1,
+      "desvio_pct": 0.01785,
+      "fase_rad": -0.1557295,
+      "sigma_fase_rad": 0.0001774
+    },
+    {
+      "freq_hz": 2303.9026,
+      "ganho": 0.9917009,
+      "n": 1,
+      "desvio_pct": 0.0122,
+      "fase_rad": -0.2017167,
+      "sigma_fase_rad": 0.0001207
+    },
+    {
+      "freq_hz": 2815.881,
+      "ganho": 0.986577,
+      "n": 1,
+      "desvio_pct": 0.02031,
+      "fase_rad": -0.24729,
+      "sigma_fase_rad": 0.0002022
+    },
+    {
+      "freq_hz": 3327.8593,
+      "ganho": 0.9807676,
+      "n": 1,
+      "desvio_pct": 0.02183,
+      "fase_rad": -0.292395,
+      "sigma_fase_rad": 0.0002175
+    },
+    {
+      "freq_hz": 3839.8377,
+      "ganho": 0.9738704,
+      "n": 1,
+      "desvio_pct": 0.01238,
+      "fase_rad": -0.3369517,
+      "sigma_fase_rad": 0.0001226
+    },
+    {
+      "freq_hz": 4351.816,
+      "ganho": 0.9665148,
+      "n": 1,
+      "desvio_pct": 0.02536,
+      "fase_rad": -0.3815145,
+      "sigma_fase_rad": 0.000253
+    },
+    {
+      "freq_hz": 4863.7944,
+      "ganho": 0.9580615,
+      "n": 1,
+      "desvio_pct": 0.02733,
+      "fase_rad": -0.4254953,
+      "sigma_fase_rad": 0.0002728
+    },
+    {
+      "freq_hz": 5375.7727,
+      "ganho": 0.9491751,
+      "n": 1,
+      "desvio_pct": 0.0208,
+      "fase_rad": -0.4689832,
+      "sigma_fase_rad": 0.000207
+    },
+    {
+      "freq_hz": 5887.7511,
+      "ganho": 0.939062,
+      "n": 1,
+      "desvio_pct": 0.03164,
+      "fase_rad": -0.5123491,
+      "sigma_fase_rad": 0.0003161
+    },
+    {
+      "freq_hz": 6714.2784,
+      "ganho": 0.9213201,
+      "n": 1,
+      "desvio_pct": 0.01024,
+      "fase_rad": -0.5816551,
+      "sigma_fase_rad": 0.0001019
+    },
+    {
+      "freq_hz": 7423.6861,
+      "ganho": 0.9057908,
+      "n": 1,
+      "desvio_pct": 0.03905,
+      "fase_rad": -0.6386012,
+      "sigma_fase_rad": 0.0003905
+    },
+    {
+      "freq_hz": 8262.3595,
+      "ganho": 0.8852574,
+      "n": 1,
+      "desvio_pct": 0.0241,
+      "fase_rad": -0.7061283,
+      "sigma_fase_rad": 0.000241
+    },
+    {
+      "freq_hz": 9070.7223,
+      "ganho": 0.864481,
+      "n": 1,
+      "desvio_pct": 0.02278,
+      "fase_rad": -0.7689517,
+      "sigma_fase_rad": 0.0002278
+    },
+    {
+      "freq_hz": 10135.334,
+      "ganho": 0.8362283,
+      "n": 1,
+      "desvio_pct": 0.03,
+      "fase_rad": -0.8500822,
+      "sigma_fase_rad": 0.0003003
+    },
+    {
+      "freq_hz": 11500.4551,
+      "ganho": 0.7984273,
+      "n": 1,
+      "desvio_pct": 0.02227,
+      "fase_rad": -0.9493989,
+      "sigma_fase_rad": 0.000223
+    },
+    {
+      "freq_hz": 13022.6652,
+      "ganho": 0.7550212,
+      "n": 1,
+      "desvio_pct": 0.03593,
+      "fase_rad": -1.0552556,
+      "sigma_fase_rad": 0.0003598
+    },
+    {
+      "freq_hz": 14375.419,
+      "ganho": 0.7163074,
+      "n": 1,
+      "desvio_pct": 0.03311,
+      "fase_rad": -1.1442033,
+      "sigma_fase_rad": 0.0003318
+    },
+    {
+      "freq_hz": 16338.0416,
+      "ganho": 0.6613975,
+      "n": 1,
+      "desvio_pct": 0.03467,
+      "fase_rad": -1.2653411,
+      "sigma_fase_rad": 0.0003474
+    },
+    {
+      "freq_hz": 18621.9007,
+      "ganho": 0.6002398,
+      "n": 1,
+      "desvio_pct": 0.04066,
+      "fase_rad": -1.3946032,
+      "sigma_fase_rad": 0.0004072
+    },
+    {
+      "freq_hz": 20723.7899,
+      "ganho": 0.5487691,
+      "n": 1,
+      "desvio_pct": 0.01331,
+      "fase_rad": -1.5027907,
+      "sigma_fase_rad": 0.0001419
+    },
+    {
+      "freq_hz": 22472.0813,
+      "ganho": 0.5079257,
+      "n": 1,
+      "desvio_pct": 0.05871,
+      "fase_rad": -1.5862693,
+      "sigma_fase_rad": 0.0005879
+    },
+    {
+      "freq_hz": 25455.3398,
+      "ganho": 0.4457361,
+      "n": 1,
+      "desvio_pct": 0.05709,
+      "fase_rad": -1.7146631,
+      "sigma_fase_rad": 0.0005717
+    },
+    {
+      "freq_hz": 28940.3948,
+      "ganho": 0.3837936,
+      "n": 1,
+      "desvio_pct": 0.08966,
+      "fase_rad": -1.8460336,
+      "sigma_fase_rad": 0.0008976
+    },
+    {
+      "freq_hz": 32046.4971,
+      "ganho": 0.3370031,
+      "n": 1,
+      "desvio_pct": 0.10481,
+      "fase_rad": -1.9479919,
+      "sigma_fase_rad": 0.0010488
+    },
+    {
+      "freq_hz": 34677.2951,
+      "ganho": 0.3031113,
+      "n": 1,
+      "desvio_pct": 0.03525,
+      "fase_rad": -2.0250176,
+      "sigma_fase_rad": 0.0003819
+    },
+    {
+      "freq_hz": 40425.0103,
+      "ganho": 0.2421278,
+      "n": 1,
+      "desvio_pct": 0.16041,
+      "fase_rad": -2.1694689,
+      "sigma_fase_rad": 0.0016048
+    },
+    {
+      "freq_hz": 45235.9078,
+      "ganho": 0.2033749,
+      "n": 1,
+      "desvio_pct": 0.20182,
+      "fase_rad": -2.269802,
+      "sigma_fase_rad": 0.0020191
+    },
+    {
+      "freq_hz": 48544.1918,
+      "ganho": 0.1817123,
+      "n": 1,
+      "desvio_pct": 0.06567,
+      "fase_rad": -2.3300963,
+      "sigma_fase_rad": 0.0007091
+    },
+    {
+      "freq_hz": 56861.5733,
+      "ganho": 0.1391987,
+      "n": 1,
+      "desvio_pct": 0.32588,
+      "fase_rad": -2.4580002,
+      "sigma_fase_rad": 0.0032595
+    },
+    {
+      "freq_hz": 62228.6985,
+      "ganho": 0.1190797,
+      "n": 1,
+      "desvio_pct": 0.0493,
+      "fase_rad": -2.5254407,
+      "sigma_fase_rad": 0.0005794
+    },
+    {
+      "freq_hz": 70780.2182,
+      "ganho": 0.0946258,
+      "n": 1,
+      "desvio_pct": 0.56872,
+      "fase_rad": -2.6169832,
+      "sigma_fase_rad": 0.0056882
+    },
+    {
+      "freq_hz": 76133.5995,
+      "ganho": 0.082888,
+      "n": 1,
+      "desvio_pct": 0.16362,
+      "fase_rad": -2.6658831,
+      "sigma_fase_rad": 0.0017784
+    },
+    {
+      "freq_hz": 89794.5804,
+      "ganho": 0.0611298,
+      "n": 1,
+      "desvio_pct": 0.40488,
+      "fase_rad": -2.7715891,
+      "sigma_fase_rad": 0.0042482
+    },
+    {
+      "freq_hz": 89852.2165,
+      "ganho": 0.0609479,
+      "n": 1,
+      "desvio_pct": 0.32639,
+      "fase_rad": -2.7722271,
+      "sigma_fase_rad": 0.0036362
+    },
+    {
+      "freq_hz": 92924.0844,
+      "ganho": 0.0570317,
+      "n": 1,
+      "desvio_pct": 0.13908,
+      "fase_rad": -2.7915657,
+      "sigma_fase_rad": 0.0021807
+    },
+    {
+      "freq_hz": 103675.6298,
+      "ganho": 0.0463696,
+      "n": 1,
+      "desvio_pct": 0.1904,
+      "fase_rad": -2.8543292,
+      "sigma_fase_rad": 0.0027117
+    },
+    {
+      "freq_hz": 118596.7806,
+      "ganho": 0.0361457,
+      "n": 1,
+      "desvio_pct": 0.16513,
+      "fase_rad": -2.9307133,
+      "sigma_fase_rad": 0.0024099
+    },
+    {
+      "freq_hz": 131322.4635,
+      "ganho": 0.0294477,
+      "n": 1,
+      "desvio_pct": 0.96163,
+      "fase_rad": -2.9880083,
+      "sigma_fase_rad": 0.0106708
+    },
+    {
+      "freq_hz": 148734.8414,
+      "ganho": 0.0230166,
+      "n": 1,
+      "desvio_pct": 0.38033,
+      "fase_rad": -3.0531111,
+      "sigma_fase_rad": 0.0046306
+    },
+    {
+      "freq_hz": 173234.9627,
+      "ganho": 0.017048,
+      "n": 1,
+      "desvio_pct": 0.71976,
+      "fase_rad": -3.1336577,
+      "sigma_fase_rad": 0.0081859
+    }
+  ],
+  "resposta_fase": {
+    "metodo": "razão de dois canais capturados juntos: X_a/X_b de cada harmônico ímpar, média coerente por blocos, sem o atraso entre os canais, combinada numa grade logarítmica (scripts/medir_fase.py --canal-referencia); acima da Nyquist de dois canais, pares de capturas de um canal só (--separadas): a razão dos harmônicos de cada uma girados pela própria fundamental, com a fase e o módulo da fundamental da captura de dois canais da mesma quadrada",
+    "fase": "absoluta: a da razão (medida, sem modelo nem fase mínima) mais a do perfil de referência e a do shunt; em V·I* a do perfil de referência se cancela",
+    "ganho": "H = razão · (faixa_a/faixa_b) · (G/G_ref) · Z / N · H_ref",
+    "referencia": {
+      "perfil": "cadeia_tensao_fase",
+      "canal": 1,
+      "faixa_v": 5.12,
+      "ganho_nominal": 19.357
+    },
+    "canal": 0,
+    "shunt": "shunt_laco_lcr.csv",
+    "espiras": 16,
+    "atraso_entre_canais_s": [
+      -2.5e-06
+    ],
+    "diafonia_subtraida": false,
+    "capturas": [
+      {
+        "arquivo": "IV_quadrada20736Hz.bin",
+        "fs_hz": 200000.0,
+        "f1_hz": 20735.126589,
+        "blocos": 5,
+        "harmonicos_usados": 2
+      },
+      {
+        "arquivo": "IV_quadrada25344Hz.bin",
+        "fs_hz": 200000.0,
+        "f1_hz": 25342.933058,
+        "blocos": 5,
+        "harmonicos_usados": 2
+      },
+      {
+        "arquivo": "IV_quadrada30976Hz.bin",
+        "fs_hz": 200000.0,
+        "f1_hz": 30974.694784,
+        "blocos": 5,
+        "harmonicos_usados": 2
+      },
+      {
+        "arquivo": "IV_quadrada38144Hz.bin",
+        "fs_hz": 200000.0,
+        "f1_hz": 38142.393235,
+        "blocos": 5,
+        "harmonicos_usados": 1
+      },
+      {
+        "arquivo": "IV_quadrada6912Hz.bin",
+        "fs_hz": 200000.0,
+        "f1_hz": 6911.708965,
+        "blocos": 5,
+        "harmonicos_usados": 7
+      },
+      {
+        "arquivo": "I_quadrada6912Hz.bin + V_quadrada6912Hz.bin",
+        "fs_hz": 400000.0,
+        "f1_hz": 6911.708604,
+        "blocos": 11,
+        "harmonicos_usados": 6,
+        "separadas": true
+      },
+      {
+        "arquivo": "I_quadrada20736Hz.bin + V_quadrada20736Hz.bin",
+        "fs_hz": 400000.0,
+        "f1_hz": 20735.125992,
+        "blocos": 11,
+        "harmonicos_usados": 2,
+        "separadas": true
+      },
+      {
+        "arquivo": "I_quadrada25344Hz.bin + V_quadrada25344Hz.bin",
+        "fs_hz": 400000.0,
+        "f1_hz": 25342.931539,
+        "blocos": 11,
+        "harmonicos_usados": 2,
+        "separadas": true
+      },
+      {
+        "arquivo": "I_quadrada30976Hz.bin + V_quadrada30976Hz.bin",
+        "fs_hz": 400000.0,
+        "f1_hz": 30974.695047,
+        "blocos": 11,
+        "harmonicos_usados": 1,
+        "separadas": true
+      },
+      {
+        "arquivo": "I_quadrada38144Hz.bin + V_quadrada38144Hz.bin",
+        "fs_hz": 400000.0,
+        "f1_hz": 38142.392043,
+        "blocos": 11,
+        "harmonicos_usados": 1,
+        "separadas": true
+      }
+    ],
+    "razao": [
+      {
+        "freq_hz": 6911.709,
+        "modulo": 0.46968574,
+        "fase_rad": -0.0299513
+      },
+      {
+        "freq_hz": 20735.1267,
+        "modulo": 0.46858917,
+        "fase_rad": -0.0927426
+      },
+      {
+        "freq_hz": 25342.9331,
+        "modulo": 0.46797627,
+        "fase_rad": -0.1135456
+      },
+      {
+        "freq_hz": 30974.6948,
+        "modulo": 0.46685065,
+        "fase_rad": -0.1388391
+      },
+      {
+        "freq_hz": 34558.5448,
+        "modulo": 0.46565216,
+        "fase_rad": -0.1547104
+      },
+      {
+        "freq_hz": 38142.3932,
+        "modulo": 0.46503248,
+        "fase_rad": -0.1708329
+      },
+      {
+        "freq_hz": 48381.9628,
+        "modulo": 0.46153388,
+        "fase_rad": -0.2160495
+      },
+      {
+        "freq_hz": 62205.3799,
+        "modulo": 0.45633889,
+        "fase_rad": -0.2758852
+      },
+      {
+        "freq_hz": 76028.7991,
+        "modulo": 0.44984118,
+        "fase_rad": -0.3348243
+      },
+      {
+        "freq_hz": 92734.6739,
+        "modulo": 0.44061681,
+        "fase_rad": -0.4033155
+      },
+      {
+        "freq_hz": 103675.6299,
+        "modulo": 0.43433604,
+        "fase_rad": -0.4460127
+      },
+      {
+        "freq_hz": 114514.4732,
+        "modulo": 0.42716188,
+        "fase_rad": -0.4889589
+      },
+      {
+        "freq_hz": 126977.9225,
+        "modulo": 0.41955372,
+        "fase_rad": -0.5351608
+      },
+      {
+        "freq_hz": 145145.8818,
+        "modulo": 0.40737612,
+        "fase_rad": -0.602344
+      },
+      {
+        "freq_hz": 155039.7448,
+        "modulo": 0.39885028,
+        "fase_rad": -0.6367807
+      },
+      {
+        "freq_hz": 180195.3624,
+        "modulo": 0.3826455,
+        "fase_rad": -0.720637
+      }
+    ],
+    "ancora": {
+      "perfil": "sct013_coleta_0526",
+      "ate_hz": 89794.6,
+      "k": 1.000492,
+      "atraso_s": 1.42651e-08,
+      "residuo_db": 0.0141,
+      "residuo_graus": 0.0234,
+      "faixas_em_comum": 9
+    }
+  }
+}

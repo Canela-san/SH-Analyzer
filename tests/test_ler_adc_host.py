@@ -52,7 +52,7 @@ def conferir(tmp_path_factory):
     fonte.write_text(HARNESS)
     binario = pasta / "harness"
     r = subprocess.run(["gcc", "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", f"-I{FIRMWARE}",
-                        "-o", str(binario), str(fonte)], capture_output=True, text=True)
+                        "-o", str(binario), str(fonte), "-lm"], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
 
     def rodar(iomem: str) -> subprocess.CompletedProcess:
@@ -123,7 +123,7 @@ def taxa(tmp_path_factory):
     fonte.write_text(HARNESS_TAXA)
     binario = pasta / "harness"
     r = subprocess.run(["gcc", "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", f"-I{FIRMWARE}",
-                        "-o", str(binario), str(fonte)], capture_output=True, text=True)
+                        "-o", str(binario), str(fonte), "-lm"], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
 
     def rodar(*args) -> subprocess.CompletedProcess:
@@ -184,9 +184,14 @@ def test_erro_depois_de_ligar_a_pru_para_a_pru():
     fonte = (FIRMWARE / "ler_adc.c").read_text(encoding="utf-8")
     principal = fonte[fonte.index("int main("):]
     trecho = principal[principal.index("if (reiniciar_pru_antes_da_captura(ctrl) != 0) {"):principal.index("while (manter_execucao")]
-    depois_do_reinicio = trecho[trecho.index("ctrl->buffer_0_addr"):]
+    depois_do_reinicio = trecho[trecho.index("escrever_configuracao_da_pru("):]
     assert "return -1;" not in depois_do_reinicio
     assert depois_do_reinicio.count("return abortar_captura(") == 3
+    # O verificar (uma captura curta por taxa): depois de ligar a PRU, todo retorno passa por um "stop".
+    curta = fonte[fonte.index("static int capturar_um_bloco"):]
+    curta = curta[curta.index("escrever_configuracao_da_pru("):curta.index("\n}\n")]
+    retornos = curta.count("return ")
+    assert retornos == 4 and curta.count('escrever_estado_remoteproc("stop");') == retornos
 
 
 
@@ -235,7 +240,7 @@ def _compilar(tmp_path_factory, nome: str, fonte: str, *extras: str) -> Path:
     arquivo.write_text(fonte)
     binario = pasta / nome
     r = subprocess.run(["gcc", "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", f"-I{FIRMWARE}",
-                        *extras, "-o", str(binario), str(arquivo)], capture_output=True, text=True)
+                        *extras, "-o", str(binario), str(arquivo), "-lm"], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     return binario
 

@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from .analise_razao import executar_razao
-from .ancora_perfil import ajustar_a_ancora, curva_ancorada, pontos_combinados
+from .ancora_perfil import ajustar_a_ancora, curva_ancorada, pontos_combinados, relatar_ancora
 from .cabecalho import ler_cabecalho
 from .calibracao_sonda import PontoPerfil, resumir_resposta
 from .constantes import GRANDEZA_CORRENTE
@@ -133,8 +133,16 @@ def montar_parser() -> argparse.ArgumentParser:
         "1/taxa total entre os canais da varredura é descontado). Na sonda de corrente: o TC no canal medido e a "
         "tensão num resistor do laço, pelo divisor, no de referência. Com --perfil-referencia (o perfil com fase do "
         "canal de referência) e --resistencia ou --shunt, sai a resposta absoluta do canal medido e, com --ganho e "
-        "--saida-perfil, o perfil dele com a fase. Vai até ~95 kHz (com dois canais, a Nyquist é a metade).")
+        "--saida-perfil, o perfil dele com a fase. Vai até ~95 kHz (com dois canais, a Nyquist é a metade); com "
+        "--separadas, até ~190 kHz. Com --ancora (um perfil absoluto da mesma sonda, de outra sessão), K e o atraso "
+        "saem dele na sobreposição, e o perfil gravado usa os pontos dele até --ancora-ate e os desta análise acima.")
     d.add_argument("--canal-referencia", type=int, metavar="N", help="O canal de referência (liga este modo).")
+    d.add_argument("--separadas", nargs="+", type=Path, metavar="ARQUIVO",
+                   help="Capturas de UM canal (o medido sozinho e o de referência sozinho, uma de cada por quadrada, uma "
+                        "logo depois da outra, o gerador parado), à taxa inteira: a razão sai até 95 %% da Nyquist "
+                        "delas. Cada par precisa de uma captura de dois canais da mesma quadrada entre as posicionais "
+                        "(a fase e o módulo da fundamental vêm dela). Os harmônicos que ela também mede ficam com ela; "
+                        "a diferença entre os dois métodos ali é a conferência.")
     d.add_argument("--atraso-entre-canais-us", type=float, metavar="US",
                    help="Quanto o canal medido é amostrado depois do de referência (padrão: a diferença das posições "
                         "na varredura ÷ a taxa total; ex.: canal 0 medido e 1 referência a 400 kS/s: −2,5 µs).")
@@ -270,18 +278,6 @@ def _medir_todas(entradas, f0: float, q: float, polo: float, args: argparse.Name
     if casadas is None:
         return medidas
     return [dividir_pela_entrada(r, e, f0, q, polo, c.name) for r, (c, e) in zip(medidas, casadas)]
-
-
-def _relatar_ancora(ident: str, a) -> None:
-    texto = (f"Âncora '{ident}': {a.n_pontos} faixas em comum, de {a.de_hz:.0f} Hz a {a.ate_hz / 1e3:.1f} kHz; "
-             f"K = {math.exp(a.ln_k):.5f} ± {a.sigma_ln_k * math.exp(a.ln_k):.5f}; atraso aparente da curva de um canal "
-             f"{a.atraso_s * 1e6:+.4f} ± {a.sigma_inclinacao / (2 * math.pi) * 1e6:.4f} µs (descontado); depois disso, "
-             f"resíduo de {a.residuo_db:.4f} dB e {a.residuo_graus:.3f}° entre os dois métodos")
-    if a.residuo_db > 0.1 or a.residuo_graus > 1.0:
-        log.warning(texto + ": os métodos discordam além do esperado (o perfil da âncora é da mesma cadeia, na mesma "
-                    "faixa e com o mesmo --ganho?).")
-    else:
-        log.info(texto)
 
 
 def _conferir_passa_alta(medidas: list[RespostaQuadrada], melhor: AjusteFase, ancora) -> None:
@@ -574,6 +570,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         so_com_referencia = [nome for nome, valor in (
             ("--atraso-entre-canais-us", args.atraso_entre_canais_us), ("--diafonia", args.diafonia),
+            ("--separadas", args.separadas),
             ("--perfil-referencia", args.perfil_referencia), ("--ganho-referencia", args.ganho_referencia),
             ("--resistencia", args.resistencia), ("--shunt", args.shunt), ("--ganho", args.ganho)) if valor is not None]
         if args.espiras != 1:
@@ -638,7 +635,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.ancora is not None:
             ancora = ler_perfil_complexo(args.ancora)
             ajuste_ancora = ajustar_a_ancora(combinada, ancora, args.ancora_ate)
-            _relatar_ancora(ancora.id, ajuste_ancora)
+            relatar_ancora(ancora.id, ajuste_ancora)
         if args.passa_alta:
             _conferir_passa_alta(medidas, melhor, ajuste_ancora)
         if args.csv is not None:

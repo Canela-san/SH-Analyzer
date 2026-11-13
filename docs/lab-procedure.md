@@ -90,7 +90,8 @@ puro, e a **cadeia de tensão na faixa de produção** (±10,24 V).
   fica sem tensão ([23/10](bench-results.md#a-alimentação-da-placa-e-o-terra)).
 * **Um resistor de 5 a 10 Ω não indutivo** (filme de potência, ou vários SMD em paralelo; 2 A em 5 Ω são 20 W).
   Meça-o a 4 fios no Fluke e anote R com 4 algarismos: ele entra como `--resistencia R`, no lugar do
-  `medir_shunt.py`. Um resíduo de 50 nH em 10 Ω dá 0,2° em 100 kHz.
+  `medir_shunt.py`. Um resíduo de 50 nH em 10 Ω dá 0,2° em 100 kHz. Outro valor também serve (33 Ω com 16 espiras
+  dá sinal de sobra: a conta está no passo 4); o que pesa é a indutância (passo 3).
 * **Fio para 20 espiras** no SCT013 (e fita para fixá-las) e, se houver, a **fonte de corrente quadrada bipolar** de
   1 a 2 A (uma meia-ponte de MOSFET acionada pelo gerador, ou um amplificador de banda larga). Com a sensibilidade medida
   (50,9 mV/A), o gerador sozinho (~3 A·espira com 20 espiras e 10 Ω) já dá ~0,3 Vpp no pino: a fonte deixou de ser
@@ -144,8 +145,8 @@ mkdir -p SH_$(date +%F) && sudo ./ler_adc 400000 1 --faixa-adc 1:20.48 --duracao
 **3. O laço de corrente (15 min).**
 
 ```text
-gerador ou fonte de corrente ─► R (5 a 10 Ω) ─► 20 espiras no SCT013 ─► retorno ao terra
-                                │                (no condutor do lado do terra, onde a tensão quase não varia)
+gerador ou fonte de corrente ─► R (não indutivo) ─► N espiras no SCT013 ─► retorno ao terra
+                                │                    (no condutor do lado do terra, onde a tensão quase não varia)
                                 └─► entrada do divisor de tensão (canal 1): mede V = R·I
 SCT013 ─► placa (canal 0, ±2,56 V)
 ```
@@ -153,39 +154,185 @@ SCT013 ─► placa (canal 0, ±2,56 V)
 O lado frio de R vai ao terra comum, num ponto só. Sem corrente contínua no laço: ela magnetiza o núcleo do TC (com
 DC, um capacitor grande em série).
 
-**4. T10-0: o sinal basta? (10 min).** Uma quadrada só, 10 s, para conferir a sensibilidade e o SNR antes da coleta:
+**O gerador: High-Z e 20 Vpp**, como ficou do passo 1. O modo de carga do gerador não muda o que ele entrega: muda
+só o número do visor. O gerador é uma fonte de no máximo 20 Vpp em vazio, atrás de 50 Ω.
+
+* Em **High-Z**, o visor mostra a tensão em vazio (até 20 Vpp).
+* Em **50 Ω**, o visor mostra a metade dela, que é o que chegaria a uma carga de 50 Ω (até 10 Vpp).
+
+"20 Vpp em High-Z" e "10 Vpp em 50 Ω" são, portanto, a mesma saída. No laço, a corrente é 20 Vpp ÷ (50 Ω + R). A
+tensão em R é uma fração disso que nenhum dos dois modos mostra: 7,98 Vpp com 33,18 Ω. **O perfil não depende do
+modo**, porque o canal 1 mede a tensão que de fato chega a R. Só o `--esperado-vpp` (passo 4) depende dele. A conta
+do passo 4 supõe 20 Vpp em High-Z, ou 10 Vpp em 50 Ω. Com o gerador em outra amplitude, multiplique o
+`--esperado-vpp` pela mesma fração (metade da amplitude, metade do valor).
+
+**A indutância de R é o que pesa.** O método calcula a corrente como I = V/R. Uma indutância em série com R faz a
+sonda parecer perder ganho e atrasar, e o perfil "corrigiria" isso em produção.
+
+* **O que conta como R:** a impedância entre os dois pontos em que o canal 1 mede, ou seja, a entrada do divisor e o
+  terra dele. Pode ser só o resistor, ou o resistor e fios e espiras, conforme onde o divisor está ligado. O que fica
+  fora desses dois pontos só muda quanta corrente passa, não a medida.
+* **Por que a indutância não pode ficar no perfil, mesmo com a montagem sempre igual:** em produção, a sonda mede a
+  corrente de um condutor, e o resistor da calibração não está lá. A indutância do laço muda quanta corrente passa,
+  não o modo como a sonda a mede. O que ela estraga é a régua da calibração, I = V/R. Se ficasse no perfil, toda
+  corrente medida em produção sairia com esse erro: ~20° e algumas décimas de dB em 89 kHz.
+* **O que se viu em 03/11:** com um resistor de fio de 33,58 Ω e 16 espiras, a fase da razão cresceu como uma
+  indutância fixa de ~20 µH em série (19 a 21 µH de 3,8 a 88 kHz): −19,5° e −0,52 dB em 88 kHz. Em 13/11, com o
+  mesmo laço e outro gerador, a curva se repetiu: −19,6° em 89 kHz.
+* **Por que não dá para separar:** a razão não distingue a indutância de R de um polo da própria sonda.
+* **Com um resistor de fio:** meça a impedância Z(f) dele (o passo 3b) e troque o `--resistencia` pelo `--shunt`. As
+  capturas não dependem disso, porque o `--shunt` entra na análise. Guarde e identifique o resistor para medi-lo
+  depois, se hoje não der.
+
+**3b. A impedância do resistor no osciloscópio (~20 min, só se R for de fio).** A ponta diferencial mede a tensão
+sobre R, e a ponta de corrente mede a corrente por ele, na mesma captura. O `medir_shunt.py` divide uma pela outra em
+cada harmônico da quadrada e dá Z(f), com a fase. O laço é o do passo 3, com o gerador em 20 Vpp High-Z. A BeagleBone
+pode continuar ligada: o divisor em paralelo com R muda Z em 0,1 %.
+
+O que é preciso: o osciloscópio MSO46, a ponta diferencial THDP0200, a ponta de corrente TCP0030A, um pendrive e o
+Fluke.
+
+1. **R a 4 fios, entre os dois pontos do canal 1.** Meça onde o divisor se liga, entre a entrada dele e o terra dele, e
+   não de uma ponta a outra do laço. Se o divisor estiver ligado nos terminais do resistor, as espiras ficam de fora.
+   * No Fluke de bancada, use a função de 4 fios.
+   * Num Fluke de mão, que mede a 2 fios: encoste uma ponta na outra, aperte REL (ou Δ) para descontar os cabos e só
+     então meça R.
+
+   Anote R com 4 algarismos: ele é o `--resistencia-dc` daqui e o `--resistencia` dos outros comandos. Os 0,4 Ω entre
+   33,18 e 33,58 Ω mudam o K do perfil em 1,2 %.
+2. **A ponta de tensão, a THDP0200, no canal 1 do osciloscópio.**
+   * Ligue-a ao CH1. O osciloscópio reconhece a ponta e ajusta a escala sozinho.
+   * Escolha a faixa de **±150 V** no botão da caixa da ponta. A de ±1500 V atenua 10 vezes mais e afoga os ~8 Vpp
+     no ruído.
+   * Prenda as garras nos **mesmos dois pontos do divisor**: a **+** onde a entrada do divisor se liga, do lado do
+     gerador, e a **−** onde o terra dele se liga. A ponta mede só o que fica entre as garras, e tem de medir a mesma
+     tensão que o canal 1.
+3. **A ponta de corrente, a TCP0030A, no canal 2.**
+   * Ligue-a ao CH2 e escolha a faixa de **5 A** no botão da caixa da ponta.
+   * **Desmagnetize a ponta.** Com a garra fechada e travada e sem fio dentro, aperte DEGAUSS na caixa da ponta e
+     espere a luz parar de piscar. O osciloscópio também pede isso quando a ponta é ligada.
+   * Abra a garra, passe **uma vez** o fio que sai de R, no mesmo ramo dele, e feche e trave a garra. Não passe as 16
+     espiras: só esse fio.
+   * Ponha a **seta da ponta no sentido da corrente**: do gerador para R, e de R para o terra. Com a seta invertida, o
+     resultado sai com 180° de fase.
+4. **O osciloscópio.** Para abrir o menu de um canal, toque duas vezes no rótulo dele, embaixo da tela.
+   * **Nos dois canais:** acoplamento DC, offset 0 e **limite de banda de 20 MHz**. Use o mesmo limite nos dois: um
+     filtro em um canal só cria fase entre eles.
+   * **Aquisição:** **High Res**.
+   * **Escalas:** CH1 em **2 V/div** (~8 Vpp) e CH2 em **50 mA/div** (~240 mApp). As duas ondas têm de caber inteiras
+     na tela, com folga em cima e embaixo: um pico cortado estraga os harmônicos.
+   * **Deskew:** se o menu do canal oferecer o deskew das pontas, com o valor recomendado ou estático, aplique-o nos
+     dois canais. Se não oferecer, deixe 0. Um erro de 10 ns dá 0,3° em 90 kHz.
+   * **Gatilho:** borda de subida no CH1, nível 0 V, modo Normal.
+5. **A captura de 1280 Hz.**
+   * No gerador: quadrada de 1280 Hz, 20 Vpp, High-Z, a mesma do T10-0.
+   * No horizontal (toque duas vezes no rótulo Horizontal): **10 ms/div** e registro de **1 M pontos**. São 100 ms de
+     captura, 128 períodos, a 10 MS/s.
+   * Aperte **Single** e espere a captura parar.
+   * Salve em File → Save As → Waveform:
+     * fonte: **todos os canais**, para o CH1 e o CH2 ficarem no mesmo arquivo;
+     * formato: **.csv**;
+     * destino: o pendrive;
+     * nome: **`shunt_1280Hz`**. O script tira a frequência do nome.
+
+     Se não houver a opção de todos os canais e o osciloscópio gravar um arquivo por canal, traga os dois arquivos:
+     dá para juntá-los no computador.
+6. **A captura de 20736 Hz.** Mude o gerador para 20736 Hz, com os mesmos 20 Vpp em High-Z. No horizontal, use **1 ms/div**,
+   com o mesmo registro de 1 M pontos: são 10 ms, ~200 períodos, a 100 MS/s. O resto fica igual. Aperte **Single** e salve
+   como **`shunt_20736Hz`**.
+7. **No computador.** Copie os dois `.csv` para `$DIA` e rode:
+
+   ```fish
+   uv run scripts/medir_shunt.py $DIA/shunt_1280Hz.csv $DIA/shunt_20736Hz.csv --var-tensao CH1 --var-corrente CH2 --resistencia-dc <R> --csv $DIA/shunt_laco.csv --plot $DIA/shunt.png
+   ```
+
+   Confira três linhas da saída:
+   * **`R + jωL com R = ... Ω e L = ... nH`.** R tem de ser positivo e perto do Fluke. Se R sair negativo, ou a fase
+     perto de ±180°, a seta da TCP0030A estava invertida: rode de novo com `--escala-corrente -1`. Um L de algumas
+     centenas de nH quer dizer que o resistor é não indutivo, e o `--resistencia` basta. Um L de ~20 000 nH (20 µH) é
+     a indutância de 03/11 e 13/11.
+   * **`Em 1280 Hz, |Z| = ... Ω; a 4 fios, ... Ω (... %)`.** É o erro de ganho das duas pontas juntas, que pode chegar a
+     2 ou 3 %. Esse erro entraria no K do perfil. Para tirá-lo, rode de novo com `--escala-tensao` igual a R do Fluke
+     ÷ o |Z| desta linha. O CSV fica com o R do Fluke e com a fase e a forma de Z(f) medidas pelo osciloscópio.
+   * **`em 100 kHz, |Z| = ... Ω e ...°`.** Mostra o quanto R se afasta de um resistor puro na banda que importa.
+8. **A análise do T10 com Z(f).** Use os mesmos comandos dos passos 4 e 5, trocando `--resistencia <R>` por
+   `--shunt $DIA/shunt_laco.csv`. As capturas já feitas servem: não é preciso capturar de novo.
+
+**4. T10-0: o sinal basta? (10 min).** Uma quadrada só, 10 s, para conferir a sensibilidade e o SNR antes da
+coleta. Primeiro, a conta do nível, com o gerador em 20 Vpp High-Z direto no laço:
+
+* a corrente é Ipp = 20 Vpp ÷ (50 Ω + R);
+* no pino do canal 0, o `--esperado-vpp` é Ipp × N × 50,9 mV/A;
+* em R, a tensão é Ipp × R.
+
+O `calibrar` faz a mesma conta e a mostra no começo quando recebe `--resistencia` e `--espiras`.
+
+| R | N | Corrente | `--esperado-vpp` (canal 0) | Em R, e no pino do canal 1 (±2,56 V) | Potência em R |
+|---|---|---|---|---|---|
+| 10 Ω | 20 | 333 mApp (±167 mA) | 0,34 | 3,3 Vpp e 0,17 Vpp | 0,28 W |
+| 33,18 Ω | 16 | 240 mApp (±120 mA) | 0,196 | 7,98 Vpp e 0,41 Vpp | 0,48 W |
+
+Os dois têm sinal de sobra. O T10-0 de 03/11 rodou com 0,5 Vpp, 40 vezes menos corrente, e já deu 0,14 dB e 0,9° de
+incerteza mediana.
 
 ```bash
-./coletar.sh calibrar --grandeza corrente --canal 0 --canal-referencia 1 --faixa-referencia 5.12 --resistencia <R> --espiras 20 --quadradas 1280 --segundos 10 --sonda t10_0
+./coletar.sh calibrar --grandeza corrente --canal 0 --canal-referencia 1 --faixa-referencia 5.12 --resistencia <R> --espiras <N> --esperado-vpp <V> --quadradas 1280 --segundos 10 --sonda t10_0
 ```
 
+A pasta e o comando da análise saem no fim da coleta. Use a pasta desta coleta, não `$DIA/CAL_*`: a pasta do dia tem
+também as capturas da tensão (passo 2), e o glob as misturaria.
+
 ```fish
-uv run scripts/medir_fase.py $DIA/CAL_*/F_*.bin --canal 0 --canal-referencia 1 --perfil-referencia scripts/sondas/cadeia_tensao_fase.json --resistencia <R> --espiras 20 --ganho 19.65
+uv run scripts/medir_fase.py $DIA/CAL_<data_hora>/F_*.bin --canal 0 --canal-referencia 1 --perfil-referencia scripts/sondas/cadeia_tensao_fase.json --resistencia <R> --espiras <N> --ganho 19.65
 ```
 
 O K de baixa frequência deve sair perto de 1 (os 50,9 mV/A medidos: `--ganho 19.65`). Longe disso, confira as
-espiras e o resistor de carga da placa. O `calibrar` confere o nível de cada captura na hora: passe `--esperado-vpp`
-(com o gerador direto no laço, 20 Vpp ÷ (50 Ω + R) × 20 espiras × 50,9 mV/A; 0,34 V com 10 Ω). Se os harmônicos perderem o SNR antes de ~50 kHz, aumente a corrente.
+espiras e o resistor de carga da placa. Se os harmônicos perderem o SNR antes de ~50 kHz, aumente a corrente.
 
 **5. A coleta do T10 (~25 min).** Com `--faixa-referencia 5.12`, o canal de tensão fica em ±2,56 V e o perfil de
 referência é o `cadeia_tensao_fase`, já validado; a parte W pede o condutor fora da garra (a diafonia):
 
 ```bash
-./coletar.sh calibrar --grandeza corrente --canal 0 --canal-referencia 1 --faixa-referencia 5.12 --diafonia --resistencia <R> --espiras 20 --sonda sct013_100a_sn001      # 32 capturas, ~18 min, ~660 MB, e a parte W
+./coletar.sh calibrar --grandeza corrente --canal 0 --canal-referencia 1 --faixa-referencia 5.12 --diafonia --resistencia <R> --espiras <N> --esperado-vpp <V> --sonda sct013_100a_sn001      # 32 capturas, ~18 min, ~660 MB, e a parte W
 ```
 
 O comando da análise sai no fim (`medir_fase.py --canal 0 --canal-referencia 1 --perfil-referencia
-scripts/sondas/cadeia_tensao_fase.json --resistencia <R> --espiras 20 --ganho 19.65 --diafonia ... --saida-perfil
+scripts/sondas/cadeia_tensao_fase.json --resistencia <R> --espiras <N> --ganho 19.65 --diafonia ... --saida-perfil
 scripts/sondas/sct013_100a_sn001.json`). O perfil sai com magnitude e fase até ~95 kHz, a Nyquist de cada canal com
-dois canais a 400 kS/s, que é também a banda da potência por componente em produção.
+dois canais a 400 kS/s, que é também a banda da potência por componente em produção. Com um resistor de fio, rode
+sem o `--saida-perfil` até ter o Z(f) dele (passo 3b). Assim, um perfil com a indutância de R não fica com o nome da
+sonda.
+
+**5b. Acima de 95 kHz: capturas separadas (~15 min, sem osciloscópio).** Com dois canais, cada um vai a 200 kS/s e
+o perfil para em ~95 kHz. Cada canal sozinho, a 400 kS/s, vai até ~190 kHz. Para cada quadrada, o gerador parado
+nela, faça três capturas em seguida: a corrente sozinha, a tensão sozinha e as duas juntas. A de dois canais dá a
+fase e o módulo da fundamental às outras duas, e nos harmônicos abaixo de 95 kHz confere o método. Não mexa no laço
+entre esta etapa e a medida do Z(f) dele (passo 3b ou o LCR).
+
+```bash
+q() { d=ALT_$(date +%F); mkdir -p $d; sudo ./ler_adc 400000 0 --faixa-adc 0:5.12 --duracao 30s --grandeza 0:corrente --sonda 0:sct013_100a_sn001 -o $d/I_quadrada${1}Hz.bin -t "I quadrada $1 Hz" -d "quadrada f=${1}Hz" && sudo ./ler_adc 400000 1 --faixa-adc 1:5.12 --duracao 30s --grandeza 1:tensao --sonda 1:cadeia_tensao_fase -o $d/V_quadrada${1}Hz.bin -t "V quadrada $1 Hz" -d "quadrada f=${1}Hz" && sudo ./ler_adc 400000 0,1 --faixa-adc 0:5.12,1:5.12 --duracao 30s --grandeza 0:corrente,1:tensao -o $d/IV_quadrada${1}Hz.bin -t "IV quadrada $1 Hz" -d "quadrada f=${1}Hz"; }
+```
+
+Depois, uma quadrada de cada vez (20 Vpp, High-Z): `q 6912`, `q 20736`, `q 25344`, `q 30976` e `q 38144` (múltiplos
+ímpares de 256 Hz, com harmônicos em 104, 114, 127, 145, 155 e 177 kHz). No computador, com o Z(f) do laço como está
+e o perfil do passo 5 como âncora (o K e o atraso saem dele na sobreposição; o perfil gravado usa os pontos dele até
+o fim e os destas capturas acima):
+
+```fish
+uv run scripts/medir_fase.py $DIA/ALT_*/IV_*.bin --canal 0 --canal-referencia 1 --separadas $DIA/ALT_*/I_*.bin $DIA/ALT_*/V_*.bin --perfil-referencia scripts/sondas/cadeia_tensao_fase.json --shunt $DIA/shunt_laco.csv --espiras 16 --ganho 19.65 --ancora scripts/sondas/sct013_100a_sn001.json --csv $DIA/alt.csv --plot $DIA/alt.png --saida-perfil scripts/sondas/sct013_100a_sn001.json
+```
+
+Confira na saída, para cada quadrada, a linha `ancoradas em IV_...`: a amplitude do gerador entre as capturas
+separadas (centésimos de dB) e a diferença para a de dois canais nos harmônicos em comum (esperado: ≤ 0,01 dB e
+≤ 0,1°). E a linha `Âncora`: o resíduo entre esta sessão e a do passo 5 (esperado: ≤ 0,03 dB e ≤ 0,5°).
 
 **6. As conferências (~30 min).** Cada uma é o mesmo comando com `--quadradas "1280 6912 20736"` e outro `--sonda`:
 
 | Conferência | O que muda | Esperado |
 |---|---|---|
 | A garra invertida | o condutor no sentido contrário (`--sonda sct013_invertida`) | a mesma magnitude e a fase a 180°; o acoplamento capacitivo não inverteria |
-| N = 10 | `--espiras 10` | o mesmo perfil (a capacitância entre espiras não pesa) |
-| Metade da corrente | o gerador ou a fonte em metade da amplitude | o mesmo perfil (o TC linear, o resistor sem aquecer) |
+| Metade das espiras | `--espiras <N/2>` (10 com 20, 8 com 16) e `--esperado-vpp` pela metade | o mesmo perfil (a capacitância entre espiras não pesa) |
+| Metade da corrente | o gerador ou a fonte em metade da amplitude (10 Vpp em High-Z) e `--esperado-vpp` pela metade | o mesmo perfil (o TC linear, o resistor sem aquecer) |
 | Reabrir a garra | abrir, fechar e repetir | a repetibilidade |
 
 **7. Se sobrar tempo: os itens curtos (~45 min no total).**
