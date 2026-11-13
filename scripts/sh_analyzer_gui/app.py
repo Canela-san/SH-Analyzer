@@ -13,12 +13,13 @@ from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from sh_analyzer_gui import preferencias
+from sh_analyzer_gui.configuracao import APLICATIVO, ORGANIZACAO
 from sh_analyzer_gui.janela import JanelaPrincipal
 from sh_analyzer_gui.tema.aplicar import aparencia
 from sh_analyzer_gui.tema.fontes import fonte_da_interface, registrar_fontes
 
-NOME = "SH-Analyzer"
-ORGANIZACAO = "SH-Analyzer"     # o QSettings guarda a configuração numa pasta com este nome, em cada sistema
+NOME = APLICATIVO
 
 # O ícone pequeno (traço grosso, sem grade) é desenhado para 16 a 32 px; o grande, de 48 px para cima
 # (report/gerar_marca.py). As cópias em recursos/ são conferidas contra docs/images/ por tests/test_marca.py.
@@ -69,8 +70,8 @@ OPCAO_SAIR_AO_ABRIR = "--sair-ao-abrir"
 def ler_opcoes(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     """As opções do aplicativo; o que sobra (as do Qt, como ``-platform``) segue para a ``QApplication``."""
     p = argparse.ArgumentParser(prog="sh-analyzer-gui", description="A interface gráfica do SH-Analyzer.")
-    p.add_argument("--tema", choices=("sistema", "escuro", "claro"), default="sistema",
-                   help="o tema da interface (padrão: o do sistema)")
+    p.add_argument("--tema", choices=("sistema", "escuro", "claro"),
+                   help="o tema da interface (padrão: o último escolhido, ou o do sistema)")
     p.add_argument("--versao", action="store_true", help="mostra a versão e sai")
     p.add_argument(OPCAO_SAIR_AO_ABRIR, action="store_true",
                    help="abre a janela, pinta o primeiro quadro e sai (o teste de partida do instalador)")
@@ -84,7 +85,8 @@ def main(argv: list[str] | None = None) -> int:
     if opcoes.versao:
         sys.stdout.write(f"{NOME} {versao()}\n")
         return 0
-    app = criar_aplicacao(argv_qt, tema=opcoes.tema)
+    app = criar_aplicacao(argv_qt, tema=opcoes.tema or preferencias.tema_salvo())
+    preferencias.aplicar_fontes_salvas(app)
     janela = JanelaPrincipal()
     janela.show()
     if opcoes.sair_ao_abrir:

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -21,7 +22,7 @@ from PySide6.QtWidgets import (
 
 from ..tema.aplicar import aparencia
 from ..tema.fontes import com_algarismos_tabulares
-from ..tema.icones import icone
+from ..tema.icones import IconeDoTema, icone
 from ..tema.tokens import TAMANHOS, Tema
 from .numeros import NumeroInvalido, formatar_si, ler_numero
 
@@ -110,16 +111,21 @@ class CampoComUnidade(QLineEdit):
 
 
 class Segmentado(QWidget):
-    """O seletor segmentado: opções exclusivas lado a lado. ``escolhaMudou(int)`` dá o índice escolhido."""
+    """O seletor segmentado: opções exclusivas lado a lado, com ícone se quiser. ``escolhaMudou(int)`` dá o índice
+    escolhido. Uma opção pode ser desabilitada (:meth:`habilitar`), com a dica do porquê."""
 
     escolhaMudou = Signal(int)
 
-    def __init__(self, opcoes: list[str], escolhida: int = 0, parent: QWidget | None = None):
+    def __init__(self, opcoes: list[str], escolhida: int = 0, parent: QWidget | None = None, *,
+                 icones: list[str] | None = None):
         super().__init__(parent)
         if not opcoes:
             raise ValueError("o seletor precisa de pelo menos uma opção")
+        if icones is not None and len(icones) != len(opcoes):
+            raise ValueError("um ícone para cada opção")
         self.setObjectName("segmentado")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         linha = QHBoxLayout(self)
         linha.setContentsMargins(2, 2, 2, 2)
         linha.setSpacing(2)
@@ -130,6 +136,10 @@ class Segmentado(QWidget):
             b.setText(texto)
             b.setCheckable(True)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
+            if icones is not None:
+                b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+                b.setIconSize(QSize(15, 15))
+                IconeDoTema(b, icones[i], "texto2", papel_ligado="acento", tamanho=15)
             self._grupo.addButton(b, i)
             linha.addWidget(b)
         self._grupo.button(escolhida).setChecked(True)
@@ -141,6 +151,14 @@ class Segmentado(QWidget):
 
     def escolher(self, indice: int) -> None:
         self._grupo.button(indice).setChecked(True)
+
+    def botao(self, indice: int) -> QToolButton:
+        return self._grupo.button(indice)
+
+    def habilitar(self, indice: int, habilitado: bool = True, dica: str = "") -> None:
+        b = self._grupo.button(indice)
+        b.setEnabled(habilitado)
+        b.setToolTip(dica)
 
 
 class CartaoDeMedida(QFrame):

@@ -14,6 +14,12 @@ import os
 os.environ.setdefault("MPLBACKEND", "Agg")
 # A interface gráfica sem tela (tests/test_interface.py): na CI não há monitor, e na sua máquina nenhuma janela pisca.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# A configuração da interface (layout, tema, fontes) numa pasta temporária: nenhum teste lê nem grava a de quem
+# desenvolve. Vale também para os subprocessos (o teste de partida do aplicativo). Os testes que precisam de uma
+# configuração limpa usam a fixture ``config_limpa``.
+import tempfile  # noqa: E402
+
+os.environ["SH_ANALYZER_CONFIG"] = tempfile.mkdtemp(prefix="sh-analyzer-config-")
 
 import pytest  # noqa: E402
 
@@ -42,6 +48,13 @@ def _isolar_logging():
             raiz.removeHandler(h)
     raiz.propagate = True
     raiz.setLevel(logging.NOTSET)
+
+
+@pytest.fixture
+def config_limpa(tmp_path, monkeypatch):
+    """Uma pasta de configuração da interface só deste teste (``sh_analyzer_gui.configuracao``)."""
+    monkeypatch.setenv("SH_ANALYZER_CONFIG", str(tmp_path / "config"))
+    return tmp_path / "config"
 
 
 @pytest.fixture

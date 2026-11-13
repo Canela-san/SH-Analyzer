@@ -72,9 +72,9 @@ def test_botao_da_janela_troca_o_tema(qapp, ap, qtbot):
     janela = JanelaPrincipal()
     qtbot.addWidget(janela)
     janela.show()
-    assert janela.botao_tema.toolTip() == "Tema claro"
-    janela.botao_tema.click()
-    assert ap.tema is TEMAS["claro"] and janela.botao_tema.toolTip() == "Tema escuro"
+    assert janela.barra.botao_tema.toolTip() == "Tema claro"
+    janela.barra.botao_tema.click()
+    assert ap.tema is TEMAS["claro"] and janela.barra.botao_tema.toolTip() == "Tema escuro"
     assert qapp.palette().color(QPalette.ColorRole.Window).name() == TEMAS["claro"].fundo
 
 

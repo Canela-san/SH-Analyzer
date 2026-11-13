@@ -100,7 +100,7 @@ QMainWindow, QDialog {{ background: {t.fundo}; }}
 QToolTip {{ background: {t.elevada}; color: {t.texto}; border: 1px solid {t.borda_forte}; padding: 4px 8px;
             border-radius: 6px; }}
 QStatusBar {{ background: {t.fundo}; color: {t.texto2}; border-top: 1px solid {t.borda}; }}
-QStatusBar QLabel {{ color: {t.texto2}; }}
+QStatusBar QLabel {{ color: {t.texto2}; padding: 0 8px; }}
 QStatusBar::item {{ border: none; }}
 QMenuBar {{ background: {t.fundo}; }}
 QMenu {{ background: {t.elevada}; border: 1px solid {t.borda_forte}; border-radius: 8px; padding: 4px; }}
@@ -152,6 +152,41 @@ QFrame#cartao QLabel#rotulo {{ color: {t.mudo}; }}
 QFrame#cartao QLabel#unidade {{ color: {t.texto2}; }}
 QFrame#toast {{ background: {t.elevada}; border: 1px solid {t.borda_forte}; border-radius: 10px; }}
 QFrame#toast QLabel {{ color: {t.texto}; }}
+QWidget#barra_superior {{ background: {t.fundo}; border-bottom: 1px solid {t.borda}; }}
+QLabel#rotulo_projeto {{ color: {t.texto2}; }}
+QToolButton#botao_projeto {{ padding: 3px 6px; }}
+QToolButton::menu-indicator {{ image: none; width: 0; }}
+QPushButton#campo_paleta {{ background: {t.superficie}; color: {t.mudo}; border: 1px solid {t.borda};
+                            border-radius: 7px; padding: 0 10px; text-align: left; }}
+QPushButton#campo_paleta:hover {{ border-color: {t.borda_forte}; }}
+QLabel#kbd {{ color: {t.mudo}; border: 1px solid {t.borda}; border-radius: 4px; padding: 0 5px; }}
+QToolButton#chip_placa {{ background: {t.superficie}; color: {t.texto2}; border: 1px solid {t.borda};
+                          border-radius: 13px; padding: 0 10px 0 8px; min-width: 10px; }}
+QToolButton#chip_placa[estado="conectada"] {{ color: {t.ok}; border-color: {_rgba(t.ok, 0.4)};
+                                             background: {_rgba(t.ok, 0.1)}; }}
+QToolButton#chip_placa[estado="atencao"] {{ color: {t.aviso}; border-color: {_rgba(t.aviso, 0.4)};
+                                           background: {_rgba(t.aviso, 0.1)}; }}
+QToolButton#chip_placa[estado="erro"] {{ color: {t.erro}; border-color: {_rgba(t.erro, 0.4)};
+                                        background: {_rgba(t.erro, 0.1)}; }}
+QMainWindow::separator {{ background: {t.borda}; width: 1px; height: 1px; }}
+QMainWindow::separator:hover {{ background: {t.acento}; }}
+QWidget#painel, QWidget#titulo_painel {{ background: {t.superficie}; }}
+QLabel#titulo_painel_texto {{ color: {t.mudo}; }}
+QStackedWidget#area_central {{ background: {t.afundada}; }}
+QLabel#titulo_vazio {{ color: {t.texto}; }}
+QLabel#texto_vazio {{ color: {t.texto2}; }}
+QTabWidget#vistas::pane, QTabWidget#painel_inferior::pane {{ border: none; }}
+QTabWidget#vistas > QTabBar, QTabWidget#painel_inferior > QTabBar {{ background: {t.superficie}; }}
+QTabWidget#painel_inferior {{ background: {t.superficie}; }}
+QTabWidget#painel_inferior > QStackedWidget {{ background: {t.superficie}; }}
+QLabel#badge {{ color: {t.texto2}; background: {t.elevada}; border: 1px solid {t.borda}; border-radius: 8px;
+                padding: 0 5px; }}
+QLabel#badge[nivel="acento"] {{ color: {t.acento}; border-color: {_rgba(t.acento, 0.4)};
+                               background: {_rgba(t.acento, 0.13)}; }}
+QLabel#badge[nivel="aviso"] {{ color: {t.aviso}; border-color: {_rgba(t.aviso, 0.4)};
+                              background: {_rgba(t.aviso, 0.1)}; }}
+QLabel#badge[nivel="erro"] {{ color: {t.erro}; border-color: {_rgba(t.erro, 0.4)};
+                             background: {_rgba(t.erro, 0.1)}; }}
 QHeaderView::section {{ background: {t.superficie}; color: {t.mudo}; border: none;
                         border-bottom: 1px solid {t.borda}; padding: 6px 10px; font-weight: 600; }}
 QTableView, QTreeView, QListView {{ background: {t.superficie}; alternate-background-color: {t.fundo};
