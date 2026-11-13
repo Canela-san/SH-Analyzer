@@ -8,7 +8,8 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F1.3: o projeto `.shproj`** (seção 4b). A F1.1 (a janela) e a F1.2 (o modelo e o desfazer) estão feitas.
+> **F1.4: abrir capturas e o painel Projeto** (seção 4b). Da Fase 1, a F1.1 (a janela), a F1.2 (o modelo e o
+> desfazer) e a F1.3 (o projeto `.shproj`) estão feitas.
 >
 >
 > **No laboratório (opcional, 5 minutos):** a F0.2 colhe da BeagleBone os dados que a Aquisição vai usar (seção 6).
@@ -408,7 +409,14 @@ paralelo); um comando de vários passos os guarda ele mesmo. Os repasses de sina
   - o estado do traço: a fonte, o canal, a posição na paleta (a cor), a escala e o deslocamento, a visibilidade e a faixa.
 - **Os testes:** cada comando faz e desfaz, e o modelo avisa quem desenha.
 
-### ▶ F1.3: o projeto `.shproj`
+### ☑ F1.3: o projeto `.shproj`
+
+**Feito** (`a604e16`): `dados/projeto.py` (sem Qt), `modelo/persistencia.py`, `controle_do_projeto.py` e
+`componentes/avisos.py`. Os testes em `test_gui_projeto.py` e `test_gui_controle_projeto.py`.
+**Para lembrar:** os diálogos passam por `controle.dialogos` (nos testes, `tests/dialogos_falsos.py`); sem tela, um
+diálogo não previsto levanta `DialogoSemTela`. O pytest-qt fecha as janelas do `qtbot.addWidget` **antes** da limpeza
+das fixtures: uma janela que pode terminar o teste com mudanças é fechada pela própria fixture, depois do
+`setClean()`. Uma captura ausente é uma `FonteDoProjeto` com `fonte=None` e a `origem` do arquivo.
 
 - **Arquivos:** `dados/projeto.py` (sem Qt), com o JSON versionado (`"formato": "sh-analyzer-projeto"`).
 - **O conteúdo:**
@@ -417,7 +425,7 @@ paralelo); um comando de vários passos os guarda ele mesmo. Os repasses de sina
   - o salvamento automático (`.shproj~`) e a recuperação depois de uma queda.
 - **Os testes:** ida e volta, um formato futuro recusado com a mensagem, e a recuperação.
 
-### ☐ F1.4: abrir capturas e o painel Projeto
+### ▶ F1.4: abrir capturas e o painel Projeto
 
 - **O conteúdo:**
   - abrir por diálogo, arrastando e soltando, e pelos recentes;
@@ -545,6 +553,8 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   `~/Documents/sh-analyzer-data/lab/2026-11-13/FIG_2026-11-13/` (60 Hz com tom de 20 kHz ou 130 kHz, tensão e
   corrente; pequenos, 25 MB cada). **Próximo:** a F1.2.
 - **13/11/2026 (tarde):** a F1.2, o modelo e o desfazer. **Próximo:** a F1.3.
+- **13/11/2026 (noite):** a F1.3, o projeto `.shproj`, com o salvamento automático e a recuperação. **Próximo:** a
+  F1.4.
 
 ---
 
