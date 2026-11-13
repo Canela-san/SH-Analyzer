@@ -154,3 +154,17 @@ def test_descrever_cabecalho(tmp_path):
     assert all(v for _, linhas in secoes.items() for _, v in linhas)    # nada vazio nem "None"
     antigo = dict(descrever_cabecalho(abrir_captura(escrever_bin(tmp_path / "v3.bin", [np.zeros(9), np.zeros(9)]))))
     assert "CRC das amostras" not in dict(antigo["Integridade"])
+
+
+def test_a_unidade_do_canal_segue_o_ganho_declarado(tmp_path):
+    """Sem o ganho declarado na captura, o valor é a tensão no pino (V), mesmo num canal de corrente; com ele, a
+    unidade da grandeza."""
+    from supraharmonicos.api import abrir_captura
+
+    sinais = [np.zeros(4096), np.zeros(4096)]
+    sem = abrir_captura(escrever_bin(tmp_path / "sem.bin", sinais, grandezas=(0, 1), versao=9), sondas_dir=tmp_path)
+    assert [(c.nome_grandeza, c.ganho_declarado, c.unidade) for c in sem.canais] == [("tensão", False, "V"),
+                                                                                      ("corrente", False, "V")]
+    com = abrir_captura(escrever_bin(tmp_path / "com.bin", sinais, grandezas=(0, 1), versao=9,
+                                     extensao={"ganhos": [19.65, 20.0]}), sondas_dir=tmp_path)
+    assert [(c.ganho, c.ganho_declarado, c.unidade) for c in com.canais] == [(19.65, True, "V"), (20.0, True, "A")]

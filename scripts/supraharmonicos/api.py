@@ -36,7 +36,7 @@ from .cabecalho import (
     conferir_crc_das_amostras,
     contar_amostras_arquivo_bin,
 )
-from .constantes import FORMATOS_NUMPY, NOMES_GRANDEZA
+from .constantes import FORMATOS_NUMPY, NOMES_GRANDEZA, UNIDADE_GRANDEZA
 from .contexto import ContextoCaptura, perfil_para_correcao, resolver_contexto_explicito
 from .erros import ErroSHAN
 from .sonda import PerfilSonda, aplicar_correcao_sonda
@@ -69,10 +69,17 @@ class CanalDaCaptura:
     perfil: PerfilSonda | None    # o perfil que corrige este canal (a regra da CLI), ou None
     formato: str
     problema_sonda: str = ""      # por que o perfil registrado não pôde ser usado ('' se não houve problema)
+    ganho_declarado: bool = False  # o ganho veio da captura (ler_adc --ganho): o valor está na unidade física
 
     @property
     def nome_grandeza(self) -> str:
         return NOMES_GRANDEZA.get(self.grandeza, "?")
+
+    @property
+    def unidade(self) -> str:
+        """A unidade dos valores (``escala``): a da grandeza (A, °C...) quando o ganho foi declarado na captura;
+        senão, V no pino do ADC (a regra da CLI: sem ``--ganho``, o valor é a tensão no pino)."""
+        return UNIDADE_GRANDEZA.get(self.grandeza, "V") if self.ganho_declarado else "V"
 
     @property
     def escala(self) -> float:
@@ -158,6 +165,7 @@ def abrir_captura(caminho: Path, *, formato: str = "uint16", sondas_dir: Path | 
         n_canais = ctx.num_canais
         n_por_canal = len(amostras) // n_canais        # um quadro final incompleto (arquivo cortado) fica de fora
         taxa = ctx.cabecalho.frequencia_hz / n_canais
+        declarados = ctx.cabecalho.ganho_por_canal
         canais = []
         for posicao, numero in enumerate(ctx.canais):
             try:
@@ -173,6 +181,7 @@ def abrir_captura(caminho: Path, *, formato: str = "uint16", sondas_dir: Path | 
                 ganho=ctx.ganhos[posicao], offset_v=ctx.offsets[posicao],
                 grandeza=ctx.grandeza_do_canal(numero), sonda_id=ctx.sonda_id_do_canal(numero),
                 perfil=perfil, formato=formato, problema_sonda=problema,
+                ganho_declarado=posicao < len(declarados) and bool(declarados[posicao]),
             ))
     return Captura(caminho, ctx.cabecalho, formato, amostras, tuple(canais), tuple(avisos), ctx)
 
