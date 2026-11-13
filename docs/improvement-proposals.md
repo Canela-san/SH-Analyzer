@@ -156,6 +156,7 @@ o uso: decisão do usuário). Em captura multicanal, os canais são amostrados 1
 
 | Código | Item | Ganho | Esforço | PRU? | Depende de |
 |---|---|---|---|---|---|
+| **F16** | Uma captura por vez: trava, fila e tempo-limite do bloco no `ler_adc` | Alto: dados misturados saíram com "✓" (12/11) | Baixo–Médio | não | — |
 | **S1** | Calibrar a sonda de corrente (T10) com hold-out | Alto para corrente | Médio (bancada) | não | — |
 | **P1** | Análise de capturas longas por blocos (sem o sinal inteiro em float64) | Médio: 10 min = 1,6 GB; 1 h não cabe | Médio | não | — |
 | **P8** | Potência, impedância e transferência V/I por frequência | Alto para pesquisa de emissão | Médio | não | S3 |
@@ -174,6 +175,59 @@ o uso: decisão do usuário). Em captura multicanal, os canais são amostrados 1
 ---
 
 ## 3. Firmware e aquisição
+
+### F16 — Uma captura por vez: a trava, a fila e o tempo-limite do `ler_adc`
+
+**Por quê.** Na validação da revisão de 11/11, em 12/11/2026 (02:27 a 02:35 UTC de 13/11), dois `ler_adc` rodaram ao
+mesmo tempo na mesma PRU. O `coletar.sh aliasing` do passo 6 continuou em segundo plano depois de fechada a janela do
+ssh, como devia, e os passos 7 e 8 começaram antes de ele terminar. Cada `ler_adc` reinicia e reconfigura a PRU ao
+começar e a para no fim, e todos leem as mesmas flags de buffer pronto. Deu dois defeitos:
+
+* **Dados misturados com "✓ Captura concluída".** A 3ª captura do aliasing (`ALS_2026-11-13_0225/X_..._320000_...`)
+  levou 243,9 s para gravar 10 blocos, em vez de 32,8 s. Parte dos blocos veio da PRU configurada pelos outros
+  `ler_adc`, a 400 kS/s, e o cabeçalho diz 320 kS/s. O único indício foi um aviso: a taxa medida pelo ARM, de
+  39598 S/s (−87,6 %).
+* **Espera sem fim.** Quando o aliasing terminou, ele parou a PRU no meio da captura do passo 8
+  (`CAL_2026-11-13_0230`). Ela ficou 4,5 min esperando o 3º bloco, até o Ctrl+C: o laço de blocos não tem
+  tempo-limite.
+
+Os dados estão em `$DADOS/lab/2026-11-12/`. Nada impede o mesmo com dois terminais, um `for` esquecido ou uma coleta
+que sobreviveu à queda do ssh. Num `for`, os `ler_adc` já rodam um depois do outro; o que falta é o mesmo sem ele.
+
+**Proposta.**
+
+1. **A trava.** O `ler_adc` pega uma trava exclusiva antes de reiniciar a PRU e só a solta depois de pará-la no fim. É
+   um `flock` num arquivo em `/run/lock/`, onde ficam o pid, o arquivo de saída e a hora de início. O sistema solta o
+   `flock` quando o processo morre: não sobra trava velha depois de um `kill -9` ou de uma queda.
+2. **A fila, por padrão.** Com a trava ocupada, o `ler_adc` avisa e espera, sem tocar na PRU, por exemplo:
+   `outra captura em andamento (pid 1234, X_..._320000.bin, desde 02:27:07): esperando ela terminar`. Assim dois
+   comandos seguidos, sem `for`, entram um depois do outro. Duas opções:
+   * `--sem-fila` recusa na hora, com um código de saída próprio, para os scripts que não podem esperar;
+   * `--esperar-no-maximo T` desiste depois de T.
+
+   Com vários processos esperando, o `flock` não garante a ordem de chegada. Para isso, seria preciso uma senha (um
+   contador no arquivo da trava): decidir se vale.
+3. **As coletas seguram a trava do começo ao fim.** Entre duas capturas de uma campanha (nas pausas e na conferência
+   do sinal), outro `ler_adc` entraria no meio. O `coletar.sh` pega a mesma trava no começo e a passa aos seus
+   `ler_adc` (pelo descritor herdado, avisado numa variável de ambiente), que não esperam por ela de novo. Um segundo
+   `coletar.sh` espera ou recusa, como o `ler_adc`.
+4. **O tempo-limite do bloco.** Se nenhum bloco novo chega em max(3 × a duração de um bloco, 5 s), o `ler_adc` para
+   com um código de saída novo e fecha o arquivo com os blocos que já tinha. A mensagem diz o estado da PRU
+   (`/sys/class/remoteproc/remoteproc1/state`): "a PRU foi parada por outro processo?". O `coletar.sh` trata esse
+   código como captura cortada, e o `--continuar` a refaz.
+5. **A taxa fora do esperado deixa de ser "✓".** O normal é ±0,1 %. Uma taxa medida pelo ARM a mais de ~1 % da pedida
+   vira erro na captura e no `resumo.csv`, e a campanha refaz a captura. Hoje ela passa como boa.
+6. **O roteiro.** O passo 6 da validação manda reconectar "depois de 2 min". Trocar por esperar o `== fim` no
+   `log.txt` (ou `pgrep ler_adc` vazio).
+
+**Como saber que deu certo.**
+
+* Na placa falsa dos testes (`tests/pru_falsa.py`):
+  * dois `ler_adc` lançados juntos gravam um depois do outro, cada um com os seus blocos;
+  * com `--sem-fila`, o segundo sai na hora, com o código próprio;
+  * com a PRU falsa parada no meio da captura, o `ler_adc` sai dentro do tempo-limite.
+* Na bancada: o passo 6 da validação de novo, agora começando o passo 7 durante o aliasing. O passo 7 tem de avisar
+  e esperar.
 
 ### F4 — `SAMPLES_PER_BUFFER` vindo do ARM
 
