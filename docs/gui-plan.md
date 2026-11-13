@@ -1385,13 +1385,16 @@ As fases estão quebradas em tarefas pequenas, com o estado de cada uma, em [`do
 
 ### Fase 1: o visualizador (3 semanas)
 
-- [ ] A janela do layout escolhido: a barra superior, o projeto, as vistas com abas, o inspetor, o painel inferior e a barra de status, com o layout salvo.
-- [ ] O projeto `.shproj`, o salvamento automático, a recuperação e o desfazer.
-- [ ] Abrir `.bin` (v1 a v9), `.h5` e `.csv`; a árvore das fontes e dos canais; o inspetor do cabeçalho com o CRC.
-- [ ] A vista de tempo: faixas e sobreposição, o `TracoLOD`, o zoom e o pan com o histórico, o minimapa, a legenda de chips e a seleção.
-- [ ] O inspetor do traço: identidade, aparência, escala e tempo.
-- [ ] Os cursores e as medidas básicas (ME-01, ME-02).
-- [ ] A paleta de comandos e os atalhos.
+**Feita no código em 13/11/2026** (as tarefas F1.1 a F1.8 em `docs/gui-progress.md`); falta medir o G1 com 8 faixas
+na vista de verdade, numa tela.
+
+- [x] A janela do layout escolhido: a barra superior, o projeto, as vistas com abas, o inspetor, o painel inferior e a barra de status, com o layout salvo.
+- [x] O projeto `.shproj`, o salvamento automático, a recuperação e o desfazer.
+- [ ] Abrir `.bin` (v1 a v9), `.h5` e `.csv`; a árvore das fontes e dos canais; o inspetor do cabeçalho com o CRC. **Feito para o `.bin` com cabeçalho; o `.h5`, o `.csv` e o `.bin` sem cabeçalho ficam para a importação (Fase 2).**
+- [x] A vista de tempo: faixas e sobreposição, o `TracoLOD`, o zoom e o pan com o histórico, o minimapa, a legenda de chips e a seleção.
+- [x] O inspetor do traço: identidade, aparência, escala e tempo.
+- [x] Os cursores e as medidas básicas (ME-01, ME-02).
+- [x] A paleta de comandos e os atalhos.
 
 **Pronto quando:** a captura de 1 h abre, navega a 60 q/s e mede, com 8 traços de 2 fontes.
 

@@ -8,11 +8,14 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F1.8: a paleta de comandos e os atalhos** (seção 4b), a última da Fase 1. Estão feitas da F1.1 à F1.7.
+> **A Fase 1 está feita no código** (F1.1 a F1.8). Falta só a medida dela, na tela do usuário:
 >
-> **Na tela do usuário (2 minutos):** o G1 com 8 faixas na vista de verdade:
-> `uv run --extra gui python -m sh_analyzer_gui.prototipos.medir_vista` (anote o resultado na seção 5).
+> 1. **O G1 com 8 faixas na vista de verdade** (2 minutos): `uv run --extra gui python -m
+>    sh_analyzer_gui.prototipos.medir_vista`. Anote o resultado na seção 5.
+> 2. **O "pronto quando" da Fase 1:** abrir uma captura de 1 h, navegar e medir com 8 traços de 2 fontes, no
+>    aplicativo (`uv run --extra gui python -m sh_analyzer_gui`).
 >
+> **Depois:** quebrar a Fase 2 (transformações e frequência, plano seção 16) em tarefas, como a 4b.
 >
 > **No laboratório (opcional, 5 minutos):** a F0.2 colhe da BeagleBone os dados que a Aquisição vai usar (seção 6).
 
@@ -86,22 +89,20 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## 3. O estado atual
 
-**Feito, em commits locais no `feat/interface`:**
+**Em 13/11/2026 (noite), no `feat/interface`, em commits locais:** as Fases 0 e 1 no código. O aplicativo abre
+capturas (diálogo, arrastar e soltar, recentes), confere o CRC e mostra o cabeçalho, plota os canais em faixas pela
+unidade com o `TracoLOD`, navega com o histórico e o minimapa, mede entre os cursores ou na janela visível (os números
+da CLI, pela `api`), edita os traços no inspetor (tudo com desfazer), salva e reabre o projeto `.shproj` (com o
+salvamento automático e a recuperação) e tem a paleta de comandos. As seções 4 e 4b têm o commit de cada tarefa.
 
-| Commit | O quê |
-|---|---|
-| `d565596` | O extra `gui` com o PySide6 e o PyQtGraph (o `gui-dev` com o pytest-qt); o pacote `scripts/sh_analyzer_gui/` com a janela vazia e o ícone; os testes do esqueleto, do motor sem Qt e do ícone |
-| `49ac048` | O job `interface` da CI (`scripts/ci.sh interface`) |
-| `e9f1468` | A primeira versão do plano |
-| `e1d4887` | `scripts/benchmarks/plotagem_gui.py`: as medidas do motor de gráficos |
-| `e21ba9d` | Os mockups em `docs/gui-mockups/` e as imagens em `docs/images/gui/` |
-| `a029674` | O plano reescrito |
-| `69347f0` | `scripts/benchmarks/paleta_cores.py`: a conferência das cores |
-| `03c219f` | A escolha do layout no plano e este arquivo |
+**Os commits só do motor** (podem ir ao `main` sozinhos): `974c58a` (a `api`), `e76684b` (a integridade e o
+cabeçalho), `64f6e57` (a unidade do canal), `b5b02ab` (as medidas de um trecho). E o do agente da placa: `3f98d7b`.
 
-**O ambiente conferido nesta máquina (Linux):** Python 3.13, PySide6 6.12.0, PyQtGraph 0.14.0, Matplotlib 3.11.2, NumPy 2.5.4 e SciPy 1.18.1. Testes: `ci.sh rapido` com 915 aprovados e 2 pulados; `ci.sh interface` verde.
+**O ambiente:** Python 3.13, PySide6 6.12.0, PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1. Testes, na última rodada:
+`ci.sh rapido` com 1 304 aprovados e `ci.sh interface` com 427.
 
-**Ainda não existe:** nenhuma tela além da janela vazia, a `api` do motor, o `sh_placa` e o agente da placa.
+**Ainda não existe:** as transformações (filtros, correção de sonda no traço), as vistas de frequência, as figuras e
+a Aquisição (as Fases 2 em diante).
 
 ---
 
@@ -490,7 +491,11 @@ motivo na dica. As tarefas com `mostrar=False` não aparecem no painel.
   - a tabela de medidas, que copia para a planilha.
 - **Os testes:** os números iguais aos da CLI para a mesma região.
 
-### ▶ F1.8: a paleta de comandos e os atalhos
+### ☑ F1.8: a paleta de comandos e os atalhos
+
+**Feito** (`d616812`): `componentes/paleta.py` (a paleta, com a busca sem acentos, e a lista dos atalhos). Os testes
+em `test_gui_paleta.py`. **Para lembrar:** nos testes, mande as teclas por `QApplication.sendEvent`; o `event()`
+direto do widget pula os filtros de evento.
 
 - **O conteúdo:** Ctrl+K com busca por nome em todas as ações, e a lista dos atalhos.
 - **Os testes:** achar e rodar uma ação pela paleta.
@@ -511,6 +516,7 @@ motivo na dica. As tarefas com `mostrar=False` não aparecem no painel.
 | 13/11/2026 | G1 sem tela, mesmo percurso: **8 faixas** | **No limite:** mediana de 12,7 ms, p95 de 16,0 ms. Os traços custam ~1,5 ms; o resto são os eixos e as caixas de vista do PyQtGraph | `navegar --sintetico 10 --canais 8 --medir` |
 | 13/11/2026 | **G1 na tela do usuário: 8 faixas**, captura sintética de 1 h (2,88 GB), 1 280 × 626 px | **Aprovado:** mediana de 11,7 ms, p95 de 14,4 ms | `navegar --sintetico 60 --canais 8 --medir` |
 | 13/11/2026 | Instalador do PyInstaller no Linux (a interface, o `sh_placa` e a `api` do motor) | Pasta de 382 MB (128 MB em zstd, 150 MB em gzip); construção em 52 s; partida em 0,36 s com 81 MB | `empacotamento/sh-analyzer-gui.spec` |
+| 13/11/2026 | G1 sem tela na **vista de tempo**, 8 faixas, com a CPU sob estresse de outra sessão (carga de 16 a 25) | **Sem valor como medida:** mediana de 35 ms. O perfil achou e tirou dois gastos (a grade com o `tickValues` e o rótulo HTML dos eixos escondidos) | `prototipos/medir_vista.py`, perfil |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
 ---
@@ -594,6 +600,8 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   130 kHz). O G1 com 8 faixas fica para a tela do usuário. **Próximo:** a F1.6.
 - **13/11/2026 (noite):** a F1.6, o inspetor do traço. **Próximo:** a F1.7.
 - **13/11/2026 (noite):** a F1.7, os cursores e as medidas. **Próximo:** a F1.8.
+- **13/11/2026 (noite):** a F1.8, a paleta de comandos. **A Fase 1 está feita no código.** Os dois CIs verdes (1 304
+  e 427 testes). **Próximo:** o G1 com 8 faixas e o "pronto quando" na tela do usuário; depois, a Fase 2 em tarefas.
 
 ---
 
