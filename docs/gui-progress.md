@@ -8,7 +8,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F1.6: o inspetor do traço** (seção 4b). Da Fase 1, estão feitas da F1.1 à F1.5 (a vista de tempo).
+> **F1.7: os cursores e as medidas** (seção 4b). Da Fase 1, estão feitas da F1.1 à F1.6 (o inspetor do traço).
 >
 > **Na tela do usuário (2 minutos):** o G1 com 8 faixas na vista de verdade:
 > `uv run --extra gui python -m sh_analyzer_gui.prototipos.medir_vista` (anote o resultado na seção 5).
@@ -468,12 +468,15 @@ tire do pai antes (`LayoutDeFluxo.limpar`).
   - a seleção: clicar perto do traço, no chip ou na árvore.
 - **Os testes:** o G4 de novo, a seleção e o histórico; o G1 medido de novo com 8 faixas.
 
-### ▶ F1.6: o inspetor do traço
+### ☑ F1.6: o inspetor do traço
+
+**Feito:** `areas/analise/inspetor_traco.py` (e o `CampoComUnidade` com o estado "vários"); a seleção de traços vai
+para o inspetor. Os testes em `test_gui_inspetor_traco.py`.
 
 - **O conteúdo:** a identidade, a aparência (a cor da paleta), e a escala e o tempo, cada mudança como um comando de desfazer.
 - **Os testes:** editar, desfazer e editar vários traços de uma vez.
 
-### ☐ F1.7: os cursores e as medidas
+### ▶ F1.7: os cursores e as medidas
 
 - **O conteúdo:**
   - dois cursores, com Δt, 1/Δt e Δy;
@@ -583,6 +586,7 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   conferido. **Próximo:** a F1.5.
 - **13/11/2026 (noite):** a F1.5, a vista de tempo, conferida com as capturas do laboratório (60 Hz com 20 kHz e
   130 kHz). O G1 com 8 faixas fica para a tela do usuário. **Próximo:** a F1.6.
+- **13/11/2026 (noite):** a F1.6, o inspetor do traço. **Próximo:** a F1.7.
 
 ---
 

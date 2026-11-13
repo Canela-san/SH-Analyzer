@@ -82,9 +82,24 @@ class CampoComUnidade(QLineEdit):
         return self._valor
 
     def definir_valor(self, valor: float) -> None:
+        self._varios = False
+        self.setPlaceholderText("")
         self._valor = float(valor)
         self.setText(formatar_si(self._valor, self.unidade, self.digitos))
         self._marcar(False)
+
+    def definir_varios(self, texto: str = "vários") -> None:
+        """Vários valores diferentes (a edição de vários traços): o campo fica vazio, com ``texto`` de dica, e só
+        avisa quando o usuário digitar um valor."""
+        self._varios = True
+        self.clear()
+        self.setPlaceholderText(texto)
+        self._marcar(False)
+
+    def marcar_invalido(self, motivo: str) -> None:
+        """Marca o campo em vermelho com o motivo na dica (quem recusou foi quem recebeu o valor)."""
+        self.setToolTip(motivo)
+        self._marcar(True)
 
     def _marcar(self, invalido: bool) -> None:
         if bool(self.property("invalido")) != invalido:
@@ -92,6 +107,8 @@ class CampoComUnidade(QLineEdit):
             _repolir(self)
 
     def _confirmar(self) -> None:
+        if getattr(self, "_varios", False) and not self.text().strip():
+            return
         try:
             novo = ler_numero(self.text(), self.unidade)
         except NumeroInvalido as e:
@@ -104,7 +121,7 @@ class CampoComUnidade(QLineEdit):
             self._marcar(True)
             return
         self.setToolTip("")
-        mudou = novo != self._valor
+        mudou = novo != self._valor or getattr(self, "_varios", False)
         self.definir_valor(novo)
         if mudou:
             self.valorMudou.emit(novo)

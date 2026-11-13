@@ -21,10 +21,11 @@ from PySide6.QtWidgets import (
 from supraharmonicos.api import descrever_cabecalho
 
 from ...componentes.painel import EstadoVazio
-from ...modelo.objetos import FonteDoProjeto
+from ...modelo.objetos import FonteDoProjeto, Projeto
 from ...tema.aplicar import aparencia
 from ...tema.icones import icone
 from ...tema.tokens import TAMANHOS, Tema
+from .inspetor_traco import InspetorDoTraco
 
 TEXTOS_DA_INTEGRIDADE = {
     "pendente": ("relogio", "mudo", "CRC das amostras: a conferir"),
@@ -200,8 +201,16 @@ class Inspetor(QStackedWidget):
                                  self.tr("Selecione uma captura, um traço ou uma vista para ver as propriedades aqui."),
                                  icone_nome="ajustes", compacto=True)
         self.da_fonte = InspetorDaFonte()
+        self.do_traco = InspetorDoTraco()
         self.addWidget(self.vazio)
         self.addWidget(self.da_fonte)
+        self.addWidget(self.do_traco)
+
+    def mostrar_tracos(self, projeto: Projeto, tracos) -> None:
+        """Os traços selecionados (um ou vários)."""
+        self.da_fonte.soltar()
+        self.do_traco.mostrar(projeto, tracos)
+        self.setCurrentWidget(self.do_traco)
 
     def mostrar(self, tipo: str, objeto) -> None:
         if tipo == "fonte" and isinstance(objeto, FonteDoProjeto):

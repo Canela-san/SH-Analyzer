@@ -58,6 +58,7 @@ class AreaDeAnalise(QObject):
         self.painel.mostrar(projeto)
         for sinal, alvo in self._ligacoes(projeto):
             sinal.connect(alvo)
+        self.janela.selecao.mudou.connect(self._tracos_selecionados)
         self._refazer_abas()
         self.inspetor.mostrar("", None)
         for fonte in projeto.fontes:
@@ -145,6 +146,13 @@ class AreaDeAnalise(QObject):
             selecao.alternar(traco)
         else:
             selecao.definir([traco])
+
+    def _tracos_selecionados(self, tracos) -> None:
+        """A seleção de traços vai para o inspetor; sem traço selecionado, ele volta ao vazio (se mostrava traços)."""
+        if tracos:
+            self.inspetor.mostrar_tracos(self.projeto, tracos)
+        elif self.inspetor.currentWidget() is self.inspetor.do_traco:
+            self.inspetor.mostrar("", None)
 
     def remover_selecionados(self) -> bool:
         """``Del``: tira da vista ativa os traços selecionados nela (desfazível)."""
