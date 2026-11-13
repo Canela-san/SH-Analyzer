@@ -1,6 +1,6 @@
 """As ligações da área de Análise na janela: o painel do projeto, o inspetor, os avisos de cada captura, a barra de
-status da captura ativa e o plotar um canal. A janela monta as regiões (os docks, as abas); esta classe as faz
-conversar com o projeto aberto, e troca de projeto junto com a janela.
+status da captura ativa, as abas das vistas, a seleção e o plotar um canal. A janela monta as regiões (os docks, as
+abas); esta classe as faz conversar com o projeto aberto, e troca de projeto junto com a janela.
 
 Cada ligação com o projeto é desfeita ao trocar de projeto (:meth:`AreaDeAnalise.acompanhar`): o projeto antigo não
 mexe mais na tela.
@@ -8,17 +8,20 @@ mexe mais na tela.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject
-from PySide6.QtWidgets import QLabel
+from PySide6.QtCore import QObject, QSize, Qt
+from PySide6.QtWidgets import QLabel, QTabBar, QTabWidget, QToolButton
 from shiboken6 import isValid
 
 from ...componentes.avisos import ListaDeAvisos
 from ...componentes.numeros import formatar_si
 from ...dados.receita import ReceitaDoTraco
-from ...modelo.comandos import AdicionarTraco, AdicionarVista, RemoverFonte
+from ...modelo.comandos import AdicionarTraco, AdicionarVista, RemoverFonte, RemoverTracos, RemoverVista
 from ...modelo.objetos import FonteDoProjeto, Projeto, Traco, Vista
+from ...tema.aplicar import aparencia
+from ...tema.icones import IconeDoTema, icone
 from .arvore import PainelDoProjeto
 from .inspetor import TEXTOS_DA_INTEGRIDADE, Inspetor
+from .vista_tempo import VistaDeTempo
 
 NOME_DA_PRIMEIRA_VISTA = "Tempo"
 
@@ -30,35 +33,129 @@ def nome_do_traco(fonte: FonteDoProjeto, numero: int) -> str:
 
 class AreaDeAnalise(QObject):
     def __init__(self, janela, painel: PainelDoProjeto, inspetor: Inspetor, avisos: ListaDeAvisos,
-                 status_fonte: QLabel, status_integridade: QLabel):
+                 status_fonte: QLabel, status_integridade: QLabel, abas: QTabWidget):
         super().__init__(janela)
         self.janela, self.painel, self.inspetor, self.avisos = janela, painel, inspetor, avisos
-        self.status_fonte, self.status_integridade = status_fonte, status_integridade
+        self.status_fonte, self.status_integridade, self.abas = status_fonte, status_integridade, abas
         self.projeto: Projeto | None = None
         self.fonte_ativa: FonteDoProjeto | None = None
         painel.canalAtivado.connect(self.plotar_canal)
         painel.selecaoMudou.connect(self._selecao_mudou)
         painel.fecharFontePedido.connect(self.fechar_fonte)
 
+
     # ------------------------------------------------------------------ o projeto
 
     def acompanhar(self, projeto: Projeto) -> None:
         if self.projeto is not None:
-            self.projeto.fonteEntrou.disconnect(self._fonte_entrou)
-            self.projeto.fonteSaiu.disconnect(self._fonte_saiu)
+            for sinal, alvo in self._ligacoes(self.projeto):
+                sinal.disconnect(alvo)
             for fonte in self.projeto.fontes:
                 self.avisos.remover_origem(fonte.id)
         self._ativar(None)
         self.projeto = projeto
         # A árvore primeiro: ligada antes, ela já tem a linha da captura nova quando a área a seleciona.
         self.painel.mostrar(projeto)
-        projeto.fonteEntrou.connect(self._fonte_entrou)
-        projeto.fonteSaiu.connect(self._fonte_saiu)
+        for sinal, alvo in self._ligacoes(projeto):
+            sinal.connect(alvo)
+        self._refazer_abas()
         self.inspetor.mostrar("", None)
         for fonte in projeto.fontes:
             self._avisos_da_fonte(fonte)
         if projeto.fontes:
             self._ativar(projeto.fontes[-1])
+
+    def _ligacoes(self, projeto: Projeto):
+        return ((projeto.fonteEntrou, self._fonte_entrou), (projeto.fonteSaiu, self._fonte_saiu),
+                (projeto.vistaEntrou, self._vista_entrou), (projeto.vistaSaiu, self._vista_saiu),
+                (projeto.vistaMudou, self._vista_mudou))
+
+    # ------------------------------------------------------------------ as abas das vistas
+
+    def _refazer_abas(self) -> None:
+        while self.abas.count():
+            widget = self.abas.widget(0)
+            self.abas.removeTab(0)
+            widget.deleteLater()
+        for i, vista in enumerate(self.projeto.vistas):
+            self._vista_entrou(vista, i)
+
+    def widget_da_vista(self, vista: Vista) -> VistaDeTempo | None:
+        for i in range(self.abas.count()):
+            widget = self.abas.widget(i)
+            if getattr(widget, "vista", None) is vista:
+                return widget
+        return None
+
+    def vista_ativa(self) -> Vista | None:
+        widget = self.abas.currentWidget()
+        return getattr(widget, "vista", None)
+
+    def _vista_entrou(self, vista: Vista, i: int) -> None:
+        widget = VistaDeTempo(vista, self.projeto, self.janela.selecao)
+        widget.tracoClicado.connect(self._traco_clicado)
+        self.abas.insertTab(i, widget, icone("onda", aparencia().tema.texto2), vista.nome)
+        # O botão de fechar com o ícone do tema (o do estilo destoava); fecha a aba dele, onde ela estiver.
+        fechar = QToolButton()
+        fechar.setObjectName("fechar_aba")
+        fechar.setProperty("variante", "fantasma")
+        fechar.setAutoRaise(True)
+        fechar.setIconSize(QSize(12, 12))
+        fechar.setFixedSize(QSize(18, 18))
+        fechar.setToolTip(self.tr("Fechar a vista (desfazível)"))
+        IconeDoTema(fechar, "x", tamanho=12)
+        fechar.clicked.connect(lambda _=False, w=widget: self._fechar_aba(self.abas.indexOf(w)))
+        self.abas.tabBar().setTabButton(i, QTabBar.ButtonPosition.RightSide, fechar)
+        self.abas.setCurrentIndex(i)
+
+    def _vista_saiu(self, vista: Vista, _i: int) -> None:
+        widget = self.widget_da_vista(vista)
+        if widget is not None:
+            self.abas.removeTab(self.abas.indexOf(widget))
+            widget.deleteLater()
+
+    def _vista_mudou(self, vista: Vista, campos) -> None:
+        widget = self.widget_da_vista(vista)
+        if widget is not None and "nome" in campos:
+            self.abas.setTabText(self.abas.indexOf(widget), vista.nome)
+
+    def _fechar_aba(self, i: int) -> None:
+        vista = getattr(self.abas.widget(i), "vista", None)
+        if vista is not None:
+            self.projeto.pilha.push(RemoverVista(self.projeto, vista))
+
+    def nova_vista(self) -> Vista:
+        nomes = {v.nome for v in self.projeto.vistas}
+        n = 1
+        while (nome := NOME_DA_PRIMEIRA_VISTA if n == 1 else f"{NOME_DA_PRIMEIRA_VISTA} {n}") in nomes:
+            n += 1
+        vista = Vista(nome)
+        self.projeto.pilha.push(AdicionarVista(self.projeto, vista))
+        return vista
+
+    # ------------------------------------------------------------------ a seleção
+
+    def _traco_clicado(self, traco: Traco | None, modificadores) -> None:
+        selecao = self.janela.selecao
+        somar = bool(modificadores & Qt.KeyboardModifier.ControlModifier)
+        if traco is None:
+            if not somar:
+                selecao.limpar()
+        elif somar:
+            selecao.alternar(traco)
+        else:
+            selecao.definir([traco])
+
+    def remover_selecionados(self) -> bool:
+        """``Del``: tira da vista ativa os traços selecionados nela (desfazível)."""
+        vista = self.vista_ativa()
+        if vista is None:
+            return False
+        tracos = [t for t in self.janela.selecao.tracos if t in vista.tracos]
+        if not tracos:
+            return False
+        self.projeto.pilha.push(RemoverTracos(vista, tracos))
+        return True
 
     def _fonte_entrou(self, fonte: FonteDoProjeto, _i: int) -> None:
         self._avisos_da_fonte(fonte)
@@ -84,7 +181,14 @@ class AreaDeAnalise(QObject):
         if tipo == "fonte":
             self._ativar(objeto)
         elif tipo == "canal" and objeto is not None:
-            self._ativar(objeto[0])
+            fonte, numero = objeto
+            self._ativar(fonte)
+            # Um canal da árvore seleciona os traços dele na vista aberta.
+            vista = self.vista_ativa()
+            if vista is not None:
+                dele = [t for t in vista.tracos if t.receita.fonte == fonte.id and t.receita.canal == numero]
+                if dele:
+                    self.janela.selecao.definir(dele)
 
     def _ativar(self, fonte: FonteDoProjeto | None) -> None:
         if fonte is self.fonte_ativa:
@@ -141,11 +245,27 @@ class AreaDeAnalise(QObject):
             if vista is None:
                 vista = Vista(NOME_DA_PRIMEIRA_VISTA)
                 projeto.pilha.push(AdicionarVista(projeto, vista))
-            traco = Traco(ReceitaDoTraco(fonte.id, numero, nome, vista.proxima_cor()))
+            traco = Traco(ReceitaDoTraco(fonte.id, numero, nome, vista.proxima_cor(),
+                                         faixa=self._faixa_para(vista, fonte.canal(numero).unidade)))
             projeto.pilha.push(AdicionarTraco(vista, traco))
         finally:
             projeto.pilha.endMacro()
         return traco
+
+    def _faixa_para(self, vista: Vista, unidade: str) -> int:
+        """A faixa de um traço novo: a dos traços com a mesma unidade na vista; sem nenhum, uma faixa nova."""
+        ocupadas = {}
+        for t in vista.tracos:
+            try:
+                f = self.projeto.fonte(t.receita.fonte)
+            except KeyError:
+                continue
+            if not f.esta_ausente:
+                ocupadas.setdefault(f.canal(t.receita.canal).unidade, t.receita.faixa)
+        if unidade in ocupadas:
+            return ocupadas[unidade]
+        usadas = {t.receita.faixa for t in vista.tracos}
+        return max(usadas) + 1 if usadas else 0
 
     def fechar_fonte(self, fonte: FonteDoProjeto) -> None:
         self.projeto.pilha.push(RemoverFonte(self.projeto, fonte))

@@ -139,6 +139,14 @@ class TracoLOD(pg.GraphicsObject):
         self.informViewBoundsChanged()
         self.recalcular()
 
+    def definir_t0(self, t0: float) -> None:
+        """Anda o traço no tempo (o deslocamento da receita): a amostra 0 passa a ficar em ``t0``."""
+        self.prepareGeometryChange()
+        self._t0 = float(t0)
+        self._limites = self._calcular_limites()
+        self.informViewBoundsChanged()
+        self.recalcular()
+
     @property
     def consulta(self) -> Amostras | Envoltoria | None:
         """O resultado da última consulta, já na unidade do eixo y (para as medidas e os testes)."""
@@ -257,3 +265,25 @@ class TracoLOD(pg.GraphicsObject):
             return QPointF(self.tempo_da_amostra(c.indices[i]), float(c.valores[i]))
         col = int(np.clip(np.searchsorted(c.bordas, (x - self._t0) * self._taxa, side="right") - 1, 0, len(c) - 1))
         return QPointF(self.tempo_da_amostra((c.bordas[col] + c.bordas[col + 1] - 1) / 2), float(c.maximos[col]))
+
+    def distancia_em_pixels(self, x: float, y: float) -> float:
+        """Quantos pixels da tela separam o ponto ``(x, y)`` (nas unidades da vista) do desenho do traço: zero
+        dentro da faixa mín-máx da coluna; de perto, a distância até a amostra mais próxima. ``inf`` sem desenho.
+        Serve para selecionar o traço clicando perto dele (o alvo de 6 px do plano, 9.2)."""
+        c, vb = self._consulta, self.getViewBox()
+        if c is None or not len(c) or vb is None:
+            return math.inf
+        largura_px, altura_px = (abs(v) for v in vb.viewPixelSize())
+        if isinstance(c, Amostras):
+            tempos = self._t0 + c.indices / self._taxa
+            dx, dy = (tempos - x) / max(largura_px, 1e-300), (c.valores - y) / max(altura_px, 1e-300)
+            d = np.hypot(dx, dy)
+            return float(np.nanmin(d)) if np.isfinite(d).any() else math.inf
+        col = int(np.searchsorted(c.bordas, (x - self._t0) * self._taxa, side="right") - 1)
+        if not 0 <= col < len(c):
+            return math.inf
+        baixo, alto = sorted((float(c.minimos[col]), float(c.maximos[col])))
+        if not (math.isfinite(baixo) and math.isfinite(alto)):
+            return math.inf
+        fora = max(baixo - y, y - alto, 0.0)
+        return fora / max(altura_px, 1e-300)

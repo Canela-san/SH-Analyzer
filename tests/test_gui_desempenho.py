@@ -86,3 +86,48 @@ def test_g1_duas_faixas_sem_tela(request, tmp_path_factory, monkeypatch):
     mediana, p95 = navegar.resumo_dos_quadros(
         navegar.percorrer_zoom(QApplication.instance(), layout, tracos[0], len(canal.amostras), canal.taxa_hz))
     assert p95 <= 0.016, f"mediana {mediana * 1e3:.1f} ms, p95 {p95 * 1e3:.1f} ms"
+
+
+def test_g1_oito_faixas_na_vista_de_tempo(request, tmp_path, monkeypatch):
+    """G1 na vista de verdade (F1.5): 8 traços em 8 faixas, com o eixo, a grade e o minimapa do tema, sobre uma
+    captura de 1 min (2 canais a 200 kS/s, plotados 4 vezes cada). O percurso de zoom e pan do protótipo, p95 <= 16
+    ms por quadro. Sem tela, o número é só uma referência: o G1 vale na tela do usuário."""
+    pytest.importorskip("PySide6")
+    pytest.importorskip("pytestqt")
+    from capturas_sinteticas import escrever_bin
+    from dialogos_falsos import DialogosFalsos
+    from PySide6.QtWidgets import QApplication
+    from sh_analyzer_gui.app import criar_aplicacao
+    from sh_analyzer_gui.janela import JanelaPrincipal
+    from sh_analyzer_gui.modelo.comandos import MudarTracos
+    from sh_analyzer_gui.prototipos import navegar
+
+    qtbot = request.getfixturevalue("qtbot")
+    monkeypatch.setenv("SH_ANALYZER_CONFIG", str(tmp_path / "config"))
+    n = 60 * 200_000
+    t = np.arange(n) / 200_000
+    caminho = escrever_bin(tmp_path / "um_minuto.bin", [np.sin(2 * np.pi * 60 * t), np.cos(2 * np.pi * 60 * t)],
+                           versao=9)
+    criar_aplicacao([], tema="escuro")
+    janela = JanelaPrincipal()
+    janela.controle.dialogos = DialogosFalsos()
+    janela.resize(1600, 1000)
+    janela.show()
+    qtbot.waitExposed(janela)
+    (fonte,) = janela.controle.abrir_capturas([caminho])
+    qtbot.waitUntil(lambda: fonte.piramides is not None, timeout=60_000)
+    for i in range(8):
+        traco = janela.area.plotar_canal(fonte, i % 2)
+        janela.projeto.pilha.push(MudarTracos([traco], faixa=i))
+    vista = janela.area.widget_da_vista(janela.vista_ativa())
+    assert len(vista.faixas) == 8
+    qtbot.wait(50)
+    item = next(iter(vista.itens.values()))
+    canal = fonte.canal(0)
+    app = QApplication.instance()
+    navegar.percorrer_zoom(app, vista.grafico, item, len(canal.amostras), canal.taxa_hz)     # aquece
+    mediana, p95 = navegar.resumo_dos_quadros(
+        navegar.percorrer_zoom(app, vista.grafico, item, len(canal.amostras), canal.taxa_hz))
+    janela.projeto.pilha.setClean()
+    janela.close()
+    assert p95 <= 0.016, f"mediana {mediana * 1e3:.1f} ms, p95 {p95 * 1e3:.1f} ms"

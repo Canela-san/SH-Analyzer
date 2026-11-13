@@ -144,7 +144,7 @@ class JanelaPrincipal(QMainWindow):
                                               com_titulo=False)
         self._criar_barra_de_status()
         self.area = AreaDeAnalise(self, self.painel_projeto, self.inspetor, self.avisos, self.status_fonte,
-                                  self.status_integridade)
+                                  self.status_integridade, self.vistas)
         self.setAcceptDrops(True)
 
         aparencia().mudou.connect(self._tema_mudou)
@@ -194,8 +194,10 @@ class JanelaPrincipal(QMainWindow):
                    icone="baixar").triggered.connect(controle.salvar)
         self._acao("salvar_como", self.tr("Salvar o projeto como…"),
                    atalho="Ctrl+Shift+S").triggered.connect(lambda: controle.salvar_como())
-        a = self._acao("nova_vista", self.tr("Nova vista"), icone="mais")
-        a.setEnabled(False)            # a F1.5 liga
+        self._acao("nova_vista", self.tr("Nova vista"), icone="mais").triggered.connect(lambda: self.area.nova_vista())
+        a = self._acao("remover_selecionados", self.tr("Remover os traços selecionados"),
+                       atalho=QKeySequence.StandardKey.Delete)
+        a.triggered.connect(lambda: self.area.remover_selecionados())
 
     # ------------------------------------------------------------------ projeto
 
@@ -224,8 +226,8 @@ class JanelaPrincipal(QMainWindow):
         self.area.acompanhar(projeto)
 
     def vista_ativa(self) -> Vista | None:
-        """A vista onde um canal novo é plotado: por enquanto, a última do projeto (a F1.5 a liga à aba aberta)."""
-        return self.projeto.vistas[-1] if self.projeto.vistas else None
+        """A vista da aba aberta: onde um canal novo é plotado."""
+        return self.area.vista_ativa()
 
     def _projeto_mudou(self, *_) -> None:
         """O nome do projeto e o ponto das mudanças não salvas, na barra e no título da janela."""
@@ -306,8 +308,8 @@ class JanelaPrincipal(QMainWindow):
         self.vistas = QTabWidget()
         self.vistas.setObjectName("vistas")
         self.vistas.setDocumentMode(True)
-        self.vistas.setTabsClosable(True)
-        self.vistas.setMovable(True)
+        self.vistas.setTabsClosable(False)    # o botão de fechar de cada aba é nosso (areas.analise.area)
+        self.vistas.setMovable(False)         # a ordem das abas é a das vistas no projeto
         self.vistas.setCornerWidget(botao_de_icone(self.acoes["nova_vista"]), Qt.Corner.TopRightCorner)
 
         abrir = Botao(self.tr("Abrir captura…"), "primario", "pasta")
