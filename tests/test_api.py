@@ -168,3 +168,27 @@ def test_a_unidade_do_canal_segue_o_ganho_declarado(tmp_path):
     com = abrir_captura(escrever_bin(tmp_path / "com.bin", sinais, grandezas=(0, 1), versao=9,
                                      extensao={"ganhos": [19.65, 20.0]}), sondas_dir=tmp_path)
     assert [(c.ganho, c.ganho_declarado, c.unidade) for c in com.canais] == [(19.65, True, "V"), (20.0, True, "A")]
+
+
+def test_medir_regiao_igual_as_contas_da_cli(tmp_path):
+    """As medidas de um trecho são as do ``calcular_basicas`` e do ``cruzamentos_da_fundamental`` sobre os volts da
+    CLI, com o ganho e o offset do traço aplicados depois."""
+    from supraharmonicos.api import abrir_captura, medir_regiao, sinal_do_canal
+    from supraharmonicos.fundamental import cruzamentos_da_fundamental
+    from supraharmonicos.metricas_captura import calcular_basicas
+
+    fs = 200_000
+    t = np.arange(fs // 2) / fs                                          # 0,5 s
+    v = 2.0 * np.sin(2 * np.pi * 59.98 * t) + 0.3 + 0.05 * np.sin(2 * np.pi * 20_000 * t)
+    captura = abrir_captura(escrever_bin(tmp_path / "c.bin", [v, np.zeros_like(v)], versao=9), sondas_dir=tmp_path)
+    m = medir_regiao(captura, 0, 10_000, 90_000, ganho=-2.0, offset=0.5)
+    sinal = sinal_do_canal(captura, 0, 10_000, 90_000) * -2.0 + 0.5
+    b = calcular_basicas(sinal, fs)
+    assert (m.n_amostras, m.media, m.rms, m.rms_ac, m.pico_a_pico) == (b.n_amostras, b.media, b.rms_total, b.rms_ac,
+                                                                        b.pico_a_pico)
+    assert m.pico == max(abs(b.minimo), abs(b.maximo))
+    assert m.f1_hz == cruzamentos_da_fundamental(sinal, fs, 45.0, 65.0)[1] and m.f1_hz == pytest.approx(59.98, abs=0.01)
+    sem = medir_regiao(captura, 1, 0, 50_000)                            # um canal parado: sem fundamental
+    assert sem.f1_hz is None and sem.problema_f1
+    with pytest.raises(ErroSHAN):
+        medir_regiao(captura, 0, 5, 6)

@@ -16,7 +16,8 @@ Ela não monta ``argparse.Namespace`` nem imprime nada. Abre uma captura com as 
 A interface gráfica só fala com o motor por aqui (``tests/test_arquitetura.py`` confere); a CLI continua nas
 funções de sempre, e os testes de paridade (``tests/test_api.py``) conferem que as duas dão os mesmos números.
 
-Depende de: ``amostras``, ``cabecalho``, ``constantes``, ``contexto``, ``erros``, ``sonda``.
+Depende de: ``amostras``, ``cabecalho``, ``constantes``, ``contexto``, ``erros``, ``fundamental``,
+``metricas_captura``, ``sonda``.
 """
 
 from __future__ import annotations
@@ -39,6 +40,8 @@ from .cabecalho import (
 from .constantes import FORMATOS_NUMPY, NOMES_GRANDEZA, UNIDADE_GRANDEZA
 from .contexto import ContextoCaptura, perfil_para_correcao, resolver_contexto_explicito
 from .erros import ErroSHAN
+from .fundamental import cruzamentos_da_fundamental
+from .metricas_captura import calcular_basicas
 from .sonda import PerfilSonda, aplicar_correcao_sonda
 
 LOGGER_DO_MOTOR = "supraharmonicos"
@@ -249,3 +252,45 @@ def descrever_cabecalho(captura: Captura) -> list[tuple[str, list[tuple[str, str
     placa += [(f"Sistema {i + 1}", linha) for i, linha in enumerate(cab.descrever_sistema())]
     secoes = [("Captura", captura_secao), ("Canais", canais), ("Integridade", integridade), ("BeagleBone", placa)]
     return [(titulo, [(r, v) for r, v in linhas if v is not None]) for titulo, linhas in secoes]
+
+
+FREQ_MIN_FUNDAMENTAL = 45.0       # a busca da fundamental do adc_tool (--freq-min, --freq-max)
+FREQ_MAX_FUNDAMENTAL = 65.0
+
+
+@dataclass(frozen=True)
+class MedidasDaRegiao:
+    """As medidas de um trecho de um canal, na unidade do canal (com o ganho e o offset de quem chamou)."""
+
+    n_amostras: int
+    duracao_s: float
+    media: float
+    rms: float                    # com o DC
+    rms_ac: float                 # sem o DC (o desvio padrão)
+    minimo: float
+    maximo: float
+    pico_a_pico: float
+    pico: float                   # o maior valor absoluto
+    f1_hz: float | None           # a fundamental pelos cruzamentos por zero; None sem uma fundamental no trecho
+    problema_f1: str = ""         # por que não há f1 ('' se há)
+
+
+def medir_regiao(captura: Captura, canal: int, inicio: int, fim: int, *, corrigir_sonda: bool = False,
+                 ganho: float = 1.0, offset: float = 0.0, freq_min: float = FREQ_MIN_FUNDAMENTAL,
+                 freq_max: float = FREQ_MAX_FUNDAMENTAL) -> MedidasDaRegiao:
+    """As medidas das amostras ``[inicio, fim)`` de ``canal`` (nunca do desenho): a média, os RMS, os extremos e a
+    fundamental, pelas mesmas contas da CLI (``metricas_captura.calcular_basicas`` e
+    ``fundamental.cruzamentos_da_fundamental``, a busca do ``--fft``). ``ganho`` e ``offset`` são os do traço,
+    aplicados depois da conversão do canal. Levanta ``ErroSHAN`` com menos de 2 amostras; um trecho sem fundamental
+    só deixa ``f1_hz`` vazio, com o motivo."""
+    c = captura.canal(canal)
+    sinal = sinal_do_canal(captura, canal, inicio, fim, corrigir_sonda=corrigir_sonda) * ganho + offset
+    basicas = calcular_basicas(sinal, c.taxa_hz)
+    try:
+        _, f1, problema = *cruzamentos_da_fundamental(sinal, c.taxa_hz, freq_min, freq_max), ""
+    except ErroSHAN as e:
+        f1, problema = None, str(e)
+    return MedidasDaRegiao(
+        n_amostras=basicas.n_amostras, duracao_s=basicas.duracao_s, media=basicas.media, rms=basicas.rms_total,
+        rms_ac=basicas.rms_ac, minimo=basicas.minimo, maximo=basicas.maximo, pico_a_pico=basicas.pico_a_pico,
+        pico=max(abs(basicas.minimo), abs(basicas.maximo)), f1_hz=f1, problema_f1=problema)
