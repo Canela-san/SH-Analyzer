@@ -40,7 +40,15 @@ def abrir_janela(qtbot) -> JanelaPrincipal:
 
 @pytest.fixture
 def janela(app, qtbot):
-    return abrir_janela(qtbot)
+    """A janela aberta. Fechada aqui, e não pelo ``qtbot.addWidget``: o pytest-qt fecha as janelas dele antes da
+    limpeza das fixtures, e uma janela com mudanças perguntaria se quer salvar."""
+    j = JanelaPrincipal()
+    j.show()
+    qtbot.waitExposed(j)
+    yield j
+    j.projeto.pilha.setClean()
+    j.close()
+    j.deleteLater()
 
 
 class Somar(QUndoCommand):
@@ -220,7 +228,10 @@ def test_apagar_a_janela_com_comandos_na_pilha_nao_da_erro(app, qtbot):
     """Ao apagar a janela, a pilha se limpa e muda o texto do desfazer quando a ação já pode ter sido apagada: a
     dica era atualizada por uma lambda que segurava a ação, e o erro estourava no teste seguinte (o pytest-qt pega
     as exceções do laço de eventos)."""
+    from dialogos_falsos import DialogosFalsos
+
     janela = JanelaPrincipal()
+    janela.controle.dialogos = DialogosFalsos("descartar")
     janela.show()
     janela.pilha.push(Somar([0], 1))
     janela.pilha.push(Somar([0], 2))

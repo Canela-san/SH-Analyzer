@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import sys
 from importlib import metadata, resources
+from pathlib import Path
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
@@ -68,14 +69,21 @@ OPCAO_SAIR_AO_ABRIR = "--sair-ao-abrir"
 
 
 def ler_opcoes(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
-    """As opções do aplicativo; o que sobra (as do Qt, como ``-platform``) segue para a ``QApplication``."""
-    p = argparse.ArgumentParser(prog="sh-analyzer-gui", description="A interface gráfica do SH-Analyzer.")
+    """As opções do aplicativo; o que sobra (as do Qt, como ``-platform offscreen``) segue para a ``QApplication``.
+
+    O projeto a abrir (``PROJETO.shproj``, o que o sistema passa num duplo clique) é tirado antes do ``argparse``:
+    como argumento posicional, ele engoliria o valor de uma opção do Qt (o ``offscreen`` de ``-platform``)."""
+    projetos = [a for a in argv[1:] if a.lower().endswith(".shproj")]
+    resto_bruto = [a for a in argv[1:] if a not in projetos]
+    p = argparse.ArgumentParser(prog="sh-analyzer-gui", usage="%(prog)s [opções] [PROJETO.shproj]",
+                                description="A interface gráfica do SH-Analyzer.")
     p.add_argument("--tema", choices=("sistema", "escuro", "claro"),
                    help="o tema da interface (padrão: o último escolhido, ou o do sistema)")
     p.add_argument("--versao", action="store_true", help="mostra a versão e sai")
     p.add_argument(OPCAO_SAIR_AO_ABRIR, action="store_true",
                    help="abre a janela, pinta o primeiro quadro e sai (o teste de partida do instalador)")
-    opcoes, resto = p.parse_known_args(argv[1:])
+    opcoes, resto = p.parse_known_args(resto_bruto)
+    opcoes.arquivo = Path(projetos[0]) if projetos else None
     return opcoes, argv[:1] + resto
 
 
@@ -91,4 +99,8 @@ def main(argv: list[str] | None = None) -> int:
     janela.show()
     if opcoes.sair_ao_abrir:
         QTimer.singleShot(0, app.quit)
+    elif opcoes.arquivo is not None:
+        QTimer.singleShot(0, lambda: janela.controle.abrir(opcoes.arquivo))
+    else:
+        QTimer.singleShot(0, janela.controle.oferecer_recuperacao)
     return app.exec()

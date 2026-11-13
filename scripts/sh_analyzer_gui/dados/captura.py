@@ -14,11 +14,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from supraharmonicos.api import CanalDaCaptura, Captura, ErroSHAN, abrir_captura
+from supraharmonicos.api import Aviso, CanalDaCaptura, Captura, ErroSHAN, abrir_captura
 
 from .cache import chave_do_arquivo
 
-__all__ = ["CanalDaCaptura", "Captura", "ErroSHAN", "Fonte", "abrir_fonte"]
+__all__ = ["Aviso", "CanalDaCaptura", "Captura", "ErroSHAN", "Fonte", "abrir_fonte", "crc_das_amostras"]
 
 
 @dataclass(frozen=True, eq=False)
@@ -46,3 +46,9 @@ def abrir_fonte(caminho: Path, *, formato: str = "uint16", sondas_dir: Path | No
     amostras do cabeçalho v9, ou o caminho, o tamanho e a data nas versões anteriores. Levanta ``ErroSHAN``."""
     captura = abrir_captura(Path(caminho), formato=formato, sondas_dir=sondas_dir)
     return Fonte(captura, chave_do_arquivo(captura.caminho, captura.cabecalho.crc32_amostras))
+
+
+def crc_das_amostras(caminho: Path) -> int | None:
+    """O CRC das amostras do cabeçalho v9 (``None`` nas versões anteriores), sem ler as amostras. Levanta
+    ``ErroSHAN`` para um arquivo sem cabeçalho. Serve para reencontrar uma captura que mudou de lugar."""
+    return abrir_captura(Path(caminho)).cabecalho.crc32_amostras

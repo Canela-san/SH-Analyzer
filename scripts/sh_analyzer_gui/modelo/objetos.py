@@ -24,9 +24,8 @@ from PySide6.QtGui import QUndoStack
 from shiboken6 import isValid
 
 from ..dados.captura import CanalDaCaptura, Fonte
+from ..dados.projeto import TIPOS_DE_VISTA, FonteSalva
 from ..dados.receita import ReceitaDoTraco, proxima_cor
-
-TIPOS_DE_VISTA = ("tempo",)
 
 
 def novo_id() -> str:
@@ -126,28 +125,43 @@ class Vista(QObject):
 
 
 class FonteDoProjeto(QObject):
-    """Uma captura aberta no projeto: a ``Fonte`` (a ``api`` do motor e a chave do cache) e, quando prontas, as
-    pirâmides de cada canal (F1.4). ``id`` é o nome da fonte nas receitas dos traços."""
+    """Uma captura no projeto: a ``Fonte`` (a ``api`` do motor e a chave do cache) e, quando prontas, as pirâmides
+    de cada canal (F1.4). ``id`` é o nome da fonte nas receitas dos traços.
+
+    **Ausente** (``fonte is None``): o projeto lembra dela (``origem``, do arquivo de projeto), mas o arquivo não foi
+    achado. Os traços dela ficam no projeto, sem desenho, e voltam quando a captura for localizada; ao salvar, ela
+    é gravada como estava."""
 
     piramidesProntas = Signal(object)            # a fonte
 
-    def __init__(self, fonte: Fonte, id: str | None = None):
+    def __init__(self, fonte: Fonte | None, id: str | None = None, *, origem: FonteSalva | None = None):
         super().__init__()
-        self.id = id or novo_id()
+        if fonte is None and origem is None:
+            raise ValueError("uma fonte ausente precisa da origem (a do arquivo de projeto)")
+        self.id = id or (origem.id if origem is not None else novo_id())
         self.fonte = fonte
+        self.origem = origem
         self.piramides: list | None = None
+
+    @classmethod
+    def ausente(cls, origem: FonteSalva) -> FonteDoProjeto:
+        return cls(None, origem.id, origem=origem)
+
+    @property
+    def esta_ausente(self) -> bool:
+        return self.fonte is None
 
     @property
     def nome(self) -> str:
-        return self.fonte.nome
+        return self.fonte.nome if self.fonte is not None else self.origem.nome
 
     @property
     def caminho(self) -> Path:
-        return self.fonte.caminho
+        return self.fonte.caminho if self.fonte is not None else Path(self.origem.caminho_absoluto)
 
     @property
     def canais(self) -> tuple[CanalDaCaptura, ...]:
-        return self.fonte.canais
+        return self.fonte.canais if self.fonte is not None else ()
 
     def canal(self, numero: int) -> CanalDaCaptura:
         """O canal pelo número do cabeçalho. Levanta ``KeyError`` se a captura não tiver esse canal."""

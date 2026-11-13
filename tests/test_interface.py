@@ -68,4 +68,6 @@ def test_opcoes_da_linha_de_comando(capsys):
         modulo.main(["sh-analyzer-gui", "--help"])
     assert e.value.code == 0 and "--sair-ao-abrir" in capsys.readouterr().out
     opcoes, resto = modulo.ler_opcoes(["prog", "--tema", "claro", "-platform", "offscreen"])
-    assert opcoes.tema == "claro" and resto == ["prog", "-platform", "offscreen"]
+    assert opcoes.tema == "claro" and resto == ["prog", "-platform", "offscreen"] and opcoes.arquivo is None
+    opcoes, resto = modulo.ler_opcoes(["prog", "-platform", "offscreen", "/lab/Rede do bloco E.SHPROJ"])
+    assert str(opcoes.arquivo) == "/lab/Rede do bloco E.SHPROJ" and resto == ["prog", "-platform", "offscreen"]

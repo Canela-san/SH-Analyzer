@@ -45,3 +45,33 @@ def gravar(chave: str, valor) -> None:
     c = configuracoes()
     c.setValue(chave, valor)
     c.sync()
+
+
+def ler_lista(chave: str) -> list[str]:
+    """Uma lista de textos (os recentes); vazia se não houver ou se o valor for de outro tipo."""
+    valor = configuracoes().value(chave)
+    if isinstance(valor, str):
+        return [valor]
+    return [v for v in valor if isinstance(v, str)] if isinstance(valor, list) else []
+
+
+def lembrar(chave: str, valor: str, limite: int = 10) -> list[str]:
+    """Põe ``valor`` no topo da lista ``chave`` (sem repetir, no máximo ``limite``) e devolve a lista nova."""
+    lista = [valor, *(v for v in ler_lista(chave) if v != valor)][:limite]
+    gravar(chave, lista)
+    return lista
+
+
+def esquecer(chave: str, valor: str) -> None:
+    gravar(chave, [v for v in ler_lista(chave) if v != valor])
+
+
+def pasta_de_recuperacao() -> Path:
+    """Onde vai o salvamento automático de um projeto sem título (ao lado da configuração quando
+    ``SH_ANALYZER_CONFIG`` está definida; senão, na pasta de dados do usuário)."""
+    pasta = os.environ.get(VARIAVEL_DA_PASTA)
+    if pasta:
+        return Path(pasta) / "recuperacao"
+    from platformdirs import user_data_dir
+
+    return Path(user_data_dir(APLICATIVO, ORGANIZACAO)) / "recuperacao"

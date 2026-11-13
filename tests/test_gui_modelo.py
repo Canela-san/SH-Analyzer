@@ -260,3 +260,4 @@ def test_a_janela_mostra_o_projeto_e_o_desfazer_dele(qapp, qtbot, config_limpa):
     assert not janela.isWindowModified()
     janela.acoes["desfazer"].trigger()
     assert len(projeto.vistas) == 2
+    outro.pilha.setClean()

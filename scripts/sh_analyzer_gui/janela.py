@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from functools import partial
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QByteArray, QSize, Qt
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence, QShowEvent, QUndoGroup, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
@@ -40,11 +40,13 @@ from PySide6.QtWidgets import (
 from shiboken6 import isValid
 
 from . import preferencias
+from .componentes.avisos import ListaDeAvisos
 from .componentes.barra_superior import BarraSuperior
 from .componentes.basicos import Botao
 from .componentes.painel import EstadoVazio, PainelComAbas, TituloDoPainel, botao_de_icone
 from .componentes.toast import Toast
 from .configuracao import gravar, ler_bytes
+from .controle_do_projeto import ControleDoProjeto
 from .modelo.objetos import Projeto
 from .modelo.selecao import Selecao
 from .tema.aplicar import aparencia
@@ -97,6 +99,7 @@ class JanelaPrincipal(QMainWindow):
         self.projeto: Projeto | None = None
         self.selecao: Selecao | None = None
         self.acoes: dict[str, QAction] = {}
+        self.controle = ControleDoProjeto(self)
         self._criar_acoes()
 
         self.barra = BarraSuperior(self.acoes["paleta"].shortcut())
@@ -106,6 +109,7 @@ class JanelaPrincipal(QMainWindow):
         self.barra.botao_refazer.setDefaultAction(self.acoes["refazer"])
         self.barra.botao_tema.setDefaultAction(self.acoes["alternar_tema"])
         self.barra.botao_ajustes.setMenu(self._menu_de_ajustes())
+        self.barra.botao_projeto.setMenu(self._menu_do_projeto())
         self.barra.botao_ajustes.setToolTip(self.tr("Ajustes"))
         IconeDoTema(self.barra.botao_ajustes, "ajustes")
         for indice, versao in ((1, "v0.11"), (2, "v0.10")):
@@ -160,6 +164,15 @@ class JanelaPrincipal(QMainWindow):
                    icone="sol").triggered.connect(preferencias.alternar_tema)
         a = self._acao("abrir", self.tr("Abrir captura…"), atalho=QKeySequence.StandardKey.Open, icone="pasta")
         a.setEnabled(False)            # a F1.4 liga
+        controle = self.controle
+        self._acao("novo_projeto", self.tr("Novo projeto"), atalho=QKeySequence.StandardKey.New,
+                   icone="arquivo").triggered.connect(controle.novo)
+        self._acao("abrir_projeto", self.tr("Abrir projeto…"), atalho="Ctrl+Shift+O",
+                   icone="pasta").triggered.connect(lambda: controle.abrir())
+        self._acao("salvar", self.tr("Salvar o projeto"), atalho=QKeySequence.StandardKey.Save,
+                   icone="baixar").triggered.connect(controle.salvar)
+        self._acao("salvar_como", self.tr("Salvar o projeto como…"),
+                   atalho="Ctrl+Shift+S").triggered.connect(lambda: controle.salvar_como())
         a = self._acao("nova_vista", self.tr("Nova vista"), icone="mais")
         a.setEnabled(False)            # a F1.5 liga
 
@@ -228,6 +241,29 @@ class JanelaPrincipal(QMainWindow):
             sub.setEnabled(bool(familias))
         menu.aboutToShow.connect(self._marcar_tema_no_menu)
         return menu
+
+    def _menu_do_projeto(self) -> QMenu:
+        menu = QMenu(self)
+        menu.setObjectName("menu_projeto")
+        menu.addAction(self.acoes["novo_projeto"])
+        menu.addAction(self.acoes["abrir_projeto"])
+        self.menu_recentes = menu.addMenu(self.tr("Abrir recente"))
+        self.menu_recentes.aboutToShow.connect(self._preencher_recentes)
+        menu.addSeparator()
+        menu.addAction(self.acoes["salvar"])
+        menu.addAction(self.acoes["salvar_como"])
+        menu.aboutToShow.connect(self._preencher_recentes)
+        return menu
+
+    def _preencher_recentes(self) -> None:
+        """Os projetos recentes que ainda existem; o menu fica desabilitado sem nenhum."""
+        self.menu_recentes.clear()
+        recentes = [c for c in self.controle.recentes() if c.is_file()]
+        for caminho in recentes:
+            a = self.menu_recentes.addAction(caminho.stem)
+            a.setToolTip(str(caminho))
+            a.triggered.connect(lambda _=False, c=caminho: self.controle.abrir(c))
+        self.menu_recentes.setEnabled(bool(recentes))
 
     def _marcar_tema_no_menu(self) -> None:
         self._acoes_de_tema[aparencia().modo].setChecked(True)
@@ -311,11 +347,16 @@ class JanelaPrincipal(QMainWindow):
             (self.tr("Tarefas"), self.tr("Nenhuma tarefa em andamento"),
              self.tr("As contas longas (pirâmides, espectros, exportações) aparecem aqui, com o progresso."),
              "relogio"),
-            (self.tr("Avisos"), self.tr("Nenhum aviso"),
-             self.tr("Os avisos das capturas abertas (sonda, faixa, integridade) aparecem aqui."), "alerta"),
         ):
             painel.addTab(EstadoVazio(vazio, texto, icone_nome=nome_icone, compacto=True), titulo)
+        self.avisos = ListaDeAvisos()
+        painel.addTab(self.avisos, self.tr("Avisos"))
+        self.avisos.contagemMudou.connect(self._contagem_de_avisos)
         return painel
+
+    def _contagem_de_avisos(self, n: int, nivel: str) -> None:
+        if isValid(self.painel_inferior):
+            self.painel_inferior.definir_contagem(ABA_AVISOS, n, {"info": "acento"}.get(nivel, nivel))
 
     def _criar_dock(self, nome: str, titulo: str, corpo: QWidget, area: Qt.DockWidgetArea, nome_da_acao: str,
                     *, com_titulo: bool = True) -> QDockWidget:
@@ -361,6 +402,13 @@ class JanelaPrincipal(QMainWindow):
 
     # ------------------------------------------------------------------ layout
 
+    def estado(self) -> QByteArray:
+        """O estado dos painéis (quais abertos, os tamanhos), para guardar no projeto."""
+        return self.saveState(VERSAO_DO_LAYOUT)
+
+    def restaurar_estado(self, estado: QByteArray) -> bool:
+        return self.restoreState(estado, VERSAO_DO_LAYOUT)
+
     def salvar_layout(self) -> None:
         gravar(CHAVE_DA_GEOMETRIA, self.saveGeometry())
         gravar(CHAVE_DO_ESTADO, self.saveState(VERSAO_DO_LAYOUT))
@@ -388,6 +436,9 @@ class JanelaPrincipal(QMainWindow):
                 self.layout_padrao()
 
     def closeEvent(self, evento: QCloseEvent) -> None:
+        if not self.controle.pode_descartar():
+            evento.ignore()
+            return
         self.salvar_layout()
         super().closeEvent(evento)
 
