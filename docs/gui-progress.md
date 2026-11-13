@@ -8,7 +8,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F1.2: o modelo e o desfazer** (seção 4b). A F1.1 (a janela do Estúdio) está feita.
+> **F1.3: o projeto `.shproj`** (seção 4b). A F1.1 (a janela) e a F1.2 (o modelo e o desfazer) estão feitas.
 >
 >
 > **No laboratório (opcional, 5 minutos):** a F0.2 colhe da BeagleBone os dados que a Aquisição vai usar (seção 6).
@@ -394,7 +394,12 @@ destruição da janela (o erro aparece no teste seguinte).
 - **O layout:** salvo e restaurado (`saveState`/`restoreState`, por enquanto no `QSettings`; por projeto na F1.3). Ctrl+B, Ctrl+I e Ctrl+J recolhem os painéis.
 - **Os testes:** a janela abre com cada região, recolhe os painéis e guarda o layout. O `QSettings` dos testes vai para uma pasta temporária, nunca a do usuário.
 
-### ▶ F1.2: o modelo e o desfazer
+### ☑ F1.2: o modelo e o desfazer
+
+**Feito** (`8d9b719`): `dados/receita.py` (a `ReceitaDoTraco`, sem Qt) e `modelo/` (`objetos.py`, `selecao.py`,
+`comandos.py`); a janela com o projeto num `QUndoGroup`. Os testes em `test_gui_receita.py` e `test_gui_modelo.py`.
+**Para lembrar:** nada de `QUndoCommand(parent=...)` (o Python não segura o filho; o processo caiu num teste em
+paralelo); um comando de vários passos os guarda ele mesmo. Os repasses de sinal são de sinal para sinal.
 
 - **Arquivos:** `modelo/`: `Projeto`, `Fonte`, `Vista`, `Traco`, com sinais do Qt, e os comandos (`QUndoCommand`).
 - **O conteúdo:**
@@ -403,7 +408,7 @@ destruição da janela (o erro aparece no teste seguinte).
   - o estado do traço: a fonte, o canal, a posição na paleta (a cor), a escala e o deslocamento, a visibilidade e a faixa.
 - **Os testes:** cada comando faz e desfaz, e o modelo avisa quem desenha.
 
-### ☐ F1.3: o projeto `.shproj`
+### ▶ F1.3: o projeto `.shproj`
 
 - **Arquivos:** `dados/projeto.py` (sem Qt), com o JSON versionado (`"formato": "sh-analyzer-projeto"`).
 - **O conteúdo:**
@@ -539,6 +544,7 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   temporária (`SH_ANALYZER_CONFIG`, no `conftest.py`). Dados de laboratório para testar e fotografar:
   `~/Documents/sh-analyzer-data/lab/2026-11-13/FIG_2026-11-13/` (60 Hz com tom de 20 kHz ou 130 kHz, tensão e
   corrente; pequenos, 25 MB cada). **Próximo:** a F1.2.
+- **13/11/2026 (tarde):** a F1.2, o modelo e o desfazer. **Próximo:** a F1.3.
 
 ---
 
