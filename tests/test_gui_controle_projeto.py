@@ -76,7 +76,7 @@ def test_salvar_e_abrir_de_volta(janela, tmp_path):
     assert [(t.id, t.receita) for t in v.tracos] == [(a.id, a.receita), (b.id, b.receita)]
     assert not p.modificado and not janela.acoes["desfazer"].isEnabled()
     assert not janela.dock_inspetor.isVisible()                     # o layout do projeto voltou
-    assert janela.avisos.avisos == []
+    assert [a for a, origem in janela.avisos.avisos if origem == "projeto"] == []
 
 
 def test_a_captura_movida_e_reencontrada_pelo_crc(janela, tmp_path):
@@ -89,8 +89,8 @@ def test_a_captura_movida_e_reencontrada_pelo_crc(janela, tmp_path):
     assert janela.controle.abrir(caminho)
     fonte = janela.projeto.fontes[0]
     assert not fonte.esta_ausente and fonte.caminho.name == "renomeada.bin"
-    ((aviso, origem),) = janela.avisos.avisos
-    assert aviso.nivel == "info" and "reencontrada pelo CRC" in aviso.texto and origem == "projeto"
+    ((aviso, origem),) = [(a, o) for a, o in janela.avisos.avisos if o == "projeto"]
+    assert aviso.nivel == "info" and "reencontrada pelo CRC" in aviso.texto
 
 
 def test_a_captura_que_sumiu_fica_ausente_sem_perder_os_tracos(janela, tmp_path):
@@ -103,7 +103,7 @@ def test_a_captura_que_sumiu_fica_ausente_sem_perder_os_tracos(janela, tmp_path)
     fonte = janela.projeto.fontes[0]
     assert fonte.esta_ausente and fonte.nome == "a.bin" and fonte.canais == ()
     assert [t.receita for t in janela.projeto.vistas[0].tracos] == [a.receita, b.receita]
-    ((aviso, _),) = janela.avisos.avisos
+    ((aviso, _),) = [(a, o) for a, o in janela.avisos.avisos if o == "projeto"]
     assert aviso.nivel == "erro" and "não foi encontrada" in aviso.texto
     assert janela.painel_inferior.tabBar().tabButton(2, janela.painel_inferior.tabBar().ButtonPosition.RightSide)
     # Salvar de novo grava a fonte ausente como veio: nada se perde até a captura voltar.

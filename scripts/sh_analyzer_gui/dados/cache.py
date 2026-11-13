@@ -132,9 +132,16 @@ def chave_do_arquivo(caminho: Path, crc32_amostras: int | None = None) -> str:
     return "arq" + hashlib.sha256(texto.encode("utf-8")).hexdigest()[:24]
 
 
+VARIAVEL_DA_PASTA = "SH_ANALYZER_CACHE"
+
+
 def pasta_padrao() -> Path:
     """A pasta de cache do sistema (``platformdirs``): ~/.cache/sh-analyzer/piramides no Linux,
-    %LOCALAPPDATA%\\sh-analyzer\\Cache\\piramides no Windows."""
+    %LOCALAPPDATA%\\sh-analyzer\\Cache\\piramides no Windows. A variável ``SH_ANALYZER_CACHE`` a troca (os testes
+    a apontam para uma pasta temporária)."""
+    pasta = os.environ.get(VARIAVEL_DA_PASTA)
+    if pasta:
+        return Path(pasta) / "piramides"
     from platformdirs import user_cache_dir
     return Path(user_cache_dir("sh-analyzer", appauthor=False)) / "piramides"
 

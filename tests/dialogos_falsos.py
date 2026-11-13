@@ -18,6 +18,10 @@ class DialogosFalsos:
             raise AssertionError(f"pergunta não prevista no teste: {titulo!r}")
         return self.respostas.pop(0)
 
+    def abrir_arquivos(self, titulo, filtro, pasta=""):
+        r = self._proxima(titulo)
+        return [Path(c) for c in r] if r is not None else []
+
     def abrir_arquivo(self, titulo, filtro, pasta=""):
         r = self._proxima(titulo)
         return Path(r) if r is not None else None

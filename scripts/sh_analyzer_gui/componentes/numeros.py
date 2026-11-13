@@ -86,3 +86,18 @@ def formatar_si(valor: float, unidade: str = "", digitos: int = 4, decimal: str 
         texto = texto.rstrip("0").rstrip(".")
     texto = texto.replace(".", decimal)
     return f"{texto} {_ESCRITA[expoente]}{unidade}".strip()
+
+
+def formatar_duracao(segundos: float, decimal: str = ",") -> str:
+    """Uma duração legível: "4,2 s", "12 min 30 s", "1 h 02", "26 h 40". ``—`` para o que não é número."""
+    if not math.isfinite(segundos) or segundos < 0:
+        return "—"
+    if segundos < 60:
+        texto = f"{segundos:.3g}" if segundos < 10 else f"{segundos:.0f}"
+        return f"{texto.replace('.', decimal)} s"
+    inteiros = round(segundos)
+    if inteiros < 3600:
+        minutos, resto = divmod(inteiros, 60)
+        return f"{minutos} min {resto:02d} s" if resto else f"{minutos} min"
+    horas, resto = divmod(inteiros, 3600)
+    return f"{horas} h {resto // 60:02d}"

@@ -101,6 +101,15 @@ QToolTip {{ background: {t.elevada}; color: {t.texto}; border: 1px solid {t.bord
             border-radius: 6px; }}
 QStatusBar {{ background: {t.fundo}; color: {t.texto2}; border-top: 1px solid {t.borda}; }}
 QStatusBar QLabel {{ color: {t.texto2}; padding: 0 8px; }}
+QStatusBar QLabel[nivel="ok"] {{ color: {t.ok}; }}
+QStatusBar QLabel[nivel="erro"] {{ color: {t.erro}; }}
+QLabel#rotulo_campo, QLabel#subtitulo_inspetor {{ color: {t.texto2}; }}
+QLabel#aviso_inspetor {{ color: {t.aviso}; }}
+QFrame#divisoria {{ background: {t.borda}; border: none; }}
+QTreeView#arvore_projeto {{ background: transparent; border: none; }}
+QTreeView#arvore_projeto::item:selected, QTreeView#arvore_projeto::item:hover {{ background: transparent; }}
+QScrollArea#inspetor_da_fonte {{ background: transparent; border: none; }}
+QListWidget#avisos {{ border: none; background: {t.superficie}; }}
 QStatusBar::item {{ border: none; }}
 QMenuBar {{ background: {t.fundo}; }}
 QMenu {{ background: {t.elevada}; border: 1px solid {t.borda_forte}; border-radius: 8px; padding: 4px; }}

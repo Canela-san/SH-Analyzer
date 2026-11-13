@@ -22,33 +22,48 @@ comandos (F1.8) disparam a mesma ``QAction``.
 from __future__ import annotations
 
 from functools import partial
+from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QSize, Qt
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence, QShowEvent, QUndoGroup, QUndoStack
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QCloseEvent,
+    QDragEnterEvent,
+    QDropEvent,
+    QKeySequence,
+    QShowEvent,
+    QUndoGroup,
+    QUndoStack,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
     QLabel,
-    QLineEdit,
     QMainWindow,
     QMenu,
     QStackedWidget,
     QTabWidget,
-    QVBoxLayout,
     QWidget,
 )
 from shiboken6 import isValid
 
 from . import preferencias
+from .areas.analise.area import AreaDeAnalise
+from .areas.analise.arvore import PainelDoProjeto
+from .areas.analise.inspetor import Inspetor
 from .componentes.avisos import ListaDeAvisos
 from .componentes.barra_superior import BarraSuperior
 from .componentes.basicos import Botao
 from .componentes.painel import EstadoVazio, PainelComAbas, TituloDoPainel, botao_de_icone
+from .componentes.tarefas import ListaDeTarefas
 from .componentes.toast import Toast
 from .configuracao import gravar, ler_bytes
 from .controle_do_projeto import ControleDoProjeto
-from .modelo.objetos import Projeto
+from .modelo.objetos import Projeto, Vista
 from .modelo.selecao import Selecao
+from .servicos.fontes import ServicoDeFontes
+from .servicos.tarefas import GerenciadorDeTarefas
 from .tema.aplicar import aparencia
 from .tema.fontes import familias_disponiveis, fonte_escolhida
 from .tema.icones import IconeDoTema
@@ -96,6 +111,8 @@ class JanelaPrincipal(QMainWindow):
         self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
 
         self.grupo_desfazer = QUndoGroup(self)
+        self.tarefas = GerenciadorDeTarefas(parent=self)
+        self.servico_de_fontes = ServicoDeFontes(self.tarefas, parent=self)
         self.projeto: Projeto | None = None
         self.selecao: Selecao | None = None
         self.acoes: dict[str, QAction] = {}
@@ -118,6 +135,7 @@ class JanelaPrincipal(QMainWindow):
         self.setCentralWidget(self._criar_centro())
         self.dock_projeto = self._criar_dock("projeto", self.tr("Projeto"), self._criar_projeto(),
                                              Qt.DockWidgetArea.LeftDockWidgetArea, "painel_projeto")
+        self.dock_projeto.titulo.adicionar_botao(self.acoes["abrir"])
         self.dock_inspetor = self._criar_dock("inspetor", self.tr("Inspetor"), self._criar_inspetor(),
                                               Qt.DockWidgetArea.RightDockWidgetArea, "painel_inspetor")
         self.painel_inferior = self._criar_painel_inferior()
@@ -125,6 +143,9 @@ class JanelaPrincipal(QMainWindow):
                                               Qt.DockWidgetArea.BottomDockWidgetArea, "painel_inferior",
                                               com_titulo=False)
         self._criar_barra_de_status()
+        self.area = AreaDeAnalise(self, self.painel_projeto, self.inspetor, self.avisos, self.status_fonte,
+                                  self.status_integridade)
+        self.setAcceptDrops(True)
 
         aparencia().mudou.connect(self._tema_mudou)
         self._tema_mudou(aparencia().tema)
@@ -162,9 +183,9 @@ class JanelaPrincipal(QMainWindow):
         self._acao("paleta", self.tr("Paleta de comandos"), atalho="Ctrl+K").triggered.connect(self.abrir_paleta)
         self._acao("alternar_tema", self.tr("Alternar o tema claro e escuro"),
                    icone="sol").triggered.connect(preferencias.alternar_tema)
-        a = self._acao("abrir", self.tr("Abrir captura…"), atalho=QKeySequence.StandardKey.Open, icone="pasta")
-        a.setEnabled(False)            # a F1.4 liga
         controle = self.controle
+        self._acao("abrir", self.tr("Abrir captura…"), atalho=QKeySequence.StandardKey.Open,
+                   icone="pasta").triggered.connect(lambda: controle.abrir_arquivos())
         self._acao("novo_projeto", self.tr("Novo projeto"), atalho=QKeySequence.StandardKey.New,
                    icone="arquivo").triggered.connect(controle.novo)
         self._acao("abrir_projeto", self.tr("Abrir projeto…"), atalho="Ctrl+Shift+O",
@@ -199,6 +220,12 @@ class JanelaPrincipal(QMainWindow):
         projeto.modificadoMudou.connect(self._projeto_mudou)
         projeto.nomeMudou.connect(self._projeto_mudou)
         self._projeto_mudou()
+        self.servico_de_fontes.acompanhar(projeto)
+        self.area.acompanhar(projeto)
+
+    def vista_ativa(self) -> Vista | None:
+        """A vista onde um canal novo é plotado: por enquanto, a última do projeto (a F1.5 a liga à aba aberta)."""
+        return self.projeto.vistas[-1] if self.projeto.vistas else None
 
     def _projeto_mudou(self, *_) -> None:
         """O nome do projeto e o ponto das mudanças não salvas, na barra e no título da janela."""
@@ -248,7 +275,7 @@ class JanelaPrincipal(QMainWindow):
         menu.addAction(self.acoes["novo_projeto"])
         menu.addAction(self.acoes["abrir_projeto"])
         self.menu_recentes = menu.addMenu(self.tr("Abrir recente"))
-        self.menu_recentes.aboutToShow.connect(self._preencher_recentes)
+        self.menu_capturas_recentes = menu.addMenu(self.tr("Capturas recentes"))
         menu.addSeparator()
         menu.addAction(self.acoes["salvar"])
         menu.addAction(self.acoes["salvar_como"])
@@ -256,14 +283,18 @@ class JanelaPrincipal(QMainWindow):
         return menu
 
     def _preencher_recentes(self) -> None:
-        """Os projetos recentes que ainda existem; o menu fica desabilitado sem nenhum."""
-        self.menu_recentes.clear()
-        recentes = [c for c in self.controle.recentes() if c.is_file()]
-        for caminho in recentes:
-            a = self.menu_recentes.addAction(caminho.stem)
-            a.setToolTip(str(caminho))
-            a.triggered.connect(lambda _=False, c=caminho: self.controle.abrir(c))
-        self.menu_recentes.setEnabled(bool(recentes))
+        """Os projetos e as capturas recentes que ainda existem; um menu sem nenhum fica desabilitado."""
+        for menu, recentes, abrir, nome in (
+                (self.menu_recentes, self.controle.recentes(), self.controle.abrir, lambda c: c.stem),
+                (self.menu_capturas_recentes, self.controle.recentes_capturas(),
+                 lambda c: self.controle.abrir_capturas([c]), lambda c: c.name)):
+            menu.clear()
+            existentes = [c for c in recentes if c.is_file()]
+            for caminho in existentes:
+                a = menu.addAction(nome(caminho))
+                a.setToolTip(str(caminho))
+                a.triggered.connect(lambda _=False, c=caminho, f=abrir: f(c))
+            menu.setEnabled(bool(existentes))
 
     def _marcar_tema_no_menu(self) -> None:
         self._acoes_de_tema[aparencia().modo].setChecked(True)
@@ -306,53 +337,33 @@ class JanelaPrincipal(QMainWindow):
             self.centro.setCurrentWidget(self.vistas if self.vistas.count() else self.vazio_central)
 
     def _criar_projeto(self) -> QWidget:
-        corpo = QWidget()
-        corpo.setObjectName("painel")
-        corpo.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.filtro_do_projeto = QLineEdit()
-        self.filtro_do_projeto.setObjectName("filtro_projeto")
-        self.filtro_do_projeto.setPlaceholderText(self.tr("Filtrar"))
-        self.filtro_do_projeto.setClearButtonEnabled(True)
-        lupa = QAction(self.filtro_do_projeto)
-        IconeDoTema(lupa, "busca", "mudo")
-        self.filtro_do_projeto.addAction(lupa, QLineEdit.ActionPosition.LeadingPosition)
-        self.vazio_projeto = EstadoVazio(self.tr("Nenhuma captura aberta"),
-                                         self.tr("Abra uma captura para ver os canais aqui."),
-                                         icone_nome="arquivo", compacto=True)
-        coluna = QVBoxLayout(corpo)
-        coluna.setContentsMargins(8, 0, 8, 8)
-        coluna.setSpacing(6)
-        coluna.addWidget(self.filtro_do_projeto)
-        coluna.addWidget(self.vazio_projeto, 1)
-        return corpo
+        self.painel_projeto = PainelDoProjeto(self.acoes["abrir"])
+        self.filtro_do_projeto = self.painel_projeto.filtro
+        return self.painel_projeto
 
     def _criar_inspetor(self) -> QWidget:
-        corpo = QWidget()
-        corpo.setObjectName("painel")
-        corpo.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.vazio_inspetor = EstadoVazio(self.tr("Nada selecionado"),
-                                          self.tr("Selecione um traço, uma vista ou um cursor para ver e mudar as "
-                                                  "propriedades dele aqui."),
-                                          icone_nome="ajustes", compacto=True)
-        coluna = QVBoxLayout(corpo)
-        coluna.setContentsMargins(8, 0, 8, 8)
-        coluna.addWidget(self.vazio_inspetor, 1)
-        return corpo
+        self.inspetor = Inspetor()
+        return self.inspetor
 
     def _criar_painel_inferior(self) -> PainelComAbas:
         painel = PainelComAbas("painel_inferior")
-        for titulo, vazio, texto, nome_icone in (
-            (self.tr("Medidas"), self.tr("Sem medidas"),
-             self.tr("Ligue os cursores ou selecione uma região do gráfico para medir."), "regua"),
-            (self.tr("Tarefas"), self.tr("Nenhuma tarefa em andamento"),
-             self.tr("As contas longas (pirâmides, espectros, exportações) aparecem aqui, com o progresso."),
-             "relogio"),
-        ):
-            painel.addTab(EstadoVazio(vazio, texto, icone_nome=nome_icone, compacto=True), titulo)
+        painel.addTab(EstadoVazio(self.tr("Sem medidas"),
+                                  self.tr("Ligue os cursores ou selecione uma região do gráfico para medir."),
+                                  icone_nome="regua", compacto=True), self.tr("Medidas"))
+        self.lista_de_tarefas = ListaDeTarefas(self.tarefas)
+        painel.addTab(self.lista_de_tarefas, self.tr("Tarefas"))
+        self.lista_de_tarefas.contagemMudou.connect(self._contagem_de_tarefas)
         self.avisos = ListaDeAvisos()
         painel.addTab(self.avisos, self.tr("Avisos"))
         self.avisos.contagemMudou.connect(self._contagem_de_avisos)
         return painel
+
+    def _contagem_de_tarefas(self, n: int) -> None:
+        if isValid(self.painel_inferior):
+            self.painel_inferior.definir_contagem(ABA_TAREFAS, n, "acento")
+            ativas = self.tarefas.ativas
+            self.status_tarefa.setText(ativas[0].nome + (f" (+{len(ativas) - 1})" if len(ativas) > 1 else "")
+                                       if ativas else "")
 
     def _contagem_de_avisos(self, n: int, nivel: str) -> None:
         if isValid(self.painel_inferior):
@@ -385,7 +396,10 @@ class JanelaPrincipal(QMainWindow):
         barra.setSizeGripEnabled(False)
         self.status_fonte = QLabel(self.tr("Nenhuma captura aberta"))
         self.status_fonte.setObjectName("status_fonte")
-        barra.addWidget(self.status_fonte, 1)
+        barra.addWidget(self.status_fonte)
+        self.status_integridade = QLabel()
+        self.status_integridade.setObjectName("status_integridade")
+        barra.addWidget(self.status_integridade, 1)
         self.status_tarefa = QLabel()
         self.status_tarefa.setObjectName("status_tarefa")
         barra.addPermanentWidget(self.status_tarefa)
@@ -440,7 +454,27 @@ class JanelaPrincipal(QMainWindow):
             evento.ignore()
             return
         self.salvar_layout()
+        self.tarefas.encerrar()          # nenhuma thread rodando depois da janela
         super().closeEvent(evento)
+
+    # ------------------------------------------------------------------ arrastar e soltar
+
+    @staticmethod
+    def _arquivos_soltos(evento) -> list[Path]:
+        dados = evento.mimeData()
+        if not dados.hasUrls():
+            return []
+        return [Path(u.toLocalFile()) for u in dados.urls() if u.isLocalFile()]
+
+    def dragEnterEvent(self, evento: QDragEnterEvent) -> None:
+        if self._arquivos_soltos(evento):
+            evento.acceptProposedAction()
+
+    def dropEvent(self, evento: QDropEvent) -> None:
+        caminhos = self._arquivos_soltos(evento)
+        if caminhos:
+            evento.acceptProposedAction()
+            self.controle.abrir_arquivos(caminhos)
 
     def sizeHint(self) -> QSize:
         return QSize(*TAMANHO_INICIAL)

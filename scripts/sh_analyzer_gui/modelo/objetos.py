@@ -133,6 +133,9 @@ class FonteDoProjeto(QObject):
     é gravada como estava."""
 
     piramidesProntas = Signal(object)            # a fonte
+    estadoMudou = Signal(object)                 # a fonte: a pirâmide andou, a integridade foi conferida
+
+    INTEGRIDADES = ("pendente", "conferindo", "confere", "nao_confere", "sem_crc", "erro")
 
     def __init__(self, fonte: Fonte | None, id: str | None = None, *, origem: FonteSalva | None = None):
         super().__init__()
@@ -142,6 +145,8 @@ class FonteDoProjeto(QObject):
         self.fonte = fonte
         self.origem = origem
         self.piramides: list | None = None
+        self.progresso_da_piramide: float | None = None     # None: sem construção em andamento
+        self.integridade = "pendente"
 
     @classmethod
     def ausente(cls, origem: FonteSalva) -> FonteDoProjeto:
@@ -176,7 +181,20 @@ class FonteDoProjeto(QObject):
 
     def definir_piramides(self, piramides: list) -> None:
         self.piramides = piramides
+        self.progresso_da_piramide = None
         self.piramidesProntas.emit(self)
+        self.estadoMudou.emit(self)
+
+    def definir_progresso_da_piramide(self, fracao: float | None) -> None:
+        self.progresso_da_piramide = fracao
+        self.estadoMudou.emit(self)
+
+    def definir_integridade(self, integridade: str) -> None:
+        if integridade not in self.INTEGRIDADES:
+            raise ValueError(f"integridade desconhecida: {integridade!r}")
+        if integridade != self.integridade:
+            self.integridade = integridade
+            self.estadoMudou.emit(self)
 
     def __repr__(self) -> str:
         return f"FonteDoProjeto({self.nome!r})"

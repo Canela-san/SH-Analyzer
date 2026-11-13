@@ -19,14 +19,18 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QWidget
 
 from .configuracao import esquecer, lembrar, ler_lista, pasta_de_recuperacao
 from .dados import projeto as arquivo
-from .dados.captura import Aviso
-from .modelo.objetos import Projeto
+from .dados.captura import Aviso, ErroSHAN, abrir_fonte
+from .modelo.comandos import AdicionarFonte
+from .modelo.objetos import FonteDoProjeto, Projeto
 from .modelo.persistencia import descrever, montar
 
 INTERVALO_AUTOMATICO_MS = 60_000
 CHAVE_DOS_RECENTES = "recentes/projetos"
+CHAVE_DAS_CAPTURAS_RECENTES = "recentes/capturas"
 NOME_SEM_TITULO = "sem-titulo" + arquivo.EXTENSAO
 FILTRO = "Projetos do SH-Analyzer (*.shproj)"
+FILTRO_DE_ABRIR = ("Capturas e projetos (*.bin *.shproj);;Capturas do SH-Analyzer (*.bin);;"
+                   "Projetos do SH-Analyzer (*.shproj);;Todos os arquivos (*)")
 ORIGEM_DO_PROJETO = "projeto"
 """A origem dos avisos da abertura do projeto no painel de avisos (saem juntos ao abrir outro)."""
 
@@ -44,6 +48,11 @@ class Dialogos:
     def _conferir_tela(self, o_que: str) -> None:
         if QApplication.platformName() == "offscreen":
             raise DialogoSemTela(f"{o_que} sem tela: troque controle.dialogos por respostas prontas no teste")
+
+    def abrir_arquivos(self, titulo: str, filtro: str, pasta: str = "") -> list[Path]:
+        self._conferir_tela(f"o diálogo {titulo!r}")
+        caminhos, _ = QFileDialog.getOpenFileNames(self.pai, titulo, pasta, filtro)
+        return [Path(c) for c in caminhos]
 
     def abrir_arquivo(self, titulo: str, filtro: str, pasta: str = "") -> Path | None:
         self._conferir_tela(f"o diálogo {titulo!r}")
@@ -161,6 +170,43 @@ class ControleDoProjeto(QObject):
         self._lembrar(caminho)
         return True
 
+    # ------------------------------------------------------------------ capturas
+
+    def recentes_capturas(self) -> list[Path]:
+        return [Path(c) for c in ler_lista(CHAVE_DAS_CAPTURAS_RECENTES)]
+
+    def abrir_arquivos(self, caminhos=None) -> bool:
+        """Ctrl+O e o arrastar e soltar: capturas (``.bin``) entram no projeto aberto; um projeto (``.shproj``)
+        substitui o aberto (o primeiro, se vierem vários)."""
+        if caminhos is None:
+            caminhos = self.dialogos.abrir_arquivos(self.tr("Abrir"), FILTRO_DE_ABRIR, self._pasta_inicial())
+        caminhos = [Path(c) for c in caminhos]
+        projetos = [c for c in caminhos if c.suffix.lower() == arquivo.EXTENSAO]
+        capturas = [c for c in caminhos if c.suffix.lower() != arquivo.EXTENSAO]
+        if projetos and not self.abrir(projetos[0]):
+            return False
+        return bool(self.abrir_capturas(capturas)) or bool(projetos)
+
+    def abrir_capturas(self, caminhos) -> list[FonteDoProjeto]:
+        """Abre cada captura pela ``api`` e a põe no projeto (um passo de desfazer cada). Uma que não abre vira uma
+        mensagem, e as outras seguem; uma que já está no projeto não entra de novo."""
+        abertas = []
+        for caminho in map(Path, caminhos):
+            ja = next((f for f in self.projeto.fontes if not f.esta_ausente and
+                       f.caminho.resolve() == caminho.resolve()), None)
+            if ja is not None:
+                self._aviso(self.tr("{} já está aberta").format(caminho.name))
+                continue
+            try:
+                fonte = FonteDoProjeto(abrir_fonte(caminho))
+            except (ErroSHAN, OSError) as e:
+                self._erro(self.tr("Não foi possível abrir {}: {}").format(caminho.name, e))
+                continue
+            self.projeto.pilha.push(AdicionarFonte(self.projeto, fonte))
+            lembrar(CHAVE_DAS_CAPTURAS_RECENTES, str(caminho.resolve()))
+            abertas.append(fonte)
+        return abertas
+
     def oferecer_recuperacao(self) -> bool:
         """Na partida: se o último projeto sem título ficou num salvamento automático (uma queda), pergunta se quer
         recuperá-lo. Devolve se recuperou."""
@@ -268,3 +314,8 @@ class ControleDoProjeto(QObject):
         from .componentes.toast import Toast
 
         Toast.mostrar(self.janela, texto, "erro", 8000)
+
+    def _aviso(self, texto: str) -> None:
+        from .componentes.toast import Toast
+
+        Toast.mostrar(self.janela, texto, "info")

@@ -20,6 +20,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import tempfile  # noqa: E402
 
 os.environ["SH_ANALYZER_CONFIG"] = tempfile.mkdtemp(prefix="sh-analyzer-config-")
+os.environ["SH_ANALYZER_CACHE"] = tempfile.mkdtemp(prefix="sh-analyzer-cache-")     # as pirâmides, idem
 
 import pytest  # noqa: E402
 

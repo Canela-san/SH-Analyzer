@@ -43,3 +43,13 @@ def test_formatar_em_ingles_e_o_que_nao_e_numero():
 @pytest.mark.parametrize("valor", [1e-11, 3.3e-7, 0.05, 1.0, 42.0, 2.2e3, 7.5e5, 4e8])
 def test_ida_e_volta(valor):
     assert ler_numero(formatar_si(valor, "V", digitos=6), "V") == pytest.approx(valor, rel=1e-5)
+
+
+@pytest.mark.parametrize("segundos, texto", [
+    (0, "0 s"), (0.0042, "0,0042 s"), (4.2, "4,2 s"), (59.4, "59 s"), (60, "1 min"), (750, "12 min 30 s"),
+    (3600, "1 h 00"), (3720, "1 h 02"), (96_000, "26 h 40"), (math.nan, "—"), (-1, "—"),
+])
+def test_formatar_duracao(segundos, texto):
+    from sh_analyzer_gui.componentes.numeros import formatar_duracao
+
+    assert formatar_duracao(segundos) == texto

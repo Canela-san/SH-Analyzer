@@ -1,0 +1,97 @@
+"""O que cada captura aberta precisa, em segundo plano: a pirâmide de cada canal (do cache em disco, ou construída)
+e, depois, a conferência do CRC das amostras (``api.conferir_integridade``). Uma por vez por captura: a pirâmide
+lê o arquivo inteiro uma vez, e a conferência vem depois, sem disputar o disco com ela.
+
+O serviço segue o projeto: uma captura que entra é preparada; um projeto que sai tem as tarefas canceladas.
+"""
+
+from __future__ import annotations
+
+from PySide6.QtCore import QObject
+from supraharmonicos.api import conferir_integridade
+
+from ..dados.cache import CacheDePiramides
+from ..modelo.objetos import FonteDoProjeto, Projeto
+from .tarefas import GerenciadorDeTarefas, Tarefa
+
+
+class ServicoDeFontes(QObject):
+    def __init__(self, tarefas: GerenciadorDeTarefas, cache: CacheDePiramides | None = None,
+                 parent: QObject | None = None):
+        super().__init__(parent)
+        self.tarefas = tarefas
+        self.cache = cache or CacheDePiramides()
+        self.projeto: Projeto | None = None
+        self._fonte_da_tarefa: dict[Tarefa, FonteDoProjeto] = {}
+
+    def acompanhar(self, projeto: Projeto) -> None:
+        """Passa a preparar as capturas de ``projeto`` (as que já estão nele e as que entrarem)."""
+        if self.projeto is not None:
+            self.projeto.fonteEntrou.disconnect(self._fonte_entrou)
+            for fonte in self.projeto.fontes:
+                self.tarefas.cancelar_grupo(fonte.id)
+        self.projeto = projeto
+        projeto.fonteEntrou.connect(self._fonte_entrou)
+        for fonte in projeto.fontes:
+            self.preparar(fonte)
+
+    def _fonte_entrou(self, fonte: FonteDoProjeto, _indice: int) -> None:
+        self.preparar(fonte)
+
+    def preparar(self, fonte: FonteDoProjeto) -> None:
+        """Constrói (ou abre do cache) a pirâmide; depois, confere o CRC. Nada para uma ausente, nem de novo para
+        uma já pronta (desfazer e refazer a abertura não refaz o trabalho)."""
+        if fonte.esta_ausente or fonte.progresso_da_piramide is not None:
+            return
+        if fonte.piramides is None:
+            origem, cache = fonte.fonte, self.cache
+
+            def construir(progresso, cancelado):
+                return cache.obter(origem.chave, origem.captura.amostras, len(origem.canais), progresso=progresso,
+                                   cancelado=cancelado)
+
+            fonte.definir_progresso_da_piramide(0.0)
+            tarefa = self.tarefas.iniciar(self.tr("Pirâmide de {}").format(fonte.nome), construir, fonte.id)
+            tarefa.progressoMudou.connect(self._progresso)
+            tarefa.terminou.connect(self._piramide_terminou)
+            self._fonte_da_tarefa[tarefa] = fonte
+        elif fonte.integridade == "pendente":
+            self._conferir(fonte)
+
+    def _progresso(self, tarefa: Tarefa, fracao: float) -> None:
+        fonte = self._fonte_da_tarefa.get(tarefa)
+        if fonte is not None and tarefa.ativa:
+            fonte.definir_progresso_da_piramide(fracao)
+
+    def _piramide_terminou(self, tarefa: Tarefa) -> None:
+        fonte = self._fonte_da_tarefa.pop(tarefa, None)
+        if fonte is None:
+            return
+        if tarefa.estado == "concluida":
+            fonte.definir_piramides(tarefa.resultado)
+            if fonte.integridade == "pendente":
+                self._conferir(fonte)
+        else:
+            fonte.definir_progresso_da_piramide(None)
+
+    def _conferir(self, fonte: FonteDoProjeto) -> None:
+        captura = fonte.fonte.captura
+
+        def conferir(progresso, cancelado):
+            return conferir_integridade(captura, progresso=progresso, cancelado=cancelado)
+
+        fonte.definir_integridade("conferindo")
+        tarefa = self.tarefas.iniciar(self.tr("Conferir o CRC de {}").format(fonte.nome), conferir, fonte.id)
+        tarefa.terminou.connect(self._conferencia_terminou)
+        self._fonte_da_tarefa[tarefa] = fonte
+
+    def _conferencia_terminou(self, tarefa: Tarefa) -> None:
+        fonte = self._fonte_da_tarefa.pop(tarefa, None)
+        if fonte is None:
+            return
+        if tarefa.estado == "concluida":
+            fonte.definir_integridade({True: "confere", False: "nao_confere", None: "sem_crc"}[tarefa.resultado])
+        elif tarefa.estado == "falhou":
+            fonte.definir_integridade("erro")
+        else:
+            fonte.definir_integridade("pendente")

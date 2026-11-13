@@ -35,6 +35,7 @@ class ListaDeAvisos(QStackedWidget):
         self.addWidget(self.vazio)
         self.addWidget(self.lista)
         self._avisos: list[tuple[Aviso, str]] = []
+        self._rotulos: dict[str, str] = {}
         aparencia().mudou.connect(self._tema_mudou)
 
     @property
@@ -42,16 +43,24 @@ class ListaDeAvisos(QStackedWidget):
         """Os avisos, com a origem de cada um, na ordem em que chegaram."""
         return list(self._avisos)
 
-    def adicionar(self, avisos, origem: str = "") -> None:
+    def adicionar(self, avisos, origem: str = "", rotulo: str = "") -> None:
+        """``origem`` agrupa os avisos (para tirá-los juntos); ``rotulo`` (o nome do arquivo) vai na frente do
+        texto."""
+        avisos = list(avisos)
         for aviso in avisos:
             if aviso.nivel not in ICONES:
                 raise ValueError(f"nível de aviso desconhecido: {aviso.nivel!r}")
-            self._avisos.append((aviso, origem))
+        if rotulo:
+            self._rotulos[origem] = rotulo
+        self._avisos.extend((aviso, origem) for aviso in avisos)
         self._redesenhar()
 
     def remover_origem(self, origem: str) -> None:
+        antes = len(self._avisos)
         self._avisos = [(a, o) for a, o in self._avisos if o != origem]
-        self._redesenhar()
+        self._rotulos.pop(origem, None)
+        if len(self._avisos) != antes:
+            self._redesenhar()
 
     def limpar(self) -> None:
         self._avisos = []
@@ -65,8 +74,10 @@ class ListaDeAvisos(QStackedWidget):
         self.lista.clear()
         for aviso, origem in self._avisos:
             nome_icone, papel = ICONES[aviso.nivel]
-            item = QListWidgetItem(icone(nome_icone, getattr(tema, papel)), aviso.texto)
-            item.setToolTip(f"{origem}: {aviso.texto}" if origem else aviso.texto)
+            rotulo = self._rotulos.get(origem, "")
+            texto = f"{rotulo}: {aviso.texto}" if rotulo else aviso.texto
+            item = QListWidgetItem(icone(nome_icone, getattr(tema, papel)), texto)
+            item.setToolTip(texto)
             self.lista.addItem(item)
         self.setCurrentWidget(self.lista if self._avisos else self.vazio)
         pior = max((ORDEM.index(a.nivel) for a, _ in self._avisos), default=0)
