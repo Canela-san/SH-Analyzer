@@ -8,7 +8,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F0.6: os portões G1 a G5** (seção 4). Comece medindo o protótipo numa tela de verdade (o G1 com 8 faixas está no limite, seção 5).
+> **F0.7: a `api` do motor** (seção 4).
+>
+> **Para você, quando puder (5 minutos):** medir o protótipo na sua tela, os portões G1 e G2 da F0.6 (o comando está lá). Sem tela, o G1 com 8 faixas está no limite.
 >
 > **No laboratório (opcional, 5 minutos):** a F0.2 colhe da BeagleBone os dados que a Aquisição vai usar (seção 6).
 
@@ -103,7 +105,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## 4. Fase 0 em tarefas
 
-Os estados são ☐ a fazer, ▶ a próxima e ☑ feita. Cada tarefa cabe em uma ou duas sessões e termina com os testes passando.
+Os estados são ☐ a fazer, ▶ a próxima, ◐ em parte e ☑ feita. Cada tarefa cabe em uma ou duas sessões e termina com os testes passando.
 
 ### ☑ F0.1: as decisões e este arquivo
 
@@ -221,20 +223,29 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
     - o eixo do tempo repetido em cada faixa (fica só na última);
     - a consulta deixou de usar `np.unique`.
 
-### ▶ F0.6: os portões G1 a G5
+### ◐ F0.6: os portões G1 a G5 (a parte automática feita; falta medir numa tela de verdade)
 
 - **Arquivos:**
   - `tests/test_gui_desempenho.py`, marcado `desempenho` e fora do conjunto padrão. Registre o marcador no `pyproject.toml`.
   - Um gerador de captura sintética grande (`.bin` v9 com 1 h, 2 canais, 400 kS/s), sobre o `tests/capturas_sinteticas.py`. O arquivo de 2,9 GB vai para a pasta temporária e é reaproveitado.
 - **Os portões** estão na seção 6.7 do plano. O G2 (4K a 200 %) e o G5 (disco frio) pedem uma tela de verdade e, para o Windows, uma máquina com Windows: anote aqui o que não deu para medir.
 - **Para medir o G1 e o G2:** `uv run --extra gui python -m sh_analyzer_gui.prototipos.navegar --sintetico 60 --canais 8 --medir`, numa tela de verdade (sem `QT_QPA_PLATFORM=offscreen`). Com 8 faixas, sem tela, o p95 está em 16,0 ms, no limite.
+- **Feito em 13/11/2026:**
+  - **G3:** a pirâmide a ≥ 200 M amostras/s;
+  - **G4:** a fidelidade;
+  - **G1 sem tela, com 2 faixas:** p95 ≤ 16 ms, num teste marcado `desempenho` (`tests/test_gui_desempenho.py`, que roda com `pytest --desempenho`);
+  - as funções do protótipo que o teste usa: `montar_faixas`, `percorrer_zoom` e `resumo_dos_quadros`.
+- **Falta (pede uma tela de verdade):**
+  - o G1 com 8 faixas e o G2 (4K a 200 %), pelo comando acima;
+  - o G5 (disco frio): reinicie o computador e abra a captura de 1 h no protótipo;
+  - o Windows.
 - **Se reprovar:**
   1. primeiro, os eixos e a grade próprios (opacos, com o texto em cache), que vêm na Fase 1 de qualquer forma;
   2. depois, o desenho híbrido (o polígono quando a banda é lisa, plano 6.2);
   3. por fim, a GPU (plano 6.7).
 - **Pronto quando:** os resultados estão na seção 5 deste arquivo e na 6.7 do plano. Se algum portão falhar, decida o plano B antes de seguir.
 
-### ☐ F0.7: a `api` do motor (commits só do motor)
+### ▶ F0.7: a `api` do motor (commits só do motor)
 
 - **Arquivos:** `scripts/supraharmonicos/api.py`, `contexto.py` (o `resolver_contexto` passa a usar a `api`), `tests/test_api.py` e o `CAMADAS` do `tests/test_arquitetura.py`.
 - **As funções:** `abrir_captura` e `sinal_do_canal` (plano, 8.2), com os avisos estruturados.
@@ -355,7 +366,8 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     - a F0.5, o `TracoLOD`, o protótipo e as medidas que trocaram o desenho da banda (seção 4);
     - o extra `gui` passou a pedir `pyqtgraph>=0.14` e `platformdirs>=4`.
   - **Parado em:** nada em andamento.
-  - **Próximo:** a F0.6, medindo o protótipo numa tela de verdade.
+    - a parte automática da F0.6: o G1 sem tela, com 2 faixas, num teste de desempenho.
+  - **Próximo:** a F0.7. Fica com você medir o protótipo numa tela de verdade (F0.6).
 
 ---
 

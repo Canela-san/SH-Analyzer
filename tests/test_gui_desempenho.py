@@ -56,3 +56,33 @@ def test_consulta_em_menos_de_1_ms_em_qualquer_zoom(sinal_grande):
             tempos.append(time.perf_counter() - t)
         mediana = sorted(tempos)[len(tempos) // 2]
         assert mediana < 1e-3, f"{largura:,} amostras: {mediana * 1e3:.2f} ms"
+
+
+def test_g1_duas_faixas_sem_tela(request, tmp_path_factory, monkeypatch):
+    """G1, a parte que roda sem tela: 2 faixas de uma captura de 5 min (2 canais a 200 kS/s), o percurso de zoom e
+    pan do protótipo, p95 <= 16 ms por quadro. Com 8 faixas e numa tela de verdade, rode o protótipo:
+    ``python -m sh_analyzer_gui.prototipos.navegar --sintetico 60 --canais 8 --medir``."""
+    pytest.importorskip("PySide6")
+    pytest.importorskip("pytestqt")
+    import tempfile
+
+    import pyqtgraph as pg
+    from PySide6.QtWidgets import QApplication
+    from sh_analyzer_gui.prototipos import navegar
+
+    qtbot = request.getfixturevalue("qtbot")
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path_factory.mktemp("g1")))
+    fonte = navegar.gerar_sintetico(5, 2)
+    piramides = construir(fonte.amostras, 2)
+    layout = pg.GraphicsLayoutWidget()
+    layout.resize(1400, 790)
+    qtbot.addWidget(layout)
+    layout.show()
+    qtbot.waitExposed(layout)
+    tracos = navegar.montar_faixas(layout, fonte, piramides)
+    qtbot.wait(50)
+    canal = fonte.canais[0]
+    navegar.percorrer_zoom(QApplication.instance(), layout, tracos[0], len(canal.amostras), canal.taxa_hz)  # aquece
+    mediana, p95 = navegar.resumo_dos_quadros(
+        navegar.percorrer_zoom(QApplication.instance(), layout, tracos[0], len(canal.amostras), canal.taxa_hz))
+    assert p95 <= 0.016, f"mediana {mediana * 1e3:.1f} ms, p95 {p95 * 1e3:.1f} ms"

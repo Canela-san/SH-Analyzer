@@ -83,6 +83,57 @@ def abrir(caminho: Path) -> FonteProto:
     return FonteProto(caminho.name, cap.amostras, len(cap.canais), canais, cap.chave)
 
 
+def montar_faixas(layout, fonte: FonteProto, piramides) -> list:
+    """Uma faixa (``PlotItem``) por canal no ``pg.GraphicsLayoutWidget``, com o tempo ligado e um ``TracoLOD`` em cada."""
+    from ..graficos.traco_lod import TracoLOD
+
+    tracos, primeiro = [], None
+    for i, (canal, piramide) in enumerate(zip(fonte.canais, piramides)):
+        item = layout.addPlot(row=i, col=0)
+        # Sem a grade do PyQtGraph: semitransparente, ela custava ~17 ms por quadro. A grade própria, opaca, vem com o
+        # tema (F0.8) e as vistas (Fase 1). Rótulos sem "units" e sem prefixo automático: com eles, o PyQtGraph
+        # refaz o HTML do rótulo a cada quadro.
+        for lado in ("left", "bottom"):
+            item.getAxis(lado).enableAutoSIPrefix(False)
+        item.setLabel("left", f"{canal.nome} (V)")
+        if i == len(fonte.canais) - 1:
+            item.setLabel("bottom", "tempo (s)")
+        else:
+            item.hideAxis("bottom")        # o tempo é um só (as faixas estão ligadas): o eixo fica só na última
+        traco = TracoLOD(piramide, canal.amostras, canal.taxa_hz, escala=canal.escala,
+                         deslocamento=canal.deslocamento, cor=CORES[i % len(CORES)], nome=canal.nome)
+        item.addItem(traco)
+        if primeiro is None:
+            primeiro = item
+        else:
+            item.setXLink(primeiro)
+        tracos.append(traco)
+    return tracos
+
+
+def percorrer_zoom(app, widget, traco, n_amostras: int, taxa_hz: float) -> list[float]:
+    """O percurso dos portões G1/G2: zoom da captura inteira até ~50 amostras e de volta, com pan junto, pintando cada
+    quadro de forma síncrona. Devolve o tempo de cada quadro (s): as consultas agendadas + a pintura inteira."""
+    vb = traco.getViewBox()
+    janelas = [n_amostras / 1.35 ** k for k in range(0, 60) if n_amostras / 1.35 ** k > 50]
+    janelas += janelas[::-1]
+    tempos = []
+    for k, largura in enumerate(janelas):
+        centro = n_amostras * (0.3 + 0.4 * k / len(janelas))
+        t = time.perf_counter()
+        vb.setXRange((centro - largura / 2) / taxa_hz, (centro + largura / 2) / taxa_hz, padding=0)
+        app.processEvents()                                 # as consultas agendadas
+        widget.repaint()                                    # a pintura, síncrona
+        tempos.append(time.perf_counter() - t)
+    return tempos
+
+
+def resumo_dos_quadros(tempos: list[float]) -> tuple[float, float]:
+    """A mediana e o p95 do tempo por quadro (s)."""
+    ordenados = sorted(tempos)
+    return statistics.median(ordenados), ordenados[int(0.95 * (len(ordenados) - 1))]
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("arquivo", nargs="?", type=Path, help="uma captura .bin com cabeçalho")
@@ -100,7 +151,6 @@ def main(argv: list[str] | None = None) -> int:
 
     from ..dados.cache import CacheDePiramides
     from ..dados.piramide import Cancelado
-    from ..graficos.traco_lod import TracoLOD
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
     pg.setConfigOptions(background=FUNDO, foreground=EIXO)
@@ -138,31 +188,11 @@ def main(argv: list[str] | None = None) -> int:
     rotulo = QLabel(f"{fonte.nome}: construindo as pirâmides…")
     barra.addWidget(rotulo, 1)
     barra.addPermanentWidget(progresso)
-    tracos: list[TracoLOD] = []
+    tracos: list = []
 
     def montar(piramides):
         progresso.hide()
-        primeiro = None
-        for i, (canal, piramide) in enumerate(zip(fonte.canais, piramides)):
-            item = layout.addPlot(row=i, col=0)
-            # Sem a grade do PyQtGraph: semitransparente, ela custava ~17 ms por quadro. A grade própria, opaca, vem
-            # com o tema (F0.8) e as vistas (Fase 1).
-            # Rótulos sem "units": com elas, o PyQtGraph troca o prefixo do SI (e refaz o HTML do rótulo) a cada quadro.
-            for lado in ("left", "bottom"):
-                item.getAxis(lado).enableAutoSIPrefix(False)
-            item.setLabel("left", f"{canal.nome} (V)")
-            if i == len(fonte.canais) - 1:
-                item.setLabel("bottom", "tempo (s)")
-            else:
-                item.hideAxis("bottom")        # o tempo é um só (as faixas estão ligadas): o eixo fica só na última
-            traco = TracoLOD(piramide, canal.amostras, canal.taxa_hz, escala=canal.escala,
-                             deslocamento=canal.deslocamento, cor=CORES[i % len(CORES)], nome=canal.nome)
-            item.addItem(traco)
-            if primeiro is None:
-                primeiro = item
-            else:
-                item.setXLink(primeiro)
-            tracos.append(traco)
+        tracos.extend(montar_faixas(layout, fonte, piramides))
         duracao = len(fonte.canais[0].amostras) / fonte.canais[0].taxa_hz
         rotulo.setText(f"{fonte.nome}: {fonte.n_canais} canais, {duracao / 60:.1f} min, "
                        f"{len(fonte.amostras) / 1e6:.0f} M amostras")
@@ -192,25 +222,12 @@ def main(argv: list[str] | None = None) -> int:
     contador.start(1000)
 
     def medir():
-        vb = tracos[0].getViewBox()
-        n = len(fonte.canais[0].amostras)
-        taxa = fonte.canais[0].taxa_hz
-        janelas = [n / 1.35 ** k for k in range(0, 60) if n / 1.35 ** k > 50]
-        janelas += janelas[::-1]
-        tempos = []
-        for k, largura in enumerate(janelas):
-            centro = n * (0.3 + 0.4 * k / len(janelas))         # pan junto com o zoom
-            t = time.perf_counter()
-            vb.setXRange((centro - largura / 2) / taxa, (centro + largura / 2) / taxa, padding=0)
-            app.processEvents()                                 # as consultas agendadas
-            layout.repaint()                                    # a pintura, síncrona
-            tempos.append(time.perf_counter() - t)
-        tempos.sort()
-        mediana, p95 = statistics.median(tempos), tempos[int(0.95 * (len(tempos) - 1))]
+        canal = fonte.canais[0]
+        mediana, p95 = resumo_dos_quadros(percorrer_zoom(app, layout, tracos[0], len(canal.amostras), canal.taxa_hz))
         dpr = layout.devicePixelRatioF()
-        sys.stdout.write(f"{len(tempos)} quadros, {fonte.n_canais} traços, área de {layout.width()} x "
-                         f"{layout.height()} px (escala {dpr:g}): mediana {mediana * 1e3:.1f} ms, "
-                         f"p95 {p95 * 1e3:.1f} ms -> G1 {'aprovado' if p95 <= 0.016 else 'REPROVADO'}\n")
+        sys.stdout.write(f"{fonte.n_canais} traços, área de {layout.width()} x {layout.height()} px (escala {dpr:g}): "
+                         f"mediana {mediana * 1e3:.1f} ms, p95 {p95 * 1e3:.1f} ms -> "
+                         f"G1 {'aprovado' if p95 <= 0.016 else 'REPROVADO'}\n")
         app.quit()
 
     janela.show()
