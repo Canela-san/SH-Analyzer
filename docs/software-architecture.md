@@ -34,6 +34,7 @@ Três ideias organizam tudo:
 
 ```
 firmware/                 C/Assembly (ARM + PRU) — fora deste guia — e o coletar.sh (bash; os modos em coleta/)
+                          e o agente da placa (agente/shan_agente.py: Python só com a biblioteca padrão, responde em JSON)
                           (coleta interativa de calibração de sonda, bash puro)
 scripts/
   adc_tool.py             entrada fina: CLI de análise/conversão/exportação
@@ -45,6 +46,7 @@ scripts/
   sh_analyzer_gui/        a interface gráfica (PySide6), em construção: chama o supraharmonicos, nunca o contrário
                           (docs/gui-plan.md); recursos/ leva uma cópia do ícone da marca
   benchmarks/             as medidas que decidiram o motor de gráficos da interface (docs/gui-plan.md, seção 6.2)
+  sh_placa/               a BeagleBone vista do computador, sem Qt: o cliente do agente, o diagnóstico, o simulador
   ci.sh                   o que a CI roda, igual na sua máquina (seção 7.1)
 tests/                    pytest (seção 7)
 report/gerar_figuras.py   figuras do relatório/artigo (estilo único, PDF vetorial + macros siunitx);
@@ -284,6 +286,8 @@ Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `c
 | `test_gui_traco_lod.py` | o item de gráfico `TracoLOD` (pytest-qt, sem tela): o portão G4 de fidelidade (os extremos de cada coluna de pixel pintados por inteiro, nada inventado, colunas nos pixels), os regimes, uma consulta por ciclo de eventos, a conversão afim, NaN, sinal constante. Pulado sem o extra `gui-dev` |
 | `test_gui_prototipo.py` | o protótipo `prototipos/navegar.py`: o sinal sintético em disco e a linha de comando |
 | `test_gui_desempenho.py` | os portões de desempenho da interface (docs/gui-plan.md, 6.7): a pirâmide a ≥ 200 M amostras/s e a consulta em < 1 ms. Marcados `desempenho`: só rodam com `pytest --desempenho` |
+| `test_agente.py` | o agente da placa (`firmware/agente/shan_agente.py`) sobre o sistema de arquivos falso do simulador: cada campo, o que falta vira null, a EEPROM inválida, o comando desconhecido (código 2), só a biblioteca padrão e a sintaxe do Python 3.7 |
+| `test_sh_placa.py` | o `sh_placa`: o diagnóstico de cada cenário do simulador (PRU parada, pinos errados, sem `mem=496M`, firmware antigo, sem compilar), o relógio, o disco e a temperatura, as respostas que não se entendem |
 | `test_analise_pesquisa.py` | As ferramentas para pesquisa: harmônicos (amplitudes, fases no referencial seno em qualquer início, THD, grupo com inter-harmônico, Nyquist, erro sem fundamental e com f0 fora da busca), bandas IEC (centros e bordas da norma, estatísticas de um tom que liga no meio), espectrograma (quando o tom liga, mesmo nível do Welch), exportação CSV/JSON/MAT (lida de volta com `loadmat`), a análise completa pela CLI, as figuras extras, os subcomandos e o que cada comando carrega (SciPy, matplotlib, h5py, rich) num processo limpo |
 | `test_compactacao.py` | `compactar_amostras`: desentrelaçar e voltar é exato com cortes em qualquer byte; a receita do `LEIA-ME.txt` (só numpy) reconstrói o original; ida e volta devolve bytes, datas e permissões; peça corrompida é detectada e o arquivo estragado não é gravado; falha ou Ctrl+C no meio não deixa pacote nem temporários nem `zpaq` órfão; caminho malicioso no manifesto é recusado; `--remover-originais` só apaga o que continua idêntico; CLI. Os testes com o `zpaq` de verdade são `e2e` (pulados sem ele) |
 | `test_plotagem.py` | `supraharmonicos.plotagem`: a forma de onda mostra todas as amostras por padrão; a envoltória mín/máx só com `max_pontos`; o zoom (limites do eixo X) refaz o trecho visível com as amostras de verdade e marca cada uma quando são até 400 |

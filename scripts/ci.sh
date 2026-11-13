@@ -25,6 +25,8 @@ testes() {   # $1 = versão do Python; o resto vai para o pytest
     shift
     etapa "ruff (Python ${py})"
     uv run --python "$py" --extra dev ruff check .
+    # O agente da placa fica em firmware/ (que o ruff pula), mas é Python: confere nomeando o arquivo.
+    uv run --python "$py" --extra dev ruff check firmware/agente/shan_agente.py
     etapa "pytest (Python ${py}) $*"
     uv run --python "$py" --extra dev pytest "$@"
 }

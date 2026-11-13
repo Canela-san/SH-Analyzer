@@ -187,6 +187,18 @@ def test_tokens_e_contas_de_cor_nao_importam_o_qt():
                 assert nome.split(".")[0] not in QT, f"{arquivo.name}:{no.lineno}: importa o Qt ({nome})"
 
 
+def test_sh_placa_nao_importa_o_qt_nem_a_interface():
+    """``sh_placa`` (a BeagleBone vista do computador) roda sem interface: a GUI o usa, uma CLI também poderia."""
+    for arquivo in sorted((SCRIPTS / "sh_placa").glob("*.py")):
+        for no in _imports_de(arquivo):
+            if isinstance(no, ast.ImportFrom) and no.level > 0:
+                continue
+            nomes = [a.name for a in no.names] if isinstance(no, ast.Import) else [no.module or ""]
+            for nome in nomes:
+                raiz = nome.split(".")[0]
+                assert raiz not in QT and raiz != "sh_analyzer_gui", f"{arquivo.name}:{no.lineno}: importa {nome}"
+
+
 def test_a_interface_so_fala_com_o_motor_pela_api():
     """``sh_analyzer_gui`` importa do motor só ``supraharmonicos.api`` (docs/gui-plan.md, 8.1): o resto do motor
     pode mudar sem quebrar a interface, e a paridade com a CLI fica num lugar só (``tests/test_api.py``)."""
