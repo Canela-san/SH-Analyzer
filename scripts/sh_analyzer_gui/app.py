@@ -1,6 +1,6 @@
 """O aplicativo: a ``QApplication`` com o nome, a versão e o ícone da marca, e a janela principal.
 
-Depende de: ``janela``.
+Depende de: ``janela``, ``tema``.
 """
 
 from __future__ import annotations
@@ -12,6 +12,8 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from sh_analyzer_gui.janela import JanelaPrincipal
+from sh_analyzer_gui.tema.aplicar import aparencia
+from sh_analyzer_gui.tema.fontes import fonte_da_interface, registrar_fontes
 
 NOME = "SH-Analyzer"
 ORGANIZACAO = "SH-Analyzer"     # o QSettings guarda a configuração numa pasta com este nome, em cada sistema
@@ -44,14 +46,18 @@ def icone_do_aplicativo() -> QIcon:
     return icone
 
 
-def criar_aplicacao(argv: list[str] | None = None) -> QApplication:
-    """A ``QApplication`` com o nome, a organização, a versão e o ícone. Reaproveita a que já existir (o Qt só
-    admite uma por processo; nos testes, a do pytest-qt)."""
+def criar_aplicacao(argv: list[str] | None = None, tema: str = "sistema") -> QApplication:
+    """A ``QApplication`` com o nome, a organização, a versão, o ícone, as fontes e o tema (``"sistema"``,
+    ``"escuro"`` ou ``"claro"``). Reaproveita a que já existir (o Qt só admite uma por processo; nos testes, a do
+    pytest-qt)."""
     app = QApplication.instance() or QApplication(sys.argv if argv is None else argv)
     app.setApplicationName(NOME)
     app.setOrganizationName(ORGANIZACAO)
     app.setApplicationVersion(versao())
     app.setWindowIcon(icone_do_aplicativo())
+    registrar_fontes()
+    app.setFont(fonte_da_interface())
+    aparencia(app).aplicar(tema)
     return app
 
 

@@ -8,7 +8,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F0.8: o tema** (seção 4).
+> **F0.9: a galeria de componentes** (seção 4).
+>
+> **Pendente da F0.8, precisa do seu OK:** baixar as fontes Inter e JetBrains Mono (OFL) para `scripts/sh_analyzer_gui/recursos/fontes/`. Sem elas, o aplicativo usa as fontes do sistema (a Inter está instalada nesta máquina).
 >
 > **Para você, quando puder (5 minutos):** medir o protótipo na sua tela, os portões G1 e G2 da F0.6 (o comando está lá). Sem tela, o G1 com 8 faixas está no limite.
 >
@@ -262,7 +264,7 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
     - o protótipo abre as capturas por ela;
     - `test_arquitetura.py` confere que a interface só importa do motor a `supraharmonicos.api`.
 
-### ▶ F0.8: o tema
+### ◐ F0.8: o tema (falta embutir as fontes)
 
 - **Arquivos:** `scripts/sh_analyzer_gui/tema/tokens.py`, `tema/qss.py`, `tema/icones.py` e `tema/fontes.py`.
 - **Os tokens:** os valores de `docs/gui-mockups/tema.css`.
@@ -272,8 +274,22 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
   - um subconjunto dos ícones do Lucide em `recursos/icones/`, com a licença ISC, recoloridos pelo tema.
 - **O teste:** `tests/test_tema.py`, com a conta do `scripts/benchmarks/paleta_cores.py` sobre os tokens.
 - **Pronto quando:** a janela vazia troca de tema sem reiniciar e o `test_tema.py` passa.
+- **Feito em 13/11/2026:**
+  - **sem Qt:**
+    - `tema/tokens.py`: os dois temas, a paleta dos traços, a tipografia, os espaços e `cor_do_traco`, em que o 7º traço repete o matiz tracejado;
+    - `tema/cores.py`: o contraste WCAG e a separação OKLab com daltonismo simulado;
+    - `tests/test_tema.py`: as contas sobre os tokens, e o CSS dos mockups igual aos tokens (uma fonte de verdade só);
+    - o `scripts/benchmarks/paleta_cores.py` passou a ler dos tokens;
+  - **com Qt:**
+    - `tema/aplicar.py`: o `Fusion`, a `QPalette` e o QSS gerados dos tokens. O `Aparencia` tem o sinal `mudou`, para os gráficos e os componentes pintados à mão; `"sistema"` segue o `QStyleHints.colorScheme`, com o escuro quando o sistema não informa;
+    - `tema/icones.py`: 49 ícones desenhados para o projeto, os mesmos dos mockups, recoloridos e em cache, em 1x e 2x;
+    - `tema/fontes.py`: registra o que estiver em `recursos/fontes/`, cai nas fontes do sistema, e liga os algarismos tabulares;
+    - a janela aplica o tema na partida, e o botão sol/lua da barra de status troca o tema sem reiniciar;
+    - `tests/test_gui_tema.py`;
+  - **uma armadilha evitada:** o QSS não define `font-size`, que passaria por cima do `setFont` de cada widget.
+- **Falta:** embutir as fontes (ver "Próxima tarefa") e guardar a escolha do tema nas configurações (GE-05, Fase 2).
 
-### ☐ F0.9: a galeria de componentes
+### ▶ F0.9: a galeria de componentes
 
 - **Arquivos:** `scripts/sh_analyzer_gui/componentes/` e `scripts/sh_analyzer_gui/galeria.py`, aberta com `python -m sh_analyzer_gui.galeria`.
 - **Os 6 primeiros componentes:**
@@ -378,8 +394,9 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     - o extra `gui` passou a pedir `pyqtgraph>=0.14` e `platformdirs>=4`.
   - **Parado em:** nada em andamento.
     - a parte automática da F0.6: o G1 sem tela, com 2 faixas, num teste de desempenho;
-    - a F0.7: a `api` do motor (um commit só do motor) e a interface abrindo as capturas por ela.
-  - **Próximo:** a F0.8, o tema. Fica com você medir o protótipo numa tela de verdade (F0.6).
+    - a F0.7: a `api` do motor (um commit só do motor) e a interface abrindo as capturas por ela;
+    - a F0.8, o tema, menos as fontes embutidas.
+  - **Próximo:** a F0.9, a galeria. Ficam com você medir o protótipo numa tela de verdade (F0.6) e o OK para baixar as fontes (F0.8).
 
 ---
 

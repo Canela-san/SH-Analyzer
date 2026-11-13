@@ -177,6 +177,16 @@ def test_a_camada_de_dados_da_interface_nao_importa_o_qt():
                     f"{arquivo.name}:{no.lineno}: importa a interface ({nome})")
 
 
+def test_tokens_e_contas_de_cor_nao_importam_o_qt():
+    """``tema/tokens.py`` e ``tema/cores.py`` são dados e contas: o ``tests/test_tema.py`` e o
+    ``scripts/benchmarks/paleta_cores.py`` os usam sem o Qt instalado."""
+    for arquivo in (GUI / "tema" / "tokens.py", GUI / "tema" / "cores.py"):
+        for no in _imports_de(arquivo):
+            nomes = [a.name for a in no.names] if isinstance(no, ast.Import) else [no.module or ""]
+            for nome in nomes:
+                assert nome.split(".")[0] not in QT, f"{arquivo.name}:{no.lineno}: importa o Qt ({nome})"
+
+
 def test_a_interface_so_fala_com_o_motor_pela_api():
     """``sh_analyzer_gui`` importa do motor só ``supraharmonicos.api`` (docs/gui-plan.md, 8.1): o resto do motor
     pode mudar sem quebrar a interface, e a paridade com a CLI fica num lugar só (``tests/test_api.py``)."""

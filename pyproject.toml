@@ -53,7 +53,7 @@ include = ["supraharmonicos*", "sh_analyzer_gui*"]
 
 # O ícone da marca vai junto do pacote da interface (cópia de docs/images/, conferida por tests/test_marca.py).
 [tool.setuptools.package-data]
-sh_analyzer_gui = ["recursos/*.svg"]
+sh_analyzer_gui = ["recursos/*.svg", "recursos/fontes/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
