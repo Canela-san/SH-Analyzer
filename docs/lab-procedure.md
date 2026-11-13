@@ -90,7 +90,8 @@ puro, e a **cadeia de tensão na faixa de produção** (±10,24 V).
   fica sem tensão ([23/10](bench-results.md#a-alimentação-da-placa-e-o-terra)).
 * **Um resistor de 5 a 10 Ω não indutivo** (filme de potência, ou vários SMD em paralelo; 2 A em 5 Ω são 20 W).
   Meça-o a 4 fios no Fluke e anote R com 4 algarismos: ele entra como `--resistencia R`, no lugar do
-  `medir_shunt.py`. Um resíduo de 50 nH em 10 Ω dá 0,2° em 100 kHz.
+  `medir_shunt.py`. Um resíduo de 50 nH em 10 Ω dá 0,2° em 100 kHz. Outro valor também serve (33 Ω com 16 espiras
+  dá sinal de sobra: a conta está no passo 4); o que pesa é a indutância (passo 3).
 * **Fio para 20 espiras** no SCT013 (e fita para fixá-las) e, se houver, a **fonte de corrente quadrada bipolar** de
   1 a 2 A (uma meia-ponte de MOSFET acionada pelo gerador, ou um amplificador de banda larga). Com a sensibilidade medida
   (50,9 mV/A), o gerador sozinho (~3 A·espira com 20 espiras e 10 Ω) já dá ~0,3 Vpp no pino: a fonte deixou de ser
@@ -144,8 +145,8 @@ mkdir -p SH_$(date +%F) && sudo ./ler_adc 400000 1 --faixa-adc 1:20.48 --duracao
 **3. O laço de corrente (15 min).**
 
 ```text
-gerador ou fonte de corrente ─► R (5 a 10 Ω) ─► 20 espiras no SCT013 ─► retorno ao terra
-                                │                (no condutor do lado do terra, onde a tensão quase não varia)
+gerador ou fonte de corrente ─► R (não indutivo) ─► N espiras no SCT013 ─► retorno ao terra
+                                │                    (no condutor do lado do terra, onde a tensão quase não varia)
                                 └─► entrada do divisor de tensão (canal 1): mede V = R·I
 SCT013 ─► placa (canal 0, ±2,56 V)
 ```
@@ -153,39 +154,80 @@ SCT013 ─► placa (canal 0, ±2,56 V)
 O lado frio de R vai ao terra comum, num ponto só. Sem corrente contínua no laço: ela magnetiza o núcleo do TC (com
 DC, um capacitor grande em série).
 
-**4. T10-0: o sinal basta? (10 min).** Uma quadrada só, 10 s, para conferir a sensibilidade e o SNR antes da coleta:
+**O gerador: High-Z e 20 Vpp**, como ficou do passo 1. O modo de carga do gerador não muda o que ele entrega: muda
+só o número do visor. O gerador é uma fonte de no máximo 20 Vpp em vazio, atrás de 50 Ω.
+
+* Em **High-Z**, o visor mostra a tensão em vazio (até 20 Vpp).
+* Em **50 Ω**, o visor mostra a metade dela, que é o que chegaria a uma carga de 50 Ω (até 10 Vpp).
+
+"20 Vpp em High-Z" e "10 Vpp em 50 Ω" são, portanto, a mesma saída. No laço, a corrente é 20 Vpp ÷ (50 Ω + R). A
+tensão em R é uma fração disso que nenhum dos dois modos mostra: 7,98 Vpp com 33,18 Ω. **O perfil não depende do
+modo**, porque o canal 1 mede a tensão que de fato chega a R. Só o `--esperado-vpp` (passo 4) depende dele. A conta
+do passo 4 supõe 20 Vpp em High-Z, ou 10 Vpp em 50 Ω. Com o gerador em outra amplitude, multiplique o
+`--esperado-vpp` pela mesma fração (metade da amplitude, metade do valor).
+
+**A indutância de R é o que pesa.** O método calcula a corrente como I = V/R. Uma indutância em série com R faz a
+sonda parecer perder ganho e atrasar, e o perfil "corrigiria" isso em produção.
+
+* **O que se viu em 03/11:** com um resistor de fio de 33,58 Ω e 16 espiras, a fase da razão cresceu como uma
+  indutância fixa de ~20 µH em série (19 a 21 µH de 3,8 a 88 kHz): −19,5° e −0,52 dB em 88 kHz.
+* **Por que não dá para separar:** a razão não distingue a indutância de R de um polo da própria sonda.
+* **Com um resistor de fio:** meça a impedância Z(f) dele com o `medir_shunt.py` (osciloscópio, THDP0200 e TCP0030A)
+  e troque o `--resistencia` pelo `--shunt`. As capturas não dependem disso, porque o `--shunt` entra na análise.
+  Guarde e identifique o resistor para medi-lo depois, se hoje não der.
+
+**4. T10-0: o sinal basta? (10 min).** Uma quadrada só, 10 s, para conferir a sensibilidade e o SNR antes da
+coleta. Primeiro, a conta do nível, com o gerador em 20 Vpp High-Z direto no laço:
+
+* a corrente é Ipp = 20 Vpp ÷ (50 Ω + R);
+* no pino do canal 0, o `--esperado-vpp` é Ipp × N × 50,9 mV/A;
+* em R, a tensão é Ipp × R.
+
+O `calibrar` faz a mesma conta e a mostra no começo quando recebe `--resistencia` e `--espiras`.
+
+| R | N | Corrente | `--esperado-vpp` (canal 0) | Em R, e no pino do canal 1 (±2,56 V) | Potência em R |
+|---|---|---|---|---|---|
+| 10 Ω | 20 | 333 mApp (±167 mA) | 0,34 | 3,3 Vpp e 0,17 Vpp | 0,28 W |
+| 33,18 Ω | 16 | 240 mApp (±120 mA) | 0,196 | 7,98 Vpp e 0,41 Vpp | 0,48 W |
+
+Os dois têm sinal de sobra. O T10-0 de 03/11 rodou com 0,5 Vpp, 40 vezes menos corrente, e já deu 0,14 dB e 0,9° de
+incerteza mediana.
 
 ```bash
-./coletar.sh calibrar --grandeza corrente --canal 0 --canal-referencia 1 --faixa-referencia 5.12 --resistencia <R> --espiras 20 --quadradas 1280 --segundos 10 --sonda t10_0
+./coletar.sh calibrar --grandeza corrente --canal 0 --canal-referencia 1 --faixa-referencia 5.12 --resistencia <R> --espiras <N> --esperado-vpp <V> --quadradas 1280 --segundos 10 --sonda t10_0
 ```
 
+A pasta e o comando da análise saem no fim da coleta. Use a pasta desta coleta, não `$DIA/CAL_*`: a pasta do dia tem
+também as capturas da tensão (passo 2), e o glob as misturaria.
+
 ```fish
-uv run scripts/medir_fase.py $DIA/CAL_*/F_*.bin --canal 0 --canal-referencia 1 --perfil-referencia scripts/sondas/cadeia_tensao_fase.json --resistencia <R> --espiras 20 --ganho 19.65
+uv run scripts/medir_fase.py $DIA/CAL_<data_hora>/F_*.bin --canal 0 --canal-referencia 1 --perfil-referencia scripts/sondas/cadeia_tensao_fase.json --resistencia <R> --espiras <N> --ganho 19.65
 ```
 
 O K de baixa frequência deve sair perto de 1 (os 50,9 mV/A medidos: `--ganho 19.65`). Longe disso, confira as
-espiras e o resistor de carga da placa. O `calibrar` confere o nível de cada captura na hora: passe `--esperado-vpp`
-(com o gerador direto no laço, 20 Vpp ÷ (50 Ω + R) × 20 espiras × 50,9 mV/A; 0,34 V com 10 Ω). Se os harmônicos perderem o SNR antes de ~50 kHz, aumente a corrente.
+espiras e o resistor de carga da placa. Se os harmônicos perderem o SNR antes de ~50 kHz, aumente a corrente.
 
 **5. A coleta do T10 (~25 min).** Com `--faixa-referencia 5.12`, o canal de tensão fica em ±2,56 V e o perfil de
 referência é o `cadeia_tensao_fase`, já validado; a parte W pede o condutor fora da garra (a diafonia):
 
 ```bash
-./coletar.sh calibrar --grandeza corrente --canal 0 --canal-referencia 1 --faixa-referencia 5.12 --diafonia --resistencia <R> --espiras 20 --sonda sct013_100a_sn001      # 32 capturas, ~18 min, ~660 MB, e a parte W
+./coletar.sh calibrar --grandeza corrente --canal 0 --canal-referencia 1 --faixa-referencia 5.12 --diafonia --resistencia <R> --espiras <N> --esperado-vpp <V> --sonda sct013_100a_sn001      # 32 capturas, ~18 min, ~660 MB, e a parte W
 ```
 
 O comando da análise sai no fim (`medir_fase.py --canal 0 --canal-referencia 1 --perfil-referencia
-scripts/sondas/cadeia_tensao_fase.json --resistencia <R> --espiras 20 --ganho 19.65 --diafonia ... --saida-perfil
+scripts/sondas/cadeia_tensao_fase.json --resistencia <R> --espiras <N> --ganho 19.65 --diafonia ... --saida-perfil
 scripts/sondas/sct013_100a_sn001.json`). O perfil sai com magnitude e fase até ~95 kHz, a Nyquist de cada canal com
-dois canais a 400 kS/s, que é também a banda da potência por componente em produção.
+dois canais a 400 kS/s, que é também a banda da potência por componente em produção. Com um resistor de fio, rode
+sem o `--saida-perfil` até ter o Z(f) dele (passo 3). Assim, um perfil com a indutância de R não fica com o nome da
+sonda.
 
 **6. As conferências (~30 min).** Cada uma é o mesmo comando com `--quadradas "1280 6912 20736"` e outro `--sonda`:
 
 | Conferência | O que muda | Esperado |
 |---|---|---|
 | A garra invertida | o condutor no sentido contrário (`--sonda sct013_invertida`) | a mesma magnitude e a fase a 180°; o acoplamento capacitivo não inverteria |
-| N = 10 | `--espiras 10` | o mesmo perfil (a capacitância entre espiras não pesa) |
-| Metade da corrente | o gerador ou a fonte em metade da amplitude | o mesmo perfil (o TC linear, o resistor sem aquecer) |
+| Metade das espiras | `--espiras <N/2>` (10 com 20, 8 com 16) e `--esperado-vpp` pela metade | o mesmo perfil (a capacitância entre espiras não pesa) |
+| Metade da corrente | o gerador ou a fonte em metade da amplitude (10 Vpp em High-Z) e `--esperado-vpp` pela metade | o mesmo perfil (o TC linear, o resistor sem aquecer) |
 | Reabrir a garra | abrir, fechar e repetir | a repetibilidade |
 
 **7. Se sobrar tempo: os itens curtos (~45 min no total).**
