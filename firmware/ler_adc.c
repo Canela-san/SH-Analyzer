@@ -1233,25 +1233,30 @@ struct contadores_integridade {
     uint32_t divergencias_fase_c;
 };
 
-// Lê os contadores e avisa do que aumentou desde a última leitura.
-static void conferir_integridade(volatile struct shared_control *ctrl, struct contadores_integridade *vistos) {
-    struct contadores_integridade agora = {
+static struct contadores_integridade ler_contadores_integridade(volatile struct shared_control *ctrl) {
+    struct contadores_integridade c = {
         ctrl->amostras_atrasadas, ctrl->buffers_sobrescritos, ctrl->quadros_preambulo_ruim,
         ctrl->folga_minima_ciclos, ctrl->atraso_maximo_ciclos, ctrl->divergencias_fase_a, ctrl->divergencias_fase_c
     };
-    if (agora.buffers_sobrescritos > vistos->buffers_sobrescritos) {
+    return c;
+}
+
+// Avisa do que aumentou desde a última leitura e guarda a nova.
+static void conferir_integridade(const struct contadores_integridade *agora, struct contadores_integridade *vistos) {
+    if (agora->buffers_sobrescritos > vistos->buffers_sobrescritos) {
         erro("%u buffer(s) reescrito(s) pela PRU antes de gravado(s): há amostras PERDIDAS (o ARM atrasou: disco lento "
-             "ou sistema ocupado).", agora.buffers_sobrescritos - vistos->buffers_sobrescritos);
+             "ou sistema ocupado).", agora->buffers_sobrescritos - vistos->buffers_sobrescritos);
     }
-    if (agora.amostras_atrasadas > vistos->amostras_atrasadas) {
+    if (agora->amostras_atrasadas > vistos->amostras_atrasadas) {
         aviso("%u amostra(s) fora da grade (até %u ciclos de 5 ns): a PRU não acompanhou a taxa; o período entre elas "
-              "não é o do cabeçalho.", agora.amostras_atrasadas - vistos->amostras_atrasadas, agora.atraso_maximo_ciclos);
+              "não é o do cabeçalho.", agora->amostras_atrasadas - vistos->amostras_atrasadas,
+              agora->atraso_maximo_ciclos);
     }
-    if (agora.quadros_preambulo_ruim > vistos->quadros_preambulo_ruim) {
+    if (agora->quadros_preambulo_ruim > vistos->quadros_preambulo_ruim) {
         aviso("%u quadro(s) SPI com ruído no SDO: confira a ligação ADC <-> BeagleBone; essas amostras são suspeitas.",
-              agora.quadros_preambulo_ruim - vistos->quadros_preambulo_ruim);
+              agora->quadros_preambulo_ruim - vistos->quadros_preambulo_ruim);
     }
-    *vistos = agora;
+    *vistos = *agora;
 }
 
 #define LARGURA_BARRA 24
@@ -2685,7 +2690,9 @@ int main(int argc, char *argv[]) {
     // --- Laço de blocos --------------------------------------------------------------------------------------------
     // Sem descarte de amostra: no AUTO_RST, o quadro do próprio AUTO_RST (na configuração, nunca gravado) é o que traz
     // lixo; a 1ª amostra do laço já é do canal de menor número, e a amostra i é do canal da posição i % N.
-    struct contadores_integridade integridade = {0, 0, 0, 0, 0, 0, 0};
+    // Os do cabeçalho: os lidos com o último bloco gravado. Sem bloco nenhum, o que a PRU escreve antes da 1ª amostra
+    // (a folga começa no período: "ainda não publicada" para o resumo e para o Python).
+    struct contadores_integridade integridade = {0, 0, 0, config.ticks, 0, 0, 0};
     struct resultado resultado;
     memset(&resultado, 0, sizeof(resultado));
     for (int k = 0; k < ADS8688_MAX_CANAIS; k++) {
@@ -2709,6 +2716,14 @@ int main(int argc, char *argv[]) {
             struct timespec visto;
             clock_gettime(CLOCK_REALTIME, &visto);
             memcpy(copia_do_bloco, (const void *)buffers[b], bytes_por_buffer);
+            // [13/11/2026] Os contadores que valem até este bloco: lidos com a cópia, antes de liberar o buffer. A PRU
+            // não para no último bloco que o ARM grava: segue enchendo o outro buffer e os publica de novo na troca
+            // seguinte, um bloco depois (~2,5 s na maior taxa). Até aqui eles eram lidos depois da GRAVAÇÃO e outra
+            // vez no fim, e um disco que demorasse mais que isso no último bloco punha no cabeçalho os eventos de um
+            // bloco que não está no arquivo (com dois blocos de demora, também um buffer "sobrescrito" e o código 3).
+            // Agora a janela é a da cópia (~150 ms), e não a do disco. Eles saem 3 a 6 amostras depois da marca de
+            // pronto (evento 4 de spi_core.asm): depois da cópia, já saíram.
+            struct contadores_integridade ate_este_bloco = ler_contadores_integridade(ctrl);
             *prontos[b] = 0;
             int mudo = amostras_todas_iguais(copia_do_bloco, AMOSTRAS_CONFERIDAS_ADC_MUDO);
             size_t gravadas = fwrite(copia_do_bloco, sizeof(uint16_t), SAMPLES_PER_BUFFER, arquivo);
@@ -2734,7 +2749,7 @@ int main(int argc, char *argv[]) {
             if (resultado.blocos == 1) {
                 instante_primeiro = inicio;
             }
-            conferir_integridade(ctrl, &integridade);
+            conferir_integridade(&ate_este_bloco, &integridade);
             if (mudo) {
                 valor_mudo = copia_do_bloco[0];
                 resultado.adc_mudo = 1;
@@ -2762,7 +2777,9 @@ int main(int argc, char *argv[]) {
     }
 
     // --- Fim ----------------------------------------------------------------------------------------------------------
-    conferir_integridade(ctrl, &integridade);
+    // [13/11/2026] Os contadores NÃO são relidos aqui: a PRU continua rodando, e esta leitura trazia os eventos de
+    // amostras que não estão no arquivo (o bloco seguinte, um bloco que um sinal deixou sem gravar, o da gravação que
+    // falhou). Os do cabeçalho são os lidos com o último bloco gravado.
     // Com --blocos 0 (até Ctrl+C), parar por um sinal é o fim normal; com os blocos contados, é uma captura cortada.
     resultado.interrompida = sinal_recebido != 0 && config.blocos != 0 && resultado.blocos < config.blocos;
     if (resultado.blocos >= 2 && instante_ultimo > instante_primeiro) {

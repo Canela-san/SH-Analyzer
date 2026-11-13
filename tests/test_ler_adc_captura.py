@@ -132,6 +132,42 @@ def test_amostras_atrasadas_e_ruido_no_sdo_vao_para_o_cabecalho_com_aviso(ler_ad
     assert "fora da grade" in r.stderr and "ruído no SDO" in r.stderr
 
 
+def test_os_contadores_sao_os_dos_blocos_gravados_mesmo_com_o_disco_lento_no_ultimo(ler_adc, placa, tmp_path):
+    """A PRU não para no último bloco que o ARM grava: ela segue enchendo o outro buffer e publica os contadores de novo
+    na troca seguinte. Até 13/11/2026 o ler_adc os lia depois de GRAVAR cada bloco e outra vez no fim, e um disco que
+    demorasse mais que um bloco (~2,5 s na maior taxa) no último punha no cabeçalho os eventos de um bloco que não está
+    no arquivo (com dois blocos de demora, também um buffer "sobrescrito" e o código 3). Aqui a saída é um pipe, e o
+    leitor só lê o último bloco depois de a PRU falsa publicar o seguinte. (Um pipe não volta ao começo: o cabeçalho
+    final não é reescrito, e os contadores são os do resumo, que são os mesmos.)"""
+    pipe = tmp_path / "saida.fifo"
+    os.mkfifo(pipe)
+    pru = placa.pru(atrasadas_por_bloco=5, preambulo_por_bloco=1)
+
+    def leitor_que_trava_no_ultimo_bloco():
+        with open(pipe, "rb") as f:
+            restam = CABECALHO + TAMANHO_BLOCO
+            while restam > 0 and (lido := f.read(min(restam, 1 << 20))):
+                restam -= len(lido)
+            limite = time.monotonic() + 30
+            while pru.blocos_prontos < 3 and time.monotonic() < limite:
+                time.sleep(0.005)
+            while f.read(1 << 20):
+                pass
+
+    leitor = threading.Thread(target=leitor_que_trava_no_ultimo_bloco, daemon=True)
+    leitor.start()
+    try:
+        r = subprocess.run([str(ler_adc), "--blocos", "2", "-o", str(pipe)], env=placa.ambiente, capture_output=True,
+                           text=True, timeout=60)
+    finally:
+        pru.parar()
+    leitor.join(timeout=10)
+    assert r.returncode == 0 and "Captura concluída, com avisos" in r.stdout, r.stdout + r.stderr
+    assert pru.blocos_prontos == 3                  # a troca seguinte saiu enquanto o ARM gravava o último bloco
+    assert "10 amostras atrasadas, 0 buffers sobrescritos, 2 quadros com ruído no SDO" in r.stdout, r.stdout
+    assert r.stderr.count("Aviso: 5 amostra(s) fora da grade") == 2, r.stderr      # uma vez por bloco gravado
+
+
 # --------------------------------------------------------------------------------------
 # Sinais: Ctrl+C, kill e a queda da conexão
 # --------------------------------------------------------------------------------------
