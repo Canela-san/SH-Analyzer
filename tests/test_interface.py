@@ -37,7 +37,7 @@ def test_a_janela_abre_com_o_nome_a_versao_e_a_marca(qtbot):
     qtbot.addWidget(janela)
     janela.show()
     qtbot.waitExposed(janela)
-    assert janela.windowTitle() == NOME
+    assert janela.windowTitle().endswith(f"— {NOME}") and not janela.isWindowModified()
     assert (janela.minimumWidth(), janela.minimumHeight()) == TAMANHO_MINIMO
     assert versao() in janela.findChild(QLabel, "versao").text()
     assert not janela.findChild(QLabel, "marca").pixmap().isNull()

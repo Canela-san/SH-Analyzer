@@ -9,8 +9,11 @@ As regiões:
 * a **barra de status**.
 
 **As ações** (``self.acoes``, pelo nome) são o ponto único de cada comando: o botão, o atalho e, depois, a paleta de
-comandos (F1.8) disparam a mesma ``QAction``. **O desfazer** é a ``QUndoStack`` da janela (``self.pilha``): toda
-edição do modelo entra nela como um comando (F1.2).
+comandos (F1.8) disparam a mesma ``QAction``.
+
+**O projeto** (``self.projeto``, ``modelo.objetos.Projeto``) tem a sua pilha de desfazer; a janela a liga a um
+``QUndoGroup``, e o desfazer da barra segue o projeto aberto (:meth:`trocar_projeto`). A seleção
+(``self.selecao``) é da janela e segue o projeto.
 
 **O layout** (o tamanho da janela e dos painéis, e quais estão abertos) é salvo ao fechar e restaurado ao abrir
 (``configuracao.py``). Ctrl+B, Ctrl+I e Ctrl+J recolhem o Projeto, o Inspetor e o painel de baixo.
@@ -21,7 +24,7 @@ from __future__ import annotations
 from functools import partial
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence, QShowEvent, QUndoStack
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence, QShowEvent, QUndoGroup, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -42,6 +45,8 @@ from .componentes.basicos import Botao
 from .componentes.painel import EstadoVazio, PainelComAbas, TituloDoPainel, botao_de_icone
 from .componentes.toast import Toast
 from .configuracao import gravar, ler_bytes
+from .modelo.objetos import Projeto
+from .modelo.selecao import Selecao
 from .tema.aplicar import aparencia
 from .tema.fontes import familias_disponiveis, fonte_escolhida
 from .tema.icones import IconeDoTema
@@ -88,7 +93,9 @@ class JanelaPrincipal(QMainWindow):
         self.setCorner(Qt.Corner.BottomLeftCorner, Qt.DockWidgetArea.LeftDockWidgetArea)
         self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
 
-        self.pilha = QUndoStack(self)
+        self.grupo_desfazer = QUndoGroup(self)
+        self.projeto: Projeto | None = None
+        self.selecao: Selecao | None = None
         self.acoes: dict[str, QAction] = {}
         self._criar_acoes()
 
@@ -117,6 +124,7 @@ class JanelaPrincipal(QMainWindow):
 
         aparencia().mudou.connect(self._tema_mudou)
         self._tema_mudou(aparencia().tema)
+        self.trocar_projeto(Projeto())
         self._layout_restaurado = self.restaurar_layout()
         self._primeira_exibicao = True
 
@@ -141,9 +149,9 @@ class JanelaPrincipal(QMainWindow):
 
     def _criar_acoes(self) -> None:
         self._acao("desfazer", self.tr("Desfazer"), atalho=QKeySequence.StandardKey.Undo, icone="desfazer",
-                   acao=self.pilha.createUndoAction(self, self.tr("Desfazer")))
+                   acao=self.grupo_desfazer.createUndoAction(self, self.tr("Desfazer")))
         self._acao("refazer", self.tr("Refazer"), atalho=QKeySequence.StandardKey.Redo, icone="refazer",
-                   acao=self.pilha.createRedoAction(self, self.tr("Refazer")))
+                   acao=self.grupo_desfazer.createRedoAction(self, self.tr("Refazer")))
         # A dica do desfazer diz o que vai ser desfeito ("Desfazer Remover o traço (Ctrl+Z)").
         for nome in ("desfazer", "refazer"):
             self.acoes[nome].changed.connect(partial(_dica_com_atalho, self.acoes[nome]))
@@ -154,6 +162,40 @@ class JanelaPrincipal(QMainWindow):
         a.setEnabled(False)            # a F1.4 liga
         a = self._acao("nova_vista", self.tr("Nova vista"), icone="mais")
         a.setEnabled(False)            # a F1.5 liga
+
+    # ------------------------------------------------------------------ projeto
+
+    @property
+    def pilha(self) -> QUndoStack:
+        """A pilha de desfazer do projeto aberto."""
+        return self.projeto.pilha
+
+    def trocar_projeto(self, projeto: Projeto) -> None:
+        """Passa a mostrar ``projeto``: o desfazer, o nome na barra e no título, e uma seleção nova."""
+        anterior = self.projeto
+        if anterior is not None:
+            anterior.modificadoMudou.disconnect(self._projeto_mudou)
+            anterior.nomeMudou.disconnect(self._projeto_mudou)
+            self.grupo_desfazer.removeStack(anterior.pilha)
+        self.projeto = projeto
+        if self.selecao is not None:
+            self.selecao.deleteLater()
+        self.selecao = Selecao(projeto, self)
+        self.grupo_desfazer.addStack(projeto.pilha)
+        self.grupo_desfazer.setActiveStack(projeto.pilha)
+        projeto.modificadoMudou.connect(self._projeto_mudou)
+        projeto.nomeMudou.connect(self._projeto_mudou)
+        self._projeto_mudou()
+
+    def _projeto_mudou(self, *_) -> None:
+        """O nome do projeto e o ponto das mudanças não salvas, na barra e no título da janela."""
+        if not isValid(self) or self.projeto is None:
+            return
+        nome, modificado = self.projeto.nome, self.projeto.modificado
+        self.barra.definir_projeto(nome, modificado)
+        app = QApplication.instance()
+        self.setWindowTitle(f"{nome}[*] — {app.applicationName() or 'SH-Analyzer'}")
+        self.setWindowModified(modificado)
 
     def abrir_paleta(self) -> None:
         """A paleta de comandos (F1.8). Por enquanto, avisa que ela ainda não existe."""
