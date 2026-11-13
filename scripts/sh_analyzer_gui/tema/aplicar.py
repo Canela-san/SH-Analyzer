@@ -110,6 +110,10 @@ QTreeView#arvore_projeto {{ background: transparent; border: none; }}
 QTreeView#arvore_projeto::item:selected, QTreeView#arvore_projeto::item:hover {{ background: transparent; }}
 QScrollArea#inspetor_da_fonte {{ background: transparent; border: none; }}
 QListWidget#avisos {{ border: none; background: {t.superficie}; }}
+QFrame#paleta {{ background: {t.elevada}; border: 1px solid {t.borda_forte}; border-radius: 12px; }}
+QListWidget#resultados_paleta {{ background: transparent; border: none; }}
+QListWidget#resultados_paleta::item {{ padding: 6px 10px; border-radius: 6px; }}
+QListWidget#resultados_paleta::item:selected {{ background: {_rgba(t.acento, 0.13)}; color: {t.texto}; }}
 QStatusBar::item {{ border: none; }}
 QMenuBar {{ background: {t.fundo}; }}
 QMenu {{ background: {t.elevada}; border: 1px solid {t.borda_forte}; border-radius: 8px; padding: 4px; }}

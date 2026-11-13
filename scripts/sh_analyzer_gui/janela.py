@@ -57,8 +57,8 @@ from .componentes.avisos import ListaDeAvisos
 from .componentes.barra_superior import BarraSuperior
 from .componentes.basicos import Botao
 from .componentes.painel import EstadoVazio, PainelComAbas, TituloDoPainel, botao_de_icone
+from .componentes.paleta import DialogoDeAtalhos, PaletaDeComandos
 from .componentes.tarefas import ListaDeTarefas
-from .componentes.toast import Toast
 from .configuracao import gravar, ler_bytes
 from .controle_do_projeto import ControleDoProjeto
 from .modelo.objetos import Projeto, Vista
@@ -182,6 +182,8 @@ class JanelaPrincipal(QMainWindow):
         for nome in ("desfazer", "refazer"):
             self.acoes[nome].changed.connect(partial(_dica_com_atalho, self.acoes[nome]))
         self._acao("paleta", self.tr("Paleta de comandos"), atalho="Ctrl+K").triggered.connect(self.abrir_paleta)
+        self._acao("atalhos", self.tr("Atalhos do teclado e do mouse"), atalho="Ctrl+/",
+                   icone="livro").triggered.connect(self.mostrar_atalhos)
         self._acao("alternar_tema", self.tr("Alternar o tema claro e escuro"),
                    icone="sol").triggered.connect(preferencias.alternar_tema)
         controle = self.controle
@@ -240,9 +242,23 @@ class JanelaPrincipal(QMainWindow):
         self.setWindowTitle(f"{nome}[*] — {app.applicationName() or 'SH-Analyzer'}")
         self.setWindowModified(modificado)
 
+    def acoes_da_paleta(self) -> list[QAction]:
+        """As ações que a paleta busca: as da janela e as da vista aberta (ajustar, voltar, cursores)."""
+        acoes = list(self.acoes.values())
+        vista = self.vistas.currentWidget()
+        if vista is not None:
+            acoes += [a for a in vista.actions() if a.text()]
+        return acoes
+
     def abrir_paleta(self) -> None:
-        """A paleta de comandos (F1.8). Por enquanto, avisa que ela ainda não existe."""
-        Toast.mostrar(self, self.tr("A paleta de comandos ainda não está pronta."), "info")
+        if not hasattr(self, "paleta"):
+            self.paleta = PaletaDeComandos(self)
+        self.paleta.abrir(self.acoes_da_paleta())
+
+    def mostrar_atalhos(self) -> DialogoDeAtalhos:
+        self.dialogo_de_atalhos = DialogoDeAtalhos(self.acoes_da_paleta(), self)
+        self.dialogo_de_atalhos.show()
+        return self.dialogo_de_atalhos
 
     def _menu_de_ajustes(self) -> QMenu:
         """O tema e as fontes, gravados na configuração. A tela de configurações completa vem depois (GE-05)."""
@@ -389,8 +405,9 @@ class JanelaPrincipal(QMainWindow):
         dock.setWidget(corpo)
         self.addDockWidget(area, dock)
         atalhos = {"painel_projeto": "Ctrl+B", "painel_inspetor": "Ctrl+I", "painel_inferior": "Ctrl+J"}
-        self._acao(nome_da_acao, self.tr("Mostrar ou recolher: {}").format(titulo), atalho=atalhos[nome_da_acao],
-                   acao=dock.toggleViewAction())
+        acao = self._acao(nome_da_acao, self.tr("Mostrar ou recolher o painel: {}").format(titulo),
+                          atalho=atalhos[nome_da_acao], acao=dock.toggleViewAction())
+        acao.setText(self.tr("Mostrar ou recolher o painel: {}").format(titulo))
         return dock
 
     def _criar_barra_de_status(self) -> None:

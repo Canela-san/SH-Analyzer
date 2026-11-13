@@ -13,7 +13,6 @@ from sh_analyzer_gui import preferencias  # noqa: E402
 from sh_analyzer_gui.app import criar_aplicacao  # noqa: E402
 from sh_analyzer_gui.componentes.barra_superior import LARGURA_COMPACTA, BarraSuperior  # noqa: E402
 from sh_analyzer_gui.componentes.painel import ALTURA_DO_TITULO  # noqa: E402
-from sh_analyzer_gui.componentes.toast import Toast  # noqa: E402
 from sh_analyzer_gui.configuracao import configuracoes, gravar  # noqa: E402
 from sh_analyzer_gui.janela import CHAVE_DA_GEOMETRIA, CHAVE_DO_ESTADO, JanelaPrincipal  # noqa: E402
 from sh_analyzer_gui.tema.aplicar import aparencia  # noqa: E402
@@ -219,9 +218,9 @@ def test_os_contadores_das_abas(janela):
         painel.definir_contagem(2, 1, "roxo")
 
 
-def test_ctrl_k_responde_mesmo_antes_da_paleta(janela):
+def test_ctrl_k_abre_a_paleta(janela):
     janela.acoes["paleta"].trigger()
-    assert janela.findChild(Toast) is not None
+    assert janela.paleta.isVisible() and janela.paleta.lista.count() > 5
 
 
 def test_apagar_a_janela_com_comandos_na_pilha_nao_da_erro(app, qtbot):
