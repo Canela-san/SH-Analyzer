@@ -4,10 +4,13 @@ O ``ler_adc`` fala com a PRU por dois pedaços do ``/dev/mem`` (o ``shared_contr
 buffers na DDR) e a liga pelo remoteproc. Aqui, um arquivo esparso faz o papel do ``/dev/mem`` (as mesmas posições:
 0x4A310000 e 0x9F000000), e :class:`PruFalsa`, uma thread do teste, o da PRU: mapeia o mesmo arquivo e segue o
 protocolo do ``pru_main.c`` e do ``spi_core.asm`` (o aviso de "pronta", a leitura da configuração, a versão do
-protocolo, os buffers alternados, a marca de pronto um pouco depois da troca e os contadores publicados depois dela).
-O ``ler_adc`` é o de verdade, compilado com os caminhos da placa trocados (os ``#ifndef`` do topo dele).
+protocolo, os buffers alternados e os contadores publicados a cada troca). O ``ler_adc`` é o de verdade, compilado
+com os caminhos da placa trocados (os ``#ifndef`` do topo dele).
 
-O que NÃO é conferido aqui: o assembly (``pru_sim.py``), os tempos de verdade e o ``/dev/mem`` sem cache.
+O que NÃO é conferido aqui: o assembly (``pru_sim.py``), os tempos de verdade e o ``/dev/mem`` sem cache. Dois desses
+tempos viram ordem, para os testes não dependerem da carga da máquina: os contadores de cada troca saem antes da marca
+de pronto (na PRU, microssegundos depois dela, e o ARM só os lê depois de copiar o bloco), e a troca que publica um
+bloco espera o ARM liberar o anterior (na placa, ele o libera muito antes de a PRU encher o seguinte).
 """
 
 from __future__ import annotations
@@ -203,27 +206,43 @@ class PruFalsa(threading.Thread):
                 return False
             if self._reiniciada():
                 return True
-            # A troca e os eventos 1 a 7: o buffer pronto, o ativo e os contadores, nesta ordem.
+            # [13/11/2026] O ARM em dia: a troca que publica o bloco k espera o ARM liberar o k-1. Na placa, ele o
+            # libera ~150 ms depois de vê-lo (a cópia), e um bloco leva >= 2,5 s; aqui um bloco leva 30 ms, e uma
+            # máquina ocupada atrasava o ARM mais que isso: a troca seguinte saía antes de ele ler os contadores do
+            # bloco que acabava de copiar. (A PRU de verdade não espera; o ARM atrasado é o da_uma_volta_no_arm.)
+            anterior = f"buffer_{1 - b}_ready"
+            if self.ler(anterior) != 0 and not self._esperar(
+                    lambda: self.ler(anterior) == 0 or self._reiniciada()):                     # noqa: B023
+                return False
+            if self._reiniciada():
+                return True
+            # A troca e os eventos 1 a 7.
             if self.da_uma_volta_no_arm and k == 0:
                 k = 1                        # o ARM "não viu" o bloco 0 a tempo: a marca dele só vem com a do bloco 1
                 continue
+            marcas = [pronto]
             if self.da_uma_volta_no_arm and k == 1:
                 # Os 2 buffers cheios e o ARM sem ter gravado nenhum: a PRU não espera, volta ao buffer 0 (as 3
                 # primeiras amostras do bloco seguinte) e, no evento 3, vê que ele ainda está marcado como pronto.
                 # (Aqui a reescrita vem antes da marca, para o teste não depender de quem chega primeiro.)
                 self._ddr[0:6] = bloco_esperado(2)[:3].tobytes()
-                self.escrever("buffer_0_ready", 1)
+                marcas.insert(0, "buffer_0_ready")
                 sobrescritos += 1
-            self.escrever(pronto, 1)
-            self.instantes_pronto.append(time.monotonic())
-            self.escrever("active_buffer", 1 - b)
             k += 1
-            self.blocos_prontos = k
+            # [13/11/2026] Os contadores (eventos 4 a 7) ANTES da marca de pronto (evento 1) e do ativo (evento 2). Na
+            # PRU a ordem é a inversa, mas com 3 a 6 amostras entre eles (microssegundos), e o ARM só os lê depois de
+            # copiar o bloco (~150 ms). Aqui a thread pode perder a CPU entre duas escritas, e a ordem da PRU deixava
+            # o ARM ler, de vez em quando, os contadores do bloco anterior.
             self.escrever("amostras_atrasadas", k * self.atrasadas_por_bloco)
             self.escrever("buffers_sobrescritos", sobrescritos)
             self.escrever("quadros_preambulo_ruim", k * self.preambulo_por_bloco)
             self.escrever("folga_minima_ciclos", self.folga)
             self.escrever("atraso_maximo_ciclos", 77 if self.atrasadas_por_bloco else 0)
+            for marca in marcas:
+                self.escrever(marca, 1)
+            self.instantes_pronto.append(time.monotonic())
+            self.escrever("active_buffer", 1 - b)
+            self.blocos_prontos = k
         return True
 
 
