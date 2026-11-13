@@ -156,6 +156,35 @@ class PruFalsa(threading.Thread):
         """O ARM pôs a marca de novo: reiniciou a PRU para outra captura (o 'ler_adc verificar' faz uma por taxa)."""
         return self.ler("versao_protocolo_pru") == AINDA_NAO_INICIOU
 
+    def _encher(self, taxa: float, k: int) -> bytes | None:
+        """As amostras do bloco k. None = o ARM reiniciou a PRU (ou o teste acabou) antes de elas ficarem prontas: o
+        bloco é descartado, como a PRU de verdade descarta o que estava enchendo quando o ARM a para."""
+        # [13/11/2026] Numa thread à parte, e esta segue de olho no reinício: o sinal sintético leva ~0,1 s (bem mais
+        # com a máquina ocupada), e o 'ler_adc verificar' reinicia a PRU logo depois de copiar o 1º bloco de uma taxa,
+        # enquanto ela enche o 2º. Gerado aqui, o reinício só era visto no fim, e o ARM desistia da PRU depois de 500
+        # ms sem o aviso de pronta. O numpy solta o GIL nas contas, então esta thread responde na hora.
+        resultado: dict[str, object] = {}
+
+        def gerar() -> None:
+            try:
+                if self.mudo:
+                    dados = np.zeros(AMOSTRAS_POR_BLOCO, dtype="<u2")
+                elif self.sinal is not None:
+                    dados = np.asarray(self.sinal(taxa, self.configuracao["auto_seq_mask"], k), dtype="<u2")
+                else:
+                    dados = bloco_esperado(k, self.satura)
+                resultado["dados"] = dados.tobytes()
+            except BaseException as e:       # noqa: BLE001 -- vai para a thread da PRU, e dela para o parar()
+                resultado["erro"] = e
+
+        geradora = threading.Thread(target=gerar, daemon=True)
+        geradora.start()
+        if not self._esperar(lambda: not geradora.is_alive() or self._reiniciada()) or geradora.is_alive():
+            return None
+        if "erro" in resultado:
+            raise resultado["erro"]
+        return resultado["dados"]
+
     def _rodar(self) -> None:
         # Cada volta é um boot da PRU: o ARM a reinicia (a marca em versao_protocolo_pru) a cada captura.
         while not self._parar.is_set():
@@ -195,14 +224,12 @@ class PruFalsa(threading.Thread):
                 return False
             if self._reiniciada():
                 return True
-            if self.mudo:
-                dados = np.zeros(AMOSTRAS_POR_BLOCO, dtype="<u2")
-            elif self.sinal is not None:
-                dados = np.asarray(self.sinal(taxa, self.configuracao["auto_seq_mask"], k), dtype="<u2")
-            else:
-                dados = bloco_esperado(k, self.satura)
-            self._ddr[b * BYTES_POR_BUFFER:(b + 1) * BYTES_POR_BUFFER] = dados.tobytes()
-            if self._parar.wait(self.intervalo_s):
+            dados = self._encher(taxa, k)
+            if dados is None:
+                return not self._parar.is_set()
+            self._ddr[b * BYTES_POR_BUFFER:(b + 1) * BYTES_POR_BUFFER] = dados
+            fim = time.monotonic() + self.intervalo_s
+            if not self._esperar(lambda: time.monotonic() >= fim or self._reiniciada()):          # noqa: B023
                 return False
             if self._reiniciada():
                 return True
