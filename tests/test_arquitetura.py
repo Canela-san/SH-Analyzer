@@ -11,6 +11,9 @@ descreve, sem depender de revisão manual:
 """
 
 import ast
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -147,6 +150,41 @@ def test_o_motor_nao_importa_o_qt():
     (docs/gui-plan.md, seção 4). Assim a CLI, a CI e a BeagleBone não precisam do Qt instalado."""
     for modulo in modulos_do_pacote():
         assert not (importados_externos(modulo) & QT), f"{modulo} importa o Qt: a interface mora em sh_analyzer_gui"
+
+
+GUI = SCRIPTS / "sh_analyzer_gui"
+
+
+def _imports_de(arquivo: Path) -> list[ast.AST]:
+    return [n for n in ast.walk(ast.parse(arquivo.read_text(encoding="utf-8"))) if isinstance(n, (ast.Import, ast.ImportFrom))]
+
+
+def test_a_camada_de_dados_da_interface_nao_importa_o_qt():
+    """``sh_analyzer_gui.dados`` (a pirâmide, a consulta, o cache) roda e se testa sem o Qt e sem o resto da
+    interface (docs/gui-plan.md, seção 8.1): nem o PySide6 nem um módulo de fora da própria camada."""
+    arquivos = sorted((GUI / "dados").glob("*.py"))
+    assert arquivos
+    for arquivo in arquivos:
+        for no in _imports_de(arquivo):
+            nomes = [a.name for a in no.names] if isinstance(no, ast.Import) else [no.module or ""]
+            for nome in nomes:
+                if isinstance(no, ast.ImportFrom) and no.level > 0:
+                    assert no.level == 1, f"{arquivo.name}:{no.lineno}: import relativo para fora de dados/"
+                    continue
+                raiz = nome.split(".")[0]
+                assert raiz not in QT, f"{arquivo.name}:{no.lineno}: importa o Qt ({nome})"
+                assert raiz != "sh_analyzer_gui" or nome.startswith("sh_analyzer_gui.dados"), (
+                    f"{arquivo.name}:{no.lineno}: importa a interface ({nome})")
+
+
+def test_importar_a_camada_de_dados_nao_carrega_o_qt():
+    """A mesma regra, conferida de verdade: num processo novo, importar a camada não traz o PySide6."""
+    codigo = ("import sys, importlib, pkgutil, sh_analyzer_gui.dados as d\n"
+              "for m in pkgutil.iter_modules(d.__path__): importlib.import_module('sh_analyzer_gui.dados.' + m.name)\n"
+              f"print(sorted(k for k in sys.modules if k.split('.')[0] in {sorted(QT)!r}))")
+    saida = subprocess.run([sys.executable, "-c", codigo], capture_output=True, text=True, check=True,
+                           env={**os.environ, "PYTHONPATH": str(SCRIPTS)})
+    assert saida.stdout.strip() == "[]", saida.stdout + saida.stderr
 
 
 def test_plotagem_so_e_importada_pelo_modo_de_plotagem_de_forma_tardia():

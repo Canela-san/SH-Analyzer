@@ -8,21 +8,27 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F0.3: a pirâmide mín/máx** (seção 4).
+> **F0.4: a consulta M4** (seção 4).
 >
 > **No laboratório (opcional, 5 minutos):** a F0.2 colhe da BeagleBone os dados que a Aquisição vai usar (seção 6).
 
-**Nada em andamento:** a árvore de trabalho estava limpa no fim da última sessão.
+**Onde trabalhar:** no worktree `.claude/worktrees/interface` (o branch `feat/interface`), para não mexer no checkout do `main`, que é o do laboratório. Se ele não existir, crie-o com `git worktree add .claude/worktrees/interface feat/interface`.
 
 ---
 
 ## 1. Como retomar
 
-1. **Confira o branch e a árvore:**
+1. **Entre no worktree do `feat/interface`** e confira a árvore. O checkout principal fica no `main`, para o laboratório:
 
    ```bash
-   git switch feat/interface
+   cd .claude/worktrees/interface
    ```
+
+   ```bash
+   git merge main
+   ```
+
+   O merge traz o motor e o firmware novos do laboratório; faça-o no começo de cada sessão.
 
    ```bash
    git status --short
@@ -113,7 +119,7 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
 - **Como:** os comandos da seção 6. O resultado vai para a tabela de lá.
 - **Pronto quando:** a tabela da seção 6 está preenchida, ou a tarefa fica para outra ida ao laboratório, sem prejuízo para as próximas.
 
-### ▶ F0.3: a pirâmide mín/máx
+### ☑ F0.3: a pirâmide mín/máx
 
 - **Arquivos:**
   - `scripts/sh_analyzer_gui/dados/__init__.py`;
@@ -139,14 +145,20 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
   - **o nome:** a chave + o canal + a versão do formato da pirâmide;
   - **a chave:** o `crc32_amostras` do cabeçalho v9, ou o tamanho + a data de modificação + o caminho nas versões anteriores;
   - **a gravação é atômica:** num arquivo temporário, renomeado no fim; um arquivo pela metade nunca é lido.
-  - O `platformdirs` (MIT) ainda não é dependência: entra no extra `gui` nesta tarefa.
+  - O `platformdirs` (MIT) entrou no extra `gui`.
 - **Testes:**
   - dados aleatórios com extremos nas bordas dos blocos, comprimentos que não são múltiplos de 32, 1 e 3 canais intercalados, `uint16` e `int16`: cada nível é igual ao mín e máx calculados à força bruta;
   - o cancelamento para no meio e não deixa cache;
   - reabrir pelo cache dá o mesmo.
 - **Pronto quando:** os testes passam, e a construção numa captura sintética de 100 M amostras roda a ≥ 200 M amostras/s nesta máquina.
+- **Feito em 13/11/2026:**
+  - `dados/piramide.py`: `construir(amostras, n_canais)` faz as pirâmides de todos os canais numa passada só pelo arquivo;
+  - `dados/cache.py`: o arquivo `.shpir` (cabeçalho JSON + vetores alinhados, aberto em `np.memmap`), a gravação atômica, a `chave_do_arquivo` e o `CacheDePiramides`, com limite de tamanho e a limpeza dos temporários;
+  - `tests/test_gui_piramide.py`: 51 testes contra a força bruta, de 1 a 100 003 amostras, `int16`, `uint16` e `float` com `NaN`, de 1 a 8 canais, o memmap de um `.bin`, o progresso, o cancelamento e os arquivos estragados;
+  - `tests/test_gui_desempenho.py`: o portão G3, que só roda com `pytest --desempenho` (o marcador e a opção estão no `conftest.py`);
+  - `test_arquitetura.py`: a camada `dados` não importa o Qt nem o resto da interface, conferido pelo código e por um processo novo.
 
-### ☐ F0.4: a consulta M4
+### ▶ F0.4: a consulta M4
 
 - **Arquivos:** `scripts/sh_analyzer_gui/dados/consulta.py` e `tests/test_gui_consulta.py`.
 - **A função:** `consultar(piramide, canal, i0, i1, colunas) -> Colunas`. Devolve, por coluna de pixel:
@@ -242,6 +254,7 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
 | 12/11/2026 | Pirâmide: construção e consulta (100 M amostras) | 308 a 315 M amostras/s; consulta 0,12 a 0,14 ms; +7,1 % de espaço | `plotagem_gui.py piramide` |
 | 12/11/2026 | Banda cheia, 8 traços: linha × polígono | 60 a 67 ms × 10,9 a 11,7 ms por quadro | `plotagem_gui.py banda espessura` |
 | 12/11/2026 | Cores: contraste e daltonismo, nos dois temas | Tudo aprovado | `paleta_cores.py` |
+| 13/11/2026 | G3: a pirâmide de 100 M amostras `int16` em memmap (`dados/piramide.py`) | Aprovado (≥ 200 M amostras/s) | `pytest --desempenho tests/test_gui_desempenho.py` |
 
 ---
 
@@ -290,6 +303,13 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **Parado em:** nada em andamento.
   - **Próximo:** a F0.2 no laboratório, se houver tempo; depois, a F0.3.
   - **Observado, fora da GUI:** o `tests/test_ler_adc_captura.py::test_amostras_atrasadas_e_ruido_no_sdo_vao_para_o_cabecalho_com_aviso` falhou uma vez no `ci.sh rapido` com a máquina carregada (15 amostras atrasadas em vez de 10) e passou 3 vezes isolado. Parece instável: a PRU falsa publicaria os contadores de uma troca de buffer a mais antes de parar. Não foi mexido.
+- **13/11/2026:**
+  - **Feito:**
+    - o worktree `.claude/worktrees/interface`, com o `main` do laboratório trazido para o `feat/interface` (merge sem conflito);
+    - a F0.3, a pirâmide e o cache (seção 4);
+    - o extra `gui` passou a pedir `pyqtgraph>=0.14` e `platformdirs>=4`.
+  - **Parado em:** nada em andamento.
+  - **Próximo:** a F0.4.
 
 ---
 

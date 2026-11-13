@@ -18,6 +18,21 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest  # noqa: E402
 
 
+def pytest_addoption(parser):
+    parser.addoption("--desempenho", action="store_true",
+                     help="roda os testes marcados 'desempenho' (tempo e memória; lentos e dependentes da máquina)")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Os testes de desempenho medem tempo: dependem da máquina e da carga, e ficam fora do conjunto padrão."""
+    if config.getoption("--desempenho"):
+        return
+    pular = pytest.mark.skip(reason="teste de desempenho: rode com --desempenho")
+    for item in items:
+        if "desempenho" in item.keywords:
+            item.add_marker(pular)
+
+
 @pytest.fixture(autouse=True)
 def _isolar_logging():
     yield

@@ -28,8 +28,9 @@ Documentation = "https://github.com/Canela-san/SH-Analyzer/tree/main/docs"
 [project.optional-dependencies]
 # A interface gráfica (sh-analyzer-gui) e o backend interativo do matplotlib (plt.show() sem -o; para salvar PNG
 # não é necessário). PySide6, e não PyQt6: a LGPL do Qt for Python é compatível com a licença MIT do projeto, e a
-# GPL do PyQt6 não (docs/gui-plan.md, seção 3).
-gui = ["PySide6>=6.8", "pyqtgraph>=0.13.7"]
+# GPL do PyQt6 não (docs/gui-plan.md, seção 5). O PyQtGraph 0.14 traz o OpenGL moderno (o plano B do motor de
+# gráficos, seção 6.7); o platformdirs dá a pasta de cache do sistema (as pirâmides).
+gui = ["PySide6>=6.8", "pyqtgraph>=0.14", "platformdirs>=4"]
 # tomli: leitor de TOML dos testes na Python 3.10 (a partir da 3.11 ele vem na biblioteca padrão).
 # pytest-xdist: a suíte roda em paralelo (-n auto, em addopts); pytest-cov: cobertura (--cov=scripts/supraharmonicos).
 dev = ["pytest>=8", "pytest-xdist>=3.5", "pytest-cov>=5", "ruff>=0.6", "tomli>=2; python_version < '3.11'"]
@@ -63,6 +64,7 @@ pythonpath = ["scripts", "tests"]
 addopts = "-ra -n auto --dist worksteal"
 markers = [
     "e2e: roda os scripts de ponta a ponta via subprocess (lento, dezenas de segundos)",
+    "desempenho: mede tempo e memória da interface (docs/gui-plan.md, seção 6.7); só roda com --desempenho",
 ]
 
 [tool.ruff]
