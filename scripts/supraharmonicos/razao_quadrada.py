@@ -21,6 +21,15 @@ A média coerente
     Como em ``medir_quadrada``: a captura em blocos, os harmônicos de cada bloco pela transformada chirp-z, girados
     pela fase da fundamental do canal b no bloco (o mesmo giro nos dois canais: a razão não muda, e as médias ficam
     coerentes). A razão das médias é a medida; a dispersão das razões bloco a bloco, a incerteza.
+
+Acima da Nyquist de dois canais: capturas separadas
+    Com dois canais, cada um vai à metade da taxa (até ~95 kHz a 400 kS/s). Um canal sozinho vai ao dobro, mas duas
+    capturas separadas não têm instante em comum. ``medir_razao_separada`` usa o que não depende dele: em cada captura,
+    cada harmônico girado por n vezes a fase da própria fundamental. A razão disso entre as duas capturas da mesma
+    quadrada (o gerador parado nela) é ``(H_a/H_b)(n f₁) · e^{−jnθ₁}``, com θ₁ = arg(H_a/H_b)(f₁), e o módulo exato,
+    se a amplitude não mudou entre as duas. ``ancorar_na_dupla`` devolve o que falta pela captura de dois canais da
+    mesma quadrada: θ₁ (cada harmônico ganha n·θ₁) e o módulo da fundamental (o que corrige uma mudança de amplitude
+    do gerador entre as duas capturas separadas). Num canal sozinho não há diafonia do outro.
 """
 
 from __future__ import annotations
@@ -40,6 +49,7 @@ from .fase_quadrada import (
     SIGMA_FASE_MINIMO,
     SIGMA_LN_MINIMO,
     SNR_MINIMO_DB,
+    TOLERANCIA_F1_ENTRADA,
     _harmonicos_do_bloco,
     _janela_bh,
     comprimento_do_bloco,
@@ -72,6 +82,7 @@ class RazaoQuadrada:
     usado: np.ndarray
     motivo: list[str]
     diafonia: np.ndarray | None = None      # o vazamento do canal b no a, subtraído (complexo), se foi
+    fase_relativa: bool = False             # capturas separadas ainda não ancoradas: a fase é a menos de n·θ₁
 
     def __len__(self) -> int:
         return len(self.n)
@@ -139,17 +150,27 @@ def medir_razao(a: np.ndarray, b: np.ndarray, fs: float, f_dica: float | None = 
     razao = razao * np.exp(-2j * np.pi * n * f1 * atraso_s)
 
     if prever_aliasing:
-        # o duty pelo 2º harmônico do canal b: |c₂|/|c₁| = |sin(2πε)| / (2 cos(πε)), com o filtro do modelo dele
-        f0b, qb, polob = modelo_b
-        r2 = abs(par_b.mean()) / abs(zbm[0]) / abs(h_segunda_ordem(2 * f1, f0b, qb, polob) / h_segunda_ordem(f1, f0b, qb, polob))
-        eps = float(np.arcsin(min(1.0, 2 * r2)) / (2 * np.pi))
         resolucao = 4.0 * fs / comprimento
+        eps = _desvio_do_duty(par_b.mean(), zbm[0], f1, modelo_b)
         contam = np.maximum(contaminacao_por_aliasing(f1, fs, n, eps, *modelo_a[:2], resolucao, polo=modelo_a[2]),
                             contaminacao_por_aliasing(f1, fs, n, eps, *modelo_b[:2], resolucao, polo=modelo_b[2]))
     else:
         contam = np.full(len(n), -np.inf)
+    motivos = _motivos(contam, snr_a, snr_b)
+    return RazaoQuadrada(f1, fs, atraso_s, n_blocos, n, n * f1, razao, sigma_ln, sigma_fase, np.abs(zam), np.abs(zbm),
+                         snr_a, snr_b, contam, np.array([m == "" for m in motivos]), motivos)
+
+
+def _desvio_do_duty(segundo: complex, fundamental: complex, f1: float, modelo: tuple[float, float, float]) -> float:
+    """O desvio do duty pelo 2º harmônico: |c₂|/|c₁| = |sin(2πε)| / (2 cos(πε)), com o filtro do modelo da cadeia."""
+    f0, q, polo = modelo
+    r2 = abs(segundo) / abs(fundamental) / abs(h_segunda_ordem(2 * f1, f0, q, polo) / h_segunda_ordem(f1, f0, q, polo))
+    return float(np.arcsin(min(1.0, 2 * r2)) / (2 * np.pi))
+
+
+def _motivos(contam: np.ndarray, snr_a: np.ndarray, snr_b: np.ndarray) -> list[str]:
     motivos = []
-    for i in range(len(n)):
+    for i in range(len(contam)):
         if contam[i] > CONTAMINACAO_MAX_DB:
             motivos.append(f"aliasing a {contam[i]:.0f} dB")
         elif snr_b[i] < SNR_MINIMO_DB:
@@ -158,8 +179,107 @@ def medir_razao(a: np.ndarray, b: np.ndarray, fs: float, f_dica: float | None = 
             motivos.append(f"SNR de {snr_a[i]:.0f} dB")
         else:
             motivos.append("")
-    return RazaoQuadrada(f1, fs, atraso_s, n_blocos, n, n * f1, razao, sigma_ln, sigma_fase, np.abs(zam), np.abs(zbm),
-                         snr_a, snr_b, contam, np.array([m == "" for m in motivos]), motivos)
+    return motivos
+
+
+@dataclass
+class _Normalizados:
+    media: np.ndarray               # média dos blocos de Xₙ·e^{−jn·arg X₁} (a fundamental real e positiva)
+    rel: np.ndarray                 # incerteza relativa de cada um
+    segundo: complex                # o 2º harmônico, girado do mesmo jeito (o duty)
+    blocos: int
+    comprimento: int
+
+
+def _normalizados(x: np.ndarray, fs: float, f1: float, m: int, amostras_por_bloco: int) -> _Normalizados:
+    """Os ``m`` primeiros harmônicos ímpares de uma captura de um canal, cada bloco girado por n vezes a fase da
+    própria fundamental: o que não depende do instante em que a captura começou."""
+    x = np.asarray(x, dtype=np.float64)
+    x = x - float(np.mean(x))
+    n = np.arange(1, 2 * m, 2)
+    comprimento = comprimento_do_bloco(len(x), fs, f1, amostras_por_bloco)
+    n_blocos = len(x) // comprimento
+    w = _janela_bh(comprimento)
+    soma = float(np.sum(w))
+    z = np.empty((n_blocos, m), dtype=complex)
+    par = np.empty(n_blocos, dtype=complex)
+    for k in range(n_blocos):
+        trecho = x[k * comprimento:(k + 1) * comprimento]
+        h, p = _harmonicos_do_bloco((trecho - trecho.mean()) * w, fs, f1, m, 1, soma)
+        giro = np.exp(-1j * np.angle(h[0]))
+        z[k] = h * giro ** n
+        par[k] = p[0] * giro ** 2
+    media = z.mean(axis=0)
+    if abs(media[0]) == 0:
+        raise ErroSHAN("a captura não tem a fundamental: não há onda periódica nela.")
+    rel = np.std(z, axis=0, ddof=1) / math.sqrt(2 * n_blocos) / np.maximum(np.abs(media), 1e-300)
+    return _Normalizados(media, rel, complex(par.mean()), n_blocos, comprimento)
+
+
+def medir_razao_separada(a: np.ndarray, b: np.ndarray, fs: float, f_dica: float | None = None,
+                         freq_max_hz: float | None = None, amostras_por_bloco: int = AMOSTRAS_POR_BLOCO,
+                         piso_a: float = 0.0, piso_b: float = 0.0, modelo_a: tuple[float, float, float] = MODELO_PADRAO,
+                         modelo_b: tuple[float, float, float] = MODELO_PADRAO,
+                         prever_aliasing: bool = True) -> RazaoQuadrada:
+    """H_a / H_b em cada harmônico ímpar de uma quadrada capturada em DUAS capturas de um canal só (a no canal medido,
+    b no de referência, as duas à taxa ``fs``, o gerador parado na mesma quadrada). Cada harmônico vem girado por n
+    vezes a fase da fundamental da própria captura: a razão sai com a fase a menos de n·θ₁ (θ₁ = arg(H_a/H_b)(f₁)) e a
+    fundamental real, com ``fase_relativa``. ``ancorar_na_dupla`` completa a medida. f₁ sai de cada captura; elas
+    precisam concordar (a mesma quadrada)."""
+    xa = np.asarray(a, dtype=np.float64)
+    xb = np.asarray(b, dtype=np.float64)
+    f1 = estimar_f1(xb[: 1 << 22] - float(np.mean(xb[: 1 << 22])), fs, f_dica)
+    f1a = estimar_f1(xa[: 1 << 22] - float(np.mean(xa[: 1 << 22])), fs, f1)
+    if abs(f1a / f1 - 1) > TOLERANCIA_F1_ENTRADA:
+        raise ErroSHAN(f"as duas capturas não são da mesma quadrada: f₁ = {f1a:.3f} Hz na do canal medido e "
+                       f"{f1:.3f} Hz na de referência.")
+    limite = FRACAO_DA_NYQUIST * fs / 2 if freq_max_hz is None else min(freq_max_hz, FRACAO_DA_NYQUIST * fs / 2)
+    if f1 > limite:
+        raise ErroSHAN(f"f₁ = {f1:.1f} Hz passa do limite de {limite:.0f} Hz (95 % da Nyquist).")
+    n = np.arange(1, int(limite / f1) + 1, 2)
+    na = _normalizados(xa, fs, f1a, len(n), amostras_por_bloco)
+    nb = _normalizados(xb, fs, f1, len(n), amostras_por_bloco)
+    razao = na.media / np.where(np.abs(nb.media) > 0, nb.media, 1e-300)
+    rel = np.hypot(na.rel, nb.rel)                  # capturas diferentes: ruídos independentes
+    snr_a = -20 * np.log10(np.maximum(na.rel * math.sqrt(2), 1e-15))
+    snr_b = -20 * np.log10(np.maximum(nb.rel * math.sqrt(2), 1e-15))
+    sistematico = np.hypot(piso_a / np.maximum(np.abs(na.media), 1e-300), piso_b / np.maximum(np.abs(nb.media), 1e-300))
+    sigma_ln = np.sqrt(rel ** 2 + sistematico ** 2 + SIGMA_LN_MINIMO ** 2)
+    sigma_fase = np.sqrt(rel ** 2 + sistematico ** 2 + SIGMA_FASE_MINIMO ** 2)
+    if prever_aliasing:
+        resolucao = 4.0 * fs / min(na.comprimento, nb.comprimento)
+        contam = np.maximum(
+            contaminacao_por_aliasing(f1, fs, n, _desvio_do_duty(na.segundo, na.media[0], f1, modelo_a), *modelo_a[:2],
+                                      resolucao, polo=modelo_a[2]),
+            contaminacao_por_aliasing(f1, fs, n, _desvio_do_duty(nb.segundo, nb.media[0], f1, modelo_b), *modelo_b[:2],
+                                      resolucao, polo=modelo_b[2]))
+    else:
+        contam = np.full(len(n), -np.inf)
+    motivos = _motivos(contam, snr_a, snr_b)
+    return RazaoQuadrada(f1, fs, 0.0, min(na.blocos, nb.blocos), n, n * f1, razao, sigma_ln, sigma_fase,
+                         np.abs(na.media), np.abs(nb.media), snr_a, snr_b, contam,
+                         np.array([m == "" for m in motivos]), motivos, fase_relativa=True)
+
+
+def ancorar_na_dupla(separada: RazaoQuadrada, dupla: RazaoQuadrada) -> tuple[RazaoQuadrada, float]:
+    """Completa a razão de capturas separadas (``medir_razao_separada``) pela captura de dois canais da MESMA quadrada:
+    a razão das fundamentais nela, X_a/X_b em f₁, dá θ₁ e o módulo. Cada harmônico ganha n·θ₁, e o módulo de todos é
+    multiplicado por |razão dupla(f₁)| ÷ |razão separada(f₁)|: se o gerador mudou de amplitude entre as duas capturas
+    separadas, isso desfaz a mudança. Devolve a razão ancorada e o ln dessa correção (a mudança de amplitude)."""
+    if not separada.fase_relativa:
+        raise ErroSHAN("a razão já está ancorada (ou não é de capturas separadas).")
+    if abs(separada.f1_hz / dupla.f1_hz - 1) > TOLERANCIA_F1_ENTRADA:
+        raise ErroSHAN(f"a captura de dois canais não é da mesma quadrada: f₁ = {dupla.f1_hz:.3f} Hz, e a das "
+                       f"separadas, {separada.f1_hz:.3f} Hz.")
+    if dupla.n[0] != 1 or not dupla.usado[0]:
+        raise ErroSHAN(f"a fundamental da captura de dois canais ({dupla.f1_hz:.1f} Hz) não passou nos critérios: ela "
+                       "não serve de âncora.")
+    r1 = complex(dupla.razao[0])
+    mudanca = math.log(abs(separada.razao[0]) / abs(r1))
+    razao = separada.razao * math.exp(-mudanca) * np.exp(1j * separada.n * np.angle(r1))
+    sigma_ln = np.sqrt(separada.sigma_ln ** 2 + dupla.sigma_ln[0] ** 2 + separada.sigma_ln[0] ** 2)
+    sigma_fase = np.sqrt(separada.sigma_fase ** 2 + (separada.n * dupla.sigma_fase[0]) ** 2)
+    return replace(separada, razao=razao, sigma_ln=sigma_ln, sigma_fase=sigma_fase, fase_relativa=False), mudanca
 
 
 def subtrair_diafonia(r: RazaoQuadrada, diafonias: list[RazaoQuadrada]) -> RazaoQuadrada:

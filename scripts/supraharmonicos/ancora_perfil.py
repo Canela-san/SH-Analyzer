@@ -7,6 +7,7 @@ canal (até 190 kHz) segue com eles; o resíduo na sobreposição é a conferên
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, replace
 
@@ -16,7 +17,11 @@ from .erros import ErroSHAN
 from .fase_quadrada import RespostaCombinada
 from .perfil_complexo import PerfilComplexo
 
+log = logging.getLogger(__name__)
+
 PONTOS_MINIMOS = 3
+RESIDUO_MAXIMO_DB = 0.1         # acima disso (ou de RESIDUO_MAXIMO_GRAUS), os dois métodos discordam: aviso
+RESIDUO_MAXIMO_GRAUS = 1.0
 
 
 @dataclass
@@ -56,6 +61,18 @@ def ajustar_a_ancora(curva: RespostaCombinada, ancora: PerfilComplexo, ate_hz: f
                         float(20 / math.log(10) * np.sqrt(np.mean((d_ln - ln_k) ** 2))),
                         float(np.degrees(np.sqrt(np.mean((d_fa - a * fs) ** 2)))), int(np.sum(sel)), float(fs[0]),
                         float(fs[-1]))
+
+
+def relatar_ancora(ident: str, a: AjusteAncora, curva: str = "da curva de um canal") -> None:
+    texto = (f"Âncora '{ident}': {a.n_pontos} faixas em comum, de {a.de_hz:.0f} Hz a {a.ate_hz / 1e3:.1f} kHz; "
+             f"K = {math.exp(a.ln_k):.5f} ± {a.sigma_ln_k * math.exp(a.ln_k):.5f}; atraso aparente {curva} "
+             f"{a.atraso_s * 1e6:+.4f} ± {a.sigma_inclinacao / (2 * math.pi) * 1e6:.4f} µs (descontado); depois disso, "
+             f"resíduo de {a.residuo_db:.4f} dB e {a.residuo_graus:.3f}° entre os dois métodos")
+    if a.residuo_db > RESIDUO_MAXIMO_DB or a.residuo_graus > RESIDUO_MAXIMO_GRAUS:
+        log.warning(texto + ": os métodos discordam além do esperado (o perfil da âncora é da mesma cadeia, na mesma "
+                    "faixa e com o mesmo --ganho?).")
+    else:
+        log.info(texto)
 
 
 def curva_ancorada(curva: RespostaCombinada, ajuste: AjusteAncora) -> RespostaCombinada:

@@ -877,6 +877,20 @@ mesmo limite de qualquer análise V×I em produção.
    uv run scripts/medir_fase.py $DIA/CAL1_*/F_*_f5.12_*.bin --canal 0 --entrada $DIA/CAL1_*/ref_*.csv --ancora scripts/sondas/sct013_100a_sn001.json --passa-alta --saida-perfil scripts/sondas/sct013_100a_sn001_190k.json
    ```
 
+   **Ou sem o osciloscópio: capturas separadas** (`--separadas`). Para cada quadrada, o gerador parado nela, três
+   capturas em seguida: o canal medido sozinho, o de referência sozinho (os dois a 400 kS/s, até ~190 kHz) e os dois
+   juntos. Duas capturas separadas não têm instante em comum, mas cada harmônico relativo à fundamental da própria
+   captura (girado por n vezes a fase dela) não depende do instante: a razão disso entre as duas é H_I/H_V a menos de
+   n·θ₁ e da mudança de amplitude do gerador entre elas. A captura de dois canais da mesma quadrada dá as duas coisas
+   (θ₁ e o módulo da fundamental), e nos harmônicos que ela também mede (abaixo de 95 kHz) os dois métodos se
+   conferem. Saem magnitude e fase até onde vai o perfil de tensão de referência. Com `--ancora`, o resultado é
+   emendado num perfil de outra sessão da mesma sonda (K e o atraso na sobreposição): o Z do laço de cada sessão
+   entra no `--shunt` dela.
+
+   ```fish
+   uv run scripts/medir_fase.py $DIA/ALT_*/IV_*.bin --canal 0 --canal-referencia 1 --separadas $DIA/ALT_*/I_*.bin $DIA/ALT_*/V_*.bin --perfil-referencia scripts/sondas/cadeia_tensao_fase.json --shunt $DIA/shunt_laco.csv --espiras 16 --ganho 19.65 --ancora <perfil da coleta> --saida-perfil scripts/sondas/sct013_100a_sn001.json
+   ```
+
 **O que torna o perfil de corrente confiável** (o roteiro do T10 tem o passo a passo):
 
 * os dois métodos concordarem na sobreposição (o resíduo do `--ancora`), e senoides fora da grade (`gerar_perfil_sonda.py

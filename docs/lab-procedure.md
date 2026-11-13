@@ -303,6 +303,29 @@ dois canais a 400 kS/s, que é também a banda da potência por componente em pr
 sem o `--saida-perfil` até ter o Z(f) dele (passo 3b). Assim, um perfil com a indutância de R não fica com o nome da
 sonda.
 
+**5b. Acima de 95 kHz: capturas separadas (~15 min, sem osciloscópio).** Com dois canais, cada um vai a 200 kS/s e
+o perfil para em ~95 kHz. Cada canal sozinho, a 400 kS/s, vai até ~190 kHz. Para cada quadrada, o gerador parado
+nela, faça três capturas em seguida: a corrente sozinha, a tensão sozinha e as duas juntas. A de dois canais dá a
+fase e o módulo da fundamental às outras duas, e nos harmônicos abaixo de 95 kHz confere o método. Não mexa no laço
+entre esta etapa e a medida do Z(f) dele (passo 3b ou o LCR).
+
+```bash
+q() { d=ALT_$(date +%F); mkdir -p $d; sudo ./ler_adc 400000 0 --faixa-adc 0:5.12 --duracao 30s --grandeza 0:corrente --sonda 0:sct013_100a_sn001 -o $d/I_quadrada${1}Hz.bin -t "I quadrada $1 Hz" -d "quadrada f=${1}Hz" && sudo ./ler_adc 400000 1 --faixa-adc 1:5.12 --duracao 30s --grandeza 1:tensao --sonda 1:cadeia_tensao_fase -o $d/V_quadrada${1}Hz.bin -t "V quadrada $1 Hz" -d "quadrada f=${1}Hz" && sudo ./ler_adc 400000 0,1 --faixa-adc 0:5.12,1:5.12 --duracao 30s --grandeza 0:corrente,1:tensao -o $d/IV_quadrada${1}Hz.bin -t "IV quadrada $1 Hz" -d "quadrada f=${1}Hz"; }
+```
+
+Depois, uma quadrada de cada vez (20 Vpp, High-Z): `q 6912`, `q 20736`, `q 25344`, `q 30976` e `q 38144` (múltiplos
+ímpares de 256 Hz, com harmônicos em 104, 114, 127, 145, 155 e 177 kHz). No computador, com o Z(f) do laço como está
+e o perfil do passo 5 como âncora (o K e o atraso saem dele na sobreposição; o perfil gravado usa os pontos dele até
+o fim e os destas capturas acima):
+
+```fish
+uv run scripts/medir_fase.py $DIA/ALT_*/IV_*.bin --canal 0 --canal-referencia 1 --separadas $DIA/ALT_*/I_*.bin $DIA/ALT_*/V_*.bin --perfil-referencia scripts/sondas/cadeia_tensao_fase.json --shunt $DIA/shunt_laco.csv --espiras 16 --ganho 19.65 --ancora scripts/sondas/sct013_100a_sn001.json --csv $DIA/alt.csv --plot $DIA/alt.png --saida-perfil scripts/sondas/sct013_100a_sn001.json
+```
+
+Confira na saída, para cada quadrada, a linha `ancoradas em IV_...`: a amplitude do gerador entre as capturas
+separadas (centésimos de dB) e a diferença para a de dois canais nos harmônicos em comum (esperado: ≤ 0,01 dB e
+≤ 0,1°). E a linha `Âncora`: o resíduo entre esta sessão e a do passo 5 (esperado: ≤ 0,03 dB e ≤ 0,5°).
+
 **6. As conferências (~30 min).** Cada uma é o mesmo comando com `--quadradas "1280 6912 20736"` e outro `--sonda`:
 
 | Conferência | O que muda | Esperado |
