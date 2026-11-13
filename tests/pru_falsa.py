@@ -19,6 +19,7 @@ import struct
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -70,7 +71,7 @@ def compilar_ler_adc(pasta: Path) -> Path:
     fonte.write_text(HARNESS)
     binario = pasta / "ler_adc"
     r = subprocess.run(["gcc", "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-O1", f"-I{FIRMWARE}",
-                        '-DVERSAO_FIRMWARE="teste-placa-falsa"', "-o", str(binario), str(fonte)],
+                        '-DVERSAO_FIRMWARE="teste-placa-falsa"', "-o", str(binario), str(fonte), "-lm"],
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     return binario
@@ -100,8 +101,12 @@ class PruFalsa(threading.Thread):
     folga: int = 18
     max_blocos: int | None = None           # para de produzir depois de tantos blocos
     demora_para_ficar_pronta_s: float = 0.0  # o tempo do start do remoteproc até o pru_main.c avisar
+    # As amostras de cada bloco, em vez da rampa: sinal(taxa_total_hz, auto_seq_mask, k) -> AMOSTRAS_POR_BLOCO códigos
+    # (o 'ler_adc verificar' precisa de um espectro de verdade). A taxa é a da configuração que o ARM escreveu.
+    sinal: Callable[[float, int, int], np.ndarray] | None = None
     instante_da_configuracao: float = 0.0   # time.time() em que ela viu config_ready = 1
     configuracao: dict[str, int] = field(default_factory=dict)      # o que o ARM escreveu antes de config_ready = 1
+    configuracoes: list[dict[str, int]] = field(default_factory=list)   # a de cada reinício, em ordem
     blocos_prontos: int = 0
     instantes_pronto: list[float] = field(default_factory=list)     # time.monotonic() de cada marca de pronto
     erro: BaseException | None = None
@@ -144,18 +149,31 @@ class PruFalsa(threading.Thread):
         except BaseException as e:           # noqa: BLE001 -- o erro da thread aparece no parar()
             self.erro = e
 
+    def _reiniciada(self) -> bool:
+        """O ARM pôs a marca de novo: reiniciou a PRU para outra captura (o 'ler_adc verificar' faz uma por taxa)."""
+        return self.ler("versao_protocolo_pru") == AINDA_NAO_INICIOU
+
     def _rodar(self) -> None:
+        # Cada volta é um boot da PRU: o ARM a reinicia (a marca em versao_protocolo_pru) a cada captura.
+        while not self._parar.is_set():
+            if not self._uma_captura():
+                return
+
+    def _uma_captura(self) -> bool:
+        """Uma captura, do boot ao fim. False = parar (o teste acabou, ou a PRU não responde)."""
         # pru_main.c: com a marca do ARM no lugar (ele acabou de dar o start), zera config_ready e só então avisa.
-        if not self._esperar(lambda: self.ler("versao_protocolo_pru") == AINDA_NAO_INICIOU) or not self.responde:
-            return
+        if not self._esperar(self._reiniciada) or not self.responde:
+            return False
         if self._parar.wait(self.demora_para_ficar_pronta_s):
-            return
+            return False
         self.escrever("config_ready", 0)
         self.escrever("versao_protocolo_pru", 0)
         if not self._esperar(lambda: self.ler("config_ready") == 1):
-            return
+            return False
         self.instante_da_configuracao = time.time()
         self.configuracao = {campo: self.ler(campo) for campo in CAMPOS}
+        self.configuracoes.append(self.configuracao)
+        taxa = 200e6 / self.configuracao["sample_period_ticks"]
         # spi_core.asm, antes da 1ª amostra: zera o que publica e escreve a versão do protocolo.
         for campo in ("amostras_atrasadas", "buffers_sobrescritos", "quadros_preambulo_ruim", "atraso_maximo_ciclos",
                       "divergencias_fase_a", "divergencias_fase_c", "active_buffer"):
@@ -169,12 +187,22 @@ class PruFalsa(threading.Thread):
         while not self._parar.is_set() and (self.max_blocos is None or k < self.max_blocos):
             b = k % 2
             pronto = f"buffer_{b}_ready"
-            if self.ler(pronto) != 0 and not self._esperar(lambda: self.ler(pronto) == 0):      # noqa: B023
-                return
-            dados = np.zeros(AMOSTRAS_POR_BLOCO, dtype="<u2") if self.mudo else bloco_esperado(k, self.satura)
+            if self.ler(pronto) != 0 and not self._esperar(
+                    lambda: self.ler(pronto) == 0 or self._reiniciada()):                       # noqa: B023
+                return False
+            if self._reiniciada():
+                return True
+            if self.mudo:
+                dados = np.zeros(AMOSTRAS_POR_BLOCO, dtype="<u2")
+            elif self.sinal is not None:
+                dados = np.asarray(self.sinal(taxa, self.configuracao["auto_seq_mask"], k), dtype="<u2")
+            else:
+                dados = bloco_esperado(k, self.satura)
             self._ddr[b * BYTES_POR_BUFFER:(b + 1) * BYTES_POR_BUFFER] = dados.tobytes()
             if self._parar.wait(self.intervalo_s):
-                return
+                return False
+            if self._reiniciada():
+                return True
             # A troca e os eventos 1 a 7: o buffer pronto, o ativo e os contadores, nesta ordem.
             if self.da_uma_volta_no_arm and k == 0:
                 k = 1                        # o ARM "não viu" o bloco 0 a tempo: a marca dele só vem com a do bloco 1
@@ -196,6 +224,7 @@ class PruFalsa(threading.Thread):
             self.escrever("quadros_preambulo_ruim", k * self.preambulo_por_bloco)
             self.escrever("folga_minima_ciclos", self.folga)
             self.escrever("atraso_maximo_ciclos", 77 if self.atrasadas_por_bloco else 0)
+        return True
 
 
 class PlacaFalsa:

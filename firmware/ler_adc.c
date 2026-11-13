@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <math.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -385,6 +386,9 @@ static void imprimir_ajuda(const char *argv0) {
            "  -v, --verbose         mostra também os detalhes: cabeçalho, PRU, pinos, cada bloco, tempos\n"
            "  -h, --help            esta ajuda\n"
            "\n"
+           "%sVerificação rápida%s\n"
+           "  sudo ./%s verificar   há supraharmônicos no sinal? Escreve só 1 ou 0 (%s verificar --help)\n"
+           "\n"
            "Antes de capturar, o ler_adc confere a memória reservada da DDR e os pinos da PRU (P9_28 a\n"
            "P9_31; se a placa reiniciou, ele os configura de novo) e, a cada bloco, que o ADC está\n"
            "respondendo.\n"
@@ -405,6 +409,7 @@ static void imprimir_ajuda(const char *argv0) {
            ansi(stdout, NEGRITO), fim_ansi(stdout), ATRASO_CS_SETUP_PADRAO, ATRASO_CS_HOLD_PADRAO,
            ATRASO_CS_ALTO_PADRAO,
            ansi(stdout, NEGRITO), fim_ansi(stdout),
+           ansi(stdout, NEGRITO), fim_ansi(stdout), programa, programa,
            ansi(stdout, NEGRITO), fim_ansi(stdout),
            ansi(stdout, NEGRITO), fim_ansi(stdout), programa, programa, programa, programa);
 }
@@ -1073,6 +1078,95 @@ static int reiniciar_pru_antes_da_captura(volatile struct shared_control *ctrl) 
     return 0;
 }
 
+// A RAM compartilhada da PRU e os dois buffers da DDR, mapeados pelo /dev/mem (a captura e o verificar).
+struct placa {
+    int mem_fd;
+    void *ctrl_map;
+    void *ddr_map;
+    size_t bytes_por_buffer;
+    volatile struct shared_control *ctrl;
+};
+
+// Confere a reserva da DDR e os pinos da PRU e mapeia a RAM compartilhada e os buffers. 0, ou -1 com o erro impresso.
+static int abrir_placa(struct placa *p) {
+    p->bytes_por_buffer = (size_t)SAMPLES_PER_BUFFER * sizeof(uint16_t);
+    unsigned long long fim_ddr = (unsigned long long)DDR_RESERVED_PHYS + p->bytes_por_buffer * BUFFERS_PING_PONG;
+    if (conferir_ddr_reservada(CAMINHO_IOMEM, DDR_RESERVED_PHYS, fim_ddr) != 0) {
+        return -1;
+    }
+    detalhe("DDR dos buffers fora do Linux (0x%X-0x%llX)", DDR_RESERVED_PHYS, fim_ddr - 1);
+    if (preparar_pinos_da_pru(BASE_PINMUX) < 0) {
+        return -1;
+    }
+    p->mem_fd = open(CAMINHO_DEV_MEM, O_RDWR | O_SYNC);
+    if (p->mem_fd < 0) {
+        erro("não deu para abrir %s: %s.", CAMINHO_DEV_MEM, strerror(errno));
+        return -1;
+    }
+    p->ctrl_map = mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, p->mem_fd, PRU_SHARED_RAM_PHYS);
+    if (p->ctrl_map == MAP_FAILED) {
+        erro("não deu para mapear a RAM compartilhada da PRU: %s.", strerror(errno));
+        close(p->mem_fd);
+        return -1;
+    }
+    p->ctrl = (volatile struct shared_control *)p->ctrl_map;
+    p->ddr_map = mmap(0, p->bytes_por_buffer * BUFFERS_PING_PONG, PROT_READ, MAP_SHARED, p->mem_fd, DDR_RESERVED_PHYS);
+    if (p->ddr_map == MAP_FAILED) {
+        erro("não deu para mapear a DDR reservada: %s.", strerror(errno));
+        munmap(p->ctrl_map, 4096);
+        close(p->mem_fd);
+        return -1;
+    }
+    return 0;
+}
+
+static void fechar_placa(struct placa *p) {
+    munmap(p->ddr_map, p->bytes_por_buffer * BUFFERS_PING_PONG);
+    munmap(p->ctrl_map, 4096);
+    close(p->mem_fd);
+}
+
+// A configuração de uma captura na RAM compartilhada, com a PRU já reiniciada (reiniciar_pru_antes_da_captura). Ela
+// só a lê depois do config_ready = 1, que fica com quem chama (a captura marca o instante da largada logo antes).
+static void escrever_configuracao_da_pru(volatile struct shared_control *ctrl, size_t bytes_por_buffer, uint32_t ticks,
+                                         uint32_t mascara, uint32_t range_sel, const uint32_t atrasos_cs[3],
+                                         uint32_t modo_spi) {
+    ctrl->buffer_0_addr = DDR_RESERVED_PHYS;
+    ctrl->buffer_1_addr = DDR_RESERVED_PHYS + (uint32_t)bytes_por_buffer;
+    ctrl->buffer_0_ready = 0;
+    ctrl->buffer_1_ready = 0;
+    ctrl->sample_period_ticks = ticks;
+    ctrl->auto_seq_mask = mascara;
+    ctrl->range_sel = range_sel;
+    ctrl->amostras_atrasadas = 0;
+    ctrl->buffers_sobrescritos = 0;
+    ctrl->quadros_preambulo_ruim = 0;
+    ctrl->atraso_cs_setup = atrasos_cs[0];
+    ctrl->atraso_cs_hold = atrasos_cs[1];
+    ctrl->atraso_cs_alto = atrasos_cs[2];
+    ctrl->modo_spi = modo_spi;
+    ctrl->divergencias_fase_a = 0;
+    ctrl->divergencias_fase_c = 0;
+    ctrl->folga_minima_ciclos = 0;
+    ctrl->atraso_maximo_ciclos = 0;
+    ctrl->ciclos_rebase = 0;
+}
+
+// Depois do config_ready = 1: a PRU escreve a versão do protocolo depois de configurar o ADS8688 e de esperá-lo
+// acomodar (~2 ms). Outro valor = o fw_pru.out carregado não é o deste ler_adc (o 'make' foi feito, mas a PRU não
+// recebeu o firmware novo, ou o contrário). 0, ou -1 com o erro impresso (quem chama para a PRU).
+static int esperar_protocolo_da_pru(volatile struct shared_control *ctrl) {
+    for (int espera_ms = 0; espera_ms < 500 && ctrl->versao_protocolo_pru == 0; espera_ms++) {
+        usleep(1000);
+    }
+    if (ctrl->versao_protocolo_pru != VERSAO_PROTOCOLO_PRU) {
+        erro("o firmware da PRU não é o deste ler_adc (protocolo %u; este espera %u): recompile e recarregue os dois "
+             "com sudo ./setup.sh.", ctrl->versao_protocolo_pru, VERSAO_PROTOCOLO_PRU);
+        return -1;
+    }
+    return 0;
+}
+
 // Saída com erro depois de a PRU ser ligada: para a PRU (senão ela seguiria escrevendo na DDR até a próxima captura),
 // fecha o arquivo, se aberto, e desfaz os mapeamentos.
 static int abortar_captura(FILE *arquivo, void *ddr_map, size_t bytes_ddr, void *ctrl_map, int mem_fd) {
@@ -1603,6 +1697,827 @@ static void imprimir_resultado(const struct configuracao *c, volatile struct sha
 }
 
 // =====================================================================================================================
+// verificar: há supraharmônicos no sinal? (sudo ./ler_adc verificar)
+// =====================================================================================================================
+// Um testador rápido: captura 1 bloco em cada taxa (400 e 312,5 kS/s por padrão), procura as bandas de 200 Hz (as da
+// IEC 61000-4-7, de 2 a 150 kHz) que fiquem LIMIAR dB acima do piso local e escreve no stdout só 1 (há) ou 0 (não há);
+// o relatório vai para o stderr. Uma componente só conta se aparecer na mesma frequência em todas as taxas: uma que muda
+// de lugar com a taxa é a imagem (aliasing) de um sinal acima da Nyquist, e o relatório diz de qual frequência.
+//
+// O espectro: o bloco sem a média, um passa-alta Butterworth de 4ª ordem em --de / 2 (tira a fundamental e os
+// harmônicos baixos, cujo vazamento pela janela subiria o piso perto de 2 kHz com a rede no fundo de escala), as
+// primeiras amostras descartadas (o filtro acomodando) e a média de |FFT|² em segmentos de 16384 amostras com a janela
+// Blackman-Harris de 4 termos. O piso de cada banda é a mediana das 50 vizinhas de cada lado (±10 kHz): o piso do ADC
+// cai ~15 dB de 2 a 130 kHz (o filtro de ~15 kHz do ADS8688 molda o ruído do PGA), e um piso único acusaria o começo
+// da faixa.
+//
+// Calibrado nas capturas de 23/10/2026 (±2,56 V, 400 kS/s): 60 Hz limpo dá no máximo +3,6 dB acima do piso; o gerador
+// desligado ligado ao divisor, +8,8 dB em 18 kHz (captação); 9 kHz com 5 mVpp na entrada do divisor (−70 dBc), +21 dB;
+// e um tom de 270 kHz aparece em 130 kHz a 400 kS/s e em 50 kHz a 320 kS/s. Daí o limiar padrão de 15 dB.
+
+#define VERIFICAR_N_FFT 16384u
+#define VERIFICAR_BINS (VERIFICAR_N_FFT / 2u + 1u)
+#define VERIFICAR_LARGURA_BANDA_HZ 200.0
+#define VERIFICAR_MAX_BANDAS 1300                 // até a Nyquist de 500 kS/s (250 kHz), em bandas de 200 Hz
+#define VERIFICAR_VIZINHAS 50                     // bandas de cada lado na mediana do piso local (±10 kHz)
+#define VERIFICAR_DESCARTE 8192u                  // amostras do começo: o passa-alta e o ADC acomodando (20 ms a 400 kS/s)
+#define VERIFICAR_MAX_TAXAS 4
+#define VERIFICAR_MAX_COMPONENTES 48
+#define VERIFICAR_MAIS_ALTAS 5                    // as bandas mais altas de cada taxa, no -v
+#define VERIFICAR_LIMIAR_PADRAO_DB 15.0
+#define VERIFICAR_DE_PADRAO_HZ 2000.0
+#define VERIFICAR_ATE_PADRAO_HZ 150000.0
+#define VERIFICAR_ALIAS_MAX_HZ 1000000.0          // até onde procurar a frequência verdadeira de uma imagem
+#define VERIFICAR_FOLGA_HZ 400.0                  // a mesma componente em duas taxas: as bandas se tocam com esta folga
+// O filtro do ADS8688 (T3f, bench-results.md): 2ª ordem com f0 = 22,811 kHz e Q = 0,5, e um polo em 800 kHz. Só para o
+// relatório estimar o nível na entrada; a decisão não depende dele.
+#define FILTRO_ADC_F0_HZ 22811.0
+#define FILTRO_ADC_Q 0.5001
+#define FILTRO_ADC_POLO_HZ 800000.0
+
+enum situacao_componente { COMPONENTE_FORA = 0, COMPONENTE_CONFIRMADA, COMPONENTE_IMAGEM, COMPONENTE_SO_NESTA_TAXA };
+
+struct componente_espectral {
+    double f_inicio, f_fim;             // as bordas das bandas acima do limiar (Hz)
+    double f_pico;                      // o bin mais forte entre elas
+    double excesso_db;                  // a banda mais forte, acima do piso local
+    double rms_lsb;                     // as bandas somadas, em LSB rms no pino
+    int situacao;                       // enum situacao_componente
+    double f_verdadeira;                // [imagem] a frequência que explica a componente em todas as taxas
+};
+
+struct analise_espectral {
+    uint32_t taxa;
+    double fs, nyquist;
+    int segmentos;
+    int num_bandas;
+    double piso_mediano_lsb;            // a mediana do piso local, em LSB rms por banda
+    int num_componentes;
+    int componentes_demais;             // as que passaram do limiar mas não couberam
+    struct componente_espectral componentes[VERIFICAR_MAX_COMPONENTES];
+    double mais_altas_hz[VERIFICAR_MAIS_ALTAS], mais_altas_db[VERIFICAR_MAIS_ALTAS];   // o centro e o excesso
+};
+
+static double janela_bh[VERIFICAR_N_FFT];
+static double soma_janela2;
+static double cos_tab[VERIFICAR_N_FFT / 2u], sin_tab[VERIFICAR_N_FFT / 2u];   // cos e sen de 2πi/N
+
+static void preparar_tabelas_fft(void) {
+    static int prontas = 0;
+    if (prontas) {
+        return;
+    }
+    const double n = (double)VERIFICAR_N_FFT;
+    soma_janela2 = 0.0;
+    for (unsigned i = 0; i < VERIFICAR_N_FFT; i++) {
+        double x = 2.0 * M_PI * (double)i / n;
+        janela_bh[i] = 0.35875 - 0.48829 * cos(x) + 0.14128 * cos(2.0 * x) - 0.01168 * cos(3.0 * x);
+        soma_janela2 += janela_bh[i] * janela_bh[i];
+    }
+    for (unsigned i = 0; i < VERIFICAR_N_FFT / 2u; i++) {
+        cos_tab[i] = cos(2.0 * M_PI * (double)i / n);
+        sin_tab[i] = sin(2.0 * M_PI * (double)i / n);
+    }
+    prontas = 1;
+}
+
+// FFT complexa iterativa, no lugar, de tamanho m (potência de 2, até VERIFICAR_N_FFT / 2): e^(-j2πk/m) é a tabela de
+// N em k·N/m.
+static void fft_complexa(double *re, double *im, unsigned m) {
+    for (unsigned i = 1, j = 0; i < m; i++) {
+        unsigned bit = m >> 1;
+        for (; j & bit; bit >>= 1) {
+            j ^= bit;
+        }
+        j ^= bit;
+        if (i < j) {
+            double t = re[i]; re[i] = re[j]; re[j] = t;
+            t = im[i]; im[i] = im[j]; im[j] = t;
+        }
+    }
+    for (unsigned tamanho = 2; tamanho <= m; tamanho <<= 1) {
+        unsigned meio = tamanho / 2u, passo = VERIFICAR_N_FFT / tamanho;
+        for (unsigned inicio = 0; inicio < m; inicio += tamanho) {
+            for (unsigned k = 0; k < meio; k++) {
+                double wr = cos_tab[k * passo], wi = -sin_tab[k * passo];
+                unsigned a = inicio + k, b = a + meio;
+                double tr = re[b] * wr - im[b] * wi, ti = re[b] * wi + im[b] * wr;
+                re[b] = re[a] - tr;
+                im[b] = im[a] - ti;
+                re[a] += tr;
+                im[a] += ti;
+            }
+        }
+    }
+}
+
+// Soma |X[k]|² (k = 0 a N/2) da FFT real de N amostras: as pares e as ímpares viram uma complexa de N/2 pontos, e a
+// separação no fim dá o espectro de N (o dobro de rápido que uma FFT complexa de N com a parte imaginária nula).
+static void acumular_potencia(const double *x, double *potencia) {
+    static double re[VERIFICAR_N_FFT / 2u], im[VERIFICAR_N_FFT / 2u];
+    const unsigned m = VERIFICAR_N_FFT / 2u;
+    for (unsigned i = 0; i < m; i++) {
+        re[i] = x[2u * i];
+        im[i] = x[2u * i + 1u];
+    }
+    fft_complexa(re, im, m);
+    for (unsigned k = 0; k <= m; k++) {
+        unsigned a = k % m, b = (m - k) % m;
+        double zr = re[a], zi = im[a], cr = re[b], ci = -im[b];           // Z[k] e conj(Z[m-k])
+        double er = 0.5 * (zr + cr), ei = 0.5 * (zi + ci);                // a FFT das pares
+        double orr = 0.5 * (zi - ci), oi = -0.5 * (zr - cr);              // a das ímpares: (Z[k] - conj(Z[m-k])) / 2j
+        double wr = k < m ? cos_tab[k] : -1.0, wi = k < m ? -sin_tab[k] : 0.0;   // e^(-j2πk/N)
+        double xr = er + wr * orr - wi * oi, xi = ei + wr * oi + wi * orr;
+        potencia[k] += xr * xr + xi * xi;
+    }
+}
+
+struct biquad {
+    double b0, b1, b2, a1, a2, z1, z2;
+};
+
+// Passa-alta de 2ª ordem (bilinear, o do "Audio EQ Cookbook"); dois em série com Q 0,5412 e 1,3066 = Butterworth de 4ª.
+static void preparar_passa_alta(struct biquad *f, double fc, double fs, double q) {
+    double w0 = 2.0 * M_PI * fc / fs, c = cos(w0), alfa = sin(w0) / (2.0 * q), a0 = 1.0 + alfa;
+    f->b0 = (1.0 + c) / 2.0 / a0;
+    f->b1 = -(1.0 + c) / a0;
+    f->b2 = f->b0;
+    f->a1 = -2.0 * c / a0;
+    f->a2 = (1.0 - alfa) / a0;
+    f->z1 = f->z2 = 0.0;
+}
+
+static double filtrar(struct biquad *f, double x) {      // forma direta II transposta
+    double y = f->b0 * x + f->z1;
+    f->z1 = f->b1 * x - f->a1 * y + f->z2;
+    f->z2 = f->b2 * x - f->a2 * y;
+    return y;
+}
+
+static int comparar_double(const void *a, const void *b) {
+    double x = *(const double *)a, y = *(const double *)b;
+    return (x > y) - (x < y);
+}
+
+static double mediana(double *v, int n) {                 // reordena v
+    qsort(v, (size_t)n, sizeof(double), comparar_double);
+    return n % 2 ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
+}
+
+// O espectro de n códigos de UM canal tomados a fs, em bandas de 200 Hz de 'de' até a Nyquist, e as componentes: as
+// bandas vizinhas que ficam limiar_db acima do piso local, agrupadas. Preenche tudo de 'a' menos a taxa.
+static void analisar_bloco(const uint16_t *amostras, size_t n, double fs, double de, double limiar_db,
+                           struct analise_espectral *a) {
+    static double potencia[VERIFICAR_BINS];
+    static double segmento[VERIFICAR_N_FFT];
+    static double soma[VERIFICAR_MAX_BANDAS], nivel_db[VERIFICAR_MAX_BANDAS], piso_db[VERIFICAR_MAX_BANDAS];
+    static int bins[VERIFICAR_MAX_BANDAS];
+    static double vizinhas[2 * VERIFICAR_VIZINHAS + 1];
+
+    preparar_tabelas_fft();
+    memset(potencia, 0, sizeof(potencia));
+    double media = 0.0;
+    for (size_t i = 0; i < n; i++) {
+        media += amostras[i];
+    }
+    media /= (double)(n ? n : 1u);
+    struct biquad f1, f2;
+    preparar_passa_alta(&f1, de / 2.0, fs, 0.54119610);
+    preparar_passa_alta(&f2, de / 2.0, fs, 1.30656296);
+    unsigned cheio = 0;
+    int segmentos = 0;
+    for (size_t i = 0; i < n; i++) {
+        double y = filtrar(&f2, filtrar(&f1, (double)amostras[i] - media));
+        if (i < VERIFICAR_DESCARTE) {
+            continue;
+        }
+        segmento[cheio] = y * janela_bh[cheio];
+        if (++cheio == VERIFICAR_N_FFT) {
+            acumular_potencia(segmento, potencia);
+            cheio = 0;
+            segmentos++;
+        }
+    }
+
+    a->fs = fs;
+    a->nyquist = fs / 2.0;
+    a->segmentos = segmentos;
+    a->num_componentes = a->componentes_demais = 0;
+    // LSB² rms por bin: um tom de amplitude A soma A²/2 nos bins dele (Parseval com a janela).
+    double escala = segmentos ? 2.0 / ((double)VERIFICAR_N_FFT * soma_janela2 * (double)segmentos) : 0.0;
+    double resolucao = fs / (double)VERIFICAR_N_FFT;
+    int nb = (int)floor((a->nyquist - de) / VERIFICAR_LARGURA_BANDA_HZ);
+    nb = nb < 0 ? 0 : nb > VERIFICAR_MAX_BANDAS ? VERIFICAR_MAX_BANDAS : nb;
+    a->num_bandas = nb;
+    memset(soma, 0, sizeof(soma));
+    memset(bins, 0, sizeof(bins));
+    for (unsigned k = 1; k + 1u < VERIFICAR_BINS; k++) {
+        double f = (double)k * resolucao;
+        if (f < de) {
+            continue;
+        }
+        int b = (int)((f - de) / VERIFICAR_LARGURA_BANDA_HZ);
+        if (b >= nb) {
+            break;
+        }
+        soma[b] += potencia[k] * escala;
+        bins[b]++;
+    }
+    for (int b = 0; b < nb; b++) {       // a potência média por bin (as bandas têm 8 ou 9 bins)
+        double p = bins[b] ? soma[b] / bins[b] : 0.0;
+        nivel_db[b] = 10.0 * log10(p > 1e-30 ? p : 1e-30);
+    }
+    for (int b = 0; b < nb; b++) {
+        int c = 0;
+        for (int j = b - VERIFICAR_VIZINHAS; j <= b + VERIFICAR_VIZINHAS; j++) {
+            if (j != b && j >= 0 && j < nb) {
+                vizinhas[c++] = nivel_db[j];
+            }
+        }
+        piso_db[b] = c ? mediana(vizinhas, c) : nivel_db[b];
+    }
+    for (int i = 0; i < VERIFICAR_MAIS_ALTAS; i++) {
+        a->mais_altas_hz[i] = 0.0;
+        a->mais_altas_db[i] = -1e9;
+    }
+    for (int b = 0; b < nb; b++) {        // as mais altas, em ordem (para o -v)
+        double e = nivel_db[b] - piso_db[b];
+        for (int i = 0; i < VERIFICAR_MAIS_ALTAS; i++) {
+            if (e > a->mais_altas_db[i]) {
+                for (int j = VERIFICAR_MAIS_ALTAS - 1; j > i; j--) {
+                    a->mais_altas_db[j] = a->mais_altas_db[j - 1];
+                    a->mais_altas_hz[j] = a->mais_altas_hz[j - 1];
+                }
+                a->mais_altas_db[i] = e;
+                a->mais_altas_hz[i] = de + ((double)b + 0.5) * VERIFICAR_LARGURA_BANDA_HZ;
+                break;
+            }
+        }
+    }
+    if (nb > 0) {
+        static double copia[VERIFICAR_MAX_BANDAS];
+        memcpy(copia, piso_db, (size_t)nb * sizeof(double));
+        double bins_por_banda = VERIFICAR_LARGURA_BANDA_HZ / resolucao;
+        a->piso_mediano_lsb = sqrt(pow(10.0, mediana(copia, nb) / 10.0) * bins_por_banda);
+    } else {
+        a->piso_mediano_lsb = 0.0;
+    }
+
+    for (int b = 0; b < nb;) {
+        if (nivel_db[b] - piso_db[b] < limiar_db) {
+            b++;
+            continue;
+        }
+        int fim = b;
+        while (fim + 1 < nb && nivel_db[fim + 1] - piso_db[fim + 1] >= limiar_db) {
+            fim++;
+        }
+        if (a->num_componentes == VERIFICAR_MAX_COMPONENTES) {
+            a->componentes_demais++;
+            b = fim + 1;
+            continue;
+        }
+        struct componente_espectral *c = &a->componentes[a->num_componentes++];
+        memset(c, 0, sizeof(*c));
+        c->f_inicio = de + b * VERIFICAR_LARGURA_BANDA_HZ;
+        c->f_fim = de + (fim + 1) * VERIFICAR_LARGURA_BANDA_HZ;
+        c->excesso_db = -1e9;
+        double total = 0.0;
+        for (int j = b; j <= fim; j++) {
+            total += soma[j];
+            c->excesso_db = fmax(c->excesso_db, nivel_db[j] - piso_db[j]);
+        }
+        c->rms_lsb = sqrt(total);
+        unsigned k0 = (unsigned)ceil(c->f_inicio / resolucao), k1 = (unsigned)(c->f_fim / resolucao), pico = k0;
+        for (unsigned k = k0; k <= k1 && k < VERIFICAR_BINS; k++) {
+            pico = potencia[k] > potencia[pico] ? k : pico;
+        }
+        // O vértice da parábola pelos 3 bins em dB: o pico entre os bins (com a Blackman-Harris, erro de ~1 Hz).
+        double delta = 0.0;
+        if (pico > 0 && pico + 1u < VERIFICAR_BINS && potencia[pico - 1] > 0.0 && potencia[pico + 1] > 0.0) {
+            double esq = log(potencia[pico - 1]), meio = log(potencia[pico]), dir = log(potencia[pico + 1]);
+            double curva = esq - 2.0 * meio + dir;
+            delta = curva < 0.0 ? fmin(0.5, fmax(-0.5, 0.5 * (esq - dir) / curva)) : 0.0;
+        }
+        c->f_pico = ((double)pico + delta) * resolucao;
+        b = fim + 1;
+    }
+}
+
+// Onde a frequência f aparece amostrada a fs (de 0 a fs/2).
+static double dobrar_na_nyquist(double f, double fs) {
+    double r = fmod(f, fs);
+    return r > fs / 2.0 ? fs - r : r;
+}
+
+static int tem_componente_entre(const struct analise_espectral *a, double f_inicio, double f_fim) {
+    for (int k = 0; k < a->num_componentes; k++) {
+        const struct componente_espectral *c = &a->componentes[k];
+        if (c->f_fim + VERIFICAR_FOLGA_HZ > f_inicio && c->f_inicio - VERIFICAR_FOLGA_HZ < f_fim) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// Classifica as componentes de cada taxa que tocam [de, ate]: confirmada (na mesma frequência em todas as taxas),
+// imagem (um sinal acima da Nyquist desta taxa, em k·fs ± f, cai onde há componente em cada uma das outras) ou só
+// nesta taxa. Devolve quantas confirmadas a 1ª taxa tem (as mesmas das outras, contadas uma vez).
+static int classificar_componentes(struct analise_espectral *a, int num, double de, double ate) {
+    int confirmadas = 0;
+    for (int i = 0; i < num; i++) {
+        for (int k = 0; k < a[i].num_componentes; k++) {
+            struct componente_espectral *c = &a[i].componentes[k];
+            c->situacao = COMPONENTE_FORA;
+            if (c->f_fim <= de || c->f_inicio >= ate) {
+                continue;
+            }
+            int em_todas = 1;
+            for (int j = 0; j < num; j++) {
+                em_todas = em_todas && (j == i || tem_componente_entre(&a[j], c->f_inicio, c->f_fim));
+            }
+            if (em_todas) {
+                c->situacao = COMPONENTE_CONFIRMADA;
+                confirmadas += i == 0;
+                continue;
+            }
+            c->situacao = COMPONENTE_SO_NESTA_TAXA;
+            // fs - f < fs + f < 2fs - f < ...: a primeira que explica é a menor frequência possível.
+            for (int m = 1; c->situacao == COMPONENTE_SO_NESTA_TAXA && m * a[i].fs - c->f_pico <= VERIFICAR_ALIAS_MAX_HZ;
+                 m++) {
+                for (int s = -1; s <= 1; s += 2) {
+                    double ft = m * a[i].fs + s * c->f_pico;
+                    if (ft <= a[i].nyquist || ft > VERIFICAR_ALIAS_MAX_HZ) {
+                        continue;
+                    }
+                    int explica = 1;
+                    for (int j = 0; j < num && explica; j++) {
+                        double fj = dobrar_na_nyquist(ft, a[j].fs);
+                        explica = j == i || tem_componente_entre(&a[j], fj - VERIFICAR_LARGURA_BANDA_HZ / 2.0,
+                                                                 fj + VERIFICAR_LARGURA_BANDA_HZ / 2.0);
+                    }
+                    if (explica) {
+                        c->situacao = COMPONENTE_IMAGEM;
+                        c->f_verdadeira = ft;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    return confirmadas;
+}
+
+// O ganho do filtro do ADS8688 em f (o modelo do T3f).
+static double ganho_do_filtro_do_adc(double f) {
+    double u = f / FILTRO_ADC_F0_HZ, p = f / FILTRO_ADC_POLO_HZ;
+    return 1.0 / sqrt(((1.0 - u * u) * (1.0 - u * u) + (u / FILTRO_ADC_Q) * (u / FILTRO_ADC_Q)) * (1.0 + p * p));
+}
+
+struct opcoes_verificar {
+    int canal;
+    uint8_t faixa;
+    double ganho;                       // unidades na entrada por volt no pino (0 = só no pino)
+    uint32_t taxas[VERIFICAR_MAX_TAXAS];
+    int num_taxas;
+    double de, ate, limiar_db;
+    uint32_t modo_spi;
+    uint32_t atrasos_cs[3];
+};
+
+static void imprimir_ajuda_verificar(const char *argv0) {
+    const char *programa = strrchr(argv0, '/') ? strrchr(argv0, '/') + 1 : argv0;
+    printf("%sUso:%s sudo ./%s verificar [opções]\n"
+           "\n"
+           "Há supraharmônicos no sinal? Captura 1 bloco em cada taxa, procura as bandas de 200 Hz de 2 a\n"
+           "150 kHz que ficam acima do piso de ruído e escreve no stdout só %s1%s (há) ou %s0%s (não há). O\n"
+           "relatório vai para o stderr: no terminal aparecem os dois; em x=$(sudo ./%s verificar), só o número.\n"
+           "\n"
+           "Uma componente só conta se aparecer na mesma frequência em todas as taxas. Se ela muda de lugar com\n"
+           "a taxa, é a imagem (aliasing) de um sinal acima da Nyquist: não conta, e o relatório diz de onde vem.\n"
+           "\n"
+           "%sOpções%s\n"
+           "  --canal N             canal do ADS8688 (padrão: %d, o de tensão)\n"
+           "  --faixa-adc V         faixa total: 20.48 (±10,24 V, padrão; a rede de 127 V pelo divisor), 10.24\n"
+           "                        ou 5.12 (a sonda de corrente)\n"
+           "  --taxas F,F[,...]     taxas TOTAIS em Hz (padrão: 400000,312500); cada uma com a Nyquist acima de\n"
+           "                        --ate. Com uma taxa só, não há a conferência de aliasing\n"
+           "  --de HZ, --ate HZ     a faixa analisada (padrão: 2000 e 150000; aceita 2k, 150k)\n"
+           "  --limiar DB           quanto uma banda tem de ficar acima do piso local (padrão: %.0f). Menor =\n"
+           "                        mais sensível; 10 já acusa captação da bancada\n"
+           "  --ganho G             unidades na entrada por volt no pino (ex.: 19.357 no divisor): o relatório\n"
+           "                        estima o nível de cada componente na entrada\n"
+           "  --spi MODO, --atraso-cs S,H,A   como na captura\n"
+           "  -v, --verbose         mostra também as bandas mais altas de cada taxa e os detalhes da placa\n"
+           "  -h, --help            esta ajuda\n"
+           "\n"
+           "%sCódigos de saída%s  0 verificação feita (o resultado está no stdout) · 1 erro (inclusive a\n"
+           "entrada saturada: os cortes criariam falsos supraharmônicos) · 2 argumento inválido · 4 ADC sem\n"
+           "resposta · 5 interrompida. Fora o 0, o stdout fica vazio.\n"
+           "\n"
+           "%sExemplos%s\n"
+           "  sudo ./%s verificar                                  # a rede pelo divisor, no canal 1\n"
+           "  sudo ./%s verificar --ganho 19.357                   # com o nível na entrada do divisor\n"
+           "  sudo ./%s verificar --canal 0 --faixa-adc 5.12        # a sonda de corrente\n"
+           "  sudo ./%s verificar --de 9k                          # só de 9 a 150 kHz\n",
+           ansi(stdout, NEGRITO), fim_ansi(stdout), programa, ansi(stdout, NEGRITO), fim_ansi(stdout),
+           ansi(stdout, NEGRITO), fim_ansi(stdout), programa,
+           ansi(stdout, NEGRITO), fim_ansi(stdout), CANAL_PADRAO, VERIFICAR_LIMIAR_PADRAO_DB,
+           ansi(stdout, NEGRITO), fim_ansi(stdout),
+           ansi(stdout, NEGRITO), fim_ansi(stdout), programa, programa, programa, programa);
+}
+
+// "2000", "2k", "150k", "2.5k": em Hz, positivo. -1 com o erro impresso.
+static int analisar_hz(const char *texto, const char *opcao, double *valor) {
+    char *fim;
+    errno = 0;
+    double v = strtod(texto, &fim);
+    if (fim != texto && (*fim == 'k' || *fim == 'K')) {
+        v *= 1e3;
+        fim++;
+    }
+    if (fim == texto || *fim != '\0' || errno != 0 || !(v > 0.0) || !isfinite(v)) {
+        erro("%s '%s': use uma frequência positiva em Hz (2000 ou 2k).", opcao, texto);
+        return -1;
+    }
+    *valor = v;
+    return 0;
+}
+
+// Devolve SAIDA_OK ou SAIDA_USO (com o erro impresso). argv[0] é "verificar".
+static int analisar_opcoes_verificar(int argc, char *argv[], struct opcoes_verificar *o) {
+    memset(o, 0, sizeof(*o));
+    o->canal = CANAL_PADRAO;
+    o->faixa = FAIXA_ADC_PADRAO;
+    o->taxas[0] = FREQUENCIA_PADRAO_HZ;
+    o->taxas[1] = 312500u;
+    o->num_taxas = 2;
+    o->de = VERIFICAR_DE_PADRAO_HZ;
+    o->ate = VERIFICAR_ATE_PADRAO_HZ;
+    o->limiar_db = VERIFICAR_LIMIAR_PADRAO_DB;
+    o->modo_spi = MODO_SPI_RAPIDO_B;
+    o->atrasos_cs[0] = ATRASO_CS_SETUP_PADRAO;
+    o->atrasos_cs[1] = ATRASO_CS_HOLD_PADRAO;
+    o->atrasos_cs[2] = ATRASO_CS_ALTO_PADRAO;
+    for (int i = 1; i < argc; i++) {
+        const char *a = argv[i], *v = NULL;
+        if (strcmp(a, "-v") == 0 || strcmp(a, "--verbose") == 0 || strcmp(a, "--verboso") == 0) {
+            verboso = 1;
+            continue;
+        }
+        if (a[0] != '-') {
+            erro("argumento a mais: '%s' (o verificar só tem opções; veja verificar --help).", a);
+            return SAIDA_USO;
+        }
+        static const char *const com_valor[] = {"--canal", "--faixa-adc", "--taxas", "--de", "--ate", "--limiar",
+                                                "--ganho", "--spi", "--atraso-cs"};
+        int conhecida = 0;
+        for (size_t k = 0; k < sizeof(com_valor) / sizeof(com_valor[0]); k++) {
+            conhecida = conhecida || strcmp(a, com_valor[k]) == 0;
+        }
+        if (!conhecida) {
+            erro("opção desconhecida '%s' para o verificar (veja verificar --help).", a);
+            return SAIDA_USO;
+        }
+        if ((v = valor_da_opcao(argc, argv, &i)) == NULL) {
+            return SAIDA_USO;
+        }
+        if (strcmp(a, "--canal") == 0) {
+            char *fim;
+            long c = strtol(v, &fim, 10);
+            if (fim == v || *fim != '\0' || c < 0 || c >= ADS8688_MAX_CANAIS) {
+                erro("--canal '%s': use um canal de 0 a %d.", v, ADS8688_MAX_CANAIS - 1);
+                return SAIDA_USO;
+            }
+            o->canal = (int)c;
+        } else if (strcmp(a, "--faixa-adc") == 0) {
+            char *fim;
+            double span = strtod(v, &fim);
+            int codigo = -1;
+            for (int k = 0; fim != v && *fim == '\0' && k < FAIXA_ADC_NUM_CODIGOS; k++) {
+                codigo = fabs(span - FAIXA_ADC_ESPAN_V[k]) < 1e-6 ? k : codigo;
+            }
+            if (codigo < 0) {
+                erro("--faixa-adc '%s': use 20.48, 10.24 ou 5.12 (a faixa total; no verificar, sem o canal).", v);
+                return SAIDA_USO;
+            }
+            o->faixa = (uint8_t)codigo;
+        } else if (strcmp(a, "--taxas") == 0) {
+            char copia[128];
+            if (strlen(v) >= sizeof(copia)) {
+                erro("--taxas '%s': longa demais.", v);
+                return SAIDA_USO;
+            }
+            strcpy(copia, v);
+            o->num_taxas = 0;
+            for (char *salvo = NULL, *t = strtok_r(copia, ",", &salvo); t; t = strtok_r(NULL, ",", &salvo)) {
+                if (o->num_taxas == VERIFICAR_MAX_TAXAS) {
+                    erro("--taxas: no máximo %d taxas.", VERIFICAR_MAX_TAXAS);
+                    return SAIDA_USO;
+                }
+                if (analisar_frequencia(t, &o->taxas[o->num_taxas]) < 0) {
+                    return SAIDA_USO;
+                }
+                for (int k = 0; k < o->num_taxas; k++) {
+                    if (o->taxas[k] == o->taxas[o->num_taxas]) {
+                        erro("--taxas: %u repetida.", o->taxas[k]);
+                        return SAIDA_USO;
+                    }
+                }
+                o->num_taxas++;
+            }
+            if (o->num_taxas == 0) {
+                erro("--taxas '%s': nenhuma taxa.", v);
+                return SAIDA_USO;
+            }
+        } else if (strcmp(a, "--de") == 0 || strcmp(a, "--ate") == 0) {
+            if (analisar_hz(v, a, strcmp(a, "--de") == 0 ? &o->de : &o->ate) < 0) {
+                return SAIDA_USO;
+            }
+        } else if (strcmp(a, "--limiar") == 0 || strcmp(a, "--ganho") == 0) {
+            char *fim;
+            double x = strtod(v, &fim);
+            if (fim == v || *fim != '\0' || !(x > 0.0) || !isfinite(x)) {
+                erro("%s '%s': use um número positivo.", a, v);
+                return SAIDA_USO;
+            }
+            *(strcmp(a, "--limiar") == 0 ? &o->limiar_db : &o->ganho) = x;
+        } else if (strcmp(a, "--spi") == 0) {
+            int modo = analisar_modo_spi(v);
+            if (modo < 0) {
+                return SAIDA_USO;
+            }
+            o->modo_spi = (uint32_t)modo;
+        } else if (strcmp(a, "--atraso-cs") == 0) {
+            if (analisar_atrasos_cs(v, o->atrasos_cs) < 0) {
+                return SAIDA_USO;
+            }
+        } else {
+            erro("opção desconhecida '%s' para o verificar (veja verificar --help).", a);
+            return SAIDA_USO;
+        }
+    }
+    if (o->de < 500.0 || o->ate <= o->de + 4.0 * VERIFICAR_LARGURA_BANDA_HZ) {
+        erro("a faixa analisada (--de %.0f a --ate %.0f Hz) precisa começar em 500 Hz ou mais e ter ao menos 800 Hz.",
+             o->de, o->ate);
+        return SAIDA_USO;
+    }
+    for (int k = 0; k < o->num_taxas; k++) {
+        if (conferir_teto_da_taxa(o->taxas[k], o->modo_spi, o->atrasos_cs, 0) < 0) {
+            return SAIDA_USO;
+        }
+        double nyquist = (double)PRU_CLOCK_HZ / (double)(PRU_CLOCK_HZ / o->taxas[k]) / 2.0;
+        if (nyquist < o->ate) {
+            erro("a %u S/s, a Nyquist (%.0f Hz) fica abaixo de --ate (%.0f Hz): o que estiver acima dela apareceria "
+                 "dobrado. Use uma taxa de pelo menos %.0f S/s.", o->taxas[k], nyquist, o->ate, 2.0 * o->ate);
+            return SAIDA_USO;
+        }
+    }
+    return SAIDA_OK;
+}
+
+// Reinicia a PRU na taxa pedida (só o canal da verificação), copia o 1º bloco em destino e para a PRU. Um bloco que
+// não chega em 3 vezes o tempo dele + 5 s é erro (a PRU parada por outro ler_adc, por exemplo). Devolve SAIDA_OK,
+// SAIDA_ERRO, SAIDA_ADC_MUDO ou SAIDA_INTERROMPIDA.
+static int capturar_um_bloco(struct placa *p, const struct opcoes_verificar *o, uint32_t ticks, uint16_t *destino) {
+    volatile struct shared_control *ctrl = p->ctrl;
+    if (reiniciar_pru_antes_da_captura(ctrl) != 0) {
+        return SAIDA_ERRO;
+    }
+    uint32_t range_sel = ((uint32_t)o->faixa & 0xFu) << (4 * o->canal);
+    escrever_configuracao_da_pru(ctrl, p->bytes_por_buffer, ticks, 1u << o->canal, range_sel, o->atrasos_cs,
+                                 o->modo_spi);
+    ctrl->config_ready = 1;
+    if (esperar_protocolo_da_pru(ctrl) != 0) {
+        escrever_estado_remoteproc("stop");
+        return SAIDA_ERRO;
+    }
+    const volatile uint16_t *buffers[BUFFERS_PING_PONG] = {
+        (const volatile uint16_t *)p->ddr_map, (const volatile uint16_t *)p->ddr_map + SAMPLES_PER_BUFFER
+    };
+    volatile uint32_t *prontos[BUFFERS_PING_PONG] = {&ctrl->buffer_0_ready, &ctrl->buffer_1_ready};
+    double segundos_por_bloco = (double)SAMPLES_PER_BUFFER * (double)ticks / (double)PRU_CLOCK_HZ;
+    double limite = segundos_monotonicos() + 3.0 * segundos_por_bloco + 5.0;
+    while (manter_execucao) {
+        for (unsigned b = 0; b < BUFFERS_PING_PONG; b++) {
+            if (*prontos[b]) {
+                memcpy(destino, (const void *)buffers[b], p->bytes_por_buffer);
+                *prontos[b] = 0;
+                escrever_estado_remoteproc("stop");
+                int mudo = amostras_todas_iguais(destino, AMOSTRAS_CONFERIDAS_ADC_MUDO);
+                if (mudo) {
+                    erro("o ADC não está respondendo: as %u primeiras amostras valem todas 0x%04X. A placa de aquisição "
+                         "está na fonte de 5 V (pelo USB ela fica desligada)? Os pinos da PRU estão configurados "
+                         "(sudo ./setup.sh)?", AMOSTRAS_CONFERIDAS_ADC_MUDO, destino[0]);
+                }
+                return mudo ? SAIDA_ADC_MUDO : SAIDA_OK;
+            }
+        }
+        if (segundos_monotonicos() > limite) {
+            erro("nenhum bloco chegou em %.0f s (um bloco enche em %.1f s). A PRU está em '%s'? Outro ler_adc pode tê-la "
+                 "parado: confira com pgrep ler_adc.", 3.0 * segundos_por_bloco + 5.0, segundos_por_bloco,
+                 REMOTEPROC_PRU0_ESTADO);
+            escrever_estado_remoteproc("stop");
+            return SAIDA_ERRO;
+        }
+        usleep(2000);
+    }
+    escrever_estado_remoteproc("stop");
+    return SAIDA_INTERROMPIDA;
+}
+
+static const char *taxa_legivel(uint32_t taxa, char *texto, size_t tamanho) {
+    snprintf(texto, tamanho, "%g kS/s", (double)taxa / 1e3);
+    return texto;
+}
+
+static void imprimir_relatorio_verificar(const struct opcoes_verificar *o, struct analise_espectral *a, int confirmadas) {
+    double lsb = FAIXA_ADC_ESPAN_V[o->faixa] / 65536.0;
+    char t[32], t2[32];
+    if (confirmadas > 0) {
+        printf("\n%s%s● Há supraharmônicos:%s %d %s de %.1f a %.1f kHz\n", ansi(stdout, NEGRITO), ansi(stdout, AMARELO),
+               fim_ansi(stdout), confirmadas, plural((unsigned long long)confirmadas, "componente", "componentes"),
+               o->de / 1e3, o->ate / 1e3);
+        for (int k = 0; k < a[0].num_componentes; k++) {
+            const struct componente_espectral *c = &a[0].componentes[k];
+            if (c->situacao != COMPONENTE_CONFIRMADA) {
+                continue;
+            }
+            double pino = c->rms_lsb * lsb;
+            printf("    %9.3f kHz  %+5.0f dB acima do piso  %8.3f mV rms no pino", c->f_pico / 1e3, c->excesso_db,
+                   1e3 * pino);
+            if (c->f_fim - c->f_inicio > 2.0 * VERIFICAR_LARGURA_BANDA_HZ + 1.0) {
+                printf(" (de %.1f a %.1f kHz)", c->f_inicio / 1e3, c->f_fim / 1e3);
+            }
+            if (o->ganho > 0.0) {
+                double h = ganho_do_filtro_do_adc(c->f_pico);
+                printf(", ~%.3g rms na entrada (o filtro do ADC tira %.1f dB aqui)", pino * o->ganho / h,
+                       -20.0 * log10(h));
+            }
+            putchar('\n');
+        }
+        if (a[0].componentes_demais > 0) {
+            printf("    e mais %d (só cabem %d no relatório)\n", a[0].componentes_demais, VERIFICAR_MAX_COMPONENTES);
+        }
+        if (o->ganho > 0.0) {
+            printf("  %s(\"na entrada\": o pino × --ganho %g, na unidade dele, com o filtro do ADC descontado pelo modelo "
+                   "do T3f)%s\n", ansi(stdout, FRACO), o->ganho, fim_ansi(stdout));
+        }
+    } else {
+        printf("\n%s%s✓ Sem supraharmônicos%s de %.1f a %.1f kHz (nenhuma banda %.0f dB acima do piso em todas as taxas)\n",
+               ansi(stdout, NEGRITO), ansi(stdout, VERDE), fim_ansi(stdout), o->de / 1e3, o->ate / 1e3, o->limiar_db);
+    }
+
+    double ja_explicadas[VERIFICAR_MAX_TAXAS * VERIFICAR_MAX_COMPONENTES];
+    int n_explicadas = 0, cabecalho_imagem = 0, cabecalho_so = 0;
+    for (int i = 0; i < o->num_taxas; i++) {
+        for (int k = 0; k < a[i].num_componentes; k++) {
+            const struct componente_espectral *c = &a[i].componentes[k];
+            if (c->situacao != COMPONENTE_IMAGEM) {
+                continue;
+            }
+            int repetida = 0;
+            for (int j = 0; j < n_explicadas; j++) {
+                repetida = repetida || fabs(ja_explicadas[j] - c->f_verdadeira) < 2.0 * VERIFICAR_FOLGA_HZ;
+            }
+            if (repetida) {
+                continue;
+            }
+            ja_explicadas[n_explicadas++] = c->f_verdadeira;
+            if (!cabecalho_imagem) {
+                printf("  %sImagens de aliasing (não contam: um sinal acima da Nyquist, fora da faixa medida):%s\n",
+                       ansi(stdout, FRACO), fim_ansi(stdout));
+                cabecalho_imagem = 1;
+            }
+            printf("    um sinal de ~%.1f kHz:", c->f_verdadeira / 1e3);
+            for (int j = 0; j < o->num_taxas; j++) {
+                printf("%s %.1f kHz a %s", j ? "," : "", dobrar_na_nyquist(c->f_verdadeira, a[j].fs) / 1e3,
+                       taxa_legivel(a[j].taxa, t, sizeof(t)));
+            }
+            putchar('\n');
+        }
+    }
+    for (int i = 0; i < o->num_taxas; i++) {
+        for (int k = 0; k < a[i].num_componentes; k++) {
+            const struct componente_espectral *c = &a[i].componentes[k];
+            if (c->situacao != COMPONENTE_SO_NESTA_TAXA) {
+                continue;
+            }
+            if (!cabecalho_so) {
+                printf("  %sSó numa das taxas (não contam: intermitentes, ou imagens que estas taxas não explicam; "
+                       "repita):%s\n", ansi(stdout, FRACO), fim_ansi(stdout));
+                cabecalho_so = 1;
+            }
+            printf("    %.3f kHz a %s, %+.0f dB acima do piso\n", c->f_pico / 1e3, taxa_legivel(a[i].taxa, t2, sizeof(t2)),
+                   c->excesso_db);
+        }
+    }
+    if (o->num_taxas == 1) {
+        aviso("com uma taxa só, uma imagem de aliasing (um sinal acima de %.0f kHz) contaria como supraharmônico.",
+              a[0].nyquist / 1e3);
+    }
+}
+
+// sudo ./ler_adc verificar [opções]: argv[0] é "verificar".
+static int executar_verificacao(int argc, char *argv[], const char *programa) {
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            imprimir_ajuda_verificar(programa);
+            return SAIDA_OK;
+        }
+    }
+    struct opcoes_verificar o;
+    int codigo = analisar_opcoes_verificar(argc, argv, &o);
+    if (codigo != SAIDA_OK) {
+        return codigo;
+    }
+    if (geteuid() != 0) {
+        erro("o ler_adc precisa de root (a PRU, os pinos e /dev/mem): rode com sudo.");
+        return SAIDA_ERRO;
+    }
+    // O stdout é só do resultado: todo o texto (inclusive o -v da placa) vai para o stderr.
+    fflush(stdout);
+    int fd_resultado = dup(STDOUT_FILENO);
+    if (fd_resultado < 0 || dup2(STDERR_FILENO, STDOUT_FILENO) < 0) {
+        erro("não deu para separar o stdout do relatório: %s.", strerror(errno));
+        return SAIDA_ERRO;
+    }
+    cor_stdout = cor_stderr;
+    terminal_stdout = 0;
+
+    char t[32];
+    printf("%sler_adc verificar%s · firmware %s · canal %d, ±%.2f V · ", ansi(stdout, NEGRITO), fim_ansi(stdout),
+           VERSAO_FIRMWARE, o.canal, FAIXA_ADC_ESPAN_V[o.faixa] / 2.0);
+    for (int k = 0; k < o.num_taxas; k++) {
+        printf("%s%s", k == 0 ? "" : k + 1 == o.num_taxas ? " e " : ", ", taxa_legivel(o.taxas[k], t, sizeof(t)));
+    }
+    printf(" · %.1f a %.1f kHz · limiar %.0f dB\n", o.de / 1e3, o.ate / 1e3, o.limiar_db);
+
+    struct placa placa;
+    if (abrir_placa(&placa) != 0) {
+        close(fd_resultado);
+        return SAIDA_ERRO;
+    }
+    static uint16_t bloco[SAMPLES_PER_BUFFER];
+    static struct analise_espectral analises[VERIFICAR_MAX_TAXAS];
+    for (int k = 0; k < o.num_taxas && codigo == SAIDA_OK; k++) {
+        uint32_t ticks = PRU_CLOCK_HZ / o.taxas[k];
+        double fs = (double)PRU_CLOCK_HZ / (double)ticks;
+        double inicio = segundos_monotonicos();
+        codigo = capturar_um_bloco(&placa, &o, ticks, bloco);
+        if (codigo != SAIDA_OK) {
+            break;
+        }
+        unsigned long long saturadas = 0;
+        for (size_t i = VERIFICAR_DESCARTE; i < SAMPLES_PER_BUFFER; i++) {
+            saturadas += bloco[i] == 0u || bloco[i] == 0xFFFFu;
+        }
+        if (saturadas > 0) {
+            erro("o canal %d saturou a %u S/s: %llu %s no fundo de escala de ±%.2f V. Os cortes criam harmônicos que "
+                 "pareceriam supraharmônicos: %s", o.canal, o.taxas[k], saturadas, plural(saturadas, "amostra", "amostras"),
+                 FAIXA_ADC_ESPAN_V[o.faixa] / 2.0, o.faixa == ADS8688_FAIXA_2_5_VREF
+                 ? "é a maior faixa do ADC, reduza o sinal na entrada." : "use uma faixa maior (--faixa-adc).");
+            codigo = SAIDA_ERRO;
+            break;
+        }
+        double capturado = segundos_monotonicos();
+        analisar_bloco(bloco, SAMPLES_PER_BUFFER, fs, o.de, o.limiar_db, &analises[k]);
+        analises[k].taxa = o.taxas[k];
+        double piso_pino = analises[k].piso_mediano_lsb * FAIXA_ADC_ESPAN_V[o.faixa] / 65536.0;
+        printf("  %s: 1 bloco (%.2f s; captura em %.1f s, análise em %.1f s), piso de %.3f LSB rms por banda de 200 Hz "
+               "(%.1f µV no pino), %d %s\n", taxa_legivel(o.taxas[k], t, sizeof(t)),
+               (double)SAMPLES_PER_BUFFER / fs, capturado - inicio, segundos_monotonicos() - capturado,
+               analises[k].piso_mediano_lsb, 1e6 * piso_pino, analises[k].num_componentes + analises[k].componentes_demais,
+               plural((unsigned long long)(analises[k].num_componentes + analises[k].componentes_demais),
+                      "banda ou grupo acima do limiar", "bandas ou grupos acima do limiar"));
+        if (verboso) {
+            for (int i = 0; i < VERIFICAR_MAIS_ALTAS && analises[k].mais_altas_db[i] > -1e8; i++) {
+                printf("      %s%8.1f kHz  %+5.1f dB acima do piso%s\n", ansi(stdout, FRACO),
+                       analises[k].mais_altas_hz[i] / 1e3, analises[k].mais_altas_db[i], fim_ansi(stdout));
+            }
+        }
+    }
+    fechar_placa(&placa);
+    if (codigo != SAIDA_OK) {
+        close(fd_resultado);
+        return codigo;
+    }
+
+    int confirmadas = classificar_componentes(analises, o.num_taxas, o.de, o.ate);
+    imprimir_relatorio_verificar(&o, analises, confirmadas);
+    fflush(stdout);
+    char resultado[4];
+    int n = snprintf(resultado, sizeof(resultado), "%d\n", confirmadas > 0);
+    if (write(fd_resultado, resultado, (size_t)n) != n) {
+        erro("não deu para escrever o resultado: %s.", strerror(errno));
+        close(fd_resultado);
+        return SAIDA_ERRO;
+    }
+    close(fd_resultado);
+    return SAIDA_OK;
+}
+
+// =====================================================================================================================
 // main
 // =====================================================================================================================
 
@@ -1614,6 +2529,9 @@ int main(int argc, char *argv[]) {
     cor_stdout = pode_usar_cor(STDOUT_FILENO);
     cor_stderr = pode_usar_cor(STDERR_FILENO);
 
+    if (argc > 1 && strcmp(argv[1], "verificar") == 0) {
+        return executar_verificacao(argc - 1, argv + 1, argv[0]);
+    }
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             imprimir_ajuda(argv[0]);
@@ -1636,67 +2554,27 @@ int main(int argc, char *argv[]) {
     imprimir_configuracao(&config, &sistema, segundos_por_bloco);
 
     // --- Placa --------------------------------------------------------------------------------------------------------
-    size_t bytes_por_buffer = (size_t)SAMPLES_PER_BUFFER * sizeof(uint16_t);
-    unsigned long long fim_ddr = (unsigned long long)DDR_RESERVED_PHYS + bytes_por_buffer * BUFFERS_PING_PONG;
-    if (conferir_ddr_reservada(CAMINHO_IOMEM, DDR_RESERVED_PHYS, fim_ddr) != 0) {
+    struct placa placa;
+    if (abrir_placa(&placa) != 0) {
         return SAIDA_ERRO;
     }
-    detalhe("DDR dos buffers fora do Linux (0x%X-0x%llX)", DDR_RESERVED_PHYS, fim_ddr - 1);
-    if (preparar_pinos_da_pru(BASE_PINMUX) < 0) {
-        return SAIDA_ERRO;
-    }
-
-    int mem_fd = open(CAMINHO_DEV_MEM, O_RDWR | O_SYNC);
-    if (mem_fd < 0) {
-        erro("não deu para abrir %s: %s.", CAMINHO_DEV_MEM, strerror(errno));
-        return SAIDA_ERRO;
-    }
-    void *ctrl_map = mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, mem_fd, PRU_SHARED_RAM_PHYS);
-    if (ctrl_map == MAP_FAILED) {
-        erro("não deu para mapear a RAM compartilhada da PRU: %s.", strerror(errno));
-        close(mem_fd);
-        return SAIDA_ERRO;
-    }
-    volatile struct shared_control *ctrl = (volatile struct shared_control *)ctrl_map;
-    void *ddr_map = mmap(0, bytes_por_buffer * BUFFERS_PING_PONG, PROT_READ, MAP_SHARED, mem_fd, DDR_RESERVED_PHYS);
-    if (ddr_map == MAP_FAILED) {
-        erro("não deu para mapear a DDR reservada: %s.", strerror(errno));
-        munmap(ctrl_map, 4096);
-        close(mem_fd);
-        return SAIDA_ERRO;
-    }
+    size_t bytes_por_buffer = placa.bytes_por_buffer;
+    int mem_fd = placa.mem_fd;
+    void *ctrl_map = placa.ctrl_map, *ddr_map = placa.ddr_map;
+    volatile struct shared_control *ctrl = placa.ctrl;
     const volatile uint16_t *buffers[BUFFERS_PING_PONG] = {
         (const volatile uint16_t *)ddr_map, (const volatile uint16_t *)ddr_map + SAMPLES_PER_BUFFER
     };
     volatile uint32_t *prontos[BUFFERS_PING_PONG] = {&ctrl->buffer_0_ready, &ctrl->buffer_1_ready};
 
     if (reiniciar_pru_antes_da_captura(ctrl) != 0) {
-        munmap(ddr_map, bytes_por_buffer * BUFFERS_PING_PONG);
-        munmap(ctrl_map, 4096);
-        close(mem_fd);
+        fechar_placa(&placa);
         return SAIDA_ERRO;
     }
 
     // A PRU lê a configuração só depois de config_ready = 1. O versao_protocolo_pru já está em 0 (o aviso de "pronta").
-    ctrl->buffer_0_addr = DDR_RESERVED_PHYS;
-    ctrl->buffer_1_addr = DDR_RESERVED_PHYS + (uint32_t)bytes_por_buffer;
-    ctrl->buffer_0_ready = 0;
-    ctrl->buffer_1_ready = 0;
-    ctrl->sample_period_ticks = config.ticks;
-    ctrl->auto_seq_mask = config.mascara;
-    ctrl->range_sel = config.range_sel;
-    ctrl->amostras_atrasadas = 0;
-    ctrl->buffers_sobrescritos = 0;
-    ctrl->quadros_preambulo_ruim = 0;
-    ctrl->atraso_cs_setup = config.atrasos_cs[0];
-    ctrl->atraso_cs_hold = config.atrasos_cs[1];
-    ctrl->atraso_cs_alto = config.atrasos_cs[2];
-    ctrl->modo_spi = config.modo_spi;
-    ctrl->divergencias_fase_a = 0;
-    ctrl->divergencias_fase_c = 0;
-    ctrl->folga_minima_ciclos = 0;
-    ctrl->atraso_maximo_ciclos = 0;
-    ctrl->ciclos_rebase = 0;
+    escrever_configuracao_da_pru(ctrl, bytes_por_buffer, config.ticks, config.mascara, config.range_sel,
+                                 config.atrasos_cs, config.modo_spi);
     // [11/11/2026] O instante do cabeçalho é o de agora, quando o ARM solta a PRU: a 1ª amostra sai poucos ms depois
     // (a configuração do ADC e a espera de acomodação da PRU). Até aqui era o do começo do programa, antes de a PRU ser
     // reiniciada: de 60 a 600 ms adiantado, mais que a fração de segundo que o cabeçalho v8 guarda.
@@ -1705,14 +2583,7 @@ int main(int argc, char *argv[]) {
     double instante_da_largada = segundos_monotonicos();
     ctrl->config_ready = 1;
 
-    // A PRU escreve a versão do protocolo depois de configurar o ADS8688 e de esperá-lo acomodar (~2 ms): outro valor = o fw_pru.out
-    // carregado não é o deste ler_adc (o 'make' foi feito, mas a PRU não recebeu o firmware novo, ou o contrário).
-    for (int espera_ms = 0; espera_ms < 500 && ctrl->versao_protocolo_pru == 0; espera_ms++) {
-        usleep(1000);
-    }
-    if (ctrl->versao_protocolo_pru != VERSAO_PROTOCOLO_PRU) {
-        erro("o firmware da PRU não é o deste ler_adc (protocolo %u; este espera %u): recompile e recarregue os dois "
-             "com sudo ./setup.sh.", ctrl->versao_protocolo_pru, VERSAO_PROTOCOLO_PRU);
+    if (esperar_protocolo_da_pru(ctrl) != 0) {
         return abortar_captura(NULL, ddr_map, bytes_por_buffer * BUFFERS_PING_PONG, ctrl_map, mem_fd);
     }
     detalhe("PRU reiniciada e configurada (protocolo %u)", VERSAO_PROTOCOLO_PRU);

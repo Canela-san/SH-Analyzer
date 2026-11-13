@@ -215,6 +215,83 @@ O ADS8688 varre os canais habilitados **sempre em ordem crescente**, não na ord
 
 ---
 
+## Há supraharmônicos? `ler_adc verificar`
+
+Um testador rápido, sem arquivo e sem análise no computador. Ligue o sinal ao canal e rode:
+
+```bash
+sudo ./ler_adc verificar
+```
+
+Em ~8 s, ele escreve no **stdout só `1`** (há supraharmônicos de 2 a 150 kHz) ou **`0`** (não há). O relatório, com o
+que achou, vai para o **stderr**. No terminal aparecem os dois; num script, `x=$(sudo ./ler_adc verificar)` guarda só
+o número.
+
+**Como ele decide:**
+
+1. **Captura 1 bloco em cada taxa:** 400 e 312,5 kS/s por padrão, no canal 1 e na faixa de ±10,24 V. A PRU é
+   reiniciada entre as taxas. Nada é gravado.
+2. **Espectro de cada bloco:**
+   - um passa-alta em 1 kHz tira a fundamental e os harmônicos baixos;
+   - a média de |FFT|² vem de 63 segmentos de 16384 amostras, com a janela Blackman-Harris;
+   - a resolução fica em 24 Hz.
+3. **Bandas e piso:** o espectro é dividido em bandas de 200 Hz, as da IEC 61000-4-7. O piso de cada banda é a
+   mediana das 50 vizinhas de cada lado (±10 kHz). O piso do ADC cai ~15 dB de 2 a 130 kHz, e um piso único acusaria
+   o começo da faixa.
+4. **Componentes:** são as bandas que ficam **15 dB acima do piso local**, agrupadas quando vizinhas.
+5. **Conferência entre as taxas.** Uma componente só **conta** se aparecer na mesma frequência **em todas as
+   taxas**. Se ela muda de lugar com a taxa, é a **imagem (aliasing)** de um sinal acima da Nyquist e não conta. O
+   relatório diz a frequência verdadeira que explica as posições: por exemplo, um tom de 270 kHz aparece em 130 kHz a
+   400 kS/s e em 42,5 kHz a 312,5 kS/s.
+   - O que aparece numa taxa só, sem explicação, também não conta e é listado: pode ser intermitente.
+6. **Saturação é erro.** Uma entrada que bate no fundo de escala dá erro, porque os cortes criariam harmônicos que
+   pareceriam supraharmônicos.
+
+**Os padrões foram calibrados nas capturas de 23/10/2026**, a ±2,56 V e 400 kS/s:
+
+| Captura | Maior excesso sobre o piso | Resultado |
+|---|---|---|
+| 60 Hz limpo, 16 Vpp | +3,6 dB | 0 |
+| Gerador desligado ligado ao divisor (captação) | +8,6 dB em 18 kHz | 0 |
+| 9 kHz com 5 mVpp na entrada do divisor (−70 dBc) | +22,8 dB | 1 |
+| 25 kHz com 0,16 Vpp | +51,7 dB | 1 |
+| Tom de 270 kHz, a 400 e a 320 kS/s | +35 dB, mas em 130 e em 50 kHz | 0: imagem de ~270 kHz |
+
+| Opção | O que faz |
+|---|---|
+| `--canal N` | O canal (padrão: 1, o de tensão) |
+| `--faixa-adc V` | A faixa total, sem o canal: `20.48` (padrão; a rede de 127 V pelo divisor usa 91 % dela), `10.24` ou `5.12` (a sonda de corrente) |
+| `--taxas F,F[,...]` | As taxas totais (padrão `400000,312500`; até 4). Cada uma precisa ter a Nyquist acima de `--ate`. Com uma taxa só, não há a conferência de aliasing, e ele avisa |
+| `--de HZ`, `--ate HZ` | A faixa analisada (padrão: 2 kHz e 150 kHz; aceita `9k`). `--de 9k` deixa de fora a faixa de 2 a 9 kHz, onde ficam os harmônicos de ordem alta da rede |
+| `--limiar DB` | Quanto acima do piso local (padrão 15). Com 10, a captação da bancada já conta |
+| `--ganho G` | Unidades na entrada por volt no pino (ex.: `19.357` no divisor). O relatório estima o nível de cada componente na entrada, descontando o filtro do ADC pelo modelo do T3f |
+| `--spi`, `--atraso-cs` | Como na captura |
+| `-v` | Mostra também as 5 bandas mais altas de cada taxa, mesmo abaixo do limiar, e os detalhes da placa |
+
+**Códigos de saída:**
+
+| Código | Significado |
+|---|---|
+| 0 | A verificação foi feita, e o resultado está no stdout |
+| 1 | Erro, incluindo a entrada saturada |
+| 2 | Argumento inválido |
+| 4 | ADC sem resposta |
+| 5 | Interrompida |
+
+Fora o 0, o stdout fica vazio.
+
+**Limites:**
+- **Em ±10,24 V, a sensibilidade estimada é de ~2 mV rms em 5 kHz e de ~10 mV rms em 100 kHz** na entrada do
+  divisor. A conta usa o piso das capturas de 23/10, a ±2,56 V, levado para essa faixa, e o filtro do ADC. Em
+  ±2,56 V, é 4 vezes mais sensível.
+- **Na rede, os harmônicos de 60 Hz acima de 2 kHz contam**, porque fazem parte da faixa de 2 a 150 kHz. Para ver
+  só o que vem acima, use `--de 9k`.
+- **Uma emissão larga, que suba o piso por mais de ±10 kHz,** fica parecida com o próprio piso e pode passar.
+- **Um sinal cuja imagem cai no mesmo lugar nas duas taxas** (356,25 kHz cai em 43,75 kHz a 400 e a 312,5 kS/s)
+  conta como real. Uma terceira taxa (`--taxas 400000,312500,320000`) desfaz a coincidência.
+
+---
+
 ## Coletar dados: `coletar.sh`
 
 O `ler_adc` faz uma captura. O `coletar.sh` (na pasta do firmware, na BeagleBone) faz as **coletas**: chama o `ler_adc`
