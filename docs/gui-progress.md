@@ -86,7 +86,8 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 | `e1d4887` | `scripts/benchmarks/plotagem_gui.py`: as medidas do motor de gráficos |
 | `e21ba9d` | Os mockups em `docs/gui-mockups/` e as imagens em `docs/images/gui/` |
 | `a029674` | O plano reescrito |
-| (a seguir) | `scripts/benchmarks/paleta_cores.py`, a escolha do layout e este arquivo |
+| `69347f0` | `scripts/benchmarks/paleta_cores.py`: a conferência das cores |
+| `03c219f` | A escolha do layout no plano e este arquivo |
 
 **O ambiente conferido nesta máquina (Linux):** Python 3.13, PySide6 6.12.0, PyQtGraph 0.14.0, Matplotlib 3.11.2, NumPy 2.5.4 e SciPy 1.18.1. Testes: `ci.sh rapido` com 915 aprovados e 2 pulados; `ci.sh interface` verde.
 
