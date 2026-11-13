@@ -165,6 +165,7 @@ o uso: decisão do usuário). Em captura multicanal, os canais são amostrados 1
 | **F9** | Descartar o transitório de troca de faixa já na PRU (a análise já descarta) | Baixo: dado certo desde a 1ª amostra | Baixo | sim | — |
 | **F4** | `SAMPLES_PER_BUFFER` vindo do ARM, não duplicado no `.asm` | Médio: fim de uma sincronia manual | Baixo | sim | — |
 | **F7** | Conferência rápida do `coletar.sh sonda` mais leve na BeagleBone | Médio | Baixo | não | medir na BBB |
+| **F17** | Apagar da placa os fontes do firmware depois de compilar | Baixo: a pasta só com o que roda; nada compilado lá com a versão de outro código | Baixo | não | — |
 | **S2–S7** | Fase, subamostragem, perfil absoluto, teto de ganho, repetições | Alto para V×I | Médio–Alto | não | S1 |
 | **F8** | Endereço do canal no SDO (verificar a ordem dos canais a cada amostra) | Baixo–Médio | Médio | sim | F3 |
 | **H1–H2** | Isolador contra o BOM, pontos de teste na próxima PCB | Baixo–Médio | Baixo–Médio | não | — |
@@ -291,6 +292,69 @@ certo desde a 1ª amostra também para quem o lê fora destas ferramentas.
 
 **Como saber que deu certo.** Repetir a sequência de faixas do T0 (20.48 → 10.24 → 5.12) e conferir que as
 primeiras amostras de cada captura já estão dentro do ruído (±3 LSB do valor final).
+
+### F17 — A pasta do firmware na placa só com o que roda
+
+**Por quê.** O `enviar` copia para a placa todos os arquivos versionados de `firmware/`, e o `setup.sh` compila lá o
+`ler_adc` e o `fw_pru.out`. Depois de compilados, os fontes (`ler_adc.c`, `pru_main.c`, `spi_core.asm`,
+`memoria_pru.h`, `AM335x_PRU.cmd`, o `Makefile`) e os `.obj` do `clpru` não servem para nada na placa. O código de
+cada versão está no repositório, no commit do `VERSAO`. Liberar espaço não é o motivo: são ~170 kB, contra ~1,4 GB de
+um dia de capturas. Os motivos são estes:
+
+* a pasta mostra só o que roda: os dois binários, o `setup.sh`, o `coletar.sh` com `coleta/` e o `VERSAO`;
+* fecha um caminho em que a versão gravada mente. Hoje, quem edita o `.c` na placa e roda o `setup.sh` gera um
+  `ler_adc` com o `VERSAO` do commit enviado, mas com outro código. No PC, o `enviar` já evita isso: recusa
+  `firmware/` com mudanças não commitadas.
+
+**Proposta.**
+
+1. **O `setup.sh` em dois modos.** Hoje ele roda `make clean` e `make` toda vez, e é rodado de novo depois de ligar a
+   placa ou quando a PRU para de responder. Se ele rodar assim sem os fontes, o `make clean` apaga os dois binários e
+   o `make` falha. A placa fica sem `ler_adc` até o próximo `enviar`. Por isso, os dois modos:
+   * **com os fontes**, logo depois de um `enviar`: compila, carrega a PRU e só então apaga os fontes;
+   * **sem os fontes**: pula a compilação, confere que o `ler_adc` e o `fw_pru.out` existem e só configura os pinos e
+     carrega a PRU.
+
+   A versão do título ("Compilação ..., versão X") passa a vir do `VERSAO`, não do `make -s versao`.
+2. **Apagar só o que está numa lista.** As capturas `.bin` ficam na mesma pasta: o `status` as conta lá e o `trazer`
+   as busca lá. Uma regra como "apagar tudo menos os binários e os scripts" apagaria as capturas também. Por isso, os
+   fontes ficam numa lista explícita, num lugar só (por exemplo, uma variável no `setup.sh`). O `rm` apaga só o que
+   está nela, mais os `.obj` e `.map` do `clpru`. Um teste confere que todo arquivo versionado de `firmware/` está numa
+   de duas listas: a dos que são apagados depois de compilar ou a dos que ficam. Assim, um fonte novo sem
+   classificação faz o teste falhar.
+3. **Só depois do sucesso.** O `setup.sh` apaga os fontes só se o `make` terminou sem erro, se os dois binários
+   existem e se a PRU ficou em `running`, ou seja, no fim dele. Com o `set -e`, qualquer falha antes desse ponto
+   deixa os fontes na placa, e dá para compilar de novo.
+4. **O plano B do `enviar`.**
+   * Hoje o `enviar` reconhece um firmware anterior pelo `ler_adc.c`. Sem os fontes, ele passa a reconhecê-lo pelo
+     `VERSAO` ou pelo `ler_adc`.
+   * Hoje o plano B guarda "só o código". Ele passa a guardar o que estiver lá: os binários, os scripts e o `VERSAO`.
+     Ele fica melhor assim: para voltar, não é preciso compilar; basta o `setup.sh` sem os fontes.
+   * Hoje a cópia para o plano B (`cp -p "$pasta/$f" "$destino/"`) achata o `coleta/`: o `coleta/comum.sh` vai para a
+     raiz do plano B, e o `coletar.sh` restaurado não acha os seus modos. A cópia precisa manter as pastas, com
+     `cp --parents` ou um `tar`.
+5. **Uma saída para depurar.** O `setup.sh --manter-fontes`, também no `enviar --setup`, serve para compilar na
+   bancada de novo, depois de mexer no código na placa. Nesse caso, a versão gravada pode não bater com o código.
+6. **A documentação.** Atualizar o `user-guide`, o `project-context` e o cabeçalho do `setup.sh`:
+   * o `user-guide` diz "nada na BeagleBone é apagado" e "plano B só do código";
+   * o `project-context` também diz "plano B só do código";
+   * o cabeçalho do `setup.sh` diz para rodá-lo de novo quando a PRU parar de responder.
+
+Outra solução seria compilar no PC (com o `arm-linux-gnueabihf-gcc` e o `clpru` para x86) e mandar só os binários.
+Assim os fontes nem iriam para a placa. Ela fica de fora por ora, porque exigiria o compilador da TI em todo PC que
+envia o firmware.
+
+**Como saber que deu certo.**
+
+* Nos testes com o ssh e o sudo falsos (`tests/test_scripts_shell.py`):
+  * depois de um `setup` com sucesso, ficam na placa só os binários, os scripts, o `VERSAO` e os `.bin` que já
+    estavam lá;
+  * com o `make` falhando, os fontes continuam na placa;
+  * um segundo `setup`, já sem os fontes, carrega a PRU sem compilar;
+  * o plano B guarda os binários e mantém o `coleta/`.
+* O teste das duas listas.
+* Na placa: um `preparar` e um `ls ~/firmware`. Depois, desligar e ligar a placa, rodar o `setup` de novo e fazer uma
+  captura curta.
 
 ---
 
