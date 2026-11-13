@@ -169,6 +169,13 @@ do passo 4 supõe 20 Vpp em High-Z, ou 10 Vpp em 50 Ω. Com o gerador em outra a
 **A indutância de R é o que pesa.** O método calcula a corrente como I = V/R. Uma indutância em série com R faz a
 sonda parecer perder ganho e atrasar, e o perfil "corrigiria" isso em produção.
 
+* **O que conta como R:** a impedância entre os dois pontos em que o canal 1 mede, ou seja, a entrada do divisor e o
+  terra dele. Pode ser só o resistor, ou o resistor e fios e espiras, conforme onde o divisor está ligado. O que fica
+  fora desses dois pontos só muda quanta corrente passa, não a medida.
+* **Por que a indutância não pode ficar no perfil, mesmo com a montagem sempre igual:** em produção, a sonda mede a
+  corrente de um condutor, e o resistor da calibração não está lá. A indutância do laço muda quanta corrente passa,
+  não o modo como a sonda a mede. O que ela estraga é a régua da calibração, I = V/R. Se ficasse no perfil, toda
+  corrente medida em produção sairia com esse erro: ~20° e algumas décimas de dB em 89 kHz.
 * **O que se viu em 03/11:** com um resistor de fio de 33,58 Ω e 16 espiras, a fase da razão cresceu como uma
   indutância fixa de ~20 µH em série (19 a 21 µH de 3,8 a 88 kHz): −19,5° e −0,52 dB em 88 kHz. Em 13/11, com o
   mesmo laço e outro gerador, a curva se repetiu: −19,6° em 89 kHz.
@@ -185,7 +192,8 @@ pode continuar ligada: o divisor em paralelo com R muda Z em 0,1 %.
 O que é preciso: o osciloscópio MSO46, a ponta diferencial THDP0200, a ponta de corrente TCP0030A, um pendrive e o
 Fluke.
 
-1. **R a 4 fios.**
+1. **R a 4 fios, entre os dois pontos do canal 1.** Meça onde o divisor se liga, entre a entrada dele e o terra dele, e
+   não de uma ponta a outra do laço. Se o divisor estiver ligado nos terminais do resistor, as espiras ficam de fora.
    * No Fluke de bancada, use a função de 4 fios.
    * Num Fluke de mão, que mede a 2 fios: encoste uma ponta na outra, aperte REL (ou Δ) para descontar os cabos e só
      então meça R.
@@ -196,8 +204,9 @@ Fluke.
    * Ligue-a ao CH1. O osciloscópio reconhece a ponta e ajusta a escala sozinho.
    * Escolha a faixa de **±150 V** no botão da caixa da ponta. A de ±1500 V atenua 10 vezes mais e afoga os ~8 Vpp
      no ruído.
-   * Ligue a garra **+** no terminal de R do lado do gerador e a garra **−** no terminal do lado do terra. Prenda as
-     garras nos terminais do próprio resistor, não nos fios: a ponta mede só o que fica entre as garras.
+   * Prenda as garras nos **mesmos dois pontos do divisor**: a **+** onde a entrada do divisor se liga, do lado do
+     gerador, e a **−** onde o terra dele se liga. A ponta mede só o que fica entre as garras, e tem de medir a mesma
+     tensão que o canal 1.
 3. **A ponta de corrente, a TCP0030A, no canal 2.**
    * Ligue-a ao CH2 e escolha a faixa de **5 A** no botão da caixa da ponta.
    * **Desmagnetize a ponta.** Com a garra fechada e travada e sem fio dentro, aperte DEGAUSS na caixa da ponta e
