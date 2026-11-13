@@ -76,11 +76,11 @@ def gerar_sintetico(minutos: float, n_canais: int, taxa_total: int = 400_000) ->
 
 
 def abrir(caminho: Path) -> FonteProto:
-    from ..dados.captura import abrir_bin
-    cap = abrir_bin(caminho)
-    canais = [CanalProto(f"{c.nome} · {c.grandeza}", c.amostras, c.taxa_hz, c.escala, c.deslocamento)
-              for c in cap.canais]
-    return FonteProto(caminho.name, cap.amostras, len(cap.canais), canais, cap.chave)
+    from ..dados.captura import abrir_fonte
+    fonte = abrir_fonte(caminho)
+    canais = [CanalProto(f"canal {c.numero} · {c.nome_grandeza}", c.amostras, c.taxa_hz, c.escala, c.deslocamento)
+              for c in fonte.canais]
+    return FonteProto(fonte.nome, fonte.captura.amostras, len(canais), canais, fonte.chave)
 
 
 def montar_faixas(layout, fonte: FonteProto, piramides) -> list:

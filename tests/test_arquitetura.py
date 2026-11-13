@@ -177,6 +177,20 @@ def test_a_camada_de_dados_da_interface_nao_importa_o_qt():
                     f"{arquivo.name}:{no.lineno}: importa a interface ({nome})")
 
 
+def test_a_interface_so_fala_com_o_motor_pela_api():
+    """``sh_analyzer_gui`` importa do motor só ``supraharmonicos.api`` (docs/gui-plan.md, 8.1): o resto do motor
+    pode mudar sem quebrar a interface, e a paridade com a CLI fica num lugar só (``tests/test_api.py``)."""
+    for arquivo in sorted(GUI.rglob("*.py")):
+        for no in _imports_de(arquivo):
+            nomes = [a.name for a in no.names] if isinstance(no, ast.Import) else [no.module or ""]
+            if isinstance(no, ast.ImportFrom) and no.level > 0:
+                continue
+            for nome in nomes:
+                if nome.split(".")[0] == "supraharmonicos":
+                    assert nome == "supraharmonicos.api", (
+                        f"{arquivo.relative_to(SCRIPTS)}:{no.lineno}: importa {nome}; use supraharmonicos.api")
+
+
 def test_importar_a_camada_de_dados_nao_carrega_o_qt():
     """A mesma regra, conferida de verdade: num processo novo, importar a camada não traz o PySide6."""
     codigo = ("import sys, importlib, pkgutil, sh_analyzer_gui.dados as d\n"

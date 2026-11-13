@@ -8,7 +8,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F0.7: a `api` do motor** (seção 4).
+> **F0.8: o tema** (seção 4).
 >
 > **Para você, quando puder (5 minutos):** medir o protótipo na sua tela, os portões G1 e G2 da F0.6 (o comando está lá). Sem tela, o G1 com 8 faixas está no limite.
 >
@@ -245,13 +245,24 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
   3. por fim, a GPU (plano 6.7).
 - **Pronto quando:** os resultados estão na seção 5 deste arquivo e na 6.7 do plano. Se algum portão falhar, decida o plano B antes de seguir.
 
-### ▶ F0.7: a `api` do motor (commits só do motor)
+### ☑ F0.7: a `api` do motor (commits só do motor)
 
 - **Arquivos:** `scripts/supraharmonicos/api.py`, `contexto.py` (o `resolver_contexto` passa a usar a `api`), `tests/test_api.py` e o `CAMADAS` do `tests/test_arquitetura.py`.
 - **As funções:** `abrir_captura` e `sinal_do_canal` (plano, 8.2), com os avisos estruturados.
 - **Pronto quando:** os testes de paridade com a CLI passam e toda a suíte continua verde.
+- **Feito em 13/11/2026.**
+  - **No motor** (o commit `974c58a`, só do motor, pronto para ir ao `main` sozinho):
+    - o `resolver_contexto(args)` virou um adaptador de `resolver_contexto_explicito`, que recebe cada flag como parâmetro. A troca foi mecânica, e a suíte inteira continuou verde;
+    - o `perfil_para_correcao` saiu do `aplicar_correcao_sondas`;
+    - `api.py`: `abrir_captura`, `sinal_do_canal`, `Captura`, `CanalDaCaptura` (com `escala` e `deslocamento`) e os avisos como dados (`capturar_avisos`);
+    - `tests/test_api.py`: a paridade com a CLI nos canais, na calibração, nos volts e na correção de sonda.
+  - **A diferença deliberada da CLI:** se o perfil de um canal falta, a captura abre mesmo assim, e o problema vai para `CanalDaCaptura.problema_sonda` e para os avisos.
+  - **Na interface:**
+    - `dados/captura.py` virou `abrir_fonte`, a `api` mais a chave do cache, e o leitor provisório saiu;
+    - o protótipo abre as capturas por ela;
+    - `test_arquitetura.py` confere que a interface só importa do motor a `supraharmonicos.api`.
 
-### ☐ F0.8: o tema
+### ▶ F0.8: o tema
 
 - **Arquivos:** `scripts/sh_analyzer_gui/tema/tokens.py`, `tema/qss.py`, `tema/icones.py` e `tema/fontes.py`.
 - **Os tokens:** os valores de `docs/gui-mockups/tema.css`.
@@ -366,8 +377,9 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     - a F0.5, o `TracoLOD`, o protótipo e as medidas que trocaram o desenho da banda (seção 4);
     - o extra `gui` passou a pedir `pyqtgraph>=0.14` e `platformdirs>=4`.
   - **Parado em:** nada em andamento.
-    - a parte automática da F0.6: o G1 sem tela, com 2 faixas, num teste de desempenho.
-  - **Próximo:** a F0.7. Fica com você medir o protótipo numa tela de verdade (F0.6).
+    - a parte automática da F0.6: o G1 sem tela, com 2 faixas, num teste de desempenho;
+    - a F0.7: a `api` do motor (um commit só do motor) e a interface abrindo as capturas por ela.
+  - **Próximo:** a F0.8, o tema. Fica com você medir o protótipo numa tela de verdade (F0.6).
 
 ---
 
