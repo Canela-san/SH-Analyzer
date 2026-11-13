@@ -8,8 +8,10 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F1.5: a vista de tempo** (seção 4b). Da Fase 1, estão feitas a F1.1 (a janela), a F1.2 (o modelo e o desfazer),
-> a F1.3 (o projeto `.shproj`) e a F1.4 (abrir capturas e o painel do projeto).
+> **F1.6: o inspetor do traço** (seção 4b). Da Fase 1, estão feitas da F1.1 à F1.5 (a vista de tempo).
+>
+> **Na tela do usuário (2 minutos):** o G1 com 8 faixas na vista de verdade:
+> `uv run --extra gui python -m sh_analyzer_gui.prototipos.medir_vista` (anote o resultado na seção 5).
 >
 >
 > **No laboratório (opcional, 5 minutos):** a F0.2 colhe da BeagleBone os dados que a Aquisição vai usar (seção 6).
@@ -443,7 +445,21 @@ reinstala o ambiente compartilhado no meio, e um teste que abre um subprocesso f
   - a construção da pirâmide em segundo plano (um `QRunnable`), com o progresso e o cancelamento.
 - **Os testes:** abrir uma captura sintética, a árvore e o cancelamento.
 
-### ▶ F1.5: a vista de tempo
+### ◐ F1.5: a vista de tempo (falta o G1 com 8 faixas medido numa tela)
+
+**Feito** (`64f6e57`, só do motor: `CanalDaCaptura.unidade`; `97b7dca`, a interface): `areas/analise/vista_tempo.py`,
+`graficos/faixa.py` (o eixo, a grade, a caixa com os gestos), `componentes/fluxo.py` (a legenda que quebra a linha) e
+`prototipos/medir_vista.py`. Os testes em `test_gui_vista_tempo.py`; o G1 com 8 faixas em `test_gui_desempenho.py`
+(opcional, `--desempenho`).
+**O G1 com 8 faixas, sem tela, em 13/11:** não deu para medir: outra sessão estressava a CPU de propósito (carga 16 a
+25). Sob essa carga: 8 faixas, mediana 35 ms; 2 faixas, 18 ms. O perfil mostrou dois gastos sem motivo, já tirados: a
+grade com o `tickValues` do PyQtGraph (um terço do quadro) e o rótulo em HTML dos eixos escondidos. O que sobra é do
+PyQtGraph (os eixos em `QPicture` e os caminhos dos traços). **Se o G1 reprovar na tela:** o eixo próprio, com o
+texto em cache (`QStaticText`), é o próximo passo; os chips repintam a cada quadro no percurso de 1 minuto
+(1,7 ms), a investigar.
+**Para lembrar:** os eixos de cima e da direita de um `PlotItem` existem, escondidos, com o prefixo SI ligado;
+desligue-o. Um widget tirado de um layout com `deleteLater` continua na tela até o laço de eventos voltar: esconda e
+tire do pai antes (`LayoutDeFluxo.limpar`).
 
 - **O conteúdo:**
   - as faixas, uma `ViewBox` por grandeza, com o tempo ligado entre elas, e o `TracoLOD`;
@@ -452,7 +468,7 @@ reinstala o ambiente compartilhado no meio, e um teste que abre um subprocesso f
   - a seleção: clicar perto do traço, no chip ou na árvore.
 - **Os testes:** o G4 de novo, a seleção e o histórico; o G1 medido de novo com 8 faixas.
 
-### ☐ F1.6: o inspetor do traço
+### ▶ F1.6: o inspetor do traço
 
 - **O conteúdo:** a identidade, a aparência (a cor da paleta), e a escala e o tempo, cada mudança como um comando de desfazer.
 - **Os testes:** editar, desfazer e editar vários traços de uma vez.
@@ -565,6 +581,8 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   F1.4.
 - **13/11/2026 (noite):** a F1.4, abrir capturas, com a árvore, o inspetor do cabeçalho, as tarefas e o CRC
   conferido. **Próximo:** a F1.5.
+- **13/11/2026 (noite):** a F1.5, a vista de tempo, conferida com as capturas do laboratório (60 Hz com 20 kHz e
+  130 kHz). O G1 com 8 faixas fica para a tela do usuário. **Próximo:** a F1.6.
 
 ---
 
