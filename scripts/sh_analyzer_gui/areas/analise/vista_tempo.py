@@ -9,6 +9,9 @@ ligado entre elas.
 * **O histórico do zoom:** cada parada do zoom ou do pan (400 ms sem mexer) entra no histórico; Backspace volta.
   ``F`` (ou o duplo clique) ajusta a captura inteira.
 * **O minimapa** mostra a captura inteira do primeiro traço e a janela visível; arrastar a janela anda no tempo.
+* **Os cursores** (``C``): duas linhas verticais, as mesmas em todas as faixas; arrastar uma a move, e as setas
+  movem a última mexida amostra a amostra (Shift: 10 amostras). A região a medir (``regiaoMudou``) é a dos cursores
+  ou, sem eles, a janela visível; ela sai 250 ms depois da última mudança.
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ from ...tema.icones import IconeDoTema
 from ...tema.tokens import Tema, cor_do_traco
 
 PARADA_DO_HISTORICO_MS = 400
+ESPERA_DA_MEDIDA_MS = 250
 ALCANCE_DO_CLIQUE_PX = 6.0
 ALTURA_DO_MINIMAPA = 44
 MAXIMO_DO_HISTORICO = 100
@@ -41,6 +45,8 @@ class VistaDeTempo(QWidget):
     gráfico (perto de um traço, ou no vazio) ou num chip."""
 
     tracoClicado = Signal(object, object)
+    regiaoMudou = Signal(float, float, bool)      # início, fim (s), se é a dos cursores
+    semRegiao = Signal()                          # nenhum traço desenhado: nada a medir
 
     def __init__(self, vista: Vista, projeto: Projeto, selecao: Selecao, parent: QWidget | None = None):
         super().__init__(parent)
@@ -53,6 +59,9 @@ class VistaDeTempo(QWidget):
         self.historico: list[tuple[float, float]] = []
         self._navegando = False
         self._fontes_esperadas: set[FonteDoProjeto] = set()
+        self.cursores: list[float] | None = None
+        self._linhas_dos_cursores: list[list[pg.InfiniteLine]] = []
+        self._cursor_ativo = 1
 
         self._criar_barra()
         self._legenda = QWidget()
@@ -88,6 +97,10 @@ class VistaDeTempo(QWidget):
         self._parada.setSingleShot(True)
         self._parada.setInterval(PARADA_DO_HISTORICO_MS)
         self._parada.timeout.connect(self._registrar_no_historico)
+        self._espera_da_medida = QTimer(self)
+        self._espera_da_medida.setSingleShot(True)
+        self._espera_da_medida.setInterval(ESPERA_DA_MEDIDA_MS)
+        self._espera_da_medida.timeout.connect(self.emitir_regiao)
 
         vista.tracoEntrou.connect(self._estrutura_mudou)
         vista.tracoSaiu.connect(self._estrutura_mudou)
@@ -111,17 +124,29 @@ class VistaDeTempo(QWidget):
         self.acao_voltar.setShortcut(QKeySequence(Qt.Key.Key_Backspace))
         self.acao_voltar.setToolTip(self.tr("Voltar ao zoom anterior (Backspace)"))
         self.acao_voltar.triggered.connect(self.voltar)
-        for acao in (self.acao_ajustar, self.acao_voltar):
+        self.acao_cursores = QAction(self.tr("Cursores"), self)
+        self.acao_cursores.setCheckable(True)
+        self.acao_cursores.setShortcut(QKeySequence("C"))
+        self.acao_cursores.setToolTip(self.tr("Ligar os cursores (C)"))
+        self.acao_cursores.toggled.connect(self.ligar_cursores)
+        mover = []
+        for tecla, passos in (("Left", -1), ("Right", 1), ("Shift+Left", -10), ("Shift+Right", 10)):
+            a = QAction(self)
+            a.setShortcut(QKeySequence(tecla))
+            a.triggered.connect(lambda _=False, n=passos: self.mover_cursor(n))
+            mover.append(a)
+        for acao in (self.acao_ajustar, self.acao_voltar, self.acao_cursores, *mover):
             acao.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             self.addAction(acao)
         IconeDoTema(self.acao_ajustar, "expandir")
         IconeDoTema(self.acao_voltar, "desfazer")
+        IconeDoTema(self.acao_cursores, "cursores", papel_ligado="acento")
         self.info = QLabel()
         self.info.setObjectName("info_da_vista")
         linha = QHBoxLayout(self._barra)
         linha.setContentsMargins(10, 4, 10, 4)
         linha.setSpacing(4)
-        for acao in (self.acao_voltar, self.acao_ajustar):
+        for acao in (self.acao_voltar, self.acao_ajustar, self.acao_cursores):
             b = QToolButton()
             b.setProperty("variante", "fantasma")
             b.setDefaultAction(acao)
@@ -177,6 +202,8 @@ class VistaDeTempo(QWidget):
                 self.ajustar()
         self._atualizar_info()
         self._selecao_mudou(self.selecao.tracos)
+        self._por_cursores()
+        self._espera_da_medida.start()
 
     def _nova_faixa(self, linha: int, ultima: bool) -> pg.PlotItem:
         eixo_x, eixo_y = EixoDoTema("bottom"), EixoDoTema("left")
@@ -240,6 +267,88 @@ class VistaDeTempo(QWidget):
     def _estrutura_mudou(self, *_) -> None:
         self.reconstruir(ajustar=not self.itens)
 
+    # ------------------------------------------------------------------ os cursores
+
+    def ligar_cursores(self, ligar: bool = True) -> None:
+        if self.acao_cursores.isChecked() != ligar:
+            self.acao_cursores.setChecked(ligar)            # volta aqui pelo toggled
+            return
+        if ligar and self.cursores is None:
+            janela = self.janela_de_tempo() or (0.0, 1.0)
+            largura = janela[1] - janela[0]
+            self.cursores = [janela[0] + largura / 3, janela[0] + 2 * largura / 3]
+        elif not ligar:
+            self.cursores = None
+        self._por_cursores()
+        self._espera_da_medida.start()
+
+    def _por_cursores(self) -> None:
+        """Tira as linhas dos cursores e, se ligados, põe de novo em cada faixa."""
+        for linhas in self._linhas_dos_cursores:
+            for linha in linhas:
+                # As de faixas já refeitas foram apagadas junto com a faixa.
+                caixa = linha.getViewBox() if isValid(linha) else None
+                if caixa is not None:
+                    caixa.removeItem(linha)
+        self._linhas_dos_cursores = []
+        if self.cursores is None:
+            return
+        t = aparencia().tema
+        for k, posicao in enumerate(self.cursores):
+            linhas = []
+            for faixa in self.faixas.values():
+                linha = pg.InfiniteLine(posicao, angle=90, movable=True,
+                                        pen=pg.mkPen(t.destaque, width=1), hoverPen=pg.mkPen(t.destaque, width=2),
+                                        label=f"C{k + 1}", labelOpts={"position": 0.96, "color": t.destaque_texto,
+                                                                      "fill": t.destaque, "movable": False})
+                linha.indice_do_cursor = k
+                linha.setZValue(20)
+                linha.sigPositionChanged.connect(self._cursor_movido)
+                faixa.getViewBox().addItem(linha, ignoreBounds=True)
+                linhas.append(linha)
+            self._linhas_dos_cursores.append(linhas)
+
+    def _cursor_movido(self, linha: pg.InfiniteLine) -> None:
+        if self.cursores is None or self._navegando:
+            return
+        k = linha.indice_do_cursor
+        self.cursores[k] = linha.value()
+        self._cursor_ativo = k
+        self._navegando = True
+        try:
+            for outra in self._linhas_dos_cursores[k]:
+                if outra is not linha:
+                    outra.setValue(self.cursores[k])
+        finally:
+            self._navegando = False
+        self._espera_da_medida.start()
+
+    def mover_cursor(self, passos: int) -> bool:
+        """As setas: move o cursor ativo ``passos`` amostras (do primeiro traço)."""
+        if self.cursores is None or not self.itens:
+            return False
+        taxa = next(iter(self.itens.values()))._taxa
+        k = self._cursor_ativo
+        self._linhas_dos_cursores[k][0].setValue(self.cursores[k] + passos / taxa)
+        return True
+
+    def regiao(self) -> tuple[float, float, bool] | None:
+        """A região a medir: entre os cursores, ou a janela visível."""
+        if self.cursores is not None:
+            a, b = sorted(self.cursores)
+            return a, b, True
+        janela = self.janela_de_tempo()
+        return (janela[0], janela[1], False) if janela is not None else None
+
+    def emitir_regiao(self) -> None:
+        if not isValid(self):
+            return
+        regiao = self.regiao()
+        if regiao is not None and self.itens:
+            self.regiaoMudou.emit(*regiao)
+        else:
+            self.semRegiao.emit()
+
     def _traco_mudou(self, traco: Traco, campos) -> None:
         if "faixa" in campos:
             self.reconstruir()
@@ -251,6 +360,7 @@ class VistaDeTempo(QWidget):
             if campos & {"ganho", "offset"}:
                 canal = self._fonte_do(traco).canal(r.canal)
                 item.definir_afim(*r.afim(canal.escala, canal.deslocamento))
+            self._espera_da_medida.start()
             if "deslocamento_s" in campos:
                 item.definir_t0(r.deslocamento_s)
             if "visivel" in campos:
@@ -356,6 +466,8 @@ class VistaDeTempo(QWidget):
             finally:
                 self._navegando = False
         self._parada.start()
+        if self.cursores is None:
+            self._espera_da_medida.start()
 
     def _registrar_no_historico(self) -> None:
         janela = self.janela_de_tempo()

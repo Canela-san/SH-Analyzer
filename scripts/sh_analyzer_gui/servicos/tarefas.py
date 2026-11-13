@@ -45,6 +45,7 @@ class Tarefa(QObject):
         self.progresso = 0.0
         self.resultado = None
         self.erro = ""
+        self.mostrar = True
         self._funcao = funcao
         self._cancelar = threading.Event()
         self._ultimo_aviso = 0.0
@@ -112,12 +113,15 @@ class GerenciadorDeTarefas(QObject):
     def ativas(self) -> tuple[Tarefa, ...]:
         return tuple(self._ativas)
 
-    def iniciar(self, nome: str, funcao: Callable, grupo: str = "") -> Tarefa:
-        """Põe a tarefa na fila e a devolve (ligue ``terminou`` antes de voltar ao laço de eventos)."""
+    def iniciar(self, nome: str, funcao: Callable, grupo: str = "", *, mostrar: bool = True) -> Tarefa:
+        """Põe a tarefa na fila e a devolve (ligue ``terminou`` antes de voltar ao laço de eventos). Com
+        ``mostrar=False`` (uma conta rápida e frequente, como as medidas), ela não aparece no painel de tarefas."""
         tarefa = Tarefa(nome, funcao, grupo)
+        tarefa.mostrar = mostrar
         tarefa.terminou.connect(self._terminou)
         self._ativas.append(tarefa)
-        self.tarefaEntrou.emit(tarefa)
+        if mostrar:
+            self.tarefaEntrou.emit(tarefa)
         self.pool.start(_Executor(tarefa))
         return tarefa
 
@@ -132,7 +136,13 @@ class GerenciadorDeTarefas(QObject):
             tarefa.cancelar()
         return self.pool.waitForDone(espera_ms)
 
+    @property
+    def visiveis(self) -> tuple[Tarefa, ...]:
+        """As ativas que aparecem no painel."""
+        return tuple(t for t in self._ativas if t.mostrar)
+
     def _terminou(self, tarefa: Tarefa) -> None:
         if tarefa in self._ativas:
             self._ativas.remove(tarefa)
-            self.tarefaSaiu.emit(tarefa)
+            if tarefa.mostrar:
+                self.tarefaSaiu.emit(tarefa)

@@ -17,10 +17,12 @@ from ...componentes.numeros import formatar_si
 from ...dados.receita import ReceitaDoTraco
 from ...modelo.comandos import AdicionarTraco, AdicionarVista, RemoverFonte, RemoverTracos, RemoverVista
 from ...modelo.objetos import FonteDoProjeto, Projeto, Traco, Vista
+from ...servicos.medidas import PedidoDeMedida, ServicoDeMedidas
 from ...tema.aplicar import aparencia
 from ...tema.icones import IconeDoTema, icone
 from .arvore import PainelDoProjeto
 from .inspetor import TEXTOS_DA_INTEGRIDADE, Inspetor
+from .medidas import TabelaDeMedidas
 from .vista_tempo import VistaDeTempo
 
 NOME_DA_PRIMEIRA_VISTA = "Tempo"
@@ -33,8 +35,12 @@ def nome_do_traco(fonte: FonteDoProjeto, numero: int) -> str:
 
 class AreaDeAnalise(QObject):
     def __init__(self, janela, painel: PainelDoProjeto, inspetor: Inspetor, avisos: ListaDeAvisos,
-                 status_fonte: QLabel, status_integridade: QLabel, abas: QTabWidget):
+                 status_fonte: QLabel, status_integridade: QLabel, abas: QTabWidget, medidas: TabelaDeMedidas):
         super().__init__(janela)
+        self.tabela_de_medidas = medidas
+        self.servico_de_medidas = ServicoDeMedidas(janela.tarefas, self)
+        self.servico_de_medidas.prontas.connect(medidas.mostrar)
+        abas.currentChanged.connect(self._aba_mudou)
         self.janela, self.painel, self.inspetor, self.avisos = janela, painel, inspetor, avisos
         self.status_fonte, self.status_integridade, self.abas = status_fonte, status_integridade, abas
         self.projeto: Projeto | None = None
@@ -95,6 +101,8 @@ class AreaDeAnalise(QObject):
     def _vista_entrou(self, vista: Vista, i: int) -> None:
         widget = VistaDeTempo(vista, self.projeto, self.janela.selecao)
         widget.tracoClicado.connect(self._traco_clicado)
+        widget.regiaoMudou.connect(self._regiao_mudou)
+        widget.semRegiao.connect(self._sem_regiao)
         self.abas.insertTab(i, widget, icone("onda", aparencia().tema.texto2), vista.nome)
         # O botão de fechar com o ícone do tema (o do estilo destoava); fecha a aba dele, onde ela estiver.
         fechar = QToolButton()
@@ -119,6 +127,25 @@ class AreaDeAnalise(QObject):
         widget = self.widget_da_vista(vista)
         if widget is not None and "nome" in campos:
             self.abas.setTabText(self.abas.indexOf(widget), vista.nome)
+
+    # ------------------------------------------------------------------ as medidas
+
+    def _regiao_mudou(self, inicio: float, fim: float, dos_cursores: bool) -> None:
+        widget = self.sender()
+        if widget is self.abas.currentWidget():          # só a vista aberta é medida
+            self.servico_de_medidas.medir(self.projeto, PedidoDeMedida(widget.vista, inicio, fim, dos_cursores))
+
+    def _sem_regiao(self) -> None:
+        if self.sender() is self.abas.currentWidget() and isValid(self.tabela_de_medidas):
+            self.tabela_de_medidas.mostrar(None, [])
+
+    def _aba_mudou(self, _i: int) -> None:
+        widget = self.abas.currentWidget()
+        if isValid(self.tabela_de_medidas):
+            if widget is None:
+                self.tabela_de_medidas.mostrar(None, [])
+            else:
+                widget.emitir_regiao()
 
     def _fechar_aba(self, i: int) -> None:
         vista = getattr(self.abas.widget(i), "vista", None)

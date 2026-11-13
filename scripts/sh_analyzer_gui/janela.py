@@ -52,6 +52,7 @@ from . import preferencias
 from .areas.analise.area import AreaDeAnalise
 from .areas.analise.arvore import PainelDoProjeto
 from .areas.analise.inspetor import Inspetor
+from .areas.analise.medidas import TabelaDeMedidas
 from .componentes.avisos import ListaDeAvisos
 from .componentes.barra_superior import BarraSuperior
 from .componentes.basicos import Botao
@@ -144,7 +145,7 @@ class JanelaPrincipal(QMainWindow):
                                               com_titulo=False)
         self._criar_barra_de_status()
         self.area = AreaDeAnalise(self, self.painel_projeto, self.inspetor, self.avisos, self.status_fonte,
-                                  self.status_integridade, self.vistas)
+                                  self.status_integridade, self.vistas, self.tabela_de_medidas)
         self.setAcceptDrops(True)
 
         aparencia().mudou.connect(self._tema_mudou)
@@ -349,9 +350,8 @@ class JanelaPrincipal(QMainWindow):
 
     def _criar_painel_inferior(self) -> PainelComAbas:
         painel = PainelComAbas("painel_inferior")
-        painel.addTab(EstadoVazio(self.tr("Sem medidas"),
-                                  self.tr("Ligue os cursores ou selecione uma região do gráfico para medir."),
-                                  icone_nome="regua", compacto=True), self.tr("Medidas"))
+        self.tabela_de_medidas = TabelaDeMedidas()
+        painel.addTab(self.tabela_de_medidas, self.tr("Medidas"))
         self.lista_de_tarefas = ListaDeTarefas(self.tarefas)
         painel.addTab(self.lista_de_tarefas, self.tr("Tarefas"))
         self.lista_de_tarefas.contagemMudou.connect(self._contagem_de_tarefas)
@@ -363,7 +363,7 @@ class JanelaPrincipal(QMainWindow):
     def _contagem_de_tarefas(self, n: int) -> None:
         if isValid(self.painel_inferior):
             self.painel_inferior.definir_contagem(ABA_TAREFAS, n, "acento")
-            ativas = self.tarefas.ativas
+            ativas = self.tarefas.visiveis
             self.status_tarefa.setText(ativas[0].nome + (f" (+{len(ativas) - 1})" if len(ativas) > 1 else "")
                                        if ativas else "")
 

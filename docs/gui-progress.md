@@ -8,7 +8,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F1.7: os cursores e as medidas** (seção 4b). Da Fase 1, estão feitas da F1.1 à F1.6 (o inspetor do traço).
+> **F1.8: a paleta de comandos e os atalhos** (seção 4b), a última da Fase 1. Estão feitas da F1.1 à F1.7.
 >
 > **Na tela do usuário (2 minutos):** o G1 com 8 faixas na vista de verdade:
 > `uv run --extra gui python -m sh_analyzer_gui.prototipos.medir_vista` (anote o resultado na seção 5).
@@ -476,7 +476,13 @@ para o inspetor. Os testes em `test_gui_inspetor_traco.py`.
 - **O conteúdo:** a identidade, a aparência (a cor da paleta), e a escala e o tempo, cada mudança como um comando de desfazer.
 - **Os testes:** editar, desfazer e editar vários traços de uma vez.
 
-### ▶ F1.7: os cursores e as medidas
+### ☑ F1.7: os cursores e as medidas
+
+**Feito** (`b5b02ab`, só do motor: `api.medir_regiao`, com as contas da CLI): `servicos/medidas.py` (em segundo
+plano; vale o pedido mais recente; acima de 20 M amostras, não lê), `areas/analise/medidas.py` (a tabela, que copia
+para a planilha com a vírgula decimal) e os cursores na vista (C, as setas). Os testes em `test_gui_medidas.py`.
+**Para lembrar:** a f₁ precisa de dois cruzamentos por zero (a regra da CLI): com um ciclo só, fica vazia, com o
+motivo na dica. As tarefas com `mostrar=False` não aparecem no painel.
 
 - **O conteúdo:**
   - dois cursores, com Δt, 1/Δt e Δy;
@@ -484,7 +490,7 @@ para o inspetor. Os testes em `test_gui_inspetor_traco.py`.
   - a tabela de medidas, que copia para a planilha.
 - **Os testes:** os números iguais aos da CLI para a mesma região.
 
-### ☐ F1.8: a paleta de comandos e os atalhos
+### ▶ F1.8: a paleta de comandos e os atalhos
 
 - **O conteúdo:** Ctrl+K com busca por nome em todas as ações, e a lista dos atalhos.
 - **Os testes:** achar e rodar uma ação pela paleta.
@@ -587,6 +593,7 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
 - **13/11/2026 (noite):** a F1.5, a vista de tempo, conferida com as capturas do laboratório (60 Hz com 20 kHz e
   130 kHz). O G1 com 8 faixas fica para a tela do usuário. **Próximo:** a F1.6.
 - **13/11/2026 (noite):** a F1.6, o inspetor do traço. **Próximo:** a F1.7.
+- **13/11/2026 (noite):** a F1.7, os cursores e as medidas. **Próximo:** a F1.8.
 
 ---
 
