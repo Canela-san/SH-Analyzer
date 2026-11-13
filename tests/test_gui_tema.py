@@ -87,3 +87,24 @@ def test_nenhuma_lambda_ligada_a_troca_de_tema():
     pacote = Path(__file__).resolve().parents[1] / "scripts" / "sh_analyzer_gui"
     for arquivo in pacote.rglob("*.py"):
         assert not re.search(r"mudou\.connect\(\s*lambda", arquivo.read_text(encoding="utf-8")), arquivo.name
+
+
+def test_fontes_embutidas_registram_e_se_escolhem(qapp):
+    from sh_analyzer_gui.tema import fontes
+
+    familias = registrar_fontes()
+    assert "Inter" in familias and "JetBrains Mono" in familias        # mesmo sem elas instaladas no sistema
+    assert fontes.familias_disponiveis("interface") == ["Inter"]
+    assert fontes.familias_disponiveis("mono") == ["JetBrains Mono"]
+    assert fonte_mono().family() == "JetBrains Mono" and fonte_da_interface().family() == "Inter"
+    sistema = fontes.QFontDatabase.systemFont(fontes.QFontDatabase.SystemFont.GeneralFont).family()
+    try:
+        fontes.escolher_fonte("interface", sistema, qapp)
+        assert qapp.font().family() == sistema and fontes.fonte_escolhida("interface") == sistema
+    finally:
+        fontes.escolher_fonte("interface", "Inter", qapp)
+    assert qapp.font().family() == "Inter"
+    with pytest.raises(ValueError):
+        fontes.escolher_fonte("interface", "Fonte Que Não Existe")
+    with pytest.raises(ValueError):
+        fontes.familias_disponiveis("titulo")

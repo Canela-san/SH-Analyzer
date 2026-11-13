@@ -65,3 +65,22 @@ def test_as_contas():
     assert distancia("#ff0000", "#00ff00", "deuteranopia") < distancia("#ff0000", "#00ff00")   # vermelho x verde
     with pytest.raises(ValueError):
         rgb("red")
+
+
+def test_fontes_embutidas_tem_arquivos_e_licenca():
+    """Cada fonte da lista está na pasta, com a licença; nenhum arquivo de fonte está na pasta sem estar na lista."""
+    from sh_analyzer_gui.tema.fontes_embutidas import EMBUTIDAS, PAPEIS
+
+    pasta = Path(__file__).resolve().parents[1] / "scripts" / "sh_analyzer_gui" / "recursos" / "fontes"
+    listados = set()
+    for fonte in EMBUTIDAS:
+        assert fonte.papel in PAPEIS and fonte.tipo_de_licenca in ("OFL-1.1", "Apache-2.0", "MIT")
+        licenca = (pasta / fonte.licenca).read_text(encoding="utf-8")
+        assert "Copyright" in licenca and ("OPEN FONT LICENSE" in licenca or fonte.tipo_de_licenca != "OFL-1.1")
+        for nome in fonte.arquivos:
+            assert (pasta / nome).stat().st_size > 10_000, nome
+            assert (pasta / nome).read_bytes()[:4] in (b"\x00\x01\x00\x00", b"OTTO", b"true"), f"{nome}: não é TTF/OTF"
+            listados.add(nome)
+    na_pasta = {p.name for p in pasta.iterdir() if p.suffix.lower() in (".ttf", ".otf")}
+    assert na_pasta == listados, f"sem entrada em EMBUTIDAS: {sorted(na_pasta - listados)}"
+    assert {f.papel for f in EMBUTIDAS} == set(PAPEIS)

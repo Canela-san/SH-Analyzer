@@ -9,6 +9,8 @@
 *.webp   binary
 *.avif   binary
 *.bin    binary
+*.ttf    binary
+*.otf    binary
 *.PcbDoc binary
 *.SchDoc binary
 

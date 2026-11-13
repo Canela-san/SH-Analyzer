@@ -180,7 +180,7 @@ def test_a_camada_de_dados_da_interface_nao_importa_o_qt():
 def test_tokens_e_contas_de_cor_nao_importam_o_qt():
     """``tema/tokens.py`` e ``tema/cores.py`` são dados e contas: o ``tests/test_tema.py`` e o
     ``scripts/benchmarks/paleta_cores.py`` os usam sem o Qt instalado."""
-    for arquivo in (GUI / "tema" / "tokens.py", GUI / "tema" / "cores.py"):
+    for arquivo in (GUI / "tema" / "tokens.py", GUI / "tema" / "cores.py", GUI / "tema" / "fontes_embutidas.py"):
         for no in _imports_de(arquivo):
             nomes = [a.name for a in no.names] if isinstance(no, ast.Import) else [no.module or ""]
             for nome in nomes:
