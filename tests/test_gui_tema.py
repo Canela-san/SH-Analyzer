@@ -76,3 +76,14 @@ def test_botao_da_janela_troca_o_tema(qapp, ap, qtbot):
     janela.botao_tema.click()
     assert ap.tema is TEMAS["claro"] and janela.botao_tema.toolTip() == "Tema escuro"
     assert qapp.palette().color(QPalette.ColorRole.Window).name() == TEMAS["claro"].fundo
+
+
+def test_nenhuma_lambda_ligada_a_troca_de_tema():
+    """``aparencia().mudou.connect(lambda ...)`` não se desfaz quando o widget é destruído: a próxima troca de tema
+    chamaria um objeto morto (o erro apareceu no chip de traço). Ligue a um método do próprio widget."""
+    import re
+    from pathlib import Path
+
+    pacote = Path(__file__).resolve().parents[1] / "scripts" / "sh_analyzer_gui"
+    for arquivo in pacote.rglob("*.py"):
+        assert not re.search(r"mudou\.connect\(\s*lambda", arquivo.read_text(encoding="utf-8")), arquivo.name

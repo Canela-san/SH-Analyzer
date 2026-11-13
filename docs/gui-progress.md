@@ -8,7 +8,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F0.9: a galeria de componentes** (seção 4).
+> **F0.10: o `sh_placa`, o agente e o simulador** (seção 4).
 >
 > **Pendente da F0.8, precisa do seu OK:** baixar as fontes Inter e JetBrains Mono (OFL) para `scripts/sh_analyzer_gui/recursos/fontes/`. Sem elas, o aplicativo usa as fontes do sistema (a Inter está instalada nesta máquina).
 >
@@ -289,7 +289,7 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
   - **uma armadilha evitada:** o QSS não define `font-size`, que passaria por cima do `setFont` de cada widget.
 - **Falta:** embutir as fontes (ver "Próxima tarefa") e guardar a escolha do tema nas configurações (GE-05, Fase 2).
 
-### ▶ F0.9: a galeria de componentes
+### ☑ F0.9: a galeria de componentes
 
 - **Arquivos:** `scripts/sh_analyzer_gui/componentes/` e `scripts/sh_analyzer_gui/galeria.py`, aberta com `python -m sh_analyzer_gui.galeria`.
 - **Os 6 primeiros componentes:**
@@ -300,8 +300,20 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
   - cartão de medida;
   - toast.
 - **Pronto quando:** a galeria mostra os 6 nos dois temas, parecidos com os mockups, com um teste pytest-qt que abre cada um.
+- **Feito em 13/11/2026:**
+  - `componentes/numeros.py`, sem Qt: lê "2,5k", "2500", "1,2 mV", "1.234,5" e escreve "2,5 kHz", com o prefixo de engenharia e a vírgula decimal. Tem 50 testes;
+  - `componentes/basicos.py`:
+    - `Botao` com variante e ícone recolorido;
+    - `CampoComUnidade`, que marca em vermelho o que não é número ou está fora da faixa, sem perder o valor;
+    - `Segmentado`;
+    - `CartaoDeMedida`;
+  - `componentes/chip.py`: `ChipDeTraco`, pintado, com o progresso. A cor é a posição na paleta, então troca de tom com o tema;
+  - `componentes/toast.py`: entra e sai em 200 ms e respeita o movimento reduzido;
+  - `galeria.py`, que abre com `python -m sh_analyzer_gui.galeria`;
+  - os testes `test_gui_numeros.py` e `test_gui_componentes.py`.
+  - **Um bug que os testes pegaram:** ligar `aparencia().mudou` a uma `lambda` deixa a conexão viva depois que o widget morre. A ligação tem de ser a um método, e um teste agora proíbe a `lambda`.
 
-### ☐ F0.10: o `sh_placa`, o agente e o simulador
+### ▶ F0.10: o `sh_placa`, o agente e o simulador
 
 - **Arquivos:**
   - `firmware/agente/shan_agente.py` (só a biblioteca padrão; as raízes `/sys`, `/proc` e `/boot` configuráveis por variável de ambiente, para os testes);
@@ -395,8 +407,9 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **Parado em:** nada em andamento.
     - a parte automática da F0.6: o G1 sem tela, com 2 faixas, num teste de desempenho;
     - a F0.7: a `api` do motor (um commit só do motor) e a interface abrindo as capturas por ela;
-    - a F0.8, o tema, menos as fontes embutidas.
-  - **Próximo:** a F0.9, a galeria. Ficam com você medir o protótipo numa tela de verdade (F0.6) e o OK para baixar as fontes (F0.8).
+    - a F0.8, o tema, menos as fontes embutidas;
+    - a F0.9, os 6 componentes e a galeria.
+  - **Próximo:** a F0.10, a placa: o agente, o `sh_placa` e o simulador. Ficam com você medir o protótipo numa tela de verdade (F0.6) e o OK para baixar as fontes (F0.8).
 
 ---
 

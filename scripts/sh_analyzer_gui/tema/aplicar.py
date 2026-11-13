@@ -85,6 +85,11 @@ def gerar_paleta(t: Tema) -> QPalette:
     return p
 
 
+def _rgba(cor: str, alfa: float) -> str:
+    """``#rrggbb`` com transparência, no formato do QSS."""
+    return f"rgba({int(cor[1:3], 16)}, {int(cor[3:5], 16)}, {int(cor[5:7], 16)}, {alfa:g})"
+
+
 def gerar_qss(t: Tema) -> str:
     """A folha de estilos do tema. Os botões aceitam ``setProperty("variante", "primario" | "fantasma" |
     "perigo")``. Sem ``font-size``: o tamanho base vem da fonte da aplicação (``fontes.fonte_da_interface``), e um
@@ -136,6 +141,17 @@ QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0; }}
 QScrollBar::handle {{ background: {t.borda_forte}; border-radius: 5px; min-height: 24px; min-width: 24px; }}
 QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{
     background: none; border: none; width: 0; height: 0; }}
+QLineEdit[invalido="true"] {{ border-color: {t.erro}; }}
+QWidget#segmentado {{ background: {t.superficie}; border: 1px solid {t.borda}; border-radius: 8px; }}
+QWidget#segmentado QToolButton {{ background: transparent; border: none; border-radius: 6px; color: {t.texto2};
+                                  padding: 4px 12px; }}
+QWidget#segmentado QToolButton:checked {{ background: {_rgba(t.acento, 0.13)}; color: {t.acento}; font-weight: 600; }}
+QWidget#segmentado QToolButton:hover:!checked {{ color: {t.texto}; }}
+QFrame#cartao {{ background: {t.afundada}; border: 1px solid {t.borda}; border-radius: 8px; }}
+QFrame#cartao QLabel#rotulo {{ color: {t.mudo}; }}
+QFrame#cartao QLabel#unidade {{ color: {t.texto2}; }}
+QFrame#toast {{ background: {t.elevada}; border: 1px solid {t.borda_forte}; border-radius: 10px; }}
+QFrame#toast QLabel {{ color: {t.texto}; }}
 QHeaderView::section {{ background: {t.superficie}; color: {t.mudo}; border: none;
                         border-bottom: 1px solid {t.borda}; padding: 6px 10px; font-weight: 600; }}
 QTableView, QTreeView, QListView {{ background: {t.superficie}; alternate-background-color: {t.fundo};
