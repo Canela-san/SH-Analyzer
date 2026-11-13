@@ -56,6 +56,7 @@ report/gerar_marca.py     a marca em SVG (banner do README, logo, ícone do apli
                           só biblioteca padrão, saída determinística (os SVGs são commitados)
 docs/                     documentação (este arquivo, user-guide.md, lab-procedure.md, project-context.md...)
                           e referências (datasheets/, fapesp/, images/); os mockups da interface em gui-mockups/
+empacotamento/            a receita do PyInstaller do aplicativo (sh-analyzer-gui.spec, entrada.py; docs/gui-plan.md, 15)
 hardware/DAQ_Module/      projeto da PCB (Altium)
 .github/workflows/ci.yml  testes automáticos no GitHub (seção 7.1)
 pyproject.toml            dependências, configuração de pytest e ruff

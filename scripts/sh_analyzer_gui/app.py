@@ -5,9 +5,11 @@ Depende de: ``janela``, ``tema``.
 
 from __future__ import annotations
 
+import argparse
 import sys
 from importlib import metadata, resources
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
@@ -61,9 +63,30 @@ def criar_aplicacao(argv: list[str] | None = None, tema: str = "sistema") -> QAp
     return app
 
 
+OPCAO_SAIR_AO_ABRIR = "--sair-ao-abrir"
+
+
+def ler_opcoes(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
+    """As opções do aplicativo; o que sobra (as do Qt, como ``-platform``) segue para a ``QApplication``."""
+    p = argparse.ArgumentParser(prog="sh-analyzer-gui", description="A interface gráfica do SH-Analyzer.")
+    p.add_argument("--tema", choices=("sistema", "escuro", "claro"), default="sistema",
+                   help="o tema da interface (padrão: o do sistema)")
+    p.add_argument("--versao", action="store_true", help="mostra a versão e sai")
+    p.add_argument(OPCAO_SAIR_AO_ABRIR, action="store_true",
+                   help="abre a janela, pinta o primeiro quadro e sai (o teste de partida do instalador)")
+    opcoes, resto = p.parse_known_args(argv[1:])
+    return opcoes, argv[:1] + resto
+
+
 def main(argv: list[str] | None = None) -> int:
     """Abre a interface e devolve o código de saída do laço de eventos."""
-    app = criar_aplicacao(argv)
+    opcoes, argv_qt = ler_opcoes(list(sys.argv if argv is None else argv))
+    if opcoes.versao:
+        sys.stdout.write(f"{NOME} {versao()}\n")
+        return 0
+    app = criar_aplicacao(argv_qt, tema=opcoes.tema)
     janela = JanelaPrincipal()
     janela.show()
+    if opcoes.sair_ao_abrir:
+        QTimer.singleShot(0, app.quit)
     return app.exec()

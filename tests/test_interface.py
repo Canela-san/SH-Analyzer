@@ -41,3 +41,31 @@ def test_a_janela_abre_com_o_nome_a_versao_e_a_marca(qtbot):
     assert (janela.minimumWidth(), janela.minimumHeight()) == TAMANHO_MINIMO
     assert versao() in janela.findChild(QLabel, "versao").text()
     assert not janela.findChild(QLabel, "marca").pixmap().isNull()
+
+
+def test_main_com_sair_ao_abrir_abre_e_sai_com_zero():
+    """O teste de partida do instalador (F0.11), num processo à parte: a janela abre, o primeiro quadro é pintado e o
+    aplicativo sai com 0. Não roda no processo do pytest: depois de um ``quit()``, o Qt devolve na hora qualquer laço
+    de eventos novo, e os testes seguintes deixariam de processar os temporizadores."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    scripts = Path(__file__).resolve().parents[1] / "scripts"
+    ambiente = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "PYTHONPATH": str(scripts)}
+    r = subprocess.run([sys.executable, "-m", "sh_analyzer_gui", "--sair-ao-abrir", "--tema", "claro"],
+                       capture_output=True, text=True, env=ambiente, timeout=60)
+    assert r.returncode == 0, r.stderr[-2000:]
+
+
+def test_opcoes_da_linha_de_comando(capsys):
+    from sh_analyzer_gui import app as modulo
+
+    assert modulo.main(["sh-analyzer-gui", "--versao"]) == 0
+    assert capsys.readouterr().out.strip() == f"{NOME} {versao()}"
+    with pytest.raises(SystemExit) as e:
+        modulo.main(["sh-analyzer-gui", "--help"])
+    assert e.value.code == 0 and "--sair-ao-abrir" in capsys.readouterr().out
+    opcoes, resto = modulo.ler_opcoes(["prog", "--tema", "claro", "-platform", "offscreen"])
+    assert opcoes.tema == "claro" and resto == ["prog", "-platform", "offscreen"]
