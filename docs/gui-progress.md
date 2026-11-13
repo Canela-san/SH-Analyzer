@@ -8,8 +8,8 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F1.4: abrir capturas e o painel Projeto** (seção 4b). Da Fase 1, a F1.1 (a janela), a F1.2 (o modelo e o
-> desfazer) e a F1.3 (o projeto `.shproj`) estão feitas.
+> **F1.5: a vista de tempo** (seção 4b). Da Fase 1, estão feitas a F1.1 (a janela), a F1.2 (o modelo e o desfazer),
+> a F1.3 (o projeto `.shproj`) e a F1.4 (abrir capturas e o painel do projeto).
 >
 >
 > **No laboratório (opcional, 5 minutos):** a F0.2 colhe da BeagleBone os dados que a Aquisição vai usar (seção 6).
@@ -425,7 +425,15 @@ das fixtures: uma janela que pode terminar o teste com mudanças é fechada pela
   - o salvamento automático (`.shproj~`) e a recuperação depois de uma queda.
 - **Os testes:** ida e volta, um formato futuro recusado com a mensagem, e a recuperação.
 
-### ▶ F1.4: abrir capturas e o painel Projeto
+### ☑ F1.4: abrir capturas e o painel Projeto
+
+**Feito** (`e76684b`, só do motor: `api.conferir_integridade` e `api.descrever_cabecalho`; `84e4fa9`, a interface):
+`servicos/` (as tarefas e o preparo de cada captura), `areas/analise/` (`arvore.py`, `inspetor.py`, `area.py`) e
+`componentes/tarefas.py`. Os testes em `test_gui_abrir_capturas.py`. Conferido com as capturas do laboratório de
+13/11 (`FIG_2026-11-13`): abrem, a pirâmide sai, o CRC confere.
+**Para lembrar:** quem segue um sinal do projeto **depois** da árvore precisa ser ligado depois dela (a ordem das
+conexões é a ordem das chamadas). **Não rode `uv run` com outro extra enquanto a CI roda em segundo plano:** o `uv`
+reinstala o ambiente compartilhado no meio, e um teste que abre um subprocesso falha sem motivo.
 
 - **O conteúdo:**
   - abrir por diálogo, arrastando e soltando, e pelos recentes;
@@ -435,7 +443,7 @@ das fixtures: uma janela que pode terminar o teste com mudanças é fechada pela
   - a construção da pirâmide em segundo plano (um `QRunnable`), com o progresso e o cancelamento.
 - **Os testes:** abrir uma captura sintética, a árvore e o cancelamento.
 
-### ☐ F1.5: a vista de tempo
+### ▶ F1.5: a vista de tempo
 
 - **O conteúdo:**
   - as faixas, uma `ViewBox` por grandeza, com o tempo ligado entre elas, e o `TracoLOD`;
@@ -555,6 +563,8 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
 - **13/11/2026 (tarde):** a F1.2, o modelo e o desfazer. **Próximo:** a F1.3.
 - **13/11/2026 (noite):** a F1.3, o projeto `.shproj`, com o salvamento automático e a recuperação. **Próximo:** a
   F1.4.
+- **13/11/2026 (noite):** a F1.4, abrir capturas, com a árvore, o inspetor do cabeçalho, as tarefas e o CRC
+  conferido. **Próximo:** a F1.5.
 
 ---
 
