@@ -8,7 +8,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F0.10: o `sh_placa`, o agente e o simulador** (seção 4).
+> **F0.11: o instalador de teste** (seção 4). Depois dela, a F0.12 fecha a Fase 0.
 >
 >
 > **No laboratório (opcional, 5 minutos):** a F0.2 colhe da BeagleBone os dados que a Aquisição vai usar (seção 6).
@@ -322,7 +322,7 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
   - os testes `test_gui_numeros.py` e `test_gui_componentes.py`.
   - **Um bug que os testes pegaram:** ligar `aparencia().mudou` a uma `lambda` deixa a conexão viva depois que o widget morre. A ligação tem de ser a um método, e um teste agora proíbe a `lambda`.
 
-### ▶ F0.10: o `sh_placa`, o agente e o simulador
+### ☑ F0.10: o `sh_placa`, o agente e o simulador
 
 - **Arquivos:**
   - `firmware/agente/shan_agente.py` (só a biblioteca padrão; as raízes `/sys`, `/proc` e `/boot` configuráveis por variável de ambiente, para os testes);
@@ -331,8 +331,21 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
   - `tests/test_agente.py` e `tests/test_sh_placa.py`.
 - **Os comandos:** só `versao` e `estado`, por enquanto (plano, 11.2). O `ci.sh` do firmware passa a conferir o agente.
 - **Pronto quando:** o agente responde sobre uma árvore falsa, e o simulador responde os mesmos dois comandos.
+- **Feito em 13/11/2026:**
+  - **`firmware/agente/shan_agente.py`**, que só lê, com os comandos `versao` e `estado` em JSON, `"protocolo": 1`:
+    - responde a placa (a EEPROM, como o `ler_adc`), o sistema, o kernel, o tempo ligada, a carga, a memória, a temperatura, o disco, o relógio e o NTP;
+    - responde também a PRU0 (o remoteproc), os pinos P9_28 a P9_31, o `mem=496M`, o firmware (`VERSAO`, compilado ou não) e as capturas;
+    - o que falta vira `null`;
+    - só usa a biblioteca padrão; a sintaxe é conferida para o Python 3.7 e ele roda de verdade no 3.8;
+    - `SHAN_RAIZ` e `SHAN_PASTA` trocam a raiz do sistema e a pasta do firmware.
+  - **`scripts/sh_placa/`**, sem Qt:
+    - `agente.py`: o `ClienteDoAgente`, que confere o JSON, o protocolo e o erro, e o `TransporteLocal`. O SSH entra na Fase 3, com a mesma interface;
+    - `estado.py`: o `EstadoDaPlaca.diagnostico()`, com o nível, o código, o texto e a correção de cada problema;
+    - `simulador.py`: um sistema de arquivos falso de BeagleBone, em 6 cenários, em que o **agente de verdade** roda.
+  - **Testes:** `test_agente.py` (sobre a raiz falsa) e `test_sh_placa.py` (o diagnóstico de cada cenário e as respostas estranhas). A arquitetura confere que o `sh_placa` não importa o Qt nem a interface, e o `ci.sh` roda o ruff no agente.
+  - **O extra `placa`** (asyncssh, zeroconf…) fica para a Fase 3, quando o SSH entrar: hoje não há dependência nova.
 
-### ☐ F0.11: o instalador de teste
+### ▶ F0.11: o instalador de teste
 
 - **O quê:** um PyInstaller em pasta, com o PySide6, o PyQtGraph e o SciPy. Primeiro no Linux; no Windows quando houver uma máquina.
 - **Pronto quando:** o tamanho e o tempo de abrir estão anotados na seção 5.
@@ -418,11 +431,13 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     - a parte automática da F0.6: o G1 sem tela, com 2 faixas, num teste de desempenho;
     - a F0.7: a `api` do motor (um commit só do motor) e a interface abrindo as capturas por ela;
     - a F0.8, o tema, menos as fontes embutidas;
-    - a F0.9, os 6 componentes e a galeria.
+    - a F0.9, os 6 componentes e a galeria;
+    - as fontes opcionais (IBM Plex Sans e Mono, Atkinson Hyperlegible Next), tiradas de zips com arquivos repetidos;
+    - a F0.10: o agente da placa, o `sh_placa` e o simulador.
   - **Depois, no mesmo dia:**
     - o G1 medido na tela do usuário, aprovado com 8 faixas;
     - as fontes Inter e JetBrains Mono embutidas, com os arquivos que ele baixou.
-  - **Próximo:** a F0.10, a placa: o agente, o `sh_placa` e o simulador.
+  - **Próximo:** a F0.11, o instalador de teste (PyInstaller, no Linux).
 
 ---
 
