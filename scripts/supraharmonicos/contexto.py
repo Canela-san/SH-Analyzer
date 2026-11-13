@@ -44,6 +44,7 @@ from .constantes import CANAL_PADRAO, GRANDEZA_CORRENTE, GRANDEZA_NAO_USADA, GRA
 from .erros import ErroSHAN
 from .sonda import (
     SONDAS_DIR_PADRAO,
+    PerfilSonda,
     analisar_overrides_grandeza,
     analisar_overrides_perfil,
     aplicar_correcao_sonda,
@@ -104,16 +105,38 @@ class ContextoCaptura:
 
 
 def resolver_contexto(args: argparse.Namespace) -> ContextoCaptura:
-    """Detecta o cabeçalho e resolve canais/calibração/grandeza/sonda.
+    """Detecta o cabeçalho e resolve canais/calibração/grandeza/sonda a partir das flags do ``adc_tool``.
 
-    A detecção do cabeçalho vem ANTES de resolver --canais/-f, que podem cair
-    de volta nos metadados dele quando não informados. O arquivo de ENTRADA
-    muda conforme o modo: -c/--converter usa seu próprio caminho; plotagem e
-    --export-hdf5 usam o posicional 'arquivo'. Só um '.bin' pode ter o
-    cabeçalho -- um '.csv' nunca tem.
+    O arquivo de ENTRADA muda conforme o modo: -c/--converter usa seu próprio caminho; plotagem e --export-hdf5
+    usam o posicional 'arquivo'. O resto é :func:`resolver_contexto_explicito`, com cada flag como parâmetro.
 
     Levanta ErroSHAN para qualquer flag/arquivo inválido."""
-    caminho_entrada = args.converter if args.converter is not None else args.arquivo
+    return resolver_contexto_explicito(
+        args.converter if args.converter is not None else args.arquivo,
+        formato=args.formato,
+        canais_texto=args.canais,
+        canais_exibir_texto=args.canais_exibir,
+        faixa_texto=args.faixa,
+        ganho_texto=args.ganho,
+        offset_texto=args.offset,
+        grandeza_texto=args.grandeza,
+        sonda_perfil_texto=args.sonda_perfil,
+        sondas_dir=args.sondas_dir,
+    )
+
+
+def resolver_contexto_explicito(caminho_entrada: Path | None, *, formato: str = "uint16",
+                                canais_texto: str | None = None, canais_exibir_texto: str | None = None,
+                                faixa_texto: str | None = None, ganho_texto: str | None = None,
+                                offset_texto: str | None = None, grandeza_texto: str | None = None,
+                                sonda_perfil_texto: str | None = None,
+                                sondas_dir: Path | None = None) -> ContextoCaptura:
+    """O que :func:`resolver_contexto` faz, sem o ``argparse``: cada flag é um parâmetro, no MESMO texto da CLI
+    (``None`` = flag ausente). Sem nenhum, tudo vem do cabeçalho da captura e dos padrões históricos -- é o que a
+    ``api`` usa para abrir uma captura.
+
+    A detecção do cabeçalho vem ANTES de resolver --canais/-f, que podem cair de volta nos metadados dele quando
+    não informados. Só um '.bin' pode ter o cabeçalho -- um '.csv' nunca tem."""
 
     cabecalho: CabecalhoArquivo | None = None
     offset_amostras = 0
@@ -123,8 +146,8 @@ def resolver_contexto(args: argparse.Namespace) -> ContextoCaptura:
             offset_amostras = cabecalho.tamanho_cabecalho      # 1024 até a v8; 4096 na v9
 
     # --canais: explícito (CLI) > cabeçalho da captura > padrão histórico.
-    if args.canais is not None:
-        canais = analisar_lista_canais(args.canais, "--canais")
+    if canais_texto is not None:
+        canais = analisar_lista_canais(canais_texto, "--canais")
         canais_veio_do_cabecalho = False
     elif cabecalho is not None:
         canais = _canais_do_cabecalho(cabecalho)
@@ -133,8 +156,8 @@ def resolver_contexto(args: argparse.Namespace) -> ContextoCaptura:
         canais = analisar_lista_canais(CANAL_PADRAO, "--canais")
         canais_veio_do_cabecalho = False
 
-    if args.canais_exibir is not None:
-        canais_exibir = analisar_lista_canais(args.canais_exibir, "--canais-exibir")
+    if canais_exibir_texto is not None:
+        canais_exibir = analisar_lista_canais(canais_exibir_texto, "--canais-exibir")
         validar_subconjunto_canais(canais_exibir, canais)
     else:
         canais_exibir = canais
@@ -147,10 +170,10 @@ def resolver_contexto(args: argparse.Namespace) -> ContextoCaptura:
     faixas_cabecalho = None
     if cabecalho is not None and len(cabecalho.lista_canais) == len(canais):
         faixas_cabecalho = cabecalho.faixa_adc_total_v_por_canal
-    faixas, faixas_confiaveis = resolver_faixas(args.faixa, canais, args.formato, faixas_cabecalho)
+    faixas, faixas_confiaveis = resolver_faixas(faixa_texto, canais, formato, faixas_cabecalho)
     # --ganho: explícito (CLI) > o declarado na captura (ler_adc --ganho, cabeçalho v9) > 1.0 (volts no pino).
-    if args.ganho is not None:
-        ganhos = analisar_lista_calibracao(args.ganho, len(canais), "--ganho")
+    if ganho_texto is not None:
+        ganhos = analisar_lista_calibracao(ganho_texto, len(canais), "--ganho")
     else:
         declarados = cabecalho.ganho_por_canal if cabecalho is not None and len(cabecalho.lista_canais) == len(canais) else ()
         ganhos = [float(g) if g else 1.0 for g in declarados] or [1.0] * len(canais)
@@ -158,12 +181,12 @@ def resolver_contexto(args: argparse.Namespace) -> ContextoCaptura:
             log.info("Ganho por canal: o declarado na captura (ler_adc --ganho) -- "
                      + ", ".join(f"canal {c}: {g:g}" if g else f"canal {c}: 1 (não declarado)"
                                  for c, g in zip(canais, declarados)))
-    offsets = resolver_offsets_por_canal(args.offset, faixas, args.formato, len(canais))
+    offsets = resolver_offsets_por_canal(offset_texto, faixas, formato, len(canais))
 
     # --grandeza/--sonda-perfil: mesma hierarquia de 3 níveis, mas resolvida
     # por CANAL (não por posição), porque nem todo canal aparece nas flags.
-    overrides_grandeza = analisar_overrides_grandeza(args.grandeza) if args.grandeza is not None else {}
-    overrides_perfil = analisar_overrides_perfil(args.sonda_perfil) if args.sonda_perfil is not None else {}
+    overrides_grandeza = analisar_overrides_grandeza(grandeza_texto) if grandeza_texto is not None else {}
+    overrides_perfil = analisar_overrides_perfil(sonda_perfil_texto) if sonda_perfil_texto is not None else {}
     # Um canal que não está na captura era IGNORADO: '--sonda-perfil 5:...' numa captura dos canais 1 e 2 (erro
     # de digitação) saía sem correção nenhuma e sem aviso -- o resultado errado em silêncio.
     for flag, overrides in (("--grandeza", overrides_grandeza), ("--sonda-perfil", overrides_perfil)):
@@ -171,7 +194,7 @@ def resolver_contexto(args: argparse.Namespace) -> ContextoCaptura:
         if fora:
             raise ErroSHAN(f"{flag}: canal {', '.join(map(str, fora))} não está na captura (canais: "
                            f"{', '.join(map(str, canais))}). Confira o número do canal.")
-    sondas_dir = args.sondas_dir if args.sondas_dir is not None else SONDAS_DIR_PADRAO
+    sondas_dir = sondas_dir if sondas_dir is not None else SONDAS_DIR_PADRAO
 
     return ContextoCaptura(
         caminho_entrada=caminho_entrada,
@@ -223,44 +246,61 @@ def aplicar_correcao_sondas(args: argparse.Namespace, ctx: ContextoCaptura,
     cada canal exibido (o gráfico usa para rotular os eixos)."""
     grandeza_por_canal_exibir = {canal: ctx.grandeza_do_canal(canal) for canal in ctx.canais_exibir}
     for canal in ctx.canais_exibir:
-        grandeza = grandeza_por_canal_exibir[canal]
-        sonda_id = ctx.sonda_id_do_canal(canal)
-        # Uma sonda REGISTRADA (id no cabeçalho ou --sonda-perfil) vale para
-        # qualquer grandeza de frequência (corrente, e também tensão -- ex.:
-        # divisor/ponta com banda limitada). Corrente SEM sonda só avisa.
-        sonda_registrada = bool(sonda_id) or canal in ctx.overrides_perfil
-        if grandeza == GRANDEZA_TEMPERATURA:
-            if sonda_registrada:
-                log.warning(
-                    f"canal {canal} é de temperatura -- a sonda "
-                    f"registrada ('{sonda_id or ctx.overrides_perfil[canal]}') "
-                    f"não é aplicada (correção por frequência não se aplica "
-                    f"a temperatura; perfis 'polinomio'/'tabela' ainda não "
-                    f"existem)."
-                )
-            continue
-        if grandeza != GRANDEZA_CORRENTE and not sonda_registrada:
+        perfil = perfil_para_correcao(ctx, canal, args.formato, sem_correcao=args.sem_correcao_sonda)
+        if perfil is None:
             continue
         prefixo = f"  Canal {canal}: " if ctx.num_canais > 1 else "  "
-        if args.sem_correcao_sonda:
-            log.info(f"{prefixo}--sem-correcao-sonda ativo -- usando só --ganho escalar (sem correção por frequência).")
-            continue
-        perfil = resolver_perfil_canal(canal, sonda_id, ctx.overrides_perfil, ctx.sondas_dir)
-        if perfil is None:
-            log.warning(
-                f"canal {canal} é de corrente mas não tem sonda/perfil resolvido -- "
-                f"usando só --ganho escalar (sem correção por frequência). "
-                f"Registre a sonda na captura (--sonda em ler_adc) ou use "
-                f"--sonda-perfil {canal}:ARQUIVO."
-            )
-            continue
-        idx_canal = ctx.indice_no_ciclo(canal)
-        conferir_calibracao_perfil(perfil, canal, args.formato, ctx.faixas[idx_canal], ctx.ganhos[idx_canal],
-                                   faixa_confiavel=ctx.faixas_confiaveis[idx_canal])
-        conferir_idade_perfil(perfil, canal, _data_da_captura(ctx))
         por_canal_tensao[canal] = aplicar_correcao_sonda(por_canal_tensao[canal], fs_efetiva, perfil)
         log.info(f"{prefixo}correção de sonda aplicada (perfil '{perfil.id}', {perfil.caminho})")
     return grandeza_por_canal_exibir
+
+
+def perfil_para_correcao(ctx: ContextoCaptura, canal: int, formato: str, *,
+                         sem_correcao: bool = False) -> PerfilSonda | None:
+    """O perfil de sonda que corrige ``canal``, ou ``None`` se ele não deve ser corrigido -- a regra do
+    ``adc_tool`` e do ``medir_captura``, também usada pela ``api``.
+
+    * temperatura: nunca (avisa se havia uma sonda registrada);
+    * tensão sem sonda registrada (no cabeçalho ou em --sonda-perfil): não;
+    * ``sem_correcao`` (--sem-correcao-sonda): não, e diz que só o ganho escalar vale;
+    * corrente sem perfil resolvido: não, e avisa;
+    * senão, o perfil, depois de conferir que ele foi feito para a faixa e o ganho deste canal e a idade dele."""
+    grandeza = ctx.grandeza_do_canal(canal)
+    sonda_id = ctx.sonda_id_do_canal(canal)
+    # Uma sonda REGISTRADA (id no cabeçalho ou --sonda-perfil) vale para
+    # qualquer grandeza de frequência (corrente, e também tensão -- ex.:
+    # divisor/ponta com banda limitada). Corrente SEM sonda só avisa.
+    sonda_registrada = bool(sonda_id) or canal in ctx.overrides_perfil
+    if grandeza == GRANDEZA_TEMPERATURA:
+        if sonda_registrada:
+            log.warning(
+                f"canal {canal} é de temperatura -- a sonda "
+                f"registrada ('{sonda_id or ctx.overrides_perfil[canal]}') "
+                f"não é aplicada (correção por frequência não se aplica "
+                f"a temperatura; perfis 'polinomio'/'tabela' ainda não "
+                f"existem)."
+            )
+        return None
+    if grandeza != GRANDEZA_CORRENTE and not sonda_registrada:
+        return None
+    prefixo = f"  Canal {canal}: " if ctx.num_canais > 1 else "  "
+    if sem_correcao:
+        log.info(f"{prefixo}--sem-correcao-sonda ativo -- usando só --ganho escalar (sem correção por frequência).")
+        return None
+    perfil = resolver_perfil_canal(canal, sonda_id, ctx.overrides_perfil, ctx.sondas_dir)
+    if perfil is None:
+        log.warning(
+            f"canal {canal} é de corrente mas não tem sonda/perfil resolvido -- "
+            f"usando só --ganho escalar (sem correção por frequência). "
+            f"Registre a sonda na captura (--sonda em ler_adc) ou use "
+            f"--sonda-perfil {canal}:ARQUIVO."
+        )
+        return None
+    idx_canal = ctx.indice_no_ciclo(canal)
+    conferir_calibracao_perfil(perfil, canal, formato, ctx.faixas[idx_canal], ctx.ganhos[idx_canal],
+                               faixa_confiavel=ctx.faixas_confiaveis[idx_canal])
+    conferir_idade_perfil(perfil, canal, _data_da_captura(ctx))
+    return perfil
 
 
 def _data_da_captura(ctx: ContextoCaptura) -> datetime.date | None:

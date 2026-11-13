@@ -31,8 +31,8 @@ CAMADAS = {
     # 2 -- composições de camada 1
     "espectro": 2, "conversao": 2, "hdf5": 2, "contexto": 2, "metricas_captura": 2, "compactacao": 2, "exportacao": 2,
     "razao_quadrada": 2, "ancora_perfil": 2,
-    # 3 -- aplicação
-    "calibracao_sonda": 3, "modos": 3, "aliasing": 3,
+    # 3 -- aplicação ("api": a fachada sem argparse que a interface gráfica usa)
+    "calibracao_sonda": 3, "modos": 3, "aliasing": 3, "api": 3,
     # 4
     "escrita_perfil": 4, "cli_adc_tool": 4, "cli_medir_captura": 4, "cli_compactar": 4, "cli_info": 4,
     "cli_aliasing": 4,

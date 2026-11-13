@@ -1,0 +1,123 @@
+"""A ``supraharmonicos.api`` (o que a interface gráfica usa): abrir uma captura dá os mesmos canais, a mesma
+calibração, os mesmos volts e a mesma correção de sonda que o caminho da CLI (``resolver_contexto`` e
+``aplicar_correcao_sondas``), e os avisos do motor viram dados."""
+
+import json
+import logging
+
+import numpy as np
+import pytest
+from capturas_sinteticas import FREQS_CAL, captura_producao, escrever_bin, planta_h
+from supraharmonicos import api
+from supraharmonicos.amostras import converter_para_tensao
+from supraharmonicos.cli_adc_tool import montar_parser
+from supraharmonicos.constantes import GRANDEZA_CORRENTE, GRANDEZA_TENSAO
+from supraharmonicos.contexto import aplicar_correcao_sondas, resolver_contexto
+from supraharmonicos.erros import ErroSHAN
+
+
+@pytest.fixture(scope="module")
+def ambiente(tmp_path_factory):
+    base = tmp_path_factory.mktemp("api")
+    sondas = base / "sondas"
+    sondas.mkdir()
+    perfil = {"id": "sonda_teste", "tipo": "resposta_frequencia",
+              "pontos": [{"freq_hz": float(f), "ganho": float(planta_h(f))} for f in FREQS_CAL]}
+    (sondas / "sonda_teste.json").write_text(json.dumps(perfil), encoding="utf-8")
+    captura_producao(base / "ok.bin", dur_s=0.3)
+    return base
+
+
+def contexto_da_cli(ambiente, *flags):
+    return resolver_contexto(montar_parser().parse_args([str(ambiente / "ok.bin"), "--sondas-dir",
+                                                          str(ambiente / "sondas"), *flags]))
+
+
+def test_canais_e_calibracao_iguais_aos_da_cli(ambiente):
+    ctx = contexto_da_cli(ambiente)
+    cap = api.abrir_captura(ambiente / "ok.bin", sondas_dir=ambiente / "sondas")
+    assert [c.numero for c in cap.canais] == ctx.canais == [0, 1]
+    assert [c.faixa_v for c in cap.canais] == ctx.faixas
+    assert [c.ganho for c in cap.canais] == ctx.ganhos
+    assert [c.offset_v for c in cap.canais] == ctx.offsets
+    assert [c.faixa_confiavel for c in cap.canais] == ctx.faixas_confiaveis
+    assert [c.grandeza for c in cap.canais] == [GRANDEZA_TENSAO, GRANDEZA_CORRENTE]
+    assert [c.nome_grandeza for c in cap.canais] == ["tensão", "corrente"]
+    assert cap.canal(1).sonda_id == "sonda_teste" and cap.canal(1).perfil.id == "sonda_teste"
+    assert cap.canal(0).perfil is None
+    assert all(c.taxa_hz == cap.cabecalho.frequencia_hz / 2 for c in cap.canais)
+
+
+def test_volts_iguais_aos_da_cli_e_a_conversao_afim(ambiente):
+    ctx = contexto_da_cli(ambiente)
+    cap = api.abrir_captura(ambiente / "ok.bin", sondas_dir=ambiente / "sondas")
+    assert isinstance(cap.amostras, np.memmap) and not cap.canal(0).amostras.flags.owndata    # visões, sem cópia
+    todas = np.asarray(cap.amostras)
+    for i, canal in enumerate(ctx.canais):
+        codigos = todas[i::2]
+        esperado = converter_para_tensao(codigos, ctx.faixas[i], ctx.ganhos[i], "uint16", ctx.offsets[i])
+        np.testing.assert_array_equal(api.sinal_do_canal(cap, canal), esperado)
+        np.testing.assert_array_equal(api.sinal_do_canal(cap, canal, 100, 250), esperado[100:250])
+        c = cap.canal(canal)
+        np.testing.assert_allclose(codigos * c.escala + c.deslocamento, esperado, rtol=0, atol=1e-12)
+
+
+def test_correcao_de_sonda_igual_a_da_cli(ambiente):
+    args = montar_parser().parse_args([str(ambiente / "ok.bin"), "--sondas-dir", str(ambiente / "sondas")])
+    ctx = resolver_contexto(args)
+    cap = api.abrir_captura(ambiente / "ok.bin", sondas_dir=ambiente / "sondas")
+    por_canal = {c: api.sinal_do_canal(cap, c) for c in ctx.canais}
+    aplicar_correcao_sondas(args, ctx, por_canal, cap.canal(1).taxa_hz)
+    np.testing.assert_array_equal(api.sinal_do_canal(cap, 1, corrigir_sonda=True), por_canal[1])
+    np.testing.assert_array_equal(api.sinal_do_canal(cap, 0, corrigir_sonda=True), por_canal[0])   # tensão: nada
+    assert not np.array_equal(api.sinal_do_canal(cap, 1), por_canal[1])                            # corrigiu mesmo
+
+
+def test_avisos_do_motor_viram_dados_e_o_logging_volta_como_estava(tmp_path):
+    """Corrente sem sonda registrada: a CLI avisa no terminal; a API devolve o aviso."""
+    caminho = captura_producao(tmp_path / "sem_sonda.bin", sonda_id="", dur_s=0.05)
+    logger = logging.getLogger("supraharmonicos")
+    nivel = logger.level
+    cap = api.abrir_captura(caminho, sondas_dir=tmp_path)
+    assert cap.canal(1).perfil is None and cap.canal(1).problema_sonda == ""
+    assert any(a.nivel == "aviso" and "canal 1 é de corrente mas não tem sonda/perfil resolvido" in a.texto
+               for a in cap.avisos)
+    assert any(a.nivel == "info" and "não registra a faixa do ADC" in a.texto for a in cap.avisos)
+    assert logger.level == nivel and not any(isinstance(h, api._Coletor) for h in logger.handlers)
+
+
+def test_perfil_que_falta_nao_impede_de_abrir(ambiente, tmp_path):
+    """A CLI para com um erro (a sonda registrada sem o arquivo do perfil); a API abre, sem o perfil naquele canal,
+    e diz por quê -- a diferença deliberada documentada no módulo."""
+    with pytest.raises(ErroSHAN):
+        contexto_da_cli_sem_sondas = resolver_contexto(montar_parser().parse_args(
+            [str(ambiente / "ok.bin"), "--sondas-dir", str(tmp_path)]))
+        aplicar_correcao_sondas(montar_parser().parse_args([str(ambiente / "ok.bin")]), contexto_da_cli_sem_sondas,
+                                {0: np.zeros(1), 1: np.zeros(1)}, 1.0)
+    cap = api.abrir_captura(ambiente / "ok.bin", sondas_dir=tmp_path)
+    assert cap.canal(1).perfil is None and "não existe um perfil" in cap.canal(1).problema_sonda
+    assert any(a.nivel == "erro" and "não existe um perfil" in a.texto for a in cap.avisos)
+    np.testing.assert_array_equal(api.sinal_do_canal(cap, 1, corrigir_sonda=True), api.sinal_do_canal(cap, 1))
+
+
+def test_erros_viram_erro_shan(ambiente, tmp_path):
+    legado = escrever_bin(tmp_path / "legado.bin", [np.zeros(100), np.zeros(100)], com_cabecalho=False)
+    with pytest.raises(ErroSHAN, match="sem o cabeçalho"):
+        api.abrir_captura(legado)
+    (tmp_path / "x.csv").write_text("1\n2\n")
+    with pytest.raises(ErroSHAN, match="só capturas .bin"):
+        api.abrir_captura(tmp_path / "x.csv")
+    with pytest.raises(ErroSHAN, match="formato desconhecido"):
+        api.abrir_captura(ambiente / "ok.bin", formato="float32")
+    cap = api.abrir_captura(ambiente / "ok.bin", sondas_dir=ambiente / "sondas")
+    with pytest.raises(ErroSHAN, match="canal 5 não está na captura"):
+        cap.canal(5)
+
+
+def test_arquivo_cortado_no_meio_de_um_quadro(tmp_path):
+    """Um quadro final incompleto fica de fora: os canais têm o mesmo número de amostras."""
+    caminho = escrever_bin(tmp_path / "c.bin", [np.zeros(1000), np.ones(1000)])
+    with open(caminho, "ab") as f:
+        f.write(b"\x00\x80")                          # meia varredura a mais
+    cap = api.abrir_captura(caminho)
+    assert len(cap.canal(0).amostras) == len(cap.canal(1).amostras) == 1000
