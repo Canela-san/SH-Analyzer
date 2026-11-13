@@ -8,7 +8,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F0.5: o `TracoLOD` e o protótipo** (seção 4).
+> **F0.6: os portões G1 a G5** (seção 4). Comece medindo o protótipo numa tela de verdade (o G1 com 8 faixas está no limite, seção 5).
 >
 > **No laboratório (opcional, 5 minutos):** a F0.2 colhe da BeagleBone os dados que a Aquisição vai usar (seção 6).
 
@@ -187,7 +187,7 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
     - `tests/test_gui_consulta.py`: 11 testes contra a força bruta, com janelas aleatórias em todos os zooms, as pontas, os canais intercalados em memmap, `NaN` e a pirâmide do cache;
     - o portão de < 1 ms em `test_gui_desempenho.py`, aprovado.
 
-### ▶ F0.5: o `TracoLOD` e o protótipo
+### ☑ F0.5: o `TracoLOD` e o protótipo
 
 - **Arquivos:**
   - `scripts/sh_analyzer_gui/graficos/traco_lod.py`;
@@ -202,13 +202,36 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
   - pintar nos dois regimes;
   - a fidelidade (portão G4): a banda pintada é igual, pixel a pixel, a pintar todos os pontos com uma caneta de 1 px sem antialiasing.
 - **Pronto quando:** o protótipo navega a captura sintética de 100 M amostras sem engasgar nesta máquina.
+- **Feito em 13/11/2026.** As medidas mudaram o desenho duas vezes:
+  1. **O polígono em degraus com contorno** espalhava um pico pela coluna vizinha. O contorno de 1 px vaza meio pixel para cada lado, e o teste G4 pegou.
+  2. **O polígono só de preenchimento** passou no G4, mas, no protótipo, o zoom intermediário (a banda de 60 Hz oscilando de coluna para coluna) dava p95 de 150 ms e quadros de até 930 ms. No benchmark com 8 traços, chegou a 16 s num quadro.
+  3. **A escolha final: uma linha vertical de 1 px por coluna de pixel**, sem antialiasing (`_segmentos_de_coluna`):
+     - os degraus entre colunas ficam ligados, e as colunas finas ganham 1 px;
+     - os `NaN` viram buracos;
+     - no protótipo, o p95 é de 10 ms com 2 faixas e de 16 ms com 8.
+  - **Os arquivos:**
+    - `dados/captura.py`: abrir um `.bin` com cabeçalho, com os canais como visões do memmap e os volts no pino do ADC, iguais aos da CLI. É provisório até a `api` da F0.7;
+    - `graficos/traco_lod.py`;
+    - `prototipos/navegar.py`, com `--sintetico MINUTOS`, `--canais` e `--medir`;
+    - na parte `colunas` do `scripts/benchmarks/plotagem_gui.py`: polígono × linhas nos três regimes;
+    - os testes `test_gui_traco_lod.py` (9, inclusive o G4), `test_gui_captura.py` (3) e `test_gui_prototipo.py` (2).
+  - **Os acessórios do PyQtGraph pesavam mais que os traços:**
+    - a grade semitransparente custava ~17 ms por quadro, e o protótipo ficou sem ela;
+    - os rótulos com prefixo do SI refaziam o HTML a cada quadro (`enableAutoSIPrefix(False)`);
+    - o eixo do tempo repetido em cada faixa (fica só na última);
+    - a consulta deixou de usar `np.unique`.
 
-### ☐ F0.6: os portões G1 a G5
+### ▶ F0.6: os portões G1 a G5
 
 - **Arquivos:**
   - `tests/test_gui_desempenho.py`, marcado `desempenho` e fora do conjunto padrão. Registre o marcador no `pyproject.toml`.
   - Um gerador de captura sintética grande (`.bin` v9 com 1 h, 2 canais, 400 kS/s), sobre o `tests/capturas_sinteticas.py`. O arquivo de 2,9 GB vai para a pasta temporária e é reaproveitado.
 - **Os portões** estão na seção 6.7 do plano. O G2 (4K a 200 %) e o G5 (disco frio) pedem uma tela de verdade e, para o Windows, uma máquina com Windows: anote aqui o que não deu para medir.
+- **Para medir o G1 e o G2:** `uv run --extra gui python -m sh_analyzer_gui.prototipos.navegar --sintetico 60 --canais 8 --medir`, numa tela de verdade (sem `QT_QPA_PLATFORM=offscreen`). Com 8 faixas, sem tela, o p95 está em 16,0 ms, no limite.
+- **Se reprovar:**
+  1. primeiro, os eixos e a grade próprios (opacos, com o texto em cache), que vêm na Fase 1 de qualquer forma;
+  2. depois, o desenho híbrido (o polígono quando a banda é lisa, plano 6.2);
+  3. por fim, a GPU (plano 6.7).
 - **Pronto quando:** os resultados estão na seção 5 deste arquivo e na 6.7 do plano. Se algum portão falhar, decida o plano B antes de seguir.
 
 ### ☐ F0.7: a `api` do motor (commits só do motor)
@@ -272,6 +295,10 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
 | 12/11/2026 | Cores: contraste e daltonismo, nos dois temas | Tudo aprovado | `paleta_cores.py` |
 | 13/11/2026 | G3: a pirâmide de 100 M amostras `int16` em memmap (`dados/piramide.py`) | Aprovado (≥ 200 M amostras/s) | `pytest --desempenho tests/test_gui_desempenho.py` |
 | 13/11/2026 | A consulta de 1 600 colunas, da captura inteira (100 M) até 5 000 amostras | Aprovado (< 1 ms) | idem |
+| 13/11/2026 | G4: fidelidade do `TracoLOD` (extremos por coluna de pixel, ±1 px; nada inventado; colunas nos pixels) | Aprovado, em 3 zooms | `tests/test_gui_traco_lod.py` |
+| 13/11/2026 | G1 sem tela, 1 400 × 790 px, zoom e pan da captura inteira até 50 amostras: **2 faixas** | Aprovado: mediana de 6,1 ms, p95 de 10,2 ms | `navegar --sintetico 10 --canais 2 --medir` |
+| 13/11/2026 | G1 sem tela, mesmo percurso: **8 faixas** | **No limite:** mediana de 12,7 ms, p95 de 16,0 ms. Os traços custam ~1,5 ms; o resto são os eixos e as caixas de vista do PyQtGraph | `navegar --sintetico 10 --canais 8 --medir` |
+| 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
 ---
 
@@ -325,9 +352,10 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     - o worktree `.claude/worktrees/interface`, com o `main` do laboratório trazido para o `feat/interface` (merge sem conflito);
     - a F0.3, a pirâmide e o cache (seção 4);
     - a F0.4, a consulta;
+    - a F0.5, o `TracoLOD`, o protótipo e as medidas que trocaram o desenho da banda (seção 4);
     - o extra `gui` passou a pedir `pyqtgraph>=0.14` e `platformdirs>=4`.
   - **Parado em:** nada em andamento.
-  - **Próximo:** a F0.5.
+  - **Próximo:** a F0.6, medindo o protótipo numa tela de verdade.
 
 ---
 

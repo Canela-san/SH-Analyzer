@@ -45,7 +45,7 @@ O plano do **SH-Analyzer como aplicativo de desktop**: o lugar onde o pesquisado
 | Tema | Decisão | Por quê, em uma linha | Seção |
 |---|---|---|---|
 | Plataforma | **Python + Qt 6 (PySide6) + Qt Widgets**, com um sistema de design próprio | Reaproveita o motor `supraharmonicos` sem nenhuma ponte; é o que mais rende para uma pessoa; a beleza vem do sistema de design, não do toolkit | 5 |
-| Motor de gráficos | **Próprio, em duas camadas:** dados (pirâmide mín/máx M4, em disco) e desenho (um item próprio sobre o PyQtGraph) | Medido: o gargalo não é a biblioteca, é desenhar a banda densa; a pirâmide responde em 0,12 ms e a banda como polígono custa ~12 ms por quadro com 8 traços | 6 |
+| Motor de gráficos | **Próprio, em duas camadas:** dados (pirâmide mín/máx M4, em disco) e desenho (um item próprio sobre o PyQtGraph) | Medido: o gargalo não é a biblioteca, é desenhar a banda densa. A pirâmide responde em 0,12 ms, e a banda vira **uma linha vertical de 1 px por coluna**: 8 faixas a p95 de 16 ms no protótipo, e nenhum zoom trava (o polígono chegava a 16 s num quadro) | 6 |
 | Matplotlib | **Só na exportação** de figuras, nunca no gráfico interativo | 10 M pontos levam 1,5 s por quadro (0,7 q/s); para PDF, SVG e PGF ele é imbatível | 6, 10 |
 | Fidelidade | **Nenhum extremo some.** A tela e a exportação usam a agregação M4 na resolução de saída; os dados exportados são as amostras originais | É o que um artigo exige; M4 desenha igual a todos os pontos naquela resolução | 6.5, 10.3 |
 | Transformações | **Receitas por traço**, sem tocar na fonte: escala, filtros, correção de sonda, matemática entre traços. Prévia imediata da janela visível; o resto, em segundo plano, com cache | Interação em tempo real com arquivos de gigabytes | 7 |
@@ -412,12 +412,25 @@ Feitas em 12/11/2026 com `scripts/benchmarks/plotagem_gui.py`, num Intel i7-7700
 | 8 traços, ciclos visíveis, linha de 1,5 px com antialiasing | 460 ms |
 | 8 traços, ciclos visíveis, polígono | 9,6 ms |
 
-**O que as medidas dizem:**
+**A segunda rodada (13/11/2026), já com o `TracoLOD`** (`plotagem_gui.py colunas` e o protótipo `prototipos/navegar.py --medir`), mostrou o que a primeira não via:
+
+| O que se mediu | Polígono preenchido | Uma linha vertical de 1 px por coluna |
+|---|---|---|
+| 8 traços sobrepostos, banda cheia (a captura inteira) | 6,3 ms | 29,3 ms |
+| 8 traços sobrepostos, **banda oscilante** (cada coluna cobre meio ciclo de 60 Hz) | **16 366 ms** | 19,0 ms |
+| 8 traços sobrepostos, ciclos visíveis | 4,4 ms | 3,2 ms |
+| Protótipo, 2 faixas, zoom e pan da captura inteira até 50 amostras (p95) | 150 ms | **10,2 ms** |
+| Protótipo, 8 faixas, o mesmo percurso (p95) | — | **16,0 ms** (os traços: ~1,5 ms; o resto: os eixos do PyQtGraph) |
+
+**O que as medidas dizem** (as duas rodadas):
 
 1. **O Matplotlib não serve para o gráfico interativo.** Mesmo com os dados já reduzidos, ele redesenha a figura inteira na CPU: 2 s por quadro na banda cheia.
 2. **A redução tem de vir de uma pirâmide pronta.** Reduzir a cada quadro, como o PyQtGraph faz, exige a captura na memória e custa O(N). A pirâmide responde em tempo constante, em qualquer zoom.
-3. **Desenhar a banda como linha é o erro clássico.** 1 600 segmentos verticais por traço são caros, e espessura > 1 px com antialiasing é desastrosa no QPainter (100 s). **Como polígono preenchido, a banda custa ~1,5 ms por traço.**
-4. **De perto (ciclos visíveis), linhas de 1 px com antialiasing são baratas** (7,8 ms para 8 traços). Linhas grossas, só com a GPU.
+3. **Desenhar a banda como linha em zigue-zague é o erro clássico,** e espessura > 1 px com antialiasing é desastrosa no QPainter (100 s).
+4. **O polígono preenchido é rápido na banda lisa, mas imprevisível.** Na banda oscilante, em que as colunas vizinhas alternam entre o topo e a base, ele vira centenas de arestas longas e chega a 16 s num quadro: a tela trava.
+5. **Uma linha vertical de 1 px por coluna de pixel** (o desenho dos osciloscópios digitais) custa proporcional à área pintada, nunca trava, e cada coluna pinta exatamente o seu pixel: um pico aparece inteiro, na coluna dele. **É o desenho escolhido.** O caso mais pesado medido, 8 traços altos sobrepostos, fica acima de 16 ms; se as medidas em tela de verdade (os portões G1 e G2) pedirem, um desenho híbrido (o polígono quando a banda é lisa) é a otimização seguinte.
+6. **De perto (ciclos visíveis), linhas de 1 px com antialiasing são baratas** (7,8 ms para 8 traços). Linhas grossas, só com a GPU.
+7. **Os acessórios do PyQtGraph pesam mais que os traços:** a grade semitransparente custava ~17 ms por quadro e os rótulos com prefixo do SI refaziam o HTML a cada quadro. A grade e os eixos próprios, opacos e com o texto em cache, vêm com o tema e a vista de tempo.
 
 ### 6.3 As opções avaliadas
 
@@ -450,7 +463,8 @@ Feitas em 12/11/2026 com `scripts/benchmarks/plotagem_gui.py`, num Intel i7-7700
  │  TracoLOD: um QGraphicsObject próprio dentro do PlotItem do PyQtGraph                            │
  │    • de perto (≤ 2 amostras por coluna): linha das amostras, 1 px com antialiasing;             │
  │      pontos nas amostras a partir de ~8 px por amostra                                           │
- │    • de longe: a banda mín/máx como POLÍGONO preenchido + contorno de 1 px                       │
+ │    • de longe: uma linha vertical de 1 px por coluna de pixel, do mín ao máx dela (sem           │
+ │      antialiasing; colunas vizinhas ligadas nos degraus; altura mínima de 1 px)                  │
  │    • densidade (v1.0): histograma por coluna → imagem com o mapa de cores do tema                │
  │  Eixos, grade, ViewBox, cursores, ROI, legenda: PyQtGraph, com o tema                           │
  └──────────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -482,6 +496,8 @@ Feitas em 12/11/2026 com `scripts/benchmarks/plotagem_gui.py`, num Intel i7-7700
 ### 6.5 Regras de fidelidade
 
 1. **Nenhum extremo some.** Em qualquer zoom, cada coluna mostra o mínimo e o máximo **exatos** das amostras que ela cobre. A pirâmide é exata, não uma estimativa. O LTTB e a subamostragem, que podem esconder picos, ficam proibidos.
+   - Para não ler amostras cruas a cada quadro, a consulta arredonda as bordas das colunas para blocos da pirâmide: com ≥ 8 blocos por coluna, a largura varia no máximo 1/8 de pixel.
+   - Por isso, um pico a menos de um bloco da borda de um pixel aparece no pixel ao lado: **a posição vale com ±1 px**, e o pico aparece inteiro.
 2. **De perto, o que se vê são as amostras.** A partir de ~8 px por amostra, os pontos aparecem.
 3. **A prévia se diz prévia.** Um traço com uma transformação ainda não materializada mostra o chip com a porcentagem e um contorno tracejado. As medidas sobre ele dizem "prévia".
 4. **As medidas usam as amostras, nunca o desenho.** O RMS de uma região é calculado sobre os dados (ou o traço materializado) daquela região.
@@ -489,17 +505,15 @@ Feitas em 12/11/2026 com `scripts/benchmarks/plotagem_gui.py`, num Intel i7-7700
 
 ### 6.6 Fluidez: como cada quadro é feito
 
-- **O orçamento de um quadro de pan ou zoom:**
-  - consultas à pirâmide: 8 × 0,12 ms;
-  - `setData` dos 8 itens: ~1 ms;
-  - pintura: ~12 ms.
-
-  O total, < 16 ms, foi medido numa CPU de 2017.
-- **Um quadro por vez:** os eventos de mouse só marcam a vista como "suja". Um temporizador de 16 ms faz uma consulta por traço e um `setData` por quadro.
+- **O orçamento de um quadro de pan ou zoom,** medido no protótipo com 8 faixas numa CPU de 2017:
+  - consultas à pirâmide e montagem das linhas: 8 × ~0,5 ms;
+  - pintura dos traços: ~1,5 ms;
+  - o resto, até ~13 ms de mediana: os eixos e as caixas de vista do PyQtGraph.
+- **Um quadro por vez:** a mudança da vista só agenda o recálculo (um `QTimer` de intervalo 0). Várias mudanças no mesmo ciclo de eventos viram uma consulta só, e o Qt junta as pinturas.
 - **Disco frio:** se a consulta tocar páginas que ainda não estão na memória, ela vai para uma thread. Enquanto isso, a tela mostra o nível mais grosso esticado e refina quando a resposta chega, como os mapas na internet.
 - **Rolagem do mouse:** o zoom é contínuo, centrado no cursor. O trackpad faz pan e zoom com o gesto do sistema.
 - **Animação só em saltos programados** ("ir para o evento", "ajustar"), com uma transição de 200 ms. Nunca sob a mão do usuário.
-- **A seleção não engrossa a linha** (linha grossa é cara, 6.2). O traço selecionado ganha o contorno do acento, e os outros perdem um pouco de opacidade.
+- **A seleção não engrossa a linha** (linha grossa é cara, 6.2). O traço selecionado fica por cima e na cor plena, e os outros perdem um pouco de opacidade.
 
 ### 6.7 Os portões da Fase 0 e o plano B
 
@@ -510,7 +524,7 @@ O protótipo (`interface/piramide`) tem de passar nestes portões, no Windows e 
 | G1 | Captura sintética de 1 h, 2 canais, 400 kS/s: pan e zoom com 8 traços a ≥ 60 q/s (p95 ≤ 16 ms), da captura inteira até a amostra |
 | G2 | A mesma coisa em tela de 4K com escala de 200 % (o custo da pintura cresce com os pixels) |
 | G3 | A pirâmide do arquivo de 2,9 GB em < 8 s, com memória < 500 MB |
-| G4 | Fidelidade: para dados aleatórios, a banda desenhada é igual à de todos os pontos rasterizados (teste da seção 14) |
+| G4 | Fidelidade (`tests/test_gui_traco_lod.py`): em cada coluna de pixel, o mínimo e o máximo das amostras aparecem pintados por inteiro (nela ou numa vizinha), nada passa do que as vizinhas têm, e as colunas estão nos seus pixels |
 | G5 | Sem travar com o disco frio (a primeira abertura depois de reiniciar o computador) |
 
 **Plano B, se G1 ou G2 falharem:**
@@ -1292,7 +1306,7 @@ Estas telas serão desenhadas na fase em que entram:
 | O quê | Como |
 |---|---|
 | **Pirâmide e M4** | Para dados aleatórios (com picos isolados, saturação, NaN nas importações), a consulta é igual ao mín e máx por coluna calculados à força bruta, em qualquer janela e nível |
-| **Fidelidade do desenho** | Rasterizar todos os pontos e o resultado do M4 no mesmo tamanho dá os mesmos pixels (portão G4) |
+| **Fidelidade do desenho** | O portão G4: os extremos de cada coluna de pixel pintados por inteiro (±1 px), nada além do que as vizinhas têm, as colunas nos seus pixels |
 | **Transformações em blocos** | Cada etapa em blocos dá o mesmo que a função do motor sobre o vetor inteiro (filtros em fase zero, correção de sonda, reamostragem), até 1e-9 relativo |
 | **Paridade com a CLI** | A `api` e a CLI dão os mesmos números nas capturas sintéticas |
 | **Interface (pytest-qt, sem tela)** | Abrir uma captura, plotar, selecionar, editar no inspetor, desfazer, salvar e reabrir o projeto, cancelar uma tarefa |

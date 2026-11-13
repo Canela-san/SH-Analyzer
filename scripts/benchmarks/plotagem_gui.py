@@ -6,7 +6,10 @@ Mede, sem tela (``QT_QPA_PLATFORM=offscreen``, o QPainter raster de uma janela n
 * ``matplotlib``  o Matplotlib (Agg) redesenhando 1 M e 10 M pontos, e 8 traços já reduzidos;
 * ``pyqtgraph``   o PyQtGraph com 1 M pontos crus e com 10 M pontos pela redução dele (``peak``);
 * ``banda``       8 traços pela pirâmide: a banda mín/máx como linha em zigue-zague x como polígono preenchido;
-* ``espessura``   o custo do antialiasing e da linha de 1,5 px, de longe (banda cheia) e de perto (ciclos visíveis).
+* ``espessura``   o custo do antialiasing e da linha de 1,5 px, de longe (banda cheia) e de perto (ciclos visíveis);
+* ``colunas``     a decisão final do ``TracoLOD``: o polígono x **uma linha vertical de 1 px por coluna**, nos três
+                  regimes -- a banda cheia, a banda oscilante (cada coluna cobre meio ciclo de 60 Hz, e o polígono vira
+                  centenas de arestas longas) e os ciclos visíveis.
 
 Uso (da raiz do repositório)::
 
@@ -187,8 +190,57 @@ def parte_bandas(app, x, niveis, casos):
             w.close()
 
 
+def parte_colunas(app, x, niveis):
+    """Polígono preenchido x uma linha vertical por coluna (sem antialiasing), 8 traços, nos três regimes."""
+    import pyqtgraph as pg
+    from pyqtgraph import functions as fn
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPainter, QPen
+
+    class Colunas(pg.GraphicsObject):
+        def __init__(self, xs, mn, mx, cor):
+            super().__init__()
+            xx = np.repeat(xs, 2)
+            yy = np.empty(len(xx))
+            yy[0::2], yy[1::2] = mn, mx
+            self.caminho = fn.arrayToQPath(xx, yy, connect="pairs")
+            self.caneta = QPen(pg.mkColor(cor), 1)
+            self.caneta.setCosmetic(True)
+            self.caneta.setCapStyle(Qt.PenCapStyle.SquareCap)
+
+        def boundingRect(self):
+            return self.caminho.boundingRect()
+
+        def paint(self, p, *args):
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+            p.setPen(self.caneta)
+            p.drawPath(self.caminho)
+
+    colunas = np.arange(LARGURA, dtype=np.float64)
+    regimes = ((len(x), "banda cheia (a captura inteira)"),
+               (LARGURA * 3_333, "banda oscilante (meio ciclo de 60 Hz por coluna)"),
+               (40_000, "ciclos visíveis (100 ms)"))
+    for span, nome in regimes:
+        escrever(f"\n[{nome}] 8 traços, {span:,} amostras em {LARGURA} colunas")
+        for modo in ("polígono com antialiasing", "linha vertical por coluna"):
+            w = janela(app, modo.startswith("polígono"))
+            for k in range(8):
+                i0 = (len(x) - span) // 2
+                _, ys = consultar(x, niveis, i0, i0 + span)
+                mn, mx = ys[0::2] + k * 5000, ys[1::2] + k * 5000
+                if modo.startswith("polígono"):
+                    c1, c2 = pg.PlotCurveItem(colunas, mn), pg.PlotCurveItem(colunas, mx)
+                    w.addItem(pg.FillBetweenItem(c1, c2, brush=pg.mkBrush(CORES[k])))
+                else:
+                    w.addItem(Colunas(colunas, mn, mx, CORES[k]))
+            w.grab()
+            t = cronometrar(w.grab, 5, limite_s=2.0)
+            escrever(f"  {modo:48} {t * 1e3:10.1f} ms por quadro")
+            w.close()
+
+
 def main(argv=None):
-    partes = ("piramide", "matplotlib", "pyqtgraph", "banda", "espessura")
+    partes = ("piramide", "matplotlib", "pyqtgraph", "banda", "espessura", "colunas")
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("partes", nargs="*", choices=partes, help="o que medir (padrão: tudo)")
     p.add_argument("--lento", action="store_true", help="inclui a linha de 1,5 px com antialiasing na banda cheia (~100 s)")
@@ -203,7 +255,7 @@ def main(argv=None):
         parte_piramide(x, niveis, t_construcao)
     if "matplotlib" in pedidas:
         parte_matplotlib(x, niveis)
-    if not {"pyqtgraph", "banda", "espessura"} & set(pedidas):
+    if not {"pyqtgraph", "banda", "espessura", "colunas"} & set(pedidas):
         return 0
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication(sys.argv[:1])
@@ -219,6 +271,8 @@ def main(argv=None):
         if a.lento:
             casos.append(("linha de 1,5 px, antialiasing (lento)", "linha", True, 1.5))
         parte_bandas(app, x, niveis, casos)
+    if "colunas" in pedidas:
+        parte_colunas(app, x, niveis)
     return 0
 
 

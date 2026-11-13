@@ -46,11 +46,12 @@ firmware() {
 
 interface() {
     # O extra gui-dev traz o PySide6 e o pytest-qt, que os outros jobs não instalam (o motor não depende do Qt).
+    # tests/test_gui_*.py: a interface inteira (os sem Qt também rodam no conjunto padrão; os com Qt, só aqui).
     # Os testes da arquitetura e da marca entram junto: o motor sem o Qt e o ícone do pacote igual ao da marca.
-    # -n 0: poucos testes, e cada processo do xdist abriria o Qt de novo.
+    # -n 0: cada processo do xdist abriria o Qt de novo.
     etapa "pytest da interface gráfica (PySide6, sem tela)"
     QT_QPA_PLATFORM=offscreen uv run --python 3.13 --extra gui-dev pytest -n 0 \
-        tests/test_interface.py tests/test_arquitetura.py tests/test_marca.py
+        tests/test_interface.py tests/test_gui_*.py tests/test_arquitetura.py tests/test_marca.py
 }
 
 command -v zpaq > /dev/null || echo "Aviso: sem o zpaq, os testes do compactar_amostras são pulados (sudo apt install zpaq)." >&2

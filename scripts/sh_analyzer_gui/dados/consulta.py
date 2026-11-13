@@ -81,17 +81,25 @@ def consultar(piramide: Piramide, amostras: np.ndarray, inicio: float, fim: floa
     flutuante = np.issubdtype(piramide.dtype, np.floating)
     if nivel is None:
         # Poucas amostras por coluna: a envoltória vem das próprias amostras, com as bordas exatas.
-        bordas = i0 + (np.arange(colunas + 1, dtype=np.int64) * (i1 - i0)) // colunas
-        bordas = np.unique(bordas)
+        bordas = _sem_repeticao(i0 + (np.arange(colunas + 1, dtype=np.int64) * (i1 - i0)) // colunas)
         valores = np.ascontiguousarray(amostras[i0:i1])
         mn, mx = _reduzir_em(valores, valores, bordas[:-1] - i0, flutuante)
         return Envoltoria(bordas, mn, mx)
     b0 = i0 // nivel.bloco
     b1 = min(len(nivel), -(-i1 // nivel.bloco))
-    bordas_blocos = np.unique(b0 + (np.arange(colunas + 1, dtype=np.int64) * (b1 - b0)) // colunas)
+    bordas_blocos = _sem_repeticao(b0 + (np.arange(colunas + 1, dtype=np.int64) * (b1 - b0)) // colunas)
     mn, mx = _reduzir_em(nivel.minimos[b0:b1], nivel.maximos[b0:b1], bordas_blocos[:-1] - b0, flutuante)
     bordas = np.minimum(bordas_blocos * nivel.bloco, n)
     return Envoltoria(bordas, mn, mx)
+
+
+def _sem_repeticao(bordas: np.ndarray) -> np.ndarray:
+    """As bordas (já em ordem crescente) sem as repetidas: uma coluna vazia não existe. Mais barato que ``np.unique``,
+    que ordenaria de novo a cada quadro."""
+    distintas = np.empty(len(bordas), dtype=bool)
+    distintas[0] = True
+    np.greater(bordas[1:], bordas[:-1], out=distintas[1:])
+    return bordas if distintas.all() else bordas[distintas]
 
 
 def _reduzir_em(minimos: np.ndarray, maximos: np.ndarray, inicios: np.ndarray,
