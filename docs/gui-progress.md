@@ -292,6 +292,10 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
   - **A lista sem Qt** (`tema/fontes_embutidas.py`): o teste confere que cada arquivo da pasta está nela e tem licença.
   - **A troca de fonte** fica pronta para as configurações: `escolher_fonte` e `familias_disponiveis`.
   - O `.gitattributes` marca `*.ttf` e `*.otf` como binários.
+  - **Depois, as opções** (os zips que o usuário baixou, todos do Google Fonts, com arquivos repetidos entre si; conferidos por hash, e a Inter era idêntica à já embutida):
+    - **IBM Plex Sans 3.201** e **Atkinson Hyperlegible Next 2.001** (a de acessibilidade) para a interface, nos estáticos dos quatro pesos: o Qt vê os arquivos variáveis delas só com o "Regular";
+    - **IBM Plex Mono 2.3** para a mono;
+    - ao todo, 3,1 MB de fontes.
 - **Falta (Fase 2, GE-05):** guardar nas configurações a escolha do tema e da fonte.
 
 ### ☑ F0.9: a galeria de componentes

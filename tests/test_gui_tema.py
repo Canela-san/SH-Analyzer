@@ -93,9 +93,12 @@ def test_fontes_embutidas_registram_e_se_escolhem(qapp):
     from sh_analyzer_gui.tema import fontes
 
     familias = registrar_fontes()
-    assert "Inter" in familias and "JetBrains Mono" in familias        # mesmo sem elas instaladas no sistema
-    assert fontes.familias_disponiveis("interface") == ["Inter"]
-    assert fontes.familias_disponiveis("mono") == ["JetBrains Mono"]
+    for familia in ("Inter", "JetBrains Mono", "IBM Plex Sans", "IBM Plex Mono", "Atkinson Hyperlegible Next"):
+        assert familia in familias                                     # mesmo sem elas instaladas no sistema
+    assert fontes.familias_disponiveis("interface") == ["Inter", "IBM Plex Sans", "Atkinson Hyperlegible Next"]
+    assert fontes.familias_disponiveis("mono") == ["JetBrains Mono", "IBM Plex Mono"]
+    for familia in ("IBM Plex Sans", "Atkinson Hyperlegible Next"):    # os quatro pesos que a interface usa
+        assert {"Regular", "Medium", "SemiBold", "Bold"} <= set(fontes.QFontDatabase.styles(familia)), familia
     assert fonte_mono().family() == "JetBrains Mono" and fonte_da_interface().family() == "Inter"
     sistema = fontes.QFontDatabase.systemFont(fontes.QFontDatabase.SystemFont.GeneralFont).family()
     try:

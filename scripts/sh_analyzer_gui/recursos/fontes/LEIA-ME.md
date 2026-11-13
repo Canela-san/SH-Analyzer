@@ -8,6 +8,9 @@ os arquivos, a licença, a versão e de onde veio cada uma) está em `sh_analyze
 |---|---|---|---|
 | Inter | interface | 4.001 (o arquivo variável, todos os pesos) | `Inter-OFL.txt` (SIL OFL 1.1) |
 | JetBrains Mono | números alinhados e terminal | 2.304 (Regular, Medium, Bold) | `JetBrainsMono-OFL.txt` (SIL OFL 1.1) |
+| IBM Plex Sans | interface (opção) | 3.201 (Regular, Medium, SemiBold, Bold) | `IBMPlex-OFL.txt` (SIL OFL 1.1) |
+| IBM Plex Mono | mono (opção) | 2.3 (Regular, Medium, Bold) | `IBMPlex-OFL.txt` (a mesma licença da Plex Sans) |
+| Atkinson Hyperlegible Next | interface (opção de acessibilidade) | 2.001 (Regular, Medium, SemiBold, Bold) | `AtkinsonHyperlegibleNext-OFL.txt` (SIL OFL 1.1) |
 
 Para pôr uma fonte nova (para o usuário escolher nas configurações): os arquivos e a licença nesta pasta, e uma entrada
 em `fontes_embutidas.py`. Só licenças livres que permitem embutir (OFL, Apache, MIT).
