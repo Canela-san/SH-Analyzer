@@ -8,7 +8,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F0.4: a consulta M4** (seção 4).
+> **F0.5: o `TracoLOD` e o protótipo** (seção 4).
 >
 > **No laboratório (opcional, 5 minutos):** a F0.2 colhe da BeagleBone os dados que a Aquisição vai usar (seção 6).
 
@@ -158,7 +158,7 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
   - `tests/test_gui_desempenho.py`: o portão G3, que só roda com `pytest --desempenho` (o marcador e a opção estão no `conftest.py`);
   - `test_arquitetura.py`: a camada `dados` não importa o Qt nem o resto da interface, conferido pelo código e por um processo novo.
 
-### ▶ F0.4: a consulta M4
+### ☑ F0.4: a consulta
 
 - **Arquivos:** `scripts/sh_analyzer_gui/dados/consulta.py` e `tests/test_gui_consulta.py`.
 - **A função:** `consultar(piramide, canal, i0, i1, colunas) -> Colunas`. Devolve, por coluna de pixel:
@@ -170,8 +170,24 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
 - **O nível:** o que dá ~2 blocos por coluna. As bordas da janela que não caem em bordas de bloco são completadas com as amostras cruas, para o mín e o máx serem **exatos**.
 - **Testes:** igual à força bruta em janelas aleatórias, em todos os zooms, incluindo uma janela de 1 amostra e a captura inteira.
 - **Pronto quando:** os testes passam e a consulta leva < 1 ms com 1 600 colunas.
+- **Feito em 13/11/2026**, com duas decisões tomadas ao implementar:
+  - **As bordas das colunas são arredondadas para bordas de bloco**, em vez de completadas com amostras cruas:
+    - cada amostra continua em exatamente uma coluna, e o mín e o máx de cada coluna são exatos para o que ela cobre;
+    - a envoltória devolve as bordas reais (`Envoltoria.bordas`);
+    - com ≥ 8 blocos por coluna, a largura varia no máximo 1/8 de pixel;
+    - em troca, a consulta não lê nenhuma amostra crua (ler as bordas das 1 600 colunas custaria 1 600 páginas do disco por quadro).
+  - **Sem a primeira e a última amostra de cada coluna (o M4 completo):** o polígono da banda não precisa delas, e a exportação refaz a redução das amostras.
+  - **Os três regimes:**
+    - amostras, até 2 por coluna;
+    - envoltória exata das amostras, até 256 por coluna;
+    - pirâmide, daí para cima.
 
-### ☐ F0.5: o `TracoLOD` e o protótipo
+    `aplicar_afim` leva os códigos para a unidade física e troca o mín e o máx com a escala negativa.
+  - **Os testes:**
+    - `tests/test_gui_consulta.py`: 11 testes contra a força bruta, com janelas aleatórias em todos os zooms, as pontas, os canais intercalados em memmap, `NaN` e a pirâmide do cache;
+    - o portão de < 1 ms em `test_gui_desempenho.py`, aprovado.
+
+### ▶ F0.5: o `TracoLOD` e o protótipo
 
 - **Arquivos:**
   - `scripts/sh_analyzer_gui/graficos/traco_lod.py`;
@@ -255,6 +271,7 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
 | 12/11/2026 | Banda cheia, 8 traços: linha × polígono | 60 a 67 ms × 10,9 a 11,7 ms por quadro | `plotagem_gui.py banda espessura` |
 | 12/11/2026 | Cores: contraste e daltonismo, nos dois temas | Tudo aprovado | `paleta_cores.py` |
 | 13/11/2026 | G3: a pirâmide de 100 M amostras `int16` em memmap (`dados/piramide.py`) | Aprovado (≥ 200 M amostras/s) | `pytest --desempenho tests/test_gui_desempenho.py` |
+| 13/11/2026 | A consulta de 1 600 colunas, da captura inteira (100 M) até 5 000 amostras | Aprovado (< 1 ms) | idem |
 
 ---
 
@@ -307,9 +324,10 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **Feito:**
     - o worktree `.claude/worktrees/interface`, com o `main` do laboratório trazido para o `feat/interface` (merge sem conflito);
     - a F0.3, a pirâmide e o cache (seção 4);
+    - a F0.4, a consulta;
     - o extra `gui` passou a pedir `pyqtgraph>=0.14` e `platformdirs>=4`.
   - **Parado em:** nada em andamento.
-  - **Próximo:** a F0.4.
+  - **Próximo:** a F0.5.
 
 ---
 

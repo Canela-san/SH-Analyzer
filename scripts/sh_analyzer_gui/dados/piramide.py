@@ -68,12 +68,12 @@ class Piramide:
     def nbytes(self) -> int:
         return sum(n.minimos.nbytes + n.maximos.nbytes for n in self.niveis)
 
-    def nivel_para(self, amostras_por_coluna: float) -> Nivel | None:
-        """O nível mais grosso com pelo menos 2 blocos por coluna de pixel; ``None`` se nem o nível 0 serve (a
-        janela tem tão poucas amostras por coluna que é melhor lê-las direto)."""
+    def nivel_para(self, amostras_por_coluna: float, blocos_por_coluna: int = 2) -> Nivel | None:
+        """O nível mais grosso com pelo menos ``blocos_por_coluna`` blocos por coluna de pixel; ``None`` se nem o
+        nível 0 serve (a janela tem tão poucas amostras por coluna que é melhor lê-las direto)."""
         escolhido = None
         for nivel in self.niveis:
-            if nivel.bloco * 2 <= amostras_por_coluna:
+            if nivel.bloco * blocos_por_coluna <= amostras_por_coluna:
                 escolhido = nivel
             else:
                 break

@@ -11,6 +11,7 @@ import time
 
 import numpy as np
 import pytest
+from sh_analyzer_gui.dados.consulta import consultar
 from sh_analyzer_gui.dados.piramide import construir
 
 pytestmark = pytest.mark.desempenho
@@ -40,3 +41,18 @@ def test_g3_piramide_a_200_milhoes_de_amostras_por_segundo(sinal_grande):
     taxa = N / (time.perf_counter() - t)
     assert p.n_amostras == N
     assert taxa >= 200e6, f"{taxa / 1e6:.0f} M amostras/s"
+
+
+def test_consulta_em_menos_de_1_ms_em_qualquer_zoom(sinal_grande):
+    """A consulta de 1 600 colunas, da captura inteira até poucas amostras por coluna, cabe com folga num quadro."""
+    (p,) = construir(sinal_grande)
+    for largura in (N, 10_000_000, 1_000_000, 300_000, 5_000):
+        inicio = (N - largura) // 2
+        consultar(p, sinal_grande, inicio, inicio + largura, 1600)        # aquece
+        tempos = []
+        for _ in range(20):
+            t = time.perf_counter()
+            consultar(p, sinal_grande, inicio, inicio + largura, 1600)
+            tempos.append(time.perf_counter() - t)
+        mediana = sorted(tempos)[len(tempos) // 2]
+        assert mediana < 1e-3, f"{largura:,} amostras: {mediana * 1e3:.2f} ms"
