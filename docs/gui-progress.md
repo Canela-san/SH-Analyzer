@@ -8,7 +8,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F1.1: a janela do Estúdio** (seção 4b). A Fase 0 está fechada.
+> **F1.2: o modelo e o desfazer** (seção 4b). A F1.1 (a janela do Estúdio) está feita.
 >
 >
 > **No laboratório (opcional, 5 minutos):** a F0.2 colhe da BeagleBone os dados que a Aquisição vai usar (seção 6).
@@ -375,7 +375,14 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
 
 **Pronto quando:** a captura de 1 h abre, navega a 60 q/s e mede, com 8 traços de 2 fontes.
 
-### ▶ F1.1: a janela do Estúdio (A1)
+### ☑ F1.1: a janela do Estúdio (A1)
+
+**Feito** (`808a0bf`): `janela.py` reescrita; `componentes/barra_superior.py` e `componentes/painel.py` (o título do
+painel, o estado vazio, as abas com contador); `configuracao.py` (o INI, com a pasta trocada por
+`SH_ANALYZER_CONFIG`) e `preferencias.py` (o tema e as fontes gravados). Os testes em `tests/test_gui_janela.py`.
+**Para lembrar:** o `QDockWidget` reserva a altura do título pelo `sizeHint`; a ação de recolher um dock só fica
+habilitada se ele for "fechável"; nada de `lambda` que segure um objeto do Qt num sinal que pode sair durante a
+destruição da janela (o erro aparece no teste seguinte).
 
 - **Arquivos:** `janela.py` reescrita e `componentes/` (a barra superior).
 - **A estrutura:**
@@ -387,7 +394,7 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
 - **O layout:** salvo e restaurado (`saveState`/`restoreState`, por enquanto no `QSettings`; por projeto na F1.3). Ctrl+B, Ctrl+I e Ctrl+J recolhem os painéis.
 - **Os testes:** a janela abre com cada região, recolhe os painéis e guarda o layout. O `QSettings` dos testes vai para uma pasta temporária, nunca a do usuário.
 
-### ☐ F1.2: o modelo e o desfazer
+### ▶ F1.2: o modelo e o desfazer
 
 - **Arquivos:** `modelo/`: `Projeto`, `Fonte`, `Vista`, `Traco`, com sinais do Qt, e os comandos (`QUndoCommand`).
 - **O conteúdo:**
@@ -527,6 +534,11 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     - a F0.11 no Linux: o PyInstaller, com a pasta de 382 MB (128 MB compactada) e a partida em 0,36 s. O app ganhou `--help`, `--versao` e `--tema`; um `--help` sem tratamento tinha aberto uma janela na tela do usuário;
     - a F0.12: a Fase 0 fechada e a Fase 1 quebrada em tarefas (seção 4b).
   - **Próximo:** a F1.1, a janela do Estúdio.
+- **13/11/2026 (tarde):** a F1.1, a janela do Estúdio, com o layout salvo, Ctrl+B/I/J, o menu de ajustes (tema e
+  fontes gravados) e a barra compacta abaixo de 1200 px. Os testes da interface usam uma pasta de configuração
+  temporária (`SH_ANALYZER_CONFIG`, no `conftest.py`). Dados de laboratório para testar e fotografar:
+  `~/Documents/sh-analyzer-data/lab/2026-11-13/FIG_2026-11-13/` (60 Hz com tom de 20 kHz ou 130 kHz, tensão e
+  corrente; pequenos, 25 MB cada). **Próximo:** a F1.2.
 
 ---
 
