@@ -121,3 +121,36 @@ def test_arquivo_cortado_no_meio_de_um_quadro(tmp_path):
         f.write(b"\x00\x80")                          # meia varredura a mais
     cap = api.abrir_captura(caminho)
     assert len(cap.canal(0).amostras) == len(cap.canal(1).amostras) == 1000
+
+
+def test_conferir_integridade_com_progresso_e_cancelamento(tmp_path):
+    from supraharmonicos.api import abrir_captura, conferir_integridade
+
+    caminho = escrever_bin(tmp_path / "v9.bin", [np.zeros(50_000), np.ones(50_000)], versao=9)
+    captura = abrir_captura(caminho)
+    fracoes = []
+    assert conferir_integridade(captura, progresso=fracoes.append) is True
+    assert fracoes and fracoes[-1] == 1.0
+    assert conferir_integridade(captura, cancelado=lambda: True) is None
+    antigo = abrir_captura(escrever_bin(tmp_path / "v3.bin", [np.zeros(1000), np.zeros(1000)]))
+    assert conferir_integridade(antigo) is None                        # sem o CRC gravado
+    dados = bytearray(caminho.read_bytes())
+    dados[-3] ^= 0xFF                                                   # uma amostra alterada depois da captura
+    alterado = tmp_path / "alterado.bin"
+    alterado.write_bytes(bytes(dados))
+    assert conferir_integridade(abrir_captura(alterado)) is False
+
+
+def test_descrever_cabecalho(tmp_path):
+    from supraharmonicos.api import abrir_captura, descrever_cabecalho
+
+    caminho = escrever_bin(tmp_path / "c.bin", [np.zeros(4096), np.zeros(4096)], canais=(1, 3), versao=9)
+    secoes = dict(descrever_cabecalho(abrir_captura(caminho, sondas_dir=tmp_path)))
+    assert list(secoes) == ["Captura", "Canais", "Integridade", "BeagleBone"]
+    captura = dict(secoes["Captura"])
+    assert captura["Arquivo"] == "c.bin" and captura["Cabeçalho"] == "v9" and captura["Amostras"] == "8192"
+    assert [r for r, _ in secoes["Canais"]][:2] == ["Canal 1", "Canal 3"]
+    assert "tensão" in dict(secoes["Canais"])["Canal 1"]
+    assert all(v for _, linhas in secoes.items() for _, v in linhas)    # nada vazio nem "None"
+    antigo = dict(descrever_cabecalho(abrir_captura(escrever_bin(tmp_path / "v3.bin", [np.zeros(9), np.zeros(9)]))))
+    assert "CRC das amostras" not in dict(antigo["Integridade"])

@@ -22,7 +22,7 @@ Depende de: ``amostras``, ``cabecalho``, ``constantes``, ``contexto``, ``erros``
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,7 +30,12 @@ from pathlib import Path
 import numpy as np
 
 from .amostras import carregar_amostras_bin, converter_para_tensao
-from .cabecalho import CabecalhoArquivo, conferir_consistencia_cabecalho, contar_amostras_arquivo_bin
+from .cabecalho import (
+    CabecalhoArquivo,
+    conferir_consistencia_cabecalho,
+    conferir_crc_das_amostras,
+    contar_amostras_arquivo_bin,
+)
 from .constantes import FORMATOS_NUMPY, NOMES_GRANDEZA
 from .contexto import ContextoCaptura, perfil_para_correcao, resolver_contexto_explicito
 from .erros import ErroSHAN
@@ -185,3 +190,53 @@ def sinal_do_canal(captura: Captura, canal: int, inicio: int = 0, fim: int | Non
     if corrigir_sonda and c.perfil is not None:
         sinal = aplicar_correcao_sonda(sinal, c.taxa_hz, c.perfil)
     return sinal
+
+
+def conferir_integridade(captura: Captura, *, progresso: Callable[[float], None] | None = None,
+                         cancelado: Callable[[], bool] | None = None) -> bool | None:
+    """As amostras conferidas contra o CRC-32 que o ``ler_adc`` gravou no cabeçalho v9 (o ``info`` da CLI): True se
+    o arquivo é o que a captura gravou, False se foi corrompido, truncado ou alterado, None se o cabeçalho não traz o
+    CRC (ou se ``cancelado()`` interrompeu). Lê o arquivo inteiro (~1 s por GiB): rode fora da thread da interface,
+    com ``progresso(fração)``."""
+    return conferir_crc_das_amostras(captura.caminho, captura.cabecalho, progresso=progresso, cancelado=cancelado)
+
+
+def _talvez(valor, formato: str = "{}") -> str | None:
+    return None if valor is None or valor == "" else formato.format(valor)
+
+
+def descrever_cabecalho(captura: Captura) -> list[tuple[str, list[tuple[str, str]]]]:
+    """O cabeçalho em seções de ``(rótulo, valor)`` para mostrar (o inspetor da interface): a captura, os canais, a
+    integridade, a BeagleBone e a PRU. Só o que o cabeçalho traz: um campo de uma versão anterior fica de fora, em
+    vez de aparecer como "?"."""
+    cab = captura.cabecalho
+    duracao = cab.duracao_real_segundos
+    captura_secao = [
+        ("Arquivo", captura.caminho.name),
+        ("Tamanho", f"{captura.caminho.stat().st_size / 1e6:.1f} MB"),
+        ("Cabeçalho", f"v{cab.versao_cabecalho}" + ("" if cab.crc32_valido else " (CRC do cabeçalho NÃO confere)")),
+        ("Início (relógio da placa)", cab.timestamp_iso_utc),
+        ("Duração", None if duracao is None else f"{duracao:.3f} s"),
+        ("Taxa total", f"{cab.frequencia_hz} Hz"),
+        ("Taxa medida", _talvez(cab.taxa_medida_hz, "{:.2f} Hz")),
+        ("Amostras", f"{cab.total_amostras_gravadas}"),
+        ("Título", _talvez(cab.titulo)),
+        ("Descrição", _talvez(cab.descricao)),
+        ("Identificador", _talvez(cab.id_captura)),
+        ("Máquina", _talvez(cab.hostname)),
+        ("Comando", _talvez(cab.linha_de_comando, "ler_adc {}")),
+    ]
+    canais = []
+    for c in captura.canais:
+        sonda = f", sonda {c.sonda_id}" if c.sonda_id else ""
+        canais.append((f"Canal {c.numero}", f"{c.nome_grandeza}, faixa {c.faixa_v:g} V"
+                                            f"{'' if c.faixa_confiavel else ' (suposta)'}, ganho {c.ganho:g}{sonda}"))
+    canais += [(f"Sinal {i + 1}", linha) for i, linha in enumerate(cab.descrever_sinal_por_canal())]
+    integridade = [("Problema", texto) for texto in cab.problemas_integridade]
+    integridade += [("Grade", cab.descrever_grade()), ("SPI", cab.descrever_spi()),
+                    ("CRC das amostras", _talvez(cab.crc32_amostras, "0x{:08X} (gravado)")),
+                    ("Pior bloco", _talvez(cab.pior_bloco_ms, "{} ms"))]
+    placa = [("Firmware", _talvez(cab.versao_firmware))]
+    placa += [(f"Sistema {i + 1}", linha) for i, linha in enumerate(cab.descrever_sistema())]
+    secoes = [("Captura", captura_secao), ("Canais", canais), ("Integridade", integridade), ("BeagleBone", placa)]
+    return [(titulo, [(r, v) for r, v in linhas if v is not None]) for titulo, linhas in secoes]

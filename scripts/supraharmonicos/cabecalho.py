@@ -14,6 +14,7 @@ Depende de: ``constantes``, ``erros``. Quem o consome: ``contexto``,
 import logging
 import struct
 import zlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -931,22 +932,31 @@ def _campos_da_extensao(partes: list, num_canais: int, tem_final: bool) -> dict[
     return campos
 
 
-def conferir_crc_das_amostras(caminho: Path, cabecalho: CabecalhoArquivo) -> bool | None:
+def conferir_crc_das_amostras(caminho: Path, cabecalho: CabecalhoArquivo, *,
+                              progresso: Callable[[float], None] | None = None,
+                              cancelado: Callable[[], bool] | None = None) -> bool | None:
     """True se as amostras de 'caminho' têm o CRC-32 gravado no cabeçalho (v9), False se não têm (o arquivo foi
     corrompido, truncado ou editado depois da captura) e None se o cabeçalho não traz o CRC (até a v8, ou uma captura
-    que não chegou ao cabeçalho final). Lê o arquivo em blocos: memória constante, ~1 s por GiB."""
+    que não chegou ao cabeçalho final). Lê o arquivo em blocos: memória constante, ~1 s por GiB.
+
+    Para quem mostra o andamento (a interface): ``progresso(fração)`` é chamado a cada bloco de 16 MiB, e um
+    ``cancelado()`` verdadeiro interrompe a leitura, devolvendo None (quem cancelou sabe que cancelou)."""
     if cabecalho.crc32_amostras is None:
         return None
-    restam = cabecalho.total_amostras_gravadas * max(cabecalho.bytes_por_amostra, 1)
+    total = restam = cabecalho.total_amostras_gravadas * max(cabecalho.bytes_por_amostra, 1)
     crc = 0
     with open(caminho, "rb") as f:
         f.seek(cabecalho.tamanho_cabecalho)
         while restam > 0:
+            if cancelado is not None and cancelado():
+                return None
             bloco = f.read(min(restam, 1 << 24))
             if not bloco:
                 return False                        # menos amostras que as do cabeçalho
             crc = zlib.crc32(bloco, crc)
             restam -= len(bloco)
+            if progresso is not None:
+                progresso(1.0 - restam / total)
     return crc == cabecalho.crc32_amostras
 
 
