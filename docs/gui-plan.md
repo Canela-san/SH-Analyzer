@@ -3,7 +3,8 @@
 O plano do **SH-Analyzer como aplicativo de desktop**: o lugar onde o pesquisador **analisa** as capturas, **monta figuras** para publicação e **opera a BeagleBone** (conectar, conferir, capturar, trazer os dados e cuidar da placa), sem a linha de comando.
 
 - **Reescrito em 12/11/2026, sobre a v0.8.** Substitui a primeira versão do plano, do mesmo dia.
-- **Estado:** planejamento. Nada da interface foi programado além do esqueleto do pacote `scripts/sh_analyzer_gui/` (janela vazia, ícone e testes).
+- **Estado:** planejamento concluído e layout escolhido. Nada da interface foi programado além do esqueleto do pacote `scripts/sh_analyzer_gui/` (janela vazia, ícone e testes).
+- **Andamento:** [`docs/gui-progress.md`](gui-progress.md) diz onde o trabalho parou, qual é a próxima tarefa e como retomar depois de uma pausa.
 - **Mockups:** [`docs/gui-mockups/index.html`](gui-mockups/index.html), para abrir no navegador; as imagens estão na seção 13.
 - **Como ler:**
   - a seção 0 resume as decisões;
@@ -50,7 +51,7 @@ O plano do **SH-Analyzer como aplicativo de desktop**: o lugar onde o pesquisado
 | Transformações | **Receitas por traço**, sem tocar na fonte: escala, filtros, correção de sonda, matemática entre traços. Prévia imediata da janela visível; o resto, em segundo plano, com cache | Interação em tempo real com arquivos de gigabytes | 7 |
 | BeagleBone | **SSH (asyncssh)** + um **agente** na placa que responde em JSON + um **simulador** | Nada novo para instalar nem porta para abrir; respostas estruturadas e testáveis; desenvolver e demonstrar sem placa | 11 |
 | Capturas longas | **Saída contínua do `ler_adc` direto para o computador** (mudança no firmware) | O cartão da placa limita a duração; pela rede, não | 11.6 |
-| Layout | **A1 (Estúdio) + B1 (Painel com seções)**, recomendados; à espera da sua escolha | Três colunas com o inspetor sempre à vista, que é o que você pediu para editar cada traço | 13 |
+| Layout | **Escolhido em 12/11/2026: tudo unificado.** O A1 (Estúdio) é a estrutura, com o modo Instrumento (A2) e a grade de vistas (A3) dentro dele; o B1 (Painel com seções), com o B2 como a seção "Capturar"; o F1 para as figuras | Três colunas com o inspetor sempre à vista, para editar cada traço, sem perder o que as outras amostras tinham de bom | 13 |
 | Aparência | **Tema escuro com o azul-marinho do ícone e tema claro**; 6 cores de traço conferidas para daltonismo | Identidade da marca e acessibilidade medida, não estimada | 12 |
 | Versões | **v0.9** Análise; **v0.10** Aquisição; **v0.11** Figuras; **v1.0** manutenção da placa e acabamento | Primeiro o coração (os gráficos), que tem mais risco | 16 |
 
@@ -1128,7 +1129,7 @@ Os contrastes são do texto sobre a `superficie`; os do acento claro são do tex
 - **Os mapas de cores:**
   - para magnitude (espectrograma, bandas), um mapa perceptual (inferno ou viridis), legível em tons de cinza;
   - para diferenças (A − B), um mapa divergente com dois matizes e o cinza no zero.
-- **Um teste guarda a paleta:** `tests/test_tema.py` refaz as contas desta seção. Uma cor nova que reprove não entra.
+- **Um teste guarda a paleta:** hoje, `scripts/benchmarks/paleta_cores.py` refaz as contas desta seção; com os tokens no código, ele vira o `tests/test_tema.py`. Uma cor nova que reprove não entra.
 
 ### 12.4 Tipografia
 
@@ -1239,7 +1240,7 @@ Os mockups estão em [`docs/gui-mockups/`](gui-mockups/index.html). Abra o `inde
 | **Sofre em** | Telas pequenas (1 366 px): os painéis recolhem | Muitas fontes; organizar vistas | Organizar; o inspetor flutuante cobre o gráfico |
 | **Parecido com** | VS Code, Saleae Logic, Origin | PicoScope, osciloscópios de bancada | Figma, painéis do Grafana |
 
-**A recomendação: o A1 como a estrutura, com o melhor dos outros dois como modos.**
+**Decidido em 12/11/2026: o A1 como a estrutura, com o melhor dos outros dois como modos.**
 
 - **O "modo Instrumento" do A2** vira um tipo de vista (AN-08): escala por divisão, persistência e a tira de medidas.
 - **A grade do A3** vira o layout de vistas (AN-09): o centro do A1 pode se dividir em painéis com os eixos ligados.
@@ -1262,7 +1263,7 @@ Assim, a escolha não fecha portas.
 | **Brilha em** | Cuidar da placa, achar as coisas, várias placas | O dia de bancada: capturar, olhar, anotar, sem trocar de tela |
 | **Sofre em** | Capturar pede um clique a mais | A manutenção e os arquivos ficam escondidos em abas |
 
-**A recomendação: a navegação do B1, com o B2 como a seção "Capturar".**
+**Decidido em 12/11/2026: a navegação do B1, com o B2 como a seção "Capturar".**
 
 ### 13.3 Figuras
 
@@ -1349,6 +1350,8 @@ Estas telas serão desenhadas na fase em que entram:
 ## 16. Roteiro por fases
 
 As durações são em semanas de meio período. O relatório científico final e as idas ao laboratório têm prioridade, e o roteiro se ajusta a eles. Cada fase termina com uma demonstração e com os testes dela passando.
+
+As fases estão quebradas em tarefas pequenas, com o estado de cada uma, em [`docs/gui-progress.md`](gui-progress.md).
 
 ### Fase 0: fundação e protótipos de risco (3 semanas)
 
@@ -1466,15 +1469,18 @@ As durações são em semanas de meio período. O relatório científico final e
 
 ## 19. Decisões em aberto
 
-Estas dependem de você:
+Decididas em 12/11/2026:
 
-1. **O layout da Análise:** A1 (recomendado), A2 ou A3 (seção 13.1).
-2. **O layout da Aquisição:** B1 com o B2 como "Capturar" (recomendado), ou o B2 como tela principal (seção 13.2).
-3. **O tema padrão na primeira execução:** escuro (o da marca), claro, ou o do sistema (sugerido).
-4. **A ordem das versões:** Aquisição (v0.10) antes de Figuras (v0.11), como proposto, ou o contrário, se um artigo vier antes das próximas idas ao laboratório.
-5. **A regra de sudo sem senha na placa** (11.2): só o askpass por sessão (padrão), ou também a regra limitada aos comandos do firmware.
-6. **O inglês na v1.0:** depende de a GUI ser mostrada fora do grupo.
-7. **A assinatura de código no Windows:** tem custo, e o aviso do SmartScreen só aparece na primeira execução.
+- **O layout da Análise:** o A1, com o modo Instrumento (A2) e a grade de vistas (A3) dentro dele (seção 13.1).
+- **O layout da Aquisição:** o B1, com o B2 como a seção "Capturar" (seção 13.2).
+
+Ainda em aberto, e dependem de você:
+
+1. **O tema padrão na primeira execução:** escuro (o da marca), claro, ou o do sistema (sugerido).
+2. **A ordem das versões:** Aquisição (v0.10) antes de Figuras (v0.11), como proposto, ou o contrário, se um artigo vier antes das próximas idas ao laboratório.
+3. **A regra de sudo sem senha na placa** (11.2): só o askpass por sessão (padrão), ou também a regra limitada aos comandos do firmware.
+4. **O inglês na v1.0:** depende de a GUI ser mostrada fora do grupo.
+5. **A assinatura de código no Windows:** tem custo, e o aviso do SmartScreen só aparece na primeira execução.
 
 ---
 
