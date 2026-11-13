@@ -522,10 +522,10 @@ O protótipo (`interface/piramide`) tem de passar nestes portões, no Windows e 
 | Portão | Critério |
 |---|---|
 | G1 | Captura sintética de 1 h, 2 canais, 400 kS/s: pan e zoom com 8 traços a ≥ 60 q/s (p95 ≤ 16 ms), da captura inteira até a amostra. **Aprovado em 13/11/2026** na tela do usuário: 8 faixas, p95 de 14,4 ms |
-| G2 | A mesma coisa em tela de 4K com escala de 200 % (o custo da pintura cresce com os pixels) |
-| G3 | A pirâmide do arquivo de 2,9 GB em < 8 s, com memória < 500 MB |
-| G4 | Fidelidade (`tests/test_gui_traco_lod.py`): em cada coluna de pixel, o mínimo e o máximo das amostras aparecem pintados por inteiro (nela ou numa vizinha), nada passa do que as vizinhas têm, e as colunas estão nos seus pixels |
-| G5 | Sem travar com o disco frio (a primeira abertura depois de reiniciar o computador) |
+| G2 | A mesma coisa em tela de 4K com escala de 200 % (o custo da pintura cresce com os pixels). **A medir** |
+| G3 | A pirâmide do arquivo de 2,9 GB em < 8 s, com memória < 500 MB. **Aprovado pela taxa** (≥ 200 M amostras/s, ~5 s para o arquivo); a memória ainda não foi medida |
+| G4 | Fidelidade (`tests/test_gui_traco_lod.py`): em cada coluna de pixel, o mínimo e o máximo das amostras aparecem pintados por inteiro (nela ou numa vizinha), nada passa do que as vizinhas têm, e as colunas estão nos seus pixels. **Aprovado** |
+| G5 | Sem travar com o disco frio (a primeira abertura depois de reiniciar o computador). **A medir** |
 
 **Plano B, se G1 ou G2 falharem:**
 
@@ -1340,7 +1340,9 @@ Estas telas serão desenhadas na fase em que entram:
 - **Linux:** AppImage, testado em X11 e Wayland; o Flatpak fica para depois.
 - **Para quem desenvolve:** `uv run --extra gui sh-analyzer-gui`.
 - **O firmware vai junto:** o `firmware/` da versão do aplicativo, para atualizar a placa sem o repositório (seção 11.10).
-- **O tamanho esperado** é de 150 a 250 MB, sem os módulos do Qt que não são usados (WebEngine, Multimedia, 3D).
+- **O tamanho:** a primeira medida no Linux (13/11/2026) deu uma pasta de 382 MB, 128 MB compactada em zstd e 150 MB em gzip, sem os módulos do Qt que não são usados (WebEngine, Multimedia, 3D…).
+  - O que ainda dá para tirar: as duas cópias do OpenBLAS (o NumPy e o SciPy trazem cada um a sua, 48 MB) e o Qt Quick, o Qml e o Pdf, que entraram apesar das exclusões (21 MB).
+  - A partida, empacotado: 0,36 s.
 - **Atualizações:** um aviso de versão nova, consultando os releases do GitHub, desligável; sem atualização automática.
 
 | Componente | Licença | Observação |
@@ -1371,11 +1373,13 @@ As fases estão quebradas em tarefas pequenas, com o estado de cada uma, em [`do
 
 - [x] Extra `gui` com o PySide6 e o PyQtGraph; o pacote `sh_analyzer_gui` com a janela vazia e o ícone; o teste de que o motor não importa o Qt; o job `interface` na CI.
 - [x] As medidas que decidiram o motor de gráficos (seção 6.2, `scripts/benchmarks/plotagem_gui.py`).
-- [ ] **O protótipo do motor** (`sh_analyzer_gui.dados` + `TracoLOD`): passar nos portões G1 a G5, no Windows e no Linux.
-- [ ] **A `api`:** `abrir_captura` + `sinal_do_canal`, com o `resolver_contexto` passando a usá-las e os testes de paridade.
-- [ ] **O tema:** os tokens, a `QPalette` e o QSS gerados, as fontes e os ícones; a galeria com os 6 primeiros componentes; o `test_tema.py`.
-- [ ] **O esqueleto do `sh_placa` e do agente:** `versao` e `estado`, com o teste sobre a árvore falsa; o simulador respondendo os mesmos dois comandos.
-- [ ] **Um instalador do PyInstaller** com o PySide6 e o SciPy, no Windows e no Linux: o tamanho e o tempo de abrir.
+- [x] **O protótipo do motor** (`sh_analyzer_gui.dados` + `TracoLOD`): G1, G3 e G4 aprovados no Linux. Faltam o G2 (4K), o G5 (disco frio) e o Windows.
+- [x] **A `api`:** `abrir_captura` + `sinal_do_canal`, com o `resolver_contexto` passando a usá-las e os testes de paridade.
+- [x] **O tema:** os tokens, a `QPalette` e o QSS gerados, as fontes (Inter, JetBrains Mono e as opções IBM Plex e Atkinson) e os ícones; a galeria com os 6 primeiros componentes; o `test_tema.py`.
+- [x] **O esqueleto do `sh_placa` e do agente:** `versao` e `estado`, com o teste sobre a árvore falsa; o simulador respondendo os mesmos dois comandos.
+- [x] **Um instalador do PyInstaller** (`empacotamento/sh-analyzer-gui.spec`), no Linux: pasta de 382 MB (128 MB compactada), abre em 0,36 s. Falta o Windows.
+
+**Fechada em 13/11/2026** (a F0.12 do `docs/gui-progress.md`): o plano B da GPU não é necessário por ora, e o que falta (G2, G5 e o Windows) não bloqueia a Fase 1.
 
 **Pronto quando:** os portões passam e o aplicativo abre nos dois sistemas e nos dois temas, mostrando a galeria.
 

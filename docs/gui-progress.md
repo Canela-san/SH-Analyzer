@@ -8,7 +8,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F0.11: o instalador de teste** (seção 4). Depois dela, a F0.12 fecha a Fase 0.
+> **F1.1: a janela do Estúdio** (seção 4b). A Fase 0 está fechada.
 >
 >
 > **No laboratório (opcional, 5 minutos):** a F0.2 colhe da BeagleBone os dados que a Aquisição vai usar (seção 6).
@@ -345,16 +345,102 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
   - **Testes:** `test_agente.py` (sobre a raiz falsa) e `test_sh_placa.py` (o diagnóstico de cada cenário e as respostas estranhas). A arquitetura confere que o `sh_placa` não importa o Qt nem a interface, e o `ci.sh` roda o ruff no agente.
   - **O extra `placa`** (asyncssh, zeroconf…) fica para a Fase 3, quando o SSH entrar: hoje não há dependência nova.
 
-### ▶ F0.11: o instalador de teste
+### ◐ F0.11: o instalador de teste (o Linux feito; falta o Windows)
 
 - **O quê:** um PyInstaller em pasta, com o PySide6, o PyQtGraph e o SciPy. Primeiro no Linux; no Windows quando houver uma máquina.
 - **Pronto quando:** o tamanho e o tempo de abrir estão anotados na seção 5.
+- **Feito no Linux em 13/11/2026:**
+  - **A receita:** `empacotamento/sh-analyzer-gui.spec`, com `empacotamento/entrada.py`;
+  - **o conteúdo:** a interface inteira, o `sh_placa` e a `api` do motor, sem os módulos do Qt que não se usam;
+  - **a construção:** leva 52 s;
+  - **a pasta:** 382 MB, 128 MB compactada em zstd e 150 MB em gzip;
+  - **a partida:** 0,36 s, com 81 MB de memória, sem tela, pela opção `--sair-ao-abrir`;
+  - **a linha de comando do aplicativo** ganhou `--help`, `--versao` e `--tema`.
+- **Para cortar depois:** as duas cópias do OpenBLAS (48 MB) e o Qt Quick, o Qml e o Pdf (21 MB), que entraram apesar das exclusões.
+- **Falta:** o Windows, com o `.ico` da marca e o Inno Setup, quando houver uma máquina com Windows.
 
-### ☐ F0.12: o fechamento da Fase 0
+### ☑ F0.12: o fechamento da Fase 0
 
 - Os resultados dos portões no plano.
 - O plano B decidido, se for preciso.
 - A Fase 1 quebrada em tarefas, nesta seção, no mesmo formato.
+- **Feito em 13/11/2026:**
+  - **os portões:** G1, G3 e G4 aprovados (seção 6.7 do plano). O G2 (4K), o G5 (disco frio) e o Windows ficam a medir, e não bloqueiam a Fase 1;
+  - **o plano B da GPU:** não é necessário por ora;
+  - **a Fase 1:** quebrada em tarefas logo abaixo, na seção 4b.
+
+---
+
+## 4b. Fase 1 em tarefas: o visualizador
+
+**Pronto quando:** a captura de 1 h abre, navega a 60 q/s e mede, com 8 traços de 2 fontes.
+
+### ▶ F1.1: a janela do Estúdio (A1)
+
+- **Arquivos:** `janela.py` reescrita e `componentes/` (a barra superior).
+- **A estrutura:**
+  - a **barra superior**: a marca, o projeto, as três áreas num `Segmentado` (a Figuras e a Aquisição ainda desabilitadas), o campo da paleta de comandos, o chip da placa, desfazer e refazer, o tema e as configurações;
+  - os **docks:** o Projeto à esquerda e o Inspetor à direita;
+  - as **vistas** no centro, em abas;
+  - o **painel de baixo**, com as Medidas, as Tarefas e os Avisos;
+  - a barra de status.
+- **O layout:** salvo e restaurado (`saveState`/`restoreState`, por enquanto no `QSettings`; por projeto na F1.3). Ctrl+B, Ctrl+I e Ctrl+J recolhem os painéis.
+- **Os testes:** a janela abre com cada região, recolhe os painéis e guarda o layout. O `QSettings` dos testes vai para uma pasta temporária, nunca a do usuário.
+
+### ☐ F1.2: o modelo e o desfazer
+
+- **Arquivos:** `modelo/`: `Projeto`, `Fonte`, `Vista`, `Traco`, com sinais do Qt, e os comandos (`QUndoCommand`).
+- **O conteúdo:**
+  - adicionar e remover um traço, e mudar uma propriedade, cada um como um comando;
+  - o `QUndoStack` na janela;
+  - o estado do traço: a fonte, o canal, a posição na paleta (a cor), a escala e o deslocamento, a visibilidade e a faixa.
+- **Os testes:** cada comando faz e desfaz, e o modelo avisa quem desenha.
+
+### ☐ F1.3: o projeto `.shproj`
+
+- **Arquivos:** `dados/projeto.py` (sem Qt), com o JSON versionado (`"formato": "sh-analyzer-projeto"`).
+- **O conteúdo:**
+  - as fontes, por caminho relativo e pelo CRC;
+  - salvar, abrir e reencontrar uma fonte movida pelo CRC;
+  - o salvamento automático (`.shproj~`) e a recuperação depois de uma queda.
+- **Os testes:** ida e volta, um formato futuro recusado com a mensagem, e a recuperação.
+
+### ☐ F1.4: abrir capturas e o painel Projeto
+
+- **O conteúdo:**
+  - abrir por diálogo, arrastando e soltando, e pelos recentes;
+  - a árvore das fontes e dos canais (um `QAbstractItemModel`), com o ponto da cor onde o canal está plotado;
+  - a vista do cabeçalho, com o CRC conferido;
+  - os avisos da `api` no painel de avisos;
+  - a construção da pirâmide em segundo plano (um `QRunnable`), com o progresso e o cancelamento.
+- **Os testes:** abrir uma captura sintética, a árvore e o cancelamento.
+
+### ☐ F1.5: a vista de tempo
+
+- **O conteúdo:**
+  - as faixas, uma `ViewBox` por grandeza, com o tempo ligado entre elas, e o `TracoLOD`;
+  - **o eixo e a grade próprios**, opacos e com o texto em cache: o que sobrava do G1 com 8 faixas;
+  - o zoom e o pan com o histórico (Backspace), o minimapa e a legenda de chips;
+  - a seleção: clicar perto do traço, no chip ou na árvore.
+- **Os testes:** o G4 de novo, a seleção e o histórico; o G1 medido de novo com 8 faixas.
+
+### ☐ F1.6: o inspetor do traço
+
+- **O conteúdo:** a identidade, a aparência (a cor da paleta), e a escala e o tempo, cada mudança como um comando de desfazer.
+- **Os testes:** editar, desfazer e editar vários traços de uma vez.
+
+### ☐ F1.7: os cursores e as medidas
+
+- **O conteúdo:**
+  - dois cursores, com Δt, 1/Δt e Δy;
+  - as medidas da região (média, RMS, pico, pico a pico, f₁), calculadas das amostras pela `api` (`sinal_do_canal`), nunca do desenho;
+  - a tabela de medidas, que copia para a planilha.
+- **Os testes:** os números iguais aos da CLI para a mesma região.
+
+### ☐ F1.8: a paleta de comandos e os atalhos
+
+- **O conteúdo:** Ctrl+K com busca por nome em todas as ações, e a lista dos atalhos.
+- **Os testes:** achar e rodar uma ação pela paleta.
 
 ---
 
@@ -371,6 +457,7 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
 | 13/11/2026 | G1 sem tela, 1 400 × 790 px, zoom e pan da captura inteira até 50 amostras: **2 faixas** | Aprovado: mediana de 6,1 ms, p95 de 10,2 ms | `navegar --sintetico 10 --canais 2 --medir` |
 | 13/11/2026 | G1 sem tela, mesmo percurso: **8 faixas** | **No limite:** mediana de 12,7 ms, p95 de 16,0 ms. Os traços custam ~1,5 ms; o resto são os eixos e as caixas de vista do PyQtGraph | `navegar --sintetico 10 --canais 8 --medir` |
 | 13/11/2026 | **G1 na tela do usuário: 8 faixas**, captura sintética de 1 h (2,88 GB), 1 280 × 626 px | **Aprovado:** mediana de 11,7 ms, p95 de 14,4 ms | `navegar --sintetico 60 --canais 8 --medir` |
+| 13/11/2026 | Instalador do PyInstaller no Linux (a interface, o `sh_placa` e a `api` do motor) | Pasta de 382 MB (128 MB em zstd, 150 MB em gzip); construção em 52 s; partida em 0,36 s com 81 MB | `empacotamento/sh-analyzer-gui.spec` |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
 ---
@@ -437,7 +524,9 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **Depois, no mesmo dia:**
     - o G1 medido na tela do usuário, aprovado com 8 faixas;
     - as fontes Inter e JetBrains Mono embutidas, com os arquivos que ele baixou.
-  - **Próximo:** a F0.11, o instalador de teste (PyInstaller, no Linux).
+    - a F0.11 no Linux: o PyInstaller, com a pasta de 382 MB (128 MB compactada) e a partida em 0,36 s. O app ganhou `--help`, `--versao` e `--tema`; um `--help` sem tratamento tinha aberto uma janela na tela do usuário;
+    - a F0.12: a Fase 0 fechada e a Fase 1 quebrada em tarefas (seção 4b).
+  - **Próximo:** a F1.1, a janela do Estúdio.
 
 ---
 
