@@ -490,7 +490,9 @@ class VistaDeEspectro(QWidget):
                 self.grafico.addItem(item)
                 self.curvas[r.traco] = item
             elif item.dados[0] is not d.piramide:
-                item.definir_dados(d.piramide, d.niveis)
+                # A grade inteira do espectro novo: o espaçamento dos bins e o número deles mudam com o trecho e o
+                # método (sem isso, um pico de 130 kHz aparecia em 377 kHz, e o eixo passava da Nyquist).
+                item.definir_dados(d.piramide, d.niveis, taxa_hz=1.0 / d.df, t0=d.f0, n_total=len(d.niveis))
             item.definir_cor(cor)
             return
         if not isinstance(item, pg.PlotDataItem):

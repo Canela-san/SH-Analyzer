@@ -163,11 +163,22 @@ class TracoLOD(pg.GraphicsObject):
         """A pirâmide, as amostras e o início (no canal) dos dados desenhados agora."""
         return self._piramide, self._amostras, self._inicio
 
-    def definir_dados(self, piramide: Piramide, amostras: np.ndarray, inicio: int = 0) -> None:
+    def definir_dados(self, piramide: Piramide, amostras: np.ndarray, inicio: int = 0, *, taxa_hz: float | None = None,
+                      t0: float | None = None, n_total: int | None = None) -> None:
         """Troca os dados desenhados (a prévia, o começo materializado, o traço pronto) sem recriar o item: a cor, a
-        conversão e a posição na faixa ficam."""
+        conversão e a posição na faixa ficam. Dados com outra grade (o espectro de um trecho de outro tamanho tem outro
+        espaçamento entre os bins, e outro número deles) trazem ``taxa_hz``, ``t0`` e ``n_total`` novos: sem eles, o
+        eixo x ficaria na grade dos dados de antes."""
+        if taxa_hz is not None and taxa_hz <= 0:
+            raise ValueError(f"taxa_hz deve ser > 0 (recebido {taxa_hz}).")
         self.prepareGeometryChange()
         self._piramide, self._amostras, self._inicio = piramide, amostras, int(inicio)
+        if taxa_hz is not None:
+            self._taxa = float(taxa_hz)
+        if t0 is not None:
+            self._t0 = float(t0)
+        if n_total is not None:
+            self._n_total = int(n_total)
         self._limites = self._calcular_limites()
         self.informViewBoundsChanged()
         self.recalcular()

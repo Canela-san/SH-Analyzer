@@ -52,6 +52,12 @@ def aberto(janela, qtbot, tmp_path):
     return fonte, traco, tempo, espectro
 
 
+def espectro_indice(metodo):
+    """A posição do método no seletor da barra."""
+    from sh_analyzer_gui.areas.analise.vista_espectro import METODOS
+    return METODOS.index(metodo)
+
+
 def recalcular(qtbot, espectro, mexer, quando=None):
     """Mexe e espera o resultado das opções novas (um resultado pedido antes pode chegar depois da mudança)."""
     mexer()
@@ -136,3 +142,24 @@ def test_plotar_com_o_espectro_aberto_vai_para_a_vista_de_tempo(janela, aberto):
     fonte, traco, tempo, espectro = aberto
     novo = janela.area.plotar_canal(fonte, 1)
     assert novo in tempo.vista.tracos and not espectro.vista.tracos
+
+
+def test_um_trecho_de_outro_tamanho_redesenha_na_grade_certa(janela, qtbot, aberto):
+    """O espectro de um trecho de outro tamanho (outro espaçamento entre os bins, outro número deles) aparece na
+    frequência certa e não passa da Nyquist: antes, o traço ficava na grade do espectro de antes (um tom de 9 kHz
+    aparecia em outra frequência, e o eixo ia além de 100 kHz)."""
+    fonte, traco, tempo, espectro = aberto
+    recalcular(qtbot, espectro, lambda: espectro.metodo.botao(espectro_indice("fft")).click())
+    for inicio, fim in ((0.1, 0.5), (0.2, 1.9), (1.0, 1.3)):
+        tempo.ligar_cursores(True)
+        tempo.cursores = [inicio, fim]
+        tempo._por_cursores()
+        a = int(round(inicio * FS))
+        recalcular(qtbot, espectro, tempo.emitir_regiao, quando=lambda a=a: espectro.resultados[0].trecho.inicio == a)
+        item = espectro.curvas[traco]
+        d = espectro.resultados[0].desenho
+        x0, x1 = item.dataBounds(0)
+        assert x0 == pytest.approx(0.0) and x1 == pytest.approx(FS / 2, rel=1e-3)        # até a Nyquist, não além
+        assert item.tempo_da_amostra(d.indice(9_000.0)) == pytest.approx(9_000.0, abs=d.df)
+        i = int(np.argmax(d.niveis[d.indice(2_000.0):])) + d.indice(2_000.0)
+        assert item.tempo_da_amostra(i) == pytest.approx(9_000.0, abs=2 * d.df)          # o tom no lugar dele
