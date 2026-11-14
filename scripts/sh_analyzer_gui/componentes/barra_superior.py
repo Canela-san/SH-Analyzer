@@ -1,5 +1,5 @@
 """A barra superior da janela (docs/gui-plan.md, 9.1; o mockup A1): a marca e o projeto à esquerda, as três áreas no
-meio, e à direita o campo da paleta de comandos, o estado da placa, desfazer e refazer, o tema e os ajustes.
+meio, e à direita o campo da paleta de comandos, o estado da placa, desfazer e refazer, o tema e as configurações.
 
 A barra só monta e mostra: quem a usa (a janela) liga os botões às ações (``QAction``), e as ações trazem o atalho,
 a dica e o habilitado.
@@ -149,7 +149,6 @@ class BarraSuperior(QWidget):
         self.botao_refazer = self._botao("botao_refazer")
         self.botao_tema = self._botao("botao_tema")
         self.botao_ajustes = self._botao("botao_ajustes")
-        self.botao_ajustes.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
 
         # Três colunas: a da esquerda (a marca e o projeto) e a da direita (a busca e os botões) têm a mesma largura
         # (o mesmo fator e a política Ignored: cada uma recebe metade do que sobra), e as áreas ficam no meio, no

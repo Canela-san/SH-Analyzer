@@ -30,7 +30,6 @@ from pathlib import Path
 from PySide6.QtCore import QByteArray, QSize, Qt
 from PySide6.QtGui import (
     QAction,
-    QActionGroup,
     QCloseEvent,
     QDragEnterEvent,
     QDropEvent,
@@ -57,6 +56,7 @@ from .areas.analise.area import AreaDeAnalise
 from .areas.analise.arvore import PainelDoProjeto
 from .areas.analise.inspetor import Inspetor
 from .areas.analise.medidas import TabelaDeMedidas
+from .areas.configuracoes import DialogoDeConfiguracoes
 from .componentes.avisos import ListaDeAvisos
 from .componentes.barra_superior import BarraSuperior
 from .componentes.basicos import Botao
@@ -76,7 +76,6 @@ from .servicos.fontes import ServicoDeFontes
 from .servicos.materializar import ServicoDeMaterializacao
 from .servicos.tarefas import GerenciadorDeTarefas
 from .tema.aplicar import aparencia
-from .tema.fontes import familias_disponiveis, fonte_escolhida
 from .tema.icones import IconeDoTema
 from .tema.tokens import Tema
 
@@ -144,10 +143,8 @@ class JanelaPrincipal(QMainWindow):
         self.barra.botao_desfazer.setDefaultAction(self.acoes["desfazer"])
         self.barra.botao_refazer.setDefaultAction(self.acoes["refazer"])
         self.barra.botao_tema.setDefaultAction(self.acoes["alternar_tema"])
-        self.barra.botao_ajustes.setMenu(self._menu_de_ajustes())
+        self.barra.botao_ajustes.setDefaultAction(self.acoes["configuracoes"])
         self.barra.definir_menu_do_projeto(self._menu_do_projeto())
-        self.barra.botao_ajustes.setToolTip(self.tr("Ajustes"))
-        IconeDoTema(self.barra.botao_ajustes, "ajustes")
         for indice, versao in ((1, "v0.11"), (2, "v0.10")):
             self.barra.areas.habilitar(indice, False, self.tr("Chega na {}").format(versao))
 
@@ -209,6 +206,8 @@ class JanelaPrincipal(QMainWindow):
                    icone="livro").triggered.connect(self.mostrar_atalhos)
         self._acao("alternar_tema", self.tr("Alternar o tema claro e escuro"),
                    icone="sol").triggered.connect(preferencias.alternar_tema)
+        self._acao("configuracoes", self.tr("Configurações…"), atalho="Ctrl+,",
+                   icone="ajustes").triggered.connect(lambda: self.abrir_configuracoes())
         controle = self.controle
         self._acao("abrir", self.tr("Abrir captura…"), atalho=QKeySequence.StandardKey.Open,
                    icone="pasta").triggered.connect(lambda: controle.abrir_arquivos())
@@ -294,38 +293,29 @@ class JanelaPrincipal(QMainWindow):
             self.paleta = PaletaDeComandos(self)
         self.paleta.abrir(self.acoes_da_paleta())
 
+    def abrir_configuracoes(self, secao: str | None = None) -> DialogoDeConfiguracoes:
+        """A tela de configurações (uma só por janela, não modal), na ``secao`` pedida (ou onde estava)."""
+        dialogo = getattr(self, "dialogo_de_configuracoes", None)
+        if dialogo is None or not isValid(dialogo):
+            dialogo = self.dialogo_de_configuracoes = DialogoDeConfiguracoes(self)
+        if secao is not None:
+            dialogo.mostrar_secao(secao)
+        dialogo.show()
+        dialogo.raise_()
+        dialogo.activateWindow()
+        return dialogo
+
+    def aplicar_cache(self) -> None:
+        """A pasta e os limites do cache das configurações, nos dois serviços (o limite menor apaga na hora os
+        menos usados, nunca o que está aberto)."""
+        self.servico_de_fontes.definir_cache(preferencias.pasta_do_cache("piramides"), preferencias.limite("piramides"))
+        self.materializacoes.definir_cache(preferencias.pasta_do_cache("materializacoes"),
+                                           preferencias.limite("materializacoes"))
+
     def mostrar_atalhos(self) -> DialogoDeAtalhos:
         self.dialogo_de_atalhos = DialogoDeAtalhos(self.acoes_da_paleta(), self)
         self.dialogo_de_atalhos.show()
         return self.dialogo_de_atalhos
-
-    def _menu_de_ajustes(self) -> QMenu:
-        """O tema e as fontes, gravados na configuração. A tela de configurações completa vem depois (GE-05)."""
-        menu = QMenu(self)
-        menu.setObjectName("menu_ajustes")
-        sub = menu.addMenu(self.tr("Tema"))
-        grupo = QActionGroup(sub)
-        self._acoes_de_tema: dict[str, QAction] = {}
-        for modo, texto in (("sistema", self.tr("O do sistema")), ("escuro", self.tr("Escuro")),
-                            ("claro", self.tr("Claro"))):
-            a = sub.addAction(texto)
-            a.setCheckable(True)
-            a.setActionGroup(grupo)
-            a.triggered.connect(lambda _=False, m=modo: preferencias.mudar_tema(m))
-            self._acoes_de_tema[modo] = a
-        for papel, titulo in (("interface", self.tr("Fonte da interface")), ("mono", self.tr("Fonte dos números"))):
-            sub = menu.addMenu(titulo)
-            grupo = QActionGroup(sub)
-            familias = familias_disponiveis(papel)
-            for familia in familias:
-                a = sub.addAction(familia)
-                a.setCheckable(True)
-                a.setActionGroup(grupo)
-                a.setChecked(familia == fonte_escolhida(papel))
-                a.triggered.connect(lambda _=False, p=papel, f=familia: preferencias.mudar_fonte(p, f))
-            sub.setEnabled(bool(familias))
-        menu.aboutToShow.connect(self._marcar_tema_no_menu)
-        return menu
 
     def _menu_do_projeto(self) -> QMenu:
         menu = QMenu(self)
@@ -353,9 +343,6 @@ class JanelaPrincipal(QMainWindow):
                 a.setToolTip(str(caminho))
                 a.triggered.connect(lambda _=False, c=caminho, f=abrir: f(c))
             menu.setEnabled(bool(existentes))
-
-    def _marcar_tema_no_menu(self) -> None:
-        self._acoes_de_tema[aparencia().modo].setChecked(True)
 
     # ------------------------------------------------------------------ regiões
 

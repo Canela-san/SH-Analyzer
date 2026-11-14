@@ -232,3 +232,75 @@ def test_trocar_o_separador_reescreve_os_numeros_da_tela(janela, qtbot, tmp_path
     assert tempo.info.text() == info.replace(",", ".")
     assert preferencias.separador_salvo() == "."
 
+
+
+# ------------------------------------------------------------------ a tela de configurações
+
+def test_a_tela_troca_o_tema_as_fontes_e_o_movimento(janela, qtbot):
+    dialogo = janela.abrir_configuracoes()
+    qtbot.waitExposed(dialogo)
+    assert [dialogo.secoes.item(i).text() for i in range(dialogo.secoes.count())] == \
+        ["Aparência", "Números", "Pastas", "Cache"]
+    assert dialogo.tema.escolhida == 1                                  # escuro (o do teste)
+    dialogo.tema.escolher(2)
+    assert not aparencia().tema.escuro and preferencias.tema_salvo() == "claro"
+    janela.acoes["alternar_tema"].trigger()                             # pela barra: a tela acompanha
+    assert dialogo.tema.escolhida == 1 and aparencia().tema.escuro
+    caixa = dialogo.fontes["interface"]
+    caixa.textActivated.emit("IBM Plex Sans")
+    assert preferencias.ler_texto(preferencias.CHAVES_DAS_FONTES["interface"]) == "IBM Plex Sans"
+    dialogo.movimento.escolher(1)
+    assert aparencia().movimento_reduzido and preferencias.movimento_salvo() == "reduzido"
+
+
+def test_a_tela_troca_o_separador_e_mostra_o_exemplo(janela, qtbot):
+    dialogo = janela.abrir_configuracoes("numeros")
+    assert dialogo.exemplo.text() == "2,5 kHz · 127,3 V · 1,5 mA · 4,2 s"
+    dialogo.separador.escolher(1)
+    assert dialogo.exemplo.text() == "2.5 kHz · 127.3 V · 1.5 mA · 4.2 s"
+    assert preferencias.separador_salvo() == "." and numeros.separador_decimal() == "."
+
+
+def test_a_tela_escolhe_as_pastas_e_volta_a_padrao(janela, qtbot, tmp_path):
+    dialogo = janela.abrir_configuracoes("pastas")
+    sondas = tmp_path / "minhas sondas"
+    sondas.mkdir()
+    janela.controle.dialogos = DialogosFalsos(str(sondas), None)
+    dialogo._escolher_pasta("sondas")
+    assert preferencias.pasta("sondas") == sondas and dialogo.campos_de_pasta["sondas"].text() == str(sondas)
+    assert dialogo.botoes_de_padrao["sondas"].isEnabled()
+    dialogo._escolher_pasta("sondas")                                   # cancelar não muda nada
+    assert preferencias.pasta("sondas") == sondas
+    dialogo.botoes_de_padrao["sondas"].click()
+    assert preferencias.pasta_escolhida("sondas") is None and dialogo.campos_de_pasta["sondas"].text() == ""
+    assert str(preferencias.pasta_padrao("sondas")) in dialogo.campos_de_pasta["sondas"].placeholderText()
+    # A pasta do cache: os serviços passam a usá-la na hora.
+    janela.controle.dialogos = DialogosFalsos(str(tmp_path / "outro cache"))
+    dialogo._escolher_pasta("cache")
+    assert janela.servico_de_fontes.cache.pasta == tmp_path / "outro cache" / "piramides"
+    assert janela.materializacoes.cache.pasta == tmp_path / "outro cache" / "materializacoes"
+
+
+def test_a_tela_do_cache_mostra_o_uso_muda_o_limite_e_limpa(janela, qtbot, tmp_path):
+    (fonte,) = janela.controle.abrir_capturas([captura(tmp_path)])
+    qtbot.waitUntil(lambda: fonte.piramides is not None, timeout=10_000)
+    servico = janela.servico_de_fontes
+    sobra = servico.cache.pasta / f"outra{EXTENSAO}"
+    sobra.write_bytes(b"\0" * 2 * MIB)
+    dialogo = janela.abrir_configuracoes("cache")
+    assert dialogo.limites["piramides"].value() == preferencias.LIMITES_PADRAO["piramides"] // 1024**3
+    assert dialogo.usos["piramides"].text() == f"em uso: {numeros.formatar_bytes(servico.cache.tamanho_bytes)}"
+    dialogo.limites["materializacoes"].setValue(3)
+    assert preferencias.limite("materializacoes") == 3 * 1024**3
+    assert janela.materializacoes.cache.limite_bytes == 3 * 1024**3
+    dialogo.botoes_de_limpar["piramides"].click()
+    assert not sobra.exists() and all(p.exists() for p in servico.piramides_abertas())
+    assert dialogo.usos["piramides"].text() == f"em uso: {numeros.formatar_bytes(servico.cache.tamanho_bytes)}"
+
+
+def test_os_tamanhos_em_bytes():
+    assert numeros.formatar_bytes(512) == "512 B"
+    assert numeros.formatar_bytes(1536) == "1,5 KiB"
+    assert numeros.formatar_bytes(4 * 1024**3) == "4 GiB"
+    assert numeros.formatar_bytes(12.4 * 1024**3) == "12 GiB"
+    assert numeros.formatar_bytes(0) == "0 B"

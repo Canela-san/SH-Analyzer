@@ -30,6 +30,10 @@ class DialogosFalsos:
         r = self._proxima(titulo)
         return Path(r) if r is not None else None
 
+    def escolher_pasta(self, titulo, pasta=""):
+        r = self._proxima(titulo)
+        return Path(r) if r is not None else None
+
     def perguntar(self, titulo, texto, opcoes, padrao):
         r = self._proxima(titulo)
         assert r is None or r in opcoes, f"{r!r} não é uma das opções de {titulo!r}: {list(opcoes)}"

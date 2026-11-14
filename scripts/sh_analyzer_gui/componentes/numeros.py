@@ -111,6 +111,19 @@ def formatar_si(valor: float, unidade: str = "", digitos: int = 4, decimal: str 
     return f"{texto} {_ESCRITA[expoente]}{unidade}".strip()
 
 
+UNIDADES_DE_BYTES = ("B", "KiB", "MiB", "GiB", "TiB")
+
+
+def formatar_bytes(tamanho: float, decimal: str | None = None) -> str:
+    """Um tamanho em bytes nas unidades binárias, com até três algarismos: "512 B", "1,5 MiB", "12 GiB"."""
+    valor, i = float(tamanho), 0
+    while abs(valor) >= 1024 and i < len(UNIDADES_DE_BYTES) - 1:
+        valor /= 1024
+        i += 1
+    texto = f"{valor:.0f}" if i == 0 or abs(valor) >= 10 else f"{valor:.1f}".rstrip("0").rstrip(".")
+    return f"{texto.replace('.', decimal or _separador)} {UNIDADES_DE_BYTES[i]}"
+
+
 def formatar_duracao(segundos: float, decimal: str | None = None) -> str:
     """Uma duração legível: "4,2 s", "12 min 30 s", "1 h 02", "26 h 40". ``—`` para o que não é número."""
     decimal = decimal or _separador

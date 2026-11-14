@@ -13,7 +13,7 @@ from sh_analyzer_gui import preferencias  # noqa: E402
 from sh_analyzer_gui.app import criar_aplicacao  # noqa: E402
 from sh_analyzer_gui.componentes.barra_superior import LARGURA_COMPACTA, BarraSuperior  # noqa: E402
 from sh_analyzer_gui.componentes.painel import ALTURA_DO_TITULO  # noqa: E402
-from sh_analyzer_gui.configuracao import configuracoes, gravar  # noqa: E402
+from sh_analyzer_gui.configuracao import gravar  # noqa: E402
 from sh_analyzer_gui.janela import CHAVE_DA_GEOMETRIA, CHAVE_DO_ESTADO, JanelaPrincipal  # noqa: E402
 from sh_analyzer_gui.tema.aplicar import aparencia  # noqa: E402
 from sh_analyzer_gui.tema.fontes import escolher_fonte, fonte_escolhida  # noqa: E402
@@ -152,19 +152,13 @@ def test_o_botao_do_tema_troca_e_grava(janela):
     assert preferencias.tema_salvo() == "claro"
 
 
-def test_o_menu_de_ajustes_troca_o_tema_e_as_fontes(janela):
-    menu = janela.barra.botao_ajustes.menu()
-    submenus = {a.text(): a.menu() for a in menu.actions() if a.menu()}
-    assert list(submenus) == ["Tema", "Fonte da interface", "Fonte dos números"]
-    fontes = {a.text(): a for a in submenus["Fonte da interface"].actions()}
-    assert {"Inter", "IBM Plex Sans", "Atkinson Hyperlegible Next"} <= set(fontes)
-    assert fontes["Inter"].isChecked()
-    fontes["IBM Plex Sans"].trigger()
-    assert fonte_escolhida("interface") == "IBM Plex Sans"
-    assert configuracoes().value("aparencia/fonte_interface") == "IBM Plex Sans"
-    temas = {a.text(): a for a in submenus["Tema"].actions()}
-    temas["Claro"].trigger()
-    assert not aparencia().tema.escuro and preferencias.tema_salvo() == "claro"
+def test_o_botao_de_ajustes_abre_as_configuracoes(janela):
+    assert janela.barra.botao_ajustes.defaultAction() is janela.acoes["configuracoes"]
+    assert janela.acoes["configuracoes"].shortcut().toString() == "Ctrl+,"
+    janela.barra.botao_ajustes.click()
+    dialogo = janela.dialogo_de_configuracoes
+    assert dialogo.isVisible() and dialogo.secao == "aparencia"
+    assert janela.abrir_configuracoes("cache") is dialogo and dialogo.secao == "cache"   # uma só, na seção pedida
 
 
 def test_as_preferencias_gravadas_valem_na_partida(app):

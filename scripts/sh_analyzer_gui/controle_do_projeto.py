@@ -68,6 +68,11 @@ class Dialogos:
         caminho, _ = QFileDialog.getSaveFileName(self.pai, titulo, sugestao, filtro)
         return Path(caminho) if caminho else None
 
+    def escolher_pasta(self, titulo: str, pasta: str = "") -> Path | None:
+        self._conferir_tela(f"o diálogo {titulo!r}")
+        caminho = QFileDialog.getExistingDirectory(self.pai, titulo, pasta)
+        return Path(caminho) if caminho else None
+
     def perguntar(self, titulo: str, texto: str, opcoes: dict[str, str], padrao: str) -> str | None:
         """``opcoes``: a chave da resposta -> o texto do botão. A tecla Esc devolve ``None``."""
         self._conferir_tela(f"a pergunta {titulo!r}")

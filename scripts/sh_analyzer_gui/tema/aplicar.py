@@ -125,7 +125,9 @@ def _rgba(cor: str, alfa: float) -> str:
 def gerar_qss(t: Tema) -> str:
     """A folha de estilos do tema. Os botões aceitam ``setProperty("variante", "primario" | "fantasma" |
     "perigo")``. Sem ``font-size``: o tamanho base vem da fonte da aplicação (``fontes.fonte_da_interface``), e um
-    ``font-size`` no QSS passaria por cima do ``setFont`` de cada widget."""
+    ``font-size`` no QSS passaria por cima do ``setFont`` de cada widget. Os campos numéricos (``QSpinBox``) ficam
+    sem as setas, que o estilo do sistema desenharia (12.6: nunca ícones do sistema); o valor muda pela digitação,
+    pelas setas do teclado e pela roda."""
     return f"""
 QWidget {{ color: {t.texto}; }}
 QMainWindow, QDialog {{ background: {t.fundo}; }}
@@ -146,6 +148,10 @@ QFrame#paleta {{ background: {t.elevada}; border: 1px solid {t.borda_forte}; bor
 QListWidget#resultados_paleta {{ background: transparent; border: none; }}
 QListWidget#resultados_paleta::item {{ padding: 6px 10px; border-radius: 6px; }}
 QListWidget#resultados_paleta::item:selected {{ background: {_rgba(t.acento, 0.13)}; color: {t.texto}; }}
+QListWidget#secoes_configuracoes {{ background: transparent; border: none; outline: 0; }}
+QListWidget#secoes_configuracoes::item {{ padding: 6px 10px; border-radius: 6px; color: {t.texto2}; }}
+QListWidget#secoes_configuracoes::item:hover:!selected {{ color: {t.texto}; }}
+QListWidget#secoes_configuracoes::item:selected {{ background: {_rgba(t.acento, 0.13)}; color: {t.acento}; }}
 QStatusBar::item {{ border: none; }}
 QMenuBar {{ background: {t.fundo}; }}
 QMenu {{ background: {t.elevada}; border: 1px solid {t.borda_forte}; border-radius: 8px; padding: 4px; }}
@@ -170,6 +176,7 @@ QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit {{
     selection-background-color: {t.acento}; selection-color: {t.acento_texto}; }}
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QPlainTextEdit:focus, QTextEdit:focus {{
     border-color: {t.acento}; }}
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ width: 0; border: none; }}
 QComboBox QAbstractItemView {{ background: {t.elevada}; border: 1px solid {t.borda_forte};
                                selection-background-color: {t.superficie}; selection-color: {t.texto}; }}
 QTabBar::tab {{ background: transparent; color: {t.texto2}; padding: 6px 12px; border: none;
