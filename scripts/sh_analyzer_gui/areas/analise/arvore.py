@@ -8,7 +8,8 @@
   (a taxa e a duração da captura, a grandeza do canal) e o estado (a integridade conferida, a pirâmide em
   construção).
 * **O painel** (:class:`PainelDoProjeto`) junta o filtro, a árvore e o estado vazio. Um duplo clique num canal pede
-  para plotá-lo (``canalAtivado``).
+  para plotá-lo (``canalAtivado``); um clique numa vista abre a aba dela (``vistaAtivada``: outro jeito de trocar de
+  vista).
 """
 
 from __future__ import annotations
@@ -188,6 +189,8 @@ class ArvoreDoProjeto(QAbstractItemModel):
         if papel == PAPEL_DETALHE:
             n = len(vista.tracos)
             return f"{n} {'traço' if n == 1 else 'traços'}"
+        if papel == Qt.ItemDataRole.ToolTipRole:
+            return f"{vista.nome}: um clique abre a aba dela."
         return None
 
     # ------------------------------------------------------------------ o projeto mudou
@@ -358,10 +361,12 @@ class DelegadoDaArvore(QStyledItemDelegate):
 class PainelDoProjeto(QWidget):
     """O filtro, a árvore e, sem nada aberto, o estado vazio.
 
-    ``canalAtivado(fonte, numero)``: duplo clique num canal (plotar). ``selecaoMudou(tipo, objeto)``: o que está
+    ``canalAtivado(fonte, numero)``: duplo clique num canal (plotar). ``vistaAtivada(vista)``: clique numa vista (abrir
+    a aba dela). ``selecaoMudou(tipo, objeto)``: o que está
     selecionado na árvore (o inspetor mostra). ``fecharFontePedido(fonte)``: o menu de contexto."""
 
     canalAtivado = Signal(object, int)
+    vistaAtivada = Signal(object)
     selecaoMudou = Signal(str, object)
     fecharFontePedido = Signal(object)
 
@@ -390,6 +395,8 @@ class PainelDoProjeto(QWidget):
         self.arvore.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.arvore.customContextMenuRequested.connect(self._menu)
         self.arvore.doubleClicked.connect(self._duplo_clique)
+        self.arvore.clicked.connect(self._clique)
+        self.arvore.activated.connect(self._clique)          # o Enter (e, em alguns sistemas, o clique)
         self.pilha = QStackedWidget()
         self.pilha.addWidget(self.vazio)
         self.pilha.addWidget(self.arvore)
@@ -443,6 +450,10 @@ class PainelDoProjeto(QWidget):
 
     def _atual_mudou(self, atual: QModelIndex, _anterior: QModelIndex) -> None:
         self.selecaoMudou.emit(atual.data(PAPEL_TIPO) or "", atual.data(PAPEL_OBJETO))
+
+    def _clique(self, indice: QModelIndex) -> None:
+        if indice.data(PAPEL_TIPO) == "vista":
+            self.vistaAtivada.emit(indice.data(PAPEL_OBJETO))
 
     def _duplo_clique(self, indice: QModelIndex) -> None:
         if indice.data(PAPEL_TIPO) == "canal":

@@ -188,6 +188,13 @@ QMainWindow::separator:hover {{ background: {t.acento}; }}
 QWidget#painel, QWidget#titulo_painel {{ background: {t.superficie}; }}
 QLabel#titulo_painel_texto {{ color: {t.mudo}; }}
 QStackedWidget#area_central {{ background: {t.afundada}; }}
+QWidget#centro_com_trilhos {{ background: {t.afundada}; }}
+QWidget#trilho {{ background: {t.superficie}; }}
+QWidget#trilho[lado="esquerda"] {{ border-right: 1px solid {t.borda}; }}
+QWidget#trilho[lado="direita"] {{ border-left: 1px solid {t.borda}; }}
+QWidget#trilho[lado="baixo"] {{ border-top: 1px solid {t.borda}; }}
+QToolButton#aba_do_trilho {{ color: {t.texto2}; padding: 4px 8px; }}
+QToolButton#aba_do_trilho:hover {{ color: {t.texto}; }}
 QLabel#titulo_vazio {{ color: {t.texto}; }}
 QLabel#texto_vazio {{ color: {t.texto2}; }}
 QTabWidget#vistas::pane, QTabWidget#painel_inferior::pane {{ border: none; }}

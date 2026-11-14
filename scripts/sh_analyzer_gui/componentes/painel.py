@@ -1,11 +1,20 @@
-"""As peças dos painéis da janela (docs/gui-plan.md, 9.1): o título de um painel lateral, com os botões dele, e o
-estado vazio, que diz o que falta fazer em vez de mostrar uma área em branco."""
+"""As peças dos painéis da janela (docs/gui-plan.md, 9.1): o título de um painel lateral, com os botões dele; o
+estado vazio, que diz o que falta fazer em vez de mostrar uma área em branco; e o trilho de um painel recolhido.
+
+**Recolher e abrir um painel:** cada painel tem uma seta para recolher (no título; no de baixo, ao lado das abas), e o
+painel recolhido deixa na borda da área central um trilho com a aba dele (:class:`TrilhoDoPainel`): o nome, de cima
+para baixo nos dos lados; embaixo, uma aba para cada página, com o contador dela. Clicar na aba abre o painel.
+"""
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QAction, QFont, QPixmap
+from collections.abc import Callable
+
+from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QAction, QColor, QFont, QFontMetrics, QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractButton,
+    QBoxLayout,
     QHBoxLayout,
     QLabel,
     QSizePolicy,
@@ -21,6 +30,17 @@ from ..tema.icones import IconeDoTema, icone
 from ..tema.tokens import TAMANHOS, Tema
 
 ALTURA_DO_TITULO = 36
+ICONE_DA_ABA = 14
+MARGEM_DA_ABA = 8
+
+
+def fonte_de_titulo() -> QFont:
+    """A fonte dos títulos dos painéis (e das abas dos trilhos): pequena, seminegrito, com espaço entre as letras."""
+    fonte = QFont()
+    fonte.setPixelSize(TAMANHOS["legenda"])
+    fonte.setWeight(QFont.Weight.DemiBold)
+    fonte.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.6)
+    return fonte
 
 
 class TituloDoPainel(QWidget):
@@ -34,11 +54,7 @@ class TituloDoPainel(QWidget):
         self.setFixedHeight(ALTURA_DO_TITULO)
         self.rotulo = QLabel(titulo.upper())
         self.rotulo.setObjectName("titulo_painel_texto")
-        fonte = QFont()
-        fonte.setPixelSize(TAMANHOS["legenda"])
-        fonte.setWeight(QFont.Weight.DemiBold)
-        fonte.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.6)
-        self.rotulo.setFont(fonte)
+        self.rotulo.setFont(fonte_de_titulo())
         self._linha = QHBoxLayout(self)
         self._linha.setContentsMargins(12, 0, 6, 0)
         self._linha.setSpacing(2)
@@ -141,9 +157,11 @@ def botao_de_icone(acao: QAction, nome_icone: str | None = None, papel: str = "t
 
 
 class PainelComAbas(QTabWidget):
-    """Abas no estilo dos painéis (o de baixo: medidas, tarefas, avisos), com um contador opcional em cada aba."""
+    """Abas no estilo dos painéis (o de baixo: medidas, tarefas, avisos), com um contador opcional em cada aba.
+    ``contagemMudou(indice, n, nivel)``: o contador de uma aba mudou (o trilho do painel recolhido mostra o mesmo)."""
 
     NIVEIS = ("neutro", "acento", "aviso", "erro")
+    contagemMudou = Signal(int, int, str)
 
     def __init__(self, nome: str, parent: QWidget | None = None):
         super().__init__(parent)
@@ -151,6 +169,7 @@ class PainelComAbas(QTabWidget):
         self.setDocumentMode(True)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._contadores: dict[int, QLabel] = {}
+        self.contagens: dict[int, tuple[int, str]] = {}
 
     def contador(self, indice: int) -> QLabel:
         """O contador da aba ``indice`` (criado na primeira vez). Só fica na aba enquanto não for zero."""
@@ -188,3 +207,139 @@ class PainelComAbas(QTabWidget):
         else:
             rotulo.setParent(self)
             rotulo.hide()
+        if self.contagens.get(indice) != (n, nivel):
+            self.contagens[indice] = (n, nivel)
+            self.contagemMudou.emit(indice, n, nivel)
+
+
+def pintar_contador(rotulo: QLabel, n: int, nivel: str) -> None:
+    """Um contador (``QLabel#badge``) com o número e a cor do nível; escondido no zero."""
+    if rotulo.property("nivel") != nivel:
+        rotulo.setProperty("nivel", nivel)
+        rotulo.style().unpolish(rotulo)
+        rotulo.style().polish(rotulo)
+    rotulo.setText(str(n))
+    rotulo.setVisible(n > 0)
+
+
+class AbaVertical(QAbstractButton):
+    """A aba de um painel recolhido num trilho do lado: a seta (para onde ele abre) e o nome em versalete, de cima
+    para baixo. A medida vem da fonte: cabe em qualquer fonte e língua."""
+
+    def __init__(self, titulo: str, seta: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("aba_vertical")
+        self.setText(titulo.upper())
+        self.setAccessibleName(titulo)
+        self._seta = seta
+        self.setFont(fonte_de_titulo())
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        aparencia().mudou.connect(self._tema_mudou)
+
+    def _tema_mudou(self, _tema) -> None:
+        self.update()
+
+    def sizeHint(self) -> QSize:
+        medida = QFontMetrics(self.font())
+        return QSize(medida.height() + 2 * MARGEM_DA_ABA,
+                     MARGEM_DA_ABA + ICONE_DA_ABA + 6 + medida.horizontalAdvance(self.text()) + MARGEM_DA_ABA)
+
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
+
+    def enterEvent(self, evento) -> None:
+        self.update()
+        super().enterEvent(evento)
+
+    def leaveEvent(self, evento) -> None:
+        self.update()
+        super().leaveEvent(evento)
+
+    def paintEvent(self, _evento) -> None:
+        t = aparencia().tema
+        sob_o_mouse = self.underMouse() or self.isDown()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if sob_o_mouse:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(t.elevada))
+            p.drawRoundedRect(QRectF(self.rect()).adjusted(3, 3, -3, -3), 6, 6)
+        seta = icone(self._seta, t.texto if sob_o_mouse else t.texto2, ICONE_DA_ABA)
+        p.drawPixmap(int((self.width() - ICONE_DA_ABA) / 2), MARGEM_DA_ABA,
+                     seta.pixmap(QSize(ICONE_DA_ABA, ICONE_DA_ABA), self.devicePixelRatioF()))
+        medida = QFontMetrics(self.font())
+        p.setPen(QColor(t.texto if sob_o_mouse else t.mudo))
+        p.setFont(self.font())
+        p.translate(self.width() / 2, MARGEM_DA_ABA + ICONE_DA_ABA + 6)
+        p.rotate(90)                                     # de cima para baixo
+        p.drawText(QRectF(0, -medida.height() / 2, medida.horizontalAdvance(self.text()) + 2, medida.height()),
+                   Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self.text())
+        p.end()
+
+
+class TrilhoDoPainel(QWidget):
+    """O que sobra de um painel recolhido, na borda (``lado``: ``"esquerda"``, ``"direita"`` ou ``"baixo"``) da área
+    central (ver o começo do arquivo)."""
+
+    def __init__(self, lado: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        if lado not in ("esquerda", "direita", "baixo"):
+            raise ValueError(f"lado desconhecido: {lado!r}")
+        self.setObjectName("trilho")
+        self.setProperty("lado", lado)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.lado = lado
+        self.abas: list[QAbstractButton] = []
+        self.contadores: dict[int, QLabel] = {}
+        vertical = lado != "baixo"
+        self._linha = QBoxLayout(QBoxLayout.Direction.TopToBottom if vertical else QBoxLayout.Direction.LeftToRight,
+                                 self)
+        self._linha.setContentsMargins(*((0, 4, 0, 4) if vertical else (6, 0, 4, 0)))
+        self._linha.setSpacing(2)
+        self._linha.addStretch(1)
+
+    def adicionar_aba_vertical(self, titulo: str, seta: str, ao_clicar: Callable[[], None], dica: str = "") -> AbaVertical:
+        aba = AbaVertical(titulo, seta)
+        aba.setToolTip(dica)
+        aba.clicked.connect(ao_clicar)
+        self._linha.insertWidget(self._linha.count() - 1, aba, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.abas.append(aba)
+        return aba
+
+    def adicionar_aba(self, texto: str, ao_clicar: Callable[[], None], dica: str = "") -> QToolButton:
+        """Uma aba do trilho de baixo (uma página do painel), com o contador dela (escondido no zero)."""
+        aba = QToolButton()
+        aba.setObjectName("aba_do_trilho")
+        aba.setProperty("variante", "fantasma")
+        aba.setText(texto)
+        aba.setToolTip(dica)
+        aba.setCursor(Qt.CursorShape.PointingHandCursor)
+        aba.clicked.connect(ao_clicar)
+        contador = QLabel()
+        contador.setObjectName("badge")
+        contador.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        contador.setFixedHeight(16)
+        contador.setMinimumWidth(18)
+        fonte = QFont()
+        fonte.setPixelSize(TAMANHOS["legenda"])
+        contador.setFont(fonte)
+        contador.hide()
+        posicao = self._linha.count() - 1
+        self._linha.insertWidget(posicao, aba)
+        self._linha.insertWidget(posicao + 1, contador)
+        self._linha.insertSpacing(posicao + 2, 6)
+        self.contadores[len(self.abas)] = contador
+        self.abas.append(aba)
+        return aba
+
+    def adicionar_botao(self, acao: QAction, nome_icone: str) -> QToolButton:
+        """Um botão de ícone no fim do trilho (o de baixo: a seta que abre o painel na página atual)."""
+        b = botao_de_icone(acao, nome_icone)
+        self._linha.addWidget(b)
+        return b
+
+    def definir_contagem(self, indice: int, n: int, nivel: str) -> None:
+        contador = self.contadores.get(indice)
+        if contador is not None:
+            pintar_contador(contador, n, nivel)

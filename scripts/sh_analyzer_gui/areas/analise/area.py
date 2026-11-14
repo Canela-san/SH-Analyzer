@@ -51,9 +51,9 @@ class AreaDeAnalise(QObject):
         self.projeto: Projeto | None = None
         self.fonte_ativa: FonteDoProjeto | None = None
         painel.canalAtivado.connect(self.plotar_canal)
+        painel.vistaAtivada.connect(self.ativar_vista)
         painel.selecaoMudou.connect(self._selecao_mudou)
         painel.fecharFontePedido.connect(self.fechar_fonte)
-
 
     # ------------------------------------------------------------------ o projeto
 
@@ -103,6 +103,17 @@ class AreaDeAnalise(QObject):
     def vista_ativa(self) -> Vista | None:
         widget = self.abas.currentWidget()
         return getattr(widget, "vista", None)
+
+    def ativar_vista(self, vista: Vista) -> bool:
+        """Abre a aba de ``vista`` (o clique numa vista do painel do projeto)."""
+        widget = self.widget_da_vista(vista)
+        if widget is None:
+            return False
+        if widget is self.abas.currentWidget():
+            self._inspetor_da_vista(trocou_de_aba=True)     # já aberta: o inspetor mostra a vista, como na troca
+        else:
+            self.abas.setCurrentWidget(widget)
+        return True
 
     def _vista_de_tempo_por_id(self, vista_id: str | None) -> VistaDeTempo | None:
         """O widget da vista de tempo de ``vista_id`` (sem ela, o da primeira vista de tempo do projeto)."""
@@ -313,6 +324,8 @@ class AreaDeAnalise(QObject):
     # ------------------------------------------------------------------ a captura ativa (a barra de status)
 
     def _selecao_mudou(self, tipo: str, objeto) -> None:
+        if tipo == "vista":
+            return                   # o clique abre a aba dela (ativar_vista), e o inspetor segue a aba
         self.inspetor.mostrar(tipo, objeto)
         if tipo == "fonte":
             self._ativar(objeto)

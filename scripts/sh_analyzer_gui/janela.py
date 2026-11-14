@@ -16,7 +16,9 @@ comandos (F1.8) disparam a mesma ``QAction``.
 (``self.selecao``) é da janela e segue o projeto.
 
 **O layout** (o tamanho da janela e dos painéis, e quais estão abertos) é salvo ao fechar e restaurado ao abrir
-(``configuracao.py``). Ctrl+B, Ctrl+I e Ctrl+J recolhem o Projeto, o Inspetor e o painel de baixo.
+(``configuracao.py``). Ctrl+B, Ctrl+I e Ctrl+J recolhem o Projeto, o Inspetor e o painel de baixo; a seta de cada
+painel também, e o painel recolhido deixa a aba dele na borda da área central, para abri-lo de novo
+(``componentes.painel.TrilhoDoPainel``).
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
+    QGridLayout,
     QLabel,
     QMainWindow,
     QMenu,
@@ -58,7 +61,7 @@ from .componentes.avisos import ListaDeAvisos
 from .componentes.barra_superior import BarraSuperior
 from .componentes.basicos import Botao
 from .componentes.dialogo_de_erro import DialogoDeErro
-from .componentes.painel import EstadoVazio, PainelComAbas, TituloDoPainel, botao_de_icone
+from .componentes.painel import EstadoVazio, PainelComAbas, TituloDoPainel, TrilhoDoPainel, botao_de_icone
 from .componentes.paleta import DialogoDeAtalhos, PaletaDeComandos
 from .componentes.tarefas import ListaDeTarefas
 from .configuracao import gravar, ler_bytes
@@ -153,6 +156,7 @@ class JanelaPrincipal(QMainWindow):
         self.dock_inferior = self._criar_dock("inferior", self.tr("Painel de baixo"), self.painel_inferior,
                                               Qt.DockWidgetArea.BottomDockWidgetArea, "painel_inferior",
                                               com_titulo=False)
+        self._criar_recolher_e_trilhos()
         self._criar_barra_de_status()
         self.area = AreaDeAnalise(self, self.painel_projeto, self.inspetor, self.avisos, self.status_fonte,
                                   self.status_integridade, self.vistas, self.tabela_de_medidas)
@@ -378,7 +382,69 @@ class JanelaPrincipal(QMainWindow):
         self.centro.addWidget(self.vistas)
         self.vistas.currentChanged.connect(self._atualizar_centro)
         self._atualizar_centro()
-        return self.centro
+        # Em volta, os trilhos dos painéis recolhidos (postos depois dos painéis: _criar_recolher_e_trilhos).
+        conteiner = QWidget()
+        conteiner.setObjectName("centro_com_trilhos")
+        conteiner.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._grade_central = QGridLayout(conteiner)
+        self._grade_central.setContentsMargins(0, 0, 0, 0)
+        self._grade_central.setSpacing(0)
+        self._grade_central.addWidget(self.centro, 0, 1)
+        self._grade_central.setRowStretch(0, 1)
+        self._grade_central.setColumnStretch(1, 1)
+        return conteiner
+
+    def _criar_recolher_e_trilhos(self) -> None:
+        """Recolher e abrir os painéis (componentes/painel.py): a seta de cada um e o trilho que ele deixa na borda da
+        área central quando recolhido. Tudo passa pela ação de mostrar ou recolher do painel (Ctrl+B, Ctrl+I, Ctrl+J),
+        e o trilho aparece e some com ela (também quando o layout salvo é restaurado)."""
+        self.trilhos: dict[str, TrilhoDoPainel] = {}
+        for dock, lado, recolhe, abre in ((self.dock_projeto, "esquerda", "esquerda", "direita"),
+                                          (self.dock_inspetor, "direita", "direita", "esquerda")):
+            alternar = dock.toggleViewAction()
+            atalho = alternar.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
+            recolher = QAction(self.tr("Recolher o painel"), dock)
+            recolher.setObjectName(f"recolher_{dock.objectName()}")
+            recolher.setToolTip(self.tr("Recolher o painel ({})").format(atalho))
+            recolher.triggered.connect(dock.hide)
+            IconeDoTema(recolher, recolhe)
+            dock.titulo.adicionar_botao(recolher)
+            trilho = TrilhoDoPainel(lado)
+            trilho.adicionar_aba_vertical(dock.windowTitle(), abre, dock.show,
+                                          self.tr("Abrir o painel: {} ({})").format(dock.windowTitle(), atalho))
+            self.trilhos[lado] = trilho
+        painel, dock = self.painel_inferior, self.dock_inferior
+        atalho = dock.toggleViewAction().shortcut().toString(QKeySequence.SequenceFormat.NativeText)
+        recolher = QAction(self.tr("Recolher o painel de baixo"), painel)
+        recolher.setObjectName("recolher_inferior")
+        recolher.setToolTip(self.tr("Recolher o painel de baixo ({})").format(atalho))
+        recolher.triggered.connect(dock.hide)
+        painel.setCornerWidget(botao_de_icone(recolher, "baixo"), Qt.Corner.TopRightCorner)
+        trilho = TrilhoDoPainel("baixo")
+        for i in range(painel.count()):
+            trilho.adicionar_aba(painel.tabText(i), lambda _=False, i=i: self.abrir_painel_de_baixo(i),
+                                 self.tr("Abrir o painel de baixo em {}").format(painel.tabText(i)))
+            n, nivel = painel.contagens.get(i, (0, "neutro"))
+            trilho.definir_contagem(i, n, nivel)
+        painel.contagemMudou.connect(trilho.definir_contagem)
+        abrir = QAction(self.tr("Abrir o painel de baixo"), trilho)
+        abrir.setToolTip(self.tr("Abrir o painel de baixo ({})").format(atalho))
+        abrir.triggered.connect(dock.show)
+        trilho.adicionar_botao(abrir, "cima")
+        self.trilhos["baixo"] = trilho
+        self._grade_central.addWidget(self.trilhos["esquerda"], 0, 0, 2, 1)
+        self._grade_central.addWidget(self.trilhos["direita"], 0, 2, 2, 1)
+        self._grade_central.addWidget(self.trilhos["baixo"], 1, 1)
+        for dock, lado in ((self.dock_projeto, "esquerda"), (self.dock_inspetor, "direita"),
+                           (self.dock_inferior, "baixo")):
+            alternar = dock.toggleViewAction()
+            self.trilhos[lado].setVisible(not alternar.isChecked())
+            alternar.toggled.connect(lambda aberto, t=self.trilhos[lado]: t.setVisible(not aberto))
+
+    def abrir_painel_de_baixo(self, indice: int) -> None:
+        """Abre o painel de baixo na página ``indice`` (a aba do trilho)."""
+        self.dock_inferior.show()
+        self.painel_inferior.setCurrentIndex(indice)
 
     def _atualizar_centro(self, _indice: int = -1) -> None:
         """As abas, ou o estado vazio sem nenhuma (também chamado ao fechar a janela, quando as abas saem)."""
