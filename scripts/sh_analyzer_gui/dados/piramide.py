@@ -18,7 +18,8 @@ para volts (afim) fica para a consulta. Em sinais de ponto flutuante (importados
 contamina o bloco: o mínimo e o máximo ignoram os ``NaN`` (só um bloco inteiro de ``NaN`` dá ``NaN``).
 
 Nada aqui importa o Qt. A construção roda onde quem chama quiser (uma thread do ``QThreadPool``, um processo), com
-um retorno de progresso e um pedido de cancelamento.
+um retorno de progresso e um pedido de cancelamento. Cancelada, ela levanta o ``Cancelado`` do motor (o mesmo das
+contas de frequência da ``supraharmonicos.api``): o gerenciador de tarefas reconhece um só.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
+from supraharmonicos.api import Cancelado
 
 BLOCO_BASE = 32
 """Amostras por bloco no nível 0."""
@@ -36,10 +38,6 @@ MIN_BLOCOS = 2 * FATOR
 """Um nível novo só é feito se o anterior tiver pelo menos isso de blocos."""
 AMOSTRAS_POR_LEITURA = BLOCO_BASE * (1 << 20)
 """Amostras por canal lidas de cada vez na construção (~32 M: 64 MB por canal em int16)."""
-
-
-class Cancelado(Exception):
-    """A construção foi cancelada a pedido (``cancelado()`` devolveu verdadeiro)."""
 
 
 @dataclass(frozen=True, eq=False)

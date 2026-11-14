@@ -71,6 +71,22 @@ def test_cancelar_e_falhar(qtbot):
         tarefa.cancelar()
     assert tarefa.estado == "cancelada"
 
+    # Uma conta de frequência do motor, cancelada, também termina "cancelada" (e não "falhou"): o Cancelado é um só.
+    from supraharmonicos import api
+
+    def welch(avisar, cancelado):
+        comecou.set()
+        while not cancelado():
+            pass
+        return api.espectro(np.zeros(100_000), 100_000.0, progresso=avisar, cancelado=cancelado)
+
+    comecou.clear()
+    tarefa = tarefas.iniciar("welch", welch)
+    assert comecou.wait(5)
+    with qtbot.waitSignal(tarefa.terminou, timeout=5000):
+        tarefa.cancelar()
+    assert tarefa.estado == "cancelada" and Cancelado is api.Cancelado
+
     def quebrar(avisar, cancelado):
         raise ValueError("arquivo estragado")
 

@@ -4,7 +4,7 @@ progresso e pode ser cancelada.
 
 **O contrato da função de uma tarefa:** ``funcao(progresso, cancelado) -> resultado``. Ela chama
 ``progresso(fração)`` de vez em quando e confere ``cancelado()`` entre os blocos; para parar, levanta
-``Cancelado`` (o da pirâmide) ou devolve o que tiver. A tarefa repassa o progresso no máximo a cada 50 ms, para não
+``Cancelado`` (o do motor, que a pirâmide e as contas da ``api`` usam) ou devolve o que tiver. A tarefa repassa o progresso no máximo a cada 50 ms, para não
 inundar a interface.
 
 **Os sinais saem da thread de trabalho** e chegam à interface pela fila de eventos do Qt (a ``Tarefa`` mora na
