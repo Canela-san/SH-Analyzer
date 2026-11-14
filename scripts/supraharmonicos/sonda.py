@@ -128,6 +128,14 @@ class PerfilSonda:
         perfil): o aviso de 'fora da faixa calibrada' é para análises, não para plotagem."""
         self._avisou_fora_da_faixa = True
 
+    @property
+    def faixa_valida(self) -> tuple[float, float] | None:
+        """A faixa de frequência em que o perfil vale: a declarada no arquivo (``faixa_freq_valida_hz``, que o
+        operador pode ter estreitado) ou a coberta pelos pontos de calibração. None num perfil de ganho fixo."""
+        if self.tipo == "ganho_fixo":
+            return None
+        return self.faixa_freq_valida_hz or (self._freq_min_pontos, self._freq_max_pontos)
+
     def ganho_em(self, freqs_hz: np.ndarray) -> np.ndarray:
         """Ganho LINEAR (não dB) interpolado em cada frequência de
         'freqs_hz' (array numpy, Hz). Para 'ganho_fixo', devolve o mesmo

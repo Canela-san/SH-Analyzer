@@ -411,3 +411,8 @@ def test_a_margem_da_correcao_de_sonda_e_o_alcance_da_resposta_ao_impulso(ambien
     with api.capturar_avisos() as avisos:
         api.aplicar_correcao_sonda(np.zeros(1000), 200_000.0, perfil)
     assert any("fora da faixa" in a.texto for a in avisos)
+
+
+def test_a_faixa_valida_do_perfil(ambiente):
+    perfil = api.carregar_perfil(ambiente / "sondas" / "sonda_teste.json")
+    assert perfil.faixa_valida == (100.0, 80_000.0)              # os pontos de calibração (FREQS_CAL)
