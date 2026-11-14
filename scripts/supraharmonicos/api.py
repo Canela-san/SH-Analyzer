@@ -62,7 +62,8 @@ class CanalDaCaptura:
     numero: int                   # o canal do ADC (0 a 7)
     posicao: int                  # a posição na intercalação (a ordem crescente dos canais)
     amostras: np.ndarray          # os códigos do ADC: uma visão com passo dentro do memmap, sem cópia
-    taxa_hz: float                # a taxa deste canal (a total dividida pelo número de canais)
+    taxa_hz: float                # a taxa deste canal: a total que a PRU gera (clock ÷ ticks, a do adc_tool), dividida
+                                  # pelo número de canais
     faixa_v: float                # o valor de --faixa (do cabeçalho v3, ou o padrão histórico)
     faixa_confiavel: bool         # a faixa é a REAL do ADC, gravada no cabeçalho (não uma suposição)
     ganho: float                  # unidades físicas por volt no pino (o declarado na captura, ou 1)
@@ -167,7 +168,9 @@ def abrir_captura(caminho: Path, *, formato: str = "uint16", sondas_dir: Path | 
         amostras = carregar_amostras_bin(caminho, formato, ctx.offset_amostras)
         n_canais = ctx.num_canais
         n_por_canal = len(amostras) // n_canais        # um quadro final incompleto (arquivo cortado) fica de fora
-        taxa = ctx.cabecalho.frequencia_hz / n_canais
+        # A taxa que a PRU de fato gera (clock ÷ ticks), como no adc_tool: a pedida difere dela quando 200 MHz ÷
+        # taxa não é inteiro (102,4 kHz pedidos são 102.406,55 Hz, +64 ppm).
+        taxa = (ctx.cabecalho.frequencia_pru_hz or float(ctx.cabecalho.frequencia_hz)) / n_canais
         declarados = ctx.cabecalho.ganho_por_canal
         canais = []
         for posicao, numero in enumerate(ctx.canais):

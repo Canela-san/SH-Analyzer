@@ -204,3 +204,14 @@ def test_medir_regiao_sem_a_fundamental(tmp_path):
     com, sem = medir_regiao(captura, 0, 0, 100_000), medir_regiao(captura, 0, 0, 100_000, fundamental=False)
     assert com.f1_hz == pytest.approx(60, abs=0.01) and sem.f1_hz is None and "não foi calculada" in sem.problema_f1
     assert (sem.media, sem.rms, sem.pico_a_pico) == (com.media, com.rms, com.pico_a_pico)
+
+
+def test_a_taxa_do_canal_e_a_que_a_pru_gera_como_no_adc_tool(tmp_path):
+    """102,4 kHz pedidos são 200 MHz ÷ 1953 ticks = 102.406,55 Hz (+64 ppm): a CLI analisa com essa, e a API também
+    (senão a fundamental e o eixo do tempo ficariam 64 ppm fora dos da CLI)."""
+    t = np.arange(1 << 15) / (200e6 / 1953)
+    caminho = escrever_bin(tmp_path / "f102k.bin", [np.sin(2 * np.pi * 1000.0 * t)], canais=(1,), grandezas=(0,),
+                           sondas=("",), fs_total=102_400)
+    cap = api.abrir_captura(caminho, sondas_dir=tmp_path)
+    assert cap.cabecalho.frequencia_hz == 102_400
+    assert cap.canal(1).taxa_hz == pytest.approx(200e6 / 1953, rel=1e-12) == cap.cabecalho.frequencia_pru_hz
