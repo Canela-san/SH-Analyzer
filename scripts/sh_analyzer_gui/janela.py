@@ -66,6 +66,8 @@ from .componentes.paleta import DialogoDeAtalhos, PaletaDeComandos
 from .componentes.tarefas import ListaDeTarefas
 from .configuracao import gravar, ler_bytes
 from .controle_do_projeto import ControleDoProjeto
+from .dados.cache import CacheDePiramides
+from .dados.materializacao import CacheDeMaterializacoes
 from .modelo.objetos import Projeto, Vista
 from .modelo.selecao import Selecao
 from .registro import caminho_do_log
@@ -125,8 +127,11 @@ class JanelaPrincipal(QMainWindow):
         # Três threads: a pirâmide de uma captura, a materialização de um traço e as medidas não esperam uma pela
         # outra (a prévia dos traços transformados tem a sua, no serviço de materialização).
         self.tarefas = GerenciadorDeTarefas(threads=3, parent=self)
-        self.servico_de_fontes = ServicoDeFontes(self.tarefas, parent=self)
-        self.materializacoes = ServicoDeMaterializacao(self.tarefas, parent=self)
+        # Os caches nas pastas e nos limites das configurações (a tela de configurações os troca na hora).
+        self.servico_de_fontes = ServicoDeFontes(self.tarefas, parent=self, cache=CacheDePiramides(
+            preferencias.pasta_do_cache("piramides"), preferencias.limite("piramides")))
+        self.materializacoes = ServicoDeMaterializacao(self.tarefas, parent=self, cache=CacheDeMaterializacoes(
+            preferencias.pasta_do_cache("materializacoes"), preferencias.limite("materializacoes")))
         self.projeto: Projeto | None = None
         self.selecao: Selecao | None = None
         self.acoes: dict[str, QAction] = {}

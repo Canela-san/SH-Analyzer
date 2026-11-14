@@ -150,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     # Daqui em diante, um erro inesperado (num slot, num evento, noutra thread) vai para o log e para o diálogo, e o
     # aplicativo segue (servicos/erros.py).
     instalar_ganchos()
-    preferencias.aplicar_fontes_salvas(app)
+    preferencias.aplicar_na_partida(app)
     janela = JanelaPrincipal()
     janela.show()
     if opcoes.sair_ao_abrir:

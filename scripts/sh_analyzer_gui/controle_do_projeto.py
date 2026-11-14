@@ -18,6 +18,7 @@ from pathlib import Path
 from PySide6.QtCore import QByteArray, QObject, QTimer
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QWidget
 
+from . import preferencias
 from .configuracao import esquecer, lembrar, ler_lista, pasta_de_recuperacao
 from .dados import projeto as arquivo
 from .dados.captura import Aviso, ErroSHAN, abrir_fonte
@@ -166,7 +167,7 @@ class ControleDoProjeto(QObject):
             if isinstance(e, FileNotFoundError):
                 esquecer(CHAVE_DOS_RECENTES, str(caminho.resolve()))
             return False
-        projeto, avisos = montar(salvo, caminho, caminho.parent)
+        projeto, avisos = montar(salvo, caminho, caminho.parent, abrir=self._abrir_fonte)
         log.info("projeto aberto: %s%s (%d fonte(s), %d vista(s))", ler_de, " (recuperado)" if recuperado else "",
                  len(projeto.fontes), len(projeto.vistas))
         self._mostrar(projeto, salvo, avisos)
@@ -203,7 +204,7 @@ class ControleDoProjeto(QObject):
                 self._aviso(self.tr("{} já está aberta").format(caminho.name))
                 continue
             try:
-                fonte = FonteDoProjeto(abrir_fonte(caminho))
+                fonte = FonteDoProjeto(self._abrir_fonte(caminho))
             except (ErroSHAN, OSError) as e:
                 self._erro(self.tr("Não foi possível abrir {}: {}").format(caminho.name, e))
                 continue
@@ -235,7 +236,7 @@ class ControleDoProjeto(QObject):
         except (arquivo.ProjetoInvalido, OSError) as e:
             self._erro(self.tr("Não foi possível recuperar o projeto: {}").format(e))
             return False
-        projeto, avisos = montar(salvo, None, base.parent)
+        projeto, avisos = montar(salvo, None, base.parent, abrir=self._abrir_fonte)
         self._mostrar(projeto, salvo, avisos)
         projeto.pilha.resetClean()
         return True
@@ -314,11 +315,21 @@ class ControleDoProjeto(QObject):
 
     # ------------------------------------------------------------------ apoio
 
+    @staticmethod
+    def _abrir_fonte(caminho: Path, **opcoes):
+        """Abre uma captura com os perfis de sonda da pasta das configurações."""
+        return abrir_fonte(caminho, sondas_dir=preferencias.pasta("sondas"), **opcoes)
+
     def _pasta_inicial(self) -> str:
+        """Onde os diálogos de abrir começam: a pasta do projeto aberto; sem ele, a pasta dos dados escolhida nas
+        configurações; sem ela, a do recente mais novo; senão, a padrão (``$DADOS`` ou a pessoal)."""
         if self.projeto.caminho is not None:
             return str(self.projeto.caminho.parent)
+        escolhida = preferencias.pasta_escolhida("dados")
+        if escolhida is not None and escolhida.is_dir():
+            return str(escolhida)
         recentes = self.recentes()
-        return str(recentes[0].parent) if recentes else str(Path.home())
+        return str(recentes[0].parent) if recentes else str(preferencias.pasta_padrao("dados"))
 
     def _erro(self, texto: str) -> None:
         from .componentes.toast import Toast

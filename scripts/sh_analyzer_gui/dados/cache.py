@@ -27,8 +27,11 @@ import os
 import re
 import struct
 import tempfile
+import threading
 import time
-from collections.abc import Callable
+from collections import Counter
+from collections.abc import Callable, Hashable, Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -146,12 +149,42 @@ def pasta_padrao() -> Path:
     return Path(user_cache_dir("sh-analyzer", appauthor=False)) / "piramides"
 
 
+class EmConstrucao:
+    """As entradas de um cache que alguma tarefa constrói agora (noutra thread): nem o limite de tamanho nem o
+    "limpar" as apagam."""
+
+    def __init__(self):
+        self._trava = threading.Lock()
+        self._contagem: Counter = Counter()
+
+    @contextmanager
+    def marcar(self, entradas: Iterable[Hashable]) -> Iterator[None]:
+        """As ``entradas`` ficam em construção enquanto durar o ``with``."""
+        entradas = list(entradas)
+        with self._trava:
+            self._contagem.update(entradas)
+        try:
+            yield
+        finally:
+            with self._trava:
+                self._contagem.subtract(entradas)
+                self._contagem = +self._contagem          # sem as que zeraram
+
+    def atuais(self) -> set:
+        with self._trava:
+            return set(self._contagem)
+
+
 class CacheDePiramides:
-    """As pirâmides de cada canal de cada captura, numa pasta, com limite de tamanho (apaga as menos usadas)."""
+    """As pirâmides de cada canal de cada captura, numa pasta, com limite de tamanho (apaga as menos usadas).
+
+    O que está sendo construído e gravado agora (por uma tarefa, noutra thread) nunca é apagado: nem pelo limite,
+    nem pelo "limpar" das configurações. O que está aberto, quem chama diz (``manter``)."""
 
     def __init__(self, pasta: Path | None = None, limite_bytes: int = LIMITE_PADRAO_BYTES):
         self.pasta = Path(pasta) if pasta is not None else pasta_padrao()
         self.limite_bytes = limite_bytes
+        self.em_construcao = EmConstrucao()
 
     def caminho(self, chave: str, canal: int) -> Path:
         segura = re.sub(r"[^A-Za-z0-9._-]", "_", chave)
@@ -184,16 +217,48 @@ class CacheDePiramides:
         """As pirâmides de todos os canais: do cache, se estiverem todas lá; senão, construídas numa passada,
         gravadas e devolvidas (já abertas do disco, em ``np.memmap``)."""
         n = len(amostras) // n_canais
-        prontas = [self.abrir(chave, c, n, amostras.dtype) for c in range(n_canais)]
-        if all(p is not None for p in prontas):
-            if progresso is not None:
-                progresso(1.0)
-            return prontas
-        construidas = construir(amostras, n_canais, progresso=progresso, cancelado=cancelado)
-        for c, piramide in enumerate(construidas):
-            gravar(piramide, self.caminho(chave, c))
-        self.aparar(manter={self.caminho(chave, c) for c in range(n_canais)})
-        return [abrir(self.caminho(chave, c)) for c in range(n_canais)]
+        caminhos = [self.caminho(chave, c) for c in range(n_canais)]
+        with self.em_construcao.marcar(caminhos):
+            prontas = [self.abrir(chave, c, n, amostras.dtype) for c in range(n_canais)]
+            if all(p is not None for p in prontas):
+                if progresso is not None:
+                    progresso(1.0)
+                return prontas
+            construidas = construir(amostras, n_canais, progresso=progresso, cancelado=cancelado)
+            for piramide, caminho in zip(construidas, caminhos, strict=True):
+                gravar(piramide, caminho)
+            self.aparar(manter=set(caminhos))
+            return [abrir(caminho) for caminho in caminhos]
+
+    def _intocaveis(self, manter) -> set[Path]:
+        return set(manter) | self.em_construcao.atuais()
+
+    def _arquivos(self) -> list[tuple[float, int, Path]]:
+        """Cada pirâmide da pasta: a data do último uso, o tamanho e o caminho."""
+        if not self.pasta.is_dir():
+            return []
+        arquivos = []
+        for caminho in self.pasta.glob(f"*{EXTENSAO}"):
+            try:
+                estado = caminho.stat()
+            except OSError:
+                continue
+            arquivos.append((estado.st_mtime, estado.st_size, caminho))
+        return arquivos
+
+    @property
+    def tamanho_bytes(self) -> int:
+        return sum(tamanho for _, tamanho, _ in self._arquivos())
+
+    def limpar(self, manter: set[Path] = frozenset()) -> int:
+        """Apaga todas as pirâmides (menos as de ``manter``, abertas, e as em construção); devolve os bytes
+        liberados."""
+        intocaveis = self._intocaveis(manter)
+        liberados = 0
+        for _, tamanho, caminho in self._arquivos():
+            if caminho not in intocaveis and _apagar(caminho):
+                liberados += tamanho
+        return liberados
 
     def aparar(self, manter: set[Path] = frozenset()) -> None:
         """Apaga as pirâmides menos usadas até o total caber no limite (nunca as de ``manter``), e os temporários
@@ -207,18 +272,13 @@ class CacheDePiramides:
                     temporario.unlink()
             except OSError:
                 pass
-        arquivos = []
-        for caminho in self.pasta.glob(f"*{EXTENSAO}"):
-            try:
-                estado = caminho.stat()
-            except OSError:
-                continue
-            arquivos.append((estado.st_mtime, estado.st_size, caminho))
+        arquivos = self._arquivos()
+        intocaveis = self._intocaveis(manter)
         total = sum(tamanho for _, tamanho, _ in arquivos)
         for _, tamanho, caminho in sorted(arquivos):
             if total <= self.limite_bytes:
                 break
-            if caminho in manter:
+            if caminho in intocaveis:
                 continue
             if _apagar(caminho):
                 total -= tamanho

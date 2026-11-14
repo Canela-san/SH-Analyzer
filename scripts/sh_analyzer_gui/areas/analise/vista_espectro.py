@@ -51,7 +51,7 @@ from shiboken6 import isValid
 from ...componentes.basicos import CampoComUnidade, Segmentado
 from ...componentes.chip import ChipDeTraco
 from ...componentes.fluxo import LayoutDeFluxo
-from ...componentes.numeros import formatar_si
+from ...componentes.numeros import decimal, formatar_si
 from ...dados import espectros as esp
 from ...dados.cadeia import CorrecaoSonda
 from ...graficos.clique import distancia_a_linha, mais_perto
@@ -918,7 +918,7 @@ class VistaDeEspectro(QWidget):
     def _texto_do_nivel(self, valor: float, r: ResultadoDoTraco) -> str:
         if self.opcoes.escala == "rms":
             return formatar_si(valor, r.unidade, 5)
-        return f"{valor:.2f} {self._unidade_do_nivel(r)}".replace(".", ",").replace("-", "−")
+        return decimal(f"{valor:.2f} {self._unidade_do_nivel(r)}").replace("-", "−")
 
     def _ligar_cursores(self, ligar: bool) -> None:
         if ligar:
@@ -949,7 +949,7 @@ class VistaDeEspectro(QWidget):
             d = r.desenho
             n1, n2 = d.nivel_em(c1), d.nivel_em(c2)
             delta = (formatar_si(n2 - n1, r.unidade, 5) if self.opcoes.escala == "rms"
-                     else f"{n2 - n1:.2f} dB".replace(".", ",").replace("-", "−"))
+                     else decimal(f"{n2 - n1:.2f} dB").replace("-", "−"))
             linhas.append(LinhaDaTabela(r.traco, (self._texto_do_nivel(n1, r), self._texto_do_nivel(n2, r), delta)))
             planilha.append("\t".join([r.traco.nome, self._unidade_do_nivel(r), numero_para_planilha(c1),
                                         numero_para_planilha(c2), numero_para_planilha(n1), numero_para_planilha(n2),
@@ -1002,3 +1002,6 @@ class VistaDeEspectro(QWidget):
         self.valor_no_mouse.fill = pg.mkBrush(QColor(t.elevada))
         if self.resultados:
             self._desenhar()
+        # Os números escritos (o separador decimal pode ter mudado): a informação e as medidas dos cursores.
+        self._mostrar_info()
+        self.emitir_regiao()

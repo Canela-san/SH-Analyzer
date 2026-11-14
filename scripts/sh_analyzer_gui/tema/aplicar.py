@@ -4,7 +4,10 @@
 * o estilo ``Fusion`` de base (igual no Windows e no Linux), com a ``QPalette`` dos tokens;
 * o QSS para o que a paleta não alcança (cantos, bordas, estados, variantes de botão por ``setProperty``);
 * :func:`aparencia` devolve o objeto que avisa (``mudou``) quem desenha com as cores do tema por conta própria --
-  os gráficos, os componentes pintados com ``QPainter``.
+  os gráficos, os componentes pintados com ``QPainter``. O mesmo aviso sai quando muda o que se escreve com o tema
+  (o separador decimal, a fonte dos números: :meth:`Aparencia.avisar`), e quem mostra números os escreve de novo;
+* **o movimento** (docs/gui-plan.md, 12.7): reduzido (sem animações), normal ou o do sistema
+  (``QStyleHints.accessibility().motionPreference``), em :attr:`Aparencia.movimento_reduzido`.
 
 ``"sistema"`` segue o tema claro ou escuro do sistema operacional (``QStyleHints.colorScheme``); quando o sistema não
 informa, vale o escuro, o da marca.
@@ -19,10 +22,11 @@ from PySide6.QtWidgets import QApplication
 from .tokens import TEMAS, Tema
 
 MODOS = ("sistema", "escuro", "claro")
+MOVIMENTOS = ("sistema", "reduzido", "normal")
 
 
 class Aparencia(QObject):
-    """O tema em uso. ``mudou(Tema)`` sai a cada troca."""
+    """O tema em uso. ``mudou(Tema)`` sai a cada troca do tema e a cada :meth:`avisar`."""
 
     mudou = Signal(object)
 
@@ -31,6 +35,7 @@ class Aparencia(QObject):
         self._app = app
         self.modo = "sistema"
         self.tema: Tema = TEMAS["escuro"]
+        self.movimento = "sistema"
 
     def aplicar(self, modo: str = "sistema") -> Tema:
         """Aplica ``modo`` (``"sistema"``, ``"escuro"`` ou ``"claro"``) e devolve o tema em uso."""
@@ -47,6 +52,33 @@ class Aparencia(QObject):
     def alternar(self) -> Tema:
         """Troca entre o escuro e o claro (o atalho da barra de status)."""
         return self.aplicar("claro" if self.tema.escuro else "escuro")
+
+    def avisar(self) -> None:
+        """Avisa ``mudou`` sem trocar o tema: mudou o que se escreve com ele (o separador decimal, a fonte dos
+        números), e quem desenha ou mostra números por conta própria refaz."""
+        self.mudou.emit(self.tema)
+
+    def definir_movimento(self, modo: str) -> None:
+        """``"sistema"`` (o padrão: o que o sistema operacional pede), ``"reduzido"`` ou ``"normal"``."""
+        if modo not in MOVIMENTOS:
+            raise ValueError(f"movimento desconhecido: {modo!r} (use {', '.join(MOVIMENTOS)})")
+        self.movimento = modo
+
+    @property
+    def movimento_reduzido(self) -> bool:
+        """Sem animações: as mudanças são instantâneas."""
+        if self.movimento != "sistema":
+            return self.movimento == "reduzido"
+        return movimento_reduzido_do_sistema()
+
+
+def movimento_reduzido_do_sistema() -> bool:
+    """O sistema pede movimento reduzido (o Qt o lê das opções de acessibilidade; sem a informação, não)."""
+    dicas = QGuiApplication.styleHints()
+    acessibilidade = dicas.accessibility() if dicas is not None and hasattr(dicas, "accessibility") else None
+    if acessibilidade is None or not hasattr(acessibilidade, "motionPreference"):
+        return False
+    return acessibilidade.motionPreference() == Qt.MotionPreference.ReducedMotion
 
 
 def aparencia(app: QApplication | None = None) -> Aparencia:

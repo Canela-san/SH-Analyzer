@@ -40,7 +40,7 @@ from shiboken6 import isValid
 
 from ...componentes.chip import ChipDeTraco
 from ...componentes.fluxo import LayoutDeFluxo
-from ...componentes.numeros import formatar_si
+from ...componentes.numeros import decimal, formatar_si
 from ...dados.piramide import Piramide
 from ...graficos.clique import mais_perto
 from ...graficos.cursores import CursoresDaVista
@@ -840,7 +840,7 @@ class VistaDeTempo(QWidget):
         if fonte is not None and fonte.esta_ausente:
             resumo.append(self.tr("ausente"))
         if r.ganho != 1:
-            resumo.append(f"×{r.ganho:g}".replace(".", ",").replace("-", "−"))
+            resumo.append(decimal(f"×{r.ganho:g}").replace("-", "−"))
         if r.deslocamento_s:
             resumo.append(f"{formatar_si(r.deslocamento_s, 's', 3)}".replace("-", "−"))
         if not r.cadeia.vazia:
@@ -1012,3 +1012,7 @@ class VistaDeTempo(QWidget):
             faixa.rotulo_y = faixa.rotulo_x = None   # a cor do rótulo segue a do traço, que muda com o tema
         self._rotular_faixas()
         self._converter_o_tempo()
+        # Os números escritos (o separador decimal pode ter mudado): a informação e o resumo dos chips.
+        self._atualizar_info()
+        for traco, chip in self.chips.items():
+            chip.definir(resumo=self._resumo(traco))

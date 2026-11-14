@@ -101,8 +101,9 @@ def test_toast_aparece_e_some(app, qtbot, monkeypatch):
     t = toast_mod.Toast.mostrar(pai, "Figura exportada", "sucesso", duracao_ms=50)
     assert t.isVisible() and t.parent() is pai and t.y() > 200
     qtbot.waitUntil(lambda: not pai.findChildren(toast_mod.Toast), timeout=2000)
-    monkeypatch.setattr(toast_mod, "movimento_reduzido", True)
-    toast_mod.Toast.mostrar(pai, "sem animação", "aviso", duracao_ms=20)
+    monkeypatch.setattr(aparencia(), "movimento", "reduzido")       # a configuração "reduzir movimento"
+    t = toast_mod.Toast.mostrar(pai, "sem animação", "aviso", duracao_ms=20)
+    assert t._opacidade.opacity() == 1.0                            # já inteiro, sem a animação de entrada
     qtbot.waitUntil(lambda: not pai.findChildren(toast_mod.Toast), timeout=1000)
     with pytest.raises(ValueError):
         toast_mod.Toast(pai, "x", "roxo")

@@ -378,6 +378,7 @@ class PainelDoProjeto(QWidget):
         self.filtro.setObjectName("filtro_projeto")
         self.filtro.setPlaceholderText(self.tr("Filtrar"))
         self.filtro.setClearButtonEnabled(True)
+        aparencia().mudou.connect(self._reescrever)
         lupa = QAction(self.filtro)
         IconeDoTema(lupa, "busca", "mudo")
         self.filtro.addAction(lupa, QLineEdit.ActionPosition.LeadingPosition)
@@ -415,6 +416,11 @@ class PainelDoProjeto(QWidget):
         self.proxy.rowsInserted.connect(self._linhas_entraram)
         self.proxy.rowsRemoved.connect(self._atualizar_vazio)
         self._acao_abrir = acao_abrir
+
+    def _reescrever(self, _tema=None) -> None:
+        """A taxa e a duração de cada captura são escritas na pintura: pintar de novo (o separador decimal pode ter
+        mudado)."""
+        self.arvore.viewport().update()
 
     def mostrar(self, projeto: Projeto) -> None:
         """Passa a mostrar ``projeto`` (um modelo novo; o antigo some com o projeto antigo)."""

@@ -54,6 +54,7 @@ class AreaDeAnalise(QObject):
         painel.vistaAtivada.connect(self.ativar_vista)
         painel.selecaoMudou.connect(self._selecao_mudou)
         painel.fecharFontePedido.connect(self.fechar_fonte)
+        aparencia().mudou.connect(self._estado_da_ativa)      # a taxa e a duração, com o separador de agora
 
     # ------------------------------------------------------------------ o projeto
 

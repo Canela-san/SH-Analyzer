@@ -21,9 +21,11 @@ from PySide6.QtWidgets import QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabe
 from shiboken6 import isValid
 
 from ...componentes.basicos import Botao
+from ...componentes.numeros import decimal
 from ...dados import espectros as esp
 from ...modelo.comandos import MudarOpcoesDaVista
 from ...modelo.objetos import Projeto, Vista
+from ...tema.aplicar import aparencia
 from ...tema.tokens import TAMANHOS
 
 
@@ -72,10 +74,11 @@ class SecaoDoEspectro(QWidget):
         self.janela = QComboBox()
         self.janela.setObjectName("janela_espectro")
         for nome, rotulo in esp.JANELAS.items():
-            self.janela.addItem(rotulo, nome)
+            self.janela.addItem(decimal(rotulo), nome)
         self.janela.setItemData(0, self.tr("A retangular na FFT sincronizada (os harmônicos caem exatamente nos bins); "
                                            "a Hann no Welch e na FFT sem sincronizar"), Qt.ItemDataRole.ToolTipRole)
         self.janela.activated.connect(self._janela_escolhida)
+        aparencia().mudou.connect(self._reescrever)
         self.ciclos = QSpinBox()
         self.ciclos.setObjectName("ciclos_espectro")
         self.ciclos.setRange(0, esp.MAXIMO_DE_CICLOS)
@@ -152,6 +155,11 @@ class SecaoDoEspectro(QWidget):
         if self.vista is None or self.projeto is None or opcoes == self.vista.opcoes:
             return
         self.projeto.pilha.push(MudarOpcoesDaVista(self.vista, opcoes, texto=texto))
+
+    def _reescrever(self, _tema=None) -> None:
+        """Os nomes das janelas, com o separador decimal de agora (o β da Kaiser)."""
+        for i in range(self.janela.count()):
+            self.janela.setItemText(i, decimal(esp.JANELAS[self.janela.itemData(i)]))
 
     def _janela_escolhida(self, indice: int) -> None:
         if self.vista is not None:

@@ -7,7 +7,8 @@ um número com ponto é quase sempre decimal). Espaços são ignorados. O prefix
 opcionais; a unidade, se vier, tem de ser a do campo. "m" é mili e "M", mega.
 
 **A escrita** escolhe o prefixo que deixa a mantissa entre 1 e 1000 (o formato de engenharia), com ``digitos``
-algarismos significativos, sem zeros à direita, e a vírgula decimal (ou o ponto, em inglês).
+algarismos significativos, sem zeros à direita, e o separador decimal das configurações (:func:`separador_decimal`:
+a vírgula, por padrão, ou o ponto). :func:`decimal` põe esse separador num número já escrito pelo Python.
 
 Sem Qt: roda e se testa sem interface.
 """
@@ -17,9 +18,30 @@ from __future__ import annotations
 import math
 import re
 
+SEPARADORES = (",", ".")
+_separador = ","
+
 PREFIXOS = {"p": -12, "n": -9, "µ": -6, "u": -6, "m": -3, "": 0, "k": 3, "M": 6, "G": 9}
 _ESCRITA = {-12: "p", -9: "n", -6: "µ", -3: "m", 0: "", 3: "k", 6: "M", 9: "G"}
 _NUMERO = re.compile(r"^([+-]?[0-9.,]*[0-9][0-9.,]*(?:[eE][+-]?[0-9]+)?)([pnµumkMG]?)(.*)$")
+
+
+def separador_decimal() -> str:
+    """O separador decimal da escrita (``","`` ou ``"."``), o das configurações."""
+    return _separador
+
+
+def definir_separador_decimal(separador: str) -> None:
+    """Troca o separador decimal de tudo o que se escreve daqui em diante (a leitura aceita os dois sempre)."""
+    global _separador
+    if separador not in SEPARADORES:
+        raise ValueError(f"separador decimal desconhecido: {separador!r} (use {' ou '.join(SEPARADORES)})")
+    _separador = separador
+
+
+def decimal(texto: str) -> str:
+    """Um número já escrito pelo Python (``f"{x:.2f}"``, ``repr``) com o separador decimal das configurações."""
+    return texto if _separador == "." else texto.replace(".", _separador)
 
 
 class NumeroInvalido(ValueError):
@@ -65,9 +87,10 @@ def ler_numero(texto: str, unidade: str = "") -> float:
     return valor
 
 
-def formatar_si(valor: float, unidade: str = "", digitos: int = 4, decimal: str = ",") -> str:
+def formatar_si(valor: float, unidade: str = "", digitos: int = 4, decimal: str | None = None) -> str:
     """``valor`` com prefixo do SI e ``digitos`` algarismos significativos: ``formatar_si(2500, "Hz") == "2,5 kHz"``.
-    ``decimal`` é ``","`` (português) ou ``"."`` (inglês)."""
+    ``decimal`` (``","`` ou ``"."``) troca o separador das configurações só nesta chamada."""
+    decimal = decimal or _separador
     if not math.isfinite(valor):
         return "—"
     if valor == 0:
@@ -88,8 +111,9 @@ def formatar_si(valor: float, unidade: str = "", digitos: int = 4, decimal: str 
     return f"{texto} {_ESCRITA[expoente]}{unidade}".strip()
 
 
-def formatar_duracao(segundos: float, decimal: str = ",") -> str:
+def formatar_duracao(segundos: float, decimal: str | None = None) -> str:
     """Uma duração legível: "4,2 s", "12 min 30 s", "1 h 02", "26 h 40". ``—`` para o que não é número."""
+    decimal = decimal or _separador
     if not math.isfinite(segundos) or segundos < 0:
         return "—"
     if segundos < 60:

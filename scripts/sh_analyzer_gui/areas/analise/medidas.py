@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...componentes.basicos import Botao
-from ...componentes.numeros import formatar_si
+from ...componentes.numeros import decimal, formatar_si
 from ...componentes.painel import EstadoVazio
 from ...servicos.medidas import MedidaDoTraco, PedidoDeMedida
 from ...tema.aplicar import aparencia
@@ -65,10 +65,11 @@ def numero_para_planilha(valor: float | None) -> str:
 
 
 def _numero_para_planilha(valor: float | None) -> str:
-    """O número completo, com a vírgula decimal (a planilha em português o lê como número)."""
+    """O número completo, com o separador decimal das configurações (a vírgula: a planilha em português o lê como
+    número; o ponto, a em inglês)."""
     if valor is None or not math.isfinite(valor):
         return ""
-    return repr(float(valor)).replace(".", ",")
+    return decimal(repr(float(valor)))
 
 
 class TabelaDeMedidas(QStackedWidget):
@@ -108,6 +109,13 @@ class TabelaDeMedidas(QStackedWidget):
         self.medidas: list[MedidaDoTraco] = []
         self.pedido: PedidoDeMedida | None = None
         self.da_vista: MedidasDaVista | None = None
+        aparencia().mudou.connect(self._reescrever)
+
+    def _reescrever(self, _tema=None) -> None:
+        """As medidas da região escritas de novo (o separador decimal pode ter mudado; as de uma vista de frequência
+        vêm dela, que as manda de novo)."""
+        if self.da_vista is None and self.pedido is not None:
+            self.mostrar(self.pedido, self.medidas)
 
     def keyPressEvent(self, evento) -> None:
         if evento.matches(QKeySequence.StandardKey.Copy):

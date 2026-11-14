@@ -72,10 +72,17 @@ class CampoComUnidade(QLineEdit):
         super().__init__(parent)
         self.unidade, self.minimo, self.maximo, self.digitos = unidade, minimo, maximo, digitos
         self._valor = float(valor)
+        self._varios = False
         self.setFont(com_algarismos_tabulares(self.font()))
         self.setText(formatar_si(self._valor, unidade, digitos))
         self.editingFinished.connect(self._confirmar)
         self.textEdited.connect(lambda _: self._marcar(False))
+        aparencia().mudou.connect(self._reescrever)
+
+    def _reescrever(self, _tema=None) -> None:
+        """O valor escrito de novo (o separador decimal pode ter mudado), se o usuário não está digitando nele."""
+        if not self._varios and not self.isModified():
+            self.setText(formatar_si(self._valor, self.unidade, self.digitos))
 
     @property
     def valor(self) -> float:
@@ -203,11 +210,17 @@ class CartaoDeMedida(QFrame):
         coluna.addWidget(self._rotulo)
         coluna.addWidget(self._valor)
         self.definir(valor)
+        aparencia().mudou.connect(self._reescrever)
 
     def definir(self, valor: float, unidade: str | None = None) -> None:
         if unidade is not None:
             self.unidade = unidade
+        self._numero = valor
         self._valor.setText(formatar_si(valor, self.unidade, self.digitos))
+
+    def _reescrever(self, _tema=None) -> None:
+        """O valor escrito de novo (o separador decimal pode ter mudado)."""
+        self._valor.setText(formatar_si(self._numero, self.unidade, self.digitos))
 
     @property
     def texto(self) -> str:

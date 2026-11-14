@@ -181,11 +181,13 @@ def materializar(cadeia: Cadeia, ler: Callable[[int, int], np.ndarray], n_amostr
 
 
 class CacheDeMaterializacoes:
-    """As materializações dos traços numa pasta, pela chave do conteúdo, com limite de tamanho."""
+    """As materializações dos traços numa pasta, pela chave do conteúdo, com limite de tamanho. As em construção
+    (``em_construcao``) nunca são apagadas; as abertas, quem chama diz (``manter``)."""
 
     def __init__(self, pasta: Path | None = None, limite_bytes: int = LIMITE_PADRAO_BYTES):
         self.pasta = Path(pasta) if pasta is not None else pasta_padrao()
         self.limite_bytes = limite_bytes
+        self.em_construcao = arquivos.EmConstrucao()
 
     def caminhos(self, chave: str) -> tuple[Path, Path]:
         """Onde ficam as amostras e a pirâmide de ``chave``."""
@@ -219,24 +221,25 @@ class CacheDeMaterializacoes:
               contexto: ContextoDaCadeia, *, progresso=None, cancelado=None, parcial=None,
               bloco: int = BLOCO_PADRAO) -> Materializacao:
         """A materialização de ``chave``: do cache, ou feita agora (:func:`materializar`), gravada e aberta."""
-        pronta = self.abrir(chave, n_amostras)
-        if pronta is not None:
-            if progresso is not None:
-                progresso(1.0)
-            return pronta
-        dados, piramide_caminho = self.caminhos(chave)
-        piramide_caminho.unlink(missing_ok=True)
-        try:
-            piramide = materializar(cadeia, ler, n_amostras, contexto, dados, bloco=bloco, progresso=progresso,
-                                    cancelado=cancelado, parcial=parcial)
-            arquivos.gravar(piramide, piramide_caminho)        # a marca de pronto
-        except BaseException:
-            self._apagar(chave)
-            raise
-        self.aparar(manter={chave})
-        aberta = self.abrir(chave, n_amostras)
-        assert aberta is not None
-        return aberta
+        with self.em_construcao.marcar([chave]):
+            pronta = self.abrir(chave, n_amostras)
+            if pronta is not None:
+                if progresso is not None:
+                    progresso(1.0)
+                return pronta
+            dados, piramide_caminho = self.caminhos(chave)
+            piramide_caminho.unlink(missing_ok=True)
+            try:
+                piramide = materializar(cadeia, ler, n_amostras, contexto, dados, bloco=bloco, progresso=progresso,
+                                        cancelado=cancelado, parcial=parcial)
+                arquivos.gravar(piramide, piramide_caminho)        # a marca de pronto
+            except BaseException:
+                self._apagar(chave)
+                raise
+            self.aparar(manter={chave})
+            aberta = self.abrir(chave, n_amostras)
+            assert aberta is not None
+            return aberta
 
     def _apagar(self, chave: str) -> None:
         for caminho in self.caminhos(chave):
@@ -266,22 +269,26 @@ class CacheDeMaterializacoes:
         return sum(tamanho for _, tamanho in self._por_chave().values())
 
     def aparar(self, manter: set[str] = frozenset()) -> None:
-        """Apaga as materializações menos usadas até o total caber no limite (nunca as de ``manter``)."""
+        """Apaga as materializações menos usadas até o total caber no limite (nunca as de ``manter`` nem as em
+        construção)."""
         grupos = self._por_chave()
+        intocaveis = set(manter) | self.em_construcao.atuais()
         total = sum(tamanho for _, tamanho in grupos.values())
         for chave, (_, tamanho) in sorted(grupos.items(), key=lambda item: item[1][0]):
             if total <= self.limite_bytes:
                 break
-            if chave in manter:
+            if chave in intocaveis:
                 continue
             self._apagar(chave)
             if not any(c.exists() for c in self.caminhos(chave)):
                 total -= tamanho
 
     def limpar(self, manter: set[str] = frozenset()) -> int:
-        """Apaga todas as materializações (menos as de ``manter``, em uso); devolve os bytes liberados."""
+        """Apaga todas as materializações (menos as de ``manter``, abertas, e as em construção); devolve os bytes
+        liberados."""
         antes = self.tamanho_bytes
+        intocaveis = set(manter) | self.em_construcao.atuais()
         for chave in list(self._por_chave()):
-            if chave not in manter:
+            if chave not in intocaveis:
                 self._apagar(chave)
         return antes - self.tamanho_bytes

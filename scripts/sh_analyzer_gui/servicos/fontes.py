@@ -3,9 +3,15 @@ e, depois, a conferência do CRC das amostras (``api.conferir_integridade``). Um
 lê o arquivo inteiro uma vez, e a conferência vem depois, sem disputar o disco com ela.
 
 O serviço segue o projeto: uma captura que entra é preparada; um projeto que sai tem as tarefas canceladas.
+
+**O cache das pirâmides** segue as configurações (:meth:`ServicoDeFontes.definir_cache`): outra pasta é um cache
+novo (o que já está rodando termina no antigo, que a tarefa guardou); o limite vale na hora. O "limpar" nunca apaga
+as pirâmides das capturas abertas.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from PySide6.QtCore import QObject
 from supraharmonicos.api import conferir_integridade
@@ -37,6 +43,28 @@ class ServicoDeFontes(QObject):
 
     def _fonte_entrou(self, fonte: FonteDoProjeto, _indice: int) -> None:
         self.preparar(fonte)
+
+    # ------------------------------------------------------------------ o cache
+
+    def piramides_abertas(self) -> set[Path]:
+        """Os arquivos das pirâmides das capturas abertas no projeto (no cache de agora)."""
+        if self.projeto is None:
+            return set()
+        return {self.cache.caminho(f.fonte.chave, c) for f in self.projeto.fontes if not f.esta_ausente
+                for c in range(len(f.canais))}
+
+    def definir_cache(self, pasta: Path, limite_bytes: int) -> None:
+        """A pasta e o limite do cache das pirâmides. Passar do limite apaga as menos usadas na hora (nunca as
+        abertas)."""
+        if Path(pasta) != self.cache.pasta:
+            self.cache = CacheDePiramides(pasta, limite_bytes)
+        else:
+            self.cache.limite_bytes = limite_bytes
+        self.cache.aparar(manter=self.piramides_abertas())
+
+    def limpar_cache(self) -> int:
+        """Apaga as pirâmides do cache, menos as das capturas abertas; devolve os bytes liberados."""
+        return self.cache.limpar(manter=self.piramides_abertas())
 
     def preparar(self, fonte: FonteDoProjeto) -> None:
         """Constrói (ou abre do cache) a pirâmide; depois, confere o CRC. Nada para uma ausente, nem de novo para

@@ -409,7 +409,9 @@ class InspetorDoTraco(QScrollArea):
     # ------------------------------------------------------------------ tema
 
     def _tema_mudou(self, t: Tema) -> None:
+        """As cores da paleta e os números escritos de novo (o separador decimal pode ter mudado)."""
         self._pintar_cores(t)
+        self.atualizar()
 
     def _pintar_cores(self, t: Tema) -> None:
         for i, b in enumerate(self.botoes_de_cor):

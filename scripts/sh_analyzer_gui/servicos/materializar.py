@@ -18,6 +18,7 @@ Os resultados chegam à interface pela fila de eventos (as tarefas terminam nout
 from __future__ import annotations
 
 from collections.abc import Callable, Hashable
+from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QObject, Signal
@@ -129,6 +130,26 @@ class ServicoDeMaterializacao(QObject):
             del self._estados[chave]
             if estado.tarefa is not None and estado.tarefa.ativa:
                 estado.tarefa.cancelar()
+
+    # ------------------------------------------------------------------ o cache
+
+    def abertas(self) -> set[str]:
+        """As chaves das materializações prontas que os traços usam."""
+        return {e.pronta.chave for e in self._estados.values() if e.pronta is not None}
+
+    def definir_cache(self, pasta: Path, limite_bytes: int) -> None:
+        """A pasta e o limite do cache das materializações. Outra pasta é um cache novo (uma materialização que
+        já está rodando termina no antigo, que a tarefa guardou); passar do limite apaga as menos usadas na hora
+        (nunca as abertas nem as em construção)."""
+        if Path(pasta) != self.cache.pasta:
+            self.cache = mat.CacheDeMaterializacoes(pasta, limite_bytes)
+        else:
+            self.cache.limite_bytes = limite_bytes
+        self.cache.aparar(manter=self.abertas())
+
+    def limpar_cache(self) -> int:
+        """Apaga as materializações do cache, menos as abertas e as em construção; devolve os bytes liberados."""
+        return self.cache.limpar(manter=self.abertas())
 
     def estado_de(self, usuario: Hashable) -> EstadoDaMaterializacao | None:
         chave = self._de_usuario.get(usuario)

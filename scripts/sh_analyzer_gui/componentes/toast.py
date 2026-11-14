@@ -14,10 +14,6 @@ ENTRADA_MS = 200
 MARGEM_INFERIOR = 24
 NIVEIS = {"info": ("ok", "acento"), "sucesso": ("ok", "ok"), "aviso": ("alerta", "aviso"), "erro": ("alerta", "erro")}
 
-movimento_reduzido = False
-"""Com ``True`` (a configuração "reduzir movimento"), os toasts aparecem e somem sem animação."""
-
-
 class Toast(QFrame):
     """Use :meth:`mostrar`: ``Toast.mostrar(janela, "Figura exportada", "sucesso")``."""
 
@@ -57,14 +53,14 @@ class Toast(QFrame):
         return toast
 
     def esconder(self) -> None:
-        if movimento_reduzido:
+        if aparencia().movimento_reduzido:
             self.deleteLater()
             return
         self._animar(1.0, 0.0, QEasingCurve.Type.InCubic)
         self._animacao.finished.connect(self.deleteLater)
 
     def _animar(self, de: float, ate: float, curva: QEasingCurve.Type) -> None:
-        if movimento_reduzido:
+        if aparencia().movimento_reduzido:
             self._opacidade.setOpacity(ate)
             return
         self._animacao.stop()

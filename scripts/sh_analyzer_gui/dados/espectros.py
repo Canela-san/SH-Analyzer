@@ -57,8 +57,9 @@ CORTE_DOS_PICOS = api.CORTE_SUPRAHARMONICOS_PADRAO
 
 
 JANELAS = {None: "Padrão do método", "retangular": "Retangular", "hann": "Hann", "blackmanharris": "Blackman-Harris",
-           "flattop": "Flat-top", "kaiser": f"Kaiser (β = {api.KAISER_BETA_PADRAO:g})".replace(".", ",")}
-"""As janelas da ``api`` (os nomes canônicos), com o nome para mostrar."""
+           "flattop": "Flat-top", "kaiser": f"Kaiser (β = {api.KAISER_BETA_PADRAO:g})"}
+"""As janelas da ``api`` (os nomes canônicos), com o nome para mostrar (o número, com o ponto: quem mostra põe o
+separador das configurações, ``componentes.numeros.decimal``)."""
 MAXIMO_DE_CICLOS = 100_000
 FOLGA_DE_CICLOS = 10
 """Com ``ciclos``, a FFT sincronizada lê só o começo do trecho: os ciclos pedidos mais esta folga, no período mais

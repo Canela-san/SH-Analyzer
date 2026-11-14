@@ -22,6 +22,7 @@ import pyqtgraph as pg
 from PySide6.QtCore import QLineF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
 
+from ..componentes.numeros import decimal
 from ..tema.aplicar import aparencia
 from ..tema.fontes import fonte_mono
 from ..tema.tokens import TAMANHOS, Tema
@@ -72,12 +73,13 @@ class EixoDoTema(pg.AxisItem):
         self.conversao = (1.0, 0.0)             # (k, c): na vista = k·u + c
         self._medidor = MedidorDeTexto()
         self.enableAutoSIPrefix(False)
-        self.setTickFont(fonte_mono(TAMANHOS["legenda"]))
         self.aplicar_tema(aparencia().tema)
 
     def aplicar_tema(self, t: Tema) -> None:
+        """As cores e a fonte do tema; os números são escritos de novo (o separador decimal pode ter mudado)."""
         self.setPen(pg.mkPen(t.borda_forte))
         self.setTextPen(pg.mkPen(t.eixo))
+        self.setTickFont(fonte_mono(TAMANHOS["legenda"]))
 
     def definir_conversao(self, k: float = 1.0, c: float = 0.0) -> None:
         if (k, c) == self.conversao:
@@ -133,7 +135,7 @@ class EixoDoTema(pg.AxisItem):
         return [(e, v.tolist()) for e, _, v in niveis]
 
     def tickStrings(self, valores, escala, espacamento):
-        return [s.replace(".", ",").replace("-", "−") for s in super().tickStrings(valores, escala, espacamento)]
+        return [decimal(s).replace("-", "−") for s in super().tickStrings(valores, escala, espacamento)]
 
 
 def marcas_principais(eixo: pg.AxisItem, inicio: float, fim: float, pixels: float) -> np.ndarray:

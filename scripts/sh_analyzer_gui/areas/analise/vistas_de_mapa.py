@@ -49,7 +49,7 @@ from shiboken6 import isValid
 
 from ...componentes.basicos import CampoComUnidade, Segmentado
 from ...componentes.fluxo import LayoutDeFluxo
-from ...componentes.numeros import formatar_si
+from ...componentes.numeros import decimal, formatar_si
 from ...dados import espectros as esp
 from ...graficos.cursores import CursoresDaVista
 from ...graficos.faixa import EixoDoTema
@@ -412,7 +412,7 @@ class VistaLigada(QWidget):
     def _texto_x(self, valor: float) -> str:
         if self.unidade_x:
             return formatar_si(valor, self.unidade_x, 7)
-        return f"{valor:.2f}".replace(".", ",").replace("-", "−")
+        return decimal(f"{valor:.2f}").replace("-", "−")
 
     def medidas(self) -> MedidasDaVista | None:
         """As medidas dos cursores (para a tabela de Medidas): no tempo, os instantes, Δt e 1/Δt."""
@@ -437,8 +437,15 @@ class VistaLigada(QWidget):
         self._espera.stop()
 
     def _tema_mudou(self, t: Tema) -> None:
-        if isValid(self) and hasattr(self, "grafico"):
-            self.grafico.setBackground(QColor(t.afundada))
+        """O fundo do tema e os números escritos de novo (o separador decimal pode ter mudado): o desenho (as
+        tabelas), a informação e as medidas dos cursores."""
+        if not isValid(self) or not hasattr(self, "grafico"):
+            return
+        self.grafico.setBackground(QColor(t.afundada))
+        if self.resultado is not None:
+            self._desenhar()
+        self._mostrar_info()
+        self.emitir_regiao()
 
 
 def _imagem_com_barra(grafico: pg.PlotWidget, rotulo: str) -> tuple[pg.ImageItem, pg.ColorBarItem]:
@@ -680,7 +687,7 @@ class VistaDeHarmonicos(VistaLigada):
         unidade = "%" if self.opcoes.escala == "pct" else self.traco_unidade()
 
         def texto(v):
-            return f"{v:.4f} %".replace(".", ",") if unidade == "%" else formatar_si(v, unidade, 5)
+            return decimal(f"{v:.4f} %") if unidade == "%" else formatar_si(v, unidade, 5)
 
         resumo = self.tr("Cursores: ordem {} → ordem {} · Δ {} ordens").format(h1, h2, h2 - h1)
         colunas = (self.tr("Ordem {}").format(h1), self.tr("Ordem {}").format(h2), self.tr("Δ"))
@@ -722,7 +729,7 @@ class VistaDeHarmonicos(VistaLigada):
         for k, h in enumerate(tab.harmonicos):
             textos = [str(h.ordem), formatar_si(h.frequencia_hz, "Hz", 6), formatar_si(h.rms, unidade, 5),
                       formatar_si(h.rms_subgrupo, unidade, 5), formatar_si(h.rms_grupo, unidade, 5),
-                      f"{h.pct_fundamental:.4f}".replace(".", ","), f"{h.fase_graus:.2f}".replace(".", ",").replace("-", "−")]
+                      decimal(f"{h.pct_fundamental:.4f}"), decimal(f"{h.fase_graus:.2f}").replace("-", "−")]
             for c, texto in enumerate(textos):
                 self.tabela.setItem(k, c, QTableWidgetItem(texto))
         if ajustar:
@@ -739,5 +746,5 @@ class VistaDeHarmonicos(VistaLigada):
         return [self.tr("f₁ = {} · {} ciclos (janela retangular síncrona)").format(formatar_si(tab.f0_hz, "Hz", 7),
                                                                                     tab.n_ciclos),
                 self.tr("THDS {} % · THDG {} % · THD {} % (até a ordem {})").format(
-                    f"{tab.thds_pct:.4f}".replace(".", ","), f"{tab.thdg_pct:.4f}".replace(".", ","),
-                    f"{tab.thd_pct:.4f}".replace(".", ","), tab.harmonicos[-1].ordem)]
+                    decimal(f"{tab.thds_pct:.4f}"), decimal(f"{tab.thdg_pct:.4f}"),
+                    decimal(f"{tab.thd_pct:.4f}"), tab.harmonicos[-1].ordem)]
