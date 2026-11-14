@@ -634,6 +634,7 @@ class VistaDeHarmonicos(VistaLigada):
         self.grafico.setLabel("bottom", self.tr("ordem"))
         self.grafico.showGrid(x=False, y=True, alpha=0.15)
         self.barras = pg.BarGraphItem(x=[], height=[], width=0.7)
+        self._rotulo_desenhado: str | None = None     # o do eixo Y no último desenho (outro: a vista se ajusta)
         self.grafico.addItem(self.barras)
         self.tabela = QTableWidget(0, 7)
         self.tabela.setObjectName("tabela_harmonicos")
@@ -707,8 +708,12 @@ class VistaDeHarmonicos(VistaLigada):
         ordens, alturas = self.valores()
         self.barras.setOpts(x=ordens, height=alturas, width=0.7, brush=cor, pen=pg.mkPen(None))
         unidade = self.traco_unidade()
-        self.grafico.setLabel("left", self.tr("% da fundamental") if self.opcoes.escala == "pct"
-                              else self.tr("valor RMS ({})").format(unidade))
+        rotulo = self.tr("% da fundamental") if self.opcoes.escala == "pct" else self.tr("valor RMS ({})").format(unidade)
+        # A vista fica onde o usuário a pôs (outra grandeza, outra ordem máxima, outro trecho); ela se ajusta só no
+        # primeiro desenho e quando o eixo Y passa a medir outra coisa (% ou o valor RMS).
+        ajustar = rotulo != self._rotulo_desenhado
+        self._rotulo_desenhado = rotulo
+        self.grafico.setLabel("left", rotulo)
         tab = self.resultado.tabela
         self.tabela.setHorizontalHeaderLabels(["h", "f", "RMS", self.tr("subgrupo"), self.tr("grupo"), "% h1",
                                                self.tr("fase (°)")])
@@ -719,7 +724,8 @@ class VistaDeHarmonicos(VistaLigada):
                       f"{h.pct_fundamental:.4f}".replace(".", ","), f"{h.fase_graus:.2f}".replace(".", ",").replace("-", "−")]
             for c, texto in enumerate(textos):
                 self.tabela.setItem(k, c, QTableWidgetItem(texto))
-        self.grafico.enableAutoRange()
+        if ajustar:
+            self.grafico.getViewBox().autoRange(padding=0.02)
 
     def traco_unidade(self) -> str:
         t = self.trecho_atual

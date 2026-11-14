@@ -49,8 +49,9 @@ from ...componentes.fluxo import LayoutDeFluxo
 from ...componentes.numeros import formatar_si
 from ...dados import espectros as esp
 from ...dados.cadeia import CorrecaoSonda
+from ...graficos.clique import distancia_a_linha, mais_perto
 from ...graficos.cursores import CursoresDaVista
-from ...graficos.faixa import EixoDoTema, GradeDoTema
+from ...graficos.faixa import EixoDoTema, GradeDoTema, manter_o_y
 from ...graficos.traco_lod import TracoLOD
 from ...modelo.comandos import MudarOpcoesDaVista
 from ...modelo.objetos import Projeto, Traco, Vista
@@ -63,7 +64,9 @@ ESPERA_MS = 40
 METODOS, ESCALAS, TRECHOS = ("fft", "welch"), ("db", "rms", "dbc"), ("janela", "cursores", "captura")
 AMOSTRAS_PARA_MOSTRAR_A_TAREFA = 20_000_000
 ESPERA_DA_ENVOLTORIA_MS = 30
-OPCOES_QUE_PEDEM_AJUSTE = ("metodo", "escala", "frequencia_log", "trecho", "modo", "resolucao_hz")
+OPCOES_DA_UNIDADE_DO_Y = ("escala", "modo")
+"""As opções que mudam o que o eixo Y mede (dB, valor RMS, dBc; amplitude ou densidade): com elas, o Y se ajusta de
+novo. As outras (o método, o trecho, a janela, a resolução, os ciclos) deixam a vista onde o usuário a pôs."""
 
 
 class LinhasVerticais(pg.GraphicsObject):
@@ -128,8 +131,10 @@ class VistaDeEspectro(QWidget):
         self._espectros: dict[tuple, api.Espectro] = {}      # a conta de cada trecho, para não refazer
         self._desenhos: dict[tuple, esp.Desenho] = {}        # e o desenho de cada escala
         self._itens: list = []
-        self._ajustar = True                                  # o próximo desenho ajusta a vista
-        self._opcoes_vistas = None
+        self._ajustar = True                                  # o próximo desenho ajusta a vista (o primeiro)
+        self._ajustar_y = False                               # só o Y (a unidade dele mudou)
+        self._log_desenhado: bool | None = None               # a escala da frequência do último desenho
+        self._opcoes_vistas = vista.opcoes                    # as da última mudança vista (para saber o que mudou)
         self._montar()
         self._espera_da_envoltoria = QTimer(self)
         self._espera_da_envoltoria.setSingleShot(True)
@@ -137,6 +142,7 @@ class VistaDeEspectro(QWidget):
         self._espera_da_envoltoria.timeout.connect(self._atualizar_envoltorias)
         self.grafico.getViewBox().sigXRangeChanged.connect(self._zoom_mudou)
         self.grafico.scene().sigMouseClicked.connect(self._clique_no_grafico)
+        selecao.mudou.connect(self._selecao_mudou)
         self._espera = QTimer(self)
         self._espera.setSingleShot(True)
         self._espera.setInterval(ESPERA_MS)
@@ -296,8 +302,10 @@ class VistaDeEspectro(QWidget):
     def _vista_mudou(self, _vista, campos) -> None:
         if "opcoes" in campos and isValid(self):
             antes, self._opcoes_vistas = self._opcoes_vistas, self.opcoes
-            if antes is None or any(getattr(antes, n) != getattr(self.opcoes, n) for n in OPCOES_QUE_PEDEM_AJUSTE):
+            if antes is None:
                 self._ajustar = True
+            elif any(getattr(antes, n) != getattr(self.opcoes, n) for n in OPCOES_DA_UNIDADE_DO_Y):
+                self._ajustar_y = True
             self._mostrar_opcoes()
             self._pedir()
 
@@ -461,11 +469,14 @@ class VistaDeEspectro(QWidget):
                 aguardando, erro = falhas.get(chave_do_desenho, (False, ""))
                 resultados.append(ResultadoDoTraco(traco, erro=erro, aguardando=aguardando, unidade=unidade,
                                                    trecho=trecho))
-        if {r.traco for r in resultados} != {r.traco for r in self.resultados}:
-            self._ajustar = True
         self.opcoes_calculadas, self.resultados = opcoes, resultados
         self._desenhar()
         self.calculado.emit()
+
+    def fundamental(self) -> float | None:
+        """A fundamental que sincronizou o primeiro espectro mostrado (None: Welch, ou sem sincronismo)."""
+        return next((r.espectro.f0_hz for r in self.resultados
+                     if r.espectro is not None and r.espectro.f0_hz is not None), None)
 
     def soltar(self) -> None:
         """A vista vai sair: a conta em andamento é cancelada."""
@@ -507,7 +518,17 @@ class VistaDeEspectro(QWidget):
         prontos = [r for r in self.resultados if r.desenho is not None]
         for traco in [tr for tr in self.curvas if tr not in {r.traco for r in prontos}]:
             self.grafico.removeItem(self.curvas.pop(traco))
+        vb = self.grafico.getViewBox()
+        trocou_o_log = self._log_desenhado is not None and self._log_desenhado != o.frequencia_log
+        if trocou_o_log:
+            x0, x1 = vb.viewRange()[0]
+            faixa_hz = (10.0 ** x0, 10.0 ** x1) if self._log_desenhado else (x0, x1)
         self.grafico.setLogMode(x=o.frequencia_log, y=False)
+        self._log_desenhado = o.frequencia_log
+        if trocou_o_log:
+            # O PyQtGraph liga o ajuste automático ao trocar a escala: a mesma faixa de frequências, na escala nova.
+            vb.disableAutoRange()
+            vb.setXRange(*self._faixa_no_eixo(faixa_hz, prontos), padding=0)
         self.cursores.reposicionar()
         for k, r in enumerate(prontos):
             cor = QColor(cor_do_traco(r.traco.receita.cor, t)[0])
@@ -517,12 +538,43 @@ class VistaDeEspectro(QWidget):
         if o.frequencia_log:
             self._atualizar_envoltorias(inteira=True)
         if self._ajustar and prontos:
-            self._ajustar = False
-            self.grafico.getViewBox().autoRange(padding=0.02)
+            self._ajustar = self._ajustar_y = False
+            vb.autoRange(padding=0.02)
+        elif self._ajustar_y and prontos:
+            self._ajustar_y = False
+            limites = self._limites_y_visiveis(prontos)
+            if limites:
+                vb.setYRange(min(a for a, _ in limites), max(b for _, b in limites), padding=0.05)
+        elif prontos:
+            manter_o_y(vb, self._limites_y_visiveis(prontos))
         self._refazer_legenda()
         self._mostrar_info()
         if self.cursores.ligados:
             self.emitir_regiao()              # os níveis nos cursores mudaram com o espectro
+
+    def _faixa_no_eixo(self, faixa_hz: tuple[float, float], prontos) -> tuple[float, float]:
+        """Uma faixa de frequências (Hz) no eixo x da escala atual; na log, a partir do primeiro bin acima de 0 Hz."""
+        f0, f1 = faixa_hz
+        if not self.opcoes.frequencia_log:
+            return f0, f1
+        menor = min((r.desenho.f0 + r.desenho.df for r in prontos), default=1.0)
+        f0 = max(f0, menor)
+        return math.log10(f0), math.log10(f1 if f1 > f0 else f0 * 10)      # vazia (toda abaixo de 0 Hz): uma década
+
+    def _limites_y_visiveis(self, prontos) -> list[tuple[float, float]]:
+        """O mínimo e o máximo de cada espectro desenhado nas frequências visíveis."""
+        x0, x1 = self.grafico.getViewBox().viewRange()[0]
+        f0, f1 = (10.0 ** x0, 10.0 ** x1) if self.opcoes.frequencia_log else (x0, x1)
+        limites = []
+        for r in prontos:
+            d = r.desenho
+            i0 = max(0, math.ceil((f0 - d.f0) / d.df))
+            i1 = min(len(d.niveis), math.floor((f1 - d.f0) / d.df) + 1)
+            trecho = d.niveis[i0:i1] if i1 > i0 else d.niveis[:0]
+            trecho = trecho[np.isfinite(trecho)]
+            if len(trecho):
+                limites.append((float(trecho.min()), float(trecho.max())))
+        return limites
 
     def _curva(self, r: ResultadoDoTraco, cor: QColor) -> None:
         """O item do traço: o ``TracoLOD`` sobre a pirâmide do espectro na frequência linear (os bins são uniformes:
@@ -540,6 +592,7 @@ class VistaDeEspectro(QWidget):
                 # método (sem isso, um pico de 130 kHz aparecia em 377 kHz, e o eixo passava da Nyquist).
                 item.definir_dados(d.piramide, d.niveis, taxa_hz=1.0 / d.df, t0=d.f0, n_total=len(d.niveis))
             item.definir_cor(cor)
+            item.setZValue(10 if r.traco in self.selecao.tracos else 0)
             return
         if not isinstance(item, pg.PlotDataItem):
             if item is not None:
@@ -550,6 +603,16 @@ class VistaDeEspectro(QWidget):
         caneta = QPen(cor, 1.0)
         caneta.setCosmetic(True)
         item.setPen(caneta)
+        item.setZValue(10 if r.traco in self.selecao.tracos else 0)
+
+    def _selecao_mudou(self, selecionados) -> None:
+        """O traço selecionado (num chip, numa curva, em outra vista) acende o chip e vem para cima no desenho."""
+        if not isValid(self):
+            return
+        for traco, chip in self.chips.items():
+            chip.definir(selecionado=traco in selecionados)
+        for traco, item in self.curvas.items():
+            item.setZValue(10 if traco in selecionados else 0)
 
     def _zoom_mudou(self, *_) -> None:
         if self.opcoes.frequencia_log:
@@ -577,8 +640,34 @@ class VistaDeEspectro(QWidget):
             item.setData(*esp.envoltoria_log(d, f_min, f_max, 2 * colunas))
 
     def _clique_no_grafico(self, evento) -> None:
+        """O duplo clique ajusta a vista; um clique numa curva seleciona o traço dela (e o inspetor mostra o traço e a
+        análise do espectro), e no vazio tira a seleção. Em cima dos eixos, nada."""
+        vb = self.grafico.getViewBox()
+        if evento.button() != Qt.MouseButton.LeftButton:
+            return
         if evento.double():
-            self.grafico.getViewBox().autoRange(padding=0.02)
+            vb.autoRange(padding=0.02)
+            return
+        if not vb.sceneBoundingRect().contains(evento.scenePos()):
+            return
+        ponto = vb.mapSceneToView(evento.scenePos())
+        self.tracoClicado.emit(self.traco_em(ponto.x(), ponto.y()), evento.modifiers())
+
+    def traco_em(self, x: float, y: float) -> Traco | None:
+        """O traço da curva mais perto de ``(x, y)`` (nas unidades da vista) dentro do alcance do clique; empatados,
+        o desenhado por cima (``graficos/clique.py``)."""
+        largura, altura = self.grafico.getViewBox().viewPixelSize()
+        candidatos = []
+        for k, (traco, item) in enumerate(self.curvas.items()):
+            if not item.isVisible():
+                continue
+            if isinstance(item, TracoLOD):
+                distancia = item.distancia_em_pixels(x, y)
+            else:                                   # a envoltória da frequência log: a linha que está desenhada
+                xs, ys = item.getData()
+                distancia = math.inf if xs is None else distancia_a_linha(x, y, xs, ys, largura, altura)
+            candidatos.append((distancia, (item.zValue(), k), traco))
+        return mais_perto(candidatos)
 
     def _desenhar_marcas(self, r: ResultadoDoTraco, cor: QColor, primeiro: bool, t: Tema) -> None:
         e, m, o, d = r.espectro, r.marcas, self.opcoes, r.desenho

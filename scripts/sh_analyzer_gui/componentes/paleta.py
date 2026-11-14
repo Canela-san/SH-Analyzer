@@ -43,6 +43,7 @@ PAPEL_ATALHO = Qt.ItemDataRole.UserRole + 2
 GESTOS = (
     ("Zoom no tempo, centrado no cursor", "Roda"),
     ("Zoom no eixo Y da faixa", "Ctrl + roda, ou roda em cima dos números do Y"),
+    ("Zoom no tempo e no Y juntos (a forma do sinal fica)", "Alt + roda"),
     ("Andar no tempo", "Shift + roda, ou arrastar"),
     ("Mover a vista em qualquer direção, sem mudar as escalas", "Arrastar com o botão do meio (a roda apertada)"),
     ("O 0 do eixo Y no meio da faixa", "Clique rápido com o botão do meio (em cima de um traço: tira o offset dele)"),

@@ -114,7 +114,7 @@ def test_arrastar_move_a_vista_sem_mudar_a_escala_nem_os_tracos(janela, plotado,
         x, y = ponto_no_traco(fonte, 0, 0.05 + 1 / 240)          # o pico de 60 Hz do canal 0
         assert vista.traco_em(caixa, x, y) is a
     else:
-        x, y = 0.055, y1 * 0.95
+        x, y = 0.055, y0 * 0.9                     # embaixo; ali os dois traços estão perto do pico, lá em cima
         assert vista.traco_em(caixa, x, y) is None
     contagem = janela.projeto.pilha.count()
     arrastar(caixa, [(x, y), (x + 0.001, y - 0.2), (x + 0.002, y - 0.4)])

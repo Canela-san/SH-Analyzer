@@ -34,8 +34,9 @@ from ...componentes.chip import ChipDeTraco
 from ...componentes.fluxo import LayoutDeFluxo
 from ...componentes.numeros import formatar_si
 from ...dados.piramide import Piramide
+from ...graficos.clique import mais_perto
 from ...graficos.cursores import CursoresDaVista
-from ...graficos.faixa import LARGURA_DO_EIXO_Y, CaixaDaFaixa, EixoDoTema, GradeDoTema
+from ...graficos.faixa import LARGURA_DO_EIXO_Y, CaixaDaFaixa, EixoDoTema, GradeDoTema, manter_o_y
 from ...graficos.minimapa import Minimapa
 from ...graficos.traco_lod import TracoLOD
 from ...modelo.comandos import MudarTracos
@@ -51,7 +52,6 @@ PARADA_DO_HISTORICO_MS = 400
 ESPERA_DA_MEDIDA_MS = 250
 INTERVALO_DO_MINIMAPA_MS = 30      # o minimapa acompanha o zoom a ~30 q/s: ele é outro widget, pintado à parte
 LARGURA_DA_INFO = 420
-ALCANCE_DO_CLIQUE_PX = 6.0
 MAXIMO_DO_HISTORICO = 100
 ESPERA_DA_PREVIA_MS = 60           # a prévia sai 60 ms depois da última mudança do zoom ou do pan
 FOLGA_DA_PREVIA = 0.25             # a prévia cobre um quarto de janela a mais de cada lado: o pan curto não espera
@@ -85,6 +85,7 @@ class VistaDeTempo(QWidget):
         self.materializacoes = materializacoes
         self._previas: dict[Traco, Previa] = {}
         self._ajustar_y_de: set[Traco] = set()       # traços cuja faixa ajusta o Y quando os dados novos chegarem
+        self._conferir_y_de: set[Traco] = set()      # e os que só conferem se ainda aparecem (graficos.faixa.manter_o_y)
         self._acompanhados: set[Traco] = set()
         materializacoes.mudou.connect(self._materializacao_mudou)
         acompanhados, servico = self._acompanhados, materializacoes
@@ -363,10 +364,13 @@ class VistaDeTempo(QWidget):
                         deslocamento=deslocamento, cor=cor_do_traco(r.cor, aparencia().tema)[0], nome=r.nome,
                         inicio=inicio, n_total=len(canal.amostras))
         item.setVisible(r.visivel)
+        com_dados = self._faixa_com_dados(faixa)
         faixa.addItem(item)
         self.itens[traco] = item
         if estado is not None and estado.pronta is None:
-            self._ajustar_y_de.add(traco)
+            # Os dados chegam depois: numa faixa nova, o Y se ajusta a eles; numa que já mostra outros traços, a vista
+            # que o usuário escolheu fica.
+            (self._conferir_y_de if com_dados else self._ajustar_y_de).add(traco)
             self._espera_da_previa.start()
 
     # ------------------------------------------------------------------ os traços com transformações
@@ -386,6 +390,7 @@ class VistaDeTempo(QWidget):
         self._acompanhados.discard(traco)
         self._previas.pop(traco, None)
         self._ajustar_y_de.discard(traco)
+        self._conferir_y_de.discard(traco)
 
     def soltar(self) -> None:
         """A vista vai sair: as materializações e as prévias que só ela usava são canceladas."""
@@ -450,6 +455,25 @@ class VistaDeTempo(QWidget):
             if traco in self._ajustar_y_de and dados[0].n_amostras:
                 self._ajustar_y_de.discard(traco)
                 self._ajustar_y(traco.receita.faixa)
+            elif traco in self._conferir_y_de:
+                self._conferir_y(traco, item)
+
+    def _faixa_com_dados(self, faixa: pg.PlotItem) -> bool:
+        caixa = faixa.getViewBox()
+        return any(i.getViewBox() is caixa and i.dados[0].n_amostras for i in self.itens.values())
+
+    def _conferir_y(self, traco: Traco, item: TracoLOD) -> None:
+        """Os dados novos do traço (outra cadeia) chegaram: o Y da faixa fica, a não ser que o traço tenha saído
+        inteiro da vista (``manter_o_y``). Sem dados no tempo visível ainda (o começo materializado de outra parte da
+        captura), espera os próximos."""
+        caixa = item.getViewBox()
+        if caixa is None:
+            self._conferir_y_de.discard(traco)
+            return
+        limites = item.limites_y_em(*caixa.viewRange()[0])
+        if limites is not None:
+            self._conferir_y_de.discard(traco)
+            manter_o_y(caixa, [limites])
 
     def _ajustar_y(self, numero_da_faixa: int) -> None:
         """O Y da faixa ajustado aos traços dela (o traço inteiro, ou o que dele já existe)."""
@@ -596,13 +620,18 @@ class VistaDeTempo(QWidget):
             return
         item, chip, r = self.itens.get(traco), self.chips.get(traco), traco.receita
         if item is not None:
+            if campos & {"cadeia", "ganho", "offset", "deslocamento_s"} and item.getViewBox() is not None:
+                # Uma mudança no traço não mexe na vista: numa faixa em que o usuário só mexeu no tempo, o PyQtGraph
+                # ainda ajustaria o Y sozinho aos dados novos (e, sem zoom nenhum, o tempo também).
+                item.getViewBox().disableAutoRange()
             if "cor" in campos:
                 item.definir_cor(cor_do_traco(r.cor, aparencia().tema)[0])
             if "cadeia" in campos:
                 antes = self.materializacoes.estado_de(traco)
                 if self._acompanhar(traco) is not antes:
                     self._previas.pop(traco, None)
-                    self._ajustar_y_de.add(traco)
+                    self._ajustar_y_de.discard(traco)
+                    self._conferir_y_de.add(traco)
                     item.definir_afim(*self._afim(traco))
                     self._atualizar_dados(traco)
                     self._espera_da_previa.start()
@@ -756,11 +785,11 @@ class VistaDeTempo(QWidget):
     # ------------------------------------------------------------------ selecionar
 
     def traco_em(self, caixa, x: float, y: float) -> Traco | None:
-        """O traço visível desta faixa a até 6 px do ponto ``(x, y)`` (nas unidades da vista), o mais perto."""
-        candidatos = [(item.distancia_em_pixels(x, y), traco) for traco, item in self.itens.items()
-                      if item.isVisible() and item.getViewBox() is caixa]
-        perto = min(candidatos, key=lambda par: par[0], default=(float("inf"), None))
-        return perto[1] if perto[0] <= ALCANCE_DO_CLIQUE_PX else None
+        """O traço visível desta faixa mais perto do ponto ``(x, y)`` (nas unidades da vista), dentro do alcance do
+        clique; empatados, o desenhado por cima (``graficos/clique.py``)."""
+        return mais_perto((item.distancia_em_pixels(x, y), (item.zValue(), k), traco)
+                          for k, (traco, item) in enumerate(self.itens.items())
+                          if item.isVisible() and item.getViewBox() is caixa)
 
     def _clicou(self, x: float, y: float, modificadores) -> None:
         self.tracoClicado.emit(self.traco_em(self.sender(), x, y), modificadores)

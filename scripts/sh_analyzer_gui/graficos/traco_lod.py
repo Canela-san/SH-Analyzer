@@ -41,6 +41,7 @@ from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF
 
 from ..dados.consulta import Amostras, Envoltoria, aplicar_afim, consultar
 from ..dados.piramide import Piramide
+from .clique import distancia_a_colunas, distancia_a_linha
 
 PIXELS_POR_AMOSTRA_PONTOS = 8.0
 """A partir de quantos pixels por amostra os pontos das amostras aparecem."""
@@ -67,6 +68,16 @@ def _trechos_finitos(valores: np.ndarray, *outros: np.ndarray) -> list[tuple[int
     return list(zip(bordas[0::2].tolist(), bordas[1::2].tolist()))
 
 
+def _colunas_ligadas(minimos: np.ndarray, maximos: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """O trecho de cada coluna esticado até a anterior quando não encosta nela (ver :func:`_segmentos_de_coluna`)."""
+    mn, mx = minimos.copy(), maximos.copy()
+    sobe = minimos[1:] > maximos[:-1]               # a coluna está toda acima da anterior
+    desce = maximos[1:] < minimos[:-1]              # toda abaixo
+    mn[1:][sobe] = maximos[:-1][sobe]
+    mx[1:][desce] = minimos[:-1][desce]
+    return mn, mx
+
+
 def _segmentos_de_coluna(centros_x: np.ndarray, minimos: np.ndarray, maximos: np.ndarray,
                          altura_pixel: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
     """Os pontos (aos pares) das linhas verticais da envoltória: a coluna ``c`` vai de ``minimos[c]`` a
@@ -78,11 +89,7 @@ def _segmentos_de_coluna(centros_x: np.ndarray, minimos: np.ndarray, maximos: np
 
     **A altura mínima:** uma coluna mais baixa que ``altura_pixel`` (um sinal quase constante) cresce para os dois
     lados até ela -- o QPainter não desenha uma linha de comprimento zero, e a coluna sumiria."""
-    mn, mx = minimos.copy(), maximos.copy()
-    sobe = minimos[1:] > maximos[:-1]               # a coluna está toda acima da anterior
-    desce = maximos[1:] < minimos[:-1]              # toda abaixo
-    mn[1:][sobe] = maximos[:-1][sobe]
-    mx[1:][desce] = minimos[:-1][desce]
+    mn, mx = _colunas_ligadas(minimos, maximos)
     if altura_pixel > 0:
         baixa = (mx - mn) < altura_pixel
         meio = (mx[baixa] + mn[baixa]) / 2
@@ -198,6 +205,18 @@ class TracoLOD(pg.GraphicsObject):
 
     def tempo_da_amostra(self, indice: float) -> float:
         return self._origem + indice / self._taxa
+
+    def limites_y_em(self, x0: float, x1: float) -> tuple[float, float] | None:
+        """O mínimo e o máximo do traço (na unidade do eixo y) entre os tempos ``x0`` e ``x1``, ou None se os dados
+        não têm amostra ali (a prévia de outra janela, o começo materializado que ainda não chegou). Uma consulta de
+        uma coluna só à pirâmide: barata em qualquer tamanho."""
+        inicio, fim = (x0 - self._origem) * self._taxa, (x1 - self._origem) * self._taxa + 1
+        if fim <= 0 or inicio >= self._piramide.n_amostras:
+            return None
+        c = aplicar_afim(consultar(self._piramide, self._amostras, inicio, fim, 1), self._escala, self._deslocamento)
+        valores = (np.concatenate([c.minimos, c.maximos]) if isinstance(c, Envoltoria) else np.asarray(c.valores))
+        valores = valores[np.isfinite(valores)]
+        return (float(valores.min()), float(valores.max())) if len(valores) else None
 
     # ------------------------------------------------------------------ os limites (autoRange e boundingRect)
 
@@ -330,23 +349,15 @@ class TracoLOD(pg.GraphicsObject):
         return QPointF(self.tempo_da_amostra((c.bordas[col] + c.bordas[col + 1] - 1) / 2), float(c.maximos[col]))
 
     def distancia_em_pixels(self, x: float, y: float) -> float:
-        """Quantos pixels da tela separam o ponto ``(x, y)`` (nas unidades da vista) do desenho do traço: zero
-        dentro da faixa mín-máx da coluna; de perto, a distância até a amostra mais próxima. ``inf`` sem desenho.
-        Serve para selecionar o traço clicando perto dele (o alvo de 6 px do plano, 9.2)."""
+        """Quantos pixels da tela separam o ponto ``(x, y)`` (nas unidades da vista) do desenho do traço: de perto,
+        da linha entre as amostras; de longe, das linhas verticais das colunas em volta do ponto, como desenhadas.
+        ``inf`` sem desenho. Serve para selecionar o traço clicando perto dele (``graficos/clique.py``)."""
         c, vb = self._consulta, self.getViewBox()
         if c is None or not len(c) or vb is None:
             return math.inf
-        largura_px, altura_px = (abs(v) for v in vb.viewPixelSize())
+        largura_px, altura_px = vb.viewPixelSize()
         if isinstance(c, Amostras):
-            tempos = self._origem + c.indices / self._taxa
-            dx, dy = (tempos - x) / max(largura_px, 1e-300), (c.valores - y) / max(altura_px, 1e-300)
-            d = np.hypot(dx, dy)
-            return float(np.nanmin(d)) if np.isfinite(d).any() else math.inf
-        col = int(np.searchsorted(c.bordas, (x - self._origem) * self._taxa, side="right") - 1)
-        if not 0 <= col < len(c):
-            return math.inf
-        baixo, alto = sorted((float(c.minimos[col]), float(c.maximos[col])))
-        if not (math.isfinite(baixo) and math.isfinite(alto)):
-            return math.inf
-        fora = max(baixo - y, y - alto, 0.0)
-        return fora / max(altura_px, 1e-300)
+            return distancia_a_linha(x, y, self._origem + c.indices / self._taxa, c.valores, largura_px, altura_px)
+        centros = self._origem + (c.bordas[:-1] + c.bordas[1:] - 1) / (2 * self._taxa)
+        mn, mx = _colunas_ligadas(c.minimos, c.maximos)
+        return distancia_a_colunas(x, y, centros, mn, mx, largura_px, altura_px)

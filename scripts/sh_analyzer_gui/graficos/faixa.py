@@ -4,7 +4,8 @@
 * :class:`GradeDoTema`: a grade nas marcas principais dos eixos, **opaca** e sem antialiasing (a semitransparente do
   PyQtGraph custava ~17 ms por quadro no protótipo);
 * :class:`CaixaDaFaixa`: a ``ViewBox`` com os gestos do plano: a roda dá zoom no tempo, centrado no cursor; Ctrl +
-  roda, no eixo Y da faixa; Shift + roda anda no tempo; arrastar anda no tempo; o duplo clique ajusta tudo. Um clique
+  roda, no eixo Y da faixa; Alt + roda, nos dois juntos (o mesmo fator: a forma do sinal não muda); Shift + roda anda
+  no tempo; arrastar anda no tempo; o duplo clique ajusta tudo. Um clique
   avisa onde foi (``clicada``), para a vista selecionar o traço mais perto. **Em cima de um eixo,** a roda e o
   arrasto mexem só naquele eixo (a roda nos números do Y dá o zoom no Y sem o Ctrl).
 * **O botão do meio** (a roda apertada): arrastar move a vista nas duas direções, sem mudar as escalas, em cima de
@@ -169,6 +170,25 @@ class GradeDoTema(pg.GraphicsObject):
         p.drawLines(linhas)
 
 
+def manter_o_y(caixa: pg.ViewBox, limites) -> bool:
+    """Depois de uma mudança nos dados (uma etapa da cadeia, outro método do espectro), **o Y fica onde está**: a
+    posição e a escala que o usuário escolheu valem mais do que um ajuste automático. A exceção é não sobrar nada à
+    vista: se nenhum dos ``limites`` (o mínimo e o máximo de cada traço no trecho visível, na unidade do eixo) cruza
+    a faixa visível, ela anda até o meio deles, **com a mesma altura** (tirar o DC de um sinal em 2,5 V leva o traço
+    para o 0, e a vista vai junto, sem mudar o zoom). Devolve se andou."""
+    limites = [(a, b) for a, b in limites if math.isfinite(a) and math.isfinite(b)]
+    if not limites:
+        return False
+    baixo, alto = min(a for a, _ in limites), max(b for _, b in limites)
+    _, (y0, y1) = caixa.viewRange()
+    if alto >= y0 and baixo <= y1:
+        return False
+    meia = (y1 - y0) / 2
+    centro = (baixo + alto) / 2
+    caixa.setYRange(centro - meia, centro + meia, padding=0)
+    return True
+
+
 class CaixaDaFaixa(pg.ViewBox):
     """``clicada(x, y, modificadores)``: um clique simples, nas unidades da vista. ``ajustarPedido``: o duplo
     clique (ajustar tudo)."""
@@ -191,12 +211,17 @@ class CaixaDaFaixa(pg.ViewBox):
 
     def wheelEvent(self, evento, axis=None):
         """A roda na caixa (ver o começo do arquivo) ou em cima de um eixo: no do tempo, o zoom (ou, com Shift, o
-        passo) é só no tempo; no do Y, o zoom é só no Y da faixa, sem precisar do Ctrl."""
+        passo) é só no tempo; no do Y, o zoom é só no Y da faixa, sem precisar do Ctrl.
+
+        Com o Alt, o sistema costuma virar a roda de lado (o ``delta`` vem na horizontal): o ``delta()`` da cena já
+        traz o maior dos dois, e o zoom não depende da direção em que ele veio."""
         modificadores = evento.modifiers()
         passo = evento.delta() / 120.0
         fator = FATOR_DA_RODA ** -passo
         centro = self.mapSceneToView(evento.scenePos())
-        if axis == 1 or (axis is None and modificadores & Qt.KeyboardModifier.ControlModifier):
+        if axis is None and modificadores & Qt.KeyboardModifier.AltModifier:
+            self.scaleBy(x=fator, y=fator, center=centro)
+        elif axis == 1 or (axis is None and modificadores & Qt.KeyboardModifier.ControlModifier):
             self.scaleBy(y=fator, center=centro)
         elif modificadores & Qt.KeyboardModifier.ShiftModifier:
             (x0, x1), _ = self.viewRange()

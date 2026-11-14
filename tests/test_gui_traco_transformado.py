@@ -78,6 +78,7 @@ def test_a_previa_e_depois_a_materializacao(janela, qtbot, tmp_path):
     janela.materializacoes.cache = CacheLento(tmp_path / "cache", liberar)
     fonte, vista, traco, w = plotar(janela, qtbot, tmp_path)
     cru = w.itens[traco].dados[0]
+    antes = w.faixas[0].getViewBox().viewRange()
     janela.projeto.pilha.push(MudarTracos([traco], cadeia=PA))
     item = w.itens[traco]
     assert item.dados[0] is not cru                        # o canal cru sai na hora: nunca no lugar do transformado
@@ -96,9 +97,10 @@ def test_a_previa_e_depois_a_materializacao(janela, qtbot, tmp_path):
     qtbot.waitUntil(lambda: item.dados[0] is estado.pronta.piramide, timeout=5_000)
     np.testing.assert_allclose(estado.pronta.amostras, inteiro, rtol=2 ** -23, atol=2 ** -23 * np.max(np.abs(inteiro)))
     assert w.chips[traco].progresso is None and traco not in w._previas
-    # O Y da faixa ajustado ao traço transformado (o passa-altas tirou os 3 V da rede).
-    y0, y1 = w.faixas[0].getViewBox().viewRange()[1]
-    assert y1 - y0 < 1.0
+    # A vista fica onde estava (docs/gui-plan.md, 9.2): o passa-altas tirou os 3 V da rede, mas os 7 kHz que ficam
+    # ainda estão dentro dela. O F ou o duplo clique ajustam o Y, se o usuário quiser.
+    for eixo, faixa in zip(w.faixas[0].getViewBox().viewRange(), antes, strict=True):
+        assert eixo == pytest.approx(faixa)
 
     janela.projeto.pilha.undo()                            # sem a cadeia: o canal cru de novo
     assert item.dados[0] is cru and janela.materializacoes.estado_de(traco) is None
