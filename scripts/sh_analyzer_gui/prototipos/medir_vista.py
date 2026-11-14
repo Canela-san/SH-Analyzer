@@ -53,8 +53,12 @@ def main() -> int:
         for i in range(8):
             traco = janela.area.plotar_canal(fonte, i % 2)
             janela.projeto.pilha.push(MudarTracos([traco], faixa=i))
+        # Mede depois de o layout assentar (o laço de eventos roda 0,5 s): medido logo depois de plotar, o gráfico
+        # ainda tinha o tamanho de antes da legenda e dos painéis, e a medida saía numa área menor que a real.
+        QTimer.singleShot(500, percorrer)
+
+    def percorrer():
         vista = janela.area.widget_da_vista(janela.vista_ativa())
-        app.processEvents()
         item = next(iter(vista.itens.values()))
         canal = fonte.canal(0)
         navegar.percorrer_zoom(app, vista.grafico, item, len(canal.amostras), canal.taxa_hz)       # aquece

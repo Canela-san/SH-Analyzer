@@ -51,10 +51,8 @@ class ServicoDeFontes(QObject):
                                    cancelado=cancelado)
 
             fonte.definir_progresso_da_piramide(0.0)
-            tarefa = self.tarefas.iniciar(self.tr("Pirâmide de {}").format(fonte.nome), construir, fonte.id)
-            tarefa.progressoMudou.connect(self._progresso)
-            tarefa.terminou.connect(self._piramide_terminou)
-            self._fonte_da_tarefa[tarefa] = fonte
+            self._iniciar(fonte, self.tr("Pirâmide de {}").format(fonte.nome), construir, self._piramide_terminou,
+                          self._progresso)
         elif fonte.integridade == "pendente":
             self._conferir(fonte)
 
@@ -81,8 +79,12 @@ class ServicoDeFontes(QObject):
             return conferir_integridade(captura, progresso=progresso, cancelado=cancelado)
 
         fonte.definir_integridade("conferindo")
-        tarefa = self.tarefas.iniciar(self.tr("Conferir o CRC de {}").format(fonte.nome), conferir, fonte.id)
-        tarefa.terminou.connect(self._conferencia_terminou)
+        self._iniciar(fonte, self.tr("Conferir o CRC de {}").format(fonte.nome), conferir, self._conferencia_terminou)
+
+    def _iniciar(self, fonte: FonteDoProjeto, nome: str, funcao, ao_terminar, ao_progredir=None) -> None:
+        """A tarefa de ``fonte``, com os ouvintes ligados antes de ela começar. O fim chega pela fila de eventos (a
+        tarefa termina noutra thread): o par tarefa -> fonte, guardado logo depois do ``iniciar``, já está lá."""
+        tarefa = self.tarefas.iniciar(nome, funcao, fonte.id, ao_terminar=ao_terminar, ao_progredir=ao_progredir)
         self._fonte_da_tarefa[tarefa] = fonte
 
     def _conferencia_terminou(self, tarefa: Tarefa) -> None:

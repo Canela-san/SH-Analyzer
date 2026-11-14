@@ -8,14 +8,12 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **A Fase 1 está feita no código** (F1.1 a F1.8). Falta só a medida dela, na tela do usuário:
+> **A Fase 1 está feita e medida.** O G1 com 8 faixas na vista de verdade passou na tela do usuário em 14/11
+> (mediana de 8,0 ms, p95 de 9,7 ms; seção 5), depois da rodada de fluidez (seção 7).
 >
-> 1. **O G1 com 8 faixas na vista de verdade** (2 minutos): `uv run --extra gui python -m
->    sh_analyzer_gui.prototipos.medir_vista`. Anote o resultado na seção 5.
-> 2. **O "pronto quando" da Fase 1:** abrir uma captura de 1 h, navegar e medir com 8 traços de 2 fontes, no
->    aplicativo (`uv run --extra gui python -m sh_analyzer_gui`).
->
-> **Depois:** quebrar a Fase 2 (transformações e frequência, plano seção 16) em tarefas, como a 4b.
+> **Próximo:** o "pronto quando" da Fase 1 na mão do usuário (abrir uma captura de 1 h, navegar e medir com 8 traços
+> de 2 fontes, em `uv run --extra gui python -m sh_analyzer_gui`); depois, quebrar a Fase 2 (transformações e
+> frequência, plano seção 16) em tarefas, como a 4b.
 >
 > **No laboratório (opcional, 5 minutos):** a F0.2 colhe da BeagleBone os dados que a Aquisição vai usar (seção 6).
 
@@ -446,7 +444,7 @@ reinstala o ambiente compartilhado no meio, e um teste que abre um subprocesso f
   - a construção da pirâmide em segundo plano (um `QRunnable`), com o progresso e o cancelamento.
 - **Os testes:** abrir uma captura sintética, a árvore e o cancelamento.
 
-### ◐ F1.5: a vista de tempo (falta o G1 com 8 faixas medido numa tela)
+### ☑ F1.5: a vista de tempo
 
 **Feito** (`64f6e57`, só do motor: `CanalDaCaptura.unidade`; `97b7dca`, a interface): `areas/analise/vista_tempo.py`,
 `graficos/faixa.py` (o eixo, a grade, a caixa com os gestos), `componentes/fluxo.py` (a legenda que quebra a linha) e
@@ -516,6 +514,10 @@ direto do widget pula os filtros de evento.
 | 13/11/2026 | G1 sem tela, mesmo percurso: **8 faixas** | **No limite:** mediana de 12,7 ms, p95 de 16,0 ms. Os traços custam ~1,5 ms; o resto são os eixos e as caixas de vista do PyQtGraph | `navegar --sintetico 10 --canais 8 --medir` |
 | 13/11/2026 | **G1 na tela do usuário: 8 faixas**, captura sintética de 1 h (2,88 GB), 1 280 × 626 px | **Aprovado:** mediana de 11,7 ms, p95 de 14,4 ms | `navegar --sintetico 60 --canais 8 --medir` |
 | 13/11/2026 | Instalador do PyInstaller no Linux (a interface, o `sh_placa` e a `api` do motor) | Pasta de 382 MB (128 MB em zstd, 150 MB em gzip); construção em 52 s; partida em 0,36 s com 81 MB | `empacotamento/sh-analyzer-gui.spec` |
+| 14/11/2026 | **G1 na vista de tempo, na tela do usuário, 8 faixas** (área de 702 × 214 px), antes da rodada de fluidez | **Reprovado:** mediana de 18,8 ms, p95 de 20,6 ms | `prototipos/medir_vista.py` |
+| 14/11/2026 | Bancada sem tela, 8 faixas, 1 022 × 558 px: o quadro antes e depois da rodada de fluidez | Mediana de 16,5 → **9,6 ms**; p95 de 21,8 → **11,8 ms**. O custo fixo (nada desenhado) caiu de 8,8 para 2,2 ms | bancada do diário de 14/11 |
+| 14/11/2026 | **G1 na vista de tempo, na tela do usuário, 8 faixas, depois da rodada** | **Aprovado:** mediana de 8,0 ms, p95 de 9,7 ms | `prototipos/medir_vista.py` |
+| 14/11/2026 | Travadas da tela (o laço de eventos parado), captura de 5 min: plotar 8 traços; mudar a faixa de um traço | 0,81 → **0,15 s**; 0,12 → **0,03 s** | idem |
 | 13/11/2026 | G1 sem tela na **vista de tempo**, 8 faixas, com a CPU sob estresse de outra sessão (carga de 16 a 25) | **Sem valor como medida:** mediana de 35 ms. O perfil achou e tirou dois gastos (a grade com o `tickValues` e o rótulo HTML dos eixos escondidos) | `prototipos/medir_vista.py`, perfil |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
@@ -602,6 +604,26 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
 - **13/11/2026 (noite):** a F1.7, os cursores e as medidas. **Próximo:** a F1.8.
 - **13/11/2026 (noite):** a F1.8, a paleta de comandos. **A Fase 1 está feita no código.** Os dois CIs verdes (1 304
   e 427 testes). **Próximo:** o G1 com 8 faixas e o "pronto quando" na tela do usuário; depois, a Fase 2 em tarefas.
+- **14/11/2026:** o `main` do GitHub (as correções dos testes do firmware) trazido para cá (`3ad791f`). **A rodada
+  de fluidez** (`00c1f67` só do motor; `730f4ea` a interface), medida com um perfil e uma bancada que desliga cada
+  parte da vista:
+  - **O quadro do zoom com 8 faixas:** os traços escondidos não consultam mais; o texto da janela de tempo tem
+    largura fixa (mudando de largura a cada quadro, ele refazia o layout da janela inteira); o `TracoLOD` não usa o
+    `viewPixelSize` do PyQtGraph (0,23 ms por traço); os eixos fazem as marcas sem o `np.isclose`, guardam as medidas
+    dos textos, desenham direto (sem a `QPicture`) e o Y fica num cache de pixels; o minimapa virou um widget leve.
+  - **As travadas fora do zoom:** a vista é sincronizada aos poucos (só muda o que mudou); a tabela de medidas mede
+    as colunas uma vez; o inspetor do cabeçalho usa um rótulo de texto rico por seção; a f₁ automática da janela vai
+    até 1 M amostras; o SciPy é importado em segundo plano na partida (a primeira medida o importava, com o GIL
+    preso por ~1,5 s).
+  - **O que sobra do quadro** (~8 ms na bancada) é do PyQtGraph: as 8 `ViewBox` ligadas no tempo (~2 ms), o eixo do
+    tempo (~1,6 ms) e os caminhos dos traços (~0,2 ms cada). Se um dia faltar folga: uma `ViewBox` só para todas as
+    faixas, cada uma com a sua transformação em Y.
+  - **Uma corrida corrigida:** o `GerenciadorDeTarefas.iniciar` começava a tarefa antes de quem chamou ligar o
+    `terminou`; uma tarefa rápida (a conferência de uma captura sem CRC) terminava antes e o fim se perdia (a
+    captura ficava "conferindo"). Os ouvintes agora vão no próprio `iniciar` (`ao_terminar`, `ao_progredir`).
+  - **Para lembrar:** os scripts da GUI fora do pytest abrem a janela na tela do usuário se não tiverem
+    `QT_QPA_PLATFORM=offscreen` (o `medir_vista` abriu umas sete vezes nesta rodada). Numa tela pequena, as 8 faixas
+    ficam com ~27 px cada, com os painéis abertos: recolha-os (Ctrl+B/I/J).
 
 ---
 

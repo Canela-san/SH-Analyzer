@@ -111,8 +111,7 @@ class ServicoDeMedidas(QObject):
                 progresso((k + 1) / len(planos))
             return resultados
 
-        tarefa = self.tarefas.iniciar("Medidas", medir_todos, "medidas", mostrar=False)
-        tarefa.terminou.connect(self._terminou)
+        tarefa = self.tarefas.iniciar("Medidas", medir_todos, "medidas", mostrar=False, ao_terminar=self._terminou)
         self._atual = tarefa
         return tarefa
 

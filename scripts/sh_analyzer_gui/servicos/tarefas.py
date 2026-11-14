@@ -113,11 +113,19 @@ class GerenciadorDeTarefas(QObject):
     def ativas(self) -> tuple[Tarefa, ...]:
         return tuple(self._ativas)
 
-    def iniciar(self, nome: str, funcao: Callable, grupo: str = "", *, mostrar: bool = True) -> Tarefa:
-        """Põe a tarefa na fila e a devolve (ligue ``terminou`` antes de voltar ao laço de eventos). Com
-        ``mostrar=False`` (uma conta rápida e frequente, como as medidas), ela não aparece no painel de tarefas."""
+    def iniciar(self, nome: str, funcao: Callable, grupo: str = "", *, mostrar: bool = True,
+                ao_terminar: Callable | None = None, ao_progredir: Callable | None = None) -> Tarefa:
+        """Põe a tarefa na fila e a devolve. **Os ouvintes vão aqui** (``ao_terminar(tarefa)``,
+        ``ao_progredir(tarefa, fração)``), ligados antes de a tarefa começar: ligados depois do ``iniciar``, uma
+        tarefa rápida pode terminar antes, e o sinal sai para ninguém (o erro apareceu num teste em paralelo: a
+        conferência de uma captura sem CRC ficava "conferindo" para sempre). Com ``mostrar=False`` (uma conta
+        rápida e frequente, como as medidas), ela não aparece no painel de tarefas."""
         tarefa = Tarefa(nome, funcao, grupo)
         tarefa.mostrar = mostrar
+        if ao_progredir is not None:
+            tarefa.progressoMudou.connect(ao_progredir)
+        if ao_terminar is not None:
+            tarefa.terminou.connect(ao_terminar)
         tarefa.terminou.connect(self._terminou)
         self._ativas.append(tarefa)
         if mostrar:

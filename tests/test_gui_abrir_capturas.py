@@ -49,8 +49,7 @@ def test_uma_tarefa_roda_avisa_o_progresso_e_termina(qtbot):
     entrou = []
     tarefas.tarefaEntrou.connect(entrou.append)
     with qtbot.waitSignal(tarefas.tarefaSaiu, timeout=5000):
-        tarefa = tarefas.iniciar("contar", contar)
-        tarefa.progressoMudou.connect(lambda _t, f: progresso.append(f))
+        tarefa = tarefas.iniciar("contar", contar, ao_progredir=lambda _t, f: progresso.append(f))
     assert entrou == [tarefa] and tarefa.estado == "concluida" and tarefa.resultado == "pronto"
     qtbot.waitUntil(lambda: progresso and progresso[-1] == 1.0)
     assert tarefas.ativas == ()
@@ -119,7 +118,14 @@ def test_o_crc_que_nao_confere_e_a_captura_sem_crc(servico, tmp_path, qtbot):
     antiga = FonteDoProjeto(abrir_fonte(captura(tmp_path, "v3.bin", versao=3)))
     for fonte in (alterada, antiga):
         projeto.pilha.push(AdicionarFonte(projeto, fonte))
-    qtbot.waitUntil(lambda: alterada.integridade == "nao_confere" and antiga.integridade == "sem_crc", timeout=10_000)
+    try:
+        qtbot.waitUntil(lambda: alterada.integridade == "nao_confere" and antiga.integridade == "sem_crc",
+                        timeout=10_000)
+    except Exception:
+        pytest.fail(f"alterada: {alterada.integridade}, pirâmide {alterada.piramides is not None}, progresso "
+                    f"{alterada.progresso_da_piramide}; antiga: {antiga.integridade}, pirâmide "
+                    f"{antiga.piramides is not None}, progresso {antiga.progresso_da_piramide}; tarefas "
+                    f"{servico.tarefas.ativas}")
 
 
 # ------------------------------------------------------------------ a árvore
@@ -282,3 +288,15 @@ def test_a_captura_ausente_no_painel_e_no_inspetor(janela, tmp_path):
     janela.inspetor.mostrar("fonte", fonte)
     assert janela.status_fonte.text() == "a.bin: ausente"
     janela.painel_projeto.arvore.grab()                                  # o delegado pinta a ausente sem erro
+
+
+def test_uma_tarefa_rapida_nao_perde_o_fim(qtbot):
+    """Os ouvintes são ligados antes de a tarefa começar: uma tarefa que termina na hora não perde o ``terminou``
+    (o erro: a conferência de uma captura sem CRC ficava "conferindo" para sempre)."""
+    tarefas = GerenciadorDeTarefas(threads=8)
+    fins = []
+    for k in range(200):
+        tarefas.iniciar(f"rápida {k}", lambda _p, _c, k=k: k, ao_terminar=lambda t: fins.append(t.resultado),
+                        mostrar=False)
+    qtbot.waitUntil(lambda: len(fins) == 200, timeout=10_000)
+    assert sorted(fins) == list(range(200)) and tarefas.ativas == ()
