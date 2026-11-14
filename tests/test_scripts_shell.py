@@ -415,7 +415,19 @@ if [ "$blocos" -ge 2 ]; then
     printf '  Taxa medida  %d S/s pelo relógio do ARM (%+.2f %% da pedida)\n' "$real" \
         "$(awk -v r="$real" -v t="$taxa" 'BEGIN { print 100 * (r / t - 1) }')"
 fi
-[ -z "${LER_ADC_REGISTRO:-}" ] || pgrep -x dd > /dev/null && echo "dd rodando" >> "${LER_ADC_REGISTRO:-/dev/null}"
+# LER_ADC_REGISTRO: as capturas feitas com a carga da parte H ligada, uma por linha. A carga é um filho do coletar.sh
+# além deste processo: ele a põe em segundo plano e chama o ler_adc em seguida, e o filho existe desde o '&', com o
+# nome que tiver (o bash recém-criado, o nice, o dd). O pai deste processo é o subshell do $(...), e o avô, o
+# coletar.sh; se o bash não puser o subshell, o pai já é o coletar.sh (por isso os filhos dos dois).
+# [13/11/2026] Era um 'pgrep -x dd' da máquina inteira, e falhou duas vezes seguidas na CI: com a máquina ocupada, a
+# carga ainda não era o dd nas dezenas de milissegundos que este falso leva (a captura de verdade dura 60 s). E o dd
+# de outro teste da --grade, rodando em paralelo, contava como se fosse o deste.
+if [ -n "${LER_ADC_REGISTRO:-}" ]; then
+    avo=$(ps -o ppid= -p "$PPID")
+    if pgrep -P "$PPID,${avo// /}" | grep -qvx -e "$$" -e "$PPID"; then
+        echo "carga ligada: ${saida##*/}" >> "$LER_ADC_REGISTRO"
+    fi
+fi
 # LER_ADC_CORTADA: um trecho do nome da captura que um sinal "cortou" (o ler_adc sai com 5, com o resumo impresso).
 case "$saida" in *"${LER_ADC_CORTADA:-@nenhuma@}"*) exit 5 ;; esac
 '''
@@ -597,6 +609,7 @@ def test_coletar_bancada_grade_roda_a_campanha_t7f_no_padrao(varredura):
     r, pasta = varredura("bancada", "--grade", "--simular")
     assert r.returncode == 0 and "T7f" in r.stdout and "56 capturas" in r.stdout
     registro = varredura.pasta.parent / "registro.txt"
+    registro.touch()                  # sem carga nenhuma, o ler_adc falso não escreve nele
     env = {**varredura.env, "LER_ADC_REGISTRO": str(registro)}
     r = subprocess.run(["bash", str(varredura.pasta / "coletar.sh"), "bancada", "--grade"], cwd=varredura.pasta.parent,
                        env=env, capture_output=True, text=True, timeout=120)
@@ -614,7 +627,8 @@ def test_coletar_bancada_grade_roda_a_campanha_t7f_no_padrao(varredura):
     acima = [linha for linha in teto if linha["amostras_atrasadas"] != "0"]
     assert acima and all(linha["atraso_max_ciclos"] == "77" and linha["folga_ciclos"] == "" for linha in acima)
     assert "folga 31 ciclos" in r.stdout and "trazer 'T7f_*'" in r.stdout
-    assert registro.read_text().count("dd rodando") == 1                  # a carga só na parte H, e desligada depois
+    # A carga só na parte H (a 4ª captura), e desligada depois dela.
+    assert registro.read_text().splitlines() == [f"carga ligada: {linhas[3]['arquivo']}"]
 
 
 def test_coletar_bancada_continuar_retoma_as_partes_da_varredura_anterior(varredura):

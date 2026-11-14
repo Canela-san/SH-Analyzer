@@ -98,8 +98,11 @@ struct shared_control {
     // cada troca de buffer (uma escrita de 12 bytes por SAMPLES_PER_BUFFER
     // amostras, 4 amostras depois da troca: ver evento_de_buffer em
     // spi_core.asm), então não custam nada por amostra. O ARM (ler_adc.c) os
-    // zera antes de config_ready=1, lê depois de cada bloco gravado e os
-    // grava no cabeçalho v4. Em uma captura saudável, os três ficam em 0.
+    // zera antes de config_ready=1, lê com a cópia de cada bloco (antes de
+    // liberar o buffer) e grava no cabeçalho v4 os lidos com o último bloco
+    // gravado: a PRU continua depois dele, e uma leitura posterior traria
+    // eventos de amostras fora do arquivo. Em uma captura saudável, os três
+    // ficam em 0.
     //
     //   amostras_atrasadas: amostras cujo instante já tinha passado quando a
     //     PRU chegou para tomá-las -- a taxa pedida passou do que o laço
