@@ -8,12 +8,11 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **A Fase 1 está feita e medida.** O G1 com 8 faixas na vista de verdade passou na tela do usuário em 14/11
-> (mediana de 8,0 ms, p95 de 9,7 ms; seção 5), depois da rodada de fluidez (seção 7).
+> **F2.1: a `api` da frequência** (seção 4c), a primeira da Fase 2. A Fase 1 está feita e medida: o G1 com 8 faixas
+> passou na tela do usuário em 14/11 (mediana de 8,0 ms, p95 de 9,7 ms; seção 5).
 >
-> **Próximo:** o "pronto quando" da Fase 1 na mão do usuário (abrir uma captura de 1 h, navegar e medir com 8 traços
-> de 2 fontes, em `uv run --extra gui python -m sh_analyzer_gui`); depois, quebrar a Fase 2 (transformações e
-> frequência, plano seção 16) em tarefas, como a 4b.
+> **Com o usuário (quando puder):** o "pronto quando" da Fase 1, abrir uma captura de 1 h, navegar e medir com 8
+> traços de 2 fontes, em `uv run --extra gui python -m sh_analyzer_gui`.
 >
 > **No laboratório (opcional, 5 minutos):** a F0.2 colhe da BeagleBone os dados que a Aquisição vai usar (seção 6).
 
@@ -500,6 +499,113 @@ direto do widget pula os filtros de evento.
 
 ---
 
+## 4c. Fase 2 em tarefas: transformações e frequência
+
+**Pronto quando** (o plano, seção 16): a jornada do pesquisador vai da captura ao espectro corrigido pela sonda, e os
+números batem com a CLI. **Tag v0.9.**
+
+**A ordem:** a F2.1 (a `api`) e a F2.2 (a cadeia, sem Qt) vêm primeiro; a F2.3 depende da F2.2; a F2.4, da F2.3; as
+vistas de frequência (F2.5 a F2.7) dependem da F2.1 e usam a cadeia da F2.2. A F2.8 a F2.10 são independentes entre
+si. A F2.11 fecha.
+
+### ☐ F2.1: a `api` da frequência (commits só do motor)
+
+- **Arquivos:** `supraharmonicos/api.py`; testes em `tests/test_api.py`.
+- **O conteúdo:** parâmetros num dataclass imutável e resultado noutro (plano, 8.2), sobre as funções que já existem:
+  - `espectro(captura, canal, inicio, fim, parametros)`: FFT e Welch (`espectro.calcular_espectro`,
+    `calcular_espectro_welch`), com a janela, a resolução e a escala;
+  - `picos(...)`, `espectrograma(...)`, `bandas_iec(...)` e `harmonicos(...)` (`bandas_iec`, `harmonicos`);
+  - o progresso e o cancelamento nas contas longas (as bandas e o espectrograma de uma captura inteira).
+- **Os testes:** a paridade com a CLI nas capturas sintéticas (`tests/capturas_sinteticas.py`): os mesmos números
+  do `adc_tool --fft`, `--welch` e `--bandas-iec` para o mesmo trecho.
+
+### ☐ F2.2: a cadeia de transformações, sem Qt
+
+- **Arquivos:** `dados/cadeia.py`; a `ReceitaDoTraco` ganha as etapas; o `.shproj` sobe para a versão 2 (e lê a 1).
+- **O conteúdo** (plano, 7.2):
+  - as etapas, cada uma com a sua classe (afim, com memória) e os parâmetros validados: os filtros (passa-baixas,
+    passa-altas, passa-faixa, rejeita-faixa; Butterworth primeiro), remover o DC e a correção de sonda
+    (`aplicar_correcao_sonda`, automática pelo cabeçalho ou escolhida);
+  - a **prévia**: a janela visível com a margem de acomodação de cada etapa, descartada nas bordas;
+  - a **fase zero em blocos** (duas passadas, o estado levado de um bloco ao outro) e a **correção de sonda em
+    blocos** (sobreposição e soma).
+- **Os testes:** a paridade em blocos com o vetor inteiro (o `sosfiltfilt` e o `aplicar_correcao_sonda`, a 1e-9
+  relativo); cada etapa inválida recusada com a mensagem; a ida e volta pelo projeto, e o projeto v1 aberto.
+
+### ☐ F2.3: a materialização e o cache
+
+- **Arquivos:** `servicos/materializar.py`; o cache em `dados/cache.py`.
+- **O conteúdo:**
+  - a captura inteira transformada em segundo plano, em blocos, gravada com a sua pirâmide;
+  - o cache endereçado pelo conteúdo (o CRC da fonte, o canal e a receita): duas vistas com a mesma receita dividem
+    o arquivo; o limite de tamanho (LRU) e o "limpar";
+  - o `TracoLOD` mostra a prévia enquanto a materialização roda, e troca para ela quando fica pronta.
+- **Os testes:** o traço materializado igual ao do motor sobre o vetor inteiro; cancelar no meio; o cache
+  reaproveitado e o limite respeitado; a prévia em menos de 200 ms (plano, 7.2).
+
+### ☐ F2.4: a cadeia no inspetor e nos chips
+
+- **O conteúdo:**
+  - a seção **Processamento** do inspetor (plano, 9.4): um cartão por etapa (ligar e desligar, reordenar, abrir os
+    parâmetros) e "Adicionar etapa" com um menu buscável; cada mudança, um comando de desfazer;
+  - o resumo no chip (`sonda · −DC`) e o progresso da materialização;
+  - a seção **Calibração**: o perfil de sonda, a faixa válida (sombreada no gráfico) e os avisos da conferência.
+- **Os testes:** adicionar, mudar, reordenar e desligar uma etapa, e desfazer cada passo; a faixa válida no gráfico.
+
+### ☐ F2.5: a vista de espectro
+
+- **Arquivos:** `areas/analise/vista_espectro.py`; o tipo `"espectro"` no projeto.
+- **O conteúdo** (ES-01, ES-02):
+  - FFT e Welch de cada traço, com a cadeia dele, sobre um trecho: a região dos cursores, a janela visível da vista
+    de tempo ligada ou a captura inteira;
+  - a escala (dBV, dBc, V RMS), a frequência linear ou logarítmica, e a faixa de 2 a 150 kHz sombreada;
+  - os picos marcados, os harmônicos de f₁ e o piso de ruído;
+  - as contas em segundo plano (vale o pedido mais recente), o cursor de frequência e as medidas.
+- **Os testes:** os números da vista iguais aos da `api` (e esta, aos da CLI); trocar a escala e o trecho.
+
+### ☐ F2.6: as bandas IEC e o espectrograma
+
+- **O conteúdo** (ES-03, ES-04): a tabela das bandas de 200 Hz e o mapa de calor banda × tempo (RMS, máximo, P95);
+  o espectrograma com o mapa de cores perceptual, com o tempo ligado ao da vista de tempo. Uma captura longa vai em
+  blocos, com o progresso no painel de tarefas.
+- **Os testes:** as bandas iguais às do `adc_tool --bandas-iec`; o tempo ligado; cancelar.
+
+### ☐ F2.7: os harmônicos
+
+- **O conteúdo** (ES-05): barras e tabela dos grupos e subgrupos da IEC 61000-4-7, o THD, o THDG e o THDS, da janela
+  sincronizada pelos cruzamentos por zero.
+- **Os testes:** a tabela igual à da CLI para o mesmo trecho.
+
+### ☐ F2.8: os avisos nos chips, o erro inesperado e o log
+
+- **O conteúdo:** os avisos do motor também no chip do traço (o problema da sonda, a faixa suposta); o diálogo de
+  erro inesperado, com os detalhes copiáveis e o caminho do log, sem fechar o aplicativo (GE-09); o log em rotação
+  na pasta do sistema, sem senhas nem conteúdo de arquivos (plano, 8.4).
+- **Os testes:** um erro numa tarefa e num slot vira o diálogo, e o aplicativo segue; o log gravado e em rotação.
+
+### ☐ F2.9: as configurações
+
+- **O conteúdo** (GE-05): a tela de configurações, com o tema e as fontes (hoje no menu de ajustes), as pastas
+  (`$DADOS`, sondas, cache), o separador decimal, as unidades, reduzir movimento e o limite do cache, todos
+  gravados; "limpar o cache".
+- **Os testes:** cada configuração gravada e aplicada na partida; o limite do cache respeitado.
+
+### ☐ F2.10: o que ficou da Fase 1
+
+- **O conteúdo:**
+  - abrir o `.h5` e o `.csv` do `adc_tool`, e o `.bin` legado pedindo a taxa e os canais (PD-02);
+  - copiar o cabeçalho como texto ou JSON (PD-07);
+  - o zoom em caixa (`Z` + arrastar) e o modo sobrepor da vista de tempo (AN-03, AN-04).
+- **Os testes:** cada formato aberto com os mesmos volts da CLI; o zoom em caixa e o sobrepor.
+
+### ☐ F2.11: o fechamento da Fase 2
+
+- **O conteúdo:** a jornada do pesquisador num teste de ponta a ponta (abrir, plotar, ligar a correção de sonda,
+  abrir o espectro, conferir com a CLI); o G1 medido de novo com a cadeia ligada; o plano e este arquivo em dia.
+  **A tag v0.9** fica para o dono do projeto (nada vai ao GitHub sem ele pedir).
+
+---
+
 ## 5. Resultados medidos
 
 | Data | O quê | Resultado | Onde |
@@ -639,6 +745,7 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **Os avisos `qt.qpa.wayland.textinput`** que o usuário viu no terminal ("Trying to disable ... but ... is
     focused") são do plugin de Wayland do Qt, a cada troca de foco entre superfícies; o aplicativo silencia essa
     categoria (`QT_LOGGING_RULES` ainda a liga de volta).
+- **14/11/2026:** a Fase 2 quebrada em tarefas (seção 4c). **Próximo:** a F2.1.
 ---
 
 ## 8. Perguntas em aberto

@@ -1403,6 +1403,8 @@ na vista de verdade, numa tela.
 
 ### Fase 2: transformações e frequência (4 semanas)
 
+**Em tarefas** (F2.1 a F2.11) em `docs/gui-progress.md`, seção 4c.
+
 - [ ] A cadeia de transformações: as afins, os filtros, o DC e a correção de sonda; a prévia e a materialização em segundo plano; o cache.
 - [ ] As vistas de espectro (FFT e Welch), bandas IEC, espectrograma e harmônicos.
 - [ ] Os avisos do motor no painel e nos chips; o painel de tarefas.
