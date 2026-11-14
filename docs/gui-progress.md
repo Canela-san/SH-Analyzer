@@ -625,6 +625,20 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     `QT_QPA_PLATFORM=offscreen` (o `medir_vista` abriu umas sete vezes nesta rodada). Numa tela pequena, as 8 faixas
     ficam com ~27 px cada, com os painéis abertos: recolha-os (Ctrl+B/I/J).
 
+- **14/11/2026:** o botão do meio na vista de tempo, a pedido do usuário: arrastar em cima de um traço move só ele
+  (o offset em Y e o deslocamento no tempo; um passo de desfazer por arrasto, pela marca de gesto do
+  `MudarTracos`); em outro lugar, move a vista nas duas direções sem mudar as escalas; o clique rápido põe o 0 do
+  eixo Y no meio da faixa e tira o offset do traço clicado (ou dos selecionados nela). Testado também com eventos
+  de mouse de verdade pela cena do PyQtGraph.
+  - **Uma queda achada pela CI** (um *segmentation fault*, 1 vez em 4 rodadas): a coleta de lixo automática do
+    Python rodou numa tarefa em segundo plano (uma medida de uma janela já fechada, importando o SciPy) e apagou
+    widgets fora da thread da interface. Agora a coleta só roda na thread da interface, num temporizador do Qt
+    (`app.ligar_coleta_na_thread_da_interface`, o `GarbageCollector` do PyQtGraph), e nenhuma tarefa começa depois
+    de `GerenciadorDeTarefas.encerrar()`. **Para lembrar:** com a coleta automática desligada, uma conta longa e
+    síncrona na thread da interface acumula lixo até o laço de eventos voltar.
+  - **Os avisos `qt.qpa.wayland.textinput`** que o usuário viu no terminal ("Trying to disable ... but ... is
+    focused") são do plugin de Wayland do Qt, a cada troca de foco entre superfícies; o aplicativo silencia essa
+    categoria (`QT_LOGGING_RULES` ainda a liga de volta).
 ---
 
 ## 8. Perguntas em aberto

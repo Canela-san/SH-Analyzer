@@ -108,6 +108,7 @@ class GerenciadorDeTarefas(QObject):
         self.pool = QThreadPool(self)
         self.pool.setMaxThreadCount(threads)
         self._ativas: list[Tarefa] = []
+        self.encerrado = False
 
     @property
     def ativas(self) -> tuple[Tarefa, ...]:
@@ -122,6 +123,11 @@ class GerenciadorDeTarefas(QObject):
         rápida e frequente, como as medidas), ela não aparece no painel de tarefas."""
         tarefa = Tarefa(nome, funcao, grupo)
         tarefa.mostrar = mostrar
+        if self.encerrado:
+            # Depois de encerrar (a janela fechando), nada começa: um temporizador atrasado (a medida da vista)
+            # não põe uma thread para rodar com a janela sendo apagada.
+            tarefa.estado = "cancelada"
+            return tarefa
         if ao_progredir is not None:
             tarefa.progressoMudou.connect(ao_progredir)
         if ao_terminar is not None:
@@ -139,7 +145,9 @@ class GerenciadorDeTarefas(QObject):
                 tarefa.cancelar()
 
     def encerrar(self, espera_ms: int = 10_000) -> bool:
-        """Cancela todas e espera elas pararem; ``False`` se alguma não parou a tempo."""
+        """Cancela todas e espera elas pararem; ``False`` se alguma não parou a tempo. Depois disso, nenhuma tarefa
+        nova começa."""
+        self.encerrado = True
         for tarefa in self._ativas:
             tarefa.cancelar()
         return self.pool.waitForDone(espera_ms)

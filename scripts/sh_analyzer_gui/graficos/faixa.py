@@ -6,6 +6,10 @@
 * :class:`CaixaDaFaixa`: a ``ViewBox`` com os gestos do plano: a roda dá zoom no tempo, centrado no cursor; Ctrl +
   roda, no eixo Y da faixa; Shift + roda anda no tempo; arrastar anda no tempo; o duplo clique ajusta tudo. Um clique
   avisa onde foi (``clicada``), para a vista selecionar o traço mais perto.
+* **O botão do meio** (a roda apertada): arrastar move, sem mudar as escalas. Começando em cima de um traço, a vista
+  pede o modo ``"traco"`` (``arrasteDoMeioComecou``) e só aquele traço anda (``tracoArrastado``, com o deslocamento
+  total desde o começo); em qualquer outro lugar, anda a vista inteira, nas duas direções. Um clique rápido com ele
+  pede o 0 no meio da faixa (``centroPedido``).
 """
 
 from __future__ import annotations
@@ -172,10 +176,14 @@ class CaixaDaFaixa(pg.ViewBox):
 
     clicada = Signal(float, float, object)
     ajustarPedido = Signal()
+    arrasteDoMeioComecou = Signal(float, float)     # onde começou (unidades da vista); a vista diz o modo
+    tracoArrastado = Signal(float, float, bool)     # dx, dy desde o começo; se o arrasto terminou
+    centroPedido = Signal(float, float)             # o clique rápido do meio: onde foi
 
     def __init__(self):
         super().__init__(enableMenu=False)
         self.setMouseEnabled(x=True, y=False)          # arrastar anda no tempo; o Y fica onde está
+        self.modo_do_meio = "vista"                    # "vista" (anda tudo) ou "traco" (a vista move um traço)
         self.aplicar_tema(aparencia().tema)
 
     def aplicar_tema(self, t: Tema) -> None:
@@ -204,14 +212,35 @@ class CaixaDaFaixa(pg.ViewBox):
                 ponto = self.mapToView(evento.pos())
                 self.clicada.emit(ponto.x(), ponto.y(), evento.modifiers())
             evento.accept()
+        elif evento.button() == Qt.MouseButton.MiddleButton:
+            ponto = self.mapToView(evento.pos())
+            self.centroPedido.emit(ponto.x(), ponto.y())
+            evento.accept()
         else:
             super().mouseClickEvent(evento)
 
+    def centralizar_no_zero(self) -> None:
+        """O 0 do eixo Y no meio da faixa, com a mesma escala (a mesma altura em Y); o tempo fica onde está."""
+        _, (y0, y1) = self.viewRange()
+        meia = (y1 - y0) / 2
+        self.setYRange(-meia, meia, padding=0)
+
     def mouseDragEvent(self, evento, eixo=None):
         if evento.button() == Qt.MouseButton.MiddleButton:
-            # O botão do meio também anda no tempo (o gesto dos osciloscópios), sem mexer no Y.
             evento.accept()
-            anterior, atual = self.mapToView(evento.lastPos()), self.mapToView(evento.pos())
-            self.translateBy(x=anterior.x() - atual.x())
+            inicio = self.mapToView(evento.buttonDownPos())
+            if evento.isStart():
+                self.modo_do_meio = "vista"
+                self.arrasteDoMeioComecou.emit(inicio.x(), inicio.y())     # a vista pode trocar para "traco"
+            if self.modo_do_meio == "traco":
+                # A vista não anda neste modo: o deslocamento desde o começo vale nas unidades de agora.
+                atual = self.mapToView(evento.pos())
+                self.tracoArrastado.emit(atual.x() - inicio.x(), atual.y() - inicio.y(), evento.isFinish())
+            else:
+                # Anda a vista inteira nas duas direções, sem mudar a escala: os dados seguem o mouse.
+                anterior, atual = self.mapToView(evento.lastPos()), self.mapToView(evento.pos())
+                self.translateBy(x=anterior.x() - atual.x(), y=anterior.y() - atual.y())
+            if evento.isFinish():
+                self.modo_do_meio = "vista"
             return
         super().mouseDragEvent(evento, eixo)

@@ -85,16 +85,18 @@ class RemoverTracos(QUndoCommand):
 
 class MudarTracos(QUndoCommand):
     """Muda campos da receita de um ou mais traços, como um passo só de desfazer:
-    ``MudarTracos([a, b], cor=2)``. Com ``juntar=True``, mudanças seguidas dos mesmos campos nos mesmos traços
-    viram uma (arrastar o ganho não enche a pilha)."""
+    ``MudarTracos([a, b], cor=2)``. Com ``juntar``, mudanças seguidas dos mesmos campos nos mesmos traços viram uma
+    (arrastar o ganho não enche a pilha). ``juntar`` pode ser ``True`` ou uma marca (qualquer objeto): com a marca,
+    só se juntam as do mesmo gesto, e dois arrastos seguidos do mesmo traço ficam em dois passos de desfazer.
+    ``texto`` troca o texto automático ("Mover V_A")."""
 
-    def __init__(self, tracos, *, juntar: bool = False, **mudancas):
+    def __init__(self, tracos, *, juntar: object = False, texto: str | None = None, **mudancas):
         tracos = list(dict.fromkeys(tracos))
         if not tracos or not mudancas:
             raise ValueError("diga quais traços e o que muda")
         antes = [t.receita for t in tracos]
         depois = [r.com(**mudancas) for r in antes]          # valida aqui, antes do push
-        super().__init__(self._texto(tracos, antes, depois, mudancas))
+        super().__init__(texto or self._texto(tracos, antes, depois, mudancas))
         self.tracos, self.antes, self.depois = tracos, antes, depois
         self.campos = frozenset(mudancas)
         self.juntar = juntar
@@ -113,9 +115,14 @@ class MudarTracos(QUndoCommand):
     def id(self) -> int:
         return ID_MUDAR_TRACOS if self.juntar else -1
 
+    @property
+    def muda_algo(self) -> bool:
+        """Se o comando muda alguma receita (um gesto parado não precisa entrar na pilha)."""
+        return any(a != d for a, d in zip(self.antes, self.depois))
+
     def mergeWith(self, outro: QUndoCommand) -> bool:
-        if not (isinstance(outro, MudarTracos) and outro.juntar and outro.campos == self.campos
-                and outro.tracos == self.tracos):
+        if not (isinstance(outro, MudarTracos) and outro.juntar and outro.juntar == self.juntar
+                and outro.campos == self.campos and outro.tracos == self.tracos):
             return False
         self.depois = outro.depois
         return True

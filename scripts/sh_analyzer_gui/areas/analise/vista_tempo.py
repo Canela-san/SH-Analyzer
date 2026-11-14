@@ -9,6 +9,9 @@ ligado entre elas.
 * **O histórico do zoom:** cada parada do zoom ou do pan (400 ms sem mexer) entra no histórico; Backspace volta.
   ``F`` (ou o duplo clique) ajusta a captura inteira.
 * **O minimapa** mostra a captura inteira do primeiro traço e a janela visível; arrastar a janela anda no tempo.
+* **O botão do meio:** arrastar em cima de um traço move só ele (o offset em Y e o deslocamento no tempo, um passo
+  de desfazer por arrasto); em outro lugar, move a vista inteira nas duas direções, sem mudar as escalas. Um clique
+  rápido põe o 0 do eixo Y no meio da faixa e tira o deslocamento em Y do traço clicado (ou dos selecionados nela).
 * **Os cursores** (``C``): duas linhas verticais, as mesmas em todas as faixas; arrastar uma a move, e as setas
   movem a última mexida amostra a amostra (Shift: 10 amostras). A região a medir (``regiaoMudou``) é a dos cursores
   ou, sem eles, a janela visível; ela sai 250 ms depois da última mudança.
@@ -28,6 +31,7 @@ from ...componentes.numeros import formatar_si
 from ...graficos.faixa import LARGURA_DO_EIXO_Y, CaixaDaFaixa, EixoDoTema, GradeDoTema
 from ...graficos.minimapa import Minimapa
 from ...graficos.traco_lod import TracoLOD
+from ...modelo.comandos import MudarTracos
 from ...modelo.objetos import FonteDoProjeto, Projeto, Traco, Vista
 from ...modelo.selecao import Selecao
 from ...tema.aplicar import aparencia
@@ -64,6 +68,7 @@ class VistaDeTempo(QWidget):
         self.cursores: list[float] | None = None
         self._linhas_dos_cursores: list[list[pg.InfiniteLine]] = []
         self._cursor_ativo = 1
+        self._arraste: tuple | None = None          # o arrasto do meio em cima de um traço, em andamento
 
         self._criar_barra()
         self._legenda = QWidget()
@@ -304,6 +309,9 @@ class VistaDeTempo(QWidget):
         faixa.grade = grade
         faixa.ligada_a = None
         caixa.clicada.connect(self._clicou)
+        caixa.arrasteDoMeioComecou.connect(self._meio_comecou)
+        caixa.tracoArrastado.connect(self._traco_arrastado)
+        caixa.centroPedido.connect(self._centro_pedido)
         caixa.ajustarPedido.connect(self.ajustar)
         caixa.aplicar_tema(aparencia().tema)
         return faixa
@@ -444,7 +452,12 @@ class VistaDeTempo(QWidget):
             if "visivel" in campos:
                 item.setVisible(r.visivel)
         if chip is not None:
-            self._refazer_legenda()
+            if campos & {"nome", "cor"}:
+                self._refazer_legenda()
+            elif campos & {"ganho", "deslocamento_s", "visivel"}:
+                # Só o chip deste traço muda (arrastar o traço muda o deslocamento a cada movimento do mouse:
+                # refazer a legenda inteira a cada passo pesava no arrasto).
+                chip.definir(resumo=self._resumo(traco), visivel=r.visivel)
         if "visivel" in campos or "cor" in campos:
             self._refazer_minimapa()
 
@@ -456,20 +469,26 @@ class VistaDeTempo(QWidget):
 
     # ------------------------------------------------------------------ a legenda
 
+    def _resumo(self, traco: Traco) -> str:
+        """O que o chip diz além do nome: ausente, o ganho e o deslocamento no tempo."""
+        r = traco.receita
+        fonte = self._fonte_do(traco)
+        resumo = []
+        if fonte is not None and fonte.esta_ausente:
+            resumo.append(self.tr("ausente"))
+        if r.ganho != 1:
+            resumo.append(f"×{r.ganho:g}".replace(".", ",").replace("-", "−"))
+        if r.deslocamento_s:
+            resumo.append(f"{formatar_si(r.deslocamento_s, 's', 3)}".replace("-", "−"))
+        return " · ".join(resumo)
+
     def _refazer_legenda(self) -> None:
         self._fluxo_da_legenda.limpar()
         self.chips = {}
         for traco in self.vista.tracos:
             r = traco.receita
             fonte = self._fonte_do(traco)
-            resumo = []
-            if fonte is not None and fonte.esta_ausente:
-                resumo.append(self.tr("ausente"))
-            if r.ganho != 1:
-                resumo.append(f"×{r.ganho:g}".replace(".", ",").replace("-", "−"))
-            if r.deslocamento_s:
-                resumo.append(f"{formatar_si(r.deslocamento_s, 's', 3)}".replace("-", "−"))
-            chip = ChipDeTraco(r.nome, r.cor, " · ".join(resumo))
+            chip = ChipDeTraco(r.nome, r.cor, self._resumo(traco))
             chip.definir(visivel=r.visivel, selecionado=traco in self.selecao.tracos,
                          progresso=fonte.progresso_da_piramide if fonte is not None else None)
             chip.clicado.connect(lambda t=traco: self.tracoClicado.emit(t, Qt.KeyboardModifier.NoModifier))
@@ -556,12 +575,53 @@ class VistaDeTempo(QWidget):
 
     # ------------------------------------------------------------------ selecionar
 
-    def _clicou(self, x: float, y: float, modificadores) -> None:
-        caixa = self.sender()
+    def traco_em(self, caixa, x: float, y: float) -> Traco | None:
+        """O traço visível desta faixa a até 6 px do ponto ``(x, y)`` (nas unidades da vista), o mais perto."""
         candidatos = [(item.distancia_em_pixels(x, y), traco) for traco, item in self.itens.items()
                       if item.isVisible() and item.getViewBox() is caixa]
         perto = min(candidatos, key=lambda par: par[0], default=(float("inf"), None))
-        self.tracoClicado.emit(perto[1] if perto[0] <= ALCANCE_DO_CLIQUE_PX else None, modificadores)
+        return perto[1] if perto[0] <= ALCANCE_DO_CLIQUE_PX else None
+
+    def _clicou(self, x: float, y: float, modificadores) -> None:
+        self.tracoClicado.emit(self.traco_em(self.sender(), x, y), modificadores)
+
+    # ------------------------------------------------------------------ o botão do meio
+
+    def _meio_comecou(self, x: float, y: float) -> None:
+        """O arrasto do meio começou: em cima de um traço, a caixa passa ao modo de mover só ele."""
+        caixa = self.sender()
+        traco = self.traco_em(caixa, x, y)
+        if traco is None:
+            self._arraste = None
+            return
+        caixa.modo_do_meio = "traco"
+        r = traco.receita
+        self._arraste = (traco, r.offset, r.deslocamento_s, object())    # a marca junta só este gesto
+
+    def _traco_arrastado(self, dx: float, dy: float, terminou: bool) -> None:
+        arraste = getattr(self, "_arraste", None)
+        if arraste is None:
+            return
+        traco, offset, deslocamento, marca = arraste
+        comando = MudarTracos([traco], juntar=marca, texto=self.tr("Mover {}").format(traco.nome),
+                              offset=offset + dy, deslocamento_s=deslocamento + dx)
+        if comando.muda_algo:
+            self.projeto.pilha.push(comando)
+        if terminou:
+            self._arraste = None
+
+    def _centro_pedido(self, x: float, y: float) -> None:
+        """O clique rápido do meio: o traço clicado (ou os selecionados nesta faixa) perde o deslocamento em Y, e o 0
+        do eixo Y vai para o meio da faixa. O tempo fica onde está."""
+        caixa = self.sender()
+        traco = self.traco_em(caixa, x, y)
+        alvos = [traco] if traco is not None else [
+            t for t in self.selecao.tracos if t in self.itens and self.itens[t].getViewBox() is caixa]
+        alvos = [t for t in alvos if t.receita.offset != 0]
+        if alvos:
+            nome = alvos[0].nome if len(alvos) == 1 else self.tr("{} traços").format(len(alvos))
+            self.projeto.pilha.push(MudarTracos(alvos, texto=self.tr("Centralizar {}").format(nome), offset=0.0))
+        caixa.centralizar_no_zero()
 
     # ------------------------------------------------------------------ tema
 

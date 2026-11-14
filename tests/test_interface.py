@@ -71,3 +71,17 @@ def test_opcoes_da_linha_de_comando(capsys):
     assert opcoes.tema == "claro" and resto == ["prog", "-platform", "offscreen"] and opcoes.arquivo is None
     opcoes, resto = modulo.ler_opcoes(["prog", "-platform", "offscreen", "/lab/Rede do bloco E.SHPROJ"])
     assert str(opcoes.arquivo) == "/lab/Rede do bloco E.SHPROJ" and resto == ["prog", "-platform", "offscreen"]
+
+
+def test_os_avisos_de_foco_do_wayland_sao_silenciados(qapp):
+    """O plugin de Wayland do Qt escrevia um aviso a cada troca de foco entre superfícies; o aplicativo silencia
+    essa categoria (e só ela)."""
+    from PySide6.QtCore import QLoggingCategory
+    from sh_analyzer_gui import app as modulo
+
+    modulo.silenciar_avisos_do_qt()
+    try:
+        assert not QLoggingCategory("qt.qpa.wayland.textinput").isWarningEnabled()
+        assert QLoggingCategory("qt.qpa.wayland").isWarningEnabled()
+    finally:
+        QLoggingCategory.setFilterRules("")

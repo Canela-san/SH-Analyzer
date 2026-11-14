@@ -10,7 +10,7 @@ import sys
 from importlib import metadata, resources
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QLoggingCategory, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 from supraharmonicos.api import aquecer
@@ -63,7 +63,19 @@ def criar_aplicacao(argv: list[str] | None = None, tema: str = "sistema") -> QAp
     registrar_fontes()
     app.setFont(fonte_da_interface())
     aparencia(app).aplicar(tema)
+    ligar_coleta_na_thread_da_interface(app)
     return app
+
+
+def ligar_coleta_na_thread_da_interface(app: QApplication) -> None:
+    """A coleta de lixo do Python só na thread da interface, num temporizador do Qt (o ``GarbageCollector`` do
+    PyQtGraph: a automática desligada, a mesma regra de gerações). A automática roda em qualquer thread: numa tarefa
+    em segundo plano, ela apagava widgets de uma janela fechada fora da thread da interface, e o processo caía (um
+    segmentation fault na CI da interface, em 14/11/2026). Uma vez por aplicação."""
+    if getattr(app, "_coletor_de_lixo", None) is None:
+        from pyqtgraph.util.garbage_collector import GarbageCollector
+
+        app._coletor_de_lixo = GarbageCollector(interval=1.0)
 
 
 OPCAO_SAIR_AO_ABRIR = "--sair-ao-abrir"
@@ -88,12 +100,23 @@ def ler_opcoes(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     return opcoes, argv[:1] + resto
 
 
+CATEGORIAS_SILENCIADAS = ("qt.qpa.wayland.textinput",)
+"""Avisos do Qt que não dizem nada sobre o aplicativo. No Wayland, o plugin de entrada de texto do Qt escreve "Trying to
+disable ... but ... is focused" a cada troca de foco entre superfícies (a janela, os menus, as dicas, a paleta) e
+enchia o terminal. A variável ``QT_LOGGING_RULES`` ainda os liga de volta (ela tem precedência)."""
+
+
+def silenciar_avisos_do_qt() -> None:
+    QLoggingCategory.setFilterRules("\n".join(f"{c}=false" for c in CATEGORIAS_SILENCIADAS))
+
+
 def main(argv: list[str] | None = None) -> int:
     """Abre a interface e devolve o código de saída do laço de eventos."""
     opcoes, argv_qt = ler_opcoes(list(sys.argv if argv is None else argv))
     if opcoes.versao:
         sys.stdout.write(f"{NOME} {versao()}\n")
         return 0
+    silenciar_avisos_do_qt()
     app = criar_aplicacao(argv_qt, tema=opcoes.tema or preferencias.tema_salvo())
     preferencias.aplicar_fontes_salvas(app)
     janela = JanelaPrincipal()

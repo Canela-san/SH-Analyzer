@@ -300,3 +300,25 @@ def test_uma_tarefa_rapida_nao_perde_o_fim(qtbot):
                         mostrar=False)
     qtbot.waitUntil(lambda: len(fins) == 200, timeout=10_000)
     assert sorted(fins) == list(range(200)) and tarefas.ativas == ()
+
+
+def test_depois_de_encerrar_nenhuma_tarefa_comeca(qtbot):
+    """Um temporizador atrasado (a medida da vista) não põe uma thread para rodar com a janela sendo apagada."""
+    tarefas = GerenciadorDeTarefas()
+    assert tarefas.encerrar()
+    rodou = []
+    tarefa = tarefas.iniciar("tarde demais", lambda _p, _c: rodou.append(True))
+    qtbot.wait(50)
+    assert tarefa.estado == "cancelada" and rodou == [] and tarefas.ativas == ()
+
+
+def test_a_coleta_de_lixo_so_na_thread_da_interface(qapp):
+    """A automática do Python roda em qualquer thread e apagava widgets fora da thread da interface (um
+    segmentation fault). A aplicação a desliga e coleta num temporizador do Qt."""
+    import gc
+
+    criar_aplicacao([])
+    assert not gc.isenabled() and qapp._coletor_de_lixo.timer.isActive()
+    coletor = qapp._coletor_de_lixo
+    criar_aplicacao([])
+    assert qapp._coletor_de_lixo is coletor                              # um só por aplicação
