@@ -8,9 +8,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F2.3: a materialização e o cache** (seção 4c). A F2.1 (a `api` da frequência) e a F2.2 (a cadeia de
-> transformações, sem Qt) estão feitas; o traço ainda não mostra a cadeia (a vista de tempo lê a pirâmide do canal
-> cru): é a F2.3 que liga as duas.
+> **F2.4: a cadeia no inspetor e nos chips** (seção 4c). A F2.1 a F2.3 estão feitas: um traço com transformações já
+> aparece na tela (a prévia, o preenchimento, a materialização), mas só dá para montar a cadeia por código ou pelo
+> projeto; a F2.4 traz a seção Processamento do inspetor.
 >
 > **Com o usuário (quando puder):** o "pronto quando" da Fase 1, abrir uma captura de 1 h, navegar e medir com 8
 > traços de 2 fontes, em `uv run --extra gui python -m sh_analyzer_gui`.
@@ -94,13 +94,13 @@ da CLI, pela `api`), edita os traços no inspetor (tudo com desfazer), salva e r
 salvamento automático e a recuperação) e tem a paleta de comandos. As seções 4 e 4b têm o commit de cada tarefa.
 
 **Os commits só do motor** (podem ir ao `main` sozinhos): `974c58a` (a `api`), `e76684b` (a integridade e o
-cabeçalho), `64f6e57` (a unidade do canal), `b5b02ab` (as medidas de um trecho), `71ba268` (a taxa da PRU) e `98d96e0` (a frequência, F2.1), `0ef8255` (os filtros) e `28a1a04` (a margem da sonda). E o do agente da placa: `3f98d7b`.
+cabeçalho), `64f6e57` (a unidade do canal), `b5b02ab` (as medidas de um trecho), `71ba268` (a taxa da PRU) e `98d96e0` (a frequência, F2.1), `0ef8255` (os filtros), `28a1a04` (a margem da sonda) e `3110417` (`medir_sinal`). E o do agente da placa: `3f98d7b`.
 
 **O ambiente:** Python 3.13, PySide6 6.12.0, PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1. Testes, na última rodada:
-`ci.sh rapido` com 1 410 aprovados e `ci.sh interface` com 487 (14/11/2026).
+`ci.sh rapido` com 1 423 aprovados e `ci.sh interface` com 499 (14/11/2026).
 
-**Ainda não existe:** o traço transformado na tela (a cadeia existe sem Qt, F2.2, e o projeto a guarda), as vistas
-de frequência (a `api` delas já existe, F2.1), as figuras e a Aquisição.
+**Ainda não existe:** a edição da cadeia na tela (o traço transformado já é desenhado, F2.3, mas a cadeia só vem
+do projeto), as vistas de frequência (a `api` delas já existe, F2.1), as figuras e a Aquisição.
 
 ---
 
@@ -569,7 +569,29 @@ O plano original:
 - **Os testes:** a paridade em blocos com o vetor inteiro (o `sosfiltfilt` e o `aplicar_correcao_sonda`, a 1e-9
   relativo); cada etapa inválida recusada com a mensagem; a ida e volta pelo projeto, e o projeto v1 aberto.
 
-### ☐ F2.3: a materialização e o cache
+### ☑ F2.3: a materialização e o cache
+
+**Feita em 14/11/2026:** `3d7ffda` (sem Qt: a materialização, o cache e a média do canal), `3110417` (só do motor:
+`api.medir_sinal`) e `263e25e` (o serviço, a vista de tempo e as medidas). As decisões:
+
+- **O cache guarda `float32`:** o arredondamento fica 256 vezes abaixo de um LSB do ADC no fundo de escala (e é
+  relativo: um valor pequeno depois de um passa-altas guarda a mesma precisão). As contas de um trecho (as medidas)
+  refazem a cadeia em `float64` das amostras do ADC.
+- **A chave é o conteúdo:** a captura (o CRC), o canal, a taxa, as etapas **ligadas**, o conteúdo de cada perfil de
+  sonda e a média do canal (se a cadeia remove o DC). A pirâmide, gravada por último e de forma atômica, é a marca de
+  pronto; as amostras vão direto para o arquivo final (no Windows, um arquivo mapeado não se renomeia).
+- **O que a tela mostra de um traço com cadeia, nesta ordem:** a materialização pronta; o começo já materializado,
+  se ele cobre a janela; a prévia da janela (até 1 M amostras); o começo já materializado; nada. **Nunca o canal cru
+  no lugar do transformado.** O traço se preenche da esquerda para a direita enquanto a materialização roda.
+- **A prévia** tem uma thread só dela (uma materialização longa não a deixa na fila) e sai 60 ms depois da última
+  mudança do zoom ou do pan, com um quarto de janela de folga de cada lado. Medido: ~110 ns por amostra com a sonda e
+  dois filtros (1 s de janela a 200 kS/s em ~115 ms); a materialização anda a ~8 M amostras/s (5 min de captura em
+  ~8 s; 1 h em ~90 s).
+- **As medidas** de um traço com cadeia são as do sinal transformado (a cadeia na região com a margem).
+- **Fica para a F2.9:** o limite do cache e o "limpar" na tela de configurações (o `CacheDeMaterializacoes` já os
+  tem).
+
+O plano original:
 
 - **Arquivos:** `servicos/materializar.py`; o cache em `dados/cache.py`.
 - **O conteúdo:**
@@ -827,7 +849,12 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   (`sonda.alcance_da_correcao`, que não gasta o aviso de "fora da faixa" do perfil: o `ganho_em` só avisa uma vez por
   perfil). Na interface, `dados/cadeia.py`, a receita com a cadeia e o `.shproj` v2.
   - **Testes:** `ci.sh rapido` com 1 410 aprovados e `ci.sh interface` com 487.
-  - **Próximo:** a F2.3, a materialização e o cache (e a média do canal, para o "remover o DC").
+- **14/11/2026:** **a F2.3, a materialização e o cache** (seção 4c). O pedido do usuário para esta rodada: "sempre
+  pensando em fluidez de uso e precisão dos dados gerados". Daí a prévia numa thread só dela, o preenchimento
+  progressivo, o "nunca o canal cru no lugar do transformado" e as medidas do sinal transformado em `float64`.
+  - **Testes:** `ci.sh rapido` com 1 423 aprovados e `ci.sh interface` com 499; os de desempenho (`--desempenho`)
+    passam, com a prévia de 1 s abaixo de 200 ms.
+  - **Próximo:** a F2.4, a cadeia no inspetor e nos chips.
 ---
 
 ## 8. Perguntas em aberto
