@@ -3,10 +3,14 @@ ligado entre elas.
 
 * **As faixas:** uma por valor de ``receita.faixa`` (o plotar põe os canais da mesma unidade na mesma faixa). O eixo
   Y de cada uma ajusta ao traço inteiro e fica parado no zoom do tempo (como num osciloscópio); Ctrl + roda o muda.
-* **A escala de cada traço** (``graficos/escalas.py``): os traços de uma faixa dividem o Y; o cadeado da barra
-  destrava o selecionado (o zoom e o pan do Y passam a ser só dele) e "Mesma escala" o devolve à escala comum. O
-  eixo Y mostra os números e a unidade do traço selecionado na faixa (sem seleção, do primeiro travado); com traços
-  de unidades ou escalas diferentes na faixa, o rótulo fica na cor do traço que o eixo mostra.
+* **A escala de cada traço** (``graficos/escalas.py``): os traços de uma faixa dividem o Y, e todos dividem o tempo;
+  o cadeado da barra destrava o selecionado (o zoom e o pan do Y **e do tempo** passam a ser só dele) e "Mesma
+  escala" o devolve à escala comum. O eixo Y mostra os números e a unidade do traço selecionado na faixa (sem
+  seleção, do primeiro travado); o eixo do tempo, o tempo do último selecionado, se ele tem o seu. Com unidades,
+  escalas ou tempos diferentes, o rótulo fica na cor do traço que o eixo mostra.
+* **O tempo próprio de um traço** vale em tudo o que se mede nele: as medidas da região (os cursores, a janela) e o
+  trecho do espectro são o trecho dele que aparece ali na tela (:meth:`VistaDeTempo.regiao_do_traco`), e a prévia
+  de um traço transformado é a da janela dele.
 * **Os traços** são ``TracoLOD`` sobre a pirâmide de cada canal: chegam quando a pirâmide fica pronta. A cor, o
   ganho, o offset, o deslocamento no tempo e a visibilidade mudam no lugar; só a mudança de faixa refaz as faixas.
 * **Um traço com transformações** (a cadeia da receita) é desenhado da sua materialização
@@ -40,7 +44,7 @@ from ...componentes.numeros import formatar_si
 from ...dados.piramide import Piramide
 from ...graficos.clique import mais_perto
 from ...graficos.cursores import CursoresDaVista
-from ...graficos.escalas import EscalasDaCaixa
+from ...graficos.escalas import Afim, EscalasDaCaixa
 from ...graficos.faixa import LARGURA_DO_EIXO_Y, CaixaDaFaixa, EixoDoTema, GradeDoTema
 from ...graficos.minimapa import Minimapa
 from ...graficos.traco_lod import TracoLOD
@@ -93,6 +97,8 @@ class VistaDeTempo(QWidget):
         self._ajustar_y_de: set[Traco] = set()       # traços cuja faixa ajusta o Y quando os dados novos chegarem
         self._conferir_y_de: set[Traco] = set()      # e os que só conferem se ainda aparecem (graficos.escalas.manter)
         self._estados_da_escala: dict[Traco, tuple[bool, bool]] = {}   # (travado, na comum) mostrado de cada traço
+        self._tempos_proprios: dict[Traco, Afim] = {}                   # o tempo de cada traço, da última vez
+        self._modelo_do_minimapa: TracoLOD | None = None
         self._acompanhados: set[Traco] = set()
         materializacoes.mudou.connect(self._materializacao_mudou)
         acompanhados, servico = self._acompanhados, materializacoes
@@ -182,7 +188,8 @@ class VistaDeTempo(QWidget):
         IconeDoTema(self.acao_ajustar, "expandir")
         IconeDoTema(self.acao_voltar, "desfazer")
         IconeDoTema(self.acao_cursores, "cursores", papel_ligado="acento")
-        self.acao_destravar, self.acao_igualar = acoes_da_escala(self, self.destravar_selecionados, self.igualar_escalas)
+        self.acao_destravar, self.acao_igualar = acoes_da_escala(self, self.destravar_selecionados, self.igualar_escalas,
+                                                                 com_tempo=True)
         self.info = QLabel()
         self.info.setObjectName("info_da_vista")
         # Tamanho fixo: o texto muda a cada quadro do zoom, e um rótulo que muda de largura refaz o layout da janela
@@ -275,13 +282,14 @@ class VistaDeTempo(QWidget):
         for faixa in self.faixas.values():
             if faixa is ultima:
                 faixa.showAxis("bottom")
-                faixa.setLabel("bottom", self.tr("tempo (s)"))
             else:
                 faixa.hideAxis("bottom")
+                faixa.rotulo_x = None
         for numero, faixa in self.faixas.items():
             faixa.escalas.definir_itens({t: self.itens[t] for t in tracos if t.receita.faixa == numero and
                                          t in self.itens})
         self._rotular_faixas()
+        self._converter_o_tempo()
 
         self._refazer_legenda()
         self._refazer_minimapa()
@@ -351,8 +359,8 @@ class VistaDeTempo(QWidget):
         caixa.centroPedido.connect(self._centro_pedido)
         caixa.ajustarPedido.connect(self.ajustar)
         caixa.aplicar_tema(aparencia().tema)
-        faixa.rotulo_y = None
-        faixa.escalas = EscalasDaCaixa(caixa, eixo_y, parent=faixa)
+        faixa.rotulo_y = faixa.rotulo_x = None
+        faixa.escalas = EscalasDaCaixa(caixa, eixo_y, parent=faixa, com_tempo=True)
         faixa.escalas.referenciaMudou.connect(self._rotular_faixas)
         faixa.escalas.cadeadoMudou.connect(self._escalas_mudaram)
         faixa.escalas.mudou.connect(self._escala_mudou)
@@ -391,8 +399,8 @@ class VistaDeTempo(QWidget):
         return [t for t in self.selecao.tracos if t in self.itens]
 
     def destravar_selecionados(self, destravar: bool = True) -> None:
-        """O cadeado: os traços selecionados nesta vista passam a ter a escala do Y deles (ou voltam a andar com os
-        outros, na escala que ganharam)."""
+        """O cadeado: os traços selecionados nesta vista passam a ter a escala deles, no tempo e no Y (ou voltam a
+        andar com os outros, na escala que ganharam)."""
         tracos = self._tracos_selecionados_aqui()
         for faixa in self.faixas.values():
             faixa.escalas.travar(tracos, travar=not destravar)
@@ -412,14 +420,69 @@ class VistaDeTempo(QWidget):
             return None
         return faixa.escalas.escala(traco), faixa.escalas.travado(traco)
 
+    def _tempo_de(self, traco: Traco | None) -> Afim:
+        estado = self.escala_de(traco) if traco is not None else None
+        return estado[0].x if estado is not None else Afim()
+
+    def tem_tempo_proprio(self, traco: Traco) -> bool:
+        return not self._tempo_de(traco).comum
+
+    def regiao_do_traco(self, traco: Traco, inicio: float, fim: float) -> tuple[float, float]:
+        """A região ``[inicio, fim]`` da vista (s) no tempo do traço: a mesma, sem tempo próprio; com ele, o trecho do
+        traço que aparece entre ``inicio`` e ``fim`` na tela (o que as medidas e o espectro dele usam)."""
+        x = self._tempo_de(traco)
+        if x.comum:
+            return inicio, fim
+        a, b = x.no_traco(inicio), x.no_traco(fim)
+        return min(a, b), max(a, b)
+
+    def regioes_proprias(self, inicio: float, fim: float) -> dict[Traco, tuple[float, float]]:
+        """A região de cada traço de tempo próprio (os outros medem a da vista)."""
+        return {t: self.regiao_do_traco(t, inicio, fim) for t in self.vista.tracos if self.tem_tempo_proprio(t)}
+
+    def _referencia_do_tempo(self) -> Traco | None:
+        """O traço que o eixo do tempo mostra: o último selecionado nesta vista."""
+        selecionados = self._tracos_selecionados_aqui()
+        return selecionados[-1] if selecionados else None
+
+    def _converter_o_tempo(self) -> None:
+        """O eixo do tempo (e a grade de cada faixa) nos tempos do traço de referência, se ele tem o seu; o rótulo
+        então na cor dele."""
+        if not isValid(self) or not self.faixas:
+            return
+        referencia = self._referencia_do_tempo()
+        x = self._tempo_de(referencia)
+        for faixa in self.faixas.values():
+            faixa.getAxis("bottom").definir_conversao(x.k, x.c)
+        ultima = self.faixas[max(self.faixas)]
+        cor = None if x.comum else cor_do_traco(referencia.receita.cor, aparencia().tema)[0]
+        rotulo = (self.tr("tempo (s)"), cor)
+        if ultima.rotulo_x != rotulo:
+            ultima.rotulo_x = rotulo
+            ultima.setLabel("bottom", rotulo[0], **({"color": cor} if cor else {}))
+
     def _travado_e_comum(self, traco: Traco) -> tuple[bool, bool]:
         estado = self.escala_de(traco)
         return (True, True) if estado is None else (estado[1], estado[0].comum)
 
     def _escala_mudou(self, traco: Traco) -> None:
-        """A escala de um traço mudou (um gesto, o ajuste): se ela passou da comum para a própria (ou voltou), o
-        chip, os botões e o rótulo (a cada passo de um gesto, nada mais)."""
-        if isValid(self) and self._estados_da_escala.get(traco) != self._travado_e_comum(traco):
+        """A escala de um traço mudou (um gesto, o ajuste). Se o tempo dele mudou, o trecho dele na tela também: as
+        medidas e a prévia, o eixo do tempo e o minimapa (se ele é o traço deles). Se ela passou da comum para a
+        própria (ou voltou), o chip, os botões e os rótulos. A cada passo de um gesto, nada mais."""
+        if not isValid(self):
+            return
+        x = self._tempo_de(traco)
+        if x != self._tempos_proprios.get(traco, Afim()):
+            self._tempos_proprios[traco] = x
+            self._espera_da_medida.start()
+            if traco in self._acompanhados:
+                self._espera_da_previa.start()
+            if traco is self._referencia_do_tempo():
+                self._converter_o_tempo()
+                self._atualizar_info()
+            if self._modelo_do_minimapa is not None and self.itens.get(traco) is self._modelo_do_minimapa:
+                self._acompanhar_no_minimapa()
+        if self._estados_da_escala.get(traco) != self._travado_e_comum(traco):
             self._escalas_mudaram()
 
     def _escalas_mudaram(self) -> None:
@@ -427,13 +490,17 @@ class VistaDeTempo(QWidget):
         if not isValid(self):
             return
         self._estados_da_escala = {t: self._travado_e_comum(t) for t in self.itens}
+        self._tempos_proprios = {t: self._tempo_de(t) for t in self.itens}
         for traco, chip in self.chips.items():
             chip.definir(escala=estado_do_chip(*self._travado_e_comum(traco)))
         selecionados = self._tracos_selecionados_aqui()
         atualizar_acoes_da_escala(self.acao_destravar, self.acao_igualar,
                                   [self._travado_e_comum(t) for t in selecionados],
-                                  [self._travado_e_comum(t) for t in (selecionados or list(self.itens))])
+                                  [self._travado_e_comum(t) for t in (selecionados or list(self.itens))],
+                                  com_tempo=True)
         self._rotular_faixas()
+        self._converter_o_tempo()
+        self._atualizar_info()
 
     def _desenhar(self, traco: Traco) -> None:
         fonte = self._fonte_do(traco)
@@ -508,8 +575,9 @@ class VistaDeTempo(QWidget):
         r = traco.receita
         canal = fonte.canal(r.canal)
         n = len(canal.amostras)
-        i0 = int(max(0, (janela[0] - r.deslocamento_s) * canal.taxa_hz))
-        i1 = int(min(n, (janela[1] - r.deslocamento_s) * canal.taxa_hz + 2))
+        inicio, fim = self.regiao_do_traco(traco, *janela)
+        i0 = int(max(0, (inicio - r.deslocamento_s) * canal.taxa_hz))
+        i1 = int(min(n, (fim - r.deslocamento_s) * canal.taxa_hz + 2))
         return (i0, max(i0, i1))
 
     def _dados(self, traco: Traco, estado: EstadoDaMaterializacao | None):
@@ -564,7 +632,7 @@ class VistaDeTempo(QWidget):
         if caixa is None:
             self._conferir_y_de.discard(traco)
             return
-        limites = item.limites_y_em(*caixa.viewRange()[0])
+        limites = item.limites_y_em(*item.janela_do_traco(*caixa.viewRange()[0]))
         faixa = self.faixas.get(traco.receita.faixa)
         if limites is not None and faixa is not None:
             self._conferir_y_de.discard(traco)
@@ -576,7 +644,7 @@ class VistaDeTempo(QWidget):
         if faixa is None:
             return
         escalas = faixa.escalas
-        limites = [escalas.na_vista(traco, item.dataBounds(1)) for traco, item in self.itens.items()
+        limites = [escalas.limites_na_vista(traco, item.dataBounds(1)) for traco, item in self.itens.items()
                    if traco.receita.faixa == numero_da_faixa and item.dados[0].n_amostras and escalas.travado(traco)]
         if limites:
             y0, y1 = min(a for a, _ in limites), max(b for _, b in limites)
@@ -809,17 +877,32 @@ class VistaDeTempo(QWidget):
     def _refazer_minimapa(self) -> None:
         """O fundo do minimapa: o primeiro traço visível, da captura inteira."""
         modelo = next((self.itens[t] for t in self.vista.tracos if t in self.itens and t.receita.visivel), None)
+        self._modelo_do_minimapa = modelo
         self.minimapa.setVisible(modelo is not None)
         if modelo is None:
             self.minimapa.definir_traco(None)
             return
         self.minimapa.definir_traco(modelo._piramide, modelo._amostras, modelo._taxa, t0=modelo._origem,
                                     escala=modelo._escala, deslocamento=modelo._deslocamento)
+        self._acompanhar_no_minimapa()
+
+    def _janela_no_minimapa(self) -> tuple[float, float] | None:
+        """A janela visível no tempo do traço do minimapa (que pode ter o seu)."""
         janela = self.janela_de_tempo()
-        if janela is not None:
-            self.minimapa.definir_janela(*janela)
+        modelo = self._modelo_do_minimapa
+        if janela is None or modelo is None or not isValid(modelo):
+            return janela
+        return modelo.janela_do_traco(*janela)
 
     def _janela_do_minimapa(self, inicio: float, fim: float) -> None:
+        """Arrastar a janela no minimapa (no tempo do traço dele): a janela da vista vai junto, ou, com o traço
+        destravado, só o tempo dele (:meth:`EscalasDaCaixa.mostrar_no_tempo`)."""
+        modelo = self._modelo_do_minimapa
+        traco = next((t for t, item in self.itens.items() if item is modelo), None) if modelo is not None else None
+        faixa = self.faixas.get(traco.receita.faixa) if traco is not None else None
+        if faixa is not None:
+            faixa.escalas.mostrar_no_tempo(traco, inicio, fim)
+            return
         principal = self._faixa_principal()
         if principal is not None:
             principal.getViewBox().setXRange(inicio, fim, padding=0)
@@ -849,7 +932,7 @@ class VistaDeTempo(QWidget):
             self._espera_da_medida.start()
 
     def _acompanhar_no_minimapa(self) -> None:
-        janela = self.janela_de_tempo() if isValid(self) else None
+        janela = self._janela_no_minimapa() if isValid(self) else None
         if janela is not None:
             self.minimapa.definir_janela(*janela)
 
@@ -873,13 +956,16 @@ class VistaDeTempo(QWidget):
         return True
 
     def _atualizar_info(self) -> None:
+        """A janela visível no tempo que o eixo do tempo mostra (o do último selecionado; sem seleção, o da vista), e
+        as amostras dela no traço selecionado (sem seleção, no primeiro)."""
         janela = self.janela_de_tempo()
-        primeiro = next(iter(self.itens.values()), None)
-        if janela is None or primeiro is None:
+        referencia = self._referencia_do_tempo()
+        item = self.itens.get(referencia) if referencia is not None else next(iter(self.itens.values()), None)
+        if janela is None or item is None:
             self.info.setText("")
             return
-        x0, x1 = janela
-        amostras = (x1 - x0) * primeiro._taxa
+        x0, x1 = self.regiao_do_traco(referencia, *janela) if referencia is not None else janela
+        amostras = (x1 - x0) * item._taxa
         self.info.setText(f"{formatar_si(x0, '', 6)} – {formatar_si(x1, 's', 6)} · {formatar_si(x1 - x0, 's', 3)} · "
                           f"{formatar_si(amostras, '', 3)} amostras".replace("-", "−").replace(" − ", " – "))
 
@@ -923,5 +1009,6 @@ class VistaDeTempo(QWidget):
             item.definir_cor(cor_do_traco(traco.receita.cor, t)[0])
         self._cursores.aplicar_tema(t)
         for faixa in self.faixas.values():
-            faixa.rotulo_y = None                  # a cor do rótulo segue a do traço, que muda com o tema
+            faixa.rotulo_y = faixa.rotulo_x = None   # a cor do rótulo segue a do traço, que muda com o tema
         self._rotular_faixas()
+        self._converter_o_tempo()

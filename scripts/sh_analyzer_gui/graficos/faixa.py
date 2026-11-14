@@ -1,7 +1,7 @@
 """As peças de uma faixa da vista de tempo (docs/gui-plan.md, 6.6 e 9.2), com o tema:
 
-* :class:`EixoDoTema`: o eixo do PyQtGraph com as cores e a fonte do tema e os números com vírgula; o eixo Y mostra
-  os números do traço de referência, pela escala própria dele (``graficos/escalas.py``);
+* :class:`EixoDoTema`: o eixo do PyQtGraph com as cores e a fonte do tema e os números com vírgula; ele mostra os
+  números do traço de referência, pela escala própria dele (``graficos/escalas.py``);
 * :class:`GradeDoTema`: a grade nas marcas principais dos eixos, **opaca** e sem antialiasing (a semitransparente do
   PyQtGraph custava ~17 ms por quadro no protótipo);
 * :class:`CaixaDaFaixa`: a ``ViewBox`` (com as escalas dos traços: ``graficos/escalas.py``) com os gestos do plano: a roda dá zoom no tempo, centrado no cursor; Ctrl +
@@ -61,14 +61,15 @@ class MedidorDeTexto:
 class EixoDoTema(pg.AxisItem):
     """O eixo com as cores do tema e os números no formato brasileiro (vírgula decimal, menos tipográfico).
 
-    **A conversão** (só no eixo Y): com um traço de escala própria como referência, os números são os dele, ``valor
-    = (y na vista - c) / k`` (``graficos/escalas.py``); a grade segue as marcas (``conversaoMudou``)."""
+    **A conversão:** com um traço de escala própria como referência, os números são os dele, ``u = (v na vista - c)
+    / k`` (``graficos/escalas.py``: o valor no eixo Y, o tempo no eixo do tempo); a grade segue as marcas
+    (``conversaoMudou``)."""
 
     conversaoMudou = Signal()
 
     def __init__(self, orientacao: str):
         super().__init__(orientacao)
-        self.conversao = (1.0, 0.0)             # (k, c): y na vista = k·valor + c
+        self.conversao = (1.0, 0.0)             # (k, c): na vista = k·u + c
         self._medidor = MedidorDeTexto()
         self.enableAutoSIPrefix(False)
         self.setTickFont(fonte_mono(TAMANHOS["legenda"]))
@@ -88,10 +89,11 @@ class EixoDoTema(pg.AxisItem):
         self.conversaoMudou.emit()
 
     def linkedViewChanged(self, view, newRange=None):
-        if self.orientation in ("left", "right") and self.conversao != (1.0, 0.0):
+        if self.conversao != (1.0, 0.0):
             k, c = self.conversao
-            y0, y1 = view.viewRange()[1] if newRange is None else newRange
-            newRange = ((y0 - c) / k, (y1 - c) / k)
+            v0, v1 = view.viewRange()[1 if self.orientation in ("left", "right") else 0] if newRange is None \
+                else newRange
+            newRange = ((v0 - c) / k, (v1 - c) / k)
         super().linkedViewChanged(view, newRange)
 
     def paint(self, p: QPainter, opcao, widget) -> None:
@@ -160,8 +162,9 @@ class GradeDoTema(pg.GraphicsObject):
         self._chave = None
         self._linhas: list[QLineF] = []
         self.setZValue(-100)
-        if isinstance(eixo_y, EixoDoTema):
-            eixo_y.conversaoMudou.connect(self.update)
+        for eixo in (eixo_x, eixo_y):
+            if isinstance(eixo, EixoDoTema):
+                eixo.conversaoMudou.connect(self.update)
 
     def aplicar_tema(self, t: Tema) -> None:
         self._cor = QColor(t.grade)
@@ -177,14 +180,15 @@ class GradeDoTema(pg.GraphicsObject):
 
     def _calcular(self, vb) -> list[QLineF]:
         (x0, x1), (y0, y1) = vb.viewRange()
-        k, c = getattr(self._eixo_y, "conversao", (1.0, 0.0))
-        chave = (x0, x1, y0, y1, vb.width(), vb.height(), k, c)
+        kx, cx = getattr(self._eixo_x, "conversao", (1.0, 0.0))
+        ky, cy = getattr(self._eixo_y, "conversao", (1.0, 0.0))
+        chave = (x0, x1, y0, y1, vb.width(), vb.height(), kx, cx, ky, cy)
         if chave != self._chave:
             self._chave = chave
-            # As linhas do Y nas marcas do eixo, que podem ser as de um traço de escala própria.
-            marcas_y = k * marcas_principais(self._eixo_y, (y0 - c) / k, (y1 - c) / k, vb.height()) + c
-            self._linhas = ([QLineF(x, y0, x, y1) for x in marcas_principais(self._eixo_x, x0, x1, vb.width())]
-                            + [QLineF(x0, y, x1, y) for y in marcas_y])
+            # As linhas nas marcas dos eixos, que podem ser as de um traço de escala própria.
+            marcas_x = kx * marcas_principais(self._eixo_x, (x0 - cx) / kx, (x1 - cx) / kx, vb.width()) + cx
+            marcas_y = ky * marcas_principais(self._eixo_y, (y0 - cy) / ky, (y1 - cy) / ky, vb.height()) + cy
+            self._linhas = ([QLineF(x, y0, x, y1) for x in marcas_x] + [QLineF(x0, y, x1, y) for y in marcas_y])
         return self._linhas
 
     def paint(self, p: QPainter, *args) -> None:
@@ -259,7 +263,7 @@ class CaixaDaFaixa(CaixaComEscalas):
         """O 0 do eixo Y (o do traço de referência, se ele tem escala própria) no meio da faixa, com a mesma escala;
         o tempo fica onde está. É um pan do Y: com traços de escala própria selecionados, só eles andam."""
         _, (y0, y1) = self.viewRange()
-        zero = self.escalas.escala(self.escalas.referencia).na_vista(0.0) if self.escalas is not None else 0.0
+        zero = self.escalas.escala(self.escalas.referencia).y.na_vista(0.0) if self.escalas is not None else 0.0
         self.translateBy(y=zero - (y0 + y1) / 2)
 
     def mouseDragEvent(self, evento, axis=None):

@@ -335,8 +335,9 @@ class VistaLigada(QWidget):
                 else:
                     regiao = tuple(sorted(tempo.cursores))
             if regiao is not None:
-                a = int(min(max(round((regiao[0] - r.deslocamento_s) * canal.taxa_hz), 0), n))
-                b = int(min(max(round((regiao[1] - r.deslocamento_s) * canal.taxa_hz), 0), n))
+                inicio, fim = tempo.regiao_do_traco(traco, *regiao)        # o trecho dele na tela (tempo próprio)
+                a = int(min(max(round((inicio - r.deslocamento_s) * canal.taxa_hz), 0), n))
+                b = int(min(max(round((fim - r.deslocamento_s) * canal.taxa_hz), 0), n))
         estado = self.materializacoes.estado_de(traco)
         pronta = estado.pronta.amostras if estado is not None and estado.pronta is not None else None
         trecho = esp.TrechoDoTraco(fonte.fonte.captura, r.canal, r.cadeia, self.materializacoes.contexto(fonte, r.canal),

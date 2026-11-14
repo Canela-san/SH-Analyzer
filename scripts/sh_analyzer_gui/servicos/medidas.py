@@ -5,6 +5,9 @@ Num traço com transformações, as medidas são as do sinal transformado, o mes
 região com a margem dela (``Cadeia.previa``), em ``float64`` a partir das amostras do ADC, e a ``api`` mede o
 resultado (``medir_sinal``). Longe das bordas da captura, é o traço inteiro transformado (``dados/cadeia.py``).
 
+Um traço com o tempo próprio (a escala destravada, ``graficos/escalas.py``) mede o trecho **dele** que aparece na
+região da tela (``PedidoDeMedida.por_traco``), e a medida guarda esse trecho (``MedidaDoTraco.inicio_s``/``fim_s``).
+
 Em segundo plano (uma região grande leva o filtro da fundamental): cada pedido cancela o anterior, e só o resultado
 do mais recente chega (``prontas``). Uma região com mais de :data:`LIMITE_DE_AMOSTRAS` amostras não é medida (a
 conta leria tudo para a memória): a tabela diz para aproximar o zoom ou usar os cursores.
@@ -13,7 +16,8 @@ conta leria tudo para a memória): a tabela diz para aproximar o zoom ou usar os
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 
 from PySide6.QtCore import QObject, Signal
 from supraharmonicos.api import ErroSHAN, MedidasDaRegiao, medir_regiao, medir_sinal
@@ -43,10 +47,16 @@ class MedidaDoTraco:
 
 @dataclass(frozen=True)
 class PedidoDeMedida:
+    """A região da vista (s) e, dos traços com o tempo próprio, a região de cada um no tempo dele."""
+
     vista: Vista
     inicio_s: float
     fim_s: float
     dos_cursores: bool
+    por_traco: Mapping[Traco, tuple[float, float]] = field(default_factory=dict)
+
+    def regiao_de(self, traco: Traco) -> tuple[float, float]:
+        return self.por_traco.get(traco, (self.inicio_s, self.fim_s))
 
 
 def _indice(t: float, t0: float, taxa: float, n: int) -> int:
@@ -82,8 +92,9 @@ class ServicoDeMedidas(QObject):
                 continue
             canal = fonte.canal(r.canal)
             n = len(canal.amostras)
-            i0 = _indice(pedido.inicio_s, r.deslocamento_s, canal.taxa_hz, n)
-            i1 = _indice(pedido.fim_s, r.deslocamento_s, canal.taxa_hz, n)
+            inicio, fim = pedido.regiao_de(traco)
+            i0 = _indice(inicio, r.deslocamento_s, canal.taxa_hz, n)
+            i1 = _indice(fim, r.deslocamento_s, canal.taxa_hz, n)
             planos.append((traco, fonte.fonte.captura, r, i0, i1, n, canal.unidade, self._contexto(fonte, r)))
         if not planos:
             self._atual = None
@@ -117,7 +128,7 @@ class ServicoDeMedidas(QObject):
                     if 0 <= a and 0 <= b:
                         pontos = medir_pontos(captura, r, (a, b), ctx, n)
                         delta = pontos[1] - pontos[0]
-                resultados.append(MedidaDoTraco(traco, pedido.inicio_s, pedido.fim_s, medidas, erro, delta, unidade))
+                resultados.append(MedidaDoTraco(traco, *pedido.regiao_de(traco), medidas, erro, delta, unidade))
                 progresso((k + 1) / len(planos))
             return resultados
 

@@ -416,8 +416,9 @@ class VistaDeEspectro(QWidget):
             if o.trecho == "captura" or regiao is None:
                 a, b = 0, n
             else:
-                a = int(min(max(round((regiao[0] - r.deslocamento_s) * canal.taxa_hz), 0), n))
-                b = int(min(max(round((regiao[1] - r.deslocamento_s) * canal.taxa_hz), 0), n))
+                inicio, fim = tempo.regiao_do_traco(traco, *regiao)        # o trecho dele na tela (tempo próprio)
+                a = int(min(max(round((inicio - r.deslocamento_s) * canal.taxa_hz), 0), n))
+                b = int(min(max(round((fim - r.deslocamento_s) * canal.taxa_hz), 0), n))
             estado = self.materializacoes.estado_de(traco)
             pronta = estado.pronta.amostras if estado is not None and estado.pronta is not None else None
             contexto = self.materializacoes.contexto(fonte, r.canal)
@@ -758,7 +759,8 @@ class VistaDeEspectro(QWidget):
             else:                                   # a envoltória da frequência log: a linha que está desenhada
                 xs, ys = item.getData()
                 e = self.escalas.escala(traco)
-                distancia = math.inf if xs is None else distancia_a_linha(x, y, xs, e.k * ys + e.c, largura, altura)
+                distancia = math.inf if xs is None else distancia_a_linha(x, y, e.x.k * xs + e.x.c, e.y.k * ys + e.y.c,
+                                                                          largura, altura)
             candidatos.append((distancia, (item.zValue(), k), traco))
         return mais_perto(candidatos)
 
@@ -779,7 +781,7 @@ class VistaDeEspectro(QWidget):
         escala = self.escalas.escala(r.traco)
 
         def nivel(f: float) -> float:                  # na vista: pela escala do traço
-            return escala.na_vista(d.nivel_em(f))
+            return escala.y.na_vista(d.nivel_em(f))
 
         if m.picos:
             pontos = pg.ScatterPlotItem([self._x(p.frequencia_hz) for p in m.picos], [nivel(p.frequencia_hz)
@@ -795,7 +797,7 @@ class VistaDeEspectro(QWidget):
                     self._marcas_desenhadas.append(texto)
         if primeiro and math.isfinite(m.piso_db) and o.escala != "rms":
             piso = m.piso_db if o.escala == "db" else m.piso_db + float(d.niveis[0] - e.db[0])
-            linha = pg.InfiniteLine(pos=escala.na_vista(piso), angle=0, movable=False,
+            linha = pg.InfiniteLine(pos=escala.y.na_vista(piso), angle=0, movable=False,
                                     pen=pg.mkPen(QColor(t.mudo), width=1, style=Qt.PenStyle.DashLine),
                                     label=self.tr("piso"), labelOpts={"position": 0.02, "color": t.mudo})
             self.grafico.addItem(linha, ignoreBounds=True)
@@ -980,7 +982,7 @@ class VistaDeEspectro(QWidget):
             fi, nivel = d.f0 + i * d.df, float(d.niveis[i])
             linhas.append(f"{self._texto_do_nivel(nivel, r)} em {formatar_si(fi, 'Hz', 7)}")
             xs.append(self._x(max(fi, d.df) if self.opcoes.frequencia_log else fi))
-            ys.append(self.escalas.escala(r.traco).na_vista(nivel))
+            ys.append(self.escalas.escala(r.traco).y.na_vista(nivel))
             cores.append(pg.mkBrush(QColor(cor_do_traco(r.traco.receita.cor, t)[0])))
         self.valor_no_mouse.setText("\n".join(linhas))
         self.valor_no_mouse.setPos(ponto)

@@ -230,7 +230,9 @@ class AreaDeAnalise(QObject):
     def _regiao_mudou(self, inicio: float, fim: float, dos_cursores: bool) -> None:
         widget = self.sender()
         if widget is self.abas.currentWidget():          # só a vista aberta é medida
-            self.servico_de_medidas.medir(self.projeto, PedidoDeMedida(widget.vista, inicio, fim, dos_cursores))
+            proprias = widget.regioes_proprias(inicio, fim)       # os traços com o tempo próprio: o trecho deles
+            self.servico_de_medidas.medir(self.projeto, PedidoDeMedida(widget.vista, inicio, fim, dos_cursores,
+                                                                       proprias))
 
     def _medidas_da_vista(self, medidas) -> None:
         """As medidas dos cursores de uma vista de frequência (só a aberta vai para a tabela)."""

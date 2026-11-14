@@ -169,6 +169,9 @@ class TabelaDeMedidas(QStackedWidget):
         for linha, m in enumerate(medidas):
             self.tabela.setItem(linha, 0, self._celula_do_traco(m.traco))
             regiao = self.tr("cursores") if pedido.dos_cursores else self.tr("janela")
+            propria = m.traco in pedido.por_traco               # o tempo próprio: o trecho dele, na dica
+            if propria:
+                regiao = self.tr("{} · tempo próprio").format(regiao)
             valores = [regiao]
             if m.medidas is None:
                 valores += ["—"] * 5
@@ -182,6 +185,10 @@ class TabelaDeMedidas(QStackedWidget):
             for coluna, texto in enumerate(valores, start=1):
                 item = QTableWidgetItem(texto)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                if coluna == 1 and propria:
+                    item.setToolTip(self.tr("O trecho deste traço (o tempo dele é próprio): {} → {} · {}").format(
+                        formatar_si(m.inicio_s, "s", 7), formatar_si(m.fim_s, "s", 7),
+                        formatar_si(m.fim_s - m.inicio_s, "s", 5)))
                 if m.erro and coluna > 1:
                     item.setToolTip(m.erro)
                     item.setForeground(QColor(t.mudo))
