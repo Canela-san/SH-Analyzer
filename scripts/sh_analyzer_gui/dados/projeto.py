@@ -1,8 +1,9 @@
 """O arquivo de projeto ``.shproj`` (docs/gui-plan.md, 7.3): JSON legível e versionado, com as receitas e nunca os
 resultados.
 
-* **O formato:** ``{"formato": "sh-analyzer-projeto", "versao": 1, ...}``. Uma versão nova lê as antigas; um arquivo
+* **O formato:** ``{"formato": "sh-analyzer-projeto", "versao": 2, ...}``. Uma versão nova lê as antigas; um arquivo
   de uma versão mais nova que esta é recusado com a mensagem de atualizar o aplicativo (nunca aberto pela metade).
+  A versão 2 trouxe a cadeia de transformações de cada traço (``etapas``); um traço da versão 1 abre sem nenhuma.
 * **As fontes** vão pelo caminho relativo à pasta do projeto (a pasta inteira pode mudar de lugar), pelo absoluto (o
   projeto pode mudar sem os dados) e pela identidade das amostras: o CRC do cabeçalho v9 e o tamanho. Se os dois
   caminhos falham, :func:`localizar_fonte` procura pelo CRC (PD-06).
@@ -25,7 +26,7 @@ from pathlib import Path
 from .receita import ReceitaDoTraco, ReceitaInvalida
 
 FORMATO = "sh-analyzer-projeto"
-VERSAO = 1
+VERSAO = 2
 EXTENSAO = ".shproj"
 SUFIXO_AUTOMATICO = "~"
 TIPOS_DE_VISTA = ("tempo",)
@@ -114,7 +115,7 @@ def para_dict(projeto: ProjetoSalvo) -> dict:
         "aplicativo": projeto.versao_do_aplicativo,
         "fontes": [asdict(f) for f in projeto.fontes],
         "vistas": [{"id": v.id, "nome": v.nome, "tipo": v.tipo,
-                    "tracos": [{"id": t.id, **asdict(t.receita)} for t in v.tracos]} for v in projeto.vistas],
+                    "tracos": [{"id": t.id, **t.receita.para_dict()} for t in v.tracos]} for v in projeto.vistas],
         "layout": dict(projeto.layout),
     }
 
@@ -155,7 +156,9 @@ def de_dict(dados) -> ProjetoSalvo:
     if len(set(ids)) != len(ids):
         raise ProjetoInvalido("duas fontes com o mesmo id")
 
-    campos_da_receita = {f.name for f in fields(ReceitaDoTraco)}
+    campos_da_receita = {f.name for f in fields(ReceitaDoTraco)} - {"cadeia"}
+    if versao >= 2:
+        campos_da_receita.add("etapas")
     vistas = []
     for i, v in enumerate(_campo(dados, "vistas", list, "o projeto")):
         onde = f"a vista {i + 1}"
@@ -170,7 +173,7 @@ def de_dict(dados) -> ProjetoSalvo:
             if desconhecidos:
                 raise ProjetoInvalido(f"{onde_t} tem campos desconhecidos: {', '.join(sorted(desconhecidos))}")
             try:
-                receita = ReceitaDoTraco(**{k: t[k] for k in campos_da_receita if k in t})
+                receita = ReceitaDoTraco.de_dict(t)
             except TypeError as e:
                 raise ProjetoInvalido(f"{onde_t} está incompleto ({e})") from None
             except ReceitaInvalida as e:

@@ -7,6 +7,7 @@ import time
 
 import pytest
 from sh_analyzer_gui.dados import projeto as arq
+from sh_analyzer_gui.dados.cadeia import Cadeia, CorrecaoSonda, Filtro, RemoverDC
 from sh_analyzer_gui.dados.projeto import (
     FonteSalva,
     ProjetoInvalido,
@@ -18,11 +19,13 @@ from sh_analyzer_gui.dados.projeto import (
 )
 from sh_analyzer_gui.dados.receita import ReceitaDoTraco
 
+CADEIA = Cadeia((CorrecaoSonda(), Filtro("passa_altas", (2000.0,), 4), RemoverDC(ligada=False)))
+
 
 def exemplo() -> ProjetoSalvo:
     fontes = (FonteSalva("f1", "dados/a.bin", "/lab/dados/a.bin", 1024, 0xDEADBEEF),
               FonteSalva("f2", "b.bin", "/lab/b.bin", 2048, None, "int16"))
-    r1 = ReceitaDoTraco("f1", 0, "V_A · 09h30", 0, ganho=-1.5, offset=0.25, deslocamento_s=0.004)
+    r1 = ReceitaDoTraco("f1", 0, "V_A · 09h30", 0, ganho=-1.5, offset=0.25, deslocamento_s=0.004, cadeia=CADEIA)
     r2 = ReceitaDoTraco("f2", 3, "I_A", 1, visivel=False, faixa=1)
     vistas = (VistaSalva("v1", "Afundamento", "tempo", (TracoSalvo("t1", r1), TracoSalvo("t2", r2))),
               VistaSalva("v2", "Vazia", "tempo"))
@@ -32,8 +35,29 @@ def exemplo() -> ProjetoSalvo:
 def test_ida_e_volta_pelo_json():
     p = exemplo()
     dados = json.loads(json.dumps(arq.para_dict(p)))
-    assert dados["formato"] == arq.FORMATO and dados["versao"] == arq.VERSAO
+    assert dados["formato"] == arq.FORMATO and dados["versao"] == arq.VERSAO == 2
     assert arq.de_dict(dados) == p
+    t1, t2 = dados["vistas"][0]["tracos"]
+    assert t1["etapas"] == [{"tipo": "correcao_sonda", "ligada": True, "perfil": None},
+                            {"tipo": "filtro", "ligada": True, "filtro": "passa_altas", "cortes": [2000.0], "ordem": 4},
+                            {"tipo": "remover_dc", "ligada": False}]
+    assert t2["etapas"] == [] and "cadeia" not in t1
+
+
+def test_o_projeto_da_versao_1_abre_sem_nenhuma_etapa():
+    """O formato 1 (a Fase 1) não tinha a cadeia: cada traço abre com a cadeia vazia. E nele, ``etapas`` é um campo
+    desconhecido (um arquivo 1 com etapas foi mexido à mão ou é de outra coisa)."""
+    dados = arq.para_dict(exemplo())
+    dados["versao"] = 1
+    for vista in dados["vistas"]:
+        for traco in vista["tracos"]:
+            traco.pop("etapas")
+    aberto = arq.de_dict(json.loads(json.dumps(dados)))
+    assert all(t.receita.cadeia == Cadeia() for v in aberto.vistas for t in v.tracos)
+    assert aberto.vistas[0].tracos[0].receita.nome == "V_A · 09h30"
+    dados["vistas"][0]["tracos"][0]["etapas"] = []
+    with pytest.raises(ProjetoInvalido, match="desconhecidos: etapas"):
+        arq.de_dict(dados)
 
 
 def test_salvar_e_abrir_o_arquivo(tmp_path):
@@ -59,6 +83,9 @@ def test_salvar_e_abrir_o_arquivo(tmp_path):
     (lambda d: d["vistas"][0]["tracos"][0].update(fonte="f9"), "fonte que não está"),
     (lambda d: d["vistas"][0]["tracos"][0].update(brilho=3), "desconhecidos: brilho"),
     (lambda d: d["vistas"][0]["tracos"][0].pop("nome"), "incompleto"),
+    (lambda d: d["vistas"][0]["tracos"][0].update(etapas={"tipo": "remover_dc"}), "etapas são uma lista"),
+    (lambda d: d["vistas"][0]["tracos"][0]["etapas"].append({"tipo": "derivada"}), "etapa desconhecida"),
+    (lambda d: d["vistas"][0]["tracos"][0]["etapas"][1].update(ordem=40), "ordem do filtro"),
     (lambda d: d["vistas"][0].update(tipo="xy"), "tipo que esta versão não abre"),
     (lambda d: d["vistas"][0].update(nome=" "), "sem nome"),
 ])

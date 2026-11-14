@@ -62,3 +62,18 @@ def test_proxima_cor_e_a_primeira_livre():
     assert proxima_cor([0, 1, 2]) == 3
     assert proxima_cor([0, 2, 3]) == 1                  # o âmbar, liberado, volta para o próximo
     assert proxima_cor(iter([1, 1, 0])) == 2
+
+
+def test_a_cadeia_de_transformacoes_na_receita():
+    from sh_analyzer_gui.dados.cadeia import Cadeia, Filtro, RemoverDC
+
+    r = receita()
+    assert r.cadeia == Cadeia() and "cadeia" in EDITAVEIS
+    s = r.com(cadeia=Cadeia((Filtro("passa_altas", (2000.0,), 4), RemoverDC())))
+    assert r.diferencas(s) == {"cadeia"} and s.cadeia.resumo() == "PA 2 kHz · −DC"
+    assert ReceitaDoTraco.de_dict(s.para_dict()) == s
+    with pytest.raises(ReceitaInvalida, match="Cadeia"):
+        r.com(cadeia=[Filtro()])
+    with pytest.raises(ReceitaInvalida, match="cadeia de transformações é inválida"):
+        ReceitaDoTraco.de_dict({**r.para_dict(), "etapas": [{"tipo": "filtro", "filtro": "passa_altas",
+                                                             "cortes": [2000.0, 3000.0]}]})

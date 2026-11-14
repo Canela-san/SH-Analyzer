@@ -1,5 +1,8 @@
-"""A receita de um traço (docs/gui-plan.md, 7.1): de qual canal ele vem e como é mostrado. **Um traço nunca copia
-dados**; ele guarda só esta receita, e o gráfico a aplica sobre a pirâmide do canal.
+"""A receita de um traço (docs/gui-plan.md, 7.1): de qual canal ele vem, a cadeia de transformações e como é
+mostrado. **Um traço nunca copia dados**; ele guarda só esta receita, e o gráfico a aplica sobre a pirâmide do canal.
+
+A ordem: o canal na unidade física, a cadeia (``cadeia.py``: a correção de sonda, os filtros, o "remover o DC") e, no
+fim, o ganho, o offset e o deslocamento no tempo do traço (a apresentação, direto na pirâmide).
 
 Imutável: uma mudança é uma receita nova (``com``), e o desfazer guarda a de antes e a de depois. Validada na
 criação: uma receita inválida nunca entra no modelo nem no arquivo de projeto.
@@ -10,9 +13,11 @@ Sem Qt: o modelo (``modelo/``) e o arquivo de projeto (``dados/projeto.py``) usa
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 
-EDITAVEIS = ("nome", "cor", "ganho", "offset", "deslocamento_s", "visivel", "faixa")
+from .cadeia import Cadeia, EtapaInvalida
+
+EDITAVEIS = ("nome", "cor", "ganho", "offset", "deslocamento_s", "visivel", "faixa", "cadeia")
 """O que o usuário muda num traço. A fonte e o canal, não: outro canal é outro traço."""
 
 
@@ -39,6 +44,7 @@ class ReceitaDoTraco:
     deslocamento_s: float = 0.0  # o traço andado no tempo (positivo = para a direita)
     visivel: bool = True
     faixa: int = 0              # em qual faixa da vista de tempo
+    cadeia: Cadeia = field(default_factory=Cadeia)    # as transformações, antes do ganho e do offset
 
     def __post_init__(self) -> None:
         if not isinstance(self.fonte, str) or not self.fonte:
@@ -59,6 +65,8 @@ class ReceitaDoTraco:
             raise ReceitaInvalida(f"visível tem de ser verdadeiro ou falso, não {self.visivel!r}")
         if not _inteiro(self.faixa) or self.faixa < 0:
             raise ReceitaInvalida(f"faixa inválida: {self.faixa!r}")
+        if not isinstance(self.cadeia, Cadeia):
+            raise ReceitaInvalida(f"a cadeia de transformações tem de ser uma Cadeia, não {self.cadeia!r}")
 
     def com(self, **mudancas) -> ReceitaDoTraco:
         """A receita com ``mudancas`` (só os campos de :data:`EDITAVEIS`). Levanta :class:`ReceitaInvalida`."""
@@ -72,6 +80,24 @@ class ReceitaDoTraco:
     def diferencas(self, outra: ReceitaDoTraco) -> frozenset[str]:
         """Os campos que mudam desta receita para ``outra``."""
         return frozenset(f.name for f in fields(self) if getattr(self, f.name) != getattr(outra, f.name))
+
+    def para_dict(self) -> dict:
+        """Os campos para o arquivo de projeto; a cadeia vai como a lista ``etapas``."""
+        dados = {f.name: getattr(self, f.name) for f in fields(self) if f.name != "cadeia"}
+        dados["etapas"] = self.cadeia.para_lista()
+        return dados
+
+    @classmethod
+    def de_dict(cls, dados: dict) -> ReceitaDoTraco:
+        """A receita do arquivo de projeto (os campos de :meth:`para_dict`; sem ``etapas``, a cadeia vazia).
+        Levanta :class:`ReceitaInvalida` (um campo inválido) ou ``TypeError`` (um campo obrigatório que falta)."""
+        valores = {f.name: dados[f.name] for f in fields(cls) if f.name != "cadeia" and f.name in dados}
+        if "etapas" in dados:
+            try:
+                valores["cadeia"] = Cadeia.de_lista(dados["etapas"])
+            except EtapaInvalida as e:
+                raise ReceitaInvalida(f"a cadeia de transformações é inválida: {e}") from None
+        return cls(**valores)
 
     def afim(self, escala_do_canal: float, deslocamento_do_canal: float) -> tuple[float, float]:
         """A conversão inteira, do código do ADC ao valor mostrado: ``y = escala * codigo + deslocamento``, juntando
