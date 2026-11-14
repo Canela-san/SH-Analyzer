@@ -90,7 +90,7 @@ from .filtros import aplicar_filtro_digital, projetar_filtro_sos
 from .fundamental import cruzamentos_da_fundamental, recortar_ciclos_inteiros
 from .harmonicos import TabelaHarmonicos, calcular_harmonicos
 from .metricas_captura import calcular_basicas
-from .sonda import PerfilSonda, carregar_perfil_sonda
+from .sonda import PerfilSonda, alcance_da_correcao, carregar_perfil_sonda
 from .sonda import aplicar_correcao_sonda as aplicar_correcao_sonda  # a cadeia de transformações da interface usa
 
 LOGGER_DO_MOTOR = "supraharmonicos"
@@ -828,3 +828,10 @@ def carregar_perfil(caminho: Path) -> PerfilSonda:
     """Um perfil de sonda (o ``.json`` do ``gerar_perfil_sonda``) escolhido pelo usuário. Levanta ``ErroSHAN`` para
     um arquivo que falta ou que não é um perfil."""
     return carregar_perfil_sonda(Path(caminho))
+
+
+def margem_da_correcao_sonda(perfil: PerfilSonda, taxa_hz: float, tolerancia: float = 1e-9) -> int:
+    """As amostras de cada lado que um trecho corrigido em pedaços precisa para que o miolo saia como a correção do
+    sinal inteiro (``sonda.alcance_da_correcao``): ~16 000 a 200 kS/s para uma sonda de 1 polo em 30 kHz."""
+    _validar_taxa(taxa_hz)
+    return alcance_da_correcao(perfil, taxa_hz, tolerancia)

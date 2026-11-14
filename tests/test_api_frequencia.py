@@ -399,3 +399,15 @@ def test_carregar_um_perfil_escolhido(ambiente, tmp_path):
     assert perfil.id == "sonda_teste"
     with pytest.raises(api.ErroSHAN):
         api.carregar_perfil(tmp_path / "nao_existe.json")
+
+
+def test_a_margem_da_correcao_de_sonda_e_o_alcance_da_resposta_ao_impulso(ambiente):
+    """A 200 kS/s, a sonda de teste (1 polo em 30 kHz) mistura o sinal até ~16 000 amostras de distância (1e-9 do
+    pico); a margem não depende da grade da conta e não gasta o aviso de "fora da faixa" do perfil."""
+    perfil = api.carregar_perfil(ambiente / "sondas" / "sonda_teste.json")
+    margem = api.margem_da_correcao_sonda(perfil, 200_000.0)
+    assert 10_000 < margem < 30_000
+    assert api.margem_da_correcao_sonda(perfil, 200_000.0, tolerancia=1e-6) < margem
+    with api.capturar_avisos() as avisos:
+        api.aplicar_correcao_sonda(np.zeros(1000), 200_000.0, perfil)
+    assert any("fora da faixa" in a.texto for a in avisos)

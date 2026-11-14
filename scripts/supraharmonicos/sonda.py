@@ -447,6 +447,30 @@ def conferir_calibracao_perfil(perfil: PerfilSonda, canal: int, formato: str,
         )
 
 
+def alcance_da_correcao(perfil: PerfilSonda, fs: float, tolerancia: float = 1e-9,
+                        maximo_amostras: int = 1 << 21) -> int:
+    """Até quantas amostras de distância a correção de :func:`aplicar_correcao_sonda` mistura o sinal: o alcance da
+    sua resposta ao impulso (a IFFT de 1/ganho(f)), até ela ficar abaixo de ``tolerancia`` vezes o pico.
+
+    Quem corrige um trecho em pedaços (a prévia e os blocos da interface) lê cada pedaço com essa margem de cada
+    lado e descarta as bordas: o miolo sai como na correção do sinal inteiro. A grade da IFFT dobra até o alcance
+    caber folgado nela, sem passar de ``maximo_amostras`` (o alcance devolvido, então, é esse teto). Não gasta o
+    aviso de "fora da faixa calibrada", que fica para a correção de verdade."""
+    from scipy.fft import irfft, rfftfreq  # sob demanda: só quem calcula paga o SciPy
+    avisou = perfil._avisou_fora_da_faixa
+    try:
+        n = 1 << 16
+        while True:
+            h = np.abs(irfft(1.0 / perfil.ganho_em(rfftfreq(n, 1.0 / fs)), n))
+            distancia = np.minimum(np.arange(n), n - np.arange(n))      # o atraso de cada ponto (a resposta é par)
+            alcance = int(distancia[h > tolerancia * h.max()].max())
+            if alcance < n // 4 or n >= 2 * maximo_amostras:
+                return min(alcance, maximo_amostras)
+            n *= 2
+    finally:
+        perfil._avisou_fora_da_faixa = avisou
+
+
 def aplicar_correcao_sonda(sinal: np.ndarray, fs: float, perfil: PerfilSonda) -> np.ndarray:
     """Corrige 'sinal' (já em Volts/Ampères pela calibração --faixa/--ganho/
     --offset, ainda SEM a resposta em frequência da sonda) pela curva de
