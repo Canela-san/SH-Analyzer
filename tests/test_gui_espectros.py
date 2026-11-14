@@ -101,3 +101,65 @@ def test_as_opcoes_vao_e_voltam_pelo_dicionario():
     assert o.parametros == api.ParametrosEspectro("fft", None, modo="tom", resolucao_hz=200.0)
     with pytest.raises(esp.OpcoesInvalidas, match="desconhecidas"):
         esp.OpcoesDoEspectro.de_dict({"cor": 1})
+
+
+# ---------------------------------------------------------------------------
+# As bandas IEC e o espectrograma
+# ---------------------------------------------------------------------------
+
+def test_as_bandas_nos_codigos_sao_as_dos_volts_e_as_da_cli(captura, tmp_path):
+    """Sem cadeia, as bandas rodam nos códigos do ADC e são multiplicadas pela escala: os números da api sobre os
+    volts, e os do adc_tool --bandas-iec (pelo .mat, a precisão inteira)."""
+    from scipy.io import loadmat
+    from supraharmonicos.cli_adc_tool import main
+
+    p = esp.OpcoesDasBandas(freq_max=40_000).parametros
+    for ganho in (1.0, -2.0):
+        obtido = esp.bandas_do_trecho(trecho(captura, 0, N, ganho=ganho), p)
+        esperado = api.bandas_iec(api.sinal_do_canal(captura, 0) * ganho, FS, p)
+        np.testing.assert_allclose(obtido.bandas.niveis, esperado.bandas.niveis, rtol=1e-12)
+        np.testing.assert_array_equal(obtido.bandas.centros_hz, esperado.bandas.centros_hz)
+    saida = tmp_path / "bandas.mat"
+    assert main([str(captura.caminho), "--bandas-iec", "--bandas-iec-max", "40000", "--sem-grafico",
+                 "--exportar-mat", str(saida)]) in (0, None)
+    cli = loadmat(saida, squeeze_me=True, struct_as_record=False)["sh"].canal0.bandas_iec
+    obtido = esp.bandas_do_trecho(trecho(captura, 0, N), p)
+    np.testing.assert_allclose(obtido.bandas.niveis, cli.niveis, rtol=1e-12)
+    np.testing.assert_allclose(obtido.bandas.estatisticas()["p95"], cli.p95, rtol=1e-12)
+
+
+def test_as_bandas_sincronizadas_e_com_a_cadeia(captura):
+    p = esp.OpcoesDasBandas(freq_max=20_000, sincronizar=True).parametros
+    obtido = esp.bandas_do_trecho(trecho(captura, 0, N), p)
+    esperado = api.bandas_iec(api.sinal_do_canal(captura, 0), FS, p)
+    np.testing.assert_allclose(obtido.bandas.niveis, esperado.bandas.niveis, rtol=1e-12)
+    assert obtido.bandas.sincronizada and obtido.bandas.ciclos_por_janela == 10
+    cadeia = Cadeia((Filtro("passa_altas", (1000.0,), 4),))
+    com_cadeia = esp.bandas_do_trecho(trecho(captura, 0, N, cadeia=cadeia), esp.OpcoesDasBandas().parametros)
+    inteiro = cadeia.aplicar(api.sinal_do_canal(captura, 0), mat.contexto_do_canal(captura.canal(0))).valores
+    np.testing.assert_allclose(com_cadeia.bandas.niveis,
+                               api.bandas_iec(inteiro, FS, esp.OpcoesDasBandas().parametros).bandas.niveis, rtol=1e-9)
+    with pytest.raises(api.Cancelado):
+        esp.bandas_do_trecho(trecho(captura, 0, N), esp.OpcoesDasBandas().parametros, cancelado=lambda: True)
+
+
+def test_o_espectrograma_nos_codigos_e_o_dos_volts(captura):
+    p = esp.OpcoesDoEspectrograma(resolucao_hz=500).parametros
+    obtido = esp.espectrograma_do_trecho(trecho(captura, 0, N, ganho=3.0), p)
+    esperado = api.espectrograma(api.sinal_do_canal(captura, 0) * 3.0, FS, p)
+    np.testing.assert_allclose(obtido.db, esperado.db, rtol=0, atol=1e-9)
+    np.testing.assert_array_equal(obtido.tempos_s, esperado.tempos_s)
+
+
+@pytest.mark.parametrize("classe, mudanca, trecho_da_mensagem", [
+    (esp.OpcoesDasBandas, {"estatistica": "media"}, "estatística"),
+    (esp.OpcoesDasBandas, {"traco": -1}, "traço"),
+    (esp.OpcoesDasBandas, {"freq_min": -5}, "freq_min"),
+    (esp.OpcoesDoEspectrograma, {"faixa_dinamica_db": 0}, "faixa_dinamica_db"),
+    (esp.OpcoesDoEspectrograma, {"trecho": "tudo"}, "trecho"),
+])
+def test_opcoes_das_bandas_e_do_espectrograma(classe, mudanca, trecho_da_mensagem):
+    with pytest.raises(esp.OpcoesInvalidas, match=trecho_da_mensagem):
+        classe(**mudanca)
+    o = classe(vista_de_tempo="v1", traco=2)
+    assert classe.de_dict(o.para_dict()) == o

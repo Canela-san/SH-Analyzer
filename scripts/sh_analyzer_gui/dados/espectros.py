@@ -190,3 +190,163 @@ def marcas(espectro: api.Espectro, n_picos: int, harmonicos: bool, ordem_maxima:
     f0 = espectro.f0_hz
     frequencias = tuple(h * f0 for h in range(2, ordem_maxima + 1) if h * f0 < nyquist) if harmonicos and f0 else ()
     return Marcas(achados, piso, frequencias)
+
+
+# ---------------------------------------------------------------------------
+# As bandas IEC e o espectrograma (ES-03, ES-04)
+# ---------------------------------------------------------------------------
+
+ESTATISTICAS = ("rms", "p95", "maximo", "minimo")
+LIMITE_DA_SINCRONIZACAO = 1 << 26
+"""As bandas sincronizadas acham os cruzamentos por zero da fundamental nos volts do trecho inteiro, na memória:
+até 64 M amostras (~5 min a 200 kS/s, 512 MB)."""
+
+
+def _validar_comum(opcoes) -> None:
+    if opcoes.trecho not in TRECHOS:
+        raise OpcoesInvalidas(f"trecho inválido: {opcoes.trecho!r} (use {', '.join(TRECHOS)})")
+    if not (isinstance(opcoes.traco, int) and not isinstance(opcoes.traco, bool) and opcoes.traco >= 0):
+        raise OpcoesInvalidas(f"traço inválido: {opcoes.traco!r} (a posição na vista de tempo)")
+    if opcoes.vista_de_tempo is not None and not isinstance(opcoes.vista_de_tempo, str):
+        raise OpcoesInvalidas(f"vista de tempo inválida: {opcoes.vista_de_tempo!r}")
+
+
+class _OpcoesComDicionario:
+    def com(self, **mudancas):
+        return replace(self, **mudancas)
+
+    def para_dict(self) -> dict:
+        return {f.name: getattr(self, f.name) for f in fields(self)}
+
+    @classmethod
+    def de_dict(cls, dados):
+        if not isinstance(dados, dict):
+            raise OpcoesInvalidas("as opções da vista são um objeto")
+        desconhecidas = set(dados) - {f.name for f in fields(cls)}
+        if desconhecidas:
+            raise OpcoesInvalidas(f"opções desconhecidas: {', '.join(sorted(desconhecidas))}")
+        return cls(**dados)
+
+
+@dataclass(frozen=True)
+class OpcoesDasBandas(_OpcoesComDicionario):
+    """A vista das bandas IEC 61000-4-7 (anexo B): de qual traço (a posição na vista de tempo), o trecho, a faixa, a
+    estatística do mapa de calor e as janelas sincronizadas."""
+
+    traco: int = 0
+    trecho: str = "captura"
+    vista_de_tempo: str | None = None
+    freq_min: float = 2000.0
+    freq_max: float | None = None
+    estatistica: str = "p95"
+    sincronizar: bool = False
+
+    def __post_init__(self) -> None:
+        _validar_comum(self)
+        if self.estatistica not in ESTATISTICAS:
+            raise OpcoesInvalidas(f"estatística inválida: {self.estatistica!r} (use {', '.join(ESTATISTICAS)})")
+        if not isinstance(self.sincronizar, bool):
+            raise OpcoesInvalidas("sincronizar tem de ser verdadeiro ou falso")
+        for nome in ("freq_min", "freq_max"):
+            valor = getattr(self, nome)
+            if valor is not None and not (isinstance(valor, (int, float)) and math.isfinite(valor) and valor >= 0):
+                raise OpcoesInvalidas(f"{nome} inválida: {valor!r} (Hz)")
+
+    @property
+    def parametros(self) -> api.ParametrosBandasIEC:
+        return api.ParametrosBandasIEC(float(self.freq_min), None if self.freq_max is None else float(self.freq_max),
+                                       sincronizar=self.sincronizar)
+
+
+@dataclass(frozen=True)
+class OpcoesDoEspectrograma(_OpcoesComDicionario):
+    """A vista do espectrograma: de qual traço, o trecho, a resolução, o modo e a faixa dinâmica do mapa de cores."""
+
+    traco: int = 0
+    trecho: str = "captura"
+    vista_de_tempo: str | None = None
+    resolucao_hz: float = api.RESOLUCAO_WELCH_PADRAO
+    modo: str = "tom"
+    faixa_dinamica_db: float = 80.0
+
+    def __post_init__(self) -> None:
+        _validar_comum(self)
+        if self.modo not in MODOS:
+            raise OpcoesInvalidas(f"modo inválido: {self.modo!r} (use {', '.join(MODOS)})")
+        for nome in ("resolucao_hz", "faixa_dinamica_db"):
+            valor = getattr(self, nome)
+            if not (isinstance(valor, (int, float)) and math.isfinite(valor) and valor > 0):
+                raise OpcoesInvalidas(f"{nome} inválida: {valor!r}")
+
+    @property
+    def parametros(self) -> api.ParametrosEspectrograma:
+        return api.ParametrosEspectrograma(modo=self.modo, resolucao_hz=float(self.resolucao_hz))
+
+
+OPCOES_DO_TIPO = {"espectro": OpcoesDoEspectro, "bandas": OpcoesDasBandas, "espectrograma": OpcoesDoEspectrograma}
+"""A classe das opções de cada tipo de vista de frequência (a vista de tempo não tem opções)."""
+
+
+def _escalar_bandas(resultado: api.ResultadoBandasIEC, fator: float) -> api.ResultadoBandasIEC:
+    """As bandas de ``fator · sinal``: os níveis (RMS de cada banda) multiplicados por ``|fator|``."""
+    if fator == 1.0:
+        return resultado
+    f = abs(fator)
+    b = resultado.bandas
+    agregados = {nome: replace(serie, niveis=serie.niveis * f) for nome, serie in b.agregados.items()}
+    return replace(resultado, bandas=replace(b, niveis=b.niveis * f, agregados=agregados))
+
+
+def _sinal_do_trecho(trecho: TrechoDoTraco, progresso, cancelado):
+    """O sinal do trecho para as contas lineares e o fator que falta aplicar: os códigos do ADC (sem cadeia), o
+    traço transformado na hora (até 8 M amostras) ou a materialização."""
+    canal = trecho.captura.canal(trecho.numero)
+    a, b = trecho.inicio, trecho.fim
+    if trecho.cadeia.vazia:
+        return canal.amostras[a:b], canal.escala * trecho.ganho
+    if trecho.n_amostras <= LIMITE_DA_CADEIA:
+        return trecho.cadeia.previa(leitor_do_canal(trecho.captura, trecho.numero), len(canal.amostras), a, b,
+                                    trecho.contexto).valores, trecho.ganho
+    if trecho.materializada is None:
+        raise AguardandoMaterializacao()
+    return trecho.materializada[a:b], trecho.ganho
+
+
+def bandas_do_trecho(trecho: TrechoDoTraco, parametros: api.ParametrosBandasIEC, *, progresso=None,
+                     cancelado=None) -> api.ResultadoBandasIEC:
+    """As bandas IEC do traço no trecho (``api.bandas_iec``, a do ``adc_tool --bandas-iec``). Sem cadeia, em cima dos
+    códigos do ADC, multiplicadas pela escala (as bandas são lineares: a média de cada janela sai antes da FFT).
+    Sincronizadas, as janelas seguem a fundamental do próprio traço, nos volts do trecho (até
+    :data:`LIMITE_DA_SINCRONIZACAO` amostras)."""
+    if trecho.ganho == 0:
+        raise api.ErroSHAN("o ganho do traço é zero")
+    canal = trecho.captura.canal(trecho.numero)
+    if parametros.sincronizar:
+        if trecho.n_amostras > LIMITE_DA_SINCRONIZACAO:
+            raise api.ErroSHAN(f"as bandas sincronizadas acham a fundamental no trecho inteiro, na memória: até "
+                               f"{LIMITE_DA_SINCRONIZACAO} amostras (o trecho tem {trecho.n_amostras}); use as "
+                               "janelas fixas ou um trecho menor")
+        if trecho.cadeia.vazia:        # os volts de verdade (o código uint16 tem o zero em 32 768)
+            volts = api.sinal_do_canal(trecho.captura, trecho.numero, trecho.inicio, trecho.fim) * trecho.ganho
+        else:
+            sinal, fator = _sinal_do_trecho(trecho, progresso, cancelado)
+            volts = np.asarray(sinal, dtype=np.float64) * fator
+        return api.bandas_iec(volts, canal.taxa_hz, parametros, progresso=progresso, cancelado=cancelado)
+    sinal, fator = _sinal_do_trecho(trecho, progresso, cancelado)
+    return _escalar_bandas(api.bandas_iec(sinal, canal.taxa_hz, parametros, progresso=progresso,
+                                          cancelado=cancelado), fator)
+
+
+def espectrograma_do_trecho(trecho: TrechoDoTraco, parametros: api.ParametrosEspectrograma, *, progresso=None,
+                            cancelado=None) -> api.Espectrograma:
+    """O espectrograma do traço no trecho (``api.espectrograma``, o ``adc_tool --espectrograma``). Sem cadeia, em
+    cima dos códigos, subindo ``20·log10|escala|`` (com o piso do motor)."""
+    if trecho.ganho == 0:
+        raise api.ErroSHAN("o ganho do traço é zero")
+    canal = trecho.captura.canal(trecho.numero)
+    sinal, fator = _sinal_do_trecho(trecho, progresso, cancelado)
+    resultado = api.espectrograma(sinal, canal.taxa_hz, parametros, progresso=progresso, cancelado=cancelado)
+    if fator == 1.0:
+        return resultado
+    d = 20.0 * math.log10(abs(fator))
+    return replace(resultado, db=np.maximum(resultado.db + d, PISO_DO_MOTOR_DB[parametros.modo]))
