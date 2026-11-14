@@ -90,7 +90,7 @@ from .filtros import aplicar_filtro_digital, projetar_filtro_sos
 from .fundamental import cruzamentos_da_fundamental, recortar_ciclos_inteiros
 from .harmonicos import TabelaHarmonicos, calcular_harmonicos
 from .metricas_captura import calcular_basicas
-from .sonda import PerfilSonda, alcance_da_correcao, carregar_perfil_sonda
+from .sonda import SONDAS_DIR_PADRAO, PerfilSonda, alcance_da_correcao, carregar_perfil_sonda
 from .sonda import aplicar_correcao_sonda as aplicar_correcao_sonda  # a cadeia de transformações da interface usa
 
 LOGGER_DO_MOTOR = "supraharmonicos"
@@ -213,12 +213,17 @@ def capturar_avisos() -> Iterator[list[Aviso]]:
                 logger.setLevel(_nivel_antes_das_coletas)
 
 
+PASTA_DAS_SONDAS_PADRAO: Path = SONDAS_DIR_PADRAO
+"""Onde :func:`abrir_captura` procura os perfis de sonda sem ``sondas_dir`` (a interface a mostra nas
+configurações, e o usuário pode trocar)."""
+
+
 def abrir_captura(caminho: Path, *, formato: str = "uint16", sondas_dir: Path | None = None) -> Captura:
     """Abre um ``.bin`` com cabeçalho (v1 a v9), sem ler as amostras.
 
     Os canais, as faixas, os ganhos, as grandezas e as sondas vêm do cabeçalho, com os padrões históricos onde
     ele não diz (as mesmas regras do ``adc_tool`` sem flags). ``sondas_dir`` é onde procurar os perfis
-    (``scripts/sondas`` por padrão). Levanta :class:`ErroSHAN` para um arquivo sem cabeçalho, vazio ou incoerente
+    (:data:`PASTA_DAS_SONDAS_PADRAO`, ``scripts/sondas``, por padrão). Levanta :class:`ErroSHAN` para um arquivo sem cabeçalho, vazio ou incoerente
     com o cabeçalho."""
     caminho = Path(caminho)
     if formato not in FORMATOS_NUMPY:
