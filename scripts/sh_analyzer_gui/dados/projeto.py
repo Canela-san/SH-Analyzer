@@ -29,8 +29,8 @@ FORMATO = "sh-analyzer-projeto"
 VERSAO = 2
 EXTENSAO = ".shproj"
 SUFIXO_AUTOMATICO = "~"
-TIPOS_DE_VISTA = ("tempo", "espectro", "bandas", "espectrograma")
-"""Os tipos de vista que esta versão abre (os harmônicos e os outros entram nas próximas)."""
+TIPOS_DE_VISTA = ("tempo", "espectro", "bandas", "espectrograma", "harmonicos")
+"""Os tipos de vista que esta versão abre."""
 LIMITE_DA_BUSCA = 5000
 """Quantos arquivos a busca pelo CRC olha, no máximo (uma pasta enorme não trava a abertura)."""
 

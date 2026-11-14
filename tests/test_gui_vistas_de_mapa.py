@@ -121,3 +121,33 @@ def test_o_pedido_novo_cancela_o_anterior(janela, qtbot, plotado):
     qtbot.waitUntil(lambda: primeira.estado == "cancelada", timeout=5_000)
     soltar.set()
     qtbot.waitUntil(lambda: w._tarefa is None, timeout=10_000)
+
+
+def test_os_harmonicos_sao_os_da_api_com_as_barras_e_os_indices(janela, qtbot, plotado):
+    fonte, traco, tempo = plotado
+    w = abrir(janela, qtbot, "harmonicos")
+    assert w.vista.tipo == "harmonicos" and w.opcoes.trecho == "janela"
+    t0, t1 = tempo.janela_de_tempo()
+    a, b = int(min(max(round(t0 * FS), 0), N)), int(min(max(round(t1 * FS), 0), N))
+    esperado = api.harmonicos(api.sinal_do_canal(fonte.fonte.captura, 0, a, b), FS).tabela
+    tab = w.resultado.tabela
+    assert (tab.f0_hz, tab.n_ciclos, tab.thds_pct) == (esperado.f0_hz, esperado.n_ciclos, esperado.thds_pct)
+    assert len(tab.harmonicos) == 40 and w.tabela.rowCount() == 40
+    ordens, alturas = w.valores()
+    np.testing.assert_allclose(alturas, [100 * h.rms_subgrupo / esperado.harmonicos[0].rms_subgrupo
+                                         for h in esperado.harmonicos[1:]], rtol=1e-12)
+    assert list(ordens) == list(range(2, 41))
+    assert "THDS" in w.info.text() and f"{esperado.n_ciclos} ciclos" in w.info.text()
+    pilha = janela.projeto.pilha
+    w.escala.botao(1).click()                                         # o valor RMS
+    w.grandeza.botao(2).click()                                       # a componente
+    _, alturas = w.valores()
+    np.testing.assert_allclose(alturas, [h.rms for h in esperado.harmonicos[1:]], rtol=1e-12)
+    assert "valor RMS (V)" in w.grafico.getAxis("left").labelText
+    w.ordem.setValue(10)
+    qtbot.waitUntil(lambda: w.opcoes_calculadas == w.opcoes, timeout=10_000)
+    assert len(w.resultado.tabela.harmonicos) == 10
+    for _ in range(3):
+        pilha.undo()
+    qtbot.waitUntil(lambda: w.opcoes_calculadas == w.opcoes, timeout=10_000)
+    assert w.opcoes == type(w.opcoes)(vista_de_tempo=tempo.vista.id) and len(w.resultado.tabela.harmonicos) == 40

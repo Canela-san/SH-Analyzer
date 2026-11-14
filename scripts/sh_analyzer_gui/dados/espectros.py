@@ -283,7 +283,58 @@ class OpcoesDoEspectrograma(_OpcoesComDicionario):
         return api.ParametrosEspectrograma(modo=self.modo, resolucao_hz=float(self.resolucao_hz))
 
 
-OPCOES_DO_TIPO = {"espectro": OpcoesDoEspectro, "bandas": OpcoesDasBandas, "espectrograma": OpcoesDoEspectrograma}
+GRANDEZAS_HARMONICAS = ("subgrupo", "grupo", "componente")
+ESCALAS_HARMONICAS = ("pct", "rms")
+
+
+@dataclass(frozen=True)
+class OpcoesDosHarmonicos(_OpcoesComDicionario):
+    """A vista dos harmônicos (IEC 61000-4-7): de qual traço, o trecho, a ordem máxima, a grandeza das barras (o
+    subgrupo, que a IEC 61000-4-30 classe A pede; o grupo; ou a componente) e a escala (% da fundamental ou o valor
+    RMS)."""
+
+    traco: int = 0
+    trecho: str = "janela"
+    vista_de_tempo: str | None = None
+    ordem_maxima: int = api.ORDEM_MAXIMA_IEC
+    grandeza: str = "subgrupo"
+    escala: str = "pct"
+
+    def __post_init__(self) -> None:
+        _validar_comum(self)
+        if self.grandeza not in GRANDEZAS_HARMONICAS:
+            raise OpcoesInvalidas(f"grandeza inválida: {self.grandeza!r} (use {', '.join(GRANDEZAS_HARMONICAS)})")
+        if self.escala not in ESCALAS_HARMONICAS:
+            raise OpcoesInvalidas(f"escala inválida: {self.escala!r} (use {', '.join(ESCALAS_HARMONICAS)})")
+        if not (isinstance(self.ordem_maxima, int) and not isinstance(self.ordem_maxima, bool)
+                and 2 <= self.ordem_maxima <= 200):
+            raise OpcoesInvalidas(f"ordem máxima inválida: {self.ordem_maxima!r} (de 2 a 200)")
+
+    @property
+    def parametros(self) -> api.ParametrosHarmonicos:
+        return api.ParametrosHarmonicos(self.ordem_maxima)
+
+
+def harmonicos_do_trecho(trecho: TrechoDoTraco, parametros: api.ParametrosHarmonicos) -> api.ResultadoHarmonicos:
+    """Os harmônicos do traço no trecho (``api.harmonicos``: o ``adc_tool --fft --harmonicos``, com a janela
+    retangular sincronizada pelos cruzamentos por zero da fundamental). A FFT é um segmento só, nos volts do trecho
+    na memória: até :data:`LIMITE_DA_FFT` amostras. Sem cadeia, os números são os da CLI."""
+    if trecho.ganho == 0:
+        raise api.ErroSHAN("o ganho do traço é zero")
+    if trecho.n_amostras > LIMITE_DA_FFT:
+        raise api.ErroSHAN(f"os harmônicos são uma FFT do trecho inteiro, na memória: até {LIMITE_DA_FFT} amostras "
+                           f"(o trecho tem {trecho.n_amostras}); use a janela visível ou os cursores")
+    canal = trecho.captura.canal(trecho.numero)
+    if trecho.cadeia.vazia:
+        volts = api.sinal_do_canal(trecho.captura, trecho.numero, trecho.inicio, trecho.fim) * trecho.ganho
+    else:
+        sinal, fator = _sinal_do_trecho(trecho, None, None)
+        volts = np.asarray(sinal, dtype=np.float64) * fator
+    return api.harmonicos(volts, canal.taxa_hz, parametros)
+
+
+OPCOES_DO_TIPO = {"espectro": OpcoesDoEspectro, "bandas": OpcoesDasBandas, "espectrograma": OpcoesDoEspectrograma,
+                  "harmonicos": OpcoesDosHarmonicos}
 """A classe das opções de cada tipo de vista de frequência (a vista de tempo não tem opções)."""
 
 

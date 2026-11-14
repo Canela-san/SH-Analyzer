@@ -10,6 +10,9 @@ ligada, no tempo.
   escolhida (a do ``adc_tool --bandas-iec`` é o P95). As janelas fixas de 200 ms ou as sincronizadas à fundamental.
 * **O espectrograma** (``VistaDeEspectrograma``): o espectro ao longo do tempo, com o mapa de cores perceptual
   (viridis) e a faixa dinâmica escolhida abaixo do máximo.
+* **Os harmônicos** (``VistaDeHarmonicos``, ES-05): as barras e a tabela das ordens da IEC 61000-4-7 (a componente, o
+  grupo e o subgrupo, em % da fundamental ou em valor RMS), com o THD, o THDG e o THDS, da janela retangular
+  sincronizada pelos cruzamentos por zero (o ``adc_tool --fft --harmonicos``). O trecho padrão é a janela visível.
 * **As contas** são as da ``api`` (``dados/espectros.py``), em segundo plano, com o progresso no painel de tarefas numa
   captura longa; cada pedido cancela o anterior.
 """
@@ -31,6 +34,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QSpinBox,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -47,7 +51,7 @@ from ...modelo.comandos import MudarOpcoesDaVista
 from ...modelo.objetos import Projeto, Traco, Vista
 from ...modelo.selecao import Selecao
 from ...tema.aplicar import aparencia
-from ...tema.tokens import Tema
+from ...tema.tokens import Tema, cor_do_traco
 
 ESPERA_MS = 40
 TRECHOS = ("captura", "janela", "cursores")
@@ -526,3 +530,103 @@ class VistaDeEspectrograma(VistaLigada):
             len(e.tempos_s), formatar_si(passo, "s", 3), len(e.freqs_hz),
             formatar_si(e.freqs_hz[1] - e.freqs_hz[0], "Hz", 3), e.rotulo_janela)]
 
+
+
+class VistaDeHarmonicos(VistaLigada):
+    nome_da_conta = "Harmônicos"
+    GRANDEZAS = ("subgrupo", "grupo", "componente")
+
+    def _montar_conteudo(self, coluna: QVBoxLayout) -> None:
+        self.setObjectName("vista_harmonicos")
+        self.grandeza = Segmentado([self.tr("Subgrupo"), self.tr("Grupo"), self.tr("Componente")])
+        self.grandeza.setToolTip(self.tr("Subgrupo: o harmônico e os bins a até 5 Hz dele (a IEC 61000-4-30 classe A). "
+                                         "Grupo: também o conteúdo entre harmônicos. Componente: só o bin"))
+        self.grandeza.escolhaMudou.connect(lambda i: self._mudar(grandeza=self.GRANDEZAS[i]))
+        self.escala = Segmentado(["% h1", "RMS"])
+        self.escala.escolhaMudou.connect(lambda i: self._mudar(escala=("pct", "rms")[i]))
+        self.ordem = QSpinBox()
+        self.ordem.setObjectName("ordem_maxima")
+        self.ordem.setRange(2, 200)
+        self.ordem.setKeyboardTracking(False)
+        self.ordem.setToolTip(self.tr("A última ordem calculada (a IEC 61000-4-7 define o THD até a 40ª)"))
+        self.ordem.valueChanged.connect(lambda v: self._mudar(ordem_maxima=int(v)))
+        for w in (self.grandeza, self.escala, QLabel(self.tr("Até a ordem")), self.ordem):
+            self._linha.addWidget(w)
+        self.grafico = self._novo_grafico()
+        self.grafico.setObjectName("barras_harmonicos")
+        self.grafico.setLabel("bottom", self.tr("ordem"))
+        self.grafico.showGrid(x=False, y=True, alpha=0.15)
+        self.barras = pg.BarGraphItem(x=[], height=[], width=0.7)
+        self.grafico.addItem(self.barras)
+        self.tabela = QTableWidget(0, 7)
+        self.tabela.setObjectName("tabela_harmonicos")
+        self.tabela.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tabela.verticalHeader().hide()
+        self.tabela.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        divisor = QSplitter(Qt.Orientation.Vertical)
+        divisor.addWidget(self.grafico)
+        divisor.addWidget(self.tabela)
+        divisor.setSizes([360, 260])
+        coluna.addWidget(divisor, 1)
+
+    def _mostrar_opcoes_proprias(self) -> None:
+        o = self.opcoes
+        for seg, indice in ((self.grandeza, self.GRANDEZAS.index(o.grandeza)), (self.escala, ("pct", "rms").index(o.escala))):
+            seg.blockSignals(True)
+            seg.escolher(indice)
+            seg.blockSignals(False)
+        self.ordem.blockSignals(True)
+        self.ordem.setValue(o.ordem_maxima)
+        self.ordem.blockSignals(False)
+        if self.resultado is not None:
+            self._desenhar()
+
+    def _conta(self, trecho, progresso, cancelado):
+        return esp.harmonicos_do_trecho(trecho, self.opcoes.parametros)
+
+    def valores(self) -> tuple[np.ndarray, np.ndarray]:
+        """As ordens 2 em diante e a altura das barras, na grandeza e na escala escolhidas."""
+        tab = self.resultado.tabela
+        campo = {"subgrupo": "rms_subgrupo", "grupo": "rms_grupo", "componente": "rms"}[self.opcoes.grandeza]
+        base = getattr(tab.harmonicos[0], campo)
+        ordens = np.array([h.ordem for h in tab.harmonicos[1:]], dtype=float)
+        rms = np.array([getattr(h, campo) for h in tab.harmonicos[1:]])
+        return ordens, (100.0 * rms / base if self.opcoes.escala == "pct" else rms)
+
+    def _desenhar(self) -> None:
+        if self.resultado is None:
+            self.barras.setOpts(x=[], height=[])
+            self.tabela.setRowCount(0)
+            return
+        t = aparencia().tema
+        cor = QColor(cor_do_traco(self.traco.receita.cor, t)[0])
+        ordens, alturas = self.valores()
+        self.barras.setOpts(x=ordens, height=alturas, width=0.7, brush=cor, pen=pg.mkPen(None))
+        unidade = self.traco_unidade()
+        self.grafico.setLabel("left", self.tr("% da fundamental") if self.opcoes.escala == "pct"
+                              else self.tr("valor RMS ({})").format(unidade))
+        tab = self.resultado.tabela
+        self.tabela.setHorizontalHeaderLabels(["h", "f", "RMS", self.tr("subgrupo"), self.tr("grupo"), "% h1",
+                                               self.tr("fase (°)")])
+        self.tabela.setRowCount(len(tab.harmonicos))
+        for k, h in enumerate(tab.harmonicos):
+            textos = [str(h.ordem), formatar_si(h.frequencia_hz, "Hz", 6), formatar_si(h.rms, unidade, 5),
+                      formatar_si(h.rms_subgrupo, unidade, 5), formatar_si(h.rms_grupo, unidade, 5),
+                      f"{h.pct_fundamental:.4f}".replace(".", ","), f"{h.fase_graus:.2f}".replace(".", ",").replace("-", "−")]
+            for c, texto in enumerate(textos):
+                self.tabela.setItem(k, c, QTableWidgetItem(texto))
+        self.grafico.enableAutoRange()
+
+    def traco_unidade(self) -> str:
+        t = self.trecho_atual
+        return t.captura.canal(t.numero).unidade if t is not None else ""
+
+    def _descricao(self) -> list[str]:
+        if self.resultado is None:
+            return []
+        tab = self.resultado.tabela
+        return [self.tr("f₁ = {} · {} ciclos (janela retangular síncrona)").format(formatar_si(tab.f0_hz, "Hz", 7),
+                                                                                    tab.n_ciclos),
+                self.tr("THDS {} % · THDG {} % · THD {} % (até a ordem {})").format(
+                    f"{tab.thds_pct:.4f}".replace(".", ","), f"{tab.thdg_pct:.4f}".replace(".", ","),
+                    f"{tab.thd_pct:.4f}".replace(".", ","), tab.harmonicos[-1].ordem)]

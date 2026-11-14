@@ -163,3 +163,45 @@ def test_opcoes_das_bandas_e_do_espectrograma(classe, mudanca, trecho_da_mensage
         classe(**mudanca)
     o = classe(vista_de_tempo="v1", traco=2)
     assert classe.de_dict(o.para_dict()) == o
+
+
+# ---------------------------------------------------------------------------
+# Os harmônicos
+# ---------------------------------------------------------------------------
+
+def test_os_harmonicos_sao_os_da_cli(captura, tmp_path):
+    """A tabela do adc_tool --fft --harmonicos 40 para o mesmo trecho (pelo .mat): as componentes, os grupos, os
+    subgrupos, as fases e o THD, o THDG e o THDS."""
+    from scipy.io import loadmat
+    from supraharmonicos.cli_adc_tool import main
+
+    saida = tmp_path / "harmonicos.mat"
+    assert main([str(captura.caminho), "--fft", "--harmonicos", "40", "--inicio", "100000", "--fim", "900000",
+                 "--sem-grafico", "--exportar-mat", str(saida)]) in (0, None)
+    cli = loadmat(saida, squeeze_me=True, struct_as_record=False)["sh"].canal0.harmonicos
+    r = esp.harmonicos_do_trecho(trecho(captura, 50_000, 450_000), esp.OpcoesDosHarmonicos().parametros)
+    tab = r.tabela
+    assert (tab.f0_hz, tab.n_ciclos) == (cli.f0_hz, cli.n_ciclos)
+    for campo, coluna in (("rms", "rms"), ("rms_grupo", "rms_grupo"), ("rms_subgrupo", "rms_subgrupo"),
+                          ("pct_fundamental", "pct_fundamental"), ("fase_graus", "fase_graus")):
+        np.testing.assert_allclose([getattr(h, campo) for h in tab.harmonicos], getattr(cli, coluna), rtol=1e-12)
+    np.testing.assert_allclose([tab.thd_pct, tab.thdg_pct, tab.thds_pct], [cli.thd_pct, cli.thdg_pct, cli.thds_pct],
+                               rtol=1e-12)
+    com_ganho = esp.harmonicos_do_trecho(trecho(captura, 50_000, 450_000, ganho=2.0), esp.OpcoesDosHarmonicos().parametros)
+    assert com_ganho.tabela.harmonicos[0].rms == pytest.approx(2 * tab.harmonicos[0].rms, rel=1e-12)
+    assert com_ganho.tabela.thd_pct == pytest.approx(tab.thd_pct, rel=1e-9)            # o THD não depende do ganho
+
+
+def test_os_harmonicos_explicam_os_limites(captura):
+    with pytest.raises(api.ErroSHAN):                       # um trecho sem um ciclo da fundamental
+        esp.harmonicos_do_trecho(trecho(captura, 0, 1_000), esp.OpcoesDosHarmonicos().parametros)
+    limite = esp.LIMITE_DA_FFT
+    try:
+        esp.LIMITE_DA_FFT = 1000
+        with pytest.raises(api.ErroSHAN, match="janela visível ou os cursores"):
+            esp.harmonicos_do_trecho(trecho(captura), esp.OpcoesDosHarmonicos().parametros)
+    finally:
+        esp.LIMITE_DA_FFT = limite
+    for mudanca in ({"grandeza": "fase"}, {"escala": "db"}, {"ordem_maxima": 1}):
+        with pytest.raises(esp.OpcoesInvalidas):
+            esp.OpcoesDosHarmonicos(**mudanca)

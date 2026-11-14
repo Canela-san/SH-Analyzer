@@ -208,6 +208,8 @@ class JanelaPrincipal(QMainWindow):
                    icone="grade").triggered.connect(lambda: self.area.abrir_analise("bandas"))
         self._acao("espectrograma", self.tr("Abrir o espectrograma da vista"), atalho="Ctrl+Shift+E",
                    icone="camadas").triggered.connect(lambda: self.area.abrir_analise("espectrograma"))
+        self._acao("harmonicos", self.tr("Abrir os harmônicos da vista"), atalho="Ctrl+Shift+H",
+                   icone="pulso").triggered.connect(lambda: self.area.abrir_analise("harmonicos"))
         a = self._acao("remover_selecionados", self.tr("Remover os traços selecionados"),
                        atalho=QKeySequence.StandardKey.Delete)
         a.triggered.connect(lambda: self.area.remover_selecionados())
