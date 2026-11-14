@@ -9,8 +9,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 ## Próxima tarefa
 
 > **F2.9: as configurações** (seção 4c). A F2.1 a F2.8 estão feitas: a cadeia no inspetor, o traço transformado na
-> tela, as quatro vistas de frequência, os avisos nos chips, o erro inesperado e o log. A F2.9 e a F2.10 são
-> independentes entre si.
+> tela, as quatro vistas de frequência, os avisos nos chips, o erro inesperado e o log; e o terceiro retorno do
+> usuário (Alt + roda, a vista que fica nas mudanças, o clique com folga, a janela e o preset IEC 61000-4-7 no
+> inspetor, Ctrl+W; diário de 14/11). A F2.9 e a F2.10 são independentes entre si.
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos).
@@ -1021,6 +1022,33 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     terminar, e o "sem_crc" dela chegava depois; ele agora espera a conferência.
   - **Testes:** `ci.sh rapido` com 1 489 aprovados e `ci.sh interface` com 559; os 5 de desempenho passam.
   - **Próximo:** a F2.9 (as configurações).
+- **14/11/2026:** **o terceiro retorno do usuário** (a fluidez de trabalhar no gráfico):
+  - **Alt + roda** na vista de tempo amplia o tempo e o Y com o mesmo fator: a forma do sinal fica (seção 9.2 do
+    plano, e na lista de gestos da paleta);
+  - **uma mudança não mexe na vista** (plano, 9.2): uma etapa da cadeia, o ganho, o offset, o deslocamento, outro
+    método ou outro trecho do espectro deixam o tempo e o Y onde estavam. Eram quatro causas: a vista de tempo
+    reajustava o Y de propósito a cada mudança da cadeia; as faixas criadas depois ficavam com o ajuste automático do
+    pyqtgraph ligado; o espectro reajustava tudo nas opções de método e de trecho; e a de harmônicos ligava o ajuste
+    automático a cada desenho. Agora o Y só se reajusta quando passa a medir outra coisa (dB, RMS, dBc; amplitude ou
+    densidade), e, se o traço mudado sai inteiro da vista (tirar o DC de 2,5 V), ela anda até ele com a mesma altura
+    (`manter_o_y` em `graficos/faixa.py`). Ligar e desligar o eixo log do espectro mantém a mesma faixa em Hz;
+  - **o clique na linha** (`graficos/clique.py`): o alcance subiu de 6 para 9 px e passou a contar até o segmento
+    entre as amostras (de perto, clicar entre duas amostras não pegava) e até a coluna da envoltória (de longe). Com
+    vários traços no alcance, ganha o mais perto; empatados (menos de 1 px), o de cima. Vale também nas curvas do
+    espectro, que antes não se selecionavam pelo gráfico;
+  - **a janela, os ciclos e o preset IEC 61000-4-7** no inspetor ("Análise do espectro"): no traço selecionado de um
+    espectro, e na vista quando nada está selecionado. A janela vem da `api` (retangular, Hann, Blackman-Harris,
+    flat-top, Kaiser, ou a padrão do método); os ciclos são os da FFT sincronizada (o `--fft N` da CLI). O preset põe
+    o que a norma pede: FFT sincronizada, janela retangular, 10 ciclos em 50 Hz ou 12 em 60 Hz (~200 ms), com a
+    fundamental medida no último espectro. **A lembrança do usuário era 12 períodos com Hann:** os 12 conferem (60
+    Hz); a Hann a norma só admite sem sincronismo, e a FFT já cai nela sozinha, com aviso, quando não acha os
+    cruzamentos. Os presets ficam em `PRESETS_DO_ESPECTRO` (`dados/espectros.py`), prontos para o lugar de presets
+    que o usuário quer depois; cada um também é um comando da paleta;
+  - **Ctrl+W** fecha a vista ativa (desfazível, como o ×).
+  - **Dois testes antigos** dependiam do comportamento de antes: um esperava o Y reajustado depois de um passa-altas
+    (agora a vista fica); o outro clicava "no vazio" a 7 px da linha, que o alcance novo pega.
+  - **Testes:** `tests/test_gui_vistas_que_ficam.py` (9); `ci.sh rapido` com 1 498 aprovados e `ci.sh interface`
+    com 568; os 5 de desempenho passam.
 ---
 
 ## 8. Perguntas em aberto

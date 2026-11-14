@@ -676,6 +676,7 @@ Todos os painéis laterais se recolhem (Ctrl+B, Ctrl+I, Ctrl+J), e o layout é s
 |---|---|
 | Roda | Zoom no tempo, centrado no cursor |
 | Ctrl + roda | Zoom no eixo Y da faixa sob o cursor |
+| Alt + roda | Zoom no tempo e no Y juntos, com o mesmo fator (a forma do sinal fica) |
 | Shift + roda, ou arrastar, ou espaço + arrastar | Pan no tempo |
 | Arrastar com o botão do meio (a roda apertada) | Move a vista em qualquer direção, sem mudar as escalas (o tempo em todas as faixas, o Y na faixa), em cima de um traço ou não: os traços não mudam |
 | Clique rápido com o botão do meio | O 0 do eixo Y no meio da faixa, com a mesma escala; em cima de um traço (ou com traços selecionados), tira o offset dele |
@@ -684,12 +685,19 @@ Todos os painéis laterais se recolhem (Ctrl+B, Ctrl+I, Ctrl+J), e o layout é s
 | `Z` + arrastar | Zoom em caixa |
 | Duplo clique, ou `F` | Ajustar tudo |
 | Backspace | Voltar ao zoom anterior (histórico) |
-| Clique num traço | Seleciona (alvo de 6 px em volta da linha); Ctrl + clique soma à seleção |
+| Clique num traço | Seleciona (alvo de 9 px em volta da linha, contado até o segmento entre as amostras; com vários perto, o mais perto, e empatados, o de cima); Ctrl + clique soma à seleção. Vale também nas curvas do espectro |
 | `Del` | Remove os traços selecionados da vista (desfazível) |
 | `C` | Liga os cursores; setas movem o cursor ativo amostra a amostra; Shift + seta, 10 amostras |
 | `1` a `9` | Selecionam o traço N |
 | Ctrl+D | Duplica o traço (para comparar duas cadeias de transformação) |
 | Ctrl+K | Paleta de comandos |
+| Ctrl+W | Fecha a vista ativa (desfazível, como o × da aba) |
+
+**Uma mudança não mexe na vista.** Uma etapa da cadeia, o ganho, o offset, o deslocamento, outro método ou outro
+trecho do espectro deixam o tempo e o Y onde o usuário os pôs. Duas exceções: o eixo Y passa a medir outra coisa
+(dB, valor RMS, dBc; amplitude ou densidade), e ele se ajusta de novo; ou o traço mudado sai inteiro da vista (tirar
+o DC de um sinal em 2,5 V), e ela anda até ele com a mesma altura. O ajuste completo continua no duplo clique e no
+`F`.
 
 ### 9.3 Traços: adicionar, remover, selecionar
 
