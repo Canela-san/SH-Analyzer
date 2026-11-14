@@ -158,3 +158,51 @@ def construir(amostras: np.ndarray | Sequence, n_canais: int = 1, *,
         if progresso is not None:
             progresso(fim / n)
     return [Piramide(n, dtype, tuple(_niveis_acima(base_min[c], base_max[c], flutuante))) for c in range(n_canais)]
+
+
+class ConstrutorIncremental:
+    """A pirâmide de um sinal que chega aos pedaços, em ordem (a materialização de um traço, bloco a bloco).
+
+    ``acrescentar(valores)`` recebe as próximas amostras; todo pedaço, menos o último, precisa ter um múltiplo de
+    :data:`BLOCO_BASE` amostras (os blocos do nível 0 não cruzam os pedaços). ``piramide()`` devolve, a qualquer
+    momento, a pirâmide do que já chegou (o traço se preenche enquanto a materialização roda): o nível 0 está pronto,
+    e os de cima saem dele (~1/32 das amostras, rápido). Os mínimos e máximos são os mesmos de :func:`construir`
+    sobre o sinal inteiro."""
+
+    def __init__(self, n_amostras: int, dtype):
+        self.n_amostras = int(n_amostras)
+        self.dtype = np.dtype(dtype)
+        self._flutuante = np.issubdtype(self.dtype, np.floating)
+        n_blocos = -(-self.n_amostras // BLOCO_BASE)
+        self._min = np.empty(n_blocos, self.dtype)
+        self._max = np.empty(n_blocos, self.dtype)
+        self.recebidas = 0
+
+    def acrescentar(self, valores: np.ndarray) -> None:
+        valores = np.asarray(valores, dtype=self.dtype)
+        if self.recebidas + len(valores) > self.n_amostras:
+            raise ValueError(f"amostras demais: {self.recebidas + len(valores)} de {self.n_amostras}")
+        if self.recebidas % BLOCO_BASE:
+            raise ValueError("só o último pedaço pode ter um número de amostras fora do múltiplo de "
+                             f"{BLOCO_BASE}")
+        b0 = self.recebidas // BLOCO_BASE
+        cheios = len(valores) // BLOCO_BASE * BLOCO_BASE
+        if cheios:
+            mn, mx = _reduzir(np.ascontiguousarray(valores[:cheios]).reshape(-1, BLOCO_BASE), self._flutuante)
+            self._min[b0:b0 + len(mn)], self._max[b0:b0 + len(mx)] = mn, mx
+        if cheios < len(valores):
+            mn, mx = _reduzir(np.ascontiguousarray(valores[cheios:]).reshape(1, -1), self._flutuante)
+            self._min[b0 + cheios // BLOCO_BASE], self._max[b0 + cheios // BLOCO_BASE] = mn[0], mx[0]
+        self.recebidas += len(valores)
+
+    @property
+    def completa(self) -> bool:
+        return self.recebidas == self.n_amostras
+
+    def piramide(self) -> Piramide:
+        """A pirâmide das amostras recebidas até agora (com cópias: o construtor pode continuar recebendo)."""
+        if self.recebidas == 0:
+            return Piramide(0, self.dtype, ())
+        k = -(-self.recebidas // BLOCO_BASE)
+        niveis = _niveis_acima(self._min[:k].copy(), self._max[:k].copy(), self._flutuante)
+        return Piramide(self.recebidas, self.dtype, tuple(niveis))
