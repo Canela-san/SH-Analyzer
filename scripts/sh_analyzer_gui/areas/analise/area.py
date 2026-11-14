@@ -154,6 +154,7 @@ class AreaDeAnalise(QObject):
                         materializacoes=self.janela.materializacoes, vista_de_tempo=self._vista_de_tempo_por_id)
         widget.tracoClicado.connect(self._traco_clicado)
         widget.semRegiao.connect(self._sem_regiao)
+        widget.medidasMudaram.connect(self._medidas_da_vista)
         self.abas.insertTab(i, widget, icone(nome_do_icone, aparencia().tema.texto2), vista.nome)
         self._por_botao_de_fechar(i, widget)
         self.abas.setCurrentIndex(i)
@@ -190,6 +191,11 @@ class AreaDeAnalise(QObject):
         widget = self.sender()
         if widget is self.abas.currentWidget():          # só a vista aberta é medida
             self.servico_de_medidas.medir(self.projeto, PedidoDeMedida(widget.vista, inicio, fim, dos_cursores))
+
+    def _medidas_da_vista(self, medidas) -> None:
+        """As medidas dos cursores de uma vista de frequência (só a aberta vai para a tabela)."""
+        if self.sender() is self.abas.currentWidget() and isValid(self.tabela_de_medidas):
+            self.tabela_de_medidas.mostrar_da_vista(medidas)
 
     def _sem_regiao(self) -> None:
         if self.sender() is self.abas.currentWidget() and isValid(self.tabela_de_medidas):

@@ -14,8 +14,9 @@
   a FFT é do trecho inteiro, com um aviso.
 * **Os botões da barra** (todos desligados ao abrir): **Picos** marca os mais altos de cada traço (acima do piso + 20
   dB e com 10 dB de proeminência: o ruído não conta); **Valores** mostra, sob o mouse, a frequência e o nível do bin
-  mais alto da coluna de pixel de cada traço; **Cursores** (C) liga os cursores A e B, com a frequência e o nível de
-  cada traço em cada um, e as diferenças (Δf, Δ nível). Um cursor solto encosta no pico mais próximo, a até 4 pixels.
+  mais alto da coluna de pixel de cada traço; **Cursores** (C) liga os cursores C1 e C2, os mesmos da vista de tempo
+  (``graficos/cursores.py``): as setas andam um bin (Shift: 10), e as medidas (a frequência de cada um, o nível de cada
+  traço em C1 e em C2, Δf e Δ nível) vão para a tabela de Medidas do painel de baixo.
 * **As contas em segundo plano:** cada pedido cancela o anterior, e vale o mais recente. Um trecho grande de um traço
   com cadeia espera a materialização (o chip mostra o progresso), e a conta refaz quando ela fica pronta.
 * **Sem custo por quadro** (uma FFT de 60 s tem 6 milhões de bins): o espectro de um trecho já calculado não é
@@ -48,7 +49,7 @@ from ...componentes.fluxo import LayoutDeFluxo
 from ...componentes.numeros import formatar_si
 from ...dados import espectros as esp
 from ...dados.cadeia import CorrecaoSonda
-from ...graficos.cursores import ParDeCursores
+from ...graficos.cursores import CursoresDaVista
 from ...graficos.faixa import EixoDoTema, GradeDoTema
 from ...graficos.traco_lod import TracoLOD
 from ...modelo.comandos import MudarOpcoesDaVista
@@ -56,10 +57,10 @@ from ...modelo.objetos import Projeto, Traco, Vista
 from ...modelo.selecao import Selecao
 from ...tema.aplicar import aparencia
 from ...tema.tokens import Tema, cor_do_traco
+from .medidas import LinhaDaTabela, MedidasDaVista, numero_para_planilha
 
 ESPERA_MS = 40
 METODOS, ESCALAS, TRECHOS = ("fft", "welch"), ("db", "rms", "dbc"), ("janela", "cursores", "captura")
-ENCOSTAR_PX = 4                    # um cursor solto encosta no pico a até 4 pixels
 AMOSTRAS_PARA_MOSTRAR_A_TAREFA = 20_000_000
 ESPERA_DA_ENVOLTORIA_MS = 30
 OPCOES_QUE_PEDEM_AJUSTE = ("metodo", "escala", "frequencia_log", "trecho", "modo", "resolucao_hz")
@@ -108,6 +109,7 @@ class VistaDeEspectro(QWidget):
     regiaoMudou = Signal(float, float, bool)      # a vista de espectro não é medida pela tabela
     semRegiao = Signal()
     calculado = Signal()                          # um resultado novo chegou (os testes esperam por ele)
+    medidasMudaram = Signal(object)               # MedidasDaVista dos cursores (ou None): a tabela de Medidas
 
     def __init__(self, vista: Vista, projeto: Projeto, selecao: Selecao, *, tarefas, materializacoes,
                  vista_de_tempo: Callable[[str | None], object], parent: QWidget | None = None):
@@ -208,6 +210,12 @@ class VistaDeEspectro(QWidget):
             linha.addWidget(botao)
             self.botoes_de_leitura[nome] = botao
         self.acao_picos.toggled.connect(lambda _: self._pedir())
+        for tecla, passos in (("Left", -1), ("Right", 1), ("Shift+Left", -10), ("Shift+Right", 10)):
+            andar = QAction(self)
+            andar.setShortcut(QKeySequence(tecla))
+            andar.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            andar.triggered.connect(lambda _=False, n=passos: self.andar_cursor(n))
+            self.addAction(andar)
         self.acao_valores.toggled.connect(self._ligar_valores)
         self.acao_cursores.toggled.connect(self._ligar_cursores)
 
@@ -233,15 +241,9 @@ class VistaDeEspectro(QWidget):
         for lado in ("top", "right"):
             self.grafico.getPlotItem().getAxis(lado).enableAutoSIPrefix(False)
         self.grafico.setLabel("bottom", self.tr("frequência"), units="Hz")
-        self.cursores = ParDeCursores(self.grafico.getPlotItem(), para_eixo=self._x, do_eixo=self._f,
-                                      encostar=self._encostar, parent=self)
-        self.cursores.mudou.connect(self._mostrar_cursores)
-        self.leitura_dos_cursores = QLabel()
-        self.leitura_dos_cursores.setObjectName("leitura_dos_cursores")
-        self.leitura_dos_cursores.setWordWrap(True)
-        self.leitura_dos_cursores.setContentsMargins(10, 2, 10, 0)
-        self.leitura_dos_cursores.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.leitura_dos_cursores.hide()
+        self.cursores = CursoresDaVista(para_eixo=self._x, do_eixo=self._f, parent=self)
+        self.cursores.por_nas([self.grafico.getViewBox()])
+        self.cursores.mudou.connect(self.emitir_regiao)
         self.valor_no_mouse = pg.TextItem(anchor=(0, 1))
         self.valor_no_mouse.setZValue(50)
         self.ponto_no_mouse = pg.ScatterPlotItem(size=7, pen=pg.mkPen(None))
@@ -257,7 +259,6 @@ class VistaDeEspectro(QWidget):
         coluna.addWidget(barra)
         coluna.addWidget(self._legenda)
         coluna.addWidget(self.grafico, 1)
-        coluna.addWidget(self.leitura_dos_cursores)
         coluna.addWidget(self.info)
 
     # ------------------------------------------------------------------ as opções
@@ -472,7 +473,9 @@ class VistaDeEspectro(QWidget):
         self._espera.stop()
 
     def emitir_regiao(self) -> None:
-        self.semRegiao.emit()
+        """As medidas dos cursores para a tabela de Medidas (sem os cursores, nada a medir)."""
+        if isValid(self):
+            self.medidasMudaram.emit(self.medidas())
 
     # ------------------------------------------------------------------ o desenho
 
@@ -517,7 +520,8 @@ class VistaDeEspectro(QWidget):
             self.grafico.getViewBox().autoRange(padding=0.02)
         self._refazer_legenda()
         self._mostrar_info()
-        self._mostrar_cursores()
+        if self.cursores.ligados:
+            self.emitir_regiao()              # os níveis nos cursores mudaram com o espectro
 
     def _curva(self, r: ResultadoDoTraco, cor: QColor) -> None:
         """O item do traço: o ``TracoLOD`` sobre a pirâmide do espectro na frequência linear (os bins são uniformes:
@@ -692,14 +696,6 @@ class VistaDeEspectro(QWidget):
         i0, i1 = d.indice(f - largura), d.indice(f + largura) + 1
         return i0 + int(np.argmax(d.niveis[i0:i1]))
 
-    def _encostar(self, f: float) -> float:
-        """Um cursor solto encosta no pico do primeiro traço a até 4 pixels, se houver um máximo ali."""
-        d = next((r.desenho for r in self.resultados if r.desenho is not None), None)
-        if d is None:
-            return f
-        i = self._mais_alto_perto(d, f, ENCOSTAR_PX)
-        return d.f0 + i * d.df
-
     def _unidade_do_nivel(self, r: ResultadoDoTraco) -> str:
         return r.unidade if self.opcoes.escala == "rms" else ("dBc" if self.opcoes.escala == "dbc" else "dB")
 
@@ -709,25 +705,40 @@ class VistaDeEspectro(QWidget):
         return f"{valor:.2f} {self._unidade_do_nivel(r)}".replace(".", ",").replace("-", "−")
 
     def _ligar_cursores(self, ligar: bool) -> None:
-        self.cursores.ligar(ligar)
-        self.leitura_dos_cursores.setVisible(ligar)
+        if ligar:
+            x0, x1 = self.grafico.getViewBox().viewRange()[0]
+            self.cursores.ligar((self._f(x0), self._f(x1)))
+        else:
+            self.cursores.desligar()
 
-    def _mostrar_cursores(self) -> None:
-        """A leitura dos cursores: a frequência e o nível de cada traço em A e em B, e as diferenças."""
-        if not self.cursores.ligados:
-            return
+    def andar_cursor(self, passos: int) -> bool:
+        """As setas: o cursor ativo anda ``passos`` bins (do primeiro traço)."""
+        d = next((r.desenho for r in self.resultados if r.desenho is not None), None)
+        return d is not None and self.cursores.andar(passos, d.df)
+
+    def medidas(self) -> MedidasDaVista | None:
+        """As medidas dos cursores: a frequência de C1 e de C2, Δf, e o nível de cada traço no bin de cada um e a
+        diferença, na escala da vista (para a tabela de Medidas)."""
+        regiao = self.cursores.posicoes
         prontos = [r for r in self.resultados if r.desenho is not None]
-        a, b = self.cursores.a, self.cursores.b
-        partes = [self.tr("A {}").format(formatar_si(a, "Hz", 6)), self.tr("B {}").format(formatar_si(b, "Hz", 6)),
-                  self.tr("Δf = {}").format(formatar_si(b - a, "Hz", 6))]
+        if regiao is None:
+            return None
+        c1, c2 = regiao
+        resumo = self.tr("Cursores: {} → {} · Δf {}").format(formatar_si(c1, "Hz", 7), formatar_si(c2, "Hz", 7),
+                                                              formatar_si(c2 - c1, "Hz", 6))
+        colunas = (self.tr("Nível em C1"), self.tr("Nível em C2"), self.tr("Δ nível"))
+        linhas, planilha = [], ["\t".join(["Traço", "Unidade", "C1 (Hz)", "C2 (Hz)", "Nível em C1", "Nível em C2",
+                                             "Δ nível"])]
         for r in prontos:
             d = r.desenho
-            na, nb = d.nivel_em(a), d.nivel_em(b)
-            delta = (formatar_si(nb - na, r.unidade, 4) if self.opcoes.escala == "rms"
-                     else f"{nb - na:.2f} dB".replace(".", ",").replace("-", "−"))
-            partes.append(f"{r.traco.nome}: A {self._texto_do_nivel(na, r)} · B {self._texto_do_nivel(nb, r)} · "
-                          f"Δ {delta}")
-        self.leitura_dos_cursores.setText("   ".join(partes))
+            n1, n2 = d.nivel_em(c1), d.nivel_em(c2)
+            delta = (formatar_si(n2 - n1, r.unidade, 5) if self.opcoes.escala == "rms"
+                     else f"{n2 - n1:.2f} dB".replace(".", ",").replace("-", "−"))
+            linhas.append(LinhaDaTabela(r.traco, (self._texto_do_nivel(n1, r), self._texto_do_nivel(n2, r), delta)))
+            planilha.append("\t".join([r.traco.nome, self._unidade_do_nivel(r), numero_para_planilha(c1),
+                                        numero_para_planilha(c2), numero_para_planilha(n1), numero_para_planilha(n2),
+                                        numero_para_planilha(n2 - n1)]))
+        return MedidasDaVista(resumo, colunas, tuple(linhas), "\n".join(planilha) + "\n")
 
     def _ligar_valores(self, ligar: bool) -> None:
         if not ligar:
@@ -770,7 +781,7 @@ class VistaDeEspectro(QWidget):
         for eixo in (self.eixo_x, self.eixo_y):
             eixo.aplicar_tema(t)
         self.grade.aplicar_tema(t)
-        self.cursores.aplicar_cor(t.texto2)
+        self.cursores.aplicar_tema(t)
         self.valor_no_mouse.setColor(QColor(t.texto))
         self.valor_no_mouse.fill = pg.mkBrush(QColor(t.elevada))
         if self.resultados:

@@ -173,7 +173,7 @@ def test_o_espectro_de_milhoes_de_bins_arrasta_a_60_quadros(qapp, config_limpa, 
         x0, x1 = vb.viewRange()[0]
         for nome, mexer in (("pan", lambda k: vb.setXRange(x0 + 100 * k, x1 + 100 * k, padding=0)),
                             ("zoom", lambda k: vb.setXRange(9_000 + k, 10_000 + k, padding=0)),
-                            ("cursor", lambda k: w.cursores.linhas[0].setValue(5_000 + 1_000 * k))):
+                            ("cursor", lambda k: w.cursores.linhas[0][0].setValue(5_000 + 1_000 * k))):
             quadros = []
             for k in range(30):
                 inicio = time.perf_counter()

@@ -197,19 +197,27 @@ def test_os_valores_sob_o_mouse(janela, qtbot, aberto):
     assert not espectro.valor_no_mouse.isVisible()
 
 
-def test_os_cursores_no_espectro_encostam_no_pico(janela, qtbot, aberto):
+def test_os_cursores_do_espectro_sao_os_do_tempo_e_vao_para_as_medidas(janela, qtbot, aberto):
+    """C1 e C2 com a cara e a lógica dos da vista de tempo (o mesmo componente), as setas andando um bin, e as medidas
+    na tabela do painel de baixo (não um texto em cima do gráfico)."""
     fonte, traco, tempo, espectro = aberto
-    assert not espectro.cursores.ligados and espectro.leitura_dos_cursores.isHidden()
+    tabela = janela.tabela_de_medidas
+    assert not espectro.cursores.ligados
     espectro.acao_cursores.setChecked(True)
-    assert espectro.cursores.ligados and not espectro.leitura_dos_cursores.isHidden()
-    vb = espectro.grafico.getViewBox()
-    vb.setXRange(8_000.0, 10_000.0, padding=0)
+    assert espectro.cursores.ligados and [len(linhas) for linhas in espectro.cursores.linhas] == [1, 1]
+    assert type(espectro.cursores) is type(tempo._cursores)                     # o mesmo componente
+    assert espectro.cursores.linhas[0][0].label.toPlainText() == "C1"
     d = espectro.resultados[0].desenho
-    espectro.cursores.definir(9_000.5, 8_500.0)
-    espectro.cursores._solta(0)                                       # solto perto do tom: encosta nele
-    assert espectro.cursores.a == pytest.approx(d.f0 + d.indice(9_000.0) * d.df)
-    texto = espectro.leitura_dos_cursores.text()
-    assert "Δf" in texto and traco.nome in texto and "A " in texto
+    espectro.cursores.mover(0, 9_000.0)
+    espectro.cursores.mover(1, 8_500.0)
+    assert espectro.andar_cursor(+2)                                             # o ativo (C2) anda 2 bins
+    assert espectro.cursores.posicoes[1] == pytest.approx(8_500.0 + 2 * d.df)
+    assert tabela.da_vista is not None and "Δf" in tabela.resumo.text()
+    assert tabela.tabela.rowCount() == 1 and tabela.tabela.item(0, 0).text() == traco.nome
+    assert tabela.tabela.item(0, 1).text() == espectro._texto_do_nivel(d.nivel_em(9_000.0), espectro.resultados[0])
+    assert "Nível em C1" in tabela.texto_para_planilha()
+    espectro.acao_cursores.setChecked(False)
+    assert tabela.currentWidget() is tabela.vazio and not espectro.cursores.linhas
 
 
 def test_sem_a_fundamental_a_fft_e_do_trecho_inteiro(janela, qtbot, tmp_path):

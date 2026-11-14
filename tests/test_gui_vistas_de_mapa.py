@@ -156,15 +156,18 @@ def test_os_harmonicos_sao_os_da_api_com_as_barras_e_os_indices(janela, qtbot, p
     assert w.opcoes == type(w.opcoes)(vista_de_tempo=tempo.vista.id) and len(w.resultado.tabela.harmonicos) == 40
 
 
-def test_os_cursores_nos_mapas_e_nos_harmonicos(janela, qtbot, plotado):
+def test_os_cursores_nos_mapas_e_nos_harmonicos_vao_para_as_medidas(janela, qtbot, plotado):
     fonte, traco, tempo = plotado
     w = abrir(janela, qtbot, "espectrograma")
-    assert not w.cursores.ligados and w.leitura_dos_cursores.isHidden()
+    tabela = janela.tabela_de_medidas
+    assert not w.cursores.ligados
     w.acao_cursores.setChecked(True)
-    w.cursores.definir(0.5, 1.0)
-    texto = w.leitura_dos_cursores.text()
-    assert "Δ = 500 ms" in texto and "1/Δ = 2 Hz" in texto and not w.leitura_dos_cursores.isHidden()
+    w.cursores.mover(0, 0.5)
+    w.cursores.mover(1, 1.0)
+    assert "Δt 500 ms" in tabela.resumo.text() and "1/Δt 2 Hz" in tabela.resumo.text()
     h = abrir(janela, qtbot, "harmonicos")
     h.acao_cursores.setChecked(True)
-    h.cursores.definir(3.0, 7.0)
-    assert "Δ = 4,00" in h.leitura_dos_cursores.text()
+    h.cursores.mover(0, 3.0)
+    h.cursores.mover(1, 7.2)
+    assert "ordem 3 → ordem 7" in tabela.resumo.text() and tabela.tabela.rowCount() == 1
+    assert h.cursores.andar(1, 1.0) and "ordem 3 → ordem 8" in tabela.resumo.text()

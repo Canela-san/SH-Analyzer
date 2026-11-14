@@ -15,8 +15,9 @@ ligada, no tempo.
   sincronizada pelos cruzamentos por zero (o ``adc_tool --fft --harmonicos``). O trecho padrão é a janela visível.
 * **As contas** são as da ``api`` (``dados/espectros.py``), em segundo plano, com o progresso no painel de tarefas numa
   captura longa; cada pedido cancela o anterior.
-* **Os cursores A e B** (o botão da barra, ou C): a posição de cada um e a distância entre eles (no tempo, também o
-  inverso dela, em Hz).
+* **Os cursores C1 e C2** (o botão da barra, ou C): os mesmos da vista de tempo (``graficos/cursores.py``), com as
+  setas andando um passo (uma janela, uma coluna, uma ordem); as medidas (os instantes, Δt e 1/Δt; nos harmônicos, as
+  ordens e o valor das barras) vão para a tabela de Medidas do painel de baixo.
 """
 
 from __future__ import annotations
@@ -50,13 +51,14 @@ from ...componentes.basicos import CampoComUnidade, Segmentado
 from ...componentes.fluxo import LayoutDeFluxo
 from ...componentes.numeros import formatar_si
 from ...dados import espectros as esp
-from ...graficos.cursores import ParDeCursores
+from ...graficos.cursores import CursoresDaVista
 from ...graficos.faixa import EixoDoTema
 from ...modelo.comandos import MudarOpcoesDaVista
 from ...modelo.objetos import Projeto, Traco, Vista
 from ...modelo.selecao import Selecao
 from ...tema.aplicar import aparencia
 from ...tema.tokens import Tema, cor_do_traco
+from .medidas import LinhaDaTabela, MedidasDaVista, numero_para_planilha
 
 ESPERA_MS = 40
 TRECHOS = ("captura", "janela", "cursores")
@@ -72,6 +74,7 @@ class VistaLigada(QWidget):
     regiaoMudou = Signal(float, float, bool)
     semRegiao = Signal()
     calculado = Signal()
+    medidasMudaram = Signal(object)          # MedidasDaVista dos cursores (ou None): a tabela de Medidas
 
     nome_da_conta = "Conta"
     unidade_x = "s"                 # a unidade do eixo x (o tempo; nos harmônicos, a ordem)
@@ -124,15 +127,16 @@ class VistaLigada(QWidget):
         botao.setDefaultAction(self.acao_cursores)
         botao.setAutoRaise(True)
         self._linha.addWidget(botao)
-        self.cursores = ParDeCursores(self.grafico.getPlotItem(), parent=self)
-        self.cursores.mudou.connect(self._mostrar_cursores)
+        self.cursores = CursoresDaVista(parent=self)
+        self.cursores.por_nas([self.grafico.getViewBox()])
+        self.cursores.mudou.connect(self.emitir_regiao)
         self.acao_cursores.toggled.connect(self._ligar_cursores)
-        self.leitura_dos_cursores = QLabel()
-        self.leitura_dos_cursores.setObjectName("leitura_dos_cursores")
-        self.leitura_dos_cursores.setContentsMargins(10, 2, 10, 0)
-        self.leitura_dos_cursores.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.leitura_dos_cursores.hide()
-        coluna.addWidget(self.leitura_dos_cursores)
+        for tecla, passos in (("Left", -1), ("Right", 1), ("Shift+Left", -10), ("Shift+Right", 10)):
+            andar = QAction(self)
+            andar.setShortcut(QKeySequence(tecla))
+            andar.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            andar.triggered.connect(lambda _=False, n=passos: self.cursores.andar(n, self._passo_do_cursor()))
+            self.addAction(andar)
         self.info = QLabel()
         self.info.setObjectName("info_vista")
         self.info.setWordWrap(True)
@@ -368,6 +372,8 @@ class VistaLigada(QWidget):
             self.erro = "" if self.aguardando else erro
             self._desenhar()
             self._mostrar_info()
+            if self.cursores.ligados:
+                self.emitir_regiao()          # os valores nos cursores mudaram com o resultado
             self.calculado.emit()
 
         grande = trecho.n_amostras > AMOSTRAS_PARA_MOSTRAR_A_TAREFA
@@ -393,31 +399,41 @@ class VistaLigada(QWidget):
         return self.traco.receita.deslocamento_s + t.inicio / t.captura.canal(t.numero).taxa_hz
 
     def _ligar_cursores(self, ligar: bool) -> None:
-        self.cursores.ligar(ligar)
-        self.leitura_dos_cursores.setVisible(ligar)
+        if ligar:
+            self.cursores.ligar(tuple(self.grafico.getViewBox().viewRange()[0]))
+        else:
+            self.cursores.desligar()
+
+    def _passo_do_cursor(self) -> float:
+        """Quanto as setas andam: no tempo, uma janela das bandas ou uma coluna do espectrograma."""
+        return 0.0
 
     def _texto_x(self, valor: float) -> str:
         if self.unidade_x:
-            return formatar_si(valor, self.unidade_x, 6)
+            return formatar_si(valor, self.unidade_x, 7)
         return f"{valor:.2f}".replace(".", ",").replace("-", "−")
 
-    def _mostrar_cursores(self) -> None:
-        """A posição de A e de B e a distância entre eles (no tempo, também o inverso dela)."""
-        if not self.cursores.ligados:
-            return
-        a, b = self.cursores.a, self.cursores.b
-        partes = [f"A {self._texto_x(a)}", f"B {self._texto_x(b)}", f"Δ = {self._texto_x(b - a)}"]
-        if self.unidade_x == "s" and b != a:
-            partes.append(f"1/Δ = {formatar_si(1.0 / abs(b - a), 'Hz', 5)}")
-        self.leitura_dos_cursores.setText("   ".join(partes))
+    def medidas(self) -> MedidasDaVista | None:
+        """As medidas dos cursores (para a tabela de Medidas): no tempo, os instantes, Δt e 1/Δt."""
+        if self.cursores.posicoes is None:
+            return None
+        c1, c2 = self.cursores.posicoes
+        dt = c2 - c1
+        inverso = formatar_si(1.0 / abs(dt), "Hz", 5) if dt else "—"
+        resumo = self.tr("Cursores: {} → {} · Δt {} · 1/Δt {}").format(self._texto_x(c1), self._texto_x(c2),
+                                                                         self._texto_x(dt), inverso)
+        planilha = "\t".join(["C1 (s)", "C2 (s)", "Δt (s)"]) + "\n" + "\t".join(
+            numero_para_planilha(v) for v in (c1, c2, dt)) + "\n"
+        return MedidasDaVista(resumo, planilha=planilha)
+
+    def emitir_regiao(self) -> None:
+        if isValid(self):
+            self.medidasMudaram.emit(self.medidas())
 
     def soltar(self) -> None:
         if self._tarefa is not None and self._tarefa.ativa:
             self._tarefa.cancelar()
         self._espera.stop()
-
-    def emitir_regiao(self) -> None:
-        self.semRegiao.emit()
 
     def _tema_mudou(self, t: Tema) -> None:
         if isValid(self) and hasattr(self, "grafico"):
@@ -474,6 +490,9 @@ class VistaDeBandas(VistaLigada):
 
     def _conta(self, trecho, progresso, cancelado):
         return esp.bandas_do_trecho(trecho, self.opcoes.parametros, progresso=progresso, cancelado=cancelado)
+
+    def _passo_do_cursor(self) -> float:
+        return self.resultado.bandas.duracao_janela_s if self.resultado is not None else 0.0
 
     def linhas(self) -> list[tuple[float, dict[str, float]]]:
         """As bandas na ordem da tabela: (centro, estatísticas), da maior para a menor na estatística escolhida."""
@@ -560,6 +579,10 @@ class VistaDeEspectrograma(VistaLigada):
     def _conta(self, trecho, progresso, cancelado):
         return esp.espectrograma_do_trecho(trecho, self.opcoes.parametros, progresso=progresso, cancelado=cancelado)
 
+    def _passo_do_cursor(self) -> float:
+        e = self.resultado
+        return float(e.tempos_s[1] - e.tempos_s[0]) if e is not None and len(e.tempos_s) > 1 else 0.0
+
     def _desenhar(self) -> None:
         e = self.resultado
         if e is None:
@@ -637,6 +660,33 @@ class VistaDeHarmonicos(VistaLigada):
 
     def _conta(self, trecho, progresso, cancelado):
         return esp.harmonicos_do_trecho(trecho, self.opcoes.parametros)
+
+    def _passo_do_cursor(self) -> float:
+        return 1.0                                 # uma ordem
+
+    def medidas(self) -> MedidasDaVista | None:
+        """As ordens de C1 e de C2 (a barra mais perto de cada um) e o valor das barras, na grandeza e na escala da
+        vista."""
+        if self.cursores.posicoes is None or self.resultado is None:
+            return None
+        ordens, alturas = self.valores()
+        if not len(ordens):
+            return None
+        indices = [int(np.argmin(np.abs(ordens - c))) for c in self.cursores.posicoes]
+        h1, h2 = (int(ordens[i]) for i in indices)
+        v1, v2 = (float(alturas[i]) for i in indices)
+        unidade = "%" if self.opcoes.escala == "pct" else self.traco_unidade()
+
+        def texto(v):
+            return f"{v:.4f} %".replace(".", ",") if unidade == "%" else formatar_si(v, unidade, 5)
+
+        resumo = self.tr("Cursores: ordem {} → ordem {} · Δ {} ordens").format(h1, h2, h2 - h1)
+        colunas = (self.tr("Ordem {}").format(h1), self.tr("Ordem {}").format(h2), self.tr("Δ"))
+        linha = LinhaDaTabela(self.traco, (texto(v1), texto(v2), texto(v2 - v1)))
+        planilha = "\t".join(["Traço", "Unidade", "Ordem C1", "Ordem C2", "Valor C1", "Valor C2", "Δ"]) + "\n" + \
+            "\t".join([self.traco.nome, unidade, str(h1), str(h2), numero_para_planilha(v1), numero_para_planilha(v2),
+                       numero_para_planilha(v2 - v1)]) + "\n"
+        return MedidasDaVista(resumo, colunas, (linha,), planilha)
 
     def valores(self) -> tuple[np.ndarray, np.ndarray]:
         """As ordens 2 em diante e a altura das barras, na grandeza e na escala escolhidas."""

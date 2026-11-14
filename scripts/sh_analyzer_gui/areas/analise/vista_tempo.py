@@ -34,6 +34,7 @@ from ...componentes.chip import ChipDeTraco
 from ...componentes.fluxo import LayoutDeFluxo
 from ...componentes.numeros import formatar_si
 from ...dados.piramide import Piramide
+from ...graficos.cursores import CursoresDaVista
 from ...graficos.faixa import LARGURA_DO_EIXO_Y, CaixaDaFaixa, EixoDoTema, GradeDoTema
 from ...graficos.minimapa import Minimapa
 from ...graficos.traco_lod import TracoLOD
@@ -76,9 +77,8 @@ class VistaDeTempo(QWidget):
         self.historico: list[tuple[float, float]] = []
         self._navegando = False
         self._fontes_esperadas: set[FonteDoProjeto] = set()
-        self.cursores: list[float] | None = None
-        self._linhas_dos_cursores: list[list[pg.InfiniteLine]] = []
-        self._cursor_ativo = 1
+        self._cursores = CursoresDaVista(parent=self)       # os de todas as vistas (graficos/cursores.py)
+        self._cursores.mudou.connect(self._cursores_mudaram)
         if materializacoes is None:          # sem a janela (os testes): um serviço só desta vista
             materializacoes = ServicoDeMaterializacao(GerenciadorDeTarefas(parent=self), parent=self)
         self.materializacoes = materializacoes
@@ -527,68 +527,43 @@ class VistaDeTempo(QWidget):
 
     # ------------------------------------------------------------------ os cursores
 
+    @property
+    def cursores(self) -> list[float] | None:
+        """As posições de C1 e C2, em segundos (None: desligados)."""
+        return self._cursores.posicoes
+
+    @cursores.setter
+    def cursores(self, posicoes) -> None:
+        self._cursores.posicoes = None if posicoes is None else [float(p) for p in posicoes]
+
+    @property
+    def _linhas_dos_cursores(self) -> list[list[pg.InfiniteLine]]:
+        return self._cursores.linhas
+
     def ligar_cursores(self, ligar: bool = True) -> None:
         if self.acao_cursores.isChecked() != ligar:
             self.acao_cursores.setChecked(ligar)            # volta aqui pelo toggled
             return
-        if ligar and self.cursores is None:
-            janela = self.janela_de_tempo() or (0.0, 1.0)
-            largura = janela[1] - janela[0]
-            self.cursores = [janela[0] + largura / 3, janela[0] + 2 * largura / 3]
-        elif not ligar:
-            self.cursores = None
+        if ligar:
+            self._cursores.ligar(self.janela_de_tempo() or (0.0, 1.0))
+        else:
+            self._cursores.desligar()
         self._por_cursores()
-        self._espera_da_medida.start()
 
     def _por_cursores(self) -> None:
-        """Tira as linhas dos cursores e, se ligados, põe de novo em cada faixa."""
-        for linhas in self._linhas_dos_cursores:
-            for linha in linhas:
-                # As de faixas já refeitas foram apagadas junto com a faixa.
-                caixa = linha.getViewBox() if isValid(linha) else None
-                if caixa is not None:
-                    caixa.removeItem(linha)
-        self._linhas_dos_cursores = []
-        if self.cursores is None:
-            return
-        t = aparencia().tema
-        for k, posicao in enumerate(self.cursores):
-            linhas = []
-            for faixa in self.faixas.values():
-                linha = pg.InfiniteLine(posicao, angle=90, movable=True,
-                                        pen=pg.mkPen(t.destaque, width=1), hoverPen=pg.mkPen(t.destaque, width=2),
-                                        label=f"C{k + 1}", labelOpts={"position": 0.96, "color": t.destaque_texto,
-                                                                      "fill": t.destaque, "movable": False})
-                linha.indice_do_cursor = k
-                linha.setZValue(20)
-                linha.sigPositionChanged.connect(self._cursor_movido)
-                faixa.getViewBox().addItem(linha, ignoreBounds=True)
-                linhas.append(linha)
-            self._linhas_dos_cursores.append(linhas)
+        """Os cursores em cada faixa (as faixas mudaram)."""
+        self._cursores.por_nas([faixa.getViewBox() for faixa in self.faixas.values()])
 
-    def _cursor_movido(self, linha: pg.InfiniteLine) -> None:
-        if self.cursores is None or self._navegando:
-            return
-        k = linha.indice_do_cursor
-        self.cursores[k] = linha.value()
-        self._cursor_ativo = k
-        self._navegando = True
-        try:
-            for outra in self._linhas_dos_cursores[k]:
-                if outra is not linha:
-                    outra.setValue(self.cursores[k])
-        finally:
-            self._navegando = False
-        self._espera_da_medida.start()
+    def _cursores_mudaram(self) -> None:
+        if isValid(self):
+            self._espera_da_medida.start()
 
     def mover_cursor(self, passos: int) -> bool:
         """As setas: move o cursor ativo ``passos`` amostras (do primeiro traço)."""
         if self.cursores is None or not self.itens:
             return False
         taxa = next(iter(self.itens.values()))._taxa
-        k = self._cursor_ativo
-        self._linhas_dos_cursores[k][0].setValue(self.cursores[k] + passos / taxa)
-        return True
+        return self._cursores.andar(passos, 1.0 / taxa)
 
     def regiao(self) -> tuple[float, float, bool] | None:
         """A região a medir: entre os cursores, ou a janela visível."""
@@ -804,3 +779,4 @@ class VistaDeTempo(QWidget):
                 faixa.getAxis(lado).aplicar_tema(t)
         for traco, item in self.itens.items():
             item.definir_cor(cor_do_traco(traco.receita.cor, t)[0])
+        self._cursores.aplicar_tema(t)

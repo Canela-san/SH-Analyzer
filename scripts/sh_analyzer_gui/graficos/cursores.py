@@ -1,90 +1,153 @@
-"""Os cursores A e B de um gráfico (o espectro, as bandas, o espectrograma, os harmônicos): duas linhas verticais
-arrastáveis e a leitura delas, para medir num relance a distância entre dois picos ou dois instantes.
+"""Os cursores C1 e C2 de uma vista, os mesmos em todas (a de tempo, o espectro, as bandas, o espectrograma, os
+harmônicos): a mesma lógica e a mesma cara.
 
-As posições ficam **na unidade dos dados** (Hz, s, ordem), e a linha é posta no eixo por ``para_eixo`` (o log10 na
-frequência logarítmica): trocar a escala do eixo não perde os cursores. **Ao soltar,** um cursor pode encostar no
-máximo mais próximo (``encostar(valor) -> valor``, de quem sabe os dados): no espectro, o pico a até 4 pixels.
+* **Duas linhas verticais**, uma por caixa do gráfico (as faixas da vista de tempo; a caixa única do espectro), nas
+  mesmas posições em todas: arrastar uma move as outras do mesmo cursor. Na cor de destaque do tema, com o rótulo
+  "C1"/"C2" no alto, e mais grossas sob o mouse.
+* **As setas** movem o cursor ativo (o último mexido) um passo (uma amostra no tempo, um bin no espectro; Shift: 10),
+  por :meth:`CursoresDaVista.andar`.
+* **As posições ficam na unidade dos dados** (s, Hz, ordem); a linha é posta no eixo por ``para_eixo`` (o log10 na
+  frequência logarítmica): trocar a escala do eixo não perde os cursores.
+* **A leitura não é daqui:** ``mudou()`` avisa a vista, que manda as medidas da região para a tabela de Medidas do
+  painel de baixo (como a vista de tempo sempre fez), e não um texto em cima do gráfico.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 import pyqtgraph as pg
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QColor
+from shiboken6 import isValid
+
+from ..tema.aplicar import aparencia
+from ..tema.tokens import Tema
 
 
-class ParDeCursores(QObject):
-    """``mudou()`` sai quando um cursor anda (arrastando) e quando é solto."""
+def _identidade(valor: float) -> float:
+    return valor
+
+
+class CursoresDaVista(QObject):
+    """``mudou()`` sai a cada movimento de um cursor (arrastando, pelas setas, ao ligar e ao desligar)."""
 
     mudou = Signal()
 
-    def __init__(self, grafico: pg.PlotItem, *, para_eixo: Callable[[float], float] = lambda v: v,
-                 do_eixo: Callable[[float], float] = lambda x: x,
-                 encostar: Callable[[float], float] | None = None, parent: QObject | None = None):
+    def __init__(self, *, para_eixo: Callable[[float], float] = _identidade,
+                 do_eixo: Callable[[float], float] = _identidade, parent: QObject | None = None):
         super().__init__(parent)
-        self.grafico, self.para_eixo, self.do_eixo, self.encostar = grafico, para_eixo, do_eixo, encostar
-        self.valores: list[float] = [0.0, 0.0]
-        self.linhas: list[pg.InfiniteLine] = []
-        for k, nome in enumerate(("A", "B")):
-            linha = pg.InfiniteLine(angle=90, movable=True, label=nome,
-                                    labelOpts={"position": 0.96, "movable": False})
-            linha.setZValue(40)
-            linha.sigPositionChanged.connect(lambda _l, k=k: self._movida(k))
-            linha.sigPositionChangeFinished.connect(lambda _l, k=k: self._solta(k))
-            self.linhas.append(linha)
-        self.ligados = False
+        self.para_eixo, self.do_eixo = para_eixo, do_eixo
+        self.posicoes: list[float] | None = None          # na unidade dos dados; None: desligados
+        self.ativo = 1                                     # o último mexido (as setas movem ele)
+        self.linhas: list[list[pg.InfiniteLine]] = []      # por cursor, uma linha por caixa
+        self._caixas: list[pg.ViewBox] = []
+        self._sincronizando = False
 
-    def ligar(self, ligar: bool) -> None:
-        """Liga (a um terço e a dois terços da faixa visível, na primeira vez) ou desliga os cursores."""
-        if ligar == self.ligados:
-            return
-        self.ligados = ligar
-        if ligar:
-            if self.valores == [0.0, 0.0]:
-                x0, x1 = self.grafico.getViewBox().viewRange()[0]
-                self.valores = [self.do_eixo(x0 + (x1 - x0) / 3), self.do_eixo(x0 + 2 * (x1 - x0) / 3)]
-            for linha in self.linhas:
-                self.grafico.addItem(linha, ignoreBounds=True)
-            self.reposicionar()
-        else:
-            for linha in self.linhas:
-                self.grafico.removeItem(linha)
+    @property
+    def ligados(self) -> bool:
+        return self.posicoes is not None
+
+    def regiao(self) -> tuple[float, float] | None:
+        """C1 e C2 em ordem crescente (ou None, desligados)."""
+        return tuple(sorted(self.posicoes)) if self.posicoes is not None else None
+
+    # ------------------------------------------------------------------ ligar, desligar, pôr nas caixas
+
+    def ligar(self, janela: tuple[float, float]) -> None:
+        """Liga os cursores; na primeira vez, a um terço e a dois terços de ``janela`` (na unidade dos dados)."""
+        if self.posicoes is None:
+            largura = janela[1] - janela[0]
+            self.posicoes = [janela[0] + largura / 3, janela[0] + 2 * largura / 3]
+        self.por_nas(self._caixas)
         self.mudou.emit()
 
-    def reposicionar(self) -> None:
-        """Põe as linhas nos valores guardados (depois de trocar a escala do eixo)."""
-        for linha, valor in zip(self.linhas, self.valores):
-            linha.blockSignals(True)
-            linha.setValue(self.para_eixo(valor))
-            linha.blockSignals(False)
+    def desligar(self) -> None:
+        self.posicoes = None
+        self.por_nas(self._caixas)
+        self.mudou.emit()
 
-    def definir(self, a: float, b: float) -> None:
-        self.valores = [float(a), float(b)]
+    def por_nas(self, caixas: Iterable[pg.ViewBox]) -> None:
+        """Tira as linhas e, ligados, põe de novo, uma por cursor em cada caixa (as faixas mudaram, ou o eixo)."""
+        for linhas in self.linhas:
+            for linha in linhas:
+                caixa = linha.getViewBox() if isValid(linha) else None     # numa faixa apagada, foi junto
+                if caixa is not None:
+                    caixa.removeItem(linha)
+        self.linhas = []
+        self._caixas = [c for c in caixas if c is not None]
+        if self.posicoes is None:
+            return
+        t = aparencia().tema
+        for k, posicao in enumerate(self.posicoes):
+            linhas = []
+            for caixa in self._caixas:
+                linha = pg.InfiniteLine(self.para_eixo(posicao), angle=90, movable=True, label=f"C{k + 1}",
+                                        labelOpts={"position": 0.96, "movable": False})
+                linha.indice_do_cursor = k
+                linha.setZValue(20)
+                self._pintar(linha, t)
+                linha.sigPositionChanged.connect(self._movida)
+                caixa.addItem(linha, ignoreBounds=True)
+                linhas.append(linha)
+            self.linhas.append(linhas)
+
+    def reposicionar(self) -> None:
+        """As linhas nas posições guardadas (depois de trocar a escala do eixo)."""
+        if self.posicoes is None:
+            return
+        self._sincronizando = True
+        try:
+            for k, linhas in enumerate(self.linhas):
+                for linha in linhas:
+                    linha.setValue(self.para_eixo(self.posicoes[k]))
+        finally:
+            self._sincronizando = False
+
+    # ------------------------------------------------------------------ mover
+
+    def mover(self, k: int, valor: float) -> None:
+        """Põe o cursor ``k`` em ``valor`` (na unidade dos dados) e o torna o ativo."""
+        if self.posicoes is None:
+            return
+        self.posicoes[k] = float(valor)
+        self.ativo = k
         self.reposicionar()
         self.mudou.emit()
 
-    def _movida(self, k: int) -> None:
-        self.valores[k] = float(self.do_eixo(self.linhas[k].value()))
+    def andar(self, passos: int, passo: float) -> bool:
+        """As setas: o cursor ativo anda ``passos`` vezes ``passo`` (uma amostra, um bin)."""
+        if self.posicoes is None or passo <= 0:
+            return False
+        self.mover(self.ativo, self.posicoes[self.ativo] + passos * passo)
+        return True
+
+    def _movida(self, linha: pg.InfiniteLine) -> None:
+        if self._sincronizando or self.posicoes is None:
+            return
+        k = linha.indice_do_cursor
+        self.posicoes[k] = float(self.do_eixo(linha.value()))
+        self.ativo = k
+        self._sincronizando = True
+        try:
+            for outra in self.linhas[k]:
+                if outra is not linha:
+                    outra.setValue(linha.value())
+        finally:
+            self._sincronizando = False
         self.mudou.emit()
 
-    def _solta(self, k: int) -> None:
-        if self.encostar is not None:
-            self.valores[k] = float(self.encostar(self.valores[k]))
-            self.reposicionar()
-        self.mudou.emit()
+    # ------------------------------------------------------------------ o tema
 
-    def aplicar_cor(self, cor: str) -> None:
-        caneta = pg.mkPen(QColor(cor), width=1)
-        for linha in self.linhas:
-            linha.setPen(caneta)
-            linha.label.setColor(QColor(cor))
+    @staticmethod
+    def _pintar(linha: pg.InfiniteLine, t: Tema) -> None:
+        linha.setPen(pg.mkPen(t.destaque, width=1))
+        linha.setHoverPen(pg.mkPen(t.destaque, width=2))
+        linha.label.setColor(t.destaque_texto)
+        linha.label.fill = pg.mkBrush(t.destaque)
+        linha.label.update()
 
-    @property
-    def a(self) -> float:
-        return self.valores[0]
-
-    @property
-    def b(self) -> float:
-        return self.valores[1]
+    def aplicar_tema(self, t: Tema) -> None:
+        for linhas in self.linhas:
+            for linha in linhas:
+                if isValid(linha):
+                    self._pintar(linha, t)

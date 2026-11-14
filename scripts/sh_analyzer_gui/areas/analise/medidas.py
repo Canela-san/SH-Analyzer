@@ -2,6 +2,10 @@
 região (os cursores ou a janela visível), a média, o RMS, o pico, o pico a pico, a fundamental e, com os cursores,
 o Δy. Acima dela, o Δt e o 1/Δt dos cursores.
 
+**As vistas de frequência** (o espectro, as bandas, o espectrograma, os harmônicos) mandam as medidas dos cursores
+delas como uma :class:`MedidasDaVista` (o resumo, as colunas e uma linha por traço), mostrada pela mesma tabela
+(:meth:`TabelaDeMedidas.mostrar_da_vista`): os cursores de todas as vistas leem do mesmo jeito, no mesmo lugar.
+
 **Copiar** (o botão ou Ctrl+C na tabela) põe a tabela na área de transferência em texto separado por tabulação,
 com os números completos e a vírgula decimal: cola direto numa planilha em português.
 """
@@ -9,6 +13,7 @@ com os números completos e a vírgula decimal: cola direto numa planilha em por
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QKeySequence
@@ -34,6 +39,29 @@ from ...tema.icones import icone
 from ...tema.tokens import cor_do_traco
 
 COLUNAS = ("Traço", "Região", "Média", "RMS", "Pico", "Pico a pico", "f₁", "Δy")
+
+
+@dataclass(frozen=True)
+class LinhaDaTabela:
+    """Uma linha das medidas de uma vista: o traço (o nome e a cor) e os textos das colunas."""
+
+    traco: object
+    textos: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MedidasDaVista:
+    """As medidas que uma vista manda para a tabela (as dos cursores de uma vista de frequência): o resumo de cima,
+    as colunas depois de "Traço", uma linha por traço e o texto para a planilha (os números completos)."""
+
+    resumo: str
+    colunas: tuple[str, ...] = ()
+    linhas: tuple[LinhaDaTabela, ...] = ()
+    planilha: str = ""
+
+
+def numero_para_planilha(valor: float | None) -> str:
+    return _numero_para_planilha(valor)
 
 
 def _numero_para_planilha(valor: float | None) -> str:
@@ -79,6 +107,7 @@ class TabelaDeMedidas(QStackedWidget):
         self.addWidget(conteudo)
         self.medidas: list[MedidaDoTraco] = []
         self.pedido: PedidoDeMedida | None = None
+        self.da_vista: MedidasDaVista | None = None
 
     def keyPressEvent(self, evento) -> None:
         if evento.matches(QKeySequence.StandardKey.Copy):
@@ -86,12 +115,45 @@ class TabelaDeMedidas(QStackedWidget):
             return
         super().keyPressEvent(evento)
 
+    def _colunas(self, colunas) -> None:
+        if self.tabela.columnCount() != len(colunas) or \
+                [self.tabela.horizontalHeaderItem(i).text() for i in range(len(colunas))] != list(colunas):
+            self.tabela.setColumnCount(len(colunas))
+            self.tabela.setHorizontalHeaderLabels(list(colunas))
+            self.tabela.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+
+    def _celula_do_traco(self, traco) -> QTableWidgetItem:
+        r = traco.receita
+        return QTableWidgetItem(icone("pulso", cor_do_traco(r.cor, aparencia().tema)[0], 12), r.nome)
+
+    def mostrar_da_vista(self, medidas: MedidasDaVista | None) -> None:
+        """As medidas de uma vista de frequência (os cursores dela); None: nada a medir."""
+        self.pedido, self.medidas, self.da_vista = None, [], medidas
+        if medidas is None:
+            self.setCurrentWidget(self.vazio)
+            return
+        self.setCurrentIndex(1)
+        self.resumo.setText(medidas.resumo)
+        self._colunas([self.tr("Traço"), *medidas.colunas])
+        self.tabela.setUpdatesEnabled(False)
+        self.tabela.setRowCount(len(medidas.linhas))
+        for linha, m in enumerate(medidas.linhas):
+            self.tabela.setItem(linha, 0, self._celula_do_traco(m.traco))
+            for coluna, texto in enumerate(m.textos, start=1):
+                item = QTableWidgetItem(texto)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                self.tabela.setItem(linha, coluna, item)
+        for coluna in range(1, len(medidas.colunas) + 1):
+            self.tabela.resizeColumnToContents(coluna)
+        self.tabela.setUpdatesEnabled(True)
+
     def mostrar(self, pedido: PedidoDeMedida | None, medidas: list[MedidaDoTraco]) -> None:
-        self.pedido, self.medidas = pedido, list(medidas)
+        self.pedido, self.medidas, self.da_vista = pedido, list(medidas), None
         if not medidas or pedido is None:
             self.setCurrentWidget(self.vazio)
             return
         self.setCurrentIndex(1)
+        self._colunas([self.tr(c) for c in COLUNAS])
         dt = pedido.fim_s - pedido.inicio_s
         if pedido.dos_cursores:
             inverso = formatar_si(1 / dt, "Hz", 5) if dt else "—"
@@ -105,9 +167,7 @@ class TabelaDeMedidas(QStackedWidget):
         self.tabela.setUpdatesEnabled(False)
         self.tabela.setRowCount(len(medidas))
         for linha, m in enumerate(medidas):
-            r = m.traco.receita
-            nome = QTableWidgetItem(icone("pulso", cor_do_traco(r.cor, t)[0], 12), r.nome)
-            self.tabela.setItem(linha, 0, nome)
+            self.tabela.setItem(linha, 0, self._celula_do_traco(m.traco))
             regiao = self.tr("cursores") if pedido.dos_cursores else self.tr("janela")
             valores = [regiao]
             if m.medidas is None:
@@ -134,6 +194,8 @@ class TabelaDeMedidas(QStackedWidget):
 
     def texto_para_planilha(self) -> str:
         """A tabela em texto separado por tabulação, com os números completos (vírgula decimal)."""
+        if self.da_vista is not None:
+            return self.da_vista.planilha
         cabecalho = ["Traço", "Unidade", "Início (s)", "Fim (s)", "Média", "RMS", "RMS sem DC", "Pico", "Pico a pico",
                      "Mínimo", "Máximo", "f1 (Hz)", "Δy", "Amostras"]
         linhas = ["\t".join(cabecalho)]
@@ -150,5 +212,5 @@ class TabelaDeMedidas(QStackedWidget):
         return "\n".join(linhas) + "\n"
 
     def copiar(self) -> None:
-        if self.medidas:
+        if self.medidas or self.da_vista is not None:
             QApplication.clipboard().setText(self.texto_para_planilha())
