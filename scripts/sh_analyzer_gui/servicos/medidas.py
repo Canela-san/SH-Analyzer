@@ -9,7 +9,7 @@ conta leria tudo para a memória): a tabela diz para aproximar o zoom ou usar os
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from PySide6.QtCore import QObject, Signal
 from supraharmonicos.api import ErroSHAN, MedidasDaRegiao, medir_regiao
@@ -18,6 +18,11 @@ from ..modelo.objetos import Projeto, Traco, Vista
 from .tarefas import GerenciadorDeTarefas, Tarefa
 
 LIMITE_DE_AMOSTRAS = 20_000_000
+LIMITE_DA_F1_NA_JANELA = 1_000_000
+"""Sem os cursores (a janela visível, medida a cada parada do zoom), a f1 só até este tamanho: ela é a conta cara
+(~1 s a cada 4 M amostras, segurando o GIL aos pedaços) e rodaria a cada zoom. Entre os cursores, vale o limite
+geral."""
+AVISO_DA_F1 = "f₁ calculada até 1 M amostras na janela visível: aproxime o zoom ou use os cursores"
 
 
 @dataclass(frozen=True)
@@ -88,10 +93,15 @@ class ServicoDeMedidas(QObject):
                 if i1 - i0 > LIMITE_DE_AMOSTRAS:
                     erro = f"região grande demais ({i1 - i0} amostras): aproxime o zoom ou use os cursores"
                 else:
+                    com_f1 = pedido.dos_cursores or i1 - i0 <= LIMITE_DA_F1_NA_JANELA
                     try:
-                        medidas = medir_regiao(captura, r.canal, i0, i1, ganho=r.ganho, offset=r.offset)
+                        medidas = medir_regiao(captura, r.canal, i0, i1, ganho=r.ganho, offset=r.offset,
+                                               fundamental=com_f1)
                     except ErroSHAN as e:
                         erro = str(e)
+                    else:
+                        if not com_f1:
+                            medidas = replace(medidas, problema_f1=AVISO_DA_F1)
                 if pedido.dos_cursores:
                     a, b = min(i0, n - 1), min(i1, n - 1)
                     if 0 <= a and 0 <= b:

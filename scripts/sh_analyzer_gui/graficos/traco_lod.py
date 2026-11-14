@@ -113,6 +113,7 @@ class TracoLOD(pg.GraphicsObject):
         self._linhas: list[QPolygonF] = []          # a linha das amostras, um trecho por pedaço finito
         self._pontos: list[QPolygonF] = []
         self._dpr = 1.0
+        self._sujo = False               # escondido quando a vista mudou: consulta ao aparecer
         self.recalculos = 0              # quantas consultas foram feitas (para os testes e o medidor de quadros)
         self.pinturas = 0                # quantas vezes foi pintado (o medidor de quadros por segundo)
         self._limites = self._calcular_limites()
@@ -195,17 +196,28 @@ class TracoLOD(pg.GraphicsObject):
         """Uma coluna por pixel do dispositivo (em tela com escala de 200 %, o dobro das lógicas)."""
         vb = self.getViewBox()
         largura = vb.width() if vb is not None else 0
-        self._dpr = 1.0
-        if self.scene() is not None and self.scene().views():
-            self._dpr = self.scene().views()[0].devicePixelRatioF() or 1.0
+        cena = self.scene()
+        vistas = cena.views() if cena is not None else ()
+        self._dpr = (vistas[0].devicePixelRatioF() or 1.0) if vistas else 1.0
         return max(1, int(math.ceil(largura * self._dpr)))
+
+    def itemChange(self, mudanca, valor):
+        # Um traço escondido não consulta nada (recalcular só desenharia para ninguém); ao aparecer, consulta.
+        resultado = super().itemChange(mudanca, valor)
+        if mudanca == self.GraphicsItemChange.ItemVisibleHasChanged and valor and self._sujo:
+            self._agendador.start()
+        return resultado
 
     def recalcular(self) -> None:
         """Consulta a janela visível e monta os polígonos do próximo quadro."""
         vb = self.getViewBox()
         if vb is None:
             return
-        (x0, x1), _ = vb.viewRange()
+        if not self.isVisible():
+            self._sujo = True
+            return
+        self._sujo = False
+        (x0, x1), (y0, y1) = vb.viewRange()
         colunas = self._colunas_visiveis()
         inicio = (x0 - self._t0) * self._taxa
         fim = (x1 - self._t0) * self._taxa + 1
@@ -216,9 +228,12 @@ class TracoLOD(pg.GraphicsObject):
         self._colunas, self._linhas, self._pontos = None, [], []
         if isinstance(consulta, Envoltoria) and len(consulta):
             centros = self._t0 + (consulta.bordas[:-1] + consulta.bordas[1:] - 1) / (2 * self._taxa)
-            altura_pixel = abs(vb.viewPixelSize()[1]) / self._dpr     # 1 pixel do dispositivo, em unidades de y
+            # 1 pixel do dispositivo, em unidades de y. Direto da faixa visível e da altura da caixa: o
+            # viewPixelSize do PyQtGraph mapeia pontos pela matriz em Python e custava 0,23 ms por traço e quadro.
+            altura_pixel = abs(y1 - y0) / max(vb.height(), 1.0) / self._dpr
             x, y = _segmentos_de_coluna(centros, consulta.minimos, consulta.maximos, altura_pixel)
-            self._colunas = fn.arrayToQPath(x, y, connect="pairs") if len(x) else None
+            # Sem a conferência de finitos: os segmentos já saem sem NaN (as colunas vazias ficam de fora).
+            self._colunas = fn.arrayToQPath(x, y, connect="pairs", finiteCheck=False) if len(x) else None
         elif isinstance(consulta, Amostras) and len(consulta):
             x = self._t0 + consulta.indices / self._taxa
             for a, b in _trechos_finitos(consulta.valores):

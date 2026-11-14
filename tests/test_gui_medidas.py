@@ -132,3 +132,19 @@ def test_trocar_de_aba_mede_a_vista_aberta(janela, plotado, qtbot):
     janela.vistas.setCurrentIndex(0)
     esperar_medidas(janela, qtbot, False)
     assert [m.traco for m in janela.tabela_de_medidas.medidas] == [a, b]
+
+
+def test_a_f1_da_janela_tem_limite_e_a_dos_cursores_nao(janela, plotado, qtbot, monkeypatch):
+    monkeypatch.setattr(servico, "LIMITE_DA_F1_NA_JANELA", 1000)
+    fonte, a, b, vista = plotado
+    vista.emitir_regiao()
+    qtbot.waitUntil(lambda: bool(janela.tabela_de_medidas.medidas
+                                 and janela.tabela_de_medidas.medidas[0].medidas.problema_f1 == servico.AVISO_DA_F1),
+                    timeout=10_000)
+    m = janela.tabela_de_medidas.medidas[0].medidas
+    assert m.f1_hz is None and m.rms > 0                                         # as outras medidas continuam
+    vista.acao_cursores.trigger()
+    vista._linhas_dos_cursores[0][0].setValue(0.05)
+    vista._linhas_dos_cursores[1][0].setValue(0.45)
+    tabela = esperar_medidas(janela, qtbot, True)
+    assert tabela.medidas[0].medidas.f1_hz == pytest.approx(59.98, abs=0.01)    # entre os cursores, sem limite

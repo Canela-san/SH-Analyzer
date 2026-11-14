@@ -13,6 +13,7 @@ from pathlib import Path
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
+from supraharmonicos.api import aquecer
 
 from sh_analyzer_gui import preferencias
 from sh_analyzer_gui.configuracao import APLICATIVO, ORGANIZACAO
@@ -103,4 +104,8 @@ def main(argv: list[str] | None = None) -> int:
         QTimer.singleShot(0, lambda: janela.controle.abrir(opcoes.arquivo))
     else:
         QTimer.singleShot(0, janela.controle.oferecer_recuperacao)
+    if not opcoes.sair_ao_abrir:
+        # A primeira medida importaria o SciPy (~1,5 s, com o GIL preso, travando a tela aos pedaços): importado
+        # agora, em segundo plano, enquanto a janela recém-aberta está parada.
+        janela.tarefas.iniciar("Aquecer", lambda _progresso, _cancelado: aquecer(), mostrar=False)
     return app.exec()

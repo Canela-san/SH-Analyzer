@@ -90,8 +90,9 @@ def test_os_tracos_seguem_a_receita(janela, qtbot, tmp_path):
     assert item._t0 == 0.05 and "50 ms" in w.chips[traco].resumo
     p.push(MudarTracos([traco], visivel=False))
     assert not item.isVisible() and not w.chips[traco].visivel
-    p.push(MudarTracos([traco], faixa=3))                               # outra faixa: as faixas se refazem
-    assert sorted(w.faixas) == [3] and w.itens[traco] is not item
+    p.push(MudarTracos([traco], faixa=3))                               # outra faixa: o mesmo item, movido
+    assert sorted(w.faixas) == [3] and w.itens[traco] is item
+    assert item.getViewBox() is w.faixas[3].getViewBox()
     for _ in range(5):
         p.undo()
     assert w.itens[traco].isVisible() and sorted(w.faixas) == [0]
@@ -134,8 +135,10 @@ def test_o_historico_do_zoom_e_o_ajustar(janela, qtbot, tmp_path):
     w.ajustar()
     assert w.janela_de_tempo() == pytest.approx(inteira)
     assert w.acao_voltar.shortcut().toString() == "Backspace" and w.acao_ajustar.shortcut().toString() == "F"
-    x0, x1 = w._regiao.getRegion()                                      # o minimapa acompanha
-    assert (x0, x1) == pytest.approx(inteira)
+    qtbot.waitUntil(lambda: w.minimapa.janela == pytest.approx(inteira), timeout=2000)   # o minimapa acompanha
+    w.minimapa.janelaPedida.emit(0.05, 0.06)                            # arrastar a janela no minimapa
+    assert w.janela_de_tempo() == pytest.approx((0.05, 0.06))
+    w.minimapa.grab()
 
 
 def test_selecionar_pelo_clique_pelo_chip_e_pela_arvore(janela, qtbot, tmp_path):

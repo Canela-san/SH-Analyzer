@@ -19,13 +19,14 @@ from __future__ import annotations
 import pyqtgraph as pg
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGraphicsItem, QHBoxLayout, QLabel, QSizePolicy, QToolButton, QVBoxLayout, QWidget
 from shiboken6 import isValid
 
 from ...componentes.chip import ChipDeTraco
 from ...componentes.fluxo import LayoutDeFluxo
 from ...componentes.numeros import formatar_si
 from ...graficos.faixa import LARGURA_DO_EIXO_Y, CaixaDaFaixa, EixoDoTema, GradeDoTema
+from ...graficos.minimapa import Minimapa
 from ...graficos.traco_lod import TracoLOD
 from ...modelo.objetos import FonteDoProjeto, Projeto, Traco, Vista
 from ...modelo.selecao import Selecao
@@ -35,8 +36,9 @@ from ...tema.tokens import Tema, cor_do_traco
 
 PARADA_DO_HISTORICO_MS = 400
 ESPERA_DA_MEDIDA_MS = 250
+INTERVALO_DO_MINIMAPA_MS = 30      # o minimapa acompanha o zoom a ~30 q/s: ele é outro widget, pintado à parte
+LARGURA_DA_INFO = 420
 ALCANCE_DO_CLIQUE_PX = 6.0
-ALTURA_DO_MINIMAPA = 44
 MAXIMO_DO_HISTORICO = 100
 
 
@@ -76,10 +78,8 @@ class VistaDeTempo(QWidget):
         self.grafico.setObjectName("grafico")
         self.grafico.ci.setSpacing(0)
         self.grafico.ci.setContentsMargins(0, 4, 8, 0)
-        self.minimapa = pg.PlotWidget()
-        self.minimapa.setObjectName("minimapa")
-        self.minimapa.setFixedHeight(ALTURA_DO_MINIMAPA)
-        self._preparar_minimapa()
+        self.minimapa = Minimapa()
+        self.minimapa.janelaPedida.connect(self._janela_do_minimapa)
         self.vazio = QLabel(self.tr("Nenhum traço nesta vista. Dê um duplo clique num canal do painel do projeto."))
         self.vazio.setObjectName("vazio_vista")
         self.vazio.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -97,6 +97,10 @@ class VistaDeTempo(QWidget):
         self._parada.setSingleShot(True)
         self._parada.setInterval(PARADA_DO_HISTORICO_MS)
         self._parada.timeout.connect(self._registrar_no_historico)
+        self._minimapa_atrasado = QTimer(self)
+        self._minimapa_atrasado.setSingleShot(True)
+        self._minimapa_atrasado.setInterval(INTERVALO_DO_MINIMAPA_MS)
+        self._minimapa_atrasado.timeout.connect(self._acompanhar_no_minimapa)
         self._espera_da_medida = QTimer(self)
         self._espera_da_medida.setSingleShot(True)
         self._espera_da_medida.setInterval(ESPERA_DA_MEDIDA_MS)
@@ -143,6 +147,10 @@ class VistaDeTempo(QWidget):
         IconeDoTema(self.acao_cursores, "cursores", papel_ligado="acento")
         self.info = QLabel()
         self.info.setObjectName("info_da_vista")
+        # Tamanho fixo: o texto muda a cada quadro do zoom, e um rótulo que muda de largura refaz o layout da janela
+        # inteira (medido: os títulos dos painéis eram medidos 20 vezes por quadro, e os chips repintados).
+        self.info.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.info.setFixedSize(QSize(LARGURA_DA_INFO, self.info.sizeHint().height()))
         linha = QHBoxLayout(self._barra)
         linha.setContentsMargins(10, 4, 10, 4)
         linha.setSpacing(4)
@@ -168,47 +176,118 @@ class VistaDeTempo(QWidget):
         return self.faixas[min(self.faixas)] if self.faixas else None
 
     def reconstruir(self, ajustar: bool = False) -> None:
-        """Refaz as faixas e os traços (quando um traço entra, sai ou muda de faixa, ou uma pirâmide fica pronta),
-        mantendo a janela de tempo."""
-        janela_de_tempo = None if ajustar or not self.faixas else self._faixa_principal().getViewBox().viewRange()[0]
-        for item in self.itens.values():
-            item.setParentItem(None)
-        self.grafico.clear()
-        self.faixas, self.itens = {}, {}
+        """Põe a vista em dia com o modelo (um traço entrou, saiu ou mudou de faixa; uma pirâmide ficou pronta),
+        **mexendo só no que mudou**: as faixas que sobram e os traços que já estão desenhados ficam. Refazer tudo
+        custava ~50 ms por faixa a cada duplo clique (medido: plotar 8 traços travava a tela por 0,8 s). A janela de
+        tempo fica; com ``ajustar``, a captura inteira entra."""
+        principal_antes = self._faixa_principal()
+        janela_de_tempo = None if ajustar or principal_antes is None else principal_antes.getViewBox().viewRange()[0]
         tracos = self.vista.tracos
-        ordem = sorted({t.receita.faixa for t in tracos})
-        for linha, numero in enumerate(ordem):
-            self.faixas[numero] = self._nova_faixa(linha, ultima=linha == len(ordem) - 1)
+        desejadas = sorted({t.receita.faixa for t in tracos})
+
+        # 1. Os traços que saíram (ou cuja captura sumiu) deixam a sua faixa.
+        for traco in [t for t in self.itens if t not in tracos]:
+            self._tirar_item(self.itens.pop(traco))
+        # 2. As faixas que sobraram saem (os traços delas já foram tirados ou serão movidos abaixo).
+        sairam = [n for n in self.faixas if n not in desejadas]
+        for numero in sairam:
+            faixa = self.faixas.pop(numero)
+            for item in list(self.itens.values()):
+                if item.getViewBox() is faixa.getViewBox():
+                    self._tirar_item(item)          # volta abaixo, na faixa nova
+            if faixa is principal_antes:
+                faixa.getViewBox().sigXRangeChanged.disconnect(self._tempo_mudou)
+            self.grafico.removeItem(faixa)
+            faixa.ligada_a = None
+            faixa.deleteLater()                     # fora da cena, ela não teria quem a apagasse
+        # 3. As que faltam entram; a ordem das linhas segue o número da faixa.
+        ordem_antes = list(self.faixas)
+        for numero in desejadas:
+            if numero not in self.faixas:
+                self.faixas[numero] = self._nova_faixa()
+        self.faixas = {n: self.faixas[n] for n in desejadas}
+        if list(self.faixas) != ordem_antes or sairam:
+            self._ordenar_linhas(ordem_antes, compactar=bool(sairam))
+        # 4. Cada traço na sua faixa: os novos são criados; os que mudaram de faixa, movidos.
         for traco in tracos:
-            self._desenhar(traco)
+            faixa = self.faixas[traco.receita.faixa]
+            item = self.itens.get(traco)
+            if item is None:
+                self._desenhar(traco)
+            elif item.getViewBox() is not faixa.getViewBox():
+                self._tirar_item(item)
+                faixa.addItem(item)
+        # 5. O tempo ligado à faixa principal (a de menor número), o eixo do tempo só na última, os rótulos.
+        principal = self._faixa_principal()
+        if principal is not principal_antes:
+            if principal_antes is not None and isValid(principal_antes) and principal_antes in self.faixas.values():
+                principal_antes.getViewBox().sigXRangeChanged.disconnect(self._tempo_mudou)
+            if principal is not None:
+                principal.getViewBox().sigXRangeChanged.connect(self._tempo_mudou)
+        for faixa in self.faixas.values():
+            if faixa is not principal and getattr(faixa, "ligada_a", None) is not principal:
+                faixa.setXLink(principal)
+                faixa.ligada_a = principal
+            elif faixa is principal and getattr(faixa, "ligada_a", None) is not None:
+                faixa.setXLink(None)
+                faixa.ligada_a = None
+        ultima = self.faixas[desejadas[-1]] if desejadas else None
+        for faixa in self.faixas.values():
+            if faixa is ultima:
+                faixa.showAxis("bottom")
+                faixa.setLabel("bottom", self.tr("tempo (s)"))
+            else:
+                faixa.hideAxis("bottom")
         for numero, faixa in self.faixas.items():
             primeiro = next((t for t in tracos if t.receita.faixa == numero), None)
             fonte = self._fonte_do(primeiro) if primeiro is not None else None
             if fonte is not None and not fonte.esta_ausente:
                 canal = fonte.canal(primeiro.receita.canal)
-                faixa.setLabel("left", f"{canal.nome_grandeza} ({canal.unidade})")
+                rotulo = f"{canal.nome_grandeza} ({canal.unidade})"
+                if faixa.getAxis("left").labelText != rotulo:
+                    faixa.setLabel("left", rotulo)
+
         self._refazer_legenda()
         self._refazer_minimapa()
         tem = bool(tracos)
         self.grafico.setVisible(tem)
         self.vazio.setVisible(not tem)
-        principal = self._faixa_principal()
         if principal is not None:
-            vb = principal.getViewBox()
-            vb.sigXRangeChanged.connect(self._tempo_mudou)
             if janela_de_tempo is not None:
-                vb.setXRange(*janela_de_tempo, padding=0)
-            else:
+                principal.getViewBox().setXRange(*janela_de_tempo, padding=0)
+            elif ajustar or principal_antes is None:
                 self.ajustar()
         self._atualizar_info()
         self._selecao_mudou(self.selecao.tracos)
         self._por_cursores()
         self._espera_da_medida.start()
 
-    def _nova_faixa(self, linha: int, ultima: bool) -> pg.PlotItem:
+    @staticmethod
+    def _tirar_item(item: TracoLOD) -> None:
+        caixa = item.getViewBox() if isValid(item) else None
+        if caixa is not None:
+            caixa.removeItem(item)
+
+    def _ordenar_linhas(self, ordem_antes: list[int], compactar: bool = False) -> None:
+        """As faixas nas linhas do layout, na ordem do número. O caso comum (faixas novas depois das que já existem,
+        nenhuma saiu) só acrescenta linhas; senão, tira e põe todas de volta, nas linhas 0, 1, 2... (as que ficam
+        guardam a linha antiga, e uma nova cairia em cima de uma ocupada)."""
+        ordem = list(self.faixas)
+        layout = self.grafico.ci
+        if not compactar and ordem[:len(ordem_antes)] == ordem_antes:
+            for linha in range(len(ordem_antes), len(ordem)):
+                layout.addItem(self.faixas[ordem[linha]], row=linha, col=0)
+            return
+        for faixa in self.faixas.values():
+            if faixa in layout.items:
+                layout.removeItem(faixa)
+        for linha, faixa in enumerate(self.faixas.values()):
+            layout.addItem(faixa, row=linha, col=0)
+
+    def _nova_faixa(self) -> pg.PlotItem:
         eixo_x, eixo_y = EixoDoTema("bottom"), EixoDoTema("left")
         caixa = CaixaDaFaixa()
-        faixa = self.grafico.addPlot(row=linha, col=0, viewBox=caixa, axisItems={"bottom": eixo_x, "left": eixo_y})
+        faixa = pg.PlotItem(viewBox=caixa, axisItems={"bottom": eixo_x, "left": eixo_y})
         faixa.hideButtons()
         faixa.setMenuEnabled(False)
         # Os eixos de cima e da direita (escondidos) vêm com o prefixo SI automático, que refaz o HTML do rótulo a
@@ -216,18 +295,17 @@ class VistaDeTempo(QWidget):
         for lado in ("top", "right"):
             faixa.getAxis(lado).enableAutoSIPrefix(False)
         eixo_y.setWidth(LARGURA_DO_EIXO_Y)
-        if ultima:
-            faixa.setLabel("bottom", self.tr("tempo (s)"))
-        else:
-            faixa.hideAxis("bottom")
+        # O Y não muda no zoom do tempo: o eixo Y vira um pixmap e é só copiado a cada quadro (antes, 8 eixos
+        # repintavam a mesma figura). Uma mudança do Y invalida o cache sozinha (o eixo chama update()).
+        eixo_y.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
+        faixa.hideAxis("bottom")
         grade = GradeDoTema(eixo_x, eixo_y)
         caixa.addItem(grade, ignoreBounds=True)
         faixa.grade = grade
+        faixa.ligada_a = None
         caixa.clicada.connect(self._clicou)
         caixa.ajustarPedido.connect(self.ajustar)
-        principal = self._faixa_principal()
-        if principal is not None:
-            faixa.setXLink(principal)
+        caixa.aplicar_tema(aparencia().tema)
         return faixa
 
     def _desenhar(self, traco: Traco) -> None:
@@ -402,46 +480,23 @@ class VistaDeTempo(QWidget):
 
     # ------------------------------------------------------------------ o minimapa
 
-    def _preparar_minimapa(self) -> None:
-        item = self.minimapa.getPlotItem()
-        item.hideAxis("left")
-        item.hideAxis("bottom")
-        item.hideButtons()
-        item.setMenuEnabled(False)
-        item.getViewBox().setMouseEnabled(x=False, y=False)
-        item.getViewBox().setDefaultPadding(0.02)
-        self._regiao = pg.LinearRegionItem(values=(0, 1))
-        self._regiao.setZValue(10)
-        self._regiao.sigRegionChanged.connect(self._regiao_mudou)
-        self._item_do_minimapa: TracoLOD | None = None
-
     def _refazer_minimapa(self) -> None:
-        vb = self.minimapa.getPlotItem().getViewBox()
-        if self._item_do_minimapa is not None:
-            vb.removeItem(self._item_do_minimapa)
-            self._item_do_minimapa = None
-        if self._regiao.scene() is None:
-            vb.addItem(self._regiao, ignoreBounds=True)
+        """O fundo do minimapa: o primeiro traço visível, da captura inteira."""
         modelo = next((self.itens[t] for t in self.vista.tracos if t in self.itens and t.receita.visivel), None)
         self.minimapa.setVisible(modelo is not None)
         if modelo is None:
+            self.minimapa.definir_traco(None)
             return
-        copia = TracoLOD(modelo._piramide, modelo._amostras, modelo._taxa, t0=modelo._t0, escala=modelo._escala,
-                         deslocamento=modelo._deslocamento, cor=aparencia().tema.borda_forte, nome=modelo.nome)
-        vb.addItem(copia)
-        self._item_do_minimapa = copia
-        vb.autoRange(padding=0.02)
+        self.minimapa.definir_traco(modelo._piramide, modelo._amostras, modelo._taxa, t0=modelo._t0,
+                                    escala=modelo._escala, deslocamento=modelo._deslocamento)
+        janela = self.janela_de_tempo()
+        if janela is not None:
+            self.minimapa.definir_janela(*janela)
 
-    def _regiao_mudou(self) -> None:
+    def _janela_do_minimapa(self, inicio: float, fim: float) -> None:
         principal = self._faixa_principal()
-        if principal is None or self._navegando:
-            return
-        x0, x1 = self._regiao.getRegion()
-        self._navegando = True
-        try:
-            principal.getViewBox().setXRange(x0, x1, padding=0)
-        finally:
-            self._navegando = False
+        if principal is not None:
+            principal.getViewBox().setXRange(inicio, fim, padding=0)
 
     # ------------------------------------------------------------------ navegar
 
@@ -458,16 +513,16 @@ class VistaDeTempo(QWidget):
         if not isValid(self):
             return
         self._atualizar_info()
-        janela = self.janela_de_tempo()
-        if janela is not None and not self._navegando:
-            self._navegando = True
-            try:
-                self._regiao.setRegion(janela)
-            finally:
-                self._navegando = False
+        if self.minimapa.isVisible() and not self._minimapa_atrasado.isActive():
+            self._minimapa_atrasado.start()
         self._parada.start()
         if self.cursores is None:
             self._espera_da_medida.start()
+
+    def _acompanhar_no_minimapa(self) -> None:
+        janela = self.janela_de_tempo() if isValid(self) else None
+        if janela is not None:
+            self.minimapa.definir_janela(*janela)
 
     def _registrar_no_historico(self) -> None:
         janela = self.janela_de_tempo()
@@ -512,13 +567,6 @@ class VistaDeTempo(QWidget):
 
     def _tema_mudou(self, t: Tema) -> None:
         self.grafico.setBackground(QColor(t.afundada))
-        self.minimapa.setBackground(QColor(t.fundo))
-        # A janela visível em destaque, com as bordas grossas: numa captura longa, ela tem poucos pixels.
-        destaque = QColor(t.destaque)
-        destaque.setAlphaF(0.3)
-        self._regiao.setBrush(destaque)
-        for linha in self._regiao.lines:
-            linha.setPen(pg.mkPen(t.destaque, width=2))
         for faixa in self.faixas.values():
             faixa.getViewBox().aplicar_tema(t)
             faixa.grade.aplicar_tema(t)
@@ -526,5 +574,3 @@ class VistaDeTempo(QWidget):
                 faixa.getAxis(lado).aplicar_tema(t)
         for traco, item in self.itens.items():
             item.definir_cor(cor_do_traco(traco.receita.cor, t)[0])
-        if self._item_do_minimapa is not None:
-            self._refazer_minimapa()

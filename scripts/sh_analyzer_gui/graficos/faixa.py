@@ -15,14 +15,41 @@ import math
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QLineF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
 
 from ..tema.aplicar import aparencia
 from ..tema.fontes import fonte_mono
 from ..tema.tokens import TAMANHOS, Tema
 
 FATOR_DA_RODA = 1.2          # cada passo da roda: 20 % de zoom
+_VALIDO = object()           # o eixo está com as posições e os textos em dia (no lugar da QPicture do PyQtGraph)
 LARGURA_DO_EIXO_Y = 64       # px: fixa, para as faixas ficarem alinhadas no tempo
+
+
+class MedidorDeTexto:
+    """O que o ``generateDrawSpecs`` do PyQtGraph usa do pintor (``setFont`` e ``boundingRect``), com a medida de
+    cada texto guardada: o eixo do tempo mede os mesmos ~50 textos a cada quadro do zoom (~0,4 ms)."""
+
+    LIMITE = 4000
+
+    def __init__(self):
+        self._fonte = QFont()
+        self._chave = self._fonte.key()
+        self._medidas: dict[tuple, QRectF] = {}
+
+    def setFont(self, fonte: QFont) -> None:
+        self._fonte = QFont(fonte)
+        self._chave = self._fonte.key()
+
+    def boundingRect(self, retangulo: QRectF, opcoes, texto: str) -> QRectF:
+        chave = (self._chave, int(opcoes), texto, retangulo.width(), retangulo.height())
+        medida = self._medidas.get(chave)
+        if medida is None:
+            if len(self._medidas) > self.LIMITE:
+                self._medidas.clear()
+            medida = QFontMetricsF(self._fonte).boundingRect(retangulo, int(opcoes), texto)
+            self._medidas[chave] = medida
+        return QRectF(medida)
 
 
 class EixoDoTema(pg.AxisItem):
@@ -30,6 +57,7 @@ class EixoDoTema(pg.AxisItem):
 
     def __init__(self, orientacao: str):
         super().__init__(orientacao)
+        self._medidor = MedidorDeTexto()
         self.enableAutoSIPrefix(False)
         self.setTickFont(fonte_mono(TAMANHOS["legenda"]))
         self.aplicar_tema(aparencia().tema)
@@ -37,6 +65,42 @@ class EixoDoTema(pg.AxisItem):
     def aplicar_tema(self, t: Tema) -> None:
         self.setPen(pg.mkPen(t.borda_forte))
         self.setTextPen(pg.mkPen(t.eixo))
+
+    def paint(self, p: QPainter, opcao, widget) -> None:
+        """Desenha direto, sem a ``QPicture`` do PyQtGraph: o eixo do tempo muda a cada quadro do zoom, e gravar a
+        figura para tocá-la em seguida dobrava o trabalho. As posições e os textos (``generateDrawSpecs``) ficam
+        guardados até o PyQtGraph invalidar o eixo (``self.picture = None``, a cada mudança da faixa)."""
+        if self.picture is None:
+            if self.style["tickFont"]:
+                self._medidor.setFont(self.style["tickFont"])
+            self._especificacoes = self.generateDrawSpecs(self._medidor)
+            self.picture = _VALIDO
+        especificacoes = getattr(self, "_especificacoes", None)
+        if especificacoes is not None:
+            p.save()
+            if self.style["tickFont"]:
+                p.setFont(self.style["tickFont"])
+            self.drawPicture(p, *especificacoes)
+            p.restore()
+
+    def tickValues(self, inicio: float, fim: float, pixels: float):
+        """As marcas de cada nível, como as do PyQtGraph, sem o ``np.isclose`` de uma matriz (marcas × marcas) que
+        ele usa para tirar as repetidas: uma marca repete a de um nível acima quando cai num múltiplo do espaçamento
+        dele. O mesmo resultado, em uma fração do tempo (o eixo do tempo refaz as marcas a cada quadro)."""
+        if self.logMode or self.scale != 1.0:
+            return super().tickValues(inicio, fim, pixels)
+        inicio, fim = sorted((inicio, fim))
+        niveis = []
+        for espacamento, deslocamento in self.tickSpacing(inicio, fim, pixels):
+            primeiro = math.ceil((inicio - deslocamento) / espacamento) * espacamento + deslocamento
+            n = int((fim - primeiro) / espacamento) + 1
+            valores = primeiro + espacamento * np.arange(max(n, 0))
+            repetida = np.zeros(len(valores), dtype=bool)
+            for maior, desl_maior in ((e, d) for e, d, _ in niveis):
+                fracao = (valores - desl_maior) / maior
+                repetida |= np.abs(fracao - np.round(fracao)) * maior < espacamento * 0.01
+            niveis.append((espacamento, deslocamento, valores[~repetida]))
+        return [(e, v.tolist()) for e, _, v in niveis]
 
     def tickStrings(self, valores, escala, espacamento):
         return [s.replace(".", ",").replace("-", "−") for s in super().tickStrings(valores, escala, espacamento)]

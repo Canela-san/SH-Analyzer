@@ -4,11 +4,12 @@ a pirâmide. O do traço entra na F1.6."""
 
 from __future__ import annotations
 
+import html
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -138,6 +139,10 @@ class InspetorDaFonte(QScrollArea):
         self.setWidget(conteudo)
 
     def _secao(self, titulo: str, linhas: list[tuple[str, str]]) -> QWidget:
+        """Uma seção do cabeçalho: o título e os campos, **num rótulo só, em texto rico** (o rótulo de cada campo em
+        cima do valor: o painel é estreito, e um valor sem espaços não caberia ao lado). Dois ``QLabel`` por campo
+        eram ~45 widgets por captura e travavam a tela por ~40 ms a cada seleção."""
+        t = aparencia().tema
         secao = QWidget()
         coluna = QVBoxLayout(secao)
         coluna.setContentsMargins(0, 6, 0, 0)
@@ -149,26 +154,19 @@ class InspetorDaFonte(QScrollArea):
         rotulo = QLabel(titulo)
         rotulo.setFont(_fonte(TAMANHOS["corpo"], QFont.Weight.DemiBold))
         coluna.addWidget(rotulo)
-        # O rótulo em cima do valor: o painel é estreito, e um valor sem espaços (o identificador, o comando) não
-        # caberia ao lado de um rótulo.
-        grade = QGridLayout()
-        grade.setHorizontalSpacing(0)
-        grade.setVerticalSpacing(0)
-        for i, (nome, valor) in enumerate(linhas):
-            r = QLabel(nome)
-            r.setObjectName("rotulo_campo")
-            r.setFont(_fonte(TAMANHOS["legenda"]))
-            v = QLabel(valor)
-            v.setObjectName("valor_campo")
-            v.setFont(_fonte(TAMANHOS["secundario"]))
-            v.setWordWrap(True)
-            v.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            v.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-            v.setContentsMargins(0, 0, 0, 6)
-            grade.addWidget(r, 2 * i, 0)
-            grade.addWidget(v, 2 * i + 1, 0)
+        partes = []
+        for nome, valor in linhas:
+            partes.append(f'<div style="color:{t.texto2}; font-size:{TAMANHOS["legenda"]}px">{html.escape(nome)}</div>'
+                          f'<div style="margin-bottom:6px">{html.escape(valor)}</div>')
             self.valores[f"{titulo}/{nome}"] = valor
-        coluna.addLayout(grade)
+        campos = QLabel("".join(partes))
+        campos.setObjectName("campos_do_cabecalho")
+        campos.setTextFormat(Qt.TextFormat.RichText)
+        campos.setFont(_fonte(TAMANHOS["secundario"]))
+        campos.setWordWrap(True)
+        campos.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        campos.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        coluna.addWidget(campos)
         return secao
 
     def _atualizar_estado(self) -> None:

@@ -71,9 +71,9 @@ class TabelaDeMedidas(QStackedWidget):
         self.tabela.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tabela.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.tabela.setShowGrid(False)
+        # A primeira coluna estica; as outras são medidas uma vez, depois de preencher (``ResizeToContents`` mediria
+        # a coluna inteira a cada célula: 36 ms para 8 traços, a cada medida).
         self.tabela.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for i in range(1, len(COLUNAS)):
-            self.tabela.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         coluna.addWidget(self.tabela, 1)
         self.addWidget(self.vazio)
         self.addWidget(conteudo)
@@ -102,6 +102,7 @@ class TabelaDeMedidas(QStackedWidget):
             self.resumo.setText(self.tr("Janela visível: {} → {} · {}").format(
                 formatar_si(pedido.inicio_s, "s", 7), formatar_si(pedido.fim_s, "s", 7), formatar_si(dt, "s", 5)))
         t = aparencia().tema
+        self.tabela.setUpdatesEnabled(False)
         self.tabela.setRowCount(len(medidas))
         for linha, m in enumerate(medidas):
             r = m.traco.receita
@@ -127,6 +128,9 @@ class TabelaDeMedidas(QStackedWidget):
                 elif m.medidas is not None and coluna == 6 and m.medidas.problema_f1:
                     item.setToolTip(m.medidas.problema_f1)
                 self.tabela.setItem(linha, coluna, item)
+        for coluna in range(1, len(COLUNAS)):
+            self.tabela.resizeColumnToContents(coluna)
+        self.tabela.setUpdatesEnabled(True)
 
     def texto_para_planilha(self) -> str:
         """A tabela em texto separado por tabulação, com os números completos (vírgula decimal)."""
