@@ -1,13 +1,17 @@
-"""O chip de traço da legenda (docs/gui-plan.md, 9.3): a cor, o nome, o resumo das transformações e, durante uma
-materialização, o progresso. Pintado com ``QPainter`` a partir do tema; clicar seleciona."""
+"""O chip de traço da legenda (docs/gui-plan.md, 9.3): a cor, o nome, o resumo das transformações, durante uma
+materialização o progresso e, à direita, o sinal dos avisos do traço (``dados/avisos.py``: a sonda, a faixa suposta,
+uma etapa que não serve), na cor do mais grave, com a lista na dica. Pintado com ``QPainter`` a partir do tema;
+clicar seleciona."""
 
 from __future__ import annotations
 
 from PySide6.QtCore import QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from ..dados.avisos import pior_nivel
 from ..tema.aplicar import aparencia
+from ..tema.icones import icone
 from ..tema.tokens import TAMANHOS, cor_do_traco
 
 ALTURA = 24
@@ -15,6 +19,8 @@ RAIO = 6
 MARGEM = 8
 PONTO = 8
 VAO = 6
+ICONE = 14
+NIVEIS_COM_SINAL = ("aviso", "erro")      # pintados na cor do tema de mesmo nome; um "info" fica só na dica
 
 
 class ChipDeTraco(QWidget):
@@ -31,6 +37,8 @@ class ChipDeTraco(QWidget):
         self.nome, self._cor, self.resumo = nome, cor, resumo
         self.selecionado, self.visivel = False, True
         self.progresso: float | None = None
+        self.avisos: tuple = ()
+        self._sinal: tuple[str, float, QPixmap] | None = None     # o ícone pintado: a cor, a escala e o desenho
         fonte = self.font()
         fonte.setPixelSize(TAMANHOS["secundario"])
         self.setFont(fonte)
@@ -43,10 +51,13 @@ class ChipDeTraco(QWidget):
         aparencia().mudou.connect(self._tema_mudou)
 
     def _tema_mudou(self, _tema) -> None:
+        self._sinal = None
         self.update()
 
     def definir(self, *, selecionado: bool | None = None, visivel: bool | None = None,
-                progresso: float | None | type(...) = ..., resumo: str | None = None) -> None:
+                progresso: float | None | type(...) = ..., resumo: str | None = None,
+                avisos=None) -> None:
+        """``avisos``: os ``Aviso`` do traço (a lista inteira, que substitui a anterior)."""
         if selecionado is not None:
             self.selecionado = selecionado
         if visivel is not None:
@@ -56,7 +67,19 @@ class ChipDeTraco(QWidget):
         if resumo is not None:
             self.resumo = resumo
             self.updateGeometry()
+        if avisos is not None and tuple(avisos) != self.avisos:
+            self.avisos = tuple(avisos)
+            texto = "\n".join(f"• {a.texto}" for a in self.avisos)
+            self.setToolTip(texto)
+            self.setAccessibleDescription(texto)
+            self.updateGeometry()
         self.update()
+
+    @property
+    def nivel(self) -> str | None:
+        """O nível do sinal pintado (``"aviso"`` ou ``"erro"``), ou None sem sinal."""
+        nivel = pior_nivel(self.avisos)
+        return nivel if nivel in NIVEIS_COM_SINAL else None
 
     @property
     def cor(self) -> QColor:
@@ -69,7 +92,15 @@ class ChipDeTraco(QWidget):
         largura = MARGEM + PONTO + VAO + QFontMetrics(self.font()).horizontalAdvance(self.nome) + MARGEM
         if self.resumo:
             largura += VAO + 1 + VAO + QFontMetrics(self._fonte_resumo).horizontalAdvance(self.resumo)
+        if self.nivel is not None:
+            largura += VAO + ICONE
         return QSize(largura, ALTURA)
+
+    def _pixmap_do_sinal(self, cor: str) -> QPixmap:
+        escala = self.devicePixelRatioF()
+        if self._sinal is None or self._sinal[:2] != (cor, escala):
+            self._sinal = (cor, escala, icone("alerta", cor, ICONE).pixmap(QSize(ICONE, ICONE), escala))
+        return self._sinal[2]
 
     def mousePressEvent(self, evento) -> None:
         if evento.button() == Qt.MouseButton.LeftButton:
@@ -93,6 +124,12 @@ class ChipDeTraco(QWidget):
             p.setClipRect(QRectF(caixa.left(), caixa.top(), caixa.width() * self.progresso, caixa.height()))
             p.drawRoundedRect(caixa, RAIO, RAIO)
             p.setClipping(False)
+        direita = self.width() - MARGEM
+        nivel = self.nivel
+        if nivel is not None:
+            direita -= ICONE
+            p.drawPixmap(int(direita), (ALTURA - ICONE) // 2, self._pixmap_do_sinal(getattr(t, nivel)))
+            direita -= VAO
         x = MARGEM
         ponto = QRectF(x, (ALTURA - PONTO) / 2, PONTO, PONTO)
         if self.visivel:
@@ -114,5 +151,5 @@ class ChipDeTraco(QWidget):
             x += 1 + VAO
             p.setPen(QColor(t.mudo))
             p.setFont(self._fonte_resumo)
-            p.drawText(QRectF(x, 0, self.width() - x - MARGEM + 2, ALTURA), Qt.AlignmentFlag.AlignVCenter, self.resumo)
+            p.drawText(QRectF(x, 0, direita - x + 2, ALTURA), Qt.AlignmentFlag.AlignVCenter, self.resumo)
         p.end()

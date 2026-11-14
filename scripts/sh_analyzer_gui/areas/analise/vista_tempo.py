@@ -77,6 +77,7 @@ class VistaDeTempo(QWidget):
         self.historico: list[tuple[float, float]] = []
         self._navegando = False
         self._fontes_esperadas: set[FonteDoProjeto] = set()
+        self._fontes_ouvidas: set[FonteDoProjeto] = set()
         self._cursores = CursoresDaVista(parent=self)       # os de todas as vistas (graficos/cursores.py)
         self._cursores.mudou.connect(self._cursores_mudaram)
         if materializacoes is None:          # sem a janela (os testes): um serviço só desta vista
@@ -344,11 +345,14 @@ class VistaDeTempo(QWidget):
         faixa = self.faixas.get(traco.receita.faixa)
         if fonte is None or fonte.esta_ausente or faixa is None:
             return
+        if fonte not in self._fontes_ouvidas:
+            # O estado da fonte (a pirâmide andando, a integridade conferida) muda o chip dos traços dela.
+            self._fontes_ouvidas.add(fonte)
+            fonte.estadoMudou.connect(self._estado_da_fonte)
         if fonte.piramides is None:
             if fonte not in self._fontes_esperadas:
                 self._fontes_esperadas.add(fonte)
                 fonte.piramidesProntas.connect(self._piramide_chegou)
-                fonte.estadoMudou.connect(self._progresso_da_fonte)
             return
         r = traco.receita
         canal = fonte.canal(r.canal)
@@ -490,7 +494,7 @@ class VistaDeTempo(QWidget):
         if previa is None:
             chip = self.chips.get(traco)
             if chip is not None:
-                chip.setToolTip(erro)
+                chip.definir(avisos=self._avisos(traco, erro))
             return
         self._previas[traco] = previa
         self._atualizar_dados(traco)
@@ -504,8 +508,7 @@ class VistaDeTempo(QWidget):
             self._atualizar_dados(traco)
             chip = self.chips.get(traco)
             if chip is not None:
-                chip.definir(progresso=estado.progresso, resumo=self._resumo(traco))
-                chip.setToolTip(estado.erro)
+                chip.definir(progresso=estado.progresso, resumo=self._resumo(traco), avisos=self._avisos(traco))
             if estado.pronta is not None and traco is next(iter(self.vista.tracos), None):
                 self._refazer_minimapa()
 
@@ -513,12 +516,17 @@ class VistaDeTempo(QWidget):
         if isValid(self):
             self.reconstruir(ajustar=not self.itens)
 
-    def _progresso_da_fonte(self, fonte: FonteDoProjeto) -> None:
+    def _estado_da_fonte(self, fonte: FonteDoProjeto) -> None:
+        """A pirâmide andou, ou a integridade foi conferida."""
         if not isValid(self):
             return
         for traco, chip in self.chips.items():
             if traco.receita.fonte == fonte.id:
-                chip.definir(progresso=fonte.progresso_da_piramide)
+                progresso = fonte.progresso_da_piramide
+                if progresso is None:
+                    estado = self.materializacoes.estado_de(traco)
+                    progresso = estado.progresso if estado is not None else None
+                chip.definir(progresso=progresso, avisos=self._avisos(traco))
 
     # ------------------------------------------------------------------ o modelo mudou
 
@@ -614,7 +622,8 @@ class VistaDeTempo(QWidget):
                 # passo: refazer a legenda inteira a cada um pesaria).
                 estado = self.materializacoes.estado_de(traco)
                 chip.definir(resumo=self._resumo(traco), visivel=r.visivel,
-                             progresso=estado.progresso if estado is not None else None)
+                             progresso=estado.progresso if estado is not None else None,
+                             avisos=self._avisos(traco) if "cadeia" in campos else None)
         if "visivel" in campos or "cor" in campos:
             self._refazer_minimapa()
 
@@ -644,6 +653,9 @@ class VistaDeTempo(QWidget):
                 resumo.append(self.tr("erro na transformação"))
         return " · ".join(resumo)
 
+    def _avisos(self, traco: Traco, erro: str = "") -> tuple:
+        return self.materializacoes.avisos(traco, self._fonte_do(traco), erro)
+
     def _refazer_legenda(self) -> None:
         self._fluxo_da_legenda.limpar()
         self.chips = {}
@@ -655,8 +667,8 @@ class VistaDeTempo(QWidget):
             progresso = fonte.progresso_da_piramide if fonte is not None else None
             if progresso is None and estado is not None:
                 progresso = estado.progresso
-                chip.setToolTip(estado.erro)
-            chip.definir(visivel=r.visivel, selecionado=traco in self.selecao.tracos, progresso=progresso)
+            chip.definir(visivel=r.visivel, selecionado=traco in self.selecao.tracos, progresso=progresso,
+                         avisos=self._avisos(traco))
             chip.clicado.connect(lambda t=traco: self.tracoClicado.emit(t, Qt.KeyboardModifier.NoModifier))
             self._fluxo_da_legenda.addWidget(chip)
             self.chips[traco] = chip

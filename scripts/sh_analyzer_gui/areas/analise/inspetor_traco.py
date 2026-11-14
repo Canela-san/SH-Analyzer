@@ -315,7 +315,10 @@ class InspetorDoTraco(QScrollArea):
             except api.ErroSHAN as e:
                 return [*linhas, self.tr("O perfil escolhido não abre: {}").format(e)], False
         if perfil is None:
-            if etapa is not None:
+            if etapa is not None and canal.problema_sonda:
+                linhas.append(self.tr("A correção automática não muda nada: a sonda registrada não pôde ser usada "
+                                      "(acima). Escolha um perfil na etapa."))
+            elif etapa is not None:
                 linhas.append(self.tr("A correção automática não tem o que aplicar: a captura não registra uma sonda "
                                       "para este canal. Escolha um perfil na etapa."))
             elif not linhas:

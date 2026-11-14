@@ -23,7 +23,9 @@ import numpy as np
 from PySide6.QtCore import QObject, Signal
 
 from ..dados import materializacao as mat
+from ..dados.avisos import avisos_do_traco
 from ..dados.cadeia import Cadeia, ContextoDaCadeia
+from ..dados.captura import Aviso
 from ..dados.piramide import Piramide, construir
 from ..modelo.objetos import FonteDoProjeto
 from .tarefas import GerenciadorDeTarefas, Tarefa
@@ -131,6 +133,22 @@ class ServicoDeMaterializacao(QObject):
     def estado_de(self, usuario: Hashable) -> EstadoDaMaterializacao | None:
         chave = self._de_usuario.get(usuario)
         return self._estados.get(chave) if chave is not None else None
+
+    def avisos(self, traco, fonte: FonteDoProjeto | None, erro: str = "") -> tuple[Aviso, ...]:
+        """Os avisos do chip de ``traco`` (``dados/avisos.py``): os do canal, os da cadeia neste canal, a
+        integridade da captura e o erro da materialização dele (ou ``erro``, o da conta de quem desenha). Nada para
+        uma fonte ausente (o chip já diz "ausente")."""
+        if fonte is None or fonte.esta_ausente:
+            return ()
+        r = traco.receita
+        try:
+            canal = fonte.canal(r.canal)
+        except KeyError as e:
+            return (Aviso("erro", e.args[0]),)
+        estado = self.estado_de(traco)
+        erro = erro or (estado.erro if estado is not None else "")
+        return avisos_do_traco(canal, r.cadeia, self.contexto(fonte, r.canal), integridade=fonte.integridade,
+                               erro=erro)
 
     def _iniciar(self, estado: EstadoDaMaterializacao) -> None:
         fonte, numero, cadeia = estado.fonte, estado.numero, estado.cadeia

@@ -77,6 +77,7 @@ def contexto_do_canal(canal: api.CanalDaCaptura, media: float | None = None,
                       carregar_perfil: Callable[[str], object] | None = None) -> ContextoDaCadeia:
     """O contexto da cadeia de um traço deste canal: a taxa, o perfil que a captura registra e a média do canal."""
     return ContextoDaCadeia(canal.taxa_hz, perfil_do_canal=canal.perfil, media=media,
+                            problema_sonda=canal.problema_sonda,
                             carregar_perfil=carregar_perfil or carregador_de_perfis())
 
 

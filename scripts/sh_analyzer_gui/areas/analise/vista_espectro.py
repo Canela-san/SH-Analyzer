@@ -121,6 +121,7 @@ class VistaDeEspectro(QWidget):
         self.opcoes_calculadas: esp.OpcoesDoEspectro | None = None     # as opções que deram os resultados mostrados
         self.curvas: dict[Traco, pg.PlotDataItem] = {}
         self.chips: dict[Traco, ChipDeTraco] = {}
+        self._fontes_ouvidas: set = set()
         self._tempo = None
         self._tarefa = None
         self._marcas_desenhadas: list = []
@@ -637,12 +638,27 @@ class VistaDeEspectro(QWidget):
             if r.erro:
                 resumo = (resumo + " · " if resumo else "") + self.tr("erro")
             chip = ChipDeTraco(receita.nome, receita.cor, resumo)
-            chip.setToolTip(r.erro)
-            chip.definir(selecionado=r.traco in self.selecao.tracos)
+            try:
+                fonte = self.projeto.fonte(receita.fonte)
+            except KeyError:
+                fonte = None
+            if fonte is not None and fonte not in self._fontes_ouvidas:
+                self._fontes_ouvidas.add(fonte)          # a integridade conferida muda o aviso do chip
+                fonte.estadoMudou.connect(self._estado_da_fonte)
+            chip.definir(selecionado=r.traco in self.selecao.tracos,
+                         avisos=self.materializacoes.avisos(r.traco, fonte, r.erro))
             chip.clicado.connect(lambda t=r.traco: self.tracoClicado.emit(t, Qt.KeyboardModifier.NoModifier))
             self._fluxo.addWidget(chip)
             self.chips[r.traco] = chip
         self._mostrar_progresso()
+
+    def _estado_da_fonte(self, fonte) -> None:
+        if not isValid(self):
+            return
+        for r in self.resultados:
+            chip = self.chips.get(r.traco)
+            if chip is not None and r.traco.receita.fonte == fonte.id:
+                chip.definir(avisos=self.materializacoes.avisos(r.traco, fonte, r.erro))
 
     def _mostrar_progresso(self) -> None:
         for r in self.resultados:

@@ -61,6 +61,7 @@ class ContextoDaCadeia:
     taxa_hz: float
     perfil_do_canal: object | None = None          # um api.PerfilSonda
     media: float | None = None
+    problema_sonda: str = ""                       # por que a sonda registrada não pôde ser usada ('' se não houve)
     carregar_perfil: Callable[[str], object] = field(default=api.carregar_perfil, repr=False, compare=False)
 
 
@@ -224,10 +225,13 @@ class CorrecaoSonda(Etapa):
         return 1.0 / float(perfil.ganho_em(np.zeros(1))[0])
 
     def aviso(self, contexto: ContextoDaCadeia) -> str | None:
-        if self.perfil_usado(contexto) is None:
-            return ("a correção de sonda automática não tem o que aplicar: a captura não registra uma sonda para este "
-                    "canal (escolha um perfil)")
-        return None
+        if self.perfil_usado(contexto) is not None:
+            return None
+        if contexto.problema_sonda:
+            return ("a correção de sonda automática não muda nada: a sonda registrada no canal não pôde ser usada "
+                    "(escolha um perfil)")
+        return ("a correção de sonda automática não tem o que aplicar: a captura não registra uma sonda para este "
+                "canal (escolha um perfil)")
 
     def aplicar(self, sinal, contexto, media):
         perfil = self.perfil_usado(contexto)
