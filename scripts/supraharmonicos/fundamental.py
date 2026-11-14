@@ -103,6 +103,11 @@ def estimar_amostras_para_n_ciclos(n_ciclos: int, fs: float, freq_min: float,
     return int(np.ceil((n_ciclos + margem_ciclos) * amostras_por_ciclo_pior_caso))
 
 
+FRACAO_MINIMA_DA_FUNDAMENTAL = 1e-3
+"""A fundamental (o que passa pelo passa-baixa abaixo do 3º harmônico) precisa ter pelo menos isto do valor RMS do
+trecho (-60 dB): abaixo disso, os cruzamentos por zero são de ruído."""
+
+
 def cruzamentos_da_fundamental(sinal: np.ndarray, fs: float, freq_min: float,
                                freq_max: float) -> tuple[np.ndarray, float]:
     """Instantes (em amostras, com fração) dos cruzamentos por zero ascendentes da FUNDAMENTAL de ``sinal``, e a
@@ -126,6 +131,19 @@ def cruzamentos_da_fundamental(sinal: np.ndarray, fs: float, freq_min: float,
     from scipy.signal import butter, sosfiltfilt  # sob demanda: só quem calcula paga o SciPy
     sos = butter(4, corte / (fs / 2.0), btype="low", output="sos")
     sinal_filtrado = sosfiltfilt(sos, sinal_centrado)
+
+    # A fundamental tem de existir, e não só ter cruzamentos: num tom de teste sem a rede (130 kHz sozinho), o que
+    # passa pelo passa-baixa é o ruído de quantização do ADC, ~110 dB abaixo do sinal, e os cruzamentos dele davam um
+    # "f0" dentro da busca (65,9 Hz) e uma FFT sincronizada a nada.
+    rms_total = float(np.sqrt(np.mean(sinal_centrado ** 2)))
+    rms_fundamental = float(np.sqrt(np.mean(sinal_filtrado ** 2)))
+    if rms_total > 0 and rms_fundamental < FRACAO_MINIMA_DA_FUNDAMENTAL * rms_total:
+        raise ErroSHAN(
+            f"o trecho não tem uma fundamental entre {freq_min:g} e {freq_max:g} Hz: o que passa abaixo de "
+            f"{corte:.0f} Hz está {20 * np.log10(max(rms_fundamental, 1e-300) / rms_total):.0f} dB abaixo do sinal "
+            f"(um sinal de teste sem a rede? um --filtro-passa-alta acima dela?). Use --welch, que não precisa de "
+            f"fundamental."
+        )
 
     posicoes_cruzamento = detectar_cruzamentos_por_zero(sinal_filtrado)
     if len(posicoes_cruzamento) < 2:

@@ -458,3 +458,19 @@ def test_a_proeminencia_separa_os_tons_do_ruido():
     com = api.picos(esp, piso + 20, proeminencia_db=10)
     assert len(sem) > 10                                              # o ruído passa do piso + 10 dB
     assert [round(p.frequencia_hz / 1000) for p in com] == [40, 130]
+
+
+def test_um_tom_sem_a_rede_nao_tem_fundamental_para_sincronizar():
+    """130 kHz sozinho a 400 kS/s, com o ruído de quantização de 16 bits: antes, os cruzamentos do ruído davam um f0
+    de ~66 Hz e uma FFT sincronizada a nada; agora a sincronização recusa, e a FFT sem sincronizar acha o tom."""
+    fs = 400_000.0
+    t = np.arange(400_000) / fs
+    tom = np.round(np.sin(2 * np.pi * 130_000 * t) * 3200) / 3200          # quantizado como um ADC
+    with pytest.raises(api.ErroSHAN, match="não tem uma fundamental"):
+        api.espectro(tom, fs, api.ParametrosEspectro("fft"))
+    livre = api.espectro(tom, fs, api.ParametrosEspectro("fft", sincronizar=False))
+    assert livre.freqs_hz[int(np.argmax(livre.db))] == pytest.approx(130_000, abs=2)
+    # Uma rede de verdade, com um tom 14 dB acima dela, sincroniza (com a rede 26 dB abaixo do tom, a f₁ dos
+    # cruzamentos erra 0,2 Hz: um limite do passa-baixa da busca, anotado no diário de 14/11).
+    rede = 0.2 * np.sin(2 * np.pi * 50 * t) + 1.0 * np.sin(2 * np.pi * 130_000 * t)
+    assert api.espectro(rede, fs, api.ParametrosEspectro("fft")).f0_hz == pytest.approx(50, abs=0.01)

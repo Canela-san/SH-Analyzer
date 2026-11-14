@@ -99,7 +99,7 @@ class TestHarmonicos:
 
     def test_fft_sem_fundamental_na_busca_e_erro_em_vez_de_f0_absurdo(self):
         t = np.arange(int(FS)) / FS
-        with pytest.raises(ErroSHAN, match="fora da busca"):
+        with pytest.raises(ErroSHAN, match="fora da busca|não tem uma fundamental"):
             recortar_ciclos_inteiros(np.sin(2 * np.pi * 10_000 * t), FS, 45.0, 65.0, None)
 
 
@@ -306,7 +306,7 @@ def test_extras_das_bandas_sem_bandas_iec_e_erro_de_uso(cli, captura):
 def test_sincronizar_sem_fundamental_e_erro_claro(cli, captura):
     rc, _, err = cli(principal, captura, "--sem-grafico", "--bandas-iec", "--bandas-iec-sincronizar",
                      "--filtro-passa-alta", "2000")
-    assert rc == 1 and "fora da busca" in err
+    assert rc == 1 and ("fora da busca" in err or "não tem uma fundamental" in err)
 
 
 def test_harmonicos_sem_fft_e_erro_de_uso(cli, captura):
