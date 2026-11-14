@@ -11,9 +11,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > **F2.9: as configurações** (seção 4c). A F2.1 a F2.8 estão feitas: a cadeia no inspetor, o traço transformado na
 > tela, as quatro vistas de frequência, os avisos nos chips, o erro inesperado e o log; e o terceiro retorno do
 > usuário (Alt + roda, a vista que fica nas mudanças, o clique com folga, a janela e o preset IEC 61000-4-7 no
-> inspetor, Ctrl+W; diário de 14/11) e o quarto (o eixo do traço selecionado, a escala própria com o cadeado, os
-> painéis com aba para recolher, a vista aberta pelo painel do projeto, o contador dos avisos não vistos). A F2.9 e a
-> F2.10 são independentes entre si.
+> inspetor, Ctrl+W; diário de 14/11) e o quarto (o eixo do traço selecionado, a escala própria com o cadeado, o tempo
+> próprio do traço destravado, os painéis com aba para recolher, a vista aberta pelo painel do projeto, o contador dos
+> avisos não vistos). A F2.9 e a F2.10 são independentes entre si.
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos).
@@ -1074,6 +1074,22 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     da faixa pelo `PlotItem`.
   - **Testes:** `tests/test_gui_escalas.py` (9) e `tests/test_gui_paineis.py` (8); `ci.sh rapido` com 1 520
     aprovados e `ci.sh interface` com 590; os 5 de desempenho passam.
+- **14/11/2026:** **o tempo próprio do traço destravado** (o usuário pediu, depois do quarto retorno):
+  - **a escala tem os dois eixos** (`Escala(x, y)`, cada um um `Afim`): na vista de tempo (`com_tempo`), o zoom e o
+    pan do tempo com o destravado selecionado são só dele, e os da vista não o tiram do lugar. No espectro, a
+    frequência continua uma só;
+  - **o eixo do tempo mostra o último selecionado** (os números pelo tempo dele, e o rótulo na cor dele quando o
+    tempo é próprio); a grade de cada faixa segue os dois eixos;
+  - **o que se mede segue o tempo do traço:** `VistaDeTempo.regiao_do_traco` dá o trecho dele que aparece na região
+    da tela. As medidas (`PedidoDeMedida.por_traco`; a tabela marca "tempo próprio"), o espectro, as vistas de
+    bandas, espectrograma e harmônicos e a prévia do traço transformado o usam; a linha de informação e o minimapa
+    também (arrastar a janela do minimapa anda o tempo do traço dele, se ele está destravado);
+  - **o `TracoLOD` consulta a janela no tempo dele** (`janela_do_traco`), e a distância do clique leva em conta o
+    zoom do tempo;
+  - **Testes:** `tests/test_gui_escalas.py` (15); `ci.sh rapido` com 1 526 aprovados e `ci.sh interface` com 595
+    (e uma falha intermitente, sem relação com esta mudança: `test_uma_tarefa_rapida_nao_perde_o_fim`, 1 em 15
+    rodadas, porque o `ao_terminar` da tarefa é ligado antes do `_terminou` do gerenciador); os 5 de desempenho
+    passam.
 ---
 
 ## 8. Perguntas em aberto

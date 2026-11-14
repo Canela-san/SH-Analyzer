@@ -696,20 +696,26 @@ Clicar na aba abre o painel (embaixo, já na página clicada).
 | Ctrl+K | Paleta de comandos |
 | Ctrl+W | Fecha a vista ativa (desfazível, como o × da aba) |
 
-**A escala de cada traço.** Os traços de um gráfico (uma faixa da vista de tempo, o espectro) dividem o eixo Y, e o
-zoom e o pan do Y mexem em todos juntos. O eixo Y mostra a unidade e os números do traço selecionado (sem seleção, do
+**A escala de cada traço.** Os traços de um gráfico (uma faixa da vista de tempo, o espectro) dividem os eixos, e o
+zoom e o pan mexem em todos juntos. O eixo Y mostra a unidade e os números do traço selecionado (sem seleção, do
 primeiro): selecionar a corrente numa faixa com a tensão passa o eixo para A. Com unidades ou escalas diferentes no
 mesmo gráfico, o rótulo do eixo fica na cor do traço que ele mostra. Na barra da vista:
 
-- **o cadeado** destrava o traço selecionado: o zoom e o pan do Y com ele selecionado passam a ser só dele (ampliar a
-  corrente pequena ao lado da tensão), e os dos outros não o tiram do lugar na tela. Travado de novo, ele volta a
-  andar com os outros, na escala que ganhou. O chip mostra o cadeado aberto (destravado) ou fechado e discreto
-  (travado numa escala que não é a comum);
-- **"Mesma escala"** devolve os selecionados (sem seleção, todos) à escala comum.
+- **o cadeado** destrava o traço selecionado: o zoom e o pan com ele selecionado passam a ser só dele (ampliar a
+  corrente pequena ao lado da tensão), e os dos outros não o tiram do lugar na tela. Na vista de tempo, isso vale
+  para o Y **e para o tempo** (a roda, o Shift + roda, o Alt + roda, o arrastar); no espectro, só para o Y. Travado
+  de novo, ele volta a andar com os outros, na escala que ganhou. O chip mostra o cadeado aberto (destravado) ou
+  fechado e discreto (travado numa escala que não é a comum);
+- **"Mesma escala"** devolve os selecionados (sem seleção, todos) à escala comum, no tempo e no Y.
 
-Só o desenho muda: os valores do traço (as medidas, os cursores) continuam na unidade dele. O tempo e a frequência
-são um só para todos (os cursores e as medidas se alinham neles). O `F` põe cada traço destravado na altura inteira
-da faixa; o Y passar a medir outra coisa (dB, RMS, dBc) devolve todos à escala comum.
+Só o desenho muda: os valores e os tempos do traço continuam os dele. **O tempo próprio** de um traço vale em tudo o
+que se mede nele: o eixo do tempo mostra o tempo do último traço selecionado (o rótulo na cor dele, quando ele tem o
+seu), e as medidas da região, o trecho do espectro e das outras vistas de frequência e a prévia de um traço
+transformado usam o trecho **dele** que aparece entre os cursores ou na janela (a tabela de medidas marca "tempo
+próprio" na coluna da região, com o trecho na dica). O minimapa é o do primeiro traço: com o tempo próprio, ele
+mostra e anda o tempo desse traço. A frequência do espectro é uma só para todos (os marcadores e os cursores se
+alinham nela). O `F` põe cada traço destravado na faixa inteira (no tempo também); o Y passar a medir outra coisa
+(dB, RMS, dBc) devolve todos à escala comum.
 
 **Uma mudança não mexe na vista.** Uma etapa da cadeia, o ganho, o offset, o deslocamento, outro método ou outro
 trecho do espectro deixam o tempo e o Y onde o usuário os pôs. Duas exceções: o eixo Y passa a medir outra coisa
