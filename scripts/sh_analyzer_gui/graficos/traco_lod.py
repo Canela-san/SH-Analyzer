@@ -27,6 +27,9 @@ mesmo ciclo de eventos (x e y, ou várias rodadas do mouse) viram uma consulta s
 
 Os valores chegam à tela pela conversão afim do traço (``escala`` e ``deslocamento``: códigos -> volts, ganho, offset,
 inversão), aplicada à consulta e não aos dados.
+
+**A escala própria do traço** (``graficos/escalas.py``) é a transformação do item na caixa (``setTransform``): a
+consulta, os limites e os valores ficam na unidade do traço, e só o desenho (e a distância do clique) a usa.
 """
 
 from __future__ import annotations
@@ -267,7 +270,14 @@ class TracoLOD(pg.GraphicsObject):
         resultado = super().itemChange(mudanca, valor)
         if mudanca == self.GraphicsItemChange.ItemVisibleHasChanged and valor and self._sujo:
             self._agendador.start()
+        elif mudanca == self.GraphicsItemChange.ItemTransformHasChanged:
+            self._agendador.start()             # a escala própria mudou: a altura de um pixel, nos valores, também
         return resultado
+
+    def _escala_propria(self) -> tuple[float, float]:
+        """(k, c) da escala própria: y na vista = k·valor + c."""
+        t = self.transform()
+        return t.m22() or 1.0, t.dy()
 
     def recalcular(self) -> None:
         """Consulta a janela visível e monta os polígonos do próximo quadro."""
@@ -291,7 +301,7 @@ class TracoLOD(pg.GraphicsObject):
             centros = self._origem + (consulta.bordas[:-1] + consulta.bordas[1:] - 1) / (2 * self._taxa)
             # 1 pixel do dispositivo, em unidades de y. Direto da faixa visível e da altura da caixa: o
             # viewPixelSize do PyQtGraph mapeia pontos pela matriz em Python e custava 0,23 ms por traço e quadro.
-            altura_pixel = abs(y1 - y0) / max(vb.height(), 1.0) / self._dpr
+            altura_pixel = abs(y1 - y0) / max(vb.height(), 1.0) / self._dpr / abs(self._escala_propria()[0])
             x, y = _segmentos_de_coluna(centros, consulta.minimos, consulta.maximos, altura_pixel)
             # Sem a conferência de finitos: os segmentos já saem sem NaN (as colunas vazias ficam de fora).
             self._colunas = fn.arrayToQPath(x, y, connect="pairs", finiteCheck=False) if len(x) else None
@@ -356,6 +366,8 @@ class TracoLOD(pg.GraphicsObject):
         if c is None or not len(c) or vb is None:
             return math.inf
         largura_px, altura_px = vb.viewPixelSize()
+        k, deslocamento = self._escala_propria()           # o ponto e o pixel na unidade do traço
+        y, altura_px = (y - deslocamento) / k, altura_px / abs(k)
         if isinstance(c, Amostras):
             return distancia_a_linha(x, y, self._origem + c.indices / self._taxa, c.valores, largura_px, altura_px)
         centros = self._origem + (c.bordas[:-1] + c.bordas[1:] - 1) / (2 * self._taxa)

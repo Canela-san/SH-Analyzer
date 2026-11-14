@@ -55,6 +55,13 @@ CAMINHOS = {
     "lua": "M20 14.5A8.5 8.5 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z",
     "baixo": "M6 9l6 6 6-6",
     "direita": "M9 6l6 6-6 6",
+    "esquerda": "M15 6l-6 6 6 6",
+    "cima": "M6 15l6-6 6 6",
+    "cadeado": "M6 11h12a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 18 21H6a1.5 1.5 0 0 1-1.5-1.5v-7A1.5 1.5 0 0 1 6 11z "
+               "M8 11V7.5a4 4 0 0 1 8 0V11",
+    "cadeado_aberto": "M6 11h12a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 18 21H6a1.5 1.5 0 0 1-1.5-1.5v-7A1.5 1.5 0 0 1 6 "
+                      "11z M8 11V7.5a4 4 0 0 1 7.7-1.5",
+    "igualar": "M4 10h16 M4 14h16 M12 2v5 M9.5 4.5L12 7l2.5-2.5 M12 22v-5 M9.5 19.5L12 17l2.5 2.5",
     "filtro": "M3 5h18l-7 8v6l-4 2v-8z",
     "desfazer": "M9 14L4 9l5-5 M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
     "refazer": "M15 14l5-5-5-5 M20 9H9.5a5.5 5.5 0 0 0 0 11H13",
@@ -108,14 +115,17 @@ def icone(nome: str, cor: str, tamanho: int = 16) -> QIcon:
 
 
 @lru_cache(maxsize=256)
-def icone_com_estados(nome: str, cor: str, cor_ligado: str, cor_desabilitado: str, tamanho: int = 16) -> QIcon:
-    """O ícone com uma cor para o estado normal, outra para o ligado (``checked``) e outra para o desabilitado."""
+def icone_com_estados(nome: str, cor: str, cor_ligado: str, cor_desabilitado: str, tamanho: int = 16,
+                      nome_ligado: str | None = None) -> QIcon:
+    """O ícone com uma cor para o estado normal, outra para o ligado (``checked``) e outra para o desabilitado. Com
+    ``nome_ligado``, o ligado é outro desenho (o cadeado aberto)."""
     resultado = QIcon()
+    ligado = nome_ligado or nome
     for modo, estado, c in ((QIcon.Mode.Normal, QIcon.State.Off, cor), (QIcon.Mode.Normal, QIcon.State.On, cor_ligado),
                             (QIcon.Mode.Active, QIcon.State.Off, cor), (QIcon.Mode.Active, QIcon.State.On, cor_ligado),
                             (QIcon.Mode.Disabled, QIcon.State.Off, cor_desabilitado),
                             (QIcon.Mode.Disabled, QIcon.State.On, cor_desabilitado)):
-        for mapa in _mapas(nome, c, tamanho):
+        for mapa in _mapas(ligado if estado == QIcon.State.On else nome, c, tamanho):
             resultado.addPixmap(mapa, modo, estado)
     return resultado
 
@@ -128,9 +138,10 @@ class IconeDoTema(QObject):
     ``IconeDoTema(botao, "sol")``; para trocar o desenho depois, :meth:`trocar`."""
 
     def __init__(self, alvo: QObject, nome: str, papel: str = "texto2", *, papel_ligado: str | None = None,
-                 tamanho: int = 16):
+                 tamanho: int = 16, nome_ligado: str | None = None):
         super().__init__(alvo)
         self._alvo, self.nome, self.papel, self.papel_ligado, self.tamanho = alvo, nome, papel, papel_ligado, tamanho
+        self.nome_ligado = nome_ligado
         aparencia().mudou.connect(self._aplicar)
         self._aplicar(aparencia().tema)
 
@@ -146,4 +157,4 @@ class IconeDoTema(QObject):
             self._alvo.setIcon(icone(self.nome, cor, self.tamanho))
         else:
             self._alvo.setIcon(icone_com_estados(self.nome, cor, getattr(tema, self.papel_ligado), tema.mudo,
-                                                 self.tamanho))
+                                                 self.tamanho, self.nome_ligado))

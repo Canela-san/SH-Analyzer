@@ -1,9 +1,10 @@
 """As peças de uma faixa da vista de tempo (docs/gui-plan.md, 6.6 e 9.2), com o tema:
 
-* :class:`EixoDoTema`: o eixo do PyQtGraph com as cores e a fonte do tema e os números com vírgula;
+* :class:`EixoDoTema`: o eixo do PyQtGraph com as cores e a fonte do tema e os números com vírgula; o eixo Y mostra
+  os números do traço de referência, pela escala própria dele (``graficos/escalas.py``);
 * :class:`GradeDoTema`: a grade nas marcas principais dos eixos, **opaca** e sem antialiasing (a semitransparente do
   PyQtGraph custava ~17 ms por quadro no protótipo);
-* :class:`CaixaDaFaixa`: a ``ViewBox`` com os gestos do plano: a roda dá zoom no tempo, centrado no cursor; Ctrl +
+* :class:`CaixaDaFaixa`: a ``ViewBox`` (com as escalas dos traços: ``graficos/escalas.py``) com os gestos do plano: a roda dá zoom no tempo, centrado no cursor; Ctrl +
   roda, no eixo Y da faixa; Alt + roda, nos dois juntos (o mesmo fator: a forma do sinal não muda); Shift + roda anda
   no tempo; arrastar anda no tempo; o duplo clique ajusta tudo. Um clique
   avisa onde foi (``clicada``), para a vista selecionar o traço mais perto. **Em cima de um eixo,** a roda e o
@@ -24,6 +25,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
 from ..tema.aplicar import aparencia
 from ..tema.fontes import fonte_mono
 from ..tema.tokens import TAMANHOS, Tema
+from .escalas import CaixaComEscalas
 
 FATOR_DA_RODA = 1.2          # cada passo da roda: 20 % de zoom
 _VALIDO = object()           # o eixo está com as posições e os textos em dia (no lugar da QPicture do PyQtGraph)
@@ -57,10 +59,16 @@ class MedidorDeTexto:
 
 
 class EixoDoTema(pg.AxisItem):
-    """O eixo com as cores do tema e os números no formato brasileiro (vírgula decimal, menos tipográfico)."""
+    """O eixo com as cores do tema e os números no formato brasileiro (vírgula decimal, menos tipográfico).
+
+    **A conversão** (só no eixo Y): com um traço de escala própria como referência, os números são os dele, ``valor
+    = (y na vista - c) / k`` (``graficos/escalas.py``); a grade segue as marcas (``conversaoMudou``)."""
+
+    conversaoMudou = Signal()
 
     def __init__(self, orientacao: str):
         super().__init__(orientacao)
+        self.conversao = (1.0, 0.0)             # (k, c): y na vista = k·valor + c
         self._medidor = MedidorDeTexto()
         self.enableAutoSIPrefix(False)
         self.setTickFont(fonte_mono(TAMANHOS["legenda"]))
@@ -69,6 +77,22 @@ class EixoDoTema(pg.AxisItem):
     def aplicar_tema(self, t: Tema) -> None:
         self.setPen(pg.mkPen(t.borda_forte))
         self.setTextPen(pg.mkPen(t.eixo))
+
+    def definir_conversao(self, k: float = 1.0, c: float = 0.0) -> None:
+        if (k, c) == self.conversao:
+            return
+        self.conversao = (float(k), float(c))
+        vista = self.linkedView()
+        if vista is not None:
+            self.linkedViewChanged(vista)
+        self.conversaoMudou.emit()
+
+    def linkedViewChanged(self, view, newRange=None):
+        if self.orientation in ("left", "right") and self.conversao != (1.0, 0.0):
+            k, c = self.conversao
+            y0, y1 = view.viewRange()[1] if newRange is None else newRange
+            newRange = ((y0 - c) / k, (y1 - c) / k)
+        super().linkedViewChanged(view, newRange)
 
     def paint(self, p: QPainter, opcao, widget) -> None:
         """Desenha direto, sem a ``QPicture`` do PyQtGraph: o eixo do tempo muda a cada quadro do zoom, e gravar a
@@ -136,6 +160,8 @@ class GradeDoTema(pg.GraphicsObject):
         self._chave = None
         self._linhas: list[QLineF] = []
         self.setZValue(-100)
+        if isinstance(eixo_y, EixoDoTema):
+            eixo_y.conversaoMudou.connect(self.update)
 
     def aplicar_tema(self, t: Tema) -> None:
         self._cor = QColor(t.grade)
@@ -151,11 +177,14 @@ class GradeDoTema(pg.GraphicsObject):
 
     def _calcular(self, vb) -> list[QLineF]:
         (x0, x1), (y0, y1) = vb.viewRange()
-        chave = (x0, x1, y0, y1, vb.width(), vb.height())
+        k, c = getattr(self._eixo_y, "conversao", (1.0, 0.0))
+        chave = (x0, x1, y0, y1, vb.width(), vb.height(), k, c)
         if chave != self._chave:
             self._chave = chave
+            # As linhas do Y nas marcas do eixo, que podem ser as de um traço de escala própria.
+            marcas_y = k * marcas_principais(self._eixo_y, (y0 - c) / k, (y1 - c) / k, vb.height()) + c
             self._linhas = ([QLineF(x, y0, x, y1) for x in marcas_principais(self._eixo_x, x0, x1, vb.width())]
-                            + [QLineF(x0, y, x1, y) for y in marcas_principais(self._eixo_y, y0, y1, vb.height())])
+                            + [QLineF(x0, y, x1, y) for y in marcas_y])
         return self._linhas
 
     def paint(self, p: QPainter, *args) -> None:
@@ -170,26 +199,7 @@ class GradeDoTema(pg.GraphicsObject):
         p.drawLines(linhas)
 
 
-def manter_o_y(caixa: pg.ViewBox, limites) -> bool:
-    """Depois de uma mudança nos dados (uma etapa da cadeia, outro método do espectro), **o Y fica onde está**: a
-    posição e a escala que o usuário escolheu valem mais do que um ajuste automático. A exceção é não sobrar nada à
-    vista: se nenhum dos ``limites`` (o mínimo e o máximo de cada traço no trecho visível, na unidade do eixo) cruza
-    a faixa visível, ela anda até o meio deles, **com a mesma altura** (tirar o DC de um sinal em 2,5 V leva o traço
-    para o 0, e a vista vai junto, sem mudar o zoom). Devolve se andou."""
-    limites = [(a, b) for a, b in limites if math.isfinite(a) and math.isfinite(b)]
-    if not limites:
-        return False
-    baixo, alto = min(a for a, _ in limites), max(b for _, b in limites)
-    _, (y0, y1) = caixa.viewRange()
-    if alto >= y0 and baixo <= y1:
-        return False
-    meia = (y1 - y0) / 2
-    centro = (baixo + alto) / 2
-    caixa.setYRange(centro - meia, centro + meia, padding=0)
-    return True
-
-
-class CaixaDaFaixa(pg.ViewBox):
+class CaixaDaFaixa(CaixaComEscalas):
     """``clicada(x, y, modificadores)``: um clique simples, nas unidades da vista. ``ajustarPedido``: o duplo
     clique (ajustar tudo)."""
 
@@ -246,10 +256,11 @@ class CaixaDaFaixa(pg.ViewBox):
             super().mouseClickEvent(evento)
 
     def centralizar_no_zero(self) -> None:
-        """O 0 do eixo Y no meio da faixa, com a mesma escala (a mesma altura em Y); o tempo fica onde está."""
+        """O 0 do eixo Y (o do traço de referência, se ele tem escala própria) no meio da faixa, com a mesma escala;
+        o tempo fica onde está. É um pan do Y: com traços de escala própria selecionados, só eles andam."""
         _, (y0, y1) = self.viewRange()
-        meia = (y1 - y0) / 2
-        self.setYRange(-meia, meia, padding=0)
+        zero = self.escalas.escala(self.escalas.referencia).na_vista(0.0) if self.escalas is not None else 0.0
+        self.translateBy(y=zero - (y0 + y1) / 2)
 
     def mouseDragEvent(self, evento, axis=None):
         if evento.button() == Qt.MouseButton.MiddleButton:

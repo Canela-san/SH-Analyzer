@@ -3,6 +3,10 @@ ligado entre elas.
 
 * **As faixas:** uma por valor de ``receita.faixa`` (o plotar põe os canais da mesma unidade na mesma faixa). O eixo
   Y de cada uma ajusta ao traço inteiro e fica parado no zoom do tempo (como num osciloscópio); Ctrl + roda o muda.
+* **A escala de cada traço** (``graficos/escalas.py``): os traços de uma faixa dividem o Y; o cadeado da barra
+  destrava o selecionado (o zoom e o pan do Y passam a ser só dele) e "Mesma escala" o devolve à escala comum. O
+  eixo Y mostra os números e a unidade do traço selecionado na faixa (sem seleção, do primeiro travado); com traços
+  de unidades ou escalas diferentes na faixa, o rótulo fica na cor do traço que o eixo mostra.
 * **Os traços** são ``TracoLOD`` sobre a pirâmide de cada canal: chegam quando a pirâmide fica pronta. A cor, o
   ganho, o offset, o deslocamento no tempo e a visibilidade mudam no lugar; só a mudança de faixa refaz as faixas.
 * **Um traço com transformações** (a cadeia da receita) é desenhado da sua materialização
@@ -36,7 +40,8 @@ from ...componentes.numeros import formatar_si
 from ...dados.piramide import Piramide
 from ...graficos.clique import mais_perto
 from ...graficos.cursores import CursoresDaVista
-from ...graficos.faixa import LARGURA_DO_EIXO_Y, CaixaDaFaixa, EixoDoTema, GradeDoTema, manter_o_y
+from ...graficos.escalas import EscalasDaCaixa
+from ...graficos.faixa import LARGURA_DO_EIXO_Y, CaixaDaFaixa, EixoDoTema, GradeDoTema
 from ...graficos.minimapa import Minimapa
 from ...graficos.traco_lod import TracoLOD
 from ...modelo.comandos import MudarTracos
@@ -47,6 +52,7 @@ from ...servicos.tarefas import GerenciadorDeTarefas
 from ...tema.aplicar import aparencia
 from ...tema.icones import IconeDoTema
 from ...tema.tokens import Tema, cor_do_traco
+from .acoes_da_escala import acoes_da_escala, atualizar_acoes_da_escala, estado_do_chip
 
 PARADA_DO_HISTORICO_MS = 400
 ESPERA_DA_MEDIDA_MS = 250
@@ -85,7 +91,8 @@ class VistaDeTempo(QWidget):
         self.materializacoes = materializacoes
         self._previas: dict[Traco, Previa] = {}
         self._ajustar_y_de: set[Traco] = set()       # traços cuja faixa ajusta o Y quando os dados novos chegarem
-        self._conferir_y_de: set[Traco] = set()      # e os que só conferem se ainda aparecem (graficos.faixa.manter_o_y)
+        self._conferir_y_de: set[Traco] = set()      # e os que só conferem se ainda aparecem (graficos.escalas.manter)
+        self._estados_da_escala: dict[Traco, tuple[bool, bool]] = {}   # (travado, na comum) mostrado de cada traço
         self._acompanhados: set[Traco] = set()
         materializacoes.mudou.connect(self._materializacao_mudou)
         acompanhados, servico = self._acompanhados, materializacoes
@@ -175,6 +182,7 @@ class VistaDeTempo(QWidget):
         IconeDoTema(self.acao_ajustar, "expandir")
         IconeDoTema(self.acao_voltar, "desfazer")
         IconeDoTema(self.acao_cursores, "cursores", papel_ligado="acento")
+        self.acao_destravar, self.acao_igualar = acoes_da_escala(self, self.destravar_selecionados, self.igualar_escalas)
         self.info = QLabel()
         self.info.setObjectName("info_da_vista")
         # Tamanho fixo: o texto muda a cada quadro do zoom, e um rótulo que muda de largura refaz o layout da janela
@@ -184,7 +192,7 @@ class VistaDeTempo(QWidget):
         linha = QHBoxLayout(self._barra)
         linha.setContentsMargins(10, 4, 10, 4)
         linha.setSpacing(4)
-        for acao in (self.acao_voltar, self.acao_ajustar, self.acao_cursores):
+        for acao in (self.acao_voltar, self.acao_ajustar, self.acao_cursores, self.acao_destravar, self.acao_igualar):
             b = QToolButton()
             b.setProperty("variante", "fantasma")
             b.setDefaultAction(acao)
@@ -271,13 +279,9 @@ class VistaDeTempo(QWidget):
             else:
                 faixa.hideAxis("bottom")
         for numero, faixa in self.faixas.items():
-            primeiro = next((t for t in tracos if t.receita.faixa == numero), None)
-            fonte = self._fonte_do(primeiro) if primeiro is not None else None
-            if fonte is not None and not fonte.esta_ausente:
-                canal = fonte.canal(primeiro.receita.canal)
-                rotulo = f"{canal.nome_grandeza} ({canal.unidade})"
-                if faixa.getAxis("left").labelText != rotulo:
-                    faixa.setLabel("left", rotulo)
+            faixa.escalas.definir_itens({t: self.itens[t] for t in tracos if t.receita.faixa == numero and
+                                         t in self.itens})
+        self._rotular_faixas()
 
         self._refazer_legenda()
         self._refazer_minimapa()
@@ -296,8 +300,16 @@ class VistaDeTempo(QWidget):
 
     @staticmethod
     def _tirar_item(item: TracoLOD) -> None:
+        """Tira o item da faixa dele pelo ``PlotItem`` (que guarda a lista dos seus itens), e não só pela caixa: senão
+        a faixa ainda o teria na lista, e o traço que voltasse a ela (desfazer a mudança de faixa) seria recusado
+        ("Item already added") e sumiria do gráfico."""
         caixa = item.getViewBox() if isValid(item) else None
-        if caixa is not None:
+        if caixa is None:
+            return
+        faixa = caixa.parentItem()
+        if isinstance(faixa, pg.PlotItem):
+            faixa.removeItem(item)
+        else:
             caixa.removeItem(item)
 
     def _ordenar_linhas(self, ordem_antes: list[int], compactar: bool = False) -> None:
@@ -339,7 +351,89 @@ class VistaDeTempo(QWidget):
         caixa.centroPedido.connect(self._centro_pedido)
         caixa.ajustarPedido.connect(self.ajustar)
         caixa.aplicar_tema(aparencia().tema)
+        faixa.rotulo_y = None
+        faixa.escalas = EscalasDaCaixa(caixa, eixo_y, parent=faixa)
+        faixa.escalas.referenciaMudou.connect(self._rotular_faixas)
+        faixa.escalas.cadeadoMudou.connect(self._escalas_mudaram)
+        faixa.escalas.mudou.connect(self._escala_mudou)
+        faixa.escalas.definir_selecao(self.selecao.tracos)
         return faixa
+
+    def _rotular_faixas(self) -> None:
+        """O rótulo do eixo Y de cada faixa: a grandeza e a unidade do traço que o eixo mostra (graficos/escalas.py).
+        Com traços de unidades ou de escalas diferentes na faixa, o rótulo fica na cor desse traço."""
+        if not isValid(self):
+            return
+        tema = aparencia().tema
+        for numero, faixa in self.faixas.items():
+            escalas = faixa.escalas
+            dela = escalas.tracos or [t for t in self.vista.tracos if t.receita.faixa == numero]
+            traco = escalas.referencia or (dela[0] if dela else None)
+            canais = [self._canal_do(t) for t in dela]
+            canal = self._canal_do(traco) if traco is not None else None
+            if canal is None:
+                continue
+            rotulo = f"{canal.nome_grandeza} ({canal.unidade})"
+            mistura = (len({c.unidade for c in canais if c is not None}) > 1
+                       or any(not escalas.escala(t).comum for t in dela))
+            cor = cor_do_traco(traco.receita.cor, tema)[0] if mistura else None
+            if faixa.rotulo_y != (rotulo, cor):
+                faixa.rotulo_y = (rotulo, cor)
+                faixa.setLabel("left", rotulo, **({"color": cor} if cor else {}))
+
+    def _canal_do(self, traco: Traco):
+        fonte = self._fonte_do(traco)
+        return fonte.canal(traco.receita.canal) if fonte is not None and not fonte.esta_ausente else None
+
+    # ------------------------------------------------------------------ as escalas dos traços
+
+    def _tracos_selecionados_aqui(self) -> list[Traco]:
+        return [t for t in self.selecao.tracos if t in self.itens]
+
+    def destravar_selecionados(self, destravar: bool = True) -> None:
+        """O cadeado: os traços selecionados nesta vista passam a ter a escala do Y deles (ou voltam a andar com os
+        outros, na escala que ganharam)."""
+        tracos = self._tracos_selecionados_aqui()
+        for faixa in self.faixas.values():
+            faixa.escalas.travar(tracos, travar=not destravar)
+        self._escalas_mudaram()
+
+    def igualar_escalas(self) -> None:
+        """"Mesma escala": os selecionados (sem seleção, todos os traços) voltam à escala comum da faixa."""
+        tracos = self._tracos_selecionados_aqui() or list(self.itens)
+        for faixa in self.faixas.values():
+            faixa.escalas.igualar(tracos)
+        self._escalas_mudaram()
+
+    def escala_de(self, traco: Traco):
+        """(escala, travado) do traço na faixa dele."""
+        faixa = self.faixas.get(traco.receita.faixa)
+        if faixa is None:
+            return None
+        return faixa.escalas.escala(traco), faixa.escalas.travado(traco)
+
+    def _travado_e_comum(self, traco: Traco) -> tuple[bool, bool]:
+        estado = self.escala_de(traco)
+        return (True, True) if estado is None else (estado[1], estado[0].comum)
+
+    def _escala_mudou(self, traco: Traco) -> None:
+        """A escala de um traço mudou (um gesto, o ajuste): se ela passou da comum para a própria (ou voltou), o
+        chip, os botões e o rótulo (a cada passo de um gesto, nada mais)."""
+        if isValid(self) and self._estados_da_escala.get(traco) != self._travado_e_comum(traco):
+            self._escalas_mudaram()
+
+    def _escalas_mudaram(self) -> None:
+        """Um traço foi destravado, travado ou igualado: os chips, os botões e os rótulos."""
+        if not isValid(self):
+            return
+        self._estados_da_escala = {t: self._travado_e_comum(t) for t in self.itens}
+        for traco, chip in self.chips.items():
+            chip.definir(escala=estado_do_chip(*self._travado_e_comum(traco)))
+        selecionados = self._tracos_selecionados_aqui()
+        atualizar_acoes_da_escala(self.acao_destravar, self.acao_igualar,
+                                  [self._travado_e_comum(t) for t in selecionados],
+                                  [self._travado_e_comum(t) for t in (selecionados or list(self.itens))])
+        self._rotular_faixas()
 
     def _desenhar(self, traco: Traco) -> None:
         fonte = self._fonte_do(traco)
@@ -471,17 +565,19 @@ class VistaDeTempo(QWidget):
             self._conferir_y_de.discard(traco)
             return
         limites = item.limites_y_em(*caixa.viewRange()[0])
-        if limites is not None:
+        faixa = self.faixas.get(traco.receita.faixa)
+        if limites is not None and faixa is not None:
             self._conferir_y_de.discard(traco)
-            manter_o_y(caixa, [limites])
+            faixa.escalas.manter({traco: limites})
 
     def _ajustar_y(self, numero_da_faixa: int) -> None:
         """O Y da faixa ajustado aos traços dela (o traço inteiro, ou o que dele já existe)."""
         faixa = self.faixas.get(numero_da_faixa)
         if faixa is None:
             return
-        limites = [item.dataBounds(1) for traco, item in self.itens.items()
-                   if traco.receita.faixa == numero_da_faixa and item.dados[0].n_amostras]
+        escalas = faixa.escalas
+        limites = [escalas.na_vista(traco, item.dataBounds(1)) for traco, item in self.itens.items()
+                   if traco.receita.faixa == numero_da_faixa and item.dados[0].n_amostras and escalas.travado(traco)]
         if limites:
             y0, y1 = min(a for a, _ in limites), max(b for _, b in limites)
             faixa.getViewBox().setYRange(y0, y1 if y1 > y0 else y0 + 1e-12, padding=0.05)
@@ -626,6 +722,7 @@ class VistaDeTempo(QWidget):
                 item.getViewBox().disableAutoRange()
             if "cor" in campos:
                 item.definir_cor(cor_do_traco(r.cor, aparencia().tema)[0])
+                self._rotular_faixas()
             if "cadeia" in campos:
                 antes = self.materializacoes.estado_de(traco)
                 if self._acompanhar(traco) is not antes:
@@ -661,6 +758,9 @@ class VistaDeTempo(QWidget):
             chip.definir(selecionado=traco in selecionados)
         for traco, item in self.itens.items():
             item.setZValue(10 if traco in selecionados else 0)
+        for faixa in self.faixas.values():
+            faixa.escalas.definir_selecao(selecionados)
+        self._escalas_mudaram()
 
     # ------------------------------------------------------------------ a legenda
 
@@ -697,7 +797,7 @@ class VistaDeTempo(QWidget):
             if progresso is None and estado is not None:
                 progresso = estado.progresso
             chip.definir(visivel=r.visivel, selecionado=traco in self.selecao.tracos, progresso=progresso,
-                         avisos=self._avisos(traco))
+                         avisos=self._avisos(traco), escala=estado_do_chip(*self._travado_e_comum(traco)))
             chip.clicado.connect(lambda t=traco: self.tracoClicado.emit(t, Qt.KeyboardModifier.NoModifier))
             self._fluxo_da_legenda.addWidget(chip)
             self.chips[traco] = chip
@@ -731,9 +831,10 @@ class VistaDeTempo(QWidget):
         return tuple(principal.getViewBox().viewRange()[0]) if principal is not None else None
 
     def ajustar(self) -> None:
-        """A captura inteira no tempo, e cada faixa ajustada no Y."""
+        """A captura inteira no tempo, e cada faixa ajustada no Y (os traços de escala própria, cada um na altura
+        inteira da faixa)."""
         for faixa in self.faixas.values():
-            faixa.getViewBox().autoRange(padding=0.02)
+            faixa.escalas.ajustar(0.02)
 
     def _tempo_mudou(self, *_) -> None:
         if not isValid(self):
@@ -821,3 +922,6 @@ class VistaDeTempo(QWidget):
         for traco, item in self.itens.items():
             item.definir_cor(cor_do_traco(traco.receita.cor, t)[0])
         self._cursores.aplicar_tema(t)
+        for faixa in self.faixas.values():
+            faixa.rotulo_y = None                  # a cor do rótulo segue a do traço, que muda com o tema
+        self._rotular_faixas()
