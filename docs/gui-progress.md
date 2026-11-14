@@ -8,9 +8,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F2.8: os avisos nos chips, o erro inesperado e o log** (seção 4c). A F2.1 a F2.7 estão feitas: a cadeia no
-> inspetor, o traço transformado na tela e as quatro vistas de frequência. A F2.8, a F2.9 e a F2.10 são independentes
-> entre si.
+> **F2.9: as configurações** (seção 4c). A F2.1 a F2.8 estão feitas: a cadeia no inspetor, o traço transformado na
+> tela, as quatro vistas de frequência, os avisos nos chips, o erro inesperado e o log. A F2.9 e a F2.10 são
+> independentes entre si.
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos).
@@ -695,7 +695,29 @@ O plano original:
   sincronizada pelos cruzamentos por zero.
 - **Os testes:** a tabela igual à da CLI para o mesmo trecho.
 
-### ☐ F2.8: os avisos nos chips, o erro inesperado e o log
+### ☑ F2.8: os avisos nos chips, o erro inesperado e o log
+
+**Feita em 14/11/2026:** `c669e2e` (o log e o erro inesperado) e `a4457bc` (os avisos no chip). O que ficou:
+
+- **O log** (`registro.py`): `sh-analyzer.log` na pasta de logs do sistema (`platformdirs.user_log_dir`; a variável
+  `SH_ANALYZER_LOG` a troca, e os testes a usam), em rotação (1 MiB e 5 cópias). A interface registra o que faz
+  (abrir e salvar o projeto, abrir uma captura, as falhas); das bibliotecas, só os avisos; os do Qt e os do
+  `warnings` passam por ele, e os erros saem também no terminal. Uma queda do processo deixa a pilha das threads em
+  `quedas.log` (`faulthandler`). Nada de amostras, do conteúdo do projeto ou de senhas; os caminhos vão.
+- **O erro inesperado** (`servicos/erros.py`, `componentes/dialogo_de_erro.py`): uma exceção que não é do motor
+  (`ErroSHAN`) nem de arquivo (`OSError`), numa tarefa, num slot, num evento ou noutra thread, vai para o log com a
+  pilha e para um diálogo **não modal**: o resumo, os detalhes para copiar (o ambiente e as pilhas) e o caminho do
+  log, com um botão para abrir a pasta. O aplicativo segue. Os erros esperados continuam no lugar deles (o chip, a
+  vista, o toast), sem janela. O mesmo erro repetido (num `paintEvent`, a cada quadro) conta as vezes no diálogo e
+  vai ao log na 1.ª, 2.ª, 4.ª, 8.ª vez...
+- **Os avisos no chip** (`dados/avisos.py`): um sinal à direita do chip, na cor do mais grave, e a lista na dica: a
+  sonda registrada que não pôde ser usada, a faixa do ADC suposta, as amostras que não conferem com o CRC, uma etapa
+  que não serve neste canal (um corte acima da Nyquist, um perfil que não abre) ou que não faz nada, e o erro da
+  conta. Nas vistas de tempo e de espectro; a integridade conferida depois de plotar atualiza o chip.
+- **Um texto errado corrigido:** com a sonda registrada sem um perfil usável, a correção automática dizia que "a
+  captura não registra uma sonda"; agora diz que a registrada não pôde ser usada (a etapa e o inspetor).
+
+O plano original:
 
 - **O conteúdo:** os avisos do motor também no chip do traço (o problema da sonda, a faixa suposta); o diálogo de
   erro inesperado, com os detalhes copiáveis e o caminho do log, sem fechar o aplicativo (GE-09); o log em rotação
@@ -987,6 +1009,18 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     importação do Python (o aquecimento agora tem uma trava, e toda tarefa espera por ele); e uma tarefa que terminava
     depois de a janela fechar avisava um objeto apagado.
   - **Testes:** `ci.sh rapido` com 1 479 aprovados e `ci.sh interface` com 549; os 5 de desempenho passam.
+- **14/11/2026 (F2.8):** os avisos nos chips, o erro inesperado e o log (seção 4c).
+  - **Feito:** o log em rotação na pasta do sistema, o diálogo de erro inesperado não modal (de uma tarefa, de um
+    slot, de um evento ou de outra thread) e os avisos do traço no chip, nas vistas de tempo e de espectro.
+  - **Dois achados no caminho:** a correção automática de sonda dizia "a captura não registra uma sonda" quando a
+    sonda estava registrada mas o perfil não servia (corrigido na etapa e no inspetor); e o chip da vista de tempo
+    só ouvia a fonte enquanto a pirâmide era feita, e não via a conferência do CRC que termina depois.
+  - **O teste de partida** (o `main` num subprocesso) gravaria o log na pasta de verdade: o `conftest.py` aponta
+    `SH_ANALYZER_LOG` para uma pasta temporária, como já fazia com a configuração e o cache.
+  - **Um teste instável pego na CI:** o do chip forçava a integridade "nao_confere" antes de a conferência de verdade
+    terminar, e o "sem_crc" dela chegava depois; ele agora espera a conferência.
+  - **Testes:** `ci.sh rapido` com 1 489 aprovados e `ci.sh interface` com 559; os 5 de desempenho passam.
+  - **Próximo:** a F2.9 (as configurações).
 ---
 
 ## 8. Perguntas em aberto
