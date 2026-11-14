@@ -569,9 +569,9 @@ Cada etapa declara como se comporta, e é isso que decide o custo:
 | **Entre traços** | A − B, A × B, A / B, expressão | Alinha as taxas (reamostrando o de menor taxa) e materializa como acima | Como a anterior |
 | **Agregada** | RMS móvel, envoltória, frequência instantânea, bandas no tempo | Produz uma série de taxa menor, materializada | Como a anterior |
 
-- **A margem:** um filtro precisa das amostras antes e depois da janela. Cada etapa informa a sua acomodação (por exemplo, ~5 constantes de tempo de um IIR). A prévia lê a janela com essa margem e descarta as bordas.
-- **Fase zero em blocos:** o `sosfiltfilt` precisa da série inteira de trás para a frente. Em blocos, são duas passadas sobre o arquivo do cache: a direta, com o estado levado adiante, e a reversa. O resultado é **o mesmo** do `sosfiltfilt` sobre o vetor inteiro. Um teste confere isso, com tolerância de 1e-9 relativo.
-- **A correção de sonda** usa o `aplicar_correcao_sonda` do motor. Em blocos, é sobreposição e soma (*overlap-add*) com o mesmo filtro, e um teste confere a paridade com a função original.
+- **A margem:** um filtro precisa das amostras antes e depois da janela. Cada etapa informa a sua acomodação: a de um filtro sai da sua resposta ao impulso (até a cauda ficar abaixo de 1e-12); a da correção de sonda, do alcance da IFFT de 1/ganho(f). A prévia lê a janela com a margem da cadeia e descarta as bordas.
+- **Em blocos, o mesmo mecanismo:** cada bloco é lido com a margem de cada lado, a cadeia roda nele como num vetor inteiro e as bordas são descartadas (*overlap-save*). Sem arquivo intermediário por etapa. Um teste confere que o resultado é o do vetor inteiro: a 1e-9 relativo com os filtros (o `sosfiltfilt`).
+- **A correção de sonda** usa o `aplicar_correcao_sonda` do motor, uma FFT do trecho inteiro. Em blocos, ela fica abaixo de 1e-6 do RMS do vetor inteiro, no miolo: a resposta ao impulso de 1/ganho(f) decai devagar, e perto das bordas a FFT circular do vetor inteiro mistura o começo com o fim.
 - **O cache das materializações** é endereçado pelo conteúdo: o hash da fonte (CRC) + o canal + a receita. Duas vistas com a mesma receita dividem o mesmo arquivo. O cache tem limite de tamanho (LRU) e um botão "limpar".
 
 ### 7.3 O arquivo de projeto

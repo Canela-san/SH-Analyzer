@@ -8,8 +8,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F2.2: a cadeia de transformações, sem Qt** (seção 4c). A F2.1 (a `api` da frequência) está feita: o espectro, os
-> picos, o espectrograma, as bandas IEC e os harmônicos dão os números do `adc_tool` (seção 4c e o diário de 14/11).
+> **F2.3: a materialização e o cache** (seção 4c). A F2.1 (a `api` da frequência) e a F2.2 (a cadeia de
+> transformações, sem Qt) estão feitas; o traço ainda não mostra a cadeia (a vista de tempo lê a pirâmide do canal
+> cru): é a F2.3 que liga as duas.
 >
 > **Com o usuário (quando puder):** o "pronto quando" da Fase 1, abrir uma captura de 1 h, navegar e medir com 8
 > traços de 2 fontes, em `uv run --extra gui python -m sh_analyzer_gui`.
@@ -93,13 +94,13 @@ da CLI, pela `api`), edita os traços no inspetor (tudo com desfazer), salva e r
 salvamento automático e a recuperação) e tem a paleta de comandos. As seções 4 e 4b têm o commit de cada tarefa.
 
 **Os commits só do motor** (podem ir ao `main` sozinhos): `974c58a` (a `api`), `e76684b` (a integridade e o
-cabeçalho), `64f6e57` (a unidade do canal), `b5b02ab` (as medidas de um trecho), `71ba268` (a taxa da PRU) e `98d96e0` (a frequência, F2.1). E o do agente da placa: `3f98d7b`.
+cabeçalho), `64f6e57` (a unidade do canal), `b5b02ab` (as medidas de um trecho), `71ba268` (a taxa da PRU) e `98d96e0` (a frequência, F2.1), `0ef8255` (os filtros) e `28a1a04` (a margem da sonda). E o do agente da placa: `3f98d7b`.
 
 **O ambiente:** Python 3.13, PySide6 6.12.0, PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1. Testes, na última rodada:
-`ci.sh rapido` com 1 364 aprovados e `ci.sh interface` com 454 (14/11/2026).
+`ci.sh rapido` com 1 410 aprovados e `ci.sh interface` com 487 (14/11/2026).
 
-**Ainda não existe:** as transformações (filtros, correção de sonda no traço), as vistas de frequência (a `api` delas
-já existe, F2.1), as figuras e a Aquisição.
+**Ainda não existe:** o traço transformado na tela (a cadeia existe sem Qt, F2.2, e o projeto a guarda), as vistas
+de frequência (a `api` delas já existe, F2.1), as figuras e a Aquisição.
 
 ---
 
@@ -536,7 +537,26 @@ O plano original:
 - **Os testes:** a paridade com a CLI nas capturas sintéticas (`tests/capturas_sinteticas.py`): os mesmos números
   do `adc_tool --fft`, `--welch` e `--bandas-iec` para o mesmo trecho.
 
-### ☐ F2.2: a cadeia de transformações, sem Qt
+### ☑ F2.2: a cadeia de transformações, sem Qt
+
+**Feita em 14/11/2026:** `0ef8255` e `28a1a04` (só do motor: os filtros e a margem da sonda na `api`) e `828ef77`
+(a cadeia, a receita e o projeto v2). O que ficou diferente do previsto:
+
+- **Os blocos não fazem duas passadas.** A prévia e os blocos usam um mecanismo só, para a cadeia inteira: cada
+  pedaço é lido com a margem da cadeia de cada lado, a cadeia roda nele como num vetor inteiro, e as bordas são
+  descartadas (*overlap-save*). A margem de um filtro sai da sua resposta ao impulso (a cauda abaixo de 1e-12); a da
+  sonda, do alcance da IFFT de 1/ganho(f) (`api.margem_da_correcao_sonda`, 1e-9 do pico). Não precisa de um arquivo
+  intermediário por etapa, e dá o vetor inteiro a 1e-9 relativo com os filtros.
+- **A correção de sonda em blocos não dá o vetor inteiro a 1e-9:** a do vetor inteiro é uma FFT circular (perto das
+  bordas, ela mistura o começo com o fim), e a resposta ao impulso de 1/ganho(f) decai devagar (a soma da cauda nem
+  converge). No miolo, os blocos ficam abaixo de 1e-6 do RMS (4e-7 medidos com a sonda de teste).
+- **O "remover o DC"** tira a média do **canal inteiro** (`ContextoDaCadeia.media`), passada pelo ganho em DC das
+  etapas de antes; a média do trecho mudaria a cada pan. Quem calcula a média do canal (uma passada pelo memmap) é a
+  F2.3; sem ela, a etapa tira a média do trecho.
+- **A ordem:** o canal na unidade física, a cadeia, e só no fim o ganho, o offset e o deslocamento do traço (que
+  seguem direto na pirâmide). A CLI faz a correção de sonda e depois os filtros; a cadeia segue a ordem do usuário.
+
+O plano original:
 
 - **Arquivos:** `dados/cadeia.py`; a `ReceitaDoTraco` ganha as etapas; o `.shproj` sobe para a versão 2 (e lê a 1).
 - **O conteúdo** (plano, 7.2):
@@ -802,7 +822,12 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - o `capturar_avisos` juntava os avisos de todas as threads e podia deixar o logger do motor em INFO; agora cada
     coleta fica com os avisos da sua thread.
   - **Testes:** `ci.sh rapido` com 1 364 aprovados.
-  - **Próximo:** a F2.2, a cadeia de transformações.
+- **14/11/2026:** **a F2.2, a cadeia de transformações** (seção 4c). No motor, os filtros de faixa (o
+  `aplicar_filtro_digital` aceitava um corte só), a validação dos filtros com o motivo e a margem da correção de sonda
+  (`sonda.alcance_da_correcao`, que não gasta o aviso de "fora da faixa" do perfil: o `ganho_em` só avisa uma vez por
+  perfil). Na interface, `dados/cadeia.py`, a receita com a cadeia e o `.shproj` v2.
+  - **Testes:** `ci.sh rapido` com 1 410 aprovados e `ci.sh interface` com 487.
+  - **Próximo:** a F2.3, a materialização e o cache (e a média do canal, para o "remover o DC").
 ---
 
 ## 8. Perguntas em aberto
