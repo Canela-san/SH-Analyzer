@@ -15,7 +15,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 from supraharmonicos.api import aquecer
 
-from sh_analyzer_gui import preferencias
+from sh_analyzer_gui import atalho, preferencias
 from sh_analyzer_gui.configuracao import APLICATIVO, ORGANIZACAO
 from sh_analyzer_gui.janela import JanelaPrincipal
 from sh_analyzer_gui.tema.aplicar import aparencia
@@ -60,6 +60,8 @@ def criar_aplicacao(argv: list[str] | None = None, tema: str = "sistema") -> QAp
     app.setOrganizationName(ORGANIZACAO)
     app.setApplicationVersion(versao())
     app.setWindowIcon(icone_do_aplicativo())
+    # O app_id da janela no Wayland: é por ele que o painel acha o .desktop e o ícone (atalho.py). Antes das janelas.
+    app.setDesktopFileName(atalho.ID_DO_APLICATIVO)
     registrar_fontes()
     app.setFont(fonte_da_interface())
     aparencia(app).aplicar(tema)
@@ -95,6 +97,10 @@ def ler_opcoes(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     p.add_argument("--versao", action="store_true", help="mostra a versão e sai")
     p.add_argument(OPCAO_SAIR_AO_ABRIR, action="store_true",
                    help="abre a janela, pinta o primeiro quadro e sai (o teste de partida do instalador)")
+    p.add_argument("--instalar-atalho", action="store_true",
+                   help="Linux: põe o atalho (.desktop) e o ícone em ~/.local/share, para o ícone aparecer na barra "
+                        "de aplicativos e no menu, e sai")
+    p.add_argument("--remover-atalho", action="store_true", help="Linux: tira o atalho e o ícone, e sai")
     opcoes, resto = p.parse_known_args(resto_bruto)
     opcoes.arquivo = Path(projetos[0]) if projetos else None
     return opcoes, argv[:1] + resto
@@ -110,12 +116,29 @@ def silenciar_avisos_do_qt() -> None:
     QLoggingCategory.setFilterRules("\n".join(f"{c}=false" for c in CATEGORIAS_SILENCIADAS))
 
 
+def _atalho(remover: bool) -> int:
+    """``--instalar-atalho`` e ``--remover-atalho``, sem abrir janela."""
+    if not sys.platform.startswith("linux"):
+        sys.stderr.write("O atalho .desktop é do Linux; no Windows, o instalador cria o atalho.\n")
+        return 1
+    if remover:
+        apagados = atalho.remover()
+        sys.stdout.write("".join(f"apagado: {c}\n" for c in apagados) or "não havia atalho instalado\n")
+        return 0
+    desktop, icone = atalho.instalar()
+    sys.stdout.write(f"atalho: {desktop}\nícone: {icone}\n"
+                     "Feche e abra o SH-Analyzer de novo para o ícone aparecer na barra.\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Abre a interface e devolve o código de saída do laço de eventos."""
     opcoes, argv_qt = ler_opcoes(list(sys.argv if argv is None else argv))
     if opcoes.versao:
         sys.stdout.write(f"{NOME} {versao()}\n")
         return 0
+    if opcoes.instalar_atalho or opcoes.remover_atalho:
+        return _atalho(remover=opcoes.remover_atalho)
     silenciar_avisos_do_qt()
     app = criar_aplicacao(argv_qt, tema=opcoes.tema or preferencias.tema_salvo())
     preferencias.aplicar_fontes_salvas(app)

@@ -11,6 +11,7 @@ pytest.importorskip("pytestqt")
 
 from PySide6.QtWidgets import QLabel  # noqa: E402
 from sh_analyzer_gui.app import NOME, criar_aplicacao, icone_do_aplicativo, versao  # noqa: E402
+from sh_analyzer_gui.atalho import ID_DO_APLICATIVO  # noqa: E402
 from sh_analyzer_gui.janela import TAMANHO_MINIMO, JanelaPrincipal  # noqa: E402
 
 
@@ -20,6 +21,8 @@ def test_a_aplicacao_tem_o_nome_a_versao_e_o_icone(qapp):
     assert app.applicationName() == NOME
     assert app.applicationVersion() == versao() != ""
     assert not app.windowIcon().isNull()
+    # O app_id da janela no Wayland: o painel acha o ícone pelo .desktop com este nome (atalho.py).
+    assert app.desktopFileName() == ID_DO_APLICATIVO
 
 
 def test_o_icone_e_desenhado_em_cada_tamanho(qapp):

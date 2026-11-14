@@ -766,6 +766,13 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   `arrasteDoMeioComecou` e `tracoArrastado` da `CaixaDaFaixa` e o modo `"traco"`; o offset e o deslocamento no tempo
   de um traço continuam no inspetor. O clique rápido do meio segue igual (o 0 no meio da faixa; em cima de um traço,
   tira o offset dele).
+- **14/11/2026:** **o ícone na barra de aplicativos do Linux** (o usuário, no Pop!_OS com o COSMIC, via a engrenagem
+  genérica). No Wayland, o painel não usa o ícone da janela: acha o ícone pelo `app_id` da janela, procurando um
+  `<app_id>.desktop`. O Qt mandava o nome do executável do Python. Agora a aplicação põe `app_id` = `sh-analyzer`
+  (`setDesktopFileName`), e `sh-analyzer-gui --instalar-atalho` (módulo `atalho.py`, sem Qt) grava
+  `~/.local/share/applications/sh-analyzer.desktop` e o ícone em `~/.local/share/icons/hicolor/scalable/apps/`;
+  `--remover-atalho` os apaga. O atalho abre esta cópia pelo `uv` com o extra `gui` (o ambiente pode estar sem o
+  PySide6 depois de um `uv run` sem o extra). O AppImage (seção 15 do plano) trará o seu.
 ---
 
 ## 8. Perguntas em aberto
