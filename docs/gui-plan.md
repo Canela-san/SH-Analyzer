@@ -662,13 +662,16 @@ O layout recomendado é o **A1 (Estúdio)**; as alternativas estão na seção 1
 | Região | O que tem |
 |---|---|
 | **Barra superior** | A marca, o projeto, as três áreas (Análise, Figuras, Aquisição), a paleta de comandos (Ctrl+K), o estado da placa, desfazer e refazer, o tema e as configurações |
-| **Projeto** (esquerda) | As fontes e os seus canais (o ponto colorido mostra onde cada canal está plotado), as vistas, as figuras e o caderno; filtrar; importar |
+| **Projeto** (esquerda) | As fontes e os seus canais (o ponto colorido mostra onde cada canal está plotado), as vistas (um clique abre a aba dela), as figuras e o caderno; filtrar; importar |
 | **Vistas** (centro) | As abas das vistas; a barra da vista (ferramentas, modo de desenho, faixas ou sobrepor, a janela de tempo, ajustar, exportar); o gráfico; o minimapa |
 | **Inspetor** (direita) | As propriedades do que está selecionado (traço, vista, cursor, anotação), em seções recolhíveis |
-| **Painel inferior** | Medidas, cursores, tarefas, avisos e eventos, em abas |
+| **Painel inferior** | Medidas, cursores, tarefas, avisos e eventos, em abas. O contador da aba de avisos conta os não vistos: abrir a aba os dá por vistos, e ele volta só com avisos novos |
 | **Barra de status** | A fonte ativa, a integridade, a pirâmide, a tarefa em andamento e os quadros por segundo (no modo de desenvolvimento) |
 
-Todos os painéis laterais se recolhem (Ctrl+B, Ctrl+I, Ctrl+J), e o layout é salvo por projeto.
+Todos os painéis se recolhem (Ctrl+B, Ctrl+I, Ctrl+J, ou a seta de cada um: no título dos laterais, ao lado das abas
+no de baixo), e o layout é salvo por projeto. **Um painel recolhido deixa a sua aba na borda da área central** (um
+trilho estreito): nos dos lados, o nome de cima para baixo; embaixo, uma aba para cada página, com o contador dela.
+Clicar na aba abre o painel (embaixo, já na página clicada).
 
 ### 9.2 Mouse e teclado
 
@@ -692,6 +695,21 @@ Todos os painéis laterais se recolhem (Ctrl+B, Ctrl+I, Ctrl+J), e o layout é s
 | Ctrl+D | Duplica o traço (para comparar duas cadeias de transformação) |
 | Ctrl+K | Paleta de comandos |
 | Ctrl+W | Fecha a vista ativa (desfazível, como o × da aba) |
+
+**A escala de cada traço.** Os traços de um gráfico (uma faixa da vista de tempo, o espectro) dividem o eixo Y, e o
+zoom e o pan do Y mexem em todos juntos. O eixo Y mostra a unidade e os números do traço selecionado (sem seleção, do
+primeiro): selecionar a corrente numa faixa com a tensão passa o eixo para A. Com unidades ou escalas diferentes no
+mesmo gráfico, o rótulo do eixo fica na cor do traço que ele mostra. Na barra da vista:
+
+- **o cadeado** destrava o traço selecionado: o zoom e o pan do Y com ele selecionado passam a ser só dele (ampliar a
+  corrente pequena ao lado da tensão), e os dos outros não o tiram do lugar na tela. Travado de novo, ele volta a
+  andar com os outros, na escala que ganhou. O chip mostra o cadeado aberto (destravado) ou fechado e discreto
+  (travado numa escala que não é a comum);
+- **"Mesma escala"** devolve os selecionados (sem seleção, todos) à escala comum.
+
+Só o desenho muda: os valores do traço (as medidas, os cursores) continuam na unidade dele. O tempo e a frequência
+são um só para todos (os cursores e as medidas se alinham neles). O `F` põe cada traço destravado na altura inteira
+da faixa; o Y passar a medir outra coisa (dB, RMS, dBc) devolve todos à escala comum.
 
 **Uma mudança não mexe na vista.** Uma etapa da cadeia, o ganho, o offset, o deslocamento, outro método ou outro
 trecho do espectro deixam o tempo e o Y onde o usuário os pôs. Duas exceções: o eixo Y passa a medir outra coisa

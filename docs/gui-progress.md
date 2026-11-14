@@ -11,7 +11,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > **F2.9: as configurações** (seção 4c). A F2.1 a F2.8 estão feitas: a cadeia no inspetor, o traço transformado na
 > tela, as quatro vistas de frequência, os avisos nos chips, o erro inesperado e o log; e o terceiro retorno do
 > usuário (Alt + roda, a vista que fica nas mudanças, o clique com folga, a janela e o preset IEC 61000-4-7 no
-> inspetor, Ctrl+W; diário de 14/11). A F2.9 e a F2.10 são independentes entre si.
+> inspetor, Ctrl+W; diário de 14/11) e o quarto (o eixo do traço selecionado, a escala própria com o cadeado, os
+> painéis com aba para recolher, a vista aberta pelo painel do projeto, o contador dos avisos não vistos). A F2.9 e a
+> F2.10 são independentes entre si.
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos).
@@ -1049,6 +1051,29 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     (agora a vista fica); o outro clicava "no vazio" a 7 px da linha, que o alcance novo pega.
   - **Testes:** `tests/test_gui_vistas_que_ficam.py` (9); `ci.sh rapido` com 1 498 aprovados e `ci.sh interface`
     com 568; os 5 de desempenho passam.
+- **14/11/2026:** **o quarto retorno do usuário** (vários traços num gráfico, e os painéis):
+  - **o eixo Y mostra o traço selecionado:** a unidade e os números dele (selecionar a corrente numa faixa com a
+    tensão passa o eixo para A); com unidades ou escalas diferentes no gráfico, o rótulo fica na cor do traço que ele
+    mostra. Na vista de tempo e na de espectro;
+  - **a escala própria de cada traço** (`graficos/escalas.py`, plano 9.2): o cadeado na barra da vista destrava o
+    selecionado (o zoom e o pan do Y passam a ser só dele, e os dos outros não o tiram do lugar), e "Mesma escala"
+    devolve os traços à escala comum. É a transformação do item na caixa: os valores, as medidas e os cursores não
+    mudam. Todos os gestos do Y passam por `CaixaComEscalas` (o `scaleBy` e o `translateBy` que o PyQtGraph e a
+    faixa usam), e o chip mostra o cadeado. **Só o Y:** o tempo e a frequência continuam um só para todos os traços,
+    porque é neles que os cursores e as medidas se alinham (o usuário pediu "x e y"; o exemplo dele era o Y da
+    corrente);
+  - **os painéis recolhem com uma seta** (no título dos laterais, ao lado das abas no de baixo), e o painel
+    recolhido deixa a sua aba na borda da área central (`TrilhoDoPainel`): o nome de cima para baixo nos dos lados;
+    embaixo, uma aba por página, com o contador;
+  - **um clique numa vista do painel do projeto abre a aba dela** (e, se ela já está aberta, as propriedades dela no
+    inspetor);
+  - **o contador da aba de avisos conta só os não vistos:** abrir a aba os dá por vistos; ele volta só com avisos
+    novos;
+  - **um defeito antigo achado no caminho:** mudar um traço de faixa e desfazer o deixava fora de todas as faixas
+    (ele sumia do gráfico). A faixa ainda o tinha na lista do `PlotItem`, que recusava o item de volta. Agora ele sai
+    da faixa pelo `PlotItem`.
+  - **Testes:** `tests/test_gui_escalas.py` (9) e `tests/test_gui_paineis.py` (8); `ci.sh rapido` com 1 520
+    aprovados e `ci.sh interface` com 590; os 5 de desempenho passam.
 ---
 
 ## 8. Perguntas em aberto
