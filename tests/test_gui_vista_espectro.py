@@ -52,9 +52,11 @@ def aberto(janela, qtbot, tmp_path):
     return fonte, traco, tempo, espectro
 
 
-def recalcular(qtbot, espectro, mexer):
-    with qtbot.waitSignal(espectro.calculado, timeout=10_000):
-        mexer()
+def recalcular(qtbot, espectro, mexer, quando=None):
+    """Mexe e espera o resultado das opções novas (um resultado pedido antes pode chegar depois da mudança)."""
+    mexer()
+    qtbot.waitUntil(lambda: espectro.opcoes_calculadas == espectro.opcoes and (quando is None or quando()),
+                    timeout=10_000)
 
 
 def trecho_da_janela(tempo, traco):
@@ -113,7 +115,8 @@ def test_a_cadeia_da_vista_de_tempo_muda_o_espectro(janela, qtbot, aberto):
     fonte, traco, tempo, espectro = aberto
     antes = espectro.resultados[0].espectro.nivel_em(50)
     cadeia = Cadeia((Filtro("passa_altas", (2000.0,), 4),))
-    recalcular(qtbot, espectro, lambda: janela.projeto.pilha.push(MudarTracos([traco], cadeia=cadeia)))
+    recalcular(qtbot, espectro, lambda: janela.projeto.pilha.push(MudarTracos([traco], cadeia=cadeia)),
+               quando=lambda: espectro.resultados[0].trecho.cadeia == cadeia)
     depois = espectro.resultados[0].espectro.nivel_em(50)
     assert depois < antes - 60                                       # o passa-altas tirou os 50 Hz
     assert "PA 2 kHz" in espectro.chips[traco].resumo

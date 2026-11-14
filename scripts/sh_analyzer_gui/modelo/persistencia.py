@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from ..dados.captura import Aviso, ErroSHAN, Fonte, abrir_fonte, crc_das_amostras
-from ..dados.espectros import OpcoesDoEspectro
+from ..dados.espectros import OPCOES_DO_TIPO
 from ..dados.projeto import (
     FonteSalva,
     ProjetoSalvo,
@@ -73,7 +73,7 @@ def montar(salvo: ProjetoSalvo, caminho: Path | None, pasta: Path, *,
         projeto._inserir_fonte(fonte if fonte is not None else FonteDoProjeto.ausente(origem))
     for salva in salvo.vistas:
         vista = Vista(salva.nome, salva.tipo, salva.id,
-                      OpcoesDoEspectro.de_dict(salva.opcoes) if salva.tipo == "espectro" else None)
+                      OPCOES_DO_TIPO[salva.tipo].de_dict(salva.opcoes) if salva.tipo in OPCOES_DO_TIPO else None)
         for t in salva.tracos:
             vista._inserir(Traco(t.receita, t.id))
         projeto._inserir_vista(vista)

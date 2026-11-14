@@ -53,9 +53,10 @@ class ResultadoDoTraco:
     """O espectro de um traço (ou por que não há um)."""
 
     def __init__(self, traco: Traco, espectro: api.Espectro | None = None, marcas: esp.Marcas | None = None,
-                 erro: str = "", aguardando: bool = False, unidade: str = "V"):
+                 erro: str = "", aguardando: bool = False, unidade: str = "V", trecho=None):
         self.traco, self.espectro, self.marcas = traco, espectro, marcas
         self.erro, self.aguardando, self.unidade = erro, aguardando, unidade
+        self.trecho = trecho              # o TrechoDoTraco que deu este resultado (a cadeia, o ganho, as amostras)
 
 
 class VistaDeEspectro(QWidget):
@@ -71,6 +72,7 @@ class VistaDeEspectro(QWidget):
         self.vista, self.projeto, self.selecao = vista, projeto, selecao
         self.tarefas, self.materializacoes, self._achar_vista_de_tempo = tarefas, materializacoes, vista_de_tempo
         self.resultados: list[ResultadoDoTraco] = []
+        self.opcoes_calculadas: esp.OpcoesDoEspectro | None = None     # as opções que deram os resultados mostrados
         self.curvas: dict[Traco, pg.PlotDataItem] = {}
         self.chips: dict[Traco, ChipDeTraco] = {}
         self._tempo = None
@@ -306,12 +308,12 @@ class VistaDeEspectro(QWidget):
                     espectro = esp.espectro_do_trecho(trecho, parametros, cancelado=cancelado,
                                                       progresso=lambda f, k=k: progresso((k + f) / len(pedidos)))
                     resultados.append(ResultadoDoTraco(traco, espectro, esp.marcas(espectro, o.picos, o.harmonicos),
-                                                       unidade=unidade))
+                                                       unidade=unidade, trecho=trecho))
                 except esp.AguardandoMaterializacao:
-                    resultados.append(ResultadoDoTraco(traco, aguardando=True, unidade=unidade))
+                    resultados.append(ResultadoDoTraco(traco, aguardando=True, unidade=unidade, trecho=trecho))
                 except api.ErroSHAN as e:
-                    resultados.append(ResultadoDoTraco(traco, erro=str(e), unidade=unidade))
-            return resultados
+                    resultados.append(ResultadoDoTraco(traco, erro=str(e), unidade=unidade, trecho=trecho))
+            return o, resultados
 
         grande = sum(t.n_amostras for _, _, t in pedidos) > AMOSTRAS_PARA_MOSTRAR_A_TAREFA
         self._tarefa = self.tarefas.iniciar(self.tr("Espectro de {}").format(self.vista.nome), calcular,
@@ -322,7 +324,7 @@ class VistaDeEspectro(QWidget):
             return
         self._tarefa = None
         if tarefa.estado == "concluida":
-            self.resultados = tarefa.resultado
+            self.opcoes_calculadas, self.resultados = tarefa.resultado
             self._desenhar()
             self.calculado.emit()
         elif tarefa.estado == "falhou":

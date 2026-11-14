@@ -29,8 +29,8 @@ FORMATO = "sh-analyzer-projeto"
 VERSAO = 2
 EXTENSAO = ".shproj"
 SUFIXO_AUTOMATICO = "~"
-TIPOS_DE_VISTA = ("tempo", "espectro")
-"""Os tipos de vista que esta versão abre (as bandas, o espectrograma e os outros entram nas próximas)."""
+TIPOS_DE_VISTA = ("tempo", "espectro", "bandas", "espectrograma")
+"""Os tipos de vista que esta versão abre (os harmônicos e os outros entram nas próximas)."""
 LIMITE_DA_BUSCA = 5000
 """Quantos arquivos a busca pelo CRC olha, no máximo (uma pasta enorme não trava a abertura)."""
 
@@ -189,10 +189,10 @@ def de_dict(dados) -> ProjetoSalvo:
         if tipo not in TIPOS_DE_VISTA:
             raise ProjetoInvalido(f"{onde} é de um tipo que esta versão não abre ({tipo!r}): atualize o aplicativo")
         opcoes = v.get("opcoes", {})
-        if tipo == "espectro":
-            from .espectros import OpcoesDoEspectro, OpcoesInvalidas
+        if tipo != "tempo":
+            from .espectros import OPCOES_DO_TIPO, OpcoesInvalidas
             try:
-                opcoes = OpcoesDoEspectro.de_dict(opcoes).para_dict()
+                opcoes = OPCOES_DO_TIPO[tipo].de_dict(opcoes).para_dict()
             except (OpcoesInvalidas, TypeError) as e:
                 raise ProjetoInvalido(f"{onde}: {e}") from None
         elif opcoes:

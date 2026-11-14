@@ -204,6 +204,10 @@ class JanelaPrincipal(QMainWindow):
         self._acao("nova_vista", self.tr("Nova vista"), icone="mais").triggered.connect(lambda: self.area.nova_vista())
         self._acao("espectro", self.tr("Abrir o espectro da vista"), atalho="Ctrl+E",
                    icone="espectro").triggered.connect(lambda: self.area.abrir_espectro())
+        self._acao("bandas", self.tr("Abrir as bandas IEC da vista"), atalho="Ctrl+Shift+B",
+                   icone="grade").triggered.connect(lambda: self.area.abrir_analise("bandas"))
+        self._acao("espectrograma", self.tr("Abrir o espectrograma da vista"), atalho="Ctrl+Shift+E",
+                   icone="camadas").triggered.connect(lambda: self.area.abrir_analise("espectrograma"))
         a = self._acao("remover_selecionados", self.tr("Remover os traços selecionados"),
                        atalho=QKeySequence.StandardKey.Delete)
         a.triggered.connect(lambda: self.area.remover_selecionados())

@@ -24,7 +24,7 @@ from PySide6.QtGui import QUndoStack
 from shiboken6 import isValid
 
 from ..dados.captura import CanalDaCaptura, Fonte
-from ..dados.espectros import OpcoesDoEspectro
+from ..dados.espectros import OPCOES_DO_TIPO
 from ..dados.projeto import TIPOS_DE_VISTA, FonteSalva
 from ..dados.receita import ReceitaDoTraco, proxima_cor
 
@@ -80,7 +80,7 @@ class Vista(QObject):
         self.id = id or novo_id()
         self.tipo = tipo
         # As opções do espectro (``OpcoesDoEspectro``): o método, a escala, o trecho, a vista de tempo ligada...
-        self._opcoes = (opcoes or OpcoesDoEspectro()) if tipo == "espectro" else None
+        self._opcoes = (opcoes or OPCOES_DO_TIPO[tipo]()) if tipo in OPCOES_DO_TIPO else None
         self._nome = nome.strip()
         self._tracos: list[Traco] = []
 

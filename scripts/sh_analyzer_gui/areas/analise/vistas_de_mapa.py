@@ -1,0 +1,528 @@
+"""As vistas das bandas IEC e do espectrograma (docs/gui-plan.md, 9.5; ES-03 e ES-04): um traço da vista de tempo
+ligada, no tempo.
+
+* **O traço** é um dos traços da vista de tempo ligada (o seletor da barra), com a sua cadeia; **o trecho**, a captura
+  inteira (o padrão), a janela visível ou a região dos cursores de lá.
+* **O tempo ligado:** o eixo do tempo destas vistas é o mesmo da vista de tempo (``setXLink``): o zoom de uma leva a
+  outra, e um afundamento visto na forma de onda está no mesmo lugar do mapa.
+* **As bandas** (``VistaDeBandas``): o mapa de calor banda × tempo (o nível RMS de cada banda em cada janela de 200 ms,
+  em dB re 1 unidade) e a tabela das estatísticas de cada banda (RMS, P95, máximo, mínimo), em ordem da estatística
+  escolhida (a do ``adc_tool --bandas-iec`` é o P95). As janelas fixas de 200 ms ou as sincronizadas à fundamental.
+* **O espectrograma** (``VistaDeEspectrograma``): o espectro ao longo do tempo, com o mapa de cores perceptual
+  (viridis) e a faixa dinâmica escolhida abaixo do máximo.
+* **As contas** são as da ``api`` (``dados/espectros.py``), em segundo plano, com o progresso no painel de tarefas numa
+  captura longa; cada pedido cancela o anterior.
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Callable
+
+import numpy as np
+import pyqtgraph as pg
+import supraharmonicos.api as api
+from PySide6.QtCore import QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QCheckBox,
+    QComboBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+from shiboken6 import isValid
+
+from ...componentes.basicos import CampoComUnidade, Segmentado
+from ...componentes.numeros import formatar_si
+from ...dados import espectros as esp
+from ...graficos.faixa import EixoDoTema
+from ...modelo.comandos import MudarOpcoesDaVista
+from ...modelo.objetos import Projeto, Traco, Vista
+from ...modelo.selecao import Selecao
+from ...tema.aplicar import aparencia
+from ...tema.tokens import Tema
+
+ESPERA_MS = 40
+TRECHOS = ("captura", "janela", "cursores")
+AMOSTRAS_PARA_MOSTRAR_A_TAREFA = 20_000_000
+MAPA_DE_CORES = "viridis"
+
+
+class VistaLigada(QWidget):
+    """A base: a vista de tempo ligada, o traço, o trecho e a conta em segundo plano. As subclasses montam o
+    conteúdo (``_montar_conteudo``), fazem a conta de um trecho (``_conta``) e desenham o resultado (``_desenhar``)."""
+
+    tracoClicado = Signal(object, object)
+    regiaoMudou = Signal(float, float, bool)
+    semRegiao = Signal()
+    calculado = Signal()
+
+    nome_da_conta = "Conta"
+
+    def __init__(self, vista: Vista, projeto: Projeto, selecao: Selecao, *, tarefas, materializacoes,
+                 vista_de_tempo: Callable[[str | None], object], parent: QWidget | None = None):
+        super().__init__(parent)
+        self.vista, self.projeto, self.selecao = vista, projeto, selecao
+        self.tarefas, self.materializacoes, self._achar_vista_de_tempo = tarefas, materializacoes, vista_de_tempo
+        self.resultado = None
+        self.opcoes_calculadas = None          # as opções que deram o resultado mostrado
+        self.traco: Traco | None = None
+        self.trecho_atual: esp.TrechoDoTraco | None = None
+        self.erro = ""
+        self.aguardando = False
+        self._tempo = None
+        self._tarefa = None
+        self._caixa_ligada = None
+        coluna = QVBoxLayout(self)
+        coluna.setContentsMargins(0, 0, 0, 0)
+        coluna.setSpacing(0)
+        barra = QWidget()
+        barra.setObjectName("barra_vista")
+        self._linha = QHBoxLayout(barra)
+        self._linha.setContentsMargins(8, 4, 8, 4)
+        self._linha.setSpacing(8)
+        self.seletor = QComboBox()
+        self.seletor.setObjectName("traco_da_vista")
+        self.seletor.setToolTip(self.tr("O traço da vista de tempo"))
+        self.seletor.activated.connect(lambda i: self._mudar(traco=int(self.seletor.itemData(i))))
+        self.trecho = Segmentado([self.tr("Captura"), self.tr("Janela"), self.tr("Cursores")])
+        self.trecho.setToolTip(self.tr("O trecho: a captura inteira, a janela visível da vista de tempo ou a região "
+                                       "dos cursores dela"))
+        self.trecho.escolhaMudou.connect(lambda i: self._mudar(trecho=TRECHOS[i]))
+        self._linha.addWidget(self.seletor)
+        self._linha.addWidget(self.trecho)
+        coluna.addWidget(barra)
+        self._montar_conteudo(coluna)
+        self._linha.addStretch(1)
+        self.info = QLabel()
+        self.info.setObjectName("info_vista")
+        self.info.setWordWrap(True)
+        self.info.setContentsMargins(10, 2, 10, 4)
+        coluna.addWidget(self.info)
+        self._espera = QTimer(self)
+        self._espera.setSingleShot(True)
+        self._espera.setInterval(ESPERA_MS)
+        self._espera.timeout.connect(self._calcular)
+        vista.mudou.connect(self._vista_mudou)
+        projeto.vistaEntrou.connect(self._vistas_do_projeto)
+        projeto.vistaSaiu.connect(self._vistas_do_projeto)
+        materializacoes.mudou.connect(self._materializacao_mudou)
+        aparencia().mudou.connect(self._tema_mudou)
+        self._tema_mudou(aparencia().tema)
+        self._mostrar_opcoes()
+        self._pedir()
+
+    # ------------------------------------------------------------------ para as subclasses
+
+    def _montar_conteudo(self, coluna: QVBoxLayout) -> None:
+        raise NotImplementedError
+
+    def _conta(self, trecho: esp.TrechoDoTraco, progresso, cancelado):
+        raise NotImplementedError
+
+    def _desenhar(self) -> None:
+        raise NotImplementedError
+
+    def _mostrar_opcoes_proprias(self) -> None:
+        pass
+
+    def _novo_grafico(self) -> pg.PlotWidget:
+        grafico = pg.PlotWidget(axisItems={"bottom": EixoDoTema("bottom"), "left": EixoDoTema("left")})
+        grafico.setMenuEnabled(False)
+        grafico.hideButtons()
+        grafico.setLabel("bottom", self.tr("tempo"), units="s")
+        return grafico
+
+    # ------------------------------------------------------------------ as opções
+
+    @property
+    def opcoes(self):
+        return self.vista.opcoes
+
+    def _mudar(self, **mudancas) -> bool:
+        try:
+            nova = self.opcoes.com(**mudancas)
+        except esp.OpcoesInvalidas as e:
+            self.info.setText(str(e))
+            self._mostrar_opcoes()
+            return False
+        if nova == self.opcoes:
+            return False
+        self.projeto.pilha.push(MudarOpcoesDaVista(self.vista, nova, juntar=bool(set(mudancas) & {
+            "resolucao_hz", "faixa_dinamica_db", "freq_min", "freq_max"})))
+        return True
+
+    def _mostrar_opcoes(self) -> None:
+        self.trecho.blockSignals(True)
+        self.trecho.escolher(TRECHOS.index(self.opcoes.trecho))
+        self.trecho.blockSignals(False)
+        self._mostrar_opcoes_proprias()
+
+    def _vista_mudou(self, _vista, campos) -> None:
+        if "opcoes" in campos and isValid(self):
+            self._mostrar_opcoes()
+            self._pedir()
+
+    # ------------------------------------------------------------------ a vista de tempo ligada
+
+    def vista_de_tempo(self):
+        widget = self._achar_vista_de_tempo(self.opcoes.vista_de_tempo)
+        if widget is not self._tempo:
+            if self._tempo is not None and isValid(self._tempo):
+                for sinal, slot in self._ligacoes():
+                    try:
+                        sinal.disconnect(slot)
+                    except (RuntimeError, TypeError):
+                        pass
+            self._tempo = widget
+            if widget is not None:
+                for sinal, slot in self._ligacoes():
+                    sinal.connect(slot)
+        return widget
+
+    def _ligacoes(self):
+        t = self._tempo
+        return ((t.regiaoMudou, self._regiao_de_la), (t.vista.tracoEntrou, self._tracos_de_la),
+                (t.vista.tracoSaiu, self._tracos_de_la), (t.vista.tracoMudou, self._traco_de_la))
+
+    def _ligar_o_tempo(self, caixa: pg.ViewBox) -> None:
+        """O eixo do tempo desta vista segue o da faixa principal da vista de tempo, e o contrário: o mesmo intervalo
+        de tempo nas duas (o ``setXLink`` do PyQtGraph alinha pela posição na tela, e as caixas têm larguras
+        diferentes)."""
+        tempo = self._tempo
+        principal = tempo._faixa_principal() if tempo is not None and isValid(tempo) else None
+        alvo = principal.getViewBox() if principal is not None else None
+        if alvo is self._caixa_ligada:
+            return
+        if self._caixa_ligada is not None and isValid(self._caixa_ligada):
+            try:
+                self._caixa_ligada.sigXRangeChanged.disconnect(self._tempo_mudou_la)
+            except (RuntimeError, TypeError):
+                pass
+        if self._caixa_ligada is None:
+            caixa.sigXRangeChanged.connect(self._tempo_mudou_aqui)
+        self._caixa_ligada, self._caixa_daqui = alvo, caixa
+        if alvo is not None:
+            alvo.sigXRangeChanged.connect(self._tempo_mudou_la)
+            self._tempo_mudou_la(alvo, alvo.viewRange()[0])
+
+    def _copiar_tempo(self, destino: pg.ViewBox, intervalo) -> None:
+        if getattr(self, "_copiando", False) or destino is None or not isValid(destino):
+            return
+        self._copiando = True
+        try:
+            destino.setXRange(float(intervalo[0]), float(intervalo[1]), padding=0)
+        finally:
+            self._copiando = False
+
+    def _tempo_mudou_la(self, _caixa, intervalo) -> None:
+        if isValid(self):
+            self._copiar_tempo(getattr(self, "_caixa_daqui", None), intervalo)
+
+    def _tempo_mudou_aqui(self, _caixa, intervalo) -> None:
+        if isValid(self):
+            self._copiar_tempo(self._caixa_ligada, intervalo)
+
+    def _vistas_do_projeto(self, *_):
+        if isValid(self):
+            QTimer.singleShot(0, self._pedir)
+
+    def _regiao_de_la(self, *_):
+        if isValid(self) and self.opcoes.trecho != "captura":
+            self._pedir()
+
+    def _tracos_de_la(self, *_):
+        self._pedir()
+
+    def _traco_de_la(self, traco, campos):
+        if campos & {"cadeia", "ganho", "visivel", "nome", "deslocamento_s"}:
+            self._pedir()
+
+    def _materializacao_mudou(self, estado) -> None:
+        if isValid(self) and self.aguardando and estado.pronta is not None:
+            self._pedir()
+
+    # ------------------------------------------------------------------ a conta
+
+    def _pedir(self, *_) -> None:
+        if isValid(self):
+            self._espera.start()
+
+    def _refazer_seletor(self, tracos) -> int:
+        """O seletor com os traços da vista de tempo; devolve a posição do escolhido (ou do primeiro visível)."""
+        self.seletor.blockSignals(True)
+        self.seletor.clear()
+        for i, t in enumerate(tracos):
+            self.seletor.addItem(t.nome, i)
+        escolhido = self.opcoes.traco if self.opcoes.traco < len(tracos) else 0
+        self.seletor.setCurrentIndex(escolhido)
+        self.seletor.blockSignals(False)
+        return escolhido
+
+    def _calcular(self) -> None:
+        if not isValid(self):
+            return
+        if self._tarefa is not None and self._tarefa.ativa:
+            self._tarefa.cancelar()
+        tempo = self.vista_de_tempo()
+        self.erro, self.aguardando, nota = "", False, ""
+        tracos = tempo.vista.tracos if tempo is not None else ()
+        if not tracos:
+            self.resultado, self.traco, self.trecho_atual = None, None, None
+            self.info.setText(self.tr("Nenhum traço na vista de tempo ligada: plote um canal."))
+            self._desenhar()
+            return
+        traco = tracos[self._refazer_seletor(tracos)]
+        r = traco.receita
+        try:
+            fonte = self.projeto.fonte(r.fonte)
+        except KeyError:
+            return
+        if fonte.esta_ausente:
+            self.info.setText(self.tr("A captura de {} está ausente.").format(traco.nome))
+            return
+        canal = fonte.canal(r.canal)
+        n = len(canal.amostras)
+        a, b = 0, n
+        if self.opcoes.trecho != "captura":
+            regiao = tempo.janela_de_tempo()
+            if self.opcoes.trecho == "cursores":
+                if tempo.cursores is None:
+                    nota = self.tr("Sem os cursores na vista de tempo (C): a janela visível.")
+                else:
+                    regiao = tuple(sorted(tempo.cursores))
+            if regiao is not None:
+                a = int(min(max(round((regiao[0] - r.deslocamento_s) * canal.taxa_hz), 0), n))
+                b = int(min(max(round((regiao[1] - r.deslocamento_s) * canal.taxa_hz), 0), n))
+        estado = self.materializacoes.estado_de(traco)
+        pronta = estado.pronta.amostras if estado is not None and estado.pronta is not None else None
+        trecho = esp.TrechoDoTraco(fonte.fonte.captura, r.canal, r.cadeia, self.materializacoes.contexto(fonte, r.canal),
+                                   a, b, r.ganho, pronta)
+        self._nota = nota
+        opcoes = self.opcoes
+
+        def calcular(progresso, cancelado):
+            try:
+                return self._conta(trecho, progresso, cancelado), ""
+            except esp.AguardandoMaterializacao:
+                return None, "aguardando"
+            except api.ErroSHAN as e:
+                return None, str(e)
+
+        def terminou(tarefa) -> None:
+            if tarefa is not self._tarefa or not isValid(self):
+                return
+            self._tarefa = None
+            if tarefa.estado != "concluida":
+                if tarefa.estado == "falhou":
+                    self.info.setText(tarefa.erro)
+                return
+            resultado, erro = tarefa.resultado
+            self.traco, self.trecho_atual, self.opcoes_calculadas = traco, trecho, opcoes
+            self.resultado = resultado
+            self.aguardando = erro == "aguardando"
+            self.erro = "" if self.aguardando else erro
+            self._desenhar()
+            self._mostrar_info()
+            self.calculado.emit()
+
+        grande = trecho.n_amostras > AMOSTRAS_PARA_MOSTRAR_A_TAREFA
+        self._tarefa = self.tarefas.iniciar(self.tr("{} de {}").format(self.nome_da_conta, traco.nome), calcular,
+                                            f"{self.vista.tipo}-{self.vista.id}", mostrar=grande,
+                                            ao_terminar=terminou)
+
+    def _mostrar_info(self) -> None:
+        partes = [self._nota] if getattr(self, "_nota", "") else []
+        if self.aguardando:
+            partes.append(self.tr("aguardando a transformação da captura inteira de {}").format(self.traco.nome))
+        if self.erro:
+            partes.append(self.erro)
+        partes += self._descricao()
+        self.info.setText(" · ".join(partes))
+
+    def _descricao(self) -> list[str]:
+        return []
+
+    def _tempo_do_trecho(self) -> float:
+        """O tempo (na vista de tempo) da primeira amostra do trecho."""
+        t = self.trecho_atual
+        return self.traco.receita.deslocamento_s + t.inicio / t.captura.canal(t.numero).taxa_hz
+
+    def soltar(self) -> None:
+        if self._tarefa is not None and self._tarefa.ativa:
+            self._tarefa.cancelar()
+        self._espera.stop()
+
+    def emitir_regiao(self) -> None:
+        self.semRegiao.emit()
+
+    def _tema_mudou(self, t: Tema) -> None:
+        if isValid(self) and hasattr(self, "grafico"):
+            self.grafico.setBackground(QColor(t.afundada))
+
+
+def _imagem_com_barra(grafico: pg.PlotWidget, rotulo: str) -> tuple[pg.ImageItem, pg.ColorBarItem]:
+    imagem = pg.ImageItem(axisOrder="col-major")
+    grafico.addItem(imagem)
+    barra = pg.ColorBarItem(colorMap=pg.colormap.get(MAPA_DE_CORES), interactive=False, label=rotulo, width=14)
+    barra.setImageItem(imagem, insert_in=grafico.getPlotItem())
+    return imagem, barra
+
+
+class VistaDeBandas(VistaLigada):
+    nome_da_conta = "Bandas IEC"
+
+    def _montar_conteudo(self, coluna: QVBoxLayout) -> None:
+        self.setObjectName("vista_bandas")
+        self.estatistica = Segmentado(["P95", "RMS", self.tr("Máximo"), self.tr("Mínimo")])
+        self.estatistica.setToolTip(self.tr("A ordem da tabela: as bandas de maior P95 primeiro (como no adc_tool), ou "
+                                            "da estatística escolhida"))
+        self.estatistica.escolhaMudou.connect(lambda i: self._mudar(estatistica=("p95", "rms", "maximo", "minimo")[i]))
+        self.sincronizar = QCheckBox(self.tr("Sincronizar"))
+        self.sincronizar.setObjectName("sincronizar_bandas")
+        self.sincronizar.setToolTip(self.tr("Janelas de 10 ciclos (50 Hz) ou 12 (60 Hz) da fundamental medida, em vez "
+                                            "de 200 ms fixos (IEC 61000-4-30)"))
+        self.sincronizar.clicked.connect(lambda marcado: self._mudar(sincronizar=bool(marcado)))
+        self._linha.addWidget(self.estatistica)
+        self._linha.addWidget(self.sincronizar)
+        self.grafico = self._novo_grafico()
+        self.grafico.setObjectName("mapa_bandas")
+        self.grafico.setLabel("left", self.tr("banda"), units="Hz")
+        self.imagem, self.barra = _imagem_com_barra(self.grafico, self.tr("nível RMS da banda (dB)"))
+        self.tabela = QTableWidget(0, 5)
+        self.tabela.setObjectName("tabela_bandas")
+        self.tabela.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tabela.verticalHeader().hide()
+        self.tabela.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        divisor = QSplitter(Qt.Orientation.Vertical)
+        divisor.addWidget(self.grafico)
+        divisor.addWidget(self.tabela)
+        divisor.setSizes([400, 220])
+        coluna.addWidget(divisor, 1)
+
+    def _mostrar_opcoes_proprias(self) -> None:
+        self.estatistica.blockSignals(True)
+        self.estatistica.escolher(("p95", "rms", "maximo", "minimo").index(self.opcoes.estatistica))
+        self.estatistica.blockSignals(False)
+        self.sincronizar.setChecked(self.opcoes.sincronizar)
+        if self.resultado is not None:
+            self._preencher_tabela()
+
+    def _conta(self, trecho, progresso, cancelado):
+        return esp.bandas_do_trecho(trecho, self.opcoes.parametros, progresso=progresso, cancelado=cancelado)
+
+    def linhas(self) -> list[tuple[float, dict[str, float]]]:
+        """As bandas na ordem da tabela: (centro, estatísticas), da maior para a menor na estatística escolhida."""
+        b = self.resultado.bandas
+        est = b.estatisticas()
+        ordem = np.argsort(est[self.opcoes.estatistica])[::-1]
+        return [(float(b.centros_hz[i]), {k: float(v[i]) for k, v in est.items()}) for i in ordem]
+
+    def _preencher_tabela(self) -> None:
+        unidade = self.traco_unidade()
+        self.tabela.setHorizontalHeaderLabels([self.tr("banda"), "P95", "RMS", self.tr("máximo"), self.tr("mínimo")])
+        linhas = self.linhas()
+        self.tabela.setRowCount(len(linhas))
+        for k, (centro, est) in enumerate(linhas):
+            valores = [formatar_si(centro, "Hz", 5)] + [formatar_si(est[nome], unidade, 4)
+                                                        for nome in ("p95", "rms", "maximo", "minimo")]
+            for c, texto in enumerate(valores):
+                self.tabela.setItem(k, c, QTableWidgetItem(texto))
+
+    def traco_unidade(self) -> str:
+        t = self.trecho_atual
+        return t.captura.canal(t.numero).unidade if t is not None else ""
+
+    def _desenhar(self) -> None:
+        if self.resultado is None:
+            self.imagem.clear()
+            self.tabela.setRowCount(0)
+            return
+        b = self.resultado.bandas
+        niveis_db = 20.0 * np.log10(np.maximum(b.niveis, 1e-12))
+        self.imagem.setImage(niveis_db, autoLevels=False)
+        finitos = niveis_db[np.isfinite(niveis_db)]
+        topo = float(np.max(finitos)) if len(finitos) else 0.0
+        self.barra.setLevels((max(float(np.min(finitos)), topo - 80.0) if len(finitos) else -1.0, topo))
+        t0 = self._tempo_do_trecho()
+        largura = (b.tempos_s[-1] + b.duracao_janela_s) if len(b.tempos_s) else b.duracao_janela_s
+        f0 = float(b.centros_hz[0] - b.largura_hz / 2)
+        self.imagem.setRect(QRectF(t0, f0, float(largura), float(len(b.centros_hz) * b.largura_hz)))
+        self._preencher_tabela()
+        self._ligar_o_tempo(self.grafico.getViewBox())
+
+    def _descricao(self) -> list[str]:
+        if self.resultado is None:
+            return []
+        b = self.resultado.bandas
+        partes = [self.tr("{} bandas de {} ({} a {}), {}").format(
+            len(b.centros_hz), formatar_si(b.largura_hz, "Hz", 3), formatar_si(b.centros_hz[0], "Hz", 4),
+            formatar_si(b.centros_hz[-1], "Hz", 4), b.descricao_janelas())]
+        partes += [a.texto for a in self.resultado.avisos]
+        return partes
+
+
+class VistaDeEspectrograma(VistaLigada):
+    nome_da_conta = "Espectrograma"
+
+    def _montar_conteudo(self, coluna: QVBoxLayout) -> None:
+        self.setObjectName("vista_espectrograma")
+        self.resolucao = CampoComUnidade("Hz", 200.0, minimo=1e-3, digitos=4)
+        self.resolucao.setObjectName("resolucao_espectrograma")
+        self.resolucao.setToolTip(self.tr("A resolução em frequência de cada segmento"))
+        self.resolucao.setMaximumWidth(90)
+        self.resolucao.valorMudou.connect(lambda v: self._mudar(resolucao_hz=v))
+        self.faixa = CampoComUnidade("dB", 80.0, minimo=1.0, digitos=3)
+        self.faixa.setObjectName("faixa_dinamica")
+        self.faixa.setToolTip(self.tr("A faixa dinâmica do mapa de cores, abaixo do nível mais alto"))
+        self.faixa.setMaximumWidth(80)
+        self.faixa.valorMudou.connect(lambda v: self._mudar(faixa_dinamica_db=v))
+        self._linha.addWidget(QLabel(self.tr("Resolução")))
+        self._linha.addWidget(self.resolucao)
+        self._linha.addWidget(QLabel(self.tr("Faixa")))
+        self._linha.addWidget(self.faixa)
+        self.grafico = self._novo_grafico()
+        self.grafico.setObjectName("mapa_espectrograma")
+        self.grafico.setLabel("left", self.tr("frequência"), units="Hz")
+        self.imagem, self.barra = _imagem_com_barra(self.grafico, "dB")
+        coluna.addWidget(self.grafico, 1)
+
+    def _mostrar_opcoes_proprias(self) -> None:
+        self.resolucao.definir_valor(self.opcoes.resolucao_hz)
+        self.faixa.definir_valor(self.opcoes.faixa_dinamica_db)
+        if self.resultado is not None:
+            self._desenhar()
+
+    def _conta(self, trecho, progresso, cancelado):
+        return esp.espectrograma_do_trecho(trecho, self.opcoes.parametros, progresso=progresso, cancelado=cancelado)
+
+    def _desenhar(self) -> None:
+        e = self.resultado
+        if e is None:
+            self.imagem.clear()
+            return
+        self.imagem.setImage(e.db, autoLevels=False)
+        topo = float(np.max(e.db))
+        self.barra.setLevels((topo - float(self.opcoes.faixa_dinamica_db), topo))
+        passo = float(e.tempos_s[1] - e.tempos_s[0]) if len(e.tempos_s) > 1 else 1.0 / e.taxa_hz
+        resolucao = float(e.freqs_hz[1] - e.freqs_hz[0]) if len(e.freqs_hz) > 1 else 1.0
+        t0 = self._tempo_do_trecho() + float(e.tempos_s[0]) - passo / 2
+        self.imagem.setRect(QRectF(t0, -resolucao / 2, passo * len(e.tempos_s), resolucao * len(e.freqs_hz)))
+        self._ligar_o_tempo(self.grafico.getViewBox())
+
+    def _descricao(self) -> list[str]:
+        e = self.resultado
+        if e is None:
+            return []
+        passo = e.tempos_s[1] - e.tempos_s[0] if len(e.tempos_s) > 1 else math.nan
+        return [self.tr("{} colunas de {} × {} frequências (resolução {}, janela {})").format(
+            len(e.tempos_s), formatar_si(passo, "s", 3), len(e.freqs_hz),
+            formatar_si(e.freqs_hz[1] - e.freqs_hz[0], "Hz", 3), e.rotulo_janela)]
+

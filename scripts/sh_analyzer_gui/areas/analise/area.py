@@ -14,7 +14,7 @@ from shiboken6 import isValid
 
 from ...componentes.avisos import ListaDeAvisos
 from ...componentes.numeros import formatar_si
-from ...dados.espectros import OpcoesDoEspectro
+from ...dados.espectros import OPCOES_DO_TIPO
 from ...dados.receita import ReceitaDoTraco
 from ...modelo.comandos import AdicionarTraco, AdicionarVista, RemoverFonte, RemoverTracos, RemoverVista
 from ...modelo.objetos import FonteDoProjeto, Projeto, Traco, Vista
@@ -26,6 +26,7 @@ from .inspetor import TEXTOS_DA_INTEGRIDADE, Inspetor
 from .medidas import TabelaDeMedidas
 from .vista_espectro import VistaDeEspectro
 from .vista_tempo import VistaDeTempo
+from .vistas_de_mapa import VistaDeBandas, VistaDeEspectrograma
 
 NOME_DA_PRIMEIRA_VISTA = "Tempo"
 
@@ -108,26 +109,32 @@ class AreaDeAnalise(QObject):
         return self.widget_da_vista(vista) if vista is not None else None
 
     def abrir_espectro(self) -> Vista | None:
-        """Uma vista de espectro ligada à vista de tempo aberta (ou à que a vista de espectro aberta segue)."""
+        return self.abrir_analise("espectro")
+
+    def abrir_analise(self, tipo: str) -> Vista | None:
+        """Uma vista de ``tipo`` (espectro, bandas, espectrograma) ligada à vista de tempo aberta (ou à que a vista
+        de frequência aberta segue)."""
         ativa = self.janela.vista_ativa()
-        if ativa is not None and ativa.tipo == "espectro":
+        if ativa is not None and ativa.tipo != "tempo":
             ativa = next((v for v in self.projeto.vistas if v.id == ativa.opcoes.vista_de_tempo), None)
         if ativa is None:
             ativa = next((v for v in self.projeto.vistas if v.tipo == "tempo"), None)
         if ativa is None:
             return None
         nomes = {v.nome for v in self.projeto.vistas}
-        nome, n = self.tr("Espectro de {}").format(ativa.nome), 2
+        rotulos = {"espectro": self.tr("Espectro de {}"), "bandas": self.tr("Bandas de {}"),
+                   "espectrograma": self.tr("Espectrograma de {}")}
+        nome, n = rotulos[tipo].format(ativa.nome), 2
         base = nome
         while nome in nomes:
             nome, n = f"{base} {n}", n + 1
-        vista = Vista(nome, "espectro", opcoes=OpcoesDoEspectro(vista_de_tempo=ativa.id))
+        vista = Vista(nome, tipo, opcoes=OPCOES_DO_TIPO[tipo](vista_de_tempo=ativa.id))
         self.projeto.pilha.push(AdicionarVista(self.projeto, vista))
         return vista
 
     def _vista_entrou(self, vista: Vista, i: int) -> None:
-        if vista.tipo == "espectro":
-            self._vista_de_espectro_entrou(vista, i)
+        if vista.tipo != "tempo":
+            self._vista_de_frequencia_entrou(vista, i)
             return
         widget = VistaDeTempo(vista, self.projeto, self.janela.selecao, materializacoes=self.janela.materializacoes)
         widget.tracoClicado.connect(self._traco_clicado)
@@ -147,13 +154,14 @@ class AreaDeAnalise(QObject):
         self.abas.tabBar().setTabButton(i, QTabBar.ButtonPosition.RightSide, fechar)
         self.abas.setCurrentIndex(i)
 
-    def _vista_de_espectro_entrou(self, vista: Vista, i: int) -> None:
-        widget = VistaDeEspectro(vista, self.projeto, self.janela.selecao, tarefas=self.janela.tarefas,
-                                 materializacoes=self.janela.materializacoes,
-                                 vista_de_tempo=self._vista_de_tempo_por_id)
+    def _vista_de_frequencia_entrou(self, vista: Vista, i: int) -> None:
+        classe, nome_do_icone = {"espectro": (VistaDeEspectro, "espectro"), "bandas": (VistaDeBandas, "grade"),
+                                 "espectrograma": (VistaDeEspectrograma, "camadas")}[vista.tipo]
+        widget = classe(vista, self.projeto, self.janela.selecao, tarefas=self.janela.tarefas,
+                        materializacoes=self.janela.materializacoes, vista_de_tempo=self._vista_de_tempo_por_id)
         widget.tracoClicado.connect(self._traco_clicado)
         widget.semRegiao.connect(self._sem_regiao)
-        self.abas.insertTab(i, widget, icone("espectro", aparencia().tema.texto2), vista.nome)
+        self.abas.insertTab(i, widget, icone(nome_do_icone, aparencia().tema.texto2), vista.nome)
         fechar = QToolButton()
         fechar.setObjectName("fechar_aba")
         fechar.setProperty("variante", "fantasma")
