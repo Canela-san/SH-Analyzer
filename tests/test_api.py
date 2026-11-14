@@ -215,3 +215,14 @@ def test_a_taxa_do_canal_e_a_que_a_pru_gera_como_no_adc_tool(tmp_path):
     cap = api.abrir_captura(caminho, sondas_dir=tmp_path)
     assert cap.cabecalho.frequencia_hz == 102_400
     assert cap.canal(1).taxa_hz == pytest.approx(200e6 / 1953, rel=1e-12) == cap.cabecalho.frequencia_pru_hz
+
+
+def test_medir_sinal_e_o_medir_regiao_sobre_um_sinal_dado(tmp_path):
+    from supraharmonicos.api import abrir_captura, medir_regiao, medir_sinal, sinal_do_canal
+
+    t = np.arange(40_000) / 200_000
+    captura = abrir_captura(escrever_bin(tmp_path / "c.bin", [np.sin(2 * np.pi * 50 * t), np.zeros_like(t)],
+                                         versao=9), sondas_dir=tmp_path)
+    regiao = medir_regiao(captura, 0, 1000, 39_000, ganho=2.0, offset=0.1)
+    sinal = medir_sinal(sinal_do_canal(captura, 0, 1000, 39_000) * 2.0 + 0.1, captura.canal(0).taxa_hz)
+    assert regiao == sinal and sinal.f1_hz == pytest.approx(50, abs=0.01)

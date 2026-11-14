@@ -357,12 +357,20 @@ def medir_regiao(captura: Captura, canal: int, inicio: int, fim: int, *, corrigi
     ~1 s a cada 4 M amostras, contra ~0,02 s das outras)."""
     c = captura.canal(canal)
     sinal = sinal_do_canal(captura, canal, inicio, fim, corrigir_sonda=corrigir_sonda) * ganho + offset
-    basicas = calcular_basicas(sinal, c.taxa_hz)
+    return medir_sinal(sinal, c.taxa_hz, freq_min=freq_min, freq_max=freq_max, fundamental=fundamental)
+
+
+def medir_sinal(sinal, taxa_hz: float, *, freq_min: float = FREQ_MIN_FUNDAMENTAL,
+                freq_max: float = FREQ_MAX_FUNDAMENTAL, fundamental: bool = True) -> MedidasDaRegiao:
+    """As medidas de :func:`medir_regiao` sobre um sinal já na unidade física (o de um traço com a sua cadeia de
+    transformações, por exemplo). Levanta ``ErroSHAN`` com menos de 2 amostras."""
+    sinal = np.asarray(sinal, dtype=np.float64)
+    basicas = calcular_basicas(sinal, taxa_hz)
     if not fundamental:
         f1, problema = None, "a fundamental não foi calculada neste trecho"
     else:
         try:
-            _, f1, problema = *cruzamentos_da_fundamental(sinal, c.taxa_hz, freq_min, freq_max), ""
+            _, f1, problema = *cruzamentos_da_fundamental(sinal, taxa_hz, freq_min, freq_max), ""
         except ErroSHAN as e:
             f1, problema = None, str(e)
     return MedidasDaRegiao(
