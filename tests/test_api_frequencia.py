@@ -429,3 +429,17 @@ def test_o_piso_de_ruido_e_a_mediana_e_nao_sente_os_tons():
     assert tons.piso() == pytest.approx(so_ruido.piso(), abs=0.5)        # três tons fortes: o piso quase não muda
     assert so_ruido.piso() == pytest.approx(10 * np.log10(2 * 1e-6 / fs), abs=1.0)   # a PSD do ruído branco
     assert np.isnan(tons.piso(150_000, 160_000))
+
+
+def test_uma_banda_fraca_ao_lado_da_fundamental_guarda_a_precisao():
+    """A banda soma só os seus bins: com 3 V de rede e um tom de 1 µV numa banda, o nível do tom sai com a precisão
+    do float64 (a soma acumulada de antes perdia ~1e-6 relativo no cancelamento)."""
+    fs = 200_000.0
+    t = np.arange(40_000) / fs                                      # uma janela de 200 ms: bins de 5 Hz
+    tom = 1e-6 * np.sqrt(2) * np.sin(2 * np.pi * 9_000 * t)         # 1 µV RMS, no bin de 9000 Hz
+    so_o_tom = api.bandas_iec(tom, fs, api.ParametrosBandasIEC(freq_max=20_000)).bandas
+    com_a_rede = api.bandas_iec(tom + 3.0 * np.sin(2 * np.pi * 50 * t), fs,
+                                api.ParametrosBandasIEC(freq_max=20_000)).bandas
+    k = int(np.argmin(np.abs(so_o_tom.centros_hz - 9_000)))
+    assert so_o_tom.niveis[0, k] == pytest.approx(1e-6, rel=1e-9)
+    assert com_a_rede.niveis[0, k] == pytest.approx(so_o_tom.niveis[0, k], rel=1e-7)

@@ -103,6 +103,19 @@ class BandasIEC:
         return saida
 
 
+def _somas_das_bandas(potencia: np.ndarray, inicio: np.ndarray, fim: np.ndarray) -> np.ndarray:
+    """A soma dos bins ``[inicio[k], fim[k])`` de cada banda, na última dimensão de ``potencia``, somando só os bins
+    da banda. A diferença de uma soma acumulada (o jeito de antes) carrega a potência da fundamental até a banda, e uma
+    banda fraca ao lado dela perdia até ~1e-6 da sua precisão no cancelamento (4,5 V² da rede contra 2e-9 V² da
+    banda)."""
+    pad = np.concatenate([potencia, np.zeros(potencia.shape[:-1] + (1,))], axis=-1)   # o índice n vale
+    indices = np.empty(2 * len(inicio), dtype=np.intp)
+    indices[0::2], indices[1::2] = inicio, fim
+    somas = np.add.reduceat(pad, indices, axis=-1)[..., 0::2]
+    somas[..., inicio >= fim] = 0.0          # uma banda sem bins (o reduceat devolveria o bin do índice)
+    return somas
+
+
 def centros_das_bandas(freq_min: float, freq_max: float, largura: float) -> np.ndarray:
     """Centros ``freq_min + largura/2 + k·largura`` cuja banda inteira cabe até ``freq_max``."""
     if largura <= 0 or freq_max - freq_min < largura:
@@ -155,8 +168,7 @@ def calcular_bandas_iec(sinal: np.ndarray, fs: float, freq_min: float = FREQ_MIN
         lote = np.asarray(blocos[a:a + _JANELAS_POR_LOTE], dtype=np.float64)
         espectro = np.fft.rfft(lote - lote.mean(axis=1, keepdims=True), axis=1)
         potencia = (np.abs(espectro) ** 2) * (2.0 / n_janela ** 2)          # RMS² de cada bin
-        acumulada = np.concatenate([np.zeros((len(lote), 1)), np.cumsum(potencia, axis=1)], axis=1)
-        niveis[a:a + len(lote)] = np.sqrt(np.maximum(acumulada[:, fim] - acumulada[:, inicio], 0.0))
+        niveis[a:a + len(lote)] = np.sqrt(_somas_das_bandas(potencia, inicio, fim))
         if progresso is not None:
             progresso((a + len(lote)) / n_janelas)
     tempos = np.arange(n_janelas) * (n_janela / fs)
@@ -194,10 +206,9 @@ def _bandas_janelas_variaveis(sinal: np.ndarray, fs: float, freq_min: float, fre
         freqs = np.fft.rfftfreq(n, 1.0 / fs)
         potencia = (np.abs(np.fft.rfft(janela - janela.mean())) ** 2) * (2.0 / n ** 2)
         ultimo_bin = len(freqs) - 1 if n % 2 else len(freqs) - 2
-        acumulada = np.concatenate([[0.0], np.cumsum(potencia[: ultimo_bin + 1])])
         inicio = np.searchsorted(freqs[: ultimo_bin + 1], centros - largura / 2.0 + tolerancia, side="left")
         fim = np.searchsorted(freqs[: ultimo_bin + 1], centros + largura / 2.0 + tolerancia, side="left")
-        niveis[k] = np.sqrt(np.maximum(acumulada[fim] - acumulada[inicio], 0.0))
+        niveis[k] = np.sqrt(_somas_das_bandas(potencia[: ultimo_bin + 1], inicio, fim))
     if progresso is not None:
         progresso(1.0)
     duracoes = (limites[:, 1] - limites[:, 0]) / fs
