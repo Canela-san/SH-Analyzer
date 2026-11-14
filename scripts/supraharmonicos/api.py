@@ -24,8 +24,12 @@ do ``adc_tool --fft``, ``--welch``, ``--picos``, ``--agrupar-bandas``, ``--espec
 bandas de uma captura inteira) aceitam ``progresso(fração)`` e ``cancelado()``; cancelada, a conta levanta
 :class:`Cancelado`.
 
+**Os filtros e a sonda** (a cadeia de transformações de um traço): o Butterworth de fase zero da CLI
+(``--filtro-passa-alta``, ``--filtro-passa-baixa``) e também a passa-faixa e a rejeita-faixa, validados com o motivo;
+a correção de sonda (``aplicar_correcao_sonda``) e a carga de um perfil escolhido.
+
 Depende de: ``amostras``, ``bandas_iec``, ``cabecalho``, ``constantes``, ``contexto``, ``erros``, ``espectro``,
-``fundamental``, ``harmonicos``, ``metricas_captura``, ``sonda``.
+``filtros``, ``fundamental``, ``harmonicos``, ``metricas_captura``, ``sonda``.
 """
 
 from __future__ import annotations
@@ -63,6 +67,7 @@ from .constantes import (
     JANELA_PADRAO_FFT,
     JANELA_PADRAO_WELCH,
     NOMES_GRANDEZA,
+    ORDEM_FILTRO_PADRAO,
     RESOLUCAO_WELCH_PADRAO,
     SOBREPOSICAO_WELCH_PADRAO,
     UNIDADE_GRANDEZA,
@@ -81,10 +86,12 @@ from .espectro import (
     rotulo_janela_completo,
     tamanho_segmento_welch,
 )
+from .filtros import aplicar_filtro_digital, projetar_filtro_sos
 from .fundamental import cruzamentos_da_fundamental, recortar_ciclos_inteiros
 from .harmonicos import TabelaHarmonicos, calcular_harmonicos
 from .metricas_captura import calcular_basicas
-from .sonda import PerfilSonda, aplicar_correcao_sonda
+from .sonda import PerfilSonda, carregar_perfil_sonda
+from .sonda import aplicar_correcao_sonda as aplicar_correcao_sonda  # a cadeia de transformações da interface usa
 
 LOGGER_DO_MOTOR = "supraharmonicos"
 
@@ -767,3 +774,57 @@ def harmonicos(sinal, taxa_hz: float, parametros: ParametrosHarmonicos = Paramet
             _sinal_float(sinal), taxa_hz, p.freq_min_fundamental, p.freq_max_fundamental, p.n_ciclos)
         tabela = calcular_harmonicos(trecho, taxa_hz, f0, n_ciclos, p.ordem_maxima)
     return ResultadoHarmonicos(tabela, p, inicio, fim, tuple(avisos))
+
+
+# ---------------------------------------------------------------------------
+# Os filtros e a sonda: a cadeia de transformações de um traço
+# ---------------------------------------------------------------------------
+
+TIPOS_DE_FILTRO = {"passa_baixas": "low", "passa_altas": "high", "passa_faixa": "bandpass", "rejeita_faixa": "bandstop"}
+"""Os filtros Butterworth, pelo nome da interface, e o tipo do SciPy de cada um."""
+ORDEM_MAXIMA_DO_FILTRO = 10
+
+
+def validar_filtro(tipo: str, cortes, ordem: int, taxa_hz: float) -> tuple[float, ...]:
+    """Confere um filtro para um sinal a ``taxa_hz`` e devolve os cortes como uma tupla: um (passa-baixas,
+    passa-altas) ou dois, o inferior e o superior (passa-faixa, rejeita-faixa), entre 0 e a Nyquist. Levanta
+    ``ErroSHAN`` com o motivo."""
+    _validar_taxa(taxa_hz)
+    if tipo not in TIPOS_DE_FILTRO:
+        raise ErroSHAN(f"filtro desconhecido: {tipo!r} (use {', '.join(TIPOS_DE_FILTRO)}).")
+    try:
+        cortes = tuple(float(c) for c in np.atleast_1d(np.asarray(cortes, dtype=float)))
+    except (TypeError, ValueError):
+        raise ErroSHAN(f"cortes inválidos para o filtro: {cortes!r}.") from None
+    esperados = 2 if tipo in ("passa_faixa", "rejeita_faixa") else 1
+    if len(cortes) != esperados:
+        raise ErroSHAN(f"o filtro {tipo.replace('_', '-')} tem {esperados} corte(s), não {len(cortes)}.")
+    nyquist = taxa_hz / 2.0
+    for corte in cortes:
+        if not (math.isfinite(corte) and 0.0 < corte < nyquist):
+            raise ErroSHAN(f"o corte de {corte:g} Hz precisa ficar entre 0 e a Nyquist do canal ({nyquist:g} Hz).")
+    if esperados == 2 and not cortes[0] < cortes[1]:
+        raise ErroSHAN(f"o corte inferior ({cortes[0]:g} Hz) precisa ser menor que o superior ({cortes[1]:g} Hz).")
+    if not (isinstance(ordem, int) and not isinstance(ordem, bool) and 1 <= ordem <= ORDEM_MAXIMA_DO_FILTRO):
+        raise ErroSHAN(f"a ordem do filtro precisa ser um inteiro de 1 a {ORDEM_MAXIMA_DO_FILTRO} (recebido {ordem!r}).")
+    return cortes
+
+
+def projetar_filtro(tipo: str, cortes, ordem: int, taxa_hz: float) -> np.ndarray:
+    """O Butterworth em seções de 2ª ordem (a forma que o ``sosfilt`` do SciPy recebe), já validado."""
+    cortes = validar_filtro(tipo, cortes, ordem, taxa_hz)
+    return projetar_filtro_sos(taxa_hz, TIPOS_DE_FILTRO[tipo], cortes[0] if len(cortes) == 1 else cortes, ordem)
+
+
+def filtrar(sinal, taxa_hz: float, tipo: str, cortes, ordem: int = ORDEM_FILTRO_PADRAO) -> np.ndarray:
+    """``sinal`` filtrado pelo Butterworth de fase zero (``sosfiltfilt``), como o ``--filtro-passa-alta`` e o
+    ``--filtro-passa-baixa`` do ``adc_tool`` (``filtros.aplicar_filtro_digital``) com ``--ordem-filtro``."""
+    cortes = validar_filtro(tipo, cortes, ordem, taxa_hz)
+    return aplicar_filtro_digital(_sinal_float(sinal), taxa_hz, TIPOS_DE_FILTRO[tipo],
+                                  cortes[0] if len(cortes) == 1 else cortes, ordem)
+
+
+def carregar_perfil(caminho: Path) -> PerfilSonda:
+    """Um perfil de sonda (o ``.json`` do ``gerar_perfil_sonda``) escolhido pelo usuário. Levanta ``ErroSHAN`` para
+    um arquivo que falta ou que não é um perfil."""
+    return carregar_perfil_sonda(Path(caminho))

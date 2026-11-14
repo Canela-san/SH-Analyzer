@@ -343,3 +343,59 @@ def test_os_avisos_de_cada_thread_ficam_com_ela():
         t.join(timeout=10)
     assert resultados == {"a": ["aviso de a"], "b": ["aviso de b"]}
     assert logger.level == nivel and not any(isinstance(h, api._Coletor) for h in logger.handlers)
+
+
+# ---------------------------------------------------------------------------
+# Os filtros da cadeia de transformações
+# ---------------------------------------------------------------------------
+
+def test_filtros_iguais_aos_da_cli(ambiente, captura):
+    """O --filtro-passa-alta e o --filtro-passa-baixa (com --ordem-filtro) do adc_tool, depois da correção de sonda:
+    o Welch do canal filtrado pela API é o da CLI."""
+    sh = rodar_cli(ambiente, "filtros", "--welch", "--filtro-passa-alta", "2000", "--filtro-passa-baixa", "45000",
+                   "--ordem-filtro", "4")
+    taxa = captura.canal(1).taxa_hz
+    filtrado = api.filtrar(api.filtrar(trecho(captura, 1), taxa, "passa_altas", 2000, 4), taxa, "passa_baixas",
+                           45_000, 4)
+    esp = api.espectro(filtrado, taxa)
+    mesmo(esp.db, sh.canal1.welch.db)
+
+
+def test_passa_faixa_e_rejeita_faixa():
+    fs = 100_000.0
+    t = np.arange(200_000) / fs
+    sinal = np.sin(2 * np.pi * 1_000 * t) + np.sin(2 * np.pi * 10_000 * t)
+    meio = slice(50_000, 150_000)
+
+    def amplitude(x, f):
+        return api.espectro(x[meio], fs, api.ParametrosEspectro("fft", sincronizar=False)).nivel_em(f)
+
+    faixa = api.filtrar(sinal, fs, "passa_faixa", (5_000, 20_000), 4)
+    rejeita = api.filtrar(sinal, fs, "rejeita_faixa", (5_000, 20_000), 4)
+    assert amplitude(faixa, 10_000) == pytest.approx(0, abs=0.05) and amplitude(faixa, 1_000) < -60
+    assert amplitude(rejeita, 1_000) == pytest.approx(0, abs=0.05) and amplitude(rejeita, 10_000) < -60
+    sos = api.projetar_filtro("passa_faixa", (5_000, 20_000), 4, fs)
+    assert sos.shape == (4, 6)                                 # a faixa tem o dobro de polos: 2 x 4 = 8, 4 seções
+
+
+@pytest.mark.parametrize("tipo, cortes, ordem, trecho_da_mensagem", [
+    ("passa_tudo", 1000, 4, "desconhecido"),
+    ("passa_altas", (1000, 2000), 4, "1 corte"),
+    ("passa_faixa", 1000, 4, "2 corte"),
+    ("passa_baixas", 0, 4, "entre 0 e a Nyquist"),
+    ("passa_baixas", 50_000, 4, "entre 0 e a Nyquist"),
+    ("passa_faixa", (2000, 1000), 4, "inferior"),
+    ("passa_baixas", 1000, 0, "ordem"),
+    ("passa_baixas", 1000, 4.0, "ordem"),
+    ("passa_baixas", "mil", 4, "cortes inválidos"),
+])
+def test_filtros_invalidos_sao_recusados_com_o_motivo(tipo, cortes, ordem, trecho_da_mensagem):
+    with pytest.raises(api.ErroSHAN, match=trecho_da_mensagem):
+        api.filtrar(np.zeros(1000), 100_000.0, tipo, cortes, ordem)
+
+
+def test_carregar_um_perfil_escolhido(ambiente, tmp_path):
+    perfil = api.carregar_perfil(ambiente / "sondas" / "sonda_teste.json")
+    assert perfil.id == "sonda_teste"
+    with pytest.raises(api.ErroSHAN):
+        api.carregar_perfil(tmp_path / "nao_existe.json")
