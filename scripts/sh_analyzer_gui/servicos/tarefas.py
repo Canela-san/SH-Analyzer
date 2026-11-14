@@ -142,8 +142,11 @@ class GerenciadorDeTarefas(QObject):
         """Põe a tarefa na fila e a devolve. **Os ouvintes vão aqui** (``ao_terminar(tarefa)``,
         ``ao_progredir(tarefa, fração)``), ligados antes de a tarefa começar: ligados depois do ``iniciar``, uma
         tarefa rápida pode terminar antes, e o sinal sai para ninguém (o erro apareceu num teste em paralelo: a
-        conferência de uma captura sem CRC ficava "conferindo" para sempre). Com ``mostrar=False`` (uma conta
-        rápida e frequente, como as medidas), ela não aparece no painel de tarefas."""
+        conferência de uma captura sem CRC ficava "conferindo" para sempre). **O gerenciador ouve primeiro:** cada
+        ligação vira um evento na fila da interface, na ordem em que foi feita, e a thread de trabalho pode ser
+        interrompida entre um e outro; assim, quando o ``ao_terminar`` roda, a tarefa já saiu de :attr:`ativas`.
+        Com ``mostrar=False`` (uma conta rápida e frequente, como as medidas), ela não aparece no painel de
+        tarefas."""
         tarefa = Tarefa(nome, funcao, grupo)
         tarefa.mostrar = mostrar
         if self.encerrado:
@@ -151,11 +154,11 @@ class GerenciadorDeTarefas(QObject):
             # não põe uma thread para rodar com a janela sendo apagada.
             tarefa.estado = "cancelada"
             return tarefa
+        tarefa.terminou.connect(self._terminou)
         if ao_progredir is not None:
             tarefa.progressoMudou.connect(ao_progredir)
         if ao_terminar is not None:
             tarefa.terminou.connect(ao_terminar)
-        tarefa.terminou.connect(self._terminou)
         self._ativas.append(tarefa)
         if mostrar:
             self.tarefaEntrou.emit(tarefa)

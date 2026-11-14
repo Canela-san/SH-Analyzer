@@ -316,14 +316,15 @@ def test_a_captura_ausente_no_painel_e_no_inspetor(janela, tmp_path):
 
 def test_uma_tarefa_rapida_nao_perde_o_fim(qtbot):
     """Os ouvintes são ligados antes de a tarefa começar: uma tarefa que termina na hora não perde o ``terminou``
-    (o erro: a conferência de uma captura sem CRC ficava "conferindo" para sempre)."""
+    (o erro: a conferência de uma captura sem CRC ficava "conferindo" para sempre). E o gerenciador ouve primeiro:
+    no ``ao_terminar``, a tarefa já saiu das ativas (antes, às vezes a última ainda estava lá)."""
     tarefas = GerenciadorDeTarefas(threads=8)
     fins = []
     for k in range(200):
-        tarefas.iniciar(f"rápida {k}", lambda _p, _c, k=k: k, ao_terminar=lambda t: fins.append(t.resultado),
-                        mostrar=False)
+        tarefas.iniciar(f"rápida {k}", lambda _p, _c, k=k: k, mostrar=False,
+                        ao_terminar=lambda t: fins.append((t.resultado, t in tarefas.ativas)))
     qtbot.waitUntil(lambda: len(fins) == 200, timeout=10_000)
-    assert sorted(fins) == list(range(200)) and tarefas.ativas == ()
+    assert sorted(fins) == [(k, False) for k in range(200)] and tarefas.ativas == ()
 
 
 def test_depois_de_encerrar_nenhuma_tarefa_comeca(qtbot):
