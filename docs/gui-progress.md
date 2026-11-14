@@ -8,11 +8,12 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F2.7: os harmônicos** (seção 4c). A F2.1 a F2.6 estão feitas: a cadeia no inspetor, o traço transformado na tela,
-> o espectro (Ctrl+E), as bandas IEC (Ctrl+Shift+B) e o espectrograma (Ctrl+Shift+E).
+> **F2.8: os avisos nos chips, o erro inesperado e o log** (seção 4c). A F2.1 a F2.7 estão feitas: a cadeia no
+> inspetor, o traço transformado na tela e as quatro vistas de frequência. A F2.8, a F2.9 e a F2.10 são independentes
+> entre si.
 >
-> **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E,
-> Ctrl+Shift+B ou Ctrl+Shift+E.
+> **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
+> (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos).
 >
 > **Com o usuário (quando puder):** o "pronto quando" da Fase 1, abrir uma captura de 1 h, navegar e medir com 8
 > traços de 2 fontes, em `uv run --extra gui python -m sh_analyzer_gui`.
@@ -99,9 +100,10 @@ salvamento automático e a recuperação) e tem a paleta de comandos. As seçõe
 cabeçalho), `64f6e57` (a unidade do canal), `b5b02ab` (as medidas de um trecho), `71ba268` (a taxa da PRU) e `98d96e0` (a frequência, F2.1), `0ef8255` (os filtros), `28a1a04` (a margem da sonda), `3110417` (`medir_sinal`), `631a770` (a faixa válida do perfil), `b368246` (o piso de ruído) e `8376894` (as bandas sem cancelamento). E o do agente da placa: `3f98d7b`.
 
 **O ambiente:** Python 3.13, PySide6 6.12.0, PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1. Testes, na última rodada:
-`ci.sh rapido` com 1 462 aprovados e `ci.sh interface` com 535 (14/11/2026).
+`ci.sh rapido` com 1 465 aprovados e `ci.sh interface` com 538 (14/11/2026).
 
-**Ainda não existe:** os harmônicos na tela (a `api` deles já existe, F2.1), as figuras e a Aquisição.
+**Ainda não existe:** a tela de configurações, o log em arquivo, os formatos `.h5` e `.csv` na abertura, as
+figuras e a Aquisição.
 
 ---
 
@@ -680,7 +682,14 @@ O plano original:
   blocos, com o progresso no painel de tarefas.
 - **Os testes:** as bandas iguais às do `adc_tool --bandas-iec`; o tempo ligado; cancelar.
 
-### ☐ F2.7: os harmônicos
+### ☑ F2.7: os harmônicos
+
+**Feita em 14/11/2026:** `57ece6d`. A vista segue um traço da vista de tempo (a base `VistaLigada` da F2.6), com a
+janela visível como trecho padrão; sem cadeia, a tabela é a do `adc_tool --fft --harmonicos 40` a 1e-12. As barras
+mostram o subgrupo por padrão (a grandeza da IEC 61000-4-30 classe A), em % da fundamental. **Fica para depois:** a
+janela sincronizada (os ciclos inteiros usados) marcada na vista de tempo.
+
+O plano original:
 
 - **O conteúdo** (ES-05): barras e tabela dos grupos e subgrupos da IEC 61000-4-7, o THD, o THDG e o THDS, da janela
   sincronizada pelos cruzamentos por zero.
@@ -922,6 +931,9 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   agora guarda as opções e o trecho que o produziram.
   - **Testes:** `ci.sh rapido` com 1 462 aprovados e `ci.sh interface` com 535.
   - **Próximo:** a F2.7, os harmônicos.
+- **14/11/2026:** **a F2.7, os harmônicos** (seção 4c).
+  - **Testes:** `ci.sh rapido` com 1 465 aprovados e `ci.sh interface` com 538.
+  - **Próximo:** a F2.8, a F2.9 ou a F2.10 (independentes).
 ---
 
 ## 8. Perguntas em aberto
