@@ -19,6 +19,8 @@ ALTURA = 44
 LADO_DA_MARCA = 22
 LARGURA_DA_BUSCA = 300
 LARGURA_COMPACTA = 1200
+MARGEM_DAS_AREAS = 12
+LARGURA_DO_NOME = 220          # o nome do projeto na barra, no máximo (o resto vira "…")        # o mínimo entre as áreas e os vizinhos (o projeto, a busca)
 """Abaixo desta largura (px), a barra encolhe: o chip da placa fica só com o ícone, a busca encurta e o rótulo
 "Projeto" sai. O seletor das áreas nunca encolhe."""
 AREAS = ("Análise", "Figuras", "Aquisição")
@@ -37,7 +39,6 @@ class CampoDaPaleta(QPushButton):
         self.setIconSize(QSize(15, 15))
         IconeDoTema(self, "busca", "mudo", tamanho=15)
         self.setFixedHeight(28)
-        self.setMinimumWidth(150)
         self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self.kbd = QLabel(atalho.toString(QKeySequence.SequenceFormat.NativeText))
         self.kbd.setObjectName("kbd")
@@ -52,12 +53,22 @@ class CampoDaPaleta(QPushButton):
         linha.addWidget(self.kbd, 0, Qt.AlignmentFlag.AlignVCenter)
         self.setToolTip(self.tr("Paleta de comandos ({})").format(self.kbd.text()))
 
+    def _largura_do_texto(self, texto: str, com_atalho: bool) -> int:
+        """A largura que o texto pede (o ícone, o texto, o atalho e as margens), na fonte de agora."""
+        extra = self.kbd.sizeHint().width() + 12 if com_atalho else 0
+        return self.fontMetrics().horizontalAdvance(texto) + self.iconSize().width() + 36 + extra
+
     def sizeHint(self) -> QSize:
-        return QSize(LARGURA_DA_BUSCA, 28)
+        return QSize(max(LARGURA_DA_BUSCA, self._largura_do_texto(self._textos[0], True)), 28)
+
+    def minimumSizeHint(self) -> QSize:
+        """O texto curto ("Buscar…"), sem o atalho: a busca encolhe até ali."""
+        return QSize(self._largura_do_texto(self._textos[1], False), 28)
 
     def resizeEvent(self, evento) -> None:
-        # Estreito, o texto encurta e o atalho sai (fica na dica), em vez de um passar por cima do outro.
-        largo = self.width() >= 240
+        # Estreito, o texto encurta e o atalho sai (fica na dica), em vez de um passar por cima do outro. O limite sai
+        # da largura do texto (vale em qualquer fonte e língua), e não de um número fixo.
+        largo = self.width() >= self._largura_do_texto(self._textos[0], True)
         self.setText(self._textos[0 if largo else 1])
         self.kbd.setVisible(largo)
         super().resizeEvent(evento)
@@ -140,24 +151,40 @@ class BarraSuperior(QWidget):
         self.botao_ajustes = self._botao("botao_ajustes")
         self.botao_ajustes.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
 
+        # Três colunas: a da esquerda (a marca e o projeto) e a da direita (a busca e os botões) têm a mesma largura
+        # (o mesmo fator e a política Ignored: cada uma recebe metade do que sobra), e as áreas ficam no meio, no
+        # centro da JANELA, seja qual for o nome do projeto. Numa janela estreita, a busca encolhe primeiro; abaixo
+        # do mínimo de uma coluna, ela empurra as áreas, e nada se sobrepõe.
+        self.esquerda, self.direita = QWidget(), QWidget()
+        lado_esquerdo = QHBoxLayout(self.esquerda)
+        lado_esquerdo.setContentsMargins(0, 0, 0, 0)
+        lado_esquerdo.setSpacing(4)
+        lado_esquerdo.addWidget(self.marca)
+        lado_esquerdo.addSpacing(4)
+        lado_esquerdo.addWidget(self.nome)
+        lado_esquerdo.addSpacing(14)
+        lado_esquerdo.addWidget(self.rotulo_projeto)
+        lado_esquerdo.addWidget(self.botao_projeto)
+        lado_esquerdo.addStretch(1)
+        lado_direito = QHBoxLayout(self.direita)
+        lado_direito.setContentsMargins(0, 0, 0, 0)
+        lado_direito.setSpacing(4)
+        lado_direito.addStretch(1)
+        lado_direito.addWidget(self.campo_paleta, 1)
+        lado_direito.addSpacing(10)
+        lado_direito.addWidget(self.chip_placa)
+        lado_direito.addSpacing(10)
+        for b in (self.botao_desfazer, self.botao_refazer, self.botao_tema, self.botao_ajustes):
+            lado_direito.addWidget(b)
+        for lado in (self.esquerda, self.direita):
+            lado.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         linha = QHBoxLayout(self)
         linha.setContentsMargins(12, 0, 8, 0)
-        linha.setSpacing(4)
-        linha.addWidget(self.marca)
-        linha.addSpacing(4)
-        linha.addWidget(self.nome)
-        linha.addSpacing(14)
-        linha.addWidget(self.rotulo_projeto)
-        linha.addWidget(self.botao_projeto)
-        linha.addStretch(1)
-        linha.addWidget(self.areas)
-        linha.addStretch(1)
-        linha.addWidget(self.campo_paleta)
-        linha.addSpacing(10)
-        linha.addWidget(self.chip_placa)
-        linha.addSpacing(10)
-        for b in (self.botao_desfazer, self.botao_refazer, self.botao_tema, self.botao_ajustes):
-            linha.addWidget(b)
+        linha.setSpacing(MARGEM_DAS_AREAS)
+        linha.addWidget(self.esquerda, 1)
+        linha.addWidget(self.areas, 0)
+        linha.addWidget(self.direita, 1)
+        self._ajustar_minimos()
 
     @property
     def compacta(self) -> bool:
@@ -169,6 +196,14 @@ class BarraSuperior(QWidget):
         self.chip_placa.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly if compacta
                                            else Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         super().resizeEvent(evento)
+        self._ajustar_minimos()
+
+    def _ajustar_minimos(self) -> None:
+        """O mínimo de cada coluna é o do conteúdo dela (com a política Ignored, o layout não o veria sozinho)."""
+        if not hasattr(self, "direita"):          # um resize durante o __init__, antes das colunas
+            return
+        for lado in (self.esquerda, self.direita):
+            lado.setMinimumWidth(lado.layout().minimumSize().width())
 
     @staticmethod
     def _botao(nome: str) -> QToolButton:
@@ -181,7 +216,16 @@ class BarraSuperior(QWidget):
         return b
 
     def definir_projeto(self, nome: str, modificado: bool = False) -> None:
-        """O nome do projeto na barra; ``modificado`` acrescenta o ponto das mudanças não salvas."""
-        self.botao_projeto.setText(f"{nome} •" if modificado else nome)
+        """O nome do projeto na barra; ``modificado`` acrescenta o ponto das mudanças não salvas. Um nome longo é
+        abreviado no meio (o nome inteiro fica na dica): ele não empurra as áreas para fora do centro."""
+        texto = self.botao_projeto.fontMetrics().elidedText(nome, Qt.TextElideMode.ElideMiddle, LARGURA_DO_NOME)
+        self.botao_projeto.setText(f"{texto} •" if modificado else texto)
         self.botao_projeto.setToolTip(self.tr("Projeto: {}{}").format(
             nome, self.tr(" (com mudanças não salvas)") if modificado else ""))
+        self._ajustar_minimos()
+
+    def definir_menu_do_projeto(self, menu) -> None:
+        """O menu do botão do projeto, sempre da esquerda para a direita: o botão é da direita para a esquerda (a seta
+        depois do nome), e o menu herdava isso (o atalho grudava no rótulo: "Ctrl+Shift+OAbrir projeto…")."""
+        menu.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.botao_projeto.setMenu(menu)

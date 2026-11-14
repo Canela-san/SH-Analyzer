@@ -144,6 +144,8 @@ QTabBar::tab {{ background: transparent; color: {t.texto2}; padding: 6px 12px; b
                border-top-left-radius: 7px; border-top-right-radius: 7px; }}
 QTabBar::tab:selected {{ background: {t.afundada}; color: {t.texto}; border-top: 2px solid {t.acento}; }}
 QTabBar::tab:hover:!selected {{ color: {t.texto}; }}
+QToolButton#fechar_aba {{ border: none; border-radius: 4px; background: transparent; padding: 0; }}
+QToolButton#fechar_aba:hover {{ background: {t.superficie}; }}
 QTabWidget::pane {{ border: 1px solid {t.borda}; top: -1px; }}
 QSplitter::handle {{ background: {t.borda}; }}
 QProgressBar {{ background: {t.afundada}; border: 1px solid {t.borda}; border-radius: 4px; text-align: center;

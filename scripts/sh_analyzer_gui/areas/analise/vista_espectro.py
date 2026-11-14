@@ -6,8 +6,8 @@
 * **O trecho:** a região dos cursores da vista de tempo (o padrão; sem eles, a janela visível), a janela visível ou
   a captura inteira. A conta refaz a cada parada do zoom ou dos cursores de lá, se o trecho mudou.
 * **A escala:** dB (a amplitude de pico, a convenção do ``adc_tool``: dBV na tensão), o valor RMS de cada tom ou dBc
-  (relativa à fundamental, ou ao bin mais alto); a frequência linear ou logarítmica. A faixa dos supraharmônicos (2 a
-  150 kHz) fica sombreada; a faixa válida do perfil de cada traço corrigido pela sonda, também, na cor do traço.
+  (relativa à fundamental, ou ao bin mais alto); a frequência linear ou logarítmica. A faixa válida do perfil de cada
+  traço corrigido pela sonda fica sombreada, na cor do traço.
 * **As marcas:** os picos mais altos acima do piso + 10 dB (o número da frequência só nos do primeiro traço), o piso de
   ruído (tracejado) e, com a FFT sincronizada, os harmônicos de f₁.
 * **A FFT é o método padrão** (o Welch, a média de segmentos, fica como segundo). Sem a fundamental para sincronizar,
@@ -39,7 +39,7 @@ import pyqtgraph as pg
 import supraharmonicos.api as api
 from PySide6.QtCore import QLineF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QPen
-from PySide6.QtWidgets import QCheckBox, QGraphicsItem, QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QGraphicsItem, QLabel, QSizePolicy, QToolButton, QVBoxLayout, QWidget
 from shiboken6 import isValid
 
 from ...componentes.basicos import CampoComUnidade, Segmentado
@@ -57,7 +57,6 @@ from ...modelo.selecao import Selecao
 from ...tema.aplicar import aparencia
 from ...tema.tokens import Tema, cor_do_traco
 
-FAIXA_DOS_SUPRAHARMONICOS = (2_000.0, 150_000.0)
 ESPERA_MS = 40
 METODOS, ESCALAS, TRECHOS = ("fft", "welch"), ("db", "rms", "dbc"), ("janela", "cursores", "captura")
 ENCOSTAR_PX = 4                    # um cursor solto encosta no pico a até 4 pixels
@@ -151,11 +150,15 @@ class VistaDeEspectro(QWidget):
     # ------------------------------------------------------------------ montar
 
     def _montar(self) -> None:
+        # A barra quebra em linhas quando não cabe (em vez de espremer os botões até cortar o texto: "W...h"), em
+        # qualquer largura, fonte ou língua.
         barra = QWidget()
         barra.setObjectName("barra_vista")
-        linha = QHBoxLayout(barra)
+        politica = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        politica.setHeightForWidth(True)
+        barra.setSizePolicy(politica)
+        linha = LayoutDeFluxo(barra, espaco=8)
         linha.setContentsMargins(8, 4, 8, 4)
-        linha.setSpacing(8)
         self.metodo = Segmentado(["FFT", "Welch"])
         self.metodo.setToolTip(self.tr("FFT: um segmento só, sincronizado aos ciclos da fundamental (sem ela, o trecho "
                                        "inteiro com a janela Hann). Welch: a média de segmentos (o ruído e os "
@@ -183,7 +186,6 @@ class VistaDeEspectro(QWidget):
         self.harmonicos.clicked.connect(lambda marcado: self._mudar(harmonicos=bool(marcado)))
         for w in (self.metodo, self.resolucao, self.escala, self.trecho, self.log, self.harmonicos):
             linha.addWidget(w)
-        linha.addStretch(1)
         # Os botões das ajudas de leitura: desligados ao abrir (cada um custa algo a cada resultado ou movimento).
         self.acao_picos = QAction(self.tr("Picos"), self)
         self.acao_picos.setToolTip(self.tr("Marcar os picos de cada traço (acima do piso + 20 dB, com 10 dB de "
@@ -231,10 +233,6 @@ class VistaDeEspectro(QWidget):
         for lado in ("top", "right"):
             self.grafico.getPlotItem().getAxis(lado).enableAutoSIPrefix(False)
         self.grafico.setLabel("bottom", self.tr("frequência"), units="Hz")
-        self.supra = pg.LinearRegionItem(FAIXA_DOS_SUPRAHARMONICOS, movable=False)
-        self.supra.setZValue(-20)
-        self.supra.setToolTip(self.tr("A faixa dos supraharmônicos (2 a 150 kHz)"))
-        self.grafico.addItem(self.supra, ignoreBounds=True)
         self.cursores = ParDeCursores(self.grafico.getPlotItem(), para_eixo=self._x, do_eixo=self._f,
                                       encostar=self._encostar, parent=self)
         self.cursores.mudou.connect(self._mostrar_cursores)
@@ -506,7 +504,6 @@ class VistaDeEspectro(QWidget):
         for traco in [tr for tr in self.curvas if tr not in {r.traco for r in prontos}]:
             self.grafico.removeItem(self.curvas.pop(traco))
         self.grafico.setLogMode(x=o.frequencia_log, y=False)
-        self.supra.setRegion([self._x(f) for f in FAIXA_DOS_SUPRAHARMONICOS])
         self.cursores.reposicionar()
         for k, r in enumerate(prontos):
             cor = QColor(cor_do_traco(r.traco.receita.cor, t)[0])
@@ -756,7 +753,7 @@ class VistaDeEspectro(QWidget):
             d = r.desenho
             i = self._mais_alto_perto(d, f, 0.5)
             fi, nivel = d.f0 + i * d.df, float(d.niveis[i])
-            linhas.append(f"{r.traco.nome}: {self._texto_do_nivel(nivel, r)} em {formatar_si(fi, 'Hz', 7)}")
+            linhas.append(f"{self._texto_do_nivel(nivel, r)} em {formatar_si(fi, 'Hz', 7)}")
             xs.append(self._x(max(fi, d.df) if self.opcoes.frequencia_log else fi))
             ys.append(nivel)
             cores.append(pg.mkBrush(QColor(cor_do_traco(r.traco.receita.cor, t)[0])))
@@ -773,11 +770,6 @@ class VistaDeEspectro(QWidget):
         for eixo in (self.eixo_x, self.eixo_y):
             eixo.aplicar_tema(t)
         self.grade.aplicar_tema(t)
-        fundo = QColor(t.destaque)
-        fundo.setAlpha(18)
-        self.supra.setBrush(fundo)
-        for linha in self.supra.lines:
-            linha.setPen(pg.mkPen(None))
         self.cursores.aplicar_cor(t.texto2)
         self.valor_no_mouse.setColor(QColor(t.texto))
         self.valor_no_mouse.fill = pg.mkBrush(QColor(t.elevada))

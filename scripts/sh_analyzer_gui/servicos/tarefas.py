@@ -20,6 +20,8 @@ import time
 from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
+from shiboken6 import isValid
+from supraharmonicos.api import aquecer
 
 from ..dados.piramide import Cancelado
 
@@ -65,15 +67,17 @@ class Tarefa(QObject):
         agora = time.monotonic()
         if agora - self._ultimo_aviso >= INTERVALO_DO_PROGRESSO_S or self.progresso >= 1.0:
             self._ultimo_aviso = agora
-            self.progressoMudou.emit(self, self.progresso)
+            self._avisar(self.progressoMudou, self, self.progresso)
 
     def _rodar(self) -> None:
-        """Na thread de trabalho."""
+        """Na thread de trabalho. Antes da conta, o aquecimento do SciPy (com uma trava: duas threads importando ao
+        mesmo tempo caíam no deadlock das travas de importação do Python)."""
         if self.cancelada():
             self.estado = "cancelada"
         else:
             self.estado = "rodando"
             try:
+                aquecer()
                 self.resultado = self._funcao(self._progresso, self.cancelada)
                 self.estado = "cancelada" if self.cancelada() else "concluida"
             except Cancelado:
@@ -81,7 +85,16 @@ class Tarefa(QObject):
             except Exception as e:           # a tarefa falha sozinha; o aplicativo segue
                 log.exception("a tarefa %r falhou", self.nome)
                 self.erro, self.estado = str(e) or type(e).__name__, "falhou"
-        self.terminou.emit(self)
+        self._avisar(self.terminou, self)
+
+    def _avisar(self, sinal, *argumentos) -> None:
+        """Emite, se a tarefa ainda existe: uma conta que termina depois de a janela fechar (o aplicativo saindo) não
+        tem mais a quem avisar ("Signal source has been deleted")."""
+        if isValid(self):
+            try:
+                sinal.emit(*argumentos)
+            except RuntimeError:          # apagada entre o isValid e o emit
+                pass
 
     def __repr__(self) -> str:
         return f"Tarefa({self.nome!r}, {self.estado}, {self.progresso:.0%})"

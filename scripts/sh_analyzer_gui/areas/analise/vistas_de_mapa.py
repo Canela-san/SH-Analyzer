@@ -33,9 +33,9 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
-    QHBoxLayout,
     QHeaderView,
     QLabel,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
     QTableWidget,
@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 from shiboken6 import isValid
 
 from ...componentes.basicos import CampoComUnidade, Segmentado
+from ...componentes.fluxo import LayoutDeFluxo
 from ...componentes.numeros import formatar_si
 from ...dados import espectros as esp
 from ...graficos.cursores import ParDeCursores
@@ -95,9 +96,11 @@ class VistaLigada(QWidget):
         coluna.setSpacing(0)
         barra = QWidget()
         barra.setObjectName("barra_vista")
-        self._linha = QHBoxLayout(barra)
+        politica = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        politica.setHeightForWidth(True)
+        barra.setSizePolicy(politica)
+        self._linha = LayoutDeFluxo(barra, espaco=8)          # quebra em linhas: nada espremido até cortar o texto
         self._linha.setContentsMargins(8, 4, 8, 4)
-        self._linha.setSpacing(8)
         self.seletor = QComboBox()
         self.seletor.setObjectName("traco_da_vista")
         self.seletor.setToolTip(self.tr("O traço da vista de tempo"))
@@ -121,7 +124,6 @@ class VistaLigada(QWidget):
         botao.setDefaultAction(self.acao_cursores)
         botao.setAutoRaise(True)
         self._linha.addWidget(botao)
-        self._linha.addStretch(1)
         self.cursores = ParDeCursores(self.grafico.getPlotItem(), parent=self)
         self.cursores.mudou.connect(self._mostrar_cursores)
         self.acao_cursores.toggled.connect(self._ligar_cursores)

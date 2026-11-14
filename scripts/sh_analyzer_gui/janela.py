@@ -75,10 +75,10 @@ TAMANHO_INICIAL = (1440, 900)
 TAMANHO_MINIMO = (960, 600)
 LADO_DA_MARCA = 72              # px da marca no estado vazio
 LARGURA_DO_PROJETO = 264
-LARGURA_DO_INSPETOR = 312
+LARGURA_DO_INSPETOR = 380
 ALTURA_DO_PAINEL_INFERIOR = 200
 
-VERSAO_DO_LAYOUT = 1
+VERSAO_DO_LAYOUT = 2      # 2: o inspetor mais largo (um layout salvo da 1 tinha ele estreito demais)
 """Sobe quando os docks mudam: um layout salvo por outra versão é ignorado (o padrão vale), em vez de deixar um
 painel novo escondido ou fora do lugar."""
 CHAVE_DA_GEOMETRIA = "janela/geometria"
@@ -131,7 +131,7 @@ class JanelaPrincipal(QMainWindow):
         self.barra.botao_refazer.setDefaultAction(self.acoes["refazer"])
         self.barra.botao_tema.setDefaultAction(self.acoes["alternar_tema"])
         self.barra.botao_ajustes.setMenu(self._menu_de_ajustes())
-        self.barra.botao_projeto.setMenu(self._menu_do_projeto())
+        self.barra.definir_menu_do_projeto(self._menu_do_projeto())
         self.barra.botao_ajustes.setToolTip(self.tr("Ajustes"))
         IconeDoTema(self.barra.botao_ajustes, "ajustes")
         for indice, versao in ((1, "v0.11"), (2, "v0.10")):

@@ -339,6 +339,7 @@ class SecaoDeProcessamento(QWidget):
         self._guardar_o_mostrado()
         for cartao in self.cartoes:
             self._lista.removeWidget(cartao)
+            cartao.hide()                 # já: o deleteLater só apaga na volta do laço, e ele ficaria por cima
             cartao.deleteLater()
         self.cartoes = []
         cadeia = self.cadeia

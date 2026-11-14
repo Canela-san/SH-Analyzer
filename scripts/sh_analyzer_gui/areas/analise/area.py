@@ -9,7 +9,7 @@ mexe mais na tela.
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, QSize, Qt
-from PySide6.QtWidgets import QLabel, QTabBar, QTabWidget, QToolButton
+from PySide6.QtWidgets import QLabel, QTabBar, QTabWidget, QToolButton, QWidget
 from shiboken6 import isValid
 
 from ...componentes.avisos import ListaDeAvisos
@@ -29,6 +29,8 @@ from .vista_tempo import VistaDeTempo
 from .vistas_de_mapa import VistaDeBandas, VistaDeEspectrograma, VistaDeHarmonicos
 
 NOME_DA_PRIMEIRA_VISTA = "Tempo"
+TAMANHO_DO_BOTAO_DE_FECHAR = 20
+TAMANHO_DO_X = 14
 
 
 def nome_do_traco(fonte: FonteDoProjeto, numero: int) -> str:
@@ -141,17 +143,7 @@ class AreaDeAnalise(QObject):
         widget.regiaoMudou.connect(self._regiao_mudou)
         widget.semRegiao.connect(self._sem_regiao)
         self.abas.insertTab(i, widget, icone("onda", aparencia().tema.texto2), vista.nome)
-        # O botão de fechar com o ícone do tema (o do estilo destoava); fecha a aba dele, onde ela estiver.
-        fechar = QToolButton()
-        fechar.setObjectName("fechar_aba")
-        fechar.setProperty("variante", "fantasma")
-        fechar.setAutoRaise(True)
-        fechar.setIconSize(QSize(12, 12))
-        fechar.setFixedSize(QSize(18, 18))
-        fechar.setToolTip(self.tr("Fechar a vista (desfazível)"))
-        IconeDoTema(fechar, "x", tamanho=12)
-        fechar.clicked.connect(lambda _=False, w=widget: self._fechar_aba(self.abas.indexOf(w)))
-        self.abas.tabBar().setTabButton(i, QTabBar.ButtonPosition.RightSide, fechar)
+        self._por_botao_de_fechar(i, widget)
         self.abas.setCurrentIndex(i)
 
     def _vista_de_frequencia_entrou(self, vista: Vista, i: int) -> None:
@@ -163,17 +155,22 @@ class AreaDeAnalise(QObject):
         widget.tracoClicado.connect(self._traco_clicado)
         widget.semRegiao.connect(self._sem_regiao)
         self.abas.insertTab(i, widget, icone(nome_do_icone, aparencia().tema.texto2), vista.nome)
+        self._por_botao_de_fechar(i, widget)
+        self.abas.setCurrentIndex(i)
+
+    def _por_botao_de_fechar(self, i: int, widget: QWidget) -> None:
+        """O × da aba: um botão de 20 px com o ícone de 14 px, no meio da altura da aba, à direita do nome (o estilo
+        põe o botão do lado direito centrado na vertical). Fecha a aba dele, onde ela estiver."""
         fechar = QToolButton()
         fechar.setObjectName("fechar_aba")
-        fechar.setProperty("variante", "fantasma")
         fechar.setAutoRaise(True)
-        fechar.setIconSize(QSize(12, 12))
-        fechar.setFixedSize(QSize(18, 18))
+        fechar.setIconSize(QSize(TAMANHO_DO_X, TAMANHO_DO_X))
+        fechar.setFixedSize(QSize(TAMANHO_DO_BOTAO_DE_FECHAR, TAMANHO_DO_BOTAO_DE_FECHAR))
+        fechar.setCursor(Qt.CursorShape.PointingHandCursor)
         fechar.setToolTip(self.tr("Fechar a vista (desfazível)"))
-        IconeDoTema(fechar, "x", tamanho=12)
+        IconeDoTema(fechar, "x", "texto2", tamanho=TAMANHO_DO_X)
         fechar.clicked.connect(lambda _=False, w=widget: self._fechar_aba(self.abas.indexOf(w)))
         self.abas.tabBar().setTabButton(i, QTabBar.ButtonPosition.RightSide, fechar)
-        self.abas.setCurrentIndex(i)
 
     def _vista_saiu(self, vista: Vista, _i: int) -> None:
         widget = self.widget_da_vista(vista)

@@ -63,7 +63,7 @@ class InspetorDoTraco(QScrollArea):
         self.setObjectName("inspetor_do_traco")
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.projeto: Projeto | None = None
         self.tracos: tuple[Traco, ...] = ()
         self._montar()
@@ -182,6 +182,15 @@ class InspetorDoTraco(QScrollArea):
         self.setWidget(conteudo)
         self._pintar_cores(aparencia().tema)
 
+    def minimumSizeHint(self) -> QSize:
+        """A largura mínima do conteúdo (mais a barra de rolagem vertical): o dock do inspetor não encolhe abaixo do
+        que cabe, e se alarga sozinho quando entra uma etapa que pede mais (nada sai pela direita, em nenhuma fonte
+        nem língua)."""
+        conteudo = self.widget()
+        largura = (conteudo.minimumSizeHint().width() if conteudo is not None else 0) + \
+            self.verticalScrollBar().sizeHint().width() + 2 * self.frameWidth()
+        return QSize(largura, super().minimumSizeHint().height())
+
     def _secao(self, titulo: str, linhas, corpo: QWidget | None = None) -> QWidget:
         secao = QWidget()
         coluna = QVBoxLayout(secao)
@@ -286,6 +295,7 @@ class InspetorDoTraco(QScrollArea):
             campo.setToolTip("")
 
         self.processamento.mostrar(self.projeto, tracos, [c.taxa_hz for c in canais])
+        self.updateGeometry()                    # a largura mínima pode ter mudado (os cartões das etapas)
         if um and canais:
             fonte = fontes_canais[0][0]
             linhas, falta_aplicar = self._calibracao(fonte, canais[0], receitas[0].cadeia)

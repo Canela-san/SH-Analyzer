@@ -190,7 +190,9 @@ def test_os_valores_sob_o_mouse(janela, qtbot, aberto):
     assert espectro.valor_no_mouse.isVisible()
     (y,) = espectro.ponto_no_mouse.getData()[1]
     assert y == pytest.approx(d.nivel_em(9_000.0), abs=1e-9)          # o bin do tom, sob o mouse
-    assert traco.nome in espectro.valor_no_mouse.textItem.toPlainText()
+    import re
+    texto = espectro.valor_no_mouse.textItem.toPlainText()
+    assert re.fullmatch(r"−?\d+,\d{2} dB em [\d,]+ k?Hz", texto), texto        # só "−39,66 dB em 130,0052 kHz"
     espectro.acao_valores.setChecked(False)
     assert not espectro.valor_no_mouse.isVisible()
 
