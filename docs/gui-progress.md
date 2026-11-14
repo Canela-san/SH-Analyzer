@@ -8,11 +8,11 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F2.5: a vista de espectro** (seção 4c). A F2.1 a F2.4 estão feitas: a cadeia de transformações se monta no
-> inspetor (com desfazer), o traço transformado aparece na tela e as medidas saem dele.
+> **F2.6: as bandas IEC e o espectrograma** (seção 4c). A F2.1 a F2.5 estão feitas: a cadeia se monta no inspetor, o
+> traço transformado aparece na tela, e Ctrl+E abre o espectro da vista de tempo.
 >
-> **Para o usuário ver na tela:** plotar um canal, selecionar o traço e, no inspetor, "Adicionar etapa" (ou Ctrl+K,
-> "passa-altas").
+> **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
+> para o espectro.
 >
 > **Com o usuário (quando puder):** o "pronto quando" da Fase 1, abrir uma captura de 1 h, navegar e medir com 8
 > traços de 2 fontes, em `uv run --extra gui python -m sh_analyzer_gui`.
@@ -96,12 +96,13 @@ da CLI, pela `api`), edita os traços no inspetor (tudo com desfazer), salva e r
 salvamento automático e a recuperação) e tem a paleta de comandos. As seções 4 e 4b têm o commit de cada tarefa.
 
 **Os commits só do motor** (podem ir ao `main` sozinhos): `974c58a` (a `api`), `e76684b` (a integridade e o
-cabeçalho), `64f6e57` (a unidade do canal), `b5b02ab` (as medidas de um trecho), `71ba268` (a taxa da PRU) e `98d96e0` (a frequência, F2.1), `0ef8255` (os filtros), `28a1a04` (a margem da sonda), `3110417` (`medir_sinal`) e `631a770` (a faixa válida do perfil). E o do agente da placa: `3f98d7b`.
+cabeçalho), `64f6e57` (a unidade do canal), `b5b02ab` (as medidas de um trecho), `71ba268` (a taxa da PRU) e `98d96e0` (a frequência, F2.1), `0ef8255` (os filtros), `28a1a04` (a margem da sonda), `3110417` (`medir_sinal`), `631a770` (a faixa válida do perfil) e `b368246` (o piso de ruído). E o do agente da placa: `3f98d7b`.
 
 **O ambiente:** Python 3.13, PySide6 6.12.0, PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1. Testes, na última rodada:
-`ci.sh rapido` com 1 430 aprovados e `ci.sh interface` com 505 (14/11/2026).
+`ci.sh rapido` com 1 449 aprovados e `ci.sh interface` com 523 (14/11/2026).
 
-**Ainda não existe:** as vistas de frequência (a `api` delas já existe, F2.1), as figuras e a Aquisição.
+**Ainda não existe:** as bandas IEC, o espectrograma e os harmônicos na tela (a `api` deles já existe, F2.1), as
+figuras e a Aquisição.
 
 ---
 
@@ -627,7 +628,25 @@ O plano original:
   - a seção **Calibração**: o perfil de sonda, a faixa válida (sombreada no gráfico) e os avisos da conferência.
 - **Os testes:** adicionar, mudar, reordenar e desligar uma etapa, e desfazer cada passo; a faixa válida no gráfico.
 
-### ☐ F2.5: a vista de espectro
+### ☑ F2.5: a vista de espectro
+
+**Feita em 14/11/2026:** `b368246` (só do motor: o piso de ruído), `e0ff797` (sem Qt: as opções e a conta) e
+`16f5478` (a vista). As decisões:
+
+- **O espectro segue uma vista de tempo:** os traços visíveis dela, cada um com a sua cadeia. Mudar a cadeia lá muda o
+  espectro aqui, e os números nunca divergem do traço da tela. A vista de espectro não tem traços próprios nesta
+  versão (o plano, 7.1, admite; fica para quando houver um caso).
+- **Sem cadeia, o Welch roda nos códigos do ADC** (lote a lote: a captura inteira não vai para a memória) e sobe
+  `20·log10|escala|`, com o piso do motor: o número é o do Welch sobre os volts a 1e-9 dB. A FFT vai até 16 M
+  amostras (ela é um segmento só, na memória).
+- **Com cadeia, o trecho é o do traço transformado** (com a margem, em `float64`), até 8 M amostras; acima, a
+  materialização. **Diferença deliberada da CLI:** o `adc_tool` filtra só o trecho, com o transitório do filtro nas
+  bordas; aqui não há transitório. Sem cadeia, os números são os da CLI.
+- **Os harmônicos de f₁ só com a FFT sincronizada:** o Welch de 200 Hz não separa harmônicos de 50 Hz.
+- **Os picos:** os 5 mais altos acima do piso de ruído + 10 dB (o piso é a mediana dos bins de 2 kHz à Nyquist).
+- **Fica para a F2.7:** as medidas do espectro (o THD e os grupos), com os harmônicos.
+
+O plano original:
 
 - **Arquivos:** `areas/analise/vista_espectro.py`; o tipo `"espectro"` no projeto.
 - **O conteúdo** (ES-01, ES-02):
@@ -876,6 +895,11 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   trocava); o teste passou a esperar a resposta do seu pedido.
   - **Testes:** `ci.sh rapido` com 1 430 aprovados e `ci.sh interface` com 505.
   - **Próximo:** a F2.5, a vista de espectro.
+- **14/11/2026:** **a F2.5, a vista de espectro** (seção 4c). Achado no caminho: ao ligar a frequência log, o cursor
+  ficava na posição em Hz, que o eixo log lê como expoente (10⁵⁰⁰⁰⁰); o cursor guarda a frequência em Hz e é
+  reposicionado a cada desenho.
+  - **Testes:** `ci.sh rapido` com 1 449 aprovados e `ci.sh interface` com 523.
+  - **Próximo:** a F2.6, as bandas IEC e o espectrograma.
 ---
 
 ## 8. Perguntas em aberto
