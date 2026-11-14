@@ -5,6 +5,10 @@ ligado entre elas.
   Y de cada uma ajusta ao traço inteiro e fica parado no zoom do tempo (como num osciloscópio); Ctrl + roda o muda.
 * **Os traços** são ``TracoLOD`` sobre a pirâmide de cada canal: chegam quando a pirâmide fica pronta. A cor, o
   ganho, o offset, o deslocamento no tempo e a visibilidade mudam no lugar; só a mudança de faixa refaz as faixas.
+* **Um traço com transformações** (a cadeia da receita) é desenhado da sua materialização
+  (``servicos/materializar.py``). Enquanto ela roda, o traço mostra a prévia da janela visível (até 1 M amostras:
+  calculada em ~0,1 s a cada parada do zoom ou do pan) ou o começo já materializado, que se preenche da esquerda para
+  a direita; o chip mostra o progresso. Nunca o canal cru no lugar do transformado.
 * **A legenda** são os chips dos traços (clicar seleciona; o selecionado fica à frente das outras linhas).
 * **O histórico do zoom:** cada parada do zoom ou do pan (400 ms sem mexer) entra no histórico; Backspace volta.
   ``F`` (ou o duplo clique) ajusta a captura inteira.
@@ -19,6 +23,7 @@ ligado entre elas.
 
 from __future__ import annotations
 
+import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence
@@ -28,12 +33,15 @@ from shiboken6 import isValid
 from ...componentes.chip import ChipDeTraco
 from ...componentes.fluxo import LayoutDeFluxo
 from ...componentes.numeros import formatar_si
+from ...dados.piramide import Piramide
 from ...graficos.faixa import LARGURA_DO_EIXO_Y, CaixaDaFaixa, EixoDoTema, GradeDoTema
 from ...graficos.minimapa import Minimapa
 from ...graficos.traco_lod import TracoLOD
 from ...modelo.comandos import MudarTracos
 from ...modelo.objetos import FonteDoProjeto, Projeto, Traco, Vista
 from ...modelo.selecao import Selecao
+from ...servicos.materializar import LIMITE_DA_PREVIA, EstadoDaMaterializacao, Previa, ServicoDeMaterializacao
+from ...servicos.tarefas import GerenciadorDeTarefas
 from ...tema.aplicar import aparencia
 from ...tema.icones import IconeDoTema
 from ...tema.tokens import Tema, cor_do_traco
@@ -44,6 +52,8 @@ INTERVALO_DO_MINIMAPA_MS = 30      # o minimapa acompanha o zoom a ~30 q/s: ele 
 LARGURA_DA_INFO = 420
 ALCANCE_DO_CLIQUE_PX = 6.0
 MAXIMO_DO_HISTORICO = 100
+ESPERA_DA_PREVIA_MS = 60           # a prévia sai 60 ms depois da última mudança do zoom ou do pan
+FOLGA_DA_PREVIA = 0.25             # a prévia cobre um quarto de janela a mais de cada lado: o pan curto não espera
 
 
 class VistaDeTempo(QWidget):
@@ -54,7 +64,8 @@ class VistaDeTempo(QWidget):
     regiaoMudou = Signal(float, float, bool)      # início, fim (s), se é a dos cursores
     semRegiao = Signal()                          # nenhum traço desenhado: nada a medir
 
-    def __init__(self, vista: Vista, projeto: Projeto, selecao: Selecao, parent: QWidget | None = None):
+    def __init__(self, vista: Vista, projeto: Projeto, selecao: Selecao, parent: QWidget | None = None,
+                 materializacoes: ServicoDeMaterializacao | None = None):
         super().__init__(parent)
         self.setObjectName("vista_tempo")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -68,6 +79,15 @@ class VistaDeTempo(QWidget):
         self.cursores: list[float] | None = None
         self._linhas_dos_cursores: list[list[pg.InfiniteLine]] = []
         self._cursor_ativo = 1
+        if materializacoes is None:          # sem a janela (os testes): um serviço só desta vista
+            materializacoes = ServicoDeMaterializacao(GerenciadorDeTarefas(parent=self), parent=self)
+        self.materializacoes = materializacoes
+        self._previas: dict[Traco, Previa] = {}
+        self._ajustar_y_de: set[Traco] = set()       # traços cuja faixa ajusta o Y quando os dados novos chegarem
+        self._acompanhados: set[Traco] = set()
+        materializacoes.mudou.connect(self._materializacao_mudou)
+        acompanhados, servico = self._acompanhados, materializacoes
+        self.destroyed.connect(lambda *_: [servico.largar(t) for t in list(acompanhados)])
 
         self._criar_barra()
         self._legenda = QWidget()
@@ -109,6 +129,10 @@ class VistaDeTempo(QWidget):
         self._espera_da_medida.setSingleShot(True)
         self._espera_da_medida.setInterval(ESPERA_DA_MEDIDA_MS)
         self._espera_da_medida.timeout.connect(self.emitir_regiao)
+        self._espera_da_previa = QTimer(self)
+        self._espera_da_previa.setSingleShot(True)
+        self._espera_da_previa.setInterval(ESPERA_DA_PREVIA_MS)
+        self._espera_da_previa.timeout.connect(self._pedir_previas)
 
         vista.tracoEntrou.connect(self._estrutura_mudou)
         vista.tracoSaiu.connect(self._estrutura_mudou)
@@ -192,6 +216,8 @@ class VistaDeTempo(QWidget):
         # 1. Os traços que saíram (ou cuja captura sumiu) deixam a sua faixa.
         for traco in [t for t in self.itens if t not in tracos]:
             self._tirar_item(self.itens.pop(traco))
+        for traco in [t for t in self._acompanhados if t not in tracos]:
+            self._largar(traco)
         # 2. As faixas que sobraram saem (os traços delas já foram tirados ou serão movidos abaixo).
         sairam = [n for n in self.faixas if n not in desejadas]
         for numero in sairam:
@@ -326,13 +352,162 @@ class VistaDeTempo(QWidget):
             return
         r = traco.receita
         canal = fonte.canal(r.canal)
-        escala, deslocamento = r.afim(canal.escala, canal.deslocamento)
-        item = TracoLOD(fonte.piramides[fonte.posicao_do_canal(r.canal)], canal.amostras, canal.taxa_hz,
-                        t0=r.deslocamento_s, escala=escala, deslocamento=deslocamento,
-                        cor=cor_do_traco(r.cor, aparencia().tema)[0], nome=r.nome)
+        estado = self._acompanhar(traco)
+        piramide, amostras, inicio = self._dados(traco, estado)
+        escala, deslocamento = self._afim(traco)
+        item = TracoLOD(piramide, amostras, canal.taxa_hz, t0=r.deslocamento_s, escala=escala,
+                        deslocamento=deslocamento, cor=cor_do_traco(r.cor, aparencia().tema)[0], nome=r.nome,
+                        inicio=inicio, n_total=len(canal.amostras))
         item.setVisible(r.visivel)
         faixa.addItem(item)
         self.itens[traco] = item
+        if estado is not None and estado.pronta is None:
+            self._ajustar_y_de.add(traco)
+            self._espera_da_previa.start()
+
+    # ------------------------------------------------------------------ os traços com transformações
+
+    def _acompanhar(self, traco: Traco) -> EstadoDaMaterializacao | None:
+        """O estado da materialização do traço (None sem cadeia), acompanhado pelo serviço."""
+        fonte, r = self._fonte_do(traco), traco.receita
+        estado = self.materializacoes.acompanhar(traco, fonte, r.canal, r.cadeia)
+        if estado is None:
+            self._acompanhados.discard(traco)
+        else:
+            self._acompanhados.add(traco)
+        return estado
+
+    def _largar(self, traco: Traco) -> None:
+        self.materializacoes.largar(traco)
+        self._acompanhados.discard(traco)
+        self._previas.pop(traco, None)
+        self._ajustar_y_de.discard(traco)
+
+    def soltar(self) -> None:
+        """A vista vai sair: as materializações e as prévias que só ela usava são canceladas."""
+        for traco in list(self._acompanhados):
+            self._largar(traco)
+
+    def _afim(self, traco: Traco) -> tuple[float, float]:
+        """A conversão do eixo y: do código do ADC (o canal cru) ou da unidade física (o traço materializado)."""
+        r = traco.receita
+        if self.materializacoes.estado_de(traco) is not None:
+            return r.afim(1.0, 0.0)
+        canal = self._fonte_do(traco).canal(r.canal)
+        return r.afim(canal.escala, canal.deslocamento)
+
+    def _janela_do_traco(self, traco: Traco) -> tuple[int, int] | None:
+        """A janela visível em amostras do canal do traço."""
+        janela = self.janela_de_tempo()
+        fonte = self._fonte_do(traco)
+        if janela is None or fonte is None:
+            return None
+        r = traco.receita
+        canal = fonte.canal(r.canal)
+        n = len(canal.amostras)
+        i0 = int(max(0, (janela[0] - r.deslocamento_s) * canal.taxa_hz))
+        i1 = int(min(n, (janela[1] - r.deslocamento_s) * canal.taxa_hz + 2))
+        return (i0, max(i0, i1))
+
+    def _dados(self, traco: Traco, estado: EstadoDaMaterializacao | None):
+        """O que desenhar do traço: o canal, a materialização pronta, o começo já feito ou a prévia (a que cobre a
+        janela visível primeiro); nada, se ainda não há nada (nunca o canal cru no lugar do transformado)."""
+        fonte, r = self._fonte_do(traco), traco.receita
+        if estado is None:
+            return fonte.piramides[fonte.posicao_do_canal(r.canal)], fonte.canal(r.canal).amostras, 0
+        if estado.pronta is not None:
+            return estado.pronta.piramide, estado.pronta.amostras, 0
+        janela = self._janela_do_traco(traco)
+        previa = self._previas.get(traco)
+        parcial = None
+        if estado.parcial is not None:
+            amostras, piramide = estado.parcial
+            parcial = (piramide, amostras[:piramide.n_amostras], 0)
+        cobre_parcial = parcial is not None and janela is not None and parcial[0].n_amostras >= janela[1]
+        cobre_previa = previa is not None and janela is not None and previa.inicio <= janela[0] and \
+            previa.fim >= janela[1]
+        if cobre_parcial:
+            return parcial
+        if cobre_previa:
+            return previa.piramide, previa.amostras, previa.inicio
+        if parcial is not None:
+            return parcial
+        if previa is not None:
+            return previa.piramide, previa.amostras, previa.inicio
+        return Piramide(0, np.dtype("<f4"), ()), np.empty(0, np.float32), 0
+
+    def _atualizar_dados(self, traco: Traco) -> None:
+        item = self.itens.get(traco)
+        if item is None or not isValid(item):
+            return
+        dados = self._dados(traco, self.materializacoes.estado_de(traco))
+        if dados[0] is not item.dados[0]:
+            item.definir_dados(*dados)
+            if traco in self._ajustar_y_de and dados[0].n_amostras:
+                self._ajustar_y_de.discard(traco)
+                self._ajustar_y(traco.receita.faixa)
+
+    def _ajustar_y(self, numero_da_faixa: int) -> None:
+        """O Y da faixa ajustado aos traços dela (o traço inteiro, ou o que dele já existe)."""
+        faixa = self.faixas.get(numero_da_faixa)
+        if faixa is None:
+            return
+        limites = [item.dataBounds(1) for traco, item in self.itens.items()
+                   if traco.receita.faixa == numero_da_faixa and item.dados[0].n_amostras]
+        if limites:
+            y0, y1 = min(a for a, _ in limites), max(b for _, b in limites)
+            faixa.getViewBox().setYRange(y0, y1 if y1 > y0 else y0 + 1e-12, padding=0.05)
+
+    def _pedir_previas(self) -> None:
+        """A prévia da janela visível (com folga) de cada traço que ainda não ficou pronto e que a prévia atual e o
+        começo materializado não cobrem."""
+        if not isValid(self):
+            return
+        for traco in list(self.itens):
+            estado = self.materializacoes.estado_de(traco)
+            janela = self._janela_do_traco(traco)
+            if estado is None or estado.pronta is not None or janela is None or estado.erro:
+                continue
+            previa = self._previas.get(traco)
+            if previa is not None and previa.inicio <= janela[0] and previa.fim >= janela[1]:
+                continue
+            if estado.parcial is not None and estado.parcial[1].n_amostras >= janela[1]:
+                continue
+            largura = janela[1] - janela[0]
+            if largura > LIMITE_DA_PREVIA:
+                continue
+            folga = int(min(FOLGA_DA_PREVIA * largura, (LIMITE_DA_PREVIA - largura) / 2))
+            r = traco.receita
+            self.materializacoes.previa(traco, self._fonte_do(traco), r.canal, r.cadeia, janela[0] - folga,
+                                        janela[1] + folga, lambda p, erro, t=traco: self._previa_chegou(t, p, erro))
+
+    def _previa_chegou(self, traco: Traco, previa: Previa | None, erro: str) -> None:
+        if not isValid(self) or traco not in self.itens:
+            return
+        estado = self.materializacoes.estado_de(traco)
+        if estado is None or estado.pronta is not None:
+            return
+        if previa is None:
+            chip = self.chips.get(traco)
+            if chip is not None:
+                chip.setToolTip(erro)
+            return
+        self._previas[traco] = previa
+        self._atualizar_dados(traco)
+
+    def _materializacao_mudou(self, estado: EstadoDaMaterializacao) -> None:
+        if not isValid(self):
+            return
+        for traco in [t for t in self.itens if self.materializacoes.estado_de(t) is estado]:
+            if estado.pronta is not None:
+                self._previas.pop(traco, None)
+            self._atualizar_dados(traco)
+            chip = self.chips.get(traco)
+            if chip is not None:
+                chip.definir(progresso=estado.progresso, resumo=self._resumo(traco))
+                chip.setToolTip(estado.erro)
+            if estado.pronta is not None and traco is next(iter(self.vista.tracos), None):
+                self._refazer_minimapa()
 
     def _piramide_chegou(self, fonte: FonteDoProjeto) -> None:
         if isValid(self):
@@ -440,9 +615,17 @@ class VistaDeTempo(QWidget):
         if item is not None:
             if "cor" in campos:
                 item.definir_cor(cor_do_traco(r.cor, aparencia().tema)[0])
+            if "cadeia" in campos:
+                antes = self.materializacoes.estado_de(traco)
+                if self._acompanhar(traco) is not antes:
+                    self._previas.pop(traco, None)
+                    self._ajustar_y_de.add(traco)
+                    item.definir_afim(*self._afim(traco))
+                    self._atualizar_dados(traco)
+                    self._espera_da_previa.start()
+                    self._refazer_minimapa()
             if campos & {"ganho", "offset"}:
-                canal = self._fonte_do(traco).canal(r.canal)
-                item.definir_afim(*r.afim(canal.escala, canal.deslocamento))
+                item.definir_afim(*self._afim(traco))
             self._espera_da_medida.start()
             if "deslocamento_s" in campos:
                 item.definir_t0(r.deslocamento_s)
@@ -451,10 +634,12 @@ class VistaDeTempo(QWidget):
         if chip is not None:
             if campos & {"nome", "cor"}:
                 self._refazer_legenda()
-            elif campos & {"ganho", "deslocamento_s", "visivel"}:
+            elif campos & {"ganho", "deslocamento_s", "visivel", "cadeia"}:
                 # Só o chip deste traço muda (arrastar o ganho ou o deslocamento no inspetor muda o traço a cada
                 # passo: refazer a legenda inteira a cada um pesaria).
-                chip.definir(resumo=self._resumo(traco), visivel=r.visivel)
+                estado = self.materializacoes.estado_de(traco)
+                chip.definir(resumo=self._resumo(traco), visivel=r.visivel,
+                             progresso=estado.progresso if estado is not None else None)
         if "visivel" in campos or "cor" in campos:
             self._refazer_minimapa()
 
@@ -477,6 +662,11 @@ class VistaDeTempo(QWidget):
             resumo.append(f"×{r.ganho:g}".replace(".", ",").replace("-", "−"))
         if r.deslocamento_s:
             resumo.append(f"{formatar_si(r.deslocamento_s, 's', 3)}".replace("-", "−"))
+        if not r.cadeia.vazia:
+            resumo.append(r.cadeia.resumo())
+            estado = self.materializacoes.estado_de(traco)
+            if estado is not None and estado.erro:
+                resumo.append(self.tr("erro na transformação"))
         return " · ".join(resumo)
 
     def _refazer_legenda(self) -> None:
@@ -486,8 +676,12 @@ class VistaDeTempo(QWidget):
             r = traco.receita
             fonte = self._fonte_do(traco)
             chip = ChipDeTraco(r.nome, r.cor, self._resumo(traco))
-            chip.definir(visivel=r.visivel, selecionado=traco in self.selecao.tracos,
-                         progresso=fonte.progresso_da_piramide if fonte is not None else None)
+            estado = self.materializacoes.estado_de(traco)
+            progresso = fonte.progresso_da_piramide if fonte is not None else None
+            if progresso is None and estado is not None:
+                progresso = estado.progresso
+                chip.setToolTip(estado.erro)
+            chip.definir(visivel=r.visivel, selecionado=traco in self.selecao.tracos, progresso=progresso)
             chip.clicado.connect(lambda t=traco: self.tracoClicado.emit(t, Qt.KeyboardModifier.NoModifier))
             self._fluxo_da_legenda.addWidget(chip)
             self.chips[traco] = chip
@@ -503,7 +697,7 @@ class VistaDeTempo(QWidget):
         if modelo is None:
             self.minimapa.definir_traco(None)
             return
-        self.minimapa.definir_traco(modelo._piramide, modelo._amostras, modelo._taxa, t0=modelo._t0,
+        self.minimapa.definir_traco(modelo._piramide, modelo._amostras, modelo._taxa, t0=modelo._origem,
                                     escala=modelo._escala, deslocamento=modelo._deslocamento)
         janela = self.janela_de_tempo()
         if janela is not None:
@@ -532,6 +726,8 @@ class VistaDeTempo(QWidget):
         if self.minimapa.isVisible() and not self._minimapa_atrasado.isActive():
             self._minimapa_atrasado.start()
         self._parada.start()
+        if self._acompanhados:
+            self._espera_da_previa.start()
         if self.cursores is None:
             self._espera_da_medida.start()
 

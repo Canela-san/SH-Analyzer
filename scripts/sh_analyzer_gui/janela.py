@@ -64,6 +64,7 @@ from .controle_do_projeto import ControleDoProjeto
 from .modelo.objetos import Projeto, Vista
 from .modelo.selecao import Selecao
 from .servicos.fontes import ServicoDeFontes
+from .servicos.materializar import ServicoDeMaterializacao
 from .servicos.tarefas import GerenciadorDeTarefas
 from .tema.aplicar import aparencia
 from .tema.fontes import familias_disponiveis, fonte_escolhida
@@ -112,8 +113,11 @@ class JanelaPrincipal(QMainWindow):
         self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
 
         self.grupo_desfazer = QUndoGroup(self)
-        self.tarefas = GerenciadorDeTarefas(parent=self)
+        # Três threads: a pirâmide de uma captura, a materialização de um traço e as medidas não esperam uma pela
+        # outra (a prévia dos traços transformados tem a sua, no serviço de materialização).
+        self.tarefas = GerenciadorDeTarefas(threads=3, parent=self)
         self.servico_de_fontes = ServicoDeFontes(self.tarefas, parent=self)
+        self.materializacoes = ServicoDeMaterializacao(self.tarefas, parent=self)
         self.projeto: Projeto | None = None
         self.selecao: Selecao | None = None
         self.acoes: dict[str, QAction] = {}
@@ -474,6 +478,7 @@ class JanelaPrincipal(QMainWindow):
             return
         self.salvar_layout()
         self.tarefas.encerrar()          # nenhuma thread rodando depois da janela
+        self.materializacoes.encerrar()
         super().closeEvent(evento)
 
     # ------------------------------------------------------------------ arrastar e soltar

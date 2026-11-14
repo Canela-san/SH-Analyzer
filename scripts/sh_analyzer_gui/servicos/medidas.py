@@ -1,6 +1,10 @@
 """As medidas da região (docs/gui-plan.md, 3.4 e 9.4): de cada traço visível de uma vista, entre os cursores ou na
 janela de tempo, calculadas **das amostras** pela ``api`` (``medir_regiao``), nunca do desenho.
 
+Num traço com transformações, as medidas são as do sinal transformado, o mesmo que a tela mostra: a cadeia roda na
+região com a margem dela (``Cadeia.previa``), em ``float64`` a partir das amostras do ADC, e a ``api`` mede o
+resultado (``medir_sinal``). Longe das bordas da captura, é o traço inteiro transformado (``dados/cadeia.py``).
+
 Em segundo plano (uma região grande leva o filtro da fundamental): cada pedido cancela o anterior, e só o resultado
 do mais recente chega (``prontas``). Uma região com mais de :data:`LIMITE_DE_AMOSTRAS` amostras não é medida (a
 conta leria tudo para a memória): a tabela diz para aproximar o zoom ou usar os cursores.
@@ -12,8 +16,9 @@ import math
 from dataclasses import dataclass, replace
 
 from PySide6.QtCore import QObject, Signal
-from supraharmonicos.api import ErroSHAN, MedidasDaRegiao, medir_regiao
+from supraharmonicos.api import ErroSHAN, MedidasDaRegiao, medir_regiao, medir_sinal
 
+from ..dados import materializacao as mat
 from ..modelo.objetos import Projeto, Traco, Vista
 from .tarefas import GerenciadorDeTarefas, Tarefa
 
@@ -53,9 +58,10 @@ class ServicoDeMedidas(QObject):
 
     prontas = Signal(object, object)
 
-    def __init__(self, tarefas: GerenciadorDeTarefas, parent: QObject | None = None):
+    def __init__(self, tarefas: GerenciadorDeTarefas, parent: QObject | None = None, materializacoes=None):
         super().__init__(parent)
         self.tarefas = tarefas
+        self.materializacoes = materializacoes         # o contexto das cadeias (a média do canal), se houver
         self._atual: Tarefa | None = None
         self._pedido: PedidoDeMedida | None = None
 
@@ -78,7 +84,7 @@ class ServicoDeMedidas(QObject):
             n = len(canal.amostras)
             i0 = _indice(pedido.inicio_s, r.deslocamento_s, canal.taxa_hz, n)
             i1 = _indice(pedido.fim_s, r.deslocamento_s, canal.taxa_hz, n)
-            planos.append((traco, fonte.fonte.captura, r, i0, i1, n, canal.unidade))
+            planos.append((traco, fonte.fonte.captura, r, i0, i1, n, canal.unidade, self._contexto(fonte, r)))
         if not planos:
             self._atual = None
             self.prontas.emit(pedido, [])
@@ -86,7 +92,7 @@ class ServicoDeMedidas(QObject):
 
         def medir_todos(progresso, cancelado):
             resultados = []
-            for k, (traco, captura, r, i0, i1, n, unidade) in enumerate(planos):
+            for k, (traco, captura, r, i0, i1, n, unidade, ctx) in enumerate(planos):
                 if cancelado():
                     return None
                 erro, medidas, delta = "", None, None
@@ -95,8 +101,12 @@ class ServicoDeMedidas(QObject):
                 else:
                     com_f1 = pedido.dos_cursores or i1 - i0 <= LIMITE_DA_F1_NA_JANELA
                     try:
-                        medidas = medir_regiao(captura, r.canal, i0, i1, ganho=r.ganho, offset=r.offset,
-                                               fundamental=com_f1)
+                        if ctx is None:
+                            medidas = medir_regiao(captura, r.canal, i0, i1, ganho=r.ganho, offset=r.offset,
+                                                   fundamental=com_f1)
+                        else:
+                            sinal = r.cadeia.previa(mat.leitor_do_canal(captura, r.canal), n, i0, i1, ctx).valores
+                            medidas = medir_sinal(sinal * r.ganho + r.offset, ctx.taxa_hz, fundamental=com_f1)
                     except ErroSHAN as e:
                         erro = str(e)
                     else:
@@ -105,7 +115,7 @@ class ServicoDeMedidas(QObject):
                 if pedido.dos_cursores:
                     a, b = min(i0, n - 1), min(i1, n - 1)
                     if 0 <= a and 0 <= b:
-                        pontos = medir_pontos(captura, r, (a, b))
+                        pontos = medir_pontos(captura, r, (a, b), ctx, n)
                         delta = pontos[1] - pontos[0]
                 resultados.append(MedidaDoTraco(traco, pedido.inicio_s, pedido.fim_s, medidas, erro, delta, unidade))
                 progresso((k + 1) / len(planos))
@@ -115,6 +125,14 @@ class ServicoDeMedidas(QObject):
         self._atual = tarefa
         return tarefa
 
+    def _contexto(self, fonte, receita):
+        """O contexto da cadeia do traço, ou None sem cadeia (as medidas do canal como ele é)."""
+        if receita.cadeia.vazia:
+            return None
+        if self.materializacoes is not None:
+            return self.materializacoes.contexto(fonte, receita.canal)
+        return mat.contexto_do_canal(fonte.canal(receita.canal))
+
     def _terminou(self, tarefa: Tarefa) -> None:
         if tarefa is not self._atual:
             return                                # um pedido antigo: o mais recente vale
@@ -123,9 +141,14 @@ class ServicoDeMedidas(QObject):
             self.prontas.emit(self._pedido, tarefa.resultado)
 
 
-def medir_pontos(captura, receita, indices) -> list[float]:
-    """O valor do traço (com o ganho e o offset) em cada amostra de ``indices``."""
+def medir_pontos(captura, receita, indices, contexto=None, n_amostras: int | None = None) -> list[float]:
+    """O valor do traço (com a cadeia, o ganho e o offset) em cada amostra de ``indices``."""
     from supraharmonicos.api import sinal_do_canal
 
-    return [float(sinal_do_canal(captura, receita.canal, i, i + 1)[0]) * receita.ganho + receita.offset
-            if i >= 0 else math.nan for i in indices]
+    def valor(i: int) -> float:
+        if contexto is None:
+            return float(sinal_do_canal(captura, receita.canal, i, i + 1)[0])
+        return float(receita.cadeia.previa(mat.leitor_do_canal(captura, receita.canal), n_amostras, i, i + 1,
+                                           contexto).valores[0])
+
+    return [valor(i) * receita.ganho + receita.offset if i >= 0 else math.nan for i in indices]

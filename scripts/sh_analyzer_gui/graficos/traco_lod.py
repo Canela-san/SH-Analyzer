@@ -98,15 +98,22 @@ class TracoLOD(pg.GraphicsObject):
 
     ``amostras`` é o vetor do canal (a visão com passo dentro do memmap da captura) e ``piramide`` a dele. O eixo x é
     o tempo em segundos: a amostra ``i`` fica em ``t0 + i / taxa_hz``. O eixo y é ``valor * escala + deslocamento``.
+
+    **Os dados podem ser só um pedaço do canal** (:meth:`definir_dados`): a prévia da janela visível de um traço com
+    transformações, ou o começo já materializado dele. ``inicio`` diz qual amostra do canal é a primeira dos dados, e
+    ``n_total`` o tamanho do canal inteiro: os limites do tempo (o "ajustar tudo") são sempre os do canal.
     """
 
     def __init__(self, piramide: Piramide, amostras: np.ndarray, taxa_hz: float, *, t0: float = 0.0,
-                 escala: float = 1.0, deslocamento: float = 0.0, cor: str | QColor = "#7dd3fc", nome: str = ""):
+                 escala: float = 1.0, deslocamento: float = 0.0, cor: str | QColor = "#7dd3fc", nome: str = "",
+                 inicio: int = 0, n_total: int | None = None):
         super().__init__()
         if taxa_hz <= 0:
             raise ValueError(f"taxa_hz deve ser > 0 (recebido {taxa_hz}).")
         self._piramide = piramide
         self._amostras = amostras
+        self._inicio = int(inicio)
+        self._n_total = piramide.n_amostras if n_total is None else int(n_total)
         self._taxa = float(taxa_hz)
         self._t0 = float(t0)
         self._escala = float(escala)
@@ -146,6 +153,25 @@ class TracoLOD(pg.GraphicsObject):
         self.informViewBoundsChanged()
         self.recalcular()
 
+    @property
+    def _origem(self) -> float:
+        """O tempo da primeira amostra dos dados."""
+        return self._t0 + self._inicio / self._taxa
+
+    @property
+    def dados(self) -> tuple[Piramide, np.ndarray, int]:
+        """A pirâmide, as amostras e o início (no canal) dos dados desenhados agora."""
+        return self._piramide, self._amostras, self._inicio
+
+    def definir_dados(self, piramide: Piramide, amostras: np.ndarray, inicio: int = 0) -> None:
+        """Troca os dados desenhados (a prévia, o começo materializado, o traço pronto) sem recriar o item: a cor, a
+        conversão e a posição na faixa ficam."""
+        self.prepareGeometryChange()
+        self._piramide, self._amostras, self._inicio = piramide, amostras, int(inicio)
+        self._limites = self._calcular_limites()
+        self.informViewBoundsChanged()
+        self.recalcular()
+
     def definir_t0(self, t0: float) -> None:
         """Anda o traço no tempo (o deslocamento da receita): a amostra 0 passa a ficar em ``t0``."""
         self.prepareGeometryChange()
@@ -160,13 +186,12 @@ class TracoLOD(pg.GraphicsObject):
         return self._consulta
 
     def tempo_da_amostra(self, indice: float) -> float:
-        return self._t0 + indice / self._taxa
+        return self._origem + indice / self._taxa
 
     # ------------------------------------------------------------------ os limites (autoRange e boundingRect)
 
     def _calcular_limites(self) -> tuple[float, float, float, float]:
-        n = self._piramide.n_amostras
-        x0, x1 = self._t0, self._t0 + max(n - 1, 0) / self._taxa
+        x0, x1 = self._t0, self._t0 + max(self._n_total - 1, 0) / self._taxa
         if not self._piramide.niveis:
             return x0, x1, 0.0, 0.0
         topo = self._piramide.niveis[-1]
@@ -225,15 +250,15 @@ class TracoLOD(pg.GraphicsObject):
         self._sujo = False
         (x0, x1), (y0, y1) = vb.viewRange()
         colunas = self._colunas_visiveis()
-        inicio = (x0 - self._t0) * self._taxa
-        fim = (x1 - self._t0) * self._taxa + 1
+        inicio = (x0 - self._origem) * self._taxa
+        fim = (x1 - self._origem) * self._taxa + 1
         consulta = aplicar_afim(consultar(self._piramide, self._amostras, inicio, fim, colunas),
                                 self._escala, self._deslocamento)
         self.recalculos += 1
         self._consulta = consulta
         self._colunas, self._linhas, self._pontos = None, [], False
         if isinstance(consulta, Envoltoria) and len(consulta):
-            centros = self._t0 + (consulta.bordas[:-1] + consulta.bordas[1:] - 1) / (2 * self._taxa)
+            centros = self._origem + (consulta.bordas[:-1] + consulta.bordas[1:] - 1) / (2 * self._taxa)
             # 1 pixel do dispositivo, em unidades de y. Direto da faixa visível e da altura da caixa: o
             # viewPixelSize do PyQtGraph mapeia pontos pela matriz em Python e custava 0,23 ms por traço e quadro.
             altura_pixel = abs(y1 - y0) / max(vb.height(), 1.0) / self._dpr
@@ -241,7 +266,7 @@ class TracoLOD(pg.GraphicsObject):
             # Sem a conferência de finitos: os segmentos já saem sem NaN (as colunas vazias ficam de fora).
             self._colunas = fn.arrayToQPath(x, y, connect="pairs", finiteCheck=False) if len(x) else None
         elif isinstance(consulta, Amostras) and len(consulta):
-            x = self._t0 + consulta.indices / self._taxa
+            x = self._origem + consulta.indices / self._taxa
             self._linhas = [(x[a:b], consulta.valores[a:b]) for a, b in _trechos_finitos(consulta.valores)]
             pixels_por_amostra = colunas / max((x1 - x0) * self._taxa, 1e-12)
             self._pontos = pixels_por_amostra >= PIXELS_POR_AMOSTRA_PONTOS
@@ -288,9 +313,9 @@ class TracoLOD(pg.GraphicsObject):
         if c is None or not len(c):
             return None
         if isinstance(c, Amostras):
-            i = int(np.clip(np.searchsorted(c.indices, (x - self._t0) * self._taxa), 0, len(c) - 1))
+            i = int(np.clip(np.searchsorted(c.indices, (x - self._origem) * self._taxa), 0, len(c) - 1))
             return QPointF(self.tempo_da_amostra(c.indices[i]), float(c.valores[i]))
-        col = int(np.clip(np.searchsorted(c.bordas, (x - self._t0) * self._taxa, side="right") - 1, 0, len(c) - 1))
+        col = int(np.clip(np.searchsorted(c.bordas, (x - self._origem) * self._taxa, side="right") - 1, 0, len(c) - 1))
         return QPointF(self.tempo_da_amostra((c.bordas[col] + c.bordas[col + 1] - 1) / 2), float(c.maximos[col]))
 
     def distancia_em_pixels(self, x: float, y: float) -> float:
@@ -302,11 +327,11 @@ class TracoLOD(pg.GraphicsObject):
             return math.inf
         largura_px, altura_px = (abs(v) for v in vb.viewPixelSize())
         if isinstance(c, Amostras):
-            tempos = self._t0 + c.indices / self._taxa
+            tempos = self._origem + c.indices / self._taxa
             dx, dy = (tempos - x) / max(largura_px, 1e-300), (c.valores - y) / max(altura_px, 1e-300)
             d = np.hypot(dx, dy)
             return float(np.nanmin(d)) if np.isfinite(d).any() else math.inf
-        col = int(np.searchsorted(c.bordas, (x - self._t0) * self._taxa, side="right") - 1)
+        col = int(np.searchsorted(c.bordas, (x - self._origem) * self._taxa, side="right") - 1)
         if not 0 <= col < len(c):
             return math.inf
         baixo, alto = sorted((float(c.minimos[col]), float(c.maximos[col])))

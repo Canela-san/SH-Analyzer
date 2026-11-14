@@ -38,7 +38,7 @@ class AreaDeAnalise(QObject):
                  status_fonte: QLabel, status_integridade: QLabel, abas: QTabWidget, medidas: TabelaDeMedidas):
         super().__init__(janela)
         self.tabela_de_medidas = medidas
-        self.servico_de_medidas = ServicoDeMedidas(janela.tarefas, self)
+        self.servico_de_medidas = ServicoDeMedidas(janela.tarefas, self, materializacoes=janela.materializacoes)
         self.servico_de_medidas.prontas.connect(medidas.mostrar)
         abas.currentChanged.connect(self._aba_mudou)
         self.janela, self.painel, self.inspetor, self.avisos = janela, painel, inspetor, avisos
@@ -83,6 +83,7 @@ class AreaDeAnalise(QObject):
         while self.abas.count():
             widget = self.abas.widget(0)
             self.abas.removeTab(0)
+            widget.soltar()
             widget.deleteLater()
         for i, vista in enumerate(self.projeto.vistas):
             self._vista_entrou(vista, i)
@@ -99,7 +100,7 @@ class AreaDeAnalise(QObject):
         return getattr(widget, "vista", None)
 
     def _vista_entrou(self, vista: Vista, i: int) -> None:
-        widget = VistaDeTempo(vista, self.projeto, self.janela.selecao)
+        widget = VistaDeTempo(vista, self.projeto, self.janela.selecao, materializacoes=self.janela.materializacoes)
         widget.tracoClicado.connect(self._traco_clicado)
         widget.regiaoMudou.connect(self._regiao_mudou)
         widget.semRegiao.connect(self._sem_regiao)
@@ -121,6 +122,7 @@ class AreaDeAnalise(QObject):
         widget = self.widget_da_vista(vista)
         if widget is not None:
             self.abas.removeTab(self.abas.indexOf(widget))
+            widget.soltar()
             widget.deleteLater()
 
     def _vista_mudou(self, vista: Vista, campos) -> None:

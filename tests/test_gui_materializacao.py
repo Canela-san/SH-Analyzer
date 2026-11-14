@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from capturas_sinteticas import FREQS_CAL, escrever_bin, planta_h
 from sh_analyzer_gui.dados import materializacao as mat
-from sh_analyzer_gui.dados.cadeia import Cadeia, ContextoDaCadeia, CorrecaoSonda, Filtro, RemoverDC
+from sh_analyzer_gui.dados.cadeia import Cadeia, CorrecaoSonda, Filtro, RemoverDC
 from sh_analyzer_gui.dados.piramide import BLOCO_BASE, ConstrutorIncremental, construir
 from supraharmonicos import api
 
