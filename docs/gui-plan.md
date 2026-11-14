@@ -630,7 +630,7 @@ O que prende o motor à linha de comando é o `contexto.resolver_contexto(args)`
 
   O `resolver_contexto(args)` passa a chamá-la, e a CLI não muda.
 - **`sinal_do_canal(captura, canal, inicio, fim, *, corrigir_sonda=True)`** dá o trecho em unidades físicas.
-- **`espectro`, `welch`, `bandas_iec`, `harmonicos`, `espectrograma`, `metricas`:** parâmetros num dataclass imutável, resultado noutro, sobre as funções que já existem.
+- **`espectro` (FFT e Welch), `picos`, `bandas_iec`, `harmonicos`, `espectrograma`, `medir_regiao`:** parâmetros num dataclass imutável, resultado noutro, sobre as funções que já existem. As contas de frequência recebem o **sinal** (o de `sinal_do_canal`, ou o de um traço com a sua cadeia) e a taxa, não a captura; as longas leem um memmap em lotes, com o progresso e o cancelamento.
 - **Testes de paridade:** a CLI e a API dão os mesmos números nas capturas sintéticas (`tests/capturas_sinteticas.py`).
 
 ### 8.3 As threads

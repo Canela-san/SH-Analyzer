@@ -8,8 +8,8 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F2.1: a `api` da frequência** (seção 4c), a primeira da Fase 2. A Fase 1 está feita e medida: o G1 com 8 faixas
-> passou na tela do usuário em 14/11 (mediana de 8,0 ms, p95 de 9,7 ms; seção 5).
+> **F2.2: a cadeia de transformações, sem Qt** (seção 4c). A F2.1 (a `api` da frequência) está feita: o espectro, os
+> picos, o espectrograma, as bandas IEC e os harmônicos dão os números do `adc_tool` (seção 4c e o diário de 14/11).
 >
 > **Com o usuário (quando puder):** o "pronto quando" da Fase 1, abrir uma captura de 1 h, navegar e medir com 8
 > traços de 2 fontes, em `uv run --extra gui python -m sh_analyzer_gui`.
@@ -93,13 +93,13 @@ da CLI, pela `api`), edita os traços no inspetor (tudo com desfazer), salva e r
 salvamento automático e a recuperação) e tem a paleta de comandos. As seções 4 e 4b têm o commit de cada tarefa.
 
 **Os commits só do motor** (podem ir ao `main` sozinhos): `974c58a` (a `api`), `e76684b` (a integridade e o
-cabeçalho), `64f6e57` (a unidade do canal), `b5b02ab` (as medidas de um trecho). E o do agente da placa: `3f98d7b`.
+cabeçalho), `64f6e57` (a unidade do canal), `b5b02ab` (as medidas de um trecho), `71ba268` (a taxa da PRU) e `98d96e0` (a frequência, F2.1). E o do agente da placa: `3f98d7b`.
 
 **O ambiente:** Python 3.13, PySide6 6.12.0, PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1. Testes, na última rodada:
-`ci.sh rapido` com 1 304 aprovados e `ci.sh interface` com 427.
+`ci.sh rapido` com 1 364 aprovados e `ci.sh interface` com 454 (14/11/2026).
 
-**Ainda não existe:** as transformações (filtros, correção de sonda no traço), as vistas de frequência, as figuras e
-a Aquisição (as Fases 2 em diante).
+**Ainda não existe:** as transformações (filtros, correção de sonda no traço), as vistas de frequência (a `api` delas
+já existe, F2.1), as figuras e a Aquisição.
 
 ---
 
@@ -508,7 +508,24 @@ números batem com a CLI. **Tag v0.9.**
 vistas de frequência (F2.5 a F2.7) dependem da F2.1 e usam a cadeia da F2.2. A F2.8 a F2.10 são independentes entre
 si. A F2.11 fecha.
 
-### ☐ F2.1: a `api` da frequência (commits só do motor)
+### ☑ F2.1: a `api` da frequência (commits só do motor)
+
+**Feita em 14/11/2026:** `71ba268` (a taxa da PRU) e `98d96e0` (a frequência), só do motor; `dc03d91` (o `Cancelado`
+da pirâmide é o do motor). O que ficou diferente do previsto:
+
+- **As contas recebem o sinal, não a captura:** `espectro(sinal, taxa_hz, ParametrosEspectro(...))`, e o mesmo para
+  `espectrograma`, `bandas_iec` e `harmonicos`; `picos(espectro, limiar_db, ...)`. O sinal vem do
+  `sinal_do_canal` ou, na F2.2, da cadeia do traço. O Welch, o espectrograma e as bandas leem um memmap um lote por
+  vez, com `progresso` e `cancelado` (cancelada, a conta levanta `api.Cancelado`).
+- **Além da CLI:** a FFT sem sincronizar (com a Hann), as escalas do `Espectro.niveis` (`db`, `linear`, `rms`,
+  `dbc`), os N maiores picos e a sincronização das bandas por outro sinal (`referencia`: a CLI usa a tensão).
+- **A taxa do canal** passou a ser a que a PRU gera (clock ÷ ticks), como no `adc_tool`; a `api` usava a pedida (a
+  102,4 kHz, 64 ppm de diferença).
+- **Os testes** estão em `tests/test_api_frequencia.py`: a paridade com a CLI de verdade, pelo `.mat` (a precisão
+  inteira), com `--fft`, `--welch`, `--picos`, `--agrupar-bandas`, `--espectrograma`, `--bandas-iec` (fixas,
+  sincronizadas e agregadas) e `--harmonicos`, a 1e-12 relativo.
+
+O plano original:
 
 - **Arquivos:** `supraharmonicos/api.py`; testes em `tests/test_api.py`.
 - **O conteúdo:** parâmetros num dataclass imutável e resultado noutro (plano, 8.2), sobre as funções que já existem:
@@ -773,6 +790,19 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   `~/.local/share/applications/sh-analyzer.desktop` e o ícone em `~/.local/share/icons/hicolor/scalable/apps/`;
   `--remover-atalho` os apaga. O atalho abre esta cópia pelo `uv` com o extra `gui` (o ambiente pode estar sem o
   PySide6 depois de um `uv run` sem o extra). O AppImage (seção 15 do plano) trará o seu.
+- **14/11/2026:** **a F2.1, a `api` da frequência** (seção 4c). Achados no caminho, todos corrigidos no motor:
+  - a `api` usava a taxa pedida, e a CLI usa a que a PRU gera: a 102,4 kHz, a fundamental e o eixo do tempo ficavam
+    64 ppm fora dos da CLI;
+  - com um memmap `float32` (o formato que o cache das transformações deve ter), o Welch e o espectrograma faziam a
+    conta em `float32` e erravam até 0,001 dB; os lotes agora vão a `float64`;
+  - o lote do Welch tinha sempre 2048 segmentos: a 5 Hz de resolução e 200 kS/s, 650 MB de uma vez. Agora tem no
+    máximo ~2 M valores (16 MB); na resolução padrão (200 Hz), nada muda;
+  - as bandas IEC convertiam o trecho inteiro para `float64` de uma vez (5,8 GB numa captura de 1 h); agora, um lote
+    de 64 janelas por vez;
+  - o `capturar_avisos` juntava os avisos de todas as threads e podia deixar o logger do motor em INFO; agora cada
+    coleta fica com os avisos da sua thread.
+  - **Testes:** `ci.sh rapido` com 1 364 aprovados.
+  - **Próximo:** a F2.2, a cadeia de transformações.
 ---
 
 ## 8. Perguntas em aberto
