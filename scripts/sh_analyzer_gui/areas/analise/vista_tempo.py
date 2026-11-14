@@ -9,9 +9,9 @@ ligado entre elas.
 * **O histórico do zoom:** cada parada do zoom ou do pan (400 ms sem mexer) entra no histórico; Backspace volta.
   ``F`` (ou o duplo clique) ajusta a captura inteira.
 * **O minimapa** mostra a captura inteira do primeiro traço e a janela visível; arrastar a janela anda no tempo.
-* **O botão do meio:** arrastar em cima de um traço move só ele (o offset em Y e o deslocamento no tempo, um passo
-  de desfazer por arrasto); em outro lugar, move a vista inteira nas duas direções, sem mudar as escalas. Um clique
-  rápido põe o 0 do eixo Y no meio da faixa e tira o deslocamento em Y do traço clicado (ou dos selecionados nela).
+* **O botão do meio:** arrastar move a vista nas duas direções, sem mudar as escalas, em cima de um traço ou não
+  (os traços não mudam). Um clique rápido põe o 0 do eixo Y no meio da faixa e tira o deslocamento em Y do traço
+  clicado (ou dos selecionados nela).
 * **Os cursores** (``C``): duas linhas verticais, as mesmas em todas as faixas; arrastar uma a move, e as setas
   movem a última mexida amostra a amostra (Shift: 10 amostras). A região a medir (``regiaoMudou``) é a dos cursores
   ou, sem eles, a janela visível; ela sai 250 ms depois da última mudança.
@@ -68,7 +68,6 @@ class VistaDeTempo(QWidget):
         self.cursores: list[float] | None = None
         self._linhas_dos_cursores: list[list[pg.InfiniteLine]] = []
         self._cursor_ativo = 1
-        self._arraste: tuple | None = None          # o arrasto do meio em cima de um traço, em andamento
 
         self._criar_barra()
         self._legenda = QWidget()
@@ -309,8 +308,6 @@ class VistaDeTempo(QWidget):
         faixa.grade = grade
         faixa.ligada_a = None
         caixa.clicada.connect(self._clicou)
-        caixa.arrasteDoMeioComecou.connect(self._meio_comecou)
-        caixa.tracoArrastado.connect(self._traco_arrastado)
         caixa.centroPedido.connect(self._centro_pedido)
         caixa.ajustarPedido.connect(self.ajustar)
         caixa.aplicar_tema(aparencia().tema)
@@ -455,8 +452,8 @@ class VistaDeTempo(QWidget):
             if campos & {"nome", "cor"}:
                 self._refazer_legenda()
             elif campos & {"ganho", "deslocamento_s", "visivel"}:
-                # Só o chip deste traço muda (arrastar o traço muda o deslocamento a cada movimento do mouse:
-                # refazer a legenda inteira a cada passo pesava no arrasto).
+                # Só o chip deste traço muda (arrastar o ganho ou o deslocamento no inspetor muda o traço a cada
+                # passo: refazer a legenda inteira a cada um pesaria).
                 chip.definir(resumo=self._resumo(traco), visivel=r.visivel)
         if "visivel" in campos or "cor" in campos:
             self._refazer_minimapa()
@@ -586,29 +583,6 @@ class VistaDeTempo(QWidget):
         self.tracoClicado.emit(self.traco_em(self.sender(), x, y), modificadores)
 
     # ------------------------------------------------------------------ o botão do meio
-
-    def _meio_comecou(self, x: float, y: float) -> None:
-        """O arrasto do meio começou: em cima de um traço, a caixa passa ao modo de mover só ele."""
-        caixa = self.sender()
-        traco = self.traco_em(caixa, x, y)
-        if traco is None:
-            self._arraste = None
-            return
-        caixa.modo_do_meio = "traco"
-        r = traco.receita
-        self._arraste = (traco, r.offset, r.deslocamento_s, object())    # a marca junta só este gesto
-
-    def _traco_arrastado(self, dx: float, dy: float, terminou: bool) -> None:
-        arraste = getattr(self, "_arraste", None)
-        if arraste is None:
-            return
-        traco, offset, deslocamento, marca = arraste
-        comando = MudarTracos([traco], juntar=marca, texto=self.tr("Mover {}").format(traco.nome),
-                              offset=offset + dy, deslocamento_s=deslocamento + dx)
-        if comando.muda_algo:
-            self.projeto.pilha.push(comando)
-        if terminou:
-            self._arraste = None
 
     def _centro_pedido(self, x: float, y: float) -> None:
         """O clique rápido do meio: o traço clicado (ou os selecionados nesta faixa) perde o deslocamento em Y, e o 0

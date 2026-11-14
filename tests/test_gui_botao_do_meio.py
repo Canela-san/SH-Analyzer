@@ -1,7 +1,7 @@
-"""O botão do meio na vista de tempo (a roda apertada): arrastar em cima de um traço move só ele (o offset e o
-deslocamento no tempo, um passo de desfazer por arrasto); em outro lugar, move a vista inteira sem mudar as escalas;
-um clique rápido põe o 0 do eixo Y no meio da faixa (e tira o offset do traço clicado ou dos selecionados). Sem
-tela: com eventos falsos na caixa e com eventos de mouse de verdade pela cena.
+"""O botão do meio na vista de tempo (a roda apertada): arrastar move a vista inteira, em cima de um traço ou não,
+sem mudar as escalas e sem mudar os traços; um clique rápido põe o 0 do eixo Y no meio da faixa (e tira o offset do
+traço clicado ou dos selecionados). Sem tela: com eventos falsos na caixa e com eventos de mouse de verdade pela
+cena.
 
 Também os gestos em cima dos eixos, que o PyQtGraph repassa à caixa com ``axis=``: a roda e o arrasto mexem só
 naquele eixo, e o clique não mexe na seleção."""
@@ -25,30 +25,19 @@ FS = 200_000
 
 
 class Arrasto:
-    """Um passo de arrasto do PyQtGraph, falso: as posições nas unidades da vista."""
+    """Um passo de arrasto do PyQtGraph, falso: as posições em pixels da caixa."""
 
-    def __init__(self, caixa, inicio, anterior, atual, *, comeca=False, termina=False):
-        self._caixa = caixa
-        self._inicio, self._anterior, self._atual = (caixa.mapFromView(QPointF(*p)) for p in (inicio, anterior, atual))
-        self._comeca, self._termina = comeca, termina
+    def __init__(self, caixa, anterior, atual):
+        self._caixa, self._anterior, self._atual = caixa, anterior, atual
 
     def button(self):
         return Qt.MouseButton.MiddleButton
-
-    def buttonDownScenePos(self):
-        return self._caixa.mapToScene(self._inicio)
 
     def lastScenePos(self):
         return self._caixa.mapToScene(self._anterior)
 
     def scenePos(self):
         return self._caixa.mapToScene(self._atual)
-
-    def isStart(self):
-        return self._comeca
-
-    def isFinish(self):
-        return self._termina
 
     def accept(self):
         pass
@@ -75,15 +64,11 @@ class Clique:
 
 
 def arrastar(caixa, pontos):
-    """Um arrasto falso pelos ``pontos`` (unidades da vista, mapeadas com a vista de antes do arrasto)."""
+    """Um arrasto falso pelos ``pontos`` (unidades da vista, mapeadas para pixels com a vista de antes do arrasto:
+    com a vista andando, o ponto do mouse em pixels fica o mesmo)."""
     passos = [caixa.mapFromView(QPointF(*p)) for p in pontos]
-    pontos_item = [(caixa.mapToView(q).x(), caixa.mapToView(q).y()) for q in passos]
-    for k in range(1, len(pontos_item)):
-        evento = Arrasto(caixa, pontos_item[0], pontos_item[k - 1], pontos_item[k], comeca=k == 1,
-                         termina=k == len(pontos_item) - 1)
-        # Mapeia de novo a cada passo: com a vista andando, o ponto do mouse em pixels fica o mesmo.
-        evento._inicio, evento._anterior, evento._atual = passos[0], passos[k - 1], passos[k]
-        caixa.mouseDragEvent(evento)
+    for k in range(1, len(passos)):
+        caixa.mouseDragEvent(Arrasto(caixa, passos[k - 1], passos[k]))
 
 
 @pytest.fixture
@@ -121,37 +106,23 @@ def ponto_no_traco(fonte, canal, t):
     return t, float(np.asarray(c.amostras[int(round(t * FS))]) * c.escala + c.deslocamento)
 
 
-def test_arrastar_um_traco_move_so_ele_num_passo_de_desfazer(janela, plotado, qtbot):
-    fonte, a, b, vista, caixa = plotado
-    faixa_antes = [v for r in caixa.viewRange() for v in r]
-    contagem = janela.projeto.pilha.count()
-    # O pico de 60 Hz do canal 0, longe do canal 1 (que tem a metade da amplitude).
-    x, y = ponto_no_traco(fonte, 0, 0.05 + 1 / 240)
-    assert vista.traco_em(caixa, x, y) is a
-    arrastar(caixa, [(x, y), (x + 0.001, y + 0.1), (x + 0.002, y + 0.3)])
-    assert a.receita.offset == pytest.approx(0.3, rel=1e-6) and a.receita.deslocamento_s == pytest.approx(0.002)
-    assert b.receita.offset == 0 and b.receita.deslocamento_s == 0               # só ele
-    assert [v for r in caixa.viewRange() for v in r] == pytest.approx(faixa_antes)   # a vista não andou
-    assert janela.projeto.pilha.count() == contagem + 1 and janela.projeto.pilha.undoText() == f"Mover {a.nome}"
-    item = vista.itens[a]
-    assert item._t0 == pytest.approx(0.002) and "2 ms" in vista.chips[a].resumo
-    arrastar(caixa, [(x + 0.002, y + 0.3), (x + 0.002, y + 0.5)])                  # outro arrasto: outro passo
-    assert janela.projeto.pilha.count() == contagem + 2
-    janela.projeto.pilha.undo()
-    janela.projeto.pilha.undo()
-    assert a.receita.offset == 0 and a.receita.deslocamento_s == 0
-
-
-def test_arrastar_fora_dos_tracos_move_a_vista_sem_mudar_a_escala(janela, plotado):
+@pytest.mark.parametrize("onde", ["em cima do traço", "no vazio"])
+def test_arrastar_move_a_vista_sem_mudar_a_escala_nem_os_tracos(janela, plotado, onde):
     fonte, a, b, vista, caixa = plotado
     (x0, x1), (y0, y1) = caixa.viewRange()
-    assert vista.traco_em(caixa, 0.055, y1 * 0.95) is None
+    if onde == "em cima do traço":
+        x, y = ponto_no_traco(fonte, 0, 0.05 + 1 / 240)          # o pico de 60 Hz do canal 0
+        assert vista.traco_em(caixa, x, y) is a
+    else:
+        x, y = 0.055, y1 * 0.95
+        assert vista.traco_em(caixa, x, y) is None
     contagem = janela.projeto.pilha.count()
-    arrastar(caixa, [(0.055, y1 * 0.95), (0.056, y1 * 0.95 - 0.2), (0.057, y1 * 0.95 - 0.4)])
+    arrastar(caixa, [(x, y), (x + 0.001, y - 0.2), (x + 0.002, y - 0.4)])
     (n0, n1), (m0, m1) = caixa.viewRange()
     assert (n1 - n0, m1 - m0) == pytest.approx((x1 - x0, y1 - y0))               # a mesma escala
     assert n0 == pytest.approx(x0 - 0.002, abs=1e-6) and m0 == pytest.approx(y0 + 0.4, abs=1e-6)  # andou
-    assert janela.projeto.pilha.count() == contagem and a.receita.offset == 0     # a vista, não os dados
+    assert janela.projeto.pilha.count() == contagem                              # a vista, não os dados
+    assert (a.receita.offset, a.receita.deslocamento_s, b.receita.offset) == (0, 0, 0)
     for faixa in vista.faixas.values():                                          # o tempo, em todas as faixas
         assert faixa.getViewBox().viewRange()[0] == pytest.approx([n0, n1])
 
@@ -192,17 +163,23 @@ def test_com_eventos_de_mouse_de_verdade(janela, plotado, qtbot):
 
     x, y = ponto_no_traco(fonte, 0, 0.05 + 1 / 720)                # a 30°: 0,5 V (o b está em 0,25 V)
     assert vista.traco_em(caixa, x, y) is a
+    (x0, x1), (y0, y1) = caixa.viewRange()
+    contagem = janela.projeto.pilha.count()
     inicio = pixel(x, y)
     evento(QEvent.Type.MouseButtonPress, inicio, Qt.MouseButton.MiddleButton)
     for k in range(1, 6):
         evento(QEvent.Type.MouseMove, inicio + QPoint(0, -8 * k), Qt.MouseButton.MiddleButton)
     evento(QEvent.Type.MouseButtonRelease, inicio + QPoint(0, -40), Qt.MouseButton.NoButton)
-    assert a.receita.offset > 0 and b.receita.offset == 0                          # subiu só o traço a
-    assert janela.projeto.pilha.undoText() == f"Mover {a.nome}"
-    # Um clique rápido em cima dele: volta ao 0.
+    (n0, n1), (m0, m1) = caixa.viewRange()
+    assert m0 < y0 and m1 - m0 == pytest.approx(y1 - y0)                         # a vista desceu: os dados subiram
+    assert (n0, n1) == pytest.approx((x0, x1))
+    assert janela.projeto.pilha.count() == contagem and a.receita.offset == 0     # o traço não mudou
+    # Um clique rápido em cima de um traço com offset: o offset volta a 0.
+    janela.projeto.pilha.push(MudarTracos([a], offset=0.3))
+    qtbot.waitUntil(lambda: vista.traco_em(caixa, x, y + 0.3) is a)
     chamadas = []
     caixa.centroPedido.connect(lambda cx, cy: chamadas.append((cx, cy, vista.traco_em(caixa, cx, cy))))
-    alvo = pixel(x, y + a.receita.offset)
+    alvo = pixel(x, y + 0.3)
     evento(QEvent.Type.MouseButtonPress, alvo, Qt.MouseButton.MiddleButton)
     evento(QEvent.Type.MouseButtonRelease, alvo, Qt.MouseButton.NoButton)
     assert chamadas, "o clique rápido não chegou à caixa"

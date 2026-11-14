@@ -45,7 +45,6 @@ GESTOS = (
     ("Zoom no eixo Y da faixa", "Ctrl + roda, ou roda em cima dos números do Y"),
     ("Andar no tempo", "Shift + roda, ou arrastar"),
     ("Mover a vista em qualquer direção, sem mudar as escalas", "Arrastar com o botão do meio (a roda apertada)"),
-    ("Mover só um traço (offset e tempo)", "Arrastar com o botão do meio em cima dele"),
     ("O 0 do eixo Y no meio da faixa", "Clique rápido com o botão do meio (em cima de um traço: tira o offset dele)"),
     ("Ajustar tudo", "Duplo clique no gráfico, ou F"),
     ("Voltar ao zoom anterior", "Backspace"),

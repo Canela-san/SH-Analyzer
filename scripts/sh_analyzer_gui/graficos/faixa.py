@@ -7,10 +7,8 @@
   roda, no eixo Y da faixa; Shift + roda anda no tempo; arrastar anda no tempo; o duplo clique ajusta tudo. Um clique
   avisa onde foi (``clicada``), para a vista selecionar o traço mais perto. **Em cima de um eixo,** a roda e o
   arrasto mexem só naquele eixo (a roda nos números do Y dá o zoom no Y sem o Ctrl).
-* **O botão do meio** (a roda apertada): arrastar move, sem mudar as escalas. Começando em cima de um traço, a vista
-  pede o modo ``"traco"`` (``arrasteDoMeioComecou``) e só aquele traço anda (``tracoArrastado``, com o deslocamento
-  total desde o começo); em qualquer outro lugar, anda a vista inteira, nas duas direções. Um clique rápido com ele
-  pede o 0 no meio da faixa (``centroPedido``).
+* **O botão do meio** (a roda apertada): arrastar move a vista nas duas direções, sem mudar as escalas, em cima de
+  um traço ou não (os traços não mudam). Um clique rápido com ele pede o 0 no meio da faixa (``centroPedido``).
 """
 
 from __future__ import annotations
@@ -177,14 +175,11 @@ class CaixaDaFaixa(pg.ViewBox):
 
     clicada = Signal(float, float, object)
     ajustarPedido = Signal()
-    arrasteDoMeioComecou = Signal(float, float)     # onde começou (unidades da vista); a vista diz o modo
-    tracoArrastado = Signal(float, float, bool)     # dx, dy desde o começo; se o arrasto terminou
     centroPedido = Signal(float, float)             # o clique rápido do meio: onde foi
 
     def __init__(self):
         super().__init__(enableMenu=False)
         self.setMouseEnabled(x=True, y=False)          # arrastar anda no tempo; o Y fica onde está
-        self.modo_do_meio = "vista"                    # "vista" (anda tudo) ou "traco" (a vista move um traço)
         self.aplicar_tema(aparencia().tema)
 
     def aplicar_tema(self, t: Tema) -> None:
@@ -233,24 +228,11 @@ class CaixaDaFaixa(pg.ViewBox):
 
     def mouseDragEvent(self, evento, axis=None):
         if evento.button() == Qt.MouseButton.MiddleButton:
+            # Anda a vista nas duas direções (ou só na do eixo arrastado), sem mudar a escala: os dados seguem o mouse.
             evento.accept()
-            inicio = self.mapSceneToView(evento.buttonDownScenePos())
-            if evento.isStart():
-                self.modo_do_meio = "vista"
-                if axis is None:          # em cima de um eixo não há traço: anda a vista, só naquele eixo
-                    self.arrasteDoMeioComecou.emit(inicio.x(), inicio.y())     # a vista pode trocar para "traco"
-            if self.modo_do_meio == "traco":
-                # A vista não anda neste modo: o deslocamento desde o começo vale nas unidades de agora.
-                atual = self.mapSceneToView(evento.scenePos())
-                self.tracoArrastado.emit(atual.x() - inicio.x(), atual.y() - inicio.y(), evento.isFinish())
-            else:
-                # Anda a vista nas duas direções (ou só na do eixo arrastado), sem mudar a escala: os dados seguem o
-                # mouse.
-                anterior = self.mapSceneToView(evento.lastScenePos())
-                atual = self.mapSceneToView(evento.scenePos())
-                dx, dy = anterior.x() - atual.x(), anterior.y() - atual.y()
-                self.translateBy(x=0.0 if axis == 1 else dx, y=0.0 if axis == 0 else dy)
-            if evento.isFinish():
-                self.modo_do_meio = "vista"
+            anterior = self.mapSceneToView(evento.lastScenePos())
+            atual = self.mapSceneToView(evento.scenePos())
+            dx, dy = anterior.x() - atual.x(), anterior.y() - atual.y()
+            self.translateBy(x=0.0 if axis == 1 else dx, y=0.0 if axis == 0 else dy)
             return
         super().mouseDragEvent(evento, axis)

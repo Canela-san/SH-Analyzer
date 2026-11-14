@@ -761,6 +761,11 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     eixo.
   - **Para lembrar:** a 200 kHz por canal, o tom de 130 kHz das capturas B aparece em 70 kHz (acima de Nyquist,
     100 kHz): o pico do espectro do canal 0 da B2 está em 70,0 kHz.
+- **14/11/2026:** o usuário mudou de ideia sobre o botão do meio em cima de um traço: o arrasto ali **não move mais
+  só aquele traço**, move a vista como em qualquer outro lugar (sem mudar as escalas nem os traços). Saíram os sinais
+  `arrasteDoMeioComecou` e `tracoArrastado` da `CaixaDaFaixa` e o modo `"traco"`; o offset e o deslocamento no tempo
+  de um traço continuam no inspetor. O clique rápido do meio segue igual (o 0 no meio da faixa; em cima de um traço,
+  tira o offset dele).
 ---
 
 ## 8. Perguntas em aberto
