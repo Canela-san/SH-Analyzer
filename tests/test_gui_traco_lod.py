@@ -5,7 +5,8 @@ eventos, a conversão afim e, principalmente, a **fidelidade** do desenho (o por
   nela ou numa vizinha. A consulta arredonda as bordas das colunas para blocos da pirâmide (``dados.consulta``), e
   um pico a menos de um bloco da borda de um pixel é desenhado no pixel ao lado: a posição vale com ±1 px;
 * **nada é inventado:** o que foi pintado numa coluna não passa dos extremos dela e das vizinhas;
-* **as colunas estão nos pixels certos:** o centro de cada coluna da consulta cai no seu pixel (sem deslocamento).
+* **as colunas estão nos pixels certos:** o centro de cada coluna da consulta cai no seu pixel (sem deslocamento);
+* **de perto, a linha e os pontos das amostras,** sem virar um bloco cheio na escala enorme do zoom no tempo.
 """
 
 import numpy as np
@@ -195,3 +196,24 @@ def test_sinal_constante_aparece(qtbot, grafico):
     imagem = pixels(mostrar(qtbot, grafico, traco, 0, len(x), -32768, 32767))
     assert (imagem[:, 5:-5] > 64).any(axis=0).all()       # cada coluna aparece, com a altura mínima de 1 px
     assert (imagem[:, 5:-5] > 64).sum(axis=0).max() <= 2  # e não mais que isso
+
+
+def test_de_perto_os_pontos_nao_viram_um_bloco_cheio(qtbot, grafico):
+    """O bug do "retângulo": bem de perto (8 px por amostra ou mais, quando os pontos das amostras aparecem), longe
+    do tempo 0 e com a taxa de 200 kHz, a escala do tempo passa de 10⁶ px/s, e o QPainter pintava com a caneta dos
+    pontos um bloco cheio entre a linha e a primeira amostra. Desenhados em pixels da tela, ficam a linha e os
+    pontos."""
+    taxa = 200_000.0
+    x = np.linspace(0, 20_000, 100_000)                          # uma rampa: o bloco ficava embaixo dela
+    traco = colocar(grafico, x, taxa=taxa, t0=19.5)
+    inicio = 19.5 + 50_000 / taxa
+    fim = inicio + 60 / taxa                                     # 60 amostras em 600 px: 10 px por amostra
+    meio = x[50_030]
+    # 5 px por unidade: a rampa sobe 1 px a cada amostra, 60 px na janela.
+    imagem = pixels(mostrar(qtbot, grafico, traco, inicio, fim, meio - 30, meio + 30))
+    assert isinstance(traco.consulta, Amostras) and traco._pontos
+    acesas = imagem > 64
+    assert acesas.any(axis=0)[5:-5].all()                        # a linha passa por todas as colunas
+    # Cada coluna tem a linha (1 ou 2 px) e, perto das amostras, o ponto (4 px). O bloco cheio ia até 60 px.
+    assert acesas.sum(axis=0).max() <= 12, acesas.sum(axis=0).max()
+    assert acesas.mean() < 0.03, acesas.mean()                   # o bloco cheio pintava ~10 % da imagem

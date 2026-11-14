@@ -1,7 +1,10 @@
 """O botão do meio na vista de tempo (a roda apertada): arrastar em cima de um traço move só ele (o offset e o
 deslocamento no tempo, um passo de desfazer por arrasto); em outro lugar, move a vista inteira sem mudar as escalas;
 um clique rápido põe o 0 do eixo Y no meio da faixa (e tira o offset do traço clicado ou dos selecionados). Sem
-tela: com eventos falsos na caixa e com eventos de mouse de verdade pela cena."""
+tela: com eventos falsos na caixa e com eventos de mouse de verdade pela cena.
+
+Também os gestos em cima dos eixos, que o PyQtGraph repassa à caixa com ``axis=``: a roda e o arrasto mexem só
+naquele eixo, e o clique não mexe na seleção."""
 
 import numpy as np
 import pytest
@@ -12,7 +15,7 @@ pytest.importorskip("pytestqt")
 from capturas_sinteticas import escrever_bin  # noqa: E402
 from dialogos_falsos import DialogosFalsos  # noqa: E402
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
-from PySide6.QtGui import QMouseEvent  # noqa: E402
+from PySide6.QtGui import QMouseEvent, QWheelEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from sh_analyzer_gui.app import criar_aplicacao  # noqa: E402
 from sh_analyzer_gui.janela import JanelaPrincipal  # noqa: E402
@@ -32,14 +35,14 @@ class Arrasto:
     def button(self):
         return Qt.MouseButton.MiddleButton
 
-    def buttonDownPos(self):
-        return self._inicio
+    def buttonDownScenePos(self):
+        return self._caixa.mapToScene(self._inicio)
 
-    def lastPos(self):
-        return self._anterior
+    def lastScenePos(self):
+        return self._caixa.mapToScene(self._anterior)
 
-    def pos(self):
-        return self._atual
+    def scenePos(self):
+        return self._caixa.mapToScene(self._atual)
 
     def isStart(self):
         return self._comeca
@@ -53,13 +56,13 @@ class Arrasto:
 
 class Clique:
     def __init__(self, caixa, ponto):
-        self._pos = caixa.mapFromView(QPointF(*ponto))
+        self._cena = caixa.mapToScene(caixa.mapFromView(QPointF(*ponto)))
 
     def button(self):
         return Qt.MouseButton.MiddleButton
 
-    def pos(self):
-        return self._pos
+    def scenePos(self):
+        return self._cena
 
     def double(self):
         return False
@@ -204,3 +207,52 @@ def test_com_eventos_de_mouse_de_verdade(janela, plotado, qtbot):
     evento(QEvent.Type.MouseButtonRelease, alvo, Qt.MouseButton.NoButton)
     assert chamadas, "o clique rápido não chegou à caixa"
     assert a.receita.offset == 0, (chamadas, x, y)
+
+
+def test_em_cima_dos_eixos_a_roda_e_o_arrasto_mexem_so_naquele_eixo(janela, plotado):
+    """A roda nos números do Y dava ``TypeError`` (``wheelEvent() got an unexpected keyword argument 'axis'``)."""
+    fonte, a, b, vista, caixa = plotado
+    faixa = vista.faixas[0]
+    porta = vista.grafico.viewport()
+
+    def no_eixo(lado) -> QPoint:
+        eixo = faixa.getAxis(lado)
+        return vista.grafico.mapFromScene(eixo.mapToScene(eixo.boundingRect().center()))
+
+    def roda(ponto: QPoint, passos=1):
+        QApplication.sendEvent(porta, QWheelEvent(QPointF(ponto), QPointF(porta.mapToGlobal(ponto)), QPoint(0, 0),
+                                                  QPoint(0, 120 * passos), Qt.MouseButton.NoButton,
+                                                  Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase,
+                                                  False))
+
+    def mouse(tipo, ponto: QPoint, botao, botoes):
+        QApplication.sendEvent(porta, QMouseEvent(tipo, QPointF(ponto), QPointF(porta.mapToGlobal(ponto)), botao,
+                                                  botoes, Qt.KeyboardModifier.NoModifier))
+
+    (x0, x1), (y0, y1) = caixa.viewRange()
+    roda(no_eixo("left"))                                        # no Y: zoom só no Y, sem o Ctrl
+    (n0, n1), (m0, m1) = caixa.viewRange()
+    assert (n0, n1) == pytest.approx((x0, x1)) and m1 - m0 == pytest.approx((y1 - y0) / 1.2)
+    roda(no_eixo("bottom"))                                      # no tempo: zoom só no tempo
+    (p0, p1), (q0, q1) = caixa.viewRange()
+    assert p1 - p0 == pytest.approx((x1 - x0) / 1.2) and (q0, q1) == pytest.approx((m0, m1))
+
+    # O botão do meio arrastado nos números do Y: a vista anda só no Y, e nenhum traço muda.
+    contagem = janela.projeto.pilha.count()
+    inicio = no_eixo("left")
+    mouse(QEvent.Type.MouseButtonPress, inicio, Qt.MouseButton.MiddleButton, Qt.MouseButton.MiddleButton)
+    for k in range(1, 6):
+        mouse(QEvent.Type.MouseMove, inicio + QPoint(6 * k, -8 * k), Qt.MouseButton.NoButton,
+              Qt.MouseButton.MiddleButton)
+    mouse(QEvent.Type.MouseButtonRelease, inicio + QPoint(30, -40), Qt.MouseButton.MiddleButton,
+          Qt.MouseButton.NoButton)
+    (r0, r1), (s0, s1) = caixa.viewRange()
+    assert (r0, r1) == pytest.approx((p0, p1)) and s0 < q0 and s1 - s0 == pytest.approx(q1 - q0)
+    assert janela.projeto.pilha.count() == contagem
+
+    # Um clique nos números não tira a seleção.
+    janela.selecao.definir([a])
+    ponto = no_eixo("left")
+    mouse(QEvent.Type.MouseButtonPress, ponto, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton)
+    mouse(QEvent.Type.MouseButtonRelease, ponto, Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton)
+    assert list(janela.selecao.tracos) == [a]

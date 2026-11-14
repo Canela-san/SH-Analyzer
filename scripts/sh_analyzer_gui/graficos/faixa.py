@@ -5,7 +5,8 @@
   PyQtGraph custava ~17 ms por quadro no protótipo);
 * :class:`CaixaDaFaixa`: a ``ViewBox`` com os gestos do plano: a roda dá zoom no tempo, centrado no cursor; Ctrl +
   roda, no eixo Y da faixa; Shift + roda anda no tempo; arrastar anda no tempo; o duplo clique ajusta tudo. Um clique
-  avisa onde foi (``clicada``), para a vista selecionar o traço mais perto.
+  avisa onde foi (``clicada``), para a vista selecionar o traço mais perto. **Em cima de um eixo,** a roda e o
+  arrasto mexem só naquele eixo (a roda nos números do Y dá o zoom no Y sem o Ctrl).
 * **O botão do meio** (a roda apertada): arrastar move, sem mudar as escalas. Começando em cima de um traço, a vista
   pede o modo ``"traco"`` (``arrasteDoMeioComecou``) e só aquele traço anda (``tracoArrastado``, com o deslocamento
   total desde o começo); em qualquer outro lugar, anda a vista inteira, nas duas direções. Um clique rápido com ele
@@ -189,31 +190,36 @@ class CaixaDaFaixa(pg.ViewBox):
     def aplicar_tema(self, t: Tema) -> None:
         self.setBackgroundColor(QColor(t.afundada))
 
-    def wheelEvent(self, evento, eixo=None):
+    # Os eventos que vêm de um eixo (a roda ou o arrasto em cima dos números) chegam aqui repassados pelo PyQtGraph,
+    # com ``axis`` (o nome dele) = 0 para o tempo ou 1 para o Y, e com ``pos()`` nas coordenadas do eixo, não da
+    # caixa. Por isso as posições saem sempre da cena (``scenePos``), que vale para os dois casos.
+
+    def wheelEvent(self, evento, axis=None):
+        """A roda na caixa (ver o começo do arquivo) ou em cima de um eixo: no do tempo, o zoom (ou, com Shift, o
+        passo) é só no tempo; no do Y, o zoom é só no Y da faixa, sem precisar do Ctrl."""
         modificadores = evento.modifiers()
         passo = evento.delta() / 120.0
-        if modificadores & Qt.KeyboardModifier.ShiftModifier:
+        fator = FATOR_DA_RODA ** -passo
+        centro = self.mapSceneToView(evento.scenePos())
+        if axis == 1 or (axis is None and modificadores & Qt.KeyboardModifier.ControlModifier):
+            self.scaleBy(y=fator, center=centro)
+        elif modificadores & Qt.KeyboardModifier.ShiftModifier:
             (x0, x1), _ = self.viewRange()
             self.translateBy(x=-(x1 - x0) * 0.1 * passo)
         else:
-            fator = FATOR_DA_RODA ** -passo
-            centro = self.mapToView(evento.pos())
-            if modificadores & Qt.KeyboardModifier.ControlModifier:
-                self.scaleBy(y=fator, center=centro)
-            else:
-                self.scaleBy(x=fator, center=centro)
+            self.scaleBy(x=fator, center=centro)
         evento.accept()
 
     def mouseClickEvent(self, evento):
+        ponto = self.mapSceneToView(evento.scenePos())
         if evento.button() == Qt.MouseButton.LeftButton:
             if evento.double():
                 self.ajustarPedido.emit()
-            else:
-                ponto = self.mapToView(evento.pos())
+            elif self.sceneBoundingRect().contains(evento.scenePos()):
+                # Um clique em cima de um eixo não seleciona nada (nem tira a seleção).
                 self.clicada.emit(ponto.x(), ponto.y(), evento.modifiers())
             evento.accept()
         elif evento.button() == Qt.MouseButton.MiddleButton:
-            ponto = self.mapToView(evento.pos())
             self.centroPedido.emit(ponto.x(), ponto.y())
             evento.accept()
         else:
@@ -225,22 +231,26 @@ class CaixaDaFaixa(pg.ViewBox):
         meia = (y1 - y0) / 2
         self.setYRange(-meia, meia, padding=0)
 
-    def mouseDragEvent(self, evento, eixo=None):
+    def mouseDragEvent(self, evento, axis=None):
         if evento.button() == Qt.MouseButton.MiddleButton:
             evento.accept()
-            inicio = self.mapToView(evento.buttonDownPos())
+            inicio = self.mapSceneToView(evento.buttonDownScenePos())
             if evento.isStart():
                 self.modo_do_meio = "vista"
-                self.arrasteDoMeioComecou.emit(inicio.x(), inicio.y())     # a vista pode trocar para "traco"
+                if axis is None:          # em cima de um eixo não há traço: anda a vista, só naquele eixo
+                    self.arrasteDoMeioComecou.emit(inicio.x(), inicio.y())     # a vista pode trocar para "traco"
             if self.modo_do_meio == "traco":
                 # A vista não anda neste modo: o deslocamento desde o começo vale nas unidades de agora.
-                atual = self.mapToView(evento.pos())
+                atual = self.mapSceneToView(evento.scenePos())
                 self.tracoArrastado.emit(atual.x() - inicio.x(), atual.y() - inicio.y(), evento.isFinish())
             else:
-                # Anda a vista inteira nas duas direções, sem mudar a escala: os dados seguem o mouse.
-                anterior, atual = self.mapToView(evento.lastPos()), self.mapToView(evento.pos())
-                self.translateBy(x=anterior.x() - atual.x(), y=anterior.y() - atual.y())
+                # Anda a vista nas duas direções (ou só na do eixo arrastado), sem mudar a escala: os dados seguem o
+                # mouse.
+                anterior = self.mapSceneToView(evento.lastScenePos())
+                atual = self.mapSceneToView(evento.scenePos())
+                dx, dy = anterior.x() - atual.x(), anterior.y() - atual.y()
+                self.translateBy(x=0.0 if axis == 1 else dx, y=0.0 if axis == 0 else dy)
             if evento.isFinish():
                 self.modo_do_meio = "vista"
             return
-        super().mouseDragEvent(evento, eixo)
+        super().mouseDragEvent(evento, axis)

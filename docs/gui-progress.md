@@ -746,6 +746,21 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     focused") são do plugin de Wayland do Qt, a cada troca de foco entre superfícies; o aplicativo silencia essa
     categoria (`QT_LOGGING_RULES` ainda a liga de volta).
 - **14/11/2026:** a Fase 2 quebrada em tarefas (seção 4c). **Próximo:** a F2.1.
+- **14/11/2026:** dois defeitos que o usuário achou testando com a B2 do laboratório (60 Hz + 130 kHz, 200 kHz por
+  canal):
+  - **A onda virava um "retângulo" de perto,** de um passo da roda para o outro: a partir de 8 px por amostra (os
+    pontos das amostras), o QPainter, com a caneta de 4 px dos pontos e a escala do tempo acima de 10⁶ px/s,
+    pintava um bloco cheio entre a linha e a primeira amostra (isolado num `QImage`: 140 pontos acendiam 49 923 px
+    em vez de ~1 800). Não depende do tempo da janela, só da escala. O `TracoLOD` agora passa a linha e os pontos
+    das amostras para pixels da tela no NumPy e os desenha sem a transformação da vista; a envoltória (de longe)
+    continua como estava. Teste: `test_de_perto_os_pontos_nao_viram_um_bloco_cheio`.
+  - **A roda em cima dos números dos eixos dava `TypeError`:** o `AxisItem` do PyQtGraph repassa a roda e o
+    arrasto à caixa com `axis=`, e a `CaixaDaFaixa` não aceitava. Agora, em cima de um eixo, a roda e o arrasto
+    mexem só naquele eixo (a roda nos números do Y dá o zoom no Y sem o Ctrl), e um clique ali não mexe na seleção.
+    As posições da caixa saem sempre da cena (`scenePos`): o `pos()` de um evento repassado está nas coordenadas do
+    eixo.
+  - **Para lembrar:** a 200 kHz por canal, o tom de 130 kHz das capturas B aparece em 70 kHz (acima de Nyquist,
+    100 kHz): o pico do espectro do canal 0 da B2 está em 70,0 kHz.
 ---
 
 ## 8. Perguntas em aberto

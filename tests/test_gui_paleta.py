@@ -89,6 +89,6 @@ def test_a_lista_dos_atalhos(janela):
     linhas = dict(dialogo.linhas)
     assert linhas["Paleta de comandos"] == "Ctrl+K" and linhas["Salvar o projeto"] == "Ctrl+S"
     assert linhas["Mostrar ou recolher o painel: Projeto"] == "Ctrl+B"
-    assert "Roda" in linhas.values() and "Ctrl + roda" in linhas.values()
+    assert "Roda" in linhas.values() and "Ctrl + roda, ou roda em cima dos números do Y" in linhas.values()
     assert janela.acoes["atalhos"].shortcut().toString() == "Ctrl+/"
     dialogo.close()

@@ -680,6 +680,7 @@ Todos os painéis laterais se recolhem (Ctrl+B, Ctrl+I, Ctrl+J), e o layout é s
 | Arrastar com o botão do meio (a roda apertada) | Move a vista em qualquer direção, sem mudar as escalas (o tempo em todas as faixas, o Y na faixa) |
 | Arrastar com o botão do meio em cima de um traço | Move só aquele traço: o offset em Y e o deslocamento no tempo (desfazível, um passo por arrasto) |
 | Clique rápido com o botão do meio | O 0 do eixo Y no meio da faixa, com a mesma escala; em cima de um traço (ou com traços selecionados), tira o offset dele |
+| Roda ou arrasto em cima dos números de um eixo | Mexe só naquele eixo: a roda nos números do Y dá o zoom no Y (sem o Ctrl); nos do tempo, no tempo |
 | Arrastar sobre um eixo | Zoom só naquele eixo |
 | `Z` + arrastar | Zoom em caixa |
 | Duplo clique, ou `F` | Ajustar tudo |

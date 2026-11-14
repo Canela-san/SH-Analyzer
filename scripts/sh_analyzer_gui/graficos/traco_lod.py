@@ -13,6 +13,11 @@ vista, pede à camada de dados (``dados.consulta``) só o que cabe nas colunas d
 * **de perto** (até 2 amostras por coluna), a linha que passa pelas amostras, com 1 px e antialiasing, e os pontos
   das amostras a partir de :data:`PIXELS_POR_AMOSTRA_PONTOS` pixels por amostra.
 
+**De perto, o desenho é em pixels da tela:** a linha e os pontos das amostras passam para pixels aqui (a conta é do
+NumPy) e vão ao QPainter sem a transformação da vista. Bem de perto, a escala do tempo passa de um milhão de pixels
+por segundo, e o QPainter, com a caneta larga dos pontos nessa escala, pintava um bloco cheio entre as amostras em
+vez dos pontos (o "retângulo" que aparecia de um passo da roda para o outro, com 8 pixels por amostra ou mais).
+
 **A linha tem sempre 1 px na tela** (caneta cosmética): linha mais grossa com antialiasing custa até 100 s por quadro
 no QPainter. A espessura de publicação é propriedade da figura (seção 10), não da tela. As colunas são de pixel do
 dispositivo (em tela com escala de 200 %, o dobro das lógicas), e a caneta tem 1 pixel do dispositivo.
@@ -110,8 +115,9 @@ class TracoLOD(pg.GraphicsObject):
         self._cor = QColor(cor)
         self._consulta: Amostras | Envoltoria | None = None
         self._colunas: QPainterPath | None = None   # as linhas verticais da envoltória (aos pares)
-        self._linhas: list[QPolygonF] = []          # a linha das amostras, um trecho por pedaço finito
-        self._pontos: list[QPolygonF] = []
+        # A linha das amostras, um trecho (x, y) por pedaço finito, nas unidades da vista: vai para pixels ao pintar.
+        self._linhas: list[tuple[np.ndarray, np.ndarray]] = []
+        self._pontos = False                        # os pontos das amostras também
         self._dpr = 1.0
         self._sujo = False               # escondido quando a vista mudou: consulta ao aparecer
         self.recalculos = 0              # quantas consultas foram feitas (para os testes e o medidor de quadros)
@@ -225,7 +231,7 @@ class TracoLOD(pg.GraphicsObject):
                                 self._escala, self._deslocamento)
         self.recalculos += 1
         self._consulta = consulta
-        self._colunas, self._linhas, self._pontos = None, [], []
+        self._colunas, self._linhas, self._pontos = None, [], False
         if isinstance(consulta, Envoltoria) and len(consulta):
             centros = self._t0 + (consulta.bordas[:-1] + consulta.bordas[1:] - 1) / (2 * self._taxa)
             # 1 pixel do dispositivo, em unidades de y. Direto da faixa visível e da altura da caixa: o
@@ -236,11 +242,9 @@ class TracoLOD(pg.GraphicsObject):
             self._colunas = fn.arrayToQPath(x, y, connect="pairs", finiteCheck=False) if len(x) else None
         elif isinstance(consulta, Amostras) and len(consulta):
             x = self._t0 + consulta.indices / self._taxa
-            for a, b in _trechos_finitos(consulta.valores):
-                self._linhas.append(_poligono(x[a:b], consulta.valores[a:b]))
+            self._linhas = [(x[a:b], consulta.valores[a:b]) for a, b in _trechos_finitos(consulta.valores)]
             pixels_por_amostra = colunas / max((x1 - x0) * self._taxa, 1e-12)
-            if pixels_por_amostra >= PIXELS_POR_AMOSTRA_PONTOS:
-                self._pontos = self._linhas
+            self._pontos = pixels_por_amostra >= PIXELS_POR_AMOSTRA_PONTOS
         self.update()
 
     # ------------------------------------------------------------------ o desenho
@@ -258,17 +262,25 @@ class TracoLOD(pg.GraphicsObject):
             p.setPen(caneta)
             p.drawPath(self._colunas)
             return
+        # A linha e os pontos em pixels da tela (ver o começo do arquivo): a transformação da vista vai para o NumPy,
+        # e o QPainter desenha sem ela. O recorte da caixa continua valendo (ele é da tela, não da transformação).
+        t = p.transform()
+        poligonos = [_poligono(x * t.m11() + y * t.m21() + t.dx(), x * t.m12() + y * t.m22() + t.dy())
+                     for x, y in self._linhas]
+        p.save()
+        p.resetTransform()
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setPen(caneta)
-        for linha in self._linhas:
-            p.drawPolyline(linha)
+        for poligono in poligonos:
+            p.drawPolyline(poligono)
         if self._pontos:
             ponto = QPen(self._cor, 4.0 / self._dpr)
             ponto.setCosmetic(True)
             ponto.setCapStyle(Qt.PenCapStyle.RoundCap)
             p.setPen(ponto)
-            for pontos in self._pontos:
-                p.drawPoints(pontos)
+            for poligono in poligonos:
+                p.drawPoints(poligono)
+        p.restore()
 
     def ponto_mais_proximo(self, x: float) -> QPointF | None:
         """O ponto desenhado mais perto do tempo ``x`` (para a dica de valor): o centro da coluna ou a amostra."""
