@@ -277,20 +277,32 @@ class MedidasDaRegiao:
 
 def medir_regiao(captura: Captura, canal: int, inicio: int, fim: int, *, corrigir_sonda: bool = False,
                  ganho: float = 1.0, offset: float = 0.0, freq_min: float = FREQ_MIN_FUNDAMENTAL,
-                 freq_max: float = FREQ_MAX_FUNDAMENTAL) -> MedidasDaRegiao:
+                 freq_max: float = FREQ_MAX_FUNDAMENTAL, fundamental: bool = True) -> MedidasDaRegiao:
     """As medidas das amostras ``[inicio, fim)`` de ``canal`` (nunca do desenho): a média, os RMS, os extremos e a
     fundamental, pelas mesmas contas da CLI (``metricas_captura.calcular_basicas`` e
     ``fundamental.cruzamentos_da_fundamental``, a busca do ``--fft``). ``ganho`` e ``offset`` são os do traço,
     aplicados depois da conversão do canal. Levanta ``ErroSHAN`` com menos de 2 amostras; um trecho sem fundamental
-    só deixa ``f1_hz`` vazio, com o motivo."""
+    só deixa ``f1_hz`` vazio, com o motivo. Com ``fundamental=False``, a f1 não é calculada (ela é a conta cara:
+    ~1 s a cada 4 M amostras, contra ~0,02 s das outras)."""
     c = captura.canal(canal)
     sinal = sinal_do_canal(captura, canal, inicio, fim, corrigir_sonda=corrigir_sonda) * ganho + offset
     basicas = calcular_basicas(sinal, c.taxa_hz)
-    try:
-        _, f1, problema = *cruzamentos_da_fundamental(sinal, c.taxa_hz, freq_min, freq_max), ""
-    except ErroSHAN as e:
-        f1, problema = None, str(e)
+    if not fundamental:
+        f1, problema = None, "a fundamental não foi calculada neste trecho"
+    else:
+        try:
+            _, f1, problema = *cruzamentos_da_fundamental(sinal, c.taxa_hz, freq_min, freq_max), ""
+        except ErroSHAN as e:
+            f1, problema = None, str(e)
     return MedidasDaRegiao(
         n_amostras=basicas.n_amostras, duracao_s=basicas.duracao_s, media=basicas.media, rms=basicas.rms_total,
         rms_ac=basicas.rms_ac, minimo=basicas.minimo, maximo=basicas.maximo, pico_a_pico=basicas.pico_a_pico,
         pico=max(abs(basicas.minimo), abs(basicas.maximo)), f1_hz=f1, problema_f1=problema)
+
+
+def aquecer() -> None:
+    """Importa agora os módulos que as contas importam sob demanda (o SciPy da fundamental e do espectro). A
+    interface chama isto em segundo plano logo depois de abrir: a primeira medida não paga a importação (~1,5 s,
+    com o GIL preso), que antes travava a tela aos pedaços."""
+    import scipy.fft  # noqa: F401
+    import scipy.signal  # noqa: F401

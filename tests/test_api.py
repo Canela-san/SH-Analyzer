@@ -192,3 +192,15 @@ def test_medir_regiao_igual_as_contas_da_cli(tmp_path):
     assert sem.f1_hz is None and sem.problema_f1
     with pytest.raises(ErroSHAN):
         medir_regiao(captura, 0, 5, 6)
+
+
+def test_medir_regiao_sem_a_fundamental(tmp_path):
+    from supraharmonicos.api import abrir_captura, aquecer, medir_regiao
+
+    aquecer()
+    t = np.arange(100_000) / 200_000
+    captura = abrir_captura(escrever_bin(tmp_path / "c.bin", [np.sin(2 * np.pi * 60 * t), np.zeros_like(t)],
+                                         versao=9), sondas_dir=tmp_path)
+    com, sem = medir_regiao(captura, 0, 0, 100_000), medir_regiao(captura, 0, 0, 100_000, fundamental=False)
+    assert com.f1_hz == pytest.approx(60, abs=0.01) and sem.f1_hz is None and "não foi calculada" in sem.problema_f1
+    assert (sem.media, sem.rms, sem.pico_a_pico) == (com.media, com.rms, com.pico_a_pico)
