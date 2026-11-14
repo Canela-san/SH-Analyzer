@@ -14,6 +14,7 @@ from shiboken6 import isValid
 
 from ...componentes.avisos import ListaDeAvisos
 from ...componentes.numeros import formatar_si
+from ...dados.espectros import OpcoesDoEspectro
 from ...dados.receita import ReceitaDoTraco
 from ...modelo.comandos import AdicionarTraco, AdicionarVista, RemoverFonte, RemoverTracos, RemoverVista
 from ...modelo.objetos import FonteDoProjeto, Projeto, Traco, Vista
@@ -23,6 +24,7 @@ from ...tema.icones import IconeDoTema, icone
 from .arvore import PainelDoProjeto
 from .inspetor import TEXTOS_DA_INTEGRIDADE, Inspetor
 from .medidas import TabelaDeMedidas
+from .vista_espectro import VistaDeEspectro
 from .vista_tempo import VistaDeTempo
 
 NOME_DA_PRIMEIRA_VISTA = "Tempo"
@@ -99,13 +101,59 @@ class AreaDeAnalise(QObject):
         widget = self.abas.currentWidget()
         return getattr(widget, "vista", None)
 
+    def _vista_de_tempo_por_id(self, vista_id: str | None) -> VistaDeTempo | None:
+        """O widget da vista de tempo de ``vista_id`` (sem ela, o da primeira vista de tempo do projeto)."""
+        tempos = [v for v in self.projeto.vistas if v.tipo == "tempo"]
+        vista = next((v for v in tempos if v.id == vista_id), tempos[0] if tempos else None)
+        return self.widget_da_vista(vista) if vista is not None else None
+
+    def abrir_espectro(self) -> Vista | None:
+        """Uma vista de espectro ligada à vista de tempo aberta (ou à que a vista de espectro aberta segue)."""
+        ativa = self.janela.vista_ativa()
+        if ativa is not None and ativa.tipo == "espectro":
+            ativa = next((v for v in self.projeto.vistas if v.id == ativa.opcoes.vista_de_tempo), None)
+        if ativa is None:
+            ativa = next((v for v in self.projeto.vistas if v.tipo == "tempo"), None)
+        if ativa is None:
+            return None
+        nomes = {v.nome for v in self.projeto.vistas}
+        nome, n = self.tr("Espectro de {}").format(ativa.nome), 2
+        base = nome
+        while nome in nomes:
+            nome, n = f"{base} {n}", n + 1
+        vista = Vista(nome, "espectro", opcoes=OpcoesDoEspectro(vista_de_tempo=ativa.id))
+        self.projeto.pilha.push(AdicionarVista(self.projeto, vista))
+        return vista
+
     def _vista_entrou(self, vista: Vista, i: int) -> None:
+        if vista.tipo == "espectro":
+            self._vista_de_espectro_entrou(vista, i)
+            return
         widget = VistaDeTempo(vista, self.projeto, self.janela.selecao, materializacoes=self.janela.materializacoes)
         widget.tracoClicado.connect(self._traco_clicado)
         widget.regiaoMudou.connect(self._regiao_mudou)
         widget.semRegiao.connect(self._sem_regiao)
         self.abas.insertTab(i, widget, icone("onda", aparencia().tema.texto2), vista.nome)
         # O botão de fechar com o ícone do tema (o do estilo destoava); fecha a aba dele, onde ela estiver.
+        fechar = QToolButton()
+        fechar.setObjectName("fechar_aba")
+        fechar.setProperty("variante", "fantasma")
+        fechar.setAutoRaise(True)
+        fechar.setIconSize(QSize(12, 12))
+        fechar.setFixedSize(QSize(18, 18))
+        fechar.setToolTip(self.tr("Fechar a vista (desfazível)"))
+        IconeDoTema(fechar, "x", tamanho=12)
+        fechar.clicked.connect(lambda _=False, w=widget: self._fechar_aba(self.abas.indexOf(w)))
+        self.abas.tabBar().setTabButton(i, QTabBar.ButtonPosition.RightSide, fechar)
+        self.abas.setCurrentIndex(i)
+
+    def _vista_de_espectro_entrou(self, vista: Vista, i: int) -> None:
+        widget = VistaDeEspectro(vista, self.projeto, self.janela.selecao, tarefas=self.janela.tarefas,
+                                 materializacoes=self.janela.materializacoes,
+                                 vista_de_tempo=self._vista_de_tempo_por_id)
+        widget.tracoClicado.connect(self._traco_clicado)
+        widget.semRegiao.connect(self._sem_regiao)
+        self.abas.insertTab(i, widget, icone("espectro", aparencia().tema.texto2), vista.nome)
         fechar = QToolButton()
         fechar.setObjectName("fechar_aba")
         fechar.setProperty("variante", "fantasma")
@@ -276,6 +324,9 @@ class AreaDeAnalise(QObject):
         desfazer, mesmo quando cria a vista."""
         projeto = self.projeto
         vista = vista or self.janela.vista_ativa()
+        if vista is not None and vista.tipo != "tempo":       # o espectro segue uma vista de tempo: o traço vai nela
+            tempos = [v for v in projeto.vistas if v.tipo == "tempo"]
+            vista = next((v for v in tempos if v.id == vista.opcoes.vista_de_tempo), tempos[0] if tempos else None)
         nome = nome_do_traco(fonte, numero)
         projeto.pilha.beginMacro(self.tr("Plotar {}").format(nome))
         try:

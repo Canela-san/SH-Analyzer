@@ -202,6 +202,8 @@ class JanelaPrincipal(QMainWindow):
         self._acao("salvar_como", self.tr("Salvar o projeto como…"),
                    atalho="Ctrl+Shift+S").triggered.connect(lambda: controle.salvar_como())
         self._acao("nova_vista", self.tr("Nova vista"), icone="mais").triggered.connect(lambda: self.area.nova_vista())
+        self._acao("espectro", self.tr("Abrir o espectro da vista"), atalho="Ctrl+E",
+                   icone="espectro").triggered.connect(lambda: self.area.abrir_espectro())
         a = self._acao("remover_selecionados", self.tr("Remover os traços selecionados"),
                        atalho=QKeySequence.StandardKey.Delete)
         a.triggered.connect(lambda: self.area.remover_selecionados())

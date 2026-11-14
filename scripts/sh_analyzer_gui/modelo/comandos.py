@@ -180,6 +180,32 @@ class RenomearVista(QUndoCommand):
         self.vista._definir_nome(self.antes)
 
 
+class MudarOpcoesDaVista(QUndoCommand):
+    """Troca as opções de uma vista de espectro (a escala, o método, o trecho...). Com ``juntar``, mudanças seguidas
+    da mesma vista viram um passo só (arrastar a resolução não enche a pilha)."""
+
+    ID = 4101
+
+    def __init__(self, vista: Vista, opcoes, *, texto: str | None = None, juntar: bool = False):
+        super().__init__(texto or f"Opções do espectro {vista.nome}")
+        self.vista, self.antes, self.depois, self.juntar = vista, vista.opcoes, opcoes, juntar
+
+    def id(self) -> int:
+        return self.ID if self.juntar else -1
+
+    def mergeWith(self, outro) -> bool:
+        if not isinstance(outro, MudarOpcoesDaVista) or outro.vista is not self.vista:
+            return False
+        self.depois = outro.depois
+        return True
+
+    def redo(self) -> None:
+        self.vista._definir_opcoes(self.depois)
+
+    def undo(self) -> None:
+        self.vista._definir_opcoes(self.antes)
+
+
 class AdicionarFonte(QUndoCommand):
     """Põe uma captura aberta no projeto. Plotar os canais é outro passo (``AdicionarTraco``)."""
 

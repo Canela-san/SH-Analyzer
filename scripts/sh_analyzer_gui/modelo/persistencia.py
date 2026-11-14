@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from ..dados.captura import Aviso, ErroSHAN, Fonte, abrir_fonte, crc_das_amostras
+from ..dados.espectros import OpcoesDoEspectro
 from ..dados.projeto import (
     FonteSalva,
     ProjetoSalvo,
@@ -36,7 +37,8 @@ def descrever_fonte(fonte: FonteDoProjeto, pasta: Path) -> FonteSalva:
 def descrever(projeto: Projeto, pasta: Path, *, layout: dict[str, str] | None = None,
               versao_do_aplicativo: str = "") -> ProjetoSalvo:
     """O projeto como vai para o arquivo; os caminhos das capturas ficam relativos a ``pasta`` (a do projeto)."""
-    vistas = tuple(VistaSalva(v.id, v.nome, v.tipo, tuple(TracoSalvo(t.id, t.receita) for t in v.tracos))
+    vistas = tuple(VistaSalva(v.id, v.nome, v.tipo, tuple(TracoSalvo(t.id, t.receita) for t in v.tracos),
+                              v.opcoes.para_dict() if v.opcoes is not None else {})
                    for v in projeto.vistas)
     return ProjetoSalvo(tuple(descrever_fonte(f, Path(pasta)) for f in projeto.fontes), vistas, dict(layout or {}),
                         versao_do_aplicativo)
@@ -70,7 +72,8 @@ def montar(salvo: ProjetoSalvo, caminho: Path | None, pasta: Path, *,
                     avisos.append(Aviso("info", f"{origem.nome}: reencontrada pelo CRC em {local}"))
         projeto._inserir_fonte(fonte if fonte is not None else FonteDoProjeto.ausente(origem))
     for salva in salvo.vistas:
-        vista = Vista(salva.nome, salva.tipo, salva.id)
+        vista = Vista(salva.nome, salva.tipo, salva.id,
+                      OpcoesDoEspectro.de_dict(salva.opcoes) if salva.tipo == "espectro" else None)
         for t in salva.tracos:
             vista._inserir(Traco(t.receita, t.id))
         projeto._inserir_vista(vista)

@@ -24,6 +24,7 @@ from PySide6.QtGui import QUndoStack
 from shiboken6 import isValid
 
 from ..dados.captura import CanalDaCaptura, Fonte
+from ..dados.espectros import OpcoesDoEspectro
 from ..dados.projeto import TIPOS_DE_VISTA, FonteSalva
 from ..dados.receita import ReceitaDoTraco, proxima_cor
 
@@ -70,7 +71,7 @@ class Vista(QObject):
     tracoMudou = Signal(object, object)           # traço, campos (o repasse do Traco.mudou)
     mudou = Signal(object, object)                # vista, campos
 
-    def __init__(self, nome: str, tipo: str = "tempo", id: str | None = None):
+    def __init__(self, nome: str, tipo: str = "tempo", id: str | None = None, opcoes=None):
         super().__init__()
         if tipo not in TIPOS_DE_VISTA:
             raise ValueError(f"tipo de vista desconhecido: {tipo!r} (use {', '.join(TIPOS_DE_VISTA)})")
@@ -78,6 +79,8 @@ class Vista(QObject):
             raise ValueError("o nome da vista não pode ficar vazio")
         self.id = id or novo_id()
         self.tipo = tipo
+        # As opções do espectro (``OpcoesDoEspectro``): o método, a escala, o trecho, a vista de tempo ligada...
+        self._opcoes = (opcoes or OpcoesDoEspectro()) if tipo == "espectro" else None
         self._nome = nome.strip()
         self._tracos: list[Traco] = []
 
@@ -111,6 +114,15 @@ class Vista(QObject):
         traco.mudou.disconnect(self.tracoMudou)
         self.tracoSaiu.emit(self, traco, indice)
         return indice
+
+    @property
+    def opcoes(self):
+        return self._opcoes
+
+    def _definir_opcoes(self, opcoes) -> None:
+        if opcoes != self._opcoes:
+            self._opcoes = opcoes
+            self.mudou.emit(self, frozenset({"opcoes"}))
 
     def _definir_nome(self, nome: str) -> None:
         nome = nome.strip()

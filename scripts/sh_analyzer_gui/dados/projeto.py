@@ -29,8 +29,8 @@ FORMATO = "sh-analyzer-projeto"
 VERSAO = 2
 EXTENSAO = ".shproj"
 SUFIXO_AUTOMATICO = "~"
-TIPOS_DE_VISTA = ("tempo",)
-"""Os tipos de vista que esta versão abre (o espectro e os outros entram nas próximas)."""
+TIPOS_DE_VISTA = ("tempo", "espectro")
+"""Os tipos de vista que esta versão abre (as bandas, o espectrograma e os outros entram nas próximas)."""
 LIMITE_DA_BUSCA = 5000
 """Quantos arquivos a busca pelo CRC olha, no máximo (uma pasta enorme não trava a abertura)."""
 
@@ -65,6 +65,7 @@ class VistaSalva:
     nome: str
     tipo: str
     tracos: tuple[TracoSalvo, ...] = ()
+    opcoes: dict = field(default_factory=dict)     # as do espectro (``dados/espectros.py``); vazias na de tempo
 
 
 @dataclass(frozen=True)
@@ -115,7 +116,8 @@ def para_dict(projeto: ProjetoSalvo) -> dict:
         "aplicativo": projeto.versao_do_aplicativo,
         "fontes": [asdict(f) for f in projeto.fontes],
         "vistas": [{"id": v.id, "nome": v.nome, "tipo": v.tipo,
-                    "tracos": [{"id": t.id, **t.receita.para_dict()} for t in v.tracos]} for v in projeto.vistas],
+                    "tracos": [{"id": t.id, **t.receita.para_dict()} for t in v.tracos],
+                    **({"opcoes": dict(v.opcoes)} if v.opcoes else {})} for v in projeto.vistas],
         "layout": dict(projeto.layout),
     }
 
@@ -186,7 +188,17 @@ def de_dict(dados) -> ProjetoSalvo:
             raise ProjetoInvalido(f"{onde} está sem nome")
         if tipo not in TIPOS_DE_VISTA:
             raise ProjetoInvalido(f"{onde} é de um tipo que esta versão não abre ({tipo!r}): atualize o aplicativo")
-        vistas.append(VistaSalva(id=_campo(v, "id", str, onde), nome=nome, tipo=tipo, tracos=tuple(tracos)))
+        opcoes = v.get("opcoes", {})
+        if tipo == "espectro":
+            from .espectros import OpcoesDoEspectro, OpcoesInvalidas
+            try:
+                opcoes = OpcoesDoEspectro.de_dict(opcoes).para_dict()
+            except (OpcoesInvalidas, TypeError) as e:
+                raise ProjetoInvalido(f"{onde}: {e}") from None
+        elif opcoes:
+            raise ProjetoInvalido(f"{onde} tem opções que uma vista de {tipo} não tem")
+        vistas.append(VistaSalva(id=_campo(v, "id", str, onde), nome=nome, tipo=tipo, tracos=tuple(tracos),
+                                 opcoes=opcoes))
     layout = dados.get("layout", {})
     if not isinstance(layout, dict) or not all(isinstance(k, str) and isinstance(x, str) for k, x in layout.items()):
         layout = {}                                       # o layout é só conforto: inválido, vale o padrão
