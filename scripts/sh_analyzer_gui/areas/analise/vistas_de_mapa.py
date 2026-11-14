@@ -15,6 +15,8 @@ ligada, no tempo.
   sincronizada pelos cruzamentos por zero (o ``adc_tool --fft --harmonicos``). O trecho padrão é a janela visível.
 * **As contas** são as da ``api`` (``dados/espectros.py``), em segundo plano, com o progresso no painel de tarefas numa
   captura longa; cada pedido cancela o anterior.
+* **Os cursores A e B** (o botão da barra, ou C): a posição de cada um e a distância entre eles (no tempo, também o
+  inverso dela, em Hz).
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ import numpy as np
 import pyqtgraph as pg
 import supraharmonicos.api as api
 from PySide6.QtCore import QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QAction, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -38,6 +40,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -46,6 +49,7 @@ from shiboken6 import isValid
 from ...componentes.basicos import CampoComUnidade, Segmentado
 from ...componentes.numeros import formatar_si
 from ...dados import espectros as esp
+from ...graficos.cursores import ParDeCursores
 from ...graficos.faixa import EixoDoTema
 from ...modelo.comandos import MudarOpcoesDaVista
 from ...modelo.objetos import Projeto, Traco, Vista
@@ -69,6 +73,7 @@ class VistaLigada(QWidget):
     calculado = Signal()
 
     nome_da_conta = "Conta"
+    unidade_x = "s"                 # a unidade do eixo x (o tempo; nos harmônicos, a ordem)
 
     def __init__(self, vista: Vista, projeto: Projeto, selecao: Selecao, *, tarefas, materializacoes,
                  vista_de_tempo: Callable[[str | None], object], parent: QWidget | None = None):
@@ -105,7 +110,27 @@ class VistaLigada(QWidget):
         self._linha.addWidget(self.trecho)
         coluna.addWidget(barra)
         self._montar_conteudo(coluna)
+        self.acao_cursores = QAction(self.tr("Cursores"), self)
+        self.acao_cursores.setCheckable(True)
+        self.acao_cursores.setShortcut(QKeySequence("C"))
+        self.acao_cursores.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.acao_cursores.setToolTip(self.tr("Os cursores A e B, com a distância entre eles (C)"))
+        self.addAction(self.acao_cursores)
+        botao = QToolButton()
+        botao.setObjectName("botao_cursores")
+        botao.setDefaultAction(self.acao_cursores)
+        botao.setAutoRaise(True)
+        self._linha.addWidget(botao)
         self._linha.addStretch(1)
+        self.cursores = ParDeCursores(self.grafico.getPlotItem(), parent=self)
+        self.cursores.mudou.connect(self._mostrar_cursores)
+        self.acao_cursores.toggled.connect(self._ligar_cursores)
+        self.leitura_dos_cursores = QLabel()
+        self.leitura_dos_cursores.setObjectName("leitura_dos_cursores")
+        self.leitura_dos_cursores.setContentsMargins(10, 2, 10, 0)
+        self.leitura_dos_cursores.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.leitura_dos_cursores.hide()
+        coluna.addWidget(self.leitura_dos_cursores)
         self.info = QLabel()
         self.info.setObjectName("info_vista")
         self.info.setWordWrap(True)
@@ -365,6 +390,25 @@ class VistaLigada(QWidget):
         t = self.trecho_atual
         return self.traco.receita.deslocamento_s + t.inicio / t.captura.canal(t.numero).taxa_hz
 
+    def _ligar_cursores(self, ligar: bool) -> None:
+        self.cursores.ligar(ligar)
+        self.leitura_dos_cursores.setVisible(ligar)
+
+    def _texto_x(self, valor: float) -> str:
+        if self.unidade_x:
+            return formatar_si(valor, self.unidade_x, 6)
+        return f"{valor:.2f}".replace(".", ",").replace("-", "−")
+
+    def _mostrar_cursores(self) -> None:
+        """A posição de A e de B e a distância entre eles (no tempo, também o inverso dela)."""
+        if not self.cursores.ligados:
+            return
+        a, b = self.cursores.a, self.cursores.b
+        partes = [f"A {self._texto_x(a)}", f"B {self._texto_x(b)}", f"Δ = {self._texto_x(b - a)}"]
+        if self.unidade_x == "s" and b != a:
+            partes.append(f"1/Δ = {formatar_si(1.0 / abs(b - a), 'Hz', 5)}")
+        self.leitura_dos_cursores.setText("   ".join(partes))
+
     def soltar(self) -> None:
         if self._tarefa is not None and self._tarefa.ativa:
             self._tarefa.cancelar()
@@ -541,6 +585,7 @@ class VistaDeEspectrograma(VistaLigada):
 
 class VistaDeHarmonicos(VistaLigada):
     nome_da_conta = "Harmônicos"
+    unidade_x = ""                  # a ordem harmônica
     GRANDEZAS = ("subgrupo", "grupo", "componente")
 
     def _montar_conteudo(self, coluna: QVBoxLayout) -> None:

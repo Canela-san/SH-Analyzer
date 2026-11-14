@@ -14,8 +14,14 @@
 
 O ganho do traço multiplica o espectro (``20·log10|ganho|``); o offset é só o DC, que o espectro tira.
 
-**Os picos** (ES-02) são os ``picos`` mais altos acima do piso de ruído + :data:`ACIMA_DO_PISO_DB`, de 2 kHz à
-Nyquist; **os harmônicos de f₁** só com a FFT sincronizada (o Welch de 200 Hz não separa harmônicos de 50 Hz).
+**A FFT é o método padrão** (o que os pesquisadores de qualidade de energia usam), sincronizada aos ciclos da
+fundamental como o ``adc_tool --fft``; num trecho sem a fundamental de 45 a 65 Hz (um tom de teste de 130 kHz sozinho,
+por exemplo), a FFT é do trecho inteiro, sem sincronizar, com a janela Hann, e um aviso diz isso.
+
+**Os picos** (ES-02) são os ``picos`` mais altos acima do piso de ruído + :data:`ACIMA_DO_PISO_DB` e com
+:data:`PROEMINENCIA_DOS_PICOS_DB` de proeminência, de 2 kHz à Nyquist: numa FFT só, de milhões de bins, o ruído tem
+flutuações de mais de 10 dB acima do piso, e o ombro de um tom forte também. **Os harmônicos de f₁** só com a FFT
+sincronizada (o Welch de 200 Hz não separa harmônicos de 50 Hz).
 """
 
 from __future__ import annotations
@@ -39,7 +45,8 @@ LIMITE_DA_FFT = 1 << 24
 """A FFT de um segmento só vai inteira para a memória: até 16 M amostras (~6 GB menos que uma hora de captura)."""
 LIMITE_DA_CADEIA = 1 << 23
 """Até 8 M amostras, o trecho de um traço com cadeia é transformado na hora, em ``float64``; acima, a materialização."""
-ACIMA_DO_PISO_DB = 10.0
+ACIMA_DO_PISO_DB = 20.0
+PROEMINENCIA_DOS_PICOS_DB = 10.0
 CORTE_DOS_PICOS = api.CORTE_SUPRAHARMONICOS_PADRAO
 
 
@@ -55,7 +62,7 @@ class AguardandoMaterializacao(Exception):
 class OpcoesDoEspectro:
     """O que a vista de espectro mostra (vai para o projeto)."""
 
-    metodo: str = "welch"
+    metodo: str = "fft"
     resolucao_hz: float = api.RESOLUCAO_WELCH_PADRAO
     janela: str | None = None
     modo: str = "tom"
@@ -143,8 +150,23 @@ def _subir(espectro: api.Espectro, fator: float) -> api.Espectro:
 def espectro_do_trecho(trecho: TrechoDoTraco, parametros: api.ParametrosEspectro, *,
                        progresso: Callable[[float], None] | None = None,
                        cancelado: Callable[[], bool] | None = None) -> api.Espectro:
-    """O espectro do traço no trecho (ver o começo do módulo). Levanta ``api.ErroSHAN`` com o motivo, e
+    """O espectro do traço no trecho (ver o começo do módulo). A FFT sincronizada num trecho sem a fundamental vira a
+    FFT do trecho inteiro, sem sincronizar (com um aviso). Levanta ``api.ErroSHAN`` com o motivo, e
     :class:`AguardandoMaterializacao`."""
+    try:
+        return _espectro_do_trecho(trecho, parametros, progresso=progresso, cancelado=cancelado)
+    except api.ErroSHAN:
+        if not parametros.sincronizada or trecho.n_amostras < 2 or trecho.ganho == 0:
+            raise
+    livre = replace(parametros, sincronizar=False)
+    espectro = _espectro_do_trecho(trecho, livre, progresso=progresso, cancelado=cancelado)
+    aviso = api.Aviso("aviso", f"sem a fundamental de {parametros.freq_min_fundamental:g} a "
+                               f"{parametros.freq_max_fundamental:g} Hz no trecho para sincronizar: a FFT do trecho "
+                               f"inteiro, com a janela {espectro.rotulo_janela}")
+    return replace(espectro, avisos=(*espectro.avisos, aviso))
+
+
+def _espectro_do_trecho(trecho: TrechoDoTraco, parametros: api.ParametrosEspectro, *, progresso, cancelado):
     canal = trecho.captura.canal(trecho.numero)
     n = trecho.n_amostras
     if trecho.ganho == 0:
@@ -181,13 +203,13 @@ class Marcas:
 
 
 def marcas(espectro: api.Espectro, n_picos: int, harmonicos: bool, ordem_maxima: int = 50) -> Marcas:
-    """Os ``n_picos`` mais altos acima do piso + 10 dB (de 2 kHz à Nyquist), o piso e, com a FFT sincronizada, os
-    harmônicos de f₁ até ``ordem_maxima`` abaixo da Nyquist."""
+    """Os ``n_picos`` mais altos acima do piso + 20 dB e com 10 dB de proeminência (de 2 kHz à Nyquist), o piso e, com
+    a FFT sincronizada, os harmônicos de f₁ até ``ordem_maxima`` abaixo da Nyquist."""
     nyquist = espectro.taxa_hz / 2.0
     piso = espectro.piso(CORTE_DOS_PICOS) if nyquist > CORTE_DOS_PICOS else espectro.piso(0.0)
     achados: tuple[api.Pico, ...] = ()
     if n_picos and math.isfinite(piso) and nyquist > CORTE_DOS_PICOS:
-        achados = api.picos(espectro, piso + ACIMA_DO_PISO_DB, maximo=n_picos)
+        achados = api.picos(espectro, piso + ACIMA_DO_PISO_DB, maximo=n_picos, proeminencia_db=PROEMINENCIA_DOS_PICOS_DB)
     f0 = espectro.f0_hz
     frequencias = tuple(h * f0 for h in range(2, ordem_maxima + 1) if h * f0 < nyquist) if harmonicos and f0 else ()
     return Marcas(achados, piso, frequencias)

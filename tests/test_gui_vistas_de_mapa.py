@@ -154,3 +154,17 @@ def test_os_harmonicos_sao_os_da_api_com_as_barras_e_os_indices(janela, qtbot, p
         pilha.undo()
     qtbot.waitUntil(lambda: w.opcoes_calculadas == w.opcoes, timeout=10_000)
     assert w.opcoes == type(w.opcoes)(vista_de_tempo=tempo.vista.id) and len(w.resultado.tabela.harmonicos) == 40
+
+
+def test_os_cursores_nos_mapas_e_nos_harmonicos(janela, qtbot, plotado):
+    fonte, traco, tempo = plotado
+    w = abrir(janela, qtbot, "espectrograma")
+    assert not w.cursores.ligados and w.leitura_dos_cursores.isHidden()
+    w.acao_cursores.setChecked(True)
+    w.cursores.definir(0.5, 1.0)
+    texto = w.leitura_dos_cursores.text()
+    assert "Δ = 500 ms" in texto and "1/Δ = 2 Hz" in texto and not w.leitura_dos_cursores.isHidden()
+    h = abrir(janela, qtbot, "harmonicos")
+    h.acao_cursores.setChecked(True)
+    h.cursores.definir(3.0, 7.0)
+    assert "Δ = 4,00" in h.leitura_dos_cursores.text()

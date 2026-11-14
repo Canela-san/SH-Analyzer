@@ -10,7 +10,12 @@
   150 kHz) fica sombreada; a faixa válida do perfil de cada traço corrigido pela sonda, também, na cor do traço.
 * **As marcas:** os picos mais altos acima do piso + 10 dB (o número da frequência só nos do primeiro traço), o piso de
   ruído (tracejado) e, com a FFT sincronizada, os harmônicos de f₁.
-* **O cursor de frequência** (arrastar a linha): a frequência e o nível de cada traço ali.
+* **A FFT é o método padrão** (o Welch, a média de segmentos, fica como segundo). Sem a fundamental para sincronizar,
+  a FFT é do trecho inteiro, com um aviso.
+* **Os botões da barra** (todos desligados ao abrir): **Picos** marca os mais altos de cada traço (acima do piso + 20
+  dB e com 10 dB de proeminência: o ruído não conta); **Valores** mostra, sob o mouse, a frequência e o nível do bin
+  mais alto da coluna de pixel de cada traço; **Cursores** (C) liga os cursores A e B, com a frequência e o nível de
+  cada traço em cada um, e as diferenças (Δf, Δ nível). Um cursor solto encosta no pico mais próximo, a até 4 pixels.
 * **As contas em segundo plano:** cada pedido cancela o anterior, e vale o mais recente. Um trecho grande de um traço
   com cadeia espera a materialização (o chip mostra o progresso), e a conta refaz quando ela fica pronta.
 * **Sem custo por quadro** (uma FFT de 60 s tem 6 milhões de bins): o espectro de um trecho já calculado não é
@@ -33,8 +38,8 @@ import numpy as np
 import pyqtgraph as pg
 import supraharmonicos.api as api
 from PySide6.QtCore import QLineF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPen
-from PySide6.QtWidgets import QCheckBox, QGraphicsItem, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtGui import QAction, QColor, QKeySequence, QPen
+from PySide6.QtWidgets import QCheckBox, QGraphicsItem, QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QWidget
 from shiboken6 import isValid
 
 from ...componentes.basicos import CampoComUnidade, Segmentado
@@ -43,6 +48,7 @@ from ...componentes.fluxo import LayoutDeFluxo
 from ...componentes.numeros import formatar_si
 from ...dados import espectros as esp
 from ...dados.cadeia import CorrecaoSonda
+from ...graficos.cursores import ParDeCursores
 from ...graficos.faixa import EixoDoTema, GradeDoTema
 from ...graficos.traco_lod import TracoLOD
 from ...modelo.comandos import MudarOpcoesDaVista
@@ -53,7 +59,8 @@ from ...tema.tokens import Tema, cor_do_traco
 
 FAIXA_DOS_SUPRAHARMONICOS = (2_000.0, 150_000.0)
 ESPERA_MS = 40
-METODOS, ESCALAS, TRECHOS = ("welch", "fft"), ("db", "rms", "dbc"), ("janela", "cursores", "captura")
+METODOS, ESCALAS, TRECHOS = ("fft", "welch"), ("db", "rms", "dbc"), ("janela", "cursores", "captura")
+ENCOSTAR_PX = 4                    # um cursor solto encosta no pico a até 4 pixels
 AMOSTRAS_PARA_MOSTRAR_A_TAREFA = 20_000_000
 ESPERA_DA_ENVOLTORIA_MS = 30
 OPCOES_QUE_PEDEM_AJUSTE = ("metodo", "escala", "frequencia_log", "trecho", "modo", "resolucao_hz")
@@ -149,9 +156,10 @@ class VistaDeEspectro(QWidget):
         linha = QHBoxLayout(barra)
         linha.setContentsMargins(8, 4, 8, 4)
         linha.setSpacing(8)
-        self.metodo = Segmentado(["Welch", "FFT"])
-        self.metodo.setToolTip(self.tr("Welch: a média de segmentos (o ruído e os supraharmônicos). FFT: um segmento "
-                                       "só, sincronizado aos ciclos da fundamental (os harmônicos)"))
+        self.metodo = Segmentado(["FFT", "Welch"])
+        self.metodo.setToolTip(self.tr("FFT: um segmento só, sincronizado aos ciclos da fundamental (sem ela, o trecho "
+                                       "inteiro com a janela Hann). Welch: a média de segmentos (o ruído e os "
+                                       "supraharmônicos)"))
         self.metodo.escolhaMudou.connect(lambda i: self._mudar(metodo=METODOS[i]))
         self.resolucao = CampoComUnidade("Hz", 200.0, minimo=1e-3, digitos=4)
         self.resolucao.setObjectName("resolucao_welch")
@@ -176,6 +184,30 @@ class VistaDeEspectro(QWidget):
         for w in (self.metodo, self.resolucao, self.escala, self.trecho, self.log, self.harmonicos):
             linha.addWidget(w)
         linha.addStretch(1)
+        # Os botões das ajudas de leitura: desligados ao abrir (cada um custa algo a cada resultado ou movimento).
+        self.acao_picos = QAction(self.tr("Picos"), self)
+        self.acao_picos.setToolTip(self.tr("Marcar os picos de cada traço (acima do piso + 20 dB, com 10 dB de "
+                                           "proeminência)"))
+        self.acao_valores = QAction(self.tr("Valores"), self)
+        self.acao_valores.setToolTip(self.tr("Mostrar a frequência e o nível sob o mouse"))
+        self.acao_cursores = QAction(self.tr("Cursores"), self)
+        self.acao_cursores.setShortcut(QKeySequence("C"))
+        self.acao_cursores.setToolTip(self.tr("Os cursores A e B, com a distância entre eles (C)"))
+        self.botoes_de_leitura = {}
+        for acao, nome in ((self.acao_picos, "picos"), (self.acao_valores, "valores"),
+                           (self.acao_cursores, "cursores")):
+            acao.setCheckable(True)
+            acao.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            self.addAction(acao)
+            botao = QToolButton()
+            botao.setObjectName(f"botao_{nome}")
+            botao.setDefaultAction(acao)
+            botao.setAutoRaise(True)
+            linha.addWidget(botao)
+            self.botoes_de_leitura[nome] = botao
+        self.acao_picos.toggled.connect(lambda _: self._pedir())
+        self.acao_valores.toggled.connect(self._ligar_valores)
+        self.acao_cursores.toggled.connect(self._ligar_cursores)
 
         self._legenda = QWidget()
         self._fluxo = LayoutDeFluxo(self._legenda)
@@ -203,11 +235,23 @@ class VistaDeEspectro(QWidget):
         self.supra.setZValue(-20)
         self.supra.setToolTip(self.tr("A faixa dos supraharmônicos (2 a 150 kHz)"))
         self.grafico.addItem(self.supra, ignoreBounds=True)
-        self.frequencia_do_cursor = 50_000.0     # em Hz (a posição da linha, no eixo log, é o log10 dela)
-        self.cursor = pg.InfiniteLine(pos=self.frequencia_do_cursor, angle=90, movable=True)
-        self.cursor.setZValue(30)
-        self.cursor.sigPositionChanged.connect(self._cursor_movido)
-        self.grafico.addItem(self.cursor, ignoreBounds=True)
+        self.cursores = ParDeCursores(self.grafico.getPlotItem(), para_eixo=self._x, do_eixo=self._f,
+                                      encostar=self._encostar, parent=self)
+        self.cursores.mudou.connect(self._mostrar_cursores)
+        self.leitura_dos_cursores = QLabel()
+        self.leitura_dos_cursores.setObjectName("leitura_dos_cursores")
+        self.leitura_dos_cursores.setWordWrap(True)
+        self.leitura_dos_cursores.setContentsMargins(10, 2, 10, 0)
+        self.leitura_dos_cursores.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.leitura_dos_cursores.hide()
+        self.valor_no_mouse = pg.TextItem(anchor=(0, 1))
+        self.valor_no_mouse.setZValue(50)
+        self.ponto_no_mouse = pg.ScatterPlotItem(size=7, pen=pg.mkPen(None))
+        self.ponto_no_mouse.setZValue(49)
+        for item in (self.valor_no_mouse, self.ponto_no_mouse):
+            item.hide()
+            self.grafico.addItem(item, ignoreBounds=True)
+        self.grafico.scene().sigMouseMoved.connect(self._mouse_movido)
 
         coluna = QVBoxLayout(self)
         coluna.setContentsMargins(0, 0, 0, 0)
@@ -215,6 +259,7 @@ class VistaDeEspectro(QWidget):
         coluna.addWidget(barra)
         coluna.addWidget(self._legenda)
         coluna.addWidget(self.grafico, 1)
+        coluna.addWidget(self.leitura_dos_cursores)
         coluna.addWidget(self.info)
 
     # ------------------------------------------------------------------ as opções
@@ -359,12 +404,13 @@ class VistaDeEspectro(QWidget):
         for traco, unidade, trecho in pedidos:
             r = traco.receita
             chave = (id(traco), r.fonte, r.canal, r.cadeia, r.ganho, trecho.inicio, trecho.fim, parametros)
-            itens.append((traco, unidade, trecho, chave, (chave, o.escala, o.picos, o.harmonicos)))
+            itens.append((traco, unidade, trecho, chave, (chave, o.escala, self._n_picos(), o.harmonicos)))
         faltam = [item for item in itens if item[4] not in self._desenhos]
         if not faltam:
             self._mostrar_resultados(o, itens, {}, {}, {})
             return
         prontos = dict(self._espectros)
+        n_picos = self._n_picos()
 
         def calcular(progresso, cancelado):
             espectros, desenhos, falhas = {}, {}, {}
@@ -383,7 +429,7 @@ class VistaDeEspectro(QWidget):
                         falhas[chave_do_desenho] = (False, str(e))
                         continue
                     espectros[chave] = espectro
-                desenhos[chave_do_desenho] = esp.preparar_desenho(espectro, o.escala, o.picos, o.harmonicos)
+                desenhos[chave_do_desenho] = esp.preparar_desenho(espectro, o.escala, n_picos, o.harmonicos)
             return o, itens, espectros, desenhos, falhas
 
         grande = sum(item[2].n_amostras for item in faltam) > AMOSTRAS_PARA_MOSTRAR_A_TAREFA
@@ -461,9 +507,7 @@ class VistaDeEspectro(QWidget):
             self.grafico.removeItem(self.curvas.pop(traco))
         self.grafico.setLogMode(x=o.frequencia_log, y=False)
         self.supra.setRegion([self._x(f) for f in FAIXA_DOS_SUPRAHARMONICOS])
-        self.cursor.blockSignals(True)
-        self.cursor.setValue(self._x(self.frequencia_do_cursor))
-        self.cursor.blockSignals(False)
+        self.cursores.reposicionar()
         for k, r in enumerate(prontos):
             cor = QColor(cor_do_traco(r.traco.receita.cor, t)[0])
             self._curva(r, cor)
@@ -476,7 +520,7 @@ class VistaDeEspectro(QWidget):
             self.grafico.getViewBox().autoRange(padding=0.02)
         self._refazer_legenda()
         self._mostrar_info()
-        self._mostrar_cursor()
+        self._mostrar_cursores()
 
     def _curva(self, r: ResultadoDoTraco, cor: QColor) -> None:
         """O item do traço: o ``TracoLOD`` sobre a pirâmide do espectro na frequência linear (os bins são uniformes:
@@ -621,30 +665,106 @@ class VistaDeEspectro(QWidget):
                 partes.append(self.tr("FFT · {} · {}{}").format(e.rotulo_janela, formatar_si(e.resolucao_hz, "Hz", 3),
                                                                 sinc))
             partes.append(self.tr("{} de trecho").format(formatar_si(e.n_amostras / e.taxa_hz, "s", 4)))
+            partes += [a.texto for a in e.avisos if "sincronizar" in a.texto]
         if any(r.aguardando for r in self.resultados):
             partes.append(self.tr("aguardando a transformação da captura inteira"))
         partes += [f"{r.traco.nome}: {r.erro}" for r in self.resultados if r.erro]
         self.info.setText(" · ".join(partes))
 
-    def _cursor_movido(self, *_) -> None:
-        x = float(self.cursor.value())
-        if self.opcoes.frequencia_log:
-            x = 10 ** min(max(x, -3.0), 9.0)
-        self.frequencia_do_cursor = x
-        self._mostrar_cursor()
+    # ------------------------------------------------------------------ as ajudas de leitura
 
-    def _mostrar_cursor(self) -> None:
-        prontos = [r for r in self.resultados if r.desenho is not None]
-        if not prontos:
+    def _n_picos(self) -> int:
+        return self.opcoes.picos if self.acao_picos.isChecked() else 0
+
+    def _f(self, x: float) -> float:
+        """A frequência de uma posição no eixo (o inverso de ``_x``)."""
+        return 10 ** min(max(float(x), -3.0), 9.0) if self.opcoes.frequencia_log else float(x)
+
+    def _pixel_em_hz(self, f: float) -> float:
+        """Quantos Hz cabem num pixel perto de ``f`` (na log, depende da frequência)."""
+        vb = self.grafico.getViewBox()
+        x0, x1 = vb.viewRange()[0]
+        por_pixel = (x1 - x0) / max(vb.width(), 1.0)
+        if self.opcoes.frequencia_log:
+            return f * (10 ** por_pixel - 1)
+        return por_pixel
+
+    def _mais_alto_perto(self, d: esp.Desenho, f: float, pixels: float) -> int:
+        """O bin mais alto a até ``pixels`` pixels de ``f`` (de perto, o bin mais próximo)."""
+        largura = pixels * self._pixel_em_hz(f)
+        i0, i1 = d.indice(f - largura), d.indice(f + largura) + 1
+        return i0 + int(np.argmax(d.niveis[i0:i1]))
+
+    def _encostar(self, f: float) -> float:
+        """Um cursor solto encosta no pico do primeiro traço a até 4 pixels, se houver um máximo ali."""
+        d = next((r.desenho for r in self.resultados if r.desenho is not None), None)
+        if d is None:
+            return f
+        i = self._mais_alto_perto(d, f, ENCOSTAR_PX)
+        return d.f0 + i * d.df
+
+    def _unidade_do_nivel(self, r: ResultadoDoTraco) -> str:
+        return r.unidade if self.opcoes.escala == "rms" else ("dBc" if self.opcoes.escala == "dbc" else "dB")
+
+    def _texto_do_nivel(self, valor: float, r: ResultadoDoTraco) -> str:
+        if self.opcoes.escala == "rms":
+            return formatar_si(valor, r.unidade, 5)
+        return f"{valor:.2f} {self._unidade_do_nivel(r)}".replace(".", ",").replace("-", "−")
+
+    def _ligar_cursores(self, ligar: bool) -> None:
+        self.cursores.ligar(ligar)
+        self.leitura_dos_cursores.setVisible(ligar)
+
+    def _mostrar_cursores(self) -> None:
+        """A leitura dos cursores: a frequência e o nível de cada traço em A e em B, e as diferenças."""
+        if not self.cursores.ligados:
             return
-        f = self.frequencia_do_cursor
-        textos = [formatar_si(f, "Hz", 5)]
+        prontos = [r for r in self.resultados if r.desenho is not None]
+        a, b = self.cursores.a, self.cursores.b
+        partes = [self.tr("A {}").format(formatar_si(a, "Hz", 6)), self.tr("B {}").format(formatar_si(b, "Hz", 6)),
+                  self.tr("Δf = {}").format(formatar_si(b - a, "Hz", 6))]
         for r in prontos:
-            nivel = r.desenho.nivel_em(f)
-            unidade = r.unidade if self.opcoes.escala == "rms" else ("dBc" if self.opcoes.escala == "dbc" else "dB")
-            textos.append(f"{r.traco.nome}: {nivel:.4g} {unidade}".replace(".", ","))
-        self.cursor.setToolTip("\n".join(textos))
-        self.leitura_do_cursor = textos
+            d = r.desenho
+            na, nb = d.nivel_em(a), d.nivel_em(b)
+            delta = (formatar_si(nb - na, r.unidade, 4) if self.opcoes.escala == "rms"
+                     else f"{nb - na:.2f} dB".replace(".", ",").replace("-", "−"))
+            partes.append(f"{r.traco.nome}: A {self._texto_do_nivel(na, r)} · B {self._texto_do_nivel(nb, r)} · "
+                          f"Δ {delta}")
+        self.leitura_dos_cursores.setText("   ".join(partes))
+
+    def _ligar_valores(self, ligar: bool) -> None:
+        if not ligar:
+            self.valor_no_mouse.hide()
+            self.ponto_no_mouse.hide()
+
+    def _mouse_movido(self, posicao) -> None:
+        """Os valores sob o mouse: a frequência e o nível do bin mais alto da coluna de pixel de cada traço (de perto,
+        o bin mais próximo)."""
+        if not self.acao_valores.isChecked() or not isValid(self):
+            return
+        vb = self.grafico.getViewBox()
+        prontos = [r for r in self.resultados if r.desenho is not None]
+        if not prontos or not vb.sceneBoundingRect().contains(posicao):
+            self.valor_no_mouse.hide()
+            self.ponto_no_mouse.hide()
+            return
+        ponto = vb.mapSceneToView(posicao)
+        f = self._f(ponto.x())
+        linhas, xs, ys, cores = [], [], [], []
+        t = aparencia().tema
+        for r in prontos:
+            d = r.desenho
+            i = self._mais_alto_perto(d, f, 0.5)
+            fi, nivel = d.f0 + i * d.df, float(d.niveis[i])
+            linhas.append(f"{r.traco.nome}: {self._texto_do_nivel(nivel, r)} em {formatar_si(fi, 'Hz', 7)}")
+            xs.append(self._x(max(fi, d.df) if self.opcoes.frequencia_log else fi))
+            ys.append(nivel)
+            cores.append(pg.mkBrush(QColor(cor_do_traco(r.traco.receita.cor, t)[0])))
+        self.valor_no_mouse.setText("\n".join(linhas))
+        self.valor_no_mouse.setPos(ponto)
+        self.valor_no_mouse.show()
+        self.ponto_no_mouse.setData(xs, ys, brush=cores)
+        self.ponto_no_mouse.show()
 
     def _tema_mudou(self, t: Tema) -> None:
         if not isValid(self):
@@ -658,6 +778,8 @@ class VistaDeEspectro(QWidget):
         self.supra.setBrush(fundo)
         for linha in self.supra.lines:
             linha.setPen(pg.mkPen(None))
-        self.cursor.setPen(pg.mkPen(QColor(t.texto2), width=1))
+        self.cursores.aplicar_cor(t.texto2)
+        self.valor_no_mouse.setColor(QColor(t.texto))
+        self.valor_no_mouse.fill = pg.mkBrush(QColor(t.elevada))
         if self.resultados:
             self._desenhar()

@@ -164,14 +164,16 @@ def test_o_espectro_de_milhoes_de_bins_arrasta_a_60_quadros(qapp, config_limpa, 
         j.area.plotar_canal(fonte, 0)
         j.acoes["espectro"].trigger()
         w = j.area.widget_da_vista(j.vista_ativa())
-        w.metodo.botao(1).click()
+        assert w.opcoes.metodo == "fft"                              # o método padrão
         esperar(lambda: w.opcoes_calculadas == w.opcoes and w.resultados and w.resultados[0].desenho is not None)
         assert len(w.resultados[0].desenho.niveis) > 2_000_000
+        w.acao_cursores.setChecked(True)
+        w.acao_valores.setChecked(True)
         vb = w.grafico.getViewBox()
         x0, x1 = vb.viewRange()[0]
         for nome, mexer in (("pan", lambda k: vb.setXRange(x0 + 100 * k, x1 + 100 * k, padding=0)),
                             ("zoom", lambda k: vb.setXRange(9_000 + k, 10_000 + k, padding=0)),
-                            ("cursor", lambda k: w.cursor.setValue(5_000 + 1_000 * k))):
+                            ("cursor", lambda k: w.cursores.linhas[0].setValue(5_000 + 1_000 * k))):
             quadros = []
             for k in range(30):
                 inicio = time.perf_counter()
