@@ -31,7 +31,7 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
-from .erros import ErroSHAN
+from .erros import ErroSHAN, conferir_cancelamento
 
 DURACAO_JANELA_IEC_S = 0.2
 LARGURA_BANDA_IEC_HZ = 200.0
@@ -114,15 +114,21 @@ def centros_das_bandas(freq_min: float, freq_max: float, largura: float) -> np.n
 def calcular_bandas_iec(sinal: np.ndarray, fs: float, freq_min: float = FREQ_MIN_IEC_HZ,
                         freq_max: float | None = None, largura: float = LARGURA_BANDA_IEC_HZ,
                         duracao_janela_s: float = DURACAO_JANELA_IEC_S, limites: np.ndarray | None = None,
-                        ciclos_por_janela: int | None = None, f0_hz: float | None = None) -> BandasIEC:
+                        ciclos_por_janela: int | None = None, f0_hz: float | None = None, *, progresso=None,
+                        cancelado=None) -> BandasIEC:
     """Níveis por banda em janelas consecutivas de ``duracao_janela_s`` (ver o topo do módulo).
 
     ``limites`` (opcional): as janelas, em amostras, como pares ``[início, fim)`` (forma ``(n_janelas, 2)``, inícios
     crescentes) -- as janelas sincronizadas à fundamental, cada uma com o seu comprimento (ver
-    :func:`janelas_dos_cruzamentos`). ``ciclos_por_janela`` e ``f0_hz`` só vão para o resultado, para descrevê-lo."""
+    :func:`janelas_dos_cruzamentos`). ``ciclos_por_janela`` e ``f0_hz`` só vão para o resultado, para descrevê-lo.
+
+    ``sinal`` pode ser um memmap: ele é lido e convertido para ``float64`` um lote de janelas por vez. Numa captura
+    longa, ``progresso(fração)`` é chamado a cada lote e ``cancelado()`` é conferido antes de cada um (se devolver
+    verdadeiro, a conta para com ``erros.Cancelado``)."""
     if limites is not None:
         return _bandas_janelas_variaveis(sinal, fs, freq_min, freq_max, largura,
-                                         np.asarray(limites, dtype=np.int64).reshape(-1, 2), ciclos_por_janela, f0_hz)
+                                         np.asarray(limites, dtype=np.int64).reshape(-1, 2), ciclos_por_janela, f0_hz,
+                                         progresso, cancelado)
     n_janela = int(round(fs * duracao_janela_s))
     n_janelas = len(sinal) // n_janela if n_janela > 0 else 0
     if n_janelas < 1:
@@ -143,13 +149,16 @@ def calcular_bandas_iec(sinal: np.ndarray, fs: float, freq_min: float = FREQ_MIN
     fim = np.minimum(fim, ultimo_bin + 1)
 
     niveis = np.empty((n_janelas, len(centros)))
-    blocos = np.asarray(sinal[: n_janelas * n_janela], dtype=np.float64).reshape(n_janelas, n_janela)
+    blocos = np.asarray(sinal[: n_janelas * n_janela]).reshape(n_janelas, n_janela)     # uma visão, sem cópia
     for a in range(0, n_janelas, _JANELAS_POR_LOTE):
-        lote = blocos[a:a + _JANELAS_POR_LOTE]
+        conferir_cancelamento(cancelado)
+        lote = np.asarray(blocos[a:a + _JANELAS_POR_LOTE], dtype=np.float64)
         espectro = np.fft.rfft(lote - lote.mean(axis=1, keepdims=True), axis=1)
         potencia = (np.abs(espectro) ** 2) * (2.0 / n_janela ** 2)          # RMS² de cada bin
         acumulada = np.concatenate([np.zeros((len(lote), 1)), np.cumsum(potencia, axis=1)], axis=1)
         niveis[a:a + len(lote)] = np.sqrt(np.maximum(acumulada[:, fim] - acumulada[:, inicio], 0.0))
+        if progresso is not None:
+            progresso((a + len(lote)) / n_janelas)
     tempos = np.arange(n_janelas) * (n_janela / fs)
     return BandasIEC(centros, tempos, niveis, largura, n_janela / fs)
 
@@ -166,7 +175,7 @@ def _centros_validados(fs: float, freq_min: float, freq_max: float | None, largu
 
 def _bandas_janelas_variaveis(sinal: np.ndarray, fs: float, freq_min: float, freq_max: float | None,
                               largura: float, limites: np.ndarray, ciclos_por_janela: int | None,
-                              f0_hz: float | None) -> BandasIEC:
+                              f0_hz: float | None, progresso=None, cancelado=None) -> BandasIEC:
     """As janelas sincronizadas: cada uma com o seu comprimento, então cada uma tem a sua grade de bins (f0/ciclos)."""
     if (len(limites) < 1 or np.any(limites[:, 1] <= limites[:, 0]) or np.any(np.diff(limites[:, 0]) <= 0)
             or limites.min() < 0 or limites.max() > len(sinal)):
@@ -176,6 +185,10 @@ def _bandas_janelas_variaveis(sinal: np.ndarray, fs: float, freq_min: float, fre
     niveis = np.empty((len(limites), len(centros)))
     tolerancia = 1e-9 * fs
     for k, (a, b) in enumerate(limites):
+        if k % _JANELAS_POR_LOTE == 0:
+            conferir_cancelamento(cancelado)
+            if progresso is not None and k:
+                progresso(k / len(limites))
         janela = np.asarray(sinal[a:b], dtype=np.float64)
         n = len(janela)
         freqs = np.fft.rfftfreq(n, 1.0 / fs)
@@ -185,6 +198,8 @@ def _bandas_janelas_variaveis(sinal: np.ndarray, fs: float, freq_min: float, fre
         inicio = np.searchsorted(freqs[: ultimo_bin + 1], centros - largura / 2.0 + tolerancia, side="left")
         fim = np.searchsorted(freqs[: ultimo_bin + 1], centros + largura / 2.0 + tolerancia, side="left")
         niveis[k] = np.sqrt(np.maximum(acumulada[fim] - acumulada[inicio], 0.0))
+    if progresso is not None:
+        progresso(1.0)
     duracoes = (limites[:, 1] - limites[:, 0]) / fs
     return BandasIEC(centros, (limites[:, 0] - limites[0, 0]) / fs, niveis, largura, float(duracoes.mean()),
                      ciclos_por_janela=ciclos_por_janela, f0_hz=f0_hz)

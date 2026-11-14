@@ -1,6 +1,10 @@
 """Janelas espectrais e cálculo de espectro: FFT única, Welch, bandas e picos.
 
-Depende de: ``constantes``, ``fundamental``, ``erros``."""
+Depende de: ``constantes``, ``fundamental``, ``erros``.
+
+As contas que podem ser longas (o Welch e o espectrograma de uma captura inteira) aceitam ``progresso(fração)``,
+chamado a cada lote de segmentos, e ``cancelado()``, conferido antes de cada lote: se ele devolver verdadeiro, a
+conta para com ``erros.Cancelado``."""
 
 import unicodedata
 from functools import lru_cache
@@ -8,7 +12,7 @@ from functools import lru_cache
 import numpy as np
 
 from .constantes import ALIASES_JANELA, NOMES_EXIBICAO_JANELA, TAMANHO_LOTE_WELCH_PADRAO
-from .erros import ErroSHAN
+from .erros import ErroSHAN, conferir_cancelamento
 from .fundamental import refinar_pico_parabolico
 
 # ---------------------------------------------------------------------------
@@ -75,6 +79,16 @@ def enbw_bins(nome_canonico: str, n: int, kaiser_beta: float) -> float:
     normalizado como 'tom' -- quem SOMA bins (bandas) precisa dividir por ela."""
     janela = obter_janela(nome_canonico, n, kaiser_beta)
     return float(n * np.sum(janela ** 2) / np.sum(janela) ** 2)
+
+
+_VALORES_POR_LOTE = 1 << 21       # ~2 M valores por lote de segmentos (16 MB em float64, e o mesmo da FFT complexa)
+
+
+def _segmentos_por_lote(tamanho_segmento: int) -> int:
+    """Quantos segmentos do Welch (e do espectrograma) vão a cada lote: até ``TAMANHO_LOTE_WELCH_PADRAO``, mas sem
+    passar de ~2 M valores. Com a resolução padrão (200 Hz a 200 kS/s, 1000 amostras), o lote é o de sempre; numa
+    resolução fina (5 Hz: 40 000 amostras), 2048 segmentos seriam 650 MB de uma vez."""
+    return max(1, min(TAMANHO_LOTE_WELCH_PADRAO, _VALORES_POR_LOTE // tamanho_segmento))
 
 
 def tamanho_segmento_welch(fs: float, resolucao_hz: float) -> int:
@@ -144,7 +158,7 @@ def calcular_espectro(sinal: np.ndarray, fs: float, nome_janela: str,
 
 def calcular_espectro_welch(sinal: np.ndarray, fs: float, nome_janela: str,
                              kaiser_beta: float, resolucao_hz: float,
-                             sobreposicao: float, modo: str = "ruido"):
+                             sobreposicao: float, modo: str = "ruido", *, progresso=None, cancelado=None):
     """Espectro médio por segmentação (Welch): reduz a variância da
     estimativa por segmentação + média de periodogramas, ao custo de
     resolução fixa em frequência (fs/resolucao_hz, não o comprimento total
@@ -182,12 +196,16 @@ def calcular_espectro_welch(sinal: np.ndarray, fs: float, nome_janela: str,
     acumulador = np.zeros(len(freqs))
     janela_deslizante = np.lib.stride_tricks.sliding_window_view(sinal, tamanho_segmento)
 
-    for inicio_lote in range(0, n_segmentos, TAMANHO_LOTE_WELCH_PADRAO):
-        indices_lote = np.arange(inicio_lote, min(inicio_lote + TAMANHO_LOTE_WELCH_PADRAO, n_segmentos))
-        lote = janela_deslizante[indices_lote * passo]
+    por_lote = _segmentos_por_lote(tamanho_segmento)
+    for inicio_lote in range(0, n_segmentos, por_lote):
+        conferir_cancelamento(cancelado)
+        indices_lote = np.arange(inicio_lote, min(inicio_lote + por_lote, n_segmentos))
+        lote = np.asarray(janela_deslizante[indices_lote * passo], dtype=np.float64)    # um memmap float32: em float64
         lote_janelado = (lote - lote.mean(axis=1, keepdims=True)) * janela
         espectros = rfft(lote_janelado, axis=1)
         acumulador += np.sum(np.abs(espectros) ** 2, axis=0)
+        if progresso is not None:
+            progresso((indices_lote[-1] + 1) / n_segmentos)
 
     potencia_media = acumulador / n_segmentos
     amplitude_db = _normalizar_espectro(potencia_media, fs, tamanho_segmento, janela, modo)
@@ -196,7 +214,8 @@ def calcular_espectro_welch(sinal: np.ndarray, fs: float, nome_janela: str,
 
 def calcular_espectrograma(sinal: np.ndarray, fs: float, nome_janela: str, kaiser_beta: float,
                            resolucao_hz: float, sobreposicao: float, modo: str = "tom",
-                           max_colunas: int = 600) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                           max_colunas: int = 600, *, progresso=None,
+                           cancelado=None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Espectro ao longo do tempo (STFT): os mesmos segmentos do Welch, mas sem tirar a média de todos.
 
     Numa captura longa há centenas de milhares de segmentos (10 min a 100 kS/s com 200 Hz de resolução: 243 mil),
@@ -221,13 +240,17 @@ def calcular_espectrograma(sinal: np.ndarray, fs: float, nome_janela: str, kaise
     acumulado = np.zeros((n_colunas, len(freqs)))
     contagem = np.zeros(n_colunas)
     deslizante = np.lib.stride_tricks.sliding_window_view(sinal, tamanho_segmento)
-    for inicio_lote in range(0, n_segmentos, TAMANHO_LOTE_WELCH_PADRAO):
-        indices = np.arange(inicio_lote, min(inicio_lote + TAMANHO_LOTE_WELCH_PADRAO, n_segmentos))
-        lote = deslizante[indices * passo]
+    por_lote = _segmentos_por_lote(tamanho_segmento)
+    for inicio_lote in range(0, n_segmentos, por_lote):
+        conferir_cancelamento(cancelado)
+        indices = np.arange(inicio_lote, min(inicio_lote + por_lote, n_segmentos))
+        lote = np.asarray(deslizante[indices * passo], dtype=np.float64)
         potencia = np.abs(rfft((lote - lote.mean(axis=1, keepdims=True)) * janela, axis=1)) ** 2
         colunas = indices // por_coluna
         np.add.at(acumulado, colunas, potencia)
         np.add.at(contagem, colunas, 1)
+        if progresso is not None:
+            progresso((indices[-1] + 1) / n_segmentos)
     matriz_db = _normalizar_espectro(acumulado / contagem[:, None], fs, tamanho_segmento, janela, modo)
     primeiro = np.arange(n_colunas) * por_coluna
     ultimo = np.minimum(primeiro + por_coluna, n_segmentos) - 1

@@ -27,3 +27,15 @@ class ErroUso(ErroSHAN):
     incompatíveis, flag obrigatória ausente...). A CLI trata como
     ``parser.error`` (mensagem de uso + código de saída 2) em vez de um erro
     comum (código 1)."""
+
+
+class Cancelado(Exception):
+    """Uma conta longa foi interrompida a pedido: o ``cancelado()`` que quem chamou passou devolveu verdadeiro.
+
+    Não é um erro e não herda de :class:`ErroSHAN`: quem cancelou sabe que cancelou, e nada vira mensagem."""
+
+
+def conferir_cancelamento(cancelado) -> None:
+    """Levanta :class:`Cancelado` se ``cancelado`` (uma função sem argumentos, ou None) devolver verdadeiro."""
+    if cancelado is not None and cancelado():
+        raise Cancelado()
