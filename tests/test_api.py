@@ -226,3 +226,26 @@ def test_medir_sinal_e_o_medir_regiao_sobre_um_sinal_dado(tmp_path):
     regiao = medir_regiao(captura, 0, 1000, 39_000, ganho=2.0, offset=0.1)
     sinal = medir_sinal(sinal_do_canal(captura, 0, 1000, 39_000) * 2.0 + 0.1, captura.canal(0).taxa_hz)
     assert regiao == sinal and sinal.f1_hz == pytest.approx(50, abs=0.01)
+
+
+def test_aquecer_em_varias_threads_ao_mesmo_tempo():
+    """Toda tarefa da interface chama aquecer() antes de rodar: várias ao mesmo tempo esperam uma só importar."""
+    import threading
+
+    from supraharmonicos.api import aquecer
+
+    erros = []
+
+    def rodar():
+        try:
+            aquecer()
+            import scipy.signal  # noqa: F401
+        except Exception as e:      # noqa: BLE001
+            erros.append(e)
+
+    threads = [threading.Thread(target=rodar) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+    assert not erros

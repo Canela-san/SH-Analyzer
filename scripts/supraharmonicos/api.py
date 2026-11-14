@@ -379,12 +379,28 @@ def medir_sinal(sinal, taxa_hz: float, *, freq_min: float = FREQ_MIN_FUNDAMENTAL
         pico=max(abs(basicas.minimo), abs(basicas.maximo)), f1_hz=f1, problema_f1=problema)
 
 
+_aquecido = threading.Event()
+_trava_do_aquecimento = threading.Lock()
+
+
 def aquecer() -> None:
-    """Importa agora os módulos que as contas importam sob demanda (o SciPy da fundamental e do espectro). A
-    interface chama isto em segundo plano logo depois de abrir: a primeira medida não paga a importação (~1,5 s,
-    com o GIL preso), que antes travava a tela aos pedaços."""
-    import scipy.fft  # noqa: F401
-    import scipy.signal  # noqa: F401
+    """Importa agora os módulos que as contas importam sob demanda (o SciPy da fundamental, do espectro, dos filtros,
+    da sonda e da exportação). A interface chama isto em segundo plano logo depois de abrir (a primeira medida não paga
+    a importação, ~1,5 s com o GIL preso) e **no começo de toda tarefa**: duas threads importando o SciPy ao mesmo
+    tempo podem cair no deadlock das travas de importação do Python (``_DeadlockError`` em ``scipy.linalg``), e a
+    conta de uma delas falhava. Com a trava, só uma importa, e as outras esperam; depois da primeira vez, custa nada."""
+    if _aquecido.is_set():
+        return
+    with _trava_do_aquecimento:
+        if _aquecido.is_set():
+            return
+        import scipy.fft  # noqa: F401
+        import scipy.interpolate  # noqa: F401
+        import scipy.io  # noqa: F401
+        import scipy.optimize  # noqa: F401
+        import scipy.signal  # noqa: F401
+        import scipy.signal.windows  # noqa: F401
+        _aquecido.set()
 
 
 # ---------------------------------------------------------------------------
