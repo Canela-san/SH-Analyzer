@@ -744,6 +744,8 @@ O plano original:
 | 14/11/2026 | **G1 na vista de tempo, na tela do usuário, 8 faixas, depois da rodada** | **Aprovado:** mediana de 8,0 ms, p95 de 9,7 ms | `prototipos/medir_vista.py` |
 | 14/11/2026 | Travadas da tela (o laço de eventos parado), captura de 5 min: plotar 8 traços; mudar a faixa de um traço | 0,81 → **0,15 s**; 0,12 → **0,03 s** | idem |
 | 13/11/2026 | G1 sem tela na **vista de tempo**, 8 faixas, com a CPU sob estresse de outra sessão (carga de 16 a 25) | **Sem valor como medida:** mediana de 35 ms. O perfil achou e tirou dois gastos (a grade com o `tickValues` e o rótulo HTML dos eixos escondidos) | `prototipos/medir_vista.py`, perfil |
+| 14/11/2026 | **O espectro de uma FFT de 60 s** (6 M bins), 1 600 × 1 000 px, sem tela: arrastar, zoom, cursor | Antes: 316, 319 e 330 ms por quadro (o aplicativo travava). **Depois: 7,4, 6,2 e 2,2 ms**; a tela leve durante a conta (o pior quadro da vista de tempo, 15 ms) | `pytest --desempenho tests/test_gui_desempenho.py -k espectro` |
+| 14/11/2026 | As FFTs de um lote em todos os núcleos (8), `scipy.fft` com `workers=-1` | O lote do Welch (2048 × 1000) de 7,1 para 2,5 ms; o das bandas (64 × 40 000) de 13,8 para 10,9 ms | o diário de 14/11 |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
 ---
@@ -934,6 +936,22 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
 - **14/11/2026:** **a F2.7, os harmônicos** (seção 4c).
   - **Testes:** `ci.sh rapido` com 1 465 aprovados e `ci.sh interface` com 538.
   - **Próximo:** a F2.8, a F2.9 ou a F2.10 (independentes).
+- **14/11/2026:** **o espectro travava o aplicativo** (relato do usuário: com os cursores em 20 períodos, tudo perdia a
+  fluidez, e arrastar a FFT "dava dor de cabeça"). A causa: o trecho padrão era a janela visível (a captura inteira),
+  e a FFT de 60 s tem 6 M bins; cada quadro custava ~320 ms (o PyQtGraph recortava e reduzia os 6 M pontos a cada
+  mudança da vista, e o cursor copiava o espectro inteiro a cada movimento). O que mudou (`5619602`, e `a95ba57` só
+  do motor):
+  - o espectro na frequência linear é desenhado pela pirâmide mín/máx (o `TracoLOD`: os bins são uniformes), e na log
+    pela envoltória por coluna de pixel; os níveis, a pirâmide e as marcas são preparados na thread de trabalho;
+  - o espectro de um trecho já calculado não é refeito (nas quatro vistas de frequência);
+  - a grade do tema, o eixo Y em cache, os harmônicos num item só; o zoom do usuário fica quando o resultado chega;
+  - o trecho padrão do espectro passa a ser o dos cursores (sem eles, a janela visível);
+  - as FFTs em lote (Welch, espectrograma, bandas) em todos os núcleos.
+  - **Medido:** a tabela da seção 5. Um portão novo, `tests/test_gui_desempenho.py -k espectro`: menos de 16 ms por
+    quadro com 3 M bins.
+  - **O que fica:** a FFT de um trecho de 60 s leva ~1,5 s (a busca da fundamental, 0,85 s, e a FFT de 12 M pontos com
+    o fator primo 1499, 0,6 s), em segundo plano; um tamanho mais "redondo" mudaria os números da CLI.
+  - **Testes:** `ci.sh rapido` com 1 466 aprovados e `ci.sh interface` com 539.
 ---
 
 ## 8. Perguntas em aberto

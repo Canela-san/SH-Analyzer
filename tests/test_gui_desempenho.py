@@ -131,3 +131,56 @@ def test_g1_oito_faixas_na_vista_de_tempo(request, tmp_path, monkeypatch):
     janela.projeto.pilha.setClean()
     janela.close()
     assert p95 <= 0.016, f"mediana {mediana * 1e3:.1f} ms, p95 {p95 * 1e3:.1f} ms"
+
+
+def test_o_espectro_de_milhoes_de_bins_arrasta_a_60_quadros(qapp, config_limpa, tmp_path):
+    """A FFT da janela visível de 30 s a 200 kS/s tem 3 M bins: arrastar o gráfico, dar zoom e mover o cursor de
+    frequência ficam abaixo de 16 ms por quadro (antes da pirâmide no espectro, ~320 ms: o aplicativo travava)."""
+    from capturas_sinteticas import escrever_bin
+    from dialogos_falsos import DialogosFalsos
+    from sh_analyzer_gui.app import criar_aplicacao
+    from sh_analyzer_gui.janela import JanelaPrincipal
+
+    fs, n = 200_000.0, 6_000_000
+    t = np.arange(n) / fs
+    caminho = escrever_bin(tmp_path / "longa.bin", [3 * np.sin(2 * np.pi * 50 * t), 0 * t], versao=9)
+    del t
+    criar_aplicacao([])
+    j = JanelaPrincipal()
+    j.controle.dialogos = DialogosFalsos()
+    j.resize(1600, 1000)
+    j.show()
+
+    def esperar(condicao, limite=60.0):
+        inicio = time.perf_counter()
+        while not condicao():
+            qapp.processEvents()
+            time.sleep(0.005)
+            assert time.perf_counter() - inicio < limite
+
+    try:
+        (fonte,) = j.controle.abrir_capturas([caminho])
+        esperar(lambda: fonte.piramides is not None)
+        j.area.plotar_canal(fonte, 0)
+        j.acoes["espectro"].trigger()
+        w = j.area.widget_da_vista(j.vista_ativa())
+        w.metodo.botao(1).click()
+        esperar(lambda: w.opcoes_calculadas == w.opcoes and w.resultados and w.resultados[0].desenho is not None)
+        assert len(w.resultados[0].desenho.niveis) > 2_000_000
+        vb = w.grafico.getViewBox()
+        x0, x1 = vb.viewRange()[0]
+        for nome, mexer in (("pan", lambda k: vb.setXRange(x0 + 100 * k, x1 + 100 * k, padding=0)),
+                            ("zoom", lambda k: vb.setXRange(9_000 + k, 10_000 + k, padding=0)),
+                            ("cursor", lambda k: w.cursor.setValue(5_000 + 1_000 * k))):
+            quadros = []
+            for k in range(30):
+                inicio = time.perf_counter()
+                mexer(k)
+                qapp.processEvents()
+                w.grafico.viewport().repaint()
+                quadros.append(time.perf_counter() - inicio)
+            assert np.median(quadros) < 0.016, (nome, np.median(quadros))
+    finally:
+        j.projeto.pilha.setClean()
+        j.close()
+        j.deleteLater()
