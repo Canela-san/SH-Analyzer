@@ -135,8 +135,12 @@ def cruzamentos_da_fundamental(sinal: np.ndarray, fs: float, freq_min: float,
     # A fundamental tem de existir, e não só ter cruzamentos: num tom de teste sem a rede (130 kHz sozinho), o que
     # passa pelo passa-baixa é o ruído de quantização do ADC, ~110 dB abaixo do sinal, e os cruzamentos dele davam um
     # "f0" dentro da busca (65,9 Hz) e uma FFT sincronizada a nada.
-    rms_total = float(np.sqrt(np.mean(sinal_centrado ** 2)))
-    rms_fundamental = float(np.sqrt(np.mean(sinal_filtrado ** 2)))
+    # No miolo: nas bordas, o transitório do filtro (o sosfiltfilt estende o trecho de forma ímpar) com um tom forte
+    # chega a metade da amplitude dele e esconderia a falta da fundamental. ~4 períodos do corte de cada lado.
+    borda = min(len(sinal_filtrado) // 4, int(4 * fs / corte))
+    miolo = slice(borda, len(sinal_filtrado) - borda)
+    rms_total = float(np.sqrt(np.mean(sinal_centrado[miolo] ** 2)))
+    rms_fundamental = float(np.sqrt(np.mean(sinal_filtrado[miolo] ** 2)))
     if rms_total > 0 and rms_fundamental < FRACAO_MINIMA_DA_FUNDAMENTAL * rms_total:
         raise ErroSHAN(
             f"o trecho não tem uma fundamental entre {freq_min:g} e {freq_max:g} Hz: o que passa abaixo de "
