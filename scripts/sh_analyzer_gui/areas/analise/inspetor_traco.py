@@ -1,5 +1,5 @@
-"""O inspetor do traço (docs/gui-plan.md, 9.4): a identidade, a aparência e a escala e o tempo dos traços
-selecionados. **Cada mudança é um comando de desfazer** (``MudarTracos``); com vários traços selecionados, o
+"""O inspetor do traço (docs/gui-plan.md, 9.4): a identidade, a aparência, a escala e o tempo, o processamento (a
+cadeia de transformações, ``processamento.py``) e a calibração dos traços selecionados. **Cada mudança é um comando de desfazer** (``MudarTracos``); com vários traços selecionados, o
 inspetor mostra o que eles têm em comum ("vários" onde diferem), e mudar ali muda todos, num passo só.
 
 Um valor que a receita recusa (o ganho zero) não entra: o campo fica vermelho, com o motivo na dica.
@@ -7,6 +7,10 @@ Um valor que a receita recusa (o ganho zero) não entra: o campo fica vermelho, 
 
 from __future__ import annotations
 
+import datetime
+from pathlib import Path
+
+import supraharmonicos.api as api
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
@@ -26,11 +30,13 @@ from PySide6.QtWidgets import (
 
 from ...componentes.basicos import CampoComUnidade
 from ...componentes.numeros import formatar_duracao, formatar_si
+from ...dados.cadeia import CorrecaoSonda
 from ...dados.receita import ReceitaInvalida
 from ...modelo.comandos import MudarTracos
 from ...modelo.objetos import Projeto, Traco
 from ...tema.aplicar import aparencia
 from ...tema.tokens import NOMES_DOS_TRACOS, TAMANHOS, Tema, cor_do_traco
+from .processamento import SecaoDeProcessamento
 
 LARGURA_DO_ROTULO = 92
 CORES_DA_PALETA = 6
@@ -151,16 +157,32 @@ class InspetorDoTraco(QScrollArea):
             (self.tr("Faixa"), self.faixa), (self.tr("Ganho"), ganho), (self.tr("Offset"), self.offset),
             (self.tr("Deslocamento"), self.deslocamento)]))
 
+        # Processamento
+        self.processamento = SecaoDeProcessamento()
+        coluna.addWidget(self._secao(self.tr("Processamento"), [], corpo=self.processamento))
+
         # Calibração
         self.calibracao = QLabel()
+        self.calibracao.setObjectName("texto_calibracao")
         self.calibracao.setWordWrap(True)
         self.calibracao.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        coluna.addWidget(self._secao(self.tr("Calibração"), [(self.tr("Sonda"), self.calibracao)]))
+        self.aplicar_correcao = QToolButton()
+        self.aplicar_correcao.setObjectName("aplicar_correcao")
+        self.aplicar_correcao.setText(self.tr("Aplicar a correção de sonda"))
+        self.aplicar_correcao.setToolTip(self.tr("Põe a correção pelo perfil no começo da cadeia (como o adc_tool faz)"))
+        self.aplicar_correcao.clicked.connect(lambda _=False: self.processamento.adicionar("correcao_sonda"))
+        corpo = QWidget()
+        linhas = QVBoxLayout(corpo)
+        linhas.setContentsMargins(0, 0, 0, 0)
+        linhas.setSpacing(4)
+        linhas.addWidget(self.calibracao)
+        linhas.addWidget(self.aplicar_correcao, 0, Qt.AlignmentFlag.AlignLeft)
+        coluna.addWidget(self._secao(self.tr("Calibração"), [], corpo=corpo))
         coluna.addStretch(1)
         self.setWidget(conteudo)
         self._pintar_cores(aparencia().tema)
 
-    def _secao(self, titulo: str, linhas) -> QWidget:
+    def _secao(self, titulo: str, linhas, corpo: QWidget | None = None) -> QWidget:
         secao = QWidget()
         coluna = QVBoxLayout(secao)
         coluna.setContentsMargins(0, 6, 0, 0)
@@ -184,6 +206,8 @@ class InspetorDoTraco(QScrollArea):
             grade.addWidget(r, i, 0, Qt.AlignmentFlag.AlignVCenter)
             grade.addWidget(widget, i, 1)
         coluna.addLayout(grade)
+        if corpo is not None:
+            coluna.addWidget(corpo)
         return secao
 
     # ------------------------------------------------------------------ mostrar
@@ -261,13 +285,53 @@ class InspetorDoTraco(QScrollArea):
                 campo.definir_valor(valor)
             campo.setToolTip("")
 
-        sondas = []
-        for c in canais:
-            if c.problema_sonda:
-                sondas.append(c.problema_sonda)
-            elif c.sonda_id:
-                sondas.append(self.tr("{}: perfil {}").format(c.sonda_id, "aplicável" if c.perfil else "sem perfil"))
-        self.calibracao.setText("\n".join(dict.fromkeys(sondas)) or self.tr("Nenhuma sonda registrada"))
+        self.processamento.mostrar(self.projeto, tracos, [c.taxa_hz for c in canais])
+        if um and canais:
+            fonte = fontes_canais[0][0]
+            linhas, falta_aplicar = self._calibracao(fonte, canais[0], receitas[0].cadeia)
+        else:
+            linhas, falta_aplicar = [self.tr("Selecione um traço só para ver a calibração dele.")], False
+        self.calibracao.setText("\n".join(dict.fromkeys(linhas)))
+        self.aplicar_correcao.setVisible(falta_aplicar)
+
+    def _calibracao(self, fonte, canal, cadeia) -> tuple[list[str], bool]:
+        """O texto da calibração do canal com esta cadeia, e se falta aplicar a correção de um perfil que existe."""
+        etapa = next((e for e in cadeia.ligadas if isinstance(e, CorrecaoSonda)), None)
+        linhas = [canal.problema_sonda] if canal.problema_sonda else []
+        perfil, origem = canal.perfil, self.tr("o da captura")
+        if etapa is not None and etapa.perfil is not None:
+            try:
+                perfil, origem = api.carregar_perfil(Path(etapa.perfil)), self.tr("escolhido")
+            except api.ErroSHAN as e:
+                return [*linhas, self.tr("O perfil escolhido não abre: {}").format(e)], False
+        if perfil is None:
+            if etapa is not None:
+                linhas.append(self.tr("A correção automática não tem o que aplicar: a captura não registra uma sonda "
+                                      "para este canal. Escolha um perfil na etapa."))
+            elif not linhas:
+                linhas.append(self.tr("Nenhuma sonda registrada para este canal."))
+            return linhas, False
+        linhas.append(self.tr("Perfil {} ({}): {}").format(perfil.id, origem, Path(perfil.caminho).name))
+        faixa = perfil.faixa_valida
+        if faixa is not None:
+            linhas.append(self.tr("Faixa válida: {} a {}").format(formatar_si(faixa[0], "Hz", 3),
+                                                                  formatar_si(faixa[1], "Hz", 3)))
+        if perfil.data_calibracao is not None:
+            captura = fonte.fonte.captura.cabecalho
+            try:
+                dia = datetime.datetime.fromtimestamp(captura.timestamp_unix, tz=datetime.timezone.utc).date()
+                dias = (dia - perfil.data_calibracao).days
+                quando = self.tr(" ({} dias antes da captura)").format(dias) if dias >= 0 else \
+                    self.tr(" (depois da captura)")
+            except (OverflowError, OSError, ValueError):
+                quando = ""
+            linhas.append(self.tr("Calibrado em {}{}").format(perfil.data_calibracao.isoformat(), quando))
+        if etapa is None:
+            linhas.append(self.tr("A correção não está na cadeia: o traço mostra a saída da sonda, sem corrigir a "
+                                  "resposta em frequência."))
+        else:
+            linhas.append(self.tr("A correção está na cadeia."))
+        return linhas, etapa is None
 
     # ------------------------------------------------------------------ mudar (sempre pela pilha)
 

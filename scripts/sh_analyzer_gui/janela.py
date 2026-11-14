@@ -247,11 +247,14 @@ class JanelaPrincipal(QMainWindow):
         self.setWindowModified(modificado)
 
     def acoes_da_paleta(self) -> list[QAction]:
-        """As ações que a paleta busca: as da janela e as da vista aberta (ajustar, voltar, cursores)."""
+        """As ações que a paleta busca: as da janela, as da vista aberta (ajustar, voltar, cursores) e, com um traço no
+        inspetor, as de adicionar uma etapa à cadeia dele."""
         acoes = list(self.acoes.values())
         vista = self.vistas.currentWidget()
         if vista is not None:
             acoes += [a for a in vista.actions() if a.text()]
+        if self.inspetor.currentWidget() is self.inspetor.do_traco:
+            acoes += self.inspetor.do_traco.processamento.acoes      # "Adicionar etapa: passa-altas"...
         return acoes
 
     def abrir_paleta(self) -> None:
@@ -366,6 +369,7 @@ class JanelaPrincipal(QMainWindow):
 
     def _criar_inspetor(self) -> QWidget:
         self.inspetor = Inspetor()
+        self.inspetor.do_traco.processamento.dialogos_de = lambda: self.controle.dialogos
         return self.inspetor
 
     def _criar_painel_inferior(self) -> PainelComAbas:

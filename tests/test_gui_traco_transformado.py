@@ -127,8 +127,10 @@ def test_as_medidas_sao_as_do_sinal_transformado(janela, qtbot, tmp_path):
     estado = janela.materializacoes.estado_de(traco)
     qtbot.waitUntil(lambda: estado.pronta is not None, timeout=20_000)    # a média do canal já é conhecida
     servico = janela.area.servico_de_medidas
-    with qtbot.waitSignal(servico.prontas, timeout=10_000) as sinal:
-        servico.medir(janela.projeto, PedidoDeMedida(vista, 0.5, 1.5, True))
+    qtbot.wait(400)                       # o pedido automático da vista (a janela visível) sai antes do nosso
+    pedido = PedidoDeMedida(vista, 0.5, 1.5, True)
+    with qtbot.waitSignal(servico.prontas, timeout=10_000, check_params_cb=lambda p, _m: p is pedido) as sinal:
+        servico.medir(janela.projeto, pedido)
     (medida,) = [m for m in sinal.args[1] if m.traco is traco]
     inteiro = transformado(fonte, cadeia)
     esperado = api.medir_sinal(inteiro[100_000:300_000], FS)
