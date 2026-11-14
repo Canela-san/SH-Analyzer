@@ -77,6 +77,7 @@ class VistaLigada(QWidget):
         self.tarefas, self.materializacoes, self._achar_vista_de_tempo = tarefas, materializacoes, vista_de_tempo
         self.resultado = None
         self.opcoes_calculadas = None          # as opções que deram o resultado mostrado
+        self._chave_calculada = None           # o traço, o trecho e as opções do resultado (para não refazer)
         self.traco: Traco | None = None
         self.trecho_atual: esp.TrechoDoTraco | None = None
         self.erro = ""
@@ -311,6 +312,10 @@ class VistaLigada(QWidget):
                                    a, b, r.ganho, pronta)
         self._nota = nota
         opcoes = self.opcoes
+        chave = (id(traco), r.fonte, r.canal, r.cadeia, r.ganho, a, b, opcoes, pronta is not None)
+        if chave == self._chave_calculada and not self.aguardando:
+            self._mostrar_info()               # o mesmo trecho com as mesmas opções: nada a refazer
+            return
 
         def calcular(progresso, cancelado):
             try:
@@ -330,6 +335,7 @@ class VistaLigada(QWidget):
                 return
             resultado, erro = tarefa.resultado
             self.traco, self.trecho_atual, self.opcoes_calculadas = traco, trecho, opcoes
+            self._chave_calculada = chave
             self.resultado = resultado
             self.aguardando = erro == "aguardando"
             self.erro = "" if self.aguardando else erro
@@ -374,6 +380,7 @@ class VistaLigada(QWidget):
 
 def _imagem_com_barra(grafico: pg.PlotWidget, rotulo: str) -> tuple[pg.ImageItem, pg.ColorBarItem]:
     imagem = pg.ImageItem(axisOrder="col-major")
+    imagem.setAutoDownsample(True)        # o mapa de 1 h de bandas tem 18 000 janelas × 490 bandas: reduzido à tela
     grafico.addItem(imagem)
     barra = pg.ColorBarItem(colorMap=pg.colormap.get(MAPA_DE_CORES), interactive=False, label=rotulo, width=14)
     barra.setImageItem(imagem, insert_in=grafico.getPlotItem())

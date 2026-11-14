@@ -117,15 +117,15 @@ def test_as_bandas_nos_codigos_sao_as_dos_volts_e_as_da_cli(captura, tmp_path):
     for ganho in (1.0, -2.0):
         obtido = esp.bandas_do_trecho(trecho(captura, 0, N, ganho=ganho), p)
         esperado = api.bandas_iec(api.sinal_do_canal(captura, 0) * ganho, FS, p)
-        np.testing.assert_allclose(obtido.bandas.niveis, esperado.bandas.niveis, rtol=1e-12)
+        np.testing.assert_allclose(obtido.bandas.niveis, esperado.bandas.niveis, rtol=1e-11)   # ~1e-12: o arredondamento
         np.testing.assert_array_equal(obtido.bandas.centros_hz, esperado.bandas.centros_hz)
     saida = tmp_path / "bandas.mat"
     assert main([str(captura.caminho), "--bandas-iec", "--bandas-iec-max", "40000", "--sem-grafico",
                  "--exportar-mat", str(saida)]) in (0, None)
     cli = loadmat(saida, squeeze_me=True, struct_as_record=False)["sh"].canal0.bandas_iec
     obtido = esp.bandas_do_trecho(trecho(captura, 0, N), p)
-    np.testing.assert_allclose(obtido.bandas.niveis, cli.niveis, rtol=1e-12)
-    np.testing.assert_allclose(obtido.bandas.estatisticas()["p95"], cli.p95, rtol=1e-12)
+    np.testing.assert_allclose(obtido.bandas.niveis, cli.niveis, rtol=1e-11)
+    np.testing.assert_allclose(obtido.bandas.estatisticas()["p95"], cli.p95, rtol=1e-11)
 
 
 def test_as_bandas_sincronizadas_e_com_a_cadeia(captura):
@@ -205,3 +205,26 @@ def test_os_harmonicos_explicam_os_limites(captura):
     for mudanca in ({"grandeza": "fase"}, {"escala": "db"}, {"ordem_maxima": 1}):
         with pytest.raises(esp.OpcoesInvalidas):
             esp.OpcoesDosHarmonicos(**mudanca)
+
+
+# ---------------------------------------------------------------------------
+# O desenho preparado
+# ---------------------------------------------------------------------------
+
+def test_o_desenho_preparado_e_a_envoltoria_log(captura):
+    e = esp.espectro_do_trecho(trecho(captura), api.ParametrosEspectro("fft"))
+    d = esp.preparar_desenho(e, "rms", 5, True)
+    np.testing.assert_array_equal(d.niveis, e.niveis("rms"))
+    assert d.piramide.n_amostras == len(e.freqs_hz) and d.marcas == esp.marcas(e, 5, True)
+    assert d.indice(9_000.0) == int(np.argmin(np.abs(e.freqs_hz - 9_000.0)))
+    assert d.nivel_em(9_000.0) == pytest.approx(e.niveis("rms")[d.indice(9_000.0)])
+    # A envoltória log: cada coluna passa pelo mínimo e pelo máximo dos seus bins; o pico do tom está lá.
+    x, y = esp.envoltoria_log(d, 10.0, 100_000.0, 800)
+    assert len(x) <= 2 * 800 and np.all(np.diff(x) >= 0) and x[0] > 0
+    assert y.max() == pytest.approx(d.niveis[1:].max())
+    perto = (e.freqs_hz > 8_000) & (e.freqs_hz < 10_000)
+    assert y[(x > 8_000) & (x < 10_000)].max() == pytest.approx(d.niveis[perto].max())
+    # De perto, com menos bins que colunas, a envoltória são os próprios bins.
+    x, y = esp.envoltoria_log(d, 8_990.0, 9_010.0, 2_000)
+    dentro = (e.freqs_hz >= 8_990.0 - d.df) & (e.freqs_hz <= 9_010.0 + d.df)
+    assert set(np.round(y, 12)) <= set(np.round(d.niveis[dentro], 12))

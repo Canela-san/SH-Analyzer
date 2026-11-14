@@ -59,7 +59,8 @@ def test_as_bandas_sao_as_da_api_com_a_tabela_e_o_tempo_ligado(janela, qtbot, pl
     w = abrir(janela, qtbot, "bandas")
     assert w.vista.tipo == "bandas" and w.vista.nome == f"Bandas de {tempo.vista.nome}"
     esperado = api.bandas_iec(api.sinal_do_canal(fonte.fonte.captura, 0), FS, esp.OpcoesDasBandas().parametros)
-    np.testing.assert_allclose(w.resultado.bandas.niveis, esperado.bandas.niveis, rtol=1e-12)
+    # Os códigos escalados e os volts arredondam diferente: ~1e-12 nas bandas fracas.
+    np.testing.assert_allclose(w.resultado.bandas.niveis, esperado.bandas.niveis, rtol=1e-11)
     p95 = esperado.bandas.estatisticas()["p95"]
     assert w.linhas()[0][0] == esperado.bandas.centros_hz[int(np.argmax(p95))] == 9100.0   # o tom de 9 050 Hz
     assert w.tabela.rowCount() == len(esperado.bandas.centros_hz) and w.tabela.item(0, 0).text() == "9,1 kHz"
@@ -115,8 +116,10 @@ def test_o_pedido_novo_cancela_o_anterior(janela, qtbot, plotado):
         return conta(trecho, progresso, cancelado)
 
     w._conta = lenta
+    w._chave_calculada = None                    # força a conta (o mesmo trecho não seria refeito)
     w._calcular()
     primeira = w._tarefa
+    w._chave_calculada = None
     w._calcular()
     qtbot.waitUntil(lambda: primeira.estado == "cancelada", timeout=5_000)
     soltar.set()

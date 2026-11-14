@@ -75,8 +75,8 @@ def test_abrir_o_espectro_segue_a_vista_de_tempo_com_os_numeros_da_api(janela, a
     a, b = trecho_da_janela(tempo, traco)
     esperado = api.espectro(api.sinal_do_canal(fonte.fonte.captura, 0, a, b), FS)
     np.testing.assert_allclose(r.espectro.db, esperado.db, rtol=0, atol=1e-9)
-    x, y = espectro.curvas[traco].getData()
-    np.testing.assert_allclose(y, esperado.db, rtol=0, atol=1e-9)
+    _, desenhados, _ = espectro.curvas[traco].dados            # o TracoLOD sobre a pirâmide do espectro
+    np.testing.assert_allclose(desenhados, esperado.db, rtol=0, atol=1e-9)
     assert [round(p.frequencia_hz / 1000) for p in r.marcas.picos] == [9]
     assert "Welch" in espectro.info.text() and "segmentos" in espectro.info.text()
 
@@ -86,8 +86,7 @@ def test_a_escala_o_metodo_e_o_trecho_cada_um_um_passo_de_desfazer(janela, qtbot
     pilha = janela.projeto.pilha
     recalcular(qtbot, espectro, lambda: espectro.escala.botao(1).click())          # RMS
     assert espectro.opcoes.escala == "rms"
-    _, y = espectro.curvas[traco].getData()
-    np.testing.assert_allclose(y, espectro.resultados[0].espectro.niveis("rms"))
+    np.testing.assert_allclose(espectro.curvas[traco].dados[1], espectro.resultados[0].espectro.niveis("rms"))
     assert "valor RMS (V)" in espectro.grafico.getAxis("left").labelText
     recalcular(qtbot, espectro, lambda: espectro.metodo.botao(1).click())          # FFT sincronizada
     e = espectro.resultados[0].espectro
@@ -104,9 +103,10 @@ def test_a_escala_o_metodo_e_o_trecho_cada_um_um_passo_de_desfazer(janela, qtbot
 
 def test_os_cursores_da_vista_de_tempo(janela, qtbot, aberto):
     fonte, traco, tempo, espectro = aberto
+    assert espectro.opcoes.trecho == "cursores"                  # o padrão: sem os cursores, a janela visível
     tempo.ligar_cursores(True)
-    recalcular(qtbot, espectro, lambda: espectro.trecho.botao(1).click())
     a, b = (int(round(c * FS)) for c in sorted(tempo.cursores))
+    recalcular(qtbot, espectro, lambda: None, quando=lambda: espectro.resultados[0].trecho.inicio == a)
     esperado = api.espectro(api.sinal_do_canal(fonte.fonte.captura, 0, a, b), FS)
     np.testing.assert_allclose(espectro.resultados[0].espectro.db, esperado.db, rtol=0, atol=1e-9)
 

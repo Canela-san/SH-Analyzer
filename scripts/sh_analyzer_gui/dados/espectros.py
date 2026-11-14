@@ -29,6 +29,7 @@ import supraharmonicos.api as api
 
 from .cadeia import Cadeia, ContextoDaCadeia
 from .materializacao import leitor_do_canal
+from .piramide import Piramide, construir
 
 METODOS = ("welch", "fft")
 ESCALAS = ("db", "rms", "dbc")
@@ -60,7 +61,7 @@ class OpcoesDoEspectro:
     modo: str = "tom"
     escala: str = "db"
     frequencia_log: bool = False
-    trecho: str = "janela"
+    trecho: str = "cursores"                   # os cursores da vista de tempo; sem eles, a janela visível
     vista_de_tempo: str | None = None          # o id da vista de tempo ligada (None: a primeira do projeto)
     picos: int = 5
     harmonicos: bool = True
@@ -190,6 +191,67 @@ def marcas(espectro: api.Espectro, n_picos: int, harmonicos: bool, ordem_maxima:
     f0 = espectro.f0_hz
     frequencias = tuple(h * f0 for h in range(2, ordem_maxima + 1) if h * f0 < nyquist) if harmonicos and f0 else ()
     return Marcas(achados, piso, frequencias)
+
+
+# ---------------------------------------------------------------------------
+# O desenho de um espectro: os níveis na escala, a pirâmide e as marcas, preparados fora da tela
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, eq=False)
+class Desenho:
+    """O que a vista precisa para desenhar um espectro de qualquer tamanho sem custo por quadro: os níveis na escala
+    mostrada, a pirâmide mín/máx deles (a mesma da vista de tempo: os bins são uniformes em frequência, e um pico de
+    um bin aparece em qualquer zoom), as marcas e a grade (o bin ``i`` está em ``f0 + i·df``)."""
+
+    niveis: np.ndarray
+    piramide: Piramide
+    marcas: Marcas
+    f0: float
+    df: float
+
+    def indice(self, frequencia_hz: float) -> int:
+        """O bin mais perto de ``frequencia_hz`` (sem procurar: a grade é uniforme)."""
+        return int(min(max(round((frequencia_hz - self.f0) / self.df), 0), len(self.niveis) - 1))
+
+    def nivel_em(self, frequencia_hz: float) -> float:
+        return float(self.niveis[self.indice(frequencia_hz)])
+
+
+def preparar_desenho(espectro: api.Espectro, escala: str, n_picos: int, harmonicos: bool) -> Desenho:
+    """Os níveis de ``espectro`` na ``escala``, a pirâmide deles e as marcas: as contas que custam O(bins), feitas uma
+    vez (na thread de trabalho), e não a cada quadro."""
+    niveis = np.ascontiguousarray(espectro.niveis(escala), dtype=np.float64)
+    df = float(espectro.freqs_hz[1] - espectro.freqs_hz[0]) if len(espectro.freqs_hz) > 1 else 1.0
+    return Desenho(niveis, construir(niveis)[0], marcas(espectro, n_picos, harmonicos), float(espectro.freqs_hz[0]),
+                   df)
+
+
+def envoltoria_log(desenho: Desenho, f_min: float, f_max: float, colunas: int) -> tuple[np.ndarray, np.ndarray]:
+    """O traço de um espectro na frequência logarítmica entre ``f_min`` e ``f_max``, em ``colunas`` colunas de
+    pixel: as colunas com um bin só passam por ele; as com vários, pelo mínimo e pelo máximo deles (nada some, nem um
+    pico de um bin). Sem o DC. Custa O(bins visíveis), e não depende do zoom."""
+    n = len(desenho.niveis)
+    f_min, f_max = max(f_min, desenho.f0 + desenho.df), max(f_max, f_min * (1 + 1e-9))
+    bordas_f = np.geomspace(f_min, f_max, max(2, colunas) + 1)
+    bordas = np.clip(np.ceil((bordas_f - desenho.f0) / desenho.df).astype(np.int64), 1, n)
+    bordas = np.unique(bordas)
+    if len(bordas) < 2:
+        i = desenho.indice(f_min)
+        return np.array([desenho.f0 + i * desenho.df]), desenho.niveis[i:i + 1].copy()
+    trecho = desenho.niveis[bordas[0]:bordas[-1]]
+    relativas = bordas[:-1] - bordas[0]
+    minimos = np.minimum.reduceat(trecho, relativas)
+    maximos = np.maximum.reduceat(trecho, relativas)
+    tamanhos = np.diff(bordas)
+    centros = desenho.f0 + desenho.df * (bordas[:-1] + (tamanhos - 1) / 2.0)
+    um = tamanhos == 1
+    x = np.repeat(centros, np.where(um, 1, 2))
+    y = np.empty(len(x))
+    posicao = np.concatenate([[0], np.cumsum(np.where(um, 1, 2))[:-1]])
+    y[posicao] = np.where(um, maximos, minimos)
+    varios = ~um
+    y[posicao[varios] + 1] = maximos[varios]
+    return x, y
 
 
 # ---------------------------------------------------------------------------
