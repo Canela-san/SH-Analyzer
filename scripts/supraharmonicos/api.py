@@ -516,6 +516,14 @@ class Espectro:
             return f"Nível RMS por banda de {self.parametros.largura_bandas_hz:g} Hz (dB{unidade})"
         return f"Magnitude (dB{unidade})" if self.parametros.modo == "tom" else f"PSD (dB re {unidade}²/Hz)"
 
+    def piso(self, freq_min: float = CORTE_SUPRAHARMONICOS_PADRAO, freq_max: float | None = None) -> float:
+        """O piso de ruído entre ``freq_min`` e ``freq_max`` (a Nyquist, por padrão): a mediana dos níveis dos bins,
+        em ``db``. A mediana não sente os picos (os tons ocupam poucos bins), e é a mesma em dB e na escala linear.
+        NaN sem bins na faixa."""
+        freq_max = self.taxa_hz / 2.0 if freq_max is None else freq_max
+        dentro = (self.freqs_hz >= freq_min) & (self.freqs_hz <= freq_max)
+        return float(np.median(self.db[dentro])) if np.any(dentro) else math.nan
+
     def nivel_em(self, frequencia_hz: float) -> float:
         """O nível (em ``db``) do bin mais perto de ``frequencia_hz``."""
         return float(self.db[int(np.argmin(np.abs(self.freqs_hz - frequencia_hz)))])

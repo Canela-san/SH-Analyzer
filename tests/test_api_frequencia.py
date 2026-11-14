@@ -416,3 +416,16 @@ def test_a_margem_da_correcao_de_sonda_e_o_alcance_da_resposta_ao_impulso(ambien
 def test_a_faixa_valida_do_perfil(ambiente):
     perfil = api.carregar_perfil(ambiente / "sondas" / "sonda_teste.json")
     assert perfil.faixa_valida == (100.0, 80_000.0)              # os pontos de calibração (FREQS_CAL)
+
+
+def test_o_piso_de_ruido_e_a_mediana_e_nao_sente_os_tons():
+    rng = np.random.default_rng(2)
+    fs = 200_000.0
+    t = np.arange(400_000) / fs
+    ruido = rng.normal(0, 1e-3, len(t))
+    com_tons = ruido + sum(0.5 * np.sin(2 * np.pi * f * t) for f in (5_000, 20_000, 60_000))
+    so_ruido = api.espectro(ruido, fs, api.ParametrosEspectro(modo="ruido"))
+    tons = api.espectro(com_tons, fs, api.ParametrosEspectro(modo="ruido"))
+    assert tons.piso() == pytest.approx(so_ruido.piso(), abs=0.5)        # três tons fortes: o piso quase não muda
+    assert so_ruido.piso() == pytest.approx(10 * np.log10(2 * 1e-6 / fs), abs=1.0)   # a PSD do ruído branco
+    assert np.isnan(tons.piso(150_000, 160_000))
