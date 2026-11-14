@@ -24,7 +24,9 @@ mais perto da IEC 61000-4-30 (classe A), sem mudar esse padrão:
   Os intervalos incompletos no fim são descartados. Diferença que resta: os intervalos de 10 min não são alinhados
   ao relógio UTC (00:00, 00:10...), como na classe A; contam a partir do início da captura.
 
-Depende de: ``erros``. Só numpy (sem SciPy)."""
+As FFTs de cada lote de janelas rodam em todos os núcleos (``scipy.fft`` com ``workers=-1``, importado só aqui).
+
+Depende de: ``erros``."""
 
 import math
 from dataclasses import dataclass, field, replace
@@ -162,11 +164,12 @@ def calcular_bandas_iec(sinal: np.ndarray, fs: float, freq_min: float = FREQ_MIN
     fim = np.minimum(fim, ultimo_bin + 1)
 
     niveis = np.empty((n_janelas, len(centros)))
+    from scipy.fft import rfft  # sob demanda: só quem calcula paga o SciPy
     blocos = np.asarray(sinal[: n_janelas * n_janela]).reshape(n_janelas, n_janela)     # uma visão, sem cópia
     for a in range(0, n_janelas, _JANELAS_POR_LOTE):
         conferir_cancelamento(cancelado)
         lote = np.asarray(blocos[a:a + _JANELAS_POR_LOTE], dtype=np.float64)
-        espectro = np.fft.rfft(lote - lote.mean(axis=1, keepdims=True), axis=1)
+        espectro = rfft(lote - lote.mean(axis=1, keepdims=True), axis=1, workers=-1)
         potencia = (np.abs(espectro) ** 2) * (2.0 / n_janela ** 2)          # RMS² de cada bin
         niveis[a:a + len(lote)] = np.sqrt(_somas_das_bandas(potencia, inicio, fim))
         if progresso is not None:

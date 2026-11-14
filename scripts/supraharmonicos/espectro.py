@@ -2,7 +2,9 @@
 
 Depende de: ``constantes``, ``fundamental``, ``erros``.
 
-As contas que podem ser longas (o Welch e o espectrograma de uma captura inteira) aceitam ``progresso(fração)``,
+Os segmentos de cada lote do Welch e do espectrograma são transformados em todos os núcleos (``workers=-1``: são FFTs
+independentes, e o resultado é o mesmo de uma thread só). As contas que podem ser longas (o Welch e o espectrograma
+de uma captura inteira) aceitam ``progresso(fração)``,
 chamado a cada lote de segmentos, e ``cancelado()``, conferido antes de cada lote: se ele devolver verdadeiro, a
 conta para com ``erros.Cancelado``."""
 
@@ -202,7 +204,7 @@ def calcular_espectro_welch(sinal: np.ndarray, fs: float, nome_janela: str,
         indices_lote = np.arange(inicio_lote, min(inicio_lote + por_lote, n_segmentos))
         lote = np.asarray(janela_deslizante[indices_lote * passo], dtype=np.float64)    # um memmap float32: em float64
         lote_janelado = (lote - lote.mean(axis=1, keepdims=True)) * janela
-        espectros = rfft(lote_janelado, axis=1)
+        espectros = rfft(lote_janelado, axis=1, workers=-1)       # os segmentos do lote em todos os núcleos
         acumulador += np.sum(np.abs(espectros) ** 2, axis=0)
         if progresso is not None:
             progresso((indices_lote[-1] + 1) / n_segmentos)
@@ -245,7 +247,7 @@ def calcular_espectrograma(sinal: np.ndarray, fs: float, nome_janela: str, kaise
         conferir_cancelamento(cancelado)
         indices = np.arange(inicio_lote, min(inicio_lote + por_lote, n_segmentos))
         lote = np.asarray(deslizante[indices * passo], dtype=np.float64)
-        potencia = np.abs(rfft((lote - lote.mean(axis=1, keepdims=True)) * janela, axis=1)) ** 2
+        potencia = np.abs(rfft((lote - lote.mean(axis=1, keepdims=True)) * janela, axis=1, workers=-1)) ** 2
         colunas = indices // por_coluna
         np.add.at(acumulado, colunas, potencia)
         np.add.at(contagem, colunas, 1)
