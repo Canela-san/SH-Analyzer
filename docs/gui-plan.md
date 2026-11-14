@@ -673,6 +673,18 @@ no de baixo), e o layout é salvo por projeto. **Um painel recolhido deixa a sua
 trilho estreito): nos dos lados, o nome de cima para baixo; embaixo, uma aba para cada página, com o contador dela.
 Clicar na aba abre o painel (embaixo, já na página clicada).
 
+**As configurações** (GE-05; o botão de ajustes da barra, Ctrl+, ou a paleta) abrem numa janela não modal, com as
+seções à esquerda. Cada mudança vale na hora e fica gravada, sem "Aplicar":
+
+- **Aparência:** o tema, a fonte da interface, a fonte dos números (os eixos) e o movimento (o do sistema, reduzido
+  ou normal; reduzido, nada desliza nem esmaece);
+- **Números:** o separador decimal (a vírgula ou o ponto), na tela e no que se copia para uma planilha; os campos
+  aceitam os dois. Os números já na tela são escritos de novo na hora;
+- **Pastas:** a dos dados (`$DADOS`: onde o diálogo de abrir começa sem um projeto aberto), a das sondas (onde os
+  perfis das sondas registradas nas capturas são procurados ao abrir uma captura) e a do cache;
+- **Cache:** o uso e o limite de cada cache (as pirâmides das capturas e os traços transformados) e o "Limpar". O
+  que está aberto e o que está sendo construído nunca é apagado.
+
 ### 9.2 Mouse e teclado
 
 | Gesto | Efeito |

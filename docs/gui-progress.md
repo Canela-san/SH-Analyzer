@@ -8,15 +8,17 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F2.9: as configurações** (seção 4c). A F2.1 a F2.8 estão feitas: a cadeia no inspetor, o traço transformado na
-> tela, as quatro vistas de frequência, os avisos nos chips, o erro inesperado e o log; e o terceiro retorno do
-> usuário (Alt + roda, a vista que fica nas mudanças, o clique com folga, a janela e o preset IEC 61000-4-7 no
-> inspetor, Ctrl+W; diário de 14/11) e o quarto (o eixo do traço selecionado, a escala própria com o cadeado, o tempo
-> próprio do traço destravado, os painéis com aba para recolher, a vista aberta pelo painel do projeto, o contador dos
-> avisos não vistos). A F2.9 e a F2.10 são independentes entre si.
+> **F2.10: o que ficou da Fase 1** (seção 4c). A F2.1 a F2.9 estão feitas: a cadeia no inspetor, o traço
+> transformado na tela, as quatro vistas de frequência, os avisos nos chips, o erro inesperado e o log, as
+> configurações; e o terceiro retorno do usuário (Alt + roda, a vista que fica nas mudanças, o clique com folga, a
+> janela e o preset IEC 61000-4-7 no inspetor, Ctrl+W; diário de 14/11) e o quarto (o eixo do traço selecionado, a
+> escala própria com o cadeado, o tempo próprio do traço destravado, os painéis com aba para recolher, a vista aberta
+> pelo painel do projeto, o contador dos avisos não vistos). **Da F2.9, falta "as unidades"** (pergunta em aberto,
+> seção 8).
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
-> (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos).
+> (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
+> configurações).
 >
 > **Com o usuário (quando puder):** o "pronto quando" da Fase 1, abrir uma captura de 1 h, navegar e medir com 8
 > traços de 2 fontes, em `uv run --extra gui python -m sh_analyzer_gui`.
@@ -105,8 +107,7 @@ cabeçalho), `64f6e57` (a unidade do canal), `b5b02ab` (as medidas de um trecho)
 **O ambiente:** Python 3.13, PySide6 6.12.0, PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1. Testes, na última rodada:
 `ci.sh rapido` com 1 465 aprovados e `ci.sh interface` com 538 (14/11/2026).
 
-**Ainda não existe:** a tela de configurações, o log em arquivo, os formatos `.h5` e `.csv` na abertura, as
-figuras e a Aquisição.
+**Ainda não existe:** os formatos `.h5` e `.csv` na abertura, as figuras e a Aquisição.
 
 ---
 
@@ -727,7 +728,32 @@ O plano original:
   na pasta do sistema, sem senhas nem conteúdo de arquivos (plano, 8.4).
 - **Os testes:** um erro numa tarefa e num slot vira o diálogo, e o aplicativo segue; o log gravado e em rotação.
 
-### ☐ F2.9: as configurações
+### ◐ F2.9: as configurações (falta "as unidades")
+
+**Feita em 14/11/2026:** `7d0f40d` (só do motor: a `api` diz a pasta padrão das sondas), `73be9e9` (as preferências
+gravadas e aplicadas) e `f243ac5` (a tela). O que ficou:
+
+- **A tela** (`areas/configuracoes.py`; o botão de ajustes, Ctrl+, e a paleta): Aparência, Números, Pastas e Cache,
+  numa janela não modal; cada mudança vale na hora e fica gravada (`preferencias.py`). Substitui o menu de ajustes.
+- **O separador decimal** vale para tudo o que se escreve (`numeros.formatar_si`, `formatar_duracao` e `decimal`, o
+  dos números escritos à mão, e o texto para a planilha). Os números já na tela são escritos de novo pelo aviso da
+  aparência (`Aparencia.avisar`): os eixos, as linhas de informação, a tabela de medidas (sem medir de novo), o
+  inspetor, a árvore e a barra de status. A fonte dos números também vale na hora nos eixos.
+- **O movimento:** o do sistema (`QStyleHints.accessibility().motionPreference`, o padrão), reduzido ou normal, em
+  `Aparencia.movimento_reduzido`; o toast é a única animação até agora.
+- **As pastas:** a dos dados (o diálogo de abrir começa nela sem um projeto aberto; sem ela, no recente mais novo; o
+  padrão é a variável `$DADOS`, se existir), a das sondas (as capturas e os projetos abrem com ela; as já abertas
+  mantêm o perfil que acharam) e a do cache (outra pasta é um cache novo; o que já roda termina no antigo).
+- **O cache:** dois limites (as pirâmides, 4 GiB, e os traços transformados, 8 GiB, como antes), o uso e o
+  "Limpar". Nem o limite nem o "Limpar" apagam o que está aberto (os serviços dizem o quê) nem o que uma tarefa
+  constrói agora (`EmConstrucao`, nos dois caches: antes, um aparar de uma materialização podia apagar os arquivos
+  de outra ainda em construção, com um limite pequeno).
+- **Os campos numéricos sem as setas:** o estilo do sistema as desenhava quebradas nos dois temas; o valor muda pela
+  digitação, pelas setas do teclado e pela roda.
+- **A densidade da interface**, que o GE-05 também lista, não estava no conteúdo da F2.9 e ainda não existe.
+- **Testes:** `tests/test_gui_configuracoes.py` (15) e o do botão de ajustes em `test_gui_janela.py`.
+
+O plano original:
 
 - **O conteúdo** (GE-05): a tela de configurações, com o tema e as fontes (hoje no menu de ajustes), as pastas
   (`$DADOS`, sondas, cache), o separador decimal, as unidades, reduzir movimento e o limite do cache, todos
@@ -1090,6 +1116,19 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     (e uma falha intermitente, sem relação com esta mudança: `test_uma_tarefa_rapida_nao_perde_o_fim`, 1 em 15
     rodadas, porque o `ao_terminar` da tarefa é ligado antes do `_terminou` do gerenciador); os 5 de desempenho
     passam.
+- **14/11/2026:** **a F2.9, as configurações** (seção 4c), e um teste intermitente corrigido:
+  - **a tela** (Ctrl+, ou o botão de ajustes): a aparência, o separador decimal, as pastas e o cache, valendo na hora
+    e gravados; os números já na tela são escritos de novo quando o separador muda;
+  - **o cache** ganhou o "Limpar" e o limite de cada um, sem nunca apagar o que está aberto nem o que está sendo
+    construído (antes, um limite pequeno podia apagar uma materialização ainda em construção);
+  - **a pasta das sondas** vale ao abrir uma captura e ao reabrir um projeto; a dos dados, no diálogo de abrir;
+  - **o teste intermitente** (`test_uma_tarefa_rapida_nao_perde_o_fim`, 1 vez em 15): cada ligação do `terminou`
+    vira um evento na fila da interface, e o `ao_terminar` era ligado antes do gerenciador; às vezes o teste via a
+    última tarefa ainda nas ativas. Agora o gerenciador ouve primeiro (`9768729`), e o teste confere a ordem em
+    toda tarefa (passou 30 de 30 vezes).
+  - **Falta da F2.9:** "as unidades" (seção 8).
+  - **Testes:** `tests/test_gui_configuracoes.py` (15); `ci.sh rapido` com 1 541 aprovados e `ci.sh interface` com
+    611; os 5 de desempenho passam.
 ---
 
 ## 8. Perguntas em aberto
@@ -1100,4 +1139,7 @@ São as do plano, seção 19. Não bloqueiam a Fase 0:
 - a ordem das versões (Aquisição antes de Figuras);
 - a regra de sudo sem senha na placa;
 - o inglês na v1.0;
-- a assinatura de código no Windows.
+- a assinatura de código no Windows;
+- **as unidades nas configurações** (GE-05, F2.9): o requisito não diz quais. Ficaram de fora até o usuário dizer o
+  que quer escolher (por exemplo, o prefixo do SI nos eixos, automático ou fixo, ou o tempo longo em segundos ou em
+  h:min:s).
