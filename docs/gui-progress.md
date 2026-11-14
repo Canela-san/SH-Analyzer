@@ -952,6 +952,23 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **O que fica:** a FFT de um trecho de 60 s leva ~1,5 s (a busca da fundamental, 0,85 s, e a FFT de 12 M pontos com
     o fator primo 1499, 0,6 s), em segundo plano; um tamanho mais "redondo" mudaria os números da CLI.
   - **Testes:** `ci.sh rapido` com 1 466 aprovados e `ci.sh interface` com 539.
+- **14/11/2026:** **o retorno do usuário sobre o espectro.** Ficou fluido, mas:
+  - **o eixo da frequência saía errado** (um tom de 130 kHz a 400 kS/s aparecia em 377 kHz, e o traço ia além da
+    Nyquist): o `TracoLOD` trocava os dados de um espectro novo e ficava com a grade do anterior (o espaçamento e o
+    número de bins mudam com o trecho). `72e87af`; o teste muda o trecho três vezes;
+  - **a FFT passou a ser o método padrão** (o Welch fica como segundo: os pesquisadores de potência não o usam). Sem a
+    fundamental para sincronizar, a FFT é do trecho inteiro, com a Hann e um aviso;
+  - **a sincronização achava uma fundamental que não existe** (65,9 Hz num tom de 130 kHz sozinho: os cruzamentos por
+    zero do ruído de quantização). O motor agora exige que a fundamental tenha pelo menos 1/1000 do RMS do trecho,
+    medido longe das bordas do filtro (`220e422`, `eede2c1`); a CLI deixa de sincronizar a nada também;
+  - **os picos** ganharam um botão (desligado ao abrir) e deixaram de pegar o ruído: piso + 20 dB e 10 dB de
+    proeminência (`c3ca56b` no motor: a proeminência opcional em `api.picos`);
+  - **os valores sob o mouse** (botão, desligado) e **os cursores A e B em todas as vistas de frequência** (C), com
+    Δf e Δ nível no espectro, e o encosto no pico a até 4 pixels (`0e98e3f`).
+  - **Um limite anotado, sem mexer:** com a rede 26 dB abaixo de um tom forte (0,05 V de 50 Hz sob 1 V em 130 kHz),
+    a f₁ dos cruzamentos erra ~0,2 Hz (o passa-baixa de 4ª ordem da busca, com o corte em 6e-4 da Nyquist, não
+    atenua o tom o bastante). Com a rede a 14 dB ou menos do tom, ela acerta a 0,0002 Hz.
+  - **Testes:** `ci.sh rapido` com 1 473 aprovados e `ci.sh interface` com 545; os 5 de desempenho passam.
 ---
 
 ## 8. Perguntas em aberto
