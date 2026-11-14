@@ -6,6 +6,7 @@ Depende de: ``janela``, ``tema``.
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from importlib import metadata, resources
 from pathlib import Path
@@ -18,10 +19,14 @@ from supraharmonicos.api import aquecer
 from sh_analyzer_gui import atalho, preferencias
 from sh_analyzer_gui.configuracao import APLICATIVO, ORGANIZACAO
 from sh_analyzer_gui.janela import JanelaPrincipal
+from sh_analyzer_gui.registro import ligar_o_log
+from sh_analyzer_gui.servicos.erros import instalar_ganchos
 from sh_analyzer_gui.tema.aplicar import aparencia
 from sh_analyzer_gui.tema.fontes import fonte_da_interface, registrar_fontes
 
 NOME = APLICATIVO
+
+log = logging.getLogger(__name__)
 
 # O ícone pequeno (traço grosso, sem grade) é desenhado para 16 a 32 px; o grande, de 48 px para cima
 # (report/gerar_marca.py). As cópias em recursos/ são conferidas contra docs/images/ por tests/test_marca.py.
@@ -140,7 +145,11 @@ def main(argv: list[str] | None = None) -> int:
     if opcoes.instalar_atalho or opcoes.remover_atalho:
         return _atalho(remover=opcoes.remover_atalho)
     silenciar_avisos_do_qt()
+    registro = ligar_o_log()
     app = criar_aplicacao(argv_qt, tema=opcoes.tema or preferencias.tema_salvo())
+    # Daqui em diante, um erro inesperado (num slot, num evento, noutra thread) vai para o log e para o diálogo, e o
+    # aplicativo segue (servicos/erros.py).
+    instalar_ganchos()
     preferencias.aplicar_fontes_salvas(app)
     janela = JanelaPrincipal()
     janela.show()
@@ -154,4 +163,6 @@ def main(argv: list[str] | None = None) -> int:
         # A primeira medida importaria o SciPy (~1,5 s, com o GIL preso, travando a tela aos pedaços): importado
         # agora, em segundo plano, enquanto a janela recém-aberta está parada.
         janela.tarefas.iniciar("Aquecer", lambda _progresso, _cancelado: aquecer(), mostrar=False)
-    return app.exec()
+    codigo = app.exec()
+    log.info("o aplicativo fechou (código %d); o log está em %s", codigo, registro.caminho)
+    return codigo

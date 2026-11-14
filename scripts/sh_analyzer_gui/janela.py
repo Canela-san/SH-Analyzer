@@ -21,6 +21,7 @@ comandos (F1.8) disparam a mesma ``QAction``.
 
 from __future__ import annotations
 
+import logging
 from functools import partial
 from pathlib import Path
 
@@ -56,6 +57,7 @@ from .areas.analise.medidas import TabelaDeMedidas
 from .componentes.avisos import ListaDeAvisos
 from .componentes.barra_superior import BarraSuperior
 from .componentes.basicos import Botao
+from .componentes.dialogo_de_erro import DialogoDeErro
 from .componentes.painel import EstadoVazio, PainelComAbas, TituloDoPainel, botao_de_icone
 from .componentes.paleta import DialogoDeAtalhos, PaletaDeComandos
 from .componentes.tarefas import ListaDeTarefas
@@ -63,6 +65,8 @@ from .configuracao import gravar, ler_bytes
 from .controle_do_projeto import ControleDoProjeto
 from .modelo.objetos import Projeto, Vista
 from .modelo.selecao import Selecao
+from .registro import caminho_do_log
+from .servicos.erros import ErroInesperado, relator
 from .servicos.fontes import ServicoDeFontes
 from .servicos.materializar import ServicoDeMaterializacao
 from .servicos.tarefas import GerenciadorDeTarefas
@@ -70,6 +74,8 @@ from .tema.aplicar import aparencia
 from .tema.fontes import familias_disponiveis, fonte_escolhida
 from .tema.icones import IconeDoTema
 from .tema.tokens import Tema
+
+log = logging.getLogger(__name__)
 
 TAMANHO_INICIAL = (1440, 900)
 TAMANHO_MINIMO = (960, 600)
@@ -157,6 +163,10 @@ class JanelaPrincipal(QMainWindow):
         self.trocar_projeto(Projeto())
         self._layout_restaurado = self.restaurar_layout()
         self._primeira_exibicao = True
+        # Os erros inesperados de qualquer thread (servicos/erros.py). Pela fila sempre: um erro num paintEvent não
+        # abre uma janela no meio da pintura.
+        self.dialogo_de_erro: DialogoDeErro | None = None
+        relator().erroInesperado.connect(self._erro_inesperado, Qt.ConnectionType.QueuedConnection)
 
     # ------------------------------------------------------------------ ações
 
@@ -483,6 +493,26 @@ class JanelaPrincipal(QMainWindow):
             self._primeira_exibicao = False
             if not self._layout_restaurado:
                 self.layout_padrao()
+
+    # ------------------------------------------------------------------ o erro inesperado
+
+    def _erro_inesperado(self, erro: ErroInesperado) -> None:
+        """O diálogo, sem parar o trabalho (não é modal); com ele aberto, o erro entra na lista dele. Um erro aqui
+        dentro vai só para o log: voltar ao relator faria um laço."""
+        try:
+            if self.dialogo_de_erro is None:
+                self.dialogo_de_erro = DialogoDeErro(caminho_do_log(), self)
+                self.dialogo_de_erro.finished.connect(self._dialogo_de_erro_fechou)
+            self.dialogo_de_erro.adicionar(erro)
+            if not self.dialogo_de_erro.isVisible():
+                self.dialogo_de_erro.show()
+        except Exception:
+            log.exception("o diálogo de erro inesperado falhou")
+
+    def _dialogo_de_erro_fechou(self, _resultado: int) -> None:
+        if self.dialogo_de_erro is not None:
+            self.dialogo_de_erro.deleteLater()
+            self.dialogo_de_erro = None
 
     def closeEvent(self, evento: QCloseEvent) -> None:
         if not self.controle.pode_descartar():

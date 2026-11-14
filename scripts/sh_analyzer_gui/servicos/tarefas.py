@@ -7,6 +7,10 @@ progresso e pode ser cancelada.
 ``Cancelado`` (o do motor, que a pirâmide e as contas da ``api`` usam) ou devolve o que tiver. A tarefa repassa o progresso no máximo a cada 50 ms, para não
 inundar a interface.
 
+**Uma tarefa que falha** fica ``falhou``, com o motivo em ``erro`` para quem pediu mostrar no lugar certo. O motivo
+esperado (um ``ErroSHAN`` do motor, um ``OSError`` de arquivo) fica só aí; outra exceção é um defeito
+(``inesperado``): vai também para o log com a pilha e para o diálogo de erro inesperado (``servicos/erros.py``).
+
 **Os sinais saem da thread de trabalho** e chegam à interface pela fila de eventos do Qt (a ``Tarefa`` mora na
 thread da interface). **Ao fechar,** :meth:`GerenciadorDeTarefas.encerrar` cancela todas e espera: nenhuma thread
 fica rodando com o Python já saindo.
@@ -21,9 +25,10 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 from shiboken6 import isValid
-from supraharmonicos.api import aquecer
+from supraharmonicos.api import ErroSHAN, aquecer
 
 from ..dados.piramide import Cancelado
+from .erros import relatar
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +52,7 @@ class Tarefa(QObject):
         self.progresso = 0.0
         self.resultado = None
         self.erro = ""
+        self.inesperado = False             # falhou por um defeito, e não por um motivo do motor ou de arquivo
         self.mostrar = True
         self._funcao = funcao
         self._cancelar = threading.Event()
@@ -82,9 +88,13 @@ class Tarefa(QObject):
                 self.estado = "cancelada" if self.cancelada() else "concluida"
             except Cancelado:
                 self.estado = "cancelada"
-            except Exception as e:           # a tarefa falha sozinha; o aplicativo segue
-                log.exception("a tarefa %r falhou", self.nome)
+            except (ErroSHAN, OSError) as e:     # o motivo vai para quem pediu, no lugar certo
+                log.warning("a tarefa %r falhou: %s", self.nome, e)
                 self.erro, self.estado = str(e) or type(e).__name__, "falhou"
+            except Exception as e:               # um defeito: a tarefa falha sozinha, e o aplicativo segue
+                relatar(e, f"na tarefa {self.nome!r}")
+                self.erro = f"erro inesperado ({type(e).__name__}: {e})" if str(e) else f"erro inesperado ({type(e).__name__})"
+                self.estado, self.inesperado = "falhou", True
         self._avisar(self.terminou, self)
 
     def _avisar(self, sinal, *argumentos) -> None:

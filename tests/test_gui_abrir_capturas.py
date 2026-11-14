@@ -87,12 +87,20 @@ def test_cancelar_e_falhar(qtbot):
         tarefa.cancelar()
     assert tarefa.estado == "cancelada" and Cancelado is api.Cancelado
 
+    # Um erro do motor falha a tarefa com o motivo; outra exceção é um defeito (servicos/erros.py).
+    def estragado(avisar, cancelado):
+        raise api.ErroSHAN("arquivo estragado")
+
+    with qtbot.waitSignal(tarefas.tarefaSaiu, timeout=5000):
+        tarefa = tarefas.iniciar("estragado", estragado)
+    assert tarefa.estado == "falhou" and tarefa.erro == "arquivo estragado" and not tarefa.inesperado
+
     def quebrar(avisar, cancelado):
-        raise ValueError("arquivo estragado")
+        raise ValueError("um defeito")
 
     with qtbot.waitSignal(tarefas.tarefaSaiu, timeout=5000):
         tarefa = tarefas.iniciar("quebrar", quebrar)
-    assert tarefa.estado == "falhou" and tarefa.erro == "arquivo estragado"
+    assert tarefa.estado == "falhou" and tarefa.inesperado and tarefa.erro == "erro inesperado (ValueError: um defeito)"
     tarefas.iniciar("esperar de novo", esperar)
     assert tarefas.encerrar(5000)                                       # cancela e espera
 

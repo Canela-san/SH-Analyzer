@@ -12,6 +12,7 @@ lado (``.shproj~``; o de um projeto sem título vai para a pasta de recuperaçã
 from __future__ import annotations
 
 import base64
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QObject, QTimer
@@ -23,6 +24,8 @@ from .dados.captura import Aviso, ErroSHAN, abrir_fonte
 from .modelo.comandos import AdicionarFonte
 from .modelo.objetos import FonteDoProjeto, Projeto
 from .modelo.persistencia import descrever, montar
+
+log = logging.getLogger(__name__)
 
 INTERVALO_AUTOMATICO_MS = 60_000
 CHAVE_DOS_RECENTES = "recentes/projetos"
@@ -164,6 +167,8 @@ class ControleDoProjeto(QObject):
                 esquecer(CHAVE_DOS_RECENTES, str(caminho.resolve()))
             return False
         projeto, avisos = montar(salvo, caminho, caminho.parent)
+        log.info("projeto aberto: %s%s (%d fonte(s), %d vista(s))", ler_de, " (recuperado)" if recuperado else "",
+                 len(projeto.fontes), len(projeto.vistas))
         self._mostrar(projeto, salvo, avisos)
         if recuperado:
             projeto.pilha.resetClean()                # o recuperado ainda não está no arquivo principal
@@ -203,6 +208,9 @@ class ControleDoProjeto(QObject):
                 self._erro(self.tr("Não foi possível abrir {}: {}").format(caminho.name, e))
                 continue
             self.projeto.pilha.push(AdicionarFonte(self.projeto, fonte))
+            cab = fonte.fonte.captura.cabecalho
+            log.info("captura aberta: %s (cabeçalho v%s, %d canal(is) a %g Hz)", caminho, cab.versao_cabecalho,
+                     len(fonte.canais), fonte.canais[0].taxa_hz if fonte.canais else 0.0)
             lembrar(CHAVE_DAS_CAPTURAS_RECENTES, str(caminho.resolve()))
             abertas.append(fonte)
         return abertas
@@ -274,6 +282,7 @@ class ControleDoProjeto(QObject):
             self._erro(self.tr("Não foi possível salvar {}: {}").format(caminho.name, e))
             return False
         self.projeto.pilha.setClean()
+        log.info("projeto salvo: %s", caminho)
         self._lembrar(caminho)
         return True
 
@@ -296,6 +305,7 @@ class ControleDoProjeto(QObject):
         try:
             return arquivo.salvar_automatico(self._descrever(base.parent), base)
         except (OSError, ValueError) as e:
+            log.warning("o salvamento automático em %s falhou: %s", base, e)
             self.janela.statusBar().showMessage(self.tr("Salvamento automático falhou: {}").format(e), 10_000)
             return None
 
@@ -313,6 +323,7 @@ class ControleDoProjeto(QObject):
     def _erro(self, texto: str) -> None:
         from .componentes.toast import Toast
 
+        log.warning("%s", texto)
         Toast.mostrar(self.janela, texto, "erro", 8000)
 
     def _aviso(self, texto: str) -> None:
