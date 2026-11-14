@@ -8,9 +8,11 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F2.4: a cadeia no inspetor e nos chips** (seção 4c). A F2.1 a F2.3 estão feitas: um traço com transformações já
-> aparece na tela (a prévia, o preenchimento, a materialização), mas só dá para montar a cadeia por código ou pelo
-> projeto; a F2.4 traz a seção Processamento do inspetor.
+> **F2.5: a vista de espectro** (seção 4c). A F2.1 a F2.4 estão feitas: a cadeia de transformações se monta no
+> inspetor (com desfazer), o traço transformado aparece na tela e as medidas saem dele.
+>
+> **Para o usuário ver na tela:** plotar um canal, selecionar o traço e, no inspetor, "Adicionar etapa" (ou Ctrl+K,
+> "passa-altas").
 >
 > **Com o usuário (quando puder):** o "pronto quando" da Fase 1, abrir uma captura de 1 h, navegar e medir com 8
 > traços de 2 fontes, em `uv run --extra gui python -m sh_analyzer_gui`.
@@ -94,13 +96,12 @@ da CLI, pela `api`), edita os traços no inspetor (tudo com desfazer), salva e r
 salvamento automático e a recuperação) e tem a paleta de comandos. As seções 4 e 4b têm o commit de cada tarefa.
 
 **Os commits só do motor** (podem ir ao `main` sozinhos): `974c58a` (a `api`), `e76684b` (a integridade e o
-cabeçalho), `64f6e57` (a unidade do canal), `b5b02ab` (as medidas de um trecho), `71ba268` (a taxa da PRU) e `98d96e0` (a frequência, F2.1), `0ef8255` (os filtros), `28a1a04` (a margem da sonda) e `3110417` (`medir_sinal`). E o do agente da placa: `3f98d7b`.
+cabeçalho), `64f6e57` (a unidade do canal), `b5b02ab` (as medidas de um trecho), `71ba268` (a taxa da PRU) e `98d96e0` (a frequência, F2.1), `0ef8255` (os filtros), `28a1a04` (a margem da sonda), `3110417` (`medir_sinal`) e `631a770` (a faixa válida do perfil). E o do agente da placa: `3f98d7b`.
 
 **O ambiente:** Python 3.13, PySide6 6.12.0, PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1. Testes, na última rodada:
-`ci.sh rapido` com 1 423 aprovados e `ci.sh interface` com 499 (14/11/2026).
+`ci.sh rapido` com 1 430 aprovados e `ci.sh interface` com 505 (14/11/2026).
 
-**Ainda não existe:** a edição da cadeia na tela (o traço transformado já é desenhado, F2.3, mas a cadeia só vem
-do projeto), as vistas de frequência (a `api` delas já existe, F2.1), as figuras e a Aquisição.
+**Ainda não existe:** as vistas de frequência (a `api` delas já existe, F2.1), as figuras e a Aquisição.
 
 ---
 
@@ -602,7 +603,22 @@ O plano original:
 - **Os testes:** o traço materializado igual ao do motor sobre o vetor inteiro; cancelar no meio; o cache
   reaproveitado e o limite respeitado; a prévia em menos de 200 ms (plano, 7.2).
 
-### ☐ F2.4: a cadeia no inspetor e nos chips
+### ☑ F2.4: a cadeia no inspetor e nos chips
+
+**Feita em 14/11/2026:** `631a770` (só do motor: `PerfilSonda.faixa_valida`) e `c510dec` (a seção Processamento e a
+Calibração). As decisões:
+
+- **A reordenação é por setas** (▲ ▼ em cada cartão), e não por arrastar: dá para fazer pelo teclado e testar.
+  "Adicionar etapa" é um menu de 6 itens; a busca fica com a paleta de comandos (Ctrl+K: "Adicionar etapa:
+  passa-altas"), que acha as ações quando um traço está no inspetor.
+- **Os padrões das etapas novas:** a correção de sonda entra no começo da cadeia (é onde a sonda age, e é a ordem da
+  CLI); o passa-altas em 2 kHz; o passa-baixas em 80 % da Nyquist (até 150 kHz); o rejeita-faixa em 45 a 65 Hz.
+- **A correção de sonda não entra sozinha** num traço novo (ela custa uma materialização): a seção Calibração diz que
+  o perfil existe e não está na cadeia, com o botão "Aplicar a correção de sonda".
+- **Fica para a F2.5:** a faixa válida do perfil sombreada no gráfico. Ela é de frequência, e o lugar dela é a vista
+  de espectro; a seção Calibração já a mostra em texto.
+
+O plano original:
 
 - **O conteúdo:**
   - a seção **Processamento** do inspetor (plano, 9.4): um cartão por etapa (ligar e desligar, reordenar, abrir os
@@ -855,6 +871,11 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **Testes:** `ci.sh rapido` com 1 423 aprovados e `ci.sh interface` com 499; os de desempenho (`--desempenho`)
     passam, com a prévia de 1 s abaixo de 200 ms.
   - **Próximo:** a F2.4, a cadeia no inspetor e nos chips.
+- **14/11/2026:** **a F2.4, a cadeia no inspetor** (seção 4c). Achado no caminho: o teste das medidas do traço
+  transformado oscilava com a máquina carregada (o pedido automático da vista chegava depois do pedido do teste e o
+  trocava); o teste passou a esperar a resposta do seu pedido.
+  - **Testes:** `ci.sh rapido` com 1 430 aprovados e `ci.sh interface` com 505.
+  - **Próximo:** a F2.5, a vista de espectro.
 ---
 
 ## 8. Perguntas em aberto
