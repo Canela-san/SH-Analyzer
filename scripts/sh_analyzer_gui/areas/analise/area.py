@@ -155,6 +155,8 @@ class AreaDeAnalise(QObject):
         widget.tracoClicado.connect(self._traco_clicado)
         widget.semRegiao.connect(self._sem_regiao)
         widget.medidasMudaram.connect(self._medidas_da_vista)
+        if vista.tipo == "espectro":
+            widget.calculado.connect(self._espectro_calculado)
         self.abas.insertTab(i, widget, icone(nome_do_icone, aparencia().tema.texto2), vista.nome)
         self._por_botao_de_fechar(i, widget)
         self.abas.setCurrentIndex(i)
@@ -168,7 +170,7 @@ class AreaDeAnalise(QObject):
         fechar.setIconSize(QSize(TAMANHO_DO_X, TAMANHO_DO_X))
         fechar.setFixedSize(QSize(TAMANHO_DO_BOTAO_DE_FECHAR, TAMANHO_DO_BOTAO_DE_FECHAR))
         fechar.setCursor(Qt.CursorShape.PointingHandCursor)
-        fechar.setToolTip(self.tr("Fechar a vista (desfazível)"))
+        fechar.setToolTip(self.tr("Fechar a vista (Ctrl+W; desfazível)"))
         IconeDoTema(fechar, "x", "texto2", tamanho=TAMANHO_DO_X)
         fechar.clicked.connect(lambda _=False, w=widget: self._fechar_aba(self.abas.indexOf(w)))
         self.abas.tabBar().setTabButton(i, QTabBar.ButtonPosition.RightSide, fechar)
@@ -184,6 +186,33 @@ class AreaDeAnalise(QObject):
         widget = self.widget_da_vista(vista)
         if widget is not None and "nome" in campos:
             self.abas.setTabText(self.abas.indexOf(widget), vista.nome)
+            if vista is self.vista_ativa():
+                self._inspetor_da_vista()
+
+    # ------------------------------------------------------------------ o inspetor da vista ativa
+
+    def _inspetor_da_vista(self, trocou_de_aba: bool = False) -> None:
+        """A vista da aba ativa vai para o inspetor: numa de espectro, a análise dela aparece com o traço
+        selecionado e, sem seleção, sozinha (as propriedades da vista). A captura mostrada no inspetor fica, a não ser
+        que o usuário tenha trocado de aba (ele foi olhar a vista)."""
+        if not isValid(self.inspetor):
+            return
+        widget = self.abas.currentWidget()
+        vista = getattr(widget, "vista", None)
+        espectro = vista if vista is not None and vista.tipo == "espectro" else None
+        self.inspetor.definir_vista_ativa(self.projeto, vista, widget.fundamental if espectro else None)
+        atual = self.inspetor.currentWidget()
+        selecao = self.janela.selecao                     # None enquanto a janela se monta
+        if (selecao is not None and selecao.tracos) or (atual is self.inspetor.da_fonte and not trocou_de_aba):
+            return
+        if espectro is not None:
+            self.inspetor.mostrar_vista()
+        elif atual is self.inspetor.da_vista:
+            self.inspetor.mostrar("", None)
+
+    def _espectro_calculado(self) -> None:
+        if self.sender() is self.abas.currentWidget() and isValid(self.inspetor):
+            self.inspetor.atualizar_vista()
 
     # ------------------------------------------------------------------ as medidas
 
@@ -203,11 +232,20 @@ class AreaDeAnalise(QObject):
 
     def _aba_mudou(self, _i: int) -> None:
         widget = self.abas.currentWidget()
+        self._inspetor_da_vista(trocou_de_aba=True)
         if isValid(self.tabela_de_medidas):
             if widget is None:
                 self.tabela_de_medidas.mostrar(None, [])
             else:
                 widget.emitir_regiao()
+
+    def fechar_vista_ativa(self) -> bool:
+        """Ctrl+W: fecha a vista da aba ativa, como o × dela (desfazível)."""
+        i = self.abas.currentIndex()
+        if i < 0 or getattr(self.abas.widget(i), "vista", None) is None:
+            return False
+        self._fechar_aba(i)
+        return True
 
     def _fechar_aba(self, i: int) -> None:
         vista = getattr(self.abas.widget(i), "vista", None)
@@ -242,6 +280,7 @@ class AreaDeAnalise(QObject):
             self.inspetor.mostrar_tracos(self.projeto, tracos)
         elif self.inspetor.currentWidget() is self.inspetor.do_traco:
             self.inspetor.mostrar("", None)
+            self._inspetor_da_vista()
 
     def remover_selecionados(self) -> bool:
         """``Del``: tira da vista ativa os traços selecionados nela (desfazível)."""

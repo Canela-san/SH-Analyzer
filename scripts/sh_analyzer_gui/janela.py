@@ -212,6 +212,8 @@ class JanelaPrincipal(QMainWindow):
         self._acao("salvar_como", self.tr("Salvar o projeto como…"),
                    atalho="Ctrl+Shift+S").triggered.connect(lambda: controle.salvar_como())
         self._acao("nova_vista", self.tr("Nova vista"), icone="mais").triggered.connect(lambda: self.area.nova_vista())
+        self._acao("fechar_vista", self.tr("Fechar a vista"), atalho="Ctrl+W",
+                   icone="x").triggered.connect(lambda: self.area.fechar_vista_ativa())
         self._acao("espectro", self.tr("Abrir o espectro da vista"), atalho="Ctrl+E",
                    icone="espectro").triggered.connect(lambda: self.area.abrir_espectro())
         self._acao("bandas", self.tr("Abrir as bandas IEC da vista"), atalho="Ctrl+Shift+B",
@@ -273,6 +275,9 @@ class JanelaPrincipal(QMainWindow):
             acoes += [a for a in vista.actions() if a.text()]
         if self.inspetor.currentWidget() is self.inspetor.do_traco:
             acoes += self.inspetor.do_traco.processamento.acoes      # "Adicionar etapa: passa-altas"...
+        ativa = self.inspetor.vista_ativa
+        if ativa is not None and ativa.tipo == "espectro":
+            acoes += self.inspetor.da_vista.espectro.acoes           # "Aplicar o preset IEC 61000-4-7"
         return acoes
 
     def abrir_paleta(self) -> None:

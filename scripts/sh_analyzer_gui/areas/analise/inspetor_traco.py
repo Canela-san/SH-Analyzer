@@ -37,6 +37,7 @@ from ...modelo.objetos import Projeto, Traco
 from ...tema.aplicar import aparencia
 from ...tema.tokens import NOMES_DOS_TRACOS, TAMANHOS, Tema, cor_do_traco
 from .processamento import SecaoDeProcessamento
+from .secao_do_espectro import SecaoDoEspectro
 
 LARGURA_DO_ROTULO = 92
 CORES_DA_PALETA = 6
@@ -89,6 +90,12 @@ class InspetorDoTraco(QScrollArea):
         self.subtitulo.setWordWrap(True)
         coluna.addWidget(self.titulo)
         coluna.addWidget(self.subtitulo)
+
+        # A análise da vista de espectro ativa (só nela): no alto, perto de onde o usuário clicou na curva.
+        self.espectro = SecaoDoEspectro(LARGURA_DO_ROTULO)
+        self.secao_espectro = self._secao(self.tr("Análise do espectro"), [], corpo=self.espectro)
+        self.secao_espectro.hide()
+        coluna.addWidget(self.secao_espectro)
 
         # Identidade
         self.nome = QLineEdit()
@@ -233,6 +240,12 @@ class InspetorDoTraco(QScrollArea):
     def _traco_mudou(self, traco: Traco, _campos) -> None:
         if traco in self.tracos:
             self.atualizar()
+
+    def definir_vista(self, projeto: Projeto | None, vista, f1=None) -> None:
+        """A vista ativa: numa de espectro, a seção da análise dela aparece."""
+        espectro = vista is not None and vista.tipo == "espectro"
+        self.espectro.mostrar(projeto if espectro else None, vista if espectro else None, f1)
+        self.secao_espectro.setVisible(espectro)
 
     def _canal_de(self, traco: Traco):
         try:

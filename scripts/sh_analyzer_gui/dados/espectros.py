@@ -18,6 +18,12 @@ O ganho do traço multiplica o espectro (``20·log10|ganho|``); o offset é só 
 fundamental como o ``adc_tool --fft``; num trecho sem a fundamental de 45 a 65 Hz (um tom de teste de 130 kHz sozinho,
 por exemplo), a FFT é do trecho inteiro, sem sincronizar, com a janela Hann, e um aviso diz isso.
 
+**A janela e os ciclos** (o inspetor): a janela é a da ``api`` (None: a padrão do método, a retangular na FFT
+sincronizada e a Hann no Welch e na FFT sem sincronizar); ``ciclos`` limita a FFT sincronizada aos N primeiros ciclos
+inteiros do trecho. **O preset da IEC 61000-4-7** (:data:`IEC_61000_4_7`) põe a janela de medição da norma: 10
+ciclos numa rede de 50 Hz, 12 numa de 60 Hz (~200 ms), retangular e sincronizada com a fundamental; sem sincronismo,
+a norma admite a Hann, que é o que a FFT faz quando não acha a fundamental.
+
 **Os picos** (ES-02) são os ``picos`` mais altos acima do piso de ruído + :data:`ACIMA_DO_PISO_DB` e com
 :data:`PROEMINENCIA_DOS_PICOS_DB` de proeminência, de 2 kHz à Nyquist: numa FFT só, de milhões de bins, o ruído tem
 flutuações de mais de 10 dB acima do piso, e o ombro de um tom forte também. **Os harmônicos de f₁** só com a FFT
@@ -50,6 +56,16 @@ PROEMINENCIA_DOS_PICOS_DB = 10.0
 CORTE_DOS_PICOS = api.CORTE_SUPRAHARMONICOS_PADRAO
 
 
+JANELAS = {None: "Padrão do método", "retangular": "Retangular", "hann": "Hann", "blackmanharris": "Blackman-Harris",
+           "flattop": "Flat-top", "kaiser": f"Kaiser (β = {api.KAISER_BETA_PADRAO:g})".replace(".", ",")}
+"""As janelas da ``api`` (os nomes canônicos), com o nome para mostrar."""
+MAXIMO_DE_CICLOS = 100_000
+FOLGA_DE_CICLOS = 10
+"""Com ``ciclos``, a FFT sincronizada lê só o começo do trecho: os ciclos pedidos mais esta folga, no período mais
+longo da busca da fundamental. O motor recorta o mesmo começo com uma folga menor (5 ciclos), e o resultado é o da
+conta sobre o trecho inteiro."""
+
+
 class OpcoesInvalidas(ValueError):
     """Uma opção da vista de espectro fora do que ela aceita; a mensagem diz qual e por quê."""
 
@@ -64,7 +80,8 @@ class OpcoesDoEspectro:
 
     metodo: str = "fft"
     resolucao_hz: float = api.RESOLUCAO_WELCH_PADRAO
-    janela: str | None = None
+    janela: str | None = None                  # o nome canônico (JANELAS); None: a padrão do método
+    ciclos: int | None = None                  # a FFT sincronizada só nos N primeiros ciclos do trecho; None: todos
     modo: str = "tom"
     escala: str = "db"
     frequencia_log: bool = False
@@ -87,8 +104,11 @@ class OpcoesDoEspectro:
         for nome in ("frequencia_log", "harmonicos"):
             if not isinstance(getattr(self, nome), bool):
                 raise OpcoesInvalidas(f"{nome} tem de ser verdadeiro ou falso")
-        if self.janela is not None and not isinstance(self.janela, str):
-            raise OpcoesInvalidas(f"janela inválida: {self.janela!r}")
+        if self.janela not in JANELAS:
+            raise OpcoesInvalidas(f"janela inválida: {self.janela!r} (use {', '.join(n for n in JANELAS if n)})")
+        if self.ciclos is not None and not (isinstance(self.ciclos, int) and not isinstance(self.ciclos, bool)
+                                            and 1 <= self.ciclos <= MAXIMO_DE_CICLOS):
+            raise OpcoesInvalidas(f"ciclos inválidos: {self.ciclos!r} (de 1 a {MAXIMO_DE_CICLOS}, ou todos)")
         if self.vista_de_tempo is not None and not isinstance(self.vista_de_tempo, str):
             raise OpcoesInvalidas(f"vista de tempo inválida: {self.vista_de_tempo!r}")
 
@@ -97,7 +117,8 @@ class OpcoesDoEspectro:
 
     @property
     def parametros(self) -> api.ParametrosEspectro:
-        return api.ParametrosEspectro(self.metodo, self.janela, modo=self.modo, resolucao_hz=float(self.resolucao_hz))
+        return api.ParametrosEspectro(self.metodo, self.janela, modo=self.modo, resolucao_hz=float(self.resolucao_hz),
+                                      n_ciclos=self.ciclos if self.metodo == "fft" else None)
 
     def para_dict(self) -> dict:
         return {f.name: getattr(self, f.name) for f in fields(self)}
@@ -111,6 +132,51 @@ class OpcoesDoEspectro:
         if desconhecidas:
             raise OpcoesInvalidas(f"opções desconhecidas: {', '.join(sorted(desconhecidas))}")
         return cls(**dados)
+
+
+@dataclass(frozen=True)
+class PresetDoEspectro:
+    """Um conjunto de opções com nome (o começo de um lugar de presets): ``aplicar(opcoes, f1_hz)`` devolve as
+    opções com o preset; ``segue(opcoes, f1_hz)`` diz se elas já são as dele. ``f1_hz`` é a fundamental medida (None
+    se ainda não se sabe)."""
+
+    nome: str
+    descricao: Callable[[float | None], str]
+    aplicar: Callable[[OpcoesDoEspectro, float | None], OpcoesDoEspectro]
+    segue: Callable[[OpcoesDoEspectro, float | None], bool]
+    dica: str = ""
+
+
+REDE_PADRAO_HZ = 60.0
+"""A rede suposta enquanto a fundamental não foi medida: a brasileira."""
+
+
+def ciclos_da_iec(f1_hz: float | None) -> int:
+    """Os ciclos da janela de medição da IEC 61000-4-7 (~200 ms): 10 numa rede de 50 Hz, 12 numa de 60 Hz. Sem a
+    fundamental medida, os da rede de :data:`REDE_PADRAO_HZ`."""
+    f1 = f1_hz if f1_hz is not None and math.isfinite(f1_hz) else REDE_PADRAO_HZ
+    return 10 if f1 < 55.0 else 12
+
+
+def _aplicar_iec(opcoes: OpcoesDoEspectro, f1_hz: float | None) -> OpcoesDoEspectro:
+    return opcoes.com(metodo="fft", modo="tom", janela=None, ciclos=ciclos_da_iec(f1_hz))
+
+
+def _segue_a_iec(opcoes: OpcoesDoEspectro, f1_hz: float | None) -> bool:
+    return (opcoes.metodo, opcoes.modo, opcoes.janela, opcoes.ciclos) == ("fft", "tom", None, ciclos_da_iec(f1_hz))
+
+
+def _descrever_iec(f1_hz: float | None) -> str:
+    n = ciclos_da_iec(f1_hz)
+    return f"{n} ciclos de {50 if n == 10 else 60} Hz (~200 ms), janela retangular sincronizada"
+
+
+IEC_61000_4_7 = PresetDoEspectro(
+    "IEC 61000-4-7", _descrever_iec, _aplicar_iec, _segue_a_iec,
+    dica="A janela de medição da IEC 61000-4-7 (a mesma da IEC 61000-4-30 classe A): 10 ciclos numa rede de 50 Hz, 12 "
+         "numa de 60 Hz (~200 ms), retangular e sincronizada com a fundamental, a partir do começo do trecho. Sem "
+         "sincronismo, a norma admite a Hann, e é o que a FFT faz quando não acha a fundamental (com um aviso).")
+PRESETS_DO_ESPECTRO = (IEC_61000_4_7,)
 
 
 @dataclass(frozen=True, eq=False)
@@ -168,6 +234,10 @@ def espectro_do_trecho(trecho: TrechoDoTraco, parametros: api.ParametrosEspectro
 
 def _espectro_do_trecho(trecho: TrechoDoTraco, parametros: api.ParametrosEspectro, *, progresso, cancelado):
     canal = trecho.captura.canal(trecho.numero)
+    if parametros.sincronizada and parametros.n_ciclos:
+        # Os 12 ciclos da IEC numa captura de uma hora: o começo do trecho basta (e cabe na FFT).
+        basta = math.ceil((parametros.n_ciclos + FOLGA_DE_CICLOS) * canal.taxa_hz / parametros.freq_min_fundamental)
+        trecho = replace(trecho, fim=min(trecho.fim, trecho.inicio + basta))
     n = trecho.n_amostras
     if trecho.ganho == 0:
         raise api.ErroSHAN("o ganho do traço é zero")

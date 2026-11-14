@@ -26,7 +26,8 @@ from ...modelo.objetos import FonteDoProjeto, Projeto
 from ...tema.aplicar import aparencia
 from ...tema.icones import icone
 from ...tema.tokens import TAMANHOS, Tema
-from .inspetor_traco import InspetorDoTraco
+from .inspetor_traco import LARGURA_DO_ROTULO, InspetorDoTraco
+from .secao_do_espectro import SecaoDoEspectro
 
 TEXTOS_DA_INTEGRIDADE = {
     "pendente": ("relogio", "mudo", "CRC das amostras: a conferir"),
@@ -189,6 +190,52 @@ class InspetorDaFonte(QScrollArea):
                 self.estado_piramide.setText(self.tr("Pirâmide ainda não construída"))
 
 
+class InspetorDaVista(QScrollArea):
+    """As propriedades da vista ativa, sem traço selecionado (por enquanto, a análise de uma vista de espectro)."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("inspetor_da_vista")
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        conteudo = QWidget()
+        conteudo.setObjectName("painel")
+        conteudo.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        coluna = QVBoxLayout(conteudo)
+        coluna.setContentsMargins(12, 4, 12, 12)
+        coluna.setSpacing(10)
+        self.titulo = QLabel()
+        self.titulo.setObjectName("titulo_inspetor")
+        fonte = QFont()
+        fonte.setPixelSize(TAMANHOS["titulo_painel"])
+        fonte.setWeight(QFont.Weight.DemiBold)
+        self.titulo.setFont(fonte)
+        self.titulo.setWordWrap(True)
+        dica = QLabel(self.tr("As opções valem para todos os traços da vista. Clique numa curva para ver o traço."))
+        dica.setObjectName("subtitulo_inspetor")
+        dica.setWordWrap(True)
+        divisoria = QFrame()
+        divisoria.setObjectName("divisoria")
+        divisoria.setFixedHeight(1)
+        rotulo = QLabel(self.tr("Análise do espectro"))
+        fonte = QFont()
+        fonte.setPixelSize(TAMANHOS["corpo"])
+        fonte.setWeight(QFont.Weight.DemiBold)
+        rotulo.setFont(fonte)
+        self.espectro = SecaoDoEspectro(LARGURA_DO_ROTULO)
+        coluna.addWidget(self.titulo)
+        coluna.addWidget(dica)
+        coluna.addWidget(divisoria)
+        coluna.addWidget(rotulo)
+        coluna.addWidget(self.espectro)
+        coluna.addStretch(1)
+        self.setWidget(conteudo)
+
+    def mostrar(self, projeto: Projeto | None, vista, f1=None) -> None:
+        self.titulo.setText(vista.nome if vista is not None else "")
+        self.espectro.mostrar(projeto, vista, f1)
+
+
 class Inspetor(QStackedWidget):
     """O que o inspetor mostra, pelo que está selecionado; sem seleção, o estado vazio."""
 
@@ -200,9 +247,27 @@ class Inspetor(QStackedWidget):
                                  icone_nome="ajustes", compacto=True)
         self.da_fonte = InspetorDaFonte()
         self.do_traco = InspetorDoTraco()
+        self.da_vista = InspetorDaVista()
         self.addWidget(self.vazio)
         self.addWidget(self.da_fonte)
         self.addWidget(self.do_traco)
+        self.addWidget(self.da_vista)
+        self.vista_ativa = None
+
+    def definir_vista_ativa(self, projeto: Projeto | None, vista, f1=None) -> None:
+        """A vista da aba ativa (as seções que dependem dela: a análise de um espectro)."""
+        self.vista_ativa = vista
+        self.do_traco.definir_vista(projeto, vista, f1)
+        self.da_vista.mostrar(projeto, vista if vista is not None and vista.tipo == "espectro" else None, f1)
+
+    def atualizar_vista(self) -> None:
+        """Um espectro novo chegou (outra fundamental muda o que o preset põe)."""
+        self.do_traco.espectro.atualizar()
+        self.da_vista.espectro.atualizar()
+
+    def mostrar_vista(self) -> None:
+        self.da_fonte.soltar()
+        self.setCurrentWidget(self.da_vista)
 
     def mostrar_tracos(self, projeto: Projeto, tracos) -> None:
         """Os traços selecionados (um ou vários)."""
