@@ -604,10 +604,11 @@ class Pico:
 
 def picos(espectro_: Espectro, limiar_db: float, *, freq_min: float = CORTE_SUPRAHARMONICOS_PADRAO,
           freq_max: float | None = None, distancia_minima_hz: float = DISTANCIA_MINIMA_PICOS_PADRAO,
-          maximo: int | None = None) -> tuple[Pico, ...]:
+          maximo: int | None = None, proeminencia_db: float | None = None) -> tuple[Pico, ...]:
     """Os picos de ``espectro_`` acima de ``limiar_db`` entre ``freq_min`` e ``freq_max`` (a Nyquist, por padrão),
     afastados de pelo menos ``distancia_minima_hz``: o ``--picos`` da CLI (``espectro.encontrar_picos_espectro``),
-    com os mesmos padrões. ``maximo``: só os N mais altos. Em ordem de frequência."""
+    com os mesmos padrões. ``maximo``: só os N mais altos. ``proeminencia_db``: só os que sobem pelo menos isso acima do
+    vale que os separa de um pico maior (o ombro de um pico, ou o ruído, não contam). Em ordem de frequência."""
     nyquist = espectro_.taxa_hz / 2.0
     freq_max = nyquist if freq_max is None else freq_max
     if not freq_min < freq_max:
@@ -617,7 +618,7 @@ def picos(espectro_: Espectro, limiar_db: float, *, freq_min: float = CORTE_SUPR
     if maximo is not None and maximo < 1:
         raise ErroSHAN(f"o número de picos precisa ser >= 1 (recebido {maximo}).")
     achados = [Pico(a["frequencia_hz"], a["amplitude_db"]) for a in encontrar_picos_espectro(
-        espectro_.freqs_hz, espectro_.db, freq_min, freq_max, limiar_db, distancia_minima_hz)]
+        espectro_.freqs_hz, espectro_.db, freq_min, freq_max, limiar_db, distancia_minima_hz, proeminencia_db)]
     if maximo is not None and len(achados) > maximo:
         achados = sorted(sorted(achados, key=lambda pico: -pico.db)[:maximo], key=lambda pico: pico.frequencia_hz)
     return tuple(achados)

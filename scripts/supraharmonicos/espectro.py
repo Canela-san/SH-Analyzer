@@ -305,7 +305,7 @@ def agrupar_em_bandas(freqs: np.ndarray, amplitude_db: np.ndarray,
 
 def encontrar_picos_espectro(freqs: np.ndarray, amplitude_db: np.ndarray,
                               freq_min: float, freq_max: float, limiar_db: float,
-                              distancia_minima_hz: float) -> list[dict]:
+                              distancia_minima_hz: float, proeminencia_db: float | None = None) -> list[dict]:
     """Localiza picos locais dentro de [freq_min, freq_max] acima de
     'limiar_db' (scipy.signal.find_peaks) e refina cada um por interpolação
     parabólica (refinar_pico_parabolico) -- entrega frequência e amplitude de
@@ -321,7 +321,10 @@ def encontrar_picos_espectro(freqs: np.ndarray, amplitude_db: np.ndarray,
 
     from scipy.signal import find_peaks  # sob demanda: só quem calcula paga o SciPy
     sub_espectro = amplitude_db[indices_banda]
-    indices_locais, _ = find_peaks(sub_espectro, height=limiar_db, distance=distancia_bins)
+    # A proeminência (opcional): quanto o pico sobe acima do vale mais alto que o separa de um pico maior. Sem ela, o
+    # ombro de um pico ou uma flutuação do ruído (num espectro de milhões de bins, várias passam do limiar) contam.
+    indices_locais, _ = find_peaks(sub_espectro, height=limiar_db, distance=distancia_bins,
+                                   prominence=proeminencia_db)
 
     picos = []
     for i_local in indices_locais:

@@ -443,3 +443,18 @@ def test_uma_banda_fraca_ao_lado_da_fundamental_guarda_a_precisao():
     k = int(np.argmin(np.abs(so_o_tom.centros_hz - 9_000)))
     assert so_o_tom.niveis[0, k] == pytest.approx(1e-6, rel=1e-9)
     assert com_a_rede.niveis[0, k] == pytest.approx(so_o_tom.niveis[0, k], rel=1e-7)
+
+
+def test_a_proeminencia_separa_os_tons_do_ruido():
+    """Uma FFT só (sem média) de 2 M amostras: o ruído tem flutuações que passam do piso + 10 dB, e o ombro de um tom
+    forte também; com a proeminência, só os tons."""
+    rng = np.random.default_rng(12)
+    fs = 400_000.0
+    t = np.arange(2_000_000) / fs
+    sinal = rng.normal(0, 1e-3, len(t)) + 1.0 * np.sin(2 * np.pi * 130_000 * t) + 0.01 * np.sin(2 * np.pi * 40_000 * t)
+    esp = api.espectro(sinal, fs, api.ParametrosEspectro("fft", sincronizar=False))
+    piso = esp.piso()
+    sem = api.picos(esp, piso + 10)
+    com = api.picos(esp, piso + 20, proeminencia_db=10)
+    assert len(sem) > 10                                              # o ruído passa do piso + 10 dB
+    assert [round(p.frequencia_hz / 1000) for p in com] == [40, 130]
