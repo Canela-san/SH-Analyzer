@@ -8,11 +8,11 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F2.6: as bandas IEC e o espectrograma** (seção 4c). A F2.1 a F2.5 estão feitas: a cadeia se monta no inspetor, o
-> traço transformado aparece na tela, e Ctrl+E abre o espectro da vista de tempo.
+> **F2.7: os harmônicos** (seção 4c). A F2.1 a F2.6 estão feitas: a cadeia no inspetor, o traço transformado na tela,
+> o espectro (Ctrl+E), as bandas IEC (Ctrl+Shift+B) e o espectrograma (Ctrl+Shift+E).
 >
-> **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
-> para o espectro.
+> **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E,
+> Ctrl+Shift+B ou Ctrl+Shift+E.
 >
 > **Com o usuário (quando puder):** o "pronto quando" da Fase 1, abrir uma captura de 1 h, navegar e medir com 8
 > traços de 2 fontes, em `uv run --extra gui python -m sh_analyzer_gui`.
@@ -96,13 +96,12 @@ da CLI, pela `api`), edita os traços no inspetor (tudo com desfazer), salva e r
 salvamento automático e a recuperação) e tem a paleta de comandos. As seções 4 e 4b têm o commit de cada tarefa.
 
 **Os commits só do motor** (podem ir ao `main` sozinhos): `974c58a` (a `api`), `e76684b` (a integridade e o
-cabeçalho), `64f6e57` (a unidade do canal), `b5b02ab` (as medidas de um trecho), `71ba268` (a taxa da PRU) e `98d96e0` (a frequência, F2.1), `0ef8255` (os filtros), `28a1a04` (a margem da sonda), `3110417` (`medir_sinal`), `631a770` (a faixa válida do perfil) e `b368246` (o piso de ruído). E o do agente da placa: `3f98d7b`.
+cabeçalho), `64f6e57` (a unidade do canal), `b5b02ab` (as medidas de um trecho), `71ba268` (a taxa da PRU) e `98d96e0` (a frequência, F2.1), `0ef8255` (os filtros), `28a1a04` (a margem da sonda), `3110417` (`medir_sinal`), `631a770` (a faixa válida do perfil), `b368246` (o piso de ruído) e `8376894` (as bandas sem cancelamento). E o do agente da placa: `3f98d7b`.
 
 **O ambiente:** Python 3.13, PySide6 6.12.0, PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1. Testes, na última rodada:
-`ci.sh rapido` com 1 449 aprovados e `ci.sh interface` com 523 (14/11/2026).
+`ci.sh rapido` com 1 462 aprovados e `ci.sh interface` com 535 (14/11/2026).
 
-**Ainda não existe:** as bandas IEC, o espectrograma e os harmônicos na tela (a `api` deles já existe, F2.1), as
-figuras e a Aquisição.
+**Ainda não existe:** os harmônicos na tela (a `api` deles já existe, F2.1), as figuras e a Aquisição.
 
 ---
 
@@ -657,7 +656,24 @@ O plano original:
   - as contas em segundo plano (vale o pedido mais recente), o cursor de frequência e as medidas.
 - **Os testes:** os números da vista iguais aos da `api` (e esta, aos da CLI); trocar a escala e o trecho.
 
-### ☐ F2.6: as bandas IEC e o espectrograma
+### ☑ F2.6: as bandas IEC e o espectrograma
+
+**Feita em 14/11/2026:** `8376894` (só do motor: a soma de cada banda sem cancelamento), o commit sem Qt das contas e
+`f525189` (as duas vistas). As decisões:
+
+- **Um achado de precisão no motor:** as bandas saíam da diferença de uma soma acumulada da potência, que carrega a
+  fundamental; uma banda fraca ao lado da rede perdia até ~1e-6 relativo no cancelamento. Agora cada banda soma só
+  os seus bins, e os números da CLI mudam nessa ordem, nas bandas fracas.
+- **As duas vistas seguem um traço da vista de tempo** (o seletor da barra), com a cadeia dele; o trecho padrão é a
+  captura inteira. Sem cadeia, as contas rodam nos códigos do ADC e são escaladas (são lineares), sem pôr a captura
+  na memória; as bandas sincronizadas acham a fundamental nos volts do trecho, até 64 M amostras (~5 min).
+- **O tempo ligado nos dois sentidos**, copiando o intervalo: o `setXLink` do PyQtGraph alinha pela posição na tela.
+- **A tabela das bandas** vem na ordem da estatística escolhida (o P95 primeiro, como o `adc_tool`); o mapa de calor
+  mostra o nível de cada janela, em dB.
+- **Fica para depois:** a vista de espectro ainda não usa a base `VistaLigada` (as duas cuidam da vista de tempo do
+  mesmo jeito); juntar quando a F2.7 trouxer a terceira vista de frequência por traço.
+
+O plano original:
 
 - **O conteúdo** (ES-03, ES-04): a tabela das bandas de 200 Hz e o mapa de calor banda × tempo (RMS, máximo, P95);
   o espectrograma com o mapa de cores perceptual, com o tempo ligado ao da vista de tempo. Uma captura longa vai em
@@ -900,6 +916,12 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   reposicionado a cada desenho.
   - **Testes:** `ci.sh rapido` com 1 449 aprovados e `ci.sh interface` com 523.
   - **Próximo:** a F2.6, as bandas IEC e o espectrograma.
+- **14/11/2026:** **a F2.6, as bandas IEC e o espectrograma** (seção 4c). Achados no caminho: a soma acumulada das
+  bandas (acima); o `setXLink` que alinhava pela tela; e um teste do espectro que oscilava com a máquina carregada
+  (esperava o primeiro sinal de "calculado", e um pedido de antes da mudança podia chegar depois). Cada resultado
+  agora guarda as opções e o trecho que o produziram.
+  - **Testes:** `ci.sh rapido` com 1 462 aprovados e `ci.sh interface` com 535.
+  - **Próximo:** a F2.7, os harmônicos.
 ---
 
 ## 8. Perguntas em aberto
