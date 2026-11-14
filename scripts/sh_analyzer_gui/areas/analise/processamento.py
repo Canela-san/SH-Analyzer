@@ -348,13 +348,12 @@ class SecaoDeProcessamento(QWidget):
             acao.setEnabled(editavel)
         self.botao_adicionar.setEnabled(editavel)
         if not self.tracos:
-            self.aviso.setText("")
+            self._avisar("")
             return
         if cadeia is None:
-            self.aviso.setText(self.tr("Os traços selecionados têm cadeias diferentes: selecione um só para editar a "
-                                       "dele."))
+            self._avisar(self.tr("Os traços selecionados têm cadeias diferentes: selecione um só para editar a dele."))
             return
-        self.aviso.setText("" if cadeia.etapas else self.tr("Nenhuma etapa: o traço é o canal como ele é."))
+        self._avisar("" if cadeia.etapas else self.tr("Nenhuma etapa: o traço é o canal como ele é."))
         if self._aberta is not None and self._aberta >= len(cadeia.etapas):
             self._aberta = None
         for i, etapa in enumerate(cadeia.etapas):
@@ -365,6 +364,11 @@ class SecaoDeProcessamento(QWidget):
             cartao.abrir.connect(lambda k=i: self._abrir(k))
             self._lista.addWidget(cartao)
             self.cartoes.append(cartao)
+
+    def _avisar(self, texto: str) -> None:
+        """O aviso de cima; vazio, ele some (e não deixa um espaço em branco acima dos cartões)."""
+        self.aviso.setText(texto)
+        self.aviso.setVisible(bool(texto))
 
     # ------------------------------------------------------------------ mudar (sempre pela pilha)
 
