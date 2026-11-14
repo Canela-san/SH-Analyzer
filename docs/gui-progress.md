@@ -969,6 +969,24 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     a f₁ dos cruzamentos erra ~0,2 Hz (o passa-baixa de 4ª ordem da busca, com o corte em 6e-4 da Nyquist, não
     atenua o tom o bastante). Com a rede a 14 dB ou menos do tom, ela acerta a 0,0002 Hz.
   - **Testes:** `ci.sh rapido` com 1 473 aprovados e `ci.sh interface` com 545; os 5 de desempenho passam.
+- **14/11/2026:** **o segundo retorno do usuário** (a cara e a robustez):
+  - **os cursores de todas as vistas são os da vista de tempo** (`400e26d`): `graficos/cursores.py`
+    (`CursoresDaVista`) tem a lógica e a cara deles, e a vista de tempo também passou a usá-lo; as medidas dos
+    cursores de qualquer vista vão para a tabela de Medidas do painel de baixo (`MedidasDaVista`), e não para um
+    texto em cima do gráfico. Saiu o encosto no pico (os do tempo não têm): as setas andam um bin;
+  - **os textos emendados e espremidos** (`ce66744`): o menu do projeto herdava a direção da direita para a esquerda
+    do botão (a seta depois do nome) e grudava o atalho no rótulo; as barras das vistas de frequência quebram em
+    linhas em vez de cortar o texto ("W...h"); a busca encolhe pela largura do próprio texto, e não por um número
+    fixo. `tests/test_gui_textos.py` confere pelos size hints do Qt (vale para qualquer fonte e língua);
+  - **o inspetor** declara a largura mínima do conteúdo: o dock não encolhe abaixo do que cabe (o padrão sobe para
+    380 px, e a versão do layout salvo para 2);
+  - **Análise, Figuras e Aquisição no centro da janela** (três colunas iguais; o nome do projeto, abreviado além de
+    220 px); **o × das abas** maior e mais forte; **o espectro** sem a faixa laranja e com o texto do mouse só com o
+    nível e a frequência;
+  - **dois achados de robustez:** duas tarefas importando o SciPy ao mesmo tempo caíam no deadlock das travas de
+    importação do Python (o aquecimento agora tem uma trava, e toda tarefa espera por ele); e uma tarefa que terminava
+    depois de a janela fechar avisava um objeto apagado.
+  - **Testes:** `ci.sh rapido` com 1 479 aprovados e `ci.sh interface` com 549; os 5 de desempenho passam.
 ---
 
 ## 8. Perguntas em aberto
