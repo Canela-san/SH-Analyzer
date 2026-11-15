@@ -131,6 +131,19 @@ def test_os_limites_do_cache(app):
     assert preferencias.limite("piramides") == preferencias.LIMITES_PADRAO["piramides"]
 
 
+def test_as_placas_conhecidas(app):
+    from sh_placa.conhecidas import PlacaConhecida
+    from sh_placa.destino import Destino
+
+    assert preferencias.placas_conhecidas() == ()
+    placas = (PlacaConhecida("2017BBBK382A", "Placa do laboratório", "SHA256:x",
+                             (Destino("192.168.6.2"), Destino("lab", 2222, "eu", Destino("gw", 22, "canela"))), 5.0),)
+    preferencias.mudar_placas_conhecidas(placas)
+    assert preferencias.placas_conhecidas() == placas
+    gravar(preferencias.CHAVE_DAS_PLACAS, "{não é json")                # estragado: nenhuma, sem erro
+    assert preferencias.placas_conhecidas() == ()
+
+
 # ------------------------------------------------------------------ as pastas na abertura
 
 def test_as_capturas_abrem_com_a_pasta_das_sondas(janela, tmp_path, monkeypatch):

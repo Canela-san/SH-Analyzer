@@ -13,6 +13,8 @@ sem erro.
   materializações (os traços transformados).
 * **As unidades próprias** (``dados/unidades.py``) ficam gravadas como JSON: ``[{"simbolo", "grandeza",
   "prefixos"}]``.
+* **As placas conhecidas** (``sh_placa/conhecidas.py``: as em que o usuário já conectou, pelo nº de série, com o nome,
+  a chave de host e os endereços), também como JSON.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
+from sh_placa import conhecidas
 from supraharmonicos.api import PASTA_DAS_SONDAS_PADRAO
 
 from .componentes.numeros import SEPARADORES, definir_separador_decimal
@@ -39,6 +42,7 @@ CHAVE_DO_MOVIMENTO = "aparencia/movimento"
 CHAVE_DO_SEPARADOR = "numeros/separador_decimal"
 CHAVE_DOS_PREFIXOS = "numeros/prefixos_nos_eixos"
 CHAVE_DAS_UNIDADES = "unidades/proprias"
+CHAVE_DAS_PLACAS = "placa/conhecidas"
 PASTAS = ("dados", "sondas", "cache")
 CHAVES_DAS_PASTAS = {nome: f"pastas/{nome}" for nome in PASTAS}
 CACHES = ("piramides", "materializacoes")
@@ -146,6 +150,21 @@ def mudar_unidades(lista: Iterable[unidades.Unidade]) -> None:
     gravar(CHAVE_DAS_UNIDADES, json.dumps([{"simbolo": u.simbolo, "grandeza": u.grandeza, "prefixos": u.prefixos}
                                            for u in unidades.proprias()], ensure_ascii=False))
     aparencia().avisar()
+
+
+# ------------------------------------------------------------------ as placas conhecidas
+
+def placas_conhecidas() -> tuple[conhecidas.PlacaConhecida, ...]:
+    """As placas gravadas; uma estragada (um arquivo editado à mão, de outra versão) fica de fora, e as outras valem."""
+    try:
+        dados = json.loads(ler_texto(CHAVE_DAS_PLACAS, "[]") or "[]")
+    except json.JSONDecodeError:
+        return ()
+    return conhecidas.de_lista(dados)
+
+
+def mudar_placas_conhecidas(placas: Iterable[conhecidas.PlacaConhecida]) -> None:
+    gravar(CHAVE_DAS_PLACAS, json.dumps(conhecidas.para_lista(placas), ensure_ascii=False))
 
 
 # ------------------------------------------------------------------ as pastas

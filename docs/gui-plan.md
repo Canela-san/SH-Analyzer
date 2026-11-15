@@ -945,11 +945,11 @@ Quem recebe o pacote refaz a figura sem o SH-Analyzer, que é o que um revisor o
 | Caminho | Como se acha | Endereço |
 |---|---|---|
 | **USB** | A porta serial do gadget da BeagleBone (`pyserial`, pelo VID:PID e pelo nº de série), e a sondagem da porta 22 nos IPs do gadget | 192.168.7.2 (RNDIS, Windows) ou 192.168.6.2 (ECM, Linux) |
-| **LAN** | mDNS (`zeroconf`): `beaglebone.local`, ou o nome que a placa anuncia | O que o mDNS der |
+| **LAN** | mDNS (`zeroconf`): `beaglebone.local`, e as placas que anunciam o Cloud9 ou o Node-RED ("for <nome>"), já que a imagem não anuncia o SSH | O que o mDNS der (no USB, um dos dois IPs, que a sondagem já acha) |
 | **WAN** | O usuário informa o host, a porta e, se precisar, o salto (*ProxyJump*) | Recomendado: VPN (Tailscale, WireGuard) |
 | **Simulador** | Sempre na lista | Local |
 
-- **A lista de placas** mostra cada uma com o estado (conectada, disponível, vista há…), o caminho e a latência. As placas conhecidas são lembradas pelo nº de série da EEPROM (o mesmo do cabeçalho v8).
+- **A lista de placas** mostra cada uma com o estado (conectada, disponível, vista há…), o caminho e a latência. As placas conhecidas são lembradas pelo nº de série da EEPROM (o mesmo do cabeçalho v8), com a chave de host: um endereço só é de uma conhecida se a chave for a dela, e a chave liga ao nº de série a placa achada só pela rede. A mesma placa por vários caminhos (a serial, os dois IPs do USB, o mDNS) aparece uma vez.
 - **Primeira conexão:**
   1. confirmar a impressão digital;
   2. instalar a chave do aplicativo (o equivalente do `ssh-copy-id`);

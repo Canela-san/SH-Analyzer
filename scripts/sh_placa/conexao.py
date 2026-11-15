@@ -39,6 +39,7 @@ import asyncssh
 
 from .agente import TEMPO_LIMITE_S, ErroDaPlaca
 from .chaves import ChaveDoAplicativo, HostsConhecidos
+from .destino import Destino
 from .registro import Entrada, RegistroDeAtividade
 
 CIFRAS = "^aes128-ctr"                   # na frente das padrão do asyncssh, sem tirar nenhuma
@@ -59,24 +60,6 @@ IFS= read -r linha || exit 2
 if [ -f "$arquivo" ] && grep -qxF -- "$linha" "$arquivo"; then echo ja_estava; exit 0; fi
 if [ -s "$arquivo" ] && [ -n "$(tail -c 1 "$arquivo")" ]; then echo >> "$arquivo" || exit 1; fi
 printf '%s\\n' "$linha" >> "$arquivo" && echo instalada"""
-
-
-@dataclass(frozen=True)
-class Destino:
-    """Onde está a placa: o host (ou IP), a porta, o usuário e, se for o caso, o salto."""
-
-    host: str
-    porta: int = 22
-    usuario: str = "debian"
-    salto: Destino | None = None
-
-    @property
-    def conta(self) -> str:
-        """``debian@192.168.6.2`` (com a porta, fora da 22): a chave do cofre e o nome no registro."""
-        return f"{self.usuario}@{self.host}" + ("" if self.porta == 22 else f":{self.porta}")
-
-    def __str__(self) -> str:
-        return self.conta if self.salto is None else f"{self.conta} (pelo salto {self.salto})"
 
 
 @dataclass(frozen=True)

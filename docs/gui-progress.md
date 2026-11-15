@@ -12,10 +12,11 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > espectro corrigido pela sonda, com os números da CLI (`tests/test_gui_jornada.py`), e o G1 passa com a cadeia
 > ligada, durante e depois das materializações. **A tag v0.9** fica para o dono do projeto.
 >
-> **A Fase 3 está andando** (seção 4d): a F3.1 (o laço `asyncio` do `sh_placa` e a ponte) e a F3.2 (a conexão SSH,
-> as chaves, o cofre e o registro de atividade) estão feitas, conferidas no servidor SSH do teste e na placa de
-> verdade. **A próxima: a F3.3, a descoberta das placas** (o USB pela serial do gadget e a porta 22, o mDNS, o IP),
-> que a F0.2 já mediu na placa; a F3.4 (o agente completo) pode vir antes ou depois.
+> **A Fase 3 está andando** (seção 4d): a F3.1 (o laço `asyncio` do `sh_placa` e a ponte), a F3.2 (a conexão SSH,
+> as chaves, o cofre e o registro de atividade) e a F3.3 (a descoberta das placas: o USB, o mDNS, as conhecidas e o
+> simulador) estão feitas, conferidas no servidor SSH do teste e na placa de verdade. **A próxima: a F3.5, a área de
+> Aquisição e a lista de placas** (a primeira parte da Fase 3 na tela; as duas de que ela precisa estão feitas); a
+> F3.4 (o agente completo, só o agente) pode vir antes ou depois.
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
@@ -151,7 +152,9 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
   - **o kernel é o 4.19**, não o 5.10 que o plano supõe: o diagnóstico (F3.4) aceita os overlays `*-4-19-TI-*`;
   - **o Python é o 3.7.3**, o que o agente já respeita;
   - **o nº de série do USB é o da EEPROM:** a descoberta (F3.3) reconhece a placa pela porta serial, antes do SSH;
-  - **o mDNS só anuncia a 192.168.7.2**; no Linux, a 192.168.6.2 vem da sondagem da porta 22;
+  - **o mDNS dá um dos dois IPs do USB**, o da interface em que a pergunta chegou primeiro (o `getent` deu a
+    192.168.7.2; o python-zeroconf da F3.3, ora a 6.2, ora a 7.2, uma vez as duas): os dois IPs vêm da sondagem da
+    porta 22, e o mDNS só acrescenta o nome;
   - **a vazão é de ~5 MB/s**, limitada pela cifra no único núcleo da placa: a transferência (F3.7) prefere o
     `aes128-ctr` (5,9 MB/s), e pedidos SFTP em paralelo não aceleram.
 
@@ -988,7 +991,7 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
     depois;
   - **os testes:** `tests/test_sh_placa_ssh.py` (15).
 
-### ▶ F3.3: a descoberta das placas
+### ☑ F3.3: a descoberta das placas
 
 - **Arquivos:** `sh_placa/descoberta.py`; as placas conhecidas nas preferências.
 - **O conteúdo** (AQ-01; plano, 11.3):
@@ -1002,6 +1005,31 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
 - **Os testes:** com portas seriais, respostas de mDNS e uma porta TCP falsas; a mesma placa achada por dois caminhos
   aparece uma vez.
 - **Do laboratório:** o VID:PID do gadget e os IPs vêm da F0.2 (seção 6).
+- **Feito em 15/11/2026:**
+  - **`sh_placa/descoberta.py`:** as fontes (o USB, o mDNS, as conhecidas e o simulador) rodam juntas, e uma que
+    falha não derruba as outras (`Descoberta.falhas` diz qual, para a interface). **A sonda** abre a porta, mede a
+    latência, confere a saudação do SSH e lê a chave de host com uma troca de chaves, sem autenticar. O mesmo
+    endereço é sondado uma vez por varredura (o USB e o mDNS acham os mesmos IPs), e a chave fica guardada por 2 min
+    enquanto a saudação não muda: a placa, com um núcleo só, não refaz a troca de chaves a cada varredura;
+  - **a mesma placa aparece uma vez:** os achados se juntam pelo nº de série, pela chave de host e pelo endereço; com
+    um gadget só no USB, os IPs do USB são dele, a não ser que uma conhecida diga que a chave neles é de outra placa.
+    Cada endereço vira um caminho, com os detalhes juntos ("USB (RNDIS) · beaglebone.local (mDNS)") e a menor
+    latência; o melhor primeiro (o USB, o IP da rede do sistema, a latência);
+  - **os estados:** disponível, só na serial (o gadget no USB e o SSH ainda sem responder: a placa ligando), pelo
+    salto (não sondada: a conexão com o salto é do usuário), ausente (conhecida, com a hora da última vez) e o
+    simulador;
+  - **as conhecidas** (`sh_placa/conhecidas.py`, nas preferências como JSON): o nº de série, o nome, a chave de host e
+    os 5 últimos endereços. **Um endereço é de uma conhecida só se a chave de host for a dela** (o IP de uma rede com
+    DHCP pode ser de outra placa hoje); a chave liga ao nº de série uma placa achada só pelo mDNS ou pela LAN. Uma
+    gravada estragada fica de fora, e as outras valem;
+  - **o `Destino`** saiu da `conexao.py` para `sh_placa/destino.py`, sem o asyncssh: as preferências o gravam sem ele;
+  - **na placa de verdade** (pelo `LacoAsyncio`): uma placa só, com o nº de série da EEPROM, a chave ED25519 que o
+    usuário conhece, a porta serial e os dois IPs (~1 ms); a segunda varredura não refez a troca de chaves e deu o
+    nome da conhecida. A varredura leva ~1,5 s, quase tudo a espera do mDNS: a lista da F3.5 mostra a anterior
+    enquanto a próxima roda. **O mDNS dá um IP ou outro a cada vez** (a F0.2 foi corrigida);
+  - **os testes:** `tests/test_sh_placa_descoberta.py` (10), com portas seriais e respostas de mDNS falsas e o
+    servidor SSH do teste nos endereços 127.0.0.1 e 127.0.0.2, como os dois IPs do USB (`tests/servidor_ssh.py`
+    escuta em vários endereços, na mesma porta), e o das preferências em `tests/test_gui_configuracoes.py`.
 
 ### ☐ F3.4: o agente completo (commits só do agente)
 
@@ -1181,7 +1209,7 @@ lsusb > "$DIA/usb_para_gui.txt"; ip -brief addr >> "$DIA/usb_para_gui.txt"; gete
 | `config-pin`, `dtc`, `avahi-daemon`, `setsid`, `systemd-run` | Existem | Todos. O `avahi-daemon` está em `/usr/sbin`, fora do `PATH` do `debian` (o `command -v` não o acha), e roda |
 | O gadget USB no `lsusb` | Um dispositivo da BeagleBone (anote o VID:PID) | **`1d6b:0104`** (Multifunction Composite Gadget). O nº de série do USB é o da EEPROM (`2017BBBK382A`); a porta serial é a `/dev/ttyACM0` (interface 05, `/dev/serial/by-id/usb-BeagleBoard.org_BeagleBoneBlack_<série>-if05`) |
 | A interface de rede do USB no computador | 192.168.6.x ou 192.168.7.x | As duas: a placa é a **192.168.6.2** (ECM, a do Linux; o computador, 192.168.6.1) e a 192.168.7.2 (RNDIS; o computador, 192.168.7.1). Ping de 0,6 ms |
-| `beaglebone.local` resolve | Sim, pelo mDNS | Sim, mas só para a **192.168.7.2** |
+| `beaglebone.local` resolve | Sim, pelo mDNS | Sim, para um dos dois IPs do USB: o `getent`, a **192.168.7.2**; o python-zeroconf (F3.3), ora a 6.2, ora a 7.2 (a placa responde pela interface em que a pergunta chegou primeiro) |
 | Vazão do `scp` de uma captura grande | ~10 MB/s | **4,8 MB/s** (`scp` e `rsync`, 46 MiB em 10 s). Pela cifra: `chacha20-poly1305` 5,2, `aes128-gcm` 5,7 e **`aes128-ctr` 5,9 MB/s**. O limite é a cifra no único núcleo da placa (o eMMC lê a 264 MB/s): pedidos em paralelo não ajudam |
 | (Se houver um Windows no laboratório) a placa aparece como rede no USB | Sim (RNDIS) | |
 
@@ -1566,6 +1594,21 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **Testes:** `ci.sh placa` com 146 em cada Python, `ci.sh rapido` com 1 411 (sem o Qt, como o job `testes`) e
     `ci.sh interface` com 759.
   - **Próximo:** a F3.3, a descoberta (o USB, o mDNS e o IP).
+- **15/11/2026:** **a F3.3, a descoberta das placas** (seção 4d):
+  - **na placa de verdade:** o USB (a serial e os dois IPs) e o mDNS juntos numa placa só, com o nº de série e a
+    chave de host certos; a chave lida uma vez e guardada entre as varreduras;
+  - **o que a placa mostrou:** o mDNS responde com o IP da interface em que a pergunta chegou primeiro, ora a
+    192.168.6.2, ora a 192.168.7.2. A F0.2 dizia "só a 7.2", pelo `getent` de um dia; a descoberta não depende disso,
+    porque sonda os dois IPs do USB;
+  - **o log:** o asyncssh escreve ~14 linhas de INFO por varredura, que o log do aplicativo não grava (só os avisos
+    das bibliotecas), como deve ser numa varredura que se repete;
+  - **de passagem:** o servidor SSH do teste deixava vivo, por 30 s depois do teste, o `sleep 30` do teste do tempo
+    esgotado (F3.2): o `dash` não faz `exec` do último comando, e matar o shell deixava o `sleep` com os pipes
+    abertos. Aparecia só no Python 3.10, como um aviso do coletor de lixo num teste qualquer depois dele (um GC
+    depois de cada teste achou o dono). Agora cada comando roda num grupo de processos, morto inteiro, e o `parar`
+    só volta com todos colhidos.
+  - **Testes:** `ci.sh placa` com 156 em cada Python, `ci.sh rapido` com 1 421 e `ci.sh interface` com 760.
+  - **Próximo:** a F3.5, a área de Aquisição e a lista de placas.
 ---
 
 ## 8. Perguntas em aberto

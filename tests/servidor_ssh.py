@@ -1,10 +1,10 @@
 """Um servidor SSH do próprio asyncssh para os testes da conexão com a placa (F3.2; cresce até o simulador por SSH da
 F3.9): uma BeagleBone vista pela rede, sem placa.
 
-O servidor escuta em 127.0.0.1, numa porta livre, com a senha e as chaves do ``~/.ssh/authorized_keys`` do home
-falso (o do simulador: ``montar_sistema_falso``). Cada comando roda num shell de verdade, com esse home, a raiz falsa
-em ``SHAN_RAIZ`` e um ``python3`` que é o Python dos testes: o agente que chega pelo stdin lê a placa simulada, e a
-instalação da chave escreve no ``authorized_keys`` dela, como numa placa.
+O servidor escuta em 127.0.0.1 (ou em mais endereços do loopback, na mesma porta), numa porta livre, com a senha e as
+chaves do ``~/.ssh/authorized_keys`` do home falso (o do simulador: ``montar_sistema_falso``). Cada comando roda num
+shell de verdade, com esse home, a raiz falsa em ``SHAN_RAIZ`` e um ``python3`` que é o Python dos testes: o agente
+que chega pelo stdin lê a placa simulada, e a instalação da chave escreve no ``authorized_keys`` dela, como numa placa.
 
 Para os testes: os comandos rodados (:attr:`ServidorSSH.comandos`), as tentativas de autenticação
 (:attr:`ServidorSSH.autenticacoes`), a troca da chave de host (:meth:`ServidorSSH.trocar_chave_do_host`, a placa
@@ -18,6 +18,7 @@ import asyncio
 import contextlib
 import os
 import signal
+import socket
 import sys
 from pathlib import Path
 
@@ -29,9 +30,11 @@ SENHA_PADRAO = "temppwd-do-teste"
 
 class ServidorSSH:
     def __init__(self, pasta: Path, *, cenario: str = "normal", usuario: str = "debian", senha: str = SENHA_PADRAO,
-                 permitir_tunel: bool = False, tambem_rsa: bool = False):
+                 permitir_tunel: bool = False, tambem_rsa: bool = False,
+                 enderecos: tuple[str, ...] = ("127.0.0.1",)):
         self.pasta, self.cenario = Path(pasta), cenario
         self.usuario, self.senha, self.permitir_tunel = usuario, senha, permitir_tunel
+        self.enderecos = enderecos           # vários, como a placa nos dois IPs do USB (127.0.0.1 e 127.0.0.2)
         self.raiz, firmware = montar_sistema_falso(self.pasta, cenario)
         self.home = firmware.parent
         self.comandos: list[str] = []
@@ -42,7 +45,7 @@ class ServidorSSH:
         self.chave_do_host = asyncssh.generate_private_key("ssh-ed25519")
         # Como a imagem da placa, que tem as chaves RSA, ECDSA e ED25519 (o asyncssh, sozinho, escolheria a RSA).
         self.chave_rsa = asyncssh.generate_private_key("ssh-rsa", key_size=2048) if tambem_rsa else None
-        self._servidor: asyncssh.SSHAcceptor | None = None
+        self._servidores: list[asyncssh.SSHAcceptor] = []
         binarios = self.pasta / "bin"
         binarios.mkdir(exist_ok=True)
         (binarios / "python3").symlink_to(sys.executable)
@@ -58,21 +61,25 @@ class ServidorSSH:
         return self.chave_do_host.get_fingerprint()
 
     async def iniciar(self) -> ServidorSSH:
-        self._servidor = await asyncssh.create_server(
-            lambda: _Servidor(self), "127.0.0.1", self.porta,
-            server_host_keys=[k for k in (self.chave_rsa, self.chave_do_host) if k is not None],
-            process_factory=self._rodar, encoding=None, reuse_address=True)
-        self.porta = self._servidor.sockets[0].getsockname()[1]
+        """Escuta em cada endereço, na porta que o primeiro ganhou (a porta 0 daria uma a cada endereço) ou na já
+        escolhida (a de antes de :meth:`trocar_chave_do_host`, ou a de outro servidor, em outro endereço)."""
+        for endereco in self.enderecos:
+            servidor = await asyncssh.create_server(
+                lambda: _Servidor(self), endereco, self.porta,
+                server_host_keys=[k for k in (self.chave_rsa, self.chave_do_host) if k is not None],
+                process_factory=self._rodar, encoding=None, reuse_address=True)
+            self._servidores.append(servidor)
+            self.porta = servidor.sockets[0].getsockname()[1]
         return self
 
     async def parar(self) -> None:
         """Derruba as conexões e para de escutar; volta com todo comando morto e colhido (com o canal fechado, o
         vigia de cada um mata o grupo dele), para nenhum processo sobreviver ao teste."""
         self.derrubar()
-        if self._servidor is not None:
-            self._servidor.close()
-            await self._servidor.wait_closed()
-            self._servidor = None
+        for servidor in self._servidores:
+            servidor.close()
+            await servidor.wait_closed()
+        self._servidores = []
         await asyncio.gather(*self._rodando, return_exceptions=True)
 
     async def trocar_chave_do_host(self) -> None:
@@ -148,6 +155,13 @@ class _Servidor(asyncssh.SSHServer):
 
     def connection_requested(self, dest_host: str, dest_port: int, orig_host: str, orig_port: int) -> bool:
         return self.dono.permitir_tunel
+
+
+def porta_livre() -> int:
+    """Uma porta do loopback que ninguém escuta agora: a de uma placa que não responde."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 async def _bombear_entrada(processo: asyncssh.SSHServerProcess, shell: asyncio.subprocess.Process) -> None:
