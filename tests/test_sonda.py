@@ -33,6 +33,19 @@ class TestCarregarPerfil:
         perfil = carregar_perfil_sonda(escrever_perfil(tmp_path / "ok.json"))
         np.testing.assert_allclose(perfil.ganho_em(FREQS), planta_h(FREQS), rtol=1e-9)
 
+    def test_avaliada_em_pedacos_da_o_mesmo_que_a_curva_inteira(self, tmp_path):
+        """Os pedaços de PONTOS_POR_AVALIACAO (o GIL solto entre eles) não mudam nenhum bit, nem a forma do array."""
+        from supraharmonicos.sonda import PONTOS_POR_AVALIACAO
+        perfil = carregar_perfil_sonda(escrever_perfil(tmp_path / "ok.json"))
+        f = np.fft.rfftfreq(5 * PONTOS_POR_AVALIACAO + 1234, 1 / 200_000)          # 2,5 pedaços e o resto
+        perfil.ganho_em(f[:1])                                                   # monta o PCHIP
+        inteira = 10.0 ** (perfil._interpolador_db(np.log10(np.clip(f, FREQS[0], FREQS[-1]))) / 20.0)
+        np.testing.assert_array_equal(perfil.ganho_em(f), inteira)
+        grade = f[:3 * 1000].reshape(3, 1000)
+        assert perfil.ganho_em(grade).shape == (3, 1000)
+        np.testing.assert_array_equal(perfil.ganho_em(grade), inteira[:3000].reshape(3, 1000))
+        assert perfil.ganho_em(np.float64(1000.0)).shape == ()
+
     def test_interpolacao_entre_pontos_fica_dentro_de_0_2_por_cento(self, tmp_path):
         perfil = carregar_perfil_sonda(escrever_perfil(tmp_path / "ok.json"))
         f = np.geomspace(120, 75_000, 400)

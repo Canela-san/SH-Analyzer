@@ -65,6 +65,11 @@ AVISO_AMPLIFICACAO_RUIDO_DB = 20.0
 # intervalo usual de calibração de sondas e pontas de prova, e a resposta de uma bobina ou de um divisor muda com a
 # temperatura, o envelhecimento e qualquer troca de cabo ou de conector.
 IDADE_MAXIMA_PERFIL_DIAS = 365
+# ganho_em() avalia a curva em pedaços deste tamanho: o PCHIP do SciPy (PPoly) não solta o GIL, e a correção de um
+# bloco de 4 Mi amostras (2 Mi bins) prendia as outras threads do processo por ~30 ms seguidos -- a interface que
+# desenha enquanto materializa um traço corrigido, por exemplo. Um pedaço leva ~1 ms; cada ponto é avaliado sozinho, e
+# o resultado é bit a bit o da avaliação inteira.
+PONTOS_POR_AVALIACAO = 1 << 16
 
 
 class PerfilSonda:
@@ -188,8 +193,11 @@ class PerfilSonda:
             self._interpolador_db = PchipInterpolator(
                 np.log10(self._freqs_pontos), 20.0 * np.log10(self._ganhos_pontos), extrapolate=False
             )
-        ganho_db = self._interpolador_db(np.log10(freqs_clampadas))
-        return 10.0 ** (ganho_db / 20.0)
+        log_f = np.log10(freqs_clampadas).reshape(-1)
+        ganho_db = np.empty_like(log_f)
+        for i in range(0, log_f.size, PONTOS_POR_AVALIACAO):
+            ganho_db[i:i + PONTOS_POR_AVALIACAO] = self._interpolador_db(log_f[i:i + PONTOS_POR_AVALIACAO])
+        return 10.0 ** (ganho_db.reshape(freqs_hz.shape) / 20.0)
 
 
 def carregar_perfil_sonda(caminho: Path) -> PerfilSonda:
