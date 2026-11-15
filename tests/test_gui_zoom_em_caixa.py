@@ -10,11 +10,9 @@ pytest.importorskip("pytestqt")
 
 from capturas_sinteticas import escrever_bin  # noqa: E402
 from dialogos_falsos import DialogosFalsos  # noqa: E402
+from mouse_de_verdade import arrastar as arrastar_de_verdade  # noqa: E402
 from mouse_de_verdade import duplo_clique  # noqa: E402
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
-from PySide6.QtGui import QMouseEvent  # noqa: E402
-from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
 from sh_analyzer_gui.app import criar_aplicacao  # noqa: E402
 from sh_analyzer_gui.janela import JanelaPrincipal  # noqa: E402
 from sh_analyzer_gui.modelo.comandos import MudarTracos  # noqa: E402
@@ -54,26 +52,11 @@ def plotado(janela, qtbot, tmp_path):
 
 
 def arrastar(vista, caixa, de, ate, botao=Qt.MouseButton.LeftButton):
-    """Aperta em ``de``, arrasta em passos e solta em ``ate`` (nas unidades da vista), pelo viewport de verdade.
-
-    Com uma pausa entre os passos, como um mouse de verdade: o PyQtGraph ignora movimentos a mais de 100 por segundo
-    (``mouseRateLimit``), e um arrasto inteiro dentro disso vira um clique."""
-    porta = vista.grafico.viewport()
-
+    """O arrasto de verdade de ``de`` até ``ate``, nas unidades da vista."""
     def pixel(x, y) -> QPoint:
         return vista.grafico.mapFromScene(caixa.mapViewToScene(QPointF(x, y)))
 
-    def evento(tipo, ponto: QPoint, botoes):
-        apertado = botao if tipo != QEvent.Type.MouseMove else Qt.MouseButton.NoButton
-        QApplication.sendEvent(porta, QMouseEvent(tipo, QPointF(ponto), QPointF(porta.mapToGlobal(ponto)), apertado,
-                                                  botoes, Qt.KeyboardModifier.NoModifier))
-
-    inicio, fim = pixel(*de), pixel(*ate)
-    evento(QEvent.Type.MouseButtonPress, inicio, botao)
-    for k in range(1, 6):
-        QTest.qWait(12)
-        evento(QEvent.Type.MouseMove, inicio + (fim - inicio) * k / 5, botao)
-    evento(QEvent.Type.MouseButtonRelease, fim, Qt.MouseButton.NoButton)
+    arrastar_de_verdade(vista.grafico.viewport(), pixel(*de), pixel(*ate), botao)
 
 
 def test_z_arma_e_o_arrasto_mostra_a_caixa(janela, plotado):

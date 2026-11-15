@@ -131,7 +131,11 @@ class EixoDoTema(pg.AxisItem):
 
     def updateAutoSIPrefix(self) -> None:
         """O prefixo do SI pela faixa visível (ver a classe). O rótulo só é refeito quando o prefixo muda: o eixo do
-        tempo passa por aqui a cada quadro do zoom."""
+        tempo passa por aqui a cada quadro do zoom.
+
+        **Os números são refeitos sempre:** com o prefixo automático, o ``setRange`` do PyQtGraph não invalida o
+        desenho do eixo e conta com este método para isso (o dele chama o ``_updateLabel`` toda vez). Sem invalidar,
+        os números ficavam os de antes do zoom, do pan ou da mudança de escala, até o prefixo mudar."""
         expoente = 0
         if self.labelUnits and _prefixos_nos_eixos and not self.logMode and aceita_prefixos(self.labelUnits):
             expoente = expoente_de_engenharia(max(abs(self.range[0]), abs(self.range[1])), self.expoente_maximo)
@@ -139,7 +143,16 @@ class EixoDoTema(pg.AxisItem):
         if prefixo != self.labelUnitPrefix or self.autoSIPrefixScale != 10.0 ** -expoente:
             self.autoSIPrefixScale = 10.0 ** -expoente
             self.labelUnitPrefix = prefixo
-            self._updateLabel()
+            self._updateLabel()                  # o rótulo novo, e o eixo redesenhado
+        else:
+            self.picture = None
+            self.update()
+
+    @property
+    def numeros(self) -> list[str]:
+        """Os números como estão na tela: os da última pintura do eixo (vazio antes da primeira)."""
+        especificacoes = getattr(self, "_especificacoes", None)
+        return [texto for *_, texto in especificacoes[2]] if especificacoes is not None else []
 
     def definir_conversao(self, k: float = 1.0, c: float = 0.0) -> None:
         if (k, c) == self.conversao:

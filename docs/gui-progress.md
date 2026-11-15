@@ -24,7 +24,8 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 >
 > **Com o usuário (quando puder):**
 > - o G1 com a cadeia, na tela: `uv run --extra gui python -m sh_analyzer_gui.prototipos.medir_vista --cadeia`
->   (sem tela, p95 de 7,5 a 9,7 ms durante as materializações e de 10,8 a 12,2 ms depois);
+>   (sem tela, p95 de 11,9 a 12,9 ms durante as materializações e de 14,0 a 14,2 ms depois; se reprovar na tela, o
+>   texto dos eixos em cache, com `QStaticText` (a F1.5), é o próximo passo);
 > - o "pronto quando" da Fase 1: abrir uma captura de 1 h, navegar e medir com 8 traços de 2 fontes, em
 >   `uv run --extra gui python -m sh_analyzer_gui`.
 >
@@ -1084,7 +1085,8 @@ as do motor.
 | 14/11/2026 | As FFTs de um lote em todos os núcleos (8), `scipy.fft` com `workers=-1` | O lote do Welch (2048 × 1000) de 7,1 para 2,5 ms; o das bandas (64 × 40 000) de 13,8 para 10,9 ms | o diário de 14/11 |
 | 15/11/2026 | G1 sem tela, 8 faixas, 954 × 526 px, **com a cadeia** (sonda + passa-altas em cada traço): durante as materializações; depois | **Durante: reprovado**, mediana de 9,4 ms, p95 de 32,9 ms. **Depois: aprovado**, mediana de 9,2 ms, p95 de 12,8 ms (sem a cadeia: 8,3 e 10,2 ms) | `medir_vista --cadeia` |
 | 15/11/2026 | O mesmo percurso sobre traços já prontos, com **duas materializações ao fundo** × **uma de cada vez** | Duas: p95 de 37,9 e 40,1 ms (~920 trocas voluntárias da thread da interface). Uma: 11,0 e 11,2 ms (30 a 118), o mesmo que sem nenhuma (13,8 ms) | bancada do diário de 15/11 |
-| 15/11/2026 | G1 sem tela, 8 faixas, **com a cadeia**, depois da fila das pesadas e da curva da sonda em pedaços | **Aprovado. Durante:** mediana de 5,1 a 5,3 ms, p95 de 7,5 a 9,7 ms. **Depois:** mediana de 8,8 a 8,9 ms, p95 de 10,8 a 12,2 ms (3 rodadas) | `medir_vista --cadeia`; `pytest --desempenho` |
+| 15/11/2026 | G1 sem tela, 8 faixas, **com a cadeia**, depois da fila das pesadas e da curva da sonda em pedaços | **Aprovado. Durante:** mediana de 5,1 a 5,3 ms, p95 de 7,5 a 9,7 ms. **Depois:** mediana de 8,8 a 8,9 ms, p95 de 10,8 a 12,2 ms (3 rodadas). **Otimista:** os números dos eixos estavam parados (`b946419`) e quase não eram redesenhados; as duas linhas de 15/11 acima também | `medir_vista --cadeia`; `pytest --desempenho` |
+| 15/11/2026 | **G1 sem tela, 8 faixas, com os eixos redesenhados** a cada zoom e pan (a correção dos números parados) | **Aprovado. Sem a cadeia:** mediana de 9,4 ms, p95 de 11,3 ms. **Com a cadeia, durante:** mediana de 7,3 a 7,4 ms, p95 de 11,9 a 12,9 ms; **depois:** mediana de 10,2 a 10,4 ms, p95 de 14,0 a 14,2 ms (2 rodadas). Redesenhar os eixos custa ~1,5 ms por quadro | `medir_vista [--cadeia]`; `pytest --desempenho` |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
 ---
@@ -1456,6 +1458,24 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **a Fase 3 em tarefas** (seção 4d): F3.1 a F3.10, com o "pronto quando", a ordem e as regras da fase.
   - **Testes:** `ci.sh interface` com 745 aprovados (os 2 novos são o duplo clique).
   - **Próximo:** a F3.1, pedindo a permissão para baixar as dependências.
+- **15/11/2026:** **os números dos eixos parados** (o relato do usuário: "tenho que saber a tensão e o tempo que estou
+  olhando"):
+  - **o defeito:** em todos os gráficos, os números dos eixos não acompanhavam o zoom, o pan (o botão do meio) nem a
+    mudança de escala; só mudavam quando o prefixo do SI mudava. Veio com os prefixos nos eixos (`b946419`, a F2.10):
+    com o prefixo automático, o `setRange` do PyQtGraph não invalida o desenho do eixo e conta com o
+    `updateAutoSIPrefix` para isso; o do `EixoDoTema` só refazia o rótulo quando o prefixo mudava, e com ele o
+    desenho. Agora o rótulo continua sendo refeito só na troca de prefixo, e os números sempre;
+  - **os testes** (`tests/test_gui_eixos.py`) conferem os números pintados (`EixoDoTema.numeros`): o eixo sozinho,
+    no mesmo prefixo; na vista de tempo, o zoom, a escala do Y e o arrasto de verdade com o botão do meio; nas
+    vistas de espectro, bandas, espectrograma e harmônicos, o zoom. Os 6 falham sem a correção.
+    `tests/mouse_de_verdade.py` ganhou o `arrastar`, que o zoom em caixa também usa;
+  - **o G1 medido de novo:** os de hoje, depois de `b946419`, eram otimistas, com os eixos quase sem redesenho.
+    Com eles: aprovado, mas com menos folga (p95 de 14,0 a 14,2 ms depois das materializações). Redesenhar os eixos
+    custa ~1,5 ms por quadro (seção 5);
+  - **de passagem:** uma corrida no teste da fila das pesadas, vista no `ci.sh rapido` (os testes em paralelo): o
+    chip da materialização que começa só deixa o "na fila" quando o "começou" chega pela fila de eventos, e o teste
+    não esperava por ele, como já esperava pelo painel.
+  - **Testes:** `ci.sh rapido` com 1 695 aprovados e `ci.sh interface` com 751; os 6 de desempenho passam.
 ---
 
 ## 8. Perguntas em aberto
