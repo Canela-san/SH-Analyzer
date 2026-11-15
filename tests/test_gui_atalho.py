@@ -7,7 +7,6 @@ from importlib import resources
 
 import pytest
 from sh_analyzer_gui import atalho
-from sh_analyzer_gui.configuracao import APLICATIVO
 
 
 def ler(desktop):
@@ -26,8 +25,16 @@ def test_instalar_grava_o_desktop_com_o_nome_do_app_id_e_o_icone(tmp_path):
     assert campos["Type"] == "Application" and campos["Name"] == "SH-Analyzer"
     assert campos["Icon"] == str(icone)                                  # o caminho completo: vale em qualquer painel
     assert campos["Exec"] == "/opt/sh/python -m sh_analyzer_gui %f"
-    assert campos["StartupWMClass"] == APLICATIVO                        # a classe da janela no X11
     assert not list(desktop.parent.glob("*.tmp"))
+
+
+def test_a_classe_da_janela_e_o_nome_do_aplicativo(tmp_path):
+    """O ``StartupWMClass`` é a classe que o Qt dá à janela no X11: o nome do aplicativo da configuração, que precisa
+    do Qt (o ``QSettings``). Só este teste depende dele."""
+    pytest.importorskip("PySide6")
+    from sh_analyzer_gui.configuracao import APLICATIVO
+    desktop, _icone = atalho.instalar(tmp_path, ["/opt/sh/python", "-m", "sh_analyzer_gui"])
+    assert ler(desktop)["StartupWMClass"] == APLICATIVO
 
 
 @pytest.mark.skipif(shutil.which("desktop-file-validate") is None, reason="sem o desktop-file-validate")
