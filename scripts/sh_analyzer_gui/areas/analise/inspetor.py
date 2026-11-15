@@ -1,13 +1,15 @@
-"""O inspetor (docs/gui-plan.md, 9.4): as propriedades do que está selecionado. Por enquanto, a captura: o
-cabeçalho em seções (``api.descrever_cabecalho``), a integridade (o CRC das amostras, conferido em segundo plano) e
-a pirâmide. O do traço entra na F1.6."""
+"""O inspetor (docs/gui-plan.md, 9.4): as propriedades do que está selecionado. Da captura: o cabeçalho em seções
+(``api.descrever_cabecalho``), a integridade (o CRC das amostras, conferido em segundo plano), a pirâmide e o
+cabeçalho copiado como texto (as seções daqui) ou como JSON (``api.cabecalho_em_dict``: todos os campos, sem
+arredondar; PD-07). O do traço fica em ``inspetor_traco.py``."""
 
 from __future__ import annotations
 
 import html
+import json
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -19,9 +21,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from supraharmonicos.api import descrever_cabecalho
+from supraharmonicos.api import cabecalho_em_dict, descrever_cabecalho
 
+from ...componentes.basicos import Botao
 from ...componentes.painel import EstadoVazio
+from ...componentes.toast import Toast
 from ...modelo.objetos import FonteDoProjeto, Projeto
 from ...tema.aplicar import aparencia
 from ...tema.icones import icone
@@ -132,12 +136,47 @@ class InspetorDaFonte(QScrollArea):
             self.barra_piramide.setFixedHeight(6)
             coluna.addWidget(self.estado_piramide)
             coluna.addWidget(self.barra_piramide)
+            copiar = QHBoxLayout()
+            copiar.setSpacing(4)
+            self.copiar_texto = Botao(self.tr("Copiar texto"), "fantasma", "copiar")
+            self.copiar_texto.setObjectName("copiar_cabecalho_texto")
+            self.copiar_texto.setToolTip(self.tr("O cabeçalho como aparece aqui, seção a seção"))
+            self.copiar_texto.clicked.connect(lambda: self.copiar_cabecalho("texto"))
+            self.copiar_json = Botao(self.tr("Copiar JSON"), "fantasma", "copiar")
+            self.copiar_json.setObjectName("copiar_cabecalho_json")
+            self.copiar_json.setToolTip(self.tr("Todos os campos do cabeçalho, sem arredondar"))
+            self.copiar_json.clicked.connect(lambda: self.copiar_cabecalho("json"))
+            copiar.addWidget(self.copiar_texto)
+            copiar.addWidget(self.copiar_json)
+            copiar.addStretch(1)
+            coluna.addLayout(copiar)
             for titulo, linhas in descrever_cabecalho(fonte.fonte.captura):
                 if linhas:
                     coluna.addWidget(self._secao(titulo, linhas))
             self._atualizar_estado()
         coluna.addStretch(1)
         self.setWidget(conteudo)
+
+    def texto_do_cabecalho(self) -> str:
+        """O cabeçalho em texto, seção a seção, como aparece aqui ("Captura", "  Arquivo: c.bin", ...)."""
+        linhas = []
+        for titulo, campos in descrever_cabecalho(self.fonte.fonte.captura):
+            if campos:
+                linhas.append(titulo)
+                linhas += [f"  {nome}: {valor}" for nome, valor in campos]
+        return "\n".join(linhas)
+
+    def json_do_cabecalho(self) -> str:
+        """Todos os campos do cabeçalho em JSON (``api.cabecalho_em_dict``), sem arredondar."""
+        return json.dumps(cabecalho_em_dict(self.fonte.fonte.captura), ensure_ascii=False, indent=2, allow_nan=False)
+
+    def copiar_cabecalho(self, como: str) -> None:
+        """Põe o cabeçalho da captura na área de transferência: ``como`` é ``"texto"`` ou ``"json"``."""
+        if self.fonte is None or self.fonte.esta_ausente:
+            return
+        QGuiApplication.clipboard().setText(self.json_do_cabecalho() if como == "json" else self.texto_do_cabecalho())
+        Toast.mostrar(self.window(), self.tr("Cabeçalho copiado em JSON") if como == "json"
+                      else self.tr("Cabeçalho copiado em texto"), "sucesso")
 
     def _secao(self, titulo: str, linhas: list[tuple[str, str]]) -> QWidget:
         """Uma seção do cabeçalho: o título e os campos, **num rótulo só, em texto rico** (o rótulo de cada campo em

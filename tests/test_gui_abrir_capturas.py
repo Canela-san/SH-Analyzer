@@ -2,6 +2,7 @@
 (conferida pelo ``QAbstractItemModelTester`` do Qt a cada mudança), o inspetor do cabeçalho, os avisos e o abrir
 pelo Ctrl+O, pelo arrastar e soltar e pelos recentes. Sem tela."""
 
+import json
 import threading
 
 import numpy as np
@@ -13,7 +14,7 @@ pytest.importorskip("pytestqt")
 from capturas_sinteticas import escrever_bin  # noqa: E402
 from dialogos_falsos import DialogosFalsos  # noqa: E402
 from PySide6.QtCore import QMimeData, QPoint, Qt, QUrl  # noqa: E402
-from PySide6.QtGui import QDropEvent  # noqa: E402
+from PySide6.QtGui import QDropEvent, QGuiApplication  # noqa: E402
 from PySide6.QtTest import QAbstractItemModelTester  # noqa: E402
 from sh_analyzer_gui.app import criar_aplicacao  # noqa: E402
 from sh_analyzer_gui.areas.analise.arvore import PAPEL_CORES, PAPEL_DETALHE, PAPEL_TIPO, ArvoreDoProjeto  # noqa: E402
@@ -221,6 +222,17 @@ def test_abrir_uma_captura_na_janela(janela, tmp_path, qtbot):
     assert janela.status_fonte.text().startswith("a.bin · 400 kS/s · 2 canais · cabeçalho v9 · pirâmide pronta")
     assert janela.status_integridade.text() == "✓ integridade"
     assert janela.controle.recentes_capturas()[0] == (tmp_path / "a.bin").resolve()
+    # Copiar o cabeçalho (PD-07): em texto, como aparece; em JSON, todos os campos.
+    insp = janela.inspetor.da_fonte
+    area = QGuiApplication.clipboard()
+    insp.copiar_texto.click()
+    texto = area.text()
+    assert texto.startswith("Captura\n  Arquivo: a.bin\n") and "\n  Cabeçalho: v9\n" in texto
+    assert any("Cabeçalho copiado em texto" in t.rotulo.text() for t in janela.findChildren(Toast))
+    insp.copiar_json.click()
+    dados = json.loads(area.text())
+    assert dados["arquivo"] == "a.bin" and dados["versao_cabecalho"] == 9
+    assert dados["crc32_amostras"] == fonte.fonte.captura.cabecalho.crc32_amostras
 
     janela.controle.abrir_capturas([tmp_path / "a.bin"])                      # de novo: não entra
     assert len(janela.projeto.fontes) == 1
