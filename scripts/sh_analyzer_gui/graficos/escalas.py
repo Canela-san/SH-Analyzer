@@ -295,7 +295,7 @@ class EscalasDaCaixa(QObject):
     # ------------------------------------------------------------------ o ajuste e a vista que fica
 
     def ajustar(self, folga: float = 0.02) -> None:
-        """O "ajustar tudo" (F, o duplo clique): a caixa nos travados visíveis (o tempo de todos, se ninguém tem tempo
+        """O "ajustar tudo" (o F, ou o botão da barra): a caixa nos travados visíveis (o tempo de todos, se ninguém tem tempo
         próprio); cada destravado na caixa inteira, pela escala dele (no tempo também, com ``com_tempo``)."""
         visiveis = {t: i for t, i in self._itens.items() if i.isVisible()}
         travados = [i for t, i in visiveis.items() if t not in self._soltos]

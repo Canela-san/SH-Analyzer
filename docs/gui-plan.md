@@ -702,7 +702,7 @@ seções à esquerda. Cada mudança vale na hora e fica gravada, sem "Aplicar":
 | Roda ou arrasto em cima dos números de um eixo | Mexe só naquele eixo: a roda nos números do Y dá o zoom no Y (sem o Ctrl); nos do tempo, no tempo |
 | Arrastar sobre um eixo | Zoom só naquele eixo |
 | `Z` + arrastar | Zoom em caixa |
-| Duplo clique, ou `F` | Ajustar tudo |
+| `F` (ou o botão da barra) | Ajustar tudo. O duplo clique não mexe no zoom (pedido do usuário, 15/11/2026) |
 | Backspace | Voltar ao zoom anterior (histórico) |
 | Clique num traço | Seleciona (alvo de 9 px em volta da linha, contado até o segmento entre as amostras; com vários perto, o mais perto, e empatados, o de cima); Ctrl + clique soma à seleção. Vale também nas curvas do espectro |
 | `Del` | Remove os traços selecionados da vista (desfazível) |
@@ -736,8 +736,8 @@ alinham nela). O `F` põe cada traço destravado na faixa inteira (no tempo tamb
 **Uma mudança não mexe na vista.** Uma etapa da cadeia, o ganho, o offset, o deslocamento, outro método ou outro
 trecho do espectro deixam o tempo e o Y onde o usuário os pôs. Duas exceções: o eixo Y passa a medir outra coisa
 (dB, valor RMS, dBc; amplitude ou densidade), e ele se ajusta de novo; ou o traço mudado sai inteiro da vista (tirar
-o DC de um sinal em 2,5 V), e ela anda até ele com a mesma altura. O ajuste completo continua no duplo clique e no
-`F`.
+o DC de um sinal em 2,5 V), e ela anda até ele com a mesma altura. O ajuste completo continua no `F` (e no botão da
+barra).
 
 ### 9.3 Traços: adicionar, remover, selecionar
 

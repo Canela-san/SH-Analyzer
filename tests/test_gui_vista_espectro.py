@@ -10,6 +10,8 @@ pytest.importorskip("pytestqt")
 
 from capturas_sinteticas import escrever_bin  # noqa: E402
 from dialogos_falsos import DialogosFalsos  # noqa: E402
+from mouse_de_verdade import duplo_clique  # noqa: E402
+from PySide6.QtWidgets import QToolButton  # noqa: E402
 from sh_analyzer_gui.app import criar_aplicacao  # noqa: E402
 from sh_analyzer_gui.dados import projeto as arq  # noqa: E402
 from sh_analyzer_gui.dados.cadeia import Cadeia, Filtro  # noqa: E402
@@ -238,3 +240,19 @@ def test_sem_a_fundamental_a_fft_e_do_trecho_inteiro(janela, qtbot, tmp_path):
     i = int(np.argmax(r.desenho.niveis))
     assert w.curvas[traco].tempo_da_amostra(i) == pytest.approx(130_000.0, abs=2 * r.desenho.df)
     assert w.curvas[traco].dataBounds(0)[1] == pytest.approx(200_000.0, rel=1e-3)
+
+
+def test_o_duplo_clique_nao_mexe_no_zoom_e_o_f_ajusta(janela, aberto):
+    """O duplo clique ajustava a vista (o pedido do usuário, 15/11/2026: o zoom fica). Ajustar tudo é o F, ou o botão
+    da barra."""
+    fonte, traco, tempo, espectro = aberto
+    caixa = espectro.grafico.getViewBox()
+    caixa.setRange(xRange=(8_000.0, 10_000.0), yRange=(-80.0, -20.0), padding=0)
+    antes = caixa.viewRange()
+    duplo_clique(espectro.grafico.viewport(), espectro.grafico.mapFromScene(caixa.sceneBoundingRect().center()))
+    assert caixa.viewRange() == antes
+    assert espectro.acao_ajustar.shortcut().toString() == "F"
+    assert espectro.findChild(QToolButton, "botao_ajustar").defaultAction() is espectro.acao_ajustar
+    espectro.acao_ajustar.trigger()
+    (x0, x1), _ = caixa.viewRange()
+    assert x0 < 1_000.0 and x1 > 50_000.0                               # o espectro inteiro

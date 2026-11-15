@@ -7,7 +7,8 @@
   PyQtGraph custava ~17 ms por quadro no protótipo);
 * :class:`CaixaDaFaixa`: a ``ViewBox`` (com as escalas dos traços: ``graficos/escalas.py``) com os gestos do plano: a roda dá zoom no tempo, centrado no cursor; Ctrl +
   roda, no eixo Y da faixa; Alt + roda, nos dois juntos (o mesmo fator: a forma do sinal não muda); Shift + roda anda
-  no tempo; arrastar anda no tempo; o duplo clique ajusta tudo. **O zoom em caixa** (armado com ``Z``: o
+  no tempo; arrastar anda no tempo; o duplo clique não mexe no zoom (o primeiro clique dele é um clique).
+  **O zoom em caixa** (armado com ``Z``: o
   ``zoom_em_caixa``): arrastar desenha a caixa, e a faixa passa a mostrar o que estava nela (uma caixa de poucos
   pixels de altura é zoom só no tempo; de poucos de largura, só no Y). Um clique
   avisa onde foi (``clicada``), para a vista selecionar o traço mais perto. **Em cima de um eixo,** a roda e o
@@ -265,11 +266,9 @@ class GradeDoTema(pg.GraphicsObject):
 
 
 class CaixaDaFaixa(CaixaComEscalas):
-    """``clicada(x, y, modificadores)``: um clique simples, nas unidades da vista. ``ajustarPedido``: o duplo
-    clique (ajustar tudo)."""
+    """``clicada(x, y, modificadores)``: um clique simples, nas unidades da vista."""
 
     clicada = Signal(float, float, object)
-    ajustarPedido = Signal()
     centroPedido = Signal(float, float)             # o clique rápido do meio: onde foi
     caixaUsada = Signal()                           # um zoom em caixa terminou (quem armou desarma)
 
@@ -337,9 +336,9 @@ class CaixaDaFaixa(CaixaComEscalas):
     def mouseClickEvent(self, evento):
         ponto = self.mapSceneToView(evento.scenePos())
         if evento.button() == Qt.MouseButton.LeftButton:
-            if evento.double():
-                self.ajustarPedido.emit()
-            elif self.sceneBoundingRect().contains(evento.scenePos()):
+            # O segundo clique de um duplo clique não faz nada: o primeiro já selecionou, e o zoom fica onde o usuário
+            # o pôs (ajustar tudo é o F, ou o botão da barra).
+            if not evento.double() and self.sceneBoundingRect().contains(evento.scenePos()):
                 # Um clique em cima de um eixo não seleciona nada (nem tira a seleção).
                 self.clicada.emit(ponto.x(), ponto.y(), evento.modifiers())
             evento.accept()

@@ -98,7 +98,7 @@ def test_a_previa_e_depois_a_materializacao(janela, qtbot, tmp_path):
     np.testing.assert_allclose(estado.pronta.amostras, inteiro, rtol=2 ** -23, atol=2 ** -23 * np.max(np.abs(inteiro)))
     assert w.chips[traco].progresso is None and traco not in w._previas
     # A vista fica onde estava (docs/gui-plan.md, 9.2): o passa-altas tirou os 3 V da rede, mas os 7 kHz que ficam
-    # ainda estão dentro dela. O F ou o duplo clique ajustam o Y, se o usuário quiser.
+    # ainda estão dentro dela. O F ajusta o Y, se o usuário quiser.
     for eixo, faixa in zip(w.faixas[0].getViewBox().viewRange(), antes, strict=True):
         assert eixo == pytest.approx(faixa)
 

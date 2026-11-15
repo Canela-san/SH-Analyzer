@@ -22,7 +22,7 @@ ligado entre elas.
   a direita; o chip mostra o progresso. Nunca o canal cru no lugar do transformado.
 * **A legenda** são os chips dos traços (clicar seleciona; o selecionado fica à frente das outras linhas).
 * **O histórico do zoom:** cada parada do zoom ou do pan (400 ms sem mexer) entra no histórico; Backspace volta.
-  ``F`` (ou o duplo clique) ajusta a captura inteira. **O zoom em caixa** (``Z``, ou o botão): o próximo arrasto
+  ``F`` (ou o botão) ajusta a captura inteira; o duplo clique não mexe no zoom. **O zoom em caixa** (``Z``, ou o botão): o próximo arrasto
   desenha a caixa numa faixa, e ela passa a mostrar o tempo e o Y da caixa (o tempo, em todas); Esc desarma.
 * **O minimapa** mostra a captura inteira do primeiro traço e a janela visível; arrastar a janela anda no tempo.
 * **O botão do meio:** arrastar move a vista nas duas direções, sem mudar as escalas, em cima de um traço ou não
@@ -171,7 +171,7 @@ class VistaDeTempo(QWidget):
         self._barra.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.acao_ajustar = QAction(self.tr("Ajustar tudo"), self)
         self.acao_ajustar.setShortcut(QKeySequence("F"))
-        self.acao_ajustar.setToolTip(self.tr("Ajustar tudo (F, ou duplo clique no gráfico)"))
+        self.acao_ajustar.setToolTip(self.tr("Ajustar tudo (F)"))
         self.acao_ajustar.triggered.connect(self.ajustar)
         self.acao_voltar = QAction(self.tr("Voltar o zoom"), self)
         self.acao_voltar.setShortcut(QKeySequence(Qt.Key.Key_Backspace))
@@ -404,7 +404,6 @@ class VistaDeTempo(QWidget):
         faixa.ligada_a = None
         caixa.clicada.connect(self._clicou)
         caixa.centroPedido.connect(self._centro_pedido)
-        caixa.ajustarPedido.connect(self.ajustar)
         caixa.caixaUsada.connect(lambda: self.acao_caixa.setChecked(False))
         caixa.armar_zoom_em_caixa(self.acao_caixa.isChecked())
         caixa.aplicar_tema(aparencia().tema)

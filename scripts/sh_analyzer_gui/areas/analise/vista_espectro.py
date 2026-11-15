@@ -29,8 +29,8 @@
   são preparados na thread de trabalho (``esp.preparar_desenho``); na frequência linear, o traço é desenhado pela
   pirâmide, como a vista de tempo (``TracoLOD``: a consulta de cada quadro lê só a pirâmide, e um pico de um bin
   aparece em qualquer zoom); na log, pela envoltória por coluna de pixel, refeita quando o zoom para; o cursor lê o
-  bin pela grade uniforme, sem procurar. O zoom do usuário fica quando um resultado novo chega (o duplo clique
-  ajusta).
+  bin pela grade uniforme, sem procurar. O zoom do usuário fica quando um resultado novo chega (o ``F``, ou o botão
+  da barra, ajusta; o duplo clique não mexe no zoom).
 
 Cada mudança das opções é um comando de desfazer (``MudarOpcoesDaVista``) e vai para o projeto.
 """
@@ -63,6 +63,7 @@ from ...modelo.comandos import MudarOpcoesDaVista
 from ...modelo.objetos import Projeto, Traco, Vista
 from ...modelo.selecao import Selecao
 from ...tema.aplicar import aparencia
+from ...tema.icones import IconeDoTema
 from ...tema.tokens import Tema, cor_do_traco
 from .acoes_da_escala import acoes_da_escala, atualizar_acoes_da_escala, estado_do_chip
 from .medidas import LinhaDaTabela, MedidasDaVista, numero_para_planilha
@@ -207,6 +208,19 @@ class VistaDeEspectro(QWidget):
         self.harmonicos.clicked.connect(lambda marcado: self._mudar(harmonicos=bool(marcado)))
         for w in (self.metodo, self.resolucao, self.escala, self.trecho, self.log, self.harmonicos):
             linha.addWidget(w)
+        self.acao_ajustar = QAction(self.tr("Ajustar tudo"), self)
+        self.acao_ajustar.setShortcut(QKeySequence("F"))
+        self.acao_ajustar.setToolTip(self.tr("Ajustar tudo (F)"))
+        self.acao_ajustar.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.acao_ajustar.triggered.connect(lambda: self.escalas.ajustar(0.02))
+        self.addAction(self.acao_ajustar)
+        IconeDoTema(self.acao_ajustar, "expandir")
+        botao = QToolButton()
+        botao.setObjectName("botao_ajustar")
+        botao.setDefaultAction(self.acao_ajustar)
+        botao.setAutoRaise(True)
+        botao.setIconSize(QSize(16, 16))
+        linha.addWidget(botao)
         # Os botões das ajudas de leitura: desligados ao abrir (cada um custa algo a cada resultado ou movimento).
         self.acao_picos = QAction(self.tr("Picos"), self)
         self.acao_picos.setToolTip(self.tr("Marcar os picos de cada traço (acima do piso + 20 dB, com 10 dB de "
@@ -733,13 +747,11 @@ class VistaDeEspectro(QWidget):
             item.setData(*esp.envoltoria_log(d, f_min, f_max, 2 * colunas))
 
     def _clique_no_grafico(self, evento) -> None:
-        """O duplo clique ajusta a vista; um clique numa curva seleciona o traço dela (e o inspetor mostra o traço e a
-        análise do espectro), e no vazio tira a seleção. Em cima dos eixos, nada."""
+        """Um clique numa curva seleciona o traço dela (e o inspetor mostra o traço e a análise do espectro), e no
+        vazio tira a seleção. Em cima dos eixos, nada. O segundo clique de um duplo clique também não faz nada: o
+        primeiro já selecionou, e o zoom fica onde o usuário o pôs."""
         vb = self.grafico.getViewBox()
-        if evento.button() != Qt.MouseButton.LeftButton:
-            return
-        if evento.double():
-            self.escalas.ajustar(0.02)
+        if evento.button() != Qt.MouseButton.LeftButton or evento.double():
             return
         if not vb.sceneBoundingRect().contains(evento.scenePos()):
             return

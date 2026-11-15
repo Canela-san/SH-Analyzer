@@ -1,6 +1,6 @@
 """O zoom em caixa na vista de tempo (AN-04): ``Z`` (ou o botão) arma, arrastar com o botão esquerdo desenha a caixa
-e a faixa passa a mostrar o que estava nela; um zoom feito desarma, e Esc também. Com eventos de mouse de verdade,
-pela cena do PyQtGraph. Sem tela."""
+e a faixa passa a mostrar o que estava nela; um zoom feito desarma, e Esc também. E o duplo clique, que não mexe no
+zoom. Com eventos de mouse de verdade, pela cena do PyQtGraph. Sem tela."""
 
 import numpy as np
 import pytest
@@ -10,6 +10,7 @@ pytest.importorskip("pytestqt")
 
 from capturas_sinteticas import escrever_bin  # noqa: E402
 from dialogos_falsos import DialogosFalsos  # noqa: E402
+from mouse_de_verdade import duplo_clique  # noqa: E402
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QMouseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
@@ -113,3 +114,18 @@ def test_uma_caixa_baixa_e_zoom_so_no_tempo_e_esc_desarma(janela, plotado):
     antes = caixa.viewRange()
     arrastar(vista, caixa, (0.05, 0.1), (0.05, 0.1))                     # um clique parado: nada muda
     assert all(eixo == pytest.approx(antes_do_eixo) for eixo, antes_do_eixo in zip(caixa.viewRange(), antes))
+
+
+def test_o_duplo_clique_nao_mexe_no_zoom_e_seleciona_como_um_clique(janela, plotado):
+    """O pedido do usuário (15/11/2026): o duplo clique levava a vista ao mais longe que ela ia (ajustar tudo). Agora
+    o zoom fica, e o primeiro clique dele seleciona o traço, como um clique; ajustar tudo é o F."""
+    a, b, vista, caixa = plotado
+    caixa.setRange(xRange=(0.02, 0.06), yRange=(-0.5, 1.2), padding=0)
+    antes = caixa.viewRange()
+    no_traco = vista.itens[a].ponto_mais_proximo(0.04)                  # um ponto do traço a, na vista
+    ponto = vista.grafico.mapFromScene(caixa.mapViewToScene(no_traco))
+    duplo_clique(vista.grafico.viewport(), ponto)
+    assert caixa.viewRange() == antes
+    assert janela.selecao.tracos == (a,)
+    vista.acao_ajustar.trigger()                                         # o F ainda ajusta tudo
+    assert caixa.viewRange()[0][1] - caixa.viewRange()[0][0] > 0.15
