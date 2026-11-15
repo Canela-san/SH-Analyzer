@@ -74,6 +74,7 @@ from .registro import caminho_do_log
 from .servicos.erros import ErroInesperado, relator
 from .servicos.fontes import ServicoDeFontes
 from .servicos.materializar import ServicoDeMaterializacao
+from .servicos.placa import ServicoDaPlaca
 from .servicos.tarefas import GerenciadorDeTarefas
 from .tema.aplicar import aparencia
 from .tema.icones import IconeDoTema
@@ -131,6 +132,8 @@ class JanelaPrincipal(QMainWindow):
             preferencias.pasta_do_cache("piramides"), preferencias.limite("piramides")))
         self.materializacoes = ServicoDeMaterializacao(self.tarefas, parent=self, cache=CacheDeMaterializacoes(
             preferencias.pasta_do_cache("materializacoes"), preferencias.limite("materializacoes")))
+        # A placa: as chamadas no laço asyncio da thread própria, que nasce na primeira chamada (a Aquisição).
+        self.placa = ServicoDaPlaca(parent=self)
         self.projeto: Projeto | None = None
         self.selecao: Selecao | None = None
         self.acoes: dict[str, QAction] = {}
@@ -584,6 +587,7 @@ class JanelaPrincipal(QMainWindow):
         self.salvar_layout()
         self.tarefas.encerrar()          # nenhuma thread rodando depois da janela
         self.materializacoes.encerrar()
+        self.placa.encerrar()            # nem a thread do laço da placa
         super().closeEvent(evento)
 
     # ------------------------------------------------------------------ arrastar e soltar

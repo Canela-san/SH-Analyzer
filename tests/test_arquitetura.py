@@ -199,6 +199,22 @@ def test_sh_placa_nao_importa_o_qt_nem_a_interface():
                 assert raiz not in QT and raiz != "sh_analyzer_gui", f"{arquivo.name}:{no.lineno}: importa {nome}"
 
 
+REDE_DA_PLACA = {"asyncssh", "zeroconf", "serial", "keyring"}
+
+
+def test_a_rede_da_placa_fica_no_sh_placa():
+    """O extra ``placa`` (o SSH, o mDNS, a porta serial e o cofre de senhas) só é importado pelo ``sh_placa``: o motor
+    roda sem ele, e a interface fala com a placa pela ponte (``servicos/placa.py``), nunca pelo asyncssh direto."""
+    for arquivo in sorted([*PACOTE.glob("*.py"), *GUI.rglob("*.py")]):
+        for no in _imports_de(arquivo):
+            if isinstance(no, ast.ImportFrom) and no.level > 0:
+                continue
+            nomes = [a.name for a in no.names] if isinstance(no, ast.Import) else [no.module or ""]
+            for nome in nomes:
+                assert nome.split(".")[0] not in REDE_DA_PLACA, (
+                    f"{arquivo.relative_to(SCRIPTS)}:{no.lineno}: importa {nome} (a rede da placa mora no sh_placa)")
+
+
 def test_a_interface_so_fala_com_o_motor_pela_api():
     """``sh_analyzer_gui`` importa do motor só ``supraharmonicos.api`` (docs/gui-plan.md, 8.1): o resto do motor
     pode mudar sem quebrar a interface, e a paridade com a CLI fica num lugar só (``tests/test_api.py``)."""

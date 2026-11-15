@@ -7,6 +7,7 @@
 #   scripts/ci.sh testes [VERSAO]  ruff + pytest completo numa versão do Python (padrão 3.13)
 #   scripts/ci.sh firmware         gcc -Werror no ler_adc.c e shellcheck nos scripts de shell
 #   scripts/ci.sh interface        os testes da interface gráfica (PySide6 e pytest-qt, sem tela)
+#   scripts/ci.sh placa            o sh_placa e o agente com o extra placa (asyncssh...), sem o Qt, nos dois Pythons
 #
 # Precisa do uv (que baixa sozinho as versões do Python e o shellcheck) e do gcc. Sem o zpaq, os testes do
 # compactar_amostras são pulados (a CI os roda: sudo apt install zpaq); sem o gcc-arm-linux-gnueabihf, o ler_adc.c
@@ -46,6 +47,16 @@ firmware() {
     uvx --quiet --from "$SHELLCHECK" shellcheck -x firmware/*.sh firmware/coleta/*.sh scripts/*.sh
 }
 
+placa() {   # $1 = versão do Python
+    # A BeagleBone vista do computador, com as dependências da rede (o extra placa) e sem o Qt: a Aquisição se
+    # testa sem a interface, e o agente roda como na placa. Os testes da arquitetura conferem que a rede não vaza
+    # para o motor nem para a interface.
+    local py="$1"
+    etapa "pytest do sh_placa e do agente (Python ${py}, extra placa, sem o Qt)"
+    uv run --python "$py" --extra dev --extra placa pytest tests/test_sh_placa*.py tests/test_agente.py \
+        tests/test_arquitetura.py
+}
+
 interface() {
     # O extra gui-dev traz o PySide6 e o pytest-qt, que os outros jobs não instalam (o motor não depende do Qt).
     # tests/test_gui_*.py: a interface inteira (os sem Qt também rodam no conjunto padrão; os com Qt, só aqui).
@@ -59,12 +70,13 @@ interface() {
 command -v zpaq > /dev/null || echo "Aviso: sem o zpaq, os testes do compactar_amostras são pulados (sudo apt install zpaq)." >&2
 
 case "${1:-tudo}" in
-    tudo)      for py in "${VERSOES_PYTHON[@]}"; do testes "$py"; done; firmware; interface ;;
+    tudo)      for py in "${VERSOES_PYTHON[@]}"; do testes "$py"; placa "$py"; done; firmware; interface ;;
     rapido)    testes 3.13 -m "not e2e"; firmware ;;
     testes)    testes "${2:-3.13}" ;;
     firmware)  firmware ;;
     interface) interface ;;
-    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *)         echo "Uso: scripts/ci.sh [tudo | rapido | testes [VERSAO] | firmware | interface]  (--help para detalhes)" >&2; exit 2 ;;
+    placa)     for py in "${VERSOES_PYTHON[@]}"; do placa "$py"; done ;;
+    -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *)         echo "Uso: scripts/ci.sh [tudo | rapido | testes [VERSAO] | firmware | interface | placa]  (--help para detalhes)" >&2; exit 2 ;;
 esac
 etapa "tudo certo"

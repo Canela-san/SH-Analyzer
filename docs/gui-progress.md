@@ -12,9 +12,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > espectro corrigido pela sonda, com os números da CLI (`tests/test_gui_jornada.py`), e o G1 passa com a cadeia
 > ligada, durante e depois das materializações. **A tag v0.9** fica para o dono do projeto.
 >
-> **A próxima: a F3.1, o laço `asyncio`, as dependências e o job `placa`** (seção 4d, a Fase 3 em tarefas). Ela
-> começa pedindo ao usuário a permissão para baixar os pacotes do extra `placa` (asyncssh, zeroconf, pyserial e
-> keyring).
+> **A Fase 3 começou** (seção 4d): a F3.1 está feita (o laço `asyncio` do `sh_placa`, a ponte para a interface, o
+> extra `placa` e o job `placa` da CI). **A próxima: a F3.2, a conexão SSH, as chaves e o registro de atividade**,
+> que já pode ser conferida na placa de verdade, além do servidor SSH do teste.
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
@@ -103,7 +103,8 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## 3. O estado atual
 
-**Em 15/11/2026, no `feat/interface`, em commits locais:** as Fases 0, 1 e 2 no código. O visualizador da Fase 1
+**Em 15/11/2026, no `feat/interface`, em commits locais:** as Fases 0, 1 e 2 no código, e a Fase 3 começando (a
+F3.1: o laço `asyncio` do `sh_placa` e a ponte). O visualizador da Fase 1
 (abrir as capturas, a vista de tempo, o inspetor, os cursores e as medidas, o projeto `.shproj` com o desfazer e a
 paleta de comandos) ganhou na Fase 2 a cadeia de transformações (as afins, os filtros, o DC e a correção de sonda,
 com a prévia e a materialização em segundo plano e o cache), as quatro vistas de frequência (espectro, bandas IEC,
@@ -117,12 +118,14 @@ aquecer sob demanda), `71ba268` (a taxa da PRU), `98d96e0` (a frequência, F2.1)
 `8376894` (as bandas sem cancelamento), `a95ba57` (as FFTs de um lote em todos os núcleos), `c3ca56b` (a
 proeminência dos picos), `220e422` e `eede2c1` (a fundamental), `9341048` (o aquecimento com uma trava), `7d0f40d` (a
 pasta padrão das sondas), `6ac649d` (o cabeçalho num dicionário), `97a40d8` (os formatos) e `61edf72` (a curva da
-sonda em pedaços, sem prender o GIL). E o do agente da placa: `3f98d7b`.
+sonda em pedaços, sem prender o GIL). E o do agente da placa: `3f98d7b`. O diagnóstico da PRU entre capturas
+(`0997175`) é do `sh_placa`, sem o agente.
 
-**O ambiente:** Python 3.13, PySide6 6.12.0, PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1. Testes, na última rodada:
+**O ambiente:** Python 3.13, PySide6 6.12.0, PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1; no extra `placa`,
+asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5 e keyring 25.7.0 (o cofre do Linux é o Secret Service). Testes, na última rodada:
 `ci.sh rapido` com 1 687 aprovados, `ci.sh interface` com 743 e os 6 de desempenho (15/11/2026).
 
-**Ainda não existe:** a Aquisição (as Fases 3 e 4), as figuras e as exportações (a Fase 5).
+**Ainda não existe:** a Aquisição na tela (da F3.5 em diante; a Fase 4), as figuras e as exportações (a Fase 5).
 
 ---
 
@@ -904,10 +907,14 @@ da F3.5. O servidor SSH do simulador nasce nos testes da F3.2 e cresce até a F3
 **Regras desta fase** (o plano, 4.3 e 11.1): tudo pelo SSH, sem abrir porta e sem instalar nada na placa; cada
 comando rodado na placa vai para o registro de atividade; nada destrutivo sem confirmação, com o que vai acontecer
 escrito no botão; senhas só no cofre do sistema. **As dependências novas** (asyncssh, zeroconf, pyserial, keyring e,
-na F3.8, o pyte) **são baixadas só com a permissão do usuário.** As mudanças no agente vão em commits só dele, como
-as do motor.
+na F3.8, o pyte) **têm a permissão do usuário** (15/11/2026: "pode instalar tudo que você quiser" pelo projeto). As
+mudanças no agente vão em commits só dele, como as do motor.
 
-### ▶ F3.1: o laço `asyncio`, as dependências e o job `placa`
+**A placa de verdade** está no USB do computador do usuário (seção 6): cada tarefa que fala com a placa é conferida
+nela também, além do simulador. O cabo tem mau contato: a conexão que cai no meio é o caso comum, não o raro. O disco
+dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
+
+### ☑ F3.1: o laço `asyncio`, as dependências e o job `placa`
 
 - **Arquivos:** `scripts/sh_placa/laco.py` (a thread com o laço); `sh_analyzer_gui/servicos/placa.py` (a ponte
   para a interface); o extra `placa` no `pyproject.toml`; o job `placa` no `scripts/ci.sh`.
@@ -919,8 +926,25 @@ as do motor.
   - o job `placa` no `ci.sh`: o agente, o `sh_placa` e o simulador, sem o Qt.
 - **Os testes:** a ponte entrega o resultado e o erro na thread da interface, e cancela; fechar não deixa thread; a
   arquitetura confere que o `sh_placa` não importa o Qt nem a interface (a regra já existe).
+- **Feito em 15/11/2026:**
+  - **`sh_placa/laco.py`:** o `LacoAsyncio` (iniciar, submeter, parar) e a `Execucao`. **O fim de uma execução só
+    chega quando a corrotina parou:** o futuro do `asyncio.run_coroutine_threadsafe` se dá por cancelado na hora do
+    pedido, com a limpeza da corrotina ainda rodando, e uma transferência nova do mesmo arquivo começaria em cima da
+    antiga. O `ao_terminar` é ligado no `submeter`, antes de a corrotina começar; uma falha no laço fora de uma
+    execução vai para o log;
+  - **`servicos/placa.py`:** a `Chamada` e o `ServicoDaPlaca`. **O estado da chamada só muda na thread da
+    interface**, quando o aviso do laço chega, logo antes do `terminou` (a corrida do teste da fila das pesadas não
+    acontece aqui). Os erros esperados (`ErroDaPlaca`, `OSError`, o tempo esgotado) ficam na chamada; outro é um
+    defeito e vai para o relator. A thread nasce na primeira chamada e morre ao fechar a janela;
+  - **o extra `placa`** no `pyproject.toml`, que o `gui-dev` traz; **o job `placa`** no `ci.sh` e no `ci.yml`, nos
+    dois Pythons (3.10 e 3.13), sem o Qt; a regra nova da arquitetura: o asyncssh, o zeroconf, o pyserial e o
+    keyring só no `sh_placa`;
+  - **na placa de verdade:** o asyncssh pela thread do laço (a chave do computador, o `aes128-ctr`), o agente
+    respondendo no Python 3.7.3 dela e o SFTP a 5,2 MB/s. Ela achou um defeito no diagnóstico (`0997175`): a PRU
+    parada entre capturas é o normal, e a placa pronta aparecia como "não pronta para capturar";
+  - **os testes:** `tests/test_sh_placa_laco.py` (8, sem o Qt) e `tests/test_gui_placa.py` (6).
 
-### ☐ F3.2: a conexão SSH, as chaves e o registro de atividade
+### ▶ F3.2: a conexão SSH, as chaves e o registro de atividade
 
 - **Arquivos:** `sh_placa/conexao.py`, `sh_placa/chaves.py` e `sh_placa/registro.py`; o `TransporteSSH` em
   `sh_placa/agente.py`; `tests/servidor_ssh.py` (um servidor do próprio asyncssh, com o agente de verdade sobre a
@@ -1096,6 +1120,7 @@ as do motor.
 | 15/11/2026 | O mesmo percurso sobre traços já prontos, com **duas materializações ao fundo** × **uma de cada vez** | Duas: p95 de 37,9 e 40,1 ms (~920 trocas voluntárias da thread da interface). Uma: 11,0 e 11,2 ms (30 a 118), o mesmo que sem nenhuma (13,8 ms) | bancada do diário de 15/11 |
 | 15/11/2026 | G1 sem tela, 8 faixas, **com a cadeia**, depois da fila das pesadas e da curva da sonda em pedaços | **Aprovado. Durante:** mediana de 5,1 a 5,3 ms, p95 de 7,5 a 9,7 ms. **Depois:** mediana de 8,8 a 8,9 ms, p95 de 10,8 a 12,2 ms (3 rodadas). **Otimista:** os números dos eixos estavam parados (`b946419`) e quase não eram redesenhados; as duas linhas de 15/11 acima também | `medir_vista --cadeia`; `pytest --desempenho` |
 | 15/11/2026 | **G1 sem tela, 8 faixas, com os eixos redesenhados** a cada zoom e pan (a correção dos números parados) | **Aprovado. Sem a cadeia:** mediana de 9,4 ms, p95 de 11,3 ms. **Com a cadeia, durante:** mediana de 7,3 a 7,4 ms, p95 de 11,9 a 12,9 ms; **depois:** mediana de 10,2 a 10,4 ms, p95 de 14,0 a 14,2 ms (2 rodadas). Redesenhar os eixos custa ~1,5 ms por quadro | `medir_vista [--cadeia]`; `pytest --desempenho` |
+| 15/11/2026 | **A vazão do USB, na placa de verdade** (192.168.6.2), 46 MiB e 8 MiB de captura | `scp` e `rsync`: 4,8 MB/s; `ssh cat` com o `chacha20-poly1305`, o `aes128-gcm` e o `aes128-ctr`: 5,2, 5,7 e **5,9 MB/s**; **o SFTP do asyncssh com o `aes128-ctr`: 5,2 MB/s**. O limite é a cifra no único núcleo da placa (o eMMC lê a 264 MB/s) | seção 6; a sonda da F3.1 |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
 ---
@@ -1485,6 +1510,24 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     chip da materialização que começa só deixa o "na fila" quando o "começou" chega pela fila de eventos, e o teste
     não esperava por ele, como já esperava pelo painel.
   - **Testes:** `ci.sh rapido` com 1 695 aprovados e `ci.sh interface` com 751; os 6 de desempenho passam.
+- **15/11/2026:** **a placa de verdade no USB, a F0.2 e a F3.1:**
+  - **a placa:** o usuário a ligou no computador, com o canal 1 na tomada da casa, e deu liberdade para instalar e
+    para usá-la. A chave SSH do computador foi instalada (`ssh-copy-id`), o relógio acertado (estava 2 dias
+    atrasado) e o firmware atualizado (`enviar --setup`, de `v0.8-6` para `v0.8-137-g9b0ae82`: o `main` mais o
+    agente). **A rede da casa:** 127,7 V rms, 60,00 Hz, sem saturar; já com supraharmônicos de verdade (uma
+    componente em 40,0 kHz, ~81 mV no pino × o divisor, antes da correção da cadeia). As capturas estão em
+    `$DADOS/lab/2026-11-15/` e saíram da placa depois do CRC conferido;
+  - **a F0.2** (seção 6), com o que muda na Fase 3: o kernel 4.19, o nº de série da EEPROM no USB, o mDNS só na
+    192.168.7.2 e a vazão de ~5 MB/s, presa à cifra no único núcleo da placa;
+  - **a F3.1** (seção 4d): o laço `asyncio` numa thread própria, a ponte para a interface, o extra e o job `placa`.
+    Conferida também na placa, onde achou um defeito do diagnóstico (a PRU parada entre capturas, `0997175`);
+  - **de passagem:** o `ci.sh placa` troca o Python do `.venv` (3.10 e 3.13), e o `rapido` depois dele rodou sem o
+    PySide6, como o job `testes` do GitHub: o `test_gui_atalho.py`, que diz "sem Qt", falhava inteiro na importação
+    (`12cdd32`). E um teste novo do laço que dependia da carga da máquina (ele achava que segurava o laço, e não
+    segurava), corrigido e conferido 15 vezes com os 8 núcleos ocupados.
+  - **Testes:** `ci.sh rapido` com 1 716 aprovados, `ci.sh interface` com 759 e `ci.sh placa` com 129 em cada
+    Python.
+  - **Próximo:** a F3.2, a conexão SSH (com a placa de verdade além do servidor do teste).
 ---
 
 ## 8. Perguntas em aberto
