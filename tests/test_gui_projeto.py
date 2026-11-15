@@ -8,6 +8,7 @@ import time
 import pytest
 from sh_analyzer_gui.dados import projeto as arq
 from sh_analyzer_gui.dados.cadeia import Cadeia, CorrecaoSonda, Filtro, RemoverDC
+from sh_analyzer_gui.dados.captura import ParametrosSemCabecalho
 from sh_analyzer_gui.dados.projeto import (
     FonteSalva,
     ProjetoInvalido,
@@ -24,7 +25,7 @@ CADEIA = Cadeia((CorrecaoSonda(), Filtro("passa_altas", (2000.0,), 4), RemoverDC
 
 def exemplo() -> ProjetoSalvo:
     fontes = (FonteSalva("f1", "dados/a.bin", "/lab/dados/a.bin", 1024, 0xDEADBEEF),
-              FonteSalva("f2", "b.bin", "/lab/b.bin", 2048, None, "int16"))
+              FonteSalva("f2", "b.bin", "/lab/b.bin", 2048, None, "int16", ParametrosSemCabecalho(4e5, (3, 1))))
     r1 = ReceitaDoTraco("f1", 0, "V_A · 09h30", 0, ganho=-1.5, offset=0.25, deslocamento_s=0.004, cadeia=CADEIA)
     r2 = ReceitaDoTraco("f2", 3, "I_A", 1, visivel=False, faixa=1)
     vistas = (VistaSalva("v1", "Afundamento", "tempo", (TracoSalvo("t1", r1), TracoSalvo("t2", r2)),
@@ -36,8 +37,10 @@ def exemplo() -> ProjetoSalvo:
 def test_ida_e_volta_pelo_json():
     p = exemplo()
     dados = json.loads(json.dumps(arq.para_dict(p)))
-    assert dados["formato"] == arq.FORMATO and dados["versao"] == arq.VERSAO == 2
+    assert dados["formato"] == arq.FORMATO and dados["versao"] == arq.VERSAO == 3
     assert arq.de_dict(dados) == p
+    assert "sem_cabecalho" not in dados["fontes"][0]                     # só nas sem o cabeçalho
+    assert dados["fontes"][1]["sem_cabecalho"] == {"taxa_total_hz": 400_000.0, "canais": [3, 1]}
     t1, t2 = dados["vistas"][0]["tracos"]
     assert t1["etapas"] == [{"tipo": "correcao_sonda", "ligada": True, "perfil": None},
                             {"tipo": "filtro", "ligada": True, "filtro": "passa_altas", "cortes": [2000.0], "ordem": 4},
@@ -99,6 +102,10 @@ def test_salvar_e_abrir_o_arquivo(tmp_path):
     (lambda d: d["vistas"][0].update(tipo="xy"), "tipo que esta versão não abre"),
     (lambda d: d["vistas"][0].update(nome=" "), "sem nome"),
     (lambda d: d["vistas"][0]["opcoes"].update(sobrepor="sim"), "sobrepor"),
+    (lambda d: d["fontes"][1]["sem_cabecalho"].pop("canais"), "a taxa e os canais de a fonte 2 estão incompletos"),
+    (lambda d: d["fontes"][1]["sem_cabecalho"].update(canais=["3"]), "incompletos"),
+    (lambda d: d["fontes"][1]["sem_cabecalho"].update(taxa_total_hz=-1), "taxa total"),
+    (lambda d: d["fontes"][1]["sem_cabecalho"].update(canais=[3, 3]), "repetido"),
     (lambda d: d["vistas"][0]["opcoes"].update(cor=1), "desconhecidas: cor"),
 ])
 def test_um_projeto_invalido_e_recusado_com_a_mensagem(mexer, trecho):

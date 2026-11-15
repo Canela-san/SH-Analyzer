@@ -409,14 +409,16 @@ class InspetorDoTraco(QScrollArea):
             linhas.append(self.tr("Faixa válida: {} a {}").format(formatar_si(faixa[0], "Hz", 3),
                                                                   formatar_si(faixa[1], "Hz", 3)))
         if perfil.data_calibracao is not None:
-            captura = fonte.fonte.captura.cabecalho
-            try:
-                dia = datetime.datetime.fromtimestamp(captura.timestamp_unix, tz=datetime.timezone.utc).date()
-                dias = (dia - perfil.data_calibracao).days
-                quando = self.tr(" ({} dias antes da captura)").format(dias) if dias >= 0 else \
-                    self.tr(" (depois da captura)")
-            except (OverflowError, OSError, ValueError):
-                quando = ""
+            cabecalho = fonte.fonte.captura.cabecalho
+            quando = ""
+            if cabecalho is not None:                    # sem ele, não se sabe quando a captura foi feita
+                try:
+                    dia = datetime.datetime.fromtimestamp(cabecalho.timestamp_unix, tz=datetime.timezone.utc).date()
+                    dias = (dia - perfil.data_calibracao).days
+                    quando = self.tr(" ({} dias antes da captura)").format(dias) if dias >= 0 else \
+                        self.tr(" (depois da captura)")
+                except (OverflowError, OSError, ValueError):
+                    pass
             linhas.append(self.tr("Calibrado em {}{}").format(perfil.data_calibracao.isoformat(), quando))
         if etapa is None:
             linhas.append(self.tr("A correção não está na cadeia: o traço mostra a saída da sonda, sem corrigir a "

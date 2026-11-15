@@ -19,20 +19,24 @@ from PySide6.QtTest import QAbstractItemModelTester  # noqa: E402
 from sh_analyzer_gui.app import criar_aplicacao  # noqa: E402
 from sh_analyzer_gui.areas.analise.arvore import PAPEL_CORES, PAPEL_DETALHE, PAPEL_TIPO, ArvoreDoProjeto  # noqa: E402
 from sh_analyzer_gui.componentes.toast import Toast  # noqa: E402
-from sh_analyzer_gui.dados.captura import abrir_fonte  # noqa: E402
+from sh_analyzer_gui.dados.captura import ParametrosSemCabecalho, abrir_fonte  # noqa: E402
 from sh_analyzer_gui.dados.piramide import Cancelado  # noqa: E402
 from sh_analyzer_gui.janela import JanelaPrincipal  # noqa: E402
 from sh_analyzer_gui.modelo.comandos import AdicionarFonte, AdicionarVista, MudarTracos, RemoverFonte  # noqa: E402
 from sh_analyzer_gui.modelo.objetos import FonteDoProjeto, Projeto, Vista  # noqa: E402
 from sh_analyzer_gui.servicos.fontes import ServicoDeFontes  # noqa: E402
 from sh_analyzer_gui.servicos.tarefas import GerenciadorDeTarefas  # noqa: E402
+from supraharmonicos.cli_adc_tool import main  # noqa: E402
+
+
+def sinais(n=20_000):
+    t = np.arange(n) / 200_000
+    return [np.sin(2 * np.pi * 60 * t), 0.5 * np.cos(2 * np.pi * 60 * t)]
 
 
 def captura(pasta, nome="a.bin", versao=9, n=20_000):
     pasta.mkdir(parents=True, exist_ok=True)
-    t = np.arange(n) / 200_000
-    return escrever_bin(pasta / nome, [np.sin(2 * np.pi * 60 * t), 0.5 * np.cos(2 * np.pi * 60 * t)],
-                        canais=(0, 1), versao=versao)
+    return escrever_bin(pasta / nome, sinais(n), canais=(0, 1), versao=versao)
 
 
 # ------------------------------------------------------------------ tarefas
@@ -238,9 +242,71 @@ def test_abrir_uma_captura_na_janela(janela, tmp_path, qtbot):
     assert len(janela.projeto.fontes) == 1
     assert any("já está aberta" in t.rotulo.text() for t in janela.findChildren(Toast))
     estragado = tmp_path / "estragado.bin"
-    estragado.write_bytes(b"\x00" * 100)
+    estragado.write_bytes(b"\x00")                                           # nem uma amostra: nada a perguntar
     assert janela.controle.abrir_capturas([estragado]) == []
     assert any("Não foi possível abrir estragado.bin" in t.rotulo.text() for t in janela.findChildren(Toast))
+
+
+def test_o_bin_legado_pergunta_a_taxa_e_os_canais_e_o_projeto_os_guarda(janela, tmp_path, qtbot):
+    legado = escrever_bin(tmp_path / "legado.bin", sinais(), com_cabecalho=False)
+    resposta = ParametrosSemCabecalho(400_000, (0, 1))
+    janela.controle.dialogos = DialogosFalsos(None, resposta)
+    assert janela.controle.abrir_capturas([legado]) == []                    # cancelado: fica de fora, sem erro
+    assert janela.projeto.fontes == () and not janela.findChildren(Toast)
+    (fonte,) = janela.controle.abrir_capturas([legado])
+    dialogos = janela.controle.dialogos
+    assert dialogos.perguntas == ["a taxa e os canais de legado.bin"] * 2
+    pedido, sugestao = dialogos.pedidos[0]
+    assert pedido.tipo == "bin" and pedido.canais is None and pedido.n_amostras == 40_000 and sugestao is None
+    assert fonte.fonte.captura.parametros == resposta and [c.taxa_hz for c in fonte.canais] == [200_000.0] * 2
+    qtbot.waitUntil(lambda: fonte.piramides is not None, timeout=10_000)
+    assert "2 canais · sem cabeçalho (taxa informada)" in janela.status_fonte.text()
+    valores = janela.inspetor.da_fonte.valores
+    assert valores["Captura/Cabeçalho"].startswith("nenhum") and valores["Captura/Taxa total"] == "400000 Hz"
+    janela.inspetor.da_fonte.copiar_json.click()
+    assert json.loads(QGuiApplication.clipboard().text())["parametros"] == {"taxa_total_hz": 400_000.0,
+                                                                             "canais": [0, 1]}
+    janela.area.plotar_canal(fonte, 1)
+
+    # O projeto guarda a taxa e os canais: reabri-lo não pergunta de novo.
+    assert janela.controle.salvar_como(tmp_path / "p.shproj")
+    salvo = json.loads((tmp_path / "p.shproj").read_text())
+    assert salvo["versao"] == 3 and salvo["fontes"][0]["sem_cabecalho"] == {"taxa_total_hz": 400_000.0,
+                                                                            "canais": [0, 1]}
+    janela.controle.novo()
+    janela.controle.dialogos = DialogosFalsos()
+    assert janela.controle.abrir(tmp_path / "p.shproj")
+    (reaberta,) = janela.projeto.fontes
+    assert not reaberta.esta_ausente and reaberta.fonte.captura.parametros == resposta
+    assert len(janela.projeto.vistas[0].tracos) == 1
+
+    # A próxima captura sem o cabeçalho vem com a última resposta escrita.
+    janela.controle.dialogos = DialogosFalsos(None)
+    janela.controle.abrir_capturas([escrever_bin(tmp_path / "outro.bin", sinais(), com_cabecalho=False)])
+    assert janela.controle.dialogos.pedidos[0][1] == resposta
+
+
+def test_o_csv_e_o_h5_do_adc_tool_abrem_com_as_amostras_do_bin(janela, tmp_path, qtbot, cli):
+    origem = captura(tmp_path / "origem")
+    assert cli(main, "-c", origem, "-o", tmp_path / "a.csv")[0] == 0
+    assert cli(main, origem, "--export-hdf5", tmp_path / "a.h5")[0] == 0
+    janela.controle.dialogos = DialogosFalsos(ParametrosSemCabecalho(400_000, (0, 1)))
+    do_csv, do_h5, do_bin = janela.controle.abrir_capturas([tmp_path / "a.csv", tmp_path / "a.h5", origem])
+    ((pedido, _),) = janela.controle.dialogos.pedidos                     # só o .csv pergunta, e só a taxa
+    assert pedido.tipo == "csv" and pedido.canais == (0, 1)
+    assert [f.fonte.captura.tipo for f in (do_csv, do_h5, do_bin)] == ["csv", "h5", "bin"]
+    for fonte in (do_csv, do_h5):
+        for c, b in zip(fonte.canais, do_bin.canais, strict=True):
+            np.testing.assert_array_equal(c.amostras, b.amostras)
+            assert (c.numero, c.taxa_hz, c.escala, c.deslocamento, c.unidade) == \
+                   (b.numero, b.taxa_hz, b.escala, b.deslocamento, b.unidade)
+    assert do_csv.fonte.chave != do_bin.fonte.chave != do_h5.fonte.chave    # o cache não confunde as três
+    qtbot.waitUntil(lambda: do_h5.integridade == "confere", timeout=10_000)
+    janela.painel_projeto.selecionar_fonte(do_h5)
+    assert "2 canais · HDF5 · cabeçalho v9" in janela.status_fonte.text()
+    assert janela.inspetor.da_fonte.valores["Captura/Exportado de"] == "a.bin"
+    janela.painel_projeto.selecionar_fonte(do_csv)
+    assert "2 canais · CSV · sem cabeçalho (taxa informada)" in janela.status_fonte.text()
 
 
 def test_plotar_um_canal_cria_a_vista_num_passo_so(janela, tmp_path):

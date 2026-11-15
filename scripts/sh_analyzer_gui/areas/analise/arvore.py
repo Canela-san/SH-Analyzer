@@ -383,7 +383,7 @@ class PainelDoProjeto(QWidget):
         IconeDoTema(lupa, "busca", "mudo")
         self.filtro.addAction(lupa, QLineEdit.ActionPosition.LeadingPosition)
         self.vazio = EstadoVazio(self.tr("Nenhuma captura aberta"),
-                                 self.tr("Abra uma captura (Ctrl+O) ou arraste um arquivo .bin para a janela."),
+                                 self.tr("Abra uma captura (Ctrl+O) ou arraste um .bin, .csv ou .h5 para a janela."),
                                  icone_nome="arquivo", compacto=True)
         self.arvore = QTreeView()
         self.arvore.setObjectName("arvore_projeto")

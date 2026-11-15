@@ -11,6 +11,7 @@ class DialogosFalsos:
     def __init__(self, *respostas):
         self.respostas = list(respostas)
         self.perguntas: list[str] = []
+        self.pedidos: list = []                      # (pedido, sugestão) de cada captura sem o cabeçalho
 
     def _proxima(self, titulo: str):
         self.perguntas.append(titulo)
@@ -33,6 +34,11 @@ class DialogosFalsos:
     def escolher_pasta(self, titulo, pasta=""):
         r = self._proxima(titulo)
         return Path(r) if r is not None else None
+
+    def parametros_da_captura(self, caminho, pedido, sugestao):
+        """A resposta é um ``ParametrosSemCabecalho`` (ou ``None`` para cancelar)."""
+        self.pedidos.append((pedido, sugestao))
+        return self._proxima(f"a taxa e os canais de {Path(caminho).name}")
 
     def perguntar(self, titulo, texto, opcoes, padrao):
         r = self._proxima(titulo)

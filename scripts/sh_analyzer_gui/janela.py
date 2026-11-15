@@ -363,8 +363,8 @@ class JanelaPrincipal(QMainWindow):
         app = QApplication.instance()
         self.vazio_central = EstadoVazio(
             self.tr("Abra uma captura para começar"),
-            self.tr("Escolha um arquivo .bin com cabeçalho ou arraste-o para esta janela. As capturas abertas "
-                    "aparecem no painel do projeto, com os canais prontos para plotar."),
+            self.tr("Escolha uma captura (.bin, ou o .csv e o .h5 do adc_tool) ou arraste-a para esta janela. As "
+                    "capturas abertas aparecem no painel do projeto, com os canais prontos para plotar."),
             imagem=app.windowIcon().pixmap(LADO_DA_MARCA, LADO_DA_MARCA), botao=abrir, largura_do_texto=440)
         self.vazio_central.simbolo.setObjectName("marca")
 

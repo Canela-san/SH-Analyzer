@@ -366,10 +366,13 @@ class AreaDeAnalise(QObject):
             self.status_integridade.setText("")
             return
         canais = fonte.canais
-        cabecalho = fonte.fonte.captura.cabecalho
+        captura = fonte.fonte.captura
         partes = [fonte.nome, formatar_si(canais[0].taxa_hz * len(canais), "S/s", 3),
-                  f"{len(canais)} {'canal' if len(canais) == 1 else 'canais'}",
-                  self.tr("cabeçalho v{}").format(cabecalho.versao_cabecalho)]
+                  f"{len(canais)} {'canal' if len(canais) == 1 else 'canais'}"]
+        if captura.tipo != "bin":
+            partes.append({"csv": "CSV", "h5": "HDF5"}[captura.tipo])
+        partes.append(self.tr("cabeçalho v{}").format(captura.cabecalho.versao_cabecalho)
+                      if captura.cabecalho is not None else self.tr("sem cabeçalho (taxa informada)"))
         if fonte.progresso_da_piramide is not None:
             partes.append(self.tr("pirâmide {:.0%}").format(fonte.progresso_da_piramide))
         elif fonte.piramides:

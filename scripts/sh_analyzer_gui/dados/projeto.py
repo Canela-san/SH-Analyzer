@@ -1,12 +1,15 @@
 """O arquivo de projeto ``.shproj`` (docs/gui-plan.md, 7.3): JSON legível e versionado, com as receitas e nunca os
 resultados.
 
-* **O formato:** ``{"formato": "sh-analyzer-projeto", "versao": 2, ...}``. Uma versão nova lê as antigas; um arquivo
+* **O formato:** ``{"formato": "sh-analyzer-projeto", "versao": 3, ...}``. Uma versão nova lê as antigas; um arquivo
   de uma versão mais nova que esta é recusado com a mensagem de atualizar o aplicativo (nunca aberto pela metade).
-  A versão 2 trouxe a cadeia de transformações de cada traço (``etapas``); um traço da versão 1 abre sem nenhuma.
+  A versão 2 trouxe a cadeia de transformações de cada traço (``etapas``); um traço da versão 1 abre sem nenhuma. A
+  3 trouxe as opções da vista de tempo (``sobrepor``) e a taxa e os canais de uma captura sem o cabeçalho
+  (``sem_cabecalho``: o ``.bin`` legado, o ``.csv``, um ``.h5`` de um legado).
 * **As fontes** vão pelo caminho relativo à pasta do projeto (a pasta inteira pode mudar de lugar), pelo absoluto (o
   projeto pode mudar sem os dados) e pela identidade das amostras: o CRC do cabeçalho v9 e o tamanho. Se os dois
-  caminhos falham, :func:`localizar_fonte` procura pelo CRC (PD-06).
+  caminhos falham, :func:`localizar_fonte` procura pelo CRC (PD-06). Uma captura sem o cabeçalho guarda a taxa e os
+  canais com que foi aberta, e reabre sem perguntar de novo.
 * **A gravação é atômica** (um temporário na mesma pasta, renomeado no fim): uma queda no meio não estraga o projeto.
 * **O salvamento automático** vai para um arquivo ao lado, ``projeto.shproj~``; ao salvar, ele some. Ao abrir, um
   automático mais novo que o principal é o sinal de uma queda, e o aplicativo pergunta se quer recuperá-lo.
@@ -23,10 +26,12 @@ from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
+from supraharmonicos.api import ErroSHAN, ParametrosSemCabecalho
+
 from .receita import ReceitaDoTraco, ReceitaInvalida
 
 FORMATO = "sh-analyzer-projeto"
-VERSAO = 2
+VERSAO = 3
 EXTENSAO = ".shproj"
 SUFIXO_AUTOMATICO = "~"
 TIPOS_DE_VISTA = ("tempo", "espectro", "bandas", "espectrograma", "harmonicos")
@@ -47,6 +52,7 @@ class FonteSalva:
     tamanho: int                       # bytes do arquivo
     crc32_amostras: int | None = None  # o do cabeçalho v9; None nas versões anteriores
     formato: str = "uint16"
+    sem_cabecalho: ParametrosSemCabecalho | None = None   # a taxa e os canais informados ao abrir, sem o cabeçalho
 
     @property
     def nome(self) -> str:
@@ -114,12 +120,35 @@ def para_dict(projeto: ProjetoSalvo) -> dict:
         "formato": FORMATO,
         "versao": VERSAO,
         "aplicativo": projeto.versao_do_aplicativo,
-        "fontes": [asdict(f) for f in projeto.fontes],
+        "fontes": [_fonte_para_dict(f) for f in projeto.fontes],
         "vistas": [{"id": v.id, "nome": v.nome, "tipo": v.tipo,
                     "tracos": [{"id": t.id, **t.receita.para_dict()} for t in v.tracos],
                     **({"opcoes": dict(v.opcoes)} if v.opcoes else {})} for v in projeto.vistas],
         "layout": dict(projeto.layout),
     }
+
+
+def _fonte_para_dict(fonte: FonteSalva) -> dict:
+    dados = asdict(fonte)
+    if fonte.sem_cabecalho is None:
+        del dados["sem_cabecalho"]
+    else:
+        dados["sem_cabecalho"]["canais"] = list(fonte.sem_cabecalho.canais)
+    return dados
+
+
+def _sem_cabecalho(dados, onde: str) -> ParametrosSemCabecalho | None:
+    """A taxa e os canais de uma fonte sem o cabeçalho (a versão 3), validados com as regras do ``adc_tool``."""
+    if dados is None:
+        return None
+    if not isinstance(dados, dict) or set(dados) != {"taxa_total_hz", "canais"} or \
+            not isinstance(dados["canais"], list) or not all(isinstance(c, int) and not isinstance(c, bool)
+                                                              for c in dados["canais"]):
+        raise ProjetoInvalido(f"a taxa e os canais de {onde} estão incompletos: {dados!r}")
+    try:
+        return ParametrosSemCabecalho(dados["taxa_total_hz"], tuple(dados["canais"]))
+    except ErroSHAN as e:
+        raise ProjetoInvalido(f"{onde}: {e}") from None
 
 
 def _campo(dados: dict, nome: str, tipo, onde: str):
@@ -153,7 +182,8 @@ def de_dict(dados) -> ProjetoSalvo:
         fontes.append(FonteSalva(id=_campo(f, "id", str, onde), caminho=_campo(f, "caminho", str, onde),
                                  caminho_absoluto=_campo(f, "caminho_absoluto", str, onde),
                                  tamanho=_campo(f, "tamanho", int, onde), crc32_amostras=crc,
-                                 formato=f.get("formato", "uint16")))
+                                 formato=f.get("formato", "uint16"),
+                                 sem_cabecalho=_sem_cabecalho(f.get("sem_cabecalho"), onde)))
     ids = [f.id for f in fontes]
     if len(set(ids)) != len(ids):
         raise ProjetoInvalido("duas fontes com o mesmo id")

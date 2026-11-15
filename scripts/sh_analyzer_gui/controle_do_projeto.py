@@ -4,6 +4,10 @@ salvamento automático e a recuperação depois de uma queda.
 **As perguntas e os diálogos de arquivo** passam por :class:`Dialogos`. Os testes trocam ``controle.dialogos`` por
 respostas prontas; sem tela (``offscreen``), um diálogo que ninguém previu levanta erro em vez de travar o teste.
 
+**As capturas** são o ``.bin`` (com o cabeçalho, ou o legado), o ``.csv`` e o ``.h5`` do ``adc_tool`` (PD-02). Uma sem
+o cabeçalho pergunta a taxa e os canais (``areas/analise/sem_cabecalho.py``), com a última resposta já escrita; o
+projeto os guarda, e reabri-lo não pergunta de novo.
+
 **Nunca se perde trabalho sem perguntar:** fechar a janela, abrir outro projeto ou começar um novo com mudanças não
 salvas pergunta antes (salvar, descartar ou cancelar). O salvamento automático grava a cada minuto num arquivo ao
 lado (``.shproj~``; o de um projeto sem título vai para a pasta de recuperação), e some ao salvar ou descartar.
@@ -12,16 +16,18 @@ lado (``.shproj~``; o de um projeto sem título vai para a pasta de recuperaçã
 from __future__ import annotations
 
 import base64
+import json
 import logging
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QObject, QTimer
-from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMessageBox, QWidget
 
 from . import preferencias
-from .configuracao import esquecer, lembrar, ler_lista, pasta_de_recuperacao
+from .areas.analise.sem_cabecalho import DialogoSemCabecalho
+from .configuracao import esquecer, gravar, lembrar, ler_lista, ler_texto, pasta_de_recuperacao
 from .dados import projeto as arquivo
-from .dados.captura import Aviso, ErroSHAN, abrir_fonte
+from .dados.captura import Aviso, CapturaSemCabecalho, ErroSHAN, Fonte, ParametrosSemCabecalho, abrir_fonte
 from .modelo.comandos import AdicionarFonte
 from .modelo.objetos import FonteDoProjeto, Projeto
 from .modelo.persistencia import descrever, montar
@@ -31,10 +37,13 @@ log = logging.getLogger(__name__)
 INTERVALO_AUTOMATICO_MS = 60_000
 CHAVE_DOS_RECENTES = "recentes/projetos"
 CHAVE_DAS_CAPTURAS_RECENTES = "recentes/capturas"
+CHAVE_DA_TAXA_E_DOS_CANAIS = "capturas/sem_cabecalho"
+"""A última taxa e os últimos canais de uma captura sem o cabeçalho: a sugestão da próxima."""
 NOME_SEM_TITULO = "sem-titulo" + arquivo.EXTENSAO
 FILTRO = "Projetos do SH-Analyzer (*.shproj)"
-FILTRO_DE_ABRIR = ("Capturas e projetos (*.bin *.shproj);;Capturas do SH-Analyzer (*.bin);;"
-                   "Projetos do SH-Analyzer (*.shproj);;Todos os arquivos (*)")
+FILTRO_DE_ABRIR = ("Capturas e projetos (*.bin *.csv *.h5 *.hdf5 *.shproj);;Capturas do SH-Analyzer (*.bin);;"
+                   "Exportadas pelo adc_tool (*.csv *.h5 *.hdf5);;Projetos do SH-Analyzer (*.shproj);;"
+                   "Todos os arquivos (*)")
 ORIGEM_DO_PROJETO = "projeto"
 """A origem dos avisos da abertura do projeto no painel de avisos (saem juntos ao abrir outro)."""
 
@@ -72,6 +81,15 @@ class Dialogos:
         self._conferir_tela(f"o diálogo {titulo!r}")
         caminho = QFileDialog.getExistingDirectory(self.pai, titulo, pasta)
         return Path(caminho) if caminho else None
+
+    def parametros_da_captura(self, caminho: Path, pedido: CapturaSemCabecalho,
+                              sugestao: ParametrosSemCabecalho | None) -> ParametrosSemCabecalho | None:
+        """A taxa e os canais de uma captura sem o cabeçalho (``pedido``: o que o arquivo diz)."""
+        self._conferir_tela(f"a taxa e os canais de {caminho.name}")
+        dialogo = DialogoSemCabecalho(caminho.name, pedido.tipo, pedido.canais, pedido.n_amostras, sugestao, self.pai)
+        if dialogo.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return dialogo.parametros()
 
     def perguntar(self, titulo: str, texto: str, opcoes: dict[str, str], padrao: str) -> str | None:
         """``opcoes``: a chave da resposta -> o texto do botão. A tecla Esc devolve ``None``."""
@@ -187,8 +205,8 @@ class ControleDoProjeto(QObject):
         return [Path(c) for c in ler_lista(CHAVE_DAS_CAPTURAS_RECENTES)]
 
     def abrir_arquivos(self, caminhos=None) -> bool:
-        """Ctrl+O e o arrastar e soltar: capturas (``.bin``) entram no projeto aberto; um projeto (``.shproj``)
-        substitui o aberto (o primeiro, se vierem vários)."""
+        """Ctrl+O e o arrastar e soltar: capturas (``.bin``, ``.csv``, ``.h5``) entram no projeto aberto; um projeto
+        (``.shproj``) substitui o aberto (o primeiro, se vierem vários)."""
         if caminhos is None:
             caminhos = self.dialogos.abrir_arquivos(self.tr("Abrir"), FILTRO_DE_ABRIR, self._pasta_inicial())
         caminhos = [Path(c) for c in caminhos]
@@ -200,7 +218,8 @@ class ControleDoProjeto(QObject):
 
     def abrir_capturas(self, caminhos) -> list[FonteDoProjeto]:
         """Abre cada captura pela ``api`` e a põe no projeto (um passo de desfazer cada). Uma que não abre vira uma
-        mensagem, e as outras seguem; uma que já está no projeto não entra de novo."""
+        mensagem, e as outras seguem; uma que já está no projeto não entra de novo; uma sem o cabeçalho pergunta a
+        taxa e os canais (cancelar a deixa de fora)."""
         abertas = []
         for caminho in map(Path, caminhos):
             ja = next((f for f in self.projeto.fontes if not f.esta_ausente and
@@ -209,17 +228,43 @@ class ControleDoProjeto(QObject):
                 self._aviso(self.tr("{} já está aberta").format(caminho.name))
                 continue
             try:
-                fonte = FonteDoProjeto(self._abrir_fonte(caminho))
+                aberta = self._abrir_perguntando(caminho)
             except (ErroSHAN, OSError) as e:
                 self._erro(self.tr("Não foi possível abrir {}: {}").format(caminho.name, e))
                 continue
+            if aberta is None:
+                continue
+            fonte = FonteDoProjeto(aberta)
             self.projeto.pilha.push(AdicionarFonte(self.projeto, fonte))
-            cab = fonte.fonte.captura.cabecalho
-            log.info("captura aberta: %s (cabeçalho v%s, %d canal(is) a %g Hz)", caminho, cab.versao_cabecalho,
+            cab = aberta.captura.cabecalho
+            log.info("captura aberta: %s (%s, %s, %d canal(is) a %g Hz)", caminho, aberta.captura.tipo,
+                     f"cabeçalho v{cab.versao_cabecalho}" if cab is not None else "sem cabeçalho",
                      len(fonte.canais), fonte.canais[0].taxa_hz if fonte.canais else 0.0)
             lembrar(CHAVE_DAS_CAPTURAS_RECENTES, str(caminho.resolve()))
             abertas.append(fonte)
         return abertas
+
+    def _abrir_perguntando(self, caminho: Path) -> Fonte | None:
+        """Abre a captura; uma sem o cabeçalho pergunta a taxa e os canais (com a última resposta escrita) e abre com
+        eles. ``None`` se o usuário cancelar; levanta ``ErroSHAN`` se não abre."""
+        try:
+            return self._abrir_fonte(caminho)
+        except CapturaSemCabecalho as pedido:
+            parametros = self.dialogos.parametros_da_captura(caminho, pedido, self._ultima_taxa_e_canais())
+            if parametros is None:
+                return None
+            aberta = self._abrir_fonte(caminho, parametros=parametros)
+            gravar(CHAVE_DA_TAXA_E_DOS_CANAIS, json.dumps({"taxa_total_hz": parametros.taxa_total_hz,
+                                                           "canais": list(parametros.canais)}))
+            return aberta
+
+    @staticmethod
+    def _ultima_taxa_e_canais() -> ParametrosSemCabecalho | None:
+        try:
+            dados = json.loads(ler_texto(CHAVE_DA_TAXA_E_DOS_CANAIS, "") or "null")
+            return ParametrosSemCabecalho(dados["taxa_total_hz"], tuple(dados["canais"]))
+        except (json.JSONDecodeError, TypeError, KeyError, ErroSHAN):
+            return None
 
     def oferecer_recuperacao(self) -> bool:
         """Na partida: se o último projeto sem título ficou num salvamento automático (uma queda), pergunta se quer
