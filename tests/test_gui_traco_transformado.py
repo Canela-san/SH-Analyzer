@@ -119,10 +119,12 @@ def test_as_materializacoes_rodam_uma_de_cada_vez_e_a_que_espera_diz_na_fila(jan
     primeiro, segundo = sorted(estados, key=lambda e: e.na_fila)
     assert (primeiro.na_fila, segundo.na_fila) == (False, True)
     chip = {e: w.chips[t] for e, t in zip(estados, (traco0, traco1), strict=True)}
-    assert "na fila" in chip[segundo].resumo and "na fila" not in chip[primeiro].resumo
     linhas = {linha.tarefa: linha for linha in janela.lista_de_tarefas.linhas}
-    # O "começou" chega pela fila de eventos, depois de a tarefa já estar rodando na thread de trabalho.
-    qtbot.waitUntil(lambda: linhas[primeiro.tarefa].na_fila.isHidden(), timeout=5000)
+    # As duas começam na fila. O "começou" chega pela fila de eventos, depois de a tarefa já estar rodando na thread
+    # de trabalho: o chip e o painel da que roda deixam o "na fila" quando ele chega.
+    qtbot.waitUntil(lambda: "na fila" not in chip[primeiro].resumo and linhas[primeiro.tarefa].na_fila.isHidden(),
+                    timeout=5000)
+    assert "na fila" in chip[segundo].resumo
     assert not linhas[primeiro.tarefa].barra.isHidden()
     assert linhas[segundo.tarefa].barra.isHidden() and not linhas[segundo.tarefa].na_fila.isHidden()
 
