@@ -8,23 +8,25 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F2.11: o fechamento da Fase 2** (seção 4c). A F2.1 a F2.10 estão feitas: a cadeia no inspetor, o traço
-> transformado na tela, as quatro vistas de frequência, os avisos nos chips, o erro inesperado e o log, as
-> configurações; e o terceiro retorno do usuário (Alt + roda, a vista que fica nas mudanças, o clique com folga, a
-> janela e o preset IEC 61000-4-7 no inspetor, Ctrl+W; diário de 14/11) e o quarto (o eixo do traço selecionado, a
-> escala própria com o cadeado, o tempo próprio do traço destravado, os painéis com aba para recolher, a vista aberta
-> pelo painel do projeto, o contador dos avisos não vistos). A F2.9 terminou com as unidades: a de cada traço (V, A,
-> °C, K e qualquer outra), a conversão, os dois pontos e os prefixos nos eixos; a F2.10 trouxe o `.csv` e o `.h5`
-> do `adc_tool` e o `.bin` legado, copiar o cabeçalho, o zoom em caixa e sobrepor os traços (diário de 15/11).
+> **A Fase 2 está feita** (seção 4c, F2.1 a F2.11; diário de 15/11): a jornada do pesquisador vai da captura ao
+> espectro corrigido pela sonda, com os números da CLI (`tests/test_gui_jornada.py`), e o G1 passa com a cadeia
+> ligada, durante e depois das materializações. **A tag v0.9** fica para o dono do projeto.
+>
+> **A próxima: a Fase 3, Aquisição, a conexão** (o plano, seção 16): dividi-la em tarefas numa seção 4d, como a 4b e
+> a 4c, a partir do roteiro (o `sh_placa` com a descoberta, a conexão e as chaves; o agente; a visão geral e o
+> diagnóstico; os arquivos; o terminal; o simulador e o job `placa` na CI).
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
 > configurações); no inspetor, "Unidade" e "Dois pontos…"; Ctrl+O num `.csv` ou `.h5` do `adc_tool` (ou num `.bin`
 > sem o cabeçalho); na vista de tempo, `Z` e arrastar, e o botão das camadas (sobrepor); no inspetor da captura,
-> "Copiar JSON".
+> "Copiar JSON". Com dois canais transformados, o segundo diz "na fila" no chip e no painel de tarefas até a vez dele.
 >
-> **Com o usuário (quando puder):** o "pronto quando" da Fase 1, abrir uma captura de 1 h, navegar e medir com 8
-> traços de 2 fontes, em `uv run --extra gui python -m sh_analyzer_gui`.
+> **Com o usuário (quando puder):**
+> - o G1 com a cadeia, na tela: `uv run --extra gui python -m sh_analyzer_gui.prototipos.medir_vista --cadeia`
+>   (sem tela, p95 de 7,5 a 9,7 ms durante as materializações e de 10,8 a 12,2 ms depois);
+> - o "pronto quando" da Fase 1: abrir uma captura de 1 h, navegar e medir com 8 traços de 2 fontes, em
+>   `uv run --extra gui python -m sh_analyzer_gui`.
 >
 > **No laboratório (opcional, 5 minutos):** a F0.2 colhe da BeagleBone os dados que a Aquisição vai usar (seção 6).
 
@@ -98,19 +100,26 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## 3. O estado atual
 
-**Em 13/11/2026 (noite), no `feat/interface`, em commits locais:** as Fases 0 e 1 no código. O aplicativo abre
-capturas (diálogo, arrastar e soltar, recentes), confere o CRC e mostra o cabeçalho, plota os canais em faixas pela
-unidade com o `TracoLOD`, navega com o histórico e o minimapa, mede entre os cursores ou na janela visível (os números
-da CLI, pela `api`), edita os traços no inspetor (tudo com desfazer), salva e reabre o projeto `.shproj` (com o
-salvamento automático e a recuperação) e tem a paleta de comandos. As seções 4 e 4b têm o commit de cada tarefa.
+**Em 15/11/2026, no `feat/interface`, em commits locais:** as Fases 0, 1 e 2 no código. O visualizador da Fase 1
+(abrir as capturas, a vista de tempo, o inspetor, os cursores e as medidas, o projeto `.shproj` com o desfazer e a
+paleta de comandos) ganhou na Fase 2 a cadeia de transformações (as afins, os filtros, o DC e a correção de sonda,
+com a prévia e a materialização em segundo plano e o cache), as quatro vistas de frequência (espectro, bandas IEC,
+espectrograma e harmônicos), os avisos nos chips e o log, as configurações com as unidades de qualquer sensor, e os
+formatos do `adc_tool` (`.csv`, `.h5` e o `.bin` legado). As seções 4, 4b e 4c têm o commit de cada tarefa.
 
 **Os commits só do motor** (podem ir ao `main` sozinhos): `974c58a` (a `api`), `e76684b` (a integridade e o
-cabeçalho), `64f6e57` (a unidade do canal), `b5b02ab` (as medidas de um trecho), `71ba268` (a taxa da PRU) e `98d96e0` (a frequência, F2.1), `0ef8255` (os filtros), `28a1a04` (a margem da sonda), `3110417` (`medir_sinal`), `631a770` (a faixa válida do perfil), `b368246` (o piso de ruído) e `8376894` (as bandas sem cancelamento). E o do agente da placa: `3f98d7b`.
+cabeçalho), `64f6e57` (a unidade do canal), `b5b02ab` (as medidas de um trecho), `00c1f67` (medir sem a fundamental e
+aquecer sob demanda), `71ba268` (a taxa da PRU), `98d96e0` (a frequência, F2.1), `0ef8255` (os filtros), `28a1a04`
+(a margem da sonda), `3110417` (`medir_sinal`), `631a770` (a faixa válida do perfil), `b368246` (o piso de ruído),
+`8376894` (as bandas sem cancelamento), `a95ba57` (as FFTs de um lote em todos os núcleos), `c3ca56b` (a
+proeminência dos picos), `220e422` e `eede2c1` (a fundamental), `9341048` (o aquecimento com uma trava), `7d0f40d` (a
+pasta padrão das sondas), `6ac649d` (o cabeçalho num dicionário), `97a40d8` (os formatos) e `61edf72` (a curva da
+sonda em pedaços, sem prender o GIL). E o do agente da placa: `3f98d7b`.
 
 **O ambiente:** Python 3.13, PySide6 6.12.0, PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1. Testes, na última rodada:
-`ci.sh rapido` com 1 465 aprovados e `ci.sh interface` com 538 (14/11/2026).
+`ci.sh rapido` com 1 687 aprovados, `ci.sh interface` com 743 e os 6 de desempenho (15/11/2026).
 
-**Ainda não existe:** os formatos `.h5` e `.csv` na abertura, as figuras e a Aquisição.
+**Ainda não existe:** a Aquisição (as Fases 3 e 4), as figuras e as exportações (a Fase 5).
 
 ---
 
@@ -829,16 +838,36 @@ O plano original:
   - o zoom em caixa (`Z` + arrastar) e o modo sobrepor da vista de tempo (AN-03, AN-04).
 - **Os testes:** cada formato aberto com os mesmos volts da CLI; o zoom em caixa e o sobrepor.
 
-### ◐ F2.11: o fechamento da Fase 2
+### ☑ F2.11: o fechamento da Fase 2
 
-**Em andamento (15/11/2026):** `76e26ee` (a jornada do pesquisador de ponta a ponta, `tests/test_gui_jornada.py`: o
-espectro corrigido pela sonda bate com o `adc_tool --fft` a 1e-7 dB) e o `medir_vista --cadeia` (o G1 com a correção
-de sonda e um passa-altas em cada um dos 8 traços). **O G1 com a cadeia, sem tela:** materializada, aprovado (p95 de
-12,8 ms); **durante as materializações, reprovado (p95 de 32,9 ms)**: quadros de 17 a 145 ms espalhados pelo
-percurso. **Próximo:** achar o que pesa na thread da interface nesses quadros (o perfil do cProfile mistura as
-threads no Python 3.13: medir por fase do quadro e por chamada de `_materializacao_mudou`, `_pedir_previas`,
-`definir_dados` e `TracoLOD.recalcular`); depois, o G1 na tela do usuário
-(`uv run --extra gui python -m sh_analyzer_gui.prototipos.medir_vista --cadeia`), o plano e este arquivo em dia.
+**Feita em 15/11/2026:** `76e26ee` (a jornada do pesquisador), `ed70232` (o `medir_vista --cadeia`), `61edf72` (só do
+motor: a curva da sonda em pedaços) e `0d7ddf2` (a fila das pesadas). O que ficou:
+
+- **A jornada de ponta a ponta** (`tests/test_gui_jornada.py`), pelos gestos do usuário: Ctrl+O, o duplo clique na
+  corrente da árvore, "Adicionar etapa: correção de sonda" no inspetor, Ctrl+E e a captura inteira na barra do
+  espectro. O espectro bate com o `adc_tool --fft --sondas-dir` (pelo `.mat`, a precisão inteira): as frequências a
+  1e-12 e os dB a 1e-7. Em cada tom, a diferença para o espectro sem a sonda é o que o polo dela tira (0,4 dB em 9
+  kHz, 4,4 dB em 40 kHz), a 0,05 dB. Salvo e reaberto, o projeto dá o mesmo espectro, bit a bit.
+- **O G1 com a cadeia** (`medir_vista --cadeia`; no conjunto de desempenho,
+  `test_g1_oito_faixas_com_a_cadeia_durante_e_depois_das_materializacoes`): os 8 traços com a correção de sonda e um
+  passa-altas de 2 kHz. Sem tela, **durante as materializações, p95 de 7,5 a 9,7 ms; depois, de 10,8 a 12,2 ms**
+  (antes: 22 a 33 ms durante).
+- **O que engasgava o desenho durante as materializações** (medido por quadro: o tempo de CPU da thread da
+  interface era um terço do de parede, com ~1 000 trocas de contexto voluntárias no percurso, contra ~30 sem a
+  cadeia; o `strace` mostrou as esperas no mutex e na condição do GIL, de 5 ms cada):
+  - **duas contas pesadas ao mesmo tempo** (as materializações dos dois canais, e as medidas da janela visível, que
+    refaziam a cadeia nos 12 M amostras de cada traço) disputavam o GIL com a interface: cada chamada ao Qt que o
+    solta dava a vez a um trabalhador. Com os traços prontos e as contas ao fundo, duas juntas davam p95 de 38 a 40
+    ms; uma de cada vez, 11 ms, o mesmo que sem nenhuma. **A fila das pesadas** (`GerenciadorDeTarefas.iniciar(...,
+    pesada=True)`): uma de cada vez, ao lado das outras tarefas. As materializações vão para ela, e as medidas de um
+    traço transformado numa região maior que a prévia também (são uma conta do tamanho da materialização); as que
+    esperam dizem "na fila" no chip e no painel de tarefas (`Tarefa.comecou`);
+  - **o PCHIP do SciPy não solta o GIL:** a curva da sonda em 2 Mi bins prendia as outras threads por ~33 ms
+    seguidos. Em pedaços de 64 Ki pontos (`sonda.PONTOS_POR_AVALIACAO`), bit a bit o mesmo resultado.
+  - **Descartado pelas medidas:** o intervalo de troca do GIL (1 ms não mudou nada), as páginas enormes do NumPy, a
+    importação do SciPy, a coleta de lixo, as prévias e o `msync` (ele solta o GIL no Python 3.13).
+- **Fica para depois:** o espectro e as vistas de mapa continuam no conjunto geral (com a vista de espectro aberta, a
+  de tempo não é pintada); os 4 traços iguais de um canal medem a mesma cadeia 4 vezes.
 
 O plano original:
 
@@ -870,6 +899,8 @@ O plano original:
 | 14/11/2026 | **O espectro de uma FFT de 60 s** (6 M bins), 1 600 × 1 000 px, sem tela: arrastar, zoom, cursor | Antes: 316, 319 e 330 ms por quadro (o aplicativo travava). **Depois: 7,4, 6,2 e 2,2 ms**; a tela leve durante a conta (o pior quadro da vista de tempo, 15 ms) | `pytest --desempenho tests/test_gui_desempenho.py -k espectro` |
 | 14/11/2026 | As FFTs de um lote em todos os núcleos (8), `scipy.fft` com `workers=-1` | O lote do Welch (2048 × 1000) de 7,1 para 2,5 ms; o das bandas (64 × 40 000) de 13,8 para 10,9 ms | o diário de 14/11 |
 | 15/11/2026 | G1 sem tela, 8 faixas, 954 × 526 px, **com a cadeia** (sonda + passa-altas em cada traço): durante as materializações; depois | **Durante: reprovado**, mediana de 9,4 ms, p95 de 32,9 ms. **Depois: aprovado**, mediana de 9,2 ms, p95 de 12,8 ms (sem a cadeia: 8,3 e 10,2 ms) | `medir_vista --cadeia` |
+| 15/11/2026 | O mesmo percurso sobre traços já prontos, com **duas materializações ao fundo** × **uma de cada vez** | Duas: p95 de 37,9 e 40,1 ms (~920 trocas voluntárias da thread da interface). Uma: 11,0 e 11,2 ms (30 a 118), o mesmo que sem nenhuma (13,8 ms) | bancada do diário de 15/11 |
+| 15/11/2026 | G1 sem tela, 8 faixas, **com a cadeia**, depois da fila das pesadas e da curva da sonda em pedaços | **Aprovado. Durante:** mediana de 5,1 a 5,3 ms, p95 de 7,5 a 9,7 ms. **Depois:** mediana de 8,8 a 8,9 ms, p95 de 10,8 a 12,2 ms (3 rodadas) | `medir_vista --cadeia`; `pytest --desempenho` |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
 ---
@@ -1221,6 +1252,16 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     (`mouseRateLimit`): um arrasto falso rápido demais vira um clique, e o do teste anda com pausas. Um `.bin` vazio
     era "sem cabeçalho" e agora é um erro, sem perguntar nada.
   - **Testes:** `ci.sh rapido` com 1 681 aprovados e `ci.sh interface` com 738; os 5 de desempenho passam.
+- **15/11/2026:** **a F2.11, o fechamento da Fase 2** (seção 4c):
+  - **a jornada do pesquisador** num teste de ponta a ponta, pelos gestos do usuário, com os números da CLI;
+  - **o G1 com a cadeia:** reprovado durante as materializações (p95 de 22 a 33 ms). A investigação, medida a medida:
+    quase nada do quadro lento estava no código da vista; o tempo de CPU da interface era um terço do de parede, e o
+    `strace` mostrou as esperas no GIL. Duas contas pesadas ao mesmo tempo (os dois canais, e as medidas da janela
+    visível refazendo a cadeia) eram a causa; uma de cada vez não atrapalha. A **fila das pesadas** resolveu, com o
+    "na fila" no chip e no painel; e, no motor, **a curva da sonda em pedaços** (o PCHIP prendia o GIL por 33 ms);
+  - **o plano e este arquivo** em dia: a Fase 2 marcada como feita, com o "pronto quando" cumprido.
+  - **Testes:** `ci.sh rapido` com 1 687 aprovados e `ci.sh interface` com 743; os 6 de desempenho
+    passam (o G1 com a cadeia é o novo).
 ---
 
 ## 8. Perguntas em aberto

@@ -1451,7 +1451,7 @@ na vista de verdade, numa tela.
 
 - [x] A janela do layout escolhido: a barra superior, o projeto, as vistas com abas, o inspetor, o painel inferior e a barra de status, com o layout salvo.
 - [x] O projeto `.shproj`, o salvamento automático, a recuperação e o desfazer.
-- [ ] Abrir `.bin` (v1 a v9), `.h5` e `.csv`; a árvore das fontes e dos canais; o inspetor do cabeçalho com o CRC. **Feito para o `.bin` com cabeçalho; o `.h5`, o `.csv` e o `.bin` sem cabeçalho ficam para a importação (Fase 2).**
+- [x] Abrir `.bin` (v1 a v9), `.h5` e `.csv`; a árvore das fontes e dos canais; o inspetor do cabeçalho com o CRC. **O `.bin` com cabeçalho na Fase 1; o `.h5`, o `.csv` e o `.bin` sem cabeçalho na F2.10.**
 - [x] A vista de tempo: faixas e sobreposição, o `TracoLOD`, o zoom e o pan com o histórico, o minimapa, a legenda de chips e a seleção.
 - [x] O inspetor do traço: identidade, aparência, escala e tempo.
 - [x] Os cursores e as medidas básicas (ME-01, ME-02).
@@ -1461,14 +1461,18 @@ na vista de verdade, numa tela.
 
 ### Fase 2: transformações e frequência (4 semanas)
 
-**Em tarefas** (F2.1 a F2.11) em `docs/gui-progress.md`, seção 4c.
+**Em tarefas** (F2.1 a F2.11) em `docs/gui-progress.md`, seção 4c. **Feita no código em 15/11/2026**; a tag v0.9 fica
+para o dono do projeto.
 
-- [ ] A cadeia de transformações: as afins, os filtros, o DC e a correção de sonda; a prévia e a materialização em segundo plano; o cache.
-- [ ] As vistas de espectro (FFT e Welch), bandas IEC, espectrograma e harmônicos.
-- [ ] Os avisos do motor no painel e nos chips; o painel de tarefas.
-- [ ] As configurações (tema, pastas, unidades, reduzir movimento).
+- [x] A cadeia de transformações: as afins, os filtros, o DC e a correção de sonda; a prévia e a materialização em segundo plano; o cache.
+- [x] As vistas de espectro (FFT e Welch), bandas IEC, espectrograma e harmônicos.
+- [x] Os avisos do motor no painel e nos chips; o painel de tarefas.
+- [x] As configurações (tema, pastas, unidades, reduzir movimento).
 
 **Pronto quando:** a jornada do pesquisador vai da captura ao espectro corrigido pela sonda, e os números batem com a CLI. **Tag v0.9.**
+**Cumprido** por `tests/test_gui_jornada.py`: pelos gestos do usuário (Ctrl+O, o duplo clique na árvore, a correção
+de sonda no inspetor, Ctrl+E), o espectro bate com o `adc_tool --fft` a 1e-7 dB, e o projeto reaberto dá o mesmo.
+O G1 passa com a cadeia ligada, durante e depois das materializações (`tests/test_gui_desempenho.py`).
 
 ### Fase 3: Aquisição, a conexão (3 semanas)
 
