@@ -257,7 +257,9 @@ class InspetorDoTraco(QScrollArea):
         if self.projeto is not projeto:
             if self.projeto is not None:
                 self.projeto.tracoMudou.disconnect(self._traco_mudou)
+                self.projeto.vistaMudou.disconnect(self._vista_mudou)
             projeto.tracoMudou.connect(self._traco_mudou)
+            projeto.vistaMudou.connect(self._vista_mudou)
             self.projeto = projeto
         self.tracos = tuple(tracos)
         self.atualizar()
@@ -265,6 +267,16 @@ class InspetorDoTraco(QScrollArea):
     def _traco_mudou(self, traco: Traco, _campos) -> None:
         if traco in self.tracos:
             self.atualizar()
+
+    def _vista_mudou(self, vista, campos) -> None:
+        """Uma vista passou a sobrepor os traços (ou deixou): a faixa dos dela vale ou não."""
+        if "opcoes" in campos and any(t in vista.tracos for t in self.tracos):
+            self.atualizar()
+
+    def _sobreposto(self, traco: Traco) -> bool:
+        """Se o traço está numa vista de tempo que sobrepõe os traços (a faixa dele não vale ali)."""
+        return any(v.tipo == "tempo" and v.opcoes.sobrepor and traco in v.tracos
+                   for v in self.projeto.vistas)
 
     def definir_vista(self, projeto: Projeto | None, vista, f1=None) -> None:
         """A vista ativa: numa de espectro, a seção da análise dela aparece."""
@@ -321,6 +333,10 @@ class InspetorDoTraco(QScrollArea):
         faixa = _comum(r.faixa for r in receitas)
         self.faixa.setValue(faixa + 1 if faixa is not None else 0)
         self.faixa.blockSignals(False)
+        sobrepostos = self.projeto is not None and all(self._sobreposto(t) for t in tracos)
+        self.faixa.setEnabled(not sobrepostos)
+        self.faixa.setToolTip(self.tr("A vista sobrepõe os traços numa faixa só; a faixa volta a valer ao "
+                                      "separá-los") if sobrepostos else "")
         do_canal = self._unidade_comum_dos_canais()
         unidade = _comum(self._unidade_do_traco(t, c) for t, (_, c) in zip(tracos, fontes_canais))
         self.unidade.definir(unidade)

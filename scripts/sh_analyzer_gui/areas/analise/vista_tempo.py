@@ -3,6 +3,9 @@ ligado entre elas.
 
 * **As faixas:** uma por valor de ``receita.faixa`` (o plotar põe os canais da mesma unidade na mesma faixa). O eixo
   Y de cada uma ajusta ao traço inteiro e fica parado no zoom do tempo (como num osciloscópio); Ctrl + roda o muda.
+  **Sobrepor** (AN-03; as opções da vista, ``OpcoesDoTempo``, um passo de desfazer) põe todos os traços numa faixa
+  só (:meth:`VistaDeTempo.faixa_de`); a faixa de cada um fica guardada e volta quando ela deixa de sobrepor. Os da
+  mesma unidade dividem o Y; o cadeado dá a um traço a escala dele.
 * **A escala de cada traço** (``graficos/escalas.py``): os traços de uma faixa dividem o Y, e todos dividem o tempo;
   o cadeado da barra destrava o selecionado (o zoom e o pan do Y **e do tempo** passam a ser só dele) e "Mesma
   escala" o devolve à escala comum. O eixo Y mostra os números e a unidade do traço selecionado na faixa (sem
@@ -19,7 +22,8 @@ ligado entre elas.
   a direita; o chip mostra o progresso. Nunca o canal cru no lugar do transformado.
 * **A legenda** são os chips dos traços (clicar seleciona; o selecionado fica à frente das outras linhas).
 * **O histórico do zoom:** cada parada do zoom ou do pan (400 ms sem mexer) entra no histórico; Backspace volta.
-  ``F`` (ou o duplo clique) ajusta a captura inteira.
+  ``F`` (ou o duplo clique) ajusta a captura inteira. **O zoom em caixa** (``Z``, ou o botão): o próximo arrasto
+  desenha a caixa numa faixa, e ela passa a mostrar o tempo e o Y da caixa (o tempo, em todas); Esc desarma.
 * **O minimapa** mostra a captura inteira do primeiro traço e a janela visível; arrastar a janela anda no tempo.
 * **O botão do meio:** arrastar move a vista nas duas direções, sem mudar as escalas, em cima de um traço ou não
   (os traços não mudam). Um clique rápido põe o 0 do eixo Y no meio da faixa e tira o deslocamento em Y do traço
@@ -49,7 +53,7 @@ from ...graficos.escalas import Afim, EscalasDaCaixa
 from ...graficos.faixa import LARGURA_DO_EIXO_Y, CaixaDaFaixa, EixoDoTema, GradeDoTema
 from ...graficos.minimapa import Minimapa
 from ...graficos.traco_lod import TracoLOD
-from ...modelo.comandos import MudarTracos
+from ...modelo.comandos import MudarOpcoesDaVista, MudarTracos
 from ...modelo.objetos import FonteDoProjeto, Projeto, Traco, Vista
 from ...modelo.selecao import Selecao
 from ...servicos.materializar import LIMITE_DA_PREVIA, EstadoDaMaterializacao, Previa, ServicoDeMaterializacao
@@ -153,6 +157,7 @@ class VistaDeTempo(QWidget):
         vista.tracoEntrou.connect(self._estrutura_mudou)
         vista.tracoSaiu.connect(self._estrutura_mudou)
         vista.tracoMudou.connect(self._traco_mudou)
+        vista.mudou.connect(self._vista_mudou)
         selecao.mudou.connect(self._selecao_mudou)
         aparencia().mudou.connect(self._tema_mudou)
         self._tema_mudou(aparencia().tema)
@@ -172,6 +177,19 @@ class VistaDeTempo(QWidget):
         self.acao_voltar.setShortcut(QKeySequence(Qt.Key.Key_Backspace))
         self.acao_voltar.setToolTip(self.tr("Voltar ao zoom anterior (Backspace)"))
         self.acao_voltar.triggered.connect(self.voltar)
+        self.acao_sobrepor = QAction(self.tr("Sobrepor os traços"), self)
+        self.acao_sobrepor.setCheckable(True)
+        self.acao_sobrepor.setChecked(self.sobrepor)
+        self.acao_sobrepor.setToolTip(self.tr("Todos os traços numa faixa só (desligado: cada um na sua faixa)"))
+        self.acao_sobrepor.toggled.connect(self.definir_sobrepor)
+        self.acao_caixa = QAction(self.tr("Zoom em caixa"), self)
+        self.acao_caixa.setCheckable(True)
+        self.acao_caixa.setShortcut(QKeySequence("Z"))
+        self.acao_caixa.setToolTip(self.tr("Zoom em caixa (Z e arrastar; Esc desarma)"))
+        self.acao_caixa.toggled.connect(self.armar_zoom_em_caixa)
+        desarmar = QAction(self)
+        desarmar.setShortcut(QKeySequence(Qt.Key.Key_Escape))
+        desarmar.triggered.connect(lambda: self.acao_caixa.setChecked(False))
         self.acao_cursores = QAction(self.tr("Cursores"), self)
         self.acao_cursores.setCheckable(True)
         self.acao_cursores.setShortcut(QKeySequence("C"))
@@ -183,11 +201,13 @@ class VistaDeTempo(QWidget):
             a.setShortcut(QKeySequence(tecla))
             a.triggered.connect(lambda _=False, n=passos: self.mover_cursor(n))
             mover.append(a)
-        for acao in (self.acao_ajustar, self.acao_voltar, self.acao_cursores, *mover):
+        for acao in (self.acao_ajustar, self.acao_voltar, self.acao_caixa, desarmar, self.acao_cursores, *mover):
             acao.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             self.addAction(acao)
         IconeDoTema(self.acao_ajustar, "expandir")
         IconeDoTema(self.acao_voltar, "desfazer")
+        IconeDoTema(self.acao_caixa, "zoom", papel_ligado="acento")
+        IconeDoTema(self.acao_sobrepor, "camadas", papel_ligado="acento")
         IconeDoTema(self.acao_cursores, "cursores", papel_ligado="acento")
         self.acao_destravar, self.acao_igualar = acoes_da_escala(self, self.destravar_selecionados, self.igualar_escalas,
                                                                  com_tempo=True)
@@ -200,7 +220,8 @@ class VistaDeTempo(QWidget):
         linha = QHBoxLayout(self._barra)
         linha.setContentsMargins(10, 4, 10, 4)
         linha.setSpacing(4)
-        for acao in (self.acao_voltar, self.acao_ajustar, self.acao_cursores, self.acao_destravar, self.acao_igualar):
+        for acao in (self.acao_voltar, self.acao_ajustar, self.acao_caixa, self.acao_cursores, self.acao_sobrepor,
+                     self.acao_destravar, self.acao_igualar):
             b = QToolButton()
             b.setProperty("variante", "fantasma")
             b.setDefaultAction(acao)
@@ -218,6 +239,31 @@ class VistaDeTempo(QWidget):
         except KeyError:
             return None
 
+    @property
+    def sobrepor(self) -> bool:
+        """Se os traços estão todos numa faixa só (as opções da vista)."""
+        return self.vista.opcoes.sobrepor
+
+    def faixa_de(self, traco: Traco) -> int:
+        """A faixa em que o traço aparece: a dele (``receita.faixa``) ou, sobrepondo, a única (a 0)."""
+        return 0 if self.sobrepor else traco.receita.faixa
+
+    def definir_sobrepor(self, sobrepor: bool = True) -> None:
+        """Sobrepõe os traços numa faixa só, ou os separa nas faixas deles: um passo de desfazer."""
+        if sobrepor == self.sobrepor:
+            self.acao_sobrepor.setChecked(self.sobrepor)
+            return
+        texto = self.tr("Sobrepor os traços de {}") if sobrepor else self.tr("Separar os traços de {} em faixas")
+        self.projeto.pilha.push(MudarOpcoesDaVista(self.vista, self.vista.opcoes.com(sobrepor=sobrepor),
+                                                   texto=texto.format(self.vista.nome)))
+
+    def _vista_mudou(self, _vista: Vista, campos) -> None:
+        if "opcoes" in campos:
+            self.acao_sobrepor.setChecked(self.sobrepor)
+            self.reconstruir()
+            for numero in self.faixas:               # os traços mudaram de faixa: o Y de cada uma, nos dela
+                self._ajustar_y(numero)
+
     def _faixa_principal(self) -> pg.PlotItem | None:
         return self.faixas[min(self.faixas)] if self.faixas else None
 
@@ -229,7 +275,7 @@ class VistaDeTempo(QWidget):
         principal_antes = self._faixa_principal()
         janela_de_tempo = None if ajustar or principal_antes is None else principal_antes.getViewBox().viewRange()[0]
         tracos = self.vista.tracos
-        desejadas = sorted({t.receita.faixa for t in tracos})
+        desejadas = sorted({self.faixa_de(t) for t in tracos})
 
         # 1. Os traços que saíram (ou cuja captura sumiu) deixam a sua faixa.
         for traco in [t for t in self.itens if t not in tracos]:
@@ -258,7 +304,7 @@ class VistaDeTempo(QWidget):
             self._ordenar_linhas(ordem_antes, compactar=bool(sairam))
         # 4. Cada traço na sua faixa: os novos são criados; os que mudaram de faixa, movidos.
         for traco in tracos:
-            faixa = self.faixas[traco.receita.faixa]
+            faixa = self.faixas[self.faixa_de(traco)]
             item = self.itens.get(traco)
             if item is None:
                 self._desenhar(traco)
@@ -287,7 +333,7 @@ class VistaDeTempo(QWidget):
                 faixa.hideAxis("bottom")
                 faixa.rotulo_x = None
         for numero, faixa in self.faixas.items():
-            faixa.escalas.definir_itens({t: self.itens[t] for t in tracos if t.receita.faixa == numero and
+            faixa.escalas.definir_itens({t: self.itens[t] for t in tracos if self.faixa_de(t) == numero and
                                          t in self.itens})
         self._rotular_faixas()
         self._converter_o_tempo()
@@ -359,6 +405,8 @@ class VistaDeTempo(QWidget):
         caixa.clicada.connect(self._clicou)
         caixa.centroPedido.connect(self._centro_pedido)
         caixa.ajustarPedido.connect(self.ajustar)
+        caixa.caixaUsada.connect(lambda: self.acao_caixa.setChecked(False))
+        caixa.armar_zoom_em_caixa(self.acao_caixa.isChecked())
         caixa.aplicar_tema(aparencia().tema)
         faixa.rotulo_y = faixa.rotulo_x = None
         faixa.escalas = EscalasDaCaixa(caixa, eixo_y, parent=faixa, com_tempo=True)
@@ -376,7 +424,7 @@ class VistaDeTempo(QWidget):
         tema = aparencia().tema
         for numero, faixa in self.faixas.items():
             escalas = faixa.escalas
-            dela = escalas.tracos or [t for t in self.vista.tracos if t.receita.faixa == numero]
+            dela = escalas.tracos or [t for t in self.vista.tracos if self.faixa_de(t) == numero]
             traco = escalas.referencia or (dela[0] if dela else None)
             if traco is None or self._canal_do(traco) is None:
                 continue
@@ -422,7 +470,7 @@ class VistaDeTempo(QWidget):
 
     def escala_de(self, traco: Traco):
         """(escala, travado) do traço na faixa dele."""
-        faixa = self.faixas.get(traco.receita.faixa)
+        faixa = self.faixas.get(self.faixa_de(traco))
         if faixa is None:
             return None
         return faixa.escalas.escala(traco), faixa.escalas.travado(traco)
@@ -511,7 +559,7 @@ class VistaDeTempo(QWidget):
 
     def _desenhar(self, traco: Traco) -> None:
         fonte = self._fonte_do(traco)
-        faixa = self.faixas.get(traco.receita.faixa)
+        faixa = self.faixas.get(self.faixa_de(traco))
         if fonte is None or fonte.esta_ausente or faixa is None:
             return
         if fonte not in self._fontes_ouvidas:
@@ -623,7 +671,7 @@ class VistaDeTempo(QWidget):
             item.definir_dados(*dados)
             if traco in self._ajustar_y_de and dados[0].n_amostras:
                 self._ajustar_y_de.discard(traco)
-                self._ajustar_y(traco.receita.faixa)
+                self._ajustar_y(self.faixa_de(traco))
             elif traco in self._conferir_y_de:
                 self._conferir_y(traco, item)
 
@@ -640,7 +688,7 @@ class VistaDeTempo(QWidget):
             self._conferir_y_de.discard(traco)
             return
         limites = item.limites_y_em(*item.janela_do_traco(*caixa.viewRange()[0]))
-        faixa = self.faixas.get(traco.receita.faixa)
+        faixa = self.faixas.get(self.faixa_de(traco))
         if limites is not None and faixa is not None:
             self._conferir_y_de.discard(traco)
             faixa.escalas.manter({traco: limites})
@@ -652,7 +700,7 @@ class VistaDeTempo(QWidget):
             return
         escalas = faixa.escalas
         limites = [escalas.limites_na_vista(traco, item.dataBounds(1)) for traco, item in self.itens.items()
-                   if traco.receita.faixa == numero_da_faixa and item.dados[0].n_amostras and escalas.travado(traco)]
+                   if self.faixa_de(traco) == numero_da_faixa and item.dados[0].n_amostras and escalas.travado(traco)]
         if limites:
             y0, y1 = min(a for a, _ in limites), max(b for _, b in limites)
             faixa.getViewBox().setYRange(y0, y1 if y1 > y0 else y0 + 1e-12, padding=0.05)
@@ -742,6 +790,19 @@ class VistaDeTempo(QWidget):
     @property
     def _linhas_dos_cursores(self) -> list[list[pg.InfiniteLine]]:
         return self._cursores.linhas
+
+    def armar_zoom_em_caixa(self, armado: bool = True) -> None:
+        """Arma o zoom em caixa em todas as faixas (o próximo arrasto desenha a caixa) ou o desarma; a cruz no
+        cursor do mouse diz que está armado. Um zoom feito desarma (o botão volta)."""
+        if self.acao_caixa.isChecked() != armado:
+            self.acao_caixa.setChecked(armado)            # o toggled chama de novo, com o botão já certo
+            return
+        for faixa in self.faixas.values():
+            faixa.getViewBox().armar_zoom_em_caixa(armado)
+        if armado:
+            self.grafico.setCursor(Qt.CursorShape.CrossCursor)
+        else:
+            self.grafico.unsetCursor()
 
     def ligar_cursores(self, ligar: bool = True) -> None:
         if self.acao_cursores.isChecked() != ligar:
@@ -911,7 +972,7 @@ class VistaDeTempo(QWidget):
         destravado, só o tempo dele (:meth:`EscalasDaCaixa.mostrar_no_tempo`)."""
         modelo = self._modelo_do_minimapa
         traco = next((t for t, item in self.itens.items() if item is modelo), None) if modelo is not None else None
-        faixa = self.faixas.get(traco.receita.faixa) if traco is not None else None
+        faixa = self.faixas.get(self.faixa_de(traco)) if traco is not None else None
         if faixa is not None:
             faixa.escalas.mostrar_no_tempo(traco, inicio, fim)
             return

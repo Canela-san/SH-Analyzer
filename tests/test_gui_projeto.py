@@ -27,8 +27,9 @@ def exemplo() -> ProjetoSalvo:
               FonteSalva("f2", "b.bin", "/lab/b.bin", 2048, None, "int16"))
     r1 = ReceitaDoTraco("f1", 0, "V_A · 09h30", 0, ganho=-1.5, offset=0.25, deslocamento_s=0.004, cadeia=CADEIA)
     r2 = ReceitaDoTraco("f2", 3, "I_A", 1, visivel=False, faixa=1)
-    vistas = (VistaSalva("v1", "Afundamento", "tempo", (TracoSalvo("t1", r1), TracoSalvo("t2", r2))),
-              VistaSalva("v2", "Vazia", "tempo"))
+    vistas = (VistaSalva("v1", "Afundamento", "tempo", (TracoSalvo("t1", r1), TracoSalvo("t2", r2)),
+                         {"sobrepor": True}),
+              VistaSalva("v2", "Vazia", "tempo", opcoes={"sobrepor": False}))
     return ProjetoSalvo(fontes, vistas, {"janela": "AAEC"}, "0.8.0")
 
 
@@ -60,6 +61,15 @@ def test_o_projeto_da_versao_1_abre_sem_nenhuma_etapa():
         arq.de_dict(dados)
 
 
+def test_a_vista_de_tempo_de_antes_das_opcoes_abre_com_as_padrao():
+    """Até a F2.10 a vista de tempo não tinha opções (``{}``, ou nem o campo): abre com as padrão, sem sobrepor."""
+    dados = arq.para_dict(exemplo())
+    dados["vistas"][0]["opcoes"] = {}
+    dados["vistas"][1].pop("opcoes")
+    aberto = arq.de_dict(json.loads(json.dumps(dados)))
+    assert [v.opcoes for v in aberto.vistas] == [{"sobrepor": False}, {"sobrepor": False}]
+
+
 def test_salvar_e_abrir_o_arquivo(tmp_path):
     caminho = tmp_path / "rede.shproj"
     arq.salvar_automatico(exemplo(), caminho)
@@ -88,6 +98,8 @@ def test_salvar_e_abrir_o_arquivo(tmp_path):
     (lambda d: d["vistas"][0]["tracos"][0]["etapas"][1].update(ordem=40), "ordem do filtro"),
     (lambda d: d["vistas"][0].update(tipo="xy"), "tipo que esta versão não abre"),
     (lambda d: d["vistas"][0].update(nome=" "), "sem nome"),
+    (lambda d: d["vistas"][0]["opcoes"].update(sobrepor="sim"), "sobrepor"),
+    (lambda d: d["vistas"][0]["opcoes"].update(cor=1), "desconhecidas: cor"),
 ])
 def test_um_projeto_invalido_e_recusado_com_a_mensagem(mexer, trecho):
     dados = arq.para_dict(exemplo())

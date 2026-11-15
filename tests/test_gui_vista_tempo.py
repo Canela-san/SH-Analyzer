@@ -98,6 +98,36 @@ def test_os_tracos_seguem_a_receita(janela, qtbot, tmp_path):
     assert w.itens[traco].isVisible() and sorted(w.faixas) == [0]
 
 
+def test_sobrepor_poe_os_tracos_numa_faixa_e_guarda_a_de_cada_um(janela, qtbot, tmp_path):
+    """AN-03: sobrepor é um passo de desfazer nas opções da vista; a faixa de cada traço fica guardada e volta ao
+    separar. O tempo visível não muda, e o inspetor diz que a faixa não vale enquanto a vista sobrepõe."""
+    fonte = abrir(janela, qtbot, captura(tmp_path))
+    v = janela.area.plotar_canal(fonte, 0)
+    a = janela.area.plotar_canal(fonte, 1)
+    w, pilha = vista_aberta(janela), janela.projeto.pilha
+    assert sorted(w.faixas) == [0, 1] and not w.acao_sobrepor.isChecked()
+    w.faixas[0].getViewBox().setXRange(0.05, 0.1, padding=0)
+    janela_antes = w.janela_de_tempo()
+    w.acao_sobrepor.trigger()
+    assert w.vista.opcoes.sobrepor and w.acao_sobrepor.isChecked() and pilha.undoText().startswith("Sobrepor")
+    assert sorted(w.faixas) == [0] and set(w.faixas[0].escalas.tracos) == {v, a}
+    assert [t.receita.faixa for t in (v, a)] == [0, 1]                  # a de cada um, guardada
+    assert w.janela_de_tempo() == pytest.approx(janela_antes)
+    janela.selecao.definir([v, a])
+    faixa = janela.inspetor.do_traco.faixa
+    assert not faixa.isEnabled() and "sobrepõe" in faixa.toolTip()
+    nova = janela.area.plotar_canal(fonte, 0)                            # um traço novo também vai para ela
+    assert sorted(w.faixas) == [0] and nova in w.faixas[0].escalas.tracos
+    pilha.undo()                                                         # o plotar
+    pilha.undo()                                                         # o sobrepor
+    assert not w.vista.opcoes.sobrepor and not w.acao_sobrepor.isChecked() and sorted(w.faixas) == [0, 1]
+    assert w.faixas[1].escalas.tracos == [a] and faixa.isEnabled() and faixa.toolTip() == ""
+    pilha.redo()
+    assert sorted(w.faixas) == [0] and w.acao_sobrepor.isChecked()
+    w.acao_sobrepor.trigger()                                            # o botão também separa
+    assert sorted(w.faixas) == [0, 1] and pilha.undoText().startswith("Separar")
+
+
 def test_a_piramide_que_chega_depois(janela, qtbot, tmp_path):
     (fonte,) = janela.controle.abrir_capturas([captura(tmp_path)])
     traco = janela.area.plotar_canal(fonte, 0)                          # plotado antes da pirâmide ficar pronta

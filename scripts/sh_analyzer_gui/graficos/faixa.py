@@ -7,7 +7,9 @@
   PyQtGraph custava ~17 ms por quadro no protótipo);
 * :class:`CaixaDaFaixa`: a ``ViewBox`` (com as escalas dos traços: ``graficos/escalas.py``) com os gestos do plano: a roda dá zoom no tempo, centrado no cursor; Ctrl +
   roda, no eixo Y da faixa; Alt + roda, nos dois juntos (o mesmo fator: a forma do sinal não muda); Shift + roda anda
-  no tempo; arrastar anda no tempo; o duplo clique ajusta tudo. Um clique
+  no tempo; arrastar anda no tempo; o duplo clique ajusta tudo. **O zoom em caixa** (armado com ``Z``: o
+  ``zoom_em_caixa``): arrastar desenha a caixa, e a faixa passa a mostrar o que estava nela (uma caixa de poucos
+  pixels de altura é zoom só no tempo; de poucos de largura, só no Y). Um clique
   avisa onde foi (``clicada``), para a vista selecionar o traço mais perto. **Em cima de um eixo,** a roda e o
   arrasto mexem só naquele eixo (a roda nos números do Y dá o zoom no Y sem o Ctrl).
 * **O botão do meio** (a roda apertada): arrastar move a vista nas duas direções, sem mudar as escalas, em cima de
@@ -20,6 +22,7 @@ import math
 
 import numpy as np
 import pyqtgraph as pg
+from pyqtgraph import Point
 from PySide6.QtCore import QLineF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
 
@@ -31,6 +34,7 @@ from ..tema.tokens import TAMANHOS, Tema
 from .escalas import CaixaComEscalas
 
 FATOR_DA_RODA = 1.2          # cada passo da roda: 20 % de zoom
+MINIMO_DA_CAIXA_PX = 4       # um lado menor que isto na tela não muda o zoom daquele eixo
 _VALIDO = object()           # o eixo está com as posições e os textos em dia (no lugar da QPicture do PyQtGraph)
 _prefixos_nos_eixos = True
 
@@ -267,14 +271,43 @@ class CaixaDaFaixa(CaixaComEscalas):
     clicada = Signal(float, float, object)
     ajustarPedido = Signal()
     centroPedido = Signal(float, float)             # o clique rápido do meio: onde foi
+    caixaUsada = Signal()                           # um zoom em caixa terminou (quem armou desarma)
 
     def __init__(self):
         super().__init__(enableMenu=False)
         self.setMouseEnabled(x=True, y=False)          # arrastar anda no tempo; o Y fica onde está
+        self.zoom_em_caixa = False
         self.aplicar_tema(aparencia().tema)
 
     def aplicar_tema(self, t: Tema) -> None:
         self.setBackgroundColor(QColor(t.afundada))
+        borda, fundo = QColor(t.acento), QColor(t.acento)
+        fundo.setAlphaF(0.12)
+        self.rbScaleBox.setPen(pg.mkPen(borda, width=1))
+        self.rbScaleBox.setBrush(pg.mkBrush(fundo))
+
+    def armar_zoom_em_caixa(self, armado: bool) -> None:
+        """Arma (ou desarma) o zoom em caixa: o próximo arrasto com o botão esquerdo desenha a caixa."""
+        self.zoom_em_caixa = armado
+        if not armado:
+            self.rbScaleBox.hide()
+
+    def zoom_na_caixa(self, canto_a, canto_b) -> None:
+        """A faixa passa a mostrar o retângulo entre os dois cantos (nas unidades da vista). Um lado que na tela tem
+        menos de :data:`MINIMO_DA_CAIXA_PX` fica como está. Vai pelo ``scaleBy`` (com o ponto fixo que leva a caixa à
+        vista inteira): com traços de escala própria selecionados, são eles que mudam, como na roda."""
+        (x0, x1), (y0, y1) = self.viewRange()
+        bx0, bx1 = sorted((canto_a.x(), canto_b.x()))
+        by0, by1 = sorted((canto_a.y(), canto_b.y()))
+        largura, altura = max(self.width(), 1.0), max(self.height(), 1.0)
+        fx = (bx1 - bx0) / (x1 - x0) if (bx1 - bx0) / (x1 - x0) * largura >= MINIMO_DA_CAIXA_PX else 1.0
+        fy = (by1 - by0) / (y1 - y0) if (by1 - by0) / (y1 - y0) * altura >= MINIMO_DA_CAIXA_PX else 1.0
+        if fx == 1.0 and fy == 1.0:
+            return
+        # O ponto fixo c de cada eixo leva o começo da vista ao da caixa: b0 = c + (v0 - c)·f.
+        cx = (bx0 - x0 * fx) / (1.0 - fx) if fx != 1.0 else x0
+        cy = (by0 - y0 * fy) / (1.0 - fy) if fy != 1.0 else y0
+        self.scaleBy(x=fx if fx != 1.0 else None, y=fy if fy != 1.0 else None, center=Point(cx, cy))
 
     # Os eventos que vêm de um eixo (a roda ou o arrasto em cima dos números) chegam aqui repassados pelo PyQtGraph,
     # com ``axis`` (o nome dele) = 0 para o tempo ou 1 para o Y, e com ``pos()`` nas coordenadas do eixo, não da
@@ -324,6 +357,16 @@ class CaixaDaFaixa(CaixaComEscalas):
         self.translateBy(y=zero - (y0 + y1) / 2)
 
     def mouseDragEvent(self, evento, axis=None):
+        if self.zoom_em_caixa and axis is None and evento.button() == Qt.MouseButton.LeftButton:
+            evento.accept()
+            if evento.isFinish():
+                self.rbScaleBox.hide()
+                self.zoom_na_caixa(self.mapSceneToView(evento.buttonDownScenePos()),
+                                   self.mapSceneToView(evento.scenePos()))
+                self.caixaUsada.emit()
+            else:
+                self.updateScaleBox(evento.buttonDownPos(), evento.pos())
+            return
         if evento.button() == Qt.MouseButton.MiddleButton:
             # Anda a vista nas duas direções (ou só na do eixo arrastado), sem mudar a escala: os dados seguem o mouse.
             evento.accept()

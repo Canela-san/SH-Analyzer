@@ -65,7 +65,7 @@ class VistaSalva:
     nome: str
     tipo: str
     tracos: tuple[TracoSalvo, ...] = ()
-    opcoes: dict = field(default_factory=dict)     # as do espectro (``dados/espectros.py``); vazias na de tempo
+    opcoes: dict = field(default_factory=dict)     # as do tipo (``espectros.OPCOES_DO_TIPO``); {}: as padrão
 
 
 @dataclass(frozen=True)
@@ -189,14 +189,11 @@ def de_dict(dados) -> ProjetoSalvo:
         if tipo not in TIPOS_DE_VISTA:
             raise ProjetoInvalido(f"{onde} é de um tipo que esta versão não abre ({tipo!r}): atualize o aplicativo")
         opcoes = v.get("opcoes", {})
-        if tipo != "tempo":
-            from .espectros import OPCOES_DO_TIPO, OpcoesInvalidas
-            try:
-                opcoes = OPCOES_DO_TIPO[tipo].de_dict(opcoes).para_dict()
-            except (OpcoesInvalidas, TypeError) as e:
-                raise ProjetoInvalido(f"{onde}: {e}") from None
-        elif opcoes:
-            raise ProjetoInvalido(f"{onde} tem opções que uma vista de {tipo} não tem")
+        from .espectros import OPCOES_DO_TIPO, OpcoesInvalidas
+        try:
+            opcoes = OPCOES_DO_TIPO[tipo].de_dict(opcoes).para_dict()
+        except (OpcoesInvalidas, TypeError) as e:
+            raise ProjetoInvalido(f"{onde}: {e}") from None
         vistas.append(VistaSalva(id=_campo(v, "id", str, onde), nome=nome, tipo=tipo, tracos=tuple(tracos),
                                  opcoes=opcoes))
     layout = dados.get("layout", {})

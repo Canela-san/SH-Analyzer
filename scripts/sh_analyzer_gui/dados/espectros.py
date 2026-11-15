@@ -488,9 +488,22 @@ def harmonicos_do_trecho(trecho: TrechoDoTraco, parametros: api.ParametrosHarmon
     return api.harmonicos(volts, canal.taxa_hz, parametros)
 
 
-OPCOES_DO_TIPO = {"espectro": OpcoesDoEspectro, "bandas": OpcoesDasBandas, "espectrograma": OpcoesDoEspectrograma,
-                  "harmonicos": OpcoesDosHarmonicos}
-"""A classe das opções de cada tipo de vista de frequência (a vista de tempo não tem opções)."""
+@dataclass(frozen=True)
+class OpcoesDoTempo(_OpcoesComDicionario):
+    """A vista de tempo (AN-03): ``sobrepor`` põe todos os traços numa faixa só (o número da faixa de cada um fica
+    guardado e volta quando ela deixa de sobrepor)."""
+
+    sobrepor: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.sobrepor, bool):
+            raise OpcoesInvalidas("sobrepor tem de ser verdadeiro ou falso")
+
+
+OPCOES_DO_TIPO = {"tempo": OpcoesDoTempo, "espectro": OpcoesDoEspectro, "bandas": OpcoesDasBandas,
+                  "espectrograma": OpcoesDoEspectrograma, "harmonicos": OpcoesDosHarmonicos}
+"""A classe das opções de cada tipo de vista. As de um projeto de antes da vista de tempo ter opções (``{}``) são as
+padrão."""
 
 
 def _escalar_bandas(resultado: api.ResultadoBandasIEC, fator: float) -> api.ResultadoBandasIEC:
