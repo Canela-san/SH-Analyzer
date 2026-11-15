@@ -46,6 +46,20 @@ def test_qss_dos_dois_temas_usa_so_os_tokens():
         assert qss.count("{") == qss.count("}") and tema.superficie in qss and tema.borda in qss
 
 
+def test_a_seta_das_caixas_de_escolha_e_a_do_tema():
+    from sh_analyzer_gui.tema.svgs import arquivo_svg
+
+    for tema in TEMAS.values():
+        seta = arquivo_svg("baixo", tema.texto2)
+        assert seta.as_posix() in gerar_qss(tema)
+        assert f'stroke="{tema.texto2}"' in seta.read_text(encoding="utf-8")
+    assert arquivo_svg("baixo", "#ABCDEF") == arquivo_svg("baixo", "#abcdef")       # o mesmo arquivo
+    with pytest.raises(ValueError, match="cor"):
+        arquivo_svg("baixo", "red")
+    with pytest.raises(KeyError):
+        arquivo_svg("nao_existe", "#000000")
+
+
 @pytest.mark.parametrize("nome", sorted(icones.CAMINHOS))
 def test_cada_icone_e_desenhado_na_cor_pedida(qapp, nome):
     icone = icones.icone(nome, "#ff0000", 24)

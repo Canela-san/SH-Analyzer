@@ -19,6 +19,7 @@ from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication
 
+from .svgs import arquivo_svg
 from .tokens import TEMAS, Tema
 
 MODOS = ("sistema", "escuro", "claro")
@@ -122,12 +123,18 @@ def _rgba(cor: str, alfa: float) -> str:
     return f"rgba({int(cor[1:3], 16)}, {int(cor[3:5], 16)}, {int(cor[5:7], 16)}, {alfa:g})"
 
 
+def _url(arquivo) -> str:
+    """O caminho de um arquivo para o ``url()`` do QSS (com ``/`` também no Windows)."""
+    return arquivo.as_posix()
+
+
 def gerar_qss(t: Tema) -> str:
     """A folha de estilos do tema. Os botões aceitam ``setProperty("variante", "primario" | "fantasma" |
     "perigo")``. Sem ``font-size``: o tamanho base vem da fonte da aplicação (``fontes.fonte_da_interface``), e um
     ``font-size`` no QSS passaria por cima do ``setFont`` de cada widget. Os campos numéricos (``QSpinBox``) ficam
     sem as setas, que o estilo do sistema desenharia (12.6: nunca ícones do sistema); o valor muda pela digitação,
-    pelas setas do teclado e pela roda."""
+    pelas setas do teclado e pela roda. A seta das caixas de escolha é a do SH-Analyzer, na cor do tema (o QSS só lê
+    imagens de arquivos: ``svgs.arquivo_svg``)."""
     return f"""
 QWidget {{ color: {t.texto}; }}
 QMainWindow, QDialog {{ background: {t.fundo}; }}
@@ -179,6 +186,10 @@ QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QPlainTe
 QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ width: 0; border: none; }}
 QComboBox QAbstractItemView {{ background: {t.elevada}; border: 1px solid {t.borda_forte};
                                selection-background-color: {t.superficie}; selection-color: {t.texto}; }}
+QComboBox QAbstractItemView::item {{ padding: 3px 8px; }}
+QComboBox::drop-down {{ border: none; width: 22px; }}
+QComboBox::down-arrow {{ image: url("{_url(arquivo_svg("baixo", t.texto2))}"); width: 12px; height: 12px; }}
+QComboBox::down-arrow:disabled {{ image: url("{_url(arquivo_svg("baixo", t.mudo))}"); }}
 QTabBar::tab {{ background: transparent; color: {t.texto2}; padding: 6px 12px; border: none;
                border-top-left-radius: 7px; border-top-right-radius: 7px; }}
 QTabBar::tab:selected {{ background: {t.afundada}; color: {t.texto}; border-top: 2px solid {t.acento}; }}
@@ -195,7 +206,8 @@ QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0; }}
 QScrollBar::handle {{ background: {t.borda_forte}; border-radius: 5px; min-height: 24px; min-width: 24px; }}
 QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{
     background: none; border: none; width: 0; height: 0; }}
-QLineEdit[invalido="true"] {{ border-color: {t.erro}; }}
+QLineEdit[invalido="true"], QComboBox[invalido="true"] {{ border-color: {t.erro}; }}
+QComboBox QLineEdit {{ background: transparent; border: none; padding: 0; }}
 QWidget#segmentado {{ background: {t.superficie}; border: 1px solid {t.borda}; border-radius: 8px; }}
 QWidget#segmentado QToolButton {{ background: transparent; border: none; border-radius: 6px; color: {t.texto2};
                                   padding: 4px 12px; }}
