@@ -1476,6 +1476,8 @@ O G1 passa com a cadeia ligada, durante e depois das materializações (`tests/t
 
 ### Fase 3: Aquisição, a conexão (3 semanas)
 
+**Em tarefas** (F3.1 a F3.10) em `docs/gui-progress.md`, seção 4d, com o "pronto quando" da fase.
+
 - [ ] O `sh_placa`: a descoberta (USB, mDNS, IP), a conexão asyncssh na thread própria, as chaves, o cofre de senhas e o registro de atividade.
 - [ ] O agente: estado, saúde, capturas, relógio e logs.
 - [ ] A visão geral e o diagnóstico, só leitura, com os "Corrigir" simples: relógio e pinos.

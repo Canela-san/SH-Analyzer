@@ -12,9 +12,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > espectro corrigido pela sonda, com os números da CLI (`tests/test_gui_jornada.py`), e o G1 passa com a cadeia
 > ligada, durante e depois das materializações. **A tag v0.9** fica para o dono do projeto.
 >
-> **A próxima: a Fase 3, Aquisição, a conexão** (o plano, seção 16): dividi-la em tarefas numa seção 4d, como a 4b e
-> a 4c, a partir do roteiro (o `sh_placa` com a descoberta, a conexão e as chaves; o agente; a visão geral e o
-> diagnóstico; os arquivos; o terminal; o simulador e o job `placa` na CI).
+> **A próxima: a F3.1, o laço `asyncio`, as dependências e o job `placa`** (seção 4d, a Fase 3 em tarefas). Ela
+> começa pedindo ao usuário a permissão para baixar os pacotes do extra `placa` (asyncssh, zeroconf, pyserial e
+> keyring).
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
@@ -877,6 +877,190 @@ O plano original:
 
 ---
 
+## 4d. Fase 3 em tarefas: Aquisição, a conexão
+
+**Pronto quando** (o plano, seção 16, não dá um para a Fase 3; este é o daqui): a jornada da Aquisição roda com o
+simulador e com a placa de verdade, pelo USB: achar a placa, conectar com a chave do aplicativo, ver a visão geral e
+o diagnóstico, acertar o relógio, transferir uma captura, conferir o CRC e abri-la na Análise.
+
+**O que já existe** (a F0.10): o agente com `versao` e `estado`, o `ClienteDoAgente` com o `TransporteLocal`, o
+`EstadoDaPlaca.diagnostico()` e o simulador de 6 cenários, sobre uma árvore falsa, sem rede. Nenhuma dependência nova
+ainda: o extra `placa` está no plano (seção 8.1), não no `pyproject.toml`.
+
+**A ordem:** a F3.1 vem primeiro; a F3.2 depende dela. A F3.3 (depois da F3.1) e a F3.4 (a qualquer hora: só o
+agente) são independentes entre si. A F3.5 precisa da F3.2 e da F3.3; a F3.6, da F3.4 e da F3.5; a F3.7 e a F3.8,
+da F3.5. O servidor SSH do simulador nasce nos testes da F3.2 e cresce até a F3.9. A F3.10 fecha.
+
+**Regras desta fase** (o plano, 4.3 e 11.1): tudo pelo SSH, sem abrir porta e sem instalar nada na placa; cada
+comando rodado na placa vai para o registro de atividade; nada destrutivo sem confirmação, com o que vai acontecer
+escrito no botão; senhas só no cofre do sistema. **As dependências novas** (asyncssh, zeroconf, pyserial, keyring e,
+na F3.8, o pyte) **são baixadas só com a permissão do usuário.** As mudanças no agente vão em commits só dele, como
+as do motor.
+
+### ▶ F3.1: o laço `asyncio`, as dependências e o job `placa`
+
+- **Arquivos:** `scripts/sh_placa/laco.py` (a thread com o laço); `sh_analyzer_gui/servicos/placa.py` (a ponte
+  para a interface); o extra `placa` no `pyproject.toml`; o job `placa` no `scripts/ci.sh`.
+- **O conteúdo:**
+  - o extra `placa` = asyncssh, zeroconf, pyserial e keyring, e o `gui-dev` passa a trazê-lo;
+  - uma thread só para o laço `asyncio` (plano, 8.3). O `sh_placa` é `async` e não sabe do Qt. A ponte roda uma
+    corrotina no laço e devolve o resultado (ou o erro) na thread da interface, por um sinal; uma chamada pode ser
+    cancelada; ao fechar, o laço para e nenhuma thread fica;
+  - o job `placa` no `ci.sh`: o agente, o `sh_placa` e o simulador, sem o Qt.
+- **Os testes:** a ponte entrega o resultado e o erro na thread da interface, e cancela; fechar não deixa thread; a
+  arquitetura confere que o `sh_placa` não importa o Qt nem a interface (a regra já existe).
+
+### ☐ F3.2: a conexão SSH, as chaves e o registro de atividade
+
+- **Arquivos:** `sh_placa/conexao.py`, `sh_placa/chaves.py` e `sh_placa/registro.py`; o `TransporteSSH` em
+  `sh_placa/agente.py`; `tests/servidor_ssh.py` (um servidor do próprio asyncssh, com o agente de verdade sobre a
+  árvore falsa do simulador).
+- **O conteúdo** (AQ-02, AQ-03 e AQ-18; plano, 4.3 e 11.2):
+  - a conexão por host ou IP, porta e usuário, com o salto (*ProxyJump*). Uma conexão reaproveitada, com um canal
+    `exec` por chamada. O `TransporteSSH` tem a mesma interface do `TransporteLocal`, e o `ClienteDoAgente` não muda;
+  - a chave `ed25519` do aplicativo, gerada na pasta de configuração (só o dono lê) e instalada na placa (o
+    `ssh-copy-id`);
+  - a impressão digital do host, confirmada na primeira vez (TOFU) e fixada. **Uma chave de host trocada bloqueia a
+    conexão**, com a explicação;
+  - a senha só no cofre do sistema (`keyring`), nunca num log nem na linha de comando;
+  - o registro de atividade: cada comando rodado na placa, com a hora, a duração e o código de saída.
+- **Os testes:** contra o servidor do teste: conectar com a senha e, depois, com a chave instalada; a chave do host
+  trocada bloqueia; a senha não aparece no registro nem no log; cada comando está no registro; a conexão que cai vira
+  um erro claro.
+
+### ☐ F3.3: a descoberta das placas
+
+- **Arquivos:** `sh_placa/descoberta.py`; as placas conhecidas nas preferências.
+- **O conteúdo** (AQ-01; plano, 11.3):
+  - **o USB:** a porta serial do gadget (`pyserial`, pelo VID:PID e pelo nº de série) e a sondagem da porta 22 em
+    192.168.7.2 e 192.168.6.2;
+  - **a LAN:** o mDNS (`zeroconf`): `beaglebone.local`, ou o nome que a placa anuncia;
+  - **a WAN:** o host, a porta e o salto que o usuário informa;
+  - **o simulador**, sempre na lista;
+  - cada placa com o estado (conectada, disponível, vista há…), o caminho e a latência. As conhecidas ficam lembradas
+    pelo nº de série da EEPROM (o mesmo do cabeçalho v8).
+- **Os testes:** com portas seriais, respostas de mDNS e uma porta TCP falsas; a mesma placa achada por dois caminhos
+  aparece uma vez.
+- **Do laboratório:** o VID:PID do gadget e os IPs vêm da F0.2 (seção 6).
+
+### ☐ F3.4: o agente completo (commits só do agente)
+
+- **Arquivos:** `firmware/agente/shan_agente.py`; `sh_placa/estado.py`; `tests/test_agente.py`.
+- **O conteúdo** (plano, 11.2 e 11.9). O agente continua só lendo, na biblioteca padrão do Python 3.7:
+  - **`saude`:** as conferências do diagnóstico, cada uma com o nível, o código e a correção sugerida:
+    - o relógio e o NTP;
+    - o firmware × a versão do aplicativo, e o `ler_adc` compilado;
+    - a PRU0 e o protocolo;
+    - a memória dos buffers no `/proc/cmdline` e no `/proc/iomem`;
+    - os pinos;
+    - os overlays e o áudio do HDMI no `uEnv.txt`;
+    - o disco e os minutos de captura que cabem nele;
+    - o sistema e as ferramentas;
+  - **`capturas`:** os `.bin` da placa com o resumo do cabeçalho (o título, a taxa, os canais, a duração, a
+    integridade) e o `resumo.csv` das pastas de coleta;
+  - **`relogio`:** a hora da placa e se ela está sincronizada;
+  - **`logs`:** as últimas linhas do `dmesg` e do `journalctl`, filtradas;
+  - o esquema de cada resposta, versionado (`"protocolo": 1`).
+- **Os testes:** cada conferência sobre a árvore falsa, inclusive os `uEnv.txt` estranhos; a sintaxe do Python 3.7;
+  o `EstadoDaPlaca` lendo cada resposta.
+- **Do laboratório:** a F0.2 diz o que a placa de verdade tem (os overlays, as ferramentas, a versão do Python).
+
+### ☐ F3.5: a área de Aquisição e a lista de placas
+
+- **Arquivos:** `areas/aquisicao/` (a área, a lista de placas e o diálogo de conectar); a área na barra superior,
+  com o estado da placa.
+- **O conteúdo** (o B1; plano, 9.1, 11.3 e 13.2):
+  - a navegação lateral do B1: Visão geral, Capturar (a Fase 4), Arquivos, Terminal, Diagnóstico e Manutenção (a
+    Fase 6). As que ainda não existem dizem quando chegam;
+  - a lista de placas da F3.3, com conectar e desconectar;
+  - o diálogo de conectar (host, porta, usuário, salto). Na primeira conexão:
+    1. a impressão digital, para confirmar;
+    2. a chave do aplicativo, instalada;
+    3. a sugestão de trocar a senha padrão;
+    4. a pergunta sobre acertar o relógio a cada conexão;
+  - a qualidade do enlace ao conectar: a latência e a vazão num teste curto;
+  - o estado da placa na barra superior.
+- **Os testes:** com o simulador: a lista, conectar, a primeira conexão inteira, e a chave de host trocada mostrada
+  como bloqueio.
+
+### ☐ F3.6: a visão geral e o diagnóstico
+
+- **Arquivos:** `areas/aquisicao/visao_geral.py` e `areas/aquisicao/diagnostico.py`.
+- **O conteúdo** (AQ-04, AQ-05 para ver, AQ-14; plano, 11.4 e 11.9):
+  - **a visão geral do B1:**
+    - o cabeçalho da placa: o modelo, o nº de série, o sistema, o kernel, e o firmware (e se é o do aplicativo);
+    - os indicadores: relógio, PRU, cartão, processador e placa de aquisição;
+    - a saúde resumida, as capturas na placa e o registro de atividade;
+  - **o diagnóstico** item a item, só lendo, com os dois "Corrigir" simples:
+    - **o relógio**, acertado pelo do computador, com a permissão lembrada;
+    - **os pinos**, com o `config-pin`, como o `setup.sh`;
+    - o sudo vai pelo askpass temporário em `/dev/shm` (plano, 11.2). "Ver o comando" mostra o que vai rodar, e o
+      botão diz o que vai acontecer;
+  - o relatório de diagnóstico em Markdown, para copiar ou salvar (o caderno chega na Fase 4).
+- **Os testes:** cada cenário do simulador dá os itens certos; o "Corrigir" roda o comando certo, uma vez, e o
+  registra; nada roda sem confirmação; a senha do sudo não aparece em lugar nenhum.
+
+### ☐ F3.7: os arquivos e a transferência
+
+- **Arquivos:** `sh_placa/sftp.py` (a fila); `areas/aquisicao/arquivos.py`.
+- **O conteúdo** (AQ-06 e AQ-07; plano, 11.7):
+  - o navegador da placa, com o resumo do cabeçalho de cada `.bin` (pelo agente) e o `resumo.csv` das coletas;
+  - **a fila de transferência:**
+    - várias requisições SFTP em paralelo;
+    - a retomada do ponto onde parou;
+    - a vazão e o tempo restante;
+    - o destino padrão na pasta da sessão do dia (`$DADOS/lab/AAAA-MM-DD/`);
+  - **a conferência:** o `crc32_amostras` na v9 (`api.conferir_integridade`); nas versões antigas, o SHA-256 dos
+    dois lados. "Apagar da placa" só para o conferido, e com confirmação;
+  - **"Abrir na Análise"** (a cópia local) e **"Abrir no gerenciador de arquivos":**
+    - no Linux, `gio mount sftp://` ou o `sshfs`;
+    - no Windows, o SSHFS-Win, se houver; senão, o aviso.
+- **Os testes:** uma transferência interrompida e retomada dá o arquivo idêntico; o CRC conferido; o "apagar"
+  desligado antes da conferência; a interface sem travar durante a transferência.
+
+### ☐ F3.8: o terminal
+
+- **Arquivos:** `componentes/terminal.py` (o widget, com o `pyte`); `areas/aquisicao/terminal.py`; o `pyte` no
+  extra `placa`.
+- **O conteúdo** (AQ-08; plano, 11.8):
+  - o emulador VT100 do `pyte`, pintado num widget próprio com o tema e a fonte mono, sobre um PTY no SSH;
+  - abas, rolagem com busca, copiar e colar;
+  - a gravação em `$DIA/terminal_bbb.txt`, como o `lab ssh`;
+  - os atalhos de comandos: clicar escreve o comando, e o Enter é do usuário;
+  - "Abrir no terminal do sistema", com o `ssh` pronto: o GNOME Terminal ou o Konsole; no Windows, o Windows
+    Terminal.
+- **Os testes:** as sequências de escape mais comuns na tela; o tamanho do widget chega ao PTY; a gravação; o atalho
+  não aperta o Enter.
+
+### ☐ F3.9: o simulador com os cenários
+
+- **Arquivos:** `sh_placa/simulador.py`; `tests/servidor_ssh.py`.
+- **O conteúdo** (AQ-19; plano, 11.11):
+  - o simulador como uma placa na lista: o mesmo protocolo, servido por SSH no próprio computador, com o agente de
+    verdade sobre a árvore falsa;
+  - os cenários:
+    - a rede de 60 Hz com supraharmônicos;
+    - o ADC mudo;
+    - o disco cheio;
+    - a conexão que cai no meio;
+    - o firmware de outra versão;
+    - o relógio errado;
+  - as capturas sintéticas (as de `tests/capturas_sinteticas.py`) nos Arquivos;
+  - o cenário escolhido pela interface.
+- **Os testes:** cada cenário na visão geral e no diagnóstico; a conexão que cai no meio de uma transferência, e a
+  retomada.
+
+### ☐ F3.10: o fechamento da Fase 3
+
+- **O conteúdo:**
+  - a jornada da Aquisição num teste de ponta a ponta, com o simulador por SSH: achar, conectar com a chave do
+    aplicativo, ver a visão geral e o diagnóstico, corrigir o relógio, transferir uma captura, conferir o CRC e
+    abri-la na Análise;
+  - **na placa de verdade, com o usuário (no laboratório):** a mesma jornada pelo USB, com a vazão anotada na seção 5;
+  - o plano e este arquivo em dia.
+
+---
+
 ## 5. Resultados medidos
 
 | Data | O quê | Resultado | Onde |
@@ -1262,6 +1446,16 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **o plano e este arquivo** em dia: a Fase 2 marcada como feita, com o "pronto quando" cumprido.
   - **Testes:** `ci.sh rapido` com 1 687 aprovados e `ci.sh interface` com 743; os 6 de desempenho
     passam (o G1 com a cadeia é o novo).
+- **15/11/2026:** **o duplo clique e a Fase 3 em tarefas:**
+  - **o pedido do usuário:** o duplo clique levava o gráfico ao mais longe que ele ia (ajustar tudo), na vista de
+    tempo e na de espectro. Agora ele não mexe no zoom, em nenhuma vista: o primeiro clique dele seleciona, como um
+    clique. Ajustar tudo é o `F` (ou o botão da barra), que a vista de espectro ganhou (antes, o duplo clique era o
+    único jeito de ajustá-la). As vistas de mapa não reagiam ao duplo clique. Um teste com o duplo clique de verdade
+    em cada vista (`tests/mouse_de_verdade.py`, `ac0bd3d`: o `QTest.mouseDClick` não chega à cena do PyQtGraph como um duplo
+    clique);
+  - **a Fase 3 em tarefas** (seção 4d): F3.1 a F3.10, com o "pronto quando", a ordem e as regras da fase.
+  - **Testes:** `ci.sh interface` com 745 aprovados (os 2 novos são o duplo clique).
+  - **Próximo:** a F3.1, pedindo a permissão para baixar as dependências.
 ---
 
 ## 8. Perguntas em aberto
