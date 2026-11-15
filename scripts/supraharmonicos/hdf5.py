@@ -1,7 +1,8 @@
-"""Modo de exportação HDF5 (``.bin`` -> ``.h5``), sempre em blocos sobre o memmap.
+"""Modo de exportação HDF5 (``.bin`` -> ``.h5``), sempre em blocos sobre o memmap, e a leitura de volta
+(:func:`ler_hdf5`: as amostras brutas e a calibração com que foram exportadas, para a ``api`` abrir o ``.h5``).
 
-``h5py`` é importado só quando a exportação é de fato usada (dependência
-pesada e opcional para os demais modos).
+``h5py`` é importado só quando a exportação (ou a leitura) é de fato usada
+(dependência pesada para os demais modos).
 
 Além das amostras, o arquivo leva tudo o que é preciso para usá-las sem o ``.bin`` nem este programa: os campos do
 cabeçalho como atributos, o próprio cabeçalho, byte a byte (``/cabecalho_bruto``: 1024 bytes até a v8, 4096 na v9) e o perfil de cada sonda
@@ -12,6 +13,7 @@ Depende de: ``amostras``, ``canais``, ``cabecalho``, ``constantes``, ``erros``, 
 
 import hashlib
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -258,3 +260,87 @@ def _gravar_perfil(f5, canal: int, perfil: PerfilSonda) -> None:
     else:
         grupo.attrs["ganho"] = float(ganhos[0])
         grupo.attrs["como_aplicar"] = "sinal em Volts dividido por 'ganho'."
+
+
+# ---------------------------------------------------------------------------
+# 4.2 Leitura de um .h5 exportado
+# ---------------------------------------------------------------------------
+
+LIMITE_DO_HDF5_EM_MEMORIA = 2 << 30
+"""Bytes de amostras que :func:`ler_hdf5` aceita: o ``/amostras`` é em blocos (``chunks``), sem um mapa direto no
+arquivo como o memmap do ``.bin``, e vai inteiro para a memória. Um maior pede o ``.bin`` de origem."""
+
+_ATRIBUTOS_DA_EXPORTACAO = ("canais_ordem", "formato_amostra", "faixa_v_por_canal", "ganho_por_canal",
+                            "offset_v_por_canal")
+
+
+@dataclass(frozen=True)
+class ConteudoHdf5:
+    """O que um ``.h5`` de :func:`exportar_hdf5` traz para usar as amostras de novo, como foi gravado: as listas por
+    canal vão na ordem de ``canais`` (a da intercalação)."""
+
+    amostras: np.ndarray           # (n_linhas * n_canais,): intercaladas como no .bin, em memória
+    formato: str
+    canais: list[int]
+    faixas: list[float]            # o --faixa, o --ganho e o --offset com que as amostras foram exportadas
+    ganhos: list[float]
+    offsets: list[float]
+    grandezas: list[int] | None    # as resolvidas na exportação (None num .h5 que não as grava)
+    cabecalho_bruto: bytes | None  # o cabeçalho do .bin de origem, byte a byte (None num exportado de um legado)
+    arquivo_origem: str
+    trecho: tuple[int, int]        # [início, fim) em amostras brutas do .bin de origem
+    versao_codigo: str | None
+
+
+def ler_hdf5(caminho: Path, *, limite_bytes: int = LIMITE_DO_HDF5_EM_MEMORIA) -> ConteudoHdf5:
+    """Lê um ``.h5`` do ``adc_tool --export-hdf5``: o ``/amostras`` (os códigos do ADC, sem calibração) para a
+    memória, os atributos da exportação e o ``/cabecalho_bruto``. Não usa o ``/tensao_v`` (float32, e sem a correção
+    de sonda): a conversão para a unidade física é refeita dos códigos, como a do ``.bin``. Levanta :class:`ErroSHAN`
+    para um arquivo que não é dessa exportação, ou com mais de ``limite_bytes`` de amostras."""
+    import h5py
+
+    try:
+        with h5py.File(caminho, "r") as f5:
+            dataset = f5.get("amostras")
+            faltam = [nome for nome in _ATRIBUTOS_DA_EXPORTACAO if nome not in f5.attrs]
+            if not isinstance(dataset, h5py.Dataset) or dataset.ndim != 2 or faltam:
+                falta = ", ".join((["/amostras"] if not isinstance(dataset, h5py.Dataset) or dataset.ndim != 2
+                                   else []) + faltam)
+                raise ErroSHAN(f"'{caminho}' não é um .h5 do adc_tool --export-hdf5 (falta: {falta}).")
+            attrs = f5.attrs
+            formato = str(attrs["formato_amostra"])
+            if formato not in FORMATOS_NUMPY or dataset.dtype != FORMATOS_NUMPY[formato]:
+                raise ErroSHAN(f"'{caminho}': as amostras são {dataset.dtype}, e o formato gravado é {formato!r}.")
+            canais = [int(c) for c in np.atleast_1d(attrs["canais_ordem"])]
+            por_canal = {nome: [float(v) for v in np.atleast_1d(attrs[nome])]
+                         for nome in ("faixa_v_por_canal", "ganho_por_canal", "offset_v_por_canal")}
+            n_linhas, n_colunas = dataset.shape
+            if len(canais) != n_colunas or any(len(v) != n_colunas for v in por_canal.values()):
+                raise ErroSHAN(f"'{caminho}': {n_colunas} coluna(s) em /amostras, mas {len(canais)} canal(is) em "
+                               f"'canais_ordem'.")
+            if n_linhas == 0:
+                raise ErroSHAN(f"'{caminho}' não tem amostras.")
+            if dataset.size * dataset.dtype.itemsize > limite_bytes:
+                raise ErroSHAN(f"'{caminho}': {dataset.size * dataset.dtype.itemsize / 1e9:.1f} GB de amostras, mais "
+                               f"do que cabe abrir na memória ({limite_bytes / 1e9:.1f} GB). Abra o .bin de origem "
+                               f"('{attrs.get('arquivo_origem', '?')}').")
+            grandezas = attrs.get("grandeza_por_canal")
+            bruto = f5.get("cabecalho_bruto")
+            inicio = int(attrs.get("trecho_inicio_amostra_bruta", 0))
+            return ConteudoHdf5(
+                amostras=np.asarray(dataset[()], dtype=FORMATOS_NUMPY[formato]).reshape(-1),
+                formato=formato,
+                canais=canais,
+                faixas=por_canal["faixa_v_por_canal"],
+                ganhos=por_canal["ganho_por_canal"],
+                offsets=por_canal["offset_v_por_canal"],
+                grandezas=None if grandezas is None else [int(g) for g in np.atleast_1d(grandezas)],
+                cabecalho_bruto=None if bruto is None else np.asarray(bruto[()], dtype=np.uint8).tobytes(),
+                arquivo_origem=str(attrs.get("arquivo_origem", "")),
+                trecho=(inicio, int(attrs.get("trecho_fim_amostra_bruta", inicio + n_linhas * n_colunas))),
+                versao_codigo=str(attrs["versao_codigo"]) if "versao_codigo" in attrs else None,
+            )
+    except FileNotFoundError:
+        raise ErroSHAN(f"arquivo '{caminho}' não encontrado.") from None
+    except OSError as e:
+        raise ErroSHAN(f"'{caminho}' não é um HDF5 legível ({e}).") from None

@@ -637,20 +637,35 @@ def ler_cabecalho(caminho: Path) -> CabecalhoArquivo | None:
     try:
         with open(caminho, "rb") as f:
             bruto = f.read(CABECALHO_TAMANHO_TOTAL)
-            # [v9] O cabeçalho é maior que os 1024 bytes da parte fixa: o tamanho está no próprio cabeçalho (byte 8).
-            tamanho_total = CABECALHO_TAMANHO_TOTAL
-            if len(bruto) == CABECALHO_TAMANHO_TOTAL and bruto[:4] == CABECALHO_MAGIC \
-                    and struct.unpack_from("<I", bruto, 4)[0] >= 9:
-                (tamanho_total,) = struct.unpack_from("<I", bruto, 8)
-                if not (CABECALHO_TAMANHO_TOTAL + struct.calcsize(_FORMATO_EXTENSAO_V9) <= tamanho_total <= 1 << 20) \
-                        or tamanho_total % 2:
-                    log.warning(f"cabeçalho de '{caminho}': tamanho {tamanho_total} bytes não é plausível para a "
-                                f"versão 9; assumindo {CABECALHO_TAMANHO_V9}.")
-                    tamanho_total = CABECALHO_TAMANHO_V9
-                bruto += f.read(tamanho_total - CABECALHO_TAMANHO_TOTAL)
+            tamanho_total = _tamanho_total(bruto, caminho)
+            bruto += f.read(tamanho_total - CABECALHO_TAMANHO_TOTAL)
     except FileNotFoundError:
         return None  # deixa o erro "arquivo não encontrado" aparecer mais tarde, no carregamento de verdade (carregar_amostras)
+    return _interpretar(bruto, tamanho_total, caminho)
 
+
+def interpretar_cabecalho(bruto: bytes, origem: object) -> CabecalhoArquivo | None:
+    """O que :func:`ler_cabecalho` faz, sobre os bytes do cabeçalho já lidos: os do começo de um ``.bin``, ou o
+    ``/cabecalho_bruto`` de um ``.h5`` do ``--export-hdf5``. ``origem`` só entra nas mensagens."""
+    return _interpretar(bytes(bruto), _tamanho_total(bruto[:CABECALHO_TAMANHO_TOTAL], origem), origem)
+
+
+def _tamanho_total(parte_fixa: bytes, origem: object) -> int:
+    """O tamanho do cabeçalho inteiro pelos primeiros 1024 bytes: na v9 ele é maior que a parte fixa, e o tamanho está
+    no próprio cabeçalho (byte 8); um valor que não é plausível vira o da v9, com aviso."""
+    if len(parte_fixa) < CABECALHO_TAMANHO_TOTAL or parte_fixa[:4] != CABECALHO_MAGIC \
+            or struct.unpack_from("<I", parte_fixa, 4)[0] < 9:
+        return CABECALHO_TAMANHO_TOTAL
+    (tamanho_total,) = struct.unpack_from("<I", parte_fixa, 8)
+    if not (CABECALHO_TAMANHO_TOTAL + struct.calcsize(_FORMATO_EXTENSAO_V9) <= tamanho_total <= 1 << 20) \
+            or tamanho_total % 2:
+        log.warning(f"cabeçalho de '{origem}': tamanho {tamanho_total} bytes não é plausível para a "
+                    f"versão 9; assumindo {CABECALHO_TAMANHO_V9}.")
+        return CABECALHO_TAMANHO_V9
+    return tamanho_total
+
+
+def _interpretar(bruto: bytes, tamanho_total: int, caminho: object) -> CabecalhoArquivo | None:
     if len(bruto) < CABECALHO_TAMANHO_TOTAL:
         return None  # arquivo menor que 1 cabeçalho inteiro -- não pode ser o formato novo
     if bruto[:4] != CABECALHO_MAGIC:

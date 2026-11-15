@@ -3,7 +3,9 @@
 Ela não monta ``argparse.Namespace`` nem imprime nada. Abre uma captura com as mesmas regras do ``adc_tool``
 (:func:`contexto.resolver_contexto_explicito`: o cabeçalho e os padrões históricos) e devolve o que cada canal é:
 
-* as amostras como uma visão do memmap (nenhuma cópia: uma captura de horas abre em milissegundos);
+* as amostras como uma visão do memmap (nenhuma cópia: uma captura de horas abre em milissegundos); o ``.csv`` e o
+  ``.h5`` do ``adc_tool`` vão para a memória, e o que não tem o cabeçalho pede a taxa e os canais
+  (:class:`ParametrosSemCabecalho`, os ``-f`` e ``--canais`` da CLI);
 * a conversão código -> unidade física, com a faixa do ADC, o ganho declarado na captura e o offset -- os mesmos
   números de ``amostras.converter_para_tensao`` na CLI;
 * a grandeza, a sonda registrada e o perfil que corrige o canal (:func:`contexto.perfil_para_correcao`, a regra da
@@ -28,8 +30,8 @@ bandas de uma captura inteira) aceitam ``progresso(fração)`` e ``cancelado()``
 (``--filtro-passa-alta``, ``--filtro-passa-baixa``) e também a passa-faixa e a rejeita-faixa, validados com o motivo;
 a correção de sonda (``aplicar_correcao_sonda``) e a carga de um perfil escolhido.
 
-Depende de: ``amostras``, ``bandas_iec``, ``cabecalho``, ``constantes``, ``contexto``, ``erros``, ``espectro``,
-``filtros``, ``fundamental``, ``harmonicos``, ``metricas_captura``, ``sonda``.
+Depende de: ``amostras``, ``bandas_iec``, ``cabecalho``, ``canais``, ``constantes``, ``contexto``, ``erros``,
+``espectro``, ``filtros``, ``fundamental``, ``harmonicos``, ``hdf5``, ``metricas_captura``, ``sonda``.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
+import zlib
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, fields
@@ -44,7 +47,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .amostras import carregar_amostras_bin, converter_para_tensao
+from .amostras import carregar_amostras_bin, carregar_colunas_csv, converter_para_tensao
 from .bandas_iec import (
     FREQ_MIN_IEC_HZ,
     LARGURA_BANDA_IEC_HZ,
@@ -59,7 +62,10 @@ from .cabecalho import (
     conferir_consistencia_cabecalho,
     conferir_crc_das_amostras,
     contar_amostras_arquivo_bin,
+    interpretar_cabecalho,
+    ler_cabecalho,
 )
+from .canais import analisar_lista_canais, faixa_cli_do_total_v
 from .constantes import (
     CORTE_SUPRAHARMONICOS_PADRAO,
     DISTANCIA_MINIMA_PICOS_PADRAO,
@@ -70,6 +76,7 @@ from .constantes import (
     ORDEM_FILTRO_PADRAO,
     RESOLUCAO_WELCH_PADRAO,
     SOBREPOSICAO_WELCH_PADRAO,
+    TOLERANCIA_FAIXA_V,
     UNIDADE_GRANDEZA,
 )
 from .contexto import ContextoCaptura, perfil_para_correcao, resolver_contexto_explicito
@@ -89,6 +96,7 @@ from .espectro import (
 from .filtros import aplicar_filtro_digital, projetar_filtro_sos
 from .fundamental import cruzamentos_da_fundamental, recortar_ciclos_inteiros
 from .harmonicos import TabelaHarmonicos, calcular_harmonicos
+from .hdf5 import ler_hdf5
 from .metricas_captura import calcular_basicas
 from .sonda import SONDAS_DIR_PADRAO, PerfilSonda, alcance_da_correcao, carregar_perfil_sonda
 from .sonda import aplicar_correcao_sonda as aplicar_correcao_sonda  # a cadeia de transformações da interface usa
@@ -148,17 +156,82 @@ class CanalDaCaptura:
         return len(self.amostras) / self.taxa_hz
 
 
+TIPOS_DE_ARQUIVO = {".bin": "bin", ".csv": "csv", ".h5": "h5", ".hdf5": "h5"}
+"""As extensões que :func:`abrir_captura` abre, e o tipo de cada uma."""
+
+
+@dataclass(frozen=True)
+class ParametrosSemCabecalho:
+    """O que uma captura sem o cabeçalho do SH-Analyzer não diz (o ``.bin`` legado, o ``.csv`` do ``adc_tool``, o
+    ``.h5`` exportado de um legado): a taxa **total**, a soma dos canais (o ``-f`` do ``adc_tool``), e os canais na
+    ordem da intercalação (o ``--canais``), validados com as mensagens da CLI."""
+
+    taxa_total_hz: float
+    canais: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        taxa = self.taxa_total_hz
+        if isinstance(taxa, bool) or not isinstance(taxa, (int, float)) or not math.isfinite(taxa) or taxa <= 0:
+            raise ErroSHAN(f"a taxa total precisa ser um número positivo, em Hz (não {taxa!r}).")
+        object.__setattr__(self, "taxa_total_hz", float(taxa))
+        object.__setattr__(self, "canais", tuple(analisar_lista_canais(",".join(str(c) for c in self.canais),
+                                                                       "canais")))
+
+    @classmethod
+    def de_texto(cls, taxa_total_hz: float, canais: str) -> ParametrosSemCabecalho:
+        """Com os canais como na CLI (``"0,1"``)."""
+        return cls(taxa_total_hz, tuple(analisar_lista_canais(canais, "canais")))
+
+    @property
+    def texto_dos_canais(self) -> str:
+        return ",".join(str(c) for c in self.canais)
+
+
+class CapturaSemCabecalho(ErroSHAN):
+    """:func:`abrir_captura` precisa de ``parametros``: o arquivo não diz a taxa (e talvez os canais). Quem abre
+    pergunta e abre de novo. Para perguntar: ``tipo`` (``"bin"``, ``"csv"`` ou ``"h5"``), ``canais`` (os que o
+    arquivo diz, e então não se pergunta por eles; ou None) e ``n_amostras`` (as brutas, de todos os canais)."""
+
+    def __init__(self, mensagem: str, *, tipo: str, canais: tuple[int, ...] | None = None,
+                 n_amostras: int | None = None):
+        super().__init__(mensagem)
+        self.tipo = tipo
+        self.canais = canais
+        self.n_amostras = n_amostras
+
+
+@dataclass(frozen=True)
+class OrigemDoHdf5:
+    """De onde veio um ``.h5`` do ``--export-hdf5``: o ``.bin``, o trecho em amostras brutas ``[início, fim)`` e a
+    versão do código que exportou (None se não gravada)."""
+
+    arquivo: str
+    trecho: tuple[int, int]
+    versao_codigo: str | None
+
+
 @dataclass(frozen=True, eq=False)
 class Captura:
-    """Uma captura aberta: o cabeçalho, todas as amostras (intercaladas, em memmap), os canais e os avisos."""
+    """Uma captura aberta: o cabeçalho (None sem ele), todas as amostras (intercaladas: em memmap no ``.bin``, em
+    memória no ``.csv`` e no ``.h5``), os canais e os avisos. ``parametros``: a taxa e os canais informados a
+    :func:`abrir_captura` (None quando o arquivo os diz); ``hdf5``: de onde veio um ``.h5``."""
 
     caminho: Path
-    cabecalho: CabecalhoArquivo
+    cabecalho: CabecalhoArquivo | None
     formato: str
     amostras: np.ndarray
     canais: tuple[CanalDaCaptura, ...]
     avisos: tuple[Aviso, ...]
     contexto: ContextoCaptura
+    tipo: str = "bin"
+    parametros: ParametrosSemCabecalho | None = None
+    hdf5: OrigemDoHdf5 | None = None
+
+    @property
+    def crc32_amostras(self) -> int | None:
+        """O CRC-32 que o ``ler_adc`` gravou das amostras **deste arquivo** (o ``.bin`` com o cabeçalho v9), ou None:
+        o ``.h5`` traz o cabeçalho do ``.bin`` de origem, mas as amostras dele podem ser só um trecho."""
+        return self.cabecalho.crc32_amostras if self.tipo == "bin" and self.cabecalho is not None else None
 
     def canal(self, numero: int) -> CanalDaCaptura:
         for c in self.canais:
@@ -218,33 +291,39 @@ PASTA_DAS_SONDAS_PADRAO: Path = SONDAS_DIR_PADRAO
 configurações, e o usuário pode trocar)."""
 
 
-def abrir_captura(caminho: Path, *, formato: str = "uint16", sondas_dir: Path | None = None) -> Captura:
-    """Abre um ``.bin`` com cabeçalho (v1 a v9), sem ler as amostras.
+def abrir_captura(caminho: Path, *, formato: str | None = None, sondas_dir: Path | None = None,
+                  parametros: ParametrosSemCabecalho | None = None) -> Captura:
+    """Abre uma captura com as regras do ``adc_tool``:
 
-    Os canais, as faixas, os ganhos, as grandezas e as sondas vêm do cabeçalho, com os padrões históricos onde
-    ele não diz (as mesmas regras do ``adc_tool`` sem flags). ``sondas_dir`` é onde procurar os perfis
-    (:data:`PASTA_DAS_SONDAS_PADRAO`, ``scripts/sondas``, por padrão). Levanta :class:`ErroSHAN` para um arquivo sem cabeçalho, vazio ou incoerente
-    com o cabeçalho."""
+    * o ``.bin`` com o cabeçalho (v1 a v9), sem ler as amostras (memmap): os canais, as faixas, os ganhos, as
+      grandezas e as sondas vêm do cabeçalho, com os padrões históricos onde ele não diz (o ``adc_tool`` sem flags);
+    * o ``.bin`` legado (sem o cabeçalho) e o ``.csv`` do ``adc_tool -c`` pedem ``parametros``, a taxa e os canais
+      (os ``-f`` e ``--canais`` da CLI); o resto, os padrões da CLI. A coluna 'canal' do ``.csv``, quando há, diz os
+      canais e a ordem deles, e um ``.csv`` que começa no meio de um ciclo é alinhado pelo índice das amostras;
+    * o ``.h5`` do ``adc_tool --export-hdf5``: as amostras brutas, a calibração com que foram exportadas e o
+      cabeçalho do ``.bin`` de origem (a taxa); um exportado de um legado pede só a taxa.
+
+    Sem ``parametros`` onde eles faltam, levanta :class:`CapturaSemCabecalho`, com o que o arquivo diz para
+    perguntar; com eles onde o arquivo já diz, :class:`ErroSHAN` (nunca dois valores para a mesma coisa).
+    ``formato``: o das amostras, ``"uint16"`` (o padrão) ou ``"int16"``; o ``.h5`` diz o dele. ``sondas_dir`` é onde
+    procurar os perfis (:data:`PASTA_DAS_SONDAS_PADRAO`, por padrão). Levanta :class:`ErroSHAN` para um arquivo
+    vazio, incoerente ou de outro tipo."""
     caminho = Path(caminho)
-    if formato not in FORMATOS_NUMPY:
+    if formato is not None and formato not in FORMATOS_NUMPY:
         raise ErroSHAN(f"formato desconhecido: {formato!r} (use 'uint16' ou 'int16').")
-    if caminho.suffix.lower() != ".bin":
-        raise ErroSHAN(f"{caminho.name}: a API abre só capturas .bin (o CSV continua no adc_tool).")
+    tipo = TIPOS_DE_ARQUIVO.get(caminho.suffix.lower())
+    if tipo is None:
+        raise ErroSHAN(f"{caminho.name}: '{caminho.suffix or '(sem extensão)'}' não é uma captura que o SH-Analyzer "
+                       f"abre (.bin, .csv ou .h5).")
+    if not caminho.is_file():
+        raise ErroSHAN(f"arquivo '{caminho}' não encontrado.")
+    abrir = {"bin": _abrir_bin, "csv": _abrir_csv, "h5": _abrir_hdf5}[tipo]
     with capturar_avisos() as avisos:
-        ctx = resolver_contexto_explicito(caminho, formato=formato, sondas_dir=sondas_dir)
-        if ctx.cabecalho is None:
-            raise ErroSHAN(f"{caminho.name}: sem o cabeçalho do SH-Analyzer. Capturas do formato legado pedem os "
-                           "canais e a taxa: use o adc_tool.py com --canais e -f.")
-        n_amostras_arquivo = contar_amostras_arquivo_bin(caminho, formato, ctx.offset_amostras)
-        conferir_consistencia_cabecalho(ctx.cabecalho, ctx.canais, ctx.canais_veio_do_cabecalho, n_amostras_arquivo,
-                                        formato)
-        amostras = carregar_amostras_bin(caminho, formato, ctx.offset_amostras)
+        ctx, amostras, formato, taxa_total, declarados, hdf5 = abrir(caminho, formato, sondas_dir, parametros)
         n_canais = ctx.num_canais
         n_por_canal = len(amostras) // n_canais        # um quadro final incompleto (arquivo cortado) fica de fora
-        # A taxa que a PRU de fato gera (clock ÷ ticks), como no adc_tool: a pedida difere dela quando 200 MHz ÷
-        # taxa não é inteiro (102,4 kHz pedidos são 102.406,55 Hz, +64 ppm).
-        taxa = (ctx.cabecalho.frequencia_pru_hz or float(ctx.cabecalho.frequencia_hz)) / n_canais
-        declarados = ctx.cabecalho.ganho_por_canal
+        if n_por_canal == 0:
+            raise ErroSHAN(f"{caminho.name}: {len(amostras)} amostra(s), menos que um ciclo dos {n_canais} canais.")
         canais = []
         for posicao, numero in enumerate(ctx.canais):
             try:
@@ -255,14 +334,141 @@ def abrir_captura(caminho: Path, *, formato: str = "uint16", sondas_dir: Path | 
             canais.append(CanalDaCaptura(
                 numero=numero, posicao=posicao,
                 amostras=amostras[posicao:n_por_canal * n_canais:n_canais],
-                taxa_hz=taxa,
+                taxa_hz=taxa_total / n_canais,
                 faixa_v=ctx.faixas[posicao], faixa_confiavel=ctx.faixas_confiaveis[posicao],
                 ganho=ctx.ganhos[posicao], offset_v=ctx.offsets[posicao],
                 grandeza=ctx.grandeza_do_canal(numero), sonda_id=ctx.sonda_id_do_canal(numero),
                 perfil=perfil, formato=formato, problema_sonda=problema,
-                ganho_declarado=posicao < len(declarados) and bool(declarados[posicao]),
+                ganho_declarado=declarados[posicao],
             ))
-    return Captura(caminho, ctx.cabecalho, formato, amostras, tuple(canais), tuple(avisos), ctx)
+    return Captura(caminho, ctx.cabecalho, formato, amostras, tuple(canais), tuple(avisos), ctx, tipo,
+                   parametros, hdf5)
+
+
+def crc32_das_amostras(caminho: Path) -> int | None:
+    """O CRC-32 que o ``ler_adc`` gravou das amostras de um ``.bin`` (cabeçalho v9), lendo só o cabeçalho (sem abrir a
+    captura); None num ``.bin`` sem ele ou de uma versão anterior, e em outro tipo de arquivo. Serve para reencontrar
+    uma captura que mudou de lugar."""
+    caminho = Path(caminho)
+    if TIPOS_DE_ARQUIVO.get(caminho.suffix.lower()) != "bin":
+        return None
+    cabecalho = ler_cabecalho(caminho)
+    return None if cabecalho is None else cabecalho.crc32_amostras
+
+
+def _sem_parametros_se_tem_cabecalho(caminho: Path, parametros: ParametrosSemCabecalho | None) -> None:
+    if parametros is not None:
+        raise ErroSHAN(f"{caminho.name} tem o cabeçalho do SH-Analyzer: a taxa e os canais vêm dele.")
+
+
+def _taxa_do_cabecalho(cab: CabecalhoArquivo) -> float:
+    """A taxa total que a PRU de fato gera (clock ÷ ticks), como no adc_tool: a pedida difere dela quando 200 MHz ÷
+    taxa não é inteiro (102,4 kHz pedidos são 102.406,55 Hz, +64 ppm)."""
+    return cab.frequencia_pru_hz or float(cab.frequencia_hz)
+
+
+def _declarados(cab: CabecalhoArquivo | None, n_canais: int) -> list[bool]:
+    """Se o ganho de cada canal foi declarado na captura (ler_adc --ganho, cabeçalho v9)."""
+    ganhos = cab.ganho_por_canal if cab is not None and len(cab.lista_canais) == n_canais else ()
+    return [i < len(ganhos) and bool(ganhos[i]) for i in range(n_canais)]
+
+
+def _abrir_bin(caminho: Path, formato: str | None, sondas_dir: Path | None,
+               parametros: ParametrosSemCabecalho | None):
+    formato = formato or "uint16"
+    if ler_cabecalho(caminho) is None:
+        n_amostras = contar_amostras_arquivo_bin(caminho, formato, 0)
+        if n_amostras == 0:
+            raise ErroSHAN(f"'{caminho}' está vazio (0 amostras).")      # nada a perguntar
+        if parametros is None:
+            raise CapturaSemCabecalho(f"{caminho.name}: sem o cabeçalho do SH-Analyzer (o formato legado). Diga a "
+                                      "taxa total e os canais.", tipo="bin", n_amostras=n_amostras)
+        ctx = resolver_contexto_explicito(caminho, formato=formato, canais_texto=parametros.texto_dos_canais,
+                                          sondas_dir=sondas_dir)
+        amostras = carregar_amostras_bin(caminho, formato, 0)
+        return ctx, amostras, formato, parametros.taxa_total_hz, [False] * ctx.num_canais, None
+    _sem_parametros_se_tem_cabecalho(caminho, parametros)
+    ctx = resolver_contexto_explicito(caminho, formato=formato, sondas_dir=sondas_dir)
+    n_amostras_arquivo = contar_amostras_arquivo_bin(caminho, formato, ctx.offset_amostras)
+    conferir_consistencia_cabecalho(ctx.cabecalho, ctx.canais, ctx.canais_veio_do_cabecalho, n_amostras_arquivo,
+                                    formato)
+    amostras = carregar_amostras_bin(caminho, formato, ctx.offset_amostras)
+    return (ctx, amostras, formato, _taxa_do_cabecalho(ctx.cabecalho), _declarados(ctx.cabecalho, ctx.num_canais),
+            None)
+
+
+def _intercalacao_do_csv(caminho: Path, canal: np.ndarray, amostra: np.ndarray | None) -> tuple[tuple[int, ...], int]:
+    """(os canais na ordem da intercalação, quantas linhas do começo pular para o primeiro ciclo começar no primeiro
+    canal), pela coluna 'canal' de um '.csv' do ``adc_tool -c`` e pela 'amostra' (o índice da amostra bruta no
+    '.bin' de origem: um '.csv' convertido com ``--inicio`` pode começar no meio de um ciclo)."""
+    n_canais = len(np.unique(canal))
+    if amostra is not None and len(amostra) > 1 and not np.all(np.diff(amostra) == 1):
+        amostra = None                                  # mexido à mão: as linhas valem pela ordem, como na CLI
+    posicao = (amostra if amostra is not None else np.arange(len(canal))) % n_canais
+    ordem = np.empty(n_canais, dtype=np.int64)
+    for p in range(n_canais):
+        linhas = np.flatnonzero(posicao == p)
+        if not len(linhas):
+            raise ErroSHAN(f"{caminho.name}: a coluna 'canal' tem {n_canais} canais e menos linhas que um ciclo.")
+        ordem[p] = canal[linhas[0]]
+    if not np.array_equal(canal, ordem[posicao]):
+        raise ErroSHAN(f"{caminho.name}: a coluna 'canal' não segue um ciclo dos canais "
+                       f"{', '.join(map(str, ordem))} (o arquivo foi mexido?).")
+    return tuple(int(c) for c in ordem), int(-posicao[0] % n_canais)
+
+
+def _abrir_csv(caminho: Path, formato: str | None, sondas_dir: Path | None,
+               parametros: ParametrosSemCabecalho | None):
+    formato = formato or "uint16"
+    colunas = carregar_colunas_csv(caminho, formato)
+    do_arquivo, pular = (None, 0) if colunas.canal is None else \
+        _intercalacao_do_csv(caminho, colunas.canal, colunas.amostra)
+    if parametros is None:
+        raise CapturaSemCabecalho(f"{caminho.name}: um .csv não tem o cabeçalho do SH-Analyzer. Diga a taxa total"
+                                  + (" e os canais." if do_arquivo is None else "."), tipo="csv", canais=do_arquivo,
+                                  n_amostras=len(colunas.valores))
+    if do_arquivo is not None and parametros.canais != do_arquivo:
+        raise ErroSHAN(f"{caminho.name}: a coluna 'canal' diz os canais {', '.join(map(str, do_arquivo))}, não "
+                       f"{', '.join(map(str, parametros.canais))}.")
+    ctx = resolver_contexto_explicito(caminho, formato=formato, canais_texto=parametros.texto_dos_canais,
+                                      sondas_dir=sondas_dir)
+    return ctx, colunas.valores[pular:], formato, parametros.taxa_total_hz, [False] * ctx.num_canais, None
+
+
+def _abrir_hdf5(caminho: Path, formato: str | None, sondas_dir: Path | None,
+                parametros: ParametrosSemCabecalho | None):
+    conteudo = ler_hdf5(caminho)
+    if formato is not None and formato != conteudo.formato:
+        raise ErroSHAN(f"{caminho.name}: as amostras do .h5 são {conteudo.formato}, não {formato}.")
+    formato, canais = conteudo.formato, tuple(conteudo.canais)
+    cab = None if conteudo.cabecalho_bruto is None else interpretar_cabecalho(conteudo.cabecalho_bruto, caminho)
+    if cab is None:
+        if parametros is None:
+            raise CapturaSemCabecalho(f"{caminho.name}: exportado de um .bin sem o cabeçalho do SH-Analyzer. Diga a "
+                                      "taxa total.", tipo="h5", canais=canais, n_amostras=len(conteudo.amostras))
+        if parametros.canais != canais:
+            raise ErroSHAN(f"{caminho.name}: o .h5 diz os canais {', '.join(map(str, canais))}, não "
+                           f"{', '.join(map(str, parametros.canais))}.")
+        taxa_total = parametros.taxa_total_hz
+    else:
+        _sem_parametros_se_tem_cabecalho(caminho, parametros)
+        taxa_total = _taxa_do_cabecalho(cab)
+    # A calibração é a da exportação (o --faixa, o --ganho e o --offset dela, ou os do cabeçalho); a faixa é a real
+    # do ADC onde coincide com a que o cabeçalho registra (a regra de resolver_faixas).
+    reais = cab.faixa_adc_total_v_por_canal if cab is not None and len(cab.lista_canais) == len(canais) else ()
+    confiaveis = [i < len(reais) and reais[i] is not None
+                  and abs(faixa_cli_do_total_v(reais[i], formato) - faixa) <= TOLERANCIA_FAIXA_V
+                  for i, faixa in enumerate(conteudo.faixas)]
+    ctx = ContextoCaptura(
+        caminho_entrada=caminho, cabecalho=cab, offset_amostras=0, canais=list(canais),
+        canais_veio_do_cabecalho=False, canais_exibir=list(canais), faixas=conteudo.faixas, ganhos=conteudo.ganhos,
+        offsets=conteudo.offsets, faixas_confiaveis=confiaveis,
+        overrides_grandeza={} if conteudo.grandezas is None else dict(zip(canais, conteudo.grandezas)),
+        overrides_perfil={}, sondas_dir=sondas_dir if sondas_dir is not None else SONDAS_DIR_PADRAO)
+    # O ganho está na unidade física se a captura o declarou ou se a exportação usou um --ganho.
+    declarados = [d or g != 1.0 for d, g in zip(_declarados(cab, len(canais)), conteudo.ganhos)]
+    origem = OrigemDoHdf5(conteudo.arquivo_origem, conteudo.trecho, conteudo.versao_codigo)
+    return ctx, conteudo.amostras, formato, taxa_total, declarados, origem
 
 
 def sinal_do_canal(captura: Captura, canal: int, inicio: int = 0, fim: int | None = None, *,
@@ -283,26 +489,68 @@ def sinal_do_canal(captura: Captura, canal: int, inicio: int = 0, fim: int | Non
 def conferir_integridade(captura: Captura, *, progresso: Callable[[float], None] | None = None,
                          cancelado: Callable[[], bool] | None = None) -> bool | None:
     """As amostras conferidas contra o CRC-32 que o ``ler_adc`` gravou no cabeçalho v9 (o ``info`` da CLI): True se
-    o arquivo é o que a captura gravou, False se foi corrompido, truncado ou alterado, None se o cabeçalho não traz o
-    CRC (ou se ``cancelado()`` interrompeu). Lê o arquivo inteiro (~1 s por GiB): rode fora da thread da interface,
-    com ``progresso(fração)``."""
-    return conferir_crc_das_amostras(captura.caminho, captura.cabecalho, progresso=progresso, cancelado=cancelado)
+    o arquivo é o que a captura gravou, False se foi corrompido, truncado ou alterado, None se não há o CRC para
+    conferir (sem o cabeçalho, até a v8, um ``.h5`` de só um trecho da captura) ou se ``cancelado()`` interrompeu. Lê
+    as amostras inteiras (~1 s por GiB): rode fora da thread da interface, com ``progresso(fração)``.
+
+    Num ``.h5`` com a captura inteira, confere as amostras dele (as do ``.bin``, byte a byte, se nada mudou)."""
+    cab = captura.cabecalho
+    if cab is None or cab.crc32_amostras is None:
+        return None
+    if captura.tipo == "bin":
+        return conferir_crc_das_amostras(captura.caminho, cab, progresso=progresso, cancelado=cancelado)
+    if captura.hdf5 is None or captura.hdf5.trecho != (0, cab.total_amostras_gravadas):
+        return None
+    dados = memoryview(np.ascontiguousarray(captura.amostras, dtype=FORMATOS_NUMPY[captura.formato])).cast("B")
+    crc, bloco = 0, 1 << 24
+    for inicio in range(0, len(dados), bloco):
+        if cancelado is not None and cancelado():
+            return None
+        crc = zlib.crc32(dados[inicio:inicio + bloco], crc)
+        if progresso is not None:
+            progresso(min(1.0, (inicio + bloco) / len(dados)))
+    return crc == cab.crc32_amostras
 
 
 def _talvez(valor, formato: str = "{}") -> str | None:
     return None if valor is None or valor == "" else formato.format(valor)
 
 
+_NOMES_DOS_TIPOS = {"bin": ".bin", "csv": ".csv do adc_tool", "h5": ".h5 do adc_tool --export-hdf5"}
+
+
 def descrever_cabecalho(captura: Captura) -> list[tuple[str, list[tuple[str, str]]]]:
     """O cabeçalho em seções de ``(rótulo, valor)`` para mostrar (o inspetor da interface): a captura, os canais, a
     integridade, a BeagleBone e a PRU. Só o que o cabeçalho traz: um campo de uma versão anterior fica de fora, em
-    vez de aparecer como "?"."""
+    vez de aparecer como "?". Sem o cabeçalho, o que se sabe: o arquivo, a taxa e os canais informados ao abrir; num
+    ``.h5``, também de onde ele veio."""
     cab = captura.cabecalho
+    captura_secao = [("Arquivo", captura.caminho.name),
+                     ("Tamanho", f"{captura.caminho.stat().st_size / 1e6:.1f} MB")]
+    if captura.tipo != "bin":
+        captura_secao.append(("Tipo", _NOMES_DOS_TIPOS[captura.tipo]))
+    if captura.hdf5 is not None:
+        inicio, fim = captura.hdf5.trecho
+        captura_secao += [("Exportado de", _talvez(captura.hdf5.arquivo)),
+                          ("Trecho exportado", f"amostras brutas {inicio} a {fim}"),
+                          ("Exportado por", _talvez(captura.hdf5.versao_codigo))]
+    canais = []
+    for c in captura.canais:
+        sonda = f", sonda {c.sonda_id}" if c.sonda_id else ""
+        canais.append((f"Canal {c.numero}", f"{c.nome_grandeza}, faixa {c.faixa_v:g} V"
+                                            f"{'' if c.faixa_confiavel else ' (suposta)'}, ganho {c.ganho:g}{sonda}"))
+    if cab is None:
+        parametros = captura.parametros
+        captura_secao += [("Cabeçalho", "nenhum: a taxa e os canais foram informados ao abrir"),
+                          ("Taxa total", f"{parametros.taxa_total_hz:g} Hz"),
+                          ("Amostras", f"{len(captura.amostras)}")]
+        secoes = [("Captura", captura_secao), ("Canais", canais)]
+        return [(titulo, [(r, v) for r, v in linhas if v is not None]) for titulo, linhas in secoes]
     duracao = cab.duracao_real_segundos
-    captura_secao = [
-        ("Arquivo", captura.caminho.name),
-        ("Tamanho", f"{captura.caminho.stat().st_size / 1e6:.1f} MB"),
-        ("Cabeçalho", f"v{cab.versao_cabecalho}" + ("" if cab.crc32_valido else " (CRC do cabeçalho NÃO confere)")),
+    origem = " (do .bin de origem)" if captura.tipo != "bin" else ""
+    captura_secao += [
+        ("Cabeçalho", f"v{cab.versao_cabecalho}{origem}"
+                      + ("" if cab.crc32_valido else " (CRC do cabeçalho NÃO confere)")),
         ("Início (relógio da placa)", cab.timestamp_iso_utc),
         ("Duração", None if duracao is None else f"{duracao:.3f} s"),
         ("Taxa total", f"{cab.frequencia_hz} Hz"),
@@ -314,11 +562,6 @@ def descrever_cabecalho(captura: Captura) -> list[tuple[str, list[tuple[str, str
         ("Máquina", _talvez(cab.hostname)),
         ("Comando", _talvez(cab.linha_de_comando, "ler_adc {}")),
     ]
-    canais = []
-    for c in captura.canais:
-        sonda = f", sonda {c.sonda_id}" if c.sonda_id else ""
-        canais.append((f"Canal {c.numero}", f"{c.nome_grandeza}, faixa {c.faixa_v:g} V"
-                                            f"{'' if c.faixa_confiavel else ' (suposta)'}, ganho {c.ganho:g}{sonda}"))
     canais += [(f"Sinal {i + 1}", linha) for i, linha in enumerate(cab.descrever_sinal_por_canal())]
     integridade = [("Problema", texto) for texto in cab.problemas_integridade]
     integridade += [("Grade", cab.descrever_grade()), ("SPI", cab.descrever_spi()),
@@ -332,11 +575,20 @@ def descrever_cabecalho(captura: Captura) -> list[tuple[str, list[tuple[str, str
 
 def cabecalho_em_dict(captura: Captura) -> dict:
     """O cabeçalho inteiro, campo a campo, num dicionário que vai direto para o ``json.dumps`` (copiar o cabeçalho,
-    guardá-lo junto de um resultado): o arquivo, cada campo do ``CabecalhoArquivo`` (``None`` onde a versão do arquivo
-    não grava), as tuplas como listas, e os derivados que a CLI mostra (o início em ISO 8601, a taxa da PRU, a duração
-    real). Os números saem como estão no cabeçalho, sem arredondar."""
+    guardá-lo junto de um resultado): o arquivo e o tipo dele, cada campo do ``CabecalhoArquivo`` (``None`` onde a
+    versão do arquivo não grava), as tuplas como listas, e os derivados que a CLI mostra (o início em ISO 8601, a taxa
+    da PRU, a duração real). Os números saem como estão no cabeçalho, sem arredondar. Sem o cabeçalho, os
+    ``parametros`` informados ao abrir; num ``.h5``, também de onde ele veio (``hdf5``)."""
     cab = captura.cabecalho
-    dados: dict = {"arquivo": captura.caminho.name}
+    dados: dict = {"arquivo": captura.caminho.name, "tipo": captura.tipo, "formato_amostras": captura.formato}
+    if captura.hdf5 is not None:
+        dados["hdf5"] = {"arquivo_origem": captura.hdf5.arquivo, "trecho": list(captura.hdf5.trecho),
+                         "versao_codigo": captura.hdf5.versao_codigo}
+    if captura.parametros is not None:
+        dados["parametros"] = {"taxa_total_hz": captura.parametros.taxa_total_hz,
+                               "canais": list(captura.parametros.canais)}
+    if cab is None:
+        return dados
     for campo in fields(cab):
         dados[campo.name] = _para_json(getattr(cab, campo.name))
     dados["timestamp_iso_utc"] = cab.timestamp_iso_utc

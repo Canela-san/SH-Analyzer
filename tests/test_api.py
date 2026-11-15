@@ -102,11 +102,20 @@ def test_perfil_que_falta_nao_impede_de_abrir(ambiente, tmp_path):
 
 def test_erros_viram_erro_shan(ambiente, tmp_path):
     legado = escrever_bin(tmp_path / "legado.bin", [np.zeros(100), np.zeros(100)], com_cabecalho=False)
-    with pytest.raises(ErroSHAN, match="sem o cabeçalho"):
+    with pytest.raises(api.CapturaSemCabecalho, match="sem o cabeçalho"):
         api.abrir_captura(legado)
     (tmp_path / "x.csv").write_text("1\n2\n")
-    with pytest.raises(ErroSHAN, match="só capturas .bin"):
+    with pytest.raises(ErroSHAN, match="não tem coluna 'valor_bruto'"):
         api.abrir_captura(tmp_path / "x.csv")
+    (tmp_path / "x.txt").write_text("1\n")
+    with pytest.raises(ErroSHAN, match="não é uma captura que o SH-Analyzer abre"):
+        api.abrir_captura(tmp_path / "x.txt")
+    with pytest.raises(ErroSHAN, match="não encontrado"):
+        api.abrir_captura(tmp_path / "nao_existe.bin")
+    (tmp_path / "vazio.bin").write_bytes(b"\x01")                        # sem uma amostra: erro, nada a perguntar
+    with pytest.raises(ErroSHAN, match="está vazio") as e:
+        api.abrir_captura(tmp_path / "vazio.bin")
+    assert not isinstance(e.value, api.CapturaSemCabecalho)
     with pytest.raises(ErroSHAN, match="formato desconhecido"):
         api.abrir_captura(ambiente / "ok.bin", formato="float32")
     cap = api.abrir_captura(ambiente / "ok.bin", sondas_dir=ambiente / "sondas")

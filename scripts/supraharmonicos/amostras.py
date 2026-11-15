@@ -6,6 +6,8 @@ projeto para capturas longas em altas taxas de amostragem.
 
 Depende de: ``constantes``, ``erros``."""
 
+import itertools
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -86,6 +88,47 @@ def carregar_amostras_csv(caminho: Path, formato: str) -> np.ndarray:
     if amostras.size == 0:
         raise ErroSHAN(f"'{caminho}' não tem linhas de dados.")
     return amostras
+
+
+@dataclass(frozen=True)
+class ColunasDoCsv:
+    """As colunas de um '.csv' do ``adc_tool -c`` que dizem as amostras: 'valor_bruto' (no tipo do formato), 'canal'
+    (de qual canal é cada linha; só nos de mais de um canal) e 'amostra' (o índice da amostra bruta no '.bin' de
+    origem), as duas ``None`` quando o arquivo não as tem."""
+
+    valores: np.ndarray
+    canal: np.ndarray | None
+    amostra: np.ndarray | None
+
+
+def carregar_colunas_csv(caminho: Path, formato: str) -> ColunasDoCsv:
+    """O '.csv' do ``adc_tool -c`` numa passada só, carregado por completo (como em :func:`carregar_amostras_csv`).
+    Um 'valor_bruto' que o formato não guarda é erro (o '.csv' foi mexido, ou é de outro formato), em vez de dar a
+    volta em silêncio."""
+    tipo = FORMATOS_NUMPY[formato]
+    try:
+        with open(caminho, newline="") as f:
+            colunas = [c.strip() for c in f.readline().strip().split(",")]
+            if "valor_bruto" not in colunas:
+                raise ErroSHAN(f"'{caminho}' não tem coluna 'valor_bruto' (colunas encontradas: {colunas}).")
+            nomes = [n for n in ("valor_bruto", "canal", "amostra") if n in colunas]
+            primeira = f.readline()
+            if not primeira.strip():
+                raise ErroSHAN(f"'{caminho}' não tem linhas de dados.")
+            try:
+                tabela = np.loadtxt(itertools.chain([primeira], f), delimiter=",",
+                                    usecols=[colunas.index(n) for n in nomes], dtype=np.int64, ndmin=2)
+            except ValueError as e:
+                raise ErroSHAN(f"'{caminho}': {e}") from None
+    except FileNotFoundError:
+        raise ErroSHAN(f"arquivo '{caminho}' não encontrado.")
+    por_nome = {n: tabela[:, i] for i, n in enumerate(nomes)}
+    valores = por_nome["valor_bruto"]
+    limites = np.iinfo(tipo)
+    if valores.min() < limites.min or valores.max() > limites.max:
+        raise ErroSHAN(f"'{caminho}': 'valor_bruto' vai de {valores.min()} a {valores.max()}, fora do que o formato "
+                       f"{formato} guarda ({limites.min} a {limites.max}). Confira o formato.")
+    return ColunasDoCsv(valores.astype(tipo), por_nome.get("canal"), por_nome.get("amostra"))
 
 
 def carregar_amostras(caminho: Path, formato: str, offset: int = 0):
