@@ -12,6 +12,10 @@ TAXA_DE_REFERENCIA_BYTES_S = 800_000     # 400 kS/s x 2 bytes: quanto disco uma 
 DISCO_MINIMO_KIB = 1024 * 1024           # menos que 1 GiB livre: avisa
 TEMPERATURA_ALTA_C = 75.0
 DIFERENCA_DE_RELOGIO_S = 2.0
+ESTADOS_NORMAIS_DA_PRU = ("running", "offline")
+"""O remoteproc da PRU0 numa placa boa: ``running`` durante a captura e ``offline`` entre uma e outra. O ``ler_adc``
+a reinicia no começo de cada captura (ela lê a configuração uma vez por partida) e a para no fim, para ela não
+escrever na DDR depois; uma placa parada há horas está ``offline``, e pronta (visto na placa de verdade, 15/11/2026)."""
 
 
 @dataclass(frozen=True)
@@ -68,9 +72,10 @@ class EstadoDaPlaca:
         if estado_pru is None:
             p.append(Problema("erro", "pru_ausente", "A PRU0 não aparece no remoteproc (sem o overlay da PRU?).",
                               "Conferir o overlay da PRU no /boot/uEnv.txt (o assistente de pinos e overlays)."))
-        elif estado_pru != "running":
-            p.append(Problema("erro", "pru_parada", f"A PRU0 está '{estado_pru}', não rodando.",
-                              "Rodar o setup.sh (compila e carrega o firmware na PRU)."))
+        elif estado_pru not in ESTADOS_NORMAIS_DA_PRU:
+            p.append(Problema("erro", "pru_com_falha", f"A PRU0 está '{estado_pru}' (o normal é 'running' durante a "
+                              "captura e 'offline' entre uma e outra).",
+                              "Rodar o setup.sh (recompila e recarrega o firmware na PRU)."))
         pinos = self._campo("pinos") or {}
         errados = sorted(n for n, info in pinos.items() if info.get("certo") is False)
         desconhecidos = sorted(n for n, info in pinos.items() if info.get("certo") is None)

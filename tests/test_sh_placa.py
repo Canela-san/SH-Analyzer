@@ -8,7 +8,7 @@ from sh_placa.simulador import CENARIOS, SERIE_SIMULADA, VERSAO_SIMULADA, Simula
 
 
 @pytest.mark.parametrize("cenario, codigo", [
-    ("normal", None), ("pru_parada", "pru_parada"), ("pinos_errados", "pinos"), ("sem_mem_496m", "mem_496m"),
+    ("normal", None), ("pru_com_falha", "pru_com_falha"), ("pinos_errados", "pinos"), ("sem_mem_496m", "mem_496m"),
     ("firmware_antigo", "firmware_diferente"), ("sem_compilar", "nao_compilado"),
 ])
 def test_diagnostico_de_cada_cenario(cenario, codigo):
@@ -21,9 +21,23 @@ def test_diagnostico_de_cada_cenario(cenario, codigo):
     assert codigos == ([] if codigo is None else [codigo])
     if codigo is not None:
         assert problemas[0].correcao                                   # todo problema diz como corrigir
-    erro = codigo in ("pru_parada", "pinos", "mem_496m", "nao_compilado")
+    erro = codigo in ("pru_com_falha", "pinos", "mem_496m", "nao_compilado")
     assert estado.pronta_para_capturar(VERSAO_SIMULADA) is not erro
     assert [p.codigo for p in problemas if p.nivel == "info"] == ["capturas"]
+
+
+@pytest.mark.parametrize("estado_pru, codigos", [
+    ("running", []), ("offline", []),            # capturando; entre uma captura e outra (o ler_adc a liga e a para)
+    ("crashed", ["pru_com_falha"]), ("suspended", ["pru_com_falha"]), (None, ["pru_ausente"]),
+])
+def test_a_pru_parada_entre_capturas_e_o_normal(estado_pru, codigos):
+    """Na placa de verdade (15/11/2026), depois de uma captura a PRU0 fica ``offline``, e a placa está pronta: o
+    diagnóstico dizia "não rodando" e a placa, não pronta para capturar."""
+    estado = EstadoDaPlaca({"pru": {} if estado_pru is None else {"estado": estado_pru},
+                            "firmware": {"firmware": "v1", "compilado": True},
+                            "memoria_dos_buffers": {"mem_496m": True}, "pinos": {}})
+    assert [p.codigo for p in estado.diagnostico("v1") if p.nivel == "erro"] == codigos
+    assert estado.pronta_para_capturar("v1") is not codigos
 
 
 def test_relogio_disco_e_temperatura():

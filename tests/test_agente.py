@@ -39,7 +39,7 @@ def test_estado_le_cada_campo(placa):
     assert e["sistema"] == "BeagleBoard.org Debian Bullseye IoT Image 2023-09-02"
     assert e["kernel"] == "5.10.168-ti-r71" and e["ligada_s"] == 8040.52 and e["carga"] == [0.31, 0.24, 0.18]
     assert e["memoria_disponivel_kib"] == 319488 and e["temperatura_c"] == 52.0
-    assert e["pru"] == {"estado": "running", "firmware": "am335x-pru0-fw", "nome": "4a334000.pru"}
+    assert e["pru"] == {"estado": "offline", "firmware": "am335x-pru0-fw", "nome": "4a334000.pru"}   # entre capturas
     assert all(p["certo"] for p in e["pinos"].values()) and set(e["pinos"]) == {"P9_28", "P9_29", "P9_30", "P9_31"}
     assert e["memoria_dos_buffers"]["mem_496m"] is True
     assert e["firmware"] == {"firmware": VERSAO_SIMULADA, "python": ".".join(map(str, sys.version_info[:3])),

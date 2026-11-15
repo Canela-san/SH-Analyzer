@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .agente import ClienteDoAgente, TransporteLocal
 
-CENARIOS = ("normal", "pru_parada", "pinos_errados", "sem_mem_496m", "firmware_antigo", "sem_compilar")
+CENARIOS = ("normal", "pru_com_falha", "pinos_errados", "sem_mem_496m", "firmware_antigo", "sem_compilar")
 VERSAO_SIMULADA = "v0.8.0-simulador"
 SERIE_SIMULADA = "3714BBBK1234"
 
@@ -45,7 +45,8 @@ def montar_sistema_falso(pasta: Path, cenario: str = "normal", versao_firmware: 
     cmdline = "console=ttyS0,115200n8 root=/dev/mmcblk0p1 ro rootfstype=ext4 rootwait coherent_pool=1M"
     _escrever(raiz, "/proc/cmdline", cmdline + ("" if cenario == "sem_mem_496m" else " mem=496M") + "\n")
     rproc = "/sys/class/remoteproc/remoteproc1"
-    _escrever(raiz, rproc + "/state", "offline\n" if cenario == "pru_parada" else "running\n")
+    # Entre uma captura e outra, a PRU de uma placa boa está parada (o ler_adc a liga e a para).
+    _escrever(raiz, rproc + "/state", "crashed\n" if cenario == "pru_com_falha" else "offline\n")
     _escrever(raiz, rproc + "/firmware", "am335x-pru0-fw\n")
     _escrever(raiz, rproc + "/name", "4a334000.pru\n")
     for pino, modo in (("P9_28", "pruout"), ("P9_29", "pruout"), ("P9_30", "pruin"), ("P9_31", "pruout")):
@@ -64,7 +65,7 @@ def montar_sistema_falso(pasta: Path, cenario: str = "normal", versao_firmware: 
 
 
 class Simulador:
-    """Uma placa simulada: ``with Simulador("pru_parada") as cliente: cliente.estado()``. A pasta temporária some
+    """Uma placa simulada: ``with Simulador("pru_com_falha") as cliente: cliente.estado()``. A pasta temporária some
     no fim."""
 
     def __init__(self, cenario: str = "normal", versao_firmware: str = VERSAO_SIMULADA):
