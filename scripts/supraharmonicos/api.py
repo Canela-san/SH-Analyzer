@@ -39,7 +39,7 @@ import math
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 import numpy as np
@@ -328,6 +328,35 @@ def descrever_cabecalho(captura: Captura) -> list[tuple[str, list[tuple[str, str
     placa += [(f"Sistema {i + 1}", linha) for i, linha in enumerate(cab.descrever_sistema())]
     secoes = [("Captura", captura_secao), ("Canais", canais), ("Integridade", integridade), ("BeagleBone", placa)]
     return [(titulo, [(r, v) for r, v in linhas if v is not None]) for titulo, linhas in secoes]
+
+
+def cabecalho_em_dict(captura: Captura) -> dict:
+    """O cabeçalho inteiro, campo a campo, num dicionário que vai direto para o ``json.dumps`` (copiar o cabeçalho,
+    guardá-lo junto de um resultado): o arquivo, cada campo do ``CabecalhoArquivo`` (``None`` onde a versão do arquivo
+    não grava), as tuplas como listas, e os derivados que a CLI mostra (o início em ISO 8601, a taxa da PRU, a duração
+    real). Os números saem como estão no cabeçalho, sem arredondar."""
+    cab = captura.cabecalho
+    dados: dict = {"arquivo": captura.caminho.name}
+    for campo in fields(cab):
+        dados[campo.name] = _para_json(getattr(cab, campo.name))
+    dados["timestamp_iso_utc"] = cab.timestamp_iso_utc
+    dados["frequencia_pru_hz"] = _para_json(cab.frequencia_pru_hz)
+    dados["duracao_real_segundos"] = _para_json(cab.duracao_real_segundos)
+    return dados
+
+
+def _para_json(valor):
+    """Um valor do cabeçalho no que o JSON aceita: as tuplas viram listas, os escalares do numpy viram os do Python,
+    os bytes viram hexadecimal e um número não finito vira ``None`` (o JSON não tem NaN)."""
+    if isinstance(valor, (tuple, list)):
+        return [_para_json(v) for v in valor]
+    if isinstance(valor, np.generic):
+        valor = valor.item()
+    if isinstance(valor, bytes):
+        return valor.hex()
+    if isinstance(valor, float) and not math.isfinite(valor):
+        return None
+    return valor
 
 
 FREQ_MIN_FUNDAMENTAL = 45.0       # a busca da fundamental do adc_tool (--freq-min, --freq-max)

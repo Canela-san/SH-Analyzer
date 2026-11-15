@@ -152,8 +152,29 @@ def test_descrever_cabecalho(tmp_path):
     assert [r for r, _ in secoes["Canais"]][:2] == ["Canal 1", "Canal 3"]
     assert "tensão" in dict(secoes["Canais"])["Canal 1"]
     assert all(v for _, linhas in secoes.items() for _, v in linhas)    # nada vazio nem "None"
-    antigo = dict(descrever_cabecalho(abrir_captura(escrever_bin(tmp_path / "v3.bin", [np.zeros(9), np.zeros(9)]))))
+    antigo = dict(descrever_cabecalho(abrir_captura(escrever_bin(tmp_path / "v3.bin", [np.zeros(9), np.zeros(9)], versao=3))))
     assert "CRC das amostras" not in dict(antigo["Integridade"])
+
+
+def test_o_cabecalho_em_dict_vai_inteiro_para_o_json(tmp_path):
+    import dataclasses
+    import json
+
+    from supraharmonicos.api import abrir_captura, cabecalho_em_dict
+
+    caminho = escrever_bin(tmp_path / "c.bin", [np.zeros(4096), np.zeros(4096)], canais=(1, 3), versao=9,
+                           extensao={"ganhos": [19.65, 20.0]})
+    captura = abrir_captura(caminho, sondas_dir=tmp_path)
+    dados = cabecalho_em_dict(captura)
+    cab = captura.cabecalho
+    assert json.loads(json.dumps(dados, allow_nan=False)) == dados        # JSON estrito, ida e volta
+    assert dados["arquivo"] == "c.bin" and dados["versao_cabecalho"] == 9 and dados["lista_canais"] == [1, 3]
+    assert {f.name for f in dataclasses.fields(cab)} <= set(dados)        # todos os campos do cabeçalho
+    assert dados["ganho_por_canal"] == [19.65, 20.0] and dados["crc32_amostras"] == cab.crc32_amostras
+    assert dados["timestamp_iso_utc"] == cab.timestamp_iso_utc and dados["frequencia_hz"] == cab.frequencia_hz
+    antigo = cabecalho_em_dict(abrir_captura(escrever_bin(tmp_path / "v3.bin", [np.zeros(9), np.zeros(9)], versao=3)))
+    assert antigo["versao_cabecalho"] == 3 and antigo["crc32_amostras"] is None
+    json.dumps(antigo, allow_nan=False)
 
 
 def test_a_unidade_do_canal_segue_o_ganho_declarado(tmp_path):
