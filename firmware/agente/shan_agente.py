@@ -2,12 +2,14 @@
 """O agente do SH-Analyzer na BeagleBone: responde em JSON o que o aplicativo do computador pergunta sobre a placa
 (docs/gui-plan.md, seção 11.2).
 
-O aplicativo roda, pelo SSH, um comando por vez:
+O aplicativo roda, pelo SSH, um comando por vez, com o código deste arquivo pelo stdin (a placa não precisa ter o
+agente, e ele fala sempre o protocolo do aplicativo que o mandou, mesmo com um firmware antigo):
 
-    python3 ~/firmware/agente/shan_agente.py versao
-    python3 ~/firmware/agente/shan_agente.py estado
+    SHAN_PASTA="$HOME"/firmware python3 - versao
+    SHAN_PASTA="$HOME"/firmware python3 - estado
 
-e lê um objeto JSON do stdout, com ``"protocolo"`` (a versão deste formato) e ``"agente"``. Um comando desconhecido
+À mão, na placa, também vale ``python3 ~/firmware/agente/shan_agente.py estado``. O aplicativo lê um objeto JSON do
+stdout, com ``"protocolo"`` (a versão deste formato) e ``"agente"``. Um comando desconhecido
 responde ``{"erro": ...}`` e sai com o código 2. Nada aqui muda a placa: só lê.
 
 **Por que um agente, e não comandos soltos:** respostas estruturadas, num esquema versionado, em vez de texto feito
@@ -20,7 +22,7 @@ nunca um erro, porque cada imagem da BeagleBone tem um conjunto diferente.
 
 **Para os testes e o simulador:** ``SHAN_RAIZ`` troca a raiz de todos os caminhos do sistema (``/proc``, ``/sys``,
 ``/boot``, ``/etc``) por uma pasta falsa, e ``SHAN_PASTA`` diz onde está a pasta do firmware (por padrão, a pasta
-acima desta). É o que o ``ler_adc`` faz com ``BASE_PINMUX`` e companhia.
+acima desta; lido pelo stdin, ``~/firmware``). É o que o ``ler_adc`` faz com ``BASE_PINMUX`` e companhia.
 """
 
 from __future__ import annotations
@@ -49,7 +51,14 @@ def sistema(caminho):
 
 
 def pasta_do_firmware():
-    return os.environ.get("SHAN_PASTA") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    """``SHAN_PASTA``; sem ela, a pasta acima desta (o agente fica em ``firmware/agente/``). Lido pelo stdin
+    (``python3 -``), o agente não tem pasta (o ``__file__`` é ``<stdin>``): o padrão é ``~/firmware``, o do
+    ``BeagleBone_Setup.sh``."""
+    if os.environ.get("SHAN_PASTA"):
+        return os.environ["SHAN_PASTA"]
+    if os.path.isfile(__file__):
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(os.path.expanduser("~"), "firmware")
 
 
 def ler_texto(caminho, limite=4096):

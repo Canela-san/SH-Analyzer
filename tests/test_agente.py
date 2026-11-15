@@ -48,6 +48,23 @@ def test_estado_le_cada_campo(placa):
     assert e["relogio"]["sincronizado"] is True and e["disco"]["total_kib"] > 0
 
 
+def test_pelo_stdin_como_o_aplicativo_o_roda(placa):
+    """O aplicativo manda o código do agente pelo stdin (``python3 -``, ``sh_placa.agente.TransporteSSH``). Com a
+    ``SHAN_PASTA``, a pasta é a dela; sem, a ``~/firmware`` (o ``__file__`` é ``<stdin>``, e a pasta acima dele seria
+    a de cima da pasta atual, sem aviso)."""
+    raiz, pasta = placa
+    home = pasta.parent
+    for pasta_pedida in (str(pasta), None):
+        ambiente = {**os.environ, "SHAN_RAIZ": str(raiz), "HOME": str(home)}
+        ambiente.pop("SHAN_PASTA", None)
+        if pasta_pedida is not None:
+            ambiente["SHAN_PASTA"] = pasta_pedida
+        r = subprocess.run([sys.executable, "-", "versao"], input=AGENTE.read_text(encoding="utf-8"),
+                           capture_output=True, text=True, env=ambiente, cwd=raiz, timeout=30)
+        assert r.returncode == 0, r.stderr
+        assert json.loads(r.stdout)["firmware"] == VERSAO_SIMULADA
+
+
 def test_o_que_falta_vira_null(tmp_path):
     vazia = tmp_path / "vazia"
     vazia.mkdir()
