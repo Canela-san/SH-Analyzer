@@ -8,17 +8,20 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
-> **F2.10: o que ficou da Fase 1** (seção 4c). A F2.1 a F2.9 estão feitas: a cadeia no inspetor, o traço
+> **F2.11: o fechamento da Fase 2** (seção 4c). A F2.1 a F2.10 estão feitas: a cadeia no inspetor, o traço
 > transformado na tela, as quatro vistas de frequência, os avisos nos chips, o erro inesperado e o log, as
 > configurações; e o terceiro retorno do usuário (Alt + roda, a vista que fica nas mudanças, o clique com folga, a
 > janela e o preset IEC 61000-4-7 no inspetor, Ctrl+W; diário de 14/11) e o quarto (o eixo do traço selecionado, a
 > escala própria com o cadeado, o tempo próprio do traço destravado, os painéis com aba para recolher, a vista aberta
 > pelo painel do projeto, o contador dos avisos não vistos). A F2.9 terminou com as unidades: a de cada traço (V, A,
-> °C, K e qualquer outra), a conversão, os dois pontos e os prefixos nos eixos (diário de 15/11).
+> °C, K e qualquer outra), a conversão, os dois pontos e os prefixos nos eixos; a F2.10 trouxe o `.csv` e o `.h5`
+> do `adc_tool` e o `.bin` legado, copiar o cabeçalho, o zoom em caixa e sobrepor os traços (diário de 15/11).
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
-> configurações); no inspetor, "Unidade" e "Dois pontos…".
+> configurações); no inspetor, "Unidade" e "Dois pontos…"; Ctrl+O num `.csv` ou `.h5` do `adc_tool` (ou num `.bin`
+> sem o cabeçalho); na vista de tempo, `Z` e arrastar, e o botão das camadas (sobrepor); no inspetor da captura,
+> "Copiar JSON".
 >
 > **Com o usuário (quando puder):** o "pronto quando" da Fase 1, abrir uma captura de 1 h, navegar e medir com 8
 > traços de 2 fontes, em `uv run --extra gui python -m sh_analyzer_gui`.
@@ -755,7 +758,7 @@ gravadas e aplicadas) e `f243ac5` (a tela). O que ficou:
 
 **As unidades, feitas em 15/11/2026** (o pedido do usuário: "quaisquer unidades que o usuário queira", com V, A, °C e
 K como as principais): `8a6de44` (o catálogo e a unidade do traço), `fafae0a` (a seta das caixas de escolha),
-`2669bf2` (o inspetor e os dois pontos) e o commit dos eixos e da página das unidades. O que ficou:
+`2669bf2` (o inspetor e os dois pontos) e `b946419` (os eixos e a página das unidades). O que ficou:
 
 - **A unidade do traço** (`ReceitaDoTraco.unidade`; vazia, a do canal), gravada no projeto (os de antes abrem sem
   ela). O catálogo (`dados/unidades.py`): as principais, as de sensores comuns com a grandeza (temperatura, pressão,
@@ -788,7 +791,37 @@ O plano original:
   gravados; "limpar o cache".
 - **Os testes:** cada configuração gravada e aplicada na partida; o limite do cache respeitado.
 
-### ☐ F2.10: o que ficou da Fase 1
+### ☑ F2.10: o que ficou da Fase 1
+
+**Feita em 15/11/2026:** `6ac649d` (só do motor: o cabeçalho num dicionário), `ef2b894` (copiar o cabeçalho),
+`afff39b` (o zoom em caixa e sobrepor), `97a40d8` (só do motor: os formatos) e `8b500eb` (os formatos na
+interface). O que ficou:
+
+- **Os formatos (PD-02):** o Ctrl+O e o arrastar abrem o `.bin` com o cabeçalho, o `.bin` legado, o `.csv` do
+  `adc_tool -c` e o `.h5` do `--export-hdf5`. O que não tem o cabeçalho pergunta a taxa total e os canais (o `-f` e
+  o `--canais` da CLI, com as validações dela; `areas/analise/sem_cabecalho.py`), com a última resposta escrita e o
+  que ela dá por canal e em duração; o projeto (o formato 3) os guarda, e reabri-lo não pergunta. O `.csv` diz os
+  canais pela coluna `canal` (só a taxa é perguntada), e um convertido com `--inicio` no meio de um ciclo é alinhado
+  pelo índice das amostras (a CLI leria as linhas pela ordem e trocaria os canais). O `.h5` abre com o cabeçalho do
+  `.bin` de origem e a calibração da exportação; o CRC das amostras é conferido quando ele tem a captura inteira. A
+  chave do cache de um `.h5` nunca é o CRC do `.bin` (ele pode ser só um trecho). O `.csv` e o `.h5` vão para a
+  memória (o `.h5` até 2 GB de amostras; um maior pede o `.bin` de origem).
+- **Copiar o cabeçalho (PD-07):** no inspetor da captura, "Copiar texto" (as seções, como aparecem) e "Copiar JSON"
+  (todos os campos, sem arredondar: `api.cabecalho_em_dict`; sem o cabeçalho, a taxa e os canais informados).
+- **O zoom em caixa (AN-04):** `Z` (ou o botão) arma; o arrasto com o botão esquerdo desenha a caixa, e a faixa passa
+  a mostrar o tempo e o Y dela (o tempo, em todas). Uma caixa com um lado de menos de 4 px não muda aquele eixo. O
+  zoom feito desarma, e Esc também.
+- **Sobrepor (AN-03):** o botão das camadas põe todos os traços numa faixa só, num passo de desfazer, gravado no
+  projeto (`OpcoesDoTempo`); a faixa de cada traço fica guardada e volta ao separar, e o inspetor desliga a faixa
+  enquanto a vista sobrepõe.
+- **Ainda não:** sobrepostos, os traços de unidades diferentes dividem o Y, até o cadeado dar a um deles a escala
+  própria. Destravar sozinho não serve: um traço destravado fica parado quando o tempo da vista muda.
+- **Testes:** `tests/test_api_formatos.py` (12: os volts da CLI, bit a bit, nos três formatos),
+  `tests/test_gui_sem_cabecalho.py` (2), `tests/test_gui_zoom_em_caixa.py` (2, com eventos de mouse de verdade), o
+  sobrepor em `test_gui_vista_tempo.py`, os formatos e o copiar em `test_gui_abrir_capturas.py` (+2), o projeto 3 em
+  `test_gui_projeto.py`.
+
+O plano original:
 
 - **O conteúdo:**
   - abrir o `.h5` e o `.csv` do `adc_tool`, e o `.bin` legado pedindo a taxa e os canais (PD-02);
@@ -1166,6 +1199,16 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     **Unidades** das configurações, com as do usuário;
   - **de passagem:** a seta das caixas de escolha passou a ser a do SH-Analyzer (era a do sistema).
   - **Testes:** `ci.sh rapido` com 1 654 aprovados e `ci.sh interface` com 724; os 5 de desempenho passam.
+- **15/11/2026:** **a F2.10, o que ficou da Fase 1** (seção 4c):
+  - **os formatos:** o `.csv` e o `.h5` do `adc_tool` e o `.bin` legado; o legado e o `.csv` perguntam a taxa e os
+    canais (o `.csv` só a taxa, quando a coluna `canal` diz os canais), guardados no projeto (o formato 3, que também
+    leva as opções da vista de tempo). Os volts são os da CLI, bit a bit;
+  - **copiar o cabeçalho** em texto ou em JSON;
+  - **o zoom em caixa** (`Z`) e **sobrepor** os traços numa faixa;
+  - **de passagem:** o teste do arrasto mostrou que o PyQtGraph ignora movimentos do mouse a mais de 100 por segundo
+    (`mouseRateLimit`): um arrasto falso rápido demais vira um clique, e o do teste anda com pausas. Um `.bin` vazio
+    era "sem cabeçalho" e agora é um erro, sem perguntar nada.
+  - **Testes:** `ci.sh rapido` com 1 681 aprovados e `ci.sh interface` com 738; os 5 de desempenho passam.
 ---
 
 ## 8. Perguntas em aberto
