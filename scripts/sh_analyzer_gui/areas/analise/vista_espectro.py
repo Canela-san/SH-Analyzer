@@ -372,7 +372,7 @@ class VistaDeEspectro(QWidget):
         self._pedir()
 
     def _traco_de_la(self, _traco, campos):
-        if campos & {"cadeia", "ganho", "visivel", "cor", "nome", "deslocamento_s"}:
+        if campos & {"cadeia", "ganho", "visivel", "cor", "nome", "deslocamento_s", "unidade"}:
             self._pedir()
 
     def _materializacao_mudou(self, estado) -> None:
@@ -422,7 +422,7 @@ class VistaDeEspectro(QWidget):
             estado = self.materializacoes.estado_de(traco)
             pronta = estado.pronta.amostras if estado is not None and estado.pronta is not None else None
             contexto = self.materializacoes.contexto(fonte, r.canal)
-            pedidos.append((traco, canal.unidade, esp.TrechoDoTraco(fonte.fonte.captura, r.canal, r.cadeia, contexto,
+            pedidos.append((traco, r.unidade_de(canal.unidade), esp.TrechoDoTraco(fonte.fonte.captura, r.canal, r.cadeia, contexto,
                                                                     a, b, r.ganho, pronta)))
         return pedidos, nota
 

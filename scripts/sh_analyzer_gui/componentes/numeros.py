@@ -4,7 +4,8 @@ numérico aceita ("2,5k", "2500", "1,2 mV", "3e-6") e como as medidas aparecem (
 **A leitura** aceita a vírgula ou o ponto como separador decimal. Com os dois no mesmo número, o último é o decimal e
 o outro, o dos milhares ("1.234,5" ou "1,234.5"); com um só, ele é o decimal ("1.500" = 1,5: num campo de medida,
 um número com ponto é quase sempre decimal). Espaços são ignorados. O prefixo (``p n µ u m k M G``) e a unidade são
-opcionais; a unidade, se vier, tem de ser a do campo. "m" é mili e "M", mega.
+opcionais; a unidade, se vier, tem de ser a do campo. "m" é mili e "M", mega. Uma unidade sem prefixo (°C, %, psi:
+``unidades.aceita_prefixos``) não leva um, nem na leitura nem na escrita ("23,46 °C").
 
 **A escrita** escolhe o prefixo que deixa a mantissa entre 1 e 1000 (o formato de engenharia), com ``digitos``
 algarismos significativos, sem zeros à direita, e o separador decimal das configurações (:func:`separador_decimal`:
@@ -18,10 +19,11 @@ from __future__ import annotations
 import math
 import re
 
+from ..dados.unidades import PREFIXOS_DO_SI, aceita_prefixos
+
 SEPARADORES = (",", ".")
 _separador = ","
 
-PREFIXOS = {"p": -12, "n": -9, "µ": -6, "u": -6, "m": -3, "": 0, "k": 3, "M": 6, "G": 9}
 _ESCRITA = {-12: "p", -9: "n", -6: "µ", -3: "m", 0: "", 3: "k", 6: "M", 9: "G"}
 _NUMERO = re.compile(r"^([+-]?[0-9.,]*[0-9][0-9.,]*(?:[eE][+-]?[0-9]+)?)([pnµumkMG]?)(.*)$")
 
@@ -78,8 +80,10 @@ def ler_numero(texto: str, unidade: str = "") -> float:
         prefixo, resto = "", unidade
     if resto and resto != unidade:
         raise NumeroInvalido(f"unidade '{resto}' não é a do campo ({unidade or 'sem unidade'})")
+    if prefixo and unidade and not aceita_prefixos(unidade):
+        raise NumeroInvalido(f"{unidade} não leva prefixo do SI")
     try:
-        valor = _mantissa(numero) * 10.0 ** PREFIXOS[prefixo]
+        valor = _mantissa(numero) * 10.0 ** PREFIXOS_DO_SI[prefixo]
     except ValueError as e:
         raise NumeroInvalido(f"'{texto}' não é um número ({e})") from None
     if not math.isfinite(valor):
@@ -89,12 +93,16 @@ def ler_numero(texto: str, unidade: str = "") -> float:
 
 def formatar_si(valor: float, unidade: str = "", digitos: int = 4, decimal: str | None = None) -> str:
     """``valor`` com prefixo do SI e ``digitos`` algarismos significativos: ``formatar_si(2500, "Hz") == "2,5 kHz"``.
-    ``decimal`` (``","`` ou ``"."``) troca o separador das configurações só nesta chamada."""
+    Numa unidade que não aceita prefixo (°C, %, psi: ``unidades.aceita_prefixos``), os algarismos na unidade:
+    ``formatar_si(23.456, "°C") == "23,46 °C"``. ``decimal`` (``","`` ou ``"."``) troca o separador das configurações
+    só nesta chamada."""
     decimal = decimal or _separador
     if not math.isfinite(valor):
         return "—"
     if valor == 0:
         return f"0 {unidade}".strip()
+    if unidade and not aceita_prefixos(unidade):
+        return f"{_sem_prefixo(valor, digitos, decimal)} {unidade}"
     expoente = int(math.floor(math.log10(abs(valor)) / 3) * 3)
     expoente = max(-12, min(9, expoente))
     mantissa = valor / 10.0 ** expoente
@@ -109,6 +117,20 @@ def formatar_si(valor: float, unidade: str = "", digitos: int = 4, decimal: str 
         texto = texto.rstrip("0").rstrip(".")
     texto = texto.replace(".", decimal)
     return f"{texto} {_ESCRITA[expoente]}{unidade}".strip()
+
+
+def _sem_prefixo(valor: float, digitos: int, decimal: str) -> str:
+    """``digitos`` algarismos significativos, sem prefixo (em notação científica fora de 10⁻⁴ a 10⁹)."""
+    ordem = int(math.floor(math.log10(abs(valor))))
+    if not -4 <= ordem < 9:
+        mantissa, expoente = f"{valor:.{max(0, digitos - 1)}e}".split("e")
+        if "." in mantissa:
+            mantissa = mantissa.rstrip("0").rstrip(".")
+        return f"{mantissa.replace('.', decimal)}e{int(expoente)}"
+    texto = f"{valor:.{max(0, digitos - 1 - ordem)}f}"
+    if "." in texto:
+        texto = texto.rstrip("0").rstrip(".")
+    return texto.replace(".", decimal)
 
 
 UNIDADES_DE_BYTES = ("B", "KiB", "MiB", "GiB", "TiB")

@@ -280,6 +280,18 @@ class VistaLigada(QWidget):
     def _traco_de_la(self, traco, campos):
         if campos & {"cadeia", "ganho", "visivel", "nome", "deslocamento_s"}:
             self._pedir()
+        elif "unidade" in campos and traco is self.traco and self.resultado is not None:
+            self._desenhar()                     # os mesmos números, com a unidade nova
+            self._mostrar_info()
+            self.emitir_regiao()
+
+    def traco_unidade(self) -> str:
+        """A unidade dos valores do traço calculado: a dele, ou a do canal."""
+        t = self.trecho_atual
+        if t is None:
+            return ""
+        do_canal = t.captura.canal(t.numero).unidade
+        return self.traco.receita.unidade_de(do_canal) if self.traco is not None else do_canal
 
     def _materializacao_mudou(self, estado) -> None:
         if isValid(self) and self.aguardando and estado.pronta is not None:
@@ -520,10 +532,6 @@ class VistaDeBandas(VistaLigada):
             for c, texto in enumerate(valores):
                 self.tabela.setItem(k, c, QTableWidgetItem(texto))
 
-    def traco_unidade(self) -> str:
-        t = self.trecho_atual
-        return t.captura.canal(t.numero).unidade if t is not None else ""
-
     def _desenhar(self) -> None:
         if self.resultado is None:
             self.imagem.clear()
@@ -734,10 +742,6 @@ class VistaDeHarmonicos(VistaLigada):
                 self.tabela.setItem(k, c, QTableWidgetItem(texto))
         if ajustar:
             self.grafico.getViewBox().autoRange(padding=0.02)
-
-    def traco_unidade(self) -> str:
-        t = self.trecho_atual
-        return t.captura.canal(t.numero).unidade if t is not None else ""
 
     def _descricao(self) -> list[str]:
         if self.resultado is None:

@@ -408,7 +408,8 @@ class AreaDeAnalise(QObject):
         return traco
 
     def _faixa_para(self, vista: Vista, unidade: str) -> int:
-        """A faixa de um traço novo: a dos traços com a mesma unidade na vista; sem nenhum, uma faixa nova."""
+        """A faixa de um traço novo: a dos traços com a mesma unidade na vista (a de cada um: a dele ou a do
+        canal); sem nenhum, uma faixa nova."""
         ocupadas = {}
         for t in vista.tracos:
             try:
@@ -416,7 +417,7 @@ class AreaDeAnalise(QObject):
             except KeyError:
                 continue
             if not f.esta_ausente:
-                ocupadas.setdefault(f.canal(t.receita.canal).unidade, t.receita.faixa)
+                ocupadas.setdefault(t.receita.unidade_de(f.canal(t.receita.canal).unidade), t.receita.faixa)
         if unidade in ocupadas:
             return ocupadas[unidade]
         usadas = {t.receita.faixa for t in vista.tracos}

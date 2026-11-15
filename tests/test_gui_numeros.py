@@ -12,6 +12,8 @@ from sh_analyzer_gui.componentes.numeros import NumeroInvalido, formatar_si, ler
     ("4,7µ", "", 4.7e-6), ("4,7u", "", 4.7e-6), ("10 MHz", "Hz", 1e7), ("100 n", "", 1e-7), ("2 p", "", 2e-12),
     ("1.234,5", "", 1234.5), ("1,234.5", "", 1234.5), ("1.500", "", 1.5), ("+7", "", 7.0), ("0,5 V", "V", 0.5),
     ("5 m", "m", 5.0), ("5 mm", "m", 5e-3), ("1 000", "", 1000.0), (" 12 ", "", 12.0),
+    ("23,5 °C", "°C", 23.5), ("-40°F", "°F", -40.0), ("50 %", "%", 50.0), ("2 kg", "kg", 2.0),
+    ("760 mmHg", "mmHg", 760.0), ("9,8 m/s²", "m/s²", 9.8), ("3 mg", "g", 3e-3), ("1,5 kPa", "Pa", 1500.0),
 ])
 def test_ler_numero(texto, unidade, valor):
     assert ler_numero(texto, unidade) == pytest.approx(valor)
@@ -19,6 +21,7 @@ def test_ler_numero(texto, unidade, valor):
 
 @pytest.mark.parametrize("texto, unidade", [
     ("", ""), ("abc", ""), ("1,2,3", ""), ("1.2.3", ""), ("2 kHz", "V"), ("2 x", ""), ("inf", ""), ("1e999", ""),
+    ("2 m°C", "°C"), ("3 k%", "%"), ("1 Mkg", "kg"),
 ])
 def test_ler_numero_invalido(texto, unidade):
     with pytest.raises(NumeroInvalido):
@@ -29,6 +32,9 @@ def test_ler_numero_invalido(texto, unidade):
     (2500, "Hz", "2,5 kHz"), (127.34, "V", "127,3 V"), (0.0012, "V", "1,2 mV"), (59.998, "Hz", "60 Hz"),
     (0, "A", "0 A"), (-4.7e-6, "F", "-4,7 µF"), (1e7, "Hz", "10 MHz"), (999.96, "V", "1 kV"), (1500, "", "1,5 k"),
     (3.0, "", "3"), (123456, "S/s", "123,5 kS/s"),
+    (23.456, "°C", "23,46 °C"), (-40, "°F", "-40 °F"), (0.0123, "%", "0,0123 %"), (101325, "Pa", "101,3 kPa"),
+    (2.5e-3, "g", "2,5 mg"), (1.5e12, "psi", "1,5e12 psi"), (3e-6, "°C", "3e-6 °C"), (1234.6, "rpm", "1235 rpm"),
+    (75.0, "kg", "75 kg"),
 ])
 def test_formatar_si(valor, unidade, texto):
     assert formatar_si(valor, unidade) == texto
@@ -40,9 +46,10 @@ def test_formatar_em_ingles_e_o_que_nao_e_numero():
     assert formatar_si(math.nan, "V") == "—" and formatar_si(math.inf) == "—"
 
 
-@pytest.mark.parametrize("valor", [1e-11, 3.3e-7, 0.05, 1.0, 42.0, 2.2e3, 7.5e5, 4e8])
-def test_ida_e_volta(valor):
-    assert ler_numero(formatar_si(valor, "V", digitos=6), "V") == pytest.approx(valor, rel=1e-5)
+@pytest.mark.parametrize("valor", [1e-11, 3.3e-7, 0.05, 1.0, 42.0, 2.2e3, 7.5e5, 4e8, -2.5e12])
+@pytest.mark.parametrize("unidade", ["V", "°C"])
+def test_ida_e_volta(valor, unidade):
+    assert ler_numero(formatar_si(valor, unidade, digitos=6), unidade) == pytest.approx(valor, rel=1e-5)
 
 
 @pytest.mark.parametrize("segundos, texto", [

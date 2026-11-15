@@ -33,6 +33,9 @@ def test_padroes_e_mudanca():
     ({"deslocamento_s": math.nan}, "deslocamento"),
     ({"visivel": 1}, "visível"),
     ({"faixa": -2}, "faixa"),
+    ({"unidade": "m s"}, "unidade"),
+    ({"unidade": "x" * 17}, "unidade"),
+    ({"unidade": 3}, "unidade"),
 ])
 def test_campos_invalidos_sao_recusados_com_a_mensagem(campos, trecho):
     with pytest.raises(ReceitaInvalida, match=trecho):
@@ -77,3 +80,16 @@ def test_a_cadeia_de_transformacoes_na_receita():
     with pytest.raises(ReceitaInvalida, match="cadeia de transformações é inválida"):
         ReceitaDoTraco.de_dict({**r.para_dict(), "etapas": [{"tipo": "filtro", "filtro": "passa_altas",
                                                              "cortes": [2000.0, 3000.0]}]})
+
+
+def test_a_unidade_do_traco():
+    r = receita()
+    assert r.unidade == "" and r.unidade_de("V") == "V"               # sem uma, a do canal
+    s = r.com(unidade="  °C ", ganho=100.0)
+    assert s.unidade == "°C" and s.unidade_de("V") == "°C" and r.diferencas(s) == {"unidade", "ganho"}
+    assert s.com(unidade="").unidade_de("A") == "A"                     # vazia volta à do canal
+    with pytest.raises(ReceitaInvalida, match="espaços"):
+        receita(unidade=" °C")                                         # na criação, já tem de vir limpa
+    assert ReceitaDoTraco.de_dict(s.para_dict()) == s
+    antigo = {k: v for k, v in s.para_dict().items() if k != "unidade"}  # um projeto de antes da unidade
+    assert ReceitaDoTraco.de_dict(antigo).unidade == ""

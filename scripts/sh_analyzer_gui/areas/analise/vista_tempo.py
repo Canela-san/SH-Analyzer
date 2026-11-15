@@ -41,6 +41,7 @@ from shiboken6 import isValid
 from ...componentes.chip import ChipDeTraco
 from ...componentes.fluxo import LayoutDeFluxo
 from ...componentes.numeros import decimal, formatar_si
+from ...dados import unidades
 from ...dados.piramide import Piramide
 from ...graficos.clique import mais_perto
 from ...graficos.cursores import CursoresDaVista
@@ -377,12 +378,10 @@ class VistaDeTempo(QWidget):
             escalas = faixa.escalas
             dela = escalas.tracos or [t for t in self.vista.tracos if t.receita.faixa == numero]
             traco = escalas.referencia or (dela[0] if dela else None)
-            canais = [self._canal_do(t) for t in dela]
-            canal = self._canal_do(traco) if traco is not None else None
-            if canal is None:
+            if traco is None or self._canal_do(traco) is None:
                 continue
-            rotulo = f"{canal.nome_grandeza} ({canal.unidade})"
-            mistura = (len({c.unidade for c in canais if c is not None}) > 1
+            rotulo = unidades.rotulo(*self.grandeza_e_unidade(traco))
+            mistura = (len({self.grandeza_e_unidade(t)[1] for t in dela if self._canal_do(t) is not None}) > 1
                        or any(not escalas.escala(t).comum for t in dela))
             cor = cor_do_traco(traco.receita.cor, tema)[0] if mistura else None
             if faixa.rotulo_y != (rotulo, cor):
@@ -392,6 +391,13 @@ class VistaDeTempo(QWidget):
     def _canal_do(self, traco: Traco):
         fonte = self._fonte_do(traco)
         return fonte.canal(traco.receita.canal) if fonte is not None and not fonte.esta_ausente else None
+
+    def grandeza_e_unidade(self, traco: Traco) -> tuple[str, str]:
+        """A grandeza e a unidade dos valores do traço (a dele, ou a do canal: ``dados/unidades.py``)."""
+        canal = self._canal_do(traco)
+        if canal is None:
+            return "", traco.receita.unidade
+        return unidades.do_traco(traco.receita.unidade, canal.unidade, canal.nome_grandeza)
 
     # ------------------------------------------------------------------ as escalas dos traços
 
@@ -803,6 +809,8 @@ class VistaDeTempo(QWidget):
                     self._refazer_minimapa()
             if campos & {"ganho", "offset"}:
                 item.definir_afim(*self._afim(traco))
+            if "unidade" in campos:
+                self._rotular_faixas()
             self._espera_da_medida.start()
             if "deslocamento_s" in campos:
                 item.definir_t0(r.deslocamento_s)

@@ -95,7 +95,8 @@ class ServicoDeMedidas(QObject):
             inicio, fim = pedido.regiao_de(traco)
             i0 = _indice(inicio, r.deslocamento_s, canal.taxa_hz, n)
             i1 = _indice(fim, r.deslocamento_s, canal.taxa_hz, n)
-            planos.append((traco, fonte.fonte.captura, r, i0, i1, n, canal.unidade, self._contexto(fonte, r)))
+            planos.append((traco, fonte.fonte.captura, r, i0, i1, n, r.unidade_de(canal.unidade),
+                           self._contexto(fonte, r)))
         if not planos:
             self._atual = None
             self.prontas.emit(pedido, [])

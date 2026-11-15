@@ -4,6 +4,10 @@ mostrado. **Um traço nunca copia dados**; ele guarda só esta receita, e o grá
 A ordem: o canal na unidade física, a cadeia (``cadeia.py``: a correção de sonda, os filtros, o "remover o DC") e, no
 fim, o ganho, o offset e o deslocamento no tempo do traço (a apresentação, direto na pirâmide).
 
+**A unidade do traço** (``unidade``) é a dos valores depois do ganho e do offset: vazia, a do canal (V, A); senão, a
+que o usuário escolheu para o sensor (°C, Pa, rpm: ``unidades.py``). Com ela, o ganho e o offset são a
+escala do sensor (10 mV/°C: ganho de 100 °C/V).
+
 Imutável: uma mudança é uma receita nova (``com``), e o desfazer guarda a de antes e a de depois. Validada na
 criação: uma receita inválida nunca entra no modelo nem no arquivo de projeto.
 
@@ -16,8 +20,9 @@ import math
 from dataclasses import dataclass, field, fields, replace
 
 from .cadeia import Cadeia, EtapaInvalida
+from .unidades import UnidadeInvalida, validar_simbolo
 
-EDITAVEIS = ("nome", "cor", "ganho", "offset", "deslocamento_s", "visivel", "faixa", "cadeia")
+EDITAVEIS = ("nome", "cor", "ganho", "offset", "deslocamento_s", "visivel", "faixa", "cadeia", "unidade")
 """O que o usuário muda num traço. A fonte e o canal, não: outro canal é outro traço."""
 
 
@@ -40,11 +45,12 @@ class ReceitaDoTraco:
     nome: str
     cor: int                    # a posição na paleta (12.3): a cor segue o traço, não a ordem na legenda
     ganho: float = 1.0          # multiplica o valor em unidade física; negativo inverte
-    offset: float = 0.0         # somado depois do ganho, na unidade do canal
+    offset: float = 0.0         # somado depois do ganho, na unidade do traço
     deslocamento_s: float = 0.0  # o traço andado no tempo (positivo = para a direita)
     visivel: bool = True
     faixa: int = 0              # em qual faixa da vista de tempo
     cadeia: Cadeia = field(default_factory=Cadeia)    # as transformações, antes do ganho e do offset
+    unidade: str = ""           # a do traço (depois do ganho e do offset); vazia: a do canal
 
     def __post_init__(self) -> None:
         if not isinstance(self.fonte, str) or not self.fonte:
@@ -67,14 +73,21 @@ class ReceitaDoTraco:
             raise ReceitaInvalida(f"faixa inválida: {self.faixa!r}")
         if not isinstance(self.cadeia, Cadeia):
             raise ReceitaInvalida(f"a cadeia de transformações tem de ser uma Cadeia, não {self.cadeia!r}")
+        if self.unidade != "":
+            try:
+                if validar_simbolo(self.unidade) != self.unidade:
+                    raise UnidadeInvalida("a unidade tem espaços nas pontas")
+            except UnidadeInvalida as e:
+                raise ReceitaInvalida(f"unidade inválida: {e}") from None
 
     def com(self, **mudancas) -> ReceitaDoTraco:
         """A receita com ``mudancas`` (só os campos de :data:`EDITAVEIS`). Levanta :class:`ReceitaInvalida`."""
         fora = set(mudancas) - set(EDITAVEIS)
         if fora:
             raise ReceitaInvalida(f"não dá para mudar {', '.join(sorted(fora))} num traço")
-        if "nome" in mudancas and isinstance(mudancas["nome"], str):
-            mudancas["nome"] = mudancas["nome"].strip()
+        for campo in ("nome", "unidade"):
+            if campo in mudancas and isinstance(mudancas[campo], str):
+                mudancas[campo] = mudancas[campo].strip()
         return replace(self, **mudancas)
 
     def diferencas(self, outra: ReceitaDoTraco) -> frozenset[str]:
@@ -98,6 +111,10 @@ class ReceitaDoTraco:
             except EtapaInvalida as e:
                 raise ReceitaInvalida(f"a cadeia de transformações é inválida: {e}") from None
         return cls(**valores)
+
+    def unidade_de(self, unidade_do_canal: str) -> str:
+        """A unidade dos valores do traço: a dele ou, sem uma, a do canal."""
+        return self.unidade or unidade_do_canal
 
     def afim(self, escala_do_canal: float, deslocamento_do_canal: float) -> tuple[float, float]:
         """A conversão inteira, do código do ADC ao valor mostrado: ``y = escala * codigo + deslocamento``, juntando
