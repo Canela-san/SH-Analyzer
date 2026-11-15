@@ -29,7 +29,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > - o "pronto quando" da Fase 1: abrir uma captura de 1 h, navegar e medir com 8 traços de 2 fontes, em
 >   `uv run --extra gui python -m sh_analyzer_gui`.
 >
-> **No laboratório (opcional, 5 minutos):** a F0.2 colhe da BeagleBone os dados que a Aquisição vai usar (seção 6).
+> **A placa de verdade** está no USB do computador do usuário (15/11/2026): `debian@192.168.6.2`, com a chave. O
+> cabo tem mau contato (a conexão cai sem aviso), e o disco dela é pequeno (~1,5 GB livres): as capturas vêm
+> para `$DADOS/lab/` e saem da placa depois de conferidas. O canal 1 está na tomada da casa (127 V).
 
 **Onde trabalhar:** no worktree `.claude/worktrees/interface` (o branch `feat/interface`), para não mexer no checkout do `main`, que é o do laboratório. Se ele não existir, crie-o com `git worktree add .claude/worktrees/interface feat/interface`.
 
@@ -132,7 +134,7 @@ Os estados são ☐ a fazer, ▶ a próxima, ◐ em parte e ☑ feita. Cada tare
 
 O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/paleta_cores.py` e este arquivo de andamento.
 
-### ☐ F0.2: os dados da placa para a Aquisição (no laboratório, opcional)
+### ☑ F0.2: os dados da placa para a Aquisição
 
 - **Objetivo:** confirmar na placa real o que o plano supõe:
   - o Python 3 para o agente;
@@ -141,6 +143,13 @@ O layout escolhido no plano, a conferência das cores em `scripts/benchmarks/pal
   - a vazão do SSH.
 - **Como:** os comandos da seção 6. O resultado vai para a tabela de lá.
 - **Pronto quando:** a tabela da seção 6 está preenchida, ou a tarefa fica para outra ida ao laboratório, sem prejuízo para as próximas.
+- **Feito em 15/11/2026,** com a placa no USB em casa (a tabela da seção 6). O que muda para a Fase 3:
+  - **o kernel é o 4.19**, não o 5.10 que o plano supõe: o diagnóstico (F3.4) aceita os overlays `*-4-19-TI-*`;
+  - **o Python é o 3.7.3**, o que o agente já respeita;
+  - **o nº de série do USB é o da EEPROM:** a descoberta (F3.3) reconhece a placa pela porta serial, antes do SSH;
+  - **o mDNS só anuncia a 192.168.7.2**; no Linux, a 192.168.6.2 vem da sondagem da porta 22;
+  - **a vazão é de ~5 MB/s**, limitada pela cifra no único núcleo da placa: a transferência (F3.7) prefere o
+    `aes128-ctr` (5,9 MB/s), e pedidos SFTP em paralelo não aceleram.
 
 ### ☑ F0.3: a pirâmide mín/máx
 
@@ -1109,20 +1118,20 @@ lsusb > "$DIA/usb_para_gui.txt"; ip -brief addr >> "$DIA/usb_para_gui.txt"; gete
 
 **A vazão:** quando trouxer uma captura grande, anote o tamanho e o tempo. Se usar o `lab trazer`, ponha `time` na frente.
 
-Depois, preencha a tabela (ou peça para preencher a partir dos arquivos `placa_para_gui.txt` e `usb_para_gui.txt`):
+**Colhido em 15/11/2026**, com a placa no USB em casa (`$DADOS/lab/2026-11-15/`, os dois `.txt` e a captura da rede). O canal 1 na tomada: 127,7 V rms, 60,00 Hz, sem saturar na faixa de ±10,24 V.
 
 | Item | O que o plano supõe | Na placa |
 |---|---|---|
-| Python 3 na placa | Existe (o agente usa só a biblioteca padrão) | |
-| Kernel e imagem | Debian da BeagleBoard, kernel 5.10-ti ou parecido | |
-| `mem=496M` na linha do kernel | Sim | |
-| Overlays carregados | O de PRU remoteproc; o de áudio do HDMI desligado ou o cape universal | |
-| `.dtbo` de PRU em `/lib/firmware` | Algum `*PRU-RPROC*` | |
-| `config-pin`, `dtc`, `avahi-daemon`, `setsid`, `systemd-run` | Existem | |
-| O gadget USB no `lsusb` | Um dispositivo da BeagleBone (anote o VID:PID) | |
-| A interface de rede do USB no computador | 192.168.6.x ou 192.168.7.x | |
-| `beaglebone.local` resolve | Sim, pelo mDNS | |
-| Vazão do `scp` de uma captura grande | ~10 MB/s | |
+| Python 3 na placa | Existe (o agente usa só a biblioteca padrão) | **3.7.3** |
+| Kernel e imagem | Debian da BeagleBoard, kernel 5.10-ti ou parecido | **4.19.94-ti-r42**, Debian 10 (Buster IoT de 2020-04-06); 1 núcleo ARMv7 |
+| `mem=496M` na linha do kernel | Sim | Sim |
+| Overlays carregados | O de PRU remoteproc; o de áudio do HDMI desligado ou o cape universal | `AM335X-PRU-RPROC-4-19-TI-00A0`, `BB-ADC-00A0`, `BB-BONE-eMMC1-01-00A0`; o vídeo e o áudio do HDMI desligados, o cape universal ligado (`uEnv.txt`) |
+| `.dtbo` de PRU em `/lib/firmware` | Algum `*PRU-RPROC*` | Os de 4.4 a 4.19, com e sem o PRUCAPE, e o `AM335X-PRU-UIO` |
+| `config-pin`, `dtc`, `avahi-daemon`, `setsid`, `systemd-run` | Existem | Todos. O `avahi-daemon` está em `/usr/sbin`, fora do `PATH` do `debian` (o `command -v` não o acha), e roda |
+| O gadget USB no `lsusb` | Um dispositivo da BeagleBone (anote o VID:PID) | **`1d6b:0104`** (Multifunction Composite Gadget). O nº de série do USB é o da EEPROM (`2017BBBK382A`); a porta serial é a `/dev/ttyACM0` (interface 05, `/dev/serial/by-id/usb-BeagleBoard.org_BeagleBoneBlack_<série>-if05`) |
+| A interface de rede do USB no computador | 192.168.6.x ou 192.168.7.x | As duas: a placa é a **192.168.6.2** (ECM, a do Linux; o computador, 192.168.6.1) e a 192.168.7.2 (RNDIS; o computador, 192.168.7.1). Ping de 0,6 ms |
+| `beaglebone.local` resolve | Sim, pelo mDNS | Sim, mas só para a **192.168.7.2** |
+| Vazão do `scp` de uma captura grande | ~10 MB/s | **4,8 MB/s** (`scp` e `rsync`, 46 MiB em 10 s). Pela cifra: `chacha20-poly1305` 5,2, `aes128-gcm` 5,7 e **`aes128-ctr` 5,9 MB/s**. O limite é a cifra no único núcleo da placa (o eMMC lê a 264 MB/s): pedidos em paralelo não ajudam |
 | (Se houver um Windows no laboratório) a placa aparece como rede no USB | Sim (RNDIS) | |
 
 ---
