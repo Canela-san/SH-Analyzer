@@ -15,7 +15,9 @@ regravada), a queda de todas as conexões (:meth:`ServidorSSH.derrubar`, o cabo 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -35,6 +37,7 @@ class ServidorSSH:
         self.comandos: list[str] = []
         self.autenticacoes: list[tuple[str, object]] = []    # ("inicio", usuário), ("senha", certa?)
         self.conexoes: set[asyncssh.SSHServerConnection] = set()
+        self._rodando: set[asyncio.Task] = set()            # os comandos ainda rodando (o _rodar de cada um)
         self.porta = 0
         self.chave_do_host = asyncssh.generate_private_key("ssh-ed25519")
         # Como a imagem da placa, que tem as chaves RSA, ECDSA e ED25519 (o asyncssh, sozinho, escolheria a RSA).
@@ -63,11 +66,14 @@ class ServidorSSH:
         return self
 
     async def parar(self) -> None:
+        """Derruba as conexões e para de escutar; volta com todo comando morto e colhido (com o canal fechado, o
+        vigia de cada um mata o grupo dele), para nenhum processo sobreviver ao teste."""
         self.derrubar()
         if self._servidor is not None:
             self._servidor.close()
             await self._servidor.wait_closed()
             self._servidor = None
+        await asyncio.gather(*self._rodando, return_exceptions=True)
 
     async def trocar_chave_do_host(self) -> None:
         """A placa regravada: outra chave de host, na mesma porta."""
@@ -87,26 +93,31 @@ class ServidorSSH:
         await self.parar()
 
     async def _rodar(self, processo: asyncssh.SSHServerProcess) -> None:
-        """Um comando num shell de verdade, com o stdin, o stdout e o stderr ligados ao canal. Se o canal fecha antes
-        (o cliente desistiu, a conexão caiu), o shell é morto."""
+        """Um comando num shell de verdade, num grupo de processos só dele, com o stdin, o stdout e o stderr ligados
+        ao canal. Se o canal fecha antes (o cliente desistiu, a conexão caiu), o grupo inteiro é morto: o ``dash`` não
+        faz ``exec`` do último comando, e um ``sleep 30`` sobreviveria ao shell, com os pipes abertos."""
+        tarefa = asyncio.current_task()
+        self._rodando.add(tarefa)
         comando = processo.command or ""
         self.comandos.append(comando)
-        shell = await asyncio.create_subprocess_exec(
-            "/bin/sh", "-c", comando, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, cwd=self.home, env=self.ambiente)
-        entrada = asyncio.create_task(_bombear_entrada(processo, shell))
-        vigia = asyncio.create_task(_matar_quando_o_canal_fechar(processo, shell))
         try:
-            await asyncio.gather(_copiar(shell.stdout, processo.stdout), _copiar(shell.stderr, processo.stderr))
-            processo.exit(await shell.wait())
-        except (asyncssh.Error, OSError):
-            pass
-        finally:
-            entrada.cancel()
-            vigia.cancel()
-            if shell.returncode is None:
-                shell.kill()
+            shell = await asyncio.create_subprocess_exec(
+                "/bin/sh", "-c", comando, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE, cwd=self.home, env=self.ambiente, start_new_session=True)
+            entrada = asyncio.create_task(_bombear_entrada(processo, shell))
+            vigia = asyncio.create_task(_matar_quando_o_canal_fechar(processo, shell))
+            try:
+                await asyncio.gather(_copiar(shell.stdout, processo.stdout), _copiar(shell.stderr, processo.stderr))
+                processo.exit(await shell.wait())
+            except (asyncssh.Error, OSError):
+                pass
+            finally:
+                entrada.cancel()
+                vigia.cancel()
+                _matar(shell)
                 await shell.wait()
+        finally:
+            self._rodando.discard(tarefa)
 
 
 class _Servidor(asyncssh.SSHServer):
@@ -157,5 +168,11 @@ async def _copiar(origem: asyncio.StreamReader, destino) -> None:
 
 async def _matar_quando_o_canal_fechar(processo: asyncssh.SSHServerProcess, shell: asyncio.subprocess.Process) -> None:
     await processo.channel.wait_closed()
+    _matar(shell)
+
+
+def _matar(shell: asyncio.subprocess.Process) -> None:
+    """O shell e o que ele rodou (o grupo dele), se ainda está de pé."""
     if shell.returncode is None:
-        shell.kill()
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(shell.pid, signal.SIGKILL)
