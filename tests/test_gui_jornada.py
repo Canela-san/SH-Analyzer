@@ -3,15 +3,13 @@ do usuário, abrir a captura (Ctrl+O), plotar a corrente (o duplo clique na árv
 inspetor, abrir o espectro (Ctrl+E) da captura inteira, e os números batem com os do ``adc_tool --fft`` (pelo
 ``.mat``, a precisão inteira). Depois, o projeto salvo e reaberto dá o mesmo espectro. Sem tela."""
 
-import json
-
 import numpy as np
 import pytest
 
 pytest.importorskip("PySide6")
 pytest.importorskip("pytestqt")
 
-from capturas_sinteticas import FREQS_CAL, captura_producao, planta_h  # noqa: E402
+from capturas_sinteticas import captura_producao, escrever_perfil_sonda, planta_h  # noqa: E402
 from dialogos_falsos import DialogosFalsos  # noqa: E402
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
@@ -28,11 +26,7 @@ TONS_HZ = (9_000.0, 20_000.0, 40_000.0)          # os tons da captura de produç
 @pytest.fixture
 def campo(tmp_path):
     """Uma captura de campo (a tensão e a corrente pela sonda de 1 polo em 30 kHz) e a pasta com o perfil da sonda."""
-    sondas = tmp_path / "sondas"
-    sondas.mkdir()
-    perfil = {"id": "sonda_teste", "tipo": "resposta_frequencia",
-              "pontos": [{"freq_hz": float(f), "ganho": float(planta_h(f))} for f in FREQS_CAL]}
-    (sondas / "sonda_teste.json").write_text(json.dumps(perfil), encoding="utf-8")
+    sondas = escrever_perfil_sonda(tmp_path / "sondas").parent
     return captura_producao(tmp_path / "campo.bin", dur_s=0.5), sondas
 
 

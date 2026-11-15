@@ -16,6 +16,7 @@ codificado com a SUA faixa, como o ADS8688 faria.
 
 from __future__ import annotations
 
+import json
 import struct
 import zlib
 from pathlib import Path
@@ -56,6 +57,18 @@ def planta_h(f, fc_lp: float = 30e3, fc_hp: float = 5.0):
     """Magnitude 'verdadeira' (linear) da sonda simulada."""
     f = np.asarray(f, dtype=np.float64)
     return 1.0 / np.sqrt(1.0 + (f / fc_lp) ** 2) / np.sqrt(1.0 + (fc_hp / np.maximum(f, 1e-9)) ** 2)
+
+
+def escrever_perfil_sonda(pasta: Path, nome: str = "sonda_teste") -> Path:
+    """O perfil da sonda simulada (``planta_h`` nos ``FREQS_CAL``) em ``pasta/nome.json``, como o ``gerar_perfil``
+    o gravaria; ``pasta`` é a pasta das sondas (``--sondas-dir``)."""
+    pasta = Path(pasta)
+    pasta.mkdir(parents=True, exist_ok=True)
+    perfil = {"id": nome, "tipo": "resposta_frequencia",
+              "pontos": [{"freq_hz": float(f), "ganho": float(planta_h(f))} for f in FREQS_CAL]}
+    caminho = pasta / f"{nome}.json"
+    caminho.write_text(json.dumps(perfil), encoding="utf-8")
+    return caminho
 
 
 def volts_para_codigos(v: np.ndarray, formato: str = "uint16", faixa: float = FAIXA) -> np.ndarray:

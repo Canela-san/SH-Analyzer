@@ -829,7 +829,18 @@ O plano original:
   - o zoom em caixa (`Z` + arrastar) e o modo sobrepor da vista de tempo (AN-03, AN-04).
 - **Os testes:** cada formato aberto com os mesmos volts da CLI; o zoom em caixa e o sobrepor.
 
-### ☐ F2.11: o fechamento da Fase 2
+### ◐ F2.11: o fechamento da Fase 2
+
+**Em andamento (15/11/2026):** `76e26ee` (a jornada do pesquisador de ponta a ponta, `tests/test_gui_jornada.py`: o
+espectro corrigido pela sonda bate com o `adc_tool --fft` a 1e-7 dB) e o `medir_vista --cadeia` (o G1 com a correção
+de sonda e um passa-altas em cada um dos 8 traços). **O G1 com a cadeia, sem tela:** materializada, aprovado (p95 de
+12,8 ms); **durante as materializações, reprovado (p95 de 32,9 ms)**: quadros de 17 a 145 ms espalhados pelo
+percurso. **Próximo:** achar o que pesa na thread da interface nesses quadros (o perfil do cProfile mistura as
+threads no Python 3.13: medir por fase do quadro e por chamada de `_materializacao_mudou`, `_pedir_previas`,
+`definir_dados` e `TracoLOD.recalcular`); depois, o G1 na tela do usuário
+(`uv run --extra gui python -m sh_analyzer_gui.prototipos.medir_vista --cadeia`), o plano e este arquivo em dia.
+
+O plano original:
 
 - **O conteúdo:** a jornada do pesquisador num teste de ponta a ponta (abrir, plotar, ligar a correção de sonda,
   abrir o espectro, conferir com a CLI); o G1 medido de novo com a cadeia ligada; o plano e este arquivo em dia.
@@ -858,6 +869,7 @@ O plano original:
 | 13/11/2026 | G1 sem tela na **vista de tempo**, 8 faixas, com a CPU sob estresse de outra sessão (carga de 16 a 25) | **Sem valor como medida:** mediana de 35 ms. O perfil achou e tirou dois gastos (a grade com o `tickValues` e o rótulo HTML dos eixos escondidos) | `prototipos/medir_vista.py`, perfil |
 | 14/11/2026 | **O espectro de uma FFT de 60 s** (6 M bins), 1 600 × 1 000 px, sem tela: arrastar, zoom, cursor | Antes: 316, 319 e 330 ms por quadro (o aplicativo travava). **Depois: 7,4, 6,2 e 2,2 ms**; a tela leve durante a conta (o pior quadro da vista de tempo, 15 ms) | `pytest --desempenho tests/test_gui_desempenho.py -k espectro` |
 | 14/11/2026 | As FFTs de um lote em todos os núcleos (8), `scipy.fft` com `workers=-1` | O lote do Welch (2048 × 1000) de 7,1 para 2,5 ms; o das bandas (64 × 40 000) de 13,8 para 10,9 ms | o diário de 14/11 |
+| 15/11/2026 | G1 sem tela, 8 faixas, 954 × 526 px, **com a cadeia** (sonda + passa-altas em cada traço): durante as materializações; depois | **Durante: reprovado**, mediana de 9,4 ms, p95 de 32,9 ms. **Depois: aprovado**, mediana de 9,2 ms, p95 de 12,8 ms (sem a cadeia: 8,3 e 10,2 ms) | `medir_vista --cadeia` |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
 ---
