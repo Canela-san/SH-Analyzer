@@ -133,6 +133,65 @@ def test_g1_oito_faixas_na_vista_de_tempo(request, tmp_path, monkeypatch):
     assert p95 <= 0.016, f"mediana {mediana * 1e3:.1f} ms, p95 {p95 * 1e3:.1f} ms"
 
 
+def test_g1_oito_faixas_com_a_cadeia_durante_e_depois_das_materializacoes(request, tmp_path, monkeypatch):
+    """G1 com a cadeia ligada (F2.11): os 8 traços do G1 com a correção de sonda e um passa-altas de 2 kHz. O percurso
+    enquanto as materializações rodam (uma de cada vez; os traços do outro canal, das prévias) e depois delas, das
+    pirâmides dos traços transformados: p95 <= 16 ms nos dois. Antes da fila das pesadas, as duas materializações e
+    as medidas da janela rodavam juntas, e o percurso dava p95 de 22 a 33 ms nesta máquina."""
+    pytest.importorskip("PySide6")
+    pytest.importorskip("pytestqt")
+    from capturas_sinteticas import escrever_bin, escrever_perfil_sonda
+    from dialogos_falsos import DialogosFalsos
+    from PySide6.QtWidgets import QApplication
+    from sh_analyzer_gui import preferencias
+    from sh_analyzer_gui.app import criar_aplicacao
+    from sh_analyzer_gui.janela import JanelaPrincipal
+    from sh_analyzer_gui.modelo.comandos import MudarTracos
+    from sh_analyzer_gui.prototipos import navegar
+    from sh_analyzer_gui.prototipos.medir_vista import cadeia_do_g1
+
+    qtbot = request.getfixturevalue("qtbot")
+    monkeypatch.setenv("SH_ANALYZER_CONFIG", str(tmp_path / "config"))
+    n = 60 * 200_000
+    t = np.arange(n) / 200_000
+    caminho = escrever_bin(tmp_path / "um_minuto.bin", [np.sin(2 * np.pi * 60 * t), np.cos(2 * np.pi * 60 * t)],
+                           grandezas=(0, 1), sondas=("sonda_teste", "sonda_teste"), versao=9)
+    preferencias.mudar_pasta("sondas", escrever_perfil_sonda(tmp_path / "sondas").parent)
+    criar_aplicacao([], tema="escuro")
+    janela = JanelaPrincipal()
+    janela.controle.dialogos = DialogosFalsos()
+    janela.resize(1600, 1000)
+    janela.show()
+    qtbot.waitExposed(janela)
+    (fonte,) = janela.controle.abrir_capturas([caminho])
+    qtbot.waitUntil(lambda: fonte.piramides is not None, timeout=60_000)
+    tracos = []
+    for i in range(8):
+        tracos.append(janela.area.plotar_canal(fonte, i % 2))
+        janela.projeto.pilha.push(MudarTracos([tracos[-1]], faixa=i))
+    vista = janela.area.widget_da_vista(janela.vista_ativa())
+    qtbot.wait(300)
+    janela.projeto.pilha.push(MudarTracos(tracos, cadeia=cadeia_do_g1()))
+    estados = {vista.materializacoes.estado_de(t) for t in tracos}
+    assert len(estados) == 2                                          # uma por canal
+    qtbot.wait(500)
+    item = next(iter(vista.itens.values()))
+    canal = fonte.canal(0)
+    app = QApplication.instance()
+    assert any(e.pronta is None for e in estados)                    # o percurso pega as materializações rodando
+    durante = navegar.resumo_dos_quadros(
+        navegar.percorrer_zoom(app, vista.grafico, item, len(canal.amostras), canal.taxa_hz))
+    qtbot.waitUntil(lambda: all(e.pronta is not None for e in estados), timeout=120_000)
+    navegar.percorrer_zoom(app, vista.grafico, item, len(canal.amostras), canal.taxa_hz)     # aquece
+    depois = navegar.resumo_dos_quadros(
+        navegar.percorrer_zoom(app, vista.grafico, item, len(canal.amostras), canal.taxa_hz))
+    janela.projeto.pilha.setClean()
+    janela.close()
+    texto = ", ".join(f"{nome}: mediana {m * 1e3:.1f} ms, p95 {p * 1e3:.1f} ms"
+                      for nome, (m, p) in (("durante", durante), ("depois", depois)))
+    assert durante[1] <= 0.016 and depois[1] <= 0.016, texto
+
+
 def test_o_espectro_de_milhoes_de_bins_arrasta_a_60_quadros(qapp, config_limpa, tmp_path):
     """A FFT da janela visível de 30 s a 200 kS/s tem 3 M bins: arrastar o gráfico, dar zoom e mover o cursor de
     frequência ficam abaixo de 16 ms por quadro (antes da pirâmide no espectro, ~320 ms: o aplicativo travava)."""

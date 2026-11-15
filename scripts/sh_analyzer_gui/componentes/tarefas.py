@@ -1,5 +1,5 @@
-"""A lista de tarefas do painel de baixo: cada tarefa em segundo plano com o nome, o progresso e o botão de cancelar.
-Some da lista quando termina."""
+"""A lista de tarefas do painel de baixo: cada tarefa em segundo plano com o nome, o progresso (ou "na fila", enquanto
+espera a vez: as pesadas rodam uma de cada vez) e o botão de cancelar. Some da lista quando termina."""
 
 from __future__ import annotations
 
@@ -29,6 +29,10 @@ class _LinhaDaTarefa(QWidget):
         self.barra.setTextVisible(False)
         self.barra.setFixedHeight(6)
         self.barra.setMaximumWidth(220)
+        self.na_fila = QLabel(self.tr("na fila"))
+        self.na_fila.setObjectName("tarefa_na_fila")
+        self.na_fila.setToolTip(self.tr("Espera a vez: as contas pesadas rodam uma de cada vez, para a interface não "
+                                        "engasgar."))
         self.cancelar = QToolButton()
         self.cancelar.setProperty("variante", "fantasma")
         self.cancelar.setToolTip(self.tr("Cancelar"))
@@ -39,7 +43,14 @@ class _LinhaDaTarefa(QWidget):
         linha.setContentsMargins(12, 4, 8, 4)
         linha.addWidget(self.nome, 1)
         linha.addWidget(self.barra, 1)
+        linha.addWidget(self.na_fila, 1)
         linha.addWidget(self.cancelar)
+        self.mostrar_o_estado()
+
+    def mostrar_o_estado(self) -> None:
+        esperando = self.tarefa.estado == "esperando"
+        self.barra.setVisible(not esperando)
+        self.na_fila.setVisible(esperando)
 
 
 class ListaDeTarefas(QStackedWidget):
@@ -73,6 +84,7 @@ class ListaDeTarefas(QStackedWidget):
 
     def _entrou(self, tarefa: Tarefa) -> None:
         linha = _LinhaDaTarefa(tarefa)
+        tarefa.comecou.connect(self._comecou)
         tarefa.progressoMudou.connect(self._progresso)
         self._linhas[tarefa] = linha
         self._coluna.insertWidget(self._coluna.count() - 1, linha)
@@ -83,6 +95,11 @@ class ListaDeTarefas(QStackedWidget):
         if linha is not None:
             linha.deleteLater()
         self._atualizar()
+
+    def _comecou(self, tarefa: Tarefa) -> None:
+        linha = self._linhas.get(tarefa)
+        if linha is not None:
+            linha.mostrar_o_estado()
 
     def _progresso(self, tarefa: Tarefa, fracao: float) -> None:
         linha = self._linhas.get(tarefa)

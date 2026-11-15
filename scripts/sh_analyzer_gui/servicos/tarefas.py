@@ -7,6 +7,12 @@ progresso e pode ser cancelada.
 ``Cancelado`` (o do motor, que a pirâmide e as contas da ``api`` usam) ou devolve o que tiver. A tarefa repassa o progresso no máximo a cada 50 ms, para não
 inundar a interface.
 
+**As pesadas** (``pesada=True``: as contas longas de NumPy com Python no meio, como a materialização de um traço)
+rodam uma de cada vez, numa fila própria, ao lado das outras. Duas ao mesmo tempo disputam o GIL com a interface:
+a cada chamada ao Qt que solta o GIL, um trabalhador o pega, e a thread da interface espera por ele. Medido na F2.11
+(docs/gui-progress.md), o percurso do G1 sobre traços prontos com duas materializações ao fundo dava p95 de 38 a 40
+ms por quadro; com uma de cada vez, 11 ms, o mesmo que sem nenhuma.
+
 **Uma tarefa que falha** fica ``falhou``, com o motivo em ``erro`` para quem pediu mostrar no lugar certo. O motivo
 esperado (um ``ErroSHAN`` do motor, um ``OSError`` de arquivo) fica só aí; outra exceção é um defeito
 (``inesperado``): vai também para o log com a pilha e para o diálogo de erro inesperado (``servicos/erros.py``).
@@ -39,9 +45,10 @@ ESTADOS = ("esperando", "rodando", "concluida", "cancelada", "falhou")
 class Tarefa(QObject):
     """Uma tarefa: o nome (para o painel), o estado, o progresso (0 a 1) e o resultado.
 
-    ``terminou(tarefa)`` sai uma vez, no fim, em qualquer estado final (``concluida``, ``cancelada`` ou ``falhou``,
-    com ``erro`` preenchido)."""
+    ``comecou(tarefa)`` sai quando ela sai da fila e passa a rodar; ``terminou(tarefa)`` sai uma vez, no fim, em
+    qualquer estado final (``concluida``, ``cancelada`` ou ``falhou``, com ``erro`` preenchido)."""
 
+    comecou = Signal(object)
     progressoMudou = Signal(object, float)
     terminou = Signal(object)
 
@@ -54,6 +61,7 @@ class Tarefa(QObject):
         self.erro = ""
         self.inesperado = False             # falhou por um defeito, e não por um motivo do motor ou de arquivo
         self.mostrar = True
+        self.pesada = False                 # na fila das pesadas (GerenciadorDeTarefas.iniciar)
         self._funcao = funcao
         self._cancelar = threading.Event()
         self._ultimo_aviso = 0.0
@@ -82,6 +90,7 @@ class Tarefa(QObject):
             self.estado = "cancelada"
         else:
             self.estado = "rodando"
+            self._avisar(self.comecou, self)
             try:
                 aquecer()
                 self.resultado = self._funcao(self._progresso, self.cancelada)
@@ -130,6 +139,8 @@ class GerenciadorDeTarefas(QObject):
         super().__init__(parent)
         self.pool = QThreadPool(self)
         self.pool.setMaxThreadCount(threads)
+        self.pool_das_pesadas = QThreadPool(self)
+        self.pool_das_pesadas.setMaxThreadCount(1)
         self._ativas: list[Tarefa] = []
         self.encerrado = False
 
@@ -137,24 +148,27 @@ class GerenciadorDeTarefas(QObject):
     def ativas(self) -> tuple[Tarefa, ...]:
         return tuple(self._ativas)
 
-    def iniciar(self, nome: str, funcao: Callable, grupo: str = "", *, mostrar: bool = True,
-                ao_terminar: Callable | None = None, ao_progredir: Callable | None = None) -> Tarefa:
+    def iniciar(self, nome: str, funcao: Callable, grupo: str = "", *, mostrar: bool = True, pesada: bool = False,
+                ao_terminar: Callable | None = None, ao_progredir: Callable | None = None,
+                ao_comecar: Callable | None = None) -> Tarefa:
         """Põe a tarefa na fila e a devolve. **Os ouvintes vão aqui** (``ao_terminar(tarefa)``,
-        ``ao_progredir(tarefa, fração)``), ligados antes de a tarefa começar: ligados depois do ``iniciar``, uma
+        ``ao_progredir(tarefa, fração)``, ``ao_comecar(tarefa)``), ligados antes de a tarefa começar: ligados depois do ``iniciar``, uma
         tarefa rápida pode terminar antes, e o sinal sai para ninguém (o erro apareceu num teste em paralelo: a
         conferência de uma captura sem CRC ficava "conferindo" para sempre). **O gerenciador ouve primeiro:** cada
         ligação vira um evento na fila da interface, na ordem em que foi feita, e a thread de trabalho pode ser
         interrompida entre um e outro; assim, quando o ``ao_terminar`` roda, a tarefa já saiu de :attr:`ativas`.
         Com ``mostrar=False`` (uma conta rápida e frequente, como as medidas), ela não aparece no painel de
-        tarefas."""
+        tarefas. Com ``pesada=True``, ela espera na fila das pesadas (uma de cada vez)."""
         tarefa = Tarefa(nome, funcao, grupo)
-        tarefa.mostrar = mostrar
+        tarefa.mostrar, tarefa.pesada = mostrar, pesada
         if self.encerrado:
             # Depois de encerrar (a janela fechando), nada começa: um temporizador atrasado (a medida da vista)
             # não põe uma thread para rodar com a janela sendo apagada.
             tarefa.estado = "cancelada"
             return tarefa
         tarefa.terminou.connect(self._terminou)
+        if ao_comecar is not None:
+            tarefa.comecou.connect(ao_comecar)
         if ao_progredir is not None:
             tarefa.progressoMudou.connect(ao_progredir)
         if ao_terminar is not None:
@@ -162,7 +176,7 @@ class GerenciadorDeTarefas(QObject):
         self._ativas.append(tarefa)
         if mostrar:
             self.tarefaEntrou.emit(tarefa)
-        self.pool.start(_Executor(tarefa))
+        (self.pool_das_pesadas if pesada else self.pool).start(_Executor(tarefa))
         return tarefa
 
     def cancelar_grupo(self, grupo: str) -> None:
@@ -176,7 +190,10 @@ class GerenciadorDeTarefas(QObject):
         self.encerrado = True
         for tarefa in self._ativas:
             tarefa.cancelar()
-        return self.pool.waitForDone(espera_ms)
+        prazo = time.monotonic() + espera_ms / 1000
+        pararam = [pool.waitForDone(max(0, round((prazo - time.monotonic()) * 1000)))
+                   for pool in (self.pool, self.pool_das_pesadas)]
+        return all(pararam)
 
     @property
     def visiveis(self) -> tuple[Tarefa, ...]:

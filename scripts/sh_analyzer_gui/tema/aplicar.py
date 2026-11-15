@@ -220,6 +220,7 @@ QFrame#toast {{ background: {t.elevada}; border: 1px solid {t.borda_forte}; bord
 QFrame#toast QLabel {{ color: {t.texto}; }}
 QWidget#barra_superior {{ background: {t.fundo}; border-bottom: 1px solid {t.borda}; }}
 QLabel#rotulo_projeto {{ color: {t.texto2}; }}
+QLabel#tarefa_na_fila {{ color: {t.mudo}; }}
 QToolButton#botao_projeto {{ padding: 3px 6px; }}
 QToolButton::menu-indicator {{ image: none; width: 0; }}
 QPushButton#campo_paleta {{ background: {t.superficie}; color: {t.mudo}; border: 1px solid {t.borda};

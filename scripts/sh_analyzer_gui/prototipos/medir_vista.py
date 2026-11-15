@@ -5,7 +5,8 @@ o p95 do tempo por quadro: o G1 pede p95 <= 16 ms.
 
 Com ``--cadeia`` (F2.11, o G1 com a cadeia ligada), cada traço ganha a correção de sonda (a captura registra a sonda
 simulada nos dois canais) e um passa-altas de 2 kHz: o percurso é medido enquanto as materializações rodam (a prévia
-de cada parada) e de novo depois delas, com os traços transformados desenhados das pirâmides deles.
+de cada parada; elas rodam uma de cada vez, e a do outro canal espera na fila) e de novo depois delas, com os traços
+transformados desenhados das pirâmides deles.
 
 Rode numa tela de verdade (da raiz do repositório)::
 
@@ -86,11 +87,13 @@ def main(argv: list[str] | None = None) -> int:
         # ainda tinha o tamanho de antes da legenda e dos painéis, e a medida saía numa área menor que a real.
         QTimer.singleShot(500, percorrer)
 
-    def em_curso() -> int:
-        """Quantas materializações dos traços ainda rodam."""
+    def em_curso() -> tuple[int, int]:
+        """As materializações dos traços que rodam e as que esperam a vez (rodam uma de cada vez)."""
         v = vista()
         estados = {v.materializacoes.estado_de(t) for t in v.itens} - {None}     # uma por canal e cadeia
-        return sum(1 for e in estados if e.pronta is None)
+        pendentes = [e for e in estados if e.pronta is None and not e.erro]
+        na_fila = sum(1 for e in pendentes if e.na_fila)
+        return len(pendentes) - na_fila, na_fila
 
     def percurso(como: str, aquecer: bool) -> None:
         v = vista()
@@ -110,12 +113,12 @@ def main(argv: list[str] | None = None) -> int:
             percurso("", aquecer=True)
             terminar()
             return
-        rodando = em_curso()
-        percurso(f", com a cadeia, {rodando} materialização(ões) rodando", aquecer=False)
+        rodando, na_fila = em_curso()
+        percurso(f", com a cadeia, materializações: {rodando} rodando e {na_fila} na fila", aquecer=False)
         esperar_as_materializacoes()
 
     def esperar_as_materializacoes():
-        if em_curso():
+        if any(em_curso()):
             QTimer.singleShot(200, esperar_as_materializacoes)
             return
         percurso(", com a cadeia, materializada", aquecer=True)

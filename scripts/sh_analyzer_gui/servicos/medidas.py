@@ -9,7 +9,10 @@ Um traço com o tempo próprio (a escala destravada, ``graficos/escalas.py``) me
 região da tela (``PedidoDeMedida.por_traco``), e a medida guarda esse trecho (``MedidaDoTraco.inicio_s``/``fim_s``).
 
 Em segundo plano (uma região grande leva o filtro da fundamental): cada pedido cancela o anterior, e só o resultado
-do mais recente chega (``prontas``). Uma região com mais de :data:`LIMITE_DE_AMOSTRAS` amostras não é medida (a
+do mais recente chega (``prontas``). **Um traço transformado numa região maior que a prévia** (:data:`LIMITE_DA_PREVIA
+<sh_analyzer_gui.servicos.materializar.LIMITE_DA_PREVIA>`) faz a conta do tamanho da materialização dele: o pedido
+vai para a fila das pesadas (``GerenciadorDeTarefas``) e espera a vez, em vez de disputar o GIL com ela e com a
+interface (o desenho engasgava). Até lá, a tabela fica com as medidas anteriores, e o resumo diz de que região são. Uma região com mais de :data:`LIMITE_DE_AMOSTRAS` amostras não é medida (a
 conta leria tudo para a memória): a tabela diz para aproximar o zoom ou usar os cursores.
 """
 
@@ -24,6 +27,7 @@ from supraharmonicos.api import ErroSHAN, MedidasDaRegiao, medir_regiao, medir_s
 
 from ..dados import materializacao as mat
 from ..modelo.objetos import Projeto, Traco, Vista
+from .materializar import LIMITE_DA_PREVIA
 from .tarefas import GerenciadorDeTarefas, Tarefa
 
 LIMITE_DE_AMOSTRAS = 20_000_000
@@ -133,7 +137,9 @@ class ServicoDeMedidas(QObject):
                 progresso((k + 1) / len(planos))
             return resultados
 
-        tarefa = self.tarefas.iniciar("Medidas", medir_todos, "medidas", mostrar=False, ao_terminar=self._terminou)
+        pesada = any(ctx is not None and i1 - i0 > LIMITE_DA_PREVIA for _t, _c, _r, i0, i1, _n, _u, ctx in planos)
+        tarefa = self.tarefas.iniciar("Medidas", medir_todos, "medidas", mostrar=False, pesada=pesada,
+                                      ao_terminar=self._terminou)
         self._atual = tarefa
         return tarefa
 

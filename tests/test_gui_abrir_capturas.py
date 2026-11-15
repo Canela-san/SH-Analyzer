@@ -405,6 +405,46 @@ def test_uma_tarefa_rapida_nao_perde_o_fim(qtbot):
     assert sorted(fins) == [(k, False) for k in range(200)] and tarefas.ativas == ()
 
 
+def test_as_pesadas_rodam_uma_de_cada_vez_e_as_leves_ao_lado(qtbot):
+    """Duas contas pesadas ao mesmo tempo disputam o GIL com a interface (o desenho engasgava): a segunda espera na
+    fila, ``esperando``, e começa (``comecou``) só depois de a primeira terminar; uma leve roda ao lado."""
+    tarefas = GerenciadorDeTarefas()
+    rodando, liberar, ordem = threading.Event(), threading.Event(), []
+
+    def primeira(_p, _c):
+        rodando.set()
+        liberar.wait(5)
+        ordem.append("a primeira terminou")
+
+    a = tarefas.iniciar("pesada 1", primeira, pesada=True, ao_comecar=lambda t: ordem.append("a primeira começou"))
+    assert rodando.wait(5)
+    b = tarefas.iniciar("pesada 2", lambda _p, _c: None, pesada=True,
+                        ao_comecar=lambda t: ordem.append("a segunda começou"))
+    with qtbot.waitSignal(tarefas.tarefaSaiu, timeout=5000):
+        leve = tarefas.iniciar("leve", lambda _p, _c: "feita")
+    assert leve.estado == "concluida" and (a.estado, b.estado) == ("rodando", "esperando")
+    assert (a.pesada, b.pesada, leve.pesada) == (True, True, False)
+    liberar.set()
+    qtbot.waitUntil(lambda: not tarefas.ativas, timeout=5000)
+    assert ordem == ["a primeira começou", "a primeira terminou", "a segunda começou"]
+    assert (a.estado, b.estado) == ("concluida", "concluida")
+
+
+def test_encerrar_espera_tambem_as_pesadas(qtbot):
+    tarefas = GerenciadorDeTarefas()
+    comecou = threading.Event()
+
+    def girar(_p, cancelado):
+        comecou.set()
+        while not cancelado():
+            pass
+        raise Cancelado
+
+    pesada = tarefas.iniciar("pesada", girar, pesada=True)
+    assert comecou.wait(5)
+    assert tarefas.encerrar() and pesada.estado == "cancelada"
+
+
 def test_depois_de_encerrar_nenhuma_tarefa_comeca(qtbot):
     """Um temporizador atrasado (a medida da vista) não põe uma thread para rodar com a janela sendo apagada."""
     tarefas = GerenciadorDeTarefas()

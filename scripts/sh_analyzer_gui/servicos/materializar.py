@@ -7,6 +7,10 @@ um :class:`EstadoDaMaterializacao` (duas vistas do mesmo traço fazem a conta um
 feito, o progresso, o fim, um erro). Um estado sem ninguém acompanhando é cancelado: mudar o corte de um filtro três
 vezes seguidas deixa só a última conta rodando.
 
+**As materializações rodam uma de cada vez** (a fila das pesadas do :class:`GerenciadorDeTarefas`): duas ao mesmo
+tempo engasgavam o desenho, disputando o GIL com a interface. As que esperam a vez ficam :attr:`na_fila
+<EstadoDaMaterializacao.na_fila>`, e ``mudou`` sai quando cada uma começa.
+
 **A média do canal** (o "remover o DC") é calculada na primeira materialização que precisa dela e fica guardada.
 
 **A prévia** (:meth:`ServicoDeMaterializacao.previa`) roda num conjunto de threads só dela, de uma thread: uma
@@ -52,6 +56,11 @@ class EstadoDaMaterializacao:
     @property
     def n_amostras(self) -> int:
         return len(self.fonte.canal(self.numero).amostras)
+
+    @property
+    def na_fila(self) -> bool:
+        """A materialização espera a vez (outra roda antes dela)."""
+        return self.tarefa is not None and self.tarefa.estado == "esperando"
 
     def __repr__(self) -> str:
         estado = "pronta" if self.pronta else f"erro: {self.erro}" if self.erro else f"{self.progresso}"
@@ -198,9 +207,14 @@ class ServicoDeMaterializacao(QObject):
             return pronta, media
 
         estado.tarefa = self.tarefas.iniciar(self.tr("Transformar {} (canal {}: {})").format(
-            fonte.nome, numero, cadeia.resumo()), trabalho, fonte.id, ao_terminar=self._terminou,
-            ao_progredir=self._progrediu)
+            fonte.nome, numero, cadeia.resumo()), trabalho, fonte.id, pesada=True, ao_comecar=self._comecou,
+            ao_terminar=self._terminou, ao_progredir=self._progrediu)
         self._estado_da_tarefa[estado.tarefa] = estado
+
+    def _comecou(self, tarefa: Tarefa) -> None:
+        estado = self._estado_da_tarefa.get(tarefa)
+        if estado is not None and tarefa.ativa:
+            self.mudou.emit(estado)
 
     def _progrediu(self, tarefa: Tarefa, fracao: float) -> None:
         estado = self._estado_da_tarefa.get(tarefa)

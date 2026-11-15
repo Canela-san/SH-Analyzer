@@ -106,6 +106,31 @@ def test_a_previa_e_depois_a_materializacao(janela, qtbot, tmp_path):
     assert item.dados[0] is cru and janela.materializacoes.estado_de(traco) is None
 
 
+def test_as_materializacoes_rodam_uma_de_cada_vez_e_a_que_espera_diz_na_fila(janela, qtbot, tmp_path):
+    """Os dois canais com a mesma cadeia: duas materializações. A segunda espera a primeira (as duas juntas engasgavam
+    o desenho), e o chip do traço e o painel de tarefas dizem "na fila" enquanto isso."""
+    liberar = threading.Event()
+    janela.materializacoes.cache = CacheLento(tmp_path / "cache", liberar)
+    fonte, vista, traco0, w = plotar(janela, qtbot, tmp_path)
+    traco1 = janela.area.plotar_canal(fonte, 1)
+    janela.projeto.pilha.push(MudarTracos([traco0, traco1], cadeia=PA))
+    estados = [janela.materializacoes.estado_de(t) for t in (traco0, traco1)]
+    qtbot.waitUntil(lambda: sorted(e.tarefa.estado for e in estados) == ["esperando", "rodando"], timeout=5000)
+    primeiro, segundo = sorted(estados, key=lambda e: e.na_fila)
+    assert (primeiro.na_fila, segundo.na_fila) == (False, True)
+    chip = {e: w.chips[t] for e, t in zip(estados, (traco0, traco1), strict=True)}
+    assert "na fila" in chip[segundo].resumo and "na fila" not in chip[primeiro].resumo
+    linhas = {linha.tarefa: linha for linha in janela.lista_de_tarefas.linhas}
+    # O "começou" chega pela fila de eventos, depois de a tarefa já estar rodando na thread de trabalho.
+    qtbot.waitUntil(lambda: linhas[primeiro.tarefa].na_fila.isHidden(), timeout=5000)
+    assert not linhas[primeiro.tarefa].barra.isHidden()
+    assert linhas[segundo.tarefa].barra.isHidden() and not linhas[segundo.tarefa].na_fila.isHidden()
+
+    liberar.set()
+    qtbot.waitUntil(lambda: all(e.pronta is not None for e in estados), timeout=20_000)
+    assert all("na fila" not in chip[e].resumo for e in estados)
+
+
 def test_a_materializacao_e_dividida_e_cancelada_sem_ninguem(janela, qtbot, tmp_path):
     liberar = threading.Event()
     janela.materializacoes.cache = CacheLento(tmp_path / "cache", liberar)
@@ -139,3 +164,36 @@ def test_as_medidas_sao_as_do_sinal_transformado(janela, qtbot, tmp_path):
     assert medida.medidas.rms == pytest.approx(esperado.rms, rel=1e-9)
     assert medida.medidas.media == pytest.approx(esperado.media, abs=1e-9)
     assert abs(medida.medidas.media) < 1e-3                # o DC do canal inteiro saiu (0,2 V)
+
+
+def test_a_medida_de_uma_regiao_maior_que_a_previa_espera_a_vez(janela, qtbot, tmp_path, monkeypatch):
+    """Num traço transformado, medir uma região maior que a prévia é uma conta do tamanho da materialização: o pedido
+    vai para a fila das pesadas e espera a materialização que roda (as duas juntas engasgavam o desenho). Uma região
+    pequena é medida na hora, ao lado dela."""
+    from sh_analyzer_gui.servicos import medidas
+    monkeypatch.setattr(medidas, "LIMITE_DA_PREVIA", 50_000)
+    liberar = threading.Event()
+    janela.materializacoes.cache = CacheLento(tmp_path / "cache", liberar)
+    fonte, vista, traco, w = plotar(janela, qtbot, tmp_path)
+    janela.projeto.pilha.push(MudarTracos([traco], cadeia=PA))
+    estado = janela.materializacoes.estado_de(traco)
+    qtbot.waitUntil(lambda: estado.tarefa.estado == "rodando", timeout=5000)
+    servico = janela.area.servico_de_medidas
+    qtbot.wait(400)                       # o pedido automático da vista (a janela visível) sai antes dos nossos
+
+    pequena = PedidoDeMedida(vista, 0.5, 0.6, True)                     # 20 000 amostras
+    with qtbot.waitSignal(servico.prontas, timeout=10_000, check_params_cb=lambda p, _m: p is pequena):
+        tarefa = servico.medir(janela.projeto, pequena)
+    assert not tarefa.pesada and estado.tarefa.estado == "rodando"     # medida com a materialização rodando
+
+    grande = PedidoDeMedida(vista, 0.0, 2.0, True)                      # a captura inteira: 400 000 amostras
+    tarefa = servico.medir(janela.projeto, grande)
+    assert tarefa.pesada
+    qtbot.wait(200)
+    assert tarefa.estado == "esperando" and estado.pronta is None
+    with qtbot.waitSignal(servico.prontas, timeout=20_000, check_params_cb=lambda p, _m: p is grande) as sinal:
+        liberar.set()
+    assert estado.pronta is not None                                    # a materialização terminou antes
+    (medida,) = [m for m in sinal.args[1] if m.traco is traco]
+    esperado = api.medir_sinal(transformado(fonte, PA), FS)
+    assert medida.medidas.rms == pytest.approx(esperado.rms, rel=1e-9)

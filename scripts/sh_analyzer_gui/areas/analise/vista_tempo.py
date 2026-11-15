@@ -921,6 +921,8 @@ class VistaDeTempo(QWidget):
             estado = self.materializacoes.estado_de(traco)
             if estado is not None and estado.erro:
                 resumo.append(self.tr("erro na transformação"))
+            elif estado is not None and estado.na_fila:
+                resumo.append(self.tr("na fila"))
         return " · ".join(resumo)
 
     def _avisos(self, traco: Traco, erro: str = "") -> tuple:
