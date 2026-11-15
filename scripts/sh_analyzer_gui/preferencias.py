@@ -1,5 +1,5 @@
-"""As preferências do usuário (docs/gui-plan.md, GE-05): o tema e as fontes, o movimento, o separador decimal, as
-pastas e os limites do cache.
+"""As preferências do usuário (docs/gui-plan.md, GE-05): o tema e as fontes, o movimento, o separador decimal e os
+prefixos dos eixos, as unidades próprias, as pastas e os limites do cache.
 
 Cada uma é gravada na configuração (``configuracao.py``) quando muda e aplicada na partida
 (:func:`aplicar_na_partida`, chamada pelo ``app.main``); a tela de configurações (``areas/configuracoes.py``) as
@@ -11,11 +11,15 @@ sem erro.
   materializações). Sem uma escolhida, vale a padrão (:func:`pasta_padrao`).
 * **Os limites do cache** são dois, cada um com o seu uso: as pirâmides das capturas (a navegação) e as
   materializações (os traços transformados).
+* **As unidades próprias** (``dados/unidades.py``) ficam gravadas como JSON: ``[{"simbolo", "grandeza",
+  "prefixos"}]``.
 """
 
 from __future__ import annotations
 
+import json
 import os
+from collections.abc import Iterable
 from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
@@ -24,7 +28,8 @@ from supraharmonicos.api import PASTA_DAS_SONDAS_PADRAO
 from .componentes.numeros import SEPARADORES, definir_separador_decimal
 from .configuracao import gravar, ler_texto
 from .dados import cache as cache_de_piramides
-from .dados import materializacao
+from .dados import materializacao, unidades
+from .graficos.faixa import definir_prefixos_nos_eixos
 from .tema.aplicar import MODOS, MOVIMENTOS, aparencia
 from .tema.fontes import escolher_fonte, familias_disponiveis
 
@@ -32,6 +37,8 @@ CHAVE_DO_TEMA = "aparencia/tema"
 CHAVES_DAS_FONTES = {"interface": "aparencia/fonte_interface", "mono": "aparencia/fonte_mono"}
 CHAVE_DO_MOVIMENTO = "aparencia/movimento"
 CHAVE_DO_SEPARADOR = "numeros/separador_decimal"
+CHAVE_DOS_PREFIXOS = "numeros/prefixos_nos_eixos"
+CHAVE_DAS_UNIDADES = "unidades/proprias"
 PASTAS = ("dados", "sondas", "cache")
 CHAVES_DAS_PASTAS = {nome: f"pastas/{nome}" for nome in PASTAS}
 CACHES = ("piramides", "materializacoes")
@@ -105,6 +112,42 @@ def mudar_separador(separador: str) -> None:
     aparencia().avisar()
 
 
+def prefixos_salvos() -> bool:
+    """Se os eixos escolhem o prefixo do SI pela faixa visível (o padrão: sim)."""
+    return ler_texto(CHAVE_DOS_PREFIXOS, "sim") != "nao"
+
+
+def mudar_prefixos_nos_eixos(ligados: bool) -> None:
+    definir_prefixos_nos_eixos(ligados)
+    gravar(CHAVE_DOS_PREFIXOS, "sim" if ligados else "nao")
+    aparencia().avisar()
+
+
+# ------------------------------------------------------------------ as unidades próprias
+
+def unidades_salvas() -> list[unidades.Unidade]:
+    """As unidades próprias gravadas; uma inválida (ou que entrou no catálogo numa versão nova) fica de fora."""
+    try:
+        dados = json.loads(ler_texto(CHAVE_DAS_UNIDADES, "[]") or "[]")
+    except json.JSONDecodeError:
+        return []
+    lidas = []
+    for d in dados if isinstance(dados, list) else ():
+        try:
+            lidas.append(unidades.propria(d["simbolo"], d.get("grandeza", ""), bool(d.get("prefixos", False))))
+        except (KeyError, TypeError, AttributeError, unidades.UnidadeInvalida):
+            continue
+    return lidas
+
+
+def mudar_unidades(lista: Iterable[unidades.Unidade]) -> None:
+    """Troca as unidades próprias, grava e avisa quem escreve números e rótulos com elas."""
+    unidades.definir_proprias(lista)
+    gravar(CHAVE_DAS_UNIDADES, json.dumps([{"simbolo": u.simbolo, "grandeza": u.grandeza, "prefixos": u.prefixos}
+                                           for u in unidades.proprias()], ensure_ascii=False))
+    aparencia().avisar()
+
+
 # ------------------------------------------------------------------ as pastas
 
 def pasta_padrao(nome: str) -> Path:
@@ -171,8 +214,11 @@ def mudar_limite(nome: str, limite_bytes: int) -> None:
 # ------------------------------------------------------------------ a partida
 
 def aplicar_na_partida(app: QApplication | None = None) -> None:
-    """O que vale antes da janela abrir: as fontes, o movimento e o separador decimal (o tema vai na criação da
-    aplicação; as pastas e os limites, quando a janela cria os serviços)."""
+    """O que vale antes da janela abrir: as fontes, o movimento, o separador decimal, os prefixos dos eixos e as
+    unidades próprias (o tema vai na criação da aplicação; as pastas e os limites, quando a janela cria os
+    serviços)."""
     aplicar_fontes_salvas(app)
     aparencia(app).definir_movimento(movimento_salvo())
     definir_separador_decimal(separador_salvo())
+    definir_prefixos_nos_eixos(prefixos_salvos())
+    unidades.definir_proprias(unidades_salvas())

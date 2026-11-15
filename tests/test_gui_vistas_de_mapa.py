@@ -146,7 +146,7 @@ def test_os_harmonicos_sao_os_da_api_com_as_barras_e_os_indices(janela, qtbot, p
     w.grandeza.botao(2).click()                                       # a componente
     _, alturas = w.valores()
     np.testing.assert_allclose(alturas, [h.rms for h in esperado.harmonicos[1:]], rtol=1e-12)
-    assert "valor RMS (V)" in w.grafico.getAxis("left").labelText
+    assert "valor RMS (V)" in w.grafico.getAxis("left").rotulo
     w.ordem.setValue(10)
     qtbot.waitUntil(lambda: w.opcoes_calculadas == w.opcoes, timeout=10_000)
     assert len(w.resultado.tabela.harmonicos) == 10

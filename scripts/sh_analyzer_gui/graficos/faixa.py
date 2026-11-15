@@ -1,7 +1,8 @@
 """As peças de uma faixa da vista de tempo (docs/gui-plan.md, 6.6 e 9.2), com o tema:
 
 * :class:`EixoDoTema`: o eixo do PyQtGraph com as cores e a fonte do tema e os números com vírgula; ele mostra os
-  números do traço de referência, pela escala própria dele (``graficos/escalas.py``);
+  números do traço de referência, pela escala própria dele (``graficos/escalas.py``), com o prefixo do SI que a
+  faixa visível pede ("tensão (mV)": :meth:`EixoDoTema.definir_rotulo`);
 * :class:`GradeDoTema`: a grade nas marcas principais dos eixos, **opaca** e sem antialiasing (a semitransparente do
   PyQtGraph custava ~17 ms por quadro no protótipo);
 * :class:`CaixaDaFaixa`: a ``ViewBox`` (com as escalas dos traços: ``graficos/escalas.py``) com os gestos do plano: a roda dá zoom no tempo, centrado no cursor; Ctrl +
@@ -22,7 +23,8 @@ import pyqtgraph as pg
 from PySide6.QtCore import QLineF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
 
-from ..componentes.numeros import decimal
+from ..componentes.numeros import PREFIXO_DO_EXPOENTE, decimal, expoente_de_engenharia
+from ..dados.unidades import aceita_prefixos
 from ..tema.aplicar import aparencia
 from ..tema.fontes import fonte_mono
 from ..tema.tokens import TAMANHOS, Tema
@@ -30,6 +32,19 @@ from .escalas import CaixaComEscalas
 
 FATOR_DA_RODA = 1.2          # cada passo da roda: 20 % de zoom
 _VALIDO = object()           # o eixo está com as posições e os textos em dia (no lugar da QPicture do PyQtGraph)
+_prefixos_nos_eixos = True
+
+
+def prefixos_nos_eixos() -> bool:
+    """Se os eixos escolhem o prefixo do SI pela faixa visível (as configurações; ligado por padrão)."""
+    return _prefixos_nos_eixos
+
+
+def definir_prefixos_nos_eixos(ligados: bool) -> None:
+    """Liga ou desliga os prefixos dos eixos de agora em diante; quem já desenhou refaz com o aviso da aparência
+    (:meth:`EixoDoTema.aplicar_tema`)."""
+    global _prefixos_nos_eixos
+    _prefixos_nos_eixos = bool(ligados)
 LARGURA_DO_EIXO_Y = 64       # px: fixa, para as faixas ficarem alinhadas no tempo
 
 
@@ -64,22 +79,62 @@ class EixoDoTema(pg.AxisItem):
 
     **A conversão:** com um traço de escala própria como referência, os números são os dele, ``u = (v na vista - c)
     / k`` (``graficos/escalas.py``: o valor no eixo Y, o tempo no eixo do tempo); a grade segue as marcas
-    (``conversaoMudou``)."""
+    (``conversaoMudou``).
+
+    **O prefixo do SI:** com a unidade no rótulo (:meth:`definir_rotulo`), o eixo escolhe o prefixo pelo maior valor
+    da faixa visível, como a escrita dos números (``numeros.formatar_si``): de 0 a 2 mV, "tensão (mV)" e os números
+    em mV. Só numa unidade que aceita prefixo (°C, % e psi ficam como estão), fora da escala logarítmica, com os
+    prefixos ligados nas configurações, e nunca acima de ``expoente_maximo`` (no tempo, 0: uma hora é 3600 s, não
+    3,6 ks). As posições das marcas e a grade não mudam: só os números escritos."""
 
     conversaoMudou = Signal()
+    expoente_maximo = 9
 
-    def __init__(self, orientacao: str):
+    def __init__(self, orientacao: str, *, expoente_maximo: int = 9):
         super().__init__(orientacao)
         self.conversao = (1.0, 0.0)             # (k, c): na vista = k·u + c
+        self.expoente_maximo = expoente_maximo
         self._medidor = MedidorDeTexto()
-        self.enableAutoSIPrefix(False)
+        self.enableAutoSIPrefix(True)            # o setRange chama o updateAutoSIPrefix (o daqui)
         self.aplicar_tema(aparencia().tema)
 
     def aplicar_tema(self, t: Tema) -> None:
-        """As cores e a fonte do tema; os números são escritos de novo (o separador decimal pode ter mudado)."""
+        """As cores e a fonte do tema; os números são escritos de novo (o separador decimal e os prefixos podem ter
+        mudado). O rótulo volta à cor do eixo: quem o pinta com a cor de um traço o pinta de novo depois."""
         self.setPen(pg.mkPen(t.borda_forte))
         self.setTextPen(pg.mkPen(t.eixo))
         self.setTickFont(fonte_mono(TAMANHOS["legenda"]))
+        self.updateAutoSIPrefix()
+
+    def definir_rotulo(self, texto: str, unidade: str = "", cor: str | None = None) -> None:
+        """O rótulo "texto (unidade)", com o prefixo que a faixa pedir; ``cor`` (``#rrggbb``) pinta o rótulo (um
+        traço de unidade ou escala diferente das outras da faixa), ``None`` o deixa na cor do eixo."""
+        self.setLabel(texto, unidade, color=cor or self.textPen().color().name())
+
+    def setLabel(self, text=None, units=None, unitPrefix=None, siPrefixEnableRanges=None, unitPower=1, **kwargs):
+        """O ``setLabel`` do PyQtGraph, e o prefixo refeito na hora: um rótulo sem unidade nunca fica com os números
+        na escala do prefixo de antes."""
+        super().setLabel(text, units, unitPrefix, siPrefixEnableRanges, unitPower, **kwargs)
+        self.updateAutoSIPrefix()
+
+    @property
+    def rotulo(self) -> str:
+        """O rótulo como aparece, em texto: "tensão (mV)"."""
+        if not self.labelUnits:
+            return self.labelText
+        return f"{self.labelText} ({self.labelUnitPrefix}{self.labelUnits})"
+
+    def updateAutoSIPrefix(self) -> None:
+        """O prefixo do SI pela faixa visível (ver a classe). O rótulo só é refeito quando o prefixo muda: o eixo do
+        tempo passa por aqui a cada quadro do zoom."""
+        expoente = 0
+        if self.labelUnits and _prefixos_nos_eixos and not self.logMode and aceita_prefixos(self.labelUnits):
+            expoente = expoente_de_engenharia(max(abs(self.range[0]), abs(self.range[1])), self.expoente_maximo)
+        prefixo = PREFIXO_DO_EXPOENTE[expoente]
+        if prefixo != self.labelUnitPrefix or self.autoSIPrefixScale != 10.0 ** -expoente:
+            self.autoSIPrefixScale = 10.0 ** -expoente
+            self.labelUnitPrefix = prefixo
+            self._updateLabel()
 
     def definir_conversao(self, k: float = 1.0, c: float = 0.0) -> None:
         if (k, c) == self.conversao:

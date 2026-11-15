@@ -94,7 +94,7 @@ def test_a_escala_o_metodo_e_o_trecho_cada_um_um_passo_de_desfazer(janela, qtbot
     recalcular(qtbot, espectro, lambda: espectro.escala.botao(1).click())          # RMS
     assert espectro.opcoes.escala == "rms"
     np.testing.assert_allclose(espectro.curvas[traco].dados[1], espectro.resultados[0].espectro.niveis("rms"))
-    assert "valor RMS (V)" in espectro.grafico.getAxis("left").labelText
+    assert "valor RMS (V)" in espectro.grafico.getAxis("left").rotulo
     recalcular(qtbot, espectro, lambda: espectro.metodo.botao(espectro_indice("welch")).click())   # o segundo
     e = espectro.resultados[0].espectro
     assert e.parametros.metodo == "welch" and e.n_segmentos > 1 and "segmentos" in espectro.info.text()

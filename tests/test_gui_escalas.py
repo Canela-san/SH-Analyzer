@@ -127,14 +127,14 @@ def test_o_eixo_mostra_a_unidade_do_traco_selecionado(janela, juntos):
     faixa = tempo.faixas[v.receita.faixa]
     tema = aparencia().tema
     # Sem seleção, o primeiro travado (a tensão); com unidades diferentes na faixa, o rótulo vem na cor do traço.
-    assert faixa.rotulo_y == ("tensão (V)", cor_do_traco(v.receita.cor, tema)[0])
+    eixo = faixa.getAxis("left")
+    assert eixo.rotulo == "tensão (V)" and faixa.rotulo_y[2] == cor_do_traco(v.receita.cor, tema)[0]
     janela.selecao.definir([a])
-    assert faixa.rotulo_y == ("corrente (A)", cor_do_traco(a.receita.cor, tema)[0])
-    assert "corrente (A)" in faixa.getAxis("left").labelText
+    assert eixo.rotulo == "corrente (A)" and faixa.rotulo_y[2] == cor_do_traco(a.receita.cor, tema)[0]
     janela.selecao.definir([v, a])                                 # o último selecionado
-    assert faixa.rotulo_y[0] == "corrente (A)"
+    assert eixo.rotulo == "corrente (A)"
     janela.selecao.limpar()
-    assert faixa.rotulo_y[0] == "tensão (V)"
+    assert eixo.rotulo == "tensão (V)"
 
 
 def test_o_cadeado_da_ao_traco_uma_escala_so_dele(janela, qtbot, juntos):
@@ -263,13 +263,13 @@ def test_o_traco_destravado_tem_o_seu_tempo(janela, qtbot, juntos):
     propria = (e.x.no_traco(x[0]), e.x.no_traco(x[1]))
     assert propria[1] - propria[0] == pytest.approx((x[1] - x[0]) / 1.2)
     assert eixo_t.range == pytest.approx(list(propria))
-    assert faixa.rotulo_x == ("tempo (s)", cor_do_traco(a.receita.cor, aparencia().tema)[0])
+    assert faixa.rotulo_x == ("tempo", "s", cor_do_traco(a.receita.cor, aparencia().tema)[0])
     assert tempo.regiao_do_traco(a, *x) == pytest.approx(propria) and tempo.regiao_do_traco(v, *x) == tuple(x)
     assert tempo.regioes_proprias(*x).keys() == {a}
     assert formatar_si(propria[1] - propria[0], "s", 3) in tempo.info.text()     # a informação, no tempo dela
     # A tensão selecionada: o eixo volta ao tempo da vista.
     janela.selecao.definir([v])
-    assert eixo_t.range == pytest.approx(list(x)) and faixa.rotulo_x == ("tempo (s)", None)
+    assert eixo_t.range == pytest.approx(list(x)) and faixa.rotulo_x == ("tempo", "s", None)
     assert formatar_si(x[1] - x[0], "s", 3) in tempo.info.text()
     # O zoom e o pan do tempo da vista (com a tensão, travada) não tiram a corrente do lugar na tela.
     tela = [no_tempo_da_tela(caixa, escalas.escala(a), t) for t in (0.1, 0.2, 0.3)]
@@ -282,7 +282,7 @@ def test_o_traco_destravado_tem_o_seu_tempo(janela, qtbot, juntos):
     # "Mesma escala": de volta ao tempo da vista, e o rótulo perde a cor.
     janela.selecao.definir([a])
     tempo.acao_igualar.trigger()
-    assert escalas.escala(a).comum and eixo_t.range == pytest.approx(list(novo)) and faixa.rotulo_x[1] is None
+    assert escalas.escala(a).comum and eixo_t.range == pytest.approx(list(novo)) and faixa.rotulo_x[2] is None
 
 
 def test_o_tempo_proprio_numa_vista_de_varias_faixas(janela, qtbot, separados):
@@ -297,10 +297,10 @@ def test_o_tempo_proprio_numa_vista_de_varias_faixas(janela, qtbot, separados):
     assert propria[1] - propria[0] == pytest.approx((x[1] - x[0]) / 1.2)
     # O eixo do tempo fica embaixo da última faixa: ele mostra o tempo do selecionado, qualquer que seja a faixa.
     ultima = tempo.faixas[max(tempo.faixas)]
-    assert ultima.getAxis("bottom").range == pytest.approx(list(propria)) and ultima.rotulo_x[1] is not None
+    assert ultima.getAxis("bottom").range == pytest.approx(list(propria)) and ultima.rotulo_x[2] is not None
     # A roda na faixa da tensão, sem seleção: o tempo da vista (as duas faixas); a corrente fica onde está.
     janela.selecao.limpar()
-    assert ultima.getAxis("bottom").range == pytest.approx(list(x)) and ultima.rotulo_x[1] is None
+    assert ultima.getAxis("bottom").range == pytest.approx(list(x)) and ultima.rotulo_x[2] is None
     roda(tempo.grafico, da_tensao, Qt.KeyboardModifier.NoModifier, passos=2)
     novo = da_tensao.viewRange()[0]
     assert novo != pytest.approx(x) and da_corrente.viewRange()[0] == pytest.approx(novo)

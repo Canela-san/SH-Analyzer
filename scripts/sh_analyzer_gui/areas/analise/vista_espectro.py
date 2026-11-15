@@ -553,7 +553,7 @@ class VistaDeEspectro(QWidget):
         rotulo = (self._rotulo_y(), cor)
         if rotulo != self._rotulo_desenhado:
             self._rotulo_desenhado = rotulo
-            self.grafico.setLabel("left", rotulo[0], **({"color": cor} if cor else {}))
+            self.eixo_y.definir_rotulo(rotulo[0], "", cor)
 
     # ------------------------------------------------------------------ as escalas dos traços
 

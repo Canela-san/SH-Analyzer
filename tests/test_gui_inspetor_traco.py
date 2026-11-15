@@ -133,7 +133,7 @@ def escolher_unidade(seletor, texto):
 
 def faixa_do(janela, traco):
     w = janela.area.widget_da_vista(janela.vista_ativa())
-    return w.faixas[traco.receita.faixa].getAxis("left").labelText
+    return w.faixas[traco.receita.faixa].getAxis("left").rotulo
 
 
 def test_a_unidade_da_mesma_familia_converte_o_ganho_e_o_offset(janela, tracos):

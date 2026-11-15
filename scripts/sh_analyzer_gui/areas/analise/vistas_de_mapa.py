@@ -170,7 +170,8 @@ class VistaLigada(QWidget):
         pass
 
     def _novo_grafico(self) -> pg.PlotWidget:
-        grafico = pg.PlotWidget(axisItems={"bottom": EixoDoTema("bottom"), "left": EixoDoTema("left")})
+        grafico = pg.PlotWidget(axisItems={"bottom": EixoDoTema("bottom", expoente_maximo=0),
+                                           "left": EixoDoTema("left")})
         grafico.setMenuEnabled(False)
         grafico.hideButtons()
         grafico.setLabel("bottom", self.tr("tempo"), units="s")

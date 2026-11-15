@@ -68,8 +68,8 @@ def test_plotar_abre_a_aba_e_as_faixas_pela_unidade(janela, qtbot, tmp_path):
     assert [t.receita.faixa for t in vista.tracos] == [0, 1, 0]         # V numa faixa, A noutra
     assert [t.receita.cor for t in vista.tracos] == [0, 1, 2]
     assert sorted(w.faixas) == [0, 1] and len(w.itens) == 3 and len(w.chips) == 3
-    assert w.faixas[0].getAxis("left").labelText == "tensão (V)"
-    assert w.faixas[1].getAxis("left").labelText == "corrente (A)"
+    assert w.faixas[0].getAxis("left").rotulo == "tensão (V)"
+    assert w.faixas[1].getAxis("left").rotulo == "corrente (A)"
     assert w.janela_de_tempo()[1] >= 0.19                                # ajustada à captura inteira (0,2 s)
     assert "amostras" in w.info.text()
 

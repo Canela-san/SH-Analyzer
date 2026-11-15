@@ -679,7 +679,11 @@ seções à esquerda. Cada mudança vale na hora e fica gravada, sem "Aplicar":
 - **Aparência:** o tema, a fonte da interface, a fonte dos números (os eixos) e o movimento (o do sistema, reduzido
   ou normal; reduzido, nada desliza nem esmaece);
 - **Números:** o separador decimal (a vírgula ou o ponto), na tela e no que se copia para uma planilha; os campos
-  aceitam os dois. Os números já na tela são escritos de novo na hora;
+  aceitam os dois. Os números já na tela são escritos de novo na hora. E os prefixos do SI nos eixos: automáticos
+  (o padrão: cada eixo escolhe o prefixo pela faixa visível, "tensão (mV)", "frequência (kHz)"; o tempo vai até o
+  segundo) ou desligados;
+- **Unidades:** as do usuário (o símbolo, a grandeza e se leva prefixo do SI), que entram na lista do inspetor, e o
+  catálogo, com as unidades em que cada uma se converte (ver 9.4);
 - **Pastas:** a dos dados (`$DADOS`: onde o diálogo de abrir começa sem um projeto aberto), a das sondas (onde os
   perfis das sondas registradas nas capturas são procurados ao abrir uma captura) e a do cache;
 - **Cache:** o uso e o limite de cada cache (as pirâmides das capturas e os traços transformados) e o "Limpar". O
@@ -751,13 +755,23 @@ o DC de um sinal em 2,5 V), e ela anda até ele com a mesma altura. O ajuste com
 |---|---|
 | **Identidade** | Nome (editável), fonte, canal, grandeza, a taxa e a duração |
 | **Aparência** | Cor (as 6 da paleta + personalizada), espessura (1 px na tela; o que vale para a figura fica na figura), tracejado, opacidade, modo de desenho |
-| **Escala e tempo** | Eixo Y (qual faixa ou eixo), ganho, offset, inverter, unidade de exibição (V, mV, kV com prefixo automático), deslocamento no tempo e "Alinhar…" |
+| **Escala e tempo** | Eixo Y (qual faixa ou eixo), a unidade do traço, ganho, offset, inverter, "Dois pontos…", deslocamento no tempo e "Alinhar…" |
 | **Processamento** | A cadeia de etapas (seção 7.2): cada etapa é um cartão com ícone, resumo, chave liga e desliga, e alça para reordenar; "Adicionar etapa" abre um menu buscável; clicar numa etapa abre os parâmetros dela |
 | **Calibração** | O perfil de sonda (automático pelo cabeçalho ou escolhido), a faixa válida, a idade do perfil e os avisos da conferência |
 | **Na região** | Os cartões de medida (RMS, f₁, pico a pico, supra de 2 a 150 kHz…), da região dos cursores ou da janela visível |
 | **Proveniência** | O arquivo, o CRC conferido, a receita, e "copiar o comando da CLI" |
 
 **Com vários traços selecionados**, o inspetor mostra só o que é comum. Mudar ali muda em todos, como um comando só de desfazer.
+
+**A unidade do traço.** O aplicativo analisa o sinal de qualquer sensor: a tensão (V) e a corrente (A) dos canais, e
+o que o usuário disser que o sinal mede (°C, K, bar, m/s², rpm, ppm...). A unidade é a dos valores depois do ganho e
+do offset; sem uma, vale a do canal. O catálogo (`dados/unidades.py`) traz as principais (V, A, °C, K), as comuns de
+sensores com a grandeza de cada uma, e os múltiplos das que levam prefixo (mV, mA, kPa); qualquer outro símbolo
+digitado também vale. Trocar por uma da mesma família (°C e K, V e mV, bar e psi) converte o ganho e o offset, e os
+números continuam certos; trocar por uma de outra família (V para °C) só diz o que o sinal mede, e a escala vem do
+ganho e do offset (o ganho mostra a unidade dele, 100 °C/V) ou dos **dois pontos** (dois valores conhecidos do
+sensor: 4 mA → 0 bar e 20 mA → 10 bar dão o ganho e o offset). As faixas, as medidas, os espectros e os mapas usam a
+unidade do traço; a escrita põe o prefixo só onde ele cabe (1,5 mV, mas 23,5 °C).
 
 ### 9.5 Os tipos de vista
 

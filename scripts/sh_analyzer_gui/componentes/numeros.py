@@ -24,7 +24,7 @@ from ..dados.unidades import PREFIXOS_DO_SI, aceita_prefixos
 SEPARADORES = (",", ".")
 _separador = ","
 
-_ESCRITA = {-12: "p", -9: "n", -6: "µ", -3: "m", 0: "", 3: "k", 6: "M", 9: "G"}
+PREFIXO_DO_EXPOENTE = {-12: "p", -9: "n", -6: "µ", -3: "m", 0: "", 3: "k", 6: "M", 9: "G"}
 _NUMERO = re.compile(r"^([+-]?[0-9.,]*[0-9][0-9.,]*(?:[eE][+-]?[0-9]+)?)([pnµumkMG]?)(.*)$")
 
 
@@ -103,8 +103,7 @@ def formatar_si(valor: float, unidade: str = "", digitos: int = 4, decimal: str 
         return f"0 {unidade}".strip()
     if unidade and not aceita_prefixos(unidade):
         return f"{_sem_prefixo(valor, digitos, decimal)} {unidade}"
-    expoente = int(math.floor(math.log10(abs(valor)) / 3) * 3)
-    expoente = max(-12, min(9, expoente))
+    expoente = expoente_de_engenharia(valor)
     mantissa = valor / 10.0 ** expoente
     casas = max(0, digitos - 1 - int(math.floor(math.log10(abs(mantissa)))))
     texto = f"{mantissa:.{casas}f}"
@@ -116,7 +115,15 @@ def formatar_si(valor: float, unidade: str = "", digitos: int = 4, decimal: str 
     if "." in texto:
         texto = texto.rstrip("0").rstrip(".")
     texto = texto.replace(".", decimal)
-    return f"{texto} {_ESCRITA[expoente]}{unidade}".strip()
+    return f"{texto} {PREFIXO_DO_EXPOENTE[expoente]}{unidade}".strip()
+
+
+def expoente_de_engenharia(valor: float, maximo: int = 9) -> int:
+    """O expoente do prefixo do SI de ``valor`` (múltiplo de 3, de -12 a ``maximo``): o que deixa a mantissa entre 1
+    e 1000. ``0`` para o zero e o que não é número."""
+    if valor == 0 or not math.isfinite(valor):
+        return 0
+    return max(-12, min(maximo, int(math.floor(math.log10(abs(valor)) / 3) * 3)))
 
 
 def _sem_prefixo(valor: float, digitos: int, decimal: str) -> str:

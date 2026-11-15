@@ -1,6 +1,7 @@
 """As configurações (``preferencias.py``, GE-05): cada uma gravada e aplicada na partida e na hora; o separador
-decimal reescreve os números da tela; as pastas (dos dados, das sondas, do cache); os limites do cache e o
-"limpar", que nunca apaga o que está aberto nem o que está sendo construído. Sem tela."""
+decimal reescreve os números da tela; os prefixos do SI nos eixos; as unidades próprias; as pastas (dos dados, das
+sondas, do cache); os limites do cache e o "limpar", que nunca apaga o que está aberto nem o que está sendo
+construído. Sem tela."""
 
 import os
 
@@ -16,9 +17,12 @@ from sh_analyzer_gui import controle_do_projeto, preferencias  # noqa: E402
 from sh_analyzer_gui.app import criar_aplicacao  # noqa: E402
 from sh_analyzer_gui.areas.analise.arvore import PAPEL_DETALHE  # noqa: E402
 from sh_analyzer_gui.componentes import numeros  # noqa: E402
+from sh_analyzer_gui.componentes.seletor_de_unidade import SeletorDeUnidade  # noqa: E402
 from sh_analyzer_gui.configuracao import gravar, lembrar  # noqa: E402
+from sh_analyzer_gui.dados import unidades  # noqa: E402
 from sh_analyzer_gui.dados.cache import EXTENSAO, CacheDePiramides  # noqa: E402
 from sh_analyzer_gui.dados.materializacao import CacheDeMaterializacoes  # noqa: E402
+from sh_analyzer_gui.graficos.faixa import EixoDoTema, definir_prefixos_nos_eixos, prefixos_nos_eixos  # noqa: E402
 from sh_analyzer_gui.janela import JanelaPrincipal  # noqa: E402
 from sh_analyzer_gui.tema import aplicar  # noqa: E402
 from sh_analyzer_gui.tema.aplicar import aparencia  # noqa: E402
@@ -29,10 +33,13 @@ MIB = 1024**2
 
 @pytest.fixture(autouse=True)
 def padroes_de_volta(qapp):
-    """O separador e o movimento são do processo: cada teste devolve os padrões."""
+    """O separador, o movimento, os prefixos dos eixos e as unidades próprias são do processo: cada teste devolve os
+    padrões."""
     yield
     numeros.definir_separador_decimal(",")
     aparencia().definir_movimento("sistema")
+    definir_prefixos_nos_eixos(True)
+    unidades.definir_proprias(())
 
 
 @pytest.fixture
@@ -234,13 +241,67 @@ def test_trocar_o_separador_reescreve_os_numeros_da_tela(janela, qtbot, tmp_path
 
 
 
+def test_o_eixo_escolhe_o_prefixo_pela_faixa_visivel(app):
+    eixo = EixoDoTema("left")
+    eixo.definir_rotulo("tensão", "V")
+    eixo.setRange(-0.002, 0.0015)
+    assert eixo.rotulo == "tensão (mV)" and eixo.autoSIPrefixScale == pytest.approx(1e3)
+    assert eixo.tickStrings([-0.001, 0.0005], eixo.autoSIPrefixScale, 0.0005) == ["−1,0", "0,5"]
+    eixo.setRange(0, 250)
+    assert eixo.rotulo == "tensão (V)" and eixo.autoSIPrefixScale == 1.0
+    eixo.setRange(-25e3, 0)
+    assert eixo.rotulo == "tensão (kV)"
+    eixo.definir_rotulo("temperatura", "°C")                    # sem prefixo: nunca m°C
+    eixo.setRange(0, 0.002)
+    assert eixo.rotulo == "temperatura (°C)" and eixo.autoSIPrefixScale == 1.0
+    eixo.definir_rotulo("tensão", "V")
+    eixo.definir_rotulo("ordem")                               # sem unidade: os números voltam à escala 1
+    assert eixo.rotulo == "ordem" and eixo.autoSIPrefixScale == 1.0
+    tempo = EixoDoTema("bottom", expoente_maximo=0)
+    tempo.definir_rotulo("tempo", "s")
+    tempo.setRange(0, 3600)
+    assert tempo.rotulo == "tempo (s)"                         # uma hora: 3600 s, não 3,6 ks
+    tempo.setRange(0.0001, 0.004)
+    assert tempo.rotulo == "tempo (ms)"
+    definir_prefixos_nos_eixos(False)
+    tempo.aplicar_tema(aparencia().tema)                       # o aviso da aparência refaz
+    assert tempo.rotulo == "tempo (s)" and tempo.autoSIPrefixScale == 1.0
+
+
+def test_os_prefixos_e_as_unidades_gravados_valem_na_partida(app):
+    gravar(preferencias.CHAVE_DOS_PREFIXOS, "nao")
+    gravar(preferencias.CHAVE_DAS_UNIDADES, '[{"simbolo": "ppm", "grandeza": "concentração", "prefixos": false}, '
+                                            '{"simbolo": "V", "grandeza": "repetida"}, {"simbolo": "m s"}, 3, '
+                                            '{"grandeza": "sem símbolo"}, {"simbolo": "Gy", "prefixos": true}]')
+    preferencias.aplicar_na_partida()
+    assert not prefixos_nos_eixos()
+    assert [(u.simbolo, u.grandeza, u.prefixos) for u in unidades.proprias()] == \
+        [("ppm", "concentração", False), ("Gy", "", True)]           # as inválidas e a do catálogo ficam de fora
+    assert unidades.grandeza("mGy") == "" and unidades.procurar("mGy").a == pytest.approx(1e-3)
+    preferencias.mudar_unidades(unidades.proprias()[:1])
+    assert preferencias.unidades_salvas() == [unidades.propria("ppm", "concentração")]
+    gravar(preferencias.CHAVE_DAS_UNIDADES, "{não é json")
+    gravar(preferencias.CHAVE_DOS_PREFIXOS, "talvez")
+    preferencias.aplicar_na_partida()
+    assert unidades.proprias() == () and prefixos_nos_eixos()
+
+
+@pytest.mark.parametrize("simbolo, grandeza, trecho", [
+    ("mA", "", r"catálogo \(corrente\)"), ("kPa", "", "catálogo"), ("°C", "", "catálogo"), ("", "", "vazia"),
+    ("ppm", "x" * 41, "40"),
+])
+def test_uma_unidade_propria_invalida(simbolo, grandeza, trecho):
+    with pytest.raises(unidades.UnidadeInvalida, match=trecho):
+        unidades.propria(simbolo, grandeza)
+
+
 # ------------------------------------------------------------------ a tela de configurações
 
 def test_a_tela_troca_o_tema_as_fontes_e_o_movimento(janela, qtbot):
     dialogo = janela.abrir_configuracoes()
     qtbot.waitExposed(dialogo)
     assert [dialogo.secoes.item(i).text() for i in range(dialogo.secoes.count())] == \
-        ["Aparência", "Números", "Pastas", "Cache"]
+        ["Aparência", "Números", "Unidades", "Pastas", "Cache"]
     assert dialogo.tema.escolhida == 1                                  # escuro (o do teste)
     dialogo.tema.escolher(2)
     assert not aparencia().tema.escuro and preferencias.tema_salvo() == "claro"
@@ -304,3 +365,48 @@ def test_os_tamanhos_em_bytes():
     assert numeros.formatar_bytes(4 * 1024**3) == "4 GiB"
     assert numeros.formatar_bytes(12.4 * 1024**3) == "12 GiB"
     assert numeros.formatar_bytes(0) == "0 B"
+
+
+def test_a_tela_das_unidades(janela, qtbot):
+    dialogo = janela.abrir_configuracoes("unidades")
+    catalogo = dialogo.tabela_catalogo
+    assert catalogo.rowCount() == len(unidades.CATALOGO)
+    linha_c = next(i for i in range(catalogo.rowCount()) if catalogo.item(i, 0).text() == "°C")
+    assert catalogo.item(linha_c, 1).text() == "temperatura" and catalogo.item(linha_c, 2).text() == "K, °F"
+    seletor = SeletorDeUnidade()
+    assert seletor.findText("ppm") == -1
+    dialogo.novo_simbolo.setText(" ppm ")
+    dialogo.nova_grandeza.setText("concentração")
+    dialogo.adicionar_unidade.click()
+    assert dialogo.tabela_unidades.rowCount() == 1 and dialogo.tabela_unidades.item(0, 0).text() == "ppm"
+    assert unidades.grandeza("ppm") == "concentração" and preferencias.unidades_salvas()[0].simbolo == "ppm"
+    assert dialogo.novo_simbolo.text() == ""
+    seletor.showPopup()                                            # a lista se refaz com a nova
+    assert seletor.findText("ppm") >= 0
+    seletor.hidePopup()
+    for simbolo, motivo in (("ppm", "já está nas suas"), ("mV", "catálogo")):
+        dialogo.novo_simbolo.setText(simbolo)
+        dialogo.novo_simbolo.returnPressed.emit()
+        assert motivo in dialogo.motivo_unidade.text() and dialogo.tabela_unidades.rowCount() == 1
+    dialogo.tabela_unidades.selectRow(0)
+    assert dialogo.remover_unidade.isEnabled()
+    dialogo.remover_unidade.click()
+    assert dialogo.tabela_unidades.rowCount() == 0 and unidades.proprias() == ()
+    assert preferencias.unidades_salvas() == []
+
+
+def test_a_tela_desliga_os_prefixos_dos_eixos(janela, qtbot, tmp_path):
+    (fonte,) = janela.controle.abrir_capturas([captura(tmp_path)])
+    qtbot.waitUntil(lambda: fonte.piramides is not None, timeout=10_000)
+    traco = janela.area.plotar_canal(fonte, 1)                    # 0,25 de pico
+    tempo = janela.area.widget_da_vista(janela.vista_ativa())
+    eixo = tempo.faixas[traco.receita.faixa].getAxis("left")
+    qtbot.waitUntil(lambda: eixo.labelUnitPrefix == "m", timeout=5_000)
+    texto, unidade = eixo.labelText, eixo.labelUnits
+    assert eixo.rotulo == f"{texto} (m{unidade})"
+    dialogo = janela.abrir_configuracoes("numeros")
+    assert dialogo.prefixos.escolhida == 0
+    dialogo.prefixos.escolher(1)
+    assert eixo.rotulo == f"{texto} ({unidade})" and preferencias.prefixos_salvos() is False
+    dialogo.prefixos.escolher(0)
+    assert eixo.rotulo == f"{texto} (m{unidade})" and preferencias.prefixos_salvos() is True

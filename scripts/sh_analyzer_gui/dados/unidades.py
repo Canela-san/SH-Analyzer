@@ -2,8 +2,8 @@
 que o usuário escolher para o sensor dele (°C, K, Pa, m/s², rpm...).
 
 * **O catálogo** (:data:`CATALOGO`) tem as principais (V, A, °C, K) e as comuns de sensores, cada uma com a grandeza
-  que ela mede. As **unidades próprias** do usuário (as configurações) entram junto (:func:`definir_proprias`); uma
-  unidade digitada que não está em nenhum dos dois também vale (sem grandeza conhecida).
+  que ela mede. As **unidades próprias** do usuário (as configurações: :func:`propria`, :func:`definir_proprias`)
+  entram junto; uma unidade digitada que não está em nenhum dos dois também vale (sem grandeza conhecida).
 * **Os múltiplos:** uma unidade do catálogo que aceita os prefixos do SI vale com eles também (mV, mA, kPa, µm,
   kN): é a mesma grandeza, na escala do prefixo (:func:`procurar`).
 * **A conversão:** as unidades de uma mesma família (as temperaturas, as pressões, as acelerações...) se convertem
@@ -25,6 +25,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 TAMANHO_MAXIMO = 16
+TAMANHO_MAXIMO_DA_GRANDEZA = 40
 PREFIXOS_DO_SI = {"p": -12, "n": -9, "µ": -6, "u": -6, "m": -3, "": 0, "k": 3, "M": 6, "G": 9}
 """Os prefixos que se leem e escrevem (o expoente de 10); ``u`` é o micro digitado sem o µ."""
 
@@ -89,6 +90,7 @@ CATALOGO: tuple[Unidade, ...] = (
 PRINCIPAIS = ("V", "A", "°C", "K")
 
 _proprias: tuple[Unidade, ...] = ()
+_versao = 0
 
 
 def validar_simbolo(simbolo: str) -> str:
@@ -107,22 +109,44 @@ def validar_simbolo(simbolo: str) -> str:
     return limpo
 
 
+def propria(simbolo: str, grandeza_: str = "", prefixos: bool = False) -> Unidade:
+    """Uma unidade própria do usuário, validada: o símbolo (:func:`validar_simbolo`) não pode ser um do catálogo nem
+    um múltiplo de um (mA, kPa); a grandeza é um texto curto. Sem família: não se converte em nenhuma outra. Levanta
+    :class:`UnidadeInvalida`."""
+    simbolo = validar_simbolo(simbolo)
+    existente = _procurar_em(CATALOGO, simbolo)
+    if existente is not None:
+        raise UnidadeInvalida(f"{simbolo} já está no catálogo ({existente.grandeza})")
+    if not isinstance(grandeza_, str):
+        raise UnidadeInvalida(f"a grandeza tem de ser um texto, não {grandeza_!r}")
+    grandeza_ = " ".join(grandeza_.split())
+    if len(grandeza_) > TAMANHO_MAXIMO_DA_GRANDEZA:
+        raise UnidadeInvalida(f"a grandeza tem mais de {TAMANHO_MAXIMO_DA_GRANDEZA} caracteres")
+    return Unidade(simbolo, grandeza_, prefixos=bool(prefixos))
+
+
 def definir_proprias(unidades: Iterable[Unidade]) -> None:
-    """As unidades próprias do usuário (as configurações). As que repetem um símbolo do catálogo ficam de fora."""
-    global _proprias
-    do_catalogo = {u.simbolo for u in CATALOGO}
+    """As unidades próprias do usuário (as configurações). As que repetem um símbolo do catálogo (ou um múltiplo de
+    um) ou uma anterior ficam de fora."""
+    global _proprias, _versao
     vistas: set[str] = set()
-    proprias = []
+    proprias_ = []
     for u in unidades:
-        if u.simbolo in do_catalogo or u.simbolo in vistas:
+        if _procurar_em(CATALOGO, u.simbolo) is not None or u.simbolo in vistas:
             continue
         vistas.add(u.simbolo)
-        proprias.append(u)
-    _proprias = tuple(proprias)
+        proprias_.append(u)
+    _proprias = tuple(proprias_)
+    _versao += 1
 
 
 def proprias() -> tuple[Unidade, ...]:
     return _proprias
+
+
+def versao() -> int:
+    """Muda a cada :func:`definir_proprias`: quem mostra a lista sabe quando refazê-la."""
+    return _versao
 
 
 def todas() -> tuple[Unidade, ...]:
@@ -133,14 +157,26 @@ def todas() -> tuple[Unidade, ...]:
 def procurar(simbolo: str) -> Unidade | None:
     """A unidade do catálogo ou própria com este símbolo; ou o múltiplo de uma que aceita prefixos ("mA": a corrente,
     em ``a = 10⁻³``, que não aceita outro prefixo na escrita); ou ``None``."""
-    exata = next((u for u in todas() if u.simbolo == simbolo), None)
+    return _procurar_em(todas(), simbolo)
+
+
+def _procurar_em(lista: tuple[Unidade, ...], simbolo: str) -> Unidade | None:
+    exata = next((u for u in lista if u.simbolo == simbolo), None)
     if exata is not None or len(simbolo) < 2 or not PREFIXOS_DO_SI.get(simbolo[0]):
         return exata
-    base = next((u for u in todas() if u.simbolo == simbolo[1:]), None)
+    base = next((u for u in lista if u.simbolo == simbolo[1:]), None)
     if base is None or not base.prefixos:
         return None
     return Unidade(simbolo, base.grandeza, base.familia, base.a * 10.0 ** PREFIXOS_DO_SI[simbolo[0]], base.b,
                    prefixos=False)
+
+
+def da_mesma_familia(simbolo: str) -> tuple[str, ...]:
+    """As outras unidades do catálogo em que esta se converte (°C: K e °F)."""
+    u = procurar(simbolo)
+    if u is None or u.familia is None:
+        return ()
+    return tuple(v.simbolo for v in CATALOGO if v.familia == u.familia and v.simbolo != simbolo)
 
 
 def aceita_prefixos(simbolo: str) -> bool:

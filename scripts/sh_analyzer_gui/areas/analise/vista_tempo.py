@@ -338,7 +338,7 @@ class VistaDeTempo(QWidget):
             layout.addItem(faixa, row=linha, col=0)
 
     def _nova_faixa(self) -> pg.PlotItem:
-        eixo_x, eixo_y = EixoDoTema("bottom"), EixoDoTema("left")
+        eixo_x, eixo_y = EixoDoTema("bottom", expoente_maximo=0), EixoDoTema("left")
         caixa = CaixaDaFaixa()
         faixa = pg.PlotItem(viewBox=caixa, axisItems={"bottom": eixo_x, "left": eixo_y})
         faixa.hideButtons()
@@ -380,13 +380,14 @@ class VistaDeTempo(QWidget):
             traco = escalas.referencia or (dela[0] if dela else None)
             if traco is None or self._canal_do(traco) is None:
                 continue
-            rotulo = unidades.rotulo(*self.grandeza_e_unidade(traco))
+            grandeza, unidade = self.grandeza_e_unidade(traco)
             mistura = (len({self.grandeza_e_unidade(t)[1] for t in dela if self._canal_do(t) is not None}) > 1
                        or any(not escalas.escala(t).comum for t in dela))
             cor = cor_do_traco(traco.receita.cor, tema)[0] if mistura else None
-            if faixa.rotulo_y != (rotulo, cor):
-                faixa.rotulo_y = (rotulo, cor)
-                faixa.setLabel("left", rotulo, **({"color": cor} if cor else {}))
+            rotulo = (grandeza or self.tr("valor"), unidade, cor)
+            if faixa.rotulo_y != rotulo:
+                faixa.rotulo_y = rotulo
+                faixa.getAxis("left").definir_rotulo(*rotulo)
 
     def _canal_do(self, traco: Traco):
         fonte = self._fonte_do(traco)
@@ -462,10 +463,10 @@ class VistaDeTempo(QWidget):
             faixa.getAxis("bottom").definir_conversao(x.k, x.c)
         ultima = self.faixas[max(self.faixas)]
         cor = None if x.comum else cor_do_traco(referencia.receita.cor, aparencia().tema)[0]
-        rotulo = (self.tr("tempo (s)"), cor)
+        rotulo = (self.tr("tempo"), "s", cor)
         if ultima.rotulo_x != rotulo:
             ultima.rotulo_x = rotulo
-            ultima.setLabel("bottom", rotulo[0], **({"color": cor} if cor else {}))
+            ultima.getAxis("bottom").definir_rotulo(*rotulo)
 
     def _travado_e_comum(self, traco: Traco) -> tuple[bool, bool]:
         estado = self.escala_de(traco)

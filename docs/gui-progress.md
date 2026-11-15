@@ -13,12 +13,12 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > configurações; e o terceiro retorno do usuário (Alt + roda, a vista que fica nas mudanças, o clique com folga, a
 > janela e o preset IEC 61000-4-7 no inspetor, Ctrl+W; diário de 14/11) e o quarto (o eixo do traço selecionado, a
 > escala própria com o cadeado, o tempo próprio do traço destravado, os painéis com aba para recolher, a vista aberta
-> pelo painel do projeto, o contador dos avisos não vistos). **Da F2.9, falta "as unidades"** (pergunta em aberto,
-> seção 8).
+> pelo painel do projeto, o contador dos avisos não vistos). A F2.9 terminou com as unidades: a de cada traço (V, A,
+> °C, K e qualquer outra), a conversão, os dois pontos e os prefixos nos eixos (diário de 15/11).
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
-> configurações).
+> configurações); no inspetor, "Unidade" e "Dois pontos…".
 >
 > **Com o usuário (quando puder):** o "pronto quando" da Fase 1, abrir uma captura de 1 h, navegar e medir com 8
 > traços de 2 fontes, em `uv run --extra gui python -m sh_analyzer_gui`.
@@ -728,7 +728,7 @@ O plano original:
   na pasta do sistema, sem senhas nem conteúdo de arquivos (plano, 8.4).
 - **Os testes:** um erro numa tarefa e num slot vira o diálogo, e o aplicativo segue; o log gravado e em rotação.
 
-### ◐ F2.9: as configurações (falta "as unidades")
+### ☑ F2.9: as configurações
 
 **Feita em 14/11/2026:** `7d0f40d` (só do motor: a `api` diz a pasta padrão das sondas), `73be9e9` (as preferências
 gravadas e aplicadas) e `f243ac5` (a tela). O que ficou:
@@ -752,6 +752,34 @@ gravadas e aplicadas) e `f243ac5` (a tela). O que ficou:
   digitação, pelas setas do teclado e pela roda.
 - **A densidade da interface**, que o GE-05 também lista, não estava no conteúdo da F2.9 e ainda não existe.
 - **Testes:** `tests/test_gui_configuracoes.py` (15) e o do botão de ajustes em `test_gui_janela.py`.
+
+**As unidades, feitas em 15/11/2026** (o pedido do usuário: "quaisquer unidades que o usuário queira", com V, A, °C e
+K como as principais): `8a6de44` (o catálogo e a unidade do traço), `fafae0a` (a seta das caixas de escolha),
+`2669bf2` (o inspetor e os dois pontos) e o commit dos eixos e da página das unidades. O que ficou:
+
+- **A unidade do traço** (`ReceitaDoTraco.unidade`; vazia, a do canal), gravada no projeto (os de antes abrem sem
+  ela). O catálogo (`dados/unidades.py`): as principais, as de sensores comuns com a grandeza (temperatura, pressão,
+  aceleração, velocidade, deslocamento, força, torque, potência, energia, rotação, ângulo, deformação, vazão...), as
+  famílias que se convertem por uma afim exata (°C, K e °F; Pa, bar, psi, atm e mmHg; rpm e Hz...) e os múltiplos
+  das que levam prefixo (mV, mA, kPa, µm). Um símbolo fora do catálogo vale, sem grandeza.
+- **A escrita** põe o prefixo só onde ele cabe (1,5 mV, 23,46 °C, 1500 mV numa unidade já com prefixo; numa razão,
+  vale o numerador: 100 °C/V); a leitura recusa um prefixo numa unidade sem prefixo ("2 m°C").
+- **O inspetor:** a caixa da unidade (a lista com a grandeza ao lado; qualquer símbolo digitado; maiúsculas contam,
+  k e K). Na mesma família, o ganho e o offset de cada traço são convertidos, num passo só (`MudarTracos` aceita
+  uma mudança por traço); noutra, só o rótulo muda, e um aviso diz que a escala ficou. O ganho mostra a unidade
+  dele (100 °C/V); o chip da legenda, a unidade do traço. **"Dois pontos…"** dá o ganho e o offset por dois valores
+  conhecidos do sensor, e abre com a escala de agora.
+- **Os eixos** escolhem o prefixo pela faixa visível ("tensão (mV)", "frequência (kHz)"), só nas unidades que o
+  aceitam; o tempo para no segundo (uma hora é 3600 s). Desligável nas configurações (Números).
+- **A página Unidades** das configurações: as do usuário (o símbolo, a grandeza, se leva prefixo), gravadas e
+  aplicadas na partida, e o catálogo com as unidades em que cada uma se converte.
+- **De passagem:** as caixas de escolha mostravam a seta do estilo do sistema (12.6), com uma borda escura no tema
+  claro; agora é o ícone do SH-Analyzer, na cor do tema.
+- **Ainda não:** o texto dos campos numéricos (a faixa, os limites do cache) fica colado à borda: o QSS não chega
+  ao editor interno do `QSpinBox` (tentei o `padding` nele e no `QLineEdit` de dentro).
+- **Testes:** `tests/test_gui_unidades.py` (o catálogo, a conversão, a validação), as unidades em
+  `test_gui_numeros.py` e `test_gui_receita.py`, a mudança por traço em `test_gui_modelo.py`, o inspetor e os dois
+  pontos em `test_gui_inspetor_traco.py` (+8), os eixos e a página em `test_gui_configuracoes.py` (+6).
 
 O plano original:
 
@@ -1129,6 +1157,15 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **Falta da F2.9:** "as unidades" (seção 8).
   - **Testes:** `tests/test_gui_configuracoes.py` (15); `ci.sh rapido` com 1 541 aprovados e `ci.sh interface` com
     611; os 5 de desempenho passam.
+- **15/11/2026:** **as unidades, o fim da F2.9** (seção 4c). O pedido: o aplicativo analisa o sinal de qualquer
+  sensor, em qualquer unidade, com V, A, °C e K como as principais.
+  - **a unidade de cada traço**, com o catálogo, a conversão dentro da família (°C e K, V e mV), os múltiplos (mV,
+    mA, kPa) e qualquer símbolo digitado; no inspetor, a caixa da unidade e "Dois pontos…" (a escala do sensor por
+    dois valores conhecidos);
+  - **os eixos com o prefixo do SI** pela faixa visível ("tensão (mV)", "tempo (ms)"), desligável; a página
+    **Unidades** das configurações, com as do usuário;
+  - **de passagem:** a seta das caixas de escolha passou a ser a do SH-Analyzer (era a do sistema).
+  - **Testes:** `ci.sh rapido` com 1 654 aprovados e `ci.sh interface` com 724; os 5 de desempenho passam.
 ---
 
 ## 8. Perguntas em aberto
@@ -1139,7 +1176,5 @@ São as do plano, seção 19. Não bloqueiam a Fase 0:
 - a ordem das versões (Aquisição antes de Figuras);
 - a regra de sudo sem senha na placa;
 - o inglês na v1.0;
-- a assinatura de código no Windows;
-- **as unidades nas configurações** (GE-05, F2.9): o requisito não diz quais. Ficaram de fora até o usuário dizer o
-  que quer escolher (por exemplo, o prefixo do SI nos eixos, automático ou fixo, ou o tempo longo em segundos ou em
-  h:min:s).
+- a assinatura de código no Windows.
+

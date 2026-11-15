@@ -93,7 +93,9 @@ class SeletorDeUnidade(QComboBox):
         self.lineEdit().textEdited.connect(lambda _: self._marcar(False))
 
     def preencher(self) -> None:
-        """A lista de novo (as unidades próprias podem ter mudado), sem mexer no que está escrito."""
+        """A lista de novo (as unidades próprias podem ter mudado), sem mexer no que está escrito. A lista também se
+        refaz sozinha ao abrir, se as próprias mudaram desde a última vez."""
+        self._versao = unidades.versao()
         texto = self.lineEdit().text()
         principais = [unidades.procurar(s) for s in unidades.PRINCIPAIS]
         grupos = (principais, [u for u in unidades.CATALOGO if u.simbolo not in unidades.PRINCIPAIS],
@@ -137,6 +139,8 @@ class SeletorDeUnidade(QComboBox):
 
     def showPopup(self) -> None:
         """A lista na largura que cabe o símbolo e a grandeza (na fonte de agora), nunca mais estreita que a caixa."""
+        if self._versao != unidades.versao():
+            self.preencher()
         vista = self.view()
         vista.setMinimumWidth(vista.sizeHintForColumn(0) + vista.verticalScrollBar().sizeHint().width()
                               + 2 * vista.frameWidth())
