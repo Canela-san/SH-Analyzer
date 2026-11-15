@@ -12,9 +12,10 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > espectro corrigido pela sonda, com os números da CLI (`tests/test_gui_jornada.py`), e o G1 passa com a cadeia
 > ligada, durante e depois das materializações. **A tag v0.9** fica para o dono do projeto.
 >
-> **A Fase 3 começou** (seção 4d): a F3.1 está feita (o laço `asyncio` do `sh_placa`, a ponte para a interface, o
-> extra `placa` e o job `placa` da CI). **A próxima: a F3.2, a conexão SSH, as chaves e o registro de atividade**,
-> que já pode ser conferida na placa de verdade, além do servidor SSH do teste.
+> **A Fase 3 está andando** (seção 4d): a F3.1 (o laço `asyncio` do `sh_placa` e a ponte) e a F3.2 (a conexão SSH,
+> as chaves, o cofre e o registro de atividade) estão feitas, conferidas no servidor SSH do teste e na placa de
+> verdade. **A próxima: a F3.3, a descoberta das placas** (o USB pela serial do gadget e a porta 22, o mDNS, o IP),
+> que a F0.2 já mediu na placa; a F3.4 (o agente completo) pode vir antes ou depois.
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
@@ -944,7 +945,7 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
     parada entre capturas é o normal, e a placa pronta aparecia como "não pronta para capturar";
   - **os testes:** `tests/test_sh_placa_laco.py` (8, sem o Qt) e `tests/test_gui_placa.py` (6).
 
-### ▶ F3.2: a conexão SSH, as chaves e o registro de atividade
+### ☑ F3.2: a conexão SSH, as chaves e o registro de atividade
 
 - **Arquivos:** `sh_placa/conexao.py`, `sh_placa/chaves.py` e `sh_placa/registro.py`; o `TransporteSSH` em
   `sh_placa/agente.py`; `tests/servidor_ssh.py` (um servidor do próprio asyncssh, com o agente de verdade sobre a
@@ -961,8 +962,33 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
 - **Os testes:** contra o servidor do teste: conectar com a senha e, depois, com a chave instalada; a chave do host
   trocada bloqueia; a senha não aparece no registro nem no log; cada comando está no registro; a conexão que cai vira
   um erro claro.
+- **Feito em 15/11/2026:**
+  - **`sh_placa/conexao.py`:** o `Destino` (host, porta, usuário e o salto) e a `ConexaoSSH`: uma conexão
+    reaproveitada, um canal `exec` por comando, o `aes128-ctr` na frente. Nada do `~/.ssh` do usuário, do
+    `ssh-agent` ou do `~/.ssh/config` entra. **Os erros são todos `ErroDaPlaca`**, com a mensagem pronta (a
+    rede, a queda, o tempo, a senha, a chave do host); nenhum do asyncssh sai. **A queda no meio de um comando:** o
+    `communicate` do asyncssh volta sem erro, sem o código nem o sinal; sem cuidar disso, um cabo que solta pareceria
+    um comando morto por um sinal;
+  - **a chave do host:** confirmada na primeira vez e fixada; a trocada bloqueia antes de qualquer senha ou chave
+    sair (o servidor do teste confere que nenhuma autenticação começou), com as duas impressões e o que fazer. **Na
+    placa de verdade,** a primeira impressão não era nenhuma das que o `ssh` do usuário conhecia: o asyncssh põe o
+    RSA na frente. Agora a ordem é a do OpenSSH (o ED25519 primeiro), e a impressão é a do `ssh-keygen` da placa;
+  - **`sh_placa/chaves.py`:** a chave `ed25519` do aplicativo (0600 desde o primeiro byte, numa pasta 0700), os hosts
+    conhecidos no formato do `known_hosts` do OpenSSH (o terminal da F3.8 usa o mesmo arquivo) e o cofre de senhas
+    (`keyring`; sem cofre no sistema, explica e segue sem guardar);
+  - **`sh_placa/registro.py`:** cada comando com a hora, a duração, o código ou o motivo de não ter terminado, e os
+    fatos da conexão;
+  - **o agente pelo stdin** (o `TransporteSSH`): o código do agente do aplicativo vai no `python3 -`, e a placa não
+    precisa tê-lo (o plano, 11.2, mudou com isso; o agente ganhou o padrão `~/firmware` lido pelo stdin, `3d68c49`).
+    O `ClienteDoAgente` ficou `async`;
+  - **`tests/servidor_ssh.py`:** um servidor do asyncssh com o agente de verdade sobre a placa simulada, a senha e as
+    chaves do `authorized_keys` do home falso, a troca da chave de host, a queda e o salto;
+  - **na placa de verdade:** a primeira conexão com a senha (0,38 s), a chave instalada, a segunda só com a chave
+    (0,35 s), o `versao` e o `estado` pelo stdin (~0,5 s cada) e o diagnóstico sem nada. A chave de teste saiu da placa
+    depois;
+  - **os testes:** `tests/test_sh_placa_ssh.py` (15).
 
-### ☐ F3.3: a descoberta das placas
+### ▶ F3.3: a descoberta das placas
 
 - **Arquivos:** `sh_placa/descoberta.py`; as placas conhecidas nas preferências.
 - **O conteúdo** (AQ-01; plano, 11.3):
@@ -1528,6 +1554,18 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **Testes:** `ci.sh rapido` com 1 716 aprovados, `ci.sh interface` com 759 e `ci.sh placa` com 129 em cada
     Python.
   - **Próximo:** a F3.2, a conexão SSH (com a placa de verdade além do servidor do teste).
+- **15/11/2026:** **a F3.2, a conexão SSH, as chaves e o registro** (seção 4d):
+  - **a decisão:** o agente vai pelo stdin (`python3 -`), e não da pasta do firmware da placa. Ele fala sempre o
+    protocolo do aplicativo, e uma placa com o firmware antigo é diagnosticada em vez de responder outro protocolo
+    (o plano, 11.2, mudou);
+  - **o que a placa de verdade mostrou:** a impressão digital da primeira conexão não era nenhuma das que o `ssh` do
+    usuário conhecia (o asyncssh negocia o RSA primeiro; agora é o ED25519, como o OpenSSH). E o servidor do teste
+    mostrou que a queda no meio de um comando volta do asyncssh sem erro;
+  - **na placa:** a primeira conexão com a senha, a chave instalada, a segunda só com a chave, o agente pelo stdin e o
+    diagnóstico sem nada; a chave de teste saiu da placa depois.
+  - **Testes:** `ci.sh placa` com 146 em cada Python, `ci.sh rapido` com 1 411 (sem o Qt, como o job `testes`) e
+    `ci.sh interface` com 759.
+  - **Próximo:** a F3.3, a descoberta (o USB, o mDNS e o IP).
 ---
 
 ## 8. Perguntas em aberto

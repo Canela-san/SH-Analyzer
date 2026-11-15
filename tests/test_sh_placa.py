@@ -1,6 +1,8 @@
 """O ``sh_placa`` (a BeagleBone vista do computador): o cliente do agente, o diagnóstico em cada cenário do simulador
 e as respostas que não se entendem. Sem Qt e sem placa."""
 
+import asyncio
+
 import pytest
 from sh_placa.agente import ClienteDoAgente, ErroDaPlaca
 from sh_placa.estado import EstadoDaPlaca
@@ -14,7 +16,7 @@ from sh_placa.simulador import CENARIOS, SERIE_SIMULADA, VERSAO_SIMULADA, Simula
 def test_diagnostico_de_cada_cenario(cenario, codigo):
     assert cenario in CENARIOS
     with Simulador(cenario) as cliente:
-        estado = cliente.estado()
+        estado = asyncio.run(cliente.estado())
     assert estado.serie == SERIE_SIMULADA and estado.nome_da_placa == "BeagleBone Black"
     problemas = estado.diagnostico(VERSAO_SIMULADA)
     codigos = [p.codigo for p in problemas if p.nivel != "info"]
@@ -57,7 +59,7 @@ class Respostas:
     def __init__(self, codigo, saida, erro=""):
         self.r = (codigo, saida, erro)
 
-    def executar(self, argv):
+    async def executar(self, argv):
         return self.r
 
 
@@ -67,13 +69,14 @@ class Respostas:
     (Respostas(0, '{"protocolo": 2, "agente": "9"}'), "protocolo 2"),
     (Respostas(2, '{"protocolo": 1, "erro": "comando desconhecido"}'), "recusou"),
     (Respostas(3, '{"protocolo": 1}'), "código 3"),
+    (Respostas(127, "", "sh: 1: python3: not found"), "não tem o python3"),
 ])
 def test_respostas_que_nao_se_entendem(resposta, trecho):
     with pytest.raises(ErroDaPlaca, match=trecho):
-        ClienteDoAgente(resposta).estado()
+        asyncio.run(ClienteDoAgente(resposta).estado())
 
 
 def test_a_ultima_linha_e_a_resposta():
     """Um aviso impresso antes (a placa às vezes escreve no stdout ao logar) não estraga a resposta."""
     cliente = ClienteDoAgente(Respostas(0, 'Aviso qualquer\n{"protocolo": 1, "firmware": "v1"}\n'))
-    assert cliente.versao()["firmware"] == "v1"
+    assert asyncio.run(cliente.versao())["firmware"] == "v1"

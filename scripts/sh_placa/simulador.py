@@ -65,8 +65,8 @@ def montar_sistema_falso(pasta: Path, cenario: str = "normal", versao_firmware: 
 
 
 class Simulador:
-    """Uma placa simulada: ``with Simulador("pru_com_falha") as cliente: cliente.estado()``. A pasta temporária some
-    no fim."""
+    """Uma placa simulada: ``with Simulador("pru_com_falha") as cliente: await cliente.estado()``. A pasta
+    temporária some no fim."""
 
     def __init__(self, cenario: str = "normal", versao_firmware: str = VERSAO_SIMULADA):
         self.cenario, self.versao_firmware = cenario, versao_firmware

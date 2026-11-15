@@ -928,7 +928,7 @@ Quem recebe o pacote refaz a figura sem o SH-Analyzer, que é o que um revisor o
 
 **O protocolo:**
 
-- cada chamada é um comando curto, `python3 ~/sh-analyzer/firmware/agente/shan_agente.py <comando> [args] --json`, que responde um objeto JSON com `"protocolo": 1`;
+- cada chamada é um comando curto, `SHAN_PASTA="$HOME"/firmware python3 - <comando> [args]`, **com o código do agente pelo stdin**, e responde um objeto JSON com `"protocolo": 1`. O agente que roda é sempre o do aplicativo: a placa não precisa tê-lo, nada é gravado nela, e uma placa com o firmware antigo é diagnosticada (e o diagnóstico diz que ele está antigo) em vez de responder outro protocolo (decidido na F3.2, 15/11/2026);
 - comandos sem estado e uma conexão SSH reaproveitada (canais `exec` são baratos);
 - as **tarefas longas** (captura, rotina, compilação) rodam com `setsid`, com o estado e o log em `~/.sh-analyzer/tarefas/<id>/`;
 - o aplicativo pergunta `tarefa estado <id>` e lê o log incremental;
