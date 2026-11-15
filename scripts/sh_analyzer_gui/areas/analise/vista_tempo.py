@@ -819,7 +819,7 @@ class VistaDeTempo(QWidget):
         if chip is not None:
             if campos & {"nome", "cor"}:
                 self._refazer_legenda()
-            elif campos & {"ganho", "deslocamento_s", "visivel", "cadeia"}:
+            elif campos & {"ganho", "deslocamento_s", "visivel", "cadeia", "unidade"}:
                 # Só o chip deste traço muda (arrastar o ganho ou o deslocamento no inspetor muda o traço a cada
                 # passo: refazer a legenda inteira a cada um pesaria).
                 estado = self.materializacoes.estado_de(traco)
@@ -841,12 +841,15 @@ class VistaDeTempo(QWidget):
     # ------------------------------------------------------------------ a legenda
 
     def _resumo(self, traco: Traco) -> str:
-        """O que o chip diz além do nome: ausente, o ganho e o deslocamento no tempo."""
+        """O que o chip diz além do nome: ausente, a unidade própria, o ganho e o deslocamento no tempo."""
         r = traco.receita
         fonte = self._fonte_do(traco)
         resumo = []
         if fonte is not None and fonte.esta_ausente:
             resumo.append(self.tr("ausente"))
+        canal = self._canal_do(traco)
+        if r.unidade and (canal is None or r.unidade != canal.unidade):
+            resumo.append(r.unidade)
         if r.ganho != 1:
             resumo.append(decimal(f"×{r.ganho:g}").replace("-", "−"))
         if r.deslocamento_s:

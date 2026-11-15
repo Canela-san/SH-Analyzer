@@ -120,6 +120,28 @@ def test_mudar_varios_tracos_e_um_passo_so(projeto):
     assert projeto.pilha.undoText() == "Renomear B para I_A"
 
 
+def test_uma_mudanca_para_cada_traco_e_um_passo_so(projeto):
+    vista = projeto.vistas[0]
+    a, b = traco("A", 0), traco("B", 1)
+    for t in (a, b):
+        projeto.pilha.push(AdicionarTraco(vista, t))
+    contagem = projeto.pilha.count()
+    projeto.pilha.push(MudarTracos({a: {"ganho": 2.0}, b: {"ganho": -3.0, "unidade": "°C"}}, texto="Unidade: °C"))
+    assert (a.receita.ganho, a.receita.unidade, b.receita.ganho, b.receita.unidade) == (2.0, "", -3.0, "°C")
+    assert projeto.pilha.count() == contagem + 1 and projeto.pilha.undoText() == "Unidade: °C"
+    projeto.pilha.undo()
+    assert (a.receita.ganho, b.receita.ganho, b.receita.unidade) == (1.0, 1.0, "")
+    projeto.pilha.push(MudarTracos([a], unidade="K"))
+    assert projeto.pilha.undoText() == "Mudar a unidade de A"
+    with pytest.raises(ValueError, match="dicionário"):
+        MudarTracos({a: {"ganho": 2.0}}, cor=1)
+    with pytest.raises(ValueError, match="o que muda"):
+        MudarTracos({a: {}})
+    with pytest.raises(ReceitaInvalida, match="ganho"):              # um inválido recusa o comando inteiro
+        MudarTracos({a: {"ganho": 2.0}, b: {"ganho": 0}})
+    assert a.receita.ganho == 1.0
+
+
 def test_uma_mudanca_invalida_nao_entra_na_pilha(projeto):
     vista = projeto.vistas[0]
     a = traco("A")

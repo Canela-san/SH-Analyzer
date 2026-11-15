@@ -3,6 +3,11 @@ cadeia de transformações, ``processamento.py``) e a calibração dos traços s
 inspetor mostra o que eles têm em comum ("vários" onde diferem), e mudar ali muda todos, num passo só.
 
 Um valor que a receita recusa (o ganho zero) não entra: o campo fica vermelho, com o motivo na dica.
+
+**A unidade do traço** (``dados/unidades.py``): escolher uma da mesma família da de agora (°C e K, V e mV) converte o
+ganho e o offset de cada traço, e os números continuam os mesmos, noutra unidade; escolher uma de outra família (V
+para °C) só diz o que o sinal mede, e a escala vem do ganho e do offset, ou dos dois pontos (``dois_pontos.py``). O
+ganho mostra a unidade dele quando o traço não está na do canal (100 °C/V).
 """
 
 from __future__ import annotations
@@ -30,12 +35,16 @@ from PySide6.QtWidgets import (
 
 from ...componentes.basicos import CampoComUnidade
 from ...componentes.numeros import formatar_duracao, formatar_si
+from ...componentes.seletor_de_unidade import SeletorDeUnidade
+from ...componentes.toast import Toast
+from ...dados import unidades
 from ...dados.cadeia import CorrecaoSonda
 from ...dados.receita import ReceitaInvalida
 from ...modelo.comandos import MudarTracos
 from ...modelo.objetos import Projeto, Traco
 from ...tema.aplicar import aparencia
 from ...tema.tokens import NOMES_DOS_TRACOS, TAMANHOS, Tema, cor_do_traco
+from .dois_pontos import DialogoDeDoisPontos, unidade_do_ganho
 from .processamento import SecaoDeProcessamento
 from .secao_do_espectro import SecaoDoEspectro
 
@@ -140,6 +149,22 @@ class InspetorDoTraco(QScrollArea):
         self.faixa.setSpecialValueText(self.tr("vários"))         # o 0: os traços estão em faixas diferentes
         self.faixa.setKeyboardTracking(False)
         self.faixa.valueChanged.connect(self._faixa_mudou)
+        self.unidade = SeletorDeUnidade()
+        self.unidade.setObjectName("campo_unidade")
+        self.unidade.unidadeEscolhida.connect(self._unidade_escolhida)
+        self.dois_pontos = QToolButton()
+        self.dois_pontos.setObjectName("botao_dois_pontos")
+        self.dois_pontos.setText(self.tr("Dois pontos…"))
+        self.dois_pontos.setToolTip(self.tr("A escala do sensor por dois valores conhecidos (4 mA → 0 bar, "
+                                            "20 mA → 10 bar)"))
+        self.dois_pontos.clicked.connect(self.calibrar_por_dois_pontos)
+        self.dialogo_dois_pontos: DialogoDeDoisPontos | None = None
+        unidade = QWidget()
+        linha = QHBoxLayout(unidade)
+        linha.setContentsMargins(0, 0, 0, 0)
+        linha.setSpacing(6)
+        linha.addWidget(self.unidade, 1)
+        linha.addWidget(self.dois_pontos)
         self.ganho = CampoComUnidade("", 1.0, digitos=5)
         self.ganho.setObjectName("campo_ganho")
         self.ganho.valorMudou.connect(lambda v: self._mudar(self.ganho, ganho=v))
@@ -161,8 +186,8 @@ class InspetorDoTraco(QScrollArea):
         self.deslocamento.setObjectName("campo_deslocamento")
         self.deslocamento.valorMudou.connect(lambda v: self._mudar(self.deslocamento, deslocamento_s=v))
         coluna.addWidget(self._secao(self.tr("Escala e tempo"), [
-            (self.tr("Faixa"), self.faixa), (self.tr("Ganho"), ganho), (self.tr("Offset"), self.offset),
-            (self.tr("Deslocamento"), self.deslocamento)]))
+            (self.tr("Faixa"), self.faixa), (self.tr("Unidade"), unidade), (self.tr("Ganho"), ganho),
+            (self.tr("Offset"), self.offset), (self.tr("Deslocamento"), self.deslocamento)]))
 
         # Processamento
         self.processamento = SecaoDeProcessamento()
@@ -296,8 +321,13 @@ class InspetorDoTraco(QScrollArea):
         faixa = _comum(r.faixa for r in receitas)
         self.faixa.setValue(faixa + 1 if faixa is not None else 0)
         self.faixa.blockSignals(False)
-        unidade = _comum(c.unidade for c in canais) if canais else None
+        do_canal = self._unidade_comum_dos_canais()
+        unidade = _comum(self._unidade_do_traco(t, c) for t, (_, c) in zip(tracos, fontes_canais))
+        self.unidade.definir(unidade)
+        self.unidade.definir_dica(self._dica_da_unidade(unidade, do_canal))
+        self.dois_pontos.setEnabled(do_canal is not None)
         self.offset.unidade = unidade or ""
+        self.ganho.unidade = unidade_do_ganho(unidade or "", do_canal or "")
         for campo, valor in ((self.ganho, _comum(r.ganho for r in receitas)),
                              (self.offset, _comum(r.offset for r in receitas)),
                              (self.deslocamento, _comum(r.deslocamento_s for r in receitas))):
@@ -316,6 +346,26 @@ class InspetorDoTraco(QScrollArea):
             linhas, falta_aplicar = [self.tr("Selecione um traço só para ver a calibração dele.")], False
         self.calibracao.setText("\n".join(dict.fromkeys(linhas)))
         self.aplicar_correcao.setVisible(falta_aplicar)
+
+    @staticmethod
+    def _unidade_do_traco(traco: Traco, canal) -> str:
+        """A unidade dos valores do traço (a dele ou a do canal; só a dele, se a captura está ausente)."""
+        return traco.receita.unidade_de(canal.unidade if canal is not None else "")
+
+    def _unidade_comum_dos_canais(self) -> str | None:
+        """A unidade dos canais dos traços selecionados, se todos têm canal e ela é uma só; ``None`` se não."""
+        canais = [self._canal_de(t)[1] for t in self.tracos]
+        if not canais or any(c is None for c in canais):
+            return None
+        return _comum(c.unidade for c in canais)
+
+    def _dica_da_unidade(self, unidade: str | None, do_canal: str | None) -> str:
+        if unidade is None:
+            return self.tr("Os traços estão em unidades diferentes")
+        grandeza = unidades.grandeza(unidade)
+        if do_canal is not None and unidade == do_canal:
+            return self.tr("{} (a do canal)").format(grandeza or unidade)
+        return grandeza
 
     def _calibracao(self, fonte, canal, cadeia) -> tuple[list[str], bool]:
         """O texto da calibração do canal com esta cadeia, e se falta aplicar a correção de um perfil que existe."""
@@ -394,17 +444,76 @@ class InspetorDoTraco(QScrollArea):
         if valor >= 1:
             self._mudar(None, faixa=valor - 1)
 
+    def _quais(self, tracos) -> str:
+        return tracos[0].nome if len(tracos) == 1 else self.tr("{} traços").format(len(tracos))
+
     def _inverter(self) -> None:
         if not self.tracos or self.projeto is None:
             return
         # Um passo só, mesmo com ganhos diferentes: cada traço troca o sinal do seu.
-        self.projeto.pilha.beginMacro(self.tr("Inverter {}").format(
-            self.tracos[0].nome if len(self.tracos) == 1 else self.tr("{} traços").format(len(self.tracos))))
+        self.projeto.pilha.push(MudarTracos({t: {"ganho": -t.receita.ganho} for t in self.tracos},
+                                            texto=self.tr("Inverter {}").format(self._quais(self.tracos))))
+
+    def _unidade_escolhida(self, nova: str) -> None:
+        """Cada traço vai para ``nova``: convertendo o ganho e o offset dele quando a de agora se converte nela;
+        só trocando o rótulo quando não (e o aviso diz que a escala ficou como estava)."""
+        if not self.tracos or self.projeto is None:
+            return
+        de_cada, sem_conversao = {}, []
+        for traco in self.tracos:
+            canal = self._canal_de(traco)[1]
+            r, atual = traco.receita, self._unidade_do_traco(traco, canal)
+            mudancas: dict = {"unidade": "" if canal is not None and nova == canal.unidade else nova}
+            conversao = unidades.conversao(atual, nova) if atual else None
+            if conversao is not None:
+                c, d = conversao
+                mudancas.update(ganho=c * r.ganho, offset=c * r.offset + d)
+            elif atual != nova:
+                sem_conversao.append(atual or "?")
+            de_cada[traco] = mudancas
         try:
-            for traco in self.tracos:
-                self.projeto.pilha.push(MudarTracos([traco], ganho=-traco.receita.ganho))
-        finally:
-            self.projeto.pilha.endMacro()
+            comando = MudarTracos(de_cada, texto=self.tr("Unidade de {}: {}").format(self._quais(self.tracos), nova))
+        except ReceitaInvalida as e:
+            self.unidade.marcar_invalido(str(e))
+            return
+        if not comando.muda_algo:
+            self.atualizar()
+            return
+        self.projeto.pilha.push(comando)
+        if sem_conversao:
+            de = ", ".join(dict.fromkeys(sem_conversao))
+            Toast.mostrar(self.window(), self.tr("De {} para {} não há conversão: a escala é a do ganho e do offset "
+                                                 "(ou dos dois pontos).").format(de, nova))
+
+    def calibrar_por_dois_pontos(self) -> DialogoDeDoisPontos | None:
+        """Abre o diálogo dos dois pontos (sem bloquear); o "Aplicar" muda a unidade, o ganho e o offset de todos os
+        traços selecionados, num passo só."""
+        do_canal = self._unidade_comum_dos_canais()
+        if do_canal is None or self.projeto is None:
+            return None
+        receitas = [t.receita for t in self.tracos]
+        unidade = _comum(r.unidade_de(do_canal) for r in receitas) or do_canal
+        ganho, offset = _comum(r.ganho for r in receitas), _comum(r.offset for r in receitas)
+        dialogo = DialogoDeDoisPontos(do_canal, unidade, ganho if ganho is not None else 1.0,
+                                      offset if offset is not None else 0.0, self)
+        tracos = self.tracos                         # os de agora, mesmo que a seleção mude com o diálogo aberto
+        dialogo.accepted.connect(lambda: self._aplicar_dois_pontos(dialogo, do_canal, tracos))
+        dialogo.finished.connect(lambda _r: self._dois_pontos_fechou(dialogo))
+        self.dialogo_dois_pontos = dialogo
+        dialogo.open()
+        return dialogo
+
+    def _aplicar_dois_pontos(self, dialogo: DialogoDeDoisPontos, do_canal: str, tracos) -> None:
+        unidade, ganho, offset = dialogo.escala()
+        comando = MudarTracos(tracos, unidade="" if unidade == do_canal else unidade, ganho=ganho, offset=offset,
+                              texto=self.tr("Dois pontos em {}").format(self._quais(tracos)))
+        if comando.muda_algo:
+            self.projeto.pilha.push(comando)
+
+    def _dois_pontos_fechou(self, dialogo: DialogoDeDoisPontos) -> None:
+        if self.dialogo_dois_pontos is dialogo:
+            self.dialogo_dois_pontos = None
+        dialogo.deleteLater()
 
     # ------------------------------------------------------------------ tema
 

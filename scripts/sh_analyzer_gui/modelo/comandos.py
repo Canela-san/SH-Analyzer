@@ -13,6 +13,8 @@ já recolhido (o processo caiu assim num teste). Um comando de vários passos gu
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from PySide6.QtGui import QUndoCommand
 
 from .objetos import FonteDoProjeto, Projeto, Traco, Vista
@@ -21,7 +23,7 @@ ID_MUDAR_TRACOS = 1001
 """O ``id()`` das mudanças que se juntam (arrastar um valor gera uma mudança por passo; o desfazer volta tudo)."""
 
 _CAMPOS = {"nome": "o nome", "cor": "a cor", "ganho": "o ganho", "offset": "o offset",
-           "deslocamento_s": "o deslocamento no tempo", "faixa": "a faixa"}
+           "deslocamento_s": "o deslocamento no tempo", "faixa": "a faixa", "unidade": "a unidade"}
 
 
 def _quais(tracos) -> str:
@@ -88,17 +90,29 @@ class MudarTracos(QUndoCommand):
     ``MudarTracos([a, b], cor=2)``. Com ``juntar``, mudanças seguidas dos mesmos campos nos mesmos traços viram uma
     (arrastar o ganho não enche a pilha). ``juntar`` pode ser ``True`` ou uma marca (qualquer objeto): com a marca,
     só se juntam as do mesmo gesto, e dois arrastos seguidos do mesmo traço ficam em dois passos de desfazer.
-    ``texto`` troca o texto automático ("Mover V_A")."""
+    ``texto`` troca o texto automático ("Mover V_A").
+
+    Com uma mudança diferente para cada traço, ``tracos`` é o dicionário ``{traço: {campo: valor}}`` e não vêm
+    ``mudancas``: trocar a unidade converte o ganho e o offset de cada um, que podem diferir."""
 
     def __init__(self, tracos, *, juntar: object = False, texto: str | None = None, **mudancas):
-        tracos = list(dict.fromkeys(tracos))
-        if not tracos or not mudancas:
+        if isinstance(tracos, Mapping):
+            if mudancas:
+                raise ValueError("com uma mudança para cada traço, as mudanças vão no dicionário")
+            de_cada = {t: dict(m) for t, m in tracos.items()}
+        else:
+            de_cada = {t: mudancas for t in dict.fromkeys(tracos)}
+        if not de_cada or not all(de_cada.values()):
             raise ValueError("diga quais traços e o que muda")
+        tracos = list(de_cada)
         antes = [t.receita for t in tracos]
-        depois = [r.com(**mudancas) for r in antes]          # valida aqui, antes do push
-        super().__init__(texto or self._texto(tracos, antes, depois, mudancas))
+        depois = [r.com(**de_cada[t]) for t, r in zip(tracos, antes)]      # valida aqui, antes do push
+        juntas: dict = {}
+        for m in de_cada.values():
+            juntas.update(m)
+        super().__init__(texto or self._texto(tracos, antes, depois, juntas))
         self.tracos, self.antes, self.depois = tracos, antes, depois
-        self.campos = frozenset(mudancas)
+        self.campos = frozenset(juntas)
         self.juntar = juntar
 
     @staticmethod
