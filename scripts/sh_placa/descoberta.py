@@ -354,7 +354,7 @@ def agrupar(achados: Sequence[Achado], conhecidas: Sequence[PlacaConhecida] = ()
         grupos.setdefault(raiz(i), []).append(a)
     por_serie = {p.serie: p for p in conhecidas}
     placas = [_placa(grupo, serie_da_impressao, por_serie, agora) for grupo in grupos.values()]
-    achadas = {p.serie for p in placas if p.serie}
+    achadas = {p.serie for p in placas if p.serie and p.estado != "simulador"}
     placas += [_ausente(p) for p in conhecidas if p.serie not in achadas]
     ordem = {estado: i for i, estado in enumerate(ESTADOS)}
     return sorted(placas, key=lambda p: (ordem[p.estado], p.nome.lower(), p.chave))
@@ -365,6 +365,8 @@ def _series(a: Achado, serie_da_impressao: Mapping[str, str]) -> set[str]:
 
 
 def _chaves(a: Achado, serie_da_impressao: Mapping[str, str]) -> set[str]:
+    if a.caminho.tipo == "simulador":
+        return {"simulador"}           # nunca junto de uma placa de verdade: o nº de série dele é inventado
     chaves = {f"serie:{s}" for s in _series(a, serie_da_impressao)}
     if a.impressao:
         chaves.add(f"impressao:{a.impressao}")
@@ -383,7 +385,8 @@ def _ordem_do_caminho(c: Caminho, respondeu: bool | None) -> tuple:
 def _placa(grupo: list[Achado], serie_da_impressao: Mapping[str, str], por_serie: Mapping[str, PlacaConhecida],
            agora: float) -> PlacaVista:
     serie = next((s for a in grupo for s in sorted(_series(a, serie_da_impressao))), None)
-    conhecida = por_serie.get(serie) if serie else None
+    simulador = any(a.caminho.tipo == "simulador" for a in grupo)
+    conhecida = por_serie.get(serie) if serie and not simulador else None
     impressao = next((a.impressao for a in grupo if a.impressao), conhecida.impressao if conhecida else None)
     # Os caminhos, um por endereço (o USB e o mDNS acham o mesmo IP): os detalhes juntos, a menor latência.
     caminhos: dict[object, tuple[Caminho, bool | None]] = {}
@@ -402,7 +405,7 @@ def _placa(grupo: list[Achado], serie_da_impressao: Mapping[str, str], por_serie
                            True if True in (respondeu, a.respondeu) else respondeu)
     ordenados = sorted(caminhos.values(), key=lambda par: _ordem_do_caminho(*par))
     porta_serial = next((a.porta_serial for a in grupo if a.porta_serial), None)
-    if any(a.caminho.tipo == "simulador" for a in grupo):
+    if simulador:
         estado = "simulador"
     elif any(r is True and c.destino is not None for c, r in ordenados):
         estado = "disponivel"

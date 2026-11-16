@@ -45,7 +45,11 @@ import asyncssh
 from .agente import TEMPO_LIMITE_S, ErroDaPlaca
 from .chaves import ChaveDoAplicativo, HostsConhecidos
 from .destino import Destino
+from .erros import ChaveDoHostTrocada, ErroDeAutenticacao, ErroDeConexao, HostNaoConfirmado
 from .registro import Entrada, RegistroDeAtividade
+
+__all__ = ["ChaveDoHostTrocada", "ConexaoSSH", "Destino", "Enlace", "ErroDeAutenticacao", "ErroDeConexao",
+           "HostNaoConfirmado", "Resultado"]
 
 CIFRAS = "^aes128-ctr"                   # na frente das padrão do asyncssh, sem tirar nenhuma
 CHAVES_DE_HOST = "^ssh-ed25519,ecdsa-sha2-nistp256"
@@ -66,10 +70,6 @@ if [ -f "$arquivo" ] && grep -qxF -- "$linha" "$arquivo"; then echo ja_estava; e
 if [ -s "$arquivo" ] && [ -n "$(tail -c 1 "$arquivo")" ]; then echo >> "$arquivo" || exit 1; fi
 printf '%s\\n' "$linha" >> "$arquivo" && echo instalada"""
 
-
-SENHA_PADRAO_DA_IMAGEM = "temppwd"
-"""A senha do usuário ``debian`` nas imagens da BeagleBoard: todo mundo a conhece, e a primeira conexão sugere
-trocá-la (docs/gui-plan.md, 11.3)."""
 
 ECOS_DO_ENLACE = 5
 TEMPO_DO_ECO_S = 5.0
@@ -109,32 +109,6 @@ class _Desfecho:
     @property
     def duracao_s(self) -> float:
         return time.monotonic() - self._t0
-
-
-class ErroDeConexao(ErroDaPlaca):
-    """A rede: a conexão recusada, sem rota, sem resposta, ou que caiu."""
-
-
-class ErroDeAutenticacao(ErroDaPlaca):
-    """A placa recusou a chave do aplicativo e a senha (ou não havia senha para tentar)."""
-
-
-class HostNaoConfirmado(ErroDaPlaca):
-    """A primeira conexão com uma placa, sem o sim para a impressão digital dela: nada foi fixado."""
-
-
-class ChaveDoHostTrocada(ErroDaPlaca):
-    """A placa apresentou outra chave de host: a conexão foi bloqueada."""
-
-    def __init__(self, destino: Destino, conhecida: str, apresentada: str | None):
-        self.destino, self.conhecida, self.apresentada = destino, conhecida, apresentada
-        super().__init__(
-            f"A placa em {destino.conta} apresentou uma chave de host diferente da conhecida (a conhecida é "
-            f"{conhecida}; a de agora, {apresentada or 'não deu para ler'}). A conexão foi bloqueada antes de qualquer "
-            "senha ou chave sair daqui. Se a placa foi regravada (a imagem reinstalada, outro cartão), a chave nova é "
-            "esperada: confira a impressão digital na própria placa (ssh-keygen -lf "
-            "/etc/ssh/ssh_host_ed25519_key.pub, pelo console), esqueça a chave antiga e conecte de novo. Se não foi, "
-            "alguém pode estar no meio da conexão.")
 
 
 ConfirmarHost = Callable[[Destino, str], Awaitable[bool]]
@@ -263,7 +237,7 @@ class ConexaoSSH:
                           f"{d.conta} (numa placa nova, a padrão da imagem Debian)")
             else:
                 motivo = f"a placa em {d.conta} não aceita a chave do aplicativo nem senha (PasswordAuthentication)"
-            raise ErroDeAutenticacao(motivo) from e
+            raise ErroDeAutenticacao(motivo, d, cliente.pediu_a_senha) from e
         except asyncssh.Error as e:
             raise ErroDeConexao(f"a placa em {d.conta} encerrou a conexão: {e.reason}") from e
         except (OSError, asyncio.TimeoutError) as e:

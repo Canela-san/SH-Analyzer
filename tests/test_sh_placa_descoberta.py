@@ -212,6 +212,21 @@ def test_as_placas_conhecidas_lembradas_e_gravadas():
     assert [d.host for d in muitos[0].destinos] == [f"10.0.0.{i}" for i in (7, 6, 5, 4, 3)]
 
 
+def test_o_simulador_nunca_se_junta_a_uma_placa():
+    """O nº de série do simulador é inventado: uma placa com o mesmo (o servidor SSH dos testes roda a árvore dele)
+    fica numa linha própria, com o nome e o estado dela, e a conhecida com esse nº não vira o simulador."""
+    placa = Achado(Caminho("lan", Destino("10.0.0.7"), "bbb.local (mDNS)", 0.5), serie=SERIE_SIMULADA,
+                   impressao="SHA256:x", nome="bbb")
+    simulador = Achado(Caminho("simulador", None, "neste computador", 0.0), serie=SERIE_SIMULADA, nome="Simulador")
+    conhecida = PlacaConhecida(SERIE_SIMULADA, "Placa do teste", "SHA256:x", (Destino("10.0.0.7"),), 1.0)
+    lista = {p.estado: p for p in agrupar([placa, simulador], [conhecida])}
+    assert set(lista) == {"disponivel", "simulador"}
+    assert lista["disponivel"].nome == "Placa do teste" and lista["disponivel"].conhecida == conhecida
+    assert lista["simulador"].nome == "Simulador" and lista["simulador"].conhecida is None
+    so_o_simulador = agrupar([simulador], [conhecida])
+    assert [p.estado for p in so_o_simulador] == ["ausente", "simulador"]       # a de verdade não respondeu
+
+
 def test_o_relogio_lembrado_por_placa():
     """A resposta da primeira conexão (acertar o relógio a cada conexão) fica com a placa: sobrevive a uma conexão
     nova por outro endereço e à gravação; uma gravada de antes dela (sem o campo) ainda não foi perguntada."""

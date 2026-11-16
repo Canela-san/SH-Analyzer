@@ -5,6 +5,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+SENHA_PADRAO_DA_IMAGEM = "temppwd"
+"""A senha do usuário ``debian`` (o usuário padrão do :class:`Destino`) nas imagens da BeagleBoard: todo mundo a
+conhece, e a primeira conexão sugere trocá-la (docs/gui-plan.md, 11.3)."""
+
 
 @dataclass(frozen=True)
 class Destino:
