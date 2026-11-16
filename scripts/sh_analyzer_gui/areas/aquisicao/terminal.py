@@ -25,7 +25,6 @@ import shutil
 import sys
 import time
 from collections.abc import Callable
-from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
@@ -568,15 +567,15 @@ class Terminal(QWidget):
         if not aba.aberta or ssh is None or self.dialogos_de is None:
             self.fechar_aba(aba)
             return
-        conferir = partial(ssh.executar, "pgrep -x ler_adc", tempo_limite=10.0,
-                           descricao="terminal: há captura rodando antes de fechar a aba?")
-        self.conexao.servico.chamar(traduzir("conferir se há captura rodando"), conferir,
+        from sh_placa.sftp import OrigemSSH
+
+        self.conexao.servico.chamar(traduzir("conferir se há captura rodando"), OrigemSSH(ssh).captura_rodando,
                                     ao_terminar=lambda chamada, a=aba: self._fechar_se_puder(a, chamada))
 
     def _fechar_se_puder(self, aba: AbaDeTerminal, chamada) -> None:
         if not isValid(aba) or self.abas.indexOf(aba) < 0:
             return
-        rodando = chamada.estado == "concluida" and chamada.resultado.codigo == 0
+        rodando = chamada.estado == "concluida" and chamada.resultado
         if rodando:
             resposta = self.dialogos_de().perguntar(
                 traduzir("Fechar o terminal"),

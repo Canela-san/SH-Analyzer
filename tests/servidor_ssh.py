@@ -11,7 +11,9 @@ cliente pediu e que muda quando ele avisa.
 **O sudo e o ``config-pin`` da placa são falsos** (``SUDO`` e ``CONFIG_PIN``, no ``bin`` do servidor): o sudo faz o
 que o de verdade faz com ``-A``, ``-v``, ``-n`` e ``-k`` (a senha pelo ``SUDO_ASKPASS``, a credencial validada e
 esquecida) e roda o comando como o usuário do teste, anotando-o em :attr:`ServidorSSH.comandos_de_root`; o
-``config-pin`` escreve o modo no pinmux da árvore falsa, como o de verdade escreve no ``/sys``.
+``config-pin`` escreve o modo no pinmux da árvore falsa, como o de verdade escreve no ``/sys``. **O ``pgrep`` só vê os
+processos da placa** (``processos``: os de executável dentro dessa pasta; a do teste, por padrão): o ``ler_adc`` falso
+que um teste roda é a captura na placa dele, e não na de um teste em paralelo.
 
 Para os testes: os comandos rodados (:attr:`ServidorSSH.comandos`), as tentativas de autenticação
 (:attr:`ServidorSSH.autenticacoes`), a troca da chave de host (:meth:`ServidorSSH.trocar_chave_do_host`, a placa
@@ -26,6 +28,7 @@ import contextlib
 import fcntl
 import os
 import pty
+import shutil
 import signal
 import socket
 import struct
@@ -76,11 +79,33 @@ printf '%s
 ' "$2" > "$estado"
 """
 
+PGREP = r"""#!{python}
+# O pgrep da placa simulada: o de verdade, só com os processos desta placa (os de executável dentro da pasta dos
+# processos dela, SHAN_PROCESSOS). Sem isso, o ler_adc falso de um teste rodando em paralelo seria uma captura na
+# placa de outro.
+import os, subprocess, sys
+
+raiz = os.path.realpath(os.environ["SHAN_PROCESSOS"]) + os.sep
+
+
+def desta_placa(pid):
+    try:
+        return os.path.realpath(f"/proc/{{pid}}/exe").startswith(raiz)
+    except OSError:
+        return False
+
+
+r = subprocess.run([{pgrep!r}, *sys.argv[1:]], capture_output=True, text=True)
+linhas = [linha for linha in r.stdout.splitlines() if desta_placa(linha.split()[0])]
+sys.stdout.write("".join(linha + "\n" for linha in linhas))
+sys.exit(0 if linhas else 1)
+"""
+
 
 class ServidorSSH:
     def __init__(self, pasta: Path, *, cenario: str = "normal", usuario: str = "debian", senha: str = SENHA_PADRAO,
                  senha_do_sudo: str | None = None, permitir_tunel: bool = False, tambem_rsa: bool = False,
-                 enderecos: tuple[str, ...] = ("127.0.0.1",)):
+                 enderecos: tuple[str, ...] = ("127.0.0.1",), processos: Path | None = None):
         self.pasta, self.cenario = Path(pasta), cenario
         self.usuario, self.senha, self.permitir_tunel = usuario, senha, permitir_tunel
         self.enderecos = enderecos           # vários, como a placa nos dois IPs do USB (127.0.0.1 e 127.0.0.2)
@@ -98,7 +123,8 @@ class ServidorSSH:
         binarios = self.pasta / "bin"
         binarios.mkdir(exist_ok=True)
         (binarios / "python3").symlink_to(sys.executable)
-        for nome, roteiro in (("sudo", SUDO), ("config-pin", CONFIG_PIN)):
+        pgrep = PGREP.format(python=sys.executable, pgrep=shutil.which("pgrep") or "/usr/bin/pgrep")
+        for nome, roteiro in (("sudo", SUDO), ("config-pin", CONFIG_PIN), ("pgrep", pgrep)):
             (binarios / nome).write_text(roteiro)
             (binarios / nome).chmod(0o755)
         self.senha_do_sudo = senha if senha_do_sudo is None else senha_do_sudo
@@ -106,7 +132,8 @@ class ServidorSSH:
         self.ram.mkdir(exist_ok=True)
         self.ambiente = {"HOME": str(self.home), "PATH": f"{binarios}{os.pathsep}{os.environ.get('PATH', '')}",
                          "SHAN_RAIZ": str(self.raiz), "LANG": "C.UTF-8", "SHAN_SENHA_DO_SUDO": self.senha_do_sudo,
-                         "SHAN_RAM": str(self.ram)}
+                         "SHAN_RAM": str(self.ram),
+                         "SHAN_PROCESSOS": str(processos if processos is not None else self.pasta.parent)}
 
     @property
     def authorized_keys(self) -> Path:
