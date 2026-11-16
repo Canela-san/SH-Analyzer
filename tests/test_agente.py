@@ -70,7 +70,10 @@ def test_estado_le_cada_campo(placa):
                              "compilado": True, "ler_adc_antigo": False, "fw_pru": True, "fw_pru_antigo": False,
                              "fw_pru_instalado": "igual", "protocolo_da_pru": 5}
     assert e["capturas"]["quantidade"] == 2 and e["capturas"]["bytes"] == 20_480 + 8_192
-    assert e["relogio"] == {"utc": pytest.approx(time.time(), abs=30), "sincronizado": True, "fonte": "timesyncd"}
+    relogio = e["relogio"]
+    assert (relogio["utc"], relogio["sincronizado"], relogio["fonte"]) == (pytest.approx(time.time(), abs=30), True,
+                                                                            "timesyncd")
+    assert set(relogio) == {"utc", "sincronizado", "fonte", "desde_o_inicio_s"}       # test_o_relogio confere o último
     assert e["disco"]["total_kib"] > 0
 
 
@@ -228,6 +231,9 @@ def test_os_textos_das_conferencias(agente, tmp_path):
     assert "AM335X-PRU-RPROC-4-19-TI-00A0.dtbo" in por_codigo["overlay_da_pru"]["correcao"]
     assert por_codigo["disco_cheio"]["texto"] == "O cartão está cheio: 40 MiB livres, ~52 s de captura a 400 kS/s."
     assert [c["nivel"] for c in agente.conferir(fatos)] == ["erro", "aviso", "aviso", "info"]
+    fatos["carga"] = [2.14, 1.0, 0.5]
+    (carga,) = [c for c in agente.conferir(fatos) if c["codigo"] == "carga"]
+    assert "(carga de 2,1 num núcleo só)" in carga["texto"]
 
 
 def test_os_pinos_sem_o_cape_universal(agente, tmp_path):
@@ -372,10 +378,17 @@ def test_as_capturas_mais_recentes_primeiro(tmp_path):
 # ------------------------------------------------------------------ o relógio e os logs
 
 def test_o_relogio(placa):
+    """A hora, e há quanto tempo o processo roda: com ela, o computador põe a diferença do relógio entre dois
+    limites (sh_placa/estado.py). O processo começou depois do pedido e leu a hora antes de responder."""
     raiz, pasta = placa
     antes = time.time()
     rc, r = rodar("relogio", raiz=raiz, pasta=pasta)
-    assert rc == 0 and antes <= r["utc"] <= time.time() and (r["sincronizado"], r["fonte"]) == (True, "timesyncd")
+    depois = time.time()
+    assert rc == 0 and antes <= r["utc"] <= depois and (r["sincronizado"], r["fonte"]) == (True, "timesyncd")
+    if sys.platform.startswith("linux"):
+        assert 0 < r["desde_o_inicio_s"] and antes <= r["utc"] - r["desde_o_inicio_s"] <= r["utc"]
+    else:
+        assert r["desde_o_inicio_s"] is None
     (raiz / "run/systemd/timesync/synchronized").unlink()
     assert rodar("relogio", raiz=raiz, pasta=pasta)[1]["sincronizado"] is False
 

@@ -246,14 +246,39 @@ def _relogio_do_kernel():
     return not (estado == TIME_ERROR or timex.status & STA_UNSYNC)
 
 
+def _desde_o_inicio(boot):
+    """Há quanto tempo, no mínimo, este processo roda no instante ``boot`` (o ``CLOCK_BOOTTIME``): o início dele é o
+    do ``/proc/self/stat`` (em ticks, desde o boot; arredondado para baixo, por isso o tick a mais). É deste processo,
+    e não da placa: fora da raiz falsa. ``None`` fora do Linux."""
+    try:
+        with open("/proc/self/stat") as f:
+            stat = f.read()
+        inicio = int(stat[stat.rfind(")") + 2:].split()[19])
+        return max(0.0, boot - (inicio + 1) / float(os.sysconf("SC_CLK_TCK")))
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 def relogio():
-    """A hora da placa (para comparar com a do computador: ela não tem bateria de RTC) e se o NTP a sincronizou."""
+    """A hora da placa (para comparar com a do computador: ela não tem bateria de RTC), se o NTP a sincronizou e há
+    quanto tempo este processo roda (``desde_o_inicio_s``).
+
+    **Por que o tempo de processo:** o computador sabe quando pediu e quando a resposta chegou. A hora foi lida antes
+    de a resposta chegar, e o processo começou depois do pedido: a diferença do relógio fica entre ``utc - chegada`` e
+    ``utc - desde_o_inicio_s - pedido``. Sem o segundo limite, a partida e o fim do Python na placa (~0,5 s) entram
+    na medida (sh_placa/estado.py; conferido na placa contra um pingue-pongue, 15/11/2026)."""
     sincronizado, fonte = (_relogio_do_kernel(), "adjtimex") if raiz() == "/" else (None, None)
     if sincronizado is None:
         fonte = None
         if os.path.isdir(sistema("/run/systemd/timesync")):
             sincronizado, fonte = os.path.exists(sistema("/run/systemd/timesync/synchronized")), "timesyncd"
-    return {"utc": time.time(), "sincronizado": sincronizado, "fonte": fonte}
+    utc = time.time()
+    try:
+        boot = time.clock_gettime(time.CLOCK_BOOTTIME)
+    except (AttributeError, OSError):
+        boot = None
+    return {"utc": utc, "sincronizado": sincronizado, "fonte": fonte,
+            "desde_o_inicio_s": None if boot is None else _desde_o_inicio(boot)}
 
 
 def pru():
@@ -634,8 +659,9 @@ def conferir(f):
         item("aviso", "temperatura", f"O processador está a {temperatura:.0f} °C.")
     carga = f.get("carga")
     if carga and carga[0] >= CARGA_ALTA:
-        item("aviso", "carga", f"A placa está ocupada (carga {carga[0]:.2f} num núcleo só): uma captura pode perder "
-             "blocos.", "Ver o que está rodando (top) antes de capturar.")
+        carga_no_texto = f"{carga[0]:.1f}".replace(".", ",")          # o texto é em português
+        item("aviso", "carga", f"A placa está ocupada (carga de {carga_no_texto} num núcleo só): uma captura pode "
+             "perder blocos.", "Ver o que está rodando (top) antes de capturar.")
     memoria = f.get("memoria_disponivel_kib")
     if memoria is not None and memoria < MEMORIA_POUCA_KIB:
         item("aviso", "memoria", f"Pouca memória livre: {memoria / 1024.0:.0f} MiB.")
