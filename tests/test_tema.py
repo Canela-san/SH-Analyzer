@@ -84,3 +84,15 @@ def test_fontes_embutidas_tem_arquivos_e_licenca():
     na_pasta = {p.name for p in pasta.iterdir() if p.suffix.lower() in (".ttf", ".otf")}
     assert na_pasta == listados, f"sem entrada em EMBUTIDAS: {sorted(na_pasta - listados)}"
     assert {f.papel for f in EMBUTIDAS} == set(PAPEIS)
+
+
+@pytest.mark.parametrize("nome", sorted(TEMAS))
+def test_as_cores_do_terminal_sao_legiveis(nome):
+    """As 16 cores do terminal da placa: as 12 com matiz (do vermelho ao ciano, as normais e as claras) e o cinza (o
+    preto claro) com o contraste de texto sobre o fundo do terminal. O preto e o branco ficam de fora: um deles é o
+    fundo de um dos temas, como em qualquer terminal."""
+    tema = TEMAS[nome]
+    assert len(tema.ansi) == 16 and len(set(tema.ansi)) == 16
+    for cor in (*tema.ansi[1:7], *tema.ansi[8:15]):
+        c = contraste(cor, tema.afundada)
+        assert c >= CONTRASTE_TEXTO, f"{nome}: {cor} {c:.2f}:1"

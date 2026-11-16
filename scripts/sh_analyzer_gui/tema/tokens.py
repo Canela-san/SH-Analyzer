@@ -37,12 +37,14 @@ class Tema:
     grade_forte: str
     eixo: str
     tracos: tuple[str, ...]   # as 6 cores dos traços, na ordem fixa (12.3)
+    ansi: tuple[str, ...]     # as 16 cores do terminal da placa (preto, vermelho, verde, amarelo, azul, magenta,
+                              # ciano, branco, e as 8 claras), legíveis sobre a ``afundada``
     escuro: bool
 
     @property
     def tokens(self) -> dict[str, str]:
         """As cores como ``nome -> valor`` (sem os traços nem os campos que não são cores)."""
-        return {f.name: getattr(self, f.name) for f in fields(self) if f.name not in ("nome", "tracos", "escuro")}
+        return {f.name: getattr(self, f.name) for f in fields(self) if f.name not in ("nome", "tracos", "ansi", "escuro")}
 
 
 ESCURO = Tema(
@@ -55,6 +57,8 @@ ESCURO = Tema(
     ok="#4ade80", aviso="#fb923c", erro="#f87171",
     grade="#1c2a42", grade_forte="#26385a", eixo="#9fb0c8",
     tracos=("#7dd3fc", "#fbbf24", "#fb7185", "#818cf8", "#34d399", "#e879f9"),
+    ansi=("#2a3d5a", "#f87171", "#4ade80", "#fbbf24", "#60a5fa", "#e879f9", "#22d3ee", "#cbd5e1",
+          "#7d8fa9", "#fca5a5", "#86efac", "#fde68a", "#93c5fd", "#f0abfc", "#67e8f9", "#f8fafc"),
     escuro=True,
 )
 
@@ -68,6 +72,8 @@ CLARO = Tema(
     ok="#15803d", aviso="#c2410c", erro="#b91c1c",
     grade="#e9eef4", grade_forte="#d5dce6", eixo="#4b5b73",
     tracos=("#0284c7", "#d97706", "#be123c", "#3730a3", "#047857", "#c026d3"),
+    ansi=("#0f172a", "#b91c1c", "#15803d", "#a16207", "#1d4ed8", "#a21caf", "#0e7490", "#cbd5e1",
+          "#64748b", "#dc2626", "#166534", "#92400e", "#2563eb", "#c026d3", "#155e75", "#f1f5f9"),
     escuro=False,
 )
 
