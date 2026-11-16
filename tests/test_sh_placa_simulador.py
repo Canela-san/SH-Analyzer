@@ -1,4 +1,4 @@
-"""O simulador da placa (``sh_placa/simulador.py``, F3.9) como a interface o usa: servido por SSH neste computador, só
+"""O simulador da placa (``sh_placa/servidor_do_simulador.py``, F3.9) como a interface o usa: servido por SSH neste computador, só
 com a chave dele, com o agente de verdade sobre a árvore falsa, e os cenários (o ADC mudo, o cartão cheio, a conexão
 que cai no meio de uma transferência e a retomada, o relógio errado e o acerto dele). E as capturas dele
 (``sh_placa/capturas_simuladas.py``): a rede de 60 Hz com supraharmônicos, que o motor lê como as da placa."""
@@ -13,7 +13,10 @@ import pytest
 
 pytest.importorskip("asyncssh")
 
-from sh_placa import simulador  # noqa: E402
+from sh_placa import (
+    servidor_do_simulador,  # noqa: E402
+    simulador,  # noqa: E402
+)
 from sh_placa.agente import ClienteDoAgente, TransporteSSH  # noqa: E402
 from sh_placa.capturas_simuladas import (  # noqa: E402
     AMOSTRAS_POR_BLOCO_DO_FIRMWARE,
@@ -26,8 +29,8 @@ from sh_placa.correcoes import acertar_relogio  # noqa: E402
 from sh_placa.descoberta import FonteSimulador  # noqa: E402
 from sh_placa.destino import SENHA_PADRAO_DA_IMAGEM  # noqa: E402
 from sh_placa.registro import RegistroDeAtividade  # noqa: E402
+from sh_placa.servidor_do_simulador import FRACAO_DA_QUEDA, ServidorDoSimulador  # noqa: E402
 from sh_placa.sftp import SUFIXO_PARCIAL, OrigemSSH, apagar, baixar, conferir  # noqa: E402
-from sh_placa.simulador import FRACAO_DA_QUEDA, ServidorDoSimulador  # noqa: E402
 from supraharmonicos import cabecalho as motor  # noqa: E402
 
 
@@ -166,22 +169,31 @@ def test_a_leitura_cancelada_e_a_queda_logo_depois(tmp_path):
 
 
 def test_a_conexao_que_cai_de_tempos_em_tempos(tmp_path, monkeypatch):
-    monkeypatch.setattr(simulador, "QUEDA_A_CADA_S", 0.3)
+    """Cada conexão cai depois de :data:`QUEDA_A_CADA_S` (aqui, 0,3 s): a primeira e a seguinte. Com o período longo de
+    novo, a que volta fica (um comando roda nela). Sem esperas fixas: com a máquina cheia, a conexão leva mais."""
+    monkeypatch.setattr(servidor_do_simulador, "QUEDA_A_CADA_S", 0.3)
+
+    async def ate(condicao, limite_s=10.0):
+        t0 = time.monotonic()
+        while not condicao():
+            assert time.monotonic() - t0 < limite_s, "a queda não veio"
+            await asyncio.sleep(0.02)
 
     async def cenario():
         async with ServidorDoSimulador(tmp_path / "placa", "conexao_instavel", vazao_bytes_s=None) as placa:
             quedas = []
             c = entrar(placa, ao_cair=quedas.append)
-            await c.conectar()
-            await asyncio.sleep(0.8)
-            caiu = list(quedas)
+            for n in (1, 2):
+                await c.conectar()
+                await ate(lambda n=n: len(quedas) == n)
+            monkeypatch.setattr(servidor_do_simulador, "QUEDA_A_CADA_S", 45.0)
             await c.conectar()                                                    # e volta
             r = await c.executar("echo de volta")
             await c.fechar()
-            return caiu, r.saida
+            return quedas, r.saida
 
-    caiu, saida = asyncio.run(cenario())
-    assert len(caiu) == 1 and saida.strip() == "de volta"
+    quedas, saida = asyncio.run(cenario())
+    assert len(quedas) == 2 and all("caiu" in q for q in quedas) and saida.strip() == "de volta"
 
 
 def test_o_cartao_cheio_e_apagar_as_capturas(tmp_path):
