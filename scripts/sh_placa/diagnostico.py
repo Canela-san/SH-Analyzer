@@ -169,13 +169,13 @@ def _resumo_da_aquisicao(e: EstadoDaPlaca) -> str:
     parados = ultima.canais_parados
     if parados is None:
         return f"a captura mais recente ({nome}) não traz o sinal de cada canal (de antes da v9, ou interrompida)"
+    n = len(ultima.canais)
     if not parados:
-        n = len(ultima.canais)
         return f"sinal {'no canal' if n == 1 else f'nos {n} canais'} da captura mais recente ({nome})"
-    if ultima.adc_mudo:
-        return f"a captura mais recente ({nome}) ficou em 0 em todas as amostras"
-    lista = _lista([f"o {canal} em 0x{codigo:04X}" for canal, codigo in parados])
-    return f"canais parados na captura mais recente ({nome}): {lista}"
+    if ultima.adc_mudo:                             # o problema diz o que é; o resumo, o que se viu
+        return f"{'o canal' if n == 1 else f'os {n} canais'} em 0 na captura mais recente ({nome})"
+    lista = _lista([f"o canal {canal} parado em 0x{codigo:04X}" for canal, codigo in parados])
+    return f"{lista} na captura mais recente ({nome})"
 
 
 def _resumo_do_disco(e: EstadoDaPlaca) -> str:

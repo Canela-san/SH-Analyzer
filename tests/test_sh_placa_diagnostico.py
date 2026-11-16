@@ -112,10 +112,13 @@ def test_a_placa_de_aquisicao_pela_captura_mais_recente():
     assert "não traz o sinal de cada canal" in item(captura(None)).resumo
     mudo = item(captura([{"canal": 0, "codigo": 0}, {"canal": 1, "codigo": 0}]),
                 [{"nivel": "aviso", "codigo": "adc_mudo", "texto": "O ADC não respondeu."}])
-    assert mudo.nivel == "aviso" and mudo.resumo == "a captura mais recente (conferir_1015.bin) ficou em 0 em todas as amostras"
+    assert mudo.nivel == "aviso" and mudo.resumo == "os 2 canais em 0 na captura mais recente (conferir_1015.bin)"
     assert [p.codigo for p in mudo.problemas] == ["adc_mudo"]
     saturado = item(captura([{"canal": 1, "codigo": 65535}]))
-    assert saturado.resumo == "canais parados na captura mais recente (conferir_1015.bin): o 1 em 0xFFFF"
+    assert saturado.resumo == "o canal 1 parado em 0xFFFF na captura mais recente (conferir_1015.bin)"
+    dois = item(captura([{"canal": 0, "codigo": 32768}, {"canal": 1, "codigo": 65535}]))
+    assert dois.resumo == ("o canal 0 parado em 0x8000 e o canal 1 parado em 0xFFFF na captura mais recente "
+                           "(conferir_1015.bin)")
 
 
 def test_o_relatorio():
