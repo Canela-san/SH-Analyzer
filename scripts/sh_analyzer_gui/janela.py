@@ -91,6 +91,7 @@ from .servicos.erros import ErroInesperado, relator
 from .servicos.fontes import ServicoDeFontes
 from .servicos.materializar import ServicoDeMaterializacao
 from .servicos.placa import ServicoDaPlaca
+from .servicos.saude_da_placa import SaudeDaPlaca
 from .servicos.tarefas import GerenciadorDeTarefas
 from .tema.aplicar import aparencia
 from .tema.icones import IconeDoTema
@@ -156,6 +157,7 @@ class JanelaPrincipal(QMainWindow):
         # A placa: as chamadas no laço asyncio da thread própria, que nasce na primeira chamada (a Aquisição).
         self.placa = ServicoDaPlaca(parent=self)
         self.conexao_da_placa = ConexaoDaPlaca(self.placa, parent=self)
+        self.saude_da_placa = SaudeDaPlaca(self.conexao_da_placa, parent=self)
         self.projeto: Projeto | None = None
         self.selecao: Selecao | None = None
         self.acoes: dict[str, QAction] = {}
@@ -188,7 +190,7 @@ class JanelaPrincipal(QMainWindow):
         self._criar_barra_de_status()
         self.area = AreaDeAnalise(self, self.painel_projeto, self.inspetor, self.avisos, self.status_fonte,
                                   self.status_integridade, self.vistas, self.tabela_de_medidas)
-        self.aquisicao = AreaDeAquisicao(self.conexao_da_placa)
+        self.aquisicao = AreaDeAquisicao(self.conexao_da_placa, self.saude_da_placa, lambda: self.controle.dialogos)
         self.paginas = QStackedWidget()
         self.paginas.setObjectName("paginas_das_areas")
         self._paginas_das_areas = {AREA_ANALISE: self.estudio, AREA_AQUISICAO: self.aquisicao}
@@ -196,6 +198,7 @@ class JanelaPrincipal(QMainWindow):
             self.paginas.addWidget(pagina)
         self.setCentralWidget(self.paginas)
         self.conexao_da_placa.mudou.connect(self._placa_mudou)
+        self.saude_da_placa.mudou.connect(self._placa_mudou)
         self._placa_mudou()
         self.setAcceptDrops(True)
 
@@ -631,9 +634,17 @@ class JanelaPrincipal(QMainWindow):
             self.mostrar_area(AREA_ANALISE)
 
     def _placa_mudou(self) -> None:
-        """O chip da barra superior: o estado da placa, sempre à vista."""
+        """O chip da barra superior: o estado da placa, sempre à vista. Conectada e não pronta para capturar (um erro
+        no diagnóstico), ele fica em atenção, com o motivo na dica."""
         r = resumo(self.conexao_da_placa)
-        self.barra.chip_placa.definir(r.nivel, r.titulo, r.detalhe)
+        nivel, detalhe = r.nivel, r.detalhe
+        saude = self.saude_da_placa.saude
+        if nivel == "conectada" and saude is not None and saude.tem_diagnostico:
+            erros = [p for p in saude.diagnostico(self.saude_da_placa.firmware_do_aplicativo) if p.nivel == "erro"]
+            if erros:
+                nivel = "atencao"
+                detalhe = self.tr("{} Não está pronta para capturar: {}").format(detalhe, erros[0].texto)
+        self.barra.chip_placa.definir(nivel, r.titulo, detalhe)
 
     def showEvent(self, evento: QShowEvent) -> None:
         super().showEvent(evento)

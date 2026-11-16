@@ -14,9 +14,10 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 >
 > **A Fase 3 está andando** (seção 4d): a F3.1 (o laço `asyncio` do `sh_placa` e a ponte), a F3.2 (a conexão SSH,
 > as chaves, o cofre e o registro de atividade), a F3.3 (a descoberta das placas), a F3.4 (o agente completo: a
-> saúde, as capturas, o relógio e os logs) e a F3.5 (a área de Aquisição na tela: a lista de placas, a conexão e a
-> primeira conexão) estão feitas, conferidas no servidor SSH do teste e na placa de verdade. **A próxima: a F3.6, a
-> visão geral e o diagnóstico** (os indicadores, a saúde com o "Corrigir" do relógio e dos pinos, o relatório).
+> saúde, as capturas, o relógio e os logs), a F3.5 (a área de Aquisição na tela: a lista de placas, a conexão e a
+> primeira conexão) e a F3.6 (a visão geral e o diagnóstico, com o "Corrigir" do relógio e dos pinos) estão feitas,
+> conferidas no servidor SSH do teste e na placa de verdade. **A próxima: a F3.7, os arquivos e a transferência** (o
+> navegador da placa, a fila SFTP com retomada, o CRC conferido, o "Abrir na Análise").
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
@@ -25,7 +26,8 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > "Copiar JSON". Com dois canais transformados, o segundo diz "na fila" no chip e no painel de tarefas até a vez dele.
 > **A Aquisição** (o seletor da barra superior, ou o chip da placa): a placa do USB e o simulador aparecem na lista
 > sozinhos; um clique conecta (na primeira vez, o diálogo confere a impressão digital, pede a senha e instala a chave
-> do aplicativo); "Conectar por IP…" para uma placa em outra rede.
+> do aplicativo); "Conectar por IP…" para uma placa em outra rede. Conectada: a visão geral (os indicadores, a saúde,
+> as capturas na placa e a atividade ao vivo), o "Acertar…" do relógio e o diagnóstico item a item, com o relatório.
 >
 > **Com o usuário (quando puder):**
 > - o G1 com a cadeia, na tela: `uv run --extra gui python -m sh_analyzer_gui.prototipos.medir_vista --cadeia`
@@ -130,8 +132,8 @@ sonda em pedaços, sem prender o GIL). E o do agente da placa: `3f98d7b`. O diag
 asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5 e keyring 25.7.0 (o cofre do Linux é o Secret Service). Testes, na última rodada:
 `ci.sh rapido` com 1 687 aprovados, `ci.sh interface` com 743 e os 6 de desempenho (15/11/2026).
 
-**Ainda não existe:** a Aquisição além da conexão (a visão geral completa e o diagnóstico na F3.6, os arquivos na
-F3.7, o terminal na F3.8; capturar na Fase 4), as figuras e as exportações (a Fase 5).
+**Ainda não existe:** na Aquisição, os arquivos e a transferência (a F3.7), o terminal (a F3.8) e capturar (a Fase
+4); as figuras e as exportações (a Fase 5).
 
 ---
 
@@ -1169,7 +1171,7 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
     `tests/test_gui_aquisicao.py` (4: a tela, com cliques na lista e no diálogo) e `tests/placas_de_teste.py` (os
     servidores SSH do teste num laço próprio, como uma placa respondendo fora do laço da interface).
 
-### ☐ F3.6: a visão geral e o diagnóstico
+### ☑ F3.6: a visão geral e o diagnóstico
 
 - **Arquivos:** `areas/aquisicao/visao_geral.py` e `areas/aquisicao/diagnostico.py`.
 - **O conteúdo** (AQ-04, AQ-05 para ver, AQ-14; plano, 11.4 e 11.9):
@@ -1185,6 +1187,47 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
   - o relatório de diagnóstico em Markdown, para copiar ou salvar (o caderno chega na Fase 4).
 - **Os testes:** cada cenário do simulador dá os itens certos; o "Corrigir" roda o comando certo, uma vez, e o
   registra; nada roda sem confirmação; a senha do sudo não aparece em lugar nenhum.
+- **Feito em 16/11/2026:**
+  - **no `sh_placa`, sem Qt** (a interface e uma futura CLI usam o mesmo):
+    - **`correcoes.py`, as duas correções simples.** **O sudo pelo askpass:** a senha vai pelo stdin para um
+      diretório em `/dev/shm` (a RAM), só do usuário; o `sudo -A -v` a lê uma vez, o arquivo some logo depois, o
+      comando de root roda com `sudo -n` e, no fim, `sudo -k`. A senha nunca está num argumento, no registro ou no
+      log; a errada é uma tentativa só (o askpass se apaga ao ser lido). **O relógio com a precisão do enlace:** o
+      Python de root avisa que está pronto, e só então o computador manda a hora dele (mais a meia ida e volta); a
+      placa conta, pelo `CLOCK_BOOTTIME`, o tempo até acertar com o `clock_settime`. **Os pinos** pelo `config-pin`,
+      sem sudo (o pinmux é do grupo `gpio`, e o `debian` está nele), na ordem do `setup.sh` (contrato conferido);
+    - **`diagnostico.py`, o diagnóstico item a item:** as linhas da tabela 11.9 do plano, cada uma com o pior nível,
+      os fatos lidos (um item "ok" também diz por quê) e o "Corrigir" que cabe; todo código que o agente emite tem
+      um item (conferido), e um desconhecido vai para "Outras conferências". **O relatório** em Markdown;
+    - **`versao.py`, o firmware comparado pelo código:** o da placa é o deste aplicativo se o `firmware/` do commit
+      da versão dela é o de agora (sem o `agente/`, que vai pelo stdin). Comparar os textos do `git describe`
+      acusava "outra versão" a cada commit da interface: o aviso da F3.4 na placa de verdade era falso;
+  - **`servicos/saude_da_placa.py`:** o que se sabe da placa conectada (a saúde, que chega com a conexão, as capturas,
+    o firmware comparado), a atividade ao vivo (o registro de atividade, na thread da interface) e as correções, com
+    a senha do sudo da sessão, do cofre ou a que o usuário dá. **Uma coisa por vez na placa:** o enlace, depois as
+    capturas, depois o relógio a cada conexão (a vazão caía pela metade com a leitura das capturas junto). **O relógio
+    a cada conexão** roda sozinho com a permissão lembrada com a placa (a pergunta da primeira conexão); sem a senha
+    do sudo, fica o aviso, e nada roda;
+  - **a visão geral do B1:** o cabeçalho (o firmware "o deste aplicativo" ou não), os cinco indicadores (o relógio
+    com a incerteza e quando foi acertado, a PRU0, o cartão com a barra e os minutos que cabem, o processador, a
+    última conferência do ADC na placa), a saúde resumida com o "Corrigir…" e o "Acertar…", as capturas na placa
+    com a integridade de cada uma, e a atividade;
+  - **o diagnóstico item a item:** cada item com o que foi lido, os problemas e a correção, o "Ver o comando" e o
+    "Corrigir"; "Copiar o relatório" e "Salvar o relatório…";
+  - **o diálogo da correção:** o que vai acontecer, o comando exato, o botão que diz a ação ("Pôr P9_28 e P9_31 no
+    modo da PRU", "Acertar o relógio"), a senha do sudo só quando a sessão e o cofre não a têm (ou a placa a
+    recusou) e, no relógio, a permissão de acertar a cada conexão. O resultado vai para um toast, inclusive o do
+    relógio acertado sozinho;
+  - **o chip da barra superior** fica em atenção com a placa conectada e não pronta para capturar;
+  - **na placa de verdade:** o relógio estava **+1,14 s adiantado** (era +0,5 s na véspera: deriva ~2,6 s por dia
+    sem NTP) e ficou dentro do limite da medida (±0,05 s); a senha errada do sudo, recusada sem rodar nada; a
+    `/dev/shm` limpa e a credencial esquecida no fim; o `config-pin` nos quatro pinos; o firmware dela é o deste
+    aplicativo; a placa não tem sensor de temperatura (o processador mostra a carga); o diagnóstico diz "Pronta
+    para capturar", com o relógio sem NTP como informação;
+  - **os testes:** `tests/test_sh_placa_correcoes.py` (4), `tests/test_sh_placa_diagnostico.py` (16, com cada
+    cenário), `tests/test_gui_saude_da_placa.py` (4), `tests/test_gui_diagnostico.py` (7: os itens na tela, o
+    "Corrigir" só depois de confirmar e uma vez, o relógio pedindo a senha e ela em lugar nenhum, o relatório); o
+    servidor SSH do teste ganhou um sudo e um `config-pin` falsos.
 
 ### ☐ F3.7: os arquivos e a transferência
 
@@ -1736,6 +1779,19 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     o coletor de lixo (um aviso, em 2 de 8 rodadas do teste do enlace): agora lê o que sobrou depois de matar o grupo.
   - **Testes:** `ci.sh placa` com 242 em cada Python, `ci.sh rapido` com 1 842 e `ci.sh interface` com 772.
   - **Próximo:** a F3.6, a visão geral e o diagnóstico.
+- **16/11/2026:** **a F3.6, a visão geral e o diagnóstico** (seção 4d):
+  - **o que a placa mostrou:** o relógio deriva ~2,6 s por dia sem NTP (de +0,5 s para +1,14 s em seis horas), o que
+    justifica o acerto a cada conexão; a placa não tem sensor de temperatura; o `config-pin` não precisa de sudo; e
+    **o aviso "firmware de outra versão" era falso**: o `git describe` muda a cada commit, e o código do firmware é o
+    mesmo. Agora a comparação é pelo código;
+  - **o que as capturas mostraram:** a vazão do enlace pela metade (3,2 MB/s) quando a leitura das capturas rodava
+    junto (um núcleo só): agora uma coisa por vez; e "estava 0,04 s adiantado; agora, −0,04 s", que parecia não ter
+    acertado (a estimativa é o meio de uma faixa de ±0,05 s que cerca o zero): agora "está certo, dentro do limite
+    da medida";
+  - **um erro meu, corrigido:** o relatório comparava o relógio com a hora dele, e não pelos limites da resposta
+    (dava −0,09 s, e a tela, −0,04 s).
+  - **Testes:** `ci.sh placa` com 262 em cada Python, `ci.sh rapido` com 1 873 e `ci.sh interface` com 783.
+  - **Próximo:** a F3.7, os arquivos e a transferência.
 ---
 
 ## 8. Perguntas em aberto

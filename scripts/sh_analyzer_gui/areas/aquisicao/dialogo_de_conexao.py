@@ -24,7 +24,7 @@ relógio para a próxima vez.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QFont, QGuiApplication
+from PySide6.QtGui import QAction, QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -36,18 +36,16 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSpinBox,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 from sh_placa.destino import SENHA_PADRAO_DA_IMAGEM, Destino
 
 from ...componentes.basicos import Botao, RotuloDeIcone
-from ...componentes.toast import Toast
 from ...servicos.conexao_da_placa import ConexaoDaPlaca
-from ...tema.fontes import fonte_mono
 from ...tema.icones import IconeDoTema
 from ...tema.tokens import TAMANHOS
+from .pecas import BlocoDeComando
 from .textos import frase, nome_da_placa, traduzir
 
 LARGURA = 520
@@ -72,37 +70,6 @@ def _texto(texto: str = "", nome: str = "texto_do_dialogo") -> QLabel:
     rotulo.setWordWrap(True)
     rotulo.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     return rotulo
-
-
-class _Mono(QFrame):
-    """Um texto para conferir ou copiar (a impressão digital, um comando), na fonte mono, com o botão de copiar."""
-
-    def __init__(self, texto: str = "", parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setObjectName("bloco_mono")
-        self.rotulo = QLabel(texto)
-        self.rotulo.setObjectName("texto_mono")
-        self.rotulo.setFont(fonte_mono(TAMANHOS["corpo"]))
-        self.rotulo.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.rotulo.setWordWrap(True)
-        self.copiar = QToolButton()
-        self.copiar.setObjectName("copiar")
-        self.copiar.setProperty("variante", "fantasma")
-        self.copiar.setAutoRaise(True)
-        self.copiar.setToolTip(traduzir("Copiar"))
-        IconeDoTema(self.copiar, "copiar", "texto2", tamanho=14)
-        self.copiar.clicked.connect(self._copiar)
-        linha = QHBoxLayout(self)
-        linha.setContentsMargins(10, 6, 6, 6)
-        linha.addWidget(self.rotulo, 1)
-        linha.addWidget(self.copiar, 0, Qt.AlignmentFlag.AlignTop)
-
-    def definir(self, texto: str) -> None:
-        self.rotulo.setText(texto)
-
-    def _copiar(self) -> None:
-        QGuiApplication.clipboard().setText(self.rotulo.text())
-        Toast.mostrar(self.window(), traduzir("Copiado."), "sucesso", 2000)
 
 
 def _opcao(texto: str, descricao: str, nome: str) -> tuple[QWidget, QCheckBox]:
@@ -388,11 +355,11 @@ class DialogoDeConexao(QDialog):
 
     def _criar_impressao(self) -> QWidget:
         self.texto_da_impressao = _texto()
-        self.impressao = _Mono()
+        self.impressao = BlocoDeComando(tamanho="corpo")
         self.impressao.setObjectName("impressao_digital")
         como = _texto(traduzir("Para conferir, rode na placa (pelo console serial, ou por uma conexão em que você já "
                                "confia) e compare:"))
-        comando = _Mono(COMANDO_DA_IMPRESSAO)
+        comando = BlocoDeComando(COMANDO_DA_IMPRESSAO, tamanho="corpo")
         cabo = _texto(traduzir("Num cabo USB ligado direto entre este computador e a placa, ninguém fica no meio: dá "
                                "para confiar sem conferir."), "texto_mudo")
         nao = Botao(traduzir("Não confiar"), "secundario")
@@ -476,8 +443,8 @@ class DialogoDeConexao(QDialog):
 
     def _criar_bloqueada(self) -> QWidget:
         self.texto_do_bloqueio = _texto()
-        self.conhecida = _Mono()
-        self.apresentada = _Mono()
+        self.conhecida = BlocoDeComando(tamanho="corpo")
+        self.apresentada = BlocoDeComando(tamanho="corpo")
         impressoes = QVBoxLayout()
         impressoes.setSpacing(4)
         impressoes.addWidget(_texto(traduzir("A impressão conhecida:"), "texto_mudo"))

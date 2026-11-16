@@ -18,6 +18,7 @@ from sh_analyzer_gui.areas.aquisicao.area import AreaDeAquisicao  # noqa: E402
 from sh_analyzer_gui.areas.aquisicao.placas import PAPEL_DO_LADO  # noqa: E402
 from sh_analyzer_gui.servicos.conexao_da_placa import ConexaoDaPlaca  # noqa: E402
 from sh_analyzer_gui.servicos.placa import ServicoDaPlaca  # noqa: E402
+from sh_analyzer_gui.servicos.saude_da_placa import SaudeDaPlaca  # noqa: E402
 from sh_placa.descoberta import Descoberta, FonteSimulador  # noqa: E402
 from sh_placa.destino import SENHA_PADRAO_DA_IMAGEM  # noqa: E402
 
@@ -41,7 +42,8 @@ def abrir(qapp, config_limpa, qtbot, tmp_path):
         servico = ServicoDaPlaca()
         conexao = ConexaoDaPlaca(servico, descoberta=Descoberta([*fontes, FonteSimulador()]),
                                  pasta=tmp_path / "aplicativo", cofre=cofre if cofre is not None else CofreFalso())
-        area = AreaDeAquisicao(conexao)
+        saude = SaudeDaPlaca(conexao)
+        area = AreaDeAquisicao(conexao, saude)
         area.resize(1200, 800)
         area.show()
         qtbot.waitExposed(area)
@@ -149,7 +151,8 @@ def test_a_primeira_conexao_inteira_e_a_segunda_sem_dialogo(qtbot, placas, abrir
     assert lado(area, "bbb-teste") == "conectada" and lado(area, "Simulador") == "demonstração"
     qtbot.waitUntil(lambda: "latência" in cartao.linhas[1].text(), timeout=ESPERA_MS)
     assert "MB/s" in cartao.linhas[1].text() or "kB/s" in cartao.linhas[1].text()
-    assert area.visao_geral.latencia.valor.text().endswith("s")
+    qtbot.waitUntil(lambda: "latência" in area.visao_geral.linhas["conexao"].resumo.text(), timeout=ESPERA_MS)
+    assert area.visao_geral.relogio.valor.text().endswith(" s")
 
     area.lateral.desconectar.click()
     qtbot.waitUntil(lambda: lado(area, "bbb-teste") == "LAN", timeout=ESPERA_MS)

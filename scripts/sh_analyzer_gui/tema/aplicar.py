@@ -289,6 +289,29 @@ QLabel#texto_mudo {{ color: {t.mudo}; }}
 QLabel#erro_do_dialogo {{ color: {t.erro}; }}
 QFrame#bloco_mono {{ background: {t.afundada}; border: 1px solid {t.borda}; border-radius: 6px; }}
 QFrame#pergunta_do_relogio {{ background: {t.superficie}; border: 1px solid {t.borda}; border-radius: 10px; }}
+QFrame#painel_da_placa, QFrame#item_do_diagnostico {{ background: {t.superficie}; border: 1px solid {t.borda};
+                                                     border-radius: 10px; }}
+QLabel#titulo_do_painel_da_placa {{ color: {t.texto}; }}
+QLabel#conferida_em, QLabel#pasta_das_capturas, QLabel#resumo_da_linha {{ color: {t.mudo}; }}
+QLabel#resumo_do_item {{ color: {t.texto2}; }}
+QLabel#problema_erro {{ color: {t.erro}; }}
+QLabel#problema_aviso {{ color: {t.aviso}; }}
+QLabel#problema_info {{ color: {t.texto2}; }}
+QWidget#linha_da_saude {{ border-top: 1px solid {t.borda}; }}
+QLabel#icone_do_nivel {{ border-radius: 6px; background: {_rgba(t.ok, 0.12)}; }}
+QLabel#icone_do_nivel[nivel="info"] {{ background: {_rgba(t.acento, 0.12)}; }}
+QLabel#icone_do_nivel[nivel="aviso"] {{ background: {_rgba(t.aviso, 0.12)}; }}
+QLabel#icone_do_nivel[nivel="erro"] {{ background: {_rgba(t.erro, 0.12)}; }}
+QLabel#badge[nivel="ok"] {{ color: {t.ok}; border-color: {_rgba(t.ok, 0.4)}; background: {_rgba(t.ok, 0.1)}; }}
+QProgressBar#barra_de_uso {{ border: none; border-radius: 3px; background: {t.afundada}; }}
+QProgressBar#barra_de_uso::chunk {{ border-radius: 3px; background: {t.acento}; }}
+QProgressBar#barra_de_uso[nivel="aviso"]::chunk {{ background: {t.aviso}; }}
+QListWidget#atividade, QTableWidget#capturas_na_placa {{ background: transparent; border: none;
+                                                       border-top: 1px solid {t.borda}; }}
+QListWidget#atividade {{ color: {t.texto2}; padding: 4px 8px; }}
+QTableWidget#capturas_na_placa::item {{ padding: 2px 8px; }}
+QWidget#conteudo_do_diagnostico {{ background: {t.fundo}; }}
+QScrollArea#rolagem_do_diagnostico {{ background: {t.fundo}; border: none; }}
 QHeaderView::section {{ background: {t.superficie}; color: {t.mudo}; border: none;
                         border-bottom: 1px solid {t.borda}; padding: 6px 10px; font-weight: 600; }}
 QTableView, QTreeView, QListView {{ background: {t.superficie}; alternate-background-color: {t.fundo};

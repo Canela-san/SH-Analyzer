@@ -28,6 +28,11 @@ lembra com a placa (``PlacaConhecida.acertar_relogio``; quem acerta o relógio �
 lista anterior fica até a próxima chegar; com uma placa conectada, a busca é mais espaçada (cada sondagem é uma
 conexão no SSH da placa, que tem um núcleo só).
 
+**A saúde da placa** (o que ela tem, as capturas, as correções) é do ``servicos/saude_da_placa.py``; daqui ele usa a
+conexão de agora (:attr:`conexao_ssh`, :attr:`cliente`), a senha da placa que a sessão conhece
+(:meth:`senha_da_placa`) e o cofre (:meth:`cofre`). Ao conectar, o agente responde a ``saude`` (o ``estado`` com as
+conferências, no mesmo tempo): :attr:`estado_da_placa` já traz o diagnóstico.
+
 **O simulador** conecta pelo ``TransporteLocal``, sem SSH, sem impressão e sem enlace; a F3.9 o põe atrás de um SSH.
 
 **A partida da janela não carrega a rede:** o asyncssh, o zeroconf e o keyring custam ~0,7 s para importar, e
@@ -139,6 +144,7 @@ class ConexaoDaPlaca(QObject):
 
     mudou = Signal()
     placasMudaram = Signal()
+    relogioRespondido = Signal(bool)                      # a resposta da primeira conexão (acertar a cada conexão?)
     _pediuConfirmacao = Signal(object, str, object)       # do laço: (destino, impressão, futuro)
     _caiu = Signal(object, str)                           # do laço: (conexão, motivo)
 
@@ -166,6 +172,7 @@ class ConexaoDaPlaca(QObject):
         self.autenticada_com: str | None = None
         self.primeira_conexao: PrimeiraConexao | None = None
         self.conectada_em: float | None = None
+        self.sessoes = 0                                  # quantas conexões deram certo (a saúde vê uma nova)
         self.placas: list[PlacaVista] = []
         self.falhas_da_busca: list[str] = []
         self.procurando = False
@@ -220,6 +227,28 @@ class ConexaoDaPlaca(QObject):
     def quedas(self) -> int:
         """Quantas vezes a conexão de agora caiu (e voltou)."""
         return self._sessao.quedas if self._sessao is not None else 0
+
+    @property
+    def conexao_ssh(self) -> ConexaoSSH | None:
+        """A conexão SSH com a placa conectada (``None`` no simulador e sem placa)."""
+        return self._sessao.conexao if self._sessao is not None else None
+
+    @property
+    def cliente(self) -> ClienteDoAgente | None:
+        return self._sessao.cliente if self._sessao is not None else None
+
+    def senha_da_placa(self) -> str | None:
+        """A senha do usuário da placa que esta sessão conhece (a digitada para conectar, ou a do cofre que entrou);
+        ``None`` se ela entrou só com a chave. Só na memória, enquanto a placa está conectada."""
+        conexao = self.conexao_ssh
+        return conexao.senha if conexao is not None else None
+
+    def cofre(self):
+        """O cofre de senhas do sistema (criado na primeira vez, na thread do laço: o keyring fica fora da partida)."""
+        if self._cofre is None:
+            from sh_placa.chaves import CofreDeSenhas
+            self._cofre = CofreDeSenhas()
+        return self._cofre
 
     def e_a_conectada(self, placa: PlacaVista) -> bool:
         """``placa`` (da lista) é a que está conectada (ou reconectando)?"""
@@ -353,15 +382,14 @@ class ConexaoDaPlaca(QObject):
         """Na thread do laço: a conexão, a chave do aplicativo (se o usuário quis), o ``estado`` do agente e a
         impressão fixada. Uma falha depois de conectar fecha a conexão."""
         from sh_placa.agente import TransporteSSH
-        from sh_placa.chaves import ChaveDoAplicativo, CofreDeSenhas, HostsConhecidos
+        from sh_placa.chaves import ChaveDoAplicativo, HostsConhecidos
         from sh_placa.conexao import ConexaoSSH
 
         if self._chave is None:
             self._chave = ChaveDoAplicativo(self._pasta)
         if self._hosts is None:
             self._hosts = HostsConhecidos(self._pasta / "known_hosts")
-        if self._cofre is None:
-            self._cofre = CofreDeSenhas()
+        self.cofre()
         conexao = ConexaoSSH(t.destino, chave=self._chave, hosts=self._hosts, registro=self.registro, senha=t.senha,
                              senha_do_salto=t.senha_do_salto,
                              confirmar_host=lambda d, i: self._confirmar_no_laco(t, d, i))
@@ -371,7 +399,7 @@ class ConexaoDaPlaca(QObject):
             chave_instalada = await conexao.instalar_chave() \
                 if conexao.autenticada_com == "senha" and t.instalar_chave else None
             cliente = ClienteDoAgente(TransporteSSH(conexao))
-            estado = await cliente.estado()
+            estado = await cliente.saude()
             fixada = self._hosts.chave_de(t.destino.host, t.destino.porta)
             avisos = []
             for destino, senha in ((t.destino, t.senha), (t.destino.salto, t.senha_do_salto)):
@@ -417,7 +445,7 @@ class ConexaoDaPlaca(QObject):
         simulador = Simulador()
         cliente = await asyncio.to_thread(simulador.__enter__)
         try:
-            estado = await cliente.estado()
+            estado = await cliente.saude()
         except BaseException:
             await asyncio.to_thread(simulador.__exit__, None, None, None)
             raise
@@ -486,7 +514,9 @@ class ConexaoDaPlaca(QObject):
         self.estado_da_placa = aberta.estado
         self.autenticada_com = aberta.autenticada_com
         self.conectada_em = time.time()
+        self.sessoes += 1
         self.primeira_conexao = self._lembrar(aberta, t)
+        self.medindo_enlace = aberta.conexao is not None    # já à vista de quem espera a placa ficar livre
         self._mudar("conectada")
         self.placasMudaram.emit()                     # a lista marca a conectada
         if aberta.conexao is not None:
@@ -530,6 +560,7 @@ class ConexaoDaPlaca(QObject):
             except KeyError:
                 log.warning("a placa %s não está entre as conhecidas: a resposta do relógio não foi lembrada", serie)
         self.dispensar_primeira_conexao()
+        self.relogioRespondido.emit(acertar)
 
     def dispensar_primeira_conexao(self) -> None:
         """O resumo da primeira conexão foi visto (a pergunta do relógio, sem resposta, volta na próxima)."""
@@ -593,7 +624,7 @@ class ConexaoDaPlaca(QObject):
             await asyncio.sleep(espera)
             try:
                 await sessao.conexao.conectar()
-                return await sessao.cliente.estado()
+                return await sessao.cliente.saude()
             except (ChaveDoHostTrocada, ErroDeAutenticacao, HostNaoConfirmado):
                 raise
             except ErroDeConexao as e:

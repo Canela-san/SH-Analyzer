@@ -937,7 +937,8 @@ Quem recebe o pacote refaz a figura sem o SH-Analyzer, que é o que um revisor o
 **O sudo:**
 
 - o `ler_adc` e a manutenção precisam de root;
-- o padrão é o do `BeagleBone_Setup.sh`: a senha vai pelo stdin para um askpass temporário em `/dev/shm`, apagado no fim;
+- o padrão é o do `BeagleBone_Setup.sh`: a senha vai pelo stdin para um askpass temporário em `/dev/shm`, que o `sudo -A -v` lê uma vez e que some logo depois; o comando de root roda com `sudo -n` e, no fim, `sudo -k` (feito na F3.6, `sh_placa/correcoes.py`: a senha errada é uma tentativa só, e a senha nunca está num argumento, no registro ou no log);
+- a senha do sudo vem da sessão (a digitada para conectar, ou dada no "Acertar"), senão do cofre do sistema; sem nenhuma, a correção a pede;
 - como opção, com a explicação de cada linha, uma regra em `/etc/sudoers.d/sh-analyzer` que libera **só** os comandos do firmware, sem senha.
 
 ### 11.3 Descoberta e conexão
@@ -1075,12 +1076,12 @@ O cartão da placa limita a duração de uma captura, e a saída contínua tira 
 |---|---|---|
 | Conexão | Latência e vazão; a chave do host | — |
 | Relógio | A diferença para o computador, entre dois limites (a hora lida antes da chegada da resposta, e o processo começado depois do pedido: ±0,03 s no USB); o `adjtimex` (NTP), como o `relogio_sincronizado` do cabeçalho | Acertar pelo computador (como o `hora`) |
-| Firmware | `VERSAO` × a versão do aplicativo; o `ler_adc` e o `fw_pru.out` compilados depois da última mudança do código; o `fw_pru.out` igual ao `/lib/firmware/am335x-pru0-fw` | Atualizar (11.10) |
+| Firmware | O código: o `firmware/` do commit da versão da placa (o `VERSAO`) × o de agora, sem o `agente/` (comparar os textos do `git describe` acusaria outra versão a cada commit); o `ler_adc` e o `fw_pru.out` compilados depois da última mudança do código; o `fw_pru.out` igual ao `/lib/firmware/am335x-pru0-fw` | Atualizar (11.10) |
 | PRU0 | `remoteproc1/state` e o nome dele (o `4a334000.pru`), o nome do firmware, o protocolo do `memoria_pru.h` da pasta (o que a PRU escreve na memória só o root lê) | Recarregar (o passo do `setup.sh`) |
 | Memória dos buffers | `mem=496M` no `/proc/cmdline` e no `uEnv.txt` (o `optargs` ou o `cmdline`: o próximo boot); a faixa 0x9F000000–0x9F3FFFFF fora da "System RAM" no `/proc/iomem`, só como root (para o `debian`, os endereços vêm zerados; o `ler_adc` confere a cada captura) | Assistente do `uEnv.txt` |
 | Pinos | `ocp:P9_28…P9_31_pinmux/state` = `pruout`/`pruin` | `config-pin` (como o `setup.sh`) |
 | Overlays | Os overlays carregados e as chaves do `uEnv.txt`: o **áudio do HDMI** usa o McASP0, que disputa P9_28, P9_29 e P9_31 com a PRU; o overlay da PRU (remoteproc) está lá | Assistente do `uEnv.txt` |
-| Placa de aquisição | Uma conferência curta: o ADC responde (sem 65 536 amostras iguais) | Dica: a fonte de 5 V no conector (pelo USB, a placa de aquisição fica desligada) |
+| Placa de aquisição | Uma conferência curta: o ADC responde (sem 65 536 amostras iguais). Até o Capturar (a Fase 4), a visão geral mostra a última conferência que está na placa (o `conferir_*.bin` do `coletar.sh`) | Dica: a fonte de 5 V no conector (pelo USB, a placa de aquisição fica desligada) |
 | Disco | Livre no cartão; minutos de captura que cabem na taxa escolhida | Transferir e apagar o que já foi conferido |
 | Sistema | Temperatura, carga, memória, tempo ligada | — |
 | Ferramentas | `make`, `gcc`, `clpru`, `config-pin`, `python3` | A instrução de instalação |

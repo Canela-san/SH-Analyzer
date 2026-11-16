@@ -1,5 +1,6 @@
 """A área de Aquisição (o B1; docs/gui-plan.md, 11 e 13.2): a barra lateral (a placa, as seções e a lista de placas) e
-a seção escolhida. A placa conectada mora em ``servicos/conexao_da_placa.py``; a área mostra e pergunta.
+a seção escolhida. A placa conectada mora em ``servicos/conexao_da_placa.py``, e o que se sabe dela, em
+``servicos/saude_da_placa.py``; a área mostra e pergunta.
 
 **A busca** roda enquanto a área está à vista (``procurar_sempre``), e para quando ela sai (outra área, a janela
 minimizada): quem não está olhando a lista não sonda a rede.
@@ -7,33 +8,47 @@ minimizada): quem não está olhando a lista não sonda a rede.
 **O diálogo da conexão** abre sozinho só quando a conexão precisa do usuário (a impressão digital, a senha, o
 bloqueio de uma conexão que ele pediu, o resumo da primeira conexão); conectar a uma placa conhecida da lista não abre
 nada.
+
+**As correções** (o "Corrigir" da visão geral e do diagnóstico) passam pelo diálogo da correção, que confirma e
+mostra o comando; o resultado aparece num toast na janela, inclusive o do relógio acertado sozinho ao conectar.
 """
 
 from __future__ import annotations
 
 from PySide6.QtWidgets import QHBoxLayout, QStackedWidget, QWidget
 
+from ...componentes.toast import Toast
 from ...servicos.conexao_da_placa import ESPERANDO_O_USUARIO, ConexaoDaPlaca
+from ...servicos.saude_da_placa import SaudeDaPlaca
+from .diagnostico import Diagnostico
 from .dialogo_de_conexao import DialogoDeConexao
+from .dialogo_de_correcao import DialogoDeCorrecao
 from .lateral import SECOES, BarraLateral
+from .textos import frase, traduzir
 from .visao_geral import SecaoQueChega, VisaoGeral
 
 
 class AreaDeAquisicao(QWidget):
-    def __init__(self, conexao: ConexaoDaPlaca, parent: QWidget | None = None):
+    """``dialogos_de()``: quem pergunta onde salvar (o relatório do diagnóstico); o ``controle.dialogos`` da janela."""
+
+    def __init__(self, conexao: ConexaoDaPlaca, saude: SaudeDaPlaca, dialogos_de=None,
+                 parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("area_aquisicao")
-        self.conexao = conexao
+        self.conexao, self.saude = conexao, saude
         self._dialogo: DialogoDeConexao | None = None
+        self.dialogo_de_correcao: DialogoDeCorrecao | None = None
+        self._avisada = None                 # a correção cujo resultado já foi avisado
         self.lateral = BarraLateral(conexao)
         self.secoes = QStackedWidget()
         self.secoes.setObjectName("secoes_aquisicao")
-        self.visao_geral = VisaoGeral(conexao)
-        self.paginas: dict[str, QWidget] = {"visao_geral": self.visao_geral}
-        for nome, _titulo, _icone in SECOES[1:]:
-            self.paginas[nome] = SecaoQueChega(nome)
-        for pagina in self.paginas.values():
-            self.secoes.addWidget(pagina)
+        self.visao_geral = VisaoGeral(conexao, saude)
+        self.diagnostico = Diagnostico(conexao, saude, dialogos_de)
+        self.paginas: dict[str, QWidget] = {"visao_geral": self.visao_geral, "diagnostico": self.diagnostico}
+        for nome, _titulo, _icone in SECOES:
+            if nome not in self.paginas:
+                self.paginas[nome] = SecaoQueChega(nome)
+            self.secoes.addWidget(self.paginas[nome])
         linha = QHBoxLayout(self)
         linha.setContentsMargins(0, 0, 0, 0)
         linha.setSpacing(0)
@@ -46,7 +61,10 @@ class AreaDeAquisicao(QWidget):
         self.lateral.lista.conectadaClicada.connect(lambda: self.mostrar_secao("visao_geral"))
         self.visao_geral.conectarPorIp.connect(self.conectar_por_ip)
         self.visao_geral.verBloqueio.connect(lambda: self.dialogo.acompanhar())
+        self.visao_geral.corrigir.connect(self.corrigir)
+        self.diagnostico.corrigir.connect(self.corrigir)
         conexao.mudou.connect(self._conexao_mudou)
+        saude.correcaoMudou.connect(self._correcao_mudou)
         self.mostrar_secao("visao_geral")
 
     @property
@@ -68,6 +86,28 @@ class AreaDeAquisicao(QWidget):
 
     def conectar_por_ip(self) -> None:
         self.dialogo.abrir_para_destino()
+
+    def corrigir(self, nome: str) -> DialogoDeCorrecao:
+        """A confirmação da correção ``nome`` (nada roda antes dela)."""
+        if self.dialogo_de_correcao is not None:
+            self.dialogo_de_correcao.deleteLater()
+        self.dialogo_de_correcao = DialogoDeCorrecao(self.saude, nome, self.window())
+        self.dialogo_de_correcao.open()
+        return self.dialogo_de_correcao
+
+    def _correcao_mudou(self) -> None:
+        """O resultado de uma correção, num toast: a feita (pedida ou a do relógio a cada conexão) e a automática que
+        falhou (a pedida que falhou fica no diálogo dela)."""
+        correcao = self.saude.correcao
+        if correcao is None or correcao is self._avisada:
+            return
+        if correcao.estado == "feita":
+            self._avisada = correcao
+            Toast.mostrar(self.window(), correcao.mensagem, "sucesso")
+        elif correcao.estado == "falhou" and correcao.automatica:
+            self._avisada = correcao
+            Toast.mostrar(self.window(), traduzir("O relógio não foi acertado: {}").format(frase(correcao.mensagem)),
+                          "aviso")
 
     def _conexao_mudou(self) -> None:
         c = self.conexao
