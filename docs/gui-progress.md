@@ -16,9 +16,10 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > as chaves, o cofre e o registro de atividade), a F3.3 (a descoberta das placas), a F3.4 (o agente completo: a
 > saúde, as capturas, o relógio e os logs), a F3.5 (a área de Aquisição na tela: a lista de placas, a conexão e a
 > primeira conexão), a F3.6 (a visão geral e o diagnóstico, com o "Corrigir" do relógio e dos pinos) e a F3.7 (os
-> arquivos e a transferência, que espera as capturas) e a F3.8 (o terminal: o `pyte` num widget próprio, sobre um
-> PTY no SSH, com as abas, os atalhos e a gravação) estão feitas, conferidas no servidor SSH do teste e na placa de
-> verdade. **A próxima: a F3.9, o simulador com os cenários** (servido por SSH no próprio computador).
+> arquivos e a transferência, que espera as capturas), a F3.8 (o terminal: o `pyte` num widget próprio, sobre um
+> PTY no SSH, com as abas, os atalhos e a gravação) e a F3.9 (o simulador com os cenários, servido por SSH neste
+> computador) estão feitas, conferidas no servidor SSH do teste e na placa de verdade. **A próxima: a F3.10, o
+> fechamento da Fase 3.**
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
@@ -30,7 +31,8 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > do aplicativo); "Conectar por IP…" para uma placa em outra rede. Conectada: a visão geral (os indicadores, a saúde,
 > as capturas na placa e a atividade ao vivo), o "Acertar…" do relógio, o diagnóstico item a item, com o relatório, e
 > os arquivos: "Transferir as novas" para a pasta da sessão do dia, "Abrir na Análise" e "Apagar da placa" (só o
-> conferido).
+> conferido). **O simulador** está na lista também: o "Cenário" da visão geral (ou o "Conectar no cenário" do menu
+> da placa) troca a placa simulada (o ADC mudo, o cartão cheio, a conexão que cai, o relógio errado...).
 >
 > **Com o usuário (quando puder):**
 > - o G1 com a cadeia, na tela: `uv run --extra gui python -m sh_analyzer_gui.prototipos.medir_vista --cadeia`
@@ -1340,7 +1342,7 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
     a gravação de cada aba, o atalho sem o Enter, a queda e a volta sozinha, o shell que sai, a pergunta com a
     captura rodando, o terminal do sistema). O `pyte` fica fora da partida da janela (`test_arquitetura`).
 
-### ☐ F3.9: o simulador com os cenários
+### ☑ F3.9: o simulador com os cenários
 
 - **Arquivos:** `sh_placa/simulador.py`; `tests/servidor_ssh.py`.
 - **O conteúdo** (AQ-19; plano, 11.11):
@@ -1357,6 +1359,53 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
   - o cenário escolhido pela interface.
 - **Os testes:** cada cenário na visão geral e no diagnóstico; a conexão que cai no meio de uma transferência, e a
   retomada.
+- **Feito em 16/11/2026:**
+  - **o servidor** (`sh_placa/simulador.py`, o `ServidorDoSimulador`): o asyncssh no 127.0.0.1, numa porta livre,
+    com o agente de verdade sobre a árvore falsa e o SFTP dela. A chave do host e a do aplicativo são geradas para
+    ele (o `acesso()` devolve a chave e o `known_hosts`), e só a chave entra: ninguém daqui entra com uma senha
+    conhecida. O sudo pede a senha da imagem, que a sessão conhece. O `ssh` sem comando é recusado com a explicação.
+    O SFTP divide 5,2 MB/s entre os pedidos, como o USB; a conexão que cai derruba tudo na primeira leitura além de
+    40 % de um arquivo, e de novo a cada 45 s. A pasta da placa simulada sai no `fechar`. O servidor dos testes
+    (`tests/servidor_ssh.py`) virou uma subclasse dele: a senha, o terminal num PTY, o salto e a chave RSA;
+  - **os cenários** (`sh_placa/cenarios.py`): os seis do plano, de uso, e os sete de configuração da F0.10, com o
+    título e a descrição de cada um; o `montar_sistema_falso` monta a árvore de cada um;
+  - **as capturas** (`sh_placa/capturas_simuladas.py`): no formato do firmware (v9, 2 canais a 400 kS/s, blocos de
+    2²⁰ amostras, o CRC das amostras e o do cabeçalho), com a rede de 127 V e os supraharmônicos do plano (11.11). O
+    espectro de uma delas, lido pelo motor, tem os picos em 60 Hz, 16, 40 e 72 kHz (o teste confere);
+  - **o agente (v3):** a `ultima_captura` na saúde (o arquivo, o tamanho, a data e o cabeçalho, com os canais
+    parados), e os avisos `adc_mudo` (todos os canais em 0) e `sinal_parado` (um canal com o mínimo igual ao
+    máximo). Na árvore falsa, o cartão e o relógio são os da placa simulada (`/run/simulador/disco` e `relogio`), e
+    o "Acertar…" grava ali (o relógio deste computador não é tocado);
+  - **na interface:** o "Cenário" na visão geral, só com o simulador (trocar reconecta numa placa nova, e a de antes
+    é apagada), e o "Conectar no cenário" no menu da placa, com o último lembrado; o cartão da lateral com o título
+    do cenário; a "Placa de aquisição" da visão geral ("Com sinal", "ADC mudo", "Sinal parado") e o item do
+    diagnóstico, pela captura mais recente; o relógio errado legível ("−2 dias e 5 h", "atrasado · sem NTP"). A
+    seção Terminal explica que o simulador não tem terminal;
+  - **as decisões:** as capturas ficam no `sh_placa`, e não as de `tests/capturas_sinteticas.py` (o aplicativo não
+    leva os testes); só a chave entra; sem terminal (um shell nele seria o deste computador); só no Linux e no macOS
+    (o agente e os scripts da árvore falsa precisam de um shell POSIX); a `OrigemLocal` saiu, porque o simulador
+    passa pelo SFTP como a placa;
+  - **na tela (sem tela), com o simulador de verdade** (os blocos do firmware, a vazão do USB): cada cenário conecta
+    em 1,0 a 1,9 s, com a visão geral e o diagnóstico de cada um. No da conexão que cai, uma captura de 4 MiB foi
+    interrompida em 40 %; a conexão voltou sozinha, e a retomada terminou com a cópia conferida pelo CRC, em 2,1 s;
+  - **o que a tela mostrou:**
+    - a queda no meio da transferência deixava tarefas sem dono ("Task exception was never retrieved"): o leitor
+      paralelo do asyncssh não cancela as suas quando a leitura é cancelada. Agora cada bloco é lido em pedidos
+      simples, cancelados e esperados juntos (o teste reproduz o caso);
+    - **na placa:** o OpenSSH 7.9 da imagem não diz o tamanho máximo de um pedido (o `limits@openssh.com`), e o
+      asyncssh pede 16 KiB. O pedido que volta com menos é pedido de novo (o teste também). A vazão ficou a mesma
+      (seção 5);
+    - o resumo do ADC mudo repetia o aviso: agora diz o que se viu ("os 2 canais em 0");
+    - **fica para a F3.10:** a coluna Título dos Arquivos tem 40 px numa janela de 1 440 px (o painel das
+      transferências no mínimo, e as outras colunas no tamanho delas), e o título só se lê no tooltip;
+  - **o que fica para o instalador (F0.11):** o PyInstaller não leva o `firmware/agente/shan_agente.py`, que o
+    `sh_placa.agente` procura ao lado do código, e o simulador usa o `sys.executable` como o `python3`. No aplicativo
+    congelado, nem a placa nem o simulador rodariam o agente;
+  - **os testes:** `tests/test_sh_placa_simulador.py` (12: só a chave e sem terminal, a pasta que sai, o Windows, a
+    vazão, a queda no meio e a retomada, a leitura cancelada antes da queda, a queda periódica, o cartão cheio e o
+    apagar, o relógio errado e o acerto, o ADC mudo, os títulos e o espectro) e `tests/test_gui_simulador.py` (9:
+    cada cenário do plano na visão geral e no diagnóstico, o cenário escolhido e lembrado, o "Acertar…" e a queda no
+    meio de uma transferência com a retomada); o pedido com menos bytes em `tests/test_sh_placa_sftp.py`.
 
 ### ☐ F3.10: o fechamento da Fase 3
 
@@ -1395,6 +1444,7 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
 | 15/11/2026 | G1 sem tela, 8 faixas, **com a cadeia**, depois da fila das pesadas e da curva da sonda em pedaços | **Aprovado. Durante:** mediana de 5,1 a 5,3 ms, p95 de 7,5 a 9,7 ms. **Depois:** mediana de 8,8 a 8,9 ms, p95 de 10,8 a 12,2 ms (3 rodadas). **Otimista:** os números dos eixos estavam parados (`b946419`) e quase não eram redesenhados; as duas linhas de 15/11 acima também | `medir_vista --cadeia`; `pytest --desempenho` |
 | 15/11/2026 | **G1 sem tela, 8 faixas, com os eixos redesenhados** a cada zoom e pan (a correção dos números parados) | **Aprovado. Sem a cadeia:** mediana de 9,4 ms, p95 de 11,3 ms. **Com a cadeia, durante:** mediana de 7,3 a 7,4 ms, p95 de 11,9 a 12,9 ms; **depois:** mediana de 10,2 a 10,4 ms, p95 de 14,0 a 14,2 ms (2 rodadas). Redesenhar os eixos custa ~1,5 ms por quadro | `medir_vista [--cadeia]`; `pytest --desempenho` |
 | 15/11/2026 | **A vazão do USB, na placa de verdade** (192.168.6.2), 46 MiB e 8 MiB de captura | `scp` e `rsync`: 4,8 MB/s; `ssh cat` com o `chacha20-poly1305`, o `aes128-gcm` e o `aes128-ctr`: 5,2, 5,7 e **5,9 MB/s**; **o SFTP do asyncssh com o `aes128-ctr`: 5,2 MB/s**. O limite é a cifra no único núcleo da placa (o eMMC lê a 264 MB/s) | seção 6; a sonda da F3.1 |
+| 16/11/2026 | **O SFTP da placa com o leitor da F3.9** (os pedidos de 16 KiB: o OpenSSH 7.9 dela não tem o `limits@openssh.com`) × o leitor paralelo do asyncssh, 8 MiB, duas rodadas de cada | Os dois: **5,0 a 5,1 MiB/s** com o `aes128-ctr` da conexão (4,5 MiB/s com a cifra padrão do asyncssh); o SHA-256 igual | o diário de 16/11 (F3.9) |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
 ---
@@ -1900,6 +1950,20 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     eixo X vazios já antes do zoom): passa sozinho, e fica anotado.
   - **Testes:** `ci.sh placa` com 275 em cada Python, `ci.sh rapido` com 1 915 e `ci.sh interface` com 810.
   - **Próximo:** a F3.9, o simulador com os cenários.
+- **16/11/2026:** **a F3.9, o simulador com os cenários** (seção 4d):
+  - **as decisões:** o simulador é uma placa servida por SSH neste computador, com o agente de verdade, e não um
+    transporte local: a interface passa pelo mesmo caminho da placa (a chave, o SFTP, a retomada, o registro); as
+    capturas simuladas têm o formato e os sinais do firmware; os cenários de configuração da F0.10 ficam junto dos do
+    plano, num grupo à parte;
+  - **o que a tela mostrou:** as tarefas sem dono do asyncssh na queda (corrigido no `sftp.py`, com o teste) e o
+    resumo do ADC mudo que repetia o aviso;
+  - **o que a placa mostrou:** o OpenSSH 7.9 sem o `limits@openssh.com` (pedidos de 16 KiB) e a vazão igual à de
+    antes da troca do leitor;
+  - **para o instalador:** o agente fora do pacote do PyInstaller (seção 4d, F3.9).
+  - **Testes:** `ci.sh placa` com 309 em cada Python, `ci.sh rapido` com 1 576 e `ci.sh interface` com 819. O
+    `rapido` rodou depois do `placa`, e o `uv run --extra dev` tirou do ambiente o Qt e o asyncssh: os testes deles
+    ficaram para os passos próprios (a contagem não se compara com a dos dias anteriores).
+  - **Próximo:** a F3.10, o fechamento da Fase 3.
 ---
 
 ## 8. Perguntas em aberto

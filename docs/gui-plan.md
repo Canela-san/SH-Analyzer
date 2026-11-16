@@ -1089,7 +1089,7 @@ O cartão da placa limita a duração de uma captura, e a saída contínua tira 
 | Memória dos buffers | `mem=496M` no `/proc/cmdline` e no `uEnv.txt` (o `optargs` ou o `cmdline`: o próximo boot); a faixa 0x9F000000–0x9F3FFFFF fora da "System RAM" no `/proc/iomem`, só como root (para o `debian`, os endereços vêm zerados; o `ler_adc` confere a cada captura) | Assistente do `uEnv.txt` |
 | Pinos | `ocp:P9_28…P9_31_pinmux/state` = `pruout`/`pruin` | `config-pin` (como o `setup.sh`) |
 | Overlays | Os overlays carregados e as chaves do `uEnv.txt`: o **áudio do HDMI** usa o McASP0, que disputa P9_28, P9_29 e P9_31 com a PRU; o overlay da PRU (remoteproc) está lá | Assistente do `uEnv.txt` |
-| Placa de aquisição | Uma conferência curta: o ADC responde (sem 65 536 amostras iguais). Até o Capturar (a Fase 4), a visão geral mostra a última conferência que está na placa (o `conferir_*.bin` do `coletar.sh`) | Dica: a fonte de 5 V no conector (pelo USB, a placa de aquisição fica desligada) |
+| Placa de aquisição | A captura mais recente na placa (a conferência curta do `coletar.sh`, o `conferir_*.bin`, até o Capturar da Fase 4): o mínimo e o máximo de cada canal, do cabeçalho v9. Todos os canais em 0: o ADC mudo (aviso). Um canal com o mínimo igual ao máximo: o sinal parado (a entrada saturada, ou o ADC travado). Antes da v9, ou numa captura interrompida, não há o que conferir | Dica: a fonte de 5 V no conector (pelo USB, a placa de aquisição fica desligada) |
 | Disco | Livre no cartão; minutos de captura que cabem na taxa escolhida | Transferir e apagar o que já foi conferido |
 | Sistema | Temperatura, carga, memória, tempo ligada | — |
 | Ferramentas | `make`, `gcc`, `clpru`, `config-pin`, `python3` | A instrução de instalação |
@@ -1132,14 +1132,22 @@ O **relatório de diagnóstico** (Markdown) vai para o caderno com um clique: é
 
 ### 11.11 O simulador
 
-O `sh_placa.simulador` implementa o mesmo protocolo do agente e a mesma saída contínua, com sinais sintéticos (os de `tests/capturas_sinteticas.py`). Os cenários escolhíveis:
+O simulador é uma placa na lista, servida por SSH neste computador (o `sh_placa.simulador`, a F3.9): um servidor do asyncssh no 127.0.0.1, numa porta livre, com o agente de verdade sobre uma árvore falsa (o `SHAN_RAIZ`: o `/sys`, o `/proc`, o `uEnv.txt` e a pasta do firmware) e o SFTP dela. A interface conecta como numa placa: a chave do aplicativo (só ela; nenhuma senha entra pelo SSH), o `known_hosts`, o registro de atividade, a transferência com a retomada. O sudo pede a senha da imagem, que a sessão conhece.
 
-- rede de 60 Hz com supraharmônicos;
-- ADC mudo;
-- disco cheio;
-- conexão que cai no meio;
-- firmware de outra versão;
-- relógio errado.
+- **As capturas** (`sh_placa/capturas_simuladas.py`, e não as de `tests/`, que o aplicativo não leva): no formato do firmware (v9, 2 canais a 400 kS/s, blocos de 2²⁰ amostras, o CRC das amostras). A rede de 127 V e 60 Hz, com os harmônicos ímpares e uma carga não linear na corrente; os supraharmônicos: um inversor de 16 kHz modulado em 120 Hz, um driver de LED em 40 kHz com o FM, um tom em 72 kHz; o ruído; os ganhos do `--ganho 0:10,1:19.357`.
+- **O "cabo":** o SFTP divide 5,2 MB/s entre os pedidos, como o USB da placa.
+- **Os cenários**, escolhidos na visão geral ou no "Conectar no cenário" do menu da placa (o último fica lembrado):
+  - de uso:
+    - a rede de 60 Hz com supraharmônicos;
+    - o ADC mudo: a conferência mais recente em 0;
+    - o cartão cheio: 56 MiB livres;
+    - a conexão que cai: a primeira leitura além de 40 % de um arquivo derruba tudo, e de novo a cada 45 s;
+    - o firmware de outra versão;
+    - o relógio errado: 2 dias e 5 h atrasado, sem NTP;
+  - de configuração (os da F0.10): a PRU com falha, os pinos errados, sem o `mem=496M`, sem compilar, a PRU desatualizada, o áudio do HDMI e sem o overlay da PRU.
+- **Sem terminal:** um shell nele seria o deste computador. A seção Terminal diz isso.
+- **Só no Linux e no macOS:** o agente e os scripts da árvore falsa precisam de um shell POSIX e do `python3`. No Windows, o simulador não aparece na lista.
+- **A saída contínua** (11.6) entra nele com o Capturar, na Fase 4.
 
 **Para que serve:**
 
