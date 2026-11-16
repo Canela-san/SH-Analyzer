@@ -161,7 +161,7 @@ def _resumo_do_disco(e: EstadoDaPlaca) -> str:
     if minutos is not None:
         partes.append(f"≈ {minutos:.0f} min de captura a 400 kS/s")
     capturas = e.capturas_na_placa
-    if capturas:
+    if capturas and capturas[0]:
         partes.append(f"{capturas[0]} captura(s), {_bytes(capturas[1])}")
     return " · ".join(partes)
 
@@ -238,9 +238,10 @@ def relatorio(estado: EstadoDaPlaca, versao_do_aplicativo: str | None = None, *,
               registro: Iterable[Entrada] = (), agora: float | None = None, aplicativo: str = "") -> str:
     """O relatório do diagnóstico em Markdown: o cabeçalho da placa, o resumo, cada item, os problemas com a correção
     e o registro de atividade (``registro``; os últimos 50 comandos e fatos). ``conexao``: o caminho e o enlace, como
-    a interface os escreve; ``aplicativo``: o nome e a versão de quem gerou."""
+    a interface os escreve; ``aplicativo``: o nome e a versão de quem gerou; ``agora``: a hora do "Conferido em" (o
+    relógio da placa é comparado pelos limites da resposta, como na tela, e não com esta hora)."""
     agora = time.time() if agora is None else agora
-    itens = itens_do_diagnostico(estado, versao_do_aplicativo, agora)
+    itens = itens_do_diagnostico(estado, versao_do_aplicativo)
     linhas = ["# Diagnóstico da placa", ""]
     placa = estado.nome_da_placa + (f", nº {estado.serie}" if estado.serie else "")
     linhas.append(f"- **Placa:** {placa}")
@@ -257,7 +258,7 @@ def relatorio(estado: EstadoDaPlaca, versao_do_aplicativo: str | None = None, *,
     if erros:
         linhas.append(f"**Não está pronta para capturar:** {len(erros)} erro(s) e {len(avisos)} aviso(s).")
     else:
-        linhas.append("**Pronta para capturar**" + (f", com {len(avisos)} aviso(s)." if avisos else "."))
+        linhas.append(f"**Pronta para capturar**, com {len(avisos)} aviso(s)." if avisos else "**Pronta para capturar.**")
     linhas += ["", "| | Item | O que foi lido |", "|---|---|---|"]
     for item in itens:
         linhas.append(f"| {ROTULOS[item.nivel]} | {item.titulo} | {item.resumo.replace('|', '/')} |")

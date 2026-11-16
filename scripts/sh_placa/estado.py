@@ -296,6 +296,12 @@ class CapturaNaPlaca:
         return _campo(self.cabecalho, "duracao_s")
 
     @property
+    def inicio(self) -> float:
+        """Quando a captura começou (o ``inicio_utc`` do cabeçalho; sem ele, a data do arquivo)."""
+        inicio = _numero(_campo(self.cabecalho, "inicio_utc"))
+        return inicio if inicio else self.modificado
+
+    @property
     def problemas(self) -> list[str]:
         """A integridade, em frases curtas para a lista (vazia = nada de errado)."""
         c = self.cabecalho

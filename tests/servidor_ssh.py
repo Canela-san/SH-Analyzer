@@ -58,8 +58,7 @@ if [ "$validar" = 1 ]; then
     exit 0
 fi
 [ -f "$estampa" ] || { echo "sudo: a password is required" >&2; exit 1; }
-printf '%s
-' "$*" >> "$HOME/.sudo-comandos"
+printf '%s\0' "$*" >> "$HOME/.sudo-comandos"
 exec "$@"
 """
 CONFIG_PIN = r"""#!/bin/sh
@@ -106,9 +105,9 @@ class ServidorSSH:
 
     @property
     def comandos_de_root(self) -> list[str]:
-        """O que o sudo falso rodou (os argumentos, numa linha cada)."""
+        """O que o sudo falso rodou: os argumentos de cada comando, juntos (um comando de várias linhas é um só)."""
         arquivo = self.home / ".sudo-comandos"
-        return arquivo.read_text().splitlines() if arquivo.exists() else []
+        return arquivo.read_text().split("\0")[:-1] if arquivo.exists() else []
 
     @property
     def impressao(self) -> str:

@@ -26,9 +26,12 @@ import shlex
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from .agente import ErroDaPlaca
-from .conexao import ConexaoSSH
+
+if TYPE_CHECKING:                       # só a anotação: a interface mostra os comandos sem carregar o asyncssh
+    from .conexao import ConexaoSSH
 
 MODOS_DA_PRU = {"P9_31": "pruout", "P9_29": "pruout", "P9_30": "pruin", "P9_28": "pruout"}
 """Os pinos da PRU0 e os modos, na ordem do ``firmware/setup.sh`` (``tests/test_sh_placa_correcoes.py`` confere)."""

@@ -93,7 +93,8 @@ def test_acertar_o_relogio_pelo_sudo(tmp_path, caplog):
     assert abs(acertado.erro_antes_s) < 0.5                           # o mesmo relógio: a placa simulada estava certa
     escrito = float((placa.raiz / ARQUIVO_DO_RELOGIO_SIMULADO).read_text())
     assert escrito == acertado.acertado_para and enviado <= escrito <= depois + 0.01
-    assert "\n".join(placa.comandos_de_root).startswith("python3 -u -c import json, os, sys, time")
+    (como_root,) = placa.comandos_de_root
+    assert como_root.startswith("python3 -u -c import json, os, sys, time")
     (entrada,) = [e for e in registro.entradas if e.tipo == "comando"]
     assert entrada.comando == roteiro_do_relogio() and entrada.codigo == 0
     for texto in (registro.em_texto(), caplog.text, *placa.comandos, *placa.comandos_de_root):

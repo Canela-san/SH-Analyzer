@@ -100,7 +100,7 @@ def test_o_relatorio():
     assert "- **Erro (Pinos da PRU):** Pinos fora do modo da PRU: P9_28, P9_31." in texto
     assert "  - Correção: config-pin" in texto
     assert "## Registro de atividade" in texto and "agente: saude (0,60 s, código 0)" in texto
-    assert "**Pronta para capturar**" in relatorio(saude("normal"), VERSAO_SIMULADA)
+    assert "**Pronta para capturar.**" in relatorio(saude("normal"), VERSAO_SIMULADA)
 
 
 def test_o_commit_de_uma_versao():
