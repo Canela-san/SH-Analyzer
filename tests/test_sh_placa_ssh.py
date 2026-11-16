@@ -71,7 +71,7 @@ def test_a_primeira_conexao_com_a_senha_e_depois_so_com_a_chave(app, tmp_path):
             assert placa.authorized_keys.read_text().splitlines() == [app.chave.linha_publica]
             async with app.conexao(placa) as c:                            # sem senha, e sem perguntar de novo
                 assert c.autenticada_com == "chave"
-                estado = await ClienteDoAgente(TransporteSSH(c)).estado()
+                estado = await ClienteDoAgente(TransporteSSH(c)).saude()
             assert len(app.perguntas) == 1
             assert placa.autenticacoes.count(("senha", True)) == 1
             return estado

@@ -18,10 +18,11 @@ import json
 import os
 import shlex
 import sys
+import time
 from pathlib import Path
 from typing import Protocol
 
-from .estado import EstadoDaPlaca
+from .estado import CapturasDaPlaca, EstadoDaPlaca, LogsDaPlaca, RelogioDaPlaca
 
 PROTOCOLO = 1
 """A versão do formato das respostas que este cliente entende (``PROTOCOLO`` do agente)."""
@@ -101,14 +102,22 @@ class TransporteSSH:
 
 
 class ClienteDoAgente:
-    """Fala com o agente: :meth:`versao` e :meth:`estado`."""
+    """Fala com o agente: :meth:`versao`, :meth:`estado`, :meth:`saude` (o estado com o diagnóstico),
+    :meth:`capturas`, :meth:`relogio` e :meth:`logs`."""
 
     def __init__(self, transporte: Transporte):
         self.transporte = transporte
 
     async def chamar(self, comando: str, *args: str) -> dict:
         """A resposta do agente a ``comando``, conferida: JSON, o protocolo certo e sem erro."""
+        return (await self._chamar(comando, *args))[0]
+
+    async def _chamar(self, comando: str, *args: str) -> tuple[dict, float, float]:
+        """A resposta, e o ``time.time()`` em que foi pedida e em que chegou (o relógio da placa é comparado com
+        eles: ``sh_placa/estado.py``)."""
+        enviado_em = time.time()
         codigo, saida, erro = await self.transporte.executar([comando, *args])
+        recebido_em = time.time()
         try:
             resposta = json.loads(saida.strip().splitlines()[-1]) if saida.strip() else None
         except (json.JSONDecodeError, IndexError):
@@ -120,16 +129,36 @@ class ClienteDoAgente:
             detalhe = (erro or saida).strip().splitlines()[-1:] or ["sem saída"]
             raise ErroDaPlaca(f"o agente respondeu algo que não é JSON (código {codigo}): {detalhe[0][:200]}")
         if resposta.get("protocolo") != PROTOCOLO:
-            raise ErroDaPlaca(f"o agente da placa fala o protocolo {resposta.get('protocolo')!r}, e este aplicativo, o "
-                              f"{PROTOCOLO}: atualize o firmware da placa (o agente vai junto)")
+            raise ErroDaPlaca(f"o agente fala o protocolo {resposta.get('protocolo')!r}, e este cliente, o {PROTOCOLO}: "
+                              "o agente e o cliente são de versões diferentes do aplicativo")
         if "erro" in resposta:
             raise ErroDaPlaca(f"o agente recusou o comando: {resposta['erro']}")
         if codigo != 0:
             raise ErroDaPlaca(f"o agente saiu com o código {codigo}")
-        return resposta
+        return resposta, enviado_em, recebido_em
 
     async def versao(self) -> dict:
         return await self.chamar("versao")
 
     async def estado(self) -> EstadoDaPlaca:
-        return EstadoDaPlaca.de_json(await self.chamar("estado"))
+        """O estado, sem as conferências: o que a barra e a visão geral mostram (o diagnóstico vem da :meth:`saude`)."""
+        resposta, enviado_em, recebido_em = await self._chamar("estado")
+        return EstadoDaPlaca.de_json(resposta, recebido_em, enviado_em)
+
+    async def saude(self) -> EstadoDaPlaca:
+        """O estado com as conferências da placa: o que :meth:`EstadoDaPlaca.diagnostico` usa."""
+        resposta, enviado_em, recebido_em = await self._chamar("saude")
+        return EstadoDaPlaca.de_json(resposta, recebido_em, enviado_em)
+
+    async def capturas(self) -> CapturasDaPlaca:
+        return CapturasDaPlaca.de_json(await self.chamar("capturas"))
+
+    async def relogio(self) -> RelogioDaPlaca:
+        resposta, enviado_em, recebido_em = await self._chamar("relogio")
+        relogio = RelogioDaPlaca.de_json(resposta, recebido_em, enviado_em)
+        if relogio is None:
+            raise ErroDaPlaca("o agente respondeu o relógio sem a hora")
+        return relogio
+
+    async def logs(self, linhas: int = 50) -> LogsDaPlaca:
+        return LogsDaPlaca.de_json(await self.chamar("logs", str(linhas)))

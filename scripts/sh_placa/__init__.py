@@ -8,7 +8,8 @@
 * :mod:`.conhecidas` -- as placas em que o usuário já conectou, pelo nº de série, com a chave de host e os endereços;
 * :mod:`.chaves` -- a chave do aplicativo, as chaves de host conhecidas e o cofre das senhas;
 * :mod:`.registro` -- o registro de atividade: cada comando rodado na placa;
-* :mod:`.estado` -- o estado da placa e o diagnóstico (o que está errado e como corrigir);
+* :mod:`.estado` -- as respostas do agente lidas: o estado e a saúde (o diagnóstico: o que está errado e como
+  corrigir), o relógio, as capturas e os logs;
 * :mod:`.laco` -- o laço ``asyncio`` numa thread só dele, onde toda a rede da placa roda (a interface chega a ele
   pela ponte ``sh_analyzer_gui/servicos/placa.py``);
 * :mod:`.simulador` -- um sistema de arquivos falso de BeagleBone, com cenários, em que o agente de verdade roda: para

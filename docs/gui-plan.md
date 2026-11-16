@@ -1072,10 +1072,10 @@ O cartão da placa limita a duração de uma captura, e a saída contínua tira 
 | Item | Como o agente confere | O "Corrigir" |
 |---|---|---|
 | Conexão | Latência e vazão; a chave do host | — |
-| Relógio | A diferença para o computador; `relogio_sincronizado` (NTP) | Acertar pelo computador (como o `hora`) |
-| Firmware | `VERSAO` × a versão do aplicativo; o `ler_adc` compilado; o `fw_pru.out` carregado | Atualizar (11.10) |
-| PRU0 | `remoteproc1/state`, o nome do firmware, o protocolo (5) | Recarregar (o passo do `setup.sh`) |
-| Memória dos buffers | `mem=496M` no `/proc/cmdline`; a faixa 0x9F000000–0x9F3FFFFF fora da "System RAM" no `/proc/iomem` | Assistente do `uEnv.txt` |
+| Relógio | A diferença para o computador, entre dois limites (a hora lida antes da chegada da resposta, e o processo começado depois do pedido: ±0,03 s no USB); o `adjtimex` (NTP), como o `relogio_sincronizado` do cabeçalho | Acertar pelo computador (como o `hora`) |
+| Firmware | `VERSAO` × a versão do aplicativo; o `ler_adc` e o `fw_pru.out` compilados depois da última mudança do código; o `fw_pru.out` igual ao `/lib/firmware/am335x-pru0-fw` | Atualizar (11.10) |
+| PRU0 | `remoteproc1/state` e o nome dele (o `4a334000.pru`), o nome do firmware, o protocolo do `memoria_pru.h` da pasta (o que a PRU escreve na memória só o root lê) | Recarregar (o passo do `setup.sh`) |
+| Memória dos buffers | `mem=496M` no `/proc/cmdline` e no `uEnv.txt` (o `optargs` ou o `cmdline`: o próximo boot); a faixa 0x9F000000–0x9F3FFFFF fora da "System RAM" no `/proc/iomem`, só como root (para o `debian`, os endereços vêm zerados; o `ler_adc` confere a cada captura) | Assistente do `uEnv.txt` |
 | Pinos | `ocp:P9_28…P9_31_pinmux/state` = `pruout`/`pruin` | `config-pin` (como o `setup.sh`) |
 | Overlays | Os overlays carregados e as chaves do `uEnv.txt`: o **áudio do HDMI** usa o McASP0, que disputa P9_28, P9_29 e P9_31 com a PRU; o overlay da PRU (remoteproc) está lá | Assistente do `uEnv.txt` |
 | Placa de aquisição | Uma conferência curta: o ADC responde (sem 65 536 amostras iguais) | Dica: a fonte de 5 V no conector (pelo USB, a placa de aquisição fica desligada) |

@@ -13,10 +13,10 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > ligada, durante e depois das materializações. **A tag v0.9** fica para o dono do projeto.
 >
 > **A Fase 3 está andando** (seção 4d): a F3.1 (o laço `asyncio` do `sh_placa` e a ponte), a F3.2 (a conexão SSH,
-> as chaves, o cofre e o registro de atividade) e a F3.3 (a descoberta das placas: o USB, o mDNS, as conhecidas e o
-> simulador) estão feitas, conferidas no servidor SSH do teste e na placa de verdade. **A próxima: a F3.5, a área de
-> Aquisição e a lista de placas** (a primeira parte da Fase 3 na tela; as duas de que ela precisa estão feitas); a
-> F3.4 (o agente completo, só o agente) pode vir antes ou depois.
+> as chaves, o cofre e o registro de atividade), a F3.3 (a descoberta das placas) e a F3.4 (o agente completo: a
+> saúde, as capturas, o relógio e os logs) estão feitas, conferidas no servidor SSH do teste e na placa de verdade.
+> **A próxima: a F3.5, a área de Aquisição e a lista de placas** (a primeira parte da Fase 3 na tela); a F3.6 (a
+> visão geral e o diagnóstico) vem depois dela.
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
@@ -1031,7 +1031,7 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
     servidor SSH do teste nos endereços 127.0.0.1 e 127.0.0.2, como os dois IPs do USB (`tests/servidor_ssh.py`
     escuta em vários endereços, na mesma porta), e o das preferências em `tests/test_gui_configuracoes.py`.
 
-### ☐ F3.4: o agente completo (commits só do agente)
+### ☑ F3.4: o agente completo (commits só do agente)
 
 - **Arquivos:** `firmware/agente/shan_agente.py`; `sh_placa/estado.py`; `tests/test_agente.py`.
 - **O conteúdo** (plano, 11.2 e 11.9). O agente continua só lendo, na biblioteca padrão do Python 3.7:
@@ -1052,6 +1052,48 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
 - **Os testes:** cada conferência sobre a árvore falsa, inclusive os `uEnv.txt` estranhos; a sintaxe do Python 3.7;
   o `EstadoDaPlaca` lendo cada resposta.
 - **Do laboratório:** a F0.2 diz o que a placa de verdade tem (os overlays, as ferramentas, a versão do Python).
+- **Feito em 15/11/2026** (os commits do agente, `f4f462d` e `2754155`, só com ele e os testes dele):
+  - **`saude`:** os fatos do `estado`, o `/boot/uEnv.txt`, os overlays carregados, os `.dtbo` da PRU e as
+    ferramentas, e as **conferências**, cada uma com o nível, o código, o texto e a correção. O diagnóstico agora é
+    da placa (a fonte de verdade da interface, da CLI e do `setup.sh`); o `sh_placa/estado.py` só junta as duas que
+    só o computador faz: o relógio comparado com o dele e o firmware comparado com o do aplicativo. As conferências:
+    - **a PRU0:** ausente (com o overlay certo para o kernel que roda na correção), em outro remoteproc (um kernel
+      que numera de outro jeito), outro núcleo no `remoteproc1`, parada com falha, outro firmware;
+    - **o firmware:** não compilado, **compilado antes da última mudança do código** e **não instalado na PRU** (o
+      `fw_pru.out` diferente do `/lib/firmware/am335x-pru0-fw`), como a `coleta/campanha.sh` confere; o protocolo da
+      PRU vem do `memoria_pru.h` da pasta (o que a PRU escreve na memória só o root lê);
+    - **a memória dos buffers** no boot de agora (`/proc/cmdline`) e no próximo (o `optargs` ou o `cmdline` do
+      `uEnv.txt`: na placa de verdade, o `mem=496M` está no `optargs`). **O `/proc/iomem` sem sudo tem os endereços
+      zerados:** o agente só o usa como root, e o `ler_adc` o confere a cada captura;
+    - **o áudio do HDMI** carregado (o McASP0 nos pinos da PRU) ou não desligado no `uEnv.txt`; o overlay da PRU do
+      `uEnv.txt` (o UIO, o de outro kernel, um que não existe, os overlays desligados); o kernel trocado;
+    - os pinos, o disco, a temperatura, a carga, a memória e as ferramentas (com o `apt install` dos pacotes, os do
+      `dpkg -S` da placa);
+  - **`capturas`:** os `.bin` da pasta do firmware e das coletas (até 3 níveis), com o resumo do cabeçalho de v1 a v9:
+    o título, a taxa, os canais, a duração, a integridade, o CRC e se o arquivo tem o tamanho que o cabeçalho diz. **O
+    agente lê o cabeçalho sozinho** (a placa não tem o NumPy), e `tests/test_agente.py` confere, versão a versão, que
+    o resumo é o que o motor lê. E os manifestos das coletas (`resumo.csv`, `pontos_coletados.csv`);
+  - **`relogio`:** o `adjtimex`, o mesmo do `relogio_sincronizado` do cabeçalho, e há quanto tempo o processo roda.
+    **A diferença para o computador fica entre dois limites** (`sh_placa/estado.py`): a hora foi lida antes de a
+    resposta chegar, e o processo começou depois do pedido. Na placa, ±0,03 s, cercando a de um pingue-pongue num
+    canal só; a hora da chegada sozinha dava 35 a 70 ms a menos. O "Corrigir" da F3.6 confere com ela;
+  - **`logs`:** o `/dev/kmsg` (a PRU, os pinos, o firmware e os erros) e o diário do systemd, **filtrado pelos
+    índices dele** (o `sudo`, por onde passam o `ler_adc` e o `setup.sh`, e os erros): o systemd 241 da imagem não
+    tem o `--grep`, e filtrar as ~3500 linhas de um boot no agente levava 3,4 s; assim, 0,7 s;
+  - **o tempo de cada comando na placa** (o agente compilado pelo stdin a cada chamada; o Python vazio leva 0,2 s):
+    de 0,42 s (`versao`) a 0,67 s (`logs`). O `ctypes.util`, o `subprocess` e o `csv` são importados só onde se usam;
+  - **o `sh_placa/estado.py`** lê cada resposta: `EstadoDaPlaca` (o estado; com a saúde, o diagnóstico),
+    `RelogioDaPlaca`, `CapturasDaPlaca` (com a integridade de cada captura em frases curtas) e `LogsDaPlaca`. O
+    `ClienteDoAgente` ganhou a `saude`, as `capturas`, o `relogio` e os `logs`. Pedir o diagnóstico ao `estado` é um
+    erro de quem chama, e não uma lista vazia que pareceria uma placa boa (achou o teste da F3.2 que fazia isso);
+  - **o simulador** (`7bd1c08`) tem a árvore da placa de verdade (a imagem Buster, o kernel 4.19, o `uEnv.txt` dela,
+    os overlays, o `/lib/firmware`, o `/dev/kmsg` e um diário falso) e três cenários novos: o firmware da PRU de outra
+    compilação, o áudio do HDMI ligado e a placa sem o overlay da PRU. **As duas `.bin` dele continuam "SHAN" e
+    zeros**, e o agente as lista com o cabeçalho corrompido: a F3.9 as troca pelas sintéticas;
+  - **na placa de verdade:** pela `ConexaoSSH`, a saúde diz só o relógio sem NTP (no USB, sem internet) e o firmware
+    de outra versão do aplicativo, e a placa está pronta para capturar; os logs mostram cada captura (o `sudo` do
+    `ler_adc`, a PRU ligada e parada);
+  - **os testes:** `tests/test_agente.py` (70) e `tests/test_sh_placa.py`.
 
 ### ☐ F3.5: a área de Aquisição e a lista de placas
 
@@ -1608,6 +1650,18 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     depois de cada teste achou o dono). Agora cada comando roda num grupo de processos, morto inteiro, e o `parar`
     só volta com todos colhidos.
   - **Testes:** `ci.sh placa` com 156 em cada Python, `ci.sh rapido` com 1 421 e `ci.sh interface` com 760.
+  - **Próximo:** a F3.5, a área de Aquisição e a lista de placas.
+- **15/11/2026:** **a F3.4, o agente completo** (seção 4d):
+  - **na placa de verdade:** cada fato da saúde conferido à mão (o firmware instalado na PRU igual ao da pasta, o
+    protocolo 5, o `adjtimex` sem sincronizar, as ferramentas e os pacotes delas);
+  - **o que a placa mostrou:** o `/proc/iomem` sem os endereços para o `debian`; o `mem=496M` no `optargs`, e não no
+    `cmdline`; o systemd 241 sem o `--grep` (o diário inteiro levava 3,4 s; pelos índices, 0,1 s); o `find_library`
+    do `ctypes` rodando o `ldconfig` (~0,2 s); e **o relógio medido contra a chegada da resposta, 35 a 70 ms abaixo
+    do de verdade**, pela partida e pelo fim do Python na placa. Agora fica entre dois limites, conferidos contra um
+    pingue-pongue;
+  - **de passagem:** a primeira chamada numa conexão nova leva ~1 s a mais na placa (a sessão do sshd), o que a F3.5
+    pode esconder conectando antes de a pessoa pedir.
+  - **Testes:** `ci.sh placa` com 224 em cada Python, `ci.sh rapido` com 1 489 e `ci.sh interface` com 760.
   - **Próximo:** a F3.5, a área de Aquisição e a lista de placas.
 ---
 
