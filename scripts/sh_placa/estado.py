@@ -41,18 +41,20 @@ class Problema:
 def texto_do_desvio(segundos: float) -> str:
     """Quanto a placa está adiantada (+) ou atrasada (-), para gente: "42 s atrasado", "3 min adiantado", "2 h 14
     atrasado", "2 dias e 5 h atrasado"."""
-    lado = "adiantado" if segundos > 0 else "atrasado"
+    return f"{tempo_do_desvio(segundos)} {'adiantado' if segundos > 0 else 'atrasado'}"
+
+
+def tempo_do_desvio(segundos: float) -> str:
+    """O tamanho do desvio, sem o lado: "42 s", "3 min", "2 h 14", "2 dias e 5 h"."""
     s = abs(segundos)
     if s < 60:
-        quanto = f"{s:.0f} s"
-    elif s < 3600:
-        quanto = f"{s // 60:.0f} min"
-    elif s < 86_400:
-        quanto = f"{s // 3600:.0f} h {s % 3600 // 60:02.0f}"
-    else:
-        dias, horas = int(s // 86_400), int(s % 86_400 // 3600)
-        quanto = (f"{dias} dia" if dias == 1 else f"{dias} dias") + (f" e {horas} h" if horas else "")
-    return f"{quanto} {lado}"
+        return f"{s:.0f} s"
+    if s < 3600:
+        return f"{s // 60:.0f} min"
+    if s < 86_400:
+        return f"{s // 3600:.0f} h {s % 3600 // 60:02.0f}"
+    dias, horas = int(s // 86_400), int(s % 86_400 // 3600)
+    return (f"{dias} dia" if dias == 1 else f"{dias} dias") + (f" e {horas} h" if horas else "")
 
 
 def _ordenar(problemas: list[Problema]) -> list[Problema]:

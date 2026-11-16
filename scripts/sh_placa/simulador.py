@@ -15,9 +15,9 @@ ferramentas (``make``, ``gcc``, ``clpru``, ``config-pin``, ``dtc``) são arquivo
 ``journalctl``, um script que mostra um diário falso. O cartão é o de 4 GB da placa (``/run/simulador``: o agente
 desconta os arquivos da pasta do firmware), e o relógio, o deste computador mais o desvio do cenário.
 
-**Os cenários** (:data:`CENARIOS`, que a interface deixa escolher): os do uso da placa (a rede de 60 Hz com
-supraharmônicos, o ADC mudo, o cartão cheio, a conexão que cai, o firmware de outra versão, o relógio errado) e os da
-configuração dela, que o diagnóstico tem de reconhecer.
+**Os cenários** (:data:`CENARIOS`, de ``cenarios.py``; a interface deixa escolher): os do uso da placa (a rede de
+60 Hz com supraharmônicos, o ADC mudo, o cartão cheio, a conexão que cai, o firmware de outra versão, o relógio
+errado) e os da configuração dela, que o diagnóstico tem de reconhecer.
 
 **A segurança:** o servidor só escuta no 127.0.0.1 e só aceita a chave gerada para ele (:meth:`ServidorDoSimulador.
 acesso`, na pasta dele, que só o dono lê); sem a ``senha`` (a dos testes), ninguém entra com senha. Os comandos
@@ -35,7 +35,6 @@ import signal
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -43,51 +42,13 @@ import asyncssh
 
 from .agente import ClienteDoAgente, TransporteLocal
 from .capturas_simuladas import Sistema, gravar_captura
+from .cenarios import CENARIOS, Cenario  # noqa: F401 (o Cenario, para quem importa daqui)
 from .destino import SENHA_PADRAO_DA_IMAGEM, Destino
 
 if TYPE_CHECKING:
     from .chaves import ChaveDoAplicativo, HostsConhecidos
 
 
-@dataclass(frozen=True)
-class Cenario:
-    nome: str
-    titulo: str
-    descricao: str
-    grupo: str                            # "uso": como a placa se comporta; "configuracao": um problema dela
-
-
-CENARIOS = {c.nome: c for c in (
-    Cenario("normal", "Rede de 60 Hz com supraharmônicos",
-            "A placa pronta para capturar, com capturas da tomada: 60 Hz, os harmônicos e os supraharmônicos de um "
-            "inversor, de drivers de LED e de uma comunicação pela rede.", "uso"),
-    Cenario("adc_mudo", "ADC mudo",
-            "A placa de aquisição sem alimentação (a BeagleBone pelo USB): a conferência mais recente ficou em 0.",
-            "uso"),
-    Cenario("disco_cheio", "Cartão cheio",
-            "Quase sem espaço no cartão: transfira as capturas e apague as conferidas.", "uso"),
-    Cenario("conexao_instavel", "Conexão que cai",
-            "O cabo com mau contato: a conexão cai no meio de cada transferência e de tempos em tempos, e volta "
-            "sozinha.", "uso"),
-    Cenario("firmware_antigo", "Firmware de outra versão",
-            "A placa com o firmware v0.7.0, de outra versão do aplicativo.", "uso"),
-    Cenario("relogio_errado", "Relógio errado",
-            "A placa ligada sem internet depois de dias desligada: o relógio atrasado, sem NTP.", "uso"),
-    Cenario("pru_com_falha", "PRU com falha", "O remoteproc da PRU0 parou com falha.", "configuracao"),
-    Cenario("pinos_errados", "Pinos fora do modo da PRU",
-            "Depois de um reinício, sem o config-pin: P9_28 e P9_31 em default.", "configuracao"),
-    Cenario("sem_mem_496m", "Sem o mem=496M",
-            "O kernel sem o mem=496M: a memória dos buffers da PRU fica com o sistema.", "configuracao"),
-    Cenario("sem_compilar", "Firmware sem compilar", "A pasta do firmware sem o ler_adc e o fw_pru.out.",
-            "configuracao"),
-    Cenario("pru_desatualizada", "PRU desatualizada",
-            "O firmware instalado na PRU não é o compilado na pasta.", "configuracao"),
-    Cenario("audio_hdmi", "Áudio do HDMI ligado",
-            "O overlay do HDMI com áudio disputa os pinos da PRU.", "configuracao"),
-    Cenario("sem_overlay_da_pru", "Sem o overlay da PRU",
-            "O uEnv.txt sem o overlay do remoteproc: a PRU0 não existe.", "configuracao"),
-)}
-"""Os cenários, na ordem em que a interface os mostra."""
 VERSAO_SIMULADA = "v0.8.0-simulador"
 """A versão do firmware da placa simulada, e a do aplicativo para ela (o cenário ``firmware_antigo`` tem outra)."""
 VERSAO_ANTIGA = "v0.7.0"
