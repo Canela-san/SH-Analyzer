@@ -120,7 +120,7 @@ class ServidorSSH:
             servidor = await asyncssh.create_server(
                 lambda: _Servidor(self), endereco, self.porta,
                 server_host_keys=[k for k in (self.chave_rsa, self.chave_do_host) if k is not None],
-                process_factory=self._rodar, encoding=None, reuse_address=True)
+                process_factory=self._rodar, encoding=None, reuse_address=True, sftp_factory=True)
             self._servidores.append(servidor)
             self.porta = servidor.sockets[0].getsockname()[1]
         return self

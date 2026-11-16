@@ -166,6 +166,8 @@ class ConexaoSSH:
         self._ssh: asyncssh.SSHClientConnection | None = None
         self._salto: ConexaoSSH | None = None
         self._fechando = False
+        self._sftp: asyncssh.SFTPClient | None = None
+        self._sftp_de: asyncssh.SSHClientConnection | None = None     # a conexão em que o SFTP abriu
 
     @property
     def conectada(self) -> bool:
@@ -408,11 +410,33 @@ class ConexaoSSH:
                               f"{(r.erro or r.saida).strip()[:200]}")
         return resposta == "instalada"
 
+    # ------------------------------------------------------------------ o SFTP
+
+    async def sftp(self) -> asyncssh.SFTPClient:
+        """O cliente SFTP da conexão: um só, aberto na primeira vez (um canal da mesma conexão). Uma conexão nova
+        (depois de uma queda) abre outro. Os arquivos da placa (``sftp.py``) passam por ele."""
+        ssh = self._ssh
+        if ssh is None:
+            raise ErroDeConexao(f"sem conexão com a placa em {self.destino.conta}: conecte antes")
+        if self._sftp is None or self._sftp_de is not ssh:
+            try:
+                self._sftp, self._sftp_de = await ssh.start_sftp_client(), ssh
+            except (asyncssh.Error, OSError) as e:
+                raise ErroDeConexao(f"a placa em {self.destino.conta} não abriu o SFTP: {_texto_do_erro(e)}") from e
+        return self._sftp
+
+    def registrar_comando(self, descricao: str, comando: str, inicio: float, duracao_s: float, codigo: int | None,
+                          falha: str = "") -> None:
+        """Um comando que não passou por :meth:`executar` (uma operação do SFTP) também vai para o registro."""
+        self.registro.registrar(Entrada(inicio, self.destino.conta, "comando", descricao, comando, duracao_s, codigo,
+                                        falha))
+
     # ------------------------------------------------------------------ fechar e cair
 
     async def fechar(self) -> None:
         self._fechando = True
         ssh, self._ssh = self._ssh, None
+        self._sftp = self._sftp_de = None
         if ssh is not None:
             ssh.close()
             await ssh.wait_closed()
