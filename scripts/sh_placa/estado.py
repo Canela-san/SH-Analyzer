@@ -42,6 +42,11 @@ def _ordenar(problemas: list[Problema]) -> list[Problema]:
     return sorted(problemas, key=lambda p: NIVEIS.index(p.nivel))
 
 
+def _numero(valor: object) -> float | None:
+    """Um número da resposta (um ``bool`` não é), ou ``None``."""
+    return float(valor) if isinstance(valor, (int, float)) and not isinstance(valor, bool) else None
+
+
 def _campo(dados: object, *chaves):
     for chave in chaves:
         if not isinstance(dados, dict):
@@ -87,6 +92,85 @@ class EstadoDaPlaca:
     @property
     def versao_do_firmware(self) -> str | None:
         return self._campo("firmware", "firmware")
+
+    @property
+    def ligada_s(self) -> float | None:
+        """Há quanto tempo a placa está ligada (o ``/proc/uptime``)."""
+        return _numero(self._campo("ligada_s"))
+
+    @property
+    def carga(self) -> float | None:
+        """A carga média do último minuto (um núcleo só: 1,0 é ele ocupado o tempo todo)."""
+        carga = self._campo("carga")
+        return _numero(carga[0]) if isinstance(carga, list) and carga else None
+
+    @property
+    def temperatura_c(self) -> float | None:
+        return _numero(self._campo("temperatura_c"))
+
+    @property
+    def memoria_disponivel_bytes(self) -> int | None:
+        kib = _numero(self._campo("memoria_disponivel_kib"))
+        return None if kib is None else int(kib * 1024)
+
+    @property
+    def disco_bytes(self) -> tuple[int, int] | None:
+        """``(livre, total)`` do cartão (a partição da pasta do firmware)."""
+        livre, total = _numero(self._campo("disco", "livre_kib")), _numero(self._campo("disco", "total_kib"))
+        return None if livre is None or not total else (int(livre * 1024), int(total * 1024))
+
+    @property
+    def pru(self) -> dict:
+        """O ``remoteproc`` da PRU0: ``estado`` (``running``, ``offline``, ``crashed``…), ``firmware`` e ``nome``;
+        vazio sem a PRU."""
+        pru = self._campo("pru")
+        return pru if isinstance(pru, dict) else {}
+
+    @property
+    def protocolo_da_pru(self) -> int | None:
+        protocolo = self._campo("firmware", "protocolo_da_pru")
+        return protocolo if isinstance(protocolo, int) else None
+
+    @property
+    def pinos(self) -> dict[str, tuple[str | None, str | None]]:
+        """Cada pino da PRU: ``(modo de agora, modo que a PRU pede)``."""
+        pinos = self._campo("pinos")
+        return {p: (v.get("modo"), v.get("esperado")) for p, v in pinos.items() if isinstance(v, dict)} \
+            if isinstance(pinos, dict) else {}
+
+    @property
+    def pinos_errados(self) -> list[str]:
+        """Os pinos lidos fora do modo da PRU (um pino sem o pinmux, que não deu para ler, fica de fora)."""
+        return [p for p, (modo, esperado) in self.pinos.items() if modo is not None and modo != esperado]
+
+    @property
+    def firmware_compilado(self) -> bool | None:
+        """O ``ler_adc`` e o ``fw_pru.out`` compilados na pasta do firmware."""
+        compilado = self._campo("firmware", "compilado")
+        return compilado if isinstance(compilado, bool) else None
+
+    @property
+    def mem_496m(self) -> tuple[bool | None, bool | None]:
+        """O ``mem=496M`` (a memória dos buffers da PRU fora do Linux): ``(no boot de agora, no próximo boot)``."""
+        agora, proximo = self._campo("memoria_dos_buffers", "mem_496m"), self._campo("uenv", "mem_496m")
+        return (agora if isinstance(agora, bool) else None, proximo if isinstance(proximo, bool) else None)
+
+    @property
+    def overlays(self) -> list[str]:
+        overlays = self._campo("overlays")
+        return [str(o) for o in overlays] if isinstance(overlays, list) else []
+
+    @property
+    def ferramentas(self) -> dict[str, str | None]:
+        """Cada ferramenta e onde ela está na placa (``None``: não está)."""
+        ferramentas = self._campo("ferramentas")
+        return dict(ferramentas) if isinstance(ferramentas, dict) else {}
+
+    @property
+    def capturas_na_placa(self) -> tuple[int, int] | None:
+        """``(quantidade, bytes)`` das capturas na pasta do firmware (a saúde as conta; a lista vem das capturas)."""
+        quantidade, total = self._campo("capturas", "quantidade"), self._campo("capturas", "bytes")
+        return (quantidade, total) if isinstance(quantidade, int) and isinstance(total, int) else None
 
     @property
     def minutos_de_captura_no_disco(self) -> float | None:
