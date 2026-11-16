@@ -6,6 +6,11 @@ chaves do ``~/.ssh/authorized_keys`` do home falso (o do simulador: ``montar_sis
 shell de verdade, com esse home, a raiz falsa em ``SHAN_RAIZ`` e um ``python3`` que é o Python dos testes: o agente
 que chega pelo stdin lê a placa simulada, e a instalação da chave escreve no ``authorized_keys`` dela, como numa placa.
 
+**O sudo e o ``config-pin`` da placa são falsos** (``SUDO`` e ``CONFIG_PIN``, no ``bin`` do servidor): o sudo faz o
+que o de verdade faz com ``-A``, ``-v``, ``-n`` e ``-k`` (a senha pelo ``SUDO_ASKPASS``, a credencial validada e
+esquecida) e roda o comando como o usuário do teste, anotando-o em :attr:`ServidorSSH.comandos_de_root`; o
+``config-pin`` escreve o modo no pinmux da árvore falsa, como o de verdade escreve no ``/sys``.
+
 Para os testes: os comandos rodados (:attr:`ServidorSSH.comandos`), as tentativas de autenticação
 (:attr:`ServidorSSH.autenticacoes`), a troca da chave de host (:meth:`ServidorSSH.trocar_chave_do_host`, a placa
 regravada), a queda de todas as conexões (:meth:`ServidorSSH.derrubar`, o cabo que solta) e o salto
@@ -27,10 +32,49 @@ from sh_placa.simulador import montar_sistema_falso
 
 SENHA_PADRAO = "temppwd-do-teste"
 
+SUDO = r"""#!/bin/sh
+# O sudo da placa simulada: -A (a senha pelo SUDO_ASKPASS), -v (só validar), -n (sem perguntar), -k (esquecer).
+estampa="$HOME/.sudo-validado"
+[ "$1" = "-k" ] && { rm -f "$estampa"; exit 0; }
+validar=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -v) validar=1 ;;
+        -p) shift ;;
+        --) shift; break ;;
+        -*) ;;
+        *) break ;;
+    esac
+    shift
+done
+if [ "$validar" = 1 ]; then
+    [ -x "$SUDO_ASKPASS" ] || { echo "sudo: no askpass program specified" >&2; exit 1; }
+    if [ "$("$SUDO_ASKPASS")" != "$SHAN_SENHA_DO_SUDO" ]; then
+        echo "Sorry, try again." >&2
+        echo "sudo: 1 incorrect password attempt" >&2
+        exit 1
+    fi
+    touch "$estampa"
+    exit 0
+fi
+[ -f "$estampa" ] || { echo "sudo: a password is required" >&2; exit 1; }
+printf '%s
+' "$*" >> "$HOME/.sudo-comandos"
+exec "$@"
+"""
+CONFIG_PIN = r"""#!/bin/sh
+# O config-pin da placa simulada: o modo no pinmux da árvore falsa.
+[ $# -eq 2 ] || { echo "Usage: config-pin <pin> <mode>" >&2; exit 1; }
+estado="$SHAN_RAIZ/sys/devices/platform/ocp/ocp:$1_pinmux/state"
+[ -f "$estado" ] || { echo "ERROR: open() for $estado failed, No such file or directory" >&2; exit 1; }
+printf '%s
+' "$2" > "$estado"
+"""
+
 
 class ServidorSSH:
     def __init__(self, pasta: Path, *, cenario: str = "normal", usuario: str = "debian", senha: str = SENHA_PADRAO,
-                 permitir_tunel: bool = False, tambem_rsa: bool = False,
+                 senha_do_sudo: str | None = None, permitir_tunel: bool = False, tambem_rsa: bool = False,
                  enderecos: tuple[str, ...] = ("127.0.0.1",)):
         self.pasta, self.cenario = Path(pasta), cenario
         self.usuario, self.senha, self.permitir_tunel = usuario, senha, permitir_tunel
@@ -49,12 +93,22 @@ class ServidorSSH:
         binarios = self.pasta / "bin"
         binarios.mkdir(exist_ok=True)
         (binarios / "python3").symlink_to(sys.executable)
+        for nome, roteiro in (("sudo", SUDO), ("config-pin", CONFIG_PIN)):
+            (binarios / nome).write_text(roteiro)
+            (binarios / nome).chmod(0o755)
+        self.senha_do_sudo = senha if senha_do_sudo is None else senha_do_sudo
         self.ambiente = {"HOME": str(self.home), "PATH": f"{binarios}{os.pathsep}{os.environ.get('PATH', '')}",
-                         "SHAN_RAIZ": str(self.raiz), "LANG": "C.UTF-8"}
+                         "SHAN_RAIZ": str(self.raiz), "LANG": "C.UTF-8", "SHAN_SENHA_DO_SUDO": self.senha_do_sudo}
 
     @property
     def authorized_keys(self) -> Path:
         return self.home / ".ssh" / "authorized_keys"
+
+    @property
+    def comandos_de_root(self) -> list[str]:
+        """O que o sudo falso rodou (os argumentos, numa linha cada)."""
+        arquivo = self.home / ".sudo-comandos"
+        return arquivo.read_text().splitlines() if arquivo.exists() else []
 
     @property
     def impressao(self) -> str:

@@ -98,7 +98,7 @@ class Enlace:
 
 
 @dataclass
-class _Desfecho:
+class Desfecho:
     """Como um comando terminou, para o registro: o código (``-1``: por um sinal) ou o motivo de não ter terminado."""
 
     codigo: int | None = None
@@ -266,24 +266,24 @@ class ConexaoSSH:
         """Roda ``comando`` num canal novo, com ``entrada`` no stdin, e espera o fim (no máximo ``tempo_limite``).
         Um código de saída diferente de zero é um resultado, não um erro; a rede e o tempo são
         :class:`ErroDeConexao`. No tempo esgotado ou no cancelamento, o comando recebe o ``TERM`` na placa."""
-        async with self._canal(comando, descricao) as (processo, desfecho):
+        async with self.canal(comando, descricao) as (processo, desfecho):
             try:
                 saida, erro = await asyncio.wait_for(processo.communicate(entrada), tempo_limite)
             except asyncio.TimeoutError:
                 desfecho.falha = f"sem resposta em {tempo_limite:g} s"
                 raise ErroDeConexao(f"a placa não respondeu em {tempo_limite:g} s ({descricao or comando})") from None
-            self._concluir(processo, desfecho, descricao)
+            self.concluir(processo, desfecho, descricao)
         return Resultado(desfecho.codigo, saida, erro, desfecho.duracao_s)
 
     @contextlib.asynccontextmanager
-    async def _canal(self, comando: str, descricao: str, *, binario: bool = False):
-        """Um canal ``exec`` com ``comando``: dá o processo do asyncssh e o :class:`_Desfecho`, que quem usa preenche
+    async def canal(self, comando: str, descricao: str, *, binario: bool = False):
+        """Um canal ``exec`` com ``comando``: dá o processo do asyncssh e o :class:`Desfecho`, que quem usa preenche
         (o código, ou o motivo de não ter terminado). No fim, de qualquer jeito, o comando vai para o registro. Se o
         uso falha ou é cancelado, o comando recebe o ``TERM`` na placa; a rede que cai vira :class:`ErroDeConexao`."""
         ssh = self._ssh
         if ssh is None:
             raise ErroDeConexao(f"sem conexão com a placa em {self.destino.conta}: conecte antes")
-        desfecho = _Desfecho()
+        desfecho = Desfecho()
         codificacao = {"encoding": None} if binario else {"encoding": "utf-8", "errors": "replace"}
         try:
             async with ssh.create_process(comando, **codificacao) as processo:
@@ -307,7 +307,7 @@ class ConexaoSSH:
             self.registro.registrar(Entrada(desfecho.inicio, self.destino.conta, "comando", descricao or comando,
                                             comando, desfecho.duracao_s, desfecho.codigo, desfecho.falha))
 
-    def _concluir(self, processo: asyncssh.SSHClientProcess, desfecho: _Desfecho, descricao: str) -> None:
+    def concluir(self, processo: asyncssh.SSHClientProcess, desfecho: Desfecho, descricao: str) -> None:
         """O fim de um comando que terminou: o código, ou o sinal. Sem os dois, o canal acabou porque a conexão caiu
         (o ``communicate`` do asyncssh volta sem erro, com o que chegou até ali)."""
         if processo.exit_status is not None:
@@ -335,7 +335,7 @@ class ConexaoSSH:
         dois lados e nada mais (um comando por ida e volta mediria também o shell da placa começando)."""
         descricao = f"medir a latência ({ecos} idas e voltas de uma linha pelo cat)"
         idas_e_voltas = []
-        async with self._canal("cat", descricao) as (processo, desfecho):
+        async with self.canal("cat", descricao) as (processo, desfecho):
             for _ in range(ecos):
                 t0 = time.monotonic()
                 processo.stdin.write("x\n")
@@ -355,7 +355,7 @@ class ConexaoSSH:
             except asyncio.TimeoutError:
                 desfecho.falha = f"o cat não terminou em {TEMPO_DO_ECO_S:g} s"
                 raise ErroDeConexao(f"a placa em {self.destino.conta} não terminou o teste de latência") from None
-            self._concluir(processo, desfecho, descricao)
+            self.concluir(processo, desfecho, descricao)
         return statistics.median(idas_e_voltas) * 1000
 
     async def _medir_vazao(self, bytes_max: int, tempo_max_s: float) -> tuple[float | None, int]:
@@ -364,7 +364,7 @@ class ConexaoSSH:
         descricao = f"medir a vazão (até {bytes_max / 2**20:g} MiB de zeros, da placa para cá)"
         primeiro_em = ultimo_em = None
         recebidos = depois_do_primeiro = 0
-        async with self._canal(f"head -c {int(bytes_max)} /dev/zero", descricao, binario=True) as (processo, desfecho):
+        async with self.canal(f"head -c {int(bytes_max)} /dev/zero", descricao, binario=True) as (processo, desfecho):
             while True:
                 try:
                     bloco = await asyncio.wait_for(processo.stdout.read(BLOCO_DA_VAZAO), TEMPO_DO_ECO_S)
@@ -391,7 +391,7 @@ class ConexaoSSH:
                 except asyncio.TimeoutError:
                     desfecho.falha = f"o head não terminou em {TEMPO_DO_ECO_S:g} s"
                     raise ErroDeConexao(f"a placa em {self.destino.conta} não terminou o teste de vazão") from None
-                self._concluir(processo, desfecho, descricao)
+                self.concluir(processo, desfecho, descricao)
         if desfecho.codigo not in (None, 0) or not depois_do_primeiro or ultimo_em - primeiro_em <= 0:
             return None, recebidos
         return depois_do_primeiro / (ultimo_em - primeiro_em), recebidos
