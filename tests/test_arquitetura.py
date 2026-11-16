@@ -200,6 +200,8 @@ def test_sh_placa_nao_importa_o_qt_nem_a_interface():
 
 
 REDE_DA_PLACA = {"asyncssh", "zeroconf", "serial", "keyring"}
+SO_COM_A_PLACA = REDE_DA_PLACA | {"pyte", "wcwidth"}
+"""O que a janela só carrega quando a Aquisição precisa: a rede da placa e o emulador do terminal (a primeira aba)."""
 
 
 def test_a_rede_da_placa_fica_no_sh_placa():
@@ -217,11 +219,11 @@ def test_a_rede_da_placa_fica_no_sh_placa():
 
 def test_a_janela_abre_sem_carregar_a_rede_da_placa():
     """Conferido num processo novo: importar a janela não traz o asyncssh, o zeroconf, o pyserial nem o keyring
-    (~0,7 s ao todo). A Aquisição os carrega no laço da placa, na primeira busca ou conexão
-    (``servicos/conexao_da_placa.py``), e quem só analisa não paga por eles."""
+    (~0,7 s ao todo), nem o pyte do terminal (~0,1 s). A Aquisição os carrega no laço da placa, na primeira busca ou
+    conexão (``servicos/conexao_da_placa.py``), e o terminal, na primeira aba; quem só analisa não paga por eles."""
     pytest.importorskip("PySide6")
     codigo = ("import sys, sh_analyzer_gui.janela\n"
-              f"print(sorted(k for k in sys.modules if k.split('.')[0] in {sorted(REDE_DA_PLACA)!r}))")
+              f"print(sorted(k for k in sys.modules if k.split('.')[0] in {sorted(SO_COM_A_PLACA)!r}))")
     saida = subprocess.run([sys.executable, "-c", codigo], capture_output=True, text=True, check=True,
                            env={**os.environ, "PYTHONPATH": str(SCRIPTS), "QT_QPA_PLATFORM": "offscreen"})
     assert saida.stdout.strip() == "[]", saida.stdout + saida.stderr

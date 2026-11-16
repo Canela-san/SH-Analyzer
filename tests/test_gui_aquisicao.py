@@ -107,7 +107,9 @@ def test_a_lista_e_o_simulador(qtbot, abrir):
     assert "kernel 4.19.94-ti-r42" in area.visao_geral.subtitulo.text()
     assert area.lateral.rodape.isVisible() and not espremidos(area)
     area.mostrar_secao("terminal")
-    assert area.secoes.currentWidget().titulo.text() == "Terminal: chega na v0.10"
+    assert area.terminal.paginas.currentWidget() is area.terminal.simulador and not area.terminal.abas.count()
+    area.mostrar_secao("capturar")
+    assert area.secoes.currentWidget().titulo.text() == "Capturar: chega na v0.10"
     clicar_na_placa(qtbot, area, "Simulador")                     # a conectada leva à visão geral
     assert area.secao == "visao_geral" and c.estado == "conectada"
     area.lateral.desconectar.click()

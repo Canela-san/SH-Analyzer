@@ -466,8 +466,6 @@ SECOES_QUE_CHEGAM = {
     "capturar": ("Capturar", "play", "v0.10",
                  "O formulário do cabeçalho e dos canais, validado enquanto se escreve; o sinal ao vivo, com os "
                  "contadores de integridade; e a saída contínua direto para o computador."),
-    "terminal": ("Terminal", "terminal", "v0.10",
-                 "Um terminal na placa, com abas, busca, os atalhos de comandos e a gravação na pasta da sessão."),
     "manutencao": ("Manutenção", "chave", "v1.0",
                    "Atualizar o firmware, o assistente de pinos e overlays, os logs filtrados, reiniciar e desligar "
                    "com segurança."),

@@ -317,6 +317,19 @@ QListWidget#atividade, QTableWidget#capturas_na_placa {{ background: transparent
 QListWidget#atividade {{ color: {t.texto2}; padding: 4px 8px; }}
 QTableWidget#capturas_na_placa::item {{ padding: 2px 8px; }}
 QWidget#conteudo_do_diagnostico {{ background: {t.fundo}; }}
+QTabWidget#abas_do_terminal::pane {{ border: 1px solid {t.borda}; border-radius: 0 0 8px 8px; top: -1px;
+                                     background: {t.afundada}; }}
+QAbstractScrollArea#terminal {{ background: {t.afundada}; border: none; }}
+QFrame#busca_do_terminal {{ background: {t.superficie}; border-top: 1px solid {t.borda}; }}
+QFrame#aviso_do_terminal {{ background: {t.superficie}; border-top: 1px solid {t.borda}; color: {t.texto2}; }}
+QFrame#aviso_do_terminal[nivel="aviso"] {{ background: {_rgba(t.aviso, 0.08)}; border-top-color: {_rgba(t.aviso, 0.5)}; }}
+QPushButton#atalho_do_terminal {{ background: transparent; border: none; border-top: 1px solid {t.borda};
+                                  border-radius: 0; text-align: left; }}
+QPushButton#atalho_do_terminal:hover {{ background: {_rgba(t.acento, 0.08)}; }}
+QPushButton#atalho_do_terminal:focus {{ background: {_rgba(t.acento, 0.12)}; }}
+QPushButton#atalho_do_terminal QLabel {{ color: {t.texto}; }}
+QPushButton#atalho_do_terminal QLabel#comando_do_atalho {{ color: {t.texto2}; }}
+QPushButton#atalho_do_terminal QLabel:disabled {{ color: {t.mudo}; }}
 QScrollArea#rolagem_do_diagnostico {{ background: {t.fundo}; border: none; }}
 QHeaderView::section {{ background: {t.superficie}; color: {t.mudo}; border: none;
                         border-bottom: 1px solid {t.borda}; padding: 6px 10px; font-weight: 600; }}
