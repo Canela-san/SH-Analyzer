@@ -20,6 +20,8 @@ from PySide6.QtWidgets import QHBoxLayout, QStackedWidget, QWidget
 from ...componentes.toast import Toast
 from ...servicos.conexao_da_placa import ESPERANDO_O_USUARIO, ConexaoDaPlaca
 from ...servicos.saude_da_placa import SaudeDaPlaca
+from ...servicos.transferencias import TransferenciasDaPlaca
+from .arquivos import Arquivos
 from .diagnostico import Diagnostico
 from .dialogo_de_conexao import DialogoDeConexao
 from .dialogo_de_correcao import DialogoDeCorrecao
@@ -29,9 +31,12 @@ from .visao_geral import SecaoQueChega, VisaoGeral
 
 
 class AreaDeAquisicao(QWidget):
-    """``dialogos_de()``: quem pergunta onde salvar (o relatório do diagnóstico); o ``controle.dialogos`` da janela."""
+    """``dialogos_de()``: quem pergunta (onde salvar o relatório, apagar da placa); o ``controle.dialogos`` da janela.
+    ``abrir_na_analise(caminhos)``: as cópias das capturas, abertas na Análise. ``abrir_url``: o gerenciador de
+    arquivos do sistema (os testes passam um que não abre nada)."""
 
     def __init__(self, conexao: ConexaoDaPlaca, saude: SaudeDaPlaca, dialogos_de=None,
+                 transferencias: TransferenciasDaPlaca | None = None, abrir_na_analise=None, abrir_url=None,
                  parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("area_aquisicao")
@@ -42,9 +47,15 @@ class AreaDeAquisicao(QWidget):
         self.lateral = BarraLateral(conexao)
         self.secoes = QStackedWidget()
         self.secoes.setObjectName("secoes_aquisicao")
-        self.visao_geral = VisaoGeral(conexao, saude)
+        self.transferencias = transferencias if transferencias is not None else TransferenciasDaPlaca(conexao, saude,
+                                                                                                    parent=self)
+        self.visao_geral = VisaoGeral(conexao, saude, self.transferencias)
         self.diagnostico = Diagnostico(conexao, saude, dialogos_de)
-        self.paginas: dict[str, QWidget] = {"visao_geral": self.visao_geral, "diagnostico": self.diagnostico}
+        extras = {"abrir_url": abrir_url} if abrir_url is not None else {}
+        self.arquivos = Arquivos(conexao, saude, self.transferencias, abrir_na_analise=abrir_na_analise,
+                                 dialogos_de=dialogos_de, **extras)
+        self.paginas: dict[str, QWidget] = {"visao_geral": self.visao_geral, "diagnostico": self.diagnostico,
+                                            "arquivos": self.arquivos}
         for nome, _titulo, _icone in SECOES:
             if nome not in self.paginas:
                 self.paginas[nome] = SecaoQueChega(nome)

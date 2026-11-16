@@ -15,9 +15,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > **A Fase 3 está andando** (seção 4d): a F3.1 (o laço `asyncio` do `sh_placa` e a ponte), a F3.2 (a conexão SSH,
 > as chaves, o cofre e o registro de atividade), a F3.3 (a descoberta das placas), a F3.4 (o agente completo: a
 > saúde, as capturas, o relógio e os logs), a F3.5 (a área de Aquisição na tela: a lista de placas, a conexão e a
-> primeira conexão) e a F3.6 (a visão geral e o diagnóstico, com o "Corrigir" do relógio e dos pinos) estão feitas,
-> conferidas no servidor SSH do teste e na placa de verdade. **A próxima: a F3.7, os arquivos e a transferência** (o
-> navegador da placa, a fila SFTP com retomada, o CRC conferido, o "Abrir na Análise").
+> primeira conexão), a F3.6 (a visão geral e o diagnóstico, com o "Corrigir" do relógio e dos pinos) e a F3.7 (os
+> arquivos e a transferência, que espera as capturas) estão feitas, conferidas no servidor SSH do teste e na placa de
+> verdade. **A próxima: a F3.8, o terminal** (o `pyte` num widget próprio, sobre um PTY no SSH).
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
@@ -27,7 +27,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > **A Aquisição** (o seletor da barra superior, ou o chip da placa): a placa do USB e o simulador aparecem na lista
 > sozinhos; um clique conecta (na primeira vez, o diálogo confere a impressão digital, pede a senha e instala a chave
 > do aplicativo); "Conectar por IP…" para uma placa em outra rede. Conectada: a visão geral (os indicadores, a saúde,
-> as capturas na placa e a atividade ao vivo), o "Acertar…" do relógio e o diagnóstico item a item, com o relatório.
+> as capturas na placa e a atividade ao vivo), o "Acertar…" do relógio, o diagnóstico item a item, com o relatório, e
+> os arquivos: "Transferir as novas" para a pasta da sessão do dia, "Abrir na Análise" e "Apagar da placa" (só o
+> conferido).
 >
 > **Com o usuário (quando puder):**
 > - o G1 com a cadeia, na tela: `uv run --extra gui python -m sh_analyzer_gui.prototipos.medir_vista --cadeia`
@@ -132,8 +134,8 @@ sonda em pedaços, sem prender o GIL). E o do agente da placa: `3f98d7b`. O diag
 asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5 e keyring 25.7.0 (o cofre do Linux é o Secret Service). Testes, na última rodada:
 `ci.sh rapido` com 1 687 aprovados, `ci.sh interface` com 743 e os 6 de desempenho (15/11/2026).
 
-**Ainda não existe:** na Aquisição, os arquivos e a transferência (a F3.7), o terminal (a F3.8) e capturar (a Fase
-4); as figuras e as exportações (a Fase 5).
+**Ainda não existe:** na Aquisição, o terminal (a F3.8) e capturar (a Fase 4); as figuras e as exportações (a Fase
+5).
 
 ---
 
@@ -1229,7 +1231,7 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
     "Corrigir" só depois de confirmar e uma vez, o relógio pedindo a senha e ela em lugar nenhum, o relatório); o
     servidor SSH do teste ganhou um sudo e um `config-pin` falsos.
 
-### ☐ F3.7: os arquivos e a transferência
+### ☑ F3.7: os arquivos e a transferência
 
 - **Arquivos:** `sh_placa/sftp.py` (a fila); `areas/aquisicao/arquivos.py`.
 - **O conteúdo** (AQ-06 e AQ-07; plano, 11.7):
@@ -1246,6 +1248,42 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
     - no Windows, o SSHFS-Win, se houver; senão, o aviso.
 - **Os testes:** uma transferência interrompida e retomada dá o arquivo idêntico; o CRC conferido; o "apagar"
   desligado antes da conferência; a interface sem travar durante a transferência.
+- **Feito em 16/11/2026:**
+  - **a pergunta do usuário** ("a PRU usa a mesma RAM do processador: uma transferência pode atrapalhar a medição?"),
+    **medida na placa de verdade**, com a tomada no canal 1: capturas de 21 s a 400 kS/s alternando sem carga e com a
+    carga de uma transferência ao lado (o cartão lido com `O_DIRECT`, a cifra e o USB), de três ao mesmo tempo e de
+    três fluxos de cifra (o único núcleo saturado, 4,5 MB/s). **Em todas:** a folga mínima da PRU igual (18 ciclos,
+    90 ns), nenhuma amostra atrasada, nenhum buffer sobrescrito, nenhum quadro com ruído no SDO, o mesmo piso de ruído
+    entre os picos (0,317 µV/√Hz de 9 a 150 kHz) e o mesmo ruído de 150 a 200 kHz (0,070 mV), sem raias nos múltiplos
+    de 8 kHz (os microquadros do USB). A emissão da rede da casa de 9 a 150 kHz mudou de 0,9 a 9,4 mV entre as
+    capturas, com e sem carga (os aparelhos ligando e desligando): por isso a comparação é pelo piso. **Por quê:** a
+    PRU grava na memória reservada sem esperar o ARM, e o `ler_adc` tem ~2,6 s para gravar cada buffer de 2 MiB.
+    **Mesmo assim, a fila espera as capturas** (o `pgrep -x ler_adc` no começo de cada arquivo e a cada 10 s): custa
+    pouco e cobre o que o teste não cobriu (o cartão cheio, capturas longas, outras taxas, a saída contínua);
+  - **`sh_placa/sftp.py`:** baixar pelo SFTP com 8 pedidos de 256 KiB em voo (5,2 MiB/s na placa, o teto da cifra;
+    um por vez, 4,1), num `.parcial` ao lado do destino, **com a retomada** se o arquivo na placa é o mesmo (o tamanho
+    e a data) e, no fim, a data da placa; a conferência (o CRC das amostras da v9 contra o do cabeçalho; até a v8, o
+    SHA-256 dos dois lados); o apagar pelo SFTP; o índice das cópias no computador (`copias.json`), entre as sessões;
+    a origem é a placa ou o simulador (o disco deste computador), com a mesma interface;
+  - **`servicos/transferencias.py`:** a fila (um arquivo por vez; os blocos dele em paralelo), a vazão e o tempo que
+    falta, e **a queda do cabo**: o item fica interrompido, e quando a mesma placa volta a fila continua sozinha, do
+    ponto em que parou. Outra placa não herda a fila;
+  - **a seção Arquivos:** as capturas com o resumo do cabeçalho e onde cada uma está (só na placa, na fila,
+    baixando, no computador, a cópia corrompida), as coletas com o `resumo.csv`, a fila com a vazão e o tempo que
+    falta, "Transferir as novas", "Abrir na Análise", "Mostrar a pasta", "Mudar o destino…" e **"Apagar da placa…",
+    só para o conferido e depois de confirmar**; "Abrir no gerenciador de arquivos" pelo `sftp://` no Linux (o
+    Nautilus e o Dolphin falam SFTP), pelo SSHFS-Win no Windows, ou o aviso. A visão geral mostra o mesmo estado na
+    tabela das capturas, como no B1;
+  - **o destino** é a pasta da sessão do dia, `$DADOS/lab/AAAA-MM-DD` (`preferencias.pasta_da_sessao`), a mesma do
+    `lab trazer`; sem o `$DADOS` nem uma pasta escolhida, a do `sessao_lab.sh` (`~/Documents/sh-analyzer-data`);
+  - **na placa de verdade:** uma captura de 2 blocos (4 MiB) transferida e conferida pelo CRC das amostras em 1,1 s,
+    aberta na Análise e apagada da placa (a cópia fica); uma transferência de 32 MiB cancelada no meio e retomada de
+    10,2 MiB; o SHA-256 conferido dos dois lados;
+  - **os testes:** `tests/test_sh_placa_sftp.py` (7: o arquivo idêntico, a queda e a retomada, o arquivo que mudou,
+    a v9 pelo CRC e a v8 pelo SHA-256, a cópia corrompida, a espera da captura, o apagar e o índice) e
+    `tests/test_gui_arquivos.py` (6: transferir e abrir, o apagar só conferido e confirmado, a queda e a volta
+    sozinha, a interface sem travar, a fila esperando a captura, o gerenciador de arquivos). O servidor SSH do teste
+    ganhou o SFTP e uma RAM própria para o sudo.
 
 ### ☐ F3.8: o terminal
 
@@ -1792,6 +1830,18 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     (dava −0,09 s, e a tela, −0,04 s).
   - **Testes:** `ci.sh placa` com 262 em cada Python, `ci.sh rapido` com 1 873 e `ci.sh interface` com 783.
   - **Próximo:** a F3.7, os arquivos e a transferência.
+- **16/11/2026:** **a F3.7, os arquivos e a transferência** (seção 4d):
+  - **o pedido:** "a PRU usa a memória RAM igual ao processador principal: fazer streaming do arquivo assim pode de
+    algum jeito atrapalhar as medições?". Medido na placa (13 capturas, a tomada no canal 1): não, em nada que se
+    meça (a seção 4d tem os números). A fila espera as capturas assim mesmo;
+  - **o que a placa mostrou:** o SFTP pipelinado chega ao teto da cifra (5,2 MiB/s) com 8 pedidos em voo; a cópia
+    de uma captura de 4 MiB, com a conferência, leva 1,1 s;
+  - **um erro meu, corrigido:** no primeiro lote do teste de carga, o `kill` do subshell não matou o `ssh` filho, e
+    uma carga continuou nas capturas seguintes (só a comparação A1 × B1 daquele lote valeu); o segundo lote rodou
+    cada carga como um processo próprio, com a placa conferida sem carga antes de cada captura. E dois testes
+    conferiam a `/dev/shm` inteira, o que falhava rodando em paralelo: cada servidor de teste tem a sua agora.
+  - **Testes:** `ci.sh placa` com 269 em cada Python, `ci.sh rapido` com 1 886 e `ci.sh interface` com 789.
+  - **Próximo:** a F3.8, o terminal.
 ---
 
 ## 8. Perguntas em aberto

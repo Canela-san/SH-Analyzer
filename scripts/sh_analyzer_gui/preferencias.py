@@ -6,7 +6,8 @@ Cada uma é gravada na configuração (``configuracao.py``) quando muda e aplica
 troca e as aplica na hora. Um valor gravado inválido (um arquivo editado à mão, de outra versão) vale como o padrão,
 sem erro.
 
-* **As pastas:** a dos dados (``$DADOS``: onde o diálogo de abrir começa sem um projeto aberto), a das sondas (onde
+* **As pastas:** a dos dados (``$DADOS``: onde o diálogo de abrir começa sem um projeto aberto, e a base da pasta da
+  sessão do dia, para onde vêm as capturas da placa: :func:`pasta_da_sessao`), a das sondas (onde
   os perfis das sondas registradas nas capturas são procurados ao abrir uma captura) e a do cache (as pirâmides e as
   materializações). Sem uma escolhida, vale a padrão (:func:`pasta_padrao`).
 * **Os limites do cache** são dois, cada um com o seu uso: as pirâmides das capturas (a navegação) e as
@@ -20,6 +21,7 @@ sem erro.
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 from collections.abc import Iterable
@@ -200,6 +202,18 @@ def pasta_escolhida(nome: str) -> Path | None:
 def pasta(nome: str) -> Path:
     """A pasta em uso: a escolhida ou a padrão."""
     return pasta_escolhida(nome) or pasta_padrao(nome)
+
+
+DADOS_DO_LABORATORIO = Path.home() / "Documents" / "sh-analyzer-data"
+"""A pasta dos dados do laboratório sem uma escolhida nem o ``$DADOS``: a mesma do ``scripts/sessao_lab.sh``."""
+
+
+def pasta_da_sessao(dia: datetime.date | None = None) -> Path:
+    """A pasta da sessão do dia, para onde vêm as capturas da placa: ``<dados>/lab/AAAA-MM-DD``, a mesma do ``lab
+    trazer``. ``<dados>`` é a pasta escolhida, senão o ``$DADOS``, senão a do ``sessao_lab.sh``."""
+    variavel = os.environ.get(VARIAVEL_DOS_DADOS)
+    base = pasta_escolhida("dados") or (Path(variavel) if variavel else DADOS_DO_LABORATORIO)
+    return base / "lab" / (dia or datetime.date.today()).isoformat()
 
 
 def mudar_pasta(nome: str, caminho: Path | None) -> None:

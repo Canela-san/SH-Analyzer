@@ -93,6 +93,7 @@ from .servicos.materializar import ServicoDeMaterializacao
 from .servicos.placa import ServicoDaPlaca
 from .servicos.saude_da_placa import SaudeDaPlaca
 from .servicos.tarefas import GerenciadorDeTarefas
+from .servicos.transferencias import TransferenciasDaPlaca
 from .tema.aplicar import aparencia
 from .tema.icones import IconeDoTema
 from .tema.tokens import Tema
@@ -158,6 +159,7 @@ class JanelaPrincipal(QMainWindow):
         self.placa = ServicoDaPlaca(parent=self)
         self.conexao_da_placa = ConexaoDaPlaca(self.placa, parent=self)
         self.saude_da_placa = SaudeDaPlaca(self.conexao_da_placa, parent=self)
+        self.transferencias_da_placa = TransferenciasDaPlaca(self.conexao_da_placa, self.saude_da_placa, parent=self)
         self.projeto: Projeto | None = None
         self.selecao: Selecao | None = None
         self.acoes: dict[str, QAction] = {}
@@ -190,7 +192,9 @@ class JanelaPrincipal(QMainWindow):
         self._criar_barra_de_status()
         self.area = AreaDeAnalise(self, self.painel_projeto, self.inspetor, self.avisos, self.status_fonte,
                                   self.status_integridade, self.vistas, self.tabela_de_medidas)
-        self.aquisicao = AreaDeAquisicao(self.conexao_da_placa, self.saude_da_placa, lambda: self.controle.dialogos)
+        self.aquisicao = AreaDeAquisicao(
+            self.conexao_da_placa, self.saude_da_placa, lambda: self.controle.dialogos, self.transferencias_da_placa,
+            abrir_na_analise=lambda caminhos: self._na_analise(self.controle.abrir_capturas(caminhos)))
         self.paginas = QStackedWidget()
         self.paginas.setObjectName("paginas_das_areas")
         self._paginas_das_areas = {AREA_ANALISE: self.estudio, AREA_AQUISICAO: self.aquisicao}

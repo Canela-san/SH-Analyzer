@@ -265,6 +265,7 @@ QLabel#badge[nivel="erro"] {{ color: {t.erro}; border-color: {_rgba(t.erro, 0.4)
                              background: {_rgba(t.erro, 0.1)}; }}
 QStatusBar QLabel[nivel="aviso"] {{ color: {t.aviso}; }}
 QPushButton[variante="perigo"]:disabled {{ color: {t.mudo}; border-color: {t.borda}; }}
+QPushButton[variante="primario"]:disabled {{ background: {t.superficie}; color: {t.mudo}; border-color: {t.borda}; }}
 QWidget#area_aquisicao, QStackedWidget#secoes_aquisicao {{ background: {t.fundo}; }}
 QWidget#lateral_aquisicao {{ background: {t.superficie}; border-right: 1px solid {t.borda}; }}
 QFrame#cartao_da_placa {{ background: {t.afundada}; border: 1px solid {t.borda}; border-radius: 10px; }}
@@ -298,6 +299,11 @@ QLabel#problema_erro {{ color: {t.erro}; }}
 QLabel#problema_aviso {{ color: {t.aviso}; }}
 QLabel#problema_info {{ color: {t.texto2}; }}
 QWidget#linha_da_saude {{ border-top: 1px solid {t.borda}; }}
+QFrame#linha_da_fila {{ border-top: 1px solid {t.borda}; }}
+QTableWidget#arquivos_da_placa {{ border: 1px solid {t.borda}; border-radius: 8px; }}
+QTableWidget#arquivos_da_placa::item {{ padding: 2px 8px; }}
+QTableWidget#arquivos_da_placa::item:selected {{ background: {_rgba(t.acento, 0.15)}; color: {t.texto}; }}
+QListWidget#lista_de_coletas, QTableWidget#resumo_da_coleta {{ border: 1px solid {t.borda}; border-radius: 6px; }}
 QLabel#icone_do_nivel {{ border-radius: 6px; background: {_rgba(t.ok, 0.12)}; }}
 QLabel#icone_do_nivel[nivel="info"] {{ background: {_rgba(t.acento, 0.12)}; }}
 QLabel#icone_do_nivel[nivel="aviso"] {{ background: {_rgba(t.aviso, 0.12)}; }}

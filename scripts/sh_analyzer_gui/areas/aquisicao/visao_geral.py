@@ -47,6 +47,7 @@ from ...servicos.conexao_da_placa import ConexaoDaPlaca
 from ...servicos.saude_da_placa import SaudeDaPlaca
 from ...tema.fontes import fonte_mono
 from ...tema.tokens import TAMANHOS
+from .arquivos import estado_no_computador
 from .itens import TEXTOS_DAS_CORRECOES, itens_da_placa
 from .pecas import IconeDoNivel, Indicador, Painel, Selo, fonte
 from .textos import frase, hora, nome_da_placa, traduzir
@@ -109,10 +110,11 @@ class VisaoGeral(QWidget):
     verBloqueio = Signal()
     corrigir = Signal(str)
 
-    def __init__(self, conexao: ConexaoDaPlaca, saude: SaudeDaPlaca, parent: QWidget | None = None):
+    def __init__(self, conexao: ConexaoDaPlaca, saude: SaudeDaPlaca, transferencias=None,
+                 parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("visao_geral")
-        self.conexao, self.saude = conexao, saude
+        self.conexao, self.saude, self.transferencias = conexao, saude, transferencias
         self.paginas = QStackedWidget()
 
         por_ip = Botao(traduzir("Conectar por IP…"), "primario", "mais")
@@ -141,6 +143,8 @@ class VisaoGeral(QWidget):
         conexao.mudou.connect(self.atualizar)
         saude.mudou.connect(self.atualizar)
         saude.atividade.connect(self._nova_atividade)
+        if transferencias is not None:
+            transferencias.mudou.connect(self.atualizar)
         for entrada in conexao.registro.entradas[-ATIVIDADE_MAXIMA:]:
             self._nova_atividade(entrada)
         self.atualizar()
@@ -425,9 +429,13 @@ class VisaoGeral(QWidget):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.tabela.setItem(linha, coluna, item)
             n = len(c.problemas)
-            selo = Selo("aviso" if n else "ok", (traduzir("1 problema") if n == 1 else
-                                                 traduzir("{} problemas").format(n)) if n else traduzir("íntegra"))
-            selo.setToolTip("\n".join(c.problemas))
+            if self.transferencias is not None:              # onde ela está (como no B1), com a integridade na dica
+                texto, nivel = estado_no_computador(self.transferencias, c)
+                selo = Selo("aviso" if n and nivel == "ok" else nivel, texto)
+            else:
+                selo = Selo("aviso" if n else "ok", (traduzir("1 problema") if n == 1 else
+                                                     traduzir("{} problemas").format(n)) if n else traduzir("íntegra"))
+            selo.setToolTip("\n".join(c.problemas) or traduzir("íntegra"))
             selo.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.tabela.setCellWidget(linha, 5, selo)
             largura_do_selo = max(largura_do_selo, selo.sizeHint().width() + 16)
@@ -458,9 +466,6 @@ SECOES_QUE_CHEGAM = {
     "capturar": ("Capturar", "play", "v0.10",
                  "O formulário do cabeçalho e dos canais, validado enquanto se escreve; o sinal ao vivo, com os "
                  "contadores de integridade; e a saída contínua direto para o computador."),
-    "arquivos": ("Arquivos", "pasta", "v0.10",
-                 "As capturas da placa com o resumo de cada uma, a transferência com retomada, a conferência do CRC "
-                 "e o \"Abrir na Análise\"."),
     "terminal": ("Terminal", "terminal", "v0.10",
                  "Um terminal na placa, com abas, busca, os atalhos de comandos e a gravação na pasta da sessão."),
     "manutencao": ("Manutenção", "chave", "v1.0",

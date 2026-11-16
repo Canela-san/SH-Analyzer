@@ -1049,7 +1049,12 @@ O cartão da placa limita a duração de uma captura, e a saída contínua tira 
 - **O navegador da placa:** o nome, o tamanho, a data e o resumo do cabeçalho de cada `.bin` (lido pelo agente: título, taxa, canais, duração, integridade). As pastas de coleta mostram o `resumo.csv`.
 - **A transferência:**
   - uma fila com várias requisições SFTP em paralelo, retomada do ponto onde parou, e a vazão e o tempo restante;
-  - o destino padrão é a pasta da sessão do dia (`$DADOS/lab/AAAA-MM-DD/`), a mesma do `lab trazer`.
+  - o destino padrão é a pasta da sessão do dia (`$DADOS/lab/AAAA-MM-DD/`), a mesma do `lab trazer`;
+  - **a medição tem prioridade:** com uma captura rodando na placa (o `ler_adc`), a fila espera. Na placa de verdade
+    (16/11/2026), uma, três transferências e três fluxos de cifra ao lado de capturas a 400 kS/s não mudaram a folga
+    mínima da PRU (18 ciclos), não atrasaram amostra nem sobrescreveram buffer, e o piso de ruído ficou o mesmo (a PRU
+    grava na memória reservada sem esperar o ARM, e o `ler_adc` tem ~2,6 s por buffer de 2 MiB); esperar cobre o que o
+    teste não cobriu (o cartão cheio, capturas longas, a saída contínua da Fase 4, que é concorrente por natureza).
 - **A conferência:**
   - na v9, o `crc32_amostras` do cabeçalho contra o calculado no computador;
   - nas versões antigas, o SHA-256 calculado dos dois lados;
