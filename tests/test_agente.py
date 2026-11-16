@@ -18,7 +18,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 from capturas_sinteticas import FAIXA, escrever_bin
-from sh_placa.simulador import CENARIOS, SERIE_SIMULADA, VERSAO_SIMULADA, montar_sistema_falso
+from sh_placa.simulador import (
+    CARTAO_KIB,
+    CENARIOS,
+    LIVRE_NORMAL_KIB,
+    SERIE_SIMULADA,
+    VERSAO_SIMULADA,
+    montar_sistema_falso,
+)
 from supraharmonicos import cabecalho as motor
 
 RAIZ_DO_PROJETO = Path(__file__).resolve().parents[1]
@@ -69,12 +76,14 @@ def test_estado_le_cada_campo(placa):
     assert e["firmware"] == {"firmware": VERSAO_SIMULADA, "python": ".".join(map(str, sys.version_info[:3])),
                              "compilado": True, "ler_adc_antigo": False, "fw_pru": True, "fw_pru_antigo": False,
                              "fw_pru_instalado": "igual", "protocolo_da_pru": 5}
-    assert e["capturas"]["quantidade"] == 2 and e["capturas"]["bytes"] == 20_480 + 8_192
+    binarios = sorted(pasta.glob("*.bin"))
+    assert e["capturas"]["quantidade"] == len(binarios) == 3                    # a conferência e duas da tomada
+    assert e["capturas"]["bytes"] == sum(f.stat().st_size for f in binarios)
     relogio = e["relogio"]
     assert (relogio["utc"], relogio["sincronizado"], relogio["fonte"]) == (pytest.approx(time.time(), abs=30), True,
                                                                             "timesyncd")
     assert set(relogio) == {"utc", "sincronizado", "fonte", "desde_o_inicio_s"}       # test_o_relogio confere o último
-    assert e["disco"]["total_kib"] > 0
+    assert e["disco"] == {"total_kib": CARTAO_KIB, "livre_kib": LIVRE_NORMAL_KIB}        # o cartão de 4 GB dela
 
 
 def test_pelo_stdin_como_o_aplicativo_o_roda(placa):
@@ -142,7 +151,8 @@ def test_o_relogio_do_kernel(agente, monkeypatch, tmp_path):
 CODIGOS_DE_CADA_CENARIO = {
     "normal": [], "pru_com_falha": ["pru_com_falha"], "pinos_errados": ["pinos"], "sem_mem_496m": ["mem_496m"],
     "firmware_antigo": [], "sem_compilar": ["nao_compilado"], "pru_desatualizada": ["pru_desatualizada"],
-    "audio_hdmi": ["audio_hdmi", "pinos"], "sem_overlay_da_pru": ["pru_ausente"],
+    "audio_hdmi": ["audio_hdmi", "pinos"], "sem_overlay_da_pru": ["pru_ausente"], "adc_mudo": ["adc_mudo"],
+    "disco_cheio": ["disco_cheio"], "conexao_instavel": [], "relogio_errado": [],
 }
 """O que a placa diz de si em cada cenário (o firmware de outra versão é o computador que vê: sh_placa/estado.py)."""
 
@@ -155,7 +165,8 @@ def test_a_saude_de_cada_cenario(tmp_path, cenario):
     codigos = [c["codigo"] for c in s["conferencias"] if c["nivel"] != "info"]
     assert codigos == CODIGOS_DE_CADA_CENARIO[cenario]
     assert all(c["correcao"] for c in s["conferencias"] if c["nivel"] == "erro")      # todo erro diz como corrigir
-    assert [c["codigo"] for c in s["conferencias"] if c["nivel"] == "info"] == ["capturas"]
+    infos = ["relogio_sem_ntp", "capturas"] if cenario == "relogio_errado" else ["capturas"]
+    assert [c["codigo"] for c in s["conferencias"] if c["nivel"] == "info"] == infos
     assert ("AM335X-PRU-RPROC-4-19-TI-00A0" in s["overlays"]) is (cenario != "sem_overlay_da_pru")
     assert "AM335X-PRU-RPROC-4-19-TI-00A0" in s["dtbo_da_pru"] and s["ferramentas"]["make"] == "/usr/bin/make"
 

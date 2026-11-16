@@ -1,176 +1,46 @@
-"""Um servidor SSH do próprio asyncssh para os testes da conexão com a placa (F3.2; cresce até o simulador por SSH da
-F3.9): uma BeagleBone vista pela rede, sem placa.
+"""O servidor SSH dos testes da conexão com a placa: o do simulador (``sh_placa.simulador.ServidorDoSimulador``, o que a
+interface usa), mais o que só os testes pedem.
 
-O servidor escuta em 127.0.0.1 (ou em mais endereços do loopback, na mesma porta), numa porta livre, com a senha e as
-chaves do ``~/.ssh/authorized_keys`` do home falso (o do simulador: ``montar_sistema_falso``). Cada comando roda num
-shell de verdade, com esse home, a raiz falsa em ``SHAN_RAIZ`` e um ``python3`` que é o Python dos testes: o agente
-que chega pelo stdin lê a placa simulada, e a instalação da chave escreve no ``authorized_keys`` dela, como numa placa.
-O ``ssh`` sem comando (o terminal da F3.8) é um ``sh -i`` num pseudoterminal deste computador, do tamanho que o
-cliente pediu e que muda quando ele avisa.
+* **a senha** (a primeira conexão: a impressão, a senha e a instalação da chave; o sudo pede a mesma, como na placa);
+* **o terminal** (o ``ssh`` sem comando da F3.8): um ``sh -i`` num pseudoterminal deste computador, do tamanho que o
+  cliente pediu e que muda quando ele avisa (a placa simulada da interface não tem terminal);
+* **o salto** (``permitir_tunel``: as conexões *direct-tcpip* para outro servidor), **a chave RSA** (``tambem_rsa``,
+  como a imagem da placa, que tem as três) e **a placa regravada** (:meth:`ServidorSSH.trocar_chave_do_host`);
+* :attr:`ServidorSSH.autenticacoes`: as tentativas, para conferir o que foi enviado.
 
-**O sudo e o ``config-pin`` da placa são falsos** (``SUDO`` e ``CONFIG_PIN``, no ``bin`` do servidor): o sudo faz o
-que o de verdade faz com ``-A``, ``-v``, ``-n`` e ``-k`` (a senha pelo ``SUDO_ASKPASS``, a credencial validada e
-esquecida) e roda o comando como o usuário do teste, anotando-o em :attr:`ServidorSSH.comandos_de_root`; o
-``config-pin`` escreve o modo no pinmux da árvore falsa, como o de verdade escreve no ``/sys``. **O ``pgrep`` só vê os
-processos da placa** (``processos``: os de executável dentro dessa pasta; a do teste, por padrão): o ``ler_adc`` falso
-que um teste roda é a captura na placa dele, e não na de um teste em paralelo.
-
-Para os testes: os comandos rodados (:attr:`ServidorSSH.comandos`), as tentativas de autenticação
-(:attr:`ServidorSSH.autenticacoes`), a troca da chave de host (:meth:`ServidorSSH.trocar_chave_do_host`, a placa
-regravada), a queda de todas as conexões (:meth:`ServidorSSH.derrubar`, o cabo que solta) e o salto
-(``permitir_tunel``: ele abre as conexões *direct-tcpip* para outro servidor).
+**O ``pgrep`` só vê os processos do teste** (``processos``: os de executável dentro dessa pasta; a do teste, por
+padrão): o ``ler_adc`` falso que um teste roda é a captura na placa dele, e não na de um teste em paralelo. O SFTP não
+tem o limite de vazão do USB, e as capturas da placa são curtas (``tests/conftest.py``).
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import fcntl
 import os
 import pty
-import shutil
-import signal
 import socket
 import struct
-import sys
 import termios
 from pathlib import Path
 
 import asyncssh
-from sh_placa.simulador import montar_sistema_falso
+from sh_placa.simulador import ServidorDoSimulador, _LadoDoServidor, matar, matar_quando_o_canal_fechar
 
 SENHA_PADRAO = "temppwd-do-teste"
 
-SUDO = r"""#!/bin/sh
-# O sudo da placa simulada: -A (a senha pelo SUDO_ASKPASS), -v (só validar), -n (sem perguntar), -k (esquecer).
-estampa="$HOME/.sudo-validado"
-[ "$1" = "-k" ] && { rm -f "$estampa"; exit 0; }
-validar=0
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -v) validar=1 ;;
-        -p) shift ;;
-        --) shift; break ;;
-        -*) ;;
-        *) break ;;
-    esac
-    shift
-done
-if [ "$validar" = 1 ]; then
-    [ -x "$SUDO_ASKPASS" ] || { echo "sudo: no askpass program specified" >&2; exit 1; }
-    if [ "$("$SUDO_ASKPASS")" != "$SHAN_SENHA_DO_SUDO" ]; then
-        echo "Sorry, try again." >&2
-        echo "sudo: 1 incorrect password attempt" >&2
-        exit 1
-    fi
-    touch "$estampa"
-    exit 0
-fi
-[ -f "$estampa" ] || { echo "sudo: a password is required" >&2; exit 1; }
-printf '%s\0' "$*" >> "$HOME/.sudo-comandos"
-exec "$@"
-"""
-CONFIG_PIN = r"""#!/bin/sh
-# O config-pin da placa simulada: o modo no pinmux da árvore falsa.
-[ $# -eq 2 ] || { echo "Usage: config-pin <pin> <mode>" >&2; exit 1; }
-estado="$SHAN_RAIZ/sys/devices/platform/ocp/ocp:$1_pinmux/state"
-[ -f "$estado" ] || { echo "ERROR: open() for $estado failed, No such file or directory" >&2; exit 1; }
-printf '%s
-' "$2" > "$estado"
-"""
 
-PGREP = r"""#!{python}
-# O pgrep da placa simulada: o de verdade, só com os processos desta placa (os de executável dentro da pasta dos
-# processos dela, SHAN_PROCESSOS). Sem isso, o ler_adc falso de um teste rodando em paralelo seria uma captura na
-# placa de outro.
-import os, subprocess, sys
-
-raiz = os.path.realpath(os.environ["SHAN_PROCESSOS"]) + os.sep
-
-
-def desta_placa(pid):
-    try:
-        return os.path.realpath(f"/proc/{{pid}}/exe").startswith(raiz)
-    except OSError:
-        return False
-
-
-r = subprocess.run([{pgrep!r}, *sys.argv[1:]], capture_output=True, text=True)
-linhas = [linha for linha in r.stdout.splitlines() if desta_placa(linha.split()[0])]
-sys.stdout.write("".join(linha + "\n" for linha in linhas))
-sys.exit(0 if linhas else 1)
-"""
-
-
-class ServidorSSH:
+class ServidorSSH(ServidorDoSimulador):
     def __init__(self, pasta: Path, *, cenario: str = "normal", usuario: str = "debian", senha: str = SENHA_PADRAO,
                  senha_do_sudo: str | None = None, permitir_tunel: bool = False, tambem_rsa: bool = False,
                  enderecos: tuple[str, ...] = ("127.0.0.1",), processos: Path | None = None):
-        self.pasta, self.cenario = Path(pasta), cenario
-        self.usuario, self.senha, self.permitir_tunel = usuario, senha, permitir_tunel
-        self.enderecos = enderecos           # vários, como a placa nos dois IPs do USB (127.0.0.1 e 127.0.0.2)
-        self.raiz, firmware = montar_sistema_falso(self.pasta, cenario)
-        self.home = firmware.parent
-        self.comandos: list[str] = []
+        super().__init__(pasta, cenario, usuario=usuario, senha=senha,
+                         senha_do_sudo=senha if senha_do_sudo is None else senha_do_sudo, enderecos=enderecos,
+                         processos=processos if processos is not None else Path(pasta).parent, vazao_bytes_s=None)
+        self.permitir_tunel = permitir_tunel
         self.autenticacoes: list[tuple[str, object]] = []    # ("inicio", usuário), ("senha", certa?)
-        self.conexoes: set[asyncssh.SSHServerConnection] = set()
-        self._rodando: set[asyncio.Task] = set()            # os comandos ainda rodando (o _rodar de cada um)
-        self.porta = 0
-        self.chave_do_host = asyncssh.generate_private_key("ssh-ed25519")
         # Como a imagem da placa, que tem as chaves RSA, ECDSA e ED25519 (o asyncssh, sozinho, escolheria a RSA).
         self.chave_rsa = asyncssh.generate_private_key("ssh-rsa", key_size=2048) if tambem_rsa else None
-        self._servidores: list[asyncssh.SSHAcceptor] = []
-        binarios = self.pasta / "bin"
-        binarios.mkdir(exist_ok=True)
-        (binarios / "python3").symlink_to(sys.executable)
-        pgrep = PGREP.format(python=sys.executable, pgrep=shutil.which("pgrep") or "/usr/bin/pgrep")
-        for nome, roteiro in (("sudo", SUDO), ("config-pin", CONFIG_PIN), ("pgrep", pgrep)):
-            (binarios / nome).write_text(roteiro)
-            (binarios / nome).chmod(0o755)
-        self.senha_do_sudo = senha if senha_do_sudo is None else senha_do_sudo
-        self.ram = self.pasta / "ram"                    # a /dev/shm deste servidor (o SHAN_RAM do sudo)
-        self.ram.mkdir(exist_ok=True)
-        self.ambiente = {"HOME": str(self.home), "PATH": f"{binarios}{os.pathsep}{os.environ.get('PATH', '')}",
-                         "SHAN_RAIZ": str(self.raiz), "LANG": "C.UTF-8", "SHAN_SENHA_DO_SUDO": self.senha_do_sudo,
-                         "SHAN_RAM": str(self.ram),
-                         "SHAN_PROCESSOS": str(processos if processos is not None else self.pasta.parent)}
-
-    @property
-    def authorized_keys(self) -> Path:
-        return self.home / ".ssh" / "authorized_keys"
-
-    @property
-    def comandos_de_root(self) -> list[str]:
-        """O que o sudo falso rodou: os argumentos de cada comando, juntos (um comando de várias linhas é um só)."""
-        arquivo = self.home / ".sudo-comandos"
-        return arquivo.read_text().split("\0")[:-1] if arquivo.exists() else []
-
-    @property
-    def impressao(self) -> str:
-        return self.chave_do_host.get_fingerprint()
-
-    async def iniciar(self) -> ServidorSSH:
-        """Escuta em cada endereço, na porta que o primeiro ganhou (a porta 0 daria uma a cada endereço) ou na já
-        escolhida (a de antes de :meth:`trocar_chave_do_host`, ou a de outro servidor, em outro endereço)."""
-        for endereco in self.enderecos:
-            servidor = await asyncssh.create_server(
-                lambda: _Servidor(self), endereco, self.porta,
-                server_host_keys=[k for k in (self.chave_rsa, self.chave_do_host) if k is not None],
-                process_factory=self._rodar, encoding=None, reuse_address=True, sftp_factory=True,
-                line_editor=False)               # o PTY é o do sistema (o _terminal), como o sshd da placa
-            self._servidores.append(servidor)
-            self.porta = servidor.sockets[0].getsockname()[1]
-        return self
-
-    async def parar(self) -> None:
-        """Derruba as conexões e para de escutar; volta com todo comando morto e colhido (com o canal fechado, o
-        vigia de cada um mata o grupo dele), para nenhum processo sobreviver ao teste."""
-        self.derrubar()
-        for servidor in self._servidores:
-            servidor.close()
-            await servidor.wait_closed()
-        self._servidores = []
-        await asyncio.gather(*self._rodando, return_exceptions=True)
 
     async def trocar_chave_do_host(self) -> None:
         """A placa regravada: outra chave de host, na mesma porta."""
@@ -178,57 +48,14 @@ class ServidorSSH:
         self.chave_do_host = asyncssh.generate_private_key("ssh-ed25519")
         await self.iniciar()
 
-    def derrubar(self) -> None:
-        """Todas as conexões caem de uma vez, sem despedida (o cabo que solta)."""
-        for conexao in list(self.conexoes):
-            conexao.abort()
+    def _lado_do_servidor(self) -> asyncssh.SSHServer:
+        return _Servidor(self)
 
-    async def __aenter__(self) -> ServidorSSH:
-        return await self.iniciar()
+    def _chaves_do_host(self) -> list[asyncssh.SSHKey]:
+        return [k for k in (self.chave_rsa, self.chave_do_host) if k is not None]
 
-    async def __aexit__(self, *_excecao) -> None:
-        await self.parar()
-
-    async def _rodar(self, processo: asyncssh.SSHServerProcess) -> None:
-        """Um comando num shell de verdade, num grupo de processos só dele, com o stdin, o stdout e o stderr ligados
-        ao canal. Se o canal fecha antes (o cliente desistiu, a conexão caiu), o grupo inteiro é morto: o ``dash`` não
-        faz ``exec`` do último comando, e um ``sleep 30`` sobreviveria ao shell, com os pipes abertos."""
-        tarefa = asyncio.current_task()
-        self._rodando.add(tarefa)
-        if processo.command is None:
-            try:
-                await self._terminal(processo)
-            finally:
-                self._rodando.discard(tarefa)
-            return
-        comando = processo.command
-        self.comandos.append(comando)
-        try:
-            shell = await asyncio.create_subprocess_exec(
-                "/bin/sh", "-c", comando, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE, cwd=self.home, env=self.ambiente, start_new_session=True)
-            entrada = asyncio.create_task(_bombear_entrada(processo, shell))
-            vigia = asyncio.create_task(_matar_quando_o_canal_fechar(processo, shell))
-            copias = [asyncio.create_task(_copiar(shell.stdout, processo.stdout)),
-                      asyncio.create_task(_copiar(shell.stderr, processo.stderr))]
-            try:
-                await asyncio.gather(*copias)
-                processo.exit(await shell.wait())
-            except (asyncssh.Error, OSError):
-                pass
-            finally:
-                for tarefa_auxiliar in (entrada, vigia, *copias):
-                    tarefa_auxiliar.cancel()
-                _matar(shell)
-                shell.stdin.close()
-                await asyncio.gather(entrada, vigia, *copias, return_exceptions=True)
-                # O que sobrou nos pipes (um comando cortado no meio: o cliente fechou o canal e a cópia parou) é lido
-                # até o fim, com o grupo já morto: os transportes do subprocesso fecham com o laço vivo, e não no
-                # coletor de lixo, depois dele (um aviso no Python 3.10).
-                await asyncio.gather(shell.stdout.read(), shell.stderr.read(), return_exceptions=True)
-                await shell.wait()
-        finally:
-            self._rodando.discard(tarefa)
+    async def _sem_comando(self, processo: asyncssh.SSHServerProcess) -> None:
+        await self._terminal(processo)
 
     async def _terminal(self, processo: asyncssh.SSHServerProcess) -> None:
         """O shell interativo (``ssh`` sem comando, com PTY): um ``sh -i`` num pseudoterminal deste computador, do
@@ -240,7 +67,7 @@ class ServidorSSH:
         ambiente = {**self.ambiente, "TERM": processo.get_terminal_type() or "dumb", "PS1": "placa$ "}
         # O setsid do util-linux: uma sessão nova, com o PTY como terminal de controle (o controle de tarefas e o
         # SIGWINCH do sh), sem código Python no filho depois do fork (o preexec_fn trava num processo com threads,
-        # como o dos testes da interface). Ele vira o sh, com o mesmo pid: o grupo dele é o do _matar.
+        # como o dos testes da interface). Ele vira o sh, com o mesmo pid: o grupo dele é o do matar.
         try:
             shell = await asyncio.create_subprocess_exec(
                 "setsid", "--ctty", "/bin/sh", "-i", stdin=escravo, stdout=escravo, stderr=escravo, cwd=self.home,
@@ -276,7 +103,7 @@ class ServidorSSH:
 
         laco.add_reader(mestre, ler_do_pty)
         entrada = asyncio.create_task(copiar_a_entrada())
-        vigia = asyncio.create_task(_matar_quando_o_canal_fechar(processo, shell))
+        vigia = asyncio.create_task(matar_quando_o_canal_fechar(processo, shell))
         try:
             await copiar_a_saida()
             processo.exit(await shell.wait())
@@ -286,35 +113,23 @@ class ServidorSSH:
             laco.remove_reader(mestre)
             for auxiliar in (entrada, vigia):
                 auxiliar.cancel()
-            _matar(shell)
+            matar(shell)
             await asyncio.gather(entrada, vigia, return_exceptions=True)
             await shell.wait()
             os.close(mestre)
 
 
-class _Servidor(asyncssh.SSHServer):
-    def __init__(self, dono: ServidorSSH):
-        self.dono = dono
-        self.conexao: asyncssh.SSHServerConnection | None = None
 
-    def connection_made(self, conn: asyncssh.SSHServerConnection) -> None:
-        self.conexao = conn
-        self.dono.conexoes.add(conn)
 
-    def connection_lost(self, exc: Exception | None) -> None:
-        self.dono.conexoes.discard(self.conexao)
+class _Servidor(_LadoDoServidor):
+    """O lado do servidor do simulador, anotando as tentativas de autenticação e com o salto, se o teste quer."""
 
     def begin_auth(self, username: str) -> bool:
         self.dono.autenticacoes.append(("inicio", username))
-        if self.dono.authorized_keys.exists():
-            self.conexao.set_authorized_keys(str(self.dono.authorized_keys))   # lido de novo a cada conexão
-        return True
-
-    def password_auth_supported(self) -> bool:
-        return True
+        return super().begin_auth(username)
 
     def validate_password(self, username: str, password: str) -> bool:
-        certa = username == self.dono.usuario and password == self.dono.senha
+        certa = super().validate_password(username, password)
         self.dono.autenticacoes.append(("senha", certa))
         return certa
 
@@ -329,34 +144,6 @@ def porta_livre() -> int:
         return s.getsockname()[1]
 
 
-async def _bombear_entrada(processo: asyncssh.SSHServerProcess, shell: asyncio.subprocess.Process) -> None:
-    try:
-        while dados := await processo.stdin.read(65536):
-            shell.stdin.write(dados)
-            await shell.stdin.drain()
-    except (asyncssh.Error, OSError):
-        pass
-    finally:
-        shell.stdin.close()
-
-
-async def _copiar(origem: asyncio.StreamReader, destino) -> None:
-    while dados := await origem.read(65536):
-        destino.write(dados)
-
-
-async def _matar_quando_o_canal_fechar(processo: asyncssh.SSHServerProcess, shell: asyncio.subprocess.Process) -> None:
-    await processo.channel.wait_closed()
-    _matar(shell)
-
-
 def _tamanho_do_pty(fd: int, colunas: int, linhas: int) -> None:
     """O ``TIOCSWINSZ``: o tamanho do pseudoterminal (o shell nele recebe o ``SIGWINCH``)."""
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", linhas, colunas, 0, 0))
-
-
-def _matar(shell: asyncio.subprocess.Process) -> None:
-    """O shell e o que ele rodou (o grupo dele), se ainda está de pé."""
-    if shell.returncode is None:
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(shell.pid, signal.SIGKILL)

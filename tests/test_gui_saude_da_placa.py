@@ -74,7 +74,7 @@ def test_a_saude_as_capturas_a_atividade_e_os_pinos(qtbot, placas, criar):
     assert saude.saude is not None and saude.saude.tem_diagnostico and saude.conferida_em
     assert "pinos" in [p.codigo for p in saude.saude.diagnostico()]
     qtbot.waitUntil(lambda: saude.capturas is not None and not saude.conferindo, timeout=ESPERA_MS)
-    assert saude.capturas.total == 2 and saude.firmware_do_aplicativo
+    assert saude.capturas.total == 3 and saude.firmware_do_aplicativo                 # a conferência e duas da tomada
     assert any(e.descricao == "agente: capturas" for e in saude.entradas)        # a atividade, ao vivo
 
     saude.corrigir_pinos()

@@ -18,8 +18,10 @@ DIAGNOSTICO_DE_CADA_CENARIO = {
     "normal": [], "pru_com_falha": ["pru_com_falha"], "pinos_errados": ["pinos"], "sem_mem_496m": ["mem_496m"],
     "firmware_antigo": ["firmware_diferente"], "sem_compilar": ["nao_compilado"],
     "pru_desatualizada": ["pru_desatualizada"], "audio_hdmi": ["audio_hdmi", "pinos"],
-    "sem_overlay_da_pru": ["pru_ausente"],
+    "sem_overlay_da_pru": ["pru_ausente"], "adc_mudo": ["adc_mudo"], "disco_cheio": ["disco_cheio"],
+    "conexao_instavel": [], "relogio_errado": ["relogio"],
 }
+"""O que o diagnóstico diz de cada cenário (o firmware de outra versão e o relógio errado são do computador)."""
 
 
 @pytest.mark.parametrize("cenario", CENARIOS)
@@ -34,9 +36,10 @@ def test_diagnostico_de_cada_cenario(cenario):
     if codigos:
         assert problemas[0].correcao                                   # todo problema diz como corrigir
     erro = any(p.nivel == "erro" for p in problemas)
-    assert erro is (cenario not in ("normal", "firmware_antigo"))
+    assert erro is (cenario not in ("normal", "firmware_antigo", "adc_mudo", "conexao_instavel", "relogio_errado"))
     assert estado.pronta_para_capturar(VERSAO_SIMULADA) is not erro
-    assert [p.codigo for p in problemas if p.nivel == "info"] == ["capturas"]
+    infos = ["relogio_sem_ntp", "capturas"] if cenario == "relogio_errado" else ["capturas"]
+    assert [p.codigo for p in problemas if p.nivel == "info"] == infos
 
 
 def test_o_estado_nao_tem_o_diagnostico():
@@ -136,7 +139,7 @@ def test_as_capturas_e_as_coletas(tmp_path):
     ruim.write_bytes(ruim.read_bytes()[:-100])
     (pasta / "COLETA_1" / "resumo.csv").write_text("parte,arquivo,sinal\nE,ruim.bin,fraco\n")
     capturas = asyncio.run(ClienteDoAgente(TransporteLocal(raiz=raiz, pasta_firmware=pasta)).capturas())
-    assert capturas.existe and capturas.total == 4 and capturas.bytes == sum(c.bytes for c in capturas.capturas)
+    assert capturas.existe and capturas.total == 5 and capturas.bytes == sum(c.bytes for c in capturas.capturas)
     por_nome = {c.arquivo: c for c in capturas.capturas}
     rede = por_nome["rede_casa.bin"]
     assert (rede.titulo, rede.taxa_hz, rede.canais, rede.bytes) == ("Rede da casa", 400_000, (0, 1), boa.stat().st_size)
@@ -145,8 +148,9 @@ def test_as_capturas_e_as_coletas(tmp_path):
         f"o arquivo tem {ruim.stat().st_size} bytes, e o cabeçalho diz {ruim.stat().st_size + 100}: cortado, ou com "
         "outro grudado", "1 buffer(s) sobrescrito(s): amostras perdidas",
         "12 amostra(s) atrasada(s): a taxa real é menor", "3 quadro(s) com ruído na linha SDO"]
-    # As do simulador são "SHAN" e zeros (a F3.9 as troca pelas sintéticas): o cabeçalho não confere.
-    assert por_nome["conferir_0844.bin"].problemas[0] == "o cabeçalho está corrompido (o CRC não confere)"
+    # As do simulador são capturas de verdade, íntegras (as de sh_placa/capturas_simuladas.py).
+    simuladas = [c for nome, c in por_nome.items() if nome.startswith(("conferir_", "rede_bloco_"))]
+    assert len(simuladas) == 3 and all(c.problemas == [] and c.canais_parados == [] for c in simuladas)
     (coleta,) = capturas.coletas
     assert coleta.pasta == "COLETA_1" and coleta.linhas_como_dicts() == [{"parte": "E", "arquivo": "ruim.bin",
                                                                          "sinal": "fraco"}]

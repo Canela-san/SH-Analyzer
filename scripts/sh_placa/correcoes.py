@@ -15,8 +15,8 @@ registro de atividade ou no log. Uma senha errada é uma tentativa só (o askpas
 dele (mais a meia ida e volta); a placa conta, pelo ``CLOCK_BOOTTIME``, o tempo do recebimento até acertar, e acerta
 com o ``clock_settime``. O erro fica em ~1 ms no USB, em vez do tempo do sudo e da partida do Python (décimos de
 segundo, o que o ``hora`` do ``BeagleBone_Setup.sh`` compensava pelo ``/proc/uptime``, com centésimos). Na placa
-simulada (``SHAN_RAIZ``, que o sudo de verdade apaga do ambiente), a hora nova vai para um arquivo da árvore falsa, e o
-relógio do computador não é tocado.
+simulada (``SHAN_RAIZ``, que o sudo de verdade apaga do ambiente), o relógio dela é o deste computador mais um desvio,
+num arquivo da árvore falsa (o que o agente lê): o acerto reescreve o desvio, e o relógio daqui não é tocado.
 """
 
 from __future__ import annotations
@@ -39,7 +39,8 @@ MODOS_DA_PRU = {"P9_31": "pruout", "P9_29": "pruout", "P9_30": "pruin", "P9_28":
 SAIDA_SENHA_RECUSADA = 98
 SAIDA_SEM_DIRETORIO = 97
 TEMPO_DO_SUDO_S = 30.0
-ARQUIVO_DO_RELOGIO_SIMULADO = "run/relogio-acertado"
+ARQUIVO_DO_RELOGIO_SIMULADO = "run/simulador/relogio"
+"""Na raiz falsa: o desvio do relógio da placa simulada, em segundos (o ``SIMULADOR`` do agente)."""
 
 _COM_SUDO = """umask 077
 d=$(mktemp -d "${{SHAN_RAM:-/dev/shm}}/sh-analyzer.XXXXXX") || exit {sem_diretorio}
@@ -55,19 +56,23 @@ sudo -n {comando}"""
 
 CODIGO_DO_RELOGIO = f"""import json, os, sys, time
 raiz = os.environ.get("SHAN_RAIZ") or "/"
+simulado = os.path.join(raiz, "{ARQUIVO_DO_RELOGIO_SIMULADO}")
+desvio = 0.0
+if raiz != "/" and os.path.exists(simulado):
+    with open(simulado) as f:
+        desvio = float(f.read().strip() or 0)
 print("pronto", flush=True)
 linha = sys.stdin.readline()
 chegou = time.clock_gettime(time.CLOCK_BOOTTIME)
-antes = time.time()
+antes = time.time() + desvio
 hora = float(linha)
 novo = hora + time.clock_gettime(time.CLOCK_BOOTTIME) - chegou
 if raiz == "/":
     time.clock_settime(time.CLOCK_REALTIME, novo)
 else:
-    caminho = os.path.join(raiz, "{ARQUIVO_DO_RELOGIO_SIMULADO}")
-    os.makedirs(os.path.dirname(caminho), exist_ok=True)
-    with open(caminho, "w") as f:
-        f.write(repr(novo))
+    os.makedirs(os.path.dirname(simulado), exist_ok=True)
+    with open(simulado, "w") as f:
+        f.write(repr(novo - time.time()))
 print(json.dumps({{"erro_antes_s": antes - hora, "acertado_para": novo}}), flush=True)
 """
 """O Python de root (o 3.7 da imagem) que acerta o relógio: ``erro_antes_s`` é a placa menos o computador, no

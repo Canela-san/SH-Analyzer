@@ -85,8 +85,9 @@ def test_acertar_o_relogio_pelo_sudo(tmp_path, caplog):
 
     acertado, enviado, depois, placa = asyncio.run(cenario())
     assert abs(acertado.erro_antes_s) < 0.5                           # o mesmo relógio: a placa simulada estava certa
-    escrito = float((placa.raiz / ARQUIVO_DO_RELOGIO_SIMULADO).read_text())
-    assert escrito == acertado.acertado_para and enviado <= escrito <= depois + 0.01
+    assert enviado <= acertado.acertado_para <= depois + 0.01
+    desvio = float((placa.raiz / ARQUIVO_DO_RELOGIO_SIMULADO).read_text())     # o relógio dela, agora o daqui
+    assert abs(desvio) < 0.05
     (como_root,) = placa.comandos_de_root
     assert como_root.startswith("python3 -u -c import json, os, sys, time")
     (entrada,) = [e for e in registro.entradas if e.tipo == "comando"]

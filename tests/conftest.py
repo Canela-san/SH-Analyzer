@@ -24,6 +24,11 @@ os.environ["SH_ANALYZER_CACHE"] = tempfile.mkdtemp(prefix="sh-analyzer-cache-") 
 os.environ["SH_ANALYZER_LOG"] = tempfile.mkdtemp(prefix="sh-analyzer-log-")         # o log do aplicativo, idem
 
 import pytest  # noqa: E402
+from sh_placa import capturas_simuladas  # noqa: E402
+
+# As capturas da placa simulada com blocos de 4096 amostras: com os do firmware, cada placa dos testes teria ~10 MB, e
+# eles montam dezenas.
+capturas_simuladas.BLOCO_DAS_CAPTURAS = 4096
 
 
 def pytest_addoption(parser):

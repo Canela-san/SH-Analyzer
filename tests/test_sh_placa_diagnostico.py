@@ -27,6 +27,10 @@ ITENS_DE_CADA_CENARIO = {
     "pru_desatualizada": {"firmware": "erro", "disco": "info"},
     "audio_hdmi": {"overlays": "erro", "pinos": "erro", "disco": "info"},
     "sem_overlay_da_pru": {"pru": "erro", "disco": "info"},
+    "adc_mudo": {"aquisicao": "aviso", "disco": "info"},
+    "disco_cheio": {"disco": "erro"},
+    "conexao_instavel": {"disco": "info"},
+    "relogio_errado": {"relogio": "aviso", "disco": "info"},
 }
 SAUDE: dict[str, EstadoDaPlaca] = {}
 
@@ -55,7 +59,7 @@ def test_os_itens_de_cada_cenario(cenario):
     pinos = next(i for i in itens if i.chave == "pinos")
     assert pinos.correcao == ("pinos" if cenario in ("pinos_errados", "audio_hdmi") else None)
     relogio = next(i for i in itens if i.chave == "relogio")
-    assert relogio.correcao is None                                        # o simulador está sincronizado
+    assert relogio.correcao == ("relogio" if cenario == "relogio_errado" else None)   # os outros, sincronizados
 
 
 def test_os_resumos_dizem_o_que_foi_lido():

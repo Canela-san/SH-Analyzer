@@ -308,9 +308,13 @@ class FonteConhecidas:
 
 
 class FonteSimulador:
+    """O simulador, sempre (neste computador; no Windows, sem o shell POSIX que ele usa, nunca)."""
+
     nome = "simulador"
 
     async def __call__(self, _conhecidas: Sequence[PlacaConhecida] = ()) -> list[Achado]:
+        if sys.platform == "win32":
+            return []
         return [Achado(Caminho("simulador", None, "neste computador", 0.0), serie=SERIE_SIMULADA,
                        nome="Simulador")]
 

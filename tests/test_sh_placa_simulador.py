@@ -1,0 +1,235 @@
+"""O simulador da placa (``sh_placa/simulador.py``, F3.9) como a interface o usa: servido por SSH neste computador, só
+com a chave dele, com o agente de verdade sobre a árvore falsa, e os cenários (o ADC mudo, o cartão cheio, a conexão
+que cai no meio de uma transferência e a retomada, o relógio errado e o acerto dele). E as capturas dele
+(``sh_placa/capturas_simuladas.py``): a rede de 60 Hz com supraharmônicos, que o motor lê como as da placa."""
+
+import asyncio
+import sys
+import time
+
+import numpy as np
+import pytest
+
+pytest.importorskip("asyncssh")
+
+from sh_placa import simulador  # noqa: E402
+from sh_placa.agente import ClienteDoAgente, TransporteSSH  # noqa: E402
+from sh_placa.capturas_simuladas import (  # noqa: E402
+    AMOSTRAS_POR_BLOCO_DO_FIRMWARE,
+    GANHO_DA_TENSAO,
+    Sistema,
+    gravar_captura,
+)
+from sh_placa.conexao import ConexaoSSH, ErroDeAutenticacao, ErroDeConexao  # noqa: E402
+from sh_placa.correcoes import acertar_relogio  # noqa: E402
+from sh_placa.descoberta import FonteSimulador  # noqa: E402
+from sh_placa.destino import SENHA_PADRAO_DA_IMAGEM  # noqa: E402
+from sh_placa.registro import RegistroDeAtividade  # noqa: E402
+from sh_placa.sftp import SUFIXO_PARCIAL, OrigemSSH, apagar, baixar, conferir  # noqa: E402
+from sh_placa.simulador import FRACAO_DA_QUEDA, ServidorDoSimulador  # noqa: E402
+from supraharmonicos import cabecalho as motor  # noqa: E402
+
+
+def entrar(placa: ServidorDoSimulador, registro=None, **kw) -> ConexaoSSH:
+    """A conexão do aplicativo com a placa simulada, como a interface a faz: a chave e o known_hosts dela."""
+    chave, hosts = placa.acesso()
+    return ConexaoSSH(placa.destino, chave=chave, hosts=hosts, registro=registro or RegistroDeAtividade(),
+                      senha=placa.senha_do_sudo, **kw)
+
+
+def test_so_a_chave_do_simulador_entra(tmp_path):
+    """Só a chave gerada para ele, no 127.0.0.1: sem senha pelo SSH (ninguém daqui entra com uma senha conhecida), e
+    sem terminal (o shell seria o deste computador). O agente de verdade responde pela conexão."""
+    async def cenario():
+        async with ServidorDoSimulador(tmp_path / "placa", vazao_bytes_s=None) as placa:
+            async with entrar(placa) as c:
+                saude = await ClienteDoAgente(TransporteSSH(c)).saude()
+                autenticada = c.autenticada_com
+                terminal = await c.abrir_terminal(80, 24)
+                erro = await terminal.stderr.read()
+                await terminal.wait_closed()
+            outra_chave = ConexaoSSH(placa.destino, chave=simulador_chave(tmp_path), hosts=placa.acesso()[1],
+                                     registro=RegistroDeAtividade(), senha=SENHA_PADRAO_DA_IMAGEM)
+            with pytest.raises(ErroDeAutenticacao):
+                await outra_chave.conectar()
+            return placa, saude, autenticada, terminal.exit_status, erro
+
+    placa, saude, autenticada, codigo, erro = asyncio.run(cenario())
+    assert autenticada == "chave" and placa.destino.host == "127.0.0.1"
+    assert saude.serie == simulador.SERIE_SIMULADA and saude.pronta_para_capturar(simulador.VERSAO_SIMULADA)
+    assert codigo == 1 and b"nao tem terminal" in erro
+    assert (placa.pasta / "cliente" / "id_ed25519").stat().st_mode & 0o077 == 0
+
+
+def simulador_chave(tmp_path):
+    from sh_placa.chaves import ChaveDoAplicativo
+    return ChaveDoAplicativo(tmp_path / "outra")
+
+
+def test_fechar_apaga_a_pasta_temporaria():
+    async def cenario():
+        placa = await ServidorDoSimulador(vazao_bytes_s=None).iniciar()
+        pasta = placa.pasta
+        assert (pasta / "home" / "debian" / "firmware" / "VERSAO").exists()
+        await placa.fechar()
+        return pasta
+
+    assert not asyncio.run(cenario()).exists()
+
+
+def test_no_windows_nao_ha_simulador(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert asyncio.run(FonteSimulador()()) == []
+    with pytest.raises(RuntimeError, match="POSIX"):
+        ServidorDoSimulador()
+
+
+def test_a_vazao_do_usb(tmp_path):
+    """O SFTP do simulador passa na vazão pedida (a do USB, na interface): os blocos em paralelo a dividem."""
+    async def cenario():
+        async with ServidorDoSimulador(tmp_path / "placa", vazao_bytes_s=2_000_000) as placa:
+            arquivo = placa.home / "firmware" / "grande.bin"
+            arquivo.write_bytes(np.random.default_rng(1).integers(0, 255, 1_000_000, dtype=np.uint8).tobytes())
+            async with entrar(placa) as c:
+                t0 = time.monotonic()
+                await baixar(OrigemSSH(c), str(arquivo), tmp_path / "copia.bin")
+                return time.monotonic() - t0, arquivo.read_bytes()
+
+    gasto, original = asyncio.run(cenario())
+    assert 0.45 <= gasto < 2.0 and (tmp_path / "copia.bin").read_bytes() == original
+
+
+def test_a_conexao_que_cai_no_meio_da_transferencia_e_a_retomada(tmp_path):
+    """No cenário da conexão que cai: a transferência é cortada perto de 40 % do arquivo (a parte baixada fica), a
+    conexão volta, e a retomada continua dali, sem cair de novo, com a cópia conferida."""
+    async def cenario():
+        async with ServidorDoSimulador(tmp_path / "placa", "conexao_instavel", vazao_bytes_s=None) as placa:
+            (captura,) = [f for f in (placa.home / "firmware").glob("rede_bloco_A_*.bin")]
+            captura.write_bytes(captura.read_bytes()[:4096])                     # a v9 inteira, de 1 MiB
+            gravar_captura(captura, inicio=time.time() - 60, blocos=2, sistema=Sistema("k", "s", "p"),
+                           amostras_por_bloco=1 << 18)
+            local = tmp_path / "copia.bin"
+            quedas = []
+            c = entrar(placa, ao_cair=quedas.append)
+            await c.conectar()
+            with pytest.raises(ErroDeConexao, match="caiu"):
+                await baixar(OrigemSSH(c), str(captura), local, bloco=32 * 1024)
+            await asyncio.sleep(0.1)
+            parcial = local.with_name(local.name + SUFIXO_PARCIAL).stat().st_size
+            await c.conectar()                                                   # o cabo voltou
+            await baixar(OrigemSSH(c), str(captura), local, bloco=32 * 1024)
+            resultado = await conferir(OrigemSSH(c), str(captura), local)
+            await c.fechar()
+            return captura.stat().st_size, parcial, quedas, resultado
+
+    total, parcial, quedas, resultado = asyncio.run(cenario())
+    assert len(quedas) == 1 and "caiu" in quedas[0]
+    assert FRACAO_DA_QUEDA * total * 0.5 <= parcial < total                       # parou no meio, e a parte ficou
+    assert resultado.ok and resultado.como == "crc32"
+
+
+def test_a_conexao_que_cai_de_tempos_em_tempos(tmp_path, monkeypatch):
+    monkeypatch.setattr(simulador, "QUEDA_A_CADA_S", 0.3)
+
+    async def cenario():
+        async with ServidorDoSimulador(tmp_path / "placa", "conexao_instavel", vazao_bytes_s=None) as placa:
+            quedas = []
+            c = entrar(placa, ao_cair=quedas.append)
+            await c.conectar()
+            await asyncio.sleep(0.8)
+            caiu = list(quedas)
+            await c.conectar()                                                    # e volta
+            r = await c.executar("echo de volta")
+            await c.fechar()
+            return caiu, r.saida
+
+    caiu, saida = asyncio.run(cenario())
+    assert len(caiu) == 1 and saida.strip() == "de volta"
+
+
+def test_o_cartao_cheio_e_apagar_as_capturas(tmp_path):
+    """O cartão cheio é um erro do diagnóstico; apagar capturas da placa libera o espaço delas."""
+    async def cenario():
+        async with ServidorDoSimulador(tmp_path / "placa", "disco_cheio", vazao_bytes_s=None) as placa:
+            async with entrar(placa) as c:
+                cliente = ClienteDoAgente(TransporteSSH(c))
+                antes = await cliente.saude()
+                capturas = sorted((placa.home / "firmware").glob("rede_bloco_*.bin"))
+                liberado = sum(f.stat().st_size for f in capturas) // 1024
+                for f in capturas:
+                    await apagar(OrigemSSH(c), str(f))
+                depois = await cliente.saude()
+            return antes, depois, liberado, len(capturas)
+
+    antes, depois, liberado, n = asyncio.run(cenario())
+    assert n == 4 and [p.codigo for p in antes.diagnostico() if p.nivel == "erro"] == ["disco_cheio"]
+    assert antes.disco_bytes[0] == simulador.LIVRE_NO_CARTAO_CHEIO_KIB * 1024
+    assert depois.disco_bytes[0] == (simulador.LIVRE_NO_CARTAO_CHEIO_KIB + liberado) * 1024
+    assert depois.disco_bytes[1] == simulador.CARTAO_KIB * 1024
+
+
+def test_o_relogio_errado_e_o_acerto(tmp_path):
+    """A placa dois dias atrasada, sem NTP; o acerto pelo computador (o sudo dela, com a senha da imagem) a deixa
+    com a hora daqui, sem tocar no relógio deste computador."""
+    async def cenario():
+        async with ServidorDoSimulador(tmp_path / "placa", "relogio_errado", vazao_bytes_s=None) as placa:
+            async with entrar(placa) as c:
+                cliente = ClienteDoAgente(TransporteSSH(c))
+                antes = await cliente.saude()
+                acertado = await acertar_relogio(c, c.senha)
+                depois = await cliente.saude()
+            return antes, acertado, depois
+
+    antes, acertado, depois = asyncio.run(cenario())
+    (relogio,) = [p for p in antes.diagnostico() if p.codigo == "relogio"]
+    assert "2 dias e 5 h atrasado" in relogio.texto and antes.relogio.sincronizado is False
+    assert acertado.erro_antes_s == pytest.approx(simulador.DESVIO_DO_RELOGIO_ERRADO_S, abs=1)
+    assert abs(depois.relogio.diferenca_s()) < 0.5 and not [p for p in depois.diagnostico() if p.codigo == "relogio"]
+
+
+def test_o_adc_mudo(tmp_path):
+    async def cenario():
+        async with ServidorDoSimulador(tmp_path / "placa", "adc_mudo", vazao_bytes_s=None) as placa:
+            async with entrar(placa) as c:
+                return await ClienteDoAgente(TransporteSSH(c)).saude()
+
+    saude = asyncio.run(cenario())
+    ultima = saude.ultima_captura
+    assert ultima.arquivo.startswith("conferir_") and ultima.adc_mudo
+    assert [p.codigo for p in saude.diagnostico(simulador.VERSAO_SIMULADA) if p.nivel != "info"] == ["adc_mudo"]
+
+
+def test_os_cenarios_tem_titulo_e_descricao():
+    assert list(simulador.CENARIOS)[:6] == ["normal", "adc_mudo", "disco_cheio", "conexao_instavel",
+                                            "firmware_antigo", "relogio_errado"]
+    for c in simulador.CENARIOS.values():
+        assert c.titulo and c.descricao.endswith(".") and c.grupo in ("uso", "configuracao")
+    with pytest.raises(ValueError, match="cenário desconhecido"):
+        simulador.montar_sistema_falso("/nao/importa", "nao_existe")
+
+
+def test_a_captura_simulada_e_a_rede_com_supraharmonicos(tmp_path):
+    """Um bloco do firmware (1 048 576 amostras): o motor lê o cabeçalho (o CRC, o ganho, os dois canais), e a tensão
+    tem os 127 V de 60 Hz e as emissões de 16 kHz, perto de 40 kHz e de 72 kHz acima do ruído."""
+    caminho = gravar_captura(tmp_path / "rede.bin", inicio=1_794_000_000.25, blocos=1, titulo="Rede da casa",
+                             sistema=Sistema("4.19.94-ti-r42", "Debian", "A335BNLT 00C0 3714BBBK1234"),
+                             amostras_por_bloco=AMOSTRAS_POR_BLOCO_DO_FIRMWARE)
+    h = motor.ler_cabecalho(caminho)
+    assert h.versao_cabecalho == 9 and h.crc32_valido and h.titulo == "Rede da casa"
+    assert (h.frequencia_hz, h.lista_canais, h.total_amostras_gravadas) == (400_000, (0, 1), AMOSTRAS_POR_BLOCO_DO_FIRMWARE)
+    assert h.ganho_por_canal == (10.0, GANHO_DA_TENSAO) and h.grandeza_por_canal == (1, 0)
+    assert h.timestamp_unix == 1_794_000_000 and caminho.stat().st_mtime == pytest.approx(1_794_000_002.87, abs=0.01)
+    codigos = np.fromfile(caminho, dtype="<u2", offset=4096)
+    tensao = (codigos[1::2].astype(np.float64) - 32768) * 20.48 / 65536 * GANHO_DA_TENSAO
+    assert np.sqrt(np.mean(tensao ** 2)) == pytest.approx(127, rel=0.03)
+    espectro = np.abs(np.fft.rfft(tensao * np.hanning(len(tensao))))
+    f = np.fft.rfftfreq(len(tensao), 1 / 200_000)
+
+    def pico(f0, largura=300.0):
+        faixa = (f > f0 - largura) & (f < f0 + largura)
+        return espectro[faixa].max()
+
+    ruido = np.median(espectro[(f > 50_000) & (f < 60_000)])
+    for f0 in (16_000, 40_000, 72_000):
+        assert pico(f0, 1_600 if f0 == 40_000 else 300) > 30 * ruido, f0
+    assert 100 < pico(60, 5) / pico(16_000) < 1000                 # ~0,6 V na tomada: 50 dB abaixo da fundamental
