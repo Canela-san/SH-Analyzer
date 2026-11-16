@@ -113,15 +113,23 @@ class ServidorSSH:
                 stderr=asyncio.subprocess.PIPE, cwd=self.home, env=self.ambiente, start_new_session=True)
             entrada = asyncio.create_task(_bombear_entrada(processo, shell))
             vigia = asyncio.create_task(_matar_quando_o_canal_fechar(processo, shell))
+            copias = [asyncio.create_task(_copiar(shell.stdout, processo.stdout)),
+                      asyncio.create_task(_copiar(shell.stderr, processo.stderr))]
             try:
-                await asyncio.gather(_copiar(shell.stdout, processo.stdout), _copiar(shell.stderr, processo.stderr))
+                await asyncio.gather(*copias)
                 processo.exit(await shell.wait())
             except (asyncssh.Error, OSError):
                 pass
             finally:
-                entrada.cancel()
-                vigia.cancel()
+                for tarefa_auxiliar in (entrada, vigia, *copias):
+                    tarefa_auxiliar.cancel()
                 _matar(shell)
+                shell.stdin.close()
+                await asyncio.gather(entrada, vigia, *copias, return_exceptions=True)
+                # O que sobrou nos pipes (um comando cortado no meio: o cliente fechou o canal e a cópia parou) é lido
+                # até o fim, com o grupo já morto: os transportes do subprocesso fecham com o laço vivo, e não no
+                # coletor de lixo, depois dele (um aviso no Python 3.10).
+                await asyncio.gather(shell.stdout.read(), shell.stderr.read(), return_exceptions=True)
                 await shell.wait()
         finally:
             self._rodando.discard(tarefa)

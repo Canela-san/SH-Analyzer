@@ -97,7 +97,7 @@ def test_duas_placas_diferentes_ficam_separadas(tmp_path):
     estados = {p.nome: (p.estado, p.serie, p.impressao) for p in placas}
     assert estados == {"BeagleBone Black": ("disponivel", SERIE, usb.impressao),
                        "lab-bbb": ("disponivel", None, outra.impressao),
-                       "Simulador (BeagleBone Black)": ("simulador", SERIE_SIMULADA, None)}
+                       "Simulador": ("simulador", SERIE_SIMULADA, None)}
     lab = next(p for p in placas if p.nome == "lab-bbb")
     assert lab.chave == f"impressao:{outra.impressao}" and lab.melhor.tipo == "lan"
     assert lab.melhor.detalhe == "lab-bbb.local (mDNS)"
@@ -127,7 +127,7 @@ def test_as_conhecidas_dao_o_nome_e_as_ausentes_aparecem(tmp_path):
     lab, placas = rodar(cenario())
     por_nome = {p.nome: p for p in placas}
     assert set(por_nome) == {"Placa do laboratório", "A de casa", "A do DHCP", "A do campus",
-                             "Simulador (BeagleBone Black)"}
+                             "Simulador"}
     laboratorio = por_nome["Placa do laboratório"]
     assert (laboratorio.estado, laboratorio.serie, laboratorio.vista_em) == ("disponivel", "3714BBBK0001", 9_000.0)
     assert laboratorio.conhecida is not None and laboratorio.melhor.detalhe == "conhecida"

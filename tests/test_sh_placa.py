@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 from capturas_sinteticas import escrever_bin
 from sh_placa.agente import ClienteDoAgente, ErroDaPlaca, TransporteLocal
+from sh_placa.destino import Destino
 from sh_placa.estado import CapturaNaPlaca, EstadoDaPlaca, LogsDaPlaca, Problema, RelogioDaPlaca
 from sh_placa.simulador import CENARIOS, SERIE_SIMULADA, VERSAO_SIMULADA, Simulador, montar_sistema_falso
 
@@ -167,3 +168,30 @@ def test_a_ultima_linha_e_a_resposta():
     """Um aviso impresso antes (a placa às vezes escreve no stdout ao logar) não estraga a resposta."""
     cliente = ClienteDoAgente(Respostas(0, 'Aviso qualquer\n{"protocolo": 1, "firmware": "v1"}\n'))
     assert asyncio.run(cliente.versao())["firmware"] == "v1"
+
+
+@pytest.mark.parametrize("texto, esperado", [
+    ("192.168.6.2", Destino("192.168.6.2")),
+    ("  beaglebone.local ", Destino("beaglebone.local")),
+    ("lab@10.0.0.5", Destino("10.0.0.5", 22, "lab")),
+    ("10.0.0.5:2222", Destino("10.0.0.5", 2222)),
+    ("lab@[fe80::1]:2200", Destino("fe80::1", 2200, "lab")),
+    ("fe80::1", Destino("fe80::1")),
+])
+def test_o_endereco_digitado(texto, esperado):
+    assert Destino.de_texto(texto) == esperado
+
+
+@pytest.mark.parametrize("texto, trecho", [
+    ("", "escreva o endereço"), ("10.0.0.5:abc", "número"), ("10.0.0.5:70000", "porta inválida"),
+    ("placa da sala", "espaços"), ("@10.0.0.5", "usuário inválido"), ("[fe80::1", "falta o ]"),
+])
+def test_o_endereco_digitado_errado(texto, trecho):
+    with pytest.raises(ValueError, match=trecho):
+        Destino.de_texto(texto)
+
+
+def test_o_endereco_digitado_com_o_padrao_e_o_salto():
+    salto = Destino("gw.lab", 22, "eu")
+    assert Destino.de_texto("10.0.0.5", porta=2222, usuario="lab", salto=salto) == Destino("10.0.0.5", 2222, "lab", salto)
+    assert Destino.de_texto("pi@10.0.0.5:22", porta=2222, usuario="lab") == Destino("10.0.0.5", 22, "pi")

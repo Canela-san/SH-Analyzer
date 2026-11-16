@@ -312,7 +312,7 @@ class FonteSimulador:
 
     async def __call__(self, _conhecidas: Sequence[PlacaConhecida] = ()) -> list[Achado]:
         return [Achado(Caminho("simulador", None, "neste computador", 0.0), serie=SERIE_SIMULADA,
-                       nome="Simulador (BeagleBone Black)")]
+                       nome="Simulador")]
 
 
 def agrupar(achados: Sequence[Achado], conhecidas: Sequence[PlacaConhecida] = (),
