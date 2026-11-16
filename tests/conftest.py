@@ -17,11 +17,16 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # A configuração da interface (layout, tema, fontes) numa pasta temporária: nenhum teste lê nem grava a de quem
 # desenvolve. Vale também para os subprocessos (o teste de partida do aplicativo). Os testes que precisam de uma
 # configuração limpa usam a fixture ``config_limpa``.
+import atexit  # noqa: E402
+import shutil  # noqa: E402
 import tempfile  # noqa: E402
 
 os.environ["SH_ANALYZER_CONFIG"] = tempfile.mkdtemp(prefix="sh-analyzer-config-")
 os.environ["SH_ANALYZER_CACHE"] = tempfile.mkdtemp(prefix="sh-analyzer-cache-")     # as pirâmides, idem
 os.environ["SH_ANALYZER_LOG"] = tempfile.mkdtemp(prefix="sh-analyzer-log-")         # o log do aplicativo, idem
+# E saem no fim do processo (cada um do pytest-xdist tem as suas): sem isso, cada rodada deixava três pastas no /tmp.
+for _pasta in (os.environ["SH_ANALYZER_CONFIG"], os.environ["SH_ANALYZER_CACHE"], os.environ["SH_ANALYZER_LOG"]):
+    atexit.register(shutil.rmtree, _pasta, ignore_errors=True)
 
 import pytest  # noqa: E402
 from sh_placa import capturas_simuladas  # noqa: E402
