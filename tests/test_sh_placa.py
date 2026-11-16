@@ -11,7 +11,7 @@ import pytest
 from capturas_sinteticas import escrever_bin
 from sh_placa.agente import ClienteDoAgente, ErroDaPlaca, TransporteLocal
 from sh_placa.destino import Destino
-from sh_placa.estado import CapturaNaPlaca, EstadoDaPlaca, LogsDaPlaca, Problema, RelogioDaPlaca
+from sh_placa.estado import CapturaNaPlaca, EstadoDaPlaca, LogsDaPlaca, Problema, RelogioDaPlaca, texto_do_desvio
 from sh_placa.simulador import CENARIOS, SERIE_SIMULADA, VERSAO_SIMULADA, Simulador, montar_sistema_falso
 
 DIAGNOSTICO_DE_CADA_CENARIO = {
@@ -62,7 +62,7 @@ def test_as_conferencias_do_computador_e_a_ordem():
         ("erro", "pinos"), ("aviso", "disco"), ("aviso", "de_um_agente_mais_novo"), ("aviso", "firmware_diferente"),
         ("aviso", "relogio"), ("info", "capturas")]
     relogio = next(p for p in problemas if p.codigo == "relogio")
-    assert "-42 s do computador" in relogio.texto and relogio.correcao
+    assert "está 42 s atrasado em relação ao do computador" in relogio.texto and relogio.correcao
     assert "(v0.7.0) não é o deste aplicativo (v0.8-137-g9b0ae82)" in problemas[3].texto
     assert [p.codigo for p in estado.diagnostico(None, agora=agora - 41.0)] == ["pinos", "disco",
                                                                                "de_um_agente_mais_novo", "capturas"]
@@ -86,7 +86,33 @@ def test_o_relogio_entre_dois_limites():
     estado = EstadoDaPlaca({"conferencias": [], "relogio": {**dados, "utc": pedido + 41.7}},
                            recebido_em=pedido + 0.7, enviado_em=pedido)
     (problema,) = estado.diagnostico()
-    assert problema.codigo == "relogio" and "+41 s do computador" in problema.texto
+    assert problema.codigo == "relogio" and "41 s adiantado" in problema.texto
+
+
+@pytest.mark.parametrize("segundos, texto", [
+    (-41.7, "42 s atrasado"), (3.2, "3 s adiantado"), (-599, "9 min atrasado"), (8040, "2 h 14 adiantado"),
+    (-191_607.5, "2 dias e 5 h atrasado"), (86_400 + 60, "1 dia adiantado"),
+])
+def test_o_desvio_do_relogio_para_gente(segundos, texto):
+    assert texto_do_desvio(segundos) == texto
+
+
+def test_o_sinal_parado_de_uma_captura():
+    """O mínimo igual ao máximo num canal (o cabeçalho final da v9): o sinal parado. Em 0 nos canais todos, o ADC
+    mudo; um canal só, a entrada saturada ou o ADC travado; sem a medida (antes da v9), nada a dizer."""
+    def captura(parados, canais=(0, 1)):
+        return CapturaNaPlaca.de_json({"arquivo": "conferir_1015.bin", "bytes": 12_288, "modificado": 0.0, "cabecalho": {
+            "crc_valido": True, "final": True, "completa": True, "canais": list(canais), "canais_parados": parados}})
+
+    mudo = captura([{"canal": 0, "codigo": 0}, {"canal": 1, "codigo": 0}])
+    assert mudo.adc_mudo and mudo.canais_parados == [(0, 0), (1, 0)]
+    assert mudo.problemas == ["ficou em 0 em todas as amostras: o ADC não respondeu"]
+    saturado = captura([{"canal": 1, "codigo": 65535}])
+    assert not saturado.adc_mudo and saturado.problemas == ["o canal 1 ficou parado em 0xFFFF: saturado, ou o ADC "
+                                                            "travado"]
+    assert not captura([{"canal": 0, "codigo": 0}]).adc_mudo                        # o outro canal tem sinal
+    boa, antiga = captura([]), captura(None)
+    assert boa.problemas == antiga.problemas == [] and antiga.canais_parados is None and not antiga.adc_mudo
 
 
 def test_o_relogio_do_simulador():

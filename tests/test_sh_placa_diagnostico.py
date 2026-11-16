@@ -81,9 +81,37 @@ def test_o_relogio_sem_ntp_e_o_codigo_desconhecido():
     assert itens["relogio"].nivel == "aviso" and itens["relogio"].correcao == "relogio"
     assert [p.codigo for p in itens["relogio"].problemas] == ["relogio", "relogio_sem_ntp"]
     assert itens["relogio"].resumo.startswith("−41,70 s do computador")
+    # Dias de diferença (a placa que ficou desligada sem a bateria do RTC): o tempo legível, e os segundos ao lado.
+    estado = EstadoDaPlaca({"conferencias": [], "relogio": {"utc": agora - 191_607.5, "sincronizado": False}},
+                           recebido_em=agora)
+    (relogio,) = [i for i in itens_do_diagnostico(estado, agora=agora) if i.chave == "relogio"]
+    assert relogio.resumo == "2 dias e 5 h atrasado (−191\u2009608 s) · sem NTP"
+    assert "está 2 dias e 5 h atrasado em relação ao do computador" in relogio.problemas[0].texto
     assert itens["outros"].nivel == "aviso" and itens["outros"].problemas[0].codigo == "de_um_agente_mais_novo"
     with pytest.raises(ValueError, match="saúde"):
         itens_do_diagnostico(EstadoDaPlaca({"placa": {}}))
+
+
+def test_a_placa_de_aquisicao_pela_captura_mais_recente():
+    """O item da placa de aquisição: o sinal da captura mais recente (o ADC que não respondeu fica em 0)."""
+    def item(ultima, conferencias=()):
+        estado = EstadoDaPlaca({"conferencias": list(conferencias), "ultima_captura": ultima})
+        return next(i for i in itens_do_diagnostico(estado) if i.chave == "aquisicao")
+
+    def captura(parados, canais=(0, 1)):
+        return {"arquivo": "conferir_1015.bin", "bytes": 1, "modificado": 0.0,
+                "cabecalho": {"canais": list(canais), "canais_parados": parados}}
+
+    assert item(None).resumo.startswith("nenhuma captura na placa") and item(None).nivel == "ok"
+    assert item(captura([])).resumo == "sinal nos 2 canais da captura mais recente (conferir_1015.bin)"
+    assert item(captura([], canais=(3,))).resumo == "sinal no canal da captura mais recente (conferir_1015.bin)"
+    assert "não traz o sinal de cada canal" in item(captura(None)).resumo
+    mudo = item(captura([{"canal": 0, "codigo": 0}, {"canal": 1, "codigo": 0}]),
+                [{"nivel": "aviso", "codigo": "adc_mudo", "texto": "O ADC não respondeu."}])
+    assert mudo.nivel == "aviso" and mudo.resumo == "a captura mais recente (conferir_1015.bin) ficou em 0 em todas as amostras"
+    assert [p.codigo for p in mudo.problemas] == ["adc_mudo"]
+    saturado = item(captura([{"canal": 1, "codigo": 65535}]))
+    assert saturado.resumo == "canais parados na captura mais recente (conferir_1015.bin): o 1 em 0xFFFF"
 
 
 def test_o_relatorio():

@@ -38,6 +38,23 @@ class Problema:
         return cls(nivel, str(d.get("codigo") or "desconhecido"), str(d.get("texto") or ""), d.get("correcao") or None)
 
 
+def texto_do_desvio(segundos: float) -> str:
+    """Quanto a placa está adiantada (+) ou atrasada (-), para gente: "42 s atrasado", "3 min adiantado", "2 h 14
+    atrasado", "2 dias e 5 h atrasado"."""
+    lado = "adiantado" if segundos > 0 else "atrasado"
+    s = abs(segundos)
+    if s < 60:
+        quanto = f"{s:.0f} s"
+    elif s < 3600:
+        quanto = f"{s // 60:.0f} min"
+    elif s < 86_400:
+        quanto = f"{s // 3600:.0f} h {s % 3600 // 60:02.0f}"
+    else:
+        dias, horas = int(s // 86_400), int(s % 86_400 // 3600)
+        quanto = (f"{dias} dia" if dias == 1 else f"{dias} dias") + (f" e {horas} h" if horas else "")
+    return f"{quanto} {lado}"
+
+
 def _ordenar(problemas: list[Problema]) -> list[Problema]:
     return sorted(problemas, key=lambda p: NIVEIS.index(p.nivel))
 
@@ -179,6 +196,12 @@ class EstadoDaPlaca:
         return None if livre is None else livre * 1024 / TAXA_DE_REFERENCIA_BYTES_S / 60
 
     @property
+    def ultima_captura(self) -> CapturaNaPlaca | None:
+        """A captura mais recente na placa, com o cabeçalho (só na ``saude``; o sinal dela diz se o ADC respondeu)."""
+        dados = self._campo("ultima_captura")
+        return CapturaNaPlaca.de_json(dados) if isinstance(dados, dict) else None
+
+    @property
     def relogio(self) -> RelogioDaPlaca | None:
         dados = self._campo("relogio")
         return RelogioDaPlaca.de_json(dados, self.recebido_em, self.enviado_em) if isinstance(dados, dict) else None
@@ -206,9 +229,9 @@ class EstadoDaPlaca:
         relogio = self.relogio
         diferenca = None if relogio is None else relogio.diferenca_s(agora)
         if diferenca is not None and abs(diferenca) > DIFERENCA_DE_RELOGIO_S:
-            problemas.append(Problema("aviso", "relogio", f"O relógio da placa está {diferenca:+.0f} s do computador "
-                                      "(ela não tem bateria de RTC): a hora gravada nas capturas sai errada.",
-                                      "Acertar o relógio pelo do computador."))
+            problemas.append(Problema("aviso", "relogio", f"O relógio da placa está {texto_do_desvio(diferenca)} em "
+                                      "relação ao do computador (ela não tem bateria de RTC): a hora gravada nas "
+                                      "capturas sai errada.", "Acertar o relógio pelo do computador."))
         return _ordenar(problemas)
 
     def pronta_para_capturar(self, versao_do_aplicativo: str | None = None, agora: float | None = None) -> bool:
@@ -296,6 +319,21 @@ class CapturaNaPlaca:
         return _campo(self.cabecalho, "duracao_s")
 
     @property
+    def canais_parados(self) -> list[tuple[int, int]] | None:
+        """``[(canal, código)]`` dos canais em que o sinal ficou parado (o mínimo igual ao máximo, em todas as amostras);
+        ``None`` sem essa medida (antes da v9, ou sem o cabeçalho final)."""
+        parados = _campo(self.cabecalho, "canais_parados")
+        if not isinstance(parados, list):
+            return None
+        return [(int(p["canal"]), int(p["codigo"])) for p in parados if isinstance(p, dict)]
+
+    @property
+    def adc_mudo(self) -> bool:
+        """Todos os canais parados em 0: o ADC não respondeu (o ``SAIDA_ADC_MUDO`` do ``ler_adc``)."""
+        parados = self.canais_parados
+        return bool(parados) and len(parados) == len(self.canais) and all(codigo == 0 for _c, codigo in parados)
+
+    @property
     def inicio(self) -> float:
         """Quando a captura começou (o ``inicio_utc`` do cabeçalho; sem ele, a data do arquivo)."""
         inicio = _numero(_campo(self.cabecalho, "inicio_utc"))
@@ -322,6 +360,11 @@ class CapturaNaPlaca:
             problemas.append(f"{c['amostras_atrasadas']} amostra(s) atrasada(s): a taxa real é menor")
         if c.get("quadros_sdo_ruido"):
             problemas.append(f"{c['quadros_sdo_ruido']} quadro(s) com ruído na linha SDO")
+        if self.adc_mudo:
+            problemas.append("ficou em 0 em todas as amostras: o ADC não respondeu")
+        else:
+            for canal, codigo in self.canais_parados or ():
+                problemas.append(f"o canal {canal} ficou parado em 0x{codigo:04X}: saturado, ou o ADC travado")
         return problemas
 
 

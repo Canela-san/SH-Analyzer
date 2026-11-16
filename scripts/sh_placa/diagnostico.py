@@ -19,7 +19,7 @@ import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from .estado import NIVEIS, EstadoDaPlaca, Problema
+from .estado import NIVEIS, EstadoDaPlaca, Problema, texto_do_desvio
 from .registro import Entrada
 
 TAXA_DE_REFERENCIA_HZ = 400_000
@@ -34,6 +34,7 @@ CATEGORIAS = (
     ("pinos", "Pinos da PRU", ("pinos", "pinos_desconhecidos")),
     ("overlays", "Overlays e uEnv.txt", ("overlay_da_pru", "audio_hdmi", "audio_hdmi_no_proximo_boot", "uenv_ausente",
                                          "kernel_trocado", "uenv_estranho")),
+    ("aquisicao", "Placa de aquisição", ("adc_mudo", "sinal_parado")),
     ("disco", "Cartão", ("disco_cheio", "disco", "capturas")),
     ("sistema", "Sistema", ("temperatura", "carga", "memoria")),
     ("ferramentas", "Ferramentas", ("ferramentas",)),
@@ -87,9 +88,13 @@ def _resumo_do_relogio(e: EstadoDaPlaca, agora: float | None) -> str:
     relogio = e.relogio
     if relogio is None:
         return "sem a hora da placa"
-    partes = [f"{_decimal(relogio.diferenca_s(agora), 2).replace('-', '−')} s do computador"]
-    if relogio.incerteza_s is not None:
-        partes[0] += f" (±{_decimal(relogio.incerteza_s, 2)} s)"
+    diferenca = relogio.diferenca_s(agora)
+    if abs(diferenca) < 60:
+        partes = [f"{_decimal(diferenca, 2).replace('-', '−')} s do computador"]
+        if relogio.incerteza_s is not None:
+            partes[0] += f" (±{_decimal(relogio.incerteza_s, 2)} s)"
+    else:                                     # dias de diferença: o tempo legível, e os segundos para quem confere
+        partes = [f"{texto_do_desvio(diferenca)} ({_milhares(diferenca)} s)"]
     partes.append(f"sincronizado ({relogio.fonte})" if relogio.sincronizado else "sem NTP")
     return " · ".join(partes)
 
@@ -151,6 +156,28 @@ def _resumo_dos_overlays(e: EstadoDaPlaca) -> str:
     return " · ".join(partes)
 
 
+def _milhares(segundos: float) -> str:
+    """"−191 607": o número inteiro, com o espaço fino dos milhares e o menos tipográfico."""
+    return f"{segundos:,.0f}".replace(",", "\u2009").replace("-", "−")
+
+
+def _resumo_da_aquisicao(e: EstadoDaPlaca) -> str:
+    ultima = e.ultima_captura
+    if ultima is None:
+        return "nenhuma captura na placa para conferir o sinal (a conferência curta do ADC chega com o Capturar)"
+    nome = ultima.arquivo.rsplit("/", 1)[-1]
+    parados = ultima.canais_parados
+    if parados is None:
+        return f"a captura mais recente ({nome}) não traz o sinal de cada canal (de antes da v9, ou interrompida)"
+    if not parados:
+        n = len(ultima.canais)
+        return f"sinal {'no canal' if n == 1 else f'nos {n} canais'} da captura mais recente ({nome})"
+    if ultima.adc_mudo:
+        return f"a captura mais recente ({nome}) ficou em 0 em todas as amostras"
+    lista = _lista([f"o {canal} em 0x{codigo:04X}" for canal, codigo in parados])
+    return f"canais parados na captura mais recente ({nome}): {lista}"
+
+
 def _resumo_do_disco(e: EstadoDaPlaca) -> str:
     disco = e.disco_bytes
     if disco is None:
@@ -188,8 +215,8 @@ def _resumo_das_ferramentas(e: EstadoDaPlaca) -> str:
 
 
 RESUMOS = {"pru": _resumo_da_pru, "memoria_dos_buffers": _resumo_da_memoria, "pinos": _resumo_dos_pinos,
-           "overlays": _resumo_dos_overlays, "disco": _resumo_do_disco, "sistema": _resumo_do_sistema,
-           "ferramentas": _resumo_das_ferramentas}
+           "overlays": _resumo_dos_overlays, "aquisicao": _resumo_da_aquisicao, "disco": _resumo_do_disco,
+           "sistema": _resumo_do_sistema, "ferramentas": _resumo_das_ferramentas}
 """O resumo de cada item; o do relógio e o do firmware precisam da hora e da versão do aplicativo."""
 
 
