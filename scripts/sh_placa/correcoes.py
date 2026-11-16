@@ -6,7 +6,8 @@
 **O sudo** (só o relógio precisa: o ``config-pin`` escreve no pinmux, que é do grupo ``gpio``, e o ``debian`` está
 nele): a senha vai pelo stdin para um askpass num diretório temporário em ``/dev/shm`` (a RAM), só do usuário. O
 ``sudo -A -v`` a lê uma vez, o arquivo some logo depois, e o comando de root roda com ``sudo -n``, com a credencial já
-validada nesta sessão do shell; no fim, ``sudo -k``. **A senha nunca está numa linha de comando**, num argumento, no
+validada nesta sessão do shell; no fim, ``sudo -k``. (``SHAN_RAM`` troca a ``/dev/shm`` só nos testes, como o
+``SH_ANALYZER_RAM`` do ``BeagleBone_Setup.sh``: o servidor do teste dá a cada um a sua.) **A senha nunca está numa linha de comando**, num argumento, no
 registro de atividade ou no log. Uma senha errada é uma tentativa só (o askpass se apaga ao ser lido), e a resposta é
 :class:`ErroDoSudo`, com ``senha_recusada``.
 
@@ -41,7 +42,7 @@ TEMPO_DO_SUDO_S = 30.0
 ARQUIVO_DO_RELOGIO_SIMULADO = "run/relogio-acertado"
 
 _COM_SUDO = """umask 077
-d=$(mktemp -d "/dev/shm/sh-analyzer.XXXXXX") || exit {sem_diretorio}
+d=$(mktemp -d "${{SHAN_RAM:-/dev/shm}}/sh-analyzer.XXXXXX") || exit {sem_diretorio}
 trap 'rm -rf "$d"; sudo -k' EXIT
 IFS= read -r senha || senha=
 printf '%s\\n' "$senha" > "$d/senha"

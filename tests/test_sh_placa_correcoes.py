@@ -42,11 +42,6 @@ def conexao(tmp_path, placa: ServidorSSH, registro: RegistroDeAtividade) -> Cone
                       senha=placa.senha, confirmar_host=confiar)
 
 
-def sobras_na_ram() -> set[str]:
-    pasta = Path("/dev/shm")
-    return {p.name for p in pasta.glob("sh-analyzer.*")} if pasta.is_dir() else set()
-
-
 def test_os_pinos_sao_os_do_setup():
     """Os pinos e os modos, na ordem do ``firmware/setup.sh`` (o contrato: o setup e o "Corrigir" fazem o mesmo)."""
     linhas = re.findall(r"^config-pin (P\d_\d+) (\w+)", SETUP.read_text(encoding="utf-8"), re.MULTILINE)
@@ -79,7 +74,6 @@ def test_corrigir_os_pinos(tmp_path):
 def test_acertar_o_relogio_pelo_sudo(tmp_path, caplog):
     caplog.set_level(logging.DEBUG)
     registro = RegistroDeAtividade()
-    antes_na_ram = sobras_na_ram()
 
     async def cenario():
         async with ServidorSSH(tmp_path / "placa", senha_do_sudo=SENHA_DO_SUDO) as placa:
@@ -99,13 +93,12 @@ def test_acertar_o_relogio_pelo_sudo(tmp_path, caplog):
     assert entrada.comando == roteiro_do_relogio() and entrada.codigo == 0
     for texto in (registro.em_texto(), caplog.text, *placa.comandos, *placa.comandos_de_root):
         assert SENHA_DO_SUDO not in texto
-    assert sobras_na_ram() == antes_na_ram                            # o askpass e a senha saíram da /dev/shm
+    assert list(placa.ram.iterdir()) == []                            # o askpass e a senha saíram da RAM
     assert not (placa.home / ".sudo-validado").exists()               # o sudo -k no fim
 
 
 def test_a_senha_errada_do_sudo(tmp_path):
     registro = RegistroDeAtividade()
-    antes_na_ram = sobras_na_ram()
 
     async def cenario():
         async with ServidorSSH(tmp_path / "placa", senha_do_sudo=SENHA_DO_SUDO) as placa:
@@ -118,6 +111,6 @@ def test_a_senha_errada_do_sudo(tmp_path):
     placa, erro = asyncio.run(cenario())
     assert erro.senha_recusada and placa.comandos_de_root == []      # nada rodou como root
     assert not (placa.raiz / ARQUIVO_DO_RELOGIO_SIMULADO).exists()
-    assert sobras_na_ram() == antes_na_ram
+    assert list(placa.ram.iterdir()) == []
     (entrada,) = [e for e in registro.entradas if e.tipo == "comando"]
     assert entrada.codigo == 98 and "errada" not in registro.em_texto()

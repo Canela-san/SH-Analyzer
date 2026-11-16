@@ -96,8 +96,11 @@ class ServidorSSH:
             (binarios / nome).write_text(roteiro)
             (binarios / nome).chmod(0o755)
         self.senha_do_sudo = senha if senha_do_sudo is None else senha_do_sudo
+        self.ram = self.pasta / "ram"                    # a /dev/shm deste servidor (o SHAN_RAM do sudo)
+        self.ram.mkdir(exist_ok=True)
         self.ambiente = {"HOME": str(self.home), "PATH": f"{binarios}{os.pathsep}{os.environ.get('PATH', '')}",
-                         "SHAN_RAIZ": str(self.raiz), "LANG": "C.UTF-8", "SHAN_SENHA_DO_SUDO": self.senha_do_sudo}
+                         "SHAN_RAIZ": str(self.raiz), "LANG": "C.UTF-8", "SHAN_SENHA_DO_SUDO": self.senha_do_sudo,
+                         "SHAN_RAM": str(self.ram)}
 
     @property
     def authorized_keys(self) -> Path:
