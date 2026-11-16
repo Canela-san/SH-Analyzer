@@ -113,6 +113,8 @@ def test_o_tamanho_da_tela_chega_ao_pty(qtbot, placas, abrir):
     digitar(qtbot, a, "echo tamanho-1 $(stty size)")
     linhas, colunas = map(int, esperar(qtbot, a, r"^tamanho-1 (\d+) (\d+)$").groups())
     assert (colunas, linhas) == (a.tela.colunas, a.tela.linhas) and colunas > 80
+    aberto = next(e.descricao for e in area.conexao.registro.entradas if e.descricao.startswith("terminal aberto"))
+    assert f"{colunas}×{linhas}" in aberto                                  # o PTY já abriu no tamanho da tela
     area.resize(1000, 640)                                                  # a janela menor
     qtbot.waitUntil(lambda: a.tela.colunas < colunas)
     qtbot.wait(150)                                                         # o aviso do tamanho, depois do arrastar

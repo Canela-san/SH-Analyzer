@@ -28,7 +28,7 @@ from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QFont, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QFrame,
@@ -501,9 +501,9 @@ class Terminal(QWidget):
         self.do_sistema.setEnabled(c.conexao_ssh is not None)
         for botao in self.atalhos:
             botao.setEnabled(any(a.aberta for a in self.abas_abertas))
-        if chegou:                           # a placa (re)conectou: as abas que caíram voltam
+        if chegou:                           # a placa (re)conectou: as abas que caíram (ou nem abriram) voltam
             for aba in self.abas_abertas:
-                if aba.estado == "caiu":
+                if aba.estado in ("novo", "caiu"):
                     aba.abrir()
             if not self.abas.count() and self.isVisible():
                 self.nova_aba()
@@ -540,7 +540,9 @@ class Terminal(QWidget):
         fechar.clicked.connect(lambda _=False, a=aba: self.pedir_para_fechar(a))
         self.abas.tabBar().setTabButton(i, QTabBar.ButtonPosition.RightSide, fechar)
         self.abas.setCurrentWidget(aba)
-        aba.abrir()                          # no tamanho que ela tem agora; o do layout chega logo depois
+        # Abre na volta seguinte do laço, depois do layout: o PTY já nasce no tamanho da tela (aberto aqui, nasceria
+        # no tamanho de antes do layout, e o registro e a gravação diriam esse).
+        QTimer.singleShot(0, aba, aba.abrir)
         self.atualizar()
         self._focar()
         return aba
