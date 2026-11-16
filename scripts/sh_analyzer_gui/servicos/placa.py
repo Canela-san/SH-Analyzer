@@ -8,10 +8,10 @@ logo antes do ``terminou``: quem olha a chamada nunca a vê terminada sem o sina
 fila das pesadas mostrou nas tarefas). :meth:`Chamada.cancelar` entrega o ``CancelledError`` à corrotina no
 ``await`` em que ela estiver; a chamada fica ``cancelada`` quando a corrotina terminou a limpeza.
 
-**Uma chamada que falha** fica ``falhou``, com o motivo em ``erro``. O motivo esperado (um ``ErroDaPlaca``, um
-``OSError`` da rede, um tempo esgotado) fica só aí, para quem pediu mostrar no lugar certo; outra exceção é um
-defeito (``inesperado``): vai também para o log e para o diálogo de erro inesperado (``servicos/erros.py``), como
-nas tarefas.
+**Uma chamada que falha** fica ``falhou``, com o motivo em ``erro`` (o texto) e ``excecao`` (quem pediu decide pelo
+tipo: a chave de host trocada, a senha recusada). O motivo esperado (um ``ErroDaPlaca``, um ``OSError`` da rede, um
+tempo esgotado) fica só aí, para quem pediu mostrar no lugar certo; outra exceção é um defeito (``inesperado``): vai
+também para o log e para o diálogo de erro inesperado (``servicos/erros.py``), como nas tarefas.
 
 **A thread do laço nasce na primeira chamada** (quem não usa a Aquisição não a tem) e **morre no**
 :meth:`ServicoDaPlaca.encerrar`, ao fechar a janela: o que ainda roda é cancelado e esperado, e nenhuma thread fica.
@@ -50,6 +50,7 @@ class Chamada(QObject):
         self.estado = "rodando"
         self.resultado = None
         self.erro = ""
+        self.excecao: BaseException | None = None
         self.inesperado = False              # falhou por um defeito, e não pela placa, pela rede ou pelo tempo
         self._execucao: Execucao | None = None
         self._acabou.connect(self._ao_acabar)
@@ -82,11 +83,12 @@ class Chamada(QObject):
         elif isinstance(excecao, ERROS_ESPERADOS):
             log.warning("a chamada %r à placa falhou: %s", self.nome, excecao)
             self.erro, self.estado = str(excecao) or type(excecao).__name__, "falhou"
+            self.excecao = excecao
         else:
             relatar(excecao, f"na chamada {self.nome!r} à placa")
             self.erro = f"erro inesperado ({type(excecao).__name__}: {excecao})" if str(excecao) \
                 else f"erro inesperado ({type(excecao).__name__})"
-            self.estado, self.inesperado = "falhou", True
+            self.estado, self.inesperado, self.excecao = "falhou", True, excecao
         self.terminou.emit(self)
 
     def __repr__(self) -> str:

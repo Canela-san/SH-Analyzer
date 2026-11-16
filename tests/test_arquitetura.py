@@ -215,6 +215,18 @@ def test_a_rede_da_placa_fica_no_sh_placa():
                     f"{arquivo.relative_to(SCRIPTS)}:{no.lineno}: importa {nome} (a rede da placa mora no sh_placa)")
 
 
+def test_a_janela_abre_sem_carregar_a_rede_da_placa():
+    """Conferido num processo novo: importar a janela não traz o asyncssh, o zeroconf, o pyserial nem o keyring
+    (~0,7 s ao todo). A Aquisição os carrega no laço da placa, na primeira busca ou conexão
+    (``servicos/conexao_da_placa.py``), e quem só analisa não paga por eles."""
+    pytest.importorskip("PySide6")
+    codigo = ("import sys, sh_analyzer_gui.janela\n"
+              f"print(sorted(k for k in sys.modules if k.split('.')[0] in {sorted(REDE_DA_PLACA)!r}))")
+    saida = subprocess.run([sys.executable, "-c", codigo], capture_output=True, text=True, check=True,
+                           env={**os.environ, "PYTHONPATH": str(SCRIPTS), "QT_QPA_PLATFORM": "offscreen"})
+    assert saida.stdout.strip() == "[]", saida.stdout + saida.stderr
+
+
 def test_a_interface_so_fala_com_o_motor_pela_api():
     """``sh_analyzer_gui`` importa do motor só ``supraharmonicos.api`` (docs/gui-plan.md, 8.1): o resto do motor
     pode mudar sem quebrar a interface, e a paridade com a CLI fica num lugar só (``tests/test_api.py``)."""

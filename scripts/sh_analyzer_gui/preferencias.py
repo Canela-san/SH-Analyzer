@@ -14,7 +14,8 @@ sem erro.
 * **As unidades próprias** (``dados/unidades.py``) ficam gravadas como JSON: ``[{"simbolo", "grandeza",
   "prefixos"}]``.
 * **As placas conhecidas** (``sh_placa/conhecidas.py``: as em que o usuário já conectou, pelo nº de série, com o nome,
-  a chave de host e os endereços), também como JSON.
+  a chave de host, os endereços e se o relógio dela é acertado a cada conexão), também como JSON. A chave SSH do
+  aplicativo e os hosts conhecidos ficam numa pasta ao lado da configuração (:func:`pasta_da_placa`).
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from sh_placa import conhecidas
 from supraharmonicos.api import PASTA_DAS_SONDAS_PADRAO
 
 from .componentes.numeros import SEPARADORES, definir_separador_decimal
-from .configuracao import gravar, ler_texto
+from .configuracao import configuracoes, gravar, ler_texto
 from .dados import cache as cache_de_piramides
 from .dados import materializacao, unidades
 from .graficos.faixa import definir_prefixos_nos_eixos
@@ -165,6 +166,12 @@ def placas_conhecidas() -> tuple[conhecidas.PlacaConhecida, ...]:
 
 def mudar_placas_conhecidas(placas: Iterable[conhecidas.PlacaConhecida]) -> None:
     gravar(CHAVE_DAS_PLACAS, json.dumps(conhecidas.para_lista(placas), ensure_ascii=False))
+
+
+def pasta_da_placa() -> Path:
+    """A pasta da chave SSH do aplicativo (``id_ed25519``, só o dono lê) e dos hosts conhecidos (``known_hosts``, no
+    formato do OpenSSH): ao lado do arquivo da configuração, em ``placa/`` (docs/gui-plan.md, 11.2)."""
+    return Path(configuracoes().fileName()).parent / "placa"
 
 
 # ------------------------------------------------------------------ as pastas
