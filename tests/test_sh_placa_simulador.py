@@ -4,6 +4,7 @@ que cai no meio de uma transferência e a retomada, o relógio errado e o acerto
 (``sh_placa/capturas_simuladas.py``): a rede de 60 Hz com supraharmônicos, que o motor lê como as da placa."""
 
 import asyncio
+import gc
 import sys
 import time
 
@@ -101,8 +102,11 @@ def test_a_vazao_do_usb(tmp_path):
 
 def test_a_conexao_que_cai_no_meio_da_transferencia_e_a_retomada(tmp_path):
     """No cenário da conexão que cai: a transferência é cortada perto de 40 % do arquivo (a parte baixada fica), a
-    conexão volta, e a retomada continua dali, sem cair de novo, com a cópia conferida."""
+    conexão volta, e a retomada continua dali, sem cair de novo, com a cópia conferida. Os pedidos de leitura em voo
+    na queda terminam todos (nenhuma tarefa com a exceção sem dono, que o asyncio só acusaria no coletor de lixo)."""
     async def cenario():
+        sem_dono = []
+        asyncio.get_running_loop().set_exception_handler(lambda _laco, contexto: sem_dono.append(contexto["message"]))
         async with ServidorDoSimulador(tmp_path / "placa", "conexao_instavel", vazao_bytes_s=None) as placa:
             (captura,) = [f for f in (placa.home / "firmware").glob("rede_bloco_A_*.bin")]
             captura.write_bytes(captura.read_bytes()[:4096])                     # a v9 inteira, de 1 MiB
@@ -115,17 +119,50 @@ def test_a_conexao_que_cai_no_meio_da_transferencia_e_a_retomada(tmp_path):
             with pytest.raises(ErroDeConexao, match="caiu"):
                 await baixar(OrigemSSH(c), str(captura), local, bloco=32 * 1024)
             await asyncio.sleep(0.1)
+            gc.collect()
             parcial = local.with_name(local.name + SUFIXO_PARCIAL).stat().st_size
             await c.conectar()                                                   # o cabo voltou
             await baixar(OrigemSSH(c), str(captura), local, bloco=32 * 1024)
             resultado = await conferir(OrigemSSH(c), str(captura), local)
             await c.fechar()
-            return captura.stat().st_size, parcial, quedas, resultado
+            gc.collect()
+            return captura.stat().st_size, parcial, quedas, resultado, sem_dono
 
-    total, parcial, quedas, resultado = asyncio.run(cenario())
+    total, parcial, quedas, resultado, sem_dono = asyncio.run(cenario())
+    assert sem_dono == []
     assert len(quedas) == 1 and "caiu" in quedas[0]
     assert FRACAO_DA_QUEDA * total * 0.5 <= parcial < total                       # parou no meio, e a parte ficou
     assert resultado.ok and resultado.como == "crc32"
+
+
+def test_a_leitura_cancelada_e_a_queda_logo_depois(tmp_path):
+    """Um pedido de leitura cancelado com a resposta ainda a caminho (o :func:`baixar` cancela os outros quando um
+    falha) e a conexão que cai logo depois: nada fica rodando nem falha sem dono. O leitor paralelo do asyncssh (o
+    ``block_size`` padrão do ``open``) deixava as tarefas dele para trás no cancelamento, e elas falhavam na queda."""
+    async def cenario():
+        sem_dono = []
+        asyncio.get_running_loop().set_exception_handler(lambda _laco, contexto: sem_dono.append(contexto["message"]))
+        async with ServidorDoSimulador(tmp_path / "placa", vazao_bytes_s=100_000) as placa:
+            captura = placa.home / "firmware" / "longa.bin"
+            gravar_captura(captura, inicio=time.time() - 60, blocos=2, sistema=Sistema("k", "s", "p"),
+                           amostras_por_bloco=1 << 18)
+            c = entrar(placa, ao_cair=lambda _motivo: None)
+            await c.conectar()
+            leitor = await OrigemSSH(c).abrir(str(captura))
+            pedido = asyncio.ensure_future(leitor.ler(0, 256 * 1024))       # ~2,6 s no "cabo" lento
+            await asyncio.sleep(0.3)
+            pedido.cancel()
+            await asyncio.gather(pedido, return_exceptions=True)
+            cancelado = pedido.cancelled()
+            del pedido                                                          # e o que ele ainda segurava
+            placa.derrubar()
+            await asyncio.sleep(0.3)
+            await leitor.fechar()
+            await c.fechar()
+        gc.collect()
+        return cancelado, sem_dono
+
+    assert asyncio.run(cenario()) == (True, [])
 
 
 def test_a_conexao_que_cai_de_tempos_em_tempos(tmp_path, monkeypatch):

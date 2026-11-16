@@ -75,6 +75,28 @@ def test_baixar_e_conferir_a_v9(tmp_path):
     assert entrada.codigo == 0 and entrada.comando == f"sftp get {original}"
 
 
+def test_o_servidor_que_responde_menos_que_o_pedido(tmp_path, monkeypatch):
+    """Um servidor do SFTP pode responder com menos bytes que o pedido (o OpenSSH 7.9 da placa responde no máximo
+    64 KiB, sem dizer o limite): o que falta é pedido de novo, e um arquivo de tamanho quebrado chega inteiro."""
+    import asyncssh
+
+    ler = asyncssh.SFTPServer.read
+    monkeypatch.setattr(asyncssh.SFTPServer, "read", lambda self, f, deslocamento, n: ler(self, f, deslocamento,
+                                                                                         min(n, 10_000)))
+
+    async def cenario():
+        async with ServidorSSH(tmp_path / "placa") as placa:
+            original = firmware(placa) / "quebrado.bin"
+            original.write_bytes(np.random.default_rng(7).bytes(1_234_567))
+            local = tmp_path / "copia.bin"
+            async with conexao(tmp_path, placa, RegistroDeAtividade()) as c:
+                tamanho = await baixar(OrigemSSH(c), str(original), local, bloco=100_000)
+            return original.read_bytes(), local.read_bytes(), tamanho
+
+    original, copia, tamanho = asyncio.run(cenario())
+    assert copia == original and tamanho == len(original)
+
+
 def test_a_queda_no_meio_e_a_retomada(tmp_path):
     registro = RegistroDeAtividade()
 

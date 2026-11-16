@@ -50,7 +50,7 @@ log = logging.getLogger(__name__)
 
 BLOCO = 256 * 1024
 EM_PARALELO = 8
-"""Os pedidos de leitura em voo: 2 MiB em trânsito, o bastante para esconder a ida e volta do USB e da LAN."""
+"""Os blocos em voo: 2 MiB em trânsito, o bastante para esconder a ida e volta do USB e da LAN."""
 INTERVALO_DA_CAPTURA_S = 10.0
 SUFIXO_PARCIAL = ".parcial"
 TEMPO_DO_SHA256_S = 300.0
@@ -80,16 +80,54 @@ def _erro_da_rede(e: BaseException, o_que: str) -> ErroDeConexao:
 
 
 class _LeitorSFTP:
-    def __init__(self, arquivo, caminho: str):
-        self._arquivo, self._caminho = arquivo, caminho
+    """Um arquivo aberto pelo SFTP, com ``block_size=0`` (cada ``read`` do asyncssh é um pedido ``READ`` só). Um bloco
+    é lido em pedidos de até ``maximo`` bytes, todos de uma vez: o que o servidor atende num pedido (o
+    ``limits@openssh.com``; sem ele, os 16 KiB seguros do asyncssh, o caso da placa, com o OpenSSH 7.9 da imagem
+    Debian 10).
+
+    O leitor paralelo do asyncssh (o ``block_size`` padrão) faz o mesmo, mas deixa as tarefas dele para trás quando a
+    leitura é cancelada (o :func:`baixar` cancela as outras quando uma falha), e elas falhavam sem dono na queda da
+    conexão. Aqui, os pedidos de uma leitura que falha ou é cancelada são cancelados e esperados. Na placa pelo USB
+    (16/11/2026), os dois baixam a 4,5 MiB/s."""
+
+    def __init__(self, arquivo, caminho: str, maximo: int):
+        self._arquivo, self._caminho, self._maximo = arquivo, caminho, maximo
 
     async def ler(self, deslocamento: int, tamanho: int) -> bytes:
+        """``tamanho`` bytes a partir de ``deslocamento``; menos só no fim do arquivo."""
+        fim = deslocamento + tamanho
+        pedacos = [(d, min(self._maximo, fim - d)) for d in range(deslocamento, fim, self._maximo)]
+        pedidos = [asyncio.ensure_future(self._ler_pedaco(d, n)) for d, n in pedacos]
+        try:
+            partes = await asyncio.gather(*pedidos)
+        except BaseException:
+            for pedido in pedidos:
+                pedido.cancel()
+            await asyncio.gather(*pedidos, return_exceptions=True)
+            raise
+        dados = bytearray()
+        for (_d, n), parte in zip(pedacos, partes):
+            dados += parte
+            if len(parte) < n:                      # o fim do arquivo
+                break
+        return bytes(dados)
+
+    async def _ler_pedaco(self, deslocamento: int, tamanho: int) -> bytes:
+        """Um pedido; o que faltar é pedido de novo (o servidor do SFTP pode responder com menos que o pedido)."""
         import asyncssh
 
+        partes = []
         try:
-            return await self._arquivo.read(tamanho, deslocamento)
+            while tamanho > 0:
+                dados = await self._arquivo.read(tamanho, deslocamento)
+                if not dados:
+                    break
+                partes.append(dados)
+                deslocamento += len(dados)
+                tamanho -= len(dados)
         except (asyncssh.Error, OSError) as e:
             raise _erro_da_rede(e, f"a leitura de {self._caminho}") from e
+        return b"".join(partes)
 
     async def fechar(self) -> None:
         import asyncssh
@@ -124,7 +162,8 @@ class OrigemSSH:
         import asyncssh
 
         try:
-            return _LeitorSFTP(await (await self._sftp()).open(caminho, "rb"), caminho)
+            sftp = await self._sftp()
+            return _LeitorSFTP(await sftp.open(caminho, "rb", block_size=0), caminho, sftp.limits.max_read_len)
         except asyncssh.SFTPNoSuchFile as e:
             raise ErroDaPlaca(f"{caminho} não está mais na placa") from e
         except (asyncssh.Error, OSError) as e:
