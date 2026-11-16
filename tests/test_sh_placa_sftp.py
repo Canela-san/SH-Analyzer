@@ -23,7 +23,6 @@ from sh_placa.sftp import (  # noqa: E402
     SUFIXO_PARCIAL,
     CopiaLocal,
     IndiceDeCopias,
-    OrigemLocal,
     OrigemSSH,
     apagar,
     baixar,
@@ -217,21 +216,3 @@ def test_apagar_e_o_indice(tmp_path):
     assert indice.copia(chave, 10) is None                                  # a cópia sumiu do computador
     (tmp_path / "config" / "copias.json").write_text("estragado")
     assert indice.copia(chave, 10) is None
-
-
-def test_o_simulador_pela_origem_local(tmp_path):
-    (tmp_path / "placa_simulada").mkdir()
-    original = captura(tmp_path / "placa_simulada", amostras=1 << 16)
-    registros = []
-
-    async def cenario():
-        origem = OrigemLocal(lambda *a: registros.append(a))
-        await baixar(origem, str(original), tmp_path / "copia.bin")
-        resultado = await conferir(origem, str(original), tmp_path / "copia.bin")
-        await apagar(origem, str(original))
-        return resultado
-
-    resultado = asyncio.run(cenario())
-    assert resultado.ok and (resultado.como == "crc32")
-    assert not original.exists() and [r[0] for r in registros] == ["baixar rede.bin (0,3 MiB) da placa simulada, neste computador",
-                                                                    "apagar rede.bin da placa simulada"]

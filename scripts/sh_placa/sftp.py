@@ -1,8 +1,8 @@
 """Os arquivos da placa no computador (docs/gui-plan.md, 11.7; a F3.7): baixar uma captura com a retomada, conferir a
 cópia e apagar da placa só o que foi conferido. Sem Qt.
 
-**A origem** (:class:`OrigemSSH`, :class:`OrigemLocal`): a placa pelo SFTP da conexão, ou o simulador, cujos arquivos
-estão no próprio computador. A mesma interface, como os transportes do agente.
+**A origem** (:class:`OrigemSSH`): a placa pelo SFTP da conexão (o simulador também: ele é servido por SSH). O
+protocolo :class:`Origem` deixa os testes trocarem a placa.
 
 **Baixar** (:func:`baixar`): os blocos pedidos em paralelo (o SFTP pipelinado: vários pedidos de leitura em voo, que
 escondem a ida e volta), gravados num ``<nome>.parcial`` ao lado do destino. **A retomada:** uma transferência
@@ -33,7 +33,6 @@ import json
 import logging
 import os
 import shlex
-import threading
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -63,8 +62,7 @@ class Leitor(Protocol):
 
 
 class Origem(Protocol):
-    """De onde vêm os arquivos: a placa (:class:`OrigemSSH`) ou o simulador (:class:`OrigemLocal`). ``meio``: como,
-    para o registro ("pelo SFTP")."""
+    """De onde vêm os arquivos (:class:`OrigemSSH`). ``meio``: como, para o registro ("pelo SFTP")."""
 
     meio: str
 
@@ -159,60 +157,6 @@ class OrigemSSH:
     def registrar(self, descricao: str, comando: str, inicio: float, duracao_s: float, codigo: int | None,
                   falha: str = "") -> None:
         self.conexao.registrar_comando(descricao, comando, inicio, duracao_s, codigo, falha)
-
-
-class _LeitorLocal:
-    """Os pedidos em paralelo leem do mesmo arquivo: a trava ordena o seek e o read (o ``os.pread`` não existe no
-    Windows)."""
-
-    def __init__(self, arquivo):
-        self._arquivo = arquivo
-        self._trava = threading.Lock()
-
-    def _ler(self, deslocamento: int, tamanho: int) -> bytes:
-        with self._trava:
-            self._arquivo.seek(deslocamento)
-            return self._arquivo.read(tamanho)
-
-    async def ler(self, deslocamento: int, tamanho: int) -> bytes:
-        return await asyncio.to_thread(self._ler, deslocamento, tamanho)
-
-    async def fechar(self) -> None:
-        self._arquivo.close()
-
-
-class OrigemLocal:
-    """O simulador: os arquivos da placa simulada estão no próprio computador (a F3.9 o põe atrás de um SSH)."""
-
-    meio = "da placa simulada, neste computador"
-
-    def __init__(self, registrar: Callable[..., object] | None = None):
-        self._registrar = registrar
-
-    async def tamanho(self, caminho: str) -> tuple[int, float]:
-        try:
-            atributos = os.stat(caminho)
-        except FileNotFoundError as e:
-            raise ErroDaPlaca(f"{caminho} não está mais na placa simulada") from e
-        return atributos.st_size, atributos.st_mtime
-
-    async def abrir(self, caminho: str) -> Leitor:
-        return _LeitorLocal(open(caminho, "rb"))     # noqa: SIM115 (fechado pelo fechar do leitor)
-
-    async def sha256(self, caminho: str) -> str:
-        return await asyncio.to_thread(_sha256_local, Path(caminho))
-
-    async def apagar(self, caminho: str) -> None:
-        os.remove(caminho)
-        self.registrar(f"apagar {Path(caminho).name} da placa simulada", f"rm {caminho}", time.time(), 0.0, 0)
-
-    async def captura_rodando(self) -> bool:
-        return False
-
-    def registrar(self, descricao: str, comando: str, inicio: float, duracao_s: float, codigo: int | None,
-                  falha: str = "") -> None:
-        if self._registrar is not None:
-            self._registrar(descricao, comando, inicio, duracao_s, codigo, falha)
 
 
 def _sha256_local(caminho: Path) -> str:
