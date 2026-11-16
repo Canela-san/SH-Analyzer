@@ -37,7 +37,7 @@ dev = ["pytest>=8", "pytest-xdist>=3.5", "pytest-cov>=5", "ruff>=0.6", "tomli>=2
 # A BeagleBone vista do computador (sh_placa; docs/gui-plan.md, seção 11): o SSH e o SFTP (asyncssh), o mDNS
 # (zeroconf), a porta serial do gadget USB (pyserial) e o cofre de senhas do sistema (keyring). Sem o Qt: o job
 # placa da CI os testa sozinhos.
-placa = ["asyncssh>=2.17", "zeroconf>=0.136", "pyserial>=3.5", "keyring>=25"]
+placa = ["asyncssh>=2.17", "zeroconf>=0.136", "pyserial>=3.5", "keyring>=25", "pyte>=0.8.2"]
 # Os testes da interface (pytest-qt). Fora do dev: o pytest-qt recusa iniciar sem um Qt instalado, e os jobs da CI
 # que não testam a interface não instalam o Qt. A Aquisição é parte da interface: o placa vem junto.
 gui-dev = ["sh-analyzer[gui,dev,placa]", "pytest-qt>=4.4"]

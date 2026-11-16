@@ -5,6 +5,8 @@ O servidor escuta em 127.0.0.1 (ou em mais endereços do loopback, na mesma port
 chaves do ``~/.ssh/authorized_keys`` do home falso (o do simulador: ``montar_sistema_falso``). Cada comando roda num
 shell de verdade, com esse home, a raiz falsa em ``SHAN_RAIZ`` e um ``python3`` que é o Python dos testes: o agente
 que chega pelo stdin lê a placa simulada, e a instalação da chave escreve no ``authorized_keys`` dela, como numa placa.
+O ``ssh`` sem comando (o terminal da F3.8) é um ``sh -i`` num pseudoterminal deste computador, do tamanho que o
+cliente pediu e que muda quando ele avisa.
 
 **O sudo e o ``config-pin`` da placa são falsos** (``SUDO`` e ``CONFIG_PIN``, no ``bin`` do servidor): o sudo faz o
 que o de verdade faz com ``-A``, ``-v``, ``-n`` e ``-k`` (a senha pelo ``SUDO_ASKPASS``, a credencial validada e
@@ -21,10 +23,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fcntl
 import os
+import pty
 import signal
 import socket
+import struct
 import sys
+import termios
 from pathlib import Path
 
 import asyncssh
@@ -123,7 +129,8 @@ class ServidorSSH:
             servidor = await asyncssh.create_server(
                 lambda: _Servidor(self), endereco, self.porta,
                 server_host_keys=[k for k in (self.chave_rsa, self.chave_do_host) if k is not None],
-                process_factory=self._rodar, encoding=None, reuse_address=True, sftp_factory=True)
+                process_factory=self._rodar, encoding=None, reuse_address=True, sftp_factory=True,
+                line_editor=False)               # o PTY é o do sistema (o _terminal), como o sshd da placa
             self._servidores.append(servidor)
             self.porta = servidor.sockets[0].getsockname()[1]
         return self
@@ -161,7 +168,13 @@ class ServidorSSH:
         faz ``exec`` do último comando, e um ``sleep 30`` sobreviveria ao shell, com os pipes abertos."""
         tarefa = asyncio.current_task()
         self._rodando.add(tarefa)
-        comando = processo.command or ""
+        if processo.command is None:
+            try:
+                await self._terminal(processo)
+            finally:
+                self._rodando.discard(tarefa)
+            return
+        comando = processo.command
         self.comandos.append(comando)
         try:
             shell = await asyncio.create_subprocess_exec(
@@ -189,6 +202,64 @@ class ServidorSSH:
                 await shell.wait()
         finally:
             self._rodando.discard(tarefa)
+
+    async def _terminal(self, processo: asyncssh.SSHServerProcess) -> None:
+        """O shell interativo (``ssh`` sem comando, com PTY): um ``sh -i`` num pseudoterminal deste computador, do
+        tamanho pedido, que muda quando o cliente avisa (o ``TerminalSizeChanged``, como o sshd faz com o
+        ``window-change``). Sem PTY pedido, o shell lê o canal como um comando sem nada para rodar."""
+        colunas, linhas, *_ = processo.get_terminal_size()
+        mestre, escravo = pty.openpty()
+        _tamanho_do_pty(mestre, colunas or 80, linhas or 24)
+        ambiente = {**self.ambiente, "TERM": processo.get_terminal_type() or "dumb", "PS1": "placa$ "}
+        try:
+            shell = await asyncio.create_subprocess_exec(
+                "/bin/sh", "-i", stdin=escravo, stdout=escravo, stderr=escravo, cwd=self.home, env=ambiente,
+                start_new_session=True, preexec_fn=_terminal_de_controle)
+        finally:
+            os.close(escravo)
+        laco = asyncio.get_running_loop()
+        saida: asyncio.Queue[bytes] = asyncio.Queue()
+
+        def ler_do_pty() -> None:
+            try:
+                dados = os.read(mestre, 65536)
+            except OSError:                         # EIO: o shell saiu e o escravo fechou
+                dados = b""
+            if not dados:
+                laco.remove_reader(mestre)
+            saida.put_nowait(dados)
+
+        async def copiar_a_saida() -> None:
+            while dados := await saida.get():
+                processo.stdout.write(dados)
+
+        async def copiar_a_entrada() -> None:
+            while True:
+                try:
+                    dados = await processo.stdin.read(65536)
+                except asyncssh.TerminalSizeChanged as mudou:
+                    _tamanho_do_pty(mestre, mudou.width, mudou.height)
+                    continue
+                if not dados:
+                    break
+                os.write(mestre, dados)
+
+        laco.add_reader(mestre, ler_do_pty)
+        entrada = asyncio.create_task(copiar_a_entrada())
+        vigia = asyncio.create_task(_matar_quando_o_canal_fechar(processo, shell))
+        try:
+            await copiar_a_saida()
+            processo.exit(await shell.wait())
+        except (asyncssh.Error, OSError):
+            pass
+        finally:
+            laco.remove_reader(mestre)
+            for auxiliar in (entrada, vigia):
+                auxiliar.cancel()
+            _matar(shell)
+            await asyncio.gather(entrada, vigia, return_exceptions=True)
+            await shell.wait()
+            os.close(mestre)
 
 
 class _Servidor(asyncssh.SSHServer):
@@ -247,6 +318,17 @@ async def _copiar(origem: asyncio.StreamReader, destino) -> None:
 async def _matar_quando_o_canal_fechar(processo: asyncssh.SSHServerProcess, shell: asyncio.subprocess.Process) -> None:
     await processo.channel.wait_closed()
     _matar(shell)
+
+
+def _tamanho_do_pty(fd: int, colunas: int, linhas: int) -> None:
+    """O ``TIOCSWINSZ``: o tamanho do pseudoterminal (o shell nele recebe o ``SIGWINCH``)."""
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", linhas, colunas, 0, 0))
+
+
+def _terminal_de_controle() -> None:
+    """No filho, depois do ``setsid``: o PTY (o stdin) vira o terminal de controle da sessão nova, para o ``sh -i``
+    ter o controle de tarefas e o ``SIGWINCH``."""
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
 
 def _matar(shell: asyncio.subprocess.Process) -> None:

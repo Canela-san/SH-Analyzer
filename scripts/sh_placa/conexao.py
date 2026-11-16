@@ -425,6 +425,17 @@ class ConexaoSSH:
                 raise ErroDeConexao(f"a placa em {self.destino.conta} não abriu o SFTP: {_texto_do_erro(e)}") from e
         return self._sftp
 
+    async def abrir_terminal(self, colunas: int, linhas: int, tipo: str = "xterm-256color"):
+        """Um shell interativo num PTY da placa (``colunas`` × ``linhas``), num canal da mesma conexão: o processo do
+        asyncssh, em bytes (o terminal da interface, ``terminal.py``, lê e escreve nele)."""
+        ssh = self._ssh
+        if ssh is None:
+            raise ErroDeConexao(f"sem conexão com a placa em {self.destino.conta}: conecte antes")
+        try:
+            return await ssh.create_process(term_type=tipo, term_size=(colunas, linhas), encoding=None)
+        except (asyncssh.Error, OSError) as e:
+            raise ErroDeConexao(f"a placa em {self.destino.conta} não abriu o terminal: {_texto_do_erro(e)}") from e
+
     def registrar_comando(self, descricao: str, comando: str, inicio: float, duracao_s: float, codigo: int | None,
                           falha: str = "") -> None:
         """Um comando que não passou por :meth:`executar` (uma operação do SFTP) também vai para o registro."""
