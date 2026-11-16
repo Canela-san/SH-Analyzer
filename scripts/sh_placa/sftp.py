@@ -88,7 +88,7 @@ class _LeitorSFTP:
     O leitor paralelo do asyncssh (o ``block_size`` padrão) faz o mesmo, mas deixa as tarefas dele para trás quando a
     leitura é cancelada (o :func:`baixar` cancela as outras quando uma falha), e elas falhavam sem dono na queda da
     conexão. Aqui, os pedidos de uma leitura que falha ou é cancelada são cancelados e esperados. Na placa pelo USB
-    (16/11/2026), os dois baixam a 4,5 MiB/s."""
+    (16/11/2026), com o ``aes128-ctr`` da conexão, os dois baixam a 5,0 a 5,1 MiB/s."""
 
     def __init__(self, arquivo, caminho: str, maximo: int):
         self._arquivo, self._caminho, self._maximo = arquivo, caminho, maximo
