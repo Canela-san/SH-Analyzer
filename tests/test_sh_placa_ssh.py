@@ -233,6 +233,40 @@ def test_o_tempo_esgotado_nao_derruba_a_conexao(app, tmp_path):
     assert travado.codigo is None and travado.falha == "sem resposta em 0.3 s"
 
 
+def test_o_enlace_a_latencia_e_a_vazao(app, tmp_path):
+    """A qualidade do enlace ao conectar: a latência pelo eco de um ``cat`` e a vazão pelos zeros do ``head``, os dois
+    no registro, como qualquer comando; o teste de vazão para no tempo dele num enlace lento."""
+    async def cenario():
+        async with ServidorSSH(tmp_path / "placa") as placa:
+            async with app.conexao(placa, senha=SENHA_PADRAO) as c:
+                enlace = await c.medir_enlace(bytes_max=1024**2)
+                curto = await c.medir_enlace(ecos=1, bytes_max=64 * 1024**2, tempo_max_s=0.05)
+                assert c.conectada
+            return enlace, curto, placa
+
+    enlace, curto, placa = rodar(cenario())
+    assert 0 < enlace.latencia_ms < 1000 and enlace.bytes_medidos == 1024**2 and enlace.vazao_bytes_s > 0
+    assert 0 < curto.bytes_medidos < 64 * 1024**2 and curto.vazao_bytes_s > 0
+    assert placa.comandos == ["cat", "head -c 1048576 /dev/zero", "cat", "head -c 67108864 /dev/zero"]
+    medidas = [e for e in app.registro.entradas if e.tipo == "comando"]
+    assert [e.descricao.split(" (")[0] for e in medidas] == ["medir a latência", "medir a vazão"] * 2
+    assert [e.codigo for e in medidas[:3]] == [0, 0, 0] and medidas[3].falha == "parado em 0.05 s, o fim do teste"
+
+
+def test_o_enlace_sem_o_head_na_placa(app, tmp_path):
+    """Uma placa sem o ``head`` (o comando falha): a latência vale, e a vazão fica sem medida, em vez de um erro."""
+    async def cenario():
+        async with ServidorSSH(tmp_path / "placa") as placa:
+            (placa.pasta / "bin" / "head").write_text("#!/bin/sh\nexit 127\n")
+            (placa.pasta / "bin" / "head").chmod(0o755)
+            async with app.conexao(placa, senha=SENHA_PADRAO) as c:
+                return await c.medir_enlace()
+
+    enlace = rodar(cenario())
+    assert enlace.latencia_ms > 0 and enlace.vazao_bytes_s is None and enlace.bytes_medidos == 0
+    assert [e.codigo for e in app.registro.entradas if e.tipo == "comando"] == [0, 127]
+
+
 def test_sem_placa_no_endereco(app, tmp_path):
     async def cenario():
         async with ServidorSSH(tmp_path / "placa") as placa:

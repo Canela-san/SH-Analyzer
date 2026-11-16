@@ -166,3 +166,21 @@ def test_parar_de_dentro_do_laco_e_recusado(laco):
 
     with pytest.raises(RuntimeError, match="a si mesmo"):
         laco.submeter(parar_a_si_mesmo).resultado(5)
+
+
+def test_a_resposta_de_fora_chega_a_corrotina_que_espera(laco):
+    """A pergunta ao usuário: a corrotina espera um futuro do laço, e a resposta vem de outra thread (a da
+    interface) pelo ``agendar``. Com o laço parado, nada roda."""
+    futuros = concurrent.futures.Future()
+
+    async def pergunta():
+        futuro = asyncio.get_running_loop().create_future()
+        futuros.set_result(futuro)
+        return await futuro, threading.current_thread().name
+
+    execucao = laco.submeter(pergunta)
+    futuro = futuros.result(5)
+    assert laco.agendar(futuro.set_result, "sim")
+    assert execucao.resultado(5) == ("sim", NOME_DA_THREAD)
+    parado = LacoAsyncio()
+    assert parado.agendar(print, "nunca") is False

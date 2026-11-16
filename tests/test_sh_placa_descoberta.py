@@ -212,6 +212,22 @@ def test_as_placas_conhecidas_lembradas_e_gravadas():
     assert [d.host for d in muitos[0].destinos] == [f"10.0.0.{i}" for i in (7, 6, 5, 4, 3)]
 
 
+def test_o_relogio_lembrado_por_placa():
+    """A resposta da primeira conexão (acertar o relógio a cada conexão) fica com a placa: sobrevive a uma conexão
+    nova por outro endereço e à gravação; uma gravada de antes dela (sem o campo) ainda não foi perguntada."""
+    lista = conhecidas.lembrar((), SERIE, "BeagleBone Black", "SHA256:a", Destino("192.168.6.2"), quando=1.0)
+    assert lista[0].acertar_relogio is None
+    lista = conhecidas.definir_relogio(lista, SERIE, True)
+    lista = conhecidas.lembrar(lista, SERIE, "BeagleBone Black", "SHA256:a", Destino("192.168.7.2"), quando=2.0)
+    assert lista[0].acertar_relogio is True
+    assert conhecidas.de_lista(conhecidas.para_lista(lista)) == lista
+    antiga = {k: v for k, v in lista[0].para_dict().items() if k != "acertar_relogio"}
+    assert conhecidas.de_lista([antiga])[0].acertar_relogio is None
+    assert conhecidas.de_lista([{**antiga, "acertar_relogio": "sim"}])[0].acertar_relogio is None
+    with pytest.raises(KeyError):
+        conhecidas.definir_relogio(lista, "outra", False)
+
+
 def test_o_nome_do_produto_do_gadget():
     assert _nome_do_produto("BeagleBoneBlack") == "BeagleBone Black"
     assert _nome_do_produto("BeagleBoneGreenWireless") == "BeagleBone Green Wireless"

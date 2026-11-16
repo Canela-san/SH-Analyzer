@@ -3,7 +3,8 @@ EEPROM (o mesmo do cabeçalho v8 das capturas), com o nome, a chave de host e os
 
 A descoberta (``descoberta.py``) as usa para dar nome a uma placa achada e para ligar o nº de série à chave de host
 (uma placa achada pelo mDNS ou pela LAN só mostra a chave), e para listar a que não respondeu agora ("vista há…"). A
-interface as guarda nas preferências, como JSON (``sh_analyzer_gui/preferencias.py``).
+interface as guarda nas preferências, como JSON (``sh_analyzer_gui/preferencias.py``), com a resposta da primeira
+conexão: acertar ou não o relógio da placa a cada conexão (``acertar_relogio``; ``None`` enquanto não foi perguntado).
 
 Tudo é imutável: :func:`lembrar` e :func:`esquecer` devolvem a lista nova (a descoberta roda no laço da placa, e a
 interface lê e grava na thread dela). Só a biblioteca padrão.
@@ -31,18 +32,22 @@ class PlacaConhecida:
     impressao: str | None                 # a chave de host (SHA256:…), a mesma por qualquer caminho
     destinos: tuple[Destino, ...]
     vista_em: float                       # time.time() da última conexão
+    acertar_relogio: bool | None = None   # a resposta da primeira conexão (None: ainda não perguntado)
 
     def para_dict(self) -> dict:
         return {"serie": self.serie, "nome": self.nome, "impressao": self.impressao,
-                "destinos": [d.para_dict() for d in self.destinos], "vista_em": self.vista_em}
+                "destinos": [d.para_dict() for d in self.destinos], "vista_em": self.vista_em,
+                "acertar_relogio": self.acertar_relogio}
 
     @classmethod
     def de_dict(cls, d: dict) -> PlacaConhecida:
         serie = d["serie"]
         if not isinstance(serie, str) or not serie:
             raise ValueError(f"nº de série inválido: {serie!r}")
+        relogio = d.get("acertar_relogio")
         return cls(serie, str(d.get("nome") or serie), d.get("impressao") or None,
-                   tuple(Destino.de_dict(x) for x in d.get("destinos") or ()), float(d.get("vista_em") or 0.0))
+                   tuple(Destino.de_dict(x) for x in d.get("destinos") or ()), float(d.get("vista_em") or 0.0),
+                   relogio if isinstance(relogio, bool) else None)
 
 
 def lembrar(conhecidas: Sequence[PlacaConhecida], serie: str, nome: str, impressao: str | None,
@@ -55,6 +60,15 @@ def lembrar(conhecidas: Sequence[PlacaConhecida], serie: str, nome: str, impress
     nova = PlacaConhecida(serie, nome, impressao, destinos, quando) if anterior is None else \
         replace(anterior, nome=nome, impressao=impressao or anterior.impressao, destinos=destinos, vista_em=quando)
     return (nova, *(p for p in conhecidas if p.serie != serie))
+
+
+def definir_relogio(conhecidas: Sequence[PlacaConhecida], serie: str,
+                    acertar: bool) -> tuple[PlacaConhecida, ...]:
+    """A lista com a resposta da placa de ``serie``: acertar ou não o relógio dela a cada conexão. ``KeyError`` se ela
+    não é conhecida (a pergunta vem depois de ela ser lembrada)."""
+    if not any(p.serie == serie for p in conhecidas):
+        raise KeyError(serie)
+    return tuple(replace(p, acertar_relogio=acertar) if p.serie == serie else p for p in conhecidas)
 
 
 def esquecer(conhecidas: Sequence[PlacaConhecida], serie: str) -> tuple[PlacaConhecida, ...]:

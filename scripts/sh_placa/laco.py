@@ -130,6 +130,15 @@ class LacoAsyncio:
             self._laco.call_soon_threadsafe(_criar, execucao, funcao, args)
         return execucao
 
+    def agendar(self, funcao: Callable[..., Any], *args) -> bool:
+        """Roda ``funcao(*args)``, uma função comum e rápida, na thread do laço (responder a um futuro dele: a
+        resposta do usuário a uma pergunta que uma corrotina espera). ``False``, sem rodar, com o laço parado."""
+        with self._trava:
+            if not self.rodando:
+                return False
+            self._laco.call_soon_threadsafe(funcao, *args)
+        return True
+
     def parar(self, espera_s: float = ESPERA_AO_PARAR_S) -> bool:
         """Cancela o que roda, espera, fecha o laço e a thread. ``False`` se ela não terminou em ``espera_s`` (uma
         corrotina que demora a tratar o cancelamento); ela segue até terminar, sem o laço aceitar nada novo."""
