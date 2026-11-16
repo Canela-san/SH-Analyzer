@@ -25,7 +25,7 @@ from ...tema.aplicar import aparencia
 from ...tema.icones import IconeDoTema, icone_de_lista
 from ...tema.tokens import TAMANHOS
 from .placas import ListaDePlacas, Ponto
-from .textos import caminho_curto, frase, hora, nome_da_placa, texto_do_enlace, traduzir
+from .textos import caminho_curto, frase, hora, nome_da_placa, texto_do_enlace, titulo_do_cenario, traduzir
 
 LARGURA = 248
 SECOES = (("visao_geral", "Visão geral", "pulso"), ("capturar", "Capturar", "play"), ("arquivos", "Arquivos", "pasta"),
@@ -124,7 +124,10 @@ class CartaoDaPlaca(QFrame):
         alvo = str(c.destino) if c.destino is not None else traduzir("o simulador")
         if estado == "conectada" and c.simulada:
             desde = traduzir("desde as {}").format(hora(c.conectada_em)) if c.conectada_em else ""
-            self._mostrar("ok", True, nome_da_placa(c), traduzir("demonstração, neste computador"), desde)
+            segunda = [traduzir("neste computador"), desde]
+            if c.quedas:
+                segunda.append(traduzir("caiu {}× e voltou").format(c.quedas))
+            self._mostrar("ok", True, nome_da_placa(c), titulo_do_cenario(c), " · ".join(x for x in segunda if x))
         elif estado == "conectada":
             # Como no B1: "nº 3714BBBK1234 · USB · 192.168.6.2" e "latência 1 ms · 6,3 MB/s" (o resto, na dica e
             # na visão geral).

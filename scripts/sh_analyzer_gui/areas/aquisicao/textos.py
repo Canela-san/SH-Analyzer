@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 
 from PySide6.QtCore import QCoreApplication
+from sh_placa.cenarios import CENARIOS
 
 from ...componentes.numeros import formatar_si
 from ...servicos.conexao_da_placa import ConexaoDaPlaca
@@ -69,7 +70,8 @@ def resumo(conexao: ConexaoDaPlaca) -> Resumo:
         pedido = conexao.destino_pedido or conexao.destino
         return Resumo("conectando", traduzir("Conectando…"), traduzir("{} pede a senha.").format(pedido.conta))
     if estado == "conectada" and conexao.simulada:
-        return Resumo("conectada", traduzir("Simulador"), traduzir("Conectada ao simulador, neste computador."))
+        return Resumo("conectada", traduzir("Simulador"), traduzir("Conectada ao simulador ({}), neste computador.").format(
+            titulo_do_cenario(conexao)))
     if estado == "conectada":
         nome = nome_da_placa(conexao)
         return Resumo("conectada", f"{nome} · {caminho_curto(conexao)}", traduzir("Conectada a {} ({}).").format(nome, alvo))
@@ -84,6 +86,12 @@ def resumo(conexao: ConexaoDaPlaca) -> Resumo:
     if estado == "falhou":
         return Resumo("erro", traduzir("Sem conexão"), frase(conexao.motivo) or traduzir("A conexão falhou."))
     return Resumo("sem_placa", traduzir("Sem placa"), traduzir("Nenhuma placa conectada."))
+
+
+def titulo_do_cenario(conexao: ConexaoDaPlaca) -> str:
+    """"Rede de 60 Hz com supraharmônicos": o cenário do simulador conectado (vazio numa placa de verdade)."""
+    cenario = CENARIOS.get(conexao.cenario or "")
+    return traduzir(cenario.titulo) if cenario is not None else ""
 
 
 def texto_da_latencia(latencia_ms: float) -> str:

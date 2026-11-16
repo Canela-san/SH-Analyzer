@@ -25,11 +25,9 @@ from pathlib import Path, PurePosixPath
 from PySide6.QtCore import QObject, Signal
 from sh_placa.erros import ErroDeConexao
 from sh_placa.estado import CapturaNaPlaca
-from sh_placa.registro import Entrada
 from sh_placa.sftp import (
     CopiaLocal,
     IndiceDeCopias,
-    OrigemLocal,
     OrigemSSH,
     apagar,
     baixar,
@@ -193,10 +191,6 @@ class TransferenciasDaPlaca(QObject):
             self.mudou.emit()
 
     def _origem(self):
-        if self.conexao.simulada:
-            registro = self.conexao.registro
-            return OrigemLocal(lambda descricao, comando, inicio, duracao_s, codigo, falha="": registro.registrar(
-                Entrada(inicio, "simulador", "comando", descricao, comando, duracao_s, codigo, falha)))
         return OrigemSSH(self.conexao.conexao_ssh)
 
     def _proxima(self) -> None:

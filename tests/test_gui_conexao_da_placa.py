@@ -72,7 +72,9 @@ def test_a_lista_e_o_simulador(qtbot, placas, criar):
     assert conexao.estado_da_placa.serie == SERIE_SIMULADA and conexao.enlace is None
     assert conexao.primeira_conexao is None                       # o simulador não pergunta nem é lembrado
     assert conexao.e_a_conectada(lista["Simulador"]) and not conexao.e_a_conectada(lista["bbb-teste"])
-    pasta = conexao._sessao.simulador._pasta
+    assert conexao.cenario == "normal" and conexao.autenticada_com == "chave"     # pelo SSH, com a chave dele
+    assert conexao.senha_da_placa() == SENHA_PADRAO_DA_IMAGEM                     # a do sudo dela
+    pasta = conexao._sessao.simulador.pasta
     assert pasta.is_dir()
     conexao.desconectar()
     assert conexao.estado == "desconectada" and conexao.estado_da_placa is None

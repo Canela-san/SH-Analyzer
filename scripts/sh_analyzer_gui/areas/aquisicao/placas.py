@@ -22,7 +22,9 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
     QWidget,
 )
+from sh_placa.cenarios import CENARIOS
 
+from ... import preferencias
 from ...servicos.conexao_da_placa import ConexaoDaPlaca
 from ...tema.aplicar import aparencia
 from ...tema.tokens import TAMANHOS, Tema
@@ -279,12 +281,25 @@ class ListaDePlacas(QListView):
             menu.exec(self.viewport().mapToGlobal(ponto))
 
     def menu_da_placa(self, placa) -> QMenu:
-        """Conectar (ou desconectar), conectar por outro caminho e esquecer a placa conhecida."""
+        """Conectar (ou desconectar), conectar por outro caminho, o cenário do simulador e esquecer a placa
+        conhecida."""
         menu = QMenu(self)
         if self.conexao.e_a_conectada(placa):
             menu.addAction(traduzir("Desconectar"), self.conexao.desconectar)
         elif conectavel(placa):
             menu.addAction(traduzir("Conectar"), lambda: self.conexao.conectar(placa))
+        if placa.estado == "simulador":
+            atual = self.conexao.cenario if self.conexao.e_a_conectada(placa) else preferencias.cenario_do_simulador()
+            cenarios = menu.addMenu(traduzir("Conectar no cenário"))
+            for nome, c in CENARIOS.items():
+                if c.grupo == "configuracao" and nome == next(n for n, x in CENARIOS.items() if x.grupo == c.grupo):
+                    cenarios.addSeparator()
+                acao = cenarios.addAction(traduzir(c.titulo),
+                                          lambda _=False, n=nome: self.conexao.conectar(placa, cenario=n))
+                acao.setCheckable(True)
+                acao.setChecked(nome == atual)
+                acao.setToolTip(traduzir(c.descricao))
+            cenarios.setToolTipsVisible(True)
         caminhos = [c for c in placa.caminhos if c.destino is not None]
         if len(caminhos) > 1:
             por = menu.addMenu(traduzir("Conectar por"))

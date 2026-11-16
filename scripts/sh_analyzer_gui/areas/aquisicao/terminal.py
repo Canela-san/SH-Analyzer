@@ -238,11 +238,11 @@ class AbaDeTerminal(QWidget):
         return self.estado == "aberto"
 
     def abrir(self) -> bool:
-        """Abre o shell na conexão de agora (``False``: sem conexão, ou já aberto)."""
+        """Abre o shell na conexão de agora (``False``: sem conexão, no simulador, ou já aberto)."""
         from sh_placa.terminal import SessaoDeTerminal
 
         ssh = self.conexao.conexao_ssh
-        if ssh is None or self.conexao.estado != "conectada" or self.aberta:
+        if ssh is None or self.conexao.estado != "conectada" or self.conexao.simulada or self.aberta:
             return False
         if self.estado != "novo":            # a mesma aba de novo: uma linha separa o que era do que vem
             quando = time.strftime("%H:%M:%S")
@@ -364,8 +364,9 @@ class Terminal(QWidget):
                                           "gravada na pasta da sessão do dia."), icone_nome="terminal",
                                  largura_do_texto=440)
         self.simulador = EstadoVazio(traduzir("O simulador não tem terminal"),
-                                     traduzir("Ele roda neste computador, sem SSH: o terminal é o da placa de "
-                                              "verdade."), icone_nome="terminal", largura_do_texto=440)
+                                     traduzir("A placa simulada roda neste computador: um terminal nela seria o "
+                                              "deste computador. O terminal é o da placa de verdade."),
+                                     icone_nome="terminal", largura_do_texto=440)
         self.paginas.addWidget(self.vazio)
         self.paginas.addWidget(self.simulador)
         self.paginas.addWidget(self._criar_conectada())
@@ -471,7 +472,9 @@ class Terminal(QWidget):
         return [self.abas.widget(i) for i in range(self.abas.count())]
 
     def _pode_abrir(self) -> bool:
-        return self.conexao.estado == "conectada" and self.conexao.conexao_ssh is not None
+        """Uma placa de verdade conectada (o simulador também é SSH, mas o shell dele seria o deste computador)."""
+        c = self.conexao
+        return c.estado == "conectada" and c.conexao_ssh is not None and not c.simulada
 
     def atualizar(self) -> None:
         c = self.conexao

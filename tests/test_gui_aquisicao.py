@@ -102,7 +102,9 @@ def test_a_lista_e_o_simulador(qtbot, abrir):
     qtbot.waitUntil(lambda: c.estado == "conectada", timeout=ESPERA_MS)
     assert area._dialogo is None                                  # nada a perguntar: nenhum diálogo
     assert area.lateral.cartao.titulo.text() == "Simulador" and lado(area, "Simulador") == "conectada"
-    assert area.lateral.cartao.linhas[0].text() == "demonstração, neste computador"
+    assert area.lateral.cartao.linhas[0].text() == "Rede de 60 Hz com supraharmônicos"          # o cenário
+    assert area.lateral.cartao.linhas[1].text().startswith("neste computador · desde as ")
+    assert area.visao_geral.cenario.isVisible() and area.visao_geral.cenario.currentData() == "normal"
     assert area.visao_geral.paginas.currentWidget() is area.visao_geral.conectada
     assert "kernel 4.19.94-ti-r42" in area.visao_geral.subtitulo.text()
     assert area.lateral.rodape.isVisible() and not espremidos(area)

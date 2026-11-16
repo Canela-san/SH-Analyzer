@@ -3,10 +3,10 @@
 Com a placa conectada:
 
 * **o cabeçalho:** o modelo, o nº de série, o sistema, o kernel e o firmware (e se ele é o deste aplicativo,
-  comparado pelo código);
+  comparado pelo código); no simulador, o cenário, que se troca ali (uma placa simulada nova);
 * **os indicadores:** o relógio (a diferença para o computador e quando foi acertado), a PRU0, o cartão (o espaço e
-  os minutos de captura que cabem), o processador (a temperatura, a carga, a memória) e a placa de aquisição (a última
-  conferência na placa);
+  os minutos de captura que cabem), o processador (a temperatura, a carga, a memória) e a placa de aquisição (o sinal
+  da captura mais recente: o ADC que não respondeu fica em 0);
 * **a saúde resumida:** a conexão e cada item do diagnóstico, os problemas primeiro, com o "Corrigir" dos dois
   simples (os pinos e o relógio), que a área confirma num diálogo antes de rodar;
 * **as capturas na placa**, com a integridade de cada uma, e **a atividade:** cada comando que o aplicativo rodou
@@ -24,6 +24,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -37,7 +38,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from sh_placa.cenarios import CENARIOS
 from sh_placa.diagnostico import ItemDoDiagnostico
+from sh_placa.estado import tempo_do_desvio
 from sh_placa.registro import Entrada
 
 from ...componentes.basicos import Botao
@@ -59,8 +62,11 @@ ESTADOS_DA_PRU = {"running": ("Rodando", "ok"), "offline": ("Parada", ""), "cras
 
 
 def texto_da_diferenca(segundos: float) -> str:
-    """"+1,14 s", "−0,02 s" (o sinal de menos tipográfico, como no B1)."""
-    return decimal(f"{segundos:+.2f}").replace("-", "−") + " s"
+    """"+1,14 s", "−0,02 s" (o sinal de menos tipográfico, como no B1); de um minuto em diante, o tempo legível:
+    "−2 dias e 5 h"."""
+    if abs(segundos) < 60:
+        return decimal(f"{segundos:+.2f}").replace("-", "−") + " s"
+    return ("+" if segundos > 0 else "−") + tempo_do_desvio(segundos)
 
 
 class LinhaDaSaude(QWidget):
@@ -163,12 +169,30 @@ class VisaoGeral(QWidget):
         self.botao_conferir = Botao(traduzir("Conferir de novo"), "secundario", "girar")
         self.botao_conferir.setObjectName("conferir_de_novo")
         self.botao_conferir.clicked.connect(self.saude.conferir)
+        self.rotulo_do_cenario = QLabel(traduzir("Cenário"))
+        self.rotulo_do_cenario.setObjectName("rotulo_do_cenario")
+        self.rotulo_do_cenario.setFont(fonte("secundario"))
+        self.cenario = QComboBox()
+        self.cenario.setObjectName("cenario_do_simulador")
+        self.cenario.setToolTip(traduzir("Outro cenário monta uma placa simulada nova, com os arquivos dele."))
+        for nome, c in CENARIOS.items():
+            if c.grupo == "configuracao" and self.cenario.findData("configuracao", Qt.ItemDataRole.UserRole + 1) < 0:
+                self.cenario.insertSeparator(self.cenario.count())
+                self.cenario.setItemData(self.cenario.count() - 1, "configuracao", Qt.ItemDataRole.UserRole + 1)
+            self.cenario.addItem(traduzir(c.titulo), nome)
+            self.cenario.setItemData(self.cenario.count() - 1, traduzir(c.descricao), Qt.ItemDataRole.ToolTipRole)
+        self.rotulo_do_cenario.setBuddy(self.cenario)
+        self.cenario.activated.connect(self._trocar_cenario)
         cabecalho = QHBoxLayout()
+        cabecalho.setSpacing(8)
         textos = QVBoxLayout()
         textos.setSpacing(2)
         textos.addWidget(self.titulo)
         textos.addWidget(self.subtitulo)
         cabecalho.addLayout(textos, 1)
+        cabecalho.addWidget(self.rotulo_do_cenario, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
+        cabecalho.addWidget(self.cenario, 0, Qt.AlignmentFlag.AlignTop)
+        cabecalho.addSpacing(8)
         cabecalho.addWidget(self.botao_conferir, 0, Qt.AlignmentFlag.AlignTop)
 
         self.relogio = Indicador(traduzir("Relógio"), "relogio")
@@ -286,6 +310,11 @@ class VisaoGeral(QWidget):
         else:
             self.paginas.setCurrentWidget(self.vazia)
 
+    def _trocar_cenario(self, indice: int) -> None:
+        nome = self.cenario.itemData(indice)
+        if nome:
+            self.conexao.trocar_cenario(nome)
+
     def _agir_na_falha(self) -> None:
         if self.conexao.estado == "bloqueada":
             self.verBloqueio.emit()
@@ -310,6 +339,11 @@ class VisaoGeral(QWidget):
             else:
                 partes.append(traduzir("firmware {} (o deste aplicativo é {})").format(versao, s.firmware_do_aplicativo))
         self.subtitulo.setText(" · ".join(partes))
+        simulada = c.simulada
+        self.rotulo_do_cenario.setVisible(simulada)
+        self.cenario.setVisible(simulada)
+        if simulada:
+            self.cenario.setCurrentIndex(self.cenario.findData(c.cenario))
         self.botao_conferir.setEnabled(not s.conferindo and c.estado == "conectada")
         self.botao_conferir.setText(traduzir("Conferindo…") if s.conferindo else traduzir("Conferir de novo"))
         if e is None:
@@ -336,7 +370,10 @@ class VisaoGeral(QWidget):
                 detalhe, nivel = traduzir("sem NTP: acerte pelo computador"), ""
             if abs(diferenca) > 2:
                 nivel = "aviso"
-            if relogio.incerteza_s is not None:
+            if abs(diferenca) >= 60:
+                lado = traduzir("adiantado") if diferenca > 0 else traduzir("atrasado")
+                detalhe = f"{lado} · {detalhe}"
+            elif relogio.incerteza_s is not None:
                 detalhe = f"±{decimal(f'{relogio.incerteza_s:.2f}')} s · {detalhe}"
             self.relogio.definir(texto_da_diferenca(diferenca), detalhe, nivel)
         pru = e.pru
@@ -376,6 +413,26 @@ class VisaoGeral(QWidget):
         self._preencher_a_aquisicao()
 
     def _preencher_a_aquisicao(self) -> None:
+        """O sinal da captura mais recente (a saúde traz o cabeçalho dela); sem essa medida (uma captura de antes da
+        v9), a data da última conferência."""
+        e = self.saude.saude
+        ultima = e.ultima_captura if e is not None else None
+        if ultima is not None and ultima.canais_parados is not None:
+            nome = PurePosixPath(ultima.arquivo).name
+            quando = time.strftime("%d/%m %H:%M", time.localtime(ultima.inicio))
+            if ultima.adc_mudo:
+                self.aquisicao.definir(traduzir("ADC mudo"), traduzir("em 0 na captura mais recente ({}, {})").format(
+                    nome, quando), "aviso")
+            elif ultima.canais_parados:
+                canais = ", ".join(str(canal) for canal, _codigo in ultima.canais_parados)
+                self.aquisicao.definir(traduzir("Sinal parado"), traduzir("canal {} na captura mais recente ({})").format(
+                    canais, nome), "aviso")
+            else:
+                self.aquisicao.definir(traduzir("Com sinal"), traduzir("na captura mais recente ({}, {})").format(
+                    nome, quando))
+            self.aquisicao.setToolTip(" · ".join(ultima.problemas) or traduzir("O sinal mexeu em todos os canais."))
+            return
+        self.aquisicao.setToolTip("")
         capturas = self.saude.capturas
         conferencias = [c for c in (capturas.capturas if capturas is not None else ())
                         if PurePosixPath(c.arquivo).name.startswith("conferir")]

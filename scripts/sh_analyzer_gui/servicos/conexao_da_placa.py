@@ -33,7 +33,10 @@ conexão de agora (:attr:`conexao_ssh`, :attr:`cliente`), a senha da placa que a
 (:meth:`senha_da_placa`) e o cofre (:meth:`cofre`). Ao conectar, o agente responde a ``saude`` (o ``estado`` com as
 conferências, no mesmo tempo): :attr:`estado_da_placa` já traz o diagnóstico.
 
-**O simulador** conecta pelo ``TransporteLocal``, sem SSH, sem impressão e sem enlace; a F3.9 o põe atrás de um SSH.
+**O simulador** (``sh_placa/simulador.py``) é uma placa servida por SSH neste computador, no :attr:`cenario` escolhido
+(:meth:`trocar_cenario`; o último fica nas preferências): conectar a ele monta a placa simulada, inicia o servidor e
+entra com a chave dele, sem perguntas, e a conexão é a de sempre (os arquivos, as correções, a queda e a volta).
+Fechar a conexão apaga a placa simulada; trocar o cenário monta outra. Sem a medida do enlace (é este computador).
 
 **A partida da janela não carrega a rede:** o asyncssh, o zeroconf e o keyring custam ~0,7 s para importar, e
 entram no laço da placa na primeira busca ou conexão (``tests/test_arquitetura.py`` confere).
@@ -63,7 +66,7 @@ from .placa import Chamada, ServicoDaPlaca
 if TYPE_CHECKING:
     from sh_placa.conexao import ConexaoSSH, Enlace
     from sh_placa.descoberta import Descoberta, PlacaVista
-    from sh_placa.simulador import Simulador
+    from sh_placa.simulador import ServidorDoSimulador
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +106,7 @@ class _Tentativa:
     host_confirmado: bool = False
     pedida_pelo_usuario: bool = True
     confiaveis: frozenset[str] = frozenset()   # as impressões das placas conhecidas (aceitas sem perguntar)
+    cenario: str = "normal"                    # o do simulador (destino None)
 
 
 @dataclass
@@ -112,7 +116,7 @@ class _Sessao:
     tentativa: _Tentativa
     cliente: ClienteDoAgente
     conexao: ConexaoSSH | None = None
-    simulador: Simulador | None = None
+    simulador: ServidorDoSimulador | None = None
     impressao: str | None = None
     quedas: int = 0
 
@@ -124,7 +128,7 @@ class _Aberta:
     cliente: ClienteDoAgente
     estado: EstadoDaPlaca
     conexao: ConexaoSSH | None = None
-    simulador: Simulador | None = None
+    simulador: ServidorDoSimulador | None = None
     impressao: str | None = None
     autenticada_com: str | None = None
     chave_instalada: bool | None = None
@@ -199,6 +203,12 @@ class ConexaoDaPlaca(QObject):
     @property
     def simulada(self) -> bool:
         return self._sessao is not None and self._sessao.simulador is not None
+
+    @property
+    def cenario(self) -> str | None:
+        """O cenário do simulador conectado (ou a caminho); ``None`` numa placa de verdade, ou sem conexão."""
+        t = self._tentativa if self._sessao is None else self._sessao.tentativa
+        return t.cenario if t is not None and t.destino is None else None
 
     @property
     def tipo_do_caminho(self) -> str | None:
@@ -303,27 +313,46 @@ class ConexaoDaPlaca(QObject):
 
     # ------------------------------------------------------------------ conectar
 
-    def conectar(self, placa: PlacaVista | None = None, destino: Destino | None = None) -> None:
+    def conectar(self, placa: PlacaVista | None = None, destino: Destino | None = None,
+                 cenario: str | None = None) -> None:
         """Conecta à ``placa`` da lista (pelo melhor caminho dela, ou por ``destino``, um dos caminhos dela) ou a um
-        ``destino`` digitado. Uma placa conectada antes é desconectada; a mesma, já conectada, fica como está."""
+        ``destino`` digitado. Uma placa conectada antes é desconectada; a mesma, já conectada, fica como está. No
+        simulador, ``cenario`` (lembrado; sem ele, o último escolhido)."""
         if self.encerrada:
             return
         if placa is not None and placa.estado == "simulador":
             alvo = None
+            if cenario is not None:
+                preferencias.mudar_cenario_do_simulador(cenario)
         else:
             alvo = destino if destino is not None else (placa.melhor.destino if placa is not None and placa.melhor
                                                          else None)
             if alvo is None:
                 raise ValueError("conectar: sem um endereço (a placa não tem um caminho pela rede)")
+        cenario = cenario or preferencias.cenario_do_simulador()
+
+        def a_mesma(t: _Tentativa) -> bool:
+            return t.destino == alvo and (alvo is not None or t.cenario == cenario)
+
         if self._sessao is not None and self.estado in ("conectada", "reconectando") \
-                and self._sessao.tentativa.destino == alvo and (alvo is not None or self.simulada):
+                and a_mesma(self._sessao.tentativa) and (alvo is not None or self.simulada):
             return
         if self._tentativa is not None and self._sessao is None and self.estado in ("conectando", *ESPERANDO_O_USUARIO) \
-                and self._tentativa.destino == alvo:
+                and a_mesma(self._tentativa):
             return                                   # a mesma conexão já está a caminho (um clique duplo)
         self._largar()
         confiaveis = frozenset(p.impressao for p in preferencias.placas_conhecidas() if p.impressao)
-        self._comecar(_Tentativa(alvo, placa, confiaveis=confiaveis))
+        self._comecar(_Tentativa(alvo, placa, confiaveis=confiaveis, cenario=cenario))
+
+    def trocar_cenario(self, cenario: str) -> None:
+        """Outro cenário no simulador: lembrado e, com o simulador conectado (ou a caminho), uma placa simulada nova
+        nele (a de antes é fechada e apagada)."""
+        preferencias.mudar_cenario_do_simulador(cenario)
+        t = self._tentativa if self._sessao is None else self._sessao.tentativa
+        if t is None or t.destino is not None or self.estado == "desconectada" or t.cenario == cenario:
+            return
+        self._largar()
+        self._comecar(replace(t, cenario=cenario, pedida_pelo_usuario=True))
 
     def informar_senha(self, senha: str, *, guardar: bool = False, instalar_chave: bool = True) -> None:
         """A senha que o usuário digitou (no estado ``pedir_senha``) para :attr:`destino_pedido` (a placa ou o
@@ -372,7 +401,7 @@ class ConexaoDaPlaca(QObject):
         self.primeira_conexao = None
         self._mudar("conectando")
         if tentativa.destino is None:
-            self._chamada_de_conexao = self.servico.chamar("conectar ao simulador", self._abrir_simulador,
+            self._chamada_de_conexao = self.servico.chamar("conectar ao simulador", self._abrir_simulador, tentativa,
                                                            ao_terminar=self._abriu)
         else:
             self._chamada_de_conexao = self.servico.chamar(f"conectar a {tentativa.destino}", self._abrir_ssh,
@@ -439,17 +468,31 @@ class ConexaoDaPlaca(QObject):
                 else:
                     conexao.senha = senha
 
-    async def _abrir_simulador(self) -> _Aberta:
-        from sh_placa.simulador import Simulador
+    async def _abrir_simulador(self, t: _Tentativa) -> _Aberta:
+        """Na thread do laço: a placa simulada no cenário pedido (montada numa pasta temporária, com as capturas), o
+        servidor SSH dela e a conexão, com a chave dele. A senha da conexão é a do sudo dela (o acerto do relógio não
+        pergunta); pelo SSH, ele só aceita a chave. Uma falha no caminho fecha e apaga o que abriu."""
+        from sh_placa.agente import TransporteSSH
+        from sh_placa.conexao import ConexaoSSH
+        from sh_placa.simulador import ServidorDoSimulador
 
-        simulador = Simulador()
-        cliente = await asyncio.to_thread(simulador.__enter__)
+        servidor = await asyncio.to_thread(ServidorDoSimulador, None, t.cenario)
+        conexao = None
         try:
+            await servidor.iniciar()
+            chave, hosts = await asyncio.to_thread(servidor.acesso)
+            conexao = ConexaoSSH(servidor.destino, chave=chave, hosts=hosts, registro=self.registro,
+                                 senha=servidor.senha_do_sudo)
+            conexao.ao_cair = lambda motivo: self._caiu_no_laco(conexao, motivo)
+            await conexao.conectar()
+            cliente = ClienteDoAgente(TransporteSSH(conexao))
             estado = await cliente.saude()
         except BaseException:
-            await asyncio.to_thread(simulador.__exit__, None, None, None)
+            if conexao is not None:
+                await conexao.fechar()
+            await servidor.fechar()
             raise
-        return _Aberta(cliente, estado, simulador=simulador)
+        return _Aberta(cliente, estado, conexao=conexao, simulador=servidor, autenticada_com=conexao.autenticada_com)
 
     async def _confirmar_no_laco(self, t: _Tentativa, destino: Destino, impressao: str) -> bool:
         """O ``confirmar_host`` da conexão: a chave de uma placa conhecida passa direto (é a mesma placa, por outro
@@ -516,10 +559,11 @@ class ConexaoDaPlaca(QObject):
         self.conectada_em = time.time()
         self.sessoes += 1
         self.primeira_conexao = self._lembrar(aberta, t)
-        self.medindo_enlace = aberta.conexao is not None    # já à vista de quem espera a placa ficar livre
+        medir = aberta.conexao is not None and aberta.simulador is None    # o simulador é este computador
+        self.medindo_enlace = medir                   # já à vista de quem espera a placa ficar livre
         self._mudar("conectada")
         self.placasMudaram.emit()                     # a lista marca a conectada
-        if aberta.conexao is not None:
+        if medir:
             self._medir_enlace()
 
     def _lembrar(self, aberta: _Aberta, t: _Tentativa) -> PrimeiraConexao | None:
@@ -691,7 +735,7 @@ class ConexaoDaPlaca(QObject):
         self.procurar()
 
     def encerrar(self, espera_s: float = ESPERA_AO_ENCERRAR_S) -> None:
-        """Ao fechar a janela: fecha a conexão (e apaga a pasta do simulador) antes de o laço parar."""
+        """Ao fechar a janela: fecha a conexão (e para o simulador e apaga a pasta dele) antes de o laço parar."""
         self.encerrada = True
         self._busca.stop()
         sessao = self._sessao
@@ -735,7 +779,7 @@ async def _fechar_sessao(sessao: _Sessao) -> None:
     if sessao.conexao is not None:
         await sessao.conexao.fechar()
     if sessao.simulador is not None:
-        await asyncio.to_thread(sessao.simulador.__exit__, None, None, None)
+        await sessao.simulador.fechar()
 
 
 def _sessao_de(aberta: _Aberta, tentativa: _Tentativa) -> _Sessao:

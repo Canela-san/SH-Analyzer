@@ -200,13 +200,17 @@ class SaudeDaPlaca(QObject):
     @staticmethod
     async def _ler_no_laco(cliente, versao: str | None, com_a_saude: bool, simulada: bool):
         """Na thread do laço: a saúde (no "conferir de novo"), as capturas e o firmware do aplicativo comparado com o
-        da placa (o simulador tem o firmware dele, que é o do aplicativo por definição)."""
+        da placa (para o simulador, o firmware do aplicativo é o dele: o cenário do firmware antigo tem outro)."""
         from sh_placa.versao import firmware_do_aplicativo
 
         saude = await cliente.saude() if com_a_saude else None
         capturas = await cliente.capturas()
         versao = saude.versao_do_firmware if saude is not None else versao
-        firmware = versao if simulada else await asyncio.to_thread(firmware_do_aplicativo, versao)
+        if simulada:
+            from sh_placa.simulador import VERSAO_SIMULADA
+            firmware = VERSAO_SIMULADA
+        else:
+            firmware = await asyncio.to_thread(firmware_do_aplicativo, versao)
         return saude, capturas, firmware
 
     def _leu(self, chamada: Chamada) -> None:

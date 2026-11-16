@@ -46,6 +46,7 @@ CHAVE_DO_SEPARADOR = "numeros/separador_decimal"
 CHAVE_DOS_PREFIXOS = "numeros/prefixos_nos_eixos"
 CHAVE_DAS_UNIDADES = "unidades/proprias"
 CHAVE_DAS_PLACAS = "placa/conhecidas"
+CHAVE_DO_CENARIO = "placa/cenario_do_simulador"
 PASTAS = ("dados", "sondas", "cache")
 CHAVES_DAS_PASTAS = {nome: f"pastas/{nome}" for nome in PASTAS}
 CACHES = ("piramides", "materializacoes")
@@ -168,6 +169,19 @@ def placas_conhecidas() -> tuple[conhecidas.PlacaConhecida, ...]:
 
 def mudar_placas_conhecidas(placas: Iterable[conhecidas.PlacaConhecida]) -> None:
     gravar(CHAVE_DAS_PLACAS, json.dumps(conhecidas.para_lista(placas), ensure_ascii=False))
+
+
+def cenario_do_simulador() -> str:
+    """O último cenário escolhido para o simulador (``sh_placa.simulador.CENARIOS``; um que não existe mais vira o
+    da rede de 60 Hz)."""
+    from sh_placa.cenarios import CENARIOS
+
+    nome = ler_texto(CHAVE_DO_CENARIO, "normal") or "normal"
+    return nome if nome in CENARIOS else "normal"
+
+
+def mudar_cenario_do_simulador(nome: str) -> None:
+    gravar(CHAVE_DO_CENARIO, nome)
 
 
 def pasta_da_placa() -> Path:
