@@ -1066,13 +1066,16 @@ O cartão da placa limita a duração de uma captura, e a saída contínua tira 
 
 ### 11.8 Terminal
 
-- **O terminal embutido:**
-  - um emulador VT100 (`pyte`) pintado num widget próprio, com o tema e a fonte mono;
-  - um PTY sobre o SSH;
-  - abas, rolagem com busca, copiar e colar;
-  - a gravação em `$DIA/terminal_bbb.txt`, como o `lab ssh`.
-- **Atalhos de comandos:** um painel com os comandos frequentes (`./coletar.sh conferir`, `dmesg | tail`, o estado da PRU…). Clicar escreve o comando, e o Enter é seu.
-- **"Abrir no terminal do sistema":** abre o Windows Terminal, o GNOME Terminal ou o Konsole, com o `ssh` pronto.
+- **O terminal embutido** (feito na F3.8):
+  - um emulador xterm (`pyte`) pintado num widget próprio (`componentes/terminal.py`), com o tema (as 16 cores da ANSI são tokens, com o contraste de texto conferido) e a fonte mono. Sobre o `pyte`: a rolagem de 10 000 linhas, a tela alternativa (o `less`, o `vim`) e o redimensionamento que guarda o prompt;
+  - um PTY sobre o SSH, num canal da conexão da placa (`sh_placa/terminal.py`);
+  - abas, rolagem com busca, copiar e colar (com o *bracketed paste*), a seleção do X11;
+  - a saída interpretada em fatias de 8 ms: um `cat` grande não trava a janela;
+  - a gravação em `$DIA/terminal_bbb.txt`, como o `lab ssh` (a segunda aba, `terminal_bbb_2.txt`, para as saídas não se misturarem);
+  - **a queda do cabo:** a aba reabre sozinha quando a placa volta, com uma linha separando o que era do que vem;
+  - **fechar uma aba com uma captura rodando** (o `ler_adc`) pergunta antes: a captura começada nela morreria junto.
+- **Atalhos de comandos:** um painel com os comandos frequentes (`./coletar.sh conferir`, `dmesg | tail`, o estado da PRU, os pinos, as capturas e o espaço…). Clicar escreve o comando, e o Enter é seu.
+- **"Abrir no terminal do sistema":** abre o terminal da área de trabalho (o do COSMIC, o GNOME Terminal, o Konsole…; no Windows, o Windows Terminal; no macOS, o Terminal), com o `ssh` pronto: a chave e o `known_hosts` do aplicativo, sem a senha nem a pergunta da impressão digital. Sem nenhum terminal conhecido, o comando vai para a área de transferência.
 - **Resgate pela serial (v1.0):** quando a placa aparece no USB, mas a rede não sobe, o console pela porta serial do gadget (`pyserial`) dá o login para consertar.
 
 ### 11.9 Diagnóstico

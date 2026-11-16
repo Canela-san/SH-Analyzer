@@ -16,8 +16,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > as chaves, o cofre e o registro de atividade), a F3.3 (a descoberta das placas), a F3.4 (o agente completo: a
 > saúde, as capturas, o relógio e os logs), a F3.5 (a área de Aquisição na tela: a lista de placas, a conexão e a
 > primeira conexão), a F3.6 (a visão geral e o diagnóstico, com o "Corrigir" do relógio e dos pinos) e a F3.7 (os
-> arquivos e a transferência, que espera as capturas) estão feitas, conferidas no servidor SSH do teste e na placa de
-> verdade. **A próxima: a F3.8, o terminal** (o `pyte` num widget próprio, sobre um PTY no SSH).
+> arquivos e a transferência, que espera as capturas) e a F3.8 (o terminal: o `pyte` num widget próprio, sobre um
+> PTY no SSH, com as abas, os atalhos e a gravação) estão feitas, conferidas no servidor SSH do teste e na placa de
+> verdade. **A próxima: a F3.9, o simulador com os cenários** (servido por SSH no próprio computador).
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
@@ -131,11 +132,11 @@ sonda em pedaços, sem prender o GIL). E o do agente da placa: `3f98d7b`. O diag
 (`0997175`) é do `sh_placa`, sem o agente.
 
 **O ambiente:** Python 3.13, PySide6 6.12.0, PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1; no extra `placa`,
-asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5 e keyring 25.7.0 (o cofre do Linux é o Secret Service). Testes, na última rodada:
+asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5, keyring 25.7.0 (o cofre do Linux é o Secret Service) e pyte 0.8.2. Testes, na última rodada:
 `ci.sh rapido` com 1 687 aprovados, `ci.sh interface` com 743 e os 6 de desempenho (15/11/2026).
 
-**Ainda não existe:** na Aquisição, o terminal (a F3.8) e capturar (a Fase 4); as figuras e as exportações (a Fase
-5).
+**Ainda não existe:** na Aquisição, capturar (a Fase 4) e o resgate pela serial (v1.0); as figuras e as
+exportações (a Fase 5).
 
 ---
 
@@ -1285,7 +1286,7 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
     sozinha, a interface sem travar, a fila esperando a captura, o gerenciador de arquivos). O servidor SSH do teste
     ganhou o SFTP e uma RAM própria para o sudo.
 
-### ☐ F3.8: o terminal
+### ☑ F3.8: o terminal
 
 - **Arquivos:** `componentes/terminal.py` (o widget, com o `pyte`); `areas/aquisicao/terminal.py`; o `pyte` no
   extra `placa`.
@@ -1298,6 +1299,46 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
     Terminal.
 - **Os testes:** as sequências de escape mais comuns na tela; o tamanho do widget chega ao PTY; a gravação; o atalho
   não aperta o Enter.
+- **Feito em 16/11/2026:**
+  - **`sh_placa/terminal.py`:** o shell num PTY da placa, num canal da conexão de agora
+    (`ConexaoSSH.abrir_terminal`); a saída em bytes, acrescentada ao arquivo da gravação com um cabeçalho por sessão
+    (como o `script -a` do `lab ssh`); o tamanho e o fechar pedidos enquanto o canal ainda abre valem; o código de
+    saída é esperado depois do fim da saída (o OpenSSH manda o EOF antes do `exit-status`); a abertura e o fechamento
+    vão para o registro de atividade; e o `ssh` do terminal do sistema, com a chave e o `known_hosts` do aplicativo
+    (e o salto pelo `ProxyCommand`);
+  - **`componentes/terminal.py`:** a `TelaDeTerminal`, um emulador xterm sobre a tela do `pyte`, que ganhou a
+    rolagem (10 000 linhas; o `ESC[3J` do `clear` a apaga), a tela alternativa (o `less`, o `vim`) e um
+    redimensionamento que guarda o prompt (ao encolher, saem primeiro as linhas vazias de baixo; ao crescer, as do
+    histórico voltam). A saída é interpretada em fatias de 8 ms por volta do laço da interface, e a fila cheia pula o
+    começo com um aviso (a gravação tem tudo). As teclas do xterm (o modo do cursor da aplicação, os modificadores,
+    o Alt como `ESC`, o AltGr do Windows); o Ctrl+letra vai para a placa mesmo quando a janela tem um atalho com ela;
+    a seleção por caractere, palavra e linha, a do X11, o colar com o *bracketed paste*, a busca dando a volta. As 16
+    cores da ANSI entraram nos tokens do tema, com o contraste de texto conferido nos dois;
+  - **a seção Terminal:** as abas (a primeira abre sozinha; Ctrl+Shift+T, Ctrl+Shift+W, Ctrl+PgUp/PgDn), a busca, os
+    atalhos (clicar escreve, o Enter é de quem lê), "Mostrar a gravação" e "Abrir no terminal do sistema" (o
+    terminal da área de trabalho: o do COSMIC, o GNOME Terminal, o Konsole, o do `x-terminal-emulator` pelo programa
+    que ele é; o Windows Terminal; o Terminal do macOS; sem nenhum, o comando vai para a área de transferência). **A
+    queda do cabo:** a aba reabre sozinha quando a placa volta. **Fechar uma aba com o `ler_adc` rodando pergunta
+    antes.** Cada aba grava no seu arquivo (`terminal_bbb.txt`, `terminal_bbb_2.txt`…), para as saídas não se
+    misturarem;
+  - **na placa de verdade** (pela tela, sem tela): o prompt em 0,9 s, com o título que o bash dá à aba; o PTY no
+    tamanho da tela (112 × 39) e no novo depois de encolher a janela (79 × 29, o `SIGWINCH`); **os oito atalhos
+    rodados de verdade**, inclusive o `coletar.sh conferir` (o `sudo` sem eco da senha, a captura íntegra, os símbolos
+    e as cores dele; a `conferencia.bin` do teste apagada depois); o `less` na tela alternativa e a principal de
+    volta; o Ctrl+C parando o `sleep` em 0,06 s (`$?` 130); o `exit 3` com o código 3 pelo OpenSSH e o "Reabrir"; a
+    gravação na pasta do dia; o `ssh` do terminal do sistema entrando com a chave e o `known_hosts` do aplicativo
+    (rodado aqui, sem janela, com `BatchMode`). Os comandos do teste começaram com espaço (fora do histórico do
+    bash), e a chave do teste saiu da placa;
+  - **o que a placa mostrou:** a primeira aba pedia o PTY no tamanho de antes do layout (80 × 24) e o mudava logo
+    depois; o registro e o cabeçalho da gravação ficavam com o errado. O shell abre agora na volta seguinte do laço;
+  - **de passagem:** o servidor SSH do teste ganhou o shell num PTY; o `preexec_fn` que dava o terminal de controle
+    travava no processo com threads dos testes da interface, e o `setsid --ctty` do util-linux faz o mesmo sem
+    Python no filho;
+  - **os testes:** `tests/test_sh_placa_terminal.py` (6), `tests/test_gui_terminal.py` (13: as sequências de escape
+    pintadas na tela, conferidas pelos pixels; a rolagem, a tela alternativa, o redimensionamento, a busca, a seleção,
+    as teclas, o colar, a fila que não trava) e `tests/test_gui_terminal_da_placa.py` (8: o tamanho que chega ao PTY,
+    a gravação de cada aba, o atalho sem o Enter, a queda e a volta sozinha, o shell que sai, a pergunta com a
+    captura rodando, o terminal do sistema). O `pyte` fica fora da partida da janela (`test_arquitetura`).
 
 ### ☐ F3.9: o simulador com os cenários
 
@@ -1842,6 +1883,23 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     conferiam a `/dev/shm` inteira, o que falhava rodando em paralelo: cada servidor de teste tem a sua agora.
   - **Testes:** `ci.sh placa` com 269 em cada Python, `ci.sh rapido` com 1 886 e `ci.sh interface` com 789.
   - **Próximo:** a F3.8, o terminal.
+- **16/11/2026:** **a F3.8, o terminal** (seção 4d):
+  - **as decisões:** o `pyte` interpreta, e a tela é nossa (a rolagem, a tela alternativa e o redimensionamento que
+    o `pyte` não tem, pintados com os tokens do tema); a saída em fatias de 8 ms, para um `cat` grande não travar a
+    janela; uma gravação por aba, para as saídas não se misturarem; a aba que caiu com o cabo reabre sozinha; fechar
+    uma aba com o `ler_adc` rodando pergunta antes (a captura começada nela morreria junto);
+  - **o que a placa mostrou:** o PTY da primeira aba nascia em 80 × 24, antes do layout (corrigido); o resto, como
+    no servidor do teste: os atalhos, o `sudo` do `coletar.sh conferir`, o `less`, o Ctrl+C e o código de saída pelo
+    OpenSSH;
+  - **um erro meu, corrigido:** o primeiro teste da seção esperava o prompt com o espaço do fim, que o texto da tela
+    tira; e o fechar da última aba abria outra na mesma hora (agora a aba nova vem só com a placa chegando ou com a
+    seção aparecendo, e sem abas há o "Abrir um terminal");
+  - **de passagem:** no `ci.sh rapido`, o `pgrep -x ler_adc` do servidor do teste via o `ler_adc` falso de outro
+    teste rodando em paralelo (os comandos rodam neste computador); o `pgrep` de cada placa falsa vê agora só os
+    processos do teste dela. E o `test_gui_eixos` das harmônicas falhou uma vez com a máquina cheia (os números do
+    eixo X vazios já antes do zoom): passa sozinho, e fica anotado.
+  - **Testes:** `ci.sh placa` com 275 em cada Python, `ci.sh rapido` com 1 915 e `ci.sh interface` com 810.
+  - **Próximo:** a F3.9, o simulador com os cenários.
 ---
 
 ## 8. Perguntas em aberto
