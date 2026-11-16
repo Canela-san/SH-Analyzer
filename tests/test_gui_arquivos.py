@@ -1,5 +1,5 @@
-"""Os arquivos da placa na tela (F3.7), com o servidor SSH do teste: transferir e abrir na Análise, o "apagar da placa"
-só depois da conferência e da confirmação, a queda no meio e a retomada sozinha quando a placa volta (o arquivo
+"""Os arquivos da placa na tela (F3.7), com o servidor SSH do teste: transferir e abrir na Análise, o título embaixo
+do nome do arquivo, o "apagar da placa" só depois da conferência e da confirmação, a queda no meio e a retomada sozinha quando a placa volta (o arquivo
 idêntico), a interface sem travar durante a transferência, a fila esperando a captura terminar, e o gerenciador de
 arquivos do sistema. Sem placa e sem tela."""
 
@@ -19,13 +19,16 @@ from capturas_sinteticas import escrever_bin  # noqa: E402
 from dialogos_falsos import DialogosFalsos  # noqa: E402
 from placas_de_teste import CofreFalso, Placas  # noqa: E402
 from PySide6.QtCore import QElapsedTimer, QTimer  # noqa: E402
+from PySide6.QtGui import QColor  # noqa: E402
 from sh_analyzer_gui import preferencias  # noqa: E402
 from sh_analyzer_gui.app import criar_aplicacao  # noqa: E402
 from sh_analyzer_gui.areas.aquisicao.area import AreaDeAquisicao  # noqa: E402
+from sh_analyzer_gui.areas.aquisicao.arquivos import COLUNAS, PAPEL_DO_TITULO  # noqa: E402
 from sh_analyzer_gui.servicos import conexao_da_placa as modulo_da_conexao  # noqa: E402
 from sh_analyzer_gui.servicos.conexao_da_placa import ConexaoDaPlaca  # noqa: E402
 from sh_analyzer_gui.servicos.placa import ServicoDaPlaca  # noqa: E402
 from sh_analyzer_gui.servicos.saude_da_placa import SaudeDaPlaca  # noqa: E402
+from sh_analyzer_gui.tema.aplicar import aparencia  # noqa: E402
 from sh_placa.descoberta import Descoberta, FonteSimulador  # noqa: E402
 from sh_placa.destino import Destino  # noqa: E402
 
@@ -122,6 +125,37 @@ def test_transferir_conferir_e_abrir_na_analise(qtbot, placas, abrir):
     linha = next(r for r in range(area.visao_geral.tabela.rowCount())
                  if area.visao_geral.tabela.item(r, 0).text() == "rede.bin")
     assert area.visao_geral.tabela.cellWidget(linha, 5).text() == "no computador"         # e na visão geral
+
+
+def test_o_titulo_embaixo_do_nome_e_a_largura_da_coluna(qtbot, placas, abrir):
+    """O título da captura vai embaixo do nome do arquivo, em cor de metadado (conferido pelos pixels), na coluna que
+    fica com a largura que as outras deixam; na janela estreita, ela fica com a largura dos nomes, e a tabela rola de
+    lado."""
+    servidor = placas.nova()
+    captura(servidor, "rede_da_bancada_com_um_nome_comprido.bin")
+    area = abrir(servidor)
+    tabela = area.arquivos.tabela
+    assert "Título" not in COLUNAS and tabela.columnCount() == len(COLUNAS)
+    linha = linha_de(area, "rede_da_bancada_com_um_nome_comprido.bin")
+    item = tabela.item(linha, 0)
+    assert item.text() == "rede_da_bancada_com_um_nome_comprido.bin"
+    assert item.data(PAPEL_DO_TITULO) == "Teste rede_da_bancada_com_um_nome_comprido.bin"
+    assert item.toolTip() == "rede_da_bancada_com_um_nome_comprido.bin\nTeste rede_da_bancada_com_um_nome_comprido.bin"
+    cabeca = tabela.horizontalHeader()
+    area.resize(1800, 860)
+    qtbot.waitUntil(lambda: sum(cabeca.sectionSize(c) for c in range(len(COLUNAS))) == tabela.viewport().width(),
+                    timeout=ESPERA_MS)
+    assert cabeca.sectionSize(0) > tabela.sizeHintForColumn(0) and tabela.horizontalScrollBar().maximum() == 0
+    celula = tabela.visualRect(tabela.model().index(linha, 0))
+    imagem = tabela.viewport().grab(celula).toImage()
+    mudo = QColor(aparencia().tema.mudo)
+    perto = [(x, y) for y in range(imagem.height()) for x in range(imagem.width())
+             if max(abs(imagem.pixelColor(x, y).red() - mudo.red()), abs(imagem.pixelColor(x, y).green() - mudo.green()),
+                    abs(imagem.pixelColor(x, y).blue() - mudo.blue())) <= 12]
+    assert perto and min(y for _x, y in perto) > imagem.height() / 2            # o título, na metade de baixo
+    area.resize(900, 860)
+    qtbot.waitUntil(lambda: cabeca.sectionSize(0) == tabela.sizeHintForColumn(0), timeout=ESPERA_MS)
+    assert tabela.horizontalScrollBar().maximum() > 0
 
 
 def test_apagar_so_o_conferido_e_com_confirmacao(qtbot, placas, abrir):

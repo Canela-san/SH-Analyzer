@@ -3,7 +3,8 @@ Análise.
 
 * **A lista:** cada ``.bin`` da pasta do firmware (e das coletas), com o resumo do cabeçalho que o agente lê (o
   título, a taxa, os canais, a duração, a integridade) e onde ela está: só na placa, na fila, baixando, no computador
-  (conferida) ou com a cópia corrompida.
+  (conferida) ou com a cópia corrompida. O título vai embaixo do nome do arquivo, na coluna que fica com a largura que
+  sobra (:class:`DelegadoDoArquivo`).
 * **As ações da seleção:** transferir (para a pasta da sessão do dia), abrir na Análise (a cópia local), mostrar a
   pasta e **apagar da placa, só o que já foi conferido**, depois de confirmar.
 * **As coletas:** as pastas de coleta, com o ``resumo.csv`` de cada uma.
@@ -22,10 +23,11 @@ import time
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
-from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QDesktopServices, QFont
+from PySide6.QtCore import QEvent, QModelIndex, QRect, QSize, Qt, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -34,6 +36,9 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QSplitter,
     QStackedWidget,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -47,10 +52,17 @@ from ...componentes.toast import Toast
 from ...servicos.conexao_da_placa import ConexaoDaPlaca
 from ...servicos.saude_da_placa import SaudeDaPlaca
 from ...servicos.transferencias import ATIVOS, ItemDaFila, TransferenciasDaPlaca
+from ...tema.aplicar import aparencia
+from ...tema.tokens import TAMANHOS
 from .pecas import Painel, Selo, fonte
 from .textos import frase, texto_da_vazao, traduzir
 
-COLUNAS = ("Arquivo", "Título", "Início", "Duração", "Taxa", "Canais", "Tamanho", "Integridade", "No computador")
+COLUNAS = ("Arquivo", "Início", "Duração", "Taxa", "Canais", "Tamanho", "Integridade", "No computador")
+PAPEL_DO_TITULO = Qt.ItemDataRole.UserRole + 1
+ENTRE_AS_LINHAS = 2
+"""Os pixels entre o nome do arquivo e o título, na coluna Arquivo."""
+FOLGA_DAS_DUAS_LINHAS = 6
+"""Os pixels a mais na altura das linhas com título (3 em cima, 3 embaixo)."""
 SSHFS_WIN = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "SSHFS-Win" / "bin" / "sshfs.exe"
 
 
@@ -73,6 +85,56 @@ def estado_no_computador(transferencias: TransferenciasDaPlaca, captura) -> tupl
     if item is not None and item.estado == "interrompida":
         return traduzir("interrompida"), "aviso"
     return traduzir("só na placa"), "aviso"
+
+
+class DelegadoDoArquivo(QStyledItemDelegate):
+    """A coluna Arquivo: o nome e, embaixo, o título da captura em cor de metadado, cortado com "…" na largura da
+    coluna (que fica com a largura que as outras deixam, e nunca menos que a dos nomes:
+    :meth:`Arquivos._ajustar_a_coluna_do_arquivo`). Numa coluna própria, o título ficava com o que as outras deixavam (40 px numa
+    janela de 1 440 px, com o painel das transferências). ``duas_linhas``: alguma captura da tabela tem título, e
+    todas as linhas ficam com a altura de duas (a tabela não fica com linhas de alturas diferentes)."""
+
+    duas_linhas = False
+
+    @staticmethod
+    def fonte_do_titulo(base: QFont) -> QFont:
+        f = QFont(base)
+        f.setPixelSize(TAMANHOS["secundario"])
+        return f
+
+    def sizeHint(self, opcao: QStyleOptionViewItem, indice: QModelIndex) -> QSize:
+        tamanho = super().sizeHint(opcao, indice)
+        if not self.duas_linhas:
+            return tamanho
+        extra = QFontMetrics(self.fonte_do_titulo(opcao.font)).height() + ENTRE_AS_LINHAS + FOLGA_DAS_DUAS_LINHAS
+        return QSize(tamanho.width(), tamanho.height() + extra)
+
+    def paint(self, pintor: QPainter, opcao: QStyleOptionViewItem, indice: QModelIndex) -> None:
+        titulo = indice.data(PAPEL_DO_TITULO) or ""
+        if not titulo:
+            super().paint(pintor, opcao, indice)
+            return
+        o = QStyleOptionViewItem(opcao)
+        self.initStyleOption(o, indice)
+        nome, o.text = o.text, ""
+        estilo = o.widget.style() if o.widget is not None else QApplication.style()
+        estilo.drawControl(QStyle.ControlElement.CE_ItemViewItem, o, pintor, o.widget)     # o fundo e a seleção
+        r: QRect = estilo.subElementRect(QStyle.SubElement.SE_ItemViewItemText, o, o.widget)
+        fonte_do_titulo = self.fonte_do_titulo(o.font)
+        m_nome, m_titulo = QFontMetrics(o.font), QFontMetrics(fonte_do_titulo)
+        topo = r.top() + (r.height() - m_nome.height() - ENTRE_AS_LINHAS - m_titulo.height()) // 2
+        tema = aparencia().tema
+        pintor.save()
+        pintor.setFont(o.font)
+        pintor.setPen(QColor(tema.texto))                   # também na seleção (o fundo dela é um tom do acento)
+        pintor.drawText(QRect(r.left(), topo, r.width(), m_nome.height()), int(Qt.AlignmentFlag.AlignLeft),
+                        m_nome.elidedText(nome, Qt.TextElideMode.ElideMiddle, r.width()))
+        pintor.setFont(fonte_do_titulo)
+        pintor.setPen(QColor(tema.mudo))
+        pintor.drawText(QRect(r.left(), topo + m_nome.height() + ENTRE_AS_LINHAS, r.width(), m_titulo.height()),
+                        int(Qt.AlignmentFlag.AlignLeft), m_titulo.elidedText(titulo, Qt.TextElideMode.ElideRight,
+                                                                              r.width()))
+        pintor.restore()
 
 
 def texto_do_item(item: ItemDaFila) -> str:
@@ -223,7 +285,12 @@ class Arquivos(QWidget):
         cabeca.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         for coluna in range(len(COLUNAS)):
             cabeca.setSectionResizeMode(coluna, QHeaderView.ResizeMode.ResizeToContents)
-        cabeca.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        cabeca.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        cabeca.sectionResized.connect(lambda coluna, _antes, _agora: coluna != 0 and self._ajustar_a_coluna_do_arquivo())
+        self.tabela.viewport().installEventFilter(self)
+        self.delegado_do_arquivo = DelegadoDoArquivo(self.tabela)
+        self.tabela.setItemDelegateForColumn(0, self.delegado_do_arquivo)
+        self.tabela.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.tabela.itemSelectionChanged.connect(self._selecao_mudou)
         self.tabela.cellDoubleClicked.connect(self._duplo_clique)
 
@@ -325,17 +392,21 @@ class Arquivos(QWidget):
     def _preencher_a_tabela(self) -> None:
         selecionadas = {c.arquivo for c in self.selecionadas()}
         self.tabela.blockSignals(True)
+        self.delegado_do_arquivo.duas_linhas = any(c.titulo for c in self._capturas)
         self.tabela.setRowCount(len(self._capturas))
         for linha, c in enumerate(self._capturas):
             integridade = "; ".join(c.problemas) if c.problemas else traduzir("íntegra")
-            valores = [c.arquivo, c.titulo or "", time.strftime("%d/%m %H:%M", time.localtime(c.inicio)),
+            valores = [c.arquivo, time.strftime("%d/%m %H:%M", time.localtime(c.inicio)),
                        formatar_duracao(c.duracao_s) if c.duracao_s else "—",
                        formatar_si(c.taxa_hz, "S/s", 3) if c.taxa_hz else "—",
                        ", ".join(str(n) for n in c.canais) or "—", formatar_bytes(c.bytes), integridade]
             for coluna, valor in enumerate(valores):
                 item = QTableWidgetItem(valor)
-                item.setToolTip(valor if coluna != 7 else "\n".join(c.problemas) or integridade)
-                if coluna in (3, 4, 6):
+                item.setToolTip(valor if coluna != 6 else "\n".join(c.problemas) or integridade)
+                if coluna == 0 and c.titulo:
+                    item.setData(PAPEL_DO_TITULO, c.titulo)
+                    item.setToolTip(f"{c.arquivo}\n{c.titulo}")
+                if coluna in (2, 3, 5):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.tabela.setItem(linha, coluna, item)
             texto, nivel = estado_no_computador(self.transferencias, c)
@@ -350,6 +421,21 @@ class Arquivos(QWidget):
                 self.tabela.selectRow(linha)
         self.tabela.blockSignals(False)
         self.tabela.resizeColumnToContents(len(COLUNAS) - 1)
+        self._ajustar_a_coluna_do_arquivo()
+
+    def eventFilter(self, objeto, evento) -> bool:
+        if objeto is self.tabela.viewport() and evento.type() == QEvent.Type.Resize:
+            self._ajustar_a_coluna_do_arquivo()
+        return super().eventFilter(objeto, evento)
+
+    def _ajustar_a_coluna_do_arquivo(self) -> None:
+        """A coluna Arquivo fica com a largura que as outras deixam, e nunca menos que a dos nomes (a tabela rola de
+        lado numa janela estreita, em vez de cortar o nome inteiro)."""
+        cabeca = self.tabela.horizontalHeader()
+        outras = sum(cabeca.sectionSize(coluna) for coluna in range(1, len(COLUNAS)))
+        largura = max(self.tabela.sizeHintForColumn(0), self.tabela.viewport().width() - outras)
+        if cabeca.sectionSize(0) != largura:
+            cabeca.resizeSection(0, largura)
 
     def _preencher_as_coletas(self) -> None:
         coletas = self.saude.capturas.coletas if self.saude.capturas is not None else ()
