@@ -1,5 +1,5 @@
 """Os cenários do simulador da placa (docs/gui-plan.md, 11.11): o nome, o título e a descrição que a interface mostra.
-À parte do ``simulador.py`` (que traz o asyncssh) para a interface listá-los sem carregar a rede."""
+À parte do ``simulador.py`` para a interface listá-los sem montar nada (e sem o numpy das capturas)."""
 
 from __future__ import annotations
 

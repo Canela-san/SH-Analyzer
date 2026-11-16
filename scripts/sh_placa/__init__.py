@@ -12,8 +12,9 @@
   corrigir), o relógio, as capturas e os logs;
 * :mod:`.laco` -- o laço ``asyncio`` numa thread só dele, onde toda a rede da placa roda (a interface chega a ele
   pela ponte ``sh_analyzer_gui/servicos/placa.py``);
-* :mod:`.simulador` -- uma BeagleBone neste computador, servida por SSH, com cenários (o sistema de arquivos falso em
-  que o agente de verdade roda): para desenvolver e demonstrar sem a placa, e para os testes;
+* :mod:`.simulador` -- uma BeagleBone neste computador, com cenários (o sistema de arquivos falso em que o agente de
+  verdade roda): para desenvolver e demonstrar sem a placa, e para os testes;
+* :mod:`.servidor_do_simulador` -- a placa simulada servida por SSH, como a interface a usa (precisa do asyncssh);
 * :mod:`.capturas_simuladas` -- as capturas da placa simulada: ``.bin`` como o ``ler_adc`` grava, com a rede de 60 Hz
   e os supraharmônicos.
 

@@ -1,4 +1,4 @@
-"""O servidor SSH dos testes da conexão com a placa: o do simulador (``sh_placa.simulador.ServidorDoSimulador``, o que a
+"""O servidor SSH dos testes da conexão com a placa: o do simulador (``sh_placa.servidor_do_simulador``, o que a
 interface usa), mais o que só os testes pedem.
 
 * **a senha** (a primeira conexão: a impressão, a senha e a instalação da chave; o sudo pede a mesma, como na placa);
@@ -25,7 +25,12 @@ import termios
 from pathlib import Path
 
 import asyncssh
-from sh_placa.simulador import ServidorDoSimulador, _LadoDoServidor, matar, matar_quando_o_canal_fechar
+from sh_placa.servidor_do_simulador import (
+    ServidorDoSimulador,
+    _LadoDoServidor,
+    matar,
+    matar_quando_o_canal_fechar,
+)
 
 SENHA_PADRAO = "temppwd-do-teste"
 

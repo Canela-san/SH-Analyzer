@@ -33,9 +33,10 @@ conexão de agora (:attr:`conexao_ssh`, :attr:`cliente`), a senha da placa que a
 (:meth:`senha_da_placa`) e o cofre (:meth:`cofre`). Ao conectar, o agente responde a ``saude`` (o ``estado`` com as
 conferências, no mesmo tempo): :attr:`estado_da_placa` já traz o diagnóstico.
 
-**O simulador** (``sh_placa/simulador.py``) é uma placa servida por SSH neste computador, no :attr:`cenario` escolhido
-(:meth:`trocar_cenario`; o último fica nas preferências): conectar a ele monta a placa simulada, inicia o servidor e
-entra com a chave dele, sem perguntas, e a conexão é a de sempre (os arquivos, as correções, a queda e a volta).
+**O simulador** (``sh_placa/servidor_do_simulador.py``) é uma placa servida por SSH neste computador, no
+:attr:`cenario` escolhido (:meth:`trocar_cenario`; o último fica nas preferências): conectar a ele monta a placa
+simulada, inicia o servidor e entra com a chave dele, sem perguntas, e a conexão é a de sempre (os arquivos, as
+correções, a queda e a volta).
 Fechar a conexão apaga a placa simulada; trocar o cenário monta outra. Sem a medida do enlace (é este computador).
 
 **A partida da janela não carrega a rede:** o asyncssh, o zeroconf e o keyring custam ~0,7 s para importar, e
@@ -66,7 +67,7 @@ from .placa import Chamada, ServicoDaPlaca
 if TYPE_CHECKING:
     from sh_placa.conexao import ConexaoSSH, Enlace
     from sh_placa.descoberta import Descoberta, PlacaVista
-    from sh_placa.simulador import ServidorDoSimulador
+    from sh_placa.servidor_do_simulador import ServidorDoSimulador
 
 log = logging.getLogger(__name__)
 
@@ -474,7 +475,7 @@ class ConexaoDaPlaca(QObject):
         pergunta); pelo SSH, ele só aceita a chave. Uma falha no caminho fecha e apaga o que abriu."""
         from sh_placa.agente import TransporteSSH
         from sh_placa.conexao import ConexaoSSH
-        from sh_placa.simulador import ServidorDoSimulador
+        from sh_placa.servidor_do_simulador import ServidorDoSimulador
 
         servidor = await asyncio.to_thread(ServidorDoSimulador, None, t.cenario)
         conexao = None

@@ -229,6 +229,22 @@ def test_a_janela_abre_sem_carregar_a_rede_da_placa():
     assert saida.stdout.strip() == "[]", saida.stdout + saida.stderr
 
 
+SEM_O_EXTRA_PLACA = ("agente", "capturas_simuladas", "cenarios", "destino", "diagnostico", "estado", "simulador",
+                     "versao")
+"""Os módulos do ``sh_placa`` que os testes do agente e do diagnóstico usam sem o extra ``placa`` (o job ``testes``
+da CI): a placa simulada sem o SSH (o servidor dela, ``servidor_do_simulador``, precisa do asyncssh)."""
+
+
+def test_o_simulador_e_o_diagnostico_sem_o_extra_placa():
+    """Conferido num processo novo, com a rede da placa bloqueada (o ``import`` dela falha, como sem o extra)."""
+    codigo = ("import sys\n"
+              f"for nome in {sorted(REDE_DA_PLACA)!r}: sys.modules[nome] = None\n"
+              f"for nome in {SEM_O_EXTRA_PLACA!r}: __import__('sh_placa.' + nome)\n")
+    saida = subprocess.run([sys.executable, "-c", codigo], capture_output=True, text=True,
+                           env={**os.environ, "PYTHONPATH": str(SCRIPTS)})
+    assert saida.returncode == 0, saida.stderr
+
+
 def test_a_interface_so_fala_com_o_motor_pela_api():
     """``sh_analyzer_gui`` importa do motor só ``supraharmonicos.api`` (docs/gui-plan.md, 8.1): o resto do motor
     pode mudar sem quebrar a interface, e a paridade com a CLI fica num lugar só (``tests/test_api.py``)."""
