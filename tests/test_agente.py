@@ -36,8 +36,8 @@ def test_estado_le_cada_campo(placa):
     assert rc == 0 and e["protocolo"] == 1 and e["comando"] == "estado"
     assert e["placa"] == {"nome": "A335BNLT", "revisao": "00C0", "serie": SERIE_SIMULADA,
                           "modelo": "TI AM335x BeagleBone Black"}
-    assert e["sistema"] == "BeagleBoard.org Debian Bullseye IoT Image 2023-09-02"
-    assert e["kernel"] == "5.10.168-ti-r71" and e["ligada_s"] == 8040.52 and e["carga"] == [0.31, 0.24, 0.18]
+    assert e["sistema"] == "BeagleBoard.org Debian Buster IoT Image 2020-04-06"
+    assert e["kernel"] == "4.19.94-ti-r42" and e["ligada_s"] == 8040.52 and e["carga"] == [0.31, 0.24, 0.18]
     assert e["memoria_disponivel_kib"] == 319488 and e["temperatura_c"] == 52.0
     assert e["pru"] == {"estado": "offline", "firmware": "am335x-pru0-fw", "nome": "4a334000.pru"}   # entre capturas
     assert all(p["certo"] for p in e["pinos"].values()) and set(e["pinos"]) == {"P9_28", "P9_29", "P9_30", "P9_31"}
