@@ -8,6 +8,9 @@ a ``ao_receber(bytes)``, que roda no laço (a interface a leva para a thread del
 
 **O registro de atividade** diz que um terminal abriu e fechou (e onde ficou gravado); os comandos que a pessoa
 digita são dela, e ficam na gravação.
+
+**O terminal do sistema** (:func:`argumentos_do_ssh`): o ``ssh`` com a chave e o ``known_hosts`` do aplicativo, para
+entrar na placa sem a senha e sem a pergunta da impressão digital, já respondida na primeira conexão.
 """
 
 from __future__ import annotations
@@ -15,6 +18,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import shlex
+import subprocess
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -24,6 +30,7 @@ from .registro import Entrada
 
 if TYPE_CHECKING:
     from .conexao import ConexaoSSH
+    from .destino import Destino
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +44,26 @@ def cabecalho_da_gravacao(conta: str, colunas: int, linhas: int, quando: float |
     quando = time.time() if quando is None else quando
     data = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(quando))
     return f"\n--- terminal da placa {conta}, aberto em {data} ({colunas}×{linhas}, SH-Analyzer) ---\n".encode()
+
+
+def argumentos_do_ssh(destino: Destino, chave: Path | None, known_hosts: Path, plataforma: str = sys.platform
+                      ) -> list[str]:
+    """O ``ssh`` para a placa em ``destino`` (com o salto, se houver), com a chave do aplicativo (se ela existe: sem
+    ela, o ``ssh`` pede a senha) e o ``known_hosts`` dele."""
+    opcoes = []
+    if chave is not None and chave.exists():
+        opcoes += ["-i", str(chave), "-o", "IdentitiesOnly=yes"]
+    arquivo = str(known_hosts)
+    opcoes += ["-o", "UserKnownHostsFile=" + (f'"{arquivo}"' if any(c.isspace() for c in arquivo) else arquivo)]
+    argumentos = ["ssh", *opcoes]
+    if destino.salto is not None:
+        s = destino.salto
+        salto = ["ssh", *opcoes, "-p", str(s.porta), "-W", "%h:%p", f"{s.usuario}@{s.host}"]
+        juntar = subprocess.list2cmdline if plataforma == "win32" else shlex.join
+        argumentos += ["-o", "ProxyCommand=" + juntar(salto)]
+    if destino.porta != 22:
+        argumentos += ["-p", str(destino.porta)]
+    return [*argumentos, f"{destino.usuario}@{destino.host}"]
 
 
 class SessaoDeTerminal:
@@ -57,7 +84,12 @@ class SessaoDeTerminal:
     async def rodar(self) -> int | None:
         """Abre o shell e lê até ele terminar; devolve o código de saída (``None``: a conexão caiu, ou o terminal foi
         fechado na interface)."""
-        self._processo = await self.conexao.abrir_terminal(self.colunas, self.linhas, self.tipo)
+        pedido = (self.colunas, self.linhas)
+        self._processo = await self.conexao.abrir_terminal(*pedido, self.tipo)
+        if self._fechado_aqui:                     # fechado na interface enquanto abria
+            self._fechar_processo()
+        elif (self.colunas, self.linhas) != pedido:  # a tela mudou de tamanho enquanto abria
+            self.redimensionar(self.colunas, self.linhas)
         arquivo = None
         if self.gravacao is not None:
             try:

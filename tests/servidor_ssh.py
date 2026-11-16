@@ -211,10 +211,13 @@ class ServidorSSH:
         mestre, escravo = pty.openpty()
         _tamanho_do_pty(mestre, colunas or 80, linhas or 24)
         ambiente = {**self.ambiente, "TERM": processo.get_terminal_type() or "dumb", "PS1": "placa$ "}
+        # O setsid do util-linux: uma sessão nova, com o PTY como terminal de controle (o controle de tarefas e o
+        # SIGWINCH do sh), sem código Python no filho depois do fork (o preexec_fn trava num processo com threads,
+        # como o dos testes da interface). Ele vira o sh, com o mesmo pid: o grupo dele é o do _matar.
         try:
             shell = await asyncio.create_subprocess_exec(
-                "/bin/sh", "-i", stdin=escravo, stdout=escravo, stderr=escravo, cwd=self.home, env=ambiente,
-                start_new_session=True, preexec_fn=_terminal_de_controle)
+                "setsid", "--ctty", "/bin/sh", "-i", stdin=escravo, stdout=escravo, stderr=escravo, cwd=self.home,
+                env=ambiente)
         finally:
             os.close(escravo)
         laco = asyncio.get_running_loop()
@@ -323,12 +326,6 @@ async def _matar_quando_o_canal_fechar(processo: asyncssh.SSHServerProcess, shel
 def _tamanho_do_pty(fd: int, colunas: int, linhas: int) -> None:
     """O ``TIOCSWINSZ``: o tamanho do pseudoterminal (o shell nele recebe o ``SIGWINCH``)."""
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", linhas, colunas, 0, 0))
-
-
-def _terminal_de_controle() -> None:
-    """No filho, depois do ``setsid``: o PTY (o stdin) vira o terminal de controle da sessão nova, para o ``sh -i``
-    ter o controle de tarefas e o ``SIGWINCH``."""
-    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
 
 def _matar(shell: asyncio.subprocess.Process) -> None:

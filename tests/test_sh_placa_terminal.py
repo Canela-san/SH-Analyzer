@@ -17,7 +17,7 @@ from sh_placa.chaves import ChaveDoAplicativo, HostsConhecidos  # noqa: E402
 from sh_placa.conexao import ConexaoSSH, ErroDeConexao  # noqa: E402
 from sh_placa.destino import Destino  # noqa: E402
 from sh_placa.registro import RegistroDeAtividade  # noqa: E402
-from sh_placa.terminal import SessaoDeTerminal  # noqa: E402
+from sh_placa.terminal import SessaoDeTerminal, argumentos_do_ssh  # noqa: E402
 
 ESPERA_S = 10
 
@@ -133,6 +133,45 @@ def test_fechar_na_interface(tmp_path):
     assert asyncio.run(cenario()) == (None, "viva\n")
     descricoes = [e.descricao for e in registro.entradas if e.tipo == "conexao"]
     assert "terminal aberto (xterm-256color, 80×24)" in descricoes and "terminal fechado na interface" in descricoes
+
+
+def test_mudar_o_tamanho_e_fechar_enquanto_abre(tmp_path):
+    """A tela muda de tamanho (ou a aba fecha) antes de o canal abrir: vale o pedido mais novo."""
+    async def cenario():
+        async with ServidorSSH(tmp_path / "placa") as placa:
+            async with conexao(tmp_path, placa, RegistroDeAtividade()) as c:
+                tela = Tela()
+                sessao = SessaoDeTerminal(c, 80, 24, ao_receber=tela.receber)
+                rodando = asyncio.ensure_future(sessao.rodar())
+                sessao.redimensionar(101, 33)                                   # antes do canal existir
+                await tela.esperar(r"placa\$ ")
+                sessao.escrever(b"stty size\r")
+                tamanho = (await tela.esperar(r"(\d+) (\d+)\r?\n")).groups()
+                sessao.fechar()
+                await asyncio.wait_for(rodando, ESPERA_S)
+
+                fechada = SessaoDeTerminal(c, 80, 24, ao_receber=tela.receber)
+                abrindo = asyncio.ensure_future(fechada.rodar())
+                fechada.fechar()                                                # antes do canal existir
+                codigo = await asyncio.wait_for(abrindo, ESPERA_S)
+            return tamanho, codigo
+
+    tamanho, codigo = asyncio.run(cenario())
+    assert tamanho == ("33", "101") and codigo is None
+
+
+def test_os_argumentos_do_ssh(tmp_path):
+    chave, hosts = tmp_path / "id_ed25519", tmp_path / "com espaço" / "known_hosts"
+    assert argumentos_do_ssh(Destino("192.168.6.2"), chave, hosts) == [
+        "ssh", "-o", f'UserKnownHostsFile="{hosts}"', "debian@192.168.6.2"]                  # sem a chave: a senha
+    chave.write_text("chave")
+    hosts = tmp_path / "known_hosts"
+    salto = Destino("lab.exemplo.br", 2222, "aluno")
+    assert argumentos_do_ssh(Destino("10.0.0.5", 2200, "lab", salto), chave, hosts) == [
+        "ssh", "-i", str(chave), "-o", "IdentitiesOnly=yes", "-o", f"UserKnownHostsFile={hosts}",
+        "-o", f"ProxyCommand=ssh -i {chave} -o IdentitiesOnly=yes -o UserKnownHostsFile={hosts} -p 2222 -W %h:%p "
+              "aluno@lab.exemplo.br",
+        "-p", "2200", "lab@10.0.0.5"]
 
 
 def test_sem_conexao(tmp_path):
