@@ -1,12 +1,23 @@
-"""A janela do Estúdio (docs/gui-plan.md, 9.1; o mockup A1 em ``docs/gui-mockups/a1-estudio.html``).
+"""A janela do aplicativo (docs/gui-plan.md, 9.1): a barra superior, as áreas e a barra de status.
 
-As regiões:
+* a **barra superior** (``componentes.barra_superior``), no lugar da barra de menus, com as áreas e o chip da placa
+  (um clique nele leva à Aquisição);
+* **as áreas**, uma página cada (``self.paginas``; :meth:`mostrar_area`):
 
-* a **barra superior** (``componentes.barra_superior``), no lugar da barra de menus;
-* o **Projeto** à esquerda e o **Inspetor** à direita, docks de altura inteira;
-* as **vistas** no centro, em abas; sem vista aberta, o estado vazio diz como começar;
-* o **painel de baixo** (medidas, tarefas, avisos), só embaixo das vistas;
-* a **barra de status**.
+  * a **Análise**, o Estúdio (o mockup A1 em ``docs/gui-mockups/a1-estudio.html``), numa ``QMainWindow`` própria
+    (``self.estudio``) com os painéis dela: o **Projeto** à esquerda e o **Inspetor** à direita, docks de altura
+    inteira; as **vistas** no centro, em abas (sem vista aberta, o estado vazio diz como começar); o **painel de
+    baixo** (medidas, tarefas, avisos), só embaixo das vistas. Os painéis são da Análise: as outras áreas ocupam a
+    janela inteira, e voltar à Análise os traz como estavam;
+  * a **Aquisição** (``areas/aquisicao``, o B1), com a placa conectada (``self.conexao_da_placa``);
+  * as Figuras chegam na v0.11;
+
+* a **barra de status**: a parte de cada área (a fonte e a integridade na Análise; a conexão e o enlace na
+  Aquisição), a tarefa em andamento e a versão.
+
+**Os atalhos de uma área valem só com ela à vista:** as ações da Análise (as vistas, os painéis, remover traços com
+Delete) moram no Estúdio, e o Qt só as dispara com ele visível; a paleta também só as oferece ali. Abrir uma captura ou
+um projeto, de qualquer área, leva à Análise.
 
 **As ações** (``self.acoes``, pelo nome) são o ponto único de cada comando: o botão, o atalho e, depois, a paleta de
 comandos (F1.8) disparam a mesma ``QAction``.
@@ -42,6 +53,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMenu,
@@ -56,6 +68,9 @@ from .areas.analise.area import AreaDeAnalise
 from .areas.analise.arvore import PainelDoProjeto
 from .areas.analise.inspetor import Inspetor
 from .areas.analise.medidas import TabelaDeMedidas
+from .areas.aquisicao.area import AreaDeAquisicao
+from .areas.aquisicao.barra_de_status import StatusDaPlaca
+from .areas.aquisicao.textos import resumo
 from .areas.configuracoes import DialogoDeConfiguracoes
 from .componentes.avisos import ListaDeAvisos
 from .componentes.barra_superior import BarraSuperior
@@ -71,6 +86,7 @@ from .dados.materializacao import CacheDeMaterializacoes
 from .modelo.objetos import Projeto, Vista
 from .modelo.selecao import Selecao
 from .registro import caminho_do_log
+from .servicos.conexao_da_placa import ConexaoDaPlaca
 from .servicos.erros import ErroInesperado, relator
 from .servicos.fontes import ServicoDeFontes
 from .servicos.materializar import ServicoDeMaterializacao
@@ -96,6 +112,7 @@ CHAVE_DA_GEOMETRIA = "janela/geometria"
 CHAVE_DO_ESTADO = "janela/estado"
 
 ABA_MEDIDAS, ABA_TAREFAS, ABA_AVISOS = range(3)
+AREA_ANALISE, AREA_FIGURAS, AREA_AQUISICAO = range(3)
 
 
 def _dica_com_atalho(acao: QAction) -> None:
@@ -118,10 +135,14 @@ class JanelaPrincipal(QMainWindow):
         self.setWindowTitle(app.applicationName() or "SH-Analyzer")
         self.resize(*TAMANHO_INICIAL)
         self.setMinimumSize(*TAMANHO_MINIMO)
-        self.setDockNestingEnabled(False)
+        # A Análise numa QMainWindow própria, com os painéis dela: as outras áreas ocupam a janela inteira.
+        self.estudio = QMainWindow()
+        self.estudio.setObjectName("estudio")
+        self.estudio.setWindowFlags(Qt.WindowType.Widget)
+        self.estudio.setDockNestingEnabled(False)
         # O Projeto e o Inspetor ocupam a altura inteira; o painel de baixo fica só embaixo das vistas.
-        self.setCorner(Qt.Corner.BottomLeftCorner, Qt.DockWidgetArea.LeftDockWidgetArea)
-        self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
+        self.estudio.setCorner(Qt.Corner.BottomLeftCorner, Qt.DockWidgetArea.LeftDockWidgetArea)
+        self.estudio.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
 
         self.grupo_desfazer = QUndoGroup(self)
         # Três threads: a pirâmide de uma captura, a materialização de um traço e as medidas não esperam uma pela
@@ -134,6 +155,7 @@ class JanelaPrincipal(QMainWindow):
             preferencias.pasta_do_cache("materializacoes"), preferencias.limite("materializacoes")))
         # A placa: as chamadas no laço asyncio da thread própria, que nasce na primeira chamada (a Aquisição).
         self.placa = ServicoDaPlaca(parent=self)
+        self.conexao_da_placa = ConexaoDaPlaca(self.placa, parent=self)
         self.projeto: Projeto | None = None
         self.selecao: Selecao | None = None
         self.acoes: dict[str, QAction] = {}
@@ -148,10 +170,11 @@ class JanelaPrincipal(QMainWindow):
         self.barra.botao_tema.setDefaultAction(self.acoes["alternar_tema"])
         self.barra.botao_ajustes.setDefaultAction(self.acoes["configuracoes"])
         self.barra.definir_menu_do_projeto(self._menu_do_projeto())
-        for indice, versao in ((1, "v0.11"), (2, "v0.10")):
-            self.barra.areas.habilitar(indice, False, self.tr("Chega na {}").format(versao))
+        self.barra.areas.habilitar(AREA_FIGURAS, False, self.tr("Chega na {}").format("v0.11"))
+        self.barra.areaMudou.connect(self.mostrar_area)
+        self.barra.chip_placa.clicked.connect(lambda: self.mostrar_area(AREA_AQUISICAO))
 
-        self.setCentralWidget(self._criar_centro())
+        self.estudio.setCentralWidget(self._criar_centro())
         self.dock_projeto = self._criar_dock("projeto", self.tr("Projeto"), self._criar_projeto(),
                                              Qt.DockWidgetArea.LeftDockWidgetArea, "painel_projeto")
         self.dock_projeto.titulo.adicionar_botao(self.acoes["abrir"])
@@ -165,6 +188,15 @@ class JanelaPrincipal(QMainWindow):
         self._criar_barra_de_status()
         self.area = AreaDeAnalise(self, self.painel_projeto, self.inspetor, self.avisos, self.status_fonte,
                                   self.status_integridade, self.vistas, self.tabela_de_medidas)
+        self.aquisicao = AreaDeAquisicao(self.conexao_da_placa)
+        self.paginas = QStackedWidget()
+        self.paginas.setObjectName("paginas_das_areas")
+        self._paginas_das_areas = {AREA_ANALISE: self.estudio, AREA_AQUISICAO: self.aquisicao}
+        for pagina in self._paginas_das_areas.values():
+            self.paginas.addWidget(pagina)
+        self.setCentralWidget(self.paginas)
+        self.conexao_da_placa.mudou.connect(self._placa_mudou)
+        self._placa_mudou()
         self.setAcceptDrops(True)
 
         aparencia().mudou.connect(self._tema_mudou)
@@ -180,8 +212,10 @@ class JanelaPrincipal(QMainWindow):
     # ------------------------------------------------------------------ ações
 
     def _acao(self, nome: str, texto: str, *, atalho: QKeySequence | str | None = None, icone: str | None = None,
-              dica: str | None = None, acao: QAction | None = None) -> QAction:
-        """Registra uma ação pelo nome (``self.acoes``) e a liga à janela, para o atalho valer em qualquer região."""
+              dica: str | None = None, acao: QAction | None = None, da_analise: bool = False) -> QAction:
+        """Registra uma ação pelo nome (``self.acoes``) e a liga à janela, para o atalho valer em qualquer região.
+        ``da_analise``: a ação mora no Estúdio, e o atalho vale só com a Análise à vista (o Qt não dispara o atalho de
+        uma ação cujos widgets estão escondidos)."""
         a = acao or QAction(texto, self)
         a.setObjectName(nome)
         if atalho is not None:
@@ -192,11 +226,14 @@ class JanelaPrincipal(QMainWindow):
         if not a.shortcut().isEmpty():
             rotulo += f" ({a.shortcut().toString(QKeySequence.SequenceFormat.NativeText)})"
         a.setToolTip(rotulo)
-        self.addAction(a)
+        (self.estudio if da_analise else self).addAction(a)
+        if da_analise:
+            self._acoes_da_analise.add(nome)
         self.acoes[nome] = a
         return a
 
     def _criar_acoes(self) -> None:
+        self._acoes_da_analise: set[str] = set()
         self._acao("desfazer", self.tr("Desfazer"), atalho=QKeySequence.StandardKey.Undo, icone="desfazer",
                    acao=self.grupo_desfazer.createUndoAction(self, self.tr("Desfazer")))
         self._acao("refazer", self.tr("Refazer"), atalho=QKeySequence.StandardKey.Redo, icone="refazer",
@@ -213,28 +250,29 @@ class JanelaPrincipal(QMainWindow):
                    icone="ajustes").triggered.connect(lambda: self.abrir_configuracoes())
         controle = self.controle
         self._acao("abrir", self.tr("Abrir captura…"), atalho=QKeySequence.StandardKey.Open,
-                   icone="pasta").triggered.connect(lambda: controle.abrir_arquivos())
+                   icone="pasta").triggered.connect(lambda: self._na_analise(controle.abrir_arquivos()))
         self._acao("novo_projeto", self.tr("Novo projeto"), atalho=QKeySequence.StandardKey.New,
                    icone="arquivo").triggered.connect(controle.novo)
         self._acao("abrir_projeto", self.tr("Abrir projeto…"), atalho="Ctrl+Shift+O",
-                   icone="pasta").triggered.connect(lambda: controle.abrir())
+                   icone="pasta").triggered.connect(lambda: self._na_analise(controle.abrir()))
         self._acao("salvar", self.tr("Salvar o projeto"), atalho=QKeySequence.StandardKey.Save,
                    icone="baixar").triggered.connect(controle.salvar)
         self._acao("salvar_como", self.tr("Salvar o projeto como…"),
                    atalho="Ctrl+Shift+S").triggered.connect(lambda: controle.salvar_como())
-        self._acao("nova_vista", self.tr("Nova vista"), icone="mais").triggered.connect(lambda: self.area.nova_vista())
-        self._acao("fechar_vista", self.tr("Fechar a vista"), atalho="Ctrl+W",
-                   icone="x").triggered.connect(lambda: self.area.fechar_vista_ativa())
-        self._acao("espectro", self.tr("Abrir o espectro da vista"), atalho="Ctrl+E",
-                   icone="espectro").triggered.connect(lambda: self.area.abrir_espectro())
-        self._acao("bandas", self.tr("Abrir as bandas IEC da vista"), atalho="Ctrl+Shift+B",
-                   icone="grade").triggered.connect(lambda: self.area.abrir_analise("bandas"))
+        self._acao("nova_vista", self.tr("Nova vista"), icone="mais",
+                   da_analise=True).triggered.connect(lambda: self.area.nova_vista())
+        self._acao("fechar_vista", self.tr("Fechar a vista"), atalho="Ctrl+W", icone="x",
+                   da_analise=True).triggered.connect(lambda: self.area.fechar_vista_ativa())
+        self._acao("espectro", self.tr("Abrir o espectro da vista"), atalho="Ctrl+E", icone="espectro",
+                   da_analise=True).triggered.connect(lambda: self.area.abrir_espectro())
+        self._acao("bandas", self.tr("Abrir as bandas IEC da vista"), atalho="Ctrl+Shift+B", icone="grade",
+                   da_analise=True).triggered.connect(lambda: self.area.abrir_analise("bandas"))
         self._acao("espectrograma", self.tr("Abrir o espectrograma da vista"), atalho="Ctrl+Shift+E",
-                   icone="camadas").triggered.connect(lambda: self.area.abrir_analise("espectrograma"))
-        self._acao("harmonicos", self.tr("Abrir os harmônicos da vista"), atalho="Ctrl+Shift+H",
-                   icone="pulso").triggered.connect(lambda: self.area.abrir_analise("harmonicos"))
+                   icone="camadas", da_analise=True).triggered.connect(lambda: self.area.abrir_analise("espectrograma"))
+        self._acao("harmonicos", self.tr("Abrir os harmônicos da vista"), atalho="Ctrl+Shift+H", icone="pulso",
+                   da_analise=True).triggered.connect(lambda: self.area.abrir_analise("harmonicos"))
         a = self._acao("remover_selecionados", self.tr("Remover os traços selecionados"),
-                       atalho=QKeySequence.StandardKey.Delete)
+                       atalho=QKeySequence.StandardKey.Delete, da_analise=True)
         a.triggered.connect(lambda: self.area.remover_selecionados())
 
     # ------------------------------------------------------------------ projeto
@@ -280,7 +318,10 @@ class JanelaPrincipal(QMainWindow):
     def acoes_da_paleta(self) -> list[QAction]:
         """As ações que a paleta busca: as da janela, as da vista aberta (ajustar, voltar, cursores) e, com um traço no
         inspetor, as de adicionar uma etapa à cadeia dele."""
-        acoes = list(self.acoes.values())
+        acoes = [a for nome, a in self.acoes.items()
+                 if nome not in self._acoes_da_analise or self.area_atual == AREA_ANALISE]
+        if self.area_atual != AREA_ANALISE:
+            return acoes
         vista = self.vistas.currentWidget()
         if vista is not None:
             acoes += [a for a in vista.actions() if a.text()]
@@ -344,7 +385,7 @@ class JanelaPrincipal(QMainWindow):
             for caminho in existentes:
                 a = menu.addAction(nome(caminho))
                 a.setToolTip(str(caminho))
-                a.triggered.connect(lambda _=False, c=caminho, f=abrir: f(c))
+                a.triggered.connect(lambda _=False, c=caminho, f=abrir: self._na_analise(f(c)))
             menu.setEnabled(bool(existentes))
 
     # ------------------------------------------------------------------ regiões
@@ -483,7 +524,7 @@ class JanelaPrincipal(QMainWindow):
                     *, com_titulo: bool = True) -> QDockWidget:
         """Um painel fixo no seu lado: não flutua nem muda de lugar (o layout fica previsível), mas recolhe e muda
         de tamanho. A ação de recolher entra em ``self.acoes``."""
-        dock = QDockWidget(titulo, self)
+        dock = QDockWidget(titulo, self.estudio)
         dock.setObjectName(nome)             # o saveState identifica os docks pelo nome
         # Só "fechável" (a ação de recolher fica desabilitada sem isso); o botão de fechar não aparece, porque o
         # título é nosso.
@@ -495,22 +536,33 @@ class JanelaPrincipal(QMainWindow):
         else:
             dock.setTitleBarWidget(QWidget())     # sem barra de título: as abas são o topo
         dock.setWidget(corpo)
-        self.addDockWidget(area, dock)
+        self.estudio.addDockWidget(area, dock)
         atalhos = {"painel_projeto": "Ctrl+B", "painel_inspetor": "Ctrl+I", "painel_inferior": "Ctrl+J"}
         acao = self._acao(nome_da_acao, self.tr("Mostrar ou recolher o painel: {}").format(titulo),
-                          atalho=atalhos[nome_da_acao], acao=dock.toggleViewAction())
+                          atalho=atalhos[nome_da_acao], acao=dock.toggleViewAction(), da_analise=True)
         acao.setText(self.tr("Mostrar ou recolher o painel: {}").format(titulo))
         return dock
 
     def _criar_barra_de_status(self) -> None:
         barra = self.statusBar()
         barra.setSizeGripEnabled(False)
+        # A parte de cada área: a fonte e a integridade na Análise; a placa na Aquisição.
         self.status_fonte = QLabel(self.tr("Nenhuma captura aberta"))
         self.status_fonte.setObjectName("status_fonte")
-        barra.addWidget(self.status_fonte)
         self.status_integridade = QLabel()
         self.status_integridade.setObjectName("status_integridade")
-        barra.addWidget(self.status_integridade, 1)
+        da_analise = QWidget()
+        linha = QHBoxLayout(da_analise)
+        linha.setContentsMargins(0, 0, 0, 0)
+        linha.setSpacing(0)
+        linha.addWidget(self.status_fonte)
+        linha.addWidget(self.status_integridade, 1)
+        self.status_da_placa = StatusDaPlaca(self.conexao_da_placa)
+        self.status_por_area = QStackedWidget()
+        self.status_por_area.setObjectName("status_por_area")
+        self.status_por_area.addWidget(da_analise)
+        self.status_por_area.addWidget(self.status_da_placa)
+        barra.addWidget(self.status_por_area, 1)
         self.status_tarefa = QLabel()
         self.status_tarefa.setObjectName("status_tarefa")
         barra.addPermanentWidget(self.status_tarefa)
@@ -528,30 +580,60 @@ class JanelaPrincipal(QMainWindow):
     # ------------------------------------------------------------------ layout
 
     def estado(self) -> QByteArray:
-        """O estado dos painéis (quais abertos, os tamanhos), para guardar no projeto."""
-        return self.saveState(VERSAO_DO_LAYOUT)
+        """O estado dos painéis da Análise (quais abertos, os tamanhos), para guardar no projeto."""
+        return self.estudio.saveState(VERSAO_DO_LAYOUT)
 
     def restaurar_estado(self, estado: QByteArray) -> bool:
-        return self.restoreState(estado, VERSAO_DO_LAYOUT)
+        return self.estudio.restoreState(estado, VERSAO_DO_LAYOUT)
 
     def salvar_layout(self) -> None:
         gravar(CHAVE_DA_GEOMETRIA, self.saveGeometry())
-        gravar(CHAVE_DO_ESTADO, self.saveState(VERSAO_DO_LAYOUT))
+        gravar(CHAVE_DO_ESTADO, self.estudio.saveState(VERSAO_DO_LAYOUT))
 
     def restaurar_layout(self) -> bool:
         """Restaura o layout salvo; ``False`` (e o padrão) se não houver um, ou se for de outra versão ou inválido."""
         geometria, estado = ler_bytes(CHAVE_DA_GEOMETRIA), ler_bytes(CHAVE_DO_ESTADO)
         if geometria is not None:
             self.restoreGeometry(geometria)
-        return estado is not None and self.restoreState(estado, VERSAO_DO_LAYOUT)
+        return estado is not None and self.estudio.restoreState(estado, VERSAO_DO_LAYOUT)
 
     def layout_padrao(self) -> None:
-        """Os três painéis abertos, nas larguras do mockup."""
+        """Os três painéis da Análise abertos, nas larguras do mockup."""
         for dock in (self.dock_projeto, self.dock_inspetor, self.dock_inferior):
             dock.show()
-        self.resizeDocks([self.dock_projeto, self.dock_inspetor], [LARGURA_DO_PROJETO, LARGURA_DO_INSPETOR],
-                         Qt.Orientation.Horizontal)
-        self.resizeDocks([self.dock_inferior], [ALTURA_DO_PAINEL_INFERIOR], Qt.Orientation.Vertical)
+        self.estudio.resizeDocks([self.dock_projeto, self.dock_inspetor], [LARGURA_DO_PROJETO, LARGURA_DO_INSPETOR],
+                                 Qt.Orientation.Horizontal)
+        self.estudio.resizeDocks([self.dock_inferior], [ALTURA_DO_PAINEL_INFERIOR], Qt.Orientation.Vertical)
+
+    # ------------------------------------------------------------------ as áreas
+
+    @property
+    def area_atual(self) -> int:
+        pagina = self.paginas.currentWidget()
+        return next(i for i, p in self._paginas_das_areas.items() if p is pagina)
+
+    def mostrar_area(self, indice: int) -> None:
+        """Mostra a área ``indice`` (``AREA_ANALISE``, ``AREA_AQUISICAO``): a página dela, a parte dela na barra de
+        status e o seletor da barra superior. Uma área que ainda não existe (as Figuras) fica como está."""
+        pagina = self._paginas_das_areas.get(indice)
+        if pagina is None:
+            return
+        if self.barra.areas.escolhida != indice:
+            self.barra.areas.blockSignals(True)
+            self.barra.areas.escolher(indice)
+            self.barra.areas.blockSignals(False)
+        self.paginas.setCurrentWidget(pagina)
+        self.status_por_area.setCurrentIndex(0 if indice == AREA_ANALISE else 1)
+
+    def _na_analise(self, abriu: object) -> None:
+        """Depois de abrir uma captura ou um projeto (de qualquer área), a Análise, onde ele aparece."""
+        if abriu:
+            self.mostrar_area(AREA_ANALISE)
+
+    def _placa_mudou(self) -> None:
+        """O chip da barra superior: o estado da placa, sempre à vista."""
+        r = resumo(self.conexao_da_placa)
+        self.barra.chip_placa.definir(r.nivel, r.titulo, r.detalhe)
 
     def showEvent(self, evento: QShowEvent) -> None:
         super().showEvent(evento)
@@ -587,6 +669,7 @@ class JanelaPrincipal(QMainWindow):
         self.salvar_layout()
         self.tarefas.encerrar()          # nenhuma thread rodando depois da janela
         self.materializacoes.encerrar()
+        self.conexao_da_placa.encerrar()  # a conexão fechada (e a pasta do simulador apagada) antes do laço parar
         self.placa.encerrar()            # nem a thread do laço da placa
         super().closeEvent(evento)
 
@@ -607,7 +690,7 @@ class JanelaPrincipal(QMainWindow):
         caminhos = self._arquivos_soltos(evento)
         if caminhos:
             evento.acceptProposedAction()
-            self.controle.abrir_arquivos(caminhos)
+            self._na_analise(self.controle.abrir_arquivos(caminhos))
 
     def sizeHint(self) -> QSize:
         return QSize(*TAMANHO_INICIAL)

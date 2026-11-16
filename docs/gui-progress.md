@@ -13,16 +13,19 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > ligada, durante e depois das materializações. **A tag v0.9** fica para o dono do projeto.
 >
 > **A Fase 3 está andando** (seção 4d): a F3.1 (o laço `asyncio` do `sh_placa` e a ponte), a F3.2 (a conexão SSH,
-> as chaves, o cofre e o registro de atividade), a F3.3 (a descoberta das placas) e a F3.4 (o agente completo: a
-> saúde, as capturas, o relógio e os logs) estão feitas, conferidas no servidor SSH do teste e na placa de verdade.
-> **A próxima: a F3.5, a área de Aquisição e a lista de placas** (a primeira parte da Fase 3 na tela); a F3.6 (a
-> visão geral e o diagnóstico) vem depois dela.
+> as chaves, o cofre e o registro de atividade), a F3.3 (a descoberta das placas), a F3.4 (o agente completo: a
+> saúde, as capturas, o relógio e os logs) e a F3.5 (a área de Aquisição na tela: a lista de placas, a conexão e a
+> primeira conexão) estão feitas, conferidas no servidor SSH do teste e na placa de verdade. **A próxima: a F3.6, a
+> visão geral e o diagnóstico** (os indicadores, a saúde com o "Corrigir" do relógio e dos pinos, o relatório).
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
 > configurações); no inspetor, "Unidade" e "Dois pontos…"; Ctrl+O num `.csv` ou `.h5` do `adc_tool` (ou num `.bin`
 > sem o cabeçalho); na vista de tempo, `Z` e arrastar, e o botão das camadas (sobrepor); no inspetor da captura,
 > "Copiar JSON". Com dois canais transformados, o segundo diz "na fila" no chip e no painel de tarefas até a vez dele.
+> **A Aquisição** (o seletor da barra superior, ou o chip da placa): a placa do USB e o simulador aparecem na lista
+> sozinhos; um clique conecta (na primeira vez, o diálogo confere a impressão digital, pede a senha e instala a chave
+> do aplicativo); "Conectar por IP…" para uma placa em outra rede.
 >
 > **Com o usuário (quando puder):**
 > - o G1 com a cadeia, na tela: `uv run --extra gui python -m sh_analyzer_gui.prototipos.medir_vista --cadeia`
@@ -127,7 +130,8 @@ sonda em pedaços, sem prender o GIL). E o do agente da placa: `3f98d7b`. O diag
 asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5 e keyring 25.7.0 (o cofre do Linux é o Secret Service). Testes, na última rodada:
 `ci.sh rapido` com 1 687 aprovados, `ci.sh interface` com 743 e os 6 de desempenho (15/11/2026).
 
-**Ainda não existe:** a Aquisição na tela (da F3.5 em diante; a Fase 4), as figuras e as exportações (a Fase 5).
+**Ainda não existe:** a Aquisição além da conexão (a visão geral completa e o diagnóstico na F3.6, os arquivos na
+F3.7, o terminal na F3.8; capturar na Fase 4), as figuras e as exportações (a Fase 5).
 
 ---
 
@@ -1095,7 +1099,7 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
     `ler_adc`, a PRU ligada e parada);
   - **os testes:** `tests/test_agente.py` (70) e `tests/test_sh_placa.py`.
 
-### ☐ F3.5: a área de Aquisição e a lista de placas
+### ☑ F3.5: a área de Aquisição e a lista de placas
 
 - **Arquivos:** `areas/aquisicao/` (a área, a lista de placas e o diálogo de conectar); a área na barra superior,
   com o estado da placa.
@@ -1112,6 +1116,58 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
   - o estado da placa na barra superior.
 - **Os testes:** com o simulador: a lista, conectar, a primeira conexão inteira, e a chave de host trocada mostrada
   como bloqueio.
+- **Feito em 16/11/2026:**
+  - **a janela em áreas:** a Análise numa `QMainWindow` própria (o Estúdio, `janela.estudio`), com os painéis
+    dela; a Aquisição ocupa a janela inteira, e voltar à Análise traz os painéis como estavam. **Os atalhos da
+    Análise só valem com ela à vista** (Ctrl+E, Ctrl+W, Delete, Ctrl+B/I/J moram no Estúdio, e o Qt não dispara o
+    atalho de uma ação escondida), e a paleta só os oferece lá. Abrir uma captura ou um projeto, de qualquer área,
+    leva à Análise. A barra de status tem a parte de cada área. O layout salvo é o do Estúdio, no mesmo formato;
+  - **`servicos/conexao_da_placa.py`, a placa conectada** (sem a tela, testada sozinha): os estados (desconectada,
+    conectando, confirmar o host, pedir a senha, bloqueada, conectada, reconectando, falhou), um só lugar que a área,
+    o chip e a barra de status leem. **A impressão digital espera o usuário** por um futuro do laço, respondido pelo
+    `LacoAsyncio.agendar`; a chave de uma placa conhecida, por outro endereço (o outro IP do USB), passa sem perguntar,
+    e o registro diz por quê. **A senha:** a do cofre primeiro, uma vez por conta; o salto pede a dele (o
+    `ErroDeAutenticacao` diz quem recusou). A chave do aplicativo é instalada só se o usuário quis, e a senha vai ao
+    cofre só se ele pediu. **A queda:** tenta de novo sozinha por ~1 min, com esperas crescentes; a chave trocada e a
+    senha recusada param na hora. Depois de conectar: a placa lembrada pelo nº de série, o resumo da primeira conexão
+    e a medida do enlace. O simulador conecta pelo `TransporteLocal` (a F3.9 o põe atrás de um SSH);
+  - **a janela abre sem a rede da placa:** o asyncssh, o zeroconf, o pyserial e o keyring custam ~0,7 s para
+    importar e entram no laço da placa, na primeira busca ou conexão. Os erros da conexão foram para um módulo leve
+    (`sh_placa/erros.py`) para a interface reconhecê-los pelo tipo; a regra nova da arquitetura confere num processo
+    novo;
+  - **a área (`areas/aquisicao/`), o B1:** a barra lateral com o cartão da placa (o estado, o nº de série, o caminho
+    e o enlace; e o próximo passo quando algo deu errado: "Responder", "Ver", "Tentar de novo"), as seções, **a
+    lista de placas** (o ponto do estado, o nome e, à direita, "USB", "LAN", "conectada", "vista há 3 h",
+    "demonstração"; um clique conecta, o menu de contexto conecta por outro caminho e esquece uma conhecida; a lista
+    só se refaz quando algo que se vê mudou), "Conectar por IP…" e "Desconectar". **A busca roda só com a área à
+    vista**, a cada 5 s (30 s com uma placa conectada: cada sondagem é uma conexão no SSH dela). As seções que ainda
+    não existem dizem o que vão ter e em que versão chegam;
+  - **a visão geral desta etapa:** o cabeçalho da placa (o nome, o nº de série, o sistema, o kernel e o firmware) e o
+    enlace (o caminho, a latência, a vazão contra os 1,6 MB/s que a saída contínua a 400 kS/s pede, desde quando e as
+    quedas). O resto (os indicadores, a saúde, as capturas, o registro) é a F3.6;
+  - **o diálogo da conexão** abre só quando há o que perguntar (conectar a uma placa conhecida da lista não abre
+    nada): o endereço (aceita `debian@host:porta`, com o salto), a impressão digital com o comando para conferi-la,
+    a senha (com "Instalar a chave do aplicativo" marcado e "Guardar no cofre" desmarcado), o bloqueio (as duas
+    impressões; "Esquecer a chave antiga" só depois de o usuário dizer que conferiu na placa, e a impressão nova
+    aparece para confirmar), a falha e o resumo da primeira conexão (a impressão guardada, a chave instalada, **a
+    sugestão de trocar a senha padrão** com o `passwd` e **a pergunta do relógio**, lembrada com a placa em
+    `PlacaConhecida.acertar_relogio`; quem acerta é a F3.6). **Fechar (Esc) é a resposta segura** de cada página:
+    não confiar, cancelar, deixar o relógio para a próxima vez. O diálogo tem a altura da página da vez;
+  - **o chip da barra superior** com o estado da placa (sem placa, conectando, conectada, reconectando, bloqueada,
+    sem conexão), abreviado no meio para não empurrar a busca; um clique leva à Aquisição;
+  - **no `sh_placa`:** `ConexaoSSH.medir_enlace` (a latência pela mediana de 5 ecos de um `cat` que já roda, e a
+    vazão pelos zeros do `head`, contada do primeiro bloco; os dois no registro), `Destino.de_texto` (o endereço
+    digitado), e o simulador nunca se junta a uma placa de verdade na lista (o nº de série dele é inventado, e o
+    servidor SSH dos testes roda a árvore dele);
+  - **na placa de verdade** (pelo USB, com uma configuração e uma chave temporárias, que saíram da placa depois): a
+    busca achou a placa em 2,1 s, uma linha só (o USB ECM, o RNDIS com o mDNS e a porta serial), com o nº de série da
+    EEPROM (`2017BBBK382A`); a primeira conexão inteira (a impressão que o usuário conhece, a senha, a chave
+    instalada, a senha padrão apontada, o relógio perguntado) em 2,5 s fora o tempo das respostas; o enlace com
+    1,1 ms e 6,6 MB/s; a segunda conexão só com a chave, sem diálogo, em 1,2 s; e o outro IP do USB aceito sem
+    perguntar, em 1,6 s. **A placa ainda usa a senha padrão da imagem**, e a sugestão de trocá-la aparece;
+  - **os testes:** `tests/test_gui_conexao_da_placa.py` (7: o serviço, sem a tela, com o salto, a queda e a volta),
+    `tests/test_gui_aquisicao.py` (4: a tela, com cliques na lista e no diálogo) e `tests/placas_de_teste.py` (os
+    servidores SSH do teste num laço próprio, como uma placa respondendo fora do laço da interface).
 
 ### ☐ F3.6: a visão geral e o diagnóstico
 
@@ -1663,6 +1719,23 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     pode esconder conectando antes de a pessoa pedir.
   - **Testes:** `ci.sh placa` com 224 em cada Python, `ci.sh rapido` com 1 489 e `ci.sh interface` com 760.
   - **Próximo:** a F3.5, a área de Aquisição e a lista de placas.
+- **16/11/2026:** **a F3.5, a área de Aquisição e a lista de placas** (seção 4d):
+  - **a decisão da janela:** os painéis do Estúdio são da Análise. Em vez de esconder os docks ao trocar de área (e
+    salvar o layout errado, e deixar o Ctrl+B mexer num painel escondido), a Análise virou uma `QMainWindow` dentro
+    da janela, com os docks e os atalhos dela; o Qt não dispara o atalho de uma ação sem widget visível, e o Delete na
+    Aquisição não apaga traços da Análise;
+  - **o que as capturas mostraram** (sem tela, cada página do diálogo e a área, nos dois temas): o texto das caixas de
+    marcar não quebra e era cortado (agora o rótulo curto e a explicação embaixo); a `QStackedWidget` dava a todas as
+    páginas a altura da mais alta (agora uma coluna com só a página da vez); o nome "Simulador (BeagleBone Black)"
+    cortado na lista e no chip; e o simulador marcado como "conectada" junto da placa do servidor de teste, que tem o
+    mesmo nº de série (o simulador nunca mais se junta a uma placa);
+  - **um erro meu, corrigido:** duas rodadas do script de capturas rodaram sem uma configuração temporária e
+    gravaram uma placa falsa nas placas conhecidas da configuração do usuário (a chave `placa/conhecidas`, que só
+    tinha ela, foi apagada; o resto ficou como estava). Os scripts fixam o `SH_ANALYZER_CONFIG` agora;
+  - **de passagem:** o servidor SSH do teste deixava, no Python 3.10, o pipe de um comando cortado no meio aberto até
+    o coletor de lixo (um aviso, em 2 de 8 rodadas do teste do enlace): agora lê o que sobrou depois de matar o grupo.
+  - **Testes:** `ci.sh placa` com 242 em cada Python, `ci.sh rapido` com 1 842 e `ci.sh interface` com 772.
+  - **Próximo:** a F3.6, a visão geral e o diagnóstico.
 ---
 
 ## 8. Perguntas em aberto

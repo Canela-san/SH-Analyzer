@@ -229,6 +229,8 @@ QPushButton#campo_paleta:hover {{ border-color: {t.borda_forte}; }}
 QLabel#kbd {{ color: {t.mudo}; border: 1px solid {t.borda}; border-radius: 4px; padding: 0 5px; }}
 QToolButton#chip_placa {{ background: {t.superficie}; color: {t.texto2}; border: 1px solid {t.borda};
                           border-radius: 13px; padding: 0 10px 0 8px; min-width: 10px; }}
+QToolButton#chip_placa[estado="conectando"] {{ color: {t.acento}; border-color: {_rgba(t.acento, 0.4)};
+                                              background: {_rgba(t.acento, 0.1)}; }}
 QToolButton#chip_placa[estado="conectada"] {{ color: {t.ok}; border-color: {_rgba(t.ok, 0.4)};
                                              background: {_rgba(t.ok, 0.1)}; }}
 QToolButton#chip_placa[estado="atencao"] {{ color: {t.aviso}; border-color: {_rgba(t.aviso, 0.4)};
@@ -261,6 +263,32 @@ QLabel#badge[nivel="aviso"] {{ color: {t.aviso}; border-color: {_rgba(t.aviso, 0
                               background: {_rgba(t.aviso, 0.1)}; }}
 QLabel#badge[nivel="erro"] {{ color: {t.erro}; border-color: {_rgba(t.erro, 0.4)};
                              background: {_rgba(t.erro, 0.1)}; }}
+QStatusBar QLabel[nivel="aviso"] {{ color: {t.aviso}; }}
+QPushButton[variante="perigo"]:disabled {{ color: {t.mudo}; border-color: {t.borda}; }}
+QWidget#area_aquisicao, QStackedWidget#secoes_aquisicao {{ background: {t.fundo}; }}
+QWidget#lateral_aquisicao {{ background: {t.superficie}; border-right: 1px solid {t.borda}; }}
+QFrame#cartao_da_placa {{ background: {t.afundada}; border: 1px solid {t.borda}; border-radius: 10px; }}
+QFrame#cartao_da_placa[nivel="aviso"] {{ border-color: {_rgba(t.aviso, 0.5)}; }}
+QFrame#cartao_da_placa[nivel="erro"] {{ border-color: {_rgba(t.erro, 0.5)}; }}
+QLabel[papel="sub"] {{ color: {t.mudo}; }}
+QListWidget#navegacao_aquisicao {{ background: transparent; border: none; outline: 0; }}
+QListWidget#navegacao_aquisicao::item {{ padding: 0 10px; border-radius: 6px; color: {t.texto}; }}
+QListWidget#navegacao_aquisicao::item:hover:!selected {{ background: {t.elevada}; }}
+QListWidget#navegacao_aquisicao::item:selected {{ background: {_rgba(t.acento, 0.13)}; color: {t.acento};
+                                                 font-weight: 600; }}
+QListView#lista_de_placas {{ background: transparent; border: none; outline: 0; }}
+QLabel#aviso_da_lista {{ color: {t.mudo}; }}
+QToolButton#conectar_por_ip {{ color: {t.acento}; padding: 4px 8px; }}
+QFrame#rodape_lateral {{ border-top: 1px solid {t.borda}; }}
+QFrame#indicador {{ background: {t.superficie}; border: 1px solid {t.borda}; border-radius: 10px; }}
+QLabel#rotulo_do_indicador {{ color: {t.mudo}; }}
+QLabel#detalhe_do_indicador, QLabel#subtitulo_da_secao {{ color: {t.texto2}; }}
+QLabel#valor_do_indicador[nivel="aviso"] {{ color: {t.aviso}; }}
+QLabel#valor_do_indicador[nivel="ok"] {{ color: {t.ok}; }}
+QLabel#texto_mudo {{ color: {t.mudo}; }}
+QLabel#erro_do_dialogo {{ color: {t.erro}; }}
+QFrame#bloco_mono {{ background: {t.afundada}; border: 1px solid {t.borda}; border-radius: 6px; }}
+QFrame#pergunta_do_relogio {{ background: {t.superficie}; border: 1px solid {t.borda}; border-radius: 10px; }}
 QHeaderView::section {{ background: {t.superficie}; color: {t.mudo}; border: none;
                         border-bottom: 1px solid {t.borda}; padding: 6px 10px; font-weight: 600; }}
 QTableView, QTreeView, QListView {{ background: {t.superficie}; alternate-background-color: {t.fundo};

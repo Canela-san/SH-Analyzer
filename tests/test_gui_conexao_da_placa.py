@@ -10,56 +10,16 @@ pytest.importorskip("PySide6")
 pytest.importorskip("pytestqt")
 pytest.importorskip("asyncssh")
 
-from servidor_ssh import ServidorSSH  # noqa: E402
+from placas_de_teste import CofreFalso, Placas, fonte_que_acha  # noqa: E402
 from sh_analyzer_gui import preferencias  # noqa: E402
 from sh_analyzer_gui.servicos import conexao_da_placa as modulo  # noqa: E402
 from sh_analyzer_gui.servicos.conexao_da_placa import ConexaoDaPlaca  # noqa: E402
 from sh_analyzer_gui.servicos.placa import ServicoDaPlaca  # noqa: E402
-from sh_placa.descoberta import Achado, Caminho, Descoberta, FonteSimulador  # noqa: E402
+from sh_placa.descoberta import Descoberta, FonteSimulador  # noqa: E402
 from sh_placa.destino import SENHA_PADRAO_DA_IMAGEM, Destino  # noqa: E402
-from sh_placa.laco import LacoAsyncio  # noqa: E402
 from sh_placa.simulador import SERIE_SIMULADA  # noqa: E402
 
 ESPERA_MS = 15_000
-
-
-class CofreFalso:
-    """O cofre do sistema, num dicionário (os testes não tocam o cofre de quem desenvolve)."""
-
-    def __init__(self, **senhas):
-        self.senhas = dict(senhas)
-        self.guardadas: list[str] = []
-
-    def senha(self, conta):
-        return self.senhas.get(conta)
-
-    def guardar(self, conta, senha):
-        self.senhas[conta] = senha
-        self.guardadas.append(conta)
-
-
-class Placas:
-    """Os servidores SSH do teste (as placas), num laço próprio: a placa responde enquanto a interface espera."""
-
-    def __init__(self, pasta):
-        self.pasta = pasta
-        self.laco = LacoAsyncio("placas-do-teste")
-        self.laco.iniciar()
-        self.servidores: list[ServidorSSH] = []
-
-    def nova(self, nome="placa", **opcoes) -> ServidorSSH:
-        servidor = ServidorSSH(self.pasta / nome, **opcoes)
-        self.laco.submeter(servidor.iniciar).resultado(10)
-        self.servidores.append(servidor)
-        return servidor
-
-    def rodar(self, funcao, *args):
-        return self.laco.submeter(funcao, *args).resultado(10)
-
-    def fechar(self):
-        for servidor in self.servidores:
-            self.laco.submeter(servidor.parar).resultado(10)
-        assert self.laco.parar()
 
 
 @pytest.fixture
@@ -67,15 +27,6 @@ def placas(tmp_path):
     p = Placas(tmp_path)
     yield p
     p.fechar()
-
-
-def fonte_de(servidor: ServidorSSH, nome: str = "bbb-teste"):
-    """Uma fonte da descoberta que acha o servidor do teste, como o mDNS acharia uma placa na LAN."""
-    async def fonte(_conhecidas=()):
-        return [Achado(Caminho("lan", Destino("127.0.0.1", servidor.porta), f"{nome}.local (mDNS)", 0.4),
-                       impressao=servidor.impressao, nome=nome)]
-    fonte.nome = "teste"
-    return fonte
 
 
 @pytest.fixture
@@ -110,17 +61,17 @@ def procurar(qtbot, conexao):
 
 def test_a_lista_e_o_simulador(qtbot, placas, criar):
     servidor = placas.nova()
-    conexao = criar(fonte_de(servidor))
+    conexao = criar(fonte_que_acha(servidor))
     lista = procurar(qtbot, conexao)
-    assert set(lista) == {"bbb-teste", "Simulador (BeagleBone Black)"} and conexao.falhas_da_busca == []
+    assert set(lista) == {"bbb-teste", "Simulador"} and conexao.falhas_da_busca == []
     assert lista["bbb-teste"].melhor.destino == Destino("127.0.0.1", servidor.porta)
 
-    conexao.conectar(lista["Simulador (BeagleBone Black)"])
+    conexao.conectar(lista["Simulador"])
     esperar(qtbot, conexao, "conectada")
     assert conexao.simulada and conexao.tipo_do_caminho == "simulador" and conexao.detalhe_do_caminho
     assert conexao.estado_da_placa.serie == SERIE_SIMULADA and conexao.enlace is None
     assert conexao.primeira_conexao is None                       # o simulador não pergunta nem é lembrado
-    assert conexao.e_a_conectada(lista["Simulador (BeagleBone Black)"]) and not conexao.e_a_conectada(lista["bbb-teste"])
+    assert conexao.e_a_conectada(lista["Simulador"]) and not conexao.e_a_conectada(lista["bbb-teste"])
     pasta = conexao._sessao.simulador._pasta
     assert pasta.is_dir()
     conexao.desconectar()
@@ -132,7 +83,7 @@ def test_a_lista_e_o_simulador(qtbot, placas, criar):
 def test_a_primeira_conexao_inteira_e_a_segunda_sem_perguntar(qtbot, placas, criar):
     servidor = placas.nova(senha=SENHA_PADRAO_DA_IMAGEM)
     cofre = CofreFalso()
-    conexao = criar(fonte_de(servidor), cofre=cofre)
+    conexao = criar(fonte_que_acha(servidor), cofre=cofre)
     placa = procurar(qtbot, conexao)["bbb-teste"]
     conexao.conectar(placa)
     esperar(qtbot, conexao, "confirmar_host")
@@ -273,7 +224,6 @@ def test_a_queda_e_a_volta_sozinha(qtbot, placas, criar, monkeypatch):
     qtbot.waitUntil(lambda: conexao.estados[-2:] == ["reconectando", "conectada"], timeout=ESPERA_MS)
     assert conexao.quedas == 1 and conexao.motivo == "" and conexao.estado_da_placa is not None
 
-    placas.rodar(servidor.parar)                                 # agora a placa some de vez
+    placas.parar(servidor)                                       # agora a placa some de vez
     qtbot.waitUntil(lambda: conexao.estado == "falhou", timeout=ESPERA_MS)
     assert "não voltou" in conexao.motivo and conexao.estados[-2:] == ["reconectando", "falhou"]
-    placas.servidores.remove(servidor)

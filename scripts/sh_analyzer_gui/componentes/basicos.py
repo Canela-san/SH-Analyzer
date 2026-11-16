@@ -1,5 +1,5 @@
-"""Os componentes simples (docs/gui-plan.md, 12.8): o botão com variante e ícone, o campo numérico com unidade, o
-seletor segmentado e o cartão de medida. A aparência vem do QSS do tema (``tema.aplicar.gerar_qss``); os ícones
+"""Os componentes simples (docs/gui-plan.md, 12.8): o botão com variante e ícone, o ícone solto (num rótulo), o campo
+numérico com unidade, o seletor segmentado e o cartão de medida. A aparência vem do QSS do tema (``tema.aplicar.gerar_qss``); os ícones
 são recoloridos quando o tema muda."""
 
 from __future__ import annotations
@@ -57,6 +57,26 @@ class Botao(QPushButton):
             cor = {"primario": tema.acento_texto, "fantasma": tema.texto2, "perigo": tema.erro}.get(self.variante,
                                                                                                     tema.texto)
             self.setIcon(icone(self.icone_nome, cor))
+
+
+class RotuloDeIcone(QLabel):
+    """Um ícone parado, fora de um botão (ao lado do rótulo de um indicador, numa linha de resumo), na cor de um papel
+    do tema e redesenhado a cada troca. :meth:`trocar` muda o desenho ou a cor."""
+
+    def __init__(self, nome: str, papel: str = "mudo", tamanho: int = 14, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setFixedSize(tamanho, tamanho)
+        self.nome, self.papel, self.tamanho = nome, papel, tamanho
+        aparencia().mudou.connect(self._tema_mudou)
+        self._tema_mudou(aparencia().tema)
+
+    def trocar(self, nome: str | None = None, papel: str | None = None) -> None:
+        self.nome, self.papel = nome or self.nome, papel or self.papel
+        self._tema_mudou(aparencia().tema)
+
+    def _tema_mudou(self, tema: Tema) -> None:
+        self.setPixmap(icone(self.nome, getattr(tema, self.papel), self.tamanho).pixmap(
+            QSize(self.tamanho, self.tamanho), self.devicePixelRatioF()))
 
 
 class CampoComUnidade(QLineEdit):

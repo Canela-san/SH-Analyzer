@@ -19,8 +19,9 @@ ALTURA = 44
 LADO_DA_MARCA = 22
 LARGURA_DA_BUSCA = 300
 LARGURA_COMPACTA = 1200
-MARGEM_DAS_AREAS = 12
-LARGURA_DO_NOME = 220          # o nome do projeto na barra, no máximo (o resto vira "…")        # o mínimo entre as áreas e os vizinhos (o projeto, a busca)
+MARGEM_DAS_AREAS = 12          # o mínimo entre as áreas e os vizinhos (o projeto, a busca)
+LARGURA_DO_CHIP = 190          # o texto do chip da placa, no máximo
+LARGURA_DO_NOME = 220          # o nome do projeto na barra, no máximo (o resto vira "…")
 """Abaixo desta largura (px), a barra encolhe: o chip da placa fica só com o ícone, a busca encurta e o rótulo
 "Projeto" sai. O seletor das áreas nunca encolhe."""
 AREAS = ("Análise", "Figuras", "Aquisição")
@@ -75,11 +76,11 @@ class CampoDaPaleta(QPushButton):
 
 
 class ChipDaPlaca(QToolButton):
-    """O estado da BeagleBone, sempre à vista: sem placa, conectada, com atenção ou com erro. A cor vem do QSS pela
-    propriedade ``estado``; o ícone, do tema."""
+    """O estado da BeagleBone, sempre à vista: sem placa, conectando, conectada, com atenção ou com erro. A cor vem do
+    QSS pela propriedade ``estado``; o ícone, do tema. Um clique leva à Aquisição (quem usa a barra liga)."""
 
-    ESTADOS = {"sem_placa": ("usb", "mudo"), "conectada": ("usb", "ok"), "atencao": ("alerta", "aviso"),
-               "erro": ("alerta", "erro")}
+    ESTADOS = {"sem_placa": ("usb", "mudo"), "conectando": ("usb", "acento"), "conectada": ("usb", "ok"),
+               "atencao": ("alerta", "aviso"), "erro": ("alerta", "erro")}
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -90,6 +91,7 @@ class ChipDaPlaca(QToolButton):
         fonte = QFont()
         fonte.setPixelSize(TAMANHOS["secundario"])
         self.setFont(fonte)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._icone = IconeDoTema(self, "usb", "mudo", tamanho=14)
         self.estado = ""
         self.definir("sem_placa", self.tr("Sem placa"))
@@ -98,7 +100,8 @@ class ChipDaPlaca(QToolButton):
         if estado not in self.ESTADOS:
             raise ValueError(f"estado desconhecido: {estado!r} (use {', '.join(self.ESTADOS)})")
         self.estado = estado
-        self.setText(texto)
+        # Um nome de placa comprido não empurra a busca: o texto é abreviado no meio (inteiro na dica).
+        self.setText(self.fontMetrics().elidedText(texto, Qt.TextElideMode.ElideMiddle, LARGURA_DO_CHIP))
         self.setToolTip(f"{texto}: {dica}" if dica else texto)
         self.setProperty("estado", estado)
         self._icone.trocar(*self.ESTADOS[estado])

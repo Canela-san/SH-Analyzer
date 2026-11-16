@@ -951,11 +951,13 @@ Quem recebe o pacote refaz a figura sem o SH-Analyzer, que é o que um revisor o
 
 - **A lista de placas** mostra cada uma com o estado (conectada, disponível, vista há…), o caminho e a latência. As placas conhecidas são lembradas pelo nº de série da EEPROM (o mesmo do cabeçalho v8), com a chave de host: um endereço só é de uma conhecida se a chave for a dela, e a chave liga ao nº de série a placa achada só pela rede. A mesma placa por vários caminhos (a serial, os dois IPs do USB, o mDNS) aparece uma vez.
 - **Primeira conexão:**
-  1. confirmar a impressão digital;
-  2. instalar a chave do aplicativo (o equivalente do `ssh-copy-id`);
+  1. confirmar a impressão digital (a chave de uma placa conhecida, por outro endereço dela, como o outro IP do USB, é aceita sem perguntar: a conexão confere que ela tem a chave privada);
+  2. instalar a chave do aplicativo (o equivalente do `ssh-copy-id`), se o usuário quiser (o padrão);
   3. sugerir trocar a senha padrão `temppwd`;
-  4. perguntar se o relógio deve ser acertado a cada conexão.
-- **A qualidade do enlace** é medida ao conectar: a latência, e a vazão num teste curto. A captura contínua avisa se a vazão não der 2× a taxa pedida.
+  4. perguntar se o relógio deve ser acertado a cada conexão (a resposta fica com a placa conhecida).
+- **O diálogo da conexão** abre só quando há o que perguntar: conectar a uma placa conhecida da lista não abre nada. Fechar é sempre a resposta segura (não confiar, cancelar). A chave de host trocada é um bloqueio, com as duas impressões; esquecer a antiga pede que o usuário diga que conferiu na placa (decidido na F3.5, 16/11/2026).
+- **A queda** (o cabo USB com mau contato é o caso comum): a conexão tenta voltar sozinha por um minuto, com a mesma chave; a chave de host trocada e a senha recusada param na hora.
+- **A qualidade do enlace** é medida ao conectar: a latência (ecos por um canal já aberto) e a vazão num teste curto (no USB, ~1 ms e 6,3 MB/s). A captura contínua avisa se a vazão não der 2× a taxa pedida.
 
 ### 11.4 Visão geral
 
@@ -1355,7 +1357,7 @@ Estas telas serão desenhadas na fase em que entram:
 - a tela inicial;
 - a primeira execução;
 - a paleta de comandos aberta;
-- o diálogo de conexão;
+- o diálogo de conexão (feito na F3.5, sem mockup: as páginas seguem o estado da conexão);
 - o assistente de pinos;
 - o diálogo de exportação de dados;
 - as configurações.

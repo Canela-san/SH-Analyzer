@@ -19,7 +19,7 @@ from .aplicar import aparencia
 from .svgs import CAMINHOS, svg
 from .tokens import Tema
 
-__all__ = ["CAMINHOS", "IconeDoTema", "icone", "icone_com_estados", "svg"]
+__all__ = ["CAMINHOS", "IconeDoTema", "icone", "icone_com_estados", "icone_de_lista", "svg"]
 
 
 
@@ -62,6 +62,17 @@ def icone_com_estados(nome: str, cor: str, cor_ligado: str, cor_desabilitado: st
                             (QIcon.Mode.Disabled, QIcon.State.On, cor_desabilitado)):
         for mapa in _mapas(ligado if estado == QIcon.State.On else nome, c, tamanho):
             resultado.addPixmap(mapa, modo, estado)
+    return resultado
+
+
+@lru_cache(maxsize=128)
+def icone_de_lista(nome: str, cor: str, cor_selecionado: str, tamanho: int = 16) -> QIcon:
+    """O ícone de um item de lista: ``cor`` no item normal e ``cor_selecionado`` no escolhido (a navegação lateral, em
+    que o item escolhido fica na cor do acento)."""
+    resultado = QIcon()
+    for modo, c in ((QIcon.Mode.Normal, cor), (QIcon.Mode.Active, cor), (QIcon.Mode.Selected, cor_selecionado)):
+        for mapa in _mapas(nome, c, tamanho):
+            resultado.addPixmap(mapa, modo)
     return resultado
 
 

@@ -148,7 +148,8 @@ class ConexaoDaPlaca(QObject):
         self.servico = servico
         self.registro = RegistroDeAtividade()
         self._pasta = pasta if pasta is not None else preferencias.pasta_da_placa()
-        self._descoberta = descoberta            # criada no laço, na primeira busca (o asyncssh fica fora da partida)
+        # Criada no laço, na primeira busca (o asyncssh fica fora da partida); os testes põem uma com fontes falsas.
+        self.descoberta = descoberta
         self._cofre = cofre
         self._chave = self._hosts = None         # idem, na primeira conexão
         self.estado = "desconectada"
@@ -225,8 +226,10 @@ class ConexaoDaPlaca(QObject):
         sessao = self._sessao
         if sessao is None or self.estado not in ("conectada", "reconectando"):
             return False
+        if (sessao.simulador is not None) != (placa.estado == "simulador"):
+            return False                         # o simulador e as placas de verdade nunca são a mesma
         if sessao.simulador is not None:
-            return placa.estado == "simulador"
+            return True
         serie = self.estado_da_placa.serie if self.estado_da_placa is not None else None
         if serie and placa.serie == serie:
             return True
@@ -253,11 +256,11 @@ class ConexaoDaPlaca(QObject):
             self.procurar()
 
     async def _varrer(self, conhecidas) -> tuple[list[PlacaVista], list[str]]:
-        if self._descoberta is None:
+        if self.descoberta is None:
             from sh_placa.descoberta import Descoberta
-            self._descoberta = Descoberta()
-        placas = await self._descoberta.varrer(conhecidas)
-        return placas, list(self._descoberta.falhas)
+            self.descoberta = Descoberta()
+        placas = await self.descoberta.varrer(conhecidas)
+        return placas, list(self.descoberta.falhas)
 
     def _varreu(self, chamada: Chamada) -> None:
         self.procurando = False
@@ -286,6 +289,9 @@ class ConexaoDaPlaca(QObject):
         if self._sessao is not None and self.estado in ("conectada", "reconectando") \
                 and self._sessao.tentativa.destino == alvo and (alvo is not None or self.simulada):
             return
+        if self._tentativa is not None and self._sessao is None and self.estado in ("conectando", *ESPERANDO_O_USUARIO) \
+                and self._tentativa.destino == alvo:
+            return                                   # a mesma conexão já está a caminho (um clique duplo)
         self._largar()
         confiaveis = frozenset(p.impressao for p in preferencias.placas_conhecidas() if p.impressao)
         self._comecar(_Tentativa(alvo, placa, confiaveis=confiaveis))
