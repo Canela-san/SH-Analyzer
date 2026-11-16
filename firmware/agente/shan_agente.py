@@ -12,8 +12,9 @@ agente, e ele fala sempre o protocolo do aplicativo que o mandou, mesmo com um f
 
 * ``versao`` -- a versão do firmware (o arquivo ``VERSAO``) e a do Python;
 * ``estado`` -- a placa, o sistema, a PRU, os pinos, a memória dos buffers, o firmware, o disco e as capturas;
-* ``saude`` -- o ``estado``, mais o ``/boot/uEnv.txt``, os overlays, as ferramentas e as **conferências**: cada
-  problema com o nível (``erro`` impede capturar; ``aviso``; ``info``), o código, o texto e a correção;
+* ``saude`` -- o ``estado``, mais o ``/boot/uEnv.txt``, os overlays, as ferramentas, o cabeçalho da captura mais
+  recente (o ADC mudo aparece nela) e as **conferências**: cada problema com o nível (``erro`` impede capturar;
+  ``aviso``; ``info``), o código, o texto e a correção;
 * ``capturas`` -- os ``.bin`` da pasta do firmware e das pastas de coleta, com o resumo do cabeçalho (o título, a
   taxa, os canais, a duração, a integridade), e os ``resumo.csv`` das coletas;
 * ``relogio`` -- a hora da placa e se o NTP a sincronizou (o mesmo ``adjtimex`` que o ``ler_adc`` grava no cabeçalho);
@@ -37,7 +38,10 @@ nunca um erro, porque cada imagem da BeagleBone tem um conjunto diferente.
 ``/boot``, ``/lib``, ``/dev/kmsg``, os programas) por uma pasta falsa, e ``SHAN_PASTA`` diz onde está a pasta do
 firmware (por padrão, a pasta acima desta; lido pelo stdin, ``~/firmware``). É o que o ``ler_adc`` faz com
 ``BASE_PINMUX`` e companhia. Com a raiz falsa, o relógio do kernel (o ``adjtimex``, que é deste computador) não vale:
-vale o arquivo do ``systemd-timesyncd`` da árvore falsa.
+vale o arquivo do ``systemd-timesyncd`` da árvore falsa. O que uma árvore de arquivos não imita fica em
+:data:`SIMULADOR`, dentro dela: a hora da placa simulada (a deste computador mais um desvio) e o cartão dela (o
+tamanho e o que o sistema ocupa; o resto é a pasta do firmware, contada arquivo por arquivo). Sem a raiz falsa, nada
+disso é lido.
 """
 
 from __future__ import annotations
@@ -54,7 +58,7 @@ import zlib
 # compilado a cada chamada, e no único núcleo da placa cada importação custa (o subprocess, ~50 ms).
 
 PROTOCOLO = 1
-AGENTE = "2"
+AGENTE = "3"
 
 PINOS_DA_PRU = {"P9_28": "pruout", "P9_29": "pruout", "P9_30": "pruin", "P9_31": "pruout"}   # os do setup.sh
 REMOTEPROC_PRU0 = "/sys/class/remoteproc/remoteproc1"                                       # o do ler_adc.c
@@ -92,6 +96,8 @@ CABECALHO_TAMANHO_V9 = 4096
 CABECALHO_TAMANHO_MINIMO_V9 = 1024 + 876 # a parte fixa e a extensão da v9 (supraharmonicos/cabecalho.py)
 OFFSET_DO_CRC = {2: 668, 3: 676, 4: 700, 5: 744, 6: 760, 7: 772}    # até a v1, 404; desde a v8, 1020
 VALOR_DESCONHECIDO = 0xFFFFFFFF
+OFFSET_DOS_MINIMOS_V9 = 1676             # [v9, final] o código mínimo e o máximo de cada canal, em todas as amostras
+OFFSET_DOS_MAXIMOS_V9 = 1692
 PROFUNDIDADE_DAS_COLETAS = 3             # coleta/, capturas/<sonda>/descartadas/
 MANIFESTOS = ("resumo.csv", "pontos_coletados.csv", "teto.csv", "referencia_externa.csv")
 LIMITE_DE_CAPTURAS = 2000
@@ -106,6 +112,10 @@ FILTRO_DO_DIARIO = ("SYSLOG_IDENTIFIER=sudo", "+", "PRIORITY=0", "PRIORITY=1", "
 passa por ele) ou um erro. O da imagem Buster (systemd 241) não tem o ``--grep``, e ler as ~3500 linhas de um boot
 para filtrar aqui levava 3 s na placa; assim, 0,1 s (15/11/2026)."""
 CHAVE_DO_UENV = re.compile(r"^[A-Za-z0-9_.]+$")
+SIMULADOR = "/run/simulador"
+"""Só na raiz falsa (``SHAN_RAIZ``): ``relogio``, quantos segundos a hora da placa está adiantada da deste computador
+(negativo: atrasada; o acerto do relógio da placa simulada o reescreve), e ``disco``, ``total reservado`` em KiB (o
+cartão simulado e o que o sistema ocupa nele)."""
 
 
 class ErroDeUso(Exception):
@@ -212,11 +222,31 @@ def memoria_disponivel_kib():
 
 
 def disco(caminho):
+    simulado = _disco_simulado(caminho) if raiz() != "/" else None
+    if simulado is not None:
+        return simulado
     try:
         v = os.statvfs(caminho)
     except OSError:
         return None
     return {"total_kib": v.f_blocks * v.f_frsize // 1024, "livre_kib": v.f_bavail * v.f_frsize // 1024}
+
+
+def _disco_simulado(pasta):
+    """O cartão da placa simulada (:data:`SIMULADOR`): o livre é o que sobra do tamanho dele, menos o sistema e os
+    arquivos da pasta do firmware (apagar uma captura libera o espaço dela). ``None`` sem o arquivo."""
+    try:
+        total, reservado = (int(x) for x in (ler_texto(SIMULADOR + "/disco") or "").split()[:2])
+    except ValueError:
+        return None
+    usado = 0
+    for atual, _pastas, arquivos in os.walk(pasta):
+        for nome in arquivos:
+            try:
+                usado += os.lstat(os.path.join(atual, nome)).st_size
+            except OSError:
+                pass
+    return {"total_kib": total, "livre_kib": max(0, total - reservado - usado // 1024)}
 
 
 def _relogio_do_kernel():
@@ -272,13 +302,21 @@ def relogio():
         fonte = None
         if os.path.isdir(sistema("/run/systemd/timesync")):
             sincronizado, fonte = os.path.exists(sistema("/run/systemd/timesync/synchronized")), "timesyncd"
-    utc = time.time()
+    utc = time.time() + (desvio_do_relogio_simulado() if raiz() != "/" else 0.0)
     try:
         boot = time.clock_gettime(time.CLOCK_BOOTTIME)
     except (AttributeError, OSError):
         boot = None
     return {"utc": utc, "sincronizado": sincronizado, "fonte": fonte,
             "desde_o_inicio_s": None if boot is None else _desde_o_inicio(boot)}
+
+
+def desvio_do_relogio_simulado():
+    """Na raiz falsa: quanto a hora da placa simulada está adiantada da deste computador (:data:`SIMULADOR`)."""
+    try:
+        return float(ler_texto(SIMULADOR + "/relogio") or 0.0)
+    except ValueError:
+        return 0.0
 
 
 def pru():
@@ -676,12 +714,35 @@ def conferir(f):
     if (f.get("relogio") or {}).get("sincronizado") is False:
         item("info", "relogio_sem_ntp", "O NTP não sincronizou o relógio da placa (sem internet?): a hora das capturas "
              "vem do acerto pelo computador.")
+    ultima = f.get("ultima_captura") or {}
+    cabecalho = ultima.get("cabecalho") or {}
+    parados = cabecalho.get("canais_parados")
+    if parados:
+        nome = ultima.get("arquivo")
+        if len(parados) == len(cabecalho.get("canais") or ()) and all(p["codigo"] == 0 for p in parados):
+            item("aviso", "adc_mudo", f"A captura mais recente ({nome}) ficou em 0 em todas as amostras: o ADC não "
+                 "respondeu.", "Ligar a BeagleBone na fonte de 5 V (pelo USB, a placa de aquisição fica sem "
+                 "alimentação) e conferir os pinos da PRU; depois, uma captura de conferência.")
+        else:
+            canais = _lista_de_canais(p["canal"] for p in parados)
+            valores = sorted({f"0x{p['codigo']:04X}" for p in parados})
+            item("aviso", "sinal_parado", f"Na captura mais recente ({nome}), o sinal {canais} ficou parado em "
+                 f"{' e '.join(valores)}: a entrada saturada ou o ADC travado.",
+                 "Conferir a ligação e a faixa do canal antes de capturar de novo.")
     resumo = f.get("capturas") or {}
     if resumo.get("quantidade"):
         item("info", "capturas", f"{resumo['quantidade']} captura(s) na placa ({resumo.get('bytes', 0) / 1048576.0:.0f} "
              "MiB).")
     ordem = {"erro": 0, "aviso": 1, "info": 2}
     return sorted(itens, key=lambda x: ordem[x["nivel"]])
+
+
+def _lista_de_canais(canais):
+    """"do canal 1", "dos canais 0 e 1"."""
+    canais = [str(c) for c in canais]
+    if len(canais) == 1:
+        return "do canal " + canais[0]
+    return "dos canais " + ", ".join(canais[:-1]) + " e " + canais[-1]
 
 
 # ------------------------------------------------------------------ as capturas
@@ -730,7 +791,7 @@ def resumo_do_cabecalho(caminho, tamanho_do_arquivo):
         "duracao_pedida_s": duracao_pedida, "final": amostras > 0,
         "amostras_atrasadas": None, "buffers_sobrescritos": None, "quadros_sdo_ruido": None,
         "versao_firmware": _texto(bruto, 700, 32) if versao >= 5 else None,
-        "relogio_sincronizado": None, "id": None, "maquina": None,
+        "relogio_sincronizado": None, "id": None, "maquina": None, "canais_parados": None,
     }
     if versao >= 4:
         resumo["amostras_atrasadas"], resumo["buffers_sobrescritos"], resumo["quadros_sdo_ruido"] = \
@@ -741,6 +802,13 @@ def resumo_do_cabecalho(caminho, tamanho_do_arquivo):
     if versao >= 9:
         resumo["id"] = bruto[1052:1068].hex() if any(bruto[1052:1068]) else None
         resumo["maquina"] = _texto(bruto, 1068, 32)
+        if amostras > 0 and inteiro:
+            # O sinal de cada canal em todas as amostras (o ler_adc mede e grava no cabeçalho final): o mínimo igual ao
+            # máximo é um canal parado, o ADC que não respondeu (em 0) ou a entrada saturada.
+            minimos = struct.unpack_from("<8H", bruto, OFFSET_DOS_MINIMOS_V9)
+            maximos = struct.unpack_from("<8H", bruto, OFFSET_DOS_MAXIMOS_V9)
+            resumo["canais_parados"] = [{"canal": c, "codigo": minimos[i]} for i, c in enumerate(resumo["canais"])
+                                        if minimos[i] == maximos[i]]
     # Uma captura com o cabeçalho final tem exatamente as amostras dele; menos é um arquivo cortado (a transferência,
     # o disco), mais é outro arquivo grudado.
     esperado = tamanho + amostras * bytes_por_amostra if amostras and bytes_por_amostra else None
@@ -895,9 +963,20 @@ def estado():
     }
 
 
+def ultima_captura(pasta):
+    """A captura mais recente, com o resumo do cabeçalho (o sinal dela diz se o ADC respondeu); ``None`` sem nenhuma."""
+    itens = _capturas_por_data(pasta)
+    if not itens:
+        return None
+    quando, rel, tamanho = itens[0]
+    return {"arquivo": rel, "bytes": tamanho, "modificado": quando,
+            "cabecalho": resumo_do_cabecalho(os.path.join(pasta, rel), tamanho)}
+
+
 def saude():
     fatos = estado()
-    fatos.update(uenv=uenv(), overlays=overlays_carregados(), dtbo_da_pru=dtbos_da_pru(), ferramentas=ferramentas())
+    fatos.update(uenv=uenv(), overlays=overlays_carregados(), dtbo_da_pru=dtbos_da_pru(), ferramentas=ferramentas(),
+                 ultima_captura=ultima_captura(pasta_do_firmware()))
     fatos["conferencias"] = conferir(fatos)
     return fatos
 

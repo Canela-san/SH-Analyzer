@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from capturas_sinteticas import escrever_bin
+from capturas_sinteticas import FAIXA, escrever_bin
 from sh_placa.simulador import CENARIOS, SERIE_SIMULADA, VERSAO_SIMULADA, montar_sistema_falso
 from supraharmonicos import cabecalho as motor
 
@@ -55,7 +55,7 @@ def placa(tmp_path):
 def test_estado_le_cada_campo(placa):
     raiz, pasta = placa
     rc, e = rodar("estado", raiz=raiz, pasta=pasta)
-    assert rc == 0 and e["protocolo"] == 1 and e["comando"] == "estado" and e["agente"] == "2"
+    assert rc == 0 and e["protocolo"] == 1 and e["comando"] == "estado" and e["agente"] == "3"
     assert e["placa"] == {"nome": "A335BNLT", "revisao": "00C0", "serie": SERIE_SIMULADA,
                           "modelo": "TI AM335x BeagleBone Black"}
     assert e["sistema"] == "BeagleBoard.org Debian Buster IoT Image 2020-04-06"
@@ -319,6 +319,10 @@ def test_o_resumo_do_cabecalho_e_o_do_motor(tmp_path, versao):
     assert c["inicio_utc"] == pytest.approx(m.timestamp_unix + (m.timestamp_ns or 0) / 1e9)
     assert (c["id"], c["maquina"]) == ((m.id_captura or None), (m.hostname or None))
     assert c["completa"] is True and c["bytes_esperados"] == arquivo.stat().st_size and c["final"] is True
+    if versao >= 9:                       # o sinal mexeu nos dois canais: nenhum parado (o mínimo e o máximo do motor)
+        assert c["canais_parados"] == [] and m.codigo_minimo_por_canal != m.codigo_maximo_por_canal
+    else:
+        assert c["canais_parados"] is None
 
 
 def test_as_capturas_estragadas(tmp_path):
@@ -373,6 +377,74 @@ def test_as_capturas_mais_recentes_primeiro(tmp_path):
     assert [c["nome"] for c in e["capturas"]["recentes"]] == ["c.bin", "b.bin", "a.bin"]
     _, sem = rodar("capturas", raiz=tmp_path, pasta=tmp_path / "nao_existe")
     assert (sem["capturas"], sem["coletas"], sem["total"]) == (None, None, None)
+
+
+def parada(caminho, *volts, quando=1_794_000_000):
+    """Uma captura v9 com cada canal parado em ``volts`` (o ADC mudo: o código 0, a -FAIXA/2), na hora ``quando``."""
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    escrever_bin(caminho, [np.full(4096, v) for v in volts], canais=tuple(range(len(volts))),
+                 grandezas=(0,) * len(volts), sondas=("",) * len(volts), versao=9)
+    os.utime(caminho, (quando, quando))
+    return caminho
+
+
+def test_o_adc_mudo_na_captura_mais_recente(tmp_path):
+    """O ler_adc grava o mínimo e o máximo de cada canal no cabeçalho final: um canal em que os dois são iguais ficou
+    parado. Em 0 nos canais todos é o ADC mudo (a placa de aquisição sem alimentação, os pinos sem configuração); vale
+    a captura mais recente, a que diz como a placa está agora."""
+    raiz, pasta = montar_sistema_falso(tmp_path)
+    mudo = parada(pasta / "conferir_1015.bin", -FAIXA / 2, -FAIXA / 2, quando=time.time() + 60)
+    _, s = rodar("saude", raiz=raiz, pasta=pasta)
+    assert s["ultima_captura"]["arquivo"] == "conferir_1015.bin"
+    assert s["ultima_captura"]["cabecalho"]["canais_parados"] == [{"canal": 0, "codigo": 0}, {"canal": 1, "codigo": 0}]
+    (adc,) = [c for c in s["conferencias"] if c["codigo"] in ("adc_mudo", "sinal_parado")]
+    assert (adc["nivel"], adc["codigo"]) == ("aviso", "adc_mudo")
+    assert adc["texto"] == "A captura mais recente (conferir_1015.bin) ficou em 0 em todas as amostras: o ADC não respondeu."
+    assert "fonte de 5 V" in adc["correcao"]
+    _, r = rodar("capturas", raiz=raiz, pasta=pasta)
+    assert {c["arquivo"]: c["cabecalho"] for c in r["capturas"]}["conferir_1015.bin"]["canais_parados"] == [
+        {"canal": 0, "codigo": 0}, {"canal": 1, "codigo": 0}]
+
+    # Um canal só, no fundo de escala: a entrada saturada (ou o ADC travado), e não mudo.
+    escrever_bin(mudo, [np.sin(np.arange(4096) / 10), np.full(4096, FAIXA)], versao=9)
+    os.utime(mudo, (time.time() + 60,) * 2)
+    _, s = rodar("saude", raiz=raiz, pasta=pasta)
+    (adc,) = [c for c in s["conferencias"] if c["codigo"] in ("adc_mudo", "sinal_parado")]
+    assert adc["codigo"] == "sinal_parado" and adc["texto"] == (
+        "Na captura mais recente (conferir_1015.bin), o sinal do canal 1 ficou parado em 0xFFFF: a entrada saturada "
+        "ou o ADC travado.")
+
+    # Uma captura boa depois da muda: a placa voltou, e a muda é só uma captura antiga.
+    escrever_bin(pasta / "rede_1020.bin", [np.sin(np.arange(4096) / 10)] * 2, versao=9)
+    os.utime(pasta / "rede_1020.bin", (time.time() + 120,) * 2)
+    _, s = rodar("saude", raiz=raiz, pasta=pasta)
+    assert s["ultima_captura"]["arquivo"] == "rede_1020.bin"
+    assert not [c for c in s["conferencias"] if c["codigo"] in ("adc_mudo", "sinal_parado")]
+
+
+def test_o_cartao_e_o_relogio_da_placa_simulada(placa):
+    """Na raiz falsa, o que a árvore de arquivos não imita: o cartão (o tamanho, menos o sistema e os arquivos da pasta
+    do firmware: apagar uma captura libera o espaço dela) e a hora (a deste computador mais o desvio)."""
+    raiz, pasta = placa
+    (raiz / "run" / "simulador").mkdir(parents=True, exist_ok=True)
+    (raiz / "run" / "simulador" / "disco").write_text("3600000 3500000\n")
+    (raiz / "run" / "simulador" / "relogio").write_text("-191607.5\n")
+
+    def ocupado_kib():
+        return sum(f.stat().st_size for f in pasta.rglob("*") if f.is_file()) // 1024
+
+    _, e = rodar("estado", raiz=raiz, pasta=pasta)
+    assert e["disco"] == {"total_kib": 3_600_000, "livre_kib": 100_000 - ocupado_kib()}
+    assert e["relogio"]["utc"] == pytest.approx(time.time() - 191_607.5, abs=30)
+    grande = pasta / "grande.bin"
+    grande.write_bytes(bytes(5 * 1024 * 1024))
+    assert rodar("estado", raiz=raiz, pasta=pasta)[1]["disco"]["livre_kib"] == 100_000 - ocupado_kib()
+    grande.unlink()
+    assert rodar("estado", raiz=raiz, pasta=pasta)[1]["disco"]["livre_kib"] == 100_000 - ocupado_kib()
+    (raiz / "run" / "simulador" / "disco").write_text("3600000 3599990\n")                 # cheio: nunca negativo
+    assert rodar("estado", raiz=raiz, pasta=pasta)[1]["disco"]["livre_kib"] == 0
+    (raiz / "run" / "simulador" / "disco").write_text("estragado\n")                       # o disco deste computador
+    assert rodar("estado", raiz=raiz, pasta=pasta)[1]["disco"]["total_kib"] > 0
 
 
 # ------------------------------------------------------------------ o relógio e os logs
@@ -431,7 +503,7 @@ def test_o_filtro_do_diario_vai_para_o_journalctl(placa):
 def test_versao_e_comandos_errados(placa):
     raiz, pasta = placa
     rc, v = rodar("versao", raiz=raiz, pasta=pasta)
-    assert rc == 0 and v["firmware"] == VERSAO_SIMULADA and v["agente"] == "2"
+    assert rc == 0 and v["firmware"] == VERSAO_SIMULADA and v["agente"] == "3"
     rc, erro = rodar("formatar_o_disco", raiz=raiz, pasta=pasta)
     assert rc == 2 and "comando desconhecido" in erro["erro"] and erro["protocolo"] == 1
     assert "capturas, estado, logs, relogio, saude, versao" in erro["erro"]
