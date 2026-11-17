@@ -1132,7 +1132,7 @@ O **relatório de diagnóstico** (Markdown) vai para o caderno com um clique: é
 
 ### 11.11 O simulador
 
-O simulador é uma placa na lista, servida por SSH neste computador (o `sh_placa.simulador`, a F3.9): um servidor do asyncssh no 127.0.0.1, numa porta livre, com o agente de verdade sobre uma árvore falsa (o `SHAN_RAIZ`: o `/sys`, o `/proc`, o `uEnv.txt` e a pasta do firmware) e o SFTP dela. A interface conecta como numa placa: a chave do aplicativo (só ela; nenhuma senha entra pelo SSH), o `known_hosts`, o registro de atividade, a transferência com a retomada. O sudo pede a senha da imagem, que a sessão conhece.
+O simulador é uma placa na lista, servida por SSH neste computador (o `sh_placa.servidor_do_simulador`, a F3.9, sobre a placa simulada do `sh_placa.simulador`): um servidor do asyncssh no 127.0.0.1, numa porta livre, com o agente de verdade sobre uma árvore falsa (o `SHAN_RAIZ`: o `/sys`, o `/proc`, o `uEnv.txt` e a pasta do firmware) e o SFTP dela. A interface conecta como numa placa: a chave do aplicativo (só ela; nenhuma senha entra pelo SSH), o `known_hosts`, o registro de atividade, a transferência com a retomada. O sudo pede a senha da imagem, que a sessão conhece.
 
 - **As capturas** (`sh_placa/capturas_simuladas.py`, e não as de `tests/`, que o aplicativo não leva): no formato do firmware (v9, 2 canais a 400 kS/s, blocos de 2²⁰ amostras, o CRC das amostras). A rede de 127 V e 60 Hz, com os harmônicos ímpares e uma carga não linear na corrente; os supraharmônicos: um inversor de 16 kHz modulado em 120 Hz, um driver de LED em 40 kHz com o FM, um tom em 72 kHz; o ruído; os ganhos do `--ganho 0:10,1:19.357`.
 - **O "cabo":** o SFTP divide 5,2 MB/s entre os pedidos, como o USB da placa.
@@ -1497,12 +1497,14 @@ O G1 passa com a cadeia ligada, durante e depois das materializações (`tests/t
 
 **Em tarefas** (F3.1 a F3.10) em `docs/gui-progress.md`, seção 4d, com o "pronto quando" da fase.
 
-- [ ] O `sh_placa`: a descoberta (USB, mDNS, IP), a conexão asyncssh na thread própria, as chaves, o cofre de senhas e o registro de atividade.
-- [ ] O agente: estado, saúde, capturas, relógio e logs.
-- [ ] A visão geral e o diagnóstico, só leitura, com os "Corrigir" simples: relógio e pinos.
-- [ ] Os arquivos: navegar, transferir com fila e retomada, conferir o CRC, apagar o conferido, abrir na Análise, abrir no gerenciador do sistema.
-- [ ] O terminal embutido, com gravação e atalhos de comandos.
-- [ ] O simulador com os cenários; o job `placa` na CI.
+- [x] O `sh_placa`: a descoberta (USB, mDNS, IP), a conexão asyncssh na thread própria, as chaves, o cofre de senhas e o registro de atividade.
+- [x] O agente: estado, saúde, capturas, relógio e logs.
+- [x] A visão geral e o diagnóstico, só leitura, com os "Corrigir" simples: relógio e pinos.
+- [x] Os arquivos: navegar, transferir com fila e retomada, conferir o CRC, apagar o conferido, abrir na Análise, abrir no gerenciador do sistema.
+- [x] O terminal embutido, com gravação e atalhos de comandos.
+- [x] O simulador com os cenários; o job `placa` na CI.
+
+**Pronto quando** (o de `docs/gui-progress.md`, 4d): a jornada da Aquisição roda com o simulador e com a placa de verdade, pelo USB. **Cumprido** por `tests/test_gui_jornada_aquisicao.py` (na janela e pelos gestos: o simulador achado, conectado com um clique, a visão geral, o diagnóstico, o relógio errado acertado, a captura transferida e conferida pelo CRC e aberta na Análise, com o espectro) e, na placa de verdade, pela mesma jornada na janela (sem tela), em casa e na tomada do laboratório (16/11/2026).
 
 ### Fase 4: Aquisição, a captura (4 semanas, com bancada)
 

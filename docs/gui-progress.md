@@ -12,14 +12,19 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > espectro corrigido pela sonda, com os números da CLI (`tests/test_gui_jornada.py`), e o G1 passa com a cadeia
 > ligada, durante e depois das materializações. **A tag v0.9** fica para o dono do projeto.
 >
-> **A Fase 3 está andando** (seção 4d): a F3.1 (o laço `asyncio` do `sh_placa` e a ponte), a F3.2 (a conexão SSH,
+> **A Fase 3 está feita** (seção 4d, F3.1 a F3.10; diário de 16/11): a F3.1 (o laço `asyncio` do `sh_placa` e a ponte), a F3.2 (a conexão SSH,
 > as chaves, o cofre e o registro de atividade), a F3.3 (a descoberta das placas), a F3.4 (o agente completo: a
 > saúde, as capturas, o relógio e os logs), a F3.5 (a área de Aquisição na tela: a lista de placas, a conexão e a
 > primeira conexão), a F3.6 (a visão geral e o diagnóstico, com o "Corrigir" do relógio e dos pinos) e a F3.7 (os
 > arquivos e a transferência, que espera as capturas), a F3.8 (o terminal: o `pyte` num widget próprio, sobre um
 > PTY no SSH, com as abas, os atalhos e a gravação) e a F3.9 (o simulador com os cenários, servido por SSH neste
-> computador) estão feitas, conferidas no servidor SSH do teste e na placa de verdade. **A próxima: a F3.10, o
-> fechamento da Fase 3.**
+> computador), conferidas no servidor SSH do teste e na placa de verdade. A jornada da Aquisição (achar, conectar,
+> a visão geral, o diagnóstico, o relógio acertado, a captura transferida, conferida pelo CRC e aberta na Análise)
+> roda de ponta a ponta com o simulador (`tests/test_gui_jornada_aquisicao.py`) e rodou na placa de verdade, na janela
+> sem tela, em casa e na tomada do laboratório (seção 5).
+>
+> **A próxima: a Fase 4, a captura** (o plano, seção 16): quebrá-la em tarefas numa seção 4e, como a 4d, e começar
+> pela do firmware (o `ler_adc -o -` e o `--progresso-json`, em commits só dele, validados em bancada).
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
@@ -35,6 +40,8 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > da placa) troca a placa simulada (o ADC mudo, o cartão cheio, a conexão que cai, o relógio errado...).
 >
 > **Com o usuário (quando puder):**
+> - a jornada da Aquisição na tela, com a placa: a placa na lista, um clique, a visão geral, o "Acertar…", os
+>   Arquivos ("Transferir", "Abrir na Análise") e o espectro da tomada;
 > - o G1 com a cadeia, na tela: `uv run --extra gui python -m sh_analyzer_gui.prototipos.medir_vista --cadeia`
 >   (sem tela, p95 de 11,9 a 12,9 ms durante as materializações e de 14,0 a 14,2 ms depois; se reprovar na tela, o
 >   texto dos eixos em cache, com `QStaticText` (a F1.5), é o próximo passo);
@@ -43,7 +50,8 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 >
 > **A placa de verdade** está no USB do computador do usuário (15/11/2026): `debian@192.168.6.2`, com a chave. O
 > cabo tem mau contato (a conexão cai sem aviso), e o disco dela é pequeno (~1,5 GB livres): as capturas vêm
-> para `$DADOS/lab/` e saem da placa depois de conferidas. O canal 1 está na tomada da casa (127 V).
+> para `$DADOS/lab/` e saem da placa depois de conferidas. O canal 1 está na tomada do laboratório (132 V,
+> 16/11/2026). A placa não tem bateria no relógio: desligada, ela volta atrasada (3 h 07 na última vez).
 
 **Onde trabalhar:** no worktree `.claude/worktrees/interface` (o branch `feat/interface`), para não mexer no checkout do `main`, que é o do laboratório. Se ele não existir, crie-o com `git worktree add .claude/worktrees/interface feat/interface`.
 
@@ -110,13 +118,15 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 | 12/11/2026 | **Layout unificado:** o A1 (Estúdio) como a estrutura, com o modo Instrumento (A2) e a grade de vistas (A3) dentro dele; na Aquisição, o B1 com o B2 como a seção "Capturar"; o F1 para as figuras | Plano, 13 |
 | 12/11/2026 | Versões: v0.9 Análise; v0.10 Aquisição; v0.11 Figuras; v1.0 manutenção da placa e acabamento | Plano, 16 |
 | 12/11/2026 | Commits locais a cada passo, sem push | Seção 1 |
+| 16/11/2026 | O PySide6 abaixo do 6.12 na Python 3.10 e 3.11: o 6.12.0 tira uma referência do None a cada chamada de um método do Qt sem retorno, e ali a interface morria em minutos ("deallocating None"); da 3.12 em diante o None é imortal | `pyproject.toml`, o extra `gui`, e o bloco PEP 723 do `adc_tool.py`; `tests/test_gui_pyside.py` |
+| 16/11/2026 | O simulador da placa sem a rede (`sh_placa/simulador.py`) e o servidor SSH dele à parte (`servidor_do_simulador.py`): os testes do agente e do diagnóstico rodam sem o extra `placa` | `tests/test_arquitetura.py` |
 
 ---
 
 ## 3. O estado atual
 
-**Em 15/11/2026, no `feat/interface`, em commits locais:** as Fases 0, 1 e 2 no código, e a Fase 3 começando (a
-F3.1: o laço `asyncio` do `sh_placa` e a ponte). O visualizador da Fase 1
+**Em 16/11/2026, no `feat/interface`, em commits locais:** as Fases 0 a 3 no código (a Fase 3: a Aquisição até a
+conexão, os arquivos, o terminal e o simulador; seção 4d). O visualizador da Fase 1
 (abrir as capturas, a vista de tempo, o inspetor, os cursores e as medidas, o projeto `.shproj` com o desfazer e a
 paleta de comandos) ganhou na Fase 2 a cadeia de transformações (as afins, os filtros, o DC e a correção de sonda,
 com a prévia e a materialização em segundo plano e o cache), as quatro vistas de frequência (espectro, bandas IEC,
@@ -133,7 +143,7 @@ pasta padrão das sondas), `6ac649d` (o cabeçalho num dicionário), `97a40d8` (
 sonda em pedaços, sem prender o GIL). E o do agente da placa: `3f98d7b`. O diagnóstico da PRU entre capturas
 (`0997175`) é do `sh_placa`, sem o agente.
 
-**O ambiente:** Python 3.13, PySide6 6.12.0, PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1; no extra `placa`,
+**O ambiente:** Python 3.13, PySide6 6.12.0 (na 3.10 e na 3.11, o 6.11.3: seção 2), PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1; no extra `placa`,
 asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5, keyring 25.7.0 (o cofre do Linux é o Secret Service) e pyte 0.8.2. Testes, na última rodada:
 `ci.sh rapido` com 1 687 aprovados, `ci.sh interface` com 743 e os 6 de desempenho (15/11/2026).
 
@@ -1344,7 +1354,8 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
 
 ### ☑ F3.9: o simulador com os cenários
 
-- **Arquivos:** `sh_placa/simulador.py`; `tests/servidor_ssh.py`.
+- **Arquivos:** `sh_placa/simulador.py` (a placa simulada) e `sh_placa/servidor_do_simulador.py` (o SSH dela, desde
+  a F3.10); `tests/servidor_ssh.py`.
 - **O conteúdo** (AQ-19; plano, 11.11):
   - o simulador como uma placa na lista: o mesmo protocolo, servido por SSH no próprio computador, com o agente de
     verdade sobre a árvore falsa;
@@ -1360,10 +1371,11 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
 - **Os testes:** cada cenário na visão geral e no diagnóstico; a conexão que cai no meio de uma transferência, e a
   retomada.
 - **Feito em 16/11/2026:**
-  - **o servidor** (`sh_placa/simulador.py`, o `ServidorDoSimulador`): o asyncssh no 127.0.0.1, numa porta livre,
-    com o agente de verdade sobre a árvore falsa e o SFTP dela. A chave do host e a do aplicativo são geradas para
-    ele (o `acesso()` devolve a chave e o `known_hosts`), e só a chave entra: ninguém daqui entra com uma senha
-    conhecida. O sudo pede a senha da imagem, que a sessão conhece. O `ssh` sem comando é recusado com a explicação.
+  - **o servidor** (o `ServidorDoSimulador`, hoje em `sh_placa/servidor_do_simulador.py`): o asyncssh no 127.0.0.1,
+    numa porta livre, com o agente de verdade sobre a árvore falsa e o SFTP dela. A chave do host e a do aplicativo
+    são geradas para ele (o `acesso()` devolve a chave e o `known_hosts`), e só a chave entra: ninguém daqui entra
+    com uma senha conhecida. O sudo pede a senha da imagem, que a sessão conhece. O `ssh` sem comando é recusado com
+    a explicação.
     O SFTP divide 5,2 MB/s entre os pedidos, como o USB; a conexão que cai derruba tudo na primeira leitura além de
     40 % de um arquivo, e de novo a cada 45 s. A pasta da placa simulada sai no `fechar`. O servidor dos testes
     (`tests/servidor_ssh.py`) virou uma subclasse dele: a senha, o terminal num PTY, o salto e a chave RSA;
@@ -1407,7 +1419,7 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
     cada cenário do plano na visão geral e no diagnóstico, o cenário escolhido e lembrado, o "Acertar…" e a queda no
     meio de uma transferência com a retomada); o pedido com menos bytes em `tests/test_sh_placa_sftp.py`.
 
-### ☐ F3.10: o fechamento da Fase 3
+### ☑ F3.10: o fechamento da Fase 3
 
 - **O conteúdo:**
   - a jornada da Aquisição num teste de ponta a ponta, com o simulador por SSH: achar, conectar com a chave do
@@ -1415,6 +1427,42 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
     abri-la na Análise;
   - **na placa de verdade, com o usuário (no laboratório):** a mesma jornada pelo USB, com a vazão anotada na seção 5;
   - o plano e este arquivo em dia.
+- **Feito em 16/11/2026:**
+  - **a jornada com o simulador** (`tests/test_gui_jornada_aquisicao.py`, ~9 s): na janela e pelos gestos (o seletor
+    da barra superior, o clique na lista, as seções da coluna da esquerda, os botões). O simulador aparece sozinho e
+    conecta com um clique (a chave); a visão geral e o diagnóstico não têm nada a corrigir; no cenário do relógio
+    errado, o "Acertar…" não pede a senha e deixa a diferença abaixo de 1 s; a captura de rede é transferida e
+    conferida pelo CRC das amostras; e "Abrir na Análise" leva à Análise, onde a tensão é plotada (o duplo clique na
+    árvore) e o espectro da captura inteira tem a rede no maior pico e os supraharmônicos da placa simulada (16, 40 e
+    72 kHz) acima do piso;
+  - **na placa de verdade**, a mesma jornada na janela, sem tela, com a configuração e os dados em pastas
+    temporárias (o usuário a confere na tela). A captura é uma conferência (`coletar.sh conferir`, o canal 1 na
+    tomada, 2 blocos), tirada pelo `ssh` como o terminal faria:
+    - **em casa:** achada em 1,6 s; a primeira conexão (a impressão, a senha, a chave instalada) em 2,5 s; o relógio
+      de +2,15 s acertado para −0,04 s; 4 MiB transferidos e conferidos pelo CRC em 0,91 s; na Análise, f₁ =
+      59,98 Hz (127,5 V);
+    - **no laboratório:** a placa desligada voltou com o relógio 3 h 07 atrasado (sem bateria) e os pinos da PRU no
+      `default` (ela reiniciou). O diagnóstico disse "Não está pronta" pelos pinos e avisou o relógio; o "Acertar…"
+      levou a diferença de −11 239 s a −0,04 s, e o `ler_adc` da conferência configurou os pinos. A tomada do
+      laboratório (132 V, f₁ = 59,99 Hz) tem o H5 em −37,8 dBc, o H7 em −39,5 dBc e uma emissão em ~18 kHz
+      (−54 dBc), com os múltiplos em 36, 54 e 72 kHz;
+    - depois de cada uma, a chave do teste saiu do `authorized_keys` e a conferência saiu do cartão (a captura do
+      usuário que estava lá ficou);
+  - **os Arquivos:** o título da captura foi para baixo do nome do arquivo, na coluna que fica com a largura que
+    sobra e nunca menos que a dos nomes. Numa coluna própria, ele ficava com 40 px numa janela de 1 440 px;
+  - **o que a CI pegou:** desde a F3.9, o `simulador.py` importava o asyncssh, e o job `testes` (sem o extra
+    `placa`) não importava mais os testes do agente e do diagnóstico. A placa simulada ficou no `simulador.py`, sem
+    a rede, e o servidor SSH foi para o `servidor_do_simulador.py`; o `test_arquitetura` confere;
+  - **o que o usuário pegou:** a interface morria em minutos com "Fatal Python error: none_dealloc: deallocating
+    None". O PySide6 6.12.0 tira uma referência do None a cada chamada de um método do Qt sem retorno (até um
+    `setWindowTitle`); da Python 3.12 em diante o None é imortal e nada acontece, mas o `ci.sh` interrompido tinha
+    deixado o `.venv` na 3.10. O extra `gui` pede o 6.11 na 3.10 e na 3.11 (o 6.11.3 não tem o defeito, medido na
+    janela inteira), e o `tests/test_gui_pyside.py` confere. A interface inteira passa na 3.10 com o 6.11.3
+    (823 testes, 7 pulados, em 8 min 22 s). O bloco PEP 723 do `adc_tool.py` tem as mesmas duas linhas (o
+    `uv run` na 3.10 instalava o 6.12.0 para a janela do matplotlib), e o `test_dependencias` compara todas as linhas
+    de cada pacote, com os marcadores;
+  - **de passagem:** cada processo do pytest deixava três pastas no `/tmp` (eram 2 520): agora saem no fim. E o
+    teste da queda periódica do simulador esperava tempos fixos, que a máquina cheia passava.
 
 ---
 
@@ -1445,6 +1493,7 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
 | 15/11/2026 | **G1 sem tela, 8 faixas, com os eixos redesenhados** a cada zoom e pan (a correção dos números parados) | **Aprovado. Sem a cadeia:** mediana de 9,4 ms, p95 de 11,3 ms. **Com a cadeia, durante:** mediana de 7,3 a 7,4 ms, p95 de 11,9 a 12,9 ms; **depois:** mediana de 10,2 a 10,4 ms, p95 de 14,0 a 14,2 ms (2 rodadas). Redesenhar os eixos custa ~1,5 ms por quadro | `medir_vista [--cadeia]`; `pytest --desempenho` |
 | 15/11/2026 | **A vazão do USB, na placa de verdade** (192.168.6.2), 46 MiB e 8 MiB de captura | `scp` e `rsync`: 4,8 MB/s; `ssh cat` com o `chacha20-poly1305`, o `aes128-gcm` e o `aes128-ctr`: 5,2, 5,7 e **5,9 MB/s**; **o SFTP do asyncssh com o `aes128-ctr`: 5,2 MB/s**. O limite é a cifra no único núcleo da placa (o eMMC lê a 264 MB/s) | seção 6; a sonda da F3.1 |
 | 16/11/2026 | **O SFTP da placa com o leitor da F3.9** (os pedidos de 16 KiB: o OpenSSH 7.9 dela não tem o `limits@openssh.com`) × o leitor paralelo do asyncssh, 8 MiB, duas rodadas de cada | Os dois: **5,0 a 5,1 MiB/s** com o `aes128-ctr` da conexão (4,5 MiB/s com a cifra padrão do asyncssh); o SHA-256 igual | o diário de 16/11 (F3.9) |
+| 16/11/2026 | **A jornada da Aquisição na placa de verdade**, na janela (sem tela), pelo USB: em casa e na tomada do laboratório | Achada em 1,6 s; a primeira conexão (a impressão, a senha, a chave) em 2,5 e 2,6 s; o enlace com 1,0 e 0,9 ms e 4,6 e 6,6 MB/s; uma conferência de 4 MiB transferida e conferida pelo CRC em 0,91 e 0,93 s (o SFTP a 5,2 e 5,3 MiB/s); o relógio acertado com ±0,05 s, de +2,15 s e de −3 h 07 | o diário de 16/11 (F3.10) |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
 ---
@@ -1964,6 +2013,22 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     `rapido` rodou depois do `placa`, e o `uv run --extra dev` tirou do ambiente o Qt e o asyncssh: os testes deles
     ficaram para os passos próprios (a contagem não se compara com a dos dias anteriores).
   - **Próximo:** a F3.10, o fechamento da Fase 3.
+- **16/11/2026:** **a F3.10, o fechamento da Fase 3** (seção 4d). **A Fase 3 está feita:** a jornada da Aquisição
+  roda de ponta a ponta com o simulador e rodou na placa de verdade, em casa e no laboratório:
+  - **o pedido:** "sim, e faça a F3.10" (o título nos Arquivos antes), e, no meio, "tentei rodar o software, apenas
+    usando um pouco ele já crasha" ("deallocating None");
+  - **o que a placa mostrou:** no laboratório, a placa que volta desligada (o relógio 3 h 07 atrasado, os pinos no
+    `default`): o diagnóstico e o "Acertar…" fazem o que devem, e o `ler_adc` configura os pinos sozinho. A tomada do
+    laboratório tem uma emissão em ~18 kHz com os múltiplos;
+  - **um erro meu, corrigido:** o `simulador.py` da F3.9 com o asyncssh, que a CI completa pegou (o `rapido` daqui
+    passava porque o `.venv` ainda tinha o asyncssh). E o `ci.sh` completo, interrompido no passo da 3.10, deixou o
+    `.venv` do worktree na 3.10, onde o defeito do PySide6 6.12.0 derruba a interface: o usuário a abriu dali. O
+    extra `gui` agora pede o 6.11 na 3.10 e na 3.11. O mesmo pedido faltou no bloco PEP 723 do `adc_tool.py`, e o
+    `test_dependencias` da CI completa pegou;
+  - **Testes:** o `ci.sh` completo passou: 1 713 em cada Python (58 pulados: os do Qt e do asyncssh, que têm os seus
+    jobs, os de desempenho e os do compilador de 32 bits), o `placa` com 310 em cada Python e a interface com 822 na 3.13 (8 pulados: os de
+    desempenho e o do None, que só vale na 3.10 e na 3.11). A interface na 3.10, com o PySide6 6.11.3: 823.
+  - **Próximo:** a Fase 4, a captura: quebrá-la em tarefas (seção 4e).
 ---
 
 ## 8. Perguntas em aberto
