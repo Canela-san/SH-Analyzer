@@ -1,6 +1,7 @@
 """Cabeçalho "SHAN": v1, v2, v3 (faixa de entrada do ADC por canal), CRC, magic e conferência de consistência."""
 
 import logging
+from dataclasses import asdict
 
 import numpy as np
 import pytest
@@ -460,3 +461,39 @@ def test_os_canais_saem_em_sequencia_e_o_atraso_de_cada_um_vai_para_as_exportaco
     um = escrever_bin(tmp_path / "um.bin", [np.sin(2 * np.pi * 1000 * t)], canais=(1,), grandezas=(0,), sondas=("",),
                       fs_total=100_000, versao=9, faixas_adc_total_v=[5.12])
     assert ler_cabecalho(um).atraso_de_amostragem_por_canal_s == (0.0,)
+
+
+def test_reescrever_campos_troca_pelo_nome_e_refaz_o_crc(tmp_path):
+    """[17/11/2026] O computador que fecha uma captura da saída contínua (supraharmonicos/saida_continua.py) reescreve
+    campos do cabeçalho pelo nome da struct do ler_adc.c: os escalares, os por canal (o que falta fica zerado, como o
+    ler_adc deixa os canais que não usa) e a reserva, com o CRC do cabeçalho refeito."""
+    from supraharmonicos.cabecalho import interpretar_cabecalho, reescrever_campos
+    p, _ = _captura_v9(tmp_path)
+    bruto = p.read_bytes()[:4096]
+    assert reescrever_campos(bruto) == bruto                 # nada trocado: os mesmos bytes, o mesmo CRC
+    novo = reescrever_campos(bruto, fixa={"blocos_gravados": 7, "amostras_atrasadas": 3, "taxa_medida_hz": 399_998.5},
+                             extensao={"crc32_amostras": 0x1234ABCD, "codigo_minimo": [10], "media_codigos": [1.5, 2.5],
+                                       "duracao_monotonica_s": 18.25},
+                             reserva={"fim_pelo_computador": 1})
+    c, antes = interpretar_cabecalho(novo, "novo"), interpretar_cabecalho(bruto, "antes")
+    assert c.crc32_valido and len(novo) == 4096
+    assert (c.blocos_gravados, c.amostras_atrasadas, c.taxa_medida_hz) == (7, 3, 399_998.5)
+    assert c.crc32_amostras == 0x1234ABCD and c.duracao_monotonica_s == 18.25 and c.fim_pelo_computador is True
+    assert c.codigo_minimo_por_canal == (10, 0) and c.media_codigos_por_canal == (1.5, 2.5)
+    trocados = {"blocos_gravados", "amostras_atrasadas", "taxa_medida_hz", "crc32_amostras", "codigo_minimo_por_canal",
+                "media_codigos_por_canal", "duracao_monotonica_s", "fim_pelo_computador", "header_crc32"}
+    assert ({k: v for k, v in asdict(c).items() if k not in trocados}
+            == {k: v for k, v in asdict(antes).items() if k not in trocados})       # o resto, intocado
+
+
+def test_reescrever_campos_recusa_o_que_nao_e_v9_e_o_campo_que_nao_existe(tmp_path):
+    from capturas_sinteticas import montar_cabecalho
+    from supraharmonicos.cabecalho import reescrever_campos
+    p, _ = _captura_v9(tmp_path)
+    bruto = p.read_bytes()[:4096]
+    with pytest.raises(ValueError, match="não é v9"):
+        reescrever_campos(montar_cabecalho(1000, (0, 1), (0, 1), ("", ""), 400_000, versao=8), fixa={"blocos_gravados": 1})
+    with pytest.raises(ValueError, match="desconhecido 'blocos'"):
+        reescrever_campos(bruto, fixa={"blocos": 1})
+    with pytest.raises(ValueError, match="8 valores, e vieram 9"):
+        reescrever_campos(bruto, extensao={"codigo_minimo": [0] * 9})

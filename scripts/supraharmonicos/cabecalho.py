@@ -247,6 +247,28 @@ _OFFSET_HEADER_CRC32_V6 = _TAMANHO_CAMPOS_V6 - struct.calcsize("I")  # 760
 _OFFSET_HEADER_CRC32_V7 = _TAMANHO_CAMPOS_V7 - struct.calcsize("I")  # 772
 _OFFSET_HEADER_CRC32_V8 = _TAMANHO_CAMPOS_V8 - struct.calcsize("I")  # 1020
 
+# [16/11/2026] Os nomes dos campos da v8 e da extensão da v9, na ordem dos formatos (os da struct do ler_adc.c), com as
+# contagens de cima: para reescrever campos de um cabeçalho (reescrever_campos), como faz o computador que fecha uma
+# captura da saída contínua (saida_continua.py).
+_NOMES_CABECALHO_V8 = (
+    "magic", "versao_cabecalho", "tamanho_cabecalho", "timestamp_unix", "frequencia_hz", "auto_seq_mask", "num_canais",
+    "lista_canais", "samples_per_buffer", "bytes_por_amostra", "pru_clock_hz", "sample_period_ticks",
+    "primeira_amostra_descartada", "duracao_pedida_segundos", "blocos_gravados", "total_amostras_gravadas",
+    "descricao", "kernel", "timestamp_ns", "relogio_sincronizado", "uptime_s", "carga_1min_milesimos",
+    "grandeza_por_canal", "sonda_id_por_canal", "faixa_adc_por_canal", "amostras_atrasadas", "buffers_sobrescritos",
+    "quadros_preambulo_ruim", "atraso_cs_iteracoes", "versao_firmware", "taxa_medida_hz", "buffers_ping_pong",
+    "folga_minima_ciclos", "atraso_maximo_ciclos", "ciclos_rebase", "versao_protocolo_pru", "modo_spi",
+    "divergencias_fase_a", "divergencias_fase_c", "titulo", "sistema_operacional", "placa", "disco_saida_total_kib",
+    "disco_saida_livre_kib", "disco_saida_livre_fim_kib", "disco_programa_total_kib", "disco_programa_livre_kib",
+    "memoria_disponivel_kib", "header_crc32")
+_NOMES_EXTENSAO_V9 = (
+    "crc32_amostras", "timestamp_fim_unix", "timestamp_fim_ns", "pior_bloco_ms", "duracao_monotonica_s", "id_captura",
+    "hostname", "linha_de_comando", "ganho_por_canal", "codigo_minimo", "codigo_maximo", "amostras_saturadas",
+    "media_codigos", "desvio_codigos")
+_NOMES_RESERVA_V9 = ("fim_pelo_computador",)
+assert len(_NOMES_CABECALHO_V8) == len(_CONTAGENS_CABECALHO_V8)
+assert len(_NOMES_EXTENSAO_V9) == len(_CONTAGENS_EXTENSAO_V9)
+
 
 def _consumir(campos_tupla: tuple, contagens: list[int]) -> list:
     """Divide 'campos_tupla' (a tupla plana devolvida por struct.unpack) em
@@ -931,6 +953,44 @@ def _interpretar(bruto: bytes, tamanho_total: int, caminho: object) -> Cabecalho
         **campos_extensao,
         **campos_sistema,
     )
+
+
+def reescrever_campos(bruto: bytes, *, fixa: dict | None = None, extensao: dict | None = None,
+                     reserva: dict | None = None) -> bytes:
+    """Os bytes de um cabeçalho v9 com campos trocados e o CRC do cabeçalho refeito (o campo zerado no cálculo, como no
+    ler_adc). Os campos têm os nomes da struct do ``ler_adc.c`` (``_NOMES_CABECALHO_V8``, ``_NOMES_EXTENSAO_V9``,
+    ``_NOMES_RESERVA_V9``); um de vários valores (os por canal) recebe uma sequência, e o que faltar até o tamanho dele
+    fica zerado, como o ``ler_adc`` deixa os canais que não usa. ``ValueError`` num cabeçalho que não é v9 ou num nome
+    que não existe."""
+    novo = bytearray(bruto)
+    if len(novo) < CABECALHO_TAMANHO_V9 or novo[:4] != CABECALHO_MAGIC or struct.unpack_from("<I", novo, 4)[0] < 9:
+        raise ValueError("reescrever_campos: o cabeçalho não é v9 (4096 bytes, magic SHAN)")
+    tamanho = struct.unpack_from("<I", novo, 8)[0]
+    partes = ((fixa, _FORMATO_CABECALHO_V8, _NOMES_CABECALHO_V8, _CONTAGENS_CABECALHO_V8, 0),
+              (extensao, _FORMATO_EXTENSAO_V9, _NOMES_EXTENSAO_V9, _CONTAGENS_EXTENSAO_V9, CABECALHO_TAMANHO_TOTAL),
+              (reserva, _FORMATO_RESERVA_V9, _NOMES_RESERVA_V9, [1], _OFFSET_RESERVA_V9))
+    for novos, formato, nomes, contagens, offset in partes:
+        if not novos:
+            continue
+        valores = list(struct.unpack_from(formato, novo, offset))
+        posicao, inicio = {}, 0
+        for nome, n in zip(nomes, contagens):
+            posicao[nome], inicio = (inicio, n), inicio + n
+        for nome, valor in novos.items():
+            if nome not in posicao:
+                raise ValueError(f"reescrever_campos: campo desconhecido '{nome}'")
+            i, n = posicao[nome]
+            if n == 1:
+                valores[i] = valor
+            else:
+                valor = list(valor)
+                if len(valor) > n:
+                    raise ValueError(f"reescrever_campos: '{nome}' tem {n} valores, e vieram {len(valor)}")
+                valores[i:i + n] = valor + [type(valores[i])(0)] * (n - len(valor))
+        struct.pack_into(formato, novo, offset, *valores)
+    struct.pack_into("<I", novo, _OFFSET_HEADER_CRC32_V8, 0)
+    struct.pack_into("<I", novo, _OFFSET_HEADER_CRC32_V8, zlib.crc32(bytes(novo[:tamanho])))
+    return bytes(novo)
 
 
 def _campos_da_extensao(partes: list, num_canais: int, tem_final: bool) -> dict[str, object]:
