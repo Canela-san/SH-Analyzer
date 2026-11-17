@@ -2153,8 +2153,9 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     dois lados juntos; o ao vivo anda de bloco em bloco: 2,6 s a 400 kS/s);
   - **a F4.1:** o `ler_adc -o -`, o código 6 e o `--progresso-json` (`7551d7e`), validados na placa. A bancada achou
     o que o teste não acharia: o cabo que sai não fecha o pipe na placa, e o `write` ficaria preso por ~15 min;
-  - **Testes:** os do firmware (101, com os 8 novos), o `ci.sh` completo antes da F4.1 (tudo certo, com os ambientes
-    novos) e depois dela (seção 5).
+  - **Testes:** os do firmware (101, com os 8 novos). O `ci.sh` completo, antes da F4.1 (tudo certo, com os ambientes
+    novos) e depois dela: 1 721 em cada Python (eram 1 713), o `placa` com 310 e a interface com 822, e o `.venv`
+    intocado nas duas.
   - **Próximo:** a F4.2.
 ---
 
