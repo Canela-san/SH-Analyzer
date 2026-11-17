@@ -5,7 +5,8 @@
 #     "matplotlib>=3.10.9",
 #     "numpy>=1.20",
 #     "scipy>=1.15.3",
-#     "PySide6>=6.8",
+#     "PySide6>=6.8,<6.12; python_version < '3.12'",
+#     "PySide6>=6.8; python_version >= '3.12'",
 #     "h5py>=3.0",
 #     "rich>=13.7",
 # ]

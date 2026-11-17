@@ -7,7 +7,7 @@
 * tudo o que ele importa ao carregar -- inclusive pelos módulos do pacote e pelos vizinhos de pasta que ele
   importa -- está no bloco (senão ``uv run`` cai num ``ModuleNotFoundError`` que o ambiente de testes esconde);
 * cada versão declarada é IGUAL à do ``pyproject.toml`` (senão ``uv run`` e ``pip install -e .`` instalariam
-  ambientes diferentes).
+  ambientes diferentes), inclusive as linhas com marcador de Python (o PySide6 abaixo do 6.12 na 3.10 e na 3.11).
 """
 
 import ast
@@ -49,12 +49,21 @@ def nome_e_spec(requisito: str) -> tuple[str, str]:
     return m.group(1).lower().replace("_", "-"), m.group(2).replace(" ", "")
 
 
-def dependencias_pep723(caminho: Path) -> dict[str, str]:
+def por_nome(requisitos) -> dict[str, set[str]]:
+    """Nome -> as especificações dele: um pacote pode vir em mais de uma linha, cada uma com o seu marcador."""
+    specs: dict[str, set[str]] = {}
+    for r in requisitos:
+        nome, spec = nome_e_spec(r)
+        specs.setdefault(nome, set()).add(spec)
+    return specs
+
+
+def dependencias_pep723(caminho: Path) -> dict[str, set[str]]:
     texto = caminho.read_text(encoding="utf-8")
     bloco = re.search(r"^# /// script\n((?:#.*\n)+?)# ///$", texto, re.M)
     assert bloco, f"{caminho.name}: bloco PEP 723 ausente"
     conteudo = "\n".join(ln[2:] if ln.startswith("# ") else ln[1:] for ln in bloco.group(1).splitlines())
-    return dict(nome_e_spec(r) for r in tomllib.loads(conteudo)["dependencies"])
+    return por_nome(tomllib.loads(conteudo)["dependencies"])
 
 
 def _imports_ao_carregar(arvore: ast.AST):
@@ -131,11 +140,11 @@ def test_script_declara_tudo_o_que_importa(script):
 @pytest.mark.parametrize("script", EXECUTAVEIS, ids=IDS)
 def test_versoes_do_script_batem_com_o_pyproject(pyproject, script):
     projeto = pyproject["project"]
-    declaradas = dict(nome_e_spec(r) for r in projeto["dependencies"])
-    declaradas.update(dict(nome_e_spec(r) for extra in projeto["optional-dependencies"].values() for r in extra))
-    for nome, spec in dependencias_pep723(script).items():
+    extras = [r for extra in projeto["optional-dependencies"].values() for r in extra if not r.startswith(projeto["name"])]
+    declaradas = por_nome([*projeto["dependencies"], *extras])
+    for nome, specs in dependencias_pep723(script).items():
         assert nome in declaradas, f"{script.name} declara '{nome}', ausente do pyproject.toml"
-        assert declaradas[nome] == spec, f"{script.name}: '{nome}{spec}' difere do pyproject ('{nome}{declaradas[nome]}')"
+        assert specs == declaradas[nome], f"{script.name}: '{nome}' {sorted(specs)} difere do pyproject ({sorted(declaradas[nome])})"
 
 
 def test_detector_de_imports_enxerga_o_pacote_e_ignora_imports_sob_demanda():
