@@ -181,6 +181,22 @@ def test_extensao_da_v9_bate_com_o_formato_python_e_cabe_nos_4096_bytes(fonte_c,
     assert padrao == cab.ATRASOS_CS_PADRAO
 
 
+def test_a_reserva_da_v9_vem_logo_depois_da_extensao_e_bate_com_o_python(fonte_c, defines):
+    """[16/11/2026] Os campos que entram na reserva sem mudar a versão (o fim escrito pelo computador, na saída contínua
+    que caiu): a struct cabecalho_reserva_campos, logo depois da extensão na cabecalho_arquivo, e o _FORMATO_RESERVA_V9
+    do Python, no byte 1024 + a extensão."""
+    import struct
+    corpo = re.search(r"struct\s+cabecalho_reserva_campos\s*\{(.*?)\}\s*__attribute__\(\(packed\)\)", fonte_c, re.S)
+    assert corpo, "struct cabecalho_reserva_campos (packed) não encontrada em ler_adc.c"
+    assert normalizar(_campos_do_corpo(corpo.group(1), defines)) == normalizar(
+        formato_struct_python(cab._FORMATO_RESERVA_V9))
+    arquivo = re.search(r"struct\s+cabecalho_arquivo\s*\{(.*?)\}\s*__attribute__\(\(packed\)\)", fonte_c, re.S)
+    membros = re.findall(r"^\s*(struct\s+\w+|uint8_t)\s+(\w+)", arquivo.group(1), re.M)
+    assert [nome for _, nome in membros] == ["campos", "extensao", "reserva", "reservado"]
+    assert cab._OFFSET_RESERVA_V9 == cab.CABECALHO_TAMANHO_TOTAL + struct.calcsize(cab._FORMATO_EXTENSAO_V9)
+    assert cab._OFFSET_RESERVA_V9 + struct.calcsize(cab._FORMATO_RESERVA_V9) <= cab.CABECALHO_TAMANHO_V9
+
+
 def test_v8_ocupa_os_1024_bytes_e_mantem_os_campos_da_v7_do_byte_404_ao_771():
     """Os scripts leem grandeza, sonda, faixa e contadores por offset: a v8 não pode tê-los mudado de lugar."""
     v7 = normalizar(formato_struct_python(cab._FORMATO_CABECALHO_V7))

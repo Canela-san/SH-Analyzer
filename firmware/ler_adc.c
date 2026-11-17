@@ -205,11 +205,20 @@ struct cabecalho_extensao_campos {
     double   desvio_codigos[ADS8688_MAX_CANAIS];       // [final] o desvio padrão (o RMS sem o DC), em LSB
 } __attribute__((packed));
 
+// [v9, 16/11/2026] Os campos que entram na reserva, logo depois da extensão, sem mudar a versão: um leitor que não os
+// conhece os vê zerados, e zero é o que o ler_adc grava.
+struct cabecalho_reserva_campos {
+    uint32_t fim_pelo_computador;                      // 1: a saída contínua (-o -) caiu, e o computador fechou a
+                                                       // captura com o que chegou (os campos [final] são dele)
+} __attribute__((packed));
+
 struct cabecalho_arquivo {
     struct cabecalho_arquivo_campos campos;            // bytes 0 a 1023: os da v8, onde estavam
     struct cabecalho_extensao_campos extensao;         // [v9] do byte 1024 em diante
+    struct cabecalho_reserva_campos reserva;           // [v9, 16/11/2026] o começo da reserva
     uint8_t reservado[CABECALHO_TAMANHO_TOTAL - sizeof(struct cabecalho_arquivo_campos)
-                      - sizeof(struct cabecalho_extensao_campos)];   // [v9] zeros: os próximos campos entram aqui
+                      - sizeof(struct cabecalho_extensao_campos)
+                      - sizeof(struct cabecalho_reserva_campos)];   // [v9] zeros: os próximos campos entram aqui
 } __attribute__((packed));
 
 _Static_assert(sizeof(struct cabecalho_arquivo_campos) == CABECALHO_TAMANHO_V8, "os campos da v8 têm de ocupar 1024 bytes");

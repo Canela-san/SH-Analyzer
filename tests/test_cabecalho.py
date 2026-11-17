@@ -415,6 +415,23 @@ def test_v9_sem_o_cabecalho_final_os_campos_finais_ficam_desconhecidos(tmp_path)
     assert c.timestamp_fim_unix is None and c.descrever_sinal_por_canal() == [] and c.id_captura
 
 
+def test_v9_o_fim_escrito_pelo_computador_na_reserva(tmp_path):
+    """[16/11/2026] O começo da reserva (byte 1900): 1 = a saída contínua caiu, e o computador fechou a captura. O
+    ler_adc grava 0 (um cabeçalho sem a marca, ou de um leitor que não a conhece, é o do ler_adc)."""
+    import struct
+    import zlib
+    p, _ = _captura_v9(tmp_path)
+    assert ler_cabecalho(p).fim_pelo_computador is False
+    bruto = bytearray(p.read_bytes())
+    struct.pack_into("<I", bruto, 1900, 1)
+    struct.pack_into("<I", bruto, 1020, 0)
+    struct.pack_into("<I", bruto, 1020, zlib.crc32(bytes(bruto[:4096])))
+    marcado = tmp_path / "marcado.bin"
+    marcado.write_bytes(bytes(bruto))
+    c = ler_cabecalho(marcado)
+    assert c.crc32_valido and c.fim_pelo_computador is True and c.para_attrs_hdf5()["fim_pelo_computador"] is True
+
+
 def test_v9_cabecalho_cortado_e_acusado_pelo_crc(tmp_path):
     p, _ = _captura_v9(tmp_path)
     cortado = tmp_path / "cabecalho_cortado.bin"

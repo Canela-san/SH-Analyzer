@@ -189,6 +189,12 @@ _FORMATO_EXTENSAO_V9 = (f"<IQIId{CABECALHO_ID_TAMANHO}s{CABECALHO_HOSTNAME_TAMAN
                         + f"{ADS8688_MAX_CANAIS}d" + f"{ADS8688_MAX_CANAIS}H" * 2 + f"{ADS8688_MAX_CANAIS}Q"
                         + f"{ADS8688_MAX_CANAIS}d" * 2)
 _CONTAGENS_EXTENSAO_V9 = [1] * 8 + [ADS8688_MAX_CANAIS] * 6
+# [v9, 16/11/2026] O começo da reserva (struct cabecalho_reserva_campos em ler_adc.c), logo depois da extensão: os campos
+# que entram sem mudar a versão (um leitor que não os conhece os vê zerados, e zero é o que o ler_adc grava).
+#   I    fim_pelo_computador          (1: a saída contínua, -o -, caiu, e o computador fechou a captura com o que chegou:
+#                                      os campos [final] são dele, supraharmonicos/saida_continua.py)
+_FORMATO_RESERVA_V9 = "<I"
+_OFFSET_RESERVA_V9 = CABECALHO_TAMANHO_TOTAL + struct.calcsize(_FORMATO_EXTENSAO_V9)   # 1900
 _FORMATO_CABECALHO_V1 = "<4sIIQIII8BIIIIIdQQ64s256sI"
 _FORMATO_CABECALHO_V2 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "I"
 _FORMATO_CABECALHO_V3 = "<4sIIQIII8BIIIIIdQQ64s256s8B" + "32s" * ADS8688_MAX_CANAIS + "8BI"
@@ -341,6 +347,9 @@ class CabecalhoArquivo:
     amostras_saturadas_por_canal: tuple[int, ...] = ()
     media_codigos_por_canal: tuple[float, ...] = ()
     desvio_codigos_por_canal: tuple[float, ...] = ()
+    # [v9, 16/11/2026, a reserva] A saída contínua que caiu: o fim (os campos [final]) foi escrito pelo computador, com
+    # o que chegou; os contadores da PRU são os da última linha de progresso recebida.
+    fim_pelo_computador: bool = False
     kernel: str = ""
     sistema_operacional: str = ""
     placa: str = ""
@@ -523,6 +532,7 @@ class CabecalhoArquivo:
             attrs["timestamp_fim_ns"] = -1 if self.timestamp_fim_ns is None else self.timestamp_fim_ns
             attrs["pior_bloco_ms"] = -1 if self.pior_bloco_ms is None else self.pior_bloco_ms
             attrs["duracao_monotonica_s"] = -1.0 if self.duracao_monotonica_s is None else self.duracao_monotonica_s
+            attrs["fim_pelo_computador"] = self.fim_pelo_computador
             if self.amostras_saturadas_por_canal:
                 attrs["codigo_minimo_por_canal"] = np.array(self.codigo_minimo_por_canal, dtype=np.uint16)
                 attrs["codigo_maximo_por_canal"] = np.array(self.codigo_maximo_por_canal, dtype=np.uint16)
@@ -875,6 +885,9 @@ def _interpretar(bruto: bytes, tamanho_total: int, caminho: object) -> Cabecalho
         campos_extensao = _campos_da_extensao(
             _consumir(struct.unpack_from(_FORMATO_EXTENSAO_V9, bruto, CABECALHO_TAMANHO_TOTAL), _CONTAGENS_EXTENSAO_V9),
             num_canais, blocos_gravados > 0)
+    if versao_cabecalho >= 9 and len(bruto) >= _OFFSET_RESERVA_V9 + struct.calcsize(_FORMATO_RESERVA_V9):
+        (fim_pelo_computador,) = struct.unpack_from(_FORMATO_RESERVA_V9, bruto, _OFFSET_RESERVA_V9)
+        campos_extensao["fim_pelo_computador"] = fim_pelo_computador == 1
     # O deslocamento das amostras: até a v8 o cabeçalho tem sempre 1024 bytes (um campo corrompido não pode mudar isso).
     tamanho_cabecalho = tamanho_total if versao_cabecalho >= 9 else CABECALHO_TAMANHO_TOTAL
 
@@ -1023,6 +1036,9 @@ def imprimir_resumo_cabecalho(cabecalho: CabecalhoArquivo) -> None:
         log.info(f"  Captura {cabecalho.id_captura[:8]}-{cabecalho.id_captura[8:]}"
                  + (f" em '{cabecalho.hostname}'" if cabecalho.hostname else "")
                  + (f": ler_adc {cabecalho.linha_de_comando}" if cabecalho.linha_de_comando else ""))
+    if cabecalho.fim_pelo_computador:
+        log.info("  Fim escrito pelo computador: a saída contínua caiu, e a captura vai até o último bloco que chegou "
+                 "inteiro (os contadores da PRU são os da última linha de progresso recebida)")
     if cabecalho.titulo:
         log.info(f"  Título: {cabecalho.titulo}")
     if cabecalho.descricao:
