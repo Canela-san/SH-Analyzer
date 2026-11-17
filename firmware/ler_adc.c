@@ -2860,10 +2860,11 @@ int main(int argc, char *argv[]) {
     }
     progresso("inicio", ",\"id_captura\":\"%s\",\"continua\":%s,\"frequencia_hz\":%u,\"taxa_real_hz\":%.6f,"
               "\"canais\":%s,\"blocos\":%llu,\"amostras_por_bloco\":%u,\"bytes_por_bloco\":%zu,"
-              "\"bytes_do_cabecalho\":%u,\"segundos_por_bloco\":%.6f", id_json, config.continua ? "true" : "false",
-              config.frequencia, (double)PRU_CLOCK_HZ / (double)config.ticks,
+              "\"bytes_do_cabecalho\":%u,\"segundos_por_bloco\":%.6f,\"versao_protocolo_pru\":%u", id_json,
+              config.continua ? "true" : "false", config.frequencia, (double)PRU_CLOCK_HZ / (double)config.ticks,
               lista_json(canais_json, sizeof(canais_json), canais_da_lista, config.num_canais), config.blocos,
-              SAMPLES_PER_BUFFER, bytes_por_buffer, CABECALHO_TAMANHO_TOTAL, segundos_por_bloco);
+              SAMPLES_PER_BUFFER, bytes_por_buffer, CABECALHO_TAMANHO_TOTAL, segundos_por_bloco,
+              ctrl->versao_protocolo_pru);
 
     // --- Laço de blocos --------------------------------------------------------------------------------------------
     // Sem descarte de amostra: no AUTO_RST, o quadro do próprio AUTO_RST (na configuração, nunca gravado) é o que traz
@@ -2957,12 +2958,13 @@ int main(int argc, char *argv[]) {
                 progresso("bloco", ",\"bloco\":%llu,\"blocos\":%llu,\"amostras\":%llu,\"t_s\":%.6f,"
                           "\"gravacao_ms\":%.1f,\"amostras_atrasadas\":%u,\"buffers_sobrescritos\":%u,"
                           "\"quadros_preambulo_ruim\":%u,\"folga_minima_ciclos\":%u,\"atraso_maximo_ciclos\":%u,"
-                          "\"divergencias_fase_a\":%u,\"divergencias_fase_c\":%u,\"saturadas\":%s",
+                          "\"divergencias_fase_a\":%u,\"divergencias_fase_c\":%u,\"ciclos_rebase\":%u,"
+                          "\"saturadas\":%s",
                           resultado.blocos, config.blocos, resultado.amostras, inicio - instante_da_largada,
                           1e3 * gasto, integridade.amostras_atrasadas, integridade.buffers_sobrescritos,
                           integridade.quadros_preambulo_ruim, integridade.folga_minima_ciclos,
                           integridade.atraso_maximo_ciclos, integridade.divergencias_fase_a,
-                          integridade.divergencias_fase_c,
+                          integridade.divergencias_fase_c, ctrl->ciclos_rebase,
                           lista_json(saturadas_json, sizeof(saturadas_json), saturadas, config.num_canais));
             }
             if (mudo) {

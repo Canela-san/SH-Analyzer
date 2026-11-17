@@ -538,6 +538,8 @@ def test_progresso_json_uma_linha_por_bloco_com_os_contadores(ler_adc, placa):
     assert inicio["id_captura"] == h.id_captura and inicio["continua"] is True
     assert (inicio["frequencia_hz"], inicio["canais"], inicio["blocos"]) == (400000, [1], 3)
     assert inicio["taxa_real_hz"] == 400000.0 and inicio["segundos_por_bloco"] == pytest.approx(2.62144)
+    assert inicio["versao_protocolo_pru"] == h.versao_protocolo_pru == versao_do_protocolo()
+    assert all(b["ciclos_rebase"] == h.ciclos_rebase == 7 for b in blocos)            # os da troca de cada bloco
     assert (inicio["amostras_por_bloco"], inicio["bytes_por_bloco"], inicio["bytes_do_cabecalho"]) == (
         AMOSTRAS_POR_BLOCO, TAMANHO_BLOCO, CABECALHO)
     assert [b["bloco"] for b in blocos] == [1, 2, 3] and all(b["blocos"] == 3 for b in blocos)

@@ -156,9 +156,9 @@ e, no fim:
   ```
 
 * **`--progresso-json`:** uma linha JSON por evento no stderr, para um programa acompanhar a captura (a interface
-  gráfica): `{"evento":"inicio",...}` com a configuração e o identificador da captura, um `"bloco"` por bloco com os
-  contadores de integridade acumulados (os do cabeçalho) e as amostras saturadas por canal, e o `"fim"` com o código,
-  o motivo e o CRC das amostras. O texto para humanos continua, em linhas que não começam com `{`; a barra sai.
+  gráfica): `{"evento":"inicio",...}` com a configuração, o identificador da captura e o protocolo da PRU, um
+  `"bloco"` por bloco com os contadores de integridade acumulados (os do cabeçalho, com a grade de tempo) e as amostras
+  saturadas por canal, e o `"fim"` com o código, o motivo e o CRC das amostras. O texto para humanos continua, em linhas que não começam com `{`; a barra sai.
 * **O sinal de cada canal no resumo** (cabeçalho versão 9): `Canal 1  de -0.5142 a +0.5194 V no pino (1.0336 Vpp), média
   +2.73 mV, 365.5 mV rms sem o DC`, medido em todas as amostras, e um aviso se alguma bateu no fundo de escala
   (`o canal 1 SATUROU`). Com `--ganho C:G` (ex.: `--ganho 1:19.357,0:19.65`), o ganho de cada canal fica no cabeçalho
