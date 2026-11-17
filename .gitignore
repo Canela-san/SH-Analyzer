@@ -50,6 +50,7 @@ report/figures/
 __pycache__/
 *.pyc
 .venv/
+.venv-ci/
 venv/
 .ipynb_checkpoints/
 .pytest_cache/

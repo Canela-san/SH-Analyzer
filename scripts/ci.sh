@@ -11,7 +11,8 @@
 #
 # Precisa do uv (que baixa sozinho as versões do Python e o shellcheck) e do gcc. Sem o zpaq, os testes do
 # compactar_amostras são pulados (a CI os roda: sudo apt install zpaq); sem o gcc-arm-linux-gnueabihf, o ler_adc.c
-# não é compilado para o ARM de 32 bits (a CI compila).
+# não é compilado para o ARM de 32 bits (a CI compila). Os ambientes ficam em .venv-ci/<versão do Python>: o .venv é o
+# de quem desenvolve (a interface aberta por ele), e a CI nunca o troca de Python nem de pacotes.
 set -euo pipefail
 
 readonly VERSOES_PYTHON=(3.10 3.13)            # a matriz da CI: o mínimo do pyproject.toml e a mais nova
@@ -21,15 +22,24 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 etapa() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 
+uvpy() {   # $1 = versão do Python; o resto vai para o uv run
+    # Um ambiente por versão, fora do .venv: o uv recriaria o .venv a cada troca de Python, e quem abrisse a interface
+    # no meio da CI (ou depois de uma CI interrompida) a teria na versão que a CI deixou. --exact: cada etapa só com
+    # os extras dela, e o placa continua sem o Qt mesmo depois da interface no mesmo ambiente.
+    local py="$1"
+    shift
+    UV_PROJECT_ENVIRONMENT=".venv-ci/${py}" uv run --exact --python "$py" "$@"
+}
+
 testes() {   # $1 = versão do Python; o resto vai para o pytest
     local py="$1"
     shift
     etapa "ruff (Python ${py})"
-    uv run --python "$py" --extra dev ruff check .
+    uvpy "$py" --extra dev ruff check .
     # O agente da placa fica em firmware/ (que o ruff pula), mas é Python: confere nomeando o arquivo.
-    uv run --python "$py" --extra dev ruff check firmware/agente/shan_agente.py
+    uvpy "$py" --extra dev ruff check firmware/agente/shan_agente.py
     etapa "pytest (Python ${py}) $*"
-    uv run --python "$py" --extra dev pytest "$@"
+    uvpy "$py" --extra dev pytest "$@"
 }
 
 firmware() {
@@ -53,7 +63,7 @@ placa() {   # $1 = versão do Python
     # para o motor nem para a interface.
     local py="$1"
     etapa "pytest do sh_placa e do agente (Python ${py}, extra placa, sem o Qt)"
-    uv run --python "$py" --extra dev --extra placa pytest tests/test_sh_placa*.py tests/test_agente.py \
+    uvpy "$py" --extra dev --extra placa pytest tests/test_sh_placa*.py tests/test_agente.py \
         tests/test_arquitetura.py
 }
 
@@ -63,7 +73,7 @@ interface() {
     # Os testes da arquitetura e da marca entram junto: o motor sem o Qt e o ícone do pacote igual ao da marca.
     # -n 0: cada processo do xdist abriria o Qt de novo.
     etapa "pytest da interface gráfica (PySide6, sem tela)"
-    QT_QPA_PLATFORM=offscreen uv run --python 3.13 --extra gui-dev pytest -n 0 \
+    QT_QPA_PLATFORM=offscreen uvpy 3.13 --extra gui-dev pytest -n 0 \
         tests/test_interface.py tests/test_gui_*.py tests/test_arquitetura.py tests/test_marca.py
 }
 
@@ -76,7 +86,7 @@ case "${1:-tudo}" in
     firmware)  firmware ;;
     interface) interface ;;
     placa)     for py in "${VERSOES_PYTHON[@]}"; do placa "$py"; done ;;
-    -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)         echo "Uso: scripts/ci.sh [tudo | rapido | testes [VERSAO] | firmware | interface | placa]  (--help para detalhes)" >&2; exit 2 ;;
 esac
 etapa "tudo certo"
