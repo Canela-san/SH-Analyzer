@@ -10,6 +10,8 @@
 * :mod:`.registro` -- o registro de atividade: cada comando rodado na placa;
 * :mod:`.estado` -- as respostas do agente lidas: o estado e a saúde (o diagnóstico: o que está errado e como
   corrigir), o relógio, as capturas e os logs;
+* :mod:`.captura` -- a captura contínua: o ``ler_adc -o -`` pelo SSH, com o sudo, gravada aqui enquanto chega, o
+  Parar e a queda (o fechamento é o do motor, ``supraharmonicos.saida_continua``);
 * :mod:`.laco` -- o laço ``asyncio`` numa thread só dele, onde toda a rede da placa roda (a interface chega a ele
   pela ponte ``sh_analyzer_gui/servicos/placa.py``);
 * :mod:`.simulador` -- uma BeagleBone neste computador, com cenários (o sistema de arquivos falso em que o agente de

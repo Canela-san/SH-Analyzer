@@ -42,7 +42,7 @@ TEMPO_DO_SUDO_S = 30.0
 ARQUIVO_DO_RELOGIO_SIMULADO = "run/simulador/relogio"
 """Na raiz falsa: o desvio do relógio da placa simulada, em segundos (o ``SIMULADOR`` do agente)."""
 
-_COM_SUDO = """umask 077
+_VALIDAR_O_SUDO = """umask 077
 d=$(mktemp -d "${{SHAN_RAM:-/dev/shm}}/sh-analyzer.XXXXXX") || exit {sem_diretorio}
 trap 'rm -rf "$d"; sudo -k' EXIT
 IFS= read -r senha || senha=
@@ -52,7 +52,7 @@ printf '#!/bin/sh\\ncat "%s/senha" 2>/dev/null\\nrm -f "%s/senha"\\n' "$d" "$d" 
 chmod 700 "$d/askpass"
 SUDO_ASKPASS="$d/askpass" sudo -A -p '' -v 2>/dev/null || exit {recusada}
 rm -f "$d/senha"
-sudo -n {comando}"""
+"""
 
 CODIGO_DO_RELOGIO = f"""import json, os, sys, time
 raiz = os.environ.get("SHAN_RAIZ") or "/"
@@ -93,10 +93,18 @@ class RelogioAcertado:
     acertado_para: float                  # a hora posta (time.time() da placa)
 
 
+def validar_o_sudo() -> str:
+    """O começo de um roteiro com o sudo: a senha lida do stdin (a primeira linha) e validada pelo askpass em
+    ``/dev/shm``, que some logo depois. Daí em diante, até o fim do roteiro, ``sudo -n`` roda como root sem a senha (a
+    credencial é a deste shell); no fim, de qualquer jeito, ``sudo -k``. Sai com :data:`SAIDA_SENHA_RECUSADA` ou
+    :data:`SAIDA_SEM_DIRETORIO`."""
+    return _VALIDAR_O_SUDO.format(recusada=SAIDA_SENHA_RECUSADA, sem_diretorio=SAIDA_SEM_DIRETORIO)
+
+
 def com_sudo(comando_de_root: str) -> str:
     """O roteiro que roda ``comando_de_root`` com o sudo, a senha pelo stdin (a primeira linha) e o askpass em
     ``/dev/shm``. O que vier no stdin depois da senha vai para o comando de root."""
-    return _COM_SUDO.format(comando=comando_de_root, recusada=SAIDA_SENHA_RECUSADA, sem_diretorio=SAIDA_SEM_DIRETORIO)
+    return validar_o_sudo() + f"sudo -n {comando_de_root}"
 
 
 def roteiro_do_relogio() -> str:
