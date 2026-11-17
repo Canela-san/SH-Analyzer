@@ -18,6 +18,8 @@
   verdade roda): para desenvolver e demonstrar sem a placa, e para os testes;
 * :mod:`.servidor_do_simulador` -- a placa simulada servida por SSH, como a interface a usa (precisa do asyncssh);
 * :mod:`.capturas_simuladas` -- as capturas da placa simulada: ``.bin`` como o ``ler_adc`` grava, com a rede de 60 Hz
-  e os supraharmônicos.
+  e os supraharmônicos;
+* :mod:`.ler_adc_simulado` -- o ``ler_adc`` da placa simulada: a linha de comando dele e as capturas, no cartão ou
+  pela saída contínua (``-o -``, ``--progresso-json``), no ritmo da taxa, com o Ctrl+C e os cenários.
 
 A interface (``sh_analyzer_gui``) usa este pacote; ele não sabe do Qt (``tests/test_arquitetura.py`` confere)."""

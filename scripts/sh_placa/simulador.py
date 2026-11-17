@@ -2,7 +2,8 @@
 as demonstrações usam como usariam a de verdade.
 
 * :func:`montar_sistema_falso` -- a árvore da placa (``/proc``, ``/sys``, ``/boot``, ``/lib/firmware``, ``/etc``) e a
-  pasta do firmware, com capturas de verdade (``capturas_simuladas.py``), em que o **agente de verdade** roda;
+  pasta do firmware, com capturas de verdade (``capturas_simuladas.py``), em que o **agente de verdade** roda, e o
+  ``ler_adc`` dela (``ler_adc_simulado.py``), que captura no cartão e pela saída contínua;
 * :class:`Simulador` -- a placa sem o SSH (o agente rodado aqui): os testes do agente e do diagnóstico;
 * a placa servida por **SSH** (o que a interface usa) fica em ``servidor_do_simulador.py``, que precisa do asyncssh
   (o extra ``placa``): este módulo não, para os testes do agente rodarem sem ele.
@@ -28,9 +29,11 @@ import tempfile
 import time
 from pathlib import Path
 
+from . import capturas_simuladas
 from .agente import ClienteDoAgente, TransporteLocal
 from .capturas_simuladas import Sistema, gravar_captura
 from .cenarios import CENARIOS, Cenario  # noqa: F401 (o Cenario, para quem importa daqui)
+from .ler_adc_simulado import roteiro as roteiro_do_ler_adc
 
 VERSAO_SIMULADA = "v0.8.0-simulador"
 """A versão do firmware da placa simulada, e a do aplicativo para ela (o cenário ``firmware_antigo`` tem outra)."""
@@ -209,7 +212,8 @@ def montar_sistema_falso(pasta: Path, cenario: str = "normal", versao_firmware: 
     fw_pru = b"\x7fELF" + b"o fw_pru.out da placa simulada".ljust(60, b"\x00")
     if cenario != "sem_compilar":
         ler_adc = firmware / "ler_adc"
-        ler_adc.write_text("#!/bin/sh\necho simulador\n")
+        ler_adc.write_text(roteiro_do_ler_adc(cenario, amostras_por_bloco or capturas_simuladas.BLOCO_DAS_CAPTURAS,
+                                              _sistema(cenario, versao)))
         ler_adc.chmod(0o755)
         (firmware / "fw_pru.out").write_bytes(fw_pru)
         for nome in ("ler_adc", "fw_pru.out"):
@@ -227,9 +231,7 @@ def _gravar_as_capturas(firmware: Path, cenario: str, versao: str, agora_na_plac
                         bloco: int | None) -> None:
     """As capturas que estão na placa: uma conferência (o ``coletar.sh conferir``) e duas da tomada, da última
     hora e meia; no cartão cheio, quatro; no ADC mudo, a conferência mais recente ficou em 0."""
-    sistema = Sistema(KERNEL_SIMULADO, SISTEMA_SIMULADO, f"A335BNLT 00C0 {SERIE_SIMULADA}", versao_firmware=versao,
-                      relogio_sincronizado=cenario != "relogio_errado", disco_total_kib=CARTAO_KIB,
-                      disco_livre_kib=LIVRE_NORMAL_KIB)
+    sistema = _sistema(cenario, versao)
     capturas = [("conferir", 125, 1, "Conferência", False), ("rede_bloco_A", 112, 2, "Rede da casa", False),
                 ("rede_bloco_B", 97, 2, "Rede da casa", False)]
     if cenario == "disco_cheio":
@@ -243,6 +245,13 @@ def _gravar_as_capturas(firmware: Path, cenario: str, versao: str, agora_na_plac
                        descricao="Captura do simulador: a tomada (canal 1, 127 V) e a corrente de uma carga não "
                                  "linear (canal 0, sonda de 100 mV/A).",
                        muda=muda, semente=semente, amostras_por_bloco=bloco)
+
+
+def _sistema(cenario: str, versao: str) -> Sistema:
+    """O sistema da placa simulada, como o ``ler_adc`` o grava no cabeçalho."""
+    return Sistema(KERNEL_SIMULADO, SISTEMA_SIMULADO, f"A335BNLT 00C0 {SERIE_SIMULADA}", versao_firmware=versao,
+                   relogio_sincronizado=cenario != "relogio_errado", disco_total_kib=CARTAO_KIB,
+                   disco_livre_kib=LIVRE_NORMAL_KIB)
 
 
 class Simulador:

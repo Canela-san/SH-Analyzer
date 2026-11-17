@@ -5,6 +5,7 @@ que cai no meio de uma transferência e a retomada, o relógio errado e o acerto
 
 import asyncio
 import gc
+import os
 import sys
 import time
 
@@ -282,3 +283,109 @@ def test_a_captura_simulada_e_a_rede_com_supraharmonicos(tmp_path):
     for f0 in (16_000, 40_000, 72_000):
         assert pico(f0, 1_600 if f0 == 40_000 else 300) > 30 * ruido, f0
     assert 100 < pico(60, 5) / pico(16_000) < 1000                 # ~0,6 V na tomada: 50 dB abaixo da fundamental
+
+
+# --- A captura contínua na placa simulada (F4.2) ------------------------------------------------------------------------
+
+def capturar_na_placa(tmp_path, argumentos, *, cenario="normal", ao_progresso=None, nome="ao_vivo.bin"):
+    """Uma captura contínua na placa simulada, pelo SSH, como a interface a faz (``sh_placa.captura``). Devolve o
+    resultado (ou a exceção) e a placa."""
+    from sh_placa.captura import CapturaContinua
+    (tmp_path / "capturas").mkdir(parents=True, exist_ok=True)
+
+    async def cenario_():
+        async with ServidorDoSimulador(tmp_path / "placa", cenario, vazao_bytes_s=None) as placa:
+            async with entrar(placa) as c:
+                captura = CapturaContinua(c, argumentos, tmp_path / "capturas" / nome,
+                                          senha_do_sudo=SENHA_PADRAO_DA_IMAGEM,
+                                          ao_progresso=ao_progresso and (lambda p: ao_progresso(captura, p, placa)))
+                try:
+                    return await captura.rodar(), placa
+                except Exception as e:
+                    return e, placa
+
+    return asyncio.run(cenario_())
+
+
+def test_a_captura_continua_na_placa_simulada(tmp_path):
+    """O ``ler_adc -o -`` da placa simulada: 3 blocos da rede com supraharmônicos, em 3 canais (cada bloco começa
+    num canal), no ritmo da taxa. O arquivo daqui abre no motor, com o CRC conferido, o título, os canais, a grandeza
+    e o ganho pedidos, e o sinal de cada canal é o das amostras."""
+    from supraharmonicos import api
+    r, placa = capturar_na_placa(tmp_path, ["400000", "0,1,2", "--blocos", "3", "-t", "Ao vivo", "--grandeza",
+                                            "0:corrente,2:corrente", "--ganho", "0:10,1:19.357"])
+    assert not isinstance(r, Exception), r
+    assert (r.codigo, r.motivo, r.caiu, r.blocos, r.fechamento.crc_confere) == (0, "ok", False, 3, True)
+    bloco = simulador.capturas_simuladas.BLOCO_DAS_CAPTURAS
+    assert r.duracao_s >= 3 * bloco / 400_000                 # no ritmo da taxa
+    c = motor.ler_cabecalho(r.arquivo)
+    assert (c.titulo, c.lista_canais, c.blocos_gravados, c.samples_per_buffer) == ("Ao vivo", (0, 1, 2), 3, bloco)
+    assert c.grandeza_por_canal == (1, 0, 1) and c.ganho_por_canal == (10.0, 19.357, None)
+    assert c.versao_firmware == simulador.VERSAO_SIMULADA and c.placa.endswith(simulador.SERIE_SIMULADA)
+    assert c.linha_de_comando.endswith("-o - --progresso-json")
+    captura = api.abrir_captura(r.arquivo)
+    assert api.conferir_integridade(captura) is True
+    tensao = np.fromfile(r.arquivo, dtype="<u2", offset=c.tamanho_cabecalho)[1::3]
+    assert c.codigo_minimo_por_canal[1] == tensao.min() and c.codigo_maximo_por_canal[1] == tensao.max()
+    assert (tensao.max() - 32768) * 20.48 / 65536 * 19.357 == pytest.approx(127 * 2 ** 0.5, rel=0.1)   # a tomada
+    assert any("Captura concluída" in linha for linha in r.texto)
+
+
+def test_parar_e_a_queda_na_placa_simulada(tmp_path):
+    """Até o Parar (o SIGINT no ler_adc simulado: o cabeçalho final dele) e o cabo que solta (o fim escrito aqui)."""
+    r, _ = capturar_na_placa(tmp_path, ["400000", "1", "--blocos", "0"],
+                             ao_progresso=lambda captura, p, placa: p.blocos >= 3 and captura.parar())
+    assert (r.codigo, r.motivo, r.caiu, r.parada_pedida) == (0, "ok", False, True) and r.blocos >= 3
+    assert r.fechamento.crc_confere is True
+    r, _ = capturar_na_placa(tmp_path / "queda", ["400000", "1", "--blocos", "0"], nome="caiu.bin",
+                             ao_progresso=lambda captura, p, placa: p.blocos >= 3 and placa.derrubar())
+    assert (r.motivo, r.caiu) == ("conexao_caiu", True) and r.blocos >= 3
+    c = motor.ler_cabecalho(r.arquivo)
+    assert c.fim_pelo_computador and motor.conferir_crc_das_amostras(r.arquivo, c) is True
+
+
+def test_a_captura_continua_nos_cenarios(tmp_path):
+    """O ADC mudo (um bloco em 0, o código 4), o firmware de antes da saída contínua (o aviso para atualizar) e a PRU
+    com falha (o erro do ler_adc, antes de qualquer amostra)."""
+    from sh_placa.captura import ErroDaCaptura, FirmwareSemSaidaContinua
+    r, _ = capturar_na_placa(tmp_path / "mudo", ["400000", "0,1", "--blocos", "5"], cenario="adc_mudo")
+    assert (r.codigo, r.motivo, r.blocos) == (4, "adc_mudo", 1)
+    assert any("o ADC não está respondendo" in linha for linha in r.texto)
+    assert motor.ler_cabecalho(r.arquivo).codigo_maximo_por_canal == (0, 0)
+    r, placa = capturar_na_placa(tmp_path / "antigo", ["400000", "1"], cenario="firmware_antigo")
+    assert isinstance(r, FirmwareSemSaidaContinua) and placa.comandos_de_root == []
+    r, _ = capturar_na_placa(tmp_path / "pru", ["400000", "1"], cenario="pru_com_falha")
+    assert isinstance(r, ErroDaCaptura) and r.codigo == 1 and "a PRU não ficou pronta" in str(r)
+    assert list((tmp_path / "pru" / "capturas").iterdir()) == []
+
+
+def test_o_ler_adc_simulado_grava_no_cartao_e_recusa_o_que_o_de_verdade_recusa(tmp_path):
+    """Com ``-o ARQUIVO`` (o destino no cartão): o arquivo na pasta do firmware, o cabeçalho final no começo; os
+    erros de uso do ``ler_adc`` (o código 2, com a mensagem dele); e a ajuda, com o ``-o -`` (a do firmware antigo,
+    sem)."""
+    import subprocess
+    pasta = tmp_path / "placa"
+    simulador.montar_sistema_falso(pasta)
+    firmware = pasta / "home" / "debian" / "firmware"
+    ambiente = {"PATH": os.environ["PATH"], "HOME": str(firmware.parent)}
+
+    def ler_adc(*argumentos, cwd=firmware):
+        return subprocess.run(["sh", str(firmware / "ler_adc"), *argumentos], cwd=cwd, env=ambiente,
+                              capture_output=True, text=True, timeout=60)
+
+    r = ler_adc("400000", "0,1", "--blocos", "2", "-o", "no_cartao.bin", "-t", "No cartão")
+    assert r.returncode == 0, r.stderr
+    c = motor.ler_cabecalho(firmware / "no_cartao.bin")
+    assert c.crc32_valido and c.blocos_gravados == 2 and c.titulo == "No cartão"
+    assert motor.conferir_crc_das_amostras(firmware / "no_cartao.bin", c) is True
+    for argumentos, mensagem in ((["400k"], "frequência inválida"), (["400000", "0,9"], "lista de canais inválida"),
+                                 (["400000", "1", "--blocos", "-1"], "--blocos"),
+                                 (["400000", "1", "--nada"], "opção desconhecida '--nada'"),
+                                 (["400000", "1", "--blocos", "1", "--duracao", "1s"], "não podem ser usados juntos")):
+        r = ler_adc(*argumentos)
+        assert r.returncode == 2 and mensagem in r.stderr, (argumentos, r.stderr)
+    assert "--progresso-json" in ler_adc("--help").stdout
+    antigo = tmp_path / "antigo"
+    simulador.montar_sistema_falso(antigo, "firmware_antigo")
+    firmware = antigo / "home" / "debian" / "firmware"
+    assert "--progresso-json" not in ler_adc("--help", cwd=firmware).stdout
