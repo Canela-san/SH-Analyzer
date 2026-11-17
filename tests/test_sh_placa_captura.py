@@ -127,7 +127,9 @@ def test_a_captura_inteira_chega_como_o_arquivo_do_cartao(tmp_path, ler_adc):
     assert entrada.codigo == 0 and "-o - --progresso-json" in entrada.comando
     for onde in (entrada.comando, *b.servidor.comandos, *b.servidor.comandos_de_root):
         assert SENHA_DO_SUDO not in onde
-    assert b.servidor.comandos_de_root == ["./ler_adc 400000 0,1 --blocos 3 -t pelo SSH -o - --progresso-json"]
+    (como_root,) = b.servidor.comandos_de_root                        # o shell de root do Parar, com o ler_adc
+    assert como_root.startswith("sh -c ") and como_root.endswith(
+        " ler_adc ./ler_adc 400000 0,1 --blocos 3 -t pelo SSH -o - --progresso-json")
     assert list((b.servidor.ram).iterdir()) == []                         # nada do askpass ficou na RAM
 
 

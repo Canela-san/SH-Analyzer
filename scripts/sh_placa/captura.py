@@ -8,9 +8,13 @@ sudo dela, e a captura gravada num arquivo deste computador enquanto chega: no f
 stdin, como em ``correcoes.py``) e roda o ``sudo -n ./ler_adc`` em segundo plano. O stdout do canal é o fluxo da
 captura; o stderr, o texto do ``ler_adc`` e as linhas de progresso.
 
-**Parar** (:meth:`CapturaContinua.parar`): uma linha no stdin do roteiro, que manda o ``SIGINT`` ao ``sudo`` (o sudo o
-repassa ao ``ler_adc``; o sinal do canal SSH chegaria só ao shell). O ``ler_adc`` para como no Ctrl+C: o bloco em
-curso é descartado, e o cabeçalho final sai depois do último inteiro. O stdin que fecha (o canal que acabou) também
+**Parar** (:meth:`CapturaContinua.parar`): uma linha no stdin do roteiro. Na placa, o ``sudo`` roda um shell de root
+(:data:`_PARAR_COMO_ROOT`) com o ``ler_adc`` em segundo plano e um leitor dessa linha, que manda o ``SIGINT`` direto
+ao ``ler_adc``. Tem de ser do lado root (achado na placa de verdade em 17/11/2026): o usuário não pode mandar sinais
+ao ``sudo``, que roda inteiro como root, e um ``sudo -n kill`` de outro processo não teria a credencial (ela é do
+shell que a validou, e vence em 15 min, menos que uma captura longa); o sinal do canal SSH chegaria só ao shell do
+usuário. O ``ler_adc`` para como no Ctrl+C: o bloco em curso é descartado, e o cabeçalho final sai depois do último
+inteiro. O stdin que fecha (o canal que acabou) também
 para a captura. Um Parar antes de a captura começar (sem a linha ``inicio``) espera por ela: o sinal não chega ao
 ``ler_adc`` antes de ele saber parar.
 
@@ -64,19 +68,25 @@ LINHAS_DE_TEXTO = 400
 """O texto do ``ler_adc`` guardado no resultado (as últimas linhas): o resumo do fim e os avisos cabem."""
 SUFIXO_PARCIAL = ".parcial"
 
-_ROTEIRO = """cd {pasta} 2>/dev/null && [ -x ./ler_adc ] || exit {sem_ler_adc}
-./ler_adc --help 2>/dev/null | grep -q -e --progresso-json || exit {sem_saida_continua}
-{validar}trap 'exit 143' HUP TERM
-sudo -n ./ler_adc {argumentos} -o - --progresso-json </dev/null &
+_PARAR_COMO_ROOT = """exec 3<&0
+"$@" </dev/null 3<&- &
 p=$!
-exec 3<&0
-(IFS= read -r _ <&3; kill -INT "$p" 2>/dev/null) >/dev/null 2>&1 &
+(IFS= read -r _ <&3; kill -INT "$p") >/dev/null 2>&1 &
 q=$!
 exec 3<&-
 wait "$p"
 c=$?
 kill "$q" 2>/dev/null
 exit "$c"
+"""
+"""O shell de root que roda o ``ler_adc`` (os argumentos dele) e espera o Parar: uma linha no stdin, ou o stdin que
+fecha. O ``ler_adc`` em segundo plano nasce com o ``SIGINT`` ignorado (um shell sem controle de jobs faz isso), mas
+instala o tratador dele mesmo assim."""
+
+_ROTEIRO = """cd {pasta} 2>/dev/null && [ -x ./ler_adc ] || exit {sem_ler_adc}
+./ler_adc --help 2>/dev/null | grep -q -e --progresso-json || exit {sem_saida_continua}
+{validar}trap 'exit 143' HUP TERM
+sudo -n sh -c {parar} ler_adc ./ler_adc {argumentos} -o - --progresso-json
 """
 
 
@@ -154,7 +164,8 @@ def roteiro_da_captura(argumentos: Sequence[str], pasta_firmware: str = PASTA_DO
     pasta = shlex.quote(pasta_firmware) if pasta_firmware.startswith("/") else (
         '"$HOME"/' + shlex.quote(pasta_firmware.lstrip("~/") or "."))
     return _ROTEIRO.format(pasta=pasta, sem_ler_adc=SAIDA_SEM_LER_ADC, sem_saida_continua=SAIDA_SEM_SAIDA_CONTINUA,
-                           validar=validar_o_sudo(), argumentos=" ".join(map(shlex.quote, argumentos)))
+                           validar=validar_o_sudo(), parar=shlex.quote(_PARAR_COMO_ROOT),
+                           argumentos=" ".join(map(shlex.quote, argumentos)))
 
 
 def caminho_parcial(arquivo: Path) -> Path:
