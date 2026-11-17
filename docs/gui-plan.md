@@ -1508,7 +1508,9 @@ O G1 passa com a cadeia ligada, durante e depois das materializações (`tests/t
 
 ### Fase 4: Aquisição, a captura (4 semanas, com bancada)
 
-- [ ] **No firmware, em commits só dele:** o `ler_adc -o -` (saída contínua, cabeçalho final no fim, código 6), o `--progresso-json` e os testes com a `pru_falsa`. **Validar em bancada** antes de seguir.
+**Em tarefas** (F4.1 a F4.7) em `docs/gui-progress.md`, seção 4e.
+
+- [x] **No firmware, em commits só dele:** o `ler_adc -o -` (saída contínua, cabeçalho final no fim, código 6), o `--progresso-json` e os testes com a `pru_falsa`. **Validar em bancada** antes de seguir. **Feito** (F4.1, 16/11/2026), validado na placa; o código 6 também vale para a saída que não anda por 10 s (o cabo que sai não fecha o pipe do `ssh` na placa).
 - [ ] O formulário de captura com a validação ao vivo e os modelos; "conferir antes".
 - [ ] A captura contínua com a prévia ao vivo e os contadores; parar; fechar a captura parcial depois de uma queda.
 - [ ] O caderno de bancada com as entradas automáticas.

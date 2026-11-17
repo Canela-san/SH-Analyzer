@@ -23,8 +23,14 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > roda de ponta a ponta com o simulador (`tests/test_gui_jornada_aquisicao.py`) e rodou na placa de verdade, na janela
 > sem tela, em casa e na tomada do laboratório (seção 5).
 >
-> **A próxima: a Fase 4, a captura** (o plano, seção 16): quebrá-la em tarefas numa seção 4e, como a 4d, e começar
-> pela do firmware (o `ler_adc -o -` e o `--progresso-json`, em commits só dele, validados em bancada).
+> **A Fase 4, a captura, está em tarefas** (seção 4e, F4.1 a F4.7). **A F4.1 está feita** (diário de 16/11): o
+> `ler_adc -o -` (a captura pelo stdout, com o cabeçalho final depois do último bloco), o código 6 (a saída que fechou
+> ou parou de andar por 10 s) e o `--progresso-json`, validados na placa de verdade (seção 5). **A próxima: a F4.2**,
+> a captura contínua no computador, sem Qt: o `ler_adc -o -` pelo SSH, o arquivo gravado enquanto chega e remontado no
+> fim, o Parar, o parcial fechado depois da queda (a marca "fim escrito pelo computador" no cabeçalho) e o simulador
+> transmitindo uma captura. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`): o aplicativo
+> vai precisar mandar o firmware novo (o `enviar` do `BeagleBone_Setup.sh`, ou a Fase 6), e a F4.2 tem de dizer isso
+> quando ele faltar.
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
@@ -144,11 +150,13 @@ sonda em pedaços, sem prender o GIL). E o do agente da placa: `3f98d7b`. O diag
 (`0997175`) é do `sh_placa`, sem o agente.
 
 **O ambiente:** Python 3.13, PySide6 6.12.0 (na 3.10 e na 3.11, o 6.11.3: seção 2), PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1; no extra `placa`,
-asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5, keyring 25.7.0 (o cofre do Linux é o Secret Service) e pyte 0.8.2. Testes, na última rodada:
-`ci.sh rapido` com 1 687 aprovados, `ci.sh interface` com 743 e os 6 de desempenho (15/11/2026).
+asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5, keyring 25.7.0 (o cofre do Linux é o Secret Service) e pyte 0.8.2. **A CI
+roda em `.venv-ci/<versão>`** (desde 16/11/2026): o `.venv` é o de quem desenvolve, e o `ci.sh` não o troca mais.
+Testes, na última rodada (16/11/2026): o `ci.sh` completo, com 1 713 em cada Python, o `placa` com 310 e a interface
+com 822.
 
-**Ainda não existe:** na Aquisição, capturar (a Fase 4) e o resgate pela serial (v1.0); as figuras e as
-exportações (a Fase 5).
+**Ainda não existe:** na Aquisição, capturar pela interface (a Fase 4: o firmware já tem a saída contínua, a F4.1)
+e o resgate pela serial (v1.0); as figuras e as exportações (a Fase 5).
 
 ---
 
@@ -1466,6 +1474,111 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
 
 ---
 
+## 4e. Fase 4 em tarefas: Aquisição, a captura
+
+**Pronto quando** (o plano, seção 16): uma captura de 1 h vai direto para o computador, sem perder amostra, e abre na
+Análise no fim. Conferido com o simulador num teste de ponta a ponta e na placa de verdade, pelo USB. **Tag v0.10**
+(para o dono do projeto).
+
+**O que já existe:** a conexão, o agente, a visão geral, os arquivos, a transferência conferida pelo CRC, o terminal e
+o simulador por SSH (a Fase 3); o `ler_adc` grava no cartão, com o cabeçalho v9 (o CRC das amostras, o sinal de cada
+canal) e os códigos de saída 0 a 5; a `pru_falsa` roda o `main` de verdade no computador
+(`tests/test_ler_adc_captura.py`).
+
+**A ordem:** a F4.1 (o firmware) vem primeiro e é validada em bancada antes de a interface depender dela. A F4.2 (o
+lado do computador, sem Qt) precisa da F4.1; a F4.3 (o formulário) é independente das duas; a F4.4 (a captura na tela)
+precisa da F4.2 e da F4.3. A F4.5 (o caderno) e a F4.6 (as rotinas pelo terminal) vêm depois da F4.3. A F4.7 fecha.
+
+**Regras desta fase:** as do firmware em commits só dele, como as do motor e as do agente; o formato do `.bin` muda só
+pelos dois lados juntos (o C e o `cabecalho.py`, com o `test_contrato_firmware`); a captura no computador é **byte a
+byte** o arquivo que o `ler_adc` gravaria no cartão (o plano, 11.6). **O ao vivo anda de bloco em bloco:** a PRU
+entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `ler_adc` só os vê inteiros.
+
+### ☑ F4.1: a saída contínua e o progresso em JSON no `ler_adc` (commits só do firmware)
+
+- **Arquivos:** `firmware/ler_adc.c`; `tests/test_ler_adc_captura.py` (a `pru_falsa`); a ajuda, o guia do usuário e a
+  arquitetura.
+- **O conteúdo:**
+  - **`-o -`:** o fluxo no stdout: o cabeçalho provisório (4 096 bytes), os blocos à medida que ficam prontos e, no
+    fim, o cabeçalho final (4 096 bytes) depois do último bloco: quem recebe o põe no offset 0 e tira os 4 096 do fim,
+    e o arquivo fica o do cartão. O texto do `ler_adc` (o resumo, os avisos, os detalhes) vai todo para o stderr: o
+    fd 1 passa a ser o stderr, e o fluxo segue numa cópia do stdout de antes, e nada que imprima texto o corrompe.
+    Recusado num terminal. O disco da saída fica "desconhecido" no cabeçalho (um pipe não tem disco);
+  - **o código 6, "saída fechada":** quem recebe parou (o `EPIPE`: a conexão caiu, o computador fechou). A captura
+    para, a PRU para, e o que chegou do outro lado é uma captura válida até o último bloco inteiro;
+  - **`--progresso-json`:** uma linha JSON por bloco no stderr, com o evento (`inicio`, `bloco`, `fim`), os blocos, as
+    amostras, o tempo, a gravação do bloco e os contadores de integridade; no fim, o código de saída e o CRC das
+    amostras. A barra de progresso para humanos sai;
+  - **validado em bancada:** a placa de verdade grava pelo SSH no computador; o arquivo remontado passa no
+    `cabecalho.py` e no CRC das amostras; puxar o cabo (ou matar o `ssh`) dá o código 6 e a PRU parada.
+- **Os testes:** o fluxo remontado = o arquivo do `-o arquivo` (os blocos, os contadores, o CRC das amostras); o texto
+  nunca entra no fluxo; o leitor que fecha no meio dá o código 6 e a PRU parada; `-o -` num terminal é recusado; as
+  linhas JSON (uma por bloco, os contadores do cabeçalho, o `fim` com o código).
+- **Feito em 16/11/2026** (`7551d7e`, só o firmware e os testes dele):
+  - **o fluxo:** o cabeçalho provisório, os blocos e o cabeçalho final depois do último bloco. O fd 1 passa a ser o
+    stderr, e o fluxo segue numa cópia do stdout: nenhum `printf` precisou mudar, e nenhum texto entra nele;
+  - **o que a bancada mostrou antes de pedir:** quem recebe pelo `ssh` e some sem fechar (o cabo USB que sai) não dá
+    o `EPIPE` na placa: o pipe do `sshd` fica aberto até o TCP desistir (~15 min), e um `write` preso não sai nem com
+    o Ctrl+C (o glibc retoma a chamada), com a PRU sobrescrevendo os buffers. O fluxo é escrito sem o stdio e sem
+    bloquear, com `poll`: sem nada andar por 10 s (2 s depois de uma parada pedida, a do aplicativo que voltou depois
+    da queda), é o código 6, como o `EPIPE`. As flags do pipe de quem chamou voltam no fim;
+  - **o `--progresso-json`:** `inicio` (a configuração, o identificador da captura, a taxa real, o tamanho do bloco),
+    um `bloco` por bloco (os contadores acumulados, os do cabeçalho, as saturadas por canal, o tempo de cada um no
+    ARM) e o `fim` (o código, o motivo e o CRC das amostras), com um campo `formato` para as próximas versões;
+  - **na placa de verdade** (compilado nela com `-Werror`, no ARM de 32 bits, numa pasta à parte, apagada depois):
+    4 blocos a 400 kS/s pelo `ssh` no computador, remontados, com o CRC do cabeçalho e o das amostras certos (a tomada
+    do laboratório: 131,9 V, 59,986 Hz); o `ssh` daqui morto no meio: o código 6 em menos de 5 s, os 8 blocos que
+    chegaram com o CRC que a placa deu; o `ssh` daqui congelado (o cabo, sem aviso): o código 6 em 16 s; o SIGINT por
+    outra conexão (o Parar): o código 0 e o fluxo inteiro, com o cabeçalho final. A PRU parada nos quatro;
+  - **os testes:** 8 novos em `tests/test_ler_adc_captura.py` (o fluxo remontado contra o arquivo do cartão, campo a
+    campo; o leitor que fecha; o leitor que some sem fechar, com a espera encurtada pelo ambiente da `pru_falsa`; a
+    parada com a saída travada; o Ctrl+C; o terminal; as linhas JSON com o fluxo e com o arquivo).
+
+### ☐ F4.2: a captura contínua no computador, sem Qt (`sh_placa`)
+
+- **O conteúdo:**
+  - rodar o `ler_adc -o - --progresso-json` pelo SSH (com o `sudo` da placa), gravar o arquivo enquanto recebe, ler
+    as linhas de progresso e, no fim, pôr o cabeçalho final no offset 0 e conferir o CRC das amostras;
+  - **Parar:** o `SIGINT` no `ler_adc` (que fecha o cabeçalho certo);
+  - **a queda:** o arquivo parcial fechado pelo computador: os campos de fim calculados dele (os blocos inteiros, o
+    CRC das amostras, o sinal de cada canal) e a marca "fim escrito pelo computador" na reserva da v9 (o C e o
+    `cabecalho.py` juntos, no mesmo commit, com o `test_contrato_firmware`);
+  - **o simulador transmite uma captura:** a placa simulada responde ao `ler_adc -o -` com um fluxo de verdade (as
+    capturas simuladas), nos cenários (a conexão que cai, o ADC mudo, o buffer sobrescrito).
+
+### ☐ F4.3: o formulário de captura (o B2)
+
+- **O conteúdo:** os campos do plano (11.5) com a validação ao vivo: o título e a descrição em bytes, os canais na
+  ordem real, a grandeza, a sonda (o perfil existe e a grandeza bate), a faixa com o LSB, a taxa até o teto da PRU com
+  a Nyquist por canal, a duração com o tamanho e o espaço no destino, o destino (o computador ou o cartão) e o
+  avançado recolhido; o comando montado, visível; **os modelos** com nome, no projeto; **"Conferir antes"** (o
+  `coletar.sh conferir`, ~10 s), com o resultado no caderno.
+
+### ☐ F4.4: a captura na tela
+
+- **O conteúdo:** o tempo e a barra, os bytes e a vazão, os contadores de integridade, o sinal ao vivo (os últimos
+  50 ms do bloco mais recente) e o espectro ao vivo (Welch, com a média dos blocos); **Parar**; no fim, o CRC
+  conferido e a captura no projeto; **a queda:** o parcial fechado e o aviso, com o que se perdeu; **o destino no
+  cartão:** o `-o` na placa e, no fim, a transferência sozinha (se pedida).
+
+### ☐ F4.5: o caderno de bancada
+
+- **O conteúdo:** as notas com hora e as entradas automáticas (a captura, a conferência, a transferência, a
+  correção), no `anotacoes.md` da sessão do dia (o mesmo do `sessao_lab.sh`, PD-09); a seção "Notas" no projeto.
+
+### ☐ F4.6: as rotinas do `coletar.sh` pelo terminal
+
+- **O conteúdo:** as rotinas (a sonda, a calibração, a campanha) abrem no terminal embutido com o comando montado pelo
+  formulário, com as pausas "mude a bancada e tecle Enter" que elas já têm (o plano, 11.5).
+
+### ☐ F4.7: o fechamento da Fase 4
+
+- **O conteúdo:** a jornada da captura num teste de ponta a ponta com o simulador (o formulário, a captura, o Parar,
+  a queda, a captura na Análise); **na placa de verdade:** uma captura de 1 h direto no computador, sem perder amostra,
+  aberta na Análise; o plano e este arquivo em dia.
+
+---
+
 ## 5. Resultados medidos
 
 | Data | O quê | Resultado | Onde |
@@ -1493,6 +1606,7 @@ dela é pequeno: o que for gravado lá para um teste sai depois de conferido.
 | 15/11/2026 | **G1 sem tela, 8 faixas, com os eixos redesenhados** a cada zoom e pan (a correção dos números parados) | **Aprovado. Sem a cadeia:** mediana de 9,4 ms, p95 de 11,3 ms. **Com a cadeia, durante:** mediana de 7,3 a 7,4 ms, p95 de 11,9 a 12,9 ms; **depois:** mediana de 10,2 a 10,4 ms, p95 de 14,0 a 14,2 ms (2 rodadas). Redesenhar os eixos custa ~1,5 ms por quadro | `medir_vista [--cadeia]`; `pytest --desempenho` |
 | 15/11/2026 | **A vazão do USB, na placa de verdade** (192.168.6.2), 46 MiB e 8 MiB de captura | `scp` e `rsync`: 4,8 MB/s; `ssh cat` com o `chacha20-poly1305`, o `aes128-gcm` e o `aes128-ctr`: 5,2, 5,7 e **5,9 MB/s**; **o SFTP do asyncssh com o `aes128-ctr`: 5,2 MB/s**. O limite é a cifra no único núcleo da placa (o eMMC lê a 264 MB/s) | seção 6; a sonda da F3.1 |
 | 16/11/2026 | **O SFTP da placa com o leitor da F3.9** (os pedidos de 16 KiB: o OpenSSH 7.9 dela não tem o `limits@openssh.com`) × o leitor paralelo do asyncssh, 8 MiB, duas rodadas de cada | Os dois: **5,0 a 5,1 MiB/s** com o `aes128-ctr` da conexão (4,5 MiB/s com a cifra padrão do asyncssh); o SHA-256 igual | o diário de 16/11 (F3.9) |
+| 16/11/2026 | **A saída contínua na placa de verdade** (`ler_adc -o -` pelo `ssh`, 400 kS/s, um canal, pelo USB) | O bloco de 2 MiB em ~420 ms no ARM (a cópia, o CRC e o envio; enche em 2 621 ms); remontado = o formato do cartão, com os dois CRCs; o `ssh` morto: o código 6; congelado: o código 6 em 16 s (10 s sem andar); o SIGINT: o fluxo inteiro e o código 0 | o diário de 16/11 (F4.1) |
 | 16/11/2026 | **A jornada da Aquisição na placa de verdade**, na janela (sem tela), pelo USB: em casa e na tomada do laboratório | Achada em 1,6 s; a primeira conexão (a impressão, a senha, a chave) em 2,5 e 2,6 s; o enlace com 1,0 e 0,9 ms e 4,6 e 6,6 MB/s; uma conferência de 4 MiB transferida e conferida pelo CRC em 0,91 e 0,93 s (o SFTP a 5,2 e 5,3 MiB/s); o relógio acertado com ±0,05 s, de +2,15 s e de −3 h 07 | o diário de 16/11 (F3.10) |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
@@ -2029,6 +2143,19 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     jobs, os de desempenho e os do compilador de 32 bits), o `placa` com 310 em cada Python e a interface com 822 na 3.13 (8 pulados: os de
     desempenho e o do None, que só vale na 3.10 e na 3.11). A interface na 3.10, com o PySide6 6.11.3: 823.
   - **Próximo:** a Fase 4, a captura: quebrá-la em tarefas (seção 4e).
+- **16/11/2026:** **a Fase 4 em tarefas e a F4.1** (seção 4e):
+  - **o pedido:** "faça o que for melhor para o projeto. continue o desenvolvimento";
+  - **antes, a causa do "deallocating None" resolvida de vez:** o `ci.sh` usa `.venv-ci/<versão>` com `--exact`
+    (`03cac5e`), e o `.venv` do worktree não muda mais de Python nem de pacotes (conferido: o mesmo `pyvenv.cfg` antes
+    e depois da CI completa). De quebra, o job `placa` ficou de fato sem o Qt (antes, o que o ambiente tinha de outra
+    etapa passava);
+  - **a seção 4e:** sete tarefas, do firmware ao fechamento, com a ordem e as regras (o formato do `.bin` só pelos
+    dois lados juntos; o ao vivo anda de bloco em bloco: 2,6 s a 400 kS/s);
+  - **a F4.1:** o `ler_adc -o -`, o código 6 e o `--progresso-json` (`7551d7e`), validados na placa. A bancada achou
+    o que o teste não acharia: o cabo que sai não fecha o pipe na placa, e o `write` ficaria preso por ~15 min;
+  - **Testes:** os do firmware (101, com os 8 novos), o `ci.sh` completo antes da F4.1 (tudo certo, com os ambientes
+    novos) e depois dela (seção 5).
+  - **Próximo:** a F4.2.
 ---
 
 ## 8. Perguntas em aberto
