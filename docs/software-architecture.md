@@ -321,7 +321,7 @@ Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `c
 **Rodar a CI na sua máquina:** `scripts/ci.sh`. O workflow chama esse mesmo script, então os comandos e as versões das ferramentas ficam num lugar só, e o que passa local passa no GitHub:
 
 ```bash
-scripts/ci.sh                 # tudo: ruff + pytest em Python 3.10 e 3.13 (com e2e) + firmware + interface (~3 min)
+scripts/ci.sh                 # tudo: ruff + pytest em Python 3.10 e 3.13 (com e2e) + sh_placa + firmware + interface (~15 min)
 scripts/ci.sh rapido          # ruff + pytest -m "not e2e" (3.13) + firmware: antes de cada commit (~30 s)
 scripts/ci.sh testes 3.10     # uma versão do Python, suíte completa
 scripts/ci.sh firmware        # gcc -Werror no ler_adc.c + shellcheck

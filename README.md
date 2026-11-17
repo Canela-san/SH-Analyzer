@@ -227,7 +227,7 @@ Quem for modificar o código Python deve começar por [`docs/software-architectu
 
 ```bash
 scripts/ci.sh rapido      # antes de cada commit (~30 s): ruff, testes sem os e2e, gcc e shellcheck
-scripts/ci.sh             # tudo o que a CI roda (~3 min): Python 3.10 e 3.13, com os e2e, e o firmware
+scripts/ci.sh             # tudo o que a CI roda (~15 min): Python 3.10 e 3.13, com os e2e, o sh_placa, o firmware e a interface
 ```
 
 Nenhum teste precisa de hardware. Eles também conferem que o firmware (C) e o Python concordam sobre o formato do cabeçalho: se você mudar um lado, o `pytest` avisa até o outro acompanhar. O que cada arquivo de teste cobre está em [`docs/software-architecture.md`](docs/software-architecture.md#7-testes).
