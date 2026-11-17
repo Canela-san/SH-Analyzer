@@ -141,7 +141,24 @@ e, no fim:
 * **Códigos de saída:** 0 ok, 1 erro, 2 argumento inválido, 3 buffers sobrescritos (amostras perdidas: refaça), 4 ADC
   sem resposta e 5 captura **interrompida** por um sinal (Ctrl+C, `kill`, a queda da conexão) antes dos blocos
   pedidos: o arquivo fecha inteiro, mas mais curto (com `--blocos 0`, "até Ctrl+C", o código é 0). O `coletar.sh`
-  refaz uma captura assim no `--continuar`.
+  refaz uma captura assim no `--continuar`. O 6 é o da saída contínua: quem recebia parou.
+* **A saída contínua** (`-o -`, desde 16/11/2026): a captura vai pelo stdout, para um pipe ou o `ssh`, sem o limite do
+  cartão: o cabeçalho provisório, os blocos à medida que ficam prontos e o cabeçalho final **depois** do último bloco
+  (um pipe não volta ao começo). Quem recebe põe os 4 096 bytes do fim no início e os tira do fim, e o arquivo é o que
+  o `-o ARQUIVO` gravaria, menos os campos do disco (o de quem recebe, que o `ler_adc` não vê). O texto do `ler_adc`
+  vai todo para o stderr, e num terminal o `-o -` é recusado. Se quem recebe parar (a conexão caiu), ou sumir sem
+  fechar (o cabo USB que sai: nada anda por 10 s, ou por 2 s depois de um Ctrl+C), a PRU para, o código é 6, e do
+  outro lado a captura vai até o último bloco que chegou inteiro, sem o cabeçalho final. À mão:
+
+  ```bash
+  ssh debian@192.168.6.2 'sudo ~/firmware/ler_adc 400000 1 --duracao 10m -o -' > fluxo.bin
+  { tail -c 4096 fluxo.bin; tail -c +4097 fluxo.bin | head -c -4096; } > captura.bin
+  ```
+
+* **`--progresso-json`:** uma linha JSON por evento no stderr, para um programa acompanhar a captura (a interface
+  gráfica): `{"evento":"inicio",...}` com a configuração e o identificador da captura, um `"bloco"` por bloco com os
+  contadores de integridade acumulados (os do cabeçalho) e as amostras saturadas por canal, e o `"fim"` com o código,
+  o motivo e o CRC das amostras. O texto para humanos continua, em linhas que não começam com `{`; a barra sai.
 * **O sinal de cada canal no resumo** (cabeçalho versão 9): `Canal 1  de -0.5142 a +0.5194 V no pino (1.0336 Vpp), média
   +2.73 mV, 365.5 mV rms sem o DC`, medido em todas as amostras, e um aviso se alguma bateu no fundo de escala
   (`o canal 1 SATUROU`). Com `--ganho C:G` (ex.: `--ganho 1:19.357,0:19.65`), o ganho de cada canal fica no cabeçalho

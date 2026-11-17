@@ -19,6 +19,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <math.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -117,6 +118,7 @@ static const double FAIXA_ADC_ESPAN_V[] = {20.48, 10.24, 5.12};
 #define SAIDA_SOBRESCRITO 3             // buffers sobrescritos: amostras perdidas
 #define SAIDA_ADC_MUDO 4
 #define SAIDA_INTERROMPIDA 5            // um sinal parou a captura antes dos blocos pedidos: o .bin está mais curto
+#define SAIDA_FECHADA 6                 // -o -: quem recebia o fluxo parou (EPIPE); do outro lado, os blocos que chegaram
 
 // =====================================================================================================================
 // Cabeçalho do .bin
@@ -246,9 +248,11 @@ static uint32_t calcular_crc32(const void *dados, size_t tamanho) {
 // Saída no terminal
 // =====================================================================================================================
 // stdout: o resumo da captura, o progresso e, com -v, os detalhes. stderr: avisos e erros. Cores e a barra de progresso
-// só num terminal (fora dele, como nos logs do varrer_taxa.sh e do calibrar_sonda.sh, o texto sai limpo).
+// só num terminal (fora dele, como nos logs do varrer_taxa.sh e do calibrar_sonda.sh, o texto sai limpo). Na saída
+// contínua (-o -) o stdout é o da captura, e o texto todo vai para o stderr (abrir_saida_continua).
 
 static int verboso = 0;
+static int progresso_json = 0;      // --progresso-json: uma linha JSON por bloco no stderr, e nenhuma barra
 static int terminal_stdout = 0;     // stdout é um terminal: barra de progresso
 static int cor_stdout = 0;
 static int cor_stderr = 0;
@@ -366,6 +370,9 @@ static void imprimir_ajuda(const char *argv0) {
            "\n"
            "%sArquivo e metadados%s\n"
            "  -o, --saida ARQUIVO   .bin de saída (padrão: captura_AAAAMMDD_HHMMSS.bin)\n"
+           "  -o -                  saída contínua: a captura no stdout (para um pipe ou o ssh), com o\n"
+           "                        cabeçalho final DEPOIS do último bloco: quem recebe o põe no início e\n"
+           "                        tira os 4096 bytes do fim. O texto vai todo para o stderr\n"
            "  -t, --titulo TEXTO    título curto (até %u bytes)\n"
            "  -d, --descricao TEXTO descrição (até %u bytes)\n"
            "  --grandeza C:G,...    tensao, corrente ou temperatura por canal (padrão: tensao)\n"
@@ -384,6 +391,8 @@ static void imprimir_ajuda(const char *argv0) {
            "\n"
            "%sSaída%s\n"
            "  -v, --verbose         mostra também os detalhes: cabeçalho, PRU, pinos, cada bloco, tempos\n"
+           "  --progresso-json      uma linha JSON por evento no stderr (inicio, cada bloco, fim), com os\n"
+           "                        contadores de integridade, para um programa acompanhar a captura\n"
            "  -h, --help            esta ajuda\n"
            "\n"
            "%sVerificação rápida%s\n"
@@ -394,7 +403,8 @@ static void imprimir_ajuda(const char *argv0) {
            "respondendo.\n"
            "\n"
            "%sCódigos de saída%s  0 ok · 1 erro · 2 argumento inválido · 3 buffers sobrescritos (amostras\n"
-           "perdidas) · 4 ADC sem resposta · 5 interrompida (Ctrl+C, kill) antes dos blocos pedidos\n"
+           "perdidas) · 4 ADC sem resposta · 5 interrompida (Ctrl+C, kill) antes dos blocos pedidos ·\n"
+           "6 a saída contínua fechou (quem recebia parou: a conexão caiu?)\n"
            "\n"
            "%sExemplos%s\n"
            "  sudo ./%s                       # 400 kS/s no canal 1, 1 bloco\n"
@@ -745,6 +755,7 @@ struct configuracao {
     const char *titulo;
     const char *descricao;
     const char *arquivo;
+    int continua;                                         // -o -: a captura no stdout
     char arquivo_automatico[64];
     time_t instante;
     uint32_t instante_ns;
@@ -810,6 +821,8 @@ static int analisar_argumentos(int argc, char *argv[], struct configuracao *c) {
             c->forcar_taxa = 1;
         } else if (strcmp(a, "-v") == 0 || strcmp(a, "--verbose") == 0 || strcmp(a, "--verboso") == 0) {
             verboso = 1;
+        } else if (strcmp(a, "--progresso-json") == 0) {
+            progresso_json = 1;
         } else if (a[0] == '-') {
             erro("opção desconhecida '%s' (veja %s --help).", a, argv[0]);
             return SAIDA_USO;
@@ -906,6 +919,12 @@ static int analisar_argumentos(int argc, char *argv[], struct configuracao *c) {
     if (c->arquivo == NULL) {
         gerar_nome_arquivo_automatico(c->instante, c->arquivo_automatico, sizeof(c->arquivo_automatico));
         c->arquivo = c->arquivo_automatico;
+    }
+    c->continua = strcmp(c->arquivo, "-") == 0;
+    if (c->continua && isatty(STDOUT_FILENO)) {
+        erro("-o - escreve a captura (binária) no stdout, e ele é um terminal: mande-a para um pipe ou um arquivo "
+             "(ler_adc -o - | ...), ou use -o ARQUIVO.");
+        return SAIDA_USO;
     }
     return SAIDA_OK;
 }
@@ -1222,6 +1241,123 @@ static double segundos_monotonicos(void) {
     return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
 }
 
+// =====================================================================================================================
+// A saída contínua (-o -) e o progresso para programas (--progresso-json)
+// =====================================================================================================================
+// [16/11/2026] Na saída contínua a captura vai pelo stdout de quem chamou (o ssh do aplicativo, um pipe), e nenhum texto
+// do ler_adc pode entrar nela. Em vez de cada printf escolher o seu destino, o fluxo segue numa cópia do fd 1 e o fd 1
+// passa a ser o stderr: o que qualquer função imprimir no stdout vai para o stderr, e o fluxo só recebe o cabeçalho e
+// os blocos. O fluxo: o cabeçalho provisório, os blocos à medida que ficam prontos e o cabeçalho final DEPOIS do
+// último bloco (um pipe não volta ao começo); quem recebe põe o final no offset 0 e tira os 4096 bytes do fim, e o
+// arquivo é o que o ler_adc gravaria no cartão.
+//
+// O fluxo é escrito direto no fd, sem o stdio, e sem bloquear: quem recebe pelo ssh e some sem aviso (o cabo USB que
+// sai) não fecha o pipe, que só daria o EPIPE quando o TCP desistisse, uns 15 min depois. Até lá um write bloqueado
+// não sai nem com o Ctrl+C (o glibc retoma a chamada), e a PRU segue sobrescrevendo os buffers. Aqui, sem nada andar
+// por ESPERA_DA_SAIDA_S, quem recebia é dado por perdido, como no EPIPE (o código 6); com a parada pedida (o SIGINT
+// do aplicativo que voltou depois da queda), bastam ESPERA_DA_SAIDA_PARANDO_S.
+#ifndef ESPERA_DA_SAIDA_S
+#define ESPERA_DA_SAIDA_S 10.0          // um enlace vivo esvazia o pipe sem parar: 2 MB levam ~0,4 s pelo USB
+#endif
+#define ESPERA_DA_SAIDA_PARANDO_S 2.0
+
+static int flags_do_fluxo = 0;          // as do stdout de quem chamou, devolvidas no fim: o pipe é dele também
+
+// Devolve o fd do fluxo, ou -1 com o errno.
+static int abrir_saida_continua(void) {
+    fflush(stdout);
+    int fd = fcntl(STDOUT_FILENO, F_DUPFD_CLOEXEC, 3);
+    if (fd < 0) {
+        return -1;
+    }
+    int flags = fcntl(fd, F_GETFL);
+    if (flags < 0 || dup2(STDERR_FILENO, STDOUT_FILENO) < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        int erro_de_antes = errno;
+        close(fd);
+        errno = erro_de_antes;
+        return -1;
+    }
+    flags_do_fluxo = flags;
+    terminal_stdout = isatty(STDOUT_FILENO);
+    cor_stdout = pode_usar_cor(STDOUT_FILENO);
+    return fd;
+}
+
+static void fechar_saida_continua(int fd) {
+    fcntl(fd, F_SETFL, flags_do_fluxo);
+    close(fd);
+}
+
+// Manda tudo pelo fluxo. Devolve 0, ou -1 com o errno: EPIPE (quem recebia fechou), ETIMEDOUT (parou de receber: nada
+// andou por ESPERA_DA_SAIDA_S) ou o erro do write.
+static int enviar(int fd, const void *dados, size_t tamanho) {
+    const uint8_t *resto = (const uint8_t *)dados;
+    double ultimo_avanco = segundos_monotonicos();
+    while (tamanho > 0) {
+        ssize_t n = write(fd, resto, tamanho);
+        if (n > 0) {
+            resto += n;
+            tamanho -= (size_t)n;
+            ultimo_avanco = segundos_monotonicos();
+            continue;
+        }
+        if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+            return -1;
+        }
+        double espera = manter_execucao ? ESPERA_DA_SAIDA_S : ESPERA_DA_SAIDA_PARANDO_S;
+        double falta = ultimo_avanco + espera - segundos_monotonicos();
+        if (falta <= 0.0) {
+            errno = ETIMEDOUT;
+            return -1;
+        }
+        struct pollfd saida = {.fd = fd, .events = POLLOUT, .revents = 0};
+        if (poll(&saida, 1, (int)(1e3 * falta) + 1) < 0 && errno != EINTR) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+// A saída fechou ou parou de receber: quem recebia a captura se foi (o código 6, e não um erro de escrita).
+static int saida_se_foi(int erro_da_escrita) {
+    return erro_da_escrita == EPIPE || erro_da_escrita == ETIMEDOUT;
+}
+
+// --progresso-json: uma linha por evento no stderr ({"evento":"inicio"|"bloco"|"fim", ...}), escrita de uma vez (o
+// stderr não tem buffer) e depois do texto pendente do stdout (na saída contínua os dois vão para o mesmo lugar). Só
+// números, listas de números e palavras fixas: nada a escapar.
+#define PROGRESSO_FORMATO 1u              // a versão das linhas: um campo novo não a muda; um que mude de sentido, sim
+__attribute__((format(printf, 2, 3)))
+static void progresso(const char *evento, const char *formato, ...) {
+    if (!progresso_json) {
+        return;
+    }
+    char linha[1024];
+    int n = snprintf(linha, sizeof(linha), "{\"evento\":\"%s\",\"formato\":%u", evento, PROGRESSO_FORMATO);
+    va_list args;
+    va_start(args, formato);
+    int resto = vsnprintf(linha + n, sizeof(linha) - (size_t)n - 2u, formato, args);
+    va_end(args);
+    if (resto < 0 || (size_t)(n + resto) >= sizeof(linha) - 2u) {
+        return;                         // não cabe: nunca acontece com os campos de hoje, e meia linha não é JSON
+    }
+    memcpy(linha + n + resto, "}\n", 3);
+    fflush(stdout);
+    fputs(linha, stderr);
+}
+
+// Uma lista JSON de números ("[1,0]"), em texto, para os campos de progresso().
+static const char *lista_json(char *texto, size_t tamanho, const unsigned long long *valores, int n) {
+    size_t usado = (size_t)snprintf(texto, tamanho, "[");
+    for (int k = 0; k < n && usado < tamanho; k++) {
+        usado += (size_t)snprintf(texto + usado, tamanho - usado, "%s%llu", k ? "," : "", valores[k]);
+    }
+    if (usado < tamanho) {
+        snprintf(texto + usado, tamanho - usado, "]");
+    }
+    return texto;
+}
+
 // Os contadores que a PRU publica depois de cada troca de buffer (memoria_pru.h).
 struct contadores_integridade {
     uint32_t amostras_atrasadas;
@@ -1262,7 +1398,7 @@ static void conferir_integridade(const struct contadores_integridade *agora, str
 #define LARGURA_BARRA 24
 
 static void mostrar_progresso(unsigned long long feitos, unsigned long long total, double segundos_por_bloco) {
-    if (!terminal_stdout) {
+    if (!terminal_stdout || progresso_json) {
         return;
     }
     printf("\r\033[K  %sCapturando%s  ", ansi(stdout, NEGRITO), fim_ansi(stdout));
@@ -1458,7 +1594,11 @@ static double gib(uint32_t kib) {
 
 static void imprimir_configuracao(const struct configuracao *c, const struct sistema *s, double segundos_por_bloco) {
     printf("%sler_adc%s · SH-Analyzer · firmware %s\n", ansi(stdout, NEGRITO), fim_ansi(stdout), VERSAO_FIRMWARE);
-    campo("Arquivo", "%s", c->arquivo);
+    if (c->continua) {
+        campo("Saída", "contínua, no stdout (o cabeçalho final vai depois do último bloco)");
+    } else {
+        campo("Arquivo", "%s", c->arquivo);
+    }
     if (c->titulo) {
         campo("Título", "%s", c->titulo);
     }
@@ -1596,6 +1736,7 @@ struct resultado {
     double taxa_medida;                     // 0 = não medida (menos de 2 blocos)
     double pior_gravacao_s;
     int erro_escrita;
+    int saida_fechada;                      // -o -: quem recebia parou (EPIPE)
     int adc_mudo;
     int interrompida;                       // um sinal parou a captura antes dos blocos pedidos
     struct estatistica_canal canais[ADS8688_MAX_CANAIS];    // [v9] o sinal de cada canal (por posição)
@@ -1609,6 +1750,8 @@ static void imprimir_resultado(const struct configuracao *c, volatile struct sha
         simbolo = "✗"; cor = VERMELHO; texto = "Captura interrompida: o ADC não respondeu";
     } else if (r->erro_escrita) {
         simbolo = "✗"; cor = VERMELHO; texto = "Captura interrompida: erro de escrita";
+    } else if (r->saida_fechada) {
+        simbolo = "✗"; cor = VERMELHO; texto = "Captura interrompida: a saída fechou";
     } else if (n->buffers_sobrescritos) {
         simbolo = "✗"; cor = VERMELHO; texto = "Captura com amostras perdidas";
     } else if (r->interrompida) {
@@ -1623,8 +1766,8 @@ static void imprimir_resultado(const struct configuracao *c, volatile struct sha
 
     double segundos = (double)r->amostras * (double)c->ticks / (double)PRU_CLOCK_HZ;
     double mib = (double)(CABECALHO_TAMANHO_TOTAL + r->amostras * sizeof(uint16_t)) / (1024.0 * 1024.0);
-    campo("Arquivo", "%s (%llu %s, %.2f s, %.1f MiB)", c->arquivo, r->blocos, plural(r->blocos, "bloco", "blocos"),
-          segundos, mib);
+    campo(c->continua ? "Saída" : "Arquivo", "%s (%llu %s, %.2f s, %.1f MiB)", c->continua ? "contínua, no stdout"
+          : c->arquivo, r->blocos, plural(r->blocos, "bloco", "blocos"), segundos, mib);
 
     int integro = !(n->amostras_atrasadas | n->buffers_sobrescritos | n->quadros_preambulo_ruim);
     campo("Integridade", "%s%s%s: %u %s, %u %s, %u %s", ansi(stdout, integro ? VERDE : AMARELO),
@@ -2553,6 +2696,12 @@ int main(int argc, char *argv[]) {
         erro("o ler_adc precisa de root (a PRU, os pinos e /dev/mem): rode com sudo.");
         return SAIDA_ERRO;
     }
+    // -o -: daqui em diante o fd 1 é o stderr, e a captura vai pela cópia do stdout de quem chamou.
+    int fluxo = -1;
+    if (config.continua && (fluxo = abrir_saida_continua()) < 0) {
+        erro("não deu para preparar a saída contínua no stdout (%s).", strerror(errno));
+        return SAIDA_ERRO;
+    }
     double segundos_por_bloco = (double)SAMPLES_PER_BUFFER * (double)config.ticks / (double)PRU_CLOCK_HZ;
     struct sistema sistema;
     ler_sistema(&sistema);
@@ -2594,16 +2743,19 @@ int main(int argc, char *argv[]) {
     detalhe("PRU reiniciada e configurada (protocolo %u)", VERSAO_PROTOCOLO_PRU);
 
     // --- Arquivo -------------------------------------------------------------------------------------------------------
-    FILE *arquivo = fopen(config.arquivo, "wb");
-    if (arquivo == NULL) {
+    // Na saída contínua o disco é o de quem recebe, que o ler_adc não vê: os campos do disco ficam "desconhecido".
+    FILE *arquivo = NULL;
+    if (!config.continua && (arquivo = fopen(config.arquivo, "wb")) == NULL) {
         erro("não deu para criar '%s': %s%s.", config.arquivo, strerror(errno),
              errno == ENOENT ? " (a pasta existe? crie-a com mkdir -p)" : "");
         return abortar_captura(NULL, ddr_map, bytes_por_buffer * BUFFERS_PING_PONG, ctrl_map, mem_fd);
     }
     struct statvfs disco;
-    uint32_t disco_total_kib, disco_livre_kib;
-    espaco_em_disco(fstatvfs(fileno(arquivo), &disco) == 0, &disco, &disco_total_kib, &disco_livre_kib);
-    detalhe("disco da captura: %.2f de %.2f GiB livres", gib(disco_livre_kib), gib(disco_total_kib));
+    uint32_t disco_total_kib = VALOR_DESCONHECIDO, disco_livre_kib = VALOR_DESCONHECIDO;
+    if (!config.continua) {
+        espaco_em_disco(fstatvfs(fileno(arquivo), &disco) == 0, &disco, &disco_total_kib, &disco_livre_kib);
+        detalhe("disco da captura: %.2f de %.2f GiB livres", gib(disco_livre_kib), gib(disco_total_kib));
+    }
     if (config.blocos != 0 && disco_livre_kib != VALOR_DESCONHECIDO) {
         double precisa_kib = ((double)CABECALHO_TAMANHO_TOTAL +
                               (double)config.blocos * (double)bytes_por_buffer) / 1024.0;
@@ -2680,12 +2832,38 @@ int main(int argc, char *argv[]) {
     }
     memcpy(x->ganho_por_canal, config.ganhos, sizeof(x->ganho_por_canal));
     h->header_crc32 = calcular_crc32(&cabecalho, sizeof(cabecalho));
-    if (fwrite(&cabecalho, sizeof(cabecalho), 1, arquivo) != 1) {
-        erro("não deu para gravar o cabeçalho em '%s'.", config.arquivo);
+    if (config.continua ? enviar(fluxo, &cabecalho, sizeof(cabecalho)) != 0
+                        : fwrite(&cabecalho, sizeof(cabecalho), 1, arquivo) != 1) {
+        int erro_do_cabecalho = errno;
+        if (config.continua) {
+            fechar_saida_continua(fluxo);
+        }
+        if (config.continua && saida_se_foi(erro_do_cabecalho)) {
+            erro("a saída %s antes do cabeçalho: ninguém estava recebendo o stdout.",
+                 erro_do_cabecalho == EPIPE ? "fechou" : "não andou");
+            abortar_captura(NULL, ddr_map, bytes_por_buffer * BUFFERS_PING_PONG, ctrl_map, mem_fd);
+            return SAIDA_FECHADA;
+        }
+        erro("não deu para gravar o cabeçalho em '%s' (%s).", config.continua ? "stdout" : config.arquivo,
+             strerror(erro_do_cabecalho));
         return abortar_captura(arquivo, ddr_map, bytes_por_buffer * BUFFERS_PING_PONG, ctrl_map, mem_fd);
     }
     detalhe("cabeçalho v%u gravado (%u bytes, CRC 0x%08X, início %llu)", CABECALHO_VERSAO, CABECALHO_TAMANHO_TOTAL,
             h->header_crc32, (unsigned long long)h->timestamp_unix);
+    char canais_json[64], id_json[2 * CABECALHO_ID_TAMANHO + 1];
+    unsigned long long canais_da_lista[ADS8688_MAX_CANAIS];
+    for (int k = 0; k < config.num_canais; k++) {
+        canais_da_lista[k] = (unsigned long long)config.canais[k];
+    }
+    for (unsigned k = 0; k < CABECALHO_ID_TAMANHO; k++) {
+        snprintf(id_json + 2 * k, 3, "%02x", x->id_captura[k]);
+    }
+    progresso("inicio", ",\"id_captura\":\"%s\",\"continua\":%s,\"frequencia_hz\":%u,\"taxa_real_hz\":%.6f,"
+              "\"canais\":%s,\"blocos\":%llu,\"amostras_por_bloco\":%u,\"bytes_por_bloco\":%zu,"
+              "\"bytes_do_cabecalho\":%u,\"segundos_por_bloco\":%.6f", id_json, config.continua ? "true" : "false",
+              config.frequencia, (double)PRU_CLOCK_HZ / (double)config.ticks,
+              lista_json(canais_json, sizeof(canais_json), canais_da_lista, config.num_canais), config.blocos,
+              SAMPLES_PER_BUFFER, bytes_por_buffer, CABECALHO_TAMANHO_TOTAL, segundos_por_bloco);
 
     // --- Laço de blocos --------------------------------------------------------------------------------------------
     // Sem descarte de amostra: no AUTO_RST, o quadro do próprio AUTO_RST (na configuração, nunca gravado) é o que traz
@@ -2726,12 +2904,32 @@ int main(int argc, char *argv[]) {
             struct contadores_integridade ate_este_bloco = ler_contadores_integridade(ctrl);
             *prontos[b] = 0;
             int mudo = amostras_todas_iguais(copia_do_bloco, AMOSTRAS_CONFERIDAS_ADC_MUDO);
-            size_t gravadas = fwrite(copia_do_bloco, sizeof(uint16_t), SAMPLES_PER_BUFFER, arquivo);
+            size_t gravadas = SAMPLES_PER_BUFFER;
+            int falhou = config.continua
+                         ? enviar(fluxo, copia_do_bloco, bytes_por_buffer) != 0
+                         : (gravadas = fwrite(copia_do_bloco, sizeof(uint16_t), SAMPLES_PER_BUFFER, arquivo))
+                           != SAMPLES_PER_BUFFER;
+            int erro_da_gravacao = errno;
             double gasto = segundos_monotonicos() - inicio;
             resultado.pior_gravacao_s = gasto > resultado.pior_gravacao_s ? gasto : resultado.pior_gravacao_s;
-            if (gravadas != SAMPLES_PER_BUFFER) {
+            if (falhou && config.continua && saida_se_foi(erro_da_gravacao)) {
+                if (erro_da_gravacao == EPIPE) {
+                    erro("a saída fechou no bloco %llu: quem recebia a captura parou (a conexão caiu?). A captura "
+                         "foi encerrada; do outro lado, ela vai até o último bloco que chegou inteiro.",
+                         resultado.blocos + 1);
+                } else {
+                    erro("a saída não andou por %.0f s no bloco %llu: quem recebia a captura sumiu (a conexão caiu "
+                         "sem aviso?). A captura foi encerrada; do outro lado, ela vai até o último bloco que chegou "
+                         "inteiro.", manter_execucao ? ESPERA_DA_SAIDA_S : ESPERA_DA_SAIDA_PARANDO_S,
+                         resultado.blocos + 1);
+                }
+                resultado.saida_fechada = 1;
+                manter_execucao = 0;
+                break;
+            }
+            if (falhou) {
                 erro("a gravação do bloco %llu parou em %zu de %u amostras (%s): disco cheio? A captura foi "
-                     "encerrada.", resultado.blocos + 1, gravadas, SAMPLES_PER_BUFFER, strerror(errno));
+                     "encerrada.", resultado.blocos + 1, gravadas, SAMPLES_PER_BUFFER, strerror(erro_da_gravacao));
                 resultado.erro_escrita = 1;
                 manter_execucao = 0;
                 break;
@@ -2750,6 +2948,23 @@ int main(int argc, char *argv[]) {
                 instante_primeiro = inicio;
             }
             conferir_integridade(&ate_este_bloco, &integridade);
+            if (progresso_json) {
+                char saturadas_json[200];
+                unsigned long long saturadas[ADS8688_MAX_CANAIS];
+                for (int k = 0; k < config.num_canais; k++) {
+                    saturadas[k] = (unsigned long long)resultado.canais[k].saturadas;
+                }
+                progresso("bloco", ",\"bloco\":%llu,\"blocos\":%llu,\"amostras\":%llu,\"t_s\":%.6f,"
+                          "\"gravacao_ms\":%.1f,\"amostras_atrasadas\":%u,\"buffers_sobrescritos\":%u,"
+                          "\"quadros_preambulo_ruim\":%u,\"folga_minima_ciclos\":%u,\"atraso_maximo_ciclos\":%u,"
+                          "\"divergencias_fase_a\":%u,\"divergencias_fase_c\":%u,\"saturadas\":%s",
+                          resultado.blocos, config.blocos, resultado.amostras, inicio - instante_da_largada,
+                          1e3 * gasto, integridade.amostras_atrasadas, integridade.buffers_sobrescritos,
+                          integridade.quadros_preambulo_ruim, integridade.folga_minima_ciclos,
+                          integridade.atraso_maximo_ciclos, integridade.divergencias_fase_a,
+                          integridade.divergencias_fase_c,
+                          lista_json(saturadas_json, sizeof(saturadas_json), saturadas, config.num_canais));
+            }
             if (mudo) {
                 valor_mudo = copia_do_bloco[0];
                 resultado.adc_mudo = 1;
@@ -2788,7 +3003,7 @@ int main(int argc, char *argv[]) {
         resultado.taxa_medida = (double)(resultado.blocos - 1) * SAMPLES_PER_BUFFER / (instante_ultimo - instante_primeiro);
     }
     if (resultado.blocos == 0 && !resultado.adc_mudo) {
-        aviso("nenhum bloco gravado: '%s' tem só o cabeçalho.", config.arquivo);
+        aviso("nenhum bloco gravado: '%s' tem só o cabeçalho.", config.continua ? "stdout" : config.arquivo);
     }
 
     h->blocos_gravados = resultado.blocos;
@@ -2817,13 +3032,34 @@ int main(int argc, char *argv[]) {
     h->versao_protocolo_pru = ctrl->versao_protocolo_pru;
     h->divergencias_fase_a = integridade.divergencias_fase_a;
     h->divergencias_fase_c = integridade.divergencias_fase_c;
-    fflush(arquivo);
-    uint32_t disco_livre_fim_kib;
-    espaco_em_disco(fstatvfs(fileno(arquivo), &disco) == 0, &disco, &disco_total_kib, &disco_livre_fim_kib);
+    uint32_t disco_livre_fim_kib = VALOR_DESCONHECIDO;
+    if (!config.continua) {
+        fflush(arquivo);
+        espaco_em_disco(fstatvfs(fileno(arquivo), &disco) == 0, &disco, &disco_total_kib, &disco_livre_fim_kib);
+    }
     h->disco_saida_livre_fim_kib = disco_livre_fim_kib;
     h->header_crc32 = 0;
     h->header_crc32 = calcular_crc32(&cabecalho, sizeof(cabecalho));
-    if (fseek(arquivo, 0, SEEK_SET) != 0 || fwrite(&cabecalho, sizeof(cabecalho), 1, arquivo) != 1) {
+    if (config.continua) {
+        // O cabeçalho final vai DEPOIS do último bloco. Com a saída fechada, não há para quem mandá-lo: quem recebeu
+        // fecha o arquivo com o que chegou.
+        if (resultado.saida_fechada) {
+            detalhe("o cabeçalho final não foi enviado: a saída fechou");
+        } else if (enviar(fluxo, &cabecalho, sizeof(cabecalho)) != 0) {
+            if (saida_se_foi(errno)) {
+                erro("a saída %s antes do cabeçalho final: do outro lado, as amostras estão inteiras e o cabeçalho "
+                     "é o provisório (quem recebeu fecha o arquivo).", errno == EPIPE ? "fechou" : "parou de andar");
+                resultado.saida_fechada = 1;
+            } else {
+                erro("não deu para enviar o cabeçalho final (%s).", strerror(errno));
+                resultado.erro_escrita = 1;
+            }
+        } else {
+            detalhe("cabeçalho final enviado depois do último bloco (%llu blocos, %llu amostras)", resultado.blocos,
+                    resultado.amostras);
+        }
+        fechar_saida_continua(fluxo);
+    } else if (fseek(arquivo, 0, SEEK_SET) != 0 || fwrite(&cabecalho, sizeof(cabecalho), 1, arquivo) != 1) {
         aviso("não deu para reescrever o cabeçalho final de '%s' (%s): as amostras estão íntegras, mas os blocos, os "
               "contadores e a taxa medida ficaram em 0 no cabeçalho.", config.arquivo, strerror(errno));
     } else {
@@ -2832,17 +3068,20 @@ int main(int argc, char *argv[]) {
     // [11/11/2026] "Captura concluída" tem de valer mesmo se a placa for desligada logo depois, e um erro de disco no
     // fim tem de aparecer: até aqui o fclose não era conferido (o cabeçalho final fica no buffer do stdio até ele) e
     // nada mandava os dados da memória para o cartão. O fsync devolve EINVAL num arquivo que não o aceita (um pipe).
-    errno = 0;
-    int falha_ao_fechar = fflush(arquivo) != 0 || (fsync(fileno(arquivo)) != 0 && errno != EINVAL);
-    int erro_ao_fechar = errno;
-    if (fclose(arquivo) != 0 && !falha_ao_fechar) {
-        falha_ao_fechar = 1;
-        erro_ao_fechar = errno;
-    }
-    if (falha_ao_fechar) {
-        erro("não deu para terminar de gravar '%s' (%s): o arquivo pode estar incompleto.", config.arquivo,
-             strerror(erro_ao_fechar));
-        resultado.erro_escrita = 1;
+    // O fluxo não tem buffer: o que não saiu foi dito acima.
+    if (!config.continua) {
+        errno = 0;
+        int falha_ao_fechar = fflush(arquivo) != 0 || (fsync(fileno(arquivo)) != 0 && errno != EINVAL);
+        int erro_ao_fechar = errno;
+        if (fclose(arquivo) != 0 && !falha_ao_fechar) {
+            falha_ao_fechar = 1;
+            erro_ao_fechar = errno;
+        }
+        if (falha_ao_fechar) {
+            erro("não deu para terminar de gravar '%s' (%s): o arquivo pode estar incompleto.", config.arquivo,
+                 strerror(erro_ao_fechar));
+            resultado.erro_escrita = 1;
+        }
     }
 
     imprimir_resultado(&config, ctrl, &integridade, &resultado);
@@ -2854,16 +3093,19 @@ int main(int argc, char *argv[]) {
         detalhe("PRU parada (a próxima captura a liga de novo)");
     }
 
-    if (resultado.erro_escrita) {
-        return SAIDA_ERRO;
-    }
-    if (resultado.adc_mudo) {
-        return SAIDA_ADC_MUDO;
-    }
-    if (integridade.buffers_sobrescritos) {
-        return SAIDA_SOBRESCRITO;
-    }
     // [11/11/2026] Até aqui uma captura cortada por um sinal saía com 0: o coletar.sh a dava por feita (e o
     // --continuar não a refazia), com menos blocos que os do plano.
-    return resultado.interrompida ? SAIDA_INTERROMPIDA : SAIDA_OK;
+    int codigo_de_saida = resultado.erro_escrita ? SAIDA_ERRO
+                          : resultado.saida_fechada ? SAIDA_FECHADA
+                          : resultado.adc_mudo ? SAIDA_ADC_MUDO
+                          : integridade.buffers_sobrescritos ? SAIDA_SOBRESCRITO
+                          : resultado.interrompida ? SAIDA_INTERROMPIDA : SAIDA_OK;
+    static const char *const MOTIVOS[] = {"ok", "erro", "uso", "sobrescrito", "adc_mudo", "interrompida",
+                                          "saida_fechada"};
+    progresso("fim", ",\"codigo\":%d,\"motivo\":\"%s\",\"blocos\":%llu,\"amostras\":%llu,\"crc32_amostras\":%u,"
+              "\"taxa_medida_hz\":%.3f,\"amostras_atrasadas\":%u,\"buffers_sobrescritos\":%u,"
+              "\"quadros_preambulo_ruim\":%u", codigo_de_saida, MOTIVOS[codigo_de_saida], resultado.blocos,
+              resultado.amostras, crc_amostras, resultado.taxa_medida, integridade.amostras_atrasadas,
+              integridade.buffers_sobrescritos, integridade.quadros_preambulo_ruim);
+    return codigo_de_saida;
 }

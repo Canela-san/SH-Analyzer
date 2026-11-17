@@ -55,6 +55,8 @@ HARNESS = r"""
 #define CAMINHO_IOMEM getenv("FALSO_IOMEM")
 #define REMOTEPROC_PRU0_ESTADO getenv("FALSO_REMOTEPROC")
 #define BASE_PINMUX getenv("FALSO_PINMUX")
+/* a espera da saída contínua que não anda: 10 s na placa; um teste a encurta */
+#define ESPERA_DA_SAIDA_S (getenv("FALSO_ESPERA_DA_SAIDA_S") ? atof(getenv("FALSO_ESPERA_DA_SAIDA_S")) : 10.0)
 #include "ler_adc.c"
 """
 

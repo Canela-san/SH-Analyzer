@@ -6,12 +6,14 @@ inteiro roda contra ``tests/pru_falsa.py`` (um arquivo no lugar do ``/dev/mem`` 
 ``.bin`` que ele grava é lido pelo ``supraharmonicos.cabecalho``, como na análise.
 """
 
+import json
 import os
 import re
 import signal
 import subprocess
 import threading
 import time
+from dataclasses import asdict
 
 import numpy as np
 import pytest
@@ -343,3 +345,217 @@ def test_v9_a_saturacao_aparece_no_fim_da_captura_e_no_cabecalho(ler_adc, placa)
     dados = np.fromfile(saida, dtype="<u2", offset=CABECALHO)
     esperadas = tuple(int(np.count_nonzero((dados[i::2] == 0) | (dados[i::2] == 65535))) for i in range(2))
     assert h.amostras_saturadas_por_canal == esperadas and sum(esperadas) > 0
+
+
+# --------------------------------------------------------------------------------------
+# [16/11/2026] A saída contínua (-o -) e o --progresso-json (docs/gui-plan.md, 11.5 e 11.6)
+# --------------------------------------------------------------------------------------
+# O que muda entre duas capturas iguais (o instante, a máquina naquela hora, o disco) e o que muda com o destino.
+MUDA_DE_UMA_CAPTURA_PARA_OUTRA = {
+    "timestamp_unix", "timestamp_ns", "timestamp_fim_unix", "timestamp_fim_ns", "duracao_monotonica_s",
+    "pior_bloco_ms", "taxa_medida_hz", "id_captura", "header_crc32", "uptime_s", "carga_1min",
+    "memoria_disponivel_kib", "disco_programa_livre_kib", "linha_de_comando", "disco_saida_total_kib",
+    "disco_saida_livre_kib", "disco_saida_livre_fim_kib",
+}
+
+
+def capturar_no_stdout(ler_adc, placa, *args, **opcoes_da_pru):
+    """Roda o ler_adc com ``-o -`` até o fim. Devolve (código, o fluxo do stdout, o stderr, a PRU)."""
+    pru = placa.pru(**opcoes_da_pru)
+    try:
+        r = subprocess.run([str(ler_adc), *map(str, args), "-o", "-"], env=placa.ambiente, capture_output=True,
+                           timeout=60)
+    finally:
+        pru.parar()
+    return r.returncode, r.stdout, r.stderr.decode(), pru
+
+
+def remontar(fluxo: bytes) -> bytes:
+    """O que o computador faz no fim do fluxo: o cabeçalho final (os 4096 bytes do fim) no lugar do provisório."""
+    return fluxo[-CABECALHO:] + fluxo[CABECALHO:-CABECALHO]
+
+
+def linhas_json(stderr: str) -> list[dict]:
+    return [json.loads(linha) for linha in stderr.splitlines() if linha.startswith("{")]
+
+
+def test_saida_continua_o_fluxo_remontado_e_o_arquivo_do_cartao(ler_adc, placa):
+    """``-o -``: o cabeçalho provisório, os blocos e o cabeçalho final depois do último bloco. Remontado (o final no
+    lugar do provisório), o fluxo é o arquivo que a mesma captura gravaria no cartão: as amostras byte a byte e o
+    cabeçalho campo a campo, menos o que muda de uma captura para outra e o disco (o de quem recebe, que o ler_adc não
+    vê). E o texto do ler_adc (o resumo, os avisos) vai todo para o stderr: nada dele no fluxo."""
+    args = (400000, "1,0", "--blocos", 3, "--grandeza", "0:corrente", "-t", "contínua", "--ganho", "1:19.357")
+    codigo, fluxo, stderr, _ = capturar_no_stdout(ler_adc, placa, *args)
+    assert codigo == 0, stderr
+    assert "Captura concluída" in stderr and re.search(r"Saída +contínua, no stdout", stderr)
+    assert len(fluxo) == 2 * CABECALHO + 3 * TAMANHO_BLOCO and fluxo[:4] == fluxo[-CABECALHO:][:4] == b"SHAN"
+
+    pasta = placa.pasta
+    (pasta / "remontada.bin").write_bytes(remontar(fluxo))
+    (pasta / "provisorio.bin").write_bytes(fluxo[:-CABECALHO])
+    final, provisorio = cab.ler_cabecalho(pasta / "remontada.bin"), cab.ler_cabecalho(pasta / "provisorio.bin")
+    assert final.crc32_valido and cab.conferir_crc_das_amostras(pasta / "remontada.bin", final) is True
+    assert final.blocos_gravados == 3 and provisorio.blocos_gravados == 0 and provisorio.crc32_valido
+    assert provisorio.id_captura == final.id_captura
+    assert (final.disco_saida_total_kib, final.disco_saida_livre_kib, final.disco_saida_livre_fim_kib) == (None,) * 3
+    assert final.linha_de_comando.endswith("-o -")
+    for k, bloco in enumerate(blocos_do_arquivo(pasta / "remontada.bin")):
+        assert np.array_equal(bloco, bloco_esperado(k)), f"bloco {k}"
+
+    r, _, no_cartao = capturar(ler_adc, placa, *args)
+    assert r.returncode == 0, r.stdout + r.stderr
+    cartao = cab.ler_cabecalho(no_cartao)
+    assert remontar(fluxo)[CABECALHO:] == no_cartao.read_bytes()[CABECALHO:]
+    assert ({k: v for k, v in asdict(final).items() if k not in MUDA_DE_UMA_CAPTURA_PARA_OUTRA}
+            == {k: v for k, v in asdict(cartao).items() if k not in MUDA_DE_UMA_CAPTURA_PARA_OUTRA})
+
+
+def test_saida_continua_quem_recebe_e_para_no_meio_da_o_codigo_6(ler_adc, placa):
+    """Quem recebia parou (a conexão caiu, o computador fechou): a escrita dá EPIPE, e não um SIGPIPE que mataria o
+    ler_adc com a PRU ligada. A captura para no bloco em que aconteceu, a PRU é parada, e o código é o 6: o arquivo
+    do outro lado vai até o último bloco inteiro que chegou, sem o cabeçalho final (quem recebeu o fecha)."""
+    pru = placa.pru()
+    processo = subprocess.Popen([str(ler_adc), "--blocos", "200", "--progresso-json", "-o", "-"], env=placa.ambiente,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        recebido = processo.stdout.read(CABECALHO + TAMANHO_BLOCO)
+        processo.stdout.close()
+        _, stderr = processo.communicate(timeout=60)
+    finally:
+        processo.kill()
+        pru.parar()
+    stderr = stderr.decode()
+    assert len(recebido) == CABECALHO + TAMANHO_BLOCO and recebido[:4] == b"SHAN"
+    assert processo.returncode == 6, stderr
+    assert "a saída fechou no bloco" in stderr and "Captura interrompida: a saída fechou" in stderr
+    fim = linhas_json(stderr)[-1]
+    assert (fim["evento"], fim["codigo"], fim["motivo"]) == ("fim", 6, "saida_fechada") and fim["blocos"] >= 1
+    assert placa.remoteproc.read_text().startswith("stop")
+
+
+def receber_e_parar_de_ler(ler_adc, placa, espera_s, depois=None):
+    """Lê o cabeçalho e o 1º bloco e para de ler SEM fechar: quem recebia sumiu (o cabo USB que sai não fecha o pipe
+    do ssh na placa; o EPIPE só viria quando o TCP desistisse, uns 15 min depois). ``depois(processo)`` roda com o
+    leitor parado. Devolve (código, stderr, segundos do fim da leitura até o ler_adc sair)."""
+    pru = placa.pru()
+    processo = subprocess.Popen([str(ler_adc), "--blocos", "200", "--progresso-json", "-o", "-"],
+                                env={**placa.ambiente, "FALSO_ESPERA_DA_SAIDA_S": str(espera_s)},
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        assert len(processo.stdout.read(CABECALHO + TAMANHO_BLOCO)) == CABECALHO + TAMANHO_BLOCO
+        parou = time.monotonic()
+        if depois:
+            depois(processo)
+        processo.wait(timeout=60)
+        levou = time.monotonic() - parou
+        stderr = processo.stderr.read().decode()
+    finally:
+        processo.kill()
+        processo.stdout.close()
+        processo.stderr.close()
+        pru.parar()
+    return processo.returncode, stderr, levou
+
+
+def test_saida_continua_quem_recebe_e_some_sem_fechar_da_o_codigo_6(ler_adc, placa):
+    """Sem nada andar por ESPERA_DA_SAIDA_S (aqui 1 s), quem recebia é dado por perdido: o código 6 e a PRU parada,
+    e não um ler_adc preso num write com a PRU sobrescrevendo os buffers."""
+    codigo, stderr, levou = receber_e_parar_de_ler(ler_adc, placa, 1.0)
+    assert codigo == 6, stderr
+    assert "a saída não andou por 1 s no bloco" in stderr and levou < 10
+    assert linhas_json(stderr)[-1]["motivo"] == "saida_fechada"
+    assert placa.remoteproc.read_text().startswith("stop")
+
+
+def test_saida_continua_parar_com_a_saida_travada_sai_em_2_s(ler_adc, placa):
+    """O aplicativo que volta depois da queda pede a parada (SIGINT) do ler_adc que ficou: com a saída sem andar, ele
+    sai em ESPERA_DA_SAIDA_PARANDO_S (2 s), e não na espera inteira (aqui 60 s)."""
+    def parar(processo):
+        time.sleep(0.5)
+        os.kill(processo.pid, signal.SIGINT)
+
+    codigo, stderr, levou = receber_e_parar_de_ler(ler_adc, placa, 60.0, depois=parar)
+    assert codigo == 6, stderr
+    assert "a saída não andou por 2 s" in stderr and 2 <= levou < 10, (levou, stderr)
+    assert placa.remoteproc.read_text().startswith("stop")
+
+
+def test_saida_continua_parada_pelo_ctrl_c_fecha_o_fluxo(ler_adc, placa):
+    """O "Parar" do aplicativo é um SIGINT: com --blocos 0 (até parar), o fluxo termina com o cabeçalho final dos
+    blocos que saíram, e o código é 0."""
+    pru = placa.pru()
+    processo = subprocess.Popen([str(ler_adc), "--blocos", "0", "-o", "-"], env=placa.ambiente,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    fluxo = bytearray()
+    leitor = threading.Thread(target=lambda: fluxo.extend(processo.stdout.read()), daemon=True)
+    leitor.start()
+    try:
+        limite = time.monotonic() + 30
+        while pru.blocos_prontos < 2 and time.monotonic() < limite and processo.poll() is None:
+            time.sleep(0.005)
+        os.kill(processo.pid, signal.SIGINT)
+        leitor.join(timeout=60)
+        _, stderr = processo.communicate(timeout=60)
+    finally:
+        processo.kill()
+        pru.parar()
+    assert processo.returncode == 0, stderr.decode()
+    (placa.pasta / "remontada.bin").write_bytes(remontar(bytes(fluxo)))
+    h = cab.ler_cabecalho(placa.pasta / "remontada.bin")
+    assert h.crc32_valido and h.blocos_gravados >= 1
+    assert len(fluxo) == 2 * CABECALHO + h.blocos_gravados * TAMANHO_BLOCO
+    assert cab.conferir_crc_das_amostras(placa.pasta / "remontada.bin", h) is True
+
+
+def test_saida_continua_num_terminal_e_recusada(ler_adc, placa):
+    """Binário num terminal embaralha a tela e não serve a ninguém: é erro de uso, antes de mexer na placa."""
+    mestre, escravo = os.openpty()
+    try:
+        r = subprocess.run([str(ler_adc), "--blocos", "1", "-o", "-"], env=placa.ambiente, stdout=escravo,
+                           stderr=subprocess.PIPE, text=True, timeout=30)
+    finally:
+        os.close(escravo)
+        os.close(mestre)
+    assert r.returncode == 2 and "é um terminal" in r.stderr
+    assert not placa.remoteproc.read_text().startswith("start")
+
+
+def test_progresso_json_uma_linha_por_bloco_com_os_contadores(ler_adc, placa):
+    """--progresso-json: a interface acompanha a captura pelo stderr, sem ler a barra feita para humanos. O início
+    (a configuração e o identificador da captura), cada bloco (os contadores acumulados até ele, como os do cabeçalho)
+    e o fim (o código e o CRC das amostras). O texto para humanos continua no stderr, em linhas que não começam com
+    '{', e a barra de progresso sai."""
+    codigo, fluxo, stderr, _ = capturar_no_stdout(ler_adc, placa, 400000, 1, "--blocos", 3, "--progresso-json",
+                                                  atrasadas_por_bloco=5, preambulo_por_bloco=1)
+    assert codigo == 0, stderr
+    eventos = linhas_json(stderr)
+    assert [e["evento"] for e in eventos] == ["inicio", "bloco", "bloco", "bloco", "fim"]
+    assert all(e["formato"] == 1 for e in eventos)
+    (placa.pasta / "remontada.bin").write_bytes(remontar(fluxo))
+    h = cab.ler_cabecalho(placa.pasta / "remontada.bin")
+
+    inicio, *blocos, fim = eventos
+    assert inicio["id_captura"] == h.id_captura and inicio["continua"] is True
+    assert (inicio["frequencia_hz"], inicio["canais"], inicio["blocos"]) == (400000, [1], 3)
+    assert inicio["taxa_real_hz"] == 400000.0 and inicio["segundos_por_bloco"] == pytest.approx(2.62144)
+    assert (inicio["amostras_por_bloco"], inicio["bytes_por_bloco"], inicio["bytes_do_cabecalho"]) == (
+        AMOSTRAS_POR_BLOCO, TAMANHO_BLOCO, CABECALHO)
+    assert [b["bloco"] for b in blocos] == [1, 2, 3] and all(b["blocos"] == 3 for b in blocos)
+    assert [b["amostras"] for b in blocos] == [AMOSTRAS_POR_BLOCO * k for k in (1, 2, 3)]
+    assert [b["amostras_atrasadas"] for b in blocos] == [5, 10, 15]
+    assert [b["quadros_preambulo_ruim"] for b in blocos] == [1, 2, 3]
+    assert all(b["buffers_sobrescritos"] == 0 and b["saturadas"] == [0] for b in blocos)
+    assert 0 < blocos[0]["t_s"] <= blocos[1]["t_s"] <= blocos[2]["t_s"]
+    assert (fim["codigo"], fim["motivo"], fim["blocos"], fim["amostras"]) == (0, "ok", 3, 3 * AMOSTRAS_POR_BLOCO)
+    assert fim["crc32_amostras"] == h.crc32_amostras and fim["amostras_atrasadas"] == h.amostras_atrasadas == 15
+    assert "Captura concluída, com avisos" in stderr and "\r" not in stderr
+
+
+def test_progresso_json_com_o_arquivo_no_cartao(ler_adc, placa):
+    """Com -o ARQUIVO, as linhas JSON também vão para o stderr, e o texto continua no stdout."""
+    r, _, saida = capturar(ler_adc, placa, "--blocos", 2, "--progresso-json")
+    assert r.returncode == 0, r.stdout + r.stderr
+    eventos = linhas_json(r.stderr)
+    assert [e["evento"] for e in eventos] == ["inicio", "bloco", "bloco", "fim"] and eventos[0]["continua"] is False
+    assert eventos[-1]["crc32_amostras"] == cab.ler_cabecalho(saida).crc32_amostras
+    assert "Captura concluída" in r.stdout and "{" not in r.stdout
