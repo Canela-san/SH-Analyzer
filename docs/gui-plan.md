@@ -1512,7 +1512,7 @@ O G1 passa com a cadeia ligada, durante e depois das materializações (`tests/t
 
 - [x] **No firmware, em commits só dele:** o `ler_adc -o -` (saída contínua, cabeçalho final no fim, código 6), o `--progresso-json` e os testes com a `pru_falsa`. **Validar em bancada** antes de seguir. **Feito** (F4.1, 16/11/2026), validado na placa; o código 6 também vale para a saída que não anda por 10 s (o cabo que sai não fecha o pipe do `ssh` na placa).
 - [ ] O formulário de captura com a validação ao vivo e os modelos; "conferir antes".
-- [ ] A captura contínua com a prévia ao vivo e os contadores; parar; fechar a captura parcial depois de uma queda.
+- [ ] A captura contínua com a prévia ao vivo e os contadores; parar; fechar a captura parcial depois de uma queda. **Sem a tela, feita** (F4.2, 17/11/2026): o `sh_placa` recebe a captura pelo SSH, para e fecha o parcial; validada na placa. Falta a tela (F4.4).
 - [ ] O caderno de bancada com as entradas automáticas.
 - [ ] As rotinas do `coletar.sh` pelo terminal, com o comando montado.
 
