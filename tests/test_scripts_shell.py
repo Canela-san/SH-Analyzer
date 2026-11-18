@@ -1008,15 +1008,30 @@ def _comum(pasta: Path, comando: str) -> str:
     return r.stdout.strip()
 
 
-def _quadrada_filtrada(f1: float, t, amplitude: float = 1.0):
-    """Uma quadrada de ±amplitude e f₁ Hz depois de H(f) = 1/(1 + j·f/f0)², pela série de Fourier (a física: o
-    filtro de 2ª ordem do ADS8688, com os dois polos em f0)."""
+PONTOS_POR_PERIODO = 2**18
+
+
+def _periodo_da_quadrada_filtrada(f1: float, amplitude: float = 1.0):
+    """Um período de uma quadrada de ±amplitude e f₁ Hz depois de H(f) = 1/(1 + j·f/f0)², pela série de Fourier até
+    3 MHz (a física: o filtro de 2ª ordem do ADS8688, com os dois polos em f0), em ``PONTOS_POR_PERIODO`` pontos.
+
+    A série inteira de uma vez por uma ``irfft``: o termo 4A/(nπ)·|h|·sin(2πnf₁t + ∠h) é Re(−j·a·e^{j2πnf₁t}), com
+    a = 4A·h/(nπ). Somada harmônico por harmônico, a de 256 Hz (5 859 harmônicos) levava 2 min."""
     import numpy as np
-    v = np.zeros_like(t)
-    for n in range(1, int(3e6 / f1), 2):
-        h = 1 / (1 + 1j * n * f1 / F0_ADC) ** 2
-        v += 4 * amplitude / (n * np.pi) * abs(h) * np.sin(2 * np.pi * n * f1 * t + np.angle(h))
-    return v
+    n = np.arange(1, int(3e6 / f1), 2)
+    h = 1 / (1 + 1j * n * f1 / F0_ADC) ** 2
+    espectro = np.zeros(PONTOS_POR_PERIODO // 2 + 1, complex)
+    espectro[n] = -1j * PONTOS_POR_PERIODO / 2 * 4 * amplitude / (n * np.pi) * h
+    return np.fft.irfft(espectro, PONTOS_POR_PERIODO)
+
+
+def _quadrada_filtrada(f1: float, t, amplitude: float = 1.0):
+    """A mesma quadrada nos instantes ``t``: o período interpolado (2¹⁸ pontos por período; a diferença para a série
+    somada termo a termo fica abaixo de 1e-9)."""
+    import numpy as np
+    periodo = 1 / f1
+    grade = np.arange(PONTOS_POR_PERIODO) * (periodo / PONTOS_POR_PERIODO)
+    return np.interp(np.mod(t, periodo), grade, _periodo_da_quadrada_filtrada(f1, amplitude), period=periodo)
 
 
 @pytest.mark.parametrize("f1", [256, 6912, 20736, 25344])
@@ -1025,8 +1040,7 @@ def test_medir_sinal_e_queda_da_quadrada_contra_a_quadrada_filtrada(varredura, t
     a pico (queda_da_quadrada); o medido vem do medir_sinal. Os dois contra uma quadrada filtrada de verdade."""
     import numpy as np
     from capturas_sinteticas import escrever_bin
-    fino = np.arange(0, 3 / f1, 1 / 50e6)
-    v = _quadrada_filtrada(f1, fino)
+    v = _periodo_da_quadrada_filtrada(f1)
     queda = (v.max() - v.min()) / 2
     assert float(_comum(varredura.pasta, f"queda_da_quadrada {f1}")) == pytest.approx(queda, rel=0.01)
     t = np.arange(65536) / 400e3
