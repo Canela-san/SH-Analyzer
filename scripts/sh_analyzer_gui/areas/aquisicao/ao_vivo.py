@@ -16,6 +16,7 @@ Os eixos e a grade são os da Análise (``graficos/faixa.py``): os números com 
 
 from __future__ import annotations
 
+import html
 import time
 
 import numpy as np
@@ -49,6 +50,10 @@ from .textos import traduzir
 
 INTERVALO_DO_RELOGIO_MS = 250
 ALTURA_DA_SAIDA = 112
+ALTURA_POR_CANAL = 120
+ALTURA_MINIMA_DO_SINAL, ALTURA_MAXIMA_DO_SINAL = 170, 330
+ALTURA_DO_ESPECTRO = 230
+"""O cockpit cabe numa janela de 1 280 × 900 com 2 canais: a barra, o sinal, o espectro e a saída do ler_adc."""
 
 
 def relogio(segundos: float | None) -> str:
@@ -95,18 +100,27 @@ class BarraDaCaptura(QFrame):
         self.parar = Botao(traduzir("Parar"), "perigo", "stop")
         self.parar.setObjectName("parar_captura")
         self.parar.clicked.connect(self.pararPedido.emit)
-        linha = QHBoxLayout(self)
-        linha.setContentsMargins(14, 8, 10, 8)
-        linha.setSpacing(10)
-        linha.addWidget(self.ponto)
-        linha.addWidget(self.estado)
-        linha.addSpacing(6)
-        linha.addWidget(self.tempo)
-        linha.addWidget(self.total)
-        linha.addWidget(self.barra, 1)
+        # Duas linhas: o estado, o tempo, a barra e o Parar; embaixo, os números (numa linha só, a barra passaria da
+        # largura do centro numa janela de 1 280 px).
+        cima = QHBoxLayout()
+        cima.setSpacing(10)
+        cima.addWidget(self.ponto)
+        cima.addWidget(self.estado)
+        cima.addSpacing(6)
+        cima.addWidget(self.tempo)
+        cima.addWidget(self.total)
+        cima.addWidget(self.barra, 1)
+        cima.addWidget(self.parar)
+        baixo = QHBoxLayout()
+        baixo.setSpacing(16)
         for rotulo in (self.recebido, self.fluxo, self.atrasadas, self.sobrescritos):
-            linha.addWidget(rotulo)
-        linha.addWidget(self.parar)
+            baixo.addWidget(rotulo)
+        baixo.addStretch(1)
+        coluna = QVBoxLayout(self)
+        coluna.setContentsMargins(14, 8, 10, 8)
+        coluna.setSpacing(4)
+        coluna.addLayout(cima)
+        coluna.addLayout(baixo)
 
     @staticmethod
     def _numero() -> QLabel:
@@ -188,12 +202,20 @@ class SinalAoVivo(QWidget):
         bloco."""
         self.grafico.clear()
         self._plots.clear()
+        self.grafico.setFixedHeight(min(ALTURA_MAXIMA_DO_SINAL, max(ALTURA_MINIMA_DO_SINAL,
+                                                                     ALTURA_POR_CANAL * len(canais))))
         primeiro = None
         for i, (numero, grandeza, unidade) in enumerate(canais):
             plot, eixo_x, eixo_y, grade = _Grafico.novo_plot(rotulo_x=i == len(canais) - 1)
-            cor = cor_do_traco(i, aparencia().tema)[0]
-            curva = plot.plot(pen=pg.mkPen(QColor(cor), width=1.4))
-            eixo_y.definir_rotulo(traduzir("canal {} · {}").format(numero, _nome_da_grandeza(grandeza)), unidade, cor)
+            curva = plot.plot()
+            # O nome do canal numa etiqueta dentro do gráfico, e só a unidade no eixo: com vários canais, cada gráfico
+            # é mais baixo que o nome em pé.
+            eixo_y.definir_rotulo("", unidade)
+            etiqueta = pg.TextItem(anchor=(0, 0))
+            etiqueta.setParentItem(plot.getViewBox())
+            etiqueta.setPos(4, 2)
+            etiqueta.setZValue(20)
+            etiqueta.setFont(fonte("secundario"))
             if i == len(canais) - 1:
                 eixo_x.definir_rotulo(traduzir("tempo"), "s")
             if primeiro is None:
@@ -201,8 +223,13 @@ class SinalAoVivo(QWidget):
             else:
                 plot.setXLink(primeiro)
             self.grafico.addItem(plot, row=i, col=0)
-            self._plots[numero] = (plot, curva, eixo_x, eixo_y, grade)
+            nome = traduzir("canal {} · {}").format(numero, _nome_da_grandeza(grandeza))
+            self._plots[numero] = (plot, curva, eixo_x, eixo_y, grade, etiqueta, nome)
         self._tema_mudou(aparencia().tema)
+
+    def etiqueta(self, numero: int) -> str:
+        """O nome do canal ``numero`` como a etiqueta do gráfico dele o mostra."""
+        return self._plots[numero][6]
 
     def mostrar(self, quadro: QuadroAoVivo) -> None:
         for canal in quadro.canais:
@@ -222,13 +249,19 @@ class SinalAoVivo(QWidget):
         if not isValid(self):
             return
         self.grafico.setBackground(QColor(t.afundada))
-        for i, (_plot, curva, eixo_x, eixo_y, grade) in enumerate(self._plots.values()):
+        fundo = QColor(t.afundada)
+        fundo.setAlpha(215)
+        for i, (_plot, curva, eixo_x, eixo_y, grade, etiqueta, nome) in enumerate(self._plots.values()):
             for eixo in (eixo_x, eixo_y):
                 eixo.aplicar_tema(t)
             grade.aplicar_tema(t)
             cor = cor_do_traco(i, t)[0]
             curva.setPen(pg.mkPen(QColor(cor), width=1.4))
-            eixo_y.definir_rotulo(eixo_y.labelText, eixo_y.labelUnits, cor)
+            eixo_y.definir_rotulo(eixo_y.labelText, eixo_y.labelUnits)
+            # O traço na cor do canal leva a identidade; o nome fica na cor do texto (12.3).
+            etiqueta.fill = pg.mkBrush(fundo)
+            etiqueta.setHtml(f"<span style='color:{cor}'>&#9473;&#9473;</span>&nbsp;"
+                             f"<span style='color:{t.texto2}'>{html.escape(nome)}</span>")
 
 
 class EspectroAoVivo(QWidget):
@@ -255,6 +288,7 @@ class EspectroAoVivo(QWidget):
         self.eixo_x, self.eixo_y = EixoDoTema("bottom"), EixoDoTema("left")
         self.grafico = pg.PlotWidget(axisItems={"bottom": self.eixo_x, "left": self.eixo_y})
         self.grafico.setObjectName("grafico_espectro_ao_vivo")
+        self.grafico.setFixedHeight(ALTURA_DO_ESPECTRO)
         self.grafico.setMenuEnabled(False)
         self.grafico.hideButtons()
         self.grafico.setMouseEnabled(x=False, y=False)
@@ -377,7 +411,8 @@ class SaidaDoLerAdc(QPlainTextEdit):
         self.setMaximumBlockCount(300)
         self.setFont(fonte_mono(TAMANHOS["secundario"]))
         self.setFixedHeight(ALTURA_DA_SAIDA)
-        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        # Quebrada na largura: o nome do arquivo e os avisos do ler_adc são linhas compridas.
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
 
     def acrescentar(self, linha: str) -> None:
         self.appendPlainText(linha)
@@ -445,21 +480,22 @@ class Cockpit(QWidget):
         g = QVBoxLayout(self.graficos)
         g.setContentsMargins(0, 0, 0, 0)
         g.setSpacing(10)
-        g.addWidget(self.sinal, 3)
-        g.addWidget(self.espectro, 2)
+        g.addWidget(self.sinal)
+        g.addWidget(self.espectro)
         coluna = QVBoxLayout(self)
         coluna.setContentsMargins(0, 0, 0, 0)
         coluna.setSpacing(10)
         coluna.addWidget(self.fim)
         coluna.addWidget(self.barra)
         coluna.addWidget(self.aviso)
-        coluna.addWidget(self.graficos, 1)
-        coluna.addWidget(self.no_cartao, 1)
+        coluna.addWidget(self.graficos)
+        coluna.addWidget(self.no_cartao)
         rotulo = QLabel(traduzir("Saída do ler_adc"))
         rotulo.setObjectName("texto_mudo")
         rotulo.setFont(fonte("secundario"))
         coluna.addWidget(rotulo)
         coluna.addWidget(self.saida)
+        coluna.addStretch(1)
         self._relogio = QTimer(self)
         self._relogio.setInterval(INTERVALO_DO_RELOGIO_MS)
         self._relogio.timeout.connect(self._mostrar_o_tempo)
@@ -529,7 +565,7 @@ class Cockpit(QWidget):
         erro = c.erro if c.estado in ("falhou", "capturando") else ""
         self.aviso.setText(erro)
         self.aviso.setVisible(bool(erro))
-        self._mostrar_o_fim()
+        self.mostrar_o_fim()
         self._progrediu()
 
     def _progrediu(self) -> None:
@@ -583,7 +619,7 @@ class Cockpit(QWidget):
 
     # ------------------------------------------------------------------ o fim
 
-    def _mostrar_o_fim(self) -> None:
+    def mostrar_o_fim(self) -> None:
         c = self.captura
         f = c.fim
         self.fim.setVisible(f is not None or c.estado == "falhou")
@@ -597,15 +633,12 @@ class Cockpit(QWidget):
             return
         self.fim.titulo.setText(titulo_do_fim(f))
         self.fim.lista.definir(linhas_do_fim(f, c))
-        no_computador = f.arquivo is not None and f.gravou
+        local = c.local_do_fim()
+        no_computador = local is not None and local.exists()
         self.fim.abrir.setVisible(no_computador)
         self.fim.pasta.setVisible(no_computador)
-        transferencias = c.transferencias
-        item = None
-        if f.destino == "cartao" and transferencias is not None and c.saude.capturas is not None:
-            achada = next((x for x in c.saude.capturas.capturas if x.arquivo == f.nome), None)
-            item = transferencias.item_de(achada) if achada is not None else None
-        self.fim.trazer.setVisible(f.destino == "cartao" and f.gravou and transferencias is not None and item is None)
+        self.fim.trazer.setVisible(f.destino == "cartao" and f.gravou and c.transferencias is not None
+                                   and c.transferencia_do_fim() is None)
 
 
 def titulo_do_fim(f: FimDaCaptura) -> str:
@@ -655,11 +688,7 @@ def linhas_do_fim(f: FimDaCaptura, captura: CapturaDaPlaca) -> list[pd.Problema]
                                                           "placa de aquisição sem alimentação ou os pinos da PRU sem "
                                                           "configuração")))
     if f.destino == "cartao" and f.gravou:
-        transferencias, saude = captura.transferencias, captura.saude
-        achada = None
-        if transferencias is not None and saude.capturas is not None:
-            achada = next((x for x in saude.capturas.capturas if x.arquivo == f.nome), None)
-        item = transferencias.item_de(achada) if achada is not None else None
+        item = captura.transferencia_do_fim()
         if item is not None:
             texto = {"na_fila": traduzir("na fila para vir para o computador"),
                      "esperando_a_captura": traduzir("esperando a placa ficar livre para vir"),
@@ -669,7 +698,7 @@ def linhas_do_fim(f: FimDaCaptura, captura: CapturaDaPlaca) -> list[pd.Problema]
                 item.estado, traduzir("a transferência: {}").format(item.erro or item.estado))
             nivel = "erro" if item.estado in ("corrompida", "falhou") else "info"
             linhas.append(pd.Problema("transferencia", nivel, texto))
-        elif captura.pedido is not None and captura.pedido.trazer_no_fim and transferencias is not None:
+        elif captura.pedido is not None and captura.pedido.trazer_no_fim and captura.transferencias is not None:
             linhas.append(pd.Problema("transferencia", "info", traduzir("procurando a captura na lista da placa para "
                                                                         "trazê-la")))
     return linhas

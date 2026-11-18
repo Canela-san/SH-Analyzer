@@ -177,6 +177,10 @@ def test_no_cartao_a_queda_nao_para_a_captura_e_ela_vem_para_o_computador(bancad
     assert trazida == b.transferencias.destino / c.nome and api.abrir_captura(trazida).cabecalho.blocos_gravados == 3
     assert any(t.startswith("No computador, conferida") for t in s.cockpit.fim.lista.textos)
     assert not s.cockpit.fim.trazer.isVisible()
+    # Trazida, ela se abre daqui como a do computador.
+    assert s.cockpit.fim.abrir.isVisible() and s.cockpit.fim.pasta.isVisible()
+    qtbot.mouseClick(s.cockpit.fim.abrir, Qt.MouseButton.LeftButton)
+    assert b.na_analise == [trazida]
 
 
 def test_a_senha_do_sudo_e_perguntada_para_a_captura(bancada, qtbot):

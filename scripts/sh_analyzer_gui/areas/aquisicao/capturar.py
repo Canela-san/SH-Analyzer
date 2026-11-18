@@ -207,7 +207,7 @@ class Capturar(QWidget):
         self.captura.mudou.connect(self._captura_mudou)
         if self.captura.transferencias is not None:
             self.captura.transferencias.mudou.connect(self._transferencias_mudaram)
-            self.captura.transferencias.progrediu.connect(lambda *_: self.cockpit._mostrar_o_fim())
+            self.captura.transferencias.progrediu.connect(lambda *_: self.cockpit.mostrar_o_fim())
         self._recuperou.connect(self._ao_recuperar)
         self.ler_os_perfis()
         if lembrar:
@@ -516,38 +516,25 @@ class Capturar(QWidget):
             self.procurar_parciais()
 
     def _transferencias_mudaram(self) -> None:
-        self.cockpit._mostrar_o_fim()
+        self.cockpit.mostrar_o_fim()
         self._por_no_projeto()
 
     def _por_no_projeto(self) -> None:
         """A captura que terminou entra no projeto uma vez: a do computador no fim; a do cartão, quando a
         transferência a traz conferida."""
-        f = self.captura.fim
-        if f is None or not f.gravou or self.abrir_no_projeto is None:
+        caminho = self.captura.local_do_fim()
+        if self.abrir_no_projeto is None or caminho is None or caminho == self._no_projeto or not caminho.exists():
             return
-        caminho = f.arquivo
-        if caminho is None and self.captura.transferencias is not None and self.saude.capturas is not None:
-            achada = next((x for x in self.saude.capturas.capturas if x.arquivo == f.nome), None)
-            item = self.captura.transferencias.item_de(achada) if achada is not None else None
-            caminho = item.local if item is not None and item.estado == "conferida" else None
-        if caminho is None or caminho == self._no_projeto or not Path(caminho).exists():
-            return
-        self._no_projeto = Path(caminho)
-        self.abrir_no_projeto(Path(caminho))
-
-    def _caminho_do_fim(self) -> Path | None:
-        f = self.captura.fim
-        if f is None:
-            return None
-        return f.arquivo if f.arquivo is not None else self._no_projeto
+        self._no_projeto = caminho
+        self.abrir_no_projeto(caminho)
 
     def _abrir_na_analise(self) -> None:
-        caminho = self._caminho_do_fim()
+        caminho = self.captura.local_do_fim()
         if caminho is not None and self.abrir_na_analise is not None:
             self.abrir_na_analise(caminho)
 
     def _mostrar_na_pasta(self) -> None:
-        caminho = self._caminho_do_fim()
+        caminho = self.captura.local_do_fim()
         if caminho is not None:
             self.abrir_url(QUrl.fromLocalFile(str(Path(caminho).parent)))
 

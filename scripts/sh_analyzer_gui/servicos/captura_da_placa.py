@@ -153,6 +153,26 @@ class CapturaDaPlaca(QObject):
     def pode_parar(self) -> bool:
         return self.estado == "capturando" and self.progresso is not None and self.progresso.inicio is not None
 
+    def transferencia_do_fim(self):
+        """O item da fila de transferências da captura no cartão que terminou (``None``: a do computador, ou a do
+        cartão que ainda não foi pedida)."""
+        f = self.fim
+        if f is None or f.destino != "cartao" or not f.gravou or self.transferencias is None:
+            return None
+        achada = self._na_lista_do_agente(f.nome)
+        return self.transferencias.item_de(achada) if achada is not None else None
+
+    def local_do_fim(self) -> Path | None:
+        """Onde a captura que terminou está neste computador: o arquivo da captura para o computador, ou a cópia
+        conferida da do cartão (``None``: ela ainda não está aqui)."""
+        f = self.fim
+        if f is None or not f.gravou:
+            return None
+        if f.arquivo is not None:
+            return f.arquivo
+        item = self.transferencia_do_fim()
+        return Path(item.local) if item is not None and item.estado == "conferida" else None
+
     # ------------------------------------------------------------------ capturar
 
     def capturar(self, pedido: PedidoDeCaptura, senha: str | None = None, guardar: bool = False) -> Chamada | None:
@@ -403,13 +423,15 @@ class CapturaDaPlaca(QObject):
         self.estado = "sem_conexao"                     # o caminho da retomada
         self._talvez_retomar()
 
+    def _na_lista_do_agente(self, nome: str):
+        capturas = self.saude.capturas
+        return None if capturas is None else next((c for c in capturas.capturas if c.arquivo == nome), None)
+
     def _saude_mudou(self) -> None:
         """A captura no cartão que vai para o computador: quando a lista do agente a tem, entra na fila."""
         if self._a_trazer is None or self.transferencias is None:
             return
-        capturas = self.saude.capturas
-        achada = None if capturas is None else next((c for c in capturas.capturas if c.arquivo == self._a_trazer),
-                                                    None)
+        achada = self._na_lista_do_agente(self._a_trazer)
         if achada is None:
             return
         self._a_trazer = None
