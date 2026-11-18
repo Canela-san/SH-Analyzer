@@ -159,7 +159,9 @@ def test_um_layout_invalido_ou_de_outra_versao_cai_no_padrao(app, qtbot):
     assert all(d.isVisible() for d in (janela.dock_projeto, janela.dock_inspetor, janela.dock_inferior))
 
     gravar(CHAVE_DO_ESTADO, janela.estudio.saveState(0))   # um layout de outra versão
-    assert not JanelaPrincipal().restaurar_layout()
+    outra = JanelaPrincipal()
+    qtbot.addWidget(outra)
+    assert not outra.restaurar_layout()
 
 
 def test_desfazer_e_refazer_seguem_a_pilha(janela):

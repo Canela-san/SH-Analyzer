@@ -77,6 +77,7 @@ class Bancada:
         self.area.close()
         self.conexao.encerrar()
         assert self.servico.encerrar()
+        self.area.deleteLater()      # sem isso, cada teste deixava uma Aquisição inteira viva (~1 000 widgets)
 
 
 @pytest.fixture

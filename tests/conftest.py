@@ -8,10 +8,16 @@
   ``(codigo_de_saida, stdout, stderr)`` -- rápido, sem subprocess.
 """
 
+import gc
 import logging
 import os
+import sys
 
 os.environ.setdefault("MPLBACKEND", "Agg")
+# Uma thread do BLAS por processo: o pytest-xdist já põe um processo em cada núcleo, e o OpenBLAS de cada um abria uma
+# thread por núcleo (8 processos x 8 threads disputando 8 núcleos; a suíte levava ~10% a mais).
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
 # A interface gráfica sem tela (tests/test_interface.py): na CI não há monitor, e na sua máquina nenhuma janela pisca.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # A configuração da interface (layout, tema, fontes) numa pasta temporária: nenhum teste lê nem grava a de quem
@@ -64,6 +70,56 @@ def _isolar_logging():
             raiz.removeHandler(h)
     raiz.propagate = True
     raiz.setLevel(logging.NOTSET)
+
+
+def _apagar_o_que_o_qt_adiou() -> bool:
+    """Apaga de verdade o que foi mandado apagar (o ``deleteLater`` das fixtures e do ``qtbot``): fora de um laço de
+    eventos, o ``processEvents`` não apaga nada. Sem isso, cada janela de teste ficava viva (~1 200 widgets, as
+    pirâmides abertas), o tema de cada teste novo passava por todas as anteriores, e a interface em série levava
+    52 min. Sem o Qt carregado, não faz nada (os testes do motor nem o importam)."""
+    qtcore = sys.modules.get("PySide6.QtCore")
+    if qtcore is None or qtcore.QCoreApplication.instance() is None:
+        return False
+    qtcore.QCoreApplication.sendPostedEvents(None, qtcore.QEvent.Type.DeferredDelete)
+    return True
+
+
+def pytest_fixture_post_finalizer(fixturedef, request):
+    """Logo depois de cada fixture terminar: a janela que ela fechou some antes da próxima limpeza (a fixture ``app``
+    que volta o tema e as fontes repassava o QSS pela janela fechada, ~1 s por teste)."""
+    _apagar_o_que_o_qt_adiou()
+
+
+def _janelas_do_aplicativo() -> set[int]:
+    """As janelas (widgets sem pai) do aplicativo vivas agora: as do ``sh_analyzer_gui``, não as do próprio Qt (a
+    dica, os menus)."""
+    qtw = sys.modules.get("PySide6.QtWidgets")
+    if qtw is None or qtw.QApplication.instance() is None:
+        return set()
+    return {id(w) for w in qtw.QApplication.topLevelWidgets() if type(w).__module__.startswith("sh_analyzer_gui")}
+
+
+@pytest.fixture(autouse=True)
+def _apagar_os_widgets_do_teste():
+    """No fim de cada teste, o que sobrou, e os ciclos entre o Python e os widgets (sem o ``gc``, sobram alguns). E
+    acusa a janela que o teste abriu e não mandou apagar (``deleteLater`` ou ``qtbot.addWidget``): uma esquecida
+    deixava a interface 20 vezes mais lenta para todos os testes seguintes do mesmo processo."""
+    antes = _janelas_do_aplicativo()
+    yield
+    if not _apagar_o_que_o_qt_adiou():
+        return
+    gc.collect()
+    qtw = sys.modules["PySide6.QtWidgets"]
+    sobraram = [w for w in qtw.QApplication.topLevelWidgets()
+                if type(w).__module__.startswith("sh_analyzer_gui") and id(w) not in antes]
+    if sobraram:
+        nomes = ", ".join(sorted({type(w).__name__ for w in sobraram}))
+        for w in sobraram:          # o teste falha, mas os seguintes não pagam por ele
+            w.close()
+            w.deleteLater()
+        _apagar_o_que_o_qt_adiou()
+        pytest.fail(f"o teste deixou {len(sobraram)} janela(s) viva(s): {nomes}. Feche-a(s) com deleteLater() "
+                    "(ou registre com qtbot.addWidget)", pytrace=False)
 
 
 @pytest.fixture

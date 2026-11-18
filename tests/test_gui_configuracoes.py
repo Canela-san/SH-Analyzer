@@ -387,6 +387,7 @@ def test_a_tela_das_unidades(janela, qtbot):
     linha_c = next(i for i in range(catalogo.rowCount()) if catalogo.item(i, 0).text() == "°C")
     assert catalogo.item(linha_c, 1).text() == "temperatura" and catalogo.item(linha_c, 2).text() == "K, °F"
     seletor = SeletorDeUnidade()
+    qtbot.addWidget(seletor)
     assert seletor.findText("ppm") == -1
     dialogo.novo_simbolo.setText(" ppm ")
     dialogo.nova_grandeza.setText("concentração")
