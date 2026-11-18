@@ -305,6 +305,28 @@ def criar_pasta_amplitude_conhecida(pasta: Path, freqs=FREQS_CAL, canal: int = 3
     return pasta
 
 
+def serie_harmonica(coeficientes, f1: float, t0: float, fs: float, n: int, bloco: int = 2048) -> np.ndarray:
+    """Σₖ Re(cₖ·e^{j2π·k·f1·tₘ}), k = 1..K (``coeficientes[k-1]``, complexos), nos instantes tₘ = t0 + m/fs,
+    m = 0..n-1: a soma de |cₖ|·cos(2π·k·f1·tₘ + ∠cₖ), de uma vez por bloco de amostras.
+
+    Dentro de um bloco, a soma é a transformada chirp-z dos cₖ, com a fase do começo do bloco já neles. Os blocos são
+    curtos porque a fase do chirp cresce com o quadrado do índice: num bloco de 2 048, ela fica longe de onde o
+    float64 perde a precisão, e a diferença para a soma termo a termo fica em ~1e-6 LSB. Termo a termo, a quadrada de
+    256 Hz até 700 kHz (2 734 harmônicos) custava ~6 s por canal de 60 mil amostras."""
+    from scipy.signal import czt
+    c = np.asarray(coeficientes, dtype=complex)
+    k = np.arange(1, len(c) + 1)
+    giro = 2 * np.pi * f1 / fs                       # a fase do 1º harmônico de uma amostra para a outra
+    x = np.empty(n)
+    for m0 in range(0, n, bloco):
+        b = min(bloco, n - m0)
+        a = c * np.exp(2j * np.pi * k * f1 * (t0 + m0 / fs))
+        j = np.arange(b)
+        # czt(a, b, w)[j] = Σᵢ aᵢ₊₁·w^{i·j}, com w = e^{j·giro}; o e^{j·giro·j} leva o índice i ao harmônico i + 1.
+        x[m0:m0 + b] = np.real(np.exp(1j * giro * j) * czt(a, b, np.exp(1j * giro)))
+    return x
+
+
 def quadrada_pela_cadeia(fs: float, f1: float, dur_s: float, duty: float = 0.5, f0: float = 24165.0, q: float = 0.5288,
                          atraso_s: float = 3e-6, ppm: float = 43.0, amplitude_lsb: float = 6600.0,
                          ruido_lsb: float = 0.79, ate_hz: float = 7e5, seed: int = 0,
@@ -320,21 +342,17 @@ def quadrada_pela_cadeia(fs: float, f1: float, dur_s: float, duty: float = 0.5, 
     rng = np.random.default_rng(seed)
     f1 = f1 * (1 + ppm * 1e-6)
     n = int(dur_s * fs)
-    t = np.arange(n) / fs + rng.uniform(0, 1 / f1)
-    fase = 2 * np.pi * f1 * (t - atraso_s)
-    x = np.zeros(n)
-    for k in range(1, int(ate_hz / f1) + 1):
-        c = 4 * amplitude_lsb / (np.pi * k) * np.sin(np.pi * k * duty)
-        if abs(c) < 1e-9:
-            continue
-        s = 1j * k * f1 / f0
-        h = 1 / (s * s + s / q + 1)
-        if polo_hz is not None:
-            h /= 1 + 1j * k * f1 / polo_hz
-        if passa_alta_hz is not None:
-            h /= 1 - 1j * passa_alta_hz / (k * f1)
-        x += c * abs(h) * np.cos(k * fase + np.angle(h))
-    codigo = 32768 + offset_lsb + x
+    t0 = rng.uniform(0, 1 / f1)
+    k = np.arange(1, int(ate_hz / f1) + 1)
+    c = 4 * amplitude_lsb / (np.pi * k) * np.sin(np.pi * k * duty)
+    c[np.abs(c) < 1e-9] = 0.0                        # os harmônicos que o duty anula
+    s = 1j * k * f1 / f0
+    h = 1 / (s * s + s / q + 1)
+    if polo_hz is not None:
+        h /= 1 + 1j * k * f1 / polo_hz
+    if passa_alta_hz is not None:
+        h /= 1 - 1j * passa_alta_hz / (k * f1)
+    codigo = 32768 + offset_lsb + serie_harmonica(c * h, f1, t0 - atraso_s, fs, n)
     if inl_lsb:
         codigo = codigo + inl_lsb * (0.7 * np.sin(2 * np.pi * codigo / 4096 + 0.3) + 0.3 * np.sin(2 * np.pi * codigo / 977))
     return np.clip(np.round(codigo + rng.normal(0, ruido_lsb, n)), 0, 65535).astype("<u2")
@@ -352,20 +370,18 @@ def quadrada_em_dois_canais(fs_total: float, f1: float, dur_s: float, h_a, h_b, 
     f1 = f1 * (1 + ppm * 1e-6)
     fs = fs_total / 2
     n = int(dur_s * fs)
-    t_a = np.arange(n) / fs + rng.uniform(0, 1 / f1)
-    t_b = t_a + 1 / fs_total
-    xa, xb = np.zeros(n), np.zeros(n)
-    for k in range(1, int(ate_hz / f1) + 1):
-        c = 4 / (np.pi * k) * np.sin(np.pi * k * duty)
-        if abs(c) < 1e-9:
-            continue
-        f = k * f1
-        borda = 1 / (1 + 1j * f / borda_hz) if borda_hz else 1.0
-        ha, hb = complex(h_a(f)) * borda, complex(h_b(f)) * borda
-        xb += amplitude_b_lsb * c * abs(hb) * np.cos(2 * np.pi * f * t_b + np.angle(hb))
-        xa += amplitude_a_lsb * c * abs(ha) * np.cos(2 * np.pi * f * t_a + np.angle(ha))
-        if vazamento is not None:
-            v = complex(vazamento(f)) * hb * amplitude_b_lsb
-            xa += c * abs(v) * np.cos(2 * np.pi * f * t_a + np.angle(v))
+    t0_a = rng.uniform(0, 1 / f1)
+    k = np.arange(1, int(ate_hz / f1) + 1)
+    c = 4 / (np.pi * k) * np.sin(np.pi * k * duty)
+    c[np.abs(c) < 1e-9] = 0.0                        # os harmônicos que o duty anula
+    f = k * f1
+    borda = 1 / (1 + 1j * f / borda_hz) if borda_hz else np.ones(len(k))
+    ha = np.array([complex(h_a(fi)) for fi in f]) * borda
+    hb = np.array([complex(h_b(fi)) for fi in f]) * borda
+    coef_a = amplitude_a_lsb * c * ha
+    if vazamento is not None:
+        coef_a = coef_a + c * np.array([complex(vazamento(fi)) for fi in f]) * hb * amplitude_b_lsb
+    xa = serie_harmonica(coef_a, f1, t0_a, fs, n)
+    xb = serie_harmonica(amplitude_b_lsb * c * hb, f1, t0_a + 1 / fs_total, fs, n)
     codigos = [np.clip(np.round(32768 + x + rng.normal(0, ruido_lsb, n)), 0, 65535).astype("<u2") for x in (xa, xb)]
     return codigos[0], codigos[1]
