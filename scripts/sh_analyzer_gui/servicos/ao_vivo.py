@@ -23,9 +23,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import supraharmonicos.api as api
 from PySide6.QtCore import QObject, Signal
 from shiboken6 import isValid
-from supraharmonicos import api
 
 log = logging.getLogger(__name__)
 
