@@ -1722,6 +1722,43 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
 
 - **O conteúdo:** as notas com hora e as entradas automáticas (a captura, a conferência, a transferência, a
   correção), no `anotacoes.md` da sessão do dia (o mesmo do `sessao_lab.sh`, PD-09); a seção "Notas" no projeto.
+- **O desenho** (18/11/2026, antes do código):
+  - **o arquivo é do usuário** (`dados/caderno.py`, sem Qt): o `anotacoes.md` da pasta da sessão do dia (a mesma das
+    capturas e das transferências, `preferencias.pasta_da_sessao`, a do `lab`). O `lab` o cria do modelo
+    (`docs/lab-notes-template.md`) e o usuário o preenche à mão (`lab notas`); o aplicativo **só acrescenta ao fim**,
+    nunca reescreve. Cada entrada é uma linha de lista em Markdown, legível no editor e no relatório:
+    `- **14:10:03** · automático · Captura ... iniciada: ...` (ou `· você ·`), com as linhas de detalhe recuadas em
+    dois espaços. As entradas ficam sob um título `## Caderno de bancada`, escrito antes da primeira e de novo quando
+    o último título do arquivo é outro (o usuário escreveu uma seção depois): nada entra no meio do que ele escreveu.
+    Sem o arquivo, o aplicativo o cria só com o título do dia (`# Anotações da bancada: AAAA-MM-DD`), e o `lab`
+    depois o acha "já existia". Cada entrada é um `write` só, no modo de acréscimo. A leitura acha as entradas em
+    qualquer parte do arquivo: as escritas à mão no mesmo formato também valem;
+  - **as entradas automáticas** vêm de sinais novos dos serviços, emitidos na hora do fato (e não de comparar
+    estados): os marcos da captura (`CapturaDaPlaca.marco`: começou, a conexão caiu com ela seguindo no cartão,
+    acompanhada de novo, terminou, não deu), o fim da conferência (`ConferenciaDaPlaca.terminou`), a transferência no
+    estado final (`TransferenciasDaPlaca.terminou`: conferida, corrompida, interrompida, falhou; a cancelada pelo
+    usuário não entra) e a correção que terminou (`SaudeDaPlaca.corrigiu`: os pinos e o relógio, inclusive o acerto
+    sozinho ao conectar). As frases usam o que a tela mostra (o resumo do pedido e o comando, as linhas da conferência
+    e do fim, com os mesmos números), com as linhas de detalhe marcadas como no `conferir.sh`: ✓, ! e ✗. **O relatório
+    do diagnóstico** vai para o caderno com um clique ("Para o caderno", ao lado do "Copiar o relatório"; o plano,
+    11.9);
+  - **o serviço** (`servicos/caderno.py`, `CadernoDaSessao`): o caminho do dia refeito a cada escrita e a cada minuto
+    (a sessão que passa da meia-noite vai para o arquivo do dia novo, como as capturas); as entradas lidas de novo
+    quando o arquivo muda fora do aplicativo (um `QFileSystemWatcher` no arquivo e na pasta: o `nvim` grava trocando o
+    arquivo); um erro de disco não perde a nota (o motivo aparece, e o texto fica no campo). Com o arquivo aberto no
+    editor, é o editor que avisa que ele mudou no disco antes de gravar por cima;
+  - **na Aquisição** (`areas/aquisicao/caderno.py`): a coluna da direita do B2 na seção Capturar (300 px), com as
+    entradas (a mais nova em cima, a hora e "automático" ou "você"), o "Escrever uma nota…" embaixo (Enter grava) e
+    "Abrir no editor". A coluna se esconde (lembrado nas preferências) para as telas estreitas, e volta pelo
+    "Caderno" do título da seção;
+  - **no projeto** (a seção "Notas" da árvore, a terceira depois de Fontes e Vistas): os cadernos das pastas das
+    capturas do projeto, um por pasta que tem o `anotacoes.md`, com o número de entradas. Calculados das fontes, sem
+    nada novo no `.shproj` (o projeto guarda receitas). Um clique mostra o caderno no inspetor (só leitura, com
+    "Abrir no editor"); o duplo clique o abre no editor. A nota nova é só no caderno do dia, na Aquisição: a hora de
+    agora num caderno de outro dia enganaria;
+  - **o simulador que para leva as capturas no cartão junto** (`servidor_do_simulador.py`): o `setsid` as solta da
+    conexão de propósito, e uma "até parar" na placa simulada seguiria neste computador depois do aplicativo fechar.
+    Como a placa desligada, o simulador que para mata as que rodam (o grupo de cada uma, conferido pelo `ps`).
 
 ### ☐ F4.6: as rotinas do `coletar.sh` pelo terminal
 
