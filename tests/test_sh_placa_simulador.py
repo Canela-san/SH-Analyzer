@@ -407,3 +407,31 @@ def test_o_ler_adc_simulado_grava_no_cartao_e_recusa_o_que_o_de_verdade_recusa(t
     simulador.montar_sistema_falso(antigo, "firmware_antigo")
     firmware = antigo / "home" / "debian" / "firmware"
     assert "--progresso-json" not in ler_adc("--help", cwd=firmware).stdout
+
+
+def test_a_captura_no_cartao_na_placa_simulada_e_a_transferencia(tmp_path):
+    """O ``ler_adc -o NOME`` desacoplado da conexão (``sh_placa.captura_no_cartao``) na placa simulada: o
+    progresso pelo tail, a captura no cartão listada pelo agente, como as outras, e trazida pelo SFTP com o SHA-256
+    conferido. A pasta em curso some quando recolhida."""
+    from sh_placa.captura_no_cartao import CapturaNoCartao, em_curso
+    progressos = []
+
+    async def cenario():
+        async with ServidorDoSimulador(tmp_path / "placa", vazao_bytes_s=None) as placa:
+            async with entrar(placa) as c:
+                captura = CapturaNoCartao(c, "no_cartao_simulado.bin", ao_progresso=progressos.append)
+                await captura.iniciar(["400000", "0,1", "--blocos", "2", "-t", "No cartão"], SENHA_PADRAO_DA_IMAGEM)
+                gravada = await captura.acompanhar()
+                await captura.limpar()
+                capturas = await ClienteDoAgente(TransporteSSH(c)).capturas()
+                remoto = f"{capturas.pasta}/{gravada.nome}"
+                origem = OrigemSSH(c)
+                local = tmp_path / "trazida.bin"
+                await baixar(origem, remoto, local)
+                return gravada, capturas.capturas, await conferir(origem, remoto, local), await em_curso(c), placa
+
+    gravada, listadas, conferida, depois, placa = asyncio.run(cenario())
+    assert (gravada.codigo, gravada.motivo, gravada.blocos) == (0, "ok", 2) and progressos[-1].blocos == 2
+    (nova,) = [c for c in listadas if c.arquivo == "no_cartao_simulado.bin"]
+    assert nova.titulo == "No cartão" and depois == []
+    assert conferida.ok and motor.ler_cabecalho(tmp_path / "trazida.bin").blocos_gravados == 2

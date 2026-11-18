@@ -22,9 +22,11 @@ duas direções contra o C de verdade, compilado num harness.
 
 from __future__ import annotations
 
+import datetime
 import math
 import re
 import shlex
+import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -58,6 +60,7 @@ BLOCOS_PADRAO = 1
 LIMITE_DO_TITULO = 127                         # bytes em UTF-8, sem o nulo (CABECALHO_TITULO_TAMANHO - 1)
 LIMITE_DA_DESCRICAO = 271
 LIMITE_DA_SONDA = 31
+TAMANHO_DO_PREFIXO = 40                       # o título no nome do arquivo, em caracteres ASCII
 GANHO_MAXIMO = 1e12
 BANDA_DOS_SUPRAHARMONICOS_HZ = (2_000.0, 150_000.0)
 DESTINOS = ("computador", "cartao")
@@ -113,6 +116,7 @@ class PedidoDeCaptura:
     spi: str = SPI_PADRAO
     atrasos_cs: tuple[int, int, int] = ATRASOS_CS_PADRAO
     forcar_taxa: bool = False
+    trazer_no_fim: bool = True             # no cartão: a captura vem para o computador quando termina
 
     def __post_init__(self):
         object.__setattr__(self, "canais", tuple(sorted(self.canais, key=lambda c: c.numero)))
@@ -178,10 +182,11 @@ class PedidoDeCaptura:
             return None
         return BYTES_DO_CABECALHO + self.blocos_pedidos * AMOSTRAS_POR_BLOCO * BYTES_POR_AMOSTRA
 
-    def argumentos(self) -> list[str]:
+    def argumentos(self, saida: bool = True) -> list[str]:
         """Os argumentos do ``ler_adc``, na ordem da ajuda dele, sem o destino da saída contínua (o ``-o -`` e o
         ``--progresso-json`` são de quem recebe, ``sh_placa/captura.py``). Uma opção por canal só entra quando algum
-        canal foge do padrão, e então com todos os canais dela: o comando fica curto e diz tudo."""
+        canal foge do padrão, e então com todos os canais dela: o comando fica curto e diz tudo. ``saida=False`` tira
+        também o ``-o`` do cartão (a ``CapturaNoCartao`` põe o dela)."""
         args = [str(self.taxa_hz), ",".join(str(n) for n in self.numeros)]
         if self.duracao_s is not None:
             args += ["--duracao", texto_da_duracao(self.duracao_s)]
@@ -206,7 +211,7 @@ class PedidoDeCaptura:
             args += ["--atraso-cs", ",".join(str(a) for a in self.atrasos_cs)]
         if self.forcar_taxa:
             args.append("--forcar-taxa")
-        if self.destino == "cartao" and self.arquivo_no_cartao:
+        if saida and self.destino == "cartao" and self.arquivo_no_cartao:
             args += ["-o", self.arquivo_no_cartao]
         return args
 
@@ -221,6 +226,18 @@ class PedidoDeCaptura:
 
     def sem_canal(self, numero: int) -> PedidoDeCaptura:
         return replace(self, canais=tuple(c for c in self.canais if c.numero != numero))
+
+
+def nome_do_arquivo(pedido: PedidoDeCaptura, quando: datetime.datetime | None = None) -> str:
+    """O nome da captura: o ``arquivo_no_cartao`` do pedido, no cartão, se ele tem um; senão o do ``ler_adc``
+    (``captura_AAAAMMDD_HHMMSS.bin``) com a hora deste computador (a da placa pode estar errada: ela não tem bateria) e,
+    se há um título, ele em ASCII no lugar de ``captura`` (``rede_de_casa_v_i_20261118_141005.bin``)."""
+    if pedido.destino == "cartao" and pedido.arquivo_no_cartao:
+        return pedido.arquivo_no_cartao
+    quando = quando or datetime.datetime.now()
+    ascii_ = unicodedata.normalize("NFKD", pedido.titulo).encode("ascii", "ignore").decode("ascii").lower()
+    prefixo = re.sub(r"[^a-z0-9]+", "_", ascii_).strip("_")[:TAMANHO_DO_PREFIXO].rstrip("_") or "captura"
+    return f"{prefixo}_{quando:%Y%m%d_%H%M%S}.bin"
 
 
 def comando(pedido: PedidoDeCaptura) -> str:
@@ -807,6 +824,7 @@ def para_dict(p: PedidoDeCaptura) -> dict:
         "spi": p.spi,
         "atrasos_cs": list(p.atrasos_cs),
         "forcar_taxa": p.forcar_taxa,
+        "trazer_no_fim": p.trazer_no_fim,
     }
 
 
@@ -856,4 +874,5 @@ def de_dict(dados) -> PedidoDeCaptura:
         spi=campo("spi", (str,), padrao.spi),
         atrasos_cs=tuple(atrasos),
         forcar_taxa=campo("forcar_taxa", (bool,), False),
+        trazer_no_fim=campo("trazer_no_fim", (bool,), True),
     )

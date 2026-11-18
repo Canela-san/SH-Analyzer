@@ -58,6 +58,8 @@ log = logging.getLogger(__name__)
 
 SAIDA_SEM_LER_ADC = 95
 SAIDA_SEM_SAIDA_CONTINUA = 96
+SAIDA_NOME_EXISTE = 94                  # no cartão: o arquivo pedido já existe na pasta do firmware
+SAIDA_OUTRA_CAPTURA = 93                # no cartão: já há um ler_adc rodando
 OPCOES_DO_RECEPTOR = ("-o", "--saida", "--progresso-json")
 """As opções do ``ler_adc`` que a captura contínua põe ela mesma (o pedido não as traz)."""
 MOTIVOS = {0: "ok", 1: "erro", 2: "uso", 3: "sobrescrito", 4: "adc_mudo", 5: "interrompida", 6: "saida_fechada"}
@@ -187,6 +189,30 @@ def recuperar(parcial: Path) -> saida_continua.Fechamento:
     return fechamento
 
 
+def erro_antes_de_comecar(codigo: int | None, texto: Sequence[str]) -> ErroDaPlaca:
+    """O erro de uma captura que não começou, pelo código do roteiro (o firmware, o sudo, o nome que já existe, a
+    outra captura rodando) ou pelo que o ``ler_adc`` escreveu (``texto``)."""
+    texto = tuple(texto)
+    if codigo == SAIDA_SEM_LER_ADC:
+        return FirmwareSemLerAdc("a pasta do firmware da placa não tem o ler_adc compilado (o setup da placa, ou a "
+                                 "atualização do firmware)", codigo, texto)
+    if codigo == SAIDA_SEM_SAIDA_CONTINUA:
+        return FirmwareSemSaidaContinua("o ler_adc da placa é de antes da captura direto no computador (sem o -o -): "
+                                        "atualize o firmware da placa", codigo, texto)
+    if codigo == SAIDA_SENHA_RECUSADA:
+        return ErroDoSudo("a placa recusou a senha do sudo", senha_recusada=True)
+    if codigo == SAIDA_SEM_DIRETORIO:
+        return ErroDoSudo("a placa não deixou criar o diretório temporário em /dev/shm (onde a senha fica, na RAM)")
+    if codigo == SAIDA_NOME_EXISTE:
+        return ErroDaCaptura("já existe uma captura com esse nome na placa: escolha outro (nada é sobrescrito)", codigo,
+                             texto)
+    if codigo == SAIDA_OUTRA_CAPTURA:
+        return ErroDaCaptura("já há uma captura rodando na placa (um ler_adc): espere ela terminar", codigo, texto)
+    erros = [linha for linha in texto if "erro" in linha.lower()] or list(texto)
+    causa = erros[-1].strip() if erros else "sem mensagem"
+    return ErroDaCaptura(f"o ler_adc não começou a captura (código {codigo}): {causa[:300]}", codigo, texto)
+
+
 class CapturaContinua:
     """Uma captura contínua: :meth:`rodar` a faz do começo ao fim e devolve a :class:`CapturaRecebida`; :meth:`parar`
     (no laço dela) pede o fim. ``arquivo``: o nome final da captura neste computador (a pasta tem de existir).
@@ -297,20 +323,7 @@ class CapturaContinua:
         return recebida
 
     def _erro_antes_de_comecar(self, codigo: int | None) -> ErroDaPlaca:
-        texto = tuple(self._texto)
-        if codigo == SAIDA_SEM_LER_ADC:
-            return FirmwareSemLerAdc("a pasta do firmware da placa não tem o ler_adc compilado (o setup da placa, ou "
-                                     "a atualização do firmware)", codigo, texto)
-        if codigo == SAIDA_SEM_SAIDA_CONTINUA:
-            return FirmwareSemSaidaContinua("o ler_adc da placa é de antes da captura direto no computador (sem o "
-                                            "-o -): atualize o firmware da placa", codigo, texto)
-        if codigo == SAIDA_SENHA_RECUSADA:
-            return ErroDoSudo("a placa recusou a senha do sudo", senha_recusada=True)
-        if codigo == SAIDA_SEM_DIRETORIO:
-            return ErroDoSudo("a placa não deixou criar o diretório temporário em /dev/shm (onde a senha fica, na RAM)")
-        erros = [linha for linha in texto if "erro" in linha.lower()] or list(texto)
-        causa = erros[-1].strip() if erros else "sem mensagem"
-        return ErroDaCaptura(f"o ler_adc não começou a captura (código {codigo}): {causa[:300]}", codigo, texto)
+        return erro_antes_de_comecar(codigo, self._texto)
 
     # ------------------------------------------------------------------ o que chega
 

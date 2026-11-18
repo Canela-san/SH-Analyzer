@@ -236,6 +236,28 @@ def test_o_comando_visivel_e_o_que_se_digitaria_na_placa():
     p = PedidoDeCaptura((Canal(1),), duracao_s=600.0, titulo="Rede de casa")
     assert pd.comando(p) == "sudo ./ler_adc 400000 1 --duracao 10m -t 'Rede de casa' -o -"
     assert pd.comando(p.com(destino="cartao")) == "sudo ./ler_adc 400000 1 --duracao 10m -t 'Rede de casa'"
+    no_cartao = p.com(destino="cartao", arquivo_no_cartao="rede.bin")
+    assert no_cartao.argumentos()[-2:] == ["-o", "rede.bin"]
+    assert no_cartao.argumentos(saida=False) == ["400000", "1", "--duracao", "10m", "-t", "Rede de casa"]
+
+
+def test_o_nome_do_arquivo_e_o_do_ler_adc_com_a_hora_daqui_e_o_titulo():
+    import datetime
+    quando = datetime.datetime(2026, 11, 18, 14, 10, 5)
+    assert pd.nome_do_arquivo(PedidoDeCaptura(), quando) == "captura_20261118_141005.bin"
+    assert pd.nome_do_arquivo(PedidoDeCaptura(titulo="Rede de casa · V+I"), quando) == \
+        "rede_de_casa_v_i_20261118_141005.bin"
+    assert pd.nome_do_arquivo(PedidoDeCaptura(titulo="Calibração ±10 V"), quando) == \
+        "calibracao_10_v_20261118_141005.bin"
+    assert pd.nome_do_arquivo(PedidoDeCaptura(titulo="· ±"), quando) == "captura_20261118_141005.bin"
+    longo = pd.nome_do_arquivo(PedidoDeCaptura(titulo="ab " * 40), quando)
+    assert len(longo) <= pd.TAMANHO_DO_PREFIXO + len("_20261118_141005.bin") and "__" not in longo
+    no_cartao = PedidoDeCaptura(destino="cartao", arquivo_no_cartao="rede.bin")
+    assert pd.nome_do_arquivo(no_cartao, quando) == "rede.bin"
+    assert pd.nome_do_arquivo(no_cartao.com(destino="computador"), quando) == "captura_20261118_141005.bin"
+    for titulo in ("Rede de casa · V+I", "", "Ação"):
+        nome = pd.nome_do_arquivo(PedidoDeCaptura(titulo=titulo), quando)
+        assert not pd.validar(PedidoDeCaptura(destino="cartao", arquivo_no_cartao=nome))       # um nome que o C aceita
 
 
 @pytest.mark.parametrize("segundos, texto", [(30.0, "30s"), (2.5, "2.5s"), (60.0, "1m"), (90.0, "90s"),
@@ -469,7 +491,8 @@ def test_o_modelo_vai_e_volta_pelo_json(pedido):
 
 
 def test_o_modelo_sem_um_campo_fica_com_o_padrao_e_um_valor_fora_da_regra_passa():
-    assert pd.de_dict({}) == PedidoDeCaptura()
+    assert pd.de_dict({}) == PedidoDeCaptura() and pd.de_dict({}).trazer_no_fim
+    assert pd.de_dict({"trazer_no_fim": False}).trazer_no_fim is False
     p = pd.de_dict({"taxa_hz": 900_000, "canais": [{"numero": 1, "faixa_v": 3}]})
     assert p.taxa_hz == 900_000 and p.canais == (Canal(1, faixa_v=3.0),)
     assert pd.impede(pd.validar(p))
@@ -477,7 +500,7 @@ def test_o_modelo_sem_um_campo_fica_com_o_padrao_e_um_valor_fora_da_regra_passa(
 
 @pytest.mark.parametrize("dados", [[], {"taxa_hz": "400000"}, {"taxa_hz": True}, {"canais": [{"grandeza": "x"}]},
                                    {"canais": [{"numero": 1, "ganho": "2"}]}, {"atrasos_cs": [3, 1]},
-                                   {"forcar_taxa": 1}, {"duracao_s": "1h"}])
+                                   {"forcar_taxa": 1}, {"duracao_s": "1h"}, {"trazer_no_fim": "sim"}])
 def test_o_modelo_com_a_forma_errada_e_recusado(dados):
     with pytest.raises(ValueError):
         pd.de_dict(dados)

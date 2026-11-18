@@ -12,6 +12,8 @@
   corrigir), o relógio, as capturas e os logs;
 * :mod:`.captura` -- a captura contínua: o ``ler_adc -o -`` pelo SSH, com o sudo, gravada aqui enquanto chega, o
   Parar e a queda (o fechamento é o do motor, ``supraharmonicos.saida_continua``);
+* :mod:`.captura_no_cartao` -- a captura no cartão: o ``ler_adc -o NOME`` desacoplado da conexão, acompanhado pelo
+  progresso, parado pelo PID e retomado depois de uma queda;
 * :mod:`.pedido` -- o pedido de uma captura (o formulário da Aquisição): os argumentos do ``ler_adc``, a validação
   por campo com as regras dele e a linha de comando lida como o C a lê (sem o asyncssh);
 * :mod:`.conferencia` -- o "Conferir antes": uma captura curta do pedido, medida no motor
