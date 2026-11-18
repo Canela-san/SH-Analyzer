@@ -1652,7 +1652,7 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
     (o `ler_adc` de verdade com a PRU falsa), os modelos em `tests/test_gui_projeto.py` e `tests/test_gui_modelo.py`, e
     o disco e as opções do `ler_adc` simulado em `tests/test_sh_placa_simulador.py`.
 
-### ▶ F4.4: a captura na tela
+### ☑ F4.4: a captura na tela
 
 - **O conteúdo:** o tempo e a barra, os bytes e a vazão, os contadores de integridade, o sinal ao vivo (os últimos
   50 ms do bloco mais recente) e o espectro ao vivo (Welch, com a média dos blocos); **Parar**; no fim, o CRC
@@ -1688,8 +1688,37 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
     travado enquanto a captura roda: a barra de estado (o tempo, a barra, o recebido, a vazão, os contadores,
     Parar), o sinal ao vivo (um gráfico por canal), o espectro ao vivo (um canal por vez, a faixa de 2 a 150 kHz
     marcada) e a saída do `ler_adc`. A senha do sudo segue a da conferência. O caderno é a F4.5.
+- **Feito em 18/11/2026** (o `sh_placa` em `1472519`; o motor em `dcfd8f1`; a interface em `080f78b`, `7a21de5` e
+  `5365d8e`):
+  - **o nome e o cartão** (`sh_placa/pedido.py`, `nome_do_arquivo`; `sh_placa/captura_no_cartao.py`), como no
+    desenho. A pasta da captura em curso fica na pasta do firmware (`.em_curso/NOME/`: o `pid`, o `progresso`, o
+    `texto` e o `codigo`), e quem a recolhe é o `limpar`. O roteiro de início confere o nome que já existe (94) e
+    outra captura rodando (93) antes da senha;
+  - **o ao vivo** (`servicos/ao_vivo.py`, pelo `api.abrir_ao_vivo`): uma conta por vez numa thread, e só o bloco
+    mais recente; no fim, o quadro do último bloco sai do arquivo final (uma captura curta acaba antes do primeiro
+    quadro);
+  - **o serviço** (`servicos/captura_da_placa.py`, `CapturaDaPlaca`): os estados, a senha (a da sessão, a desta
+    conexão, a do cofre), o Parar, a queda no cartão (o estado `sem_conexao` e a retomada na próxima sessão da mesma
+    placa, pelo `em_curso`), a fila de transferências no fim e onde a captura que terminou está neste computador
+    (`local_do_fim`: o arquivo, ou a cópia conferida da do cartão);
+  - **o cockpit** (`areas/aquisicao/ao_vivo.py`) no centro da seção, no lugar do comando; o formulário travado
+    enquanto a captura roda; o fim com o resumo e as ações (Abrir na Análise, Mostrar na pasta, Trazer, Nova
+    captura); o `.parcial` da sessão com "Fechar a captura"; fechar a janela no meio pergunta;
+  - **o que a imagem sem tela mostrou:** a barra de estado numa linha só cortava o Parar e rolava de lado, e os
+    gráficos ao vivo empurravam o espectro para fora da tela. A barra foi para duas linhas, e os gráficos para
+    alturas fixas, com o nome do canal numa etiqueta dentro do gráfico (em pé, ele era mais alto que o gráfico de
+    cada canal). No cartão, a saída do `ler_adc` rolava de lado com o nome do arquivo (agora quebra). E a captura do
+    cartão, trazida e conferida, não mostrava o "Abrir na Análise" (agora mostra, pelo `local_do_fim`);
+  - **o que a bancada mostrou** (a placa no USB, o canal 1 na tomada; o `ler_adc` deste branch em `~/f44`, compilado
+    com `-Werror` e apagado depois; seção 5): as três capturas como no simulador, sem nenhuma correção;
+  - **os testes:** `tests/test_gui_captura_na_tela.py` (9: a captura no computador com o ao vivo e o projeto, o
+    Parar, a queda no computador, o cartão com a queda, a retomada e a transferência, a senha, o `.parcial`, fechar a
+    janela, o nome livre e o quadro pela `api`), os do cartão em `tests/test_sh_placa_captura.py` (o `ler_adc` de
+    verdade com a PRU falsa: a queda, a retomada, o Parar, o nome que existe, outra captura rodando), o nome em
+    `tests/test_sh_placa_pedido.py`, o cartão com o SFTP em `tests/test_sh_placa_simulador.py` e o `abrir_ao_vivo` em
+    `tests/test_saida_continua.py`.
 
-### ☐ F4.5: o caderno de bancada
+### ▶ F4.5: o caderno de bancada
 
 - **O conteúdo:** as notas com hora e as entradas automáticas (a captura, a conferência, a transferência, a
   correção), no `anotacoes.md` da sessão do dia (o mesmo do `sessao_lab.sh`, PD-09); a seção "Notas" no projeto.
@@ -1738,6 +1767,7 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
 | 17/11/2026 | **A captura contínua (F4.2) na placa de verdade**, pelo `sh_placa`, pelo USB, a 400 kS/s | 4 blocos em 3 canais: os dois CRCs certos, aberta na `api`; 12 blocos em 2 canais (31,5 s): a vazão de 0,77 MB/s (a da captura: 0,8 MB/s), o pior bloco no ARM em 388 ms, nenhuma amostra atrasada; o Parar no 3º bloco: o código 0, o cabeçalho do `ler_adc`; a conexão abortada no 3º bloco: fechada aqui com 3 blocos, e a placa sem o `ler_adc`, com a PRU parada e a `/dev/shm` vazia; a senha errada: o código 98; o `ler_adc` v0.8: o código 96 | o diário de 17/11 (F4.2) |
 | 17/11/2026 | **Uma captura de 152 s pelo SSH** (58 blocos, 116 MiB, um canal, 400 kS/s; parada pelo root) | A taxa medida de 400 000,2 S/s, o pior bloco no ARM em 445 ms (de 2 621 ms), nenhuma amostra atrasada nem buffer sobrescrito; o CRC das amostras certo | idem |
 | 18/11/2026 | **O "Conferir antes" (F4.3) na placa de verdade**, pelo `sh_placa`, pelo USB; o canal 1 na tomada da casa | Um bloco a 400 kS/s em **4,6 s** (2,6 s de captura); o canal 1: de −9,3169 a +9,3241 V no pino (18,64 Vpp, ~128 V rms na tomada), 60,04 Hz, 91 % da maior faixa: **as medidas do motor iguais às do `ler_adc`**, dígito a dígito; em ±2,56 V: 82 % das amostras saturadas, ✗, e a sugestão da maior faixa; os canais 0 e 1 com faixas por canal e o SPI lento a 200 kS/s: íntegra, as faixas e o SPI certos no cabeçalho, o canal 0 (sem nada) com 0,7 LSB rms; o arquivo apagado nos três | o diário de 18/11 (F4.3) |
+| 18/11/2026 | **A captura na tela (F4.4) na placa de verdade**, pelo `sh_placa` e pelas contas da interface, pelo USB; o canal 1 na tomada da casa | **No computador:** 3 blocos a 400 kS/s em 9,0 s, o CRC das amostras certo e a integridade limpa; o quadro do ao vivo com 20 000 amostras (50 ms), 9,37 V de pico no pino, 60,00 Hz. **No cartão, até parar:** o Parar no 2º bloco, o código 0, a cópia pelo SFTP (4 MiB em 0,8 s) conferida pelo CRC-32. **No cartão, com a queda:** a conexão fechada no 1º bloco; 2 s depois, a conexão nova achou a captura rodando (`em_curso`) e a acompanhou até o 4º bloco; a cópia (8 MiB em 1,6 s) conferida. A placa ficou limpa | o diário de 18/11 (F4.4) |
 | 16/11/2026 | **A jornada da Aquisição na placa de verdade**, na janela (sem tela), pelo USB: em casa e na tomada do laboratório | Achada em 1,6 s; a primeira conexão (a impressão, a senha, a chave) em 2,5 e 2,6 s; o enlace com 1,0 e 0,9 ms e 4,6 e 6,6 MB/s; uma conferência de 4 MiB transferida e conferida pelo CRC em 0,91 e 0,93 s (o SFTP a 5,2 e 5,3 MiB/s); o relógio acertado com ±0,05 s, de +2,15 s e de −3 h 07 | o diário de 16/11 (F3.10) |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
@@ -2320,16 +2350,28 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **Testes:** o `ci.sh` completo passou: 1 919 em cada Python (eram 1 741), o `placa` com 477 (eram 329) e a
     interface com 850 (eram 824); o `.venv` intocado (o mesmo `pyvenv.cfg` antes e depois).
   - **Próximo:** a F4.4, a captura na tela.
-- **18/11/2026 (depois):** **a F4.4, em andamento** (seção 4e, o desenho em `a05fb03`):
-  - **feito e com teste:** a captura no cartão desacoplada da conexão e o nome do arquivo (`1472519`, 20 testes da
-    captura com o `ler_adc` de verdade, mais o do simulador com a transferência) e o `abrir_ao_vivo` do motor
-    (`dcfd8f1`); a suíte fora da interface passou (1 670);
-  - **feito, sem teste próprio ainda:** o serviço da captura, o ao vivo e o cockpit na seção (o último commit da
-    interface); os 20 testes da seção e da área passam com ele;
-  - **Parado em:** os testes da F4.4 na interface (`tests/test_gui_captura_na_tela.py`: a captura no simulador, o
-    ao vivo, o Parar, a queda, o cartão com a transferência, a senha, o `.parcial`, o fechar a janela), a imagem sem
-    tela do cockpit, a CI completa, a bancada na placa (o `ler_adc` novo numa pasta à parte, apagada depois) e os
-    docs (a F4.4 ☑, a arquitetura, a memória).
+- **18/11/2026 (depois):** **a F4.4, a captura na tela** (seção 4e, o desenho em `a05fb03`):
+  - **o pedido:** "Faça a F4.4", e depois "termine a F4.4 e faça a F4.5";
+  - **a ordem dos commits, por componente:** o `sh_placa` (o cartão e o nome, `1472519`), o motor (o
+    `abrir_ao_vivo`, `dcfd8f1`) e a interface (o serviço, o ao vivo e o cockpit, `080f78b`; os testes, `7a21de5`; o
+    que a imagem sem tela mostrou, `5365d8e`; o import do motor, `4c961dd`);
+  - **o que a imagem sem tela mostrou:** a barra de estado cortava o Parar, os gráficos ao vivo empurravam o
+    espectro para baixo da dobra, o nome do canal em pé era mais alto que o gráfico, a saída do `ler_adc` rolava de
+    lado no cartão, e a captura do cartão, trazida e conferida, não mostrava o "Abrir na Análise" (os cinco corrigidos,
+    seção 4e);
+  - **o que a placa mostrou** (seção 5): as três capturas como no simulador, sem correção nenhuma. O `ler_adc`
+    deste branch foi compilado em `~/f44` com `-Werror` e apagado depois; nenhum `ler_adc` rodando, a captura do
+    usuário (`FEM_*.bin`) intocada, 1,5 GB livres como antes;
+  - **o que a CI mostrou:** o `ao_vivo.py` importava o pacote do motor (`from supraharmonicos import api`), e o teste
+    da arquitetura o recusa (`4c961dd`). A CI completa de novo fica para o fim da F4.5 (a segunda rodada foi
+    interrompida: ela rodava sobre a árvore enquanto a F4.5 era escrita);
+  - **achado de quebra:** três `ler_adc` da PRU falsa presos havia ~3 h neste computador, de rodadas dos testes do
+    cartão que falharam durante o desenvolvimento (o `setsid` os solta da conexão, de propósito, e a PRU falsa morre
+    com o teste). Foram encerrados; a correção vem com a F4.5 (o simulador que para leva as capturas no cartão
+    junto);
+  - **Testes:** `tests/test_gui_captura_na_tela.py` (9) e os do cartão no `sh_placa` (46 com os do simulador e os da
+    tela, juntos), mais os 29 da seção, da área e da captura na tela juntos.
+  - **Próximo:** a F4.5, o caderno de bancada.
 ---
 
 ## 8. Perguntas em aberto
