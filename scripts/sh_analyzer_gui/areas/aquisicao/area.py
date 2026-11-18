@@ -19,9 +19,11 @@ from PySide6.QtWidgets import QHBoxLayout, QStackedWidget, QWidget
 
 from ...componentes.toast import Toast
 from ...servicos.conexao_da_placa import ESPERANDO_O_USUARIO, ConexaoDaPlaca
+from ...servicos.conferencia_da_placa import ConferenciaDaPlaca
 from ...servicos.saude_da_placa import SaudeDaPlaca
 from ...servicos.transferencias import TransferenciasDaPlaca
 from .arquivos import Arquivos
+from .capturar import Capturar
 from .diagnostico import Diagnostico
 from .dialogo_de_conexao import DialogoDeConexao
 from .dialogo_de_correcao import DialogoDeCorrecao
@@ -39,7 +41,8 @@ class AreaDeAquisicao(QWidget):
 
     def __init__(self, conexao: ConexaoDaPlaca, saude: SaudeDaPlaca, dialogos_de=None,
                  transferencias: TransferenciasDaPlaca | None = None, abrir_na_analise=None, abrir_url=None,
-                 executar_programa=None, parent: QWidget | None = None):
+                 executar_programa=None, conferencia: ConferenciaDaPlaca | None = None,
+                 opcoes_da_captura: dict | None = None, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("area_aquisicao")
         self.conexao, self.saude = conexao, saude
@@ -59,8 +62,11 @@ class AreaDeAquisicao(QWidget):
         if executar_programa is not None:
             extras["executar_programa"] = executar_programa
         self.terminal = Terminal(conexao, dialogos_de=dialogos_de, **extras)
+        self.conferencia = conferencia if conferencia is not None else ConferenciaDaPlaca(conexao, saude, parent=self)
+        self.capturar = Capturar(conexao, saude, self.conferencia, **(opcoes_da_captura or {}))
         self.paginas: dict[str, QWidget] = {"visao_geral": self.visao_geral, "diagnostico": self.diagnostico,
-                                            "arquivos": self.arquivos, "terminal": self.terminal}
+                                            "arquivos": self.arquivos, "terminal": self.terminal,
+                                            "capturar": self.capturar}
         for nome, _titulo, _icone in SECOES:
             if nome not in self.paginas:
                 self.paginas[nome] = SecaoQueChega(nome)
@@ -90,7 +96,14 @@ class AreaDeAquisicao(QWidget):
     def mostrar_secao(self, nome: str) -> None:
         self.lateral.navegacao.escolher(nome)
 
+    def acompanhar(self, projeto) -> None:
+        """O projeto da janela: os modelos de captura são dele."""
+        self.capturar.acompanhar(projeto)
+
     def _secao_escolhida(self, nome: str) -> None:
+        if nome == "capturar":
+            self.capturar.ler_os_perfis()
+            self.capturar.validar()
         self.secoes.setCurrentWidget(self.paginas[nome])
 
     @property

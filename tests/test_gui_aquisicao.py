@@ -111,7 +111,7 @@ def test_a_lista_e_o_simulador(qtbot, abrir):
     area.mostrar_secao("terminal")
     assert area.terminal.paginas.currentWidget() is area.terminal.simulador and not area.terminal.abas.count()
     area.mostrar_secao("capturar")
-    assert area.secoes.currentWidget().titulo.text() == "Capturar: chega na v0.10"
+    assert area.secoes.currentWidget() is area.capturar and area.capturar.conferir.isEnabled()
     clicar_na_placa(qtbot, area, "Simulador")                     # a conectada leva à visão geral
     assert area.secao == "visao_geral" and c.estado == "conectada"
     area.lateral.desconectar.click()

@@ -307,6 +307,7 @@ class JanelaPrincipal(QMainWindow):
         self._projeto_mudou()
         self.servico_de_fontes.acompanhar(projeto)
         self.area.acompanhar(projeto)
+        self.aquisicao.acompanhar(projeto)
 
     def vista_ativa(self) -> Vista | None:
         """A vista da aba aberta: onde um canal novo é plotado."""

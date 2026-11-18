@@ -21,6 +21,7 @@ from sh_analyzer_gui.areas.analise.arvore import PAPEL_CORES, PAPEL_DETALHE, PAP
 from sh_analyzer_gui.componentes.toast import Toast  # noqa: E402
 from sh_analyzer_gui.dados.captura import ParametrosSemCabecalho, abrir_fonte  # noqa: E402
 from sh_analyzer_gui.dados.piramide import Cancelado  # noqa: E402
+from sh_analyzer_gui.dados.projeto import VERSAO as VERSAO_DO_PROJETO  # noqa: E402
 from sh_analyzer_gui.janela import JanelaPrincipal  # noqa: E402
 from sh_analyzer_gui.modelo.comandos import AdicionarFonte, AdicionarVista, MudarTracos, RemoverFonte  # noqa: E402
 from sh_analyzer_gui.modelo.objetos import FonteDoProjeto, Projeto, Vista  # noqa: E402
@@ -271,7 +272,7 @@ def test_o_bin_legado_pergunta_a_taxa_e_os_canais_e_o_projeto_os_guarda(janela, 
     # O projeto guarda a taxa e os canais: reabri-lo não pergunta de novo.
     assert janela.controle.salvar_como(tmp_path / "p.shproj")
     salvo = json.loads((tmp_path / "p.shproj").read_text())
-    assert salvo["versao"] == 3 and salvo["fontes"][0]["sem_cabecalho"] == {"taxa_total_hz": 400_000.0,
+    assert salvo["versao"] == VERSAO_DO_PROJETO and salvo["fontes"][0]["sem_cabecalho"] == {"taxa_total_hz": 400_000.0,
                                                                             "canais": [0, 1]}
     janela.controle.novo()
     janela.controle.dialogos = DialogosFalsos()

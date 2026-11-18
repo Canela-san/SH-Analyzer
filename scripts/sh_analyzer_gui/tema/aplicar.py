@@ -206,7 +206,7 @@ QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0; }}
 QScrollBar::handle {{ background: {t.borda_forte}; border-radius: 5px; min-height: 24px; min-width: 24px; }}
 QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{
     background: none; border: none; width: 0; height: 0; }}
-QLineEdit[invalido="true"], QComboBox[invalido="true"] {{ border-color: {t.erro}; }}
+QLineEdit[invalido="true"], QComboBox[invalido="true"], QPlainTextEdit[invalido="true"] {{ border-color: {t.erro}; }}
 QComboBox QLineEdit {{ background: transparent; border: none; padding: 0; }}
 QWidget#segmentado {{ background: {t.superficie}; border: 1px solid {t.borda}; border-radius: 8px; }}
 QWidget#segmentado QToolButton {{ background: transparent; border: none; border-radius: 6px; color: {t.texto2};
@@ -317,6 +317,13 @@ QListWidget#atividade, QTableWidget#capturas_na_placa {{ background: transparent
 QListWidget#atividade {{ color: {t.texto2}; padding: 4px 8px; }}
 QTableWidget#capturas_na_placa::item {{ padding: 2px 8px; }}
 QWidget#conteudo_do_diagnostico {{ background: {t.fundo}; }}
+QWidget#formulario_da_captura, QWidget#conteudo_do_formulario {{ background: {t.superficie}; }}
+QWidget#formulario_da_captura {{ border-right: 1px solid {t.borda}; }}
+QScrollArea#rolagem_do_formulario, QScrollArea#rolagem_da_captura {{ background: transparent; border: none; }}
+QFrame#secao_do_formulario {{ border-bottom: 1px solid {t.borda}; }}
+QLabel#titulo_do_formulario {{ color: {t.mudo}; }}
+QLabel#rotulo_do_campo {{ color: {t.texto2}; }}
+QWidget#centro_da_captura {{ background: {t.fundo}; }}
 QTabWidget#abas_do_terminal::pane {{ border: 1px solid {t.borda}; border-radius: 0 0 8px 8px; top: -1px;
                                      background: {t.afundada}; }}
 QAbstractScrollArea#terminal {{ background: {t.afundada}; border: none; }}

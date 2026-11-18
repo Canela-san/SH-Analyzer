@@ -47,6 +47,7 @@ CHAVE_DOS_PREFIXOS = "numeros/prefixos_nos_eixos"
 CHAVE_DAS_UNIDADES = "unidades/proprias"
 CHAVE_DAS_PLACAS = "placa/conhecidas"
 CHAVE_DO_CENARIO = "placa/cenario_do_simulador"
+CHAVE_DO_PEDIDO = "aquisicao/ultimo_pedido"
 PASTAS = ("dados", "sondas", "cache")
 CHAVES_DAS_PASTAS = {nome: f"pastas/{nome}" for nome in PASTAS}
 CACHES = ("piramides", "materializacoes")
@@ -182,6 +183,26 @@ def cenario_do_simulador() -> str:
 
 def mudar_cenario_do_simulador(nome: str) -> None:
     gravar(CHAVE_DO_CENARIO, nome)
+
+
+def ultimo_pedido():
+    """O pedido de captura da última vez (o formulário da Aquisição volta com ele); ``None`` sem um, ou num que não
+    se lê mais (de outra versão)."""
+    from sh_placa import pedido
+
+    texto = ler_texto(CHAVE_DO_PEDIDO, "")
+    if not texto:
+        return None
+    try:
+        return pedido.de_dict(json.loads(texto))
+    except ValueError:
+        return None
+
+
+def mudar_ultimo_pedido(p) -> None:
+    from sh_placa import pedido
+
+    gravar(CHAVE_DO_PEDIDO, json.dumps(pedido.para_dict(p), ensure_ascii=False))
 
 
 def pasta_da_placa() -> Path:

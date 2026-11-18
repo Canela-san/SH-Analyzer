@@ -259,6 +259,15 @@ class SaudeDaPlaca(QObject):
         else:
             self._mudar_a_correcao(None)
 
+    @property
+    def senha_do_sudo(self) -> str | None:
+        """A senha do sudo desta sessão (a que deu certo nesta conexão), ou ``None``. Só na memória."""
+        return self._senha_do_sudo
+
+    def lembrar_senha_do_sudo(self, senha: str | None) -> None:
+        """A senha que deu certo em outro uso do sudo (a conferência, a captura); ``None`` a esquece (a recusada)."""
+        self._senha_do_sudo = senha
+
     def _corrigindo(self) -> bool:
         return self.correcao is not None and self.correcao.estado == "rodando"
 
