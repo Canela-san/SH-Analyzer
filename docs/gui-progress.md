@@ -1804,6 +1804,29 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
 
 - **O conteúdo:** as rotinas (a sonda, a calibração, a campanha) abrem no terminal embutido com o comando montado pelo
   formulário, com as pausas "mude a bancada e tecle Enter" que elas já têm (o plano, 11.5).
+- **O desenho (18/11/2026):**
+  - **sem o Qt, `sh_placa/rotinas.py`:** os sete modos do `coletar.sh` (conferir, calibrar, sonda, aliasing, ruído,
+    teto, bancada), cada um com o resumo, as opções principais (a opção, o rótulo, a ajuda, o tipo: texto, escolha ou
+    marca), se para e pede a bancada, se aceita `--simular` e `--continuar`; `valores_do_pedido` preenche o que é a
+    bancada (os canais, o canal da sonda, a grandeza, a sonda, a taxa, a faixa e o SPI) com o pedido da Capturar, e
+    deixa o resto vazio (o padrão do script, que dá uma boa análise); `comando` monta
+    `cd ~/firmware && ./coletar.sh MODO ...`, cada valor com `shlex.quote`, e as "outras opções" do usuário lidas
+    pelo `shlex` (aspas abertas são recusadas). A ajuda do script não é lida por máquina (é feita para gente: duas
+    opções numa linha, os padrões no meio do texto); um teste confere que cada opção da tabela está na ajuda de
+    cada modo e que todo modo da ajuda está na tabela, e outro roda os comandos montados com `--simular` no
+    `coletar.sh` do repositório;
+  - **a seção Rotinas** da Aquisição (entre a Capturar e a Arquivos): a lista dos modos à esquerda (com "para e pede
+    a bancada" quando para), o formulário do escolhido, a linha de comando pronta (editável) e "Rodar no terminal",
+    "Simular" (com `--simular`), "Continuar a última" (com `--continuar`) e "Ver a ajuda". Rodar abre uma aba nova do
+    terminal com o nome do modo, roda o comando lá (as pausas, o `sudo` e as respostas ficam na aba, gravadas no
+    `terminal_bbb_N.txt` do dia) e põe uma entrada no caderno; os valores de cada modo ficam enquanto o aplicativo
+    está aberto, e "Do pedido" os refaz pela Capturar;
+  - **os testes:** a tabela contra a ajuda, o comando (as aspas, os vazios, as marcas, as outras opções), os comandos
+    com `--simular` aceitos pelo `coletar.sh` de verdade, e a seção com o servidor SSH dos testes (o `sh -i` num PTY):
+    rodar uma rotina com `--simular` na placa do teste, a aba nova com o nome do modo e o plano na tela, e a entrada
+    no caderno;
+  - **pronto quando:** a calibração e a sonda rodam da seção na placa de verdade até a primeira pausa (com
+    `--simular`, até o fim do plano).
 
 ### ☐ F4.7: o fechamento da Fase 4
 
