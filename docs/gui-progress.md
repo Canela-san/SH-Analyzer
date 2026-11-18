@@ -29,10 +29,13 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > (diário de 17/11): a captura contínua no computador, sem Qt (`sh_placa/captura.py` e o fechamento do motor,
 > `supraharmonicos/saida_continua.py`): o arquivo gravado enquanto chega, o Parar, a queda e o disco daqui fechados
 > com o que chegou (a marca "fim escrito pelo computador" no cabeçalho), e a placa simulada transmitindo de verdade;
-> validada na placa (seção 5). **A próxima: a F4.3**, o formulário de captura (o B2); depois, a F4.4 junta as duas
-> na tela. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`): a captura contínua diz "atualize
-> o firmware da placa" (o código 96 do roteiro, conferido nela), e o aplicativo vai precisar mandar o firmware novo
-> (o `enviar` do `BeagleBone_Setup.sh`, ou a Fase 6).
+> validada na placa (seção 5). **A F4.3 está feita** (diário de 18/11): a seção Capturar, com o formulário de
+> captura (o pedido validado ao vivo pelas regras do `ler_adc.c`, num contrato com o C), os modelos no projeto e o
+> "Conferir antes" (um bloco do próprio pedido, medido no motor com as regras do `coletar.sh conferir`), validado na
+> placa com o canal 1 na tomada de casa (seção 5). **A próxima: a F4.4**, a captura na tela (o botão Capturar, o
+> progresso, o ao vivo, o Parar e a queda). **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
+> a captura contínua e o "Conferir antes" dizem "atualize o firmware da placa" (o código 96 do roteiro, conferido
+> nela), e o aplicativo vai precisar mandar o firmware novo (o `enviar` do `BeagleBone_Setup.sh`, ou a Fase 6).
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
@@ -46,10 +49,14 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > os arquivos: "Transferir as novas" para a pasta da sessão do dia, "Abrir na Análise" e "Apagar da placa" (só o
 > conferido). **O simulador** está na lista também: o "Cenário" da visão geral (ou o "Conectar no cenário" do menu
 > da placa) troca a placa simulada (o ADC mudo, o cartão cheio, a conexão que cai, o relógio errado...).
+> **A seção Capturar** (na barra lateral da Aquisição): o formulário com o comando embaixo, os problemas em cada
+> campo, o menu "Modelo" e o "Conferir antes" (com o simulador: a faixa sugerida e "Usar as faixas sugeridas").
 >
 > **Com o usuário (quando puder):**
 > - a jornada da Aquisição na tela, com a placa: a placa na lista, um clique, a visão geral, o "Acertar…", os
 >   Arquivos ("Transferir", "Abrir na Análise") e o espectro da tomada;
+> - a seção Capturar na tela: a leitura do formulário (as seções, os problemas no campo, o comando), num monitor de
+>   verdade (a imagem sem tela foi conferida, mas o tamanho das fontes e o espaço são do usuário);
 > - o G1 com a cadeia, na tela: `uv run --extra gui python -m sh_analyzer_gui.prototipos.medir_vista --cadeia`
 >   (sem tela, p95 de 11,9 a 12,9 ms durante as materializações e de 14,0 a 14,2 ms depois; se reprovar na tela, o
 >   texto dos eixos em cache, com `QStaticText` (a F1.5), é o próximo passo);
@@ -58,8 +65,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 >
 > **A placa de verdade** está no USB do computador do usuário (15/11/2026): `debian@192.168.6.2`, com a chave. O
 > cabo tem mau contato (a conexão cai sem aviso), e o disco dela é pequeno (~1,5 GB livres): as capturas vêm
-> para `$DADOS/lab/` e saem da placa depois de conferidas. O canal 1 está na tomada do laboratório (132 V,
-> 16/11/2026). A placa não tem bateria no relógio: desligada, ela volta atrasada (3 h 07 na última vez).
+> para `$DADOS/lab/` e saem da placa depois de conferidas. **O canal 1 está na tomada da casa do usuário** (desde
+> 18/11/2026: ~128 V rms, 9,3 V de pico no pino, 91 % da maior faixa; antes, na do laboratório, 132 V). A placa não
+> tem bateria no relógio: desligada, ela volta atrasada (3 h 07 numa vez; ~37 h em 18/11).
 
 **Onde trabalhar:** no worktree `.claude/worktrees/interface` (o branch `feat/interface`), para não mexer no checkout do `main`, que é o do laboratório. Se ele não existir, crie-o com `git worktree add .claude/worktrees/interface feat/interface`.
 
@@ -1581,13 +1589,68 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
     `pru_falsa` atrás do servidor SSH do teste), 4 novos em `tests/test_sh_placa_simulador.py` e 2 em
     `tests/test_cabecalho.py`.
 
-### ☐ F4.3: o formulário de captura (o B2)
+### ☑ F4.3: o formulário de captura (o B2)
 
 - **O conteúdo:** os campos do plano (11.5) com a validação ao vivo: o título e a descrição em bytes, os canais na
   ordem real, a grandeza, a sonda (o perfil existe e a grandeza bate), a faixa com o LSB, a taxa até o teto da PRU com
   a Nyquist por canal, a duração com o tamanho e o espaço no destino, o destino (o computador ou o cartão) e o
   avançado recolhido; o comando montado, visível; **os modelos** com nome, no projeto; **"Conferir antes"** (o
   `coletar.sh conferir`, ~10 s), com o resultado no caderno.
+- **O desenho** (18/11/2026, antes do código):
+  - **o pedido, sem Qt** (`sh_placa/pedido.py`): `PedidoDeCaptura` (os canais com a grandeza, a sonda, a faixa e o
+    ganho; a taxa; a duração ou os blocos, ou "até parar"; o título e a descrição; o destino; o avançado) monta os
+    argumentos do `ler_adc` e o comando visível, e `validar(contexto)` devolve os problemas por campo, com o nível
+    (o erro impede a captura; o aviso, não). As regras são as do `ler_adc.c` (o teto da PRU portado de
+    `teto_ticks_da_pru`, os limites em bytes, as faixas, os blocos de uma duração); as de fora do C vêm do motor (o id
+    de sonda seguro, o perfil na pasta das sondas, a calibração do perfil contra a faixa e o ganho do canal, como o
+    `conferir_calibracao_perfil` avisaria na análise) e do contexto (o espaço no destino, a vazão do enlace, uma
+    captura do mesmo nome no cartão). **O contrato com o C:** o `ler_adc.c` de verdade, compilado num harness, lê os
+    argumentos de cada pedido e devolve o que entendeu; o `ler_argumentos` daqui (o caminho de volta) tem de dar o
+    mesmo, nos aceitos e nos recusados. A placa simulada passa a ler a linha de comando por ele (ela aceitava menos
+    que o C: sem a temperatura, a faixa, a sonda e o teto);
+  - **os modelos de captura no projeto** (`.shproj` versão 4, `modelos_de_captura`): o pedido inteiro com um nome;
+    guardar e apagar entram no desfazer, como o resto do projeto;
+  - **"Conferir antes"**, a captura curta com o pedido do formulário (um bloco, pela saída contínua da F4.2, num
+    arquivo temporário) medida no motor com as regras do `coletar.sh conferir` (a integridade, o ADC mudo, e em cada
+    canal o nível, o offset, o ruído em LSB, a frequência, a saturação e a menor faixa que comporta o pico com 15 %
+    de folga). **Por que não rodar o `coletar.sh conferir`:** ele usa uma faixa para todos os canais e só o SPI
+    rápido ou o lento, e o resultado é texto para humanos (o mesmo motivo do `--progresso-json`, no plano 11.5); com
+    o pedido do formulário, a conferência mede exatamente a captura que vai ser feita. A rotina segue no terminal (a
+    F4.6). A faixa sugerida vira o "sugerir" de cada canal; o caderno é a F4.5;
+  - **a tela** (`areas/aquisicao/capturar.py`, a coluna esquerda do B2): a seção "Capturar" da Aquisição, no lugar da
+    página "chega na v0.10". O botão Capturar fica para a F4.4.
+- **Feito em 18/11/2026** (o `sh_placa` em `fbded87`, `d4d5929`, `2d8c826` e `d1f7d0e`; o simulador em `ca61759` e
+  `92bb000`; o motor em `4c87c77` e `d64e42a`; a interface em `5d67657`, `384e811` e `81cbc1c`):
+  - **o pedido** (`sh_placa/pedido.py`), como no desenho, com o contrato contra o `analisar_argumentos` do C
+    compilado num harness (os aceitos e os recusados, a mesma mensagem e o código 2) e o teto da PRU igual ao do C em
+    cada SPI e espera de CS. As mensagens com a vírgula decimal e os MiB, como o resto da interface;
+  - **o formulário** (`areas/aquisicao/formulario_de_captura.py`), em seções: o título e a descrição (o contador em
+    bytes), os canais (ligar e desligar; o desligado guarda o que tinha), a grandeza, a sonda (com os perfis da pasta;
+    o ganho vazio vem do perfil), a faixa com o LSB e o "sugerir" da conferência, a taxa com a Nyquist por canal, a
+    duração (tempo, blocos ou até parar) com o tamanho, o destino com o espaço e o avançado recolhido. Cada problema
+    aparece no campo dele (o erro impede; o aviso, não), e o comando, embaixo, é o que vai rodar;
+  - **os modelos** no `.shproj` versão 4, num menu na seção (guardar, atualizar, apagar, com o desfazer); o pedido da
+    última vez volta ao abrir;
+  - **"Conferir antes"** (`sh_placa/conferencia.py` e `servicos/conferencia_da_placa.py`): um bloco do pedido pela
+    saída contínua, medido no motor (`supraharmonicos/conferencia.py`, conferido contra o `medir_sinal` e o
+    `faixa_para_o_pico` do `comum.sh` de verdade) e apagado; a senha do sudo é a da sessão, a desta conexão ou a do
+    cofre, e a seção a pergunta quando não há nenhuma. O resultado fica em linhas (✓, ! e ✗), com a faixa sugerida de
+    cada canal a um clique e o aviso quando o pedido muda depois da conferência;
+  - **o que a bancada mostrou** (a placa no USB, o canal 1 na tomada da casa do usuário): as medidas do motor são as
+    do próprio `ler_adc`, dígito a dígito; o canal saturado não sugeria faixa nenhuma (agora sugere a maior, como a
+    `faixa_automatica` do `comum.sh`: o pico cortado não diz qual cabe); a tomada no divisor usa 91 % da maior faixa,
+    sem os 15 % de folga, e ninguém avisava (agora: "um surto de 10 % satura"); e o "mais resolução" valia só para a
+    faixa menor. **A imagem sem tela mostrou** que o "usar ±10,24 V" ao lado do ganho pedia 396 px numa coluna de 372
+    e cortava o formulário: a sugestão foi para uma linha dela, com o motivo. **O simulador tinha um erro:** gravava
+    0 KiB livres no disco da saída contínua (o C grava "desconhecido"), e a conferência dizia o cartão cheio; agora
+    segue o C, e o `-o ARQUIVO` usa o cartão simulado;
+  - **a placa de verdade ainda tem o `ler_adc` v0.8** na pasta do firmware: na tela, a conferência diz "atualize o
+    firmware da placa" (o código 96), sem pedir a senha. Na bancada, o `ler_adc` deste branch rodou numa pasta à
+    parte (`~/f43`, compilado nela com `-Werror` e apagado depois);
+  - **os testes:** `tests/test_sh_placa_pedido.py` (145, com o harness do C), `tests/test_conferencia.py` (24, com o
+    bash e o awk de verdade), `tests/test_gui_capturar.py` (16), o `Conferir antes` em `tests/test_sh_placa_captura.py`
+    (o `ler_adc` de verdade com a PRU falsa), os modelos em `tests/test_gui_projeto.py` e `tests/test_gui_modelo.py`, e
+    o disco e as opções do `ler_adc` simulado em `tests/test_sh_placa_simulador.py`.
 
 ### ☐ F4.4: a captura na tela
 
@@ -1644,6 +1707,7 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
 | 16/11/2026 | **A saída contínua na placa de verdade** (`ler_adc -o -` pelo `ssh`, 400 kS/s, um canal, pelo USB) | O bloco de 2 MiB em ~420 ms no ARM (a cópia, o CRC e o envio; enche em 2 621 ms); remontado = o formato do cartão, com os dois CRCs; o `ssh` morto: o código 6; congelado: o código 6 em 16 s (10 s sem andar); o SIGINT: o fluxo inteiro e o código 0 | o diário de 16/11 (F4.1) |
 | 17/11/2026 | **A captura contínua (F4.2) na placa de verdade**, pelo `sh_placa`, pelo USB, a 400 kS/s | 4 blocos em 3 canais: os dois CRCs certos, aberta na `api`; 12 blocos em 2 canais (31,5 s): a vazão de 0,77 MB/s (a da captura: 0,8 MB/s), o pior bloco no ARM em 388 ms, nenhuma amostra atrasada; o Parar no 3º bloco: o código 0, o cabeçalho do `ler_adc`; a conexão abortada no 3º bloco: fechada aqui com 3 blocos, e a placa sem o `ler_adc`, com a PRU parada e a `/dev/shm` vazia; a senha errada: o código 98; o `ler_adc` v0.8: o código 96 | o diário de 17/11 (F4.2) |
 | 17/11/2026 | **Uma captura de 152 s pelo SSH** (58 blocos, 116 MiB, um canal, 400 kS/s; parada pelo root) | A taxa medida de 400 000,2 S/s, o pior bloco no ARM em 445 ms (de 2 621 ms), nenhuma amostra atrasada nem buffer sobrescrito; o CRC das amostras certo | idem |
+| 18/11/2026 | **O "Conferir antes" (F4.3) na placa de verdade**, pelo `sh_placa`, pelo USB; o canal 1 na tomada da casa | Um bloco a 400 kS/s em **4,6 s** (2,6 s de captura); o canal 1: de −9,3169 a +9,3241 V no pino (18,64 Vpp, ~128 V rms na tomada), 60,04 Hz, 91 % da maior faixa: **as medidas do motor iguais às do `ler_adc`**, dígito a dígito; em ±2,56 V: 82 % das amostras saturadas, ✗, e a sugestão da maior faixa; os canais 0 e 1 com faixas por canal e o SPI lento a 200 kS/s: íntegra, as faixas e o SPI certos no cabeçalho, o canal 0 (sem nada) com 0,7 LSB rms; o arquivo apagado nos três | o diário de 18/11 (F4.3) |
 | 16/11/2026 | **A jornada da Aquisição na placa de verdade**, na janela (sem tela), pelo USB: em casa e na tomada do laboratório | Achada em 1,6 s; a primeira conexão (a impressão, a senha, a chave) em 2,5 e 2,6 s; o enlace com 1,0 e 0,9 ms e 4,6 e 6,6 MB/s; uma conferência de 4 MiB transferida e conferida pelo CRC em 0,91 e 0,93 s (o SFTP a 5,2 e 5,3 MiB/s); o relógio acertado com ±0,05 s, de +2,15 s e de −3 h 07 | o diário de 16/11 (F3.10) |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
@@ -2208,6 +2272,24 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **Testes:** o `ci.sh` completo passou: 1 741 em cada Python (eram 1 721), o `placa` com 329 (eram 310) e a
     interface com 824 (eram 822); o `.venv` intocado (o mesmo `pyvenv.cfg` antes e depois).
   - **Próximo:** a F4.3, o formulário de captura.
+- **18/11/2026:** **a F4.3, o formulário de captura** (seção 4e):
+  - **o pedido:** "sim, faça o F4.3", com o canal 1 agora na tomada da casa do usuário;
+  - **a ordem dos commits, por componente:** o `sh_placa` (o pedido, `fbded87` e `d4d5929`), o simulador (a linha de
+    comando do C, `ca61759`), a interface (os modelos no `.shproj` v4, `5d67657`), o motor (a conferência,
+    `4c87c77`), o `sh_placa` (o "Conferir antes", `2d8c826`) e, depois da bancada, o motor (`d64e42a`), o `sh_placa`
+    (as mensagens, `d1f7d0e`), o simulador (o disco, `92bb000`) e a interface (a seção, `384e811`, e a linha da
+    sugestão, `81cbc1c`);
+  - **o desenho antes do código** (a seção 4e): o pedido sem Qt e com contrato contra o C, e o "Conferir antes" com o
+    pedido do próprio formulário, e não o `coletar.sh conferir` (uma faixa para todos os canais, dois SPIs, texto);
+  - **o que a placa mostrou:** as medidas iguais às do `ler_adc`; o canal saturado sem sugestão de faixa, a tomada
+    sem folga sem aviso e o "mais resolução" na faixa maior (os três corrigidos, seção 4e). O simulador dizia o cartão
+    cheio na saída contínua (0 KiB em vez de "desconhecido"), e o teste da seção o pegou;
+  - **a placa ficou limpa:** a `~/f43` apagada, nenhum `ler_adc` rodando, a `/dev/shm` vazia, a captura do usuário
+    (`FEM_*.bin`) intocada. O relógio dela estava ~37 h atrasado (desligada sem bateria); a conferência não depende
+    dele, e o "Acertar…" da visão geral resolve ao conectar pelo aplicativo;
+  - **Testes:** o `ci.sh` completo passou: 1 919 em cada Python (eram 1 741), o `placa` com 477 (eram 329) e a
+    interface com 850 (eram 824); o `.venv` intocado (o mesmo `pyvenv.cfg` antes e depois).
+  - **Próximo:** a F4.4, a captura na tela.
 ---
 
 ## 8. Perguntas em aberto

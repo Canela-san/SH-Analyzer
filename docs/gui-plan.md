@@ -991,7 +991,7 @@ Quem recebe o pacote refaz a figura sem o SH-Analyzer, que é o que um revisor o
 
 **Os modelos de captura** guardam o formulário inteiro com um nome ("Rede V + I", "Calibração da tensão") e ficam no projeto.
 
-**"Conferir antes"** roda o `coletar.sh conferir` (~10 s): o firmware, os pinos e o ADC respondendo, o nível e a faixa sugerida. O resultado vai para o caderno.
+**"Conferir antes"** confere a bancada com o próprio pedido do formulário (~3 a 5 s a 400 kS/s): uma captura de um bloco pela saída contínua, medida aqui com as regras do `coletar.sh conferir` (o ADC respondendo, a integridade e, em cada canal, o nível, a frequência, a saturação e a faixa sugerida, a um clique). **Mudou na F4.3 (18/11/2026):** a rotina do `coletar.sh` usa uma faixa só para todos os canais e só o SPI rápido ou o lento, e dá texto para humanos; com o pedido do formulário, a conferência mede exatamente a captura que vai ser feita (as faixas de cada canal, o SPI, as esperas de CS). A rotina continua no terminal (11.5, as rotinas). O resultado vai para o caderno (a F4.5).
 
 **Durante a captura:**
 
