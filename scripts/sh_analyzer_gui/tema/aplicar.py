@@ -324,6 +324,18 @@ QFrame#secao_do_formulario {{ border-bottom: 1px solid {t.borda}; }}
 QLabel#titulo_do_formulario {{ color: {t.mudo}; }}
 QLabel#rotulo_do_campo {{ color: {t.texto2}; }}
 QWidget#centro_da_captura {{ background: {t.fundo}; }}
+QFrame#barra_da_captura {{ background: {t.superficie}; border: 1px solid {t.borda}; border-radius: 10px; }}
+QLabel#ponto_da_captura[nivel="gravando"], QLabel#estado_da_captura[nivel="gravando"] {{ color: {t.erro}; }}
+QLabel#ponto_da_captura[nivel="aviso"], QLabel#estado_da_captura[nivel="aviso"] {{ color: {t.aviso}; }}
+QLabel#ponto_da_captura[nivel="ok"], QLabel#estado_da_captura[nivel="ok"] {{ color: {t.ok}; }}
+QLabel#ponto_da_captura[nivel="erro"], QLabel#estado_da_captura[nivel="erro"] {{ color: {t.erro}; }}
+QLabel#tempo_da_captura {{ color: {t.texto}; }}
+QLabel#numero_da_captura {{ color: {t.texto2}; }}
+QProgressBar#barra_da_captura_progresso {{ border: none; border-radius: 3px; background: {t.afundada}; }}
+QProgressBar#barra_da_captura_progresso::chunk {{ border-radius: 3px; background: {t.acento}; }}
+QFrame#blocos_no_cartao {{ background: {t.superficie}; border: 1px solid {t.borda}; border-radius: 10px; }}
+QPlainTextEdit#saida_do_ler_adc {{ background: {t.afundada}; color: {t.texto2}; border: 1px solid {t.borda};
+    border-radius: 6px; }}
 QTabWidget#abas_do_terminal::pane {{ border: 1px solid {t.borda}; border-radius: 0 0 8px 8px; top: -1px;
                                      background: {t.afundada}; }}
 QAbstractScrollArea#terminal {{ background: {t.afundada}; border: none; }}

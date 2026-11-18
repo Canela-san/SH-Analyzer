@@ -18,6 +18,8 @@ from __future__ import annotations
 from PySide6.QtWidgets import QHBoxLayout, QStackedWidget, QWidget
 
 from ...componentes.toast import Toast
+from ...servicos.ao_vivo import AoVivo
+from ...servicos.captura_da_placa import CapturaDaPlaca
 from ...servicos.conexao_da_placa import ESPERANDO_O_USUARIO, ConexaoDaPlaca
 from ...servicos.conferencia_da_placa import ConferenciaDaPlaca
 from ...servicos.saude_da_placa import SaudeDaPlaca
@@ -34,15 +36,17 @@ from .visao_geral import SecaoQueChega, VisaoGeral
 
 
 class AreaDeAquisicao(QWidget):
-    """``dialogos_de()``: quem pergunta (onde salvar o relatório, apagar da placa, fechar um terminal com uma captura
-    rodando); o ``controle.dialogos`` da janela. ``abrir_na_analise(caminhos)``: as cópias das capturas, abertas na
-    Análise. ``abrir_url``: o gerenciador de arquivos do sistema, e ``executar_programa``: o terminal do sistema (os
-    testes passam uns que não abrem nada)."""
+    """``dialogos_de()``: quem pergunta (onde salvar o relatório, apagar da placa, fechar um terminal ou a janela com
+    uma captura rodando); o ``controle.dialogos`` da janela. ``abrir_na_analise(caminhos)``: as cópias das capturas,
+    abertas na Análise; ``abrir_no_projeto(caminhos)``: postas no projeto, sem trocar de área; e
+    ``mostrar_na_analise(caminhos)``: a Análise com elas (as que faltam entram). ``abrir_url``: o gerenciador de
+    arquivos do sistema, e ``executar_programa``: o terminal do sistema (os testes passam uns que não abrem nada)."""
 
     def __init__(self, conexao: ConexaoDaPlaca, saude: SaudeDaPlaca, dialogos_de=None,
                  transferencias: TransferenciasDaPlaca | None = None, abrir_na_analise=None, abrir_url=None,
                  executar_programa=None, conferencia: ConferenciaDaPlaca | None = None,
-                 opcoes_da_captura: dict | None = None, parent: QWidget | None = None):
+                 opcoes_da_captura: dict | None = None, captura: CapturaDaPlaca | None = None,
+                 abrir_no_projeto=None, mostrar_na_analise=None, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("area_aquisicao")
         self.conexao, self.saude = conexao, saude
@@ -63,7 +67,20 @@ class AreaDeAquisicao(QWidget):
             extras["executar_programa"] = executar_programa
         self.terminal = Terminal(conexao, dialogos_de=dialogos_de, **extras)
         self.conferencia = conferencia if conferencia is not None else ConferenciaDaPlaca(conexao, saude, parent=self)
-        self.capturar = Capturar(conexao, saude, self.conferencia, **(opcoes_da_captura or {}))
+        self.dialogos_de = dialogos_de
+        opcoes = dict(opcoes_da_captura or {})
+        self.captura = captura if captura is not None else CapturaDaPlaca(
+            conexao, saude, self.transferencias, parent=self,
+            **({"pasta_do_destino": opcoes["pasta_do_destino"]} if "pasta_do_destino" in opcoes else {}))
+        self.ao_vivo = AoVivo(self, sondas_dir=opcoes["pasta_das_sondas"]() if "pasta_das_sondas" in opcoes else None)
+        if abrir_no_projeto is not None:
+            opcoes.setdefault("abrir_no_projeto", lambda caminho: abrir_no_projeto([caminho]))
+        if mostrar_na_analise is not None:
+            opcoes.setdefault("abrir_na_analise", lambda caminho: mostrar_na_analise([caminho]))
+        if abrir_url is not None:
+            opcoes.setdefault("abrir_url", abrir_url)
+        self.capturar = Capturar(conexao, saude, self.conferencia, captura=self.captura, ao_vivo=self.ao_vivo,
+                                 **opcoes)
         self.paginas: dict[str, QWidget] = {"visao_geral": self.visao_geral, "diagnostico": self.diagnostico,
                                             "arquivos": self.arquivos, "terminal": self.terminal,
                                             "capturar": self.capturar}
@@ -104,7 +121,25 @@ class AreaDeAquisicao(QWidget):
         if nome == "capturar":
             self.capturar.ler_os_perfis()
             self.capturar.validar()
+            self.capturar.procurar_parciais()
         self.secoes.setCurrentWidget(self.paginas[nome])
+
+    def pode_fechar(self) -> bool:
+        """Fechar a janela no meio de uma captura para o computador a interrompe: pergunta antes. A do cartão segue
+        na placa (o aplicativo volta a acompanhá-la quando abrir de novo)."""
+        c = self.captura
+        if not c.rodando or c.no_cartao or self.dialogos_de is None:
+            return True
+        resposta = self.dialogos_de().perguntar(
+            traduzir("Uma captura está rodando"),
+            traduzir("A captura {} vem direto para este computador: fechar a janela a interrompe agora. O que chegou "
+                     "fica num .parcial, que a seção Capturar fecha da próxima vez. Fechar mesmo assim?").format(
+                c.nome),
+            {"fechar": traduzir("Fechar e interromper")}, "fechar")
+        if resposta != "fechar":
+            return False
+        c.cancelar()
+        return True
 
     @property
     def dialogo(self) -> DialogoDeConexao:

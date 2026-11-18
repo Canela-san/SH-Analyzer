@@ -13,19 +13,28 @@ atualizar e apagar entram no desfazer. O formulário guarda o pedido da última 
 ``coletar.sh conferir``; o resultado fica aqui, com a faixa sugerida de cada canal (o "usar" do formulário). Um pedido
 que mudou depois da conferência (os canais, as faixas, a taxa, o SPI) pede outra.
 
-**Capturar** chega na v0.10 (a F4.4): até lá, o botão diz como fazer pelo terminal, com o comando à vista.
+**Capturar** (a F4.4; ``servicos/captura_da_placa.py``): o pedido na placa, direto no computador ou no cartão. O
+centro vira o cockpit (``ao_vivo.py``: o tempo, a vazão, a integridade, o sinal e o espectro ao vivo, a saída do
+``ler_adc`` e o Parar), e o formulário fica travado até o fim. No fim, a captura no computador entra no projeto
+(``abrir_no_projeto``); a do cartão, quando a transferência a traz e confere. A senha do sudo é perguntada no mesmo
+lugar que a da conferência.
+
+**Uma captura que ficou pela metade** (o aplicativo fechou no meio de uma captura no computador: o ``.parcial`` na
+pasta da sessão) aparece no centro, com "Fechar a captura" (o ``recuperar`` do ``sh_placa``, numa thread: ele relê o
+arquivo inteiro para o CRC).
 """
 
 from __future__ import annotations
 
 import shutil
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -35,10 +44,12 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QScrollArea,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 from sh_placa import pedido as pd
+from sh_placa.captura import SUFIXO_PARCIAL, recuperar
 from sh_placa.conferencia import ConferenciaFeita, segundos_da_conferencia
 from sh_placa.pedido import Contexto, PedidoDeCaptura, Problema
 
@@ -47,16 +58,17 @@ from ...componentes.basicos import Botao
 from ...componentes.numeros import formatar_bytes, formatar_duracao, formatar_si
 from ...dados.projeto import ModeloDeCaptura
 from ...modelo.comandos import ApagarModeloDeCaptura, GuardarModeloDeCaptura
+from ...servicos.ao_vivo import AoVivo
+from ...servicos.captura_da_placa import CapturaDaPlaca
 from ...servicos.conexao_da_placa import ConexaoDaPlaca
 from ...servicos.conferencia_da_placa import ConferenciaDaPlaca
 from ...servicos.saude_da_placa import SaudeDaPlaca
+from .ao_vivo import Cockpit
 from .formulario_de_captura import FormularioDeCaptura, ListaDeProblemas, texto_da_faixa
 from .pecas import BlocoDeComando, IconeDoNivel, Painel, fonte
 from .textos import frase, hora, traduzir
 
 ATRASO_PARA_LEMBRAR_MS = 400
-CAPTURAR_CHEGA = ("A captura pela interface chega na v0.10. Por enquanto, copie o comando e rode-o na pasta "
-                  "~/firmware da placa (o Terminal da Aquisição abre uma sessão nela).")
 
 
 def livre_em(pasta: Path) -> int | None:
@@ -92,20 +104,35 @@ def _o_que_a_conferencia_mede(p: PedidoDeCaptura) -> PedidoDeCaptura:
 
 class Capturar(QWidget):
     """A seção. ``pasta_das_sondas()`` e ``pasta_do_destino()``: as pastas das preferências (os testes passam outras);
-    ``pedir_nome(titulo, rotulo, texto)``: o nome de um modelo (``None`` cancela); ``livre`` mede o espaço livre."""
+    ``pedir_nome(titulo, rotulo, texto)``: o nome de um modelo (``None`` cancela); ``livre`` mede o espaço livre.
+    ``captura``: o serviço da captura (sem ele, um daqui, sem a fila de transferências); ``abrir_no_projeto(caminho)``
+    põe a captura no projeto, ``abrir_na_analise(caminho)`` a mostra na Análise, e ``abrir_url`` abre a pasta no
+    gerenciador de arquivos (os testes passam uns que não abrem nada)."""
 
-    capturarPedido = Signal(object)              # a F4.4
+    _recuperou = Signal(object, object)          # da thread do recuperar: (o arquivo, o erro ou None)
 
     def __init__(self, conexao: ConexaoDaPlaca, saude: SaudeDaPlaca, conferencia: ConferenciaDaPlaca, *,
                  pasta_das_sondas: Callable[[], Path] = lambda: preferencias.pasta("sondas"),
                  pasta_do_destino: Callable[[], Path] = preferencias.pasta_da_sessao,
                  livre: Callable[[Path], int | None] = livre_em,
                  pedir_nome: Callable[[str, str, str], str | None] | None = None,
-                 lembrar: bool = True, parent: QWidget | None = None):
+                 lembrar: bool = True, captura: CapturaDaPlaca | None = None, ao_vivo: AoVivo | None = None,
+                 abrir_no_projeto: Callable[[Path], object] | None = None,
+                 abrir_na_analise: Callable[[Path], object] | None = None,
+                 abrir_url: Callable[[QUrl], object] = QDesktopServices.openUrl, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("secao_capturar")
         self.conexao, self.saude, self.conferencia = conexao, saude, conferencia
         self.pasta_das_sondas, self.pasta_do_destino, self.livre = pasta_das_sondas, pasta_do_destino, livre
+        self.captura = captura if captura is not None else CapturaDaPlaca(conexao, saude,
+                                                                          pasta_do_destino=pasta_do_destino,
+                                                                          parent=self)
+        self.ao_vivo = ao_vivo if ao_vivo is not None else AoVivo(self, sondas_dir=pasta_das_sondas())
+        self.abrir_no_projeto, self.abrir_na_analise, self.abrir_url = abrir_no_projeto, abrir_na_analise, abrir_url
+        self._senha_para = "conferir"            # quem o campo da senha atende: "conferir" ou "capturar"
+        self._no_projeto: Path | None = None     # a captura que já foi posta no projeto
+        self.parciais: list[Path] = []
+        self._recuperando: Path | None = None
         self.pedir_nome = pedir_nome or self._pedir_nome
         self.lembrar = lembrar
         self.projeto = None
@@ -131,17 +158,33 @@ class Capturar(QWidget):
         self.subtitulo.setWordWrap(True)
         coluna.addWidget(titulo)
         coluna.addWidget(self.subtitulo)
-        coluna.addWidget(self._criar_comando())
-        coluna.addWidget(self._criar_antes())
-        coluna.addStretch(1)
+        self.paginas = QStackedWidget()
+        self.paginas.setObjectName("paginas_da_captura")
+        pagina = QWidget()
+        pedido = QVBoxLayout(pagina)
+        pedido.setContentsMargins(0, 0, 0, 0)
+        pedido.setSpacing(14)
+        pedido.addWidget(self._criar_parcial())
+        pedido.addWidget(self._criar_comando())
+        pedido.addWidget(self._criar_antes())
+        pedido.addStretch(1)
         self.capturar = Botao(traduzir("Capturar"), "primario", "play")
         self.capturar.setObjectName("capturar")
         self.capturar.setEnabled(False)
-        self.capturar.setToolTip(traduzir(CAPTURAR_CHEGA))
+        self.capturar.clicked.connect(lambda: self.capturar_agora())
         rodape = QHBoxLayout()
         rodape.addStretch(1)
         rodape.addWidget(self.capturar)
-        coluna.addLayout(rodape)
+        pedido.addLayout(rodape)
+        self.pagina_do_pedido = pagina
+        self.cockpit = Cockpit(self.captura, self.ao_vivo)
+        self.cockpit.fim.abrirPedido.connect(self._abrir_na_analise)
+        self.cockpit.fim.pastaPedida.connect(self._mostrar_na_pasta)
+        self.cockpit.fim.trazerPedido.connect(self.captura.trazer)
+        self.cockpit.fim.novaPedida.connect(self.captura.dispensar)
+        self.paginas.addWidget(self.pagina_do_pedido)
+        self.paginas.addWidget(self.cockpit)
+        coluna.addWidget(self.paginas, 1)
         rolagem = QScrollArea()
         rolagem.setObjectName("rolagem_da_captura")
         rolagem.setWidgetResizable(True)
@@ -161,6 +204,11 @@ class Capturar(QWidget):
         conexao.mudou.connect(self.validar)
         saude.mudou.connect(self.validar)
         conferencia.mudou.connect(self._conferencia_mudou)
+        self.captura.mudou.connect(self._captura_mudou)
+        if self.captura.transferencias is not None:
+            self.captura.transferencias.mudou.connect(self._transferencias_mudaram)
+            self.captura.transferencias.progrediu.connect(lambda *_: self.cockpit._mostrar_o_fim())
+        self._recuperou.connect(self._ao_recuperar)
         self.ler_os_perfis()
         if lembrar:
             guardado = preferencias.ultimo_pedido()
@@ -169,8 +217,26 @@ class Capturar(QWidget):
         self._mostrar_o_modelo()
         self.validar()
         self._conferencia_mudou()
+        self._captura_mudou()
 
     # ------------------------------------------------------------------ montar o centro
+
+    def _criar_parcial(self) -> Painel:
+        painel = Painel(traduzir("Uma captura ficou pela metade"))
+        self.texto_do_parcial = QLabel()
+        self.texto_do_parcial.setObjectName("texto_mudo")
+        self.texto_do_parcial.setWordWrap(True)
+        self.fechar_o_parcial = Botao(traduzir("Fechar a captura"), "secundario", "ok")
+        self.fechar_o_parcial.setObjectName("fechar_o_parcial")
+        self.fechar_o_parcial.clicked.connect(lambda: self.recuperar_o_parcial())
+        painel.lado.addWidget(self.fechar_o_parcial)
+        corpo = QVBoxLayout()
+        corpo.setContentsMargins(14, 0, 14, 12)
+        corpo.addWidget(self.texto_do_parcial)
+        painel.corpo.addLayout(corpo)
+        painel.setVisible(False)
+        self.painel_do_parcial = painel
+        return painel
 
     def _criar_comando(self) -> Painel:
         painel = Painel(traduzir("O comando"))
@@ -227,12 +293,12 @@ class Capturar(QWidget):
         self.campo_da_senha.returnPressed.connect(self._conferir_com_a_senha)
         self.guardar_a_senha = QCheckBox(traduzir("Guardar a senha no cofre do sistema"))
         self.guardar_a_senha.setObjectName("guardar_a_senha")
-        com_a_senha = Botao(traduzir("Conferir"), "primario")
-        com_a_senha.setObjectName("conferir_com_a_senha")
-        com_a_senha.clicked.connect(self._conferir_com_a_senha)
+        self.com_a_senha = Botao(traduzir("Conferir"), "primario")
+        self.com_a_senha.setObjectName("conferir_com_a_senha")
+        self.com_a_senha.clicked.connect(self._conferir_com_a_senha)
         linha = QHBoxLayout()
         linha.addWidget(self.campo_da_senha, 1)
-        linha.addWidget(com_a_senha)
+        linha.addWidget(self.com_a_senha)
         senha.addWidget(self.texto_da_senha)
         senha.addLayout(linha)
         senha.addWidget(self.guardar_a_senha)
@@ -409,16 +475,151 @@ class Capturar(QWidget):
 
     def conferir_antes(self, senha: str | None = None, guardar: bool = False) -> None:
         pedido = self.formulario.pedido
-        if pd.impede(self.problemas) or not self.conferencia.pode_conferir():
+        if pd.impede(self.problemas) or not self.conferencia.pode_conferir() or self.captura.rodando:
             return
+        self._senha_para = "conferir"
         self.conferencia.conferir(pedido, senha, guardar)
 
     def _conferir_com_a_senha(self) -> None:
+        """A senha digitada, para quem a pediu: a conferência ou a captura."""
         senha = self.campo_da_senha.text()
         if not senha:
             return
         self.campo_da_senha.clear()
-        self.conferir_antes(senha, self.guardar_a_senha.isChecked())
+        if self._senha_para == "capturar":
+            self.capturar_agora(senha, self.guardar_a_senha.isChecked())
+        else:
+            self.conferir_antes(senha, self.guardar_a_senha.isChecked())
+
+    # ------------------------------------------------------------------ capturar
+
+    def pode_capturar(self) -> bool:
+        return self.captura.pode_capturar() and not pd.impede(self.problemas) and not self.conferencia.rodando
+
+    def capturar_agora(self, senha: str | None = None, guardar: bool = False) -> None:
+        if not self.pode_capturar():
+            return
+        self._senha_para = "capturar"
+        self.conferencia.dispensar()
+        self._no_projeto = None
+        self.captura.capturar(self.formulario.pedido, senha, guardar)
+
+    def _captura_mudou(self) -> None:
+        c = self.captura
+        cockpit = c.estado is not None and c.estado not in ("precisa_da_senha", "senha_recusada")
+        self.paginas.setCurrentWidget(self.cockpit if cockpit else self.pagina_do_pedido)
+        self.formulario.setEnabled(not c.rodando)
+        self._mostrar_a_senha()
+        self._mostrar_os_botoes()
+        self._por_no_projeto()
+        if c.estado is None:
+            self.procurar_parciais()
+
+    def _transferencias_mudaram(self) -> None:
+        self.cockpit._mostrar_o_fim()
+        self._por_no_projeto()
+
+    def _por_no_projeto(self) -> None:
+        """A captura que terminou entra no projeto uma vez: a do computador no fim; a do cartão, quando a
+        transferência a traz conferida."""
+        f = self.captura.fim
+        if f is None or not f.gravou or self.abrir_no_projeto is None:
+            return
+        caminho = f.arquivo
+        if caminho is None and self.captura.transferencias is not None and self.saude.capturas is not None:
+            achada = next((x for x in self.saude.capturas.capturas if x.arquivo == f.nome), None)
+            item = self.captura.transferencias.item_de(achada) if achada is not None else None
+            caminho = item.local if item is not None and item.estado == "conferida" else None
+        if caminho is None or caminho == self._no_projeto or not Path(caminho).exists():
+            return
+        self._no_projeto = Path(caminho)
+        self.abrir_no_projeto(Path(caminho))
+
+    def _caminho_do_fim(self) -> Path | None:
+        f = self.captura.fim
+        if f is None:
+            return None
+        return f.arquivo if f.arquivo is not None else self._no_projeto
+
+    def _abrir_na_analise(self) -> None:
+        caminho = self._caminho_do_fim()
+        if caminho is not None and self.abrir_na_analise is not None:
+            self.abrir_na_analise(caminho)
+
+    def _mostrar_na_pasta(self) -> None:
+        caminho = self._caminho_do_fim()
+        if caminho is not None:
+            self.abrir_url(QUrl.fromLocalFile(str(Path(caminho).parent)))
+
+    # ------------------------------------------------------------------ a captura que ficou pela metade
+
+    def procurar_parciais(self) -> list[Path]:
+        """Os ``.parcial`` da pasta da sessão (menos o da captura que roda)."""
+        pasta = self.pasta_do_destino()
+        try:
+            achados = sorted(pasta.glob(f"*.bin{SUFIXO_PARCIAL}")) if pasta.is_dir() else []
+        except OSError:
+            achados = []
+        if self.captura.rodando and self.captura.arquivo is not None:
+            achados = [a for a in achados if a.name != self.captura.arquivo.name + SUFIXO_PARCIAL]
+        self.parciais = achados
+        self._mostrar_os_parciais()
+        return achados
+
+    def _mostrar_os_parciais(self) -> None:
+        painel = self.painel_do_parcial
+        painel.setVisible(bool(self.parciais) or self._recuperando is not None)
+        if self._recuperando is not None:
+            self.texto_do_parcial.setText(traduzir("Fechando {}: os blocos inteiros e o CRC deles…").format(
+                self._recuperando.name))
+            self.fechar_o_parcial.setEnabled(False)
+            return
+        if not self.parciais:
+            return
+        primeiro = self.parciais[0]
+        try:
+            tamanho = formatar_bytes(primeiro.stat().st_size)
+        except OSError:
+            tamanho = "?"
+        mais = len(self.parciais) - 1
+        self.texto_do_parcial.setText(traduzir(
+            "{} ({}) parou no meio: o aplicativo fechou durante a captura. Fechá-la guarda os blocos inteiros que "
+            "chegaram, com a marca do fim escrito por este computador, e a põe no projeto.{}").format(
+            primeiro.name[:-len(SUFIXO_PARCIAL)], tamanho,
+            traduzir(" (E mais {}.)").format(mais) if mais else ""))
+        self.fechar_o_parcial.setEnabled(True)
+
+    def recuperar_o_parcial(self) -> None:
+        if not self.parciais or self._recuperando is not None:
+            return
+        parcial = self.parciais[0]
+        self._recuperando = parcial
+        self._mostrar_os_parciais()
+
+        def fechar():
+            try:
+                recuperar(parcial)
+                erro = None
+            except Exception as e:                             # o motor diz ErroSHAN; o disco, OSError
+                erro = e
+            try:
+                self._recuperou.emit(parcial, erro)
+            except RuntimeError:                               # a seção já foi apagada
+                pass
+
+        threading.Thread(target=fechar, name="recuperar_parcial", daemon=True).start()
+
+    def _ao_recuperar(self, parcial: Path, erro) -> None:
+        self._recuperando = None
+        final = parcial.with_name(parcial.name[:-len(SUFIXO_PARCIAL)])
+        if erro is not None:
+            self.texto_do_parcial.setText(traduzir("{} não fechou: {}").format(parcial.name, frase(str(erro))))
+            self.parciais = [p for p in self.parciais if p != parcial]
+            self.fechar_o_parcial.setEnabled(bool(self.parciais))
+            return
+        if self.abrir_no_projeto is not None and final.exists():
+            self.abrir_no_projeto(final)
+        self.procurar_parciais()
 
     def usar_as_faixas_sugeridas(self) -> None:
         feita = self.conferencia.resultado
@@ -438,8 +639,18 @@ class Capturar(QWidget):
         c = self.conferencia
         rodando = c.rodando
         self.cancelar.setVisible(rodando)
-        pode = c.pode_conferir() and not pd.impede(self.problemas)
+        pode = c.pode_conferir() and not pd.impede(self.problemas) and not self.captura.rodando
         self.conferir.setEnabled(pode)
+        self.capturar.setEnabled(self.pode_capturar())
+        if not self.conexao.conectada:
+            self.capturar.setToolTip(traduzir("Conecte uma placa para capturar."))
+        elif pd.impede(self.problemas):
+            self.capturar.setToolTip(traduzir("Resolva o que impede a captura antes."))
+        elif rodando:
+            self.capturar.setToolTip(traduzir("Espere a conferência terminar."))
+        else:
+            self.capturar.setToolTip(traduzir("Começa a captura com este pedido ({}).").format(
+                resumo_do_pedido(self.formulario.pedido)))
         if not self.conexao.conectada:
             dica = traduzir("Conecte uma placa para conferir.")
         elif pd.impede(self.problemas):
@@ -452,13 +663,21 @@ class Capturar(QWidget):
                 formatar_duracao(segundos_da_conferencia(self.formulario.pedido)))
         self.conferir.setToolTip(dica)
 
+    def _mostrar_a_senha(self) -> None:
+        """O campo da senha do sudo, para a conferência ou para a captura (a que a pediu por último)."""
+        quem = self.captura if self.captura.estado in ("precisa_da_senha", "senha_recusada") else self.conferencia
+        self._senha_para = "capturar" if quem is self.captura else "conferir"
+        self.pedido_da_senha.setVisible(quem.estado in ("precisa_da_senha", "senha_recusada"))
+        uso = traduzir("A captura") if quem is self.captura else traduzir("A conferência")
+        if quem.estado == "precisa_da_senha":
+            self.texto_da_senha.setText(traduzir("{} usa o sudo da placa: qual é a senha?").format(uso))
+        elif quem.estado == "senha_recusada":
+            self.texto_da_senha.setText(traduzir("A placa recusou a senha do sudo. Tente de novo:"))
+        self.com_a_senha.setText(traduzir("Capturar") if quem is self.captura else traduzir("Conferir"))
+
     def _mostrar_a_conferencia(self) -> None:
         c = self.conferencia
-        self.pedido_da_senha.setVisible(c.estado in ("precisa_da_senha", "senha_recusada"))
-        if c.estado == "precisa_da_senha":
-            self.texto_da_senha.setText(traduzir("A conferência usa o sudo da placa: qual é a senha?"))
-        elif c.estado == "senha_recusada":
-            self.texto_da_senha.setText(traduzir("A placa recusou a senha do sudo. Tente de novo:"))
+        self._mostrar_a_senha()
         if c.rodando:
             progresso = c.progresso
             blocos = progresso.bytes_recebidos if progresso is not None else 0

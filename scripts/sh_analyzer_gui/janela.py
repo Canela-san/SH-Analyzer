@@ -194,7 +194,9 @@ class JanelaPrincipal(QMainWindow):
                                   self.status_integridade, self.vistas, self.tabela_de_medidas)
         self.aquisicao = AreaDeAquisicao(
             self.conexao_da_placa, self.saude_da_placa, lambda: self.controle.dialogos, self.transferencias_da_placa,
-            abrir_na_analise=lambda caminhos: self._na_analise(self.controle.abrir_capturas(caminhos)))
+            abrir_na_analise=lambda caminhos: self._na_analise(self.controle.abrir_capturas(caminhos)),
+            abrir_no_projeto=lambda caminhos: self.controle.abrir_capturas(caminhos),
+            mostrar_na_analise=self._mostrar_na_analise)
         self.paginas = QStackedWidget()
         self.paginas.setObjectName("paginas_das_areas")
         self._paginas_das_areas = {AREA_ANALISE: self.estudio, AREA_AQUISICAO: self.aquisicao}
@@ -633,6 +635,14 @@ class JanelaPrincipal(QMainWindow):
         self.paginas.setCurrentWidget(pagina)
         self.status_por_area.setCurrentIndex(0 if indice == AREA_ANALISE else 1)
 
+    def _mostrar_na_analise(self, caminhos) -> None:
+        """As capturas na Análise: as que ainda não estão no projeto entram, e a área troca."""
+        no_projeto = {f.caminho.resolve() for f in self.projeto.fontes if not f.esta_ausente}
+        faltam = [c for c in map(Path, caminhos) if c.resolve() not in no_projeto]
+        if faltam:
+            self.controle.abrir_capturas(faltam)
+        self.mostrar_area(AREA_ANALISE)
+
     def _na_analise(self, abriu: object) -> None:
         """Depois de abrir uma captura ou um projeto (de qualquer área), a Análise, onde ele aparece."""
         if abriu:
@@ -679,7 +689,7 @@ class JanelaPrincipal(QMainWindow):
             self.dialogo_de_erro = None
 
     def closeEvent(self, evento: QCloseEvent) -> None:
-        if not self.controle.pode_descartar():
+        if not self.aquisicao.pode_fechar() or not self.controle.pode_descartar():
             evento.ignore()
             return
         self.salvar_layout()
