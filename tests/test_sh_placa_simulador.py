@@ -435,3 +435,40 @@ def test_a_captura_no_cartao_na_placa_simulada_e_a_transferencia(tmp_path):
     (nova,) = [c for c in listadas if c.arquivo == "no_cartao_simulado.bin"]
     assert nova.titulo == "No cartão" and depois == []
     assert conferida.ok and motor.ler_cabecalho(tmp_path / "trazida.bin").blocos_gravados == 2
+
+
+def test_a_placa_simulada_que_para_leva_a_captura_no_cartao_junto(tmp_path):
+    """Uma captura "até parar" no cartão sobrevive à conexão (o ``setsid``), mas não à placa simulada: o simulador
+    que para mata o grupo dela, como a placa desligada. Sem isso, ela seguiria neste computador depois do aplicativo
+    fechar. A que terminou (com o ``codigo``) fica como está."""
+    from sh_placa import captura_no_cartao, servidor_do_simulador
+    from sh_placa.captura_no_cartao import CapturaNoCartao, em_curso
+
+    assert servidor_do_simulador.PASTA_EM_CURSO == captura_no_cartao.PASTA_EM_CURSO
+    vistos = []
+
+    async def cenario():
+        async with ServidorDoSimulador(tmp_path / "placa", vazao_bytes_s=None) as placa:
+            async with entrar(placa) as c:
+                captura = CapturaNoCartao(c, "ate_parar.bin", ao_progresso=vistos.append)
+                await captura.iniciar(["400000", "1", "--blocos", "0"], SENHA_PADRAO_DA_IMAGEM)
+                acompanhar = asyncio.create_task(captura.acompanhar())
+                while not vistos or vistos[-1].blocos < 1:
+                    await asyncio.sleep(0.05)
+                (rodando,) = await em_curso(c)
+                acompanhar.cancel()
+            pasta = placa.home / "firmware" / captura_no_cartao.PASTA_EM_CURSO / "ate_parar.bin"
+            return rodando, int((pasta / "pid").read_text())
+
+    rodando, pid = asyncio.run(cenario())
+    assert rodando.rodando
+    fim = time.monotonic() + 5
+    while time.monotonic() < fim:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        os.kill(pid, 9)
+        pytest.fail("a captura no cartão seguiu rodando depois de a placa simulada parar")

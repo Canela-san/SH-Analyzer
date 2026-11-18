@@ -8,6 +8,11 @@ Precisa do asyncssh (o extra ``placa``).
 acesso`, na pasta dele, que só o dono lê); sem a ``senha`` (a dos testes), ninguém entra com senha. Os comandos
 rodam neste computador, como o usuário do aplicativo: por isso a interface não abre um terminal no simulador. O shell
 é o POSIX (``/bin/sh``): no Windows, não há simulador.
+
+**A placa que para leva as capturas junto** (:meth:`ServidorDoSimulador.parar`): cada comando morre com o canal dele,
+menos a captura no cartão, que o ``setsid`` solta da conexão de propósito (``captura_no_cartao.py``). Como a placa de
+verdade desligada, o simulador que para mata as que ainda rodam: senão, uma captura "até parar" na placa simulada
+seguiria neste computador depois do aplicativo fechar.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ import contextlib
 import os
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -38,6 +44,9 @@ FRACAO_DA_QUEDA = 0.4
 """No cenário ``conexao_instavel``: cada conexão cai depois de :data:`QUEDA_A_CADA_S`, e cada arquivo, na primeira vez
 que é lido além desta fração dele (a retomada continua do ponto em que parou)."""
 
+
+PASTA_EM_CURSO = ".em_curso"
+"""A pasta das capturas no cartão em curso, na pasta do firmware (a ``PASTA_EM_CURSO`` do ``captura_no_cartao.py``)."""
 
 SUDO = r"""#!/bin/sh
 # O sudo da placa simulada: -A (a senha pelo SUDO_ASKPASS), -v (só validar), -n (sem perguntar), -k (esquecer).
@@ -212,6 +221,23 @@ class ServidorDoSimulador:
             await servidor.wait_closed()
         self._servidores = []
         await asyncio.gather(*self._rodando, return_exceptions=True)
+        await asyncio.to_thread(self._parar_as_capturas_no_cartao)
+
+    def _parar_as_capturas_no_cartao(self) -> None:
+        """As capturas no cartão que ainda rodam na placa simulada (sem o ``codigo``): o grupo de cada uma (o shell
+        do ``setsid`` e o ``ler_adc``), conferido pelo ``ps`` antes (um PID de uma captura antiga pode ser de outro
+        processo agora)."""
+        for arquivo in self.home.glob(f"*/{PASTA_EM_CURSO}/*/pid"):
+            if (arquivo.parent / "codigo").exists():
+                continue
+            try:
+                pid = int(arquivo.read_text().strip())
+            except (OSError, ValueError):
+                continue
+            grupo = _grupo_do_ler_adc(pid)
+            if grupo is not None:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(grupo, signal.SIGKILL)
 
     async def fechar(self) -> None:
         """Para e, se a pasta é dele (a temporária), a apaga."""
@@ -383,6 +409,19 @@ async def _copiar(origem: asyncio.StreamReader, destino) -> None:
 async def matar_quando_o_canal_fechar(processo: asyncssh.SSHServerProcess, shell: asyncio.subprocess.Process) -> None:
     await processo.channel.wait_closed()
     matar(shell)
+
+
+def _grupo_do_ler_adc(pid: int) -> int | None:
+    """O grupo do processo ``pid``, se ele é um ``ler_adc`` (o ``ps`` do POSIX: o Linux e o macOS)."""
+    try:
+        saida = subprocess.run(["ps", "-o", "pgid=,args=", "-p", str(pid)], capture_output=True, text=True,
+                               timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    grupo, _, comando = saida.partition(" ")
+    if not grupo.isdigit() or "ler_adc" not in comando:
+        return None
+    return int(grupo)
 
 
 def matar(shell: asyncio.subprocess.Process) -> None:
