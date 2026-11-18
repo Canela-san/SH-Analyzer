@@ -71,9 +71,10 @@ class SessaoDeTerminal:
     acrescentada (``None``: sem gravar)."""
 
     def __init__(self, conexao: ConexaoSSH, colunas: int, linhas: int, *, ao_receber: Callable[[bytes], object],
-                 gravacao: Path | None = None, tipo: str = TIPO_DO_TERMINAL):
+                 gravacao: Path | None = None, tipo: str = TIPO_DO_TERMINAL, entrada_inicial: bytes = b""):
         self.conexao, self.colunas, self.linhas, self.tipo = conexao, colunas, linhas, tipo
         self.ao_receber, self.gravacao = ao_receber, gravacao
+        self.entrada_inicial = entrada_inicial    # o que o shell recebe assim que abre (a linha de uma rotina)
         self._processo = None
         self._fechado_aqui = False
         self.codigo: int | None = None
@@ -90,6 +91,8 @@ class SessaoDeTerminal:
             self._fechar_processo()
         elif (self.colunas, self.linhas) != pedido:  # a tela mudou de tamanho enquanto abria
             self.redimensionar(self.colunas, self.linhas)
+        if self.entrada_inicial and not self._fechado_aqui:
+            self.escrever(self.entrada_inicial)    # o PTY guarda até o shell ler: chega depois do prompt
         arquivo = None
         if self.gravacao is not None:
             try:

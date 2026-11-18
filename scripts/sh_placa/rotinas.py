@@ -166,7 +166,9 @@ def _do_pedido(origem: str, pedido: PedidoDeCaptura) -> str:
     if origem == "faixa":
         return _texto_da_faixa(primeiro.faixa_v)
     if origem == "spi":
-        return "lenta" if pedido.spi == "lenta" else "rapido"   # as variantes rapido:a e :c são do ler_adc
+        # Só o lento: o rápido é o padrão do script (como no comando do ler_adc), e as variantes rapido:a e :c, que
+        # o script não conhece, são do ler_adc.
+        return "lenta" if pedido.spi == "lenta" else ""
     raise ValueError(f"origem desconhecida no pedido: {origem!r}")
 
 

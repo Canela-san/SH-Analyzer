@@ -50,9 +50,11 @@ def test_o_pedido_preenche_so_a_bancada():
     assert rotinas.valores_do_pedido(rotinas.rotina("calibrar"), pedido) == {
         "--grandeza": "corrente", "--canal": "1", "--sonda": "sct013_100a_sn001"}
     assert rotinas.valores_do_pedido(rotinas.rotina("conferir"), pedido) == {
-        "--canais": "1,3", "--faixa": "5.12", "--taxa": "312500", "--spi": "rapido"}
+        "--canais": "1,3", "--faixa": "5.12", "--taxa": "312500"}
     assert rotinas.valores_do_pedido(rotinas.rotina("aliasing"), pedido) == {
-        "--canais": "1,3", "--grandeza": "1:corrente,3:tensao", "--sonda": "1:sct013_100a_sn001", "--spi": "rapido"}
+        "--canais": "1,3", "--grandeza": "1:corrente,3:tensao", "--sonda": "1:sct013_100a_sn001"}
+    lento = PedidoDeCaptura((Canal(1),), taxa_hz=312_500, spi="lenta")
+    assert rotinas.valores_do_pedido(rotinas.rotina("ruido"), lento) == {"--canais": "1", "--spi": "lenta"}
     assert rotinas.valores_do_pedido(rotinas.rotina("sonda"), pedido) == {
         "--taxa": "312500", "--canal-sonda": "1", "--grandeza": "corrente", "--sonda": "sct013_100a_sn001"}
     # A temperatura não é uma grandeza da calibração: fica o padrão do script.
