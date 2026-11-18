@@ -8,7 +8,8 @@ o Welch dele (o espectro), que entra na **média em potência dos últimos** :da
 espectro mostrado). As contas são as da Análise, sem a correção da sonda (o ao vivo é para ver a bancada).
 
 **Uma conta por vez** (:class:`AoVivo`): um bloco que chega com a anterior ainda rodando espera, e só o mais recente
-é calculado (um disco lento não acumula contas atrasadas).
+é calculado (um disco lento não acumula contas atrasadas). **No fim** (:meth:`AoVivo.terminar`), o quadro do último
+bloco sai do arquivo final, e fica na tela.
 """
 
 from __future__ import annotations
@@ -107,7 +108,9 @@ class AoVivo(QObject):
         self._geracao = 0
         self._historico: dict[int, deque] = {}
         self._pendente: int | None = None
+        self._pedido = 0                         # o último bloco pedido (o progresso repete o número)
         self._calculando = False
+        self._final = False
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ao_vivo")
         self._pronto.connect(self._ao_ficar_pronto)
         self.destroyed.connect(lambda *_: self._executor.shutdown(wait=False, cancel_futures=True))
@@ -116,17 +119,31 @@ class AoVivo(QObject):
         self._geracao += 1
         self.caminho, self.quadro = Path(caminho), None
         self._historico = {}
-        self._pendente, self._calculando = None, False
+        self._pendente, self._calculando, self._pedido, self._final = None, False, 0, False
 
     def parar(self) -> None:
         self._geracao += 1
         self.caminho = None
         self._pendente, self._calculando = None, False
 
-    def bloco(self, blocos: int) -> None:
-        if self.caminho is None or blocos < 1:
+    def terminar(self, caminho: Path, blocos: int) -> None:
+        """A captura acabou em ``caminho`` (o ``.parcial`` renomeado): o quadro do último bloco, se ele ainda não foi
+        mostrado (a conta em curso, sobre o ``.parcial``, é descartada), e mais nenhum."""
+        if self.caminho is None:
             return
-        self._pendente = blocos
+        self._geracao += 1
+        self.caminho = Path(caminho)
+        self._calculando = False
+        if blocos >= 1 and (self.quadro is None or self.quadro.blocos < blocos):
+            self._pendente = blocos
+            self._pedido = blocos
+            self._proximo()
+        self._final = True
+
+    def bloco(self, blocos: int) -> None:
+        if self.caminho is None or blocos < 1 or blocos <= self._pedido or self._final:
+            return
+        self._pendente = self._pedido = blocos
         self._proximo()
 
     def _proximo(self) -> None:

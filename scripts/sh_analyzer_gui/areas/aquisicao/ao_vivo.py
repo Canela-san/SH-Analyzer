@@ -508,7 +508,11 @@ class Cockpit(QWidget):
             self._relogio.start()
         else:
             self._relogio.stop()
-            self.ao_vivo.parar()
+            f = c.fim
+            if f is not None and f.arquivo is not None and f.gravou and f.arquivo.exists():
+                self.ao_vivo.terminar(f.arquivo, f.blocos)       # o último bloco fica na tela
+            else:
+                self.ao_vivo.parar()
         textos = {"comecando": (traduzir("Começando: o sudo e a PRU…"), "aviso"),
                   "capturando": (traduzir("Gravando") if not c.retomada else traduzir("Gravando (retomada)"),
                                  "gravando"),
