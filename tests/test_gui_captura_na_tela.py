@@ -123,6 +123,13 @@ def test_a_captura_no_computador_mostra_o_ao_vivo_e_entra_no_projeto(bancada, qt
     qtbot.mouseClick(s.cockpit.fim.abrir, Qt.MouseButton.LeftButton)
     qtbot.mouseClick(s.cockpit.fim.pasta, Qt.MouseButton.LeftButton)
     assert b.na_analise == [c.arquivo] and b.urls[0].toLocalFile() == str(b.sessao)
+    # O caderno da sessão (a F4.5): o começo, com o pedido e o comando, e o fim, com o resumo da tela.
+    assert b.area.caderno.caminho == b.sessao / "anotacoes.md"
+    inicio, fim = [e.texto for e in b.area.caderno.entradas if c.nome in e.texto]
+    assert inicio.startswith(f"Captura `{c.nome}` (“Rede de casa”) iniciada: 2 canais · 400 kS/s")
+    assert "direto no computador." in inicio and inicio.split("\n")[1].startswith("`sudo ./ler_adc 400000 0,1 ")
+    assert fim.startswith("Captura concluída: ") and f"(`{c.nome}`)." in fim
+    assert "\n- ✓ O CRC das amostras confere com o do ler_adc" in fim and "\n- ✓ Integridade: nenhuma" in fim
     qtbot.mouseClick(s.cockpit.fim.nova, Qt.MouseButton.LeftButton)
     assert c.estado is None and s.paginas.currentWidget() is s.pagina_do_pedido
 
@@ -181,6 +188,37 @@ def test_no_cartao_a_queda_nao_para_a_captura_e_ela_vem_para_o_computador(bancad
     assert s.cockpit.fim.abrir.isVisible() and s.cockpit.fim.pasta.isVisible()
     qtbot.mouseClick(s.cockpit.fim.abrir, Qt.MouseButton.LeftButton)
     assert b.na_analise == [trazida]
+    # No caderno, a queda, a volta, o fim e a transferência, nessa ordem.
+    caderno = b.area.caderno
+    qtbot.waitUntil(lambda: any("veio para o computador e confere" in e.texto for e in caderno.entradas),
+                    timeout=ESPERA_MS)
+    textos = [e.texto for e in caderno.entradas if c.nome in e.texto]
+    assert [t.split(" ")[0] for t in textos] == ["Captura", "A", "A", "Captura", f"`{c.nome}`"]
+    assert textos[1].startswith(f"A conexão caiu durante a captura `{c.nome}`: ela segue no cartão")
+    assert textos[2].startswith(f"A captura `{c.nome}`, no cartão, acompanhada de novo")
+    assert textos[3].startswith("Captura concluída") and textos[4].endswith(f"`{trazida}`.")
+
+
+def test_a_conferencia_e_o_relatorio_do_diagnostico_vao_para_o_caderno(bancada, qtbot):
+    """O "Conferir antes" entra no caderno com as linhas da tela (✓, !, ✗), e o "Para o caderno" do diagnóstico
+    leva o relatório inteiro numa entrada (recuado no arquivo, inteiro na leitura)."""
+    from sh_analyzer_gui.dados import caderno as formato
+
+    b = bancada
+    s, caderno = b.secao, b.area.caderno
+    s.formulario.definir_pedido(PedidoDeCaptura((Canal(1),), 400_000, blocos=1))
+    qtbot.mouseClick(s.conferir, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: b.area.conferencia.estado == "feita", timeout=ESPERA_MS)
+    conferencia = caderno.entradas[-1]
+    assert conferencia.autor == "automático" and conferencia.texto.startswith("Conferência: ")
+    assert "\n- ✓ Canal 1: " in conferencia.texto and "\n- ✓ Captura íntegra" in conferencia.texto
+    assert s.caderno.lista.textos[0].startswith(f"{conferencia.hora_em_texto} · automático · Conferência: ")
+    b.area.mostrar_secao("diagnostico")
+    b.area.diagnostico.para_o_caderno.click()
+    relatorio = caderno.entradas[-1]
+    assert relatorio.texto.startswith("Relatório do diagnóstico:\n\n# Diagnóstico da placa\n")
+    assert formato.ler(caderno.caminho)[-1] == relatorio
+    assert caderno.caminho.read_text(encoding="utf-8").count(formato.TITULO) == 1
 
 
 def test_a_senha_do_sudo_e_perguntada_para_a_captura(bancada, qtbot):

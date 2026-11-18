@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import html
 import json
+from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QFrame,
@@ -24,8 +25,10 @@ from PySide6.QtWidgets import (
 from supraharmonicos.api import cabecalho_em_dict, descrever_cabecalho
 
 from ...componentes.basicos import Botao
+from ...componentes.caderno import ListaDoCaderno
 from ...componentes.painel import EstadoVazio
 from ...componentes.toast import Toast
+from ...dados import caderno
 from ...modelo.objetos import FonteDoProjeto, Projeto
 from ...tema.aplicar import aparencia
 from ...tema.icones import icone
@@ -275,6 +278,53 @@ class InspetorDaVista(QScrollArea):
         self.espectro.mostrar(projeto, vista, f1)
 
 
+class InspetorDoCaderno(QWidget):
+    """Um caderno de bancada do projeto (a seção "Notas"): as entradas, a mais nova em cima, e "Abrir no editor"
+    (``abrirPedido``). Só leitura: a nota nova é no caderno do dia, na Aquisição."""
+
+    abrirPedido = Signal(object)
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("inspetor_do_caderno")
+        self.arquivo: Path | None = None
+        self.titulo = QLabel()
+        self.titulo.setObjectName("titulo_inspetor")
+        self.titulo.setFont(_fonte(TAMANHOS["titulo_painel"], QFont.Weight.DemiBold))
+        self.caminho = QLabel()
+        self.caminho.setObjectName("subtitulo_inspetor")
+        self.caminho.setFont(_fonte(TAMANHOS["secundario"]))
+        self.caminho.setWordWrap(True)
+        self.abrir = Botao(self.tr("Abrir no editor"), "secundario", "pagina")
+        self.abrir.setObjectName("abrir_o_caderno_no_editor")
+        self.abrir.clicked.connect(lambda: self.abrirPedido.emit(self.arquivo) if self.arquivo else None)
+        self.lista = ListaDoCaderno(self.tr("Nenhuma entrada no formato do caderno (\"- **HH:MM:SS** · você · …\"): "
+                                            "o arquivo inteiro abre no editor."))
+        coluna = QVBoxLayout(self)
+        coluna.setContentsMargins(12, 4, 12, 12)
+        coluna.setSpacing(8)
+        coluna.addWidget(self.titulo)
+        coluna.addWidget(self.caminho)
+        coluna.addWidget(self.abrir, 0, Qt.AlignmentFlag.AlignLeft)
+        coluna.addWidget(self.lista, 1)
+
+    def mostrar(self, arquivo: Path) -> None:
+        self.arquivo = Path(arquivo)
+        self.recarregar()
+
+    def recarregar(self) -> None:
+        """Lê o arquivo de novo (o caderno do dia mudou)."""
+        if self.arquivo is None:
+            return
+        self.titulo.setText(self.tr("Caderno de {}").format(self.arquivo.parent.name))
+        self.caminho.setText(str(self.arquivo))
+        try:
+            entradas = caderno.ler(self.arquivo)
+        except OSError:
+            entradas = []
+        self.lista.definir(entradas)
+
+
 class Inspetor(QStackedWidget):
     """O que o inspetor mostra, pelo que está selecionado; sem seleção, o estado vazio."""
 
@@ -287,10 +337,12 @@ class Inspetor(QStackedWidget):
         self.da_fonte = InspetorDaFonte()
         self.do_traco = InspetorDoTraco()
         self.da_vista = InspetorDaVista()
+        self.do_caderno = InspetorDoCaderno()
         self.addWidget(self.vazio)
         self.addWidget(self.da_fonte)
         self.addWidget(self.do_traco)
         self.addWidget(self.da_vista)
+        self.addWidget(self.do_caderno)
         self.vista_ativa = None
 
     def definir_vista_ativa(self, projeto: Projeto | None, vista, f1=None) -> None:
@@ -321,6 +373,10 @@ class Inspetor(QStackedWidget):
         elif tipo == "canal" and objeto is not None:
             self.da_fonte.mostrar(objeto[0])
             self.setCurrentWidget(self.da_fonte)
+        elif tipo == "nota" and objeto is not None:
+            self.da_fonte.soltar()
+            self.do_caderno.mostrar(objeto)
+            self.setCurrentWidget(self.do_caderno)
         else:
             self.da_fonte.soltar()
             self.setCurrentWidget(self.vazio)

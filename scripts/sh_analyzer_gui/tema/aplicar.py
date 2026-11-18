@@ -336,6 +336,9 @@ QProgressBar#barra_da_captura_progresso::chunk {{ border-radius: 3px; background
 QFrame#blocos_no_cartao {{ background: {t.superficie}; border: 1px solid {t.borda}; border-radius: 10px; }}
 QPlainTextEdit#saida_do_ler_adc {{ background: {t.afundada}; color: {t.texto2}; border: 1px solid {t.borda};
     border-radius: 6px; }}
+QFrame#caderno_de_bancada {{ background: {t.superficie}; border-left: 1px solid {t.borda}; }}
+QLabel#titulo_do_caderno {{ color: {t.texto}; font-weight: 600; }}
+QTextBrowser#lista_do_caderno {{ background: transparent; border: none; padding: 0 14px; }}
 QTabWidget#abas_do_terminal::pane {{ border: 1px solid {t.borda}; border-radius: 0 0 8px 8px; top: -1px;
                                      background: {t.afundada}; }}
 QAbstractScrollArea#terminal {{ background: {t.afundada}; border: none; }}

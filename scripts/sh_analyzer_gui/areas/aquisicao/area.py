@@ -11,19 +11,26 @@ nada.
 
 **As correções** (o "Corrigir" da visão geral e do diagnóstico) passam pelo diálogo da correção, que confirma e
 mostra o comando; o resultado aparece num toast na janela, inclusive o do relógio acertado sozinho ao conectar.
+
+**O caderno de bancada** (a F4.5; ``caderno``, o ``anotacoes.md`` da pasta da sessão): a área o cria e liga a ele as
+entradas automáticas (``entradas_do_caderno.py``); ele aparece na seção Capturar, e o diagnóstico manda o relatório
+para ele.
 """
 
 from __future__ import annotations
 
 from PySide6.QtWidgets import QHBoxLayout, QStackedWidget, QWidget
 
+from ... import preferencias
 from ...componentes.toast import Toast
 from ...servicos.ao_vivo import AoVivo
+from ...servicos.caderno import CadernoDaSessao
 from ...servicos.captura_da_placa import CapturaDaPlaca
 from ...servicos.conexao_da_placa import ESPERANDO_O_USUARIO, ConexaoDaPlaca
 from ...servicos.conferencia_da_placa import ConferenciaDaPlaca
 from ...servicos.saude_da_placa import SaudeDaPlaca
 from ...servicos.transferencias import TransferenciasDaPlaca
+from . import entradas_do_caderno
 from .arquivos import Arquivos
 from .capturar import Capturar
 from .diagnostico import Diagnostico
@@ -46,7 +53,8 @@ class AreaDeAquisicao(QWidget):
                  transferencias: TransferenciasDaPlaca | None = None, abrir_na_analise=None, abrir_url=None,
                  executar_programa=None, conferencia: ConferenciaDaPlaca | None = None,
                  opcoes_da_captura: dict | None = None, captura: CapturaDaPlaca | None = None,
-                 abrir_no_projeto=None, mostrar_na_analise=None, parent: QWidget | None = None):
+                 abrir_no_projeto=None, mostrar_na_analise=None, caderno: CadernoDaSessao | None = None,
+                 parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("area_aquisicao")
         self.conexao, self.saude = conexao, saude
@@ -58,8 +66,11 @@ class AreaDeAquisicao(QWidget):
         self.secoes.setObjectName("secoes_aquisicao")
         self.transferencias = transferencias if transferencias is not None else TransferenciasDaPlaca(conexao, saude,
                                                                                                     parent=self)
+        opcoes = dict(opcoes_da_captura or {})
+        self.caderno = caderno if caderno is not None else CadernoDaSessao(
+            opcoes.get("pasta_do_destino", preferencias.pasta_da_sessao), parent=self)
         self.visao_geral = VisaoGeral(conexao, saude, self.transferencias)
-        self.diagnostico = Diagnostico(conexao, saude, dialogos_de)
+        self.diagnostico = Diagnostico(conexao, saude, dialogos_de, caderno=self.caderno)
         extras = {"abrir_url": abrir_url} if abrir_url is not None else {}
         self.arquivos = Arquivos(conexao, saude, self.transferencias, abrir_na_analise=abrir_na_analise,
                                  dialogos_de=dialogos_de, **extras)
@@ -68,7 +79,6 @@ class AreaDeAquisicao(QWidget):
         self.terminal = Terminal(conexao, dialogos_de=dialogos_de, **extras)
         self.conferencia = conferencia if conferencia is not None else ConferenciaDaPlaca(conexao, saude, parent=self)
         self.dialogos_de = dialogos_de
-        opcoes = dict(opcoes_da_captura or {})
         self.captura = captura if captura is not None else CapturaDaPlaca(
             conexao, saude, self.transferencias, parent=self,
             **({"pasta_do_destino": opcoes["pasta_do_destino"]} if "pasta_do_destino" in opcoes else {}))
@@ -80,7 +90,9 @@ class AreaDeAquisicao(QWidget):
         if abrir_url is not None:
             opcoes.setdefault("abrir_url", abrir_url)
         self.capturar = Capturar(conexao, saude, self.conferencia, captura=self.captura, ao_vivo=self.ao_vivo,
-                                 **opcoes)
+                                 caderno=self.caderno, **opcoes)
+        entradas_do_caderno.ligar(self.caderno, captura=self.captura, conferencia=self.conferencia,
+                                  transferencias=self.transferencias, saude=saude)
         self.paginas: dict[str, QWidget] = {"visao_geral": self.visao_geral, "diagnostico": self.diagnostico,
                                             "arquivos": self.arquivos, "terminal": self.terminal,
                                             "capturar": self.capturar}

@@ -132,6 +132,20 @@ class _Secao(QFrame):
         coluna.addWidget(self.problemas)
 
 
+ORDEM_DOS_NIVEIS = {"erro": 0, "aviso": 1, "info": 2}
+
+
+def texto_do_problema(p: Problema) -> str:
+    """O problema como aparece numa linha: "Canal 1: ..." nos de um canal, com a primeira letra maiúscula."""
+    texto = (traduzir("Canal {}: ").format(p.canal) if p.canal is not None else "") + p.mensagem
+    return texto[0].upper() + texto[1:] if texto else texto
+
+
+def em_ordem(problemas: Iterable[Problema]) -> list[Problema]:
+    """Os erros, depois os avisos, depois o resto (a ordem da lista na tela e no caderno)."""
+    return sorted(problemas, key=lambda p: ORDEM_DOS_NIVEIS.get(p.nivel, 3))
+
+
 class ListaDeProblemas(QWidget):
     """Os problemas de uma parte do pedido, um por linha, com o ícone do nível."""
 
@@ -151,10 +165,8 @@ class ListaDeProblemas(QWidget):
             if item.widget() is not None:
                 item.widget().deleteLater()
         self.textos = []
-        ordem = {"erro": 0, "aviso": 1, "info": 2}
-        for p in sorted(problemas, key=lambda p: ordem.get(p.nivel, 3)):
-            texto = (traduzir("Canal {}: ").format(p.canal) if p.canal is not None else "") + p.mensagem
-            texto = texto[0].upper() + texto[1:] if texto else texto
+        for p in em_ordem(problemas):
+            texto = texto_do_problema(p)
             linha = QHBoxLayout()
             linha.setSpacing(6)
             icone = RotuloDeIcone(*self.ICONES.get(p.nivel, ("ok", "mudo")), 13)

@@ -276,6 +276,7 @@ class EspectroAoVivo(QWidget):
         self.media = QLabel()
         self.media.setObjectName("texto_mudo")
         self.media.setFont(fonte("secundario"))
+        self.media.setWordWrap(True)                 # quebra no centro estreito, em vez de alargá-lo
         topo = QHBoxLayout()
         topo.setSpacing(8)
         rotulo = QLabel(traduzir("espectro ao vivo"))
@@ -283,8 +284,7 @@ class EspectroAoVivo(QWidget):
         rotulo.setFont(fonte("secundario"))
         topo.addWidget(rotulo)
         topo.addWidget(self.canal)
-        topo.addWidget(self.media)
-        topo.addStretch(1)
+        topo.addWidget(self.media, 1)
         self.eixo_x, self.eixo_y = EixoDoTema("bottom"), EixoDoTema("left")
         self.grafico = pg.PlotWidget(axisItems={"bottom": self.eixo_x, "left": self.eixo_y})
         self.grafico.setObjectName("grafico_espectro_ao_vivo")
@@ -429,6 +429,7 @@ class PainelDoFim(Painel):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(traduzir("A captura"), parent)
+        self.titulo.setWordWrap(True)                # o título comprido (a queda, o disco) quebra, ao lado do botão
         self.lista = ListaDeProblemas()
         self.abrir = Botao(traduzir("Abrir na Análise"), "primario", "onda")
         self.abrir.setObjectName("abrir_a_captura")
@@ -442,12 +443,13 @@ class PainelDoFim(Painel):
         self.pasta.clicked.connect(self.pastaPedida.emit)
         self.trazer.clicked.connect(self.trazerPedido.emit)
         self.nova.clicked.connect(self.novaPedida.emit)
+        # "Nova captura" no topo do painel: a linha das ações cabe no centro estreito (com o caderno ao lado).
+        self.lado.addWidget(self.nova)
         botoes = QHBoxLayout()
         botoes.setSpacing(8)
         for b in (self.abrir, self.trazer, self.pasta):
             botoes.addWidget(b)
         botoes.addStretch(1)
-        botoes.addWidget(self.nova)
         corpo = QVBoxLayout()
         corpo.setContentsMargins(14, 0, 14, 12)
         corpo.setSpacing(10)

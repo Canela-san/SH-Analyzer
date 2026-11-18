@@ -165,7 +165,7 @@ def test_a_arvore_segue_o_projeto_sem_quebrar_o_contrato_do_modelo(qapp, tmp_pat
     projeto = Projeto()
     modelo = ArvoreDoProjeto(projeto)
     QAbstractItemModelTester(modelo, QAbstractItemModelTester.FailureReportingMode.Fatal)
-    assert modelo.rowCount() == 2 and modelo.rowCount(modelo.index(0, 0)) == 0
+    assert modelo.rowCount() == 3 and modelo.rowCount(modelo.index(0, 0)) == 0
     a = FonteDoProjeto(abrir_fonte(captura(tmp_path, "a.bin")))
     b = FonteDoProjeto(abrir_fonte(captura(tmp_path, "b.bin")))
     for fonte in (a, b):

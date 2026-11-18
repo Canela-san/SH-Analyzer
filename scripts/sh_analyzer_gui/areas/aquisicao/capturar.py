@@ -19,6 +19,9 @@ centro vira o cockpit (``ao_vivo.py``: o tempo, a vazão, a integridade, o sinal
 (``abrir_no_projeto``); a do cartão, quando a transferência a traz e confere. A senha do sudo é perguntada no mesmo
 lugar que a da conferência.
 
+**O caderno de bancada** (a F4.5; ``caderno.py``), na coluna da direita: as entradas do dia e as notas. Ele se
+esconde e volta pelo botão "Caderno" do título (lembrado nas preferências).
+
 **Uma captura que ficou pela metade** (o aplicativo fechou no meio de uma captura no computador: o ``.parcial`` na
 pasta da sessão) aparece no centro, com "Fechar a captura" (o ``recuperar`` do ``sh_placa``, numa thread: ele relê o
 arquivo inteiro para o CRC).
@@ -55,15 +58,17 @@ from sh_placa.pedido import Contexto, PedidoDeCaptura, Problema
 
 from ... import preferencias
 from ...componentes.basicos import Botao
-from ...componentes.numeros import formatar_bytes, formatar_duracao, formatar_si
+from ...componentes.numeros import decimal, formatar_bytes, formatar_duracao, formatar_si
 from ...dados.projeto import ModeloDeCaptura
 from ...modelo.comandos import ApagarModeloDeCaptura, GuardarModeloDeCaptura
 from ...servicos.ao_vivo import AoVivo
+from ...servicos.caderno import CadernoDaSessao
 from ...servicos.captura_da_placa import CapturaDaPlaca
 from ...servicos.conexao_da_placa import ConexaoDaPlaca
 from ...servicos.conferencia_da_placa import ConferenciaDaPlaca
 from ...servicos.saude_da_placa import SaudeDaPlaca
 from .ao_vivo import Cockpit
+from .caderno import CadernoDeBancada
 from .formulario_de_captura import FormularioDeCaptura, ListaDeProblemas, texto_da_faixa
 from .pecas import BlocoDeComando, IconeDoNivel, Painel, fonte
 from .textos import frase, hora, traduzir
@@ -107,7 +112,8 @@ class Capturar(QWidget):
     ``pedir_nome(titulo, rotulo, texto)``: o nome de um modelo (``None`` cancela); ``livre`` mede o espaço livre.
     ``captura``: o serviço da captura (sem ele, um daqui, sem a fila de transferências); ``abrir_no_projeto(caminho)``
     põe a captura no projeto, ``abrir_na_analise(caminho)`` a mostra na Análise, e ``abrir_url`` abre a pasta no
-    gerenciador de arquivos (os testes passam uns que não abrem nada)."""
+    gerenciador de arquivos (os testes passam uns que não abrem nada). ``caderno``: o caderno da sessão (sem ele, a
+    seção não tem a coluna)."""
 
     _recuperou = Signal(object, object)          # da thread do recuperar: (o arquivo, o erro ou None)
 
@@ -119,7 +125,8 @@ class Capturar(QWidget):
                  lembrar: bool = True, captura: CapturaDaPlaca | None = None, ao_vivo: AoVivo | None = None,
                  abrir_no_projeto: Callable[[Path], object] | None = None,
                  abrir_na_analise: Callable[[Path], object] | None = None,
-                 abrir_url: Callable[[QUrl], object] = QDesktopServices.openUrl, parent: QWidget | None = None):
+                 abrir_url: Callable[[QUrl], object] = QDesktopServices.openUrl,
+                 caderno: CadernoDaSessao | None = None, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("secao_capturar")
         self.conexao, self.saude, self.conferencia = conexao, saude, conferencia
@@ -156,7 +163,15 @@ class Capturar(QWidget):
         self.subtitulo = QLabel()
         self.subtitulo.setObjectName("subtitulo_da_secao")
         self.subtitulo.setWordWrap(True)
-        coluna.addWidget(titulo)
+        self.mostrar_o_caderno = Botao(traduzir("Caderno"), "fantasma", "livro")
+        self.mostrar_o_caderno.setObjectName("mostrar_o_caderno")
+        self.mostrar_o_caderno.setToolTip(traduzir("Mostrar o caderno de bancada"))
+        self.mostrar_o_caderno.clicked.connect(lambda: self.definir_caderno_visivel(True))
+        topo = QHBoxLayout()
+        topo.addWidget(titulo)
+        topo.addStretch(1)
+        topo.addWidget(self.mostrar_o_caderno)
+        coluna.addLayout(topo)
         coluna.addWidget(self.subtitulo)
         self.paginas = QStackedWidget()
         self.paginas.setObjectName("paginas_da_captura")
@@ -195,6 +210,12 @@ class Capturar(QWidget):
         linha.setSpacing(0)
         linha.addWidget(self.formulario)
         linha.addWidget(rolagem, 1)
+        self.caderno: CadernoDeBancada | None = None
+        if caderno is not None:
+            self.caderno = CadernoDeBancada(caderno, abrir_url)
+            self.caderno.esconderPedido.connect(lambda: self.definir_caderno_visivel(False))
+            linha.addWidget(self.caderno)
+        self.definir_caderno_visivel(preferencias.caderno_visivel() if lembrar else True, lembrar=False)
 
         self._para_lembrar = QTimer(self)
         self._para_lembrar.setSingleShot(True)
@@ -538,6 +559,18 @@ class Capturar(QWidget):
         if caminho is not None:
             self.abrir_url(QUrl.fromLocalFile(str(Path(caminho).parent)))
 
+    # ------------------------------------------------------------------ o caderno
+
+    def definir_caderno_visivel(self, visivel: bool, lembrar: bool | None = None) -> None:
+        """Mostra ou esconde a coluna do caderno (``lembrar``: nas preferências; o padrão, o da seção)."""
+        if self.caderno is None:
+            self.mostrar_o_caderno.setVisible(False)
+            return
+        self.caderno.setVisible(visivel)
+        self.mostrar_o_caderno.setVisible(not visivel)
+        if self.lembrar if lembrar is None else lembrar:
+            preferencias.mudar_caderno_visivel(visivel)
+
     # ------------------------------------------------------------------ a captura que ficou pela metade
 
     def procurar_parciais(self) -> list[Path]:
@@ -737,7 +770,7 @@ def linhas_da_conferencia(feita: ConferenciaFeita) -> list[Problema]:
         if n.frequencia_hz is not None:
             partes.append(formatar_si(n.frequencia_hz, "Hz", 5))
         partes.append(traduzir("offset {}").format(formatar_si(n.media_v, "V", 3)))
-        partes.append(traduzir("{} rms ({} LSB)").format(formatar_si(n.rms_v, "V", 3), f"{n.rms_lsb:.1f}"))
+        partes.append(traduzir("{} rms ({} LSB)").format(formatar_si(n.rms_v, "V", 3), decimal(f"{n.rms_lsb:.1f}")))
         partes.append(traduzir("usa {} % da faixa").format(round(100 * n.uso_da_faixa)))
         sugerida = n.faixa_sugerida_v
         if n.satura:

@@ -24,8 +24,12 @@ import tempfile  # noqa: E402
 os.environ["SH_ANALYZER_CONFIG"] = tempfile.mkdtemp(prefix="sh-analyzer-config-")
 os.environ["SH_ANALYZER_CACHE"] = tempfile.mkdtemp(prefix="sh-analyzer-cache-")     # as pirâmides, idem
 os.environ["SH_ANALYZER_LOG"] = tempfile.mkdtemp(prefix="sh-analyzer-log-")         # o log do aplicativo, idem
-# E saem no fim do processo (cada um do pytest-xdist tem as suas): sem isso, cada rodada deixava três pastas no /tmp.
-for _pasta in (os.environ["SH_ANALYZER_CONFIG"], os.environ["SH_ANALYZER_CACHE"], os.environ["SH_ANALYZER_LOG"]):
+# Os dados do laboratório ($DADOS: a pasta da sessão do dia, com as capturas trazidas e o caderno de bancada), idem:
+# um teste que monta a Aquisição sem dizer a pasta nunca escreve no anotacoes.md de verdade de quem desenvolve.
+os.environ["DADOS"] = tempfile.mkdtemp(prefix="sh-analyzer-dados-")
+# E saem no fim do processo (cada um do pytest-xdist tem as suas): sem isso, cada rodada deixava quatro pastas no /tmp.
+for _pasta in (os.environ["SH_ANALYZER_CONFIG"], os.environ["SH_ANALYZER_CACHE"], os.environ["SH_ANALYZER_LOG"],
+               os.environ["DADOS"]):
     atexit.register(shutil.rmtree, _pasta, ignore_errors=True)
 
 import pytest  # noqa: E402

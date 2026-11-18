@@ -7,6 +7,11 @@ a PRU), ``"capturando"``, ``"parando"``, ``"sem_conexao"`` (só no cartão: o ca
 acompanhamento volta com a conexão), ``"feita"`` (o :attr:`fim`), ``"falhou"`` (o :attr:`erro`),
 ``"precisa_da_senha"`` e ``"senha_recusada"``. :meth:`dispensar` volta a ``None`` (o formulário).
 
+**Os marcos** (``marco``, na hora do fato, para o caderno de bancada): ``"comecou"`` (o ``ler_adc`` começou a
+amostrar), ``"caiu"`` (no cartão: a conexão caiu e a captura segue na placa), ``"retomada"`` (o acompanhamento voltou,
+com uma conexão nova), ``"terminou"`` (o :attr:`fim`) e ``"falhou"`` (o :attr:`erro`; a senha pedida ou recusada,
+antes de começar, não é marco).
+
 **A senha do sudo** é a da conferência: a da saúde da placa, senão a desta conexão, senão a do cofre; a que deu certo
 volta para a saúde (e para o cofre, se pedido). Nunca é escrita.
 
@@ -47,6 +52,7 @@ log = logging.getLogger(__name__)
 
 ESTADOS = ("comecando", "capturando", "parando", "sem_conexao", "feita", "falhou", "precisa_da_senha",
            "senha_recusada")
+MARCOS = ("comecou", "caiu", "retomada", "terminou", "falhou")
 RODANDO = ("comecando", "capturando", "parando", "sem_conexao")
 LINHAS_DO_TEXTO = 300
 
@@ -105,6 +111,7 @@ class CapturaDaPlaca(QObject):
     mudou = Signal()
     progrediu = Signal()
     texto = Signal(str)
+    marco = Signal(str)                         # MARCOS, na hora do fato
     _do_laco = Signal(str, object)              # do laço para a interface: ("progresso", Progresso), ("texto", str)
 
     def __init__(self, conexao: ConexaoDaPlaca, saude: SaudeDaPlaca, transferencias=None, *,
@@ -313,6 +320,7 @@ class CapturaDaPlaca(QObject):
         self.progresso = dado
         if self.estado == "comecando" and dado.inicio is not None:
             self._mudar("capturando")
+            self.marco.emit("comecou")
         self.progrediu.emit()
 
     def _parou_no_cartao(self, chamada: Chamada) -> None:
@@ -334,6 +342,7 @@ class CapturaDaPlaca(QObject):
                 self.saude.lembrar_senha_do_sudo(senha)
             self.fim = fim
             self._mudar("feita")
+            self.marco.emit("terminou")
             if fim.destino == "cartao" and fim.gravou and self.pedido is not None and self.pedido.trazer_no_fim \
                     and self.transferencias is not None:
                 self._a_trazer = fim.nome
@@ -347,6 +356,7 @@ class CapturaDaPlaca(QObject):
             e = chamada.excecao
             if self.no_cartao and isinstance(e, ErroDeConexao) and self.estado in ("capturando", "parando"):
                 self._mudar("sem_conexao")          # a captura segue na placa; a conexão de volta a acompanha
+                self.marco.emit("caiu")
                 self._talvez_retomar()
                 return
             self._no_laco = None
@@ -359,10 +369,12 @@ class CapturaDaPlaca(QObject):
             if isinstance(e, ErroDaCaptura) and e.texto:
                 self.linhas.extend(e.texto[-20:])
             self._mudar("falhou")
+            self.marco.emit("falhou")
             return
         self._no_laco = None                          # cancelada (o aplicativo fechando)
         self.erro = "A captura foi cancelada."
         self._mudar("falhou")
+        self.marco.emit("falhou")
 
     def _mudar(self, estado: str | None) -> None:
         self.estado = estado
@@ -397,6 +409,7 @@ class CapturaDaPlaca(QObject):
         self._mudar("capturando")
         self._chamada = c.servico.chamar(f"acompanhar a captura no cartão ({self.nome})", self._retomar_no_cartao,
                                          c.conexao_ssh, self.nome, ao_terminar=self._terminou)
+        self.marco.emit("retomada")
 
     def _procurar_capturas_em_curso(self) -> None:
         """Uma conexão nova: há uma captura no cartão que ninguém acompanha (lançada antes da queda, ou por um

@@ -197,6 +197,7 @@ class JanelaPrincipal(QMainWindow):
             abrir_na_analise=lambda caminhos: self._na_analise(self.controle.abrir_capturas(caminhos)),
             abrir_no_projeto=lambda caminhos: self.controle.abrir_capturas(caminhos),
             mostrar_na_analise=self._mostrar_na_analise)
+        self.aquisicao.caderno.mudou.connect(self.area.cadernos_mudaram)
         self.paginas = QStackedWidget()
         self.paginas.setObjectName("paginas_das_areas")
         self._paginas_das_areas = {AREA_ANALISE: self.estudio, AREA_AQUISICAO: self.aquisicao}

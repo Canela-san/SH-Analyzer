@@ -29,6 +29,7 @@ from ...componentes.painel import EstadoVazio
 from ...componentes.toast import Toast
 from ...servicos.conexao_da_placa import ConexaoDaPlaca
 from ...servicos.saude_da_placa import SaudeDaPlaca
+from .entradas_do_caderno import frase_do_relatorio
 from .itens import TEXTOS_DAS_CORRECOES, comando_da_correcao, itens_da_placa, resumo_da_conexao
 from .pecas import BlocoDeComando, IconeDoNivel, Selo, fonte
 from .textos import frase, nome_da_placa, traduzir
@@ -108,10 +109,11 @@ class Diagnostico(QWidget):
 
     corrigir = Signal(str)
 
-    def __init__(self, conexao: ConexaoDaPlaca, saude: SaudeDaPlaca, dialogos_de=None, parent: QWidget | None = None):
+    def __init__(self, conexao: ConexaoDaPlaca, saude: SaudeDaPlaca, dialogos_de=None, caderno=None,
+                 parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("diagnostico")
-        self.conexao, self.saude, self.dialogos_de = conexao, saude, dialogos_de
+        self.conexao, self.saude, self.dialogos_de, self.caderno = conexao, saude, dialogos_de, caderno
         self.paginas = QStackedWidget()
         self.vazio = EstadoVazio(traduzir("Nenhuma placa conectada"),
                                  traduzir("O diagnóstico confere a placa conectada: o relógio, o firmware, a PRU, a "
@@ -141,13 +143,18 @@ class Diagnostico(QWidget):
         self.salvar = Botao(traduzir("Salvar o relatório…"), "secundario", "baixar")
         self.salvar.setObjectName("salvar_relatorio")
         self.salvar.clicked.connect(self.salvar_relatorio)
+        self.para_o_caderno = Botao(traduzir("Para o caderno"), "secundario", "livro")
+        self.para_o_caderno.setObjectName("relatorio_para_o_caderno")
+        self.para_o_caderno.setToolTip(traduzir("O relatório numa entrada do caderno de bancada da sessão"))
+        self.para_o_caderno.clicked.connect(self.relatorio_para_o_caderno)
+        self.para_o_caderno.setVisible(self.caderno is not None)
         cabecalho = QHBoxLayout()
         textos = QVBoxLayout()
         textos.setSpacing(2)
         textos.addWidget(self.titulo)
         textos.addWidget(self.subtitulo)
         cabecalho.addLayout(textos, 1)
-        for botao in (self.conferir, self.copiar, self.salvar):
+        for botao in (self.conferir, self.copiar, self.para_o_caderno, self.salvar):
             cabecalho.addWidget(botao, 0, Qt.AlignmentFlag.AlignTop)
         self.cartoes: dict[str, CartaoDoItem] = {}         # os itens de agora, pela chave
         self.lista = QVBoxLayout()
@@ -220,6 +227,17 @@ class Diagnostico(QWidget):
     def copiar_relatorio(self) -> None:
         QGuiApplication.clipboard().setText(self.relatorio())
         Toast.mostrar(self.window(), traduzir("O relatório do diagnóstico foi copiado (Markdown)."), "sucesso")
+
+    def relatorio_para_o_caderno(self) -> None:
+        """O relatório numa entrada do caderno (o plano, 11.9: o estado da placa antes de um ensaio)."""
+        texto = self.relatorio()
+        if self.caderno is None or not texto:
+            return
+        if self.caderno.registrar(frase_do_relatorio(texto)):
+            Toast.mostrar(self.window(), traduzir("O relatório do diagnóstico foi para o caderno de bancada."),
+                          "sucesso")
+        else:
+            Toast.mostrar(self.window(), self.caderno.erro, "erro")
 
     def salvar_relatorio(self) -> None:
         if self.dialogos_de is None:

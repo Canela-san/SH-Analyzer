@@ -79,6 +79,7 @@ class SaudeDaPlaca(QObject):
     mudou = Signal()
     atividade = Signal(object)                 # uma Entrada nova do registro de atividade
     correcaoMudou = Signal()
+    corrigiu = Signal(object)                  # a Correcao que terminou, feita ou não (o caderno)
     _registrou = Signal(object)                # do laço (ou da interface): a Entrada
 
     def __init__(self, conexao: ConexaoDaPlaca, parent: QObject | None = None):
@@ -229,6 +230,8 @@ class SaudeDaPlaca(QObject):
     def _mudar_a_correcao(self, correcao: Correcao | None) -> None:
         self.correcao = correcao
         self.correcaoMudou.emit()
+        if correcao is not None and correcao.estado in ("feita", "falhou"):
+            self.corrigiu.emit(correcao)
 
     def corrigir_pinos(self) -> None:
         """O ``config-pin`` dos pinos fora do modo da PRU (a interface já confirmou), e a saúde de novo."""

@@ -48,6 +48,7 @@ CHAVE_DAS_UNIDADES = "unidades/proprias"
 CHAVE_DAS_PLACAS = "placa/conhecidas"
 CHAVE_DO_CENARIO = "placa/cenario_do_simulador"
 CHAVE_DO_PEDIDO = "aquisicao/ultimo_pedido"
+CHAVE_DO_CADERNO = "aquisicao/caderno_visivel"
 PASTAS = ("dados", "sondas", "cache")
 CHAVES_DAS_PASTAS = {nome: f"pastas/{nome}" for nome in PASTAS}
 CACHES = ("piramides", "materializacoes")
@@ -203,6 +204,15 @@ def mudar_ultimo_pedido(p) -> None:
     from sh_placa import pedido
 
     gravar(CHAVE_DO_PEDIDO, json.dumps(pedido.para_dict(p), ensure_ascii=False))
+
+
+def caderno_visivel() -> bool:
+    """Se a seção Capturar mostra a coluna do caderno de bancada (o padrão: sim)."""
+    return ler_texto(CHAVE_DO_CADERNO, "sim") != "nao"
+
+
+def mudar_caderno_visivel(visivel: bool) -> None:
+    gravar(CHAVE_DO_CADERNO, "sim" if visivel else "nao")
 
 
 def pasta_da_placa() -> Path:

@@ -99,6 +99,7 @@ class TransferenciasDaPlaca(QObject):
 
     mudou = Signal()
     progrediu = Signal(object)
+    terminou = Signal(object)                  # um ItemDaFila no estado final (o caderno)
     _noLaco = Signal(object, str, int)          # do laço: (item, estado ou "", transferidos)
 
     def __init__(self, conexao: ConexaoDaPlaca, saude: SaudeDaPlaca, *, indice: Path | None = None,
@@ -260,6 +261,7 @@ class TransferenciasDaPlaca(QObject):
         else:
             item.estado, item.erro = "falhou", chamada.erro
         self.mudou.emit()
+        self.terminou.emit(item)
         self._proxima()
 
     # ------------------------------------------------------------------ a conexão

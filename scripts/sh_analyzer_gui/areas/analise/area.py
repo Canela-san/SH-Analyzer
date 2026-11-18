@@ -8,7 +8,8 @@ mexe mais na tela.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QSize, Qt
+from PySide6.QtCore import QObject, QSize, Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QLabel, QTabBar, QTabWidget, QToolButton, QWidget
 from shiboken6 import isValid
 
@@ -54,6 +55,9 @@ class AreaDeAnalise(QObject):
         painel.vistaAtivada.connect(self.ativar_vista)
         painel.selecaoMudou.connect(self._selecao_mudou)
         painel.fecharFontePedido.connect(self.fechar_fonte)
+        painel.notaAtivada.connect(self.abrir_no_editor)
+        inspetor.do_caderno.abrirPedido.connect(self.abrir_no_editor)
+        self.abrir_url = QDesktopServices.openUrl            # os testes trocam por um que não abre nada
         aparencia().mudou.connect(self._estado_da_ativa)      # a taxa e a duração, com o separador de agora
 
     # ------------------------------------------------------------------ o projeto
@@ -323,6 +327,19 @@ class AreaDeAnalise(QObject):
     def _avisos_da_fonte(self, fonte: FonteDoProjeto) -> None:
         if not fonte.esta_ausente:
             self.avisos.adicionar(fonte.fonte.captura.avisos, fonte.id, fonte.nome)
+
+    # ------------------------------------------------------------------ as notas (os cadernos de bancada)
+
+    def abrir_no_editor(self, arquivo) -> None:
+        if arquivo is not None:
+            self.abrir_url(QUrl.fromLocalFile(str(arquivo)))
+
+    def cadernos_mudaram(self) -> None:
+        """Um caderno mudou (o da sessão, pela Aquisição ou pelo editor): a seção Notas e o inspetor dele."""
+        if self.painel.modelo is not None:
+            self.painel.modelo.atualizar_as_notas()
+        if self.inspetor.currentWidget() is self.inspetor.do_caderno:
+            self.inspetor.do_caderno.recarregar()
 
     # ------------------------------------------------------------------ a captura ativa (a barra de status)
 

@@ -1,4 +1,5 @@
-"""O painel do projeto (docs/gui-plan.md, 9.1; o mockup A1): a árvore das fontes com os seus canais e das vistas.
+"""O painel do projeto (docs/gui-plan.md, 9.1; o mockup A1): a árvore das fontes com os seus canais, das vistas e
+das notas.
 
 * **O modelo** (:class:`ArvoreDoProjeto`) espelha o projeto e segue os sinais dele com inserções e remoções de linha
   (``beginInsertRows``...): a árvore não fecha nem perde a seleção quando algo muda.
@@ -10,9 +11,15 @@
 * **O painel** (:class:`PainelDoProjeto`) junta o filtro, a árvore e o estado vazio. Um duplo clique num canal pede
   para plotá-lo (``canalAtivado``); um clique numa vista abre a aba dela (``vistaAtivada``: outro jeito de trocar de
   vista).
+* **As notas** (a F4.5): os cadernos de bancada (o ``anotacoes.md``) das pastas das capturas do projeto, um por pasta
+  que tem o arquivo, com o número de entradas. Calculadas das fontes (o projeto guarda receitas: nada disso vai para o
+  ``.shproj``); :meth:`ArvoreDoProjeto.atualizar_as_notas` as refaz quando um caderno muda. Um clique mostra o caderno
+  no inspetor; o duplo clique o abre no editor (``notaAtivada``).
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from PySide6.QtCore import QAbstractItemModel, QModelIndex, QRectF, QSize, QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QFontMetrics, QPainter, QPen
@@ -31,13 +38,14 @@ from PySide6.QtWidgets import (
 
 from ...componentes.numeros import formatar_duracao, formatar_si
 from ...componentes.painel import EstadoVazio
+from ...dados import caderno
 from ...modelo.objetos import FonteDoProjeto, Projeto, Traco, Vista
 from ...tema.aplicar import aparencia
 from ...tema.icones import IconeDoTema, icone
 from ...tema.tokens import TAMANHOS, Tema, cor_do_traco
 
-PAPEL_TIPO = Qt.ItemDataRole.UserRole + 1         # "grupo", "fonte", "canal" ou "vista"
-PAPEL_OBJETO = Qt.ItemDataRole.UserRole + 2       # a FonteDoProjeto, a Vista ou (fonte, número do canal)
+PAPEL_TIPO = Qt.ItemDataRole.UserRole + 1         # "grupo", "fonte", "canal", "vista" ou "nota"
+PAPEL_OBJETO = Qt.ItemDataRole.UserRole + 2       # a FonteDoProjeto, a Vista, (fonte, número do canal) ou o Path
 PAPEL_DETALHE = Qt.ItemDataRole.UserRole + 3      # o texto discreto à direita
 PAPEL_CORES = Qt.ItemDataRole.UserRole + 4        # as posições na paleta dos traços do canal
 ALTURA_DA_LINHA = 26
@@ -65,10 +73,22 @@ def _meta_da_fonte(fonte: FonteDoProjeto) -> str:
            f"{formatar_duracao(canais[0].duracao_s)}"
 
 
-class ArvoreDoProjeto(QAbstractItemModel):
-    """As fontes (com os canais) e as vistas de ``projeto``, em dois grupos."""
+def cadernos_das_fontes(fontes) -> list[Path]:
+    """Os ``anotacoes.md`` que existem nas pastas das capturas de ``fontes``, sem repetir, em ordem."""
+    achados = set()
+    for fonte in fontes:
+        if fonte.esta_ausente:
+            continue
+        arquivo = caderno.caminho_do_caderno(Path(fonte.caminho).parent)
+        if arquivo.is_file():
+            achados.add(arquivo)
+    return sorted(achados)
 
-    GRUPOS = ("Fontes", "Vistas")
+
+class ArvoreDoProjeto(QAbstractItemModel):
+    """As fontes (com os canais), as vistas e as notas de ``projeto``, em três grupos."""
+
+    GRUPOS = ("Fontes", "Vistas", "Notas")
 
     def __init__(self, projeto: Projeto, parent=None):
         super().__init__(parent)
@@ -76,11 +96,16 @@ class ArvoreDoProjeto(QAbstractItemModel):
         self._raiz = _No("raiz", None, None)
         self._fontes = _No("grupo", "Fontes", self._raiz)
         self._vistas = _No("grupo", "Vistas", self._raiz)
-        self._raiz.filhos = [self._fontes, self._vistas]
+        self._notas = _No("grupo", "Notas", self._raiz)
+        self._raiz.filhos = [self._fontes, self._vistas, self._notas]
+        self._entradas: dict[Path, int] = {}      # o número de entradas de cada caderno, lido em atualizar_as_notas
         for fonte in projeto.fontes:
             self._fontes.filhos.append(self._no_da_fonte(fonte))
         for vista in projeto.vistas:
             self._vistas.filhos.append(_No("vista", vista, self._vistas))
+        for arquivo in cadernos_das_fontes(projeto.fontes):
+            self._notas.filhos.append(_No("nota", arquivo, self._notas))
+            self._entradas[arquivo] = len(caderno.ler(arquivo))
         projeto.fonteEntrou.connect(self._fonte_entrou)
         projeto.fonteSaiu.connect(self._fonte_saiu)
         projeto.vistaEntrou.connect(self._vista_entrou)
@@ -137,6 +162,16 @@ class ArvoreDoProjeto(QAbstractItemModel):
                     return self._indice(no)
         return QModelIndex()
 
+    def indice_da_nota(self, arquivo: Path) -> QModelIndex:
+        for no in self._notas.filhos:
+            if no.objeto == Path(arquivo):
+                return self._indice(no)
+        return QModelIndex()
+
+    @property
+    def notas(self) -> list[Path]:
+        return [no.objeto for no in self._notas.filhos]
+
     def indice_da_vista(self, vista: Vista) -> QModelIndex:
         for no in self._vistas.filhos:
             if no.objeto is vista:
@@ -183,6 +218,16 @@ class ArvoreDoProjeto(QAbstractItemModel):
                 return f"{fonte.nome}, canal {numero}: {canal.nome_grandeza}, {formatar_si(canal.taxa_hz, 'S/s')}. " \
                        f"Duplo clique plota na vista ativa."
             return None
+        if no.tipo == "nota":
+            arquivo: Path = no.objeto
+            if papel == Qt.ItemDataRole.DisplayRole:
+                return arquivo.parent.name
+            if papel == PAPEL_DETALHE:
+                n = self._entradas.get(arquivo, 0)
+                return f"{n} {'entrada' if n == 1 else 'entradas'}"
+            if papel == Qt.ItemDataRole.ToolTipRole:
+                return f"{arquivo}\nO caderno de bancada da sessão: um clique o mostra, o duplo clique o abre no editor."
+            return None
         vista: Vista = no.objeto
         if papel == Qt.ItemDataRole.DisplayRole:
             return vista.nome
@@ -200,6 +245,7 @@ class ArvoreDoProjeto(QAbstractItemModel):
         self._fontes.filhos.insert(i, self._no_da_fonte(fonte))
         self.endInsertRows()
         self._mudou(self._fontes)
+        self.atualizar_as_notas()
 
     def _fonte_saiu(self, fonte: FonteDoProjeto, i: int) -> None:
         self.beginRemoveRows(self._indice(self._fontes), i, i)
@@ -207,6 +253,7 @@ class ArvoreDoProjeto(QAbstractItemModel):
         self.endRemoveRows()
         fonte.estadoMudou.disconnect(self._fonte_mudou)
         self._mudou(self._fontes)
+        self.atualizar_as_notas()
 
     def _vista_entrou(self, vista: Vista, i: int) -> None:
         self.beginInsertRows(self._indice(self._vistas), i, i)
@@ -257,8 +304,34 @@ class ArvoreDoProjeto(QAbstractItemModel):
         indice = self._indice(no)
         self.dataChanged.emit(indice, indice)
 
+    def atualizar_as_notas(self) -> None:
+        """Os cadernos das pastas das fontes de novo (uma fonte entrou ou saiu, um caderno mudou): as linhas que
+        saem e as que entram, sem refazer as outras (a seleção fica)."""
+        novos = cadernos_das_fontes(self.projeto.fontes)
+        pai = self._indice(self._notas)
+        for i in reversed(range(len(self._notas.filhos))):
+            if self._notas.filhos[i].objeto not in novos:
+                self.beginRemoveRows(pai, i, i)
+                del self._notas.filhos[i]
+                self.endRemoveRows()
+        for i, arquivo in enumerate(novos):
+            if i >= len(self._notas.filhos) or self._notas.filhos[i].objeto != arquivo:
+                self.beginInsertRows(pai, i, i)
+                self._notas.filhos.insert(i, _No("nota", arquivo, self._notas))
+                self.endInsertRows()
+        mudaram = []
+        for no in self._notas.filhos:
+            n = len(caderno.ler(no.objeto))
+            if self._entradas.get(no.objeto) != n:
+                self._entradas[no.objeto] = n
+                mudaram.append(no)
+        for no in mudaram:
+            indice = self._indice(no)
+            self.dataChanged.emit(indice, indice)
+        self._mudou(self._notas)
 
-ICONES = {"fonte": "arquivo", "vista": "onda"}
+
+ICONES = {"fonte": "arquivo", "vista": "onda", "nota": "livro"}
 INTEGRIDADE = {"confere": ("ok", "ok", "CRC das amostras conferido"),
                "nao_confere": ("alerta", "erro", "o CRC das amostras NÃO confere: o arquivo foi alterado"),
                "erro": ("alerta", "aviso", "não foi possível conferir o CRC"),
@@ -369,6 +442,7 @@ class PainelDoProjeto(QWidget):
     vistaAtivada = Signal(object)
     selecaoMudou = Signal(str, object)
     fecharFontePedido = Signal(object)
+    notaAtivada = Signal(object)                   # o Path do anotacoes.md: abrir no editor
 
     def __init__(self, acao_abrir: QAction, parent: QWidget | None = None):
         super().__init__(parent)
@@ -465,6 +539,8 @@ class PainelDoProjeto(QWidget):
         if indice.data(PAPEL_TIPO) == "canal":
             fonte, numero = indice.data(PAPEL_OBJETO)
             self.canalAtivado.emit(fonte, numero)
+        elif indice.data(PAPEL_TIPO) == "nota":
+            self.notaAtivada.emit(indice.data(PAPEL_OBJETO))
 
     def _menu(self, ponto) -> None:
         indice = self.arvore.indexAt(ponto)
@@ -475,6 +551,8 @@ class PainelDoProjeto(QWidget):
             menu.addAction(self.tr("Plotar na vista ativa"), lambda: self.canalAtivado.emit(fonte, numero))
         elif tipo == "fonte":
             menu.addAction(self.tr("Fechar a captura"), lambda: self.fecharFontePedido.emit(objeto))
+        elif tipo == "nota":
+            menu.addAction(self.tr("Abrir no editor"), lambda: self.notaAtivada.emit(objeto))
         else:
             menu.addAction(self._acao_abrir)
         menu.exec(self.arvore.viewport().mapToGlobal(ponto))

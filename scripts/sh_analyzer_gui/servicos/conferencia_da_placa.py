@@ -34,6 +34,7 @@ class ConferenciaDaPlaca(QObject):
     """``pasta``: onde a captura curta fica enquanto é medida (a temporária do sistema; os testes passam outra)."""
 
     mudou = Signal()
+    terminou = Signal()                          # uma conferência acabou: o resultado ou o erro (o caderno)
     _progrediu = Signal(object)                  # do laço para a thread da interface
 
     def __init__(self, conexao: ConexaoDaPlaca, saude: SaudeDaPlaca, *, pasta: Path | None = None,
@@ -122,6 +123,7 @@ class ConferenciaDaPlaca(QObject):
             self.saude.lembrar_senha_do_sudo(senha)
             self.resultado, self.erro = feita, aviso
             self._mudar("feita")
+            self.terminou.emit()
         elif chamada.estado == "falhou":
             from sh_placa.correcoes import ErroDoSudo
 
@@ -132,6 +134,7 @@ class ConferenciaDaPlaca(QObject):
             else:
                 self.erro = chamada.erro
                 self._mudar("falhou")
+                self.terminou.emit()
         else:
             self._mudar("cancelada")
 
