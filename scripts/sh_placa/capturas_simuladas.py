@@ -42,6 +42,7 @@ VERSAO_DO_CABECALHO = 9
 ATRASOS_CS = (3, 1, 3)                        # ATRASO_CS_*_PADRAO do memoria_pru.h
 PROTOCOLO_DA_PRU = 5
 MODO_SPI = 2                                  # o SPI rápido, gravando a fase B (75 ns)
+VALOR_DESCONHECIDO = 0xFFFFFFFF               # num campo numérico do sistema: o ler_adc não conseguiu ler
 
 # A parte fixa (os campos da v8, nos mesmos bytes desde então) e a extensão da v9, como em supraharmonicos/cabecalho.py.
 _FIXA = ("<4sIIQIII8BIIIIIdQQ"          # magic ... total_amostras_gravadas (bytes 0 a 83)
@@ -66,9 +67,20 @@ class Sistema:
     versao_firmware: str = ""
     relogio_sincronizado: bool = True
     ligada_s: int = 8040
-    disco_total_kib: int = 0
+    disco_total_kib: int = 0                  # o cartão: o disco do programa e o da captura num arquivo
     disco_livre_kib: int = 0
     memoria_kib: int = 319_488
+    disco_livre_fim_kib: int | None = None    # o livre no fim da captura (None: o do início)
+    saida_no_disco: bool = True               # False: a saída contínua, cujo disco é o de quem recebe (desconhecido)
+
+
+def _disco_da_saida(sistema: Sistema, final: bool) -> tuple[int, int, int]:
+    """O total, o livre no início e o livre no fim do disco da captura, como o ``ler_adc`` os grava: desconhecidos na
+    saída contínua; o do fim, só no cabeçalho final."""
+    if not sistema.saida_no_disco:
+        return VALOR_DESCONHECIDO, VALOR_DESCONHECIDO, VALOR_DESCONHECIDO
+    fim = sistema.disco_livre_kib if sistema.disco_livre_fim_kib is None else sistema.disco_livre_fim_kib
+    return sistema.disco_total_kib, sistema.disco_livre_kib, fim if final else VALOR_DESCONHECIDO
 
 
 def sinal_da_rede(n: int, taxa_por_canal: float, semente: int = 0, *, inicio: int = 0,
@@ -276,8 +288,8 @@ def montar_cabecalho(configuracao: Configuracao, *, inicio: float, sistema: Sist
         *integridade, *c.atrasos_cs, _texto(sistema.versao_firmware, 32), fim.taxa_medida_hz if fim else 0.0, 2,
         18, 0, 2 if fim else 0, PROTOCOLO_DA_PRU, c.modo_spi, 0, 0,
         _texto(c.titulo, 128), _texto(sistema.sistema, 64), _texto(sistema.placa, 32),
-        sistema.disco_total_kib, sistema.disco_livre_kib, sistema.disco_livre_kib, sistema.disco_total_kib,
-        sistema.disco_livre_kib, sistema.memoria_kib, 0)
+        *_disco_da_saida(sistema, fim is not None), sistema.disco_total_kib, sistema.disco_livre_kib,
+        sistema.memoria_kib, 0)
     ganhos = [*c.ganhos, *[0.0] * (8 - len(c.ganhos))]
     if fim is None:
         finais = [0, 0, 0, 0, 0.0]

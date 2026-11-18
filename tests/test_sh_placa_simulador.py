@@ -323,6 +323,9 @@ def test_a_captura_continua_na_placa_simulada(tmp_path):
     assert c.grandeza_por_canal == (1, 0, 1) and c.ganho_por_canal == (10.0, 19.357, None)
     assert c.versao_firmware == simulador.VERSAO_SIMULADA and c.placa.endswith(simulador.SERIE_SIMULADA)
     assert c.linha_de_comando.endswith("-o - --progresso-json")
+    # O disco da saída contínua é o de quem recebe, que o ler_adc não vê; o do programa é o cartão.
+    assert (c.disco_saida_total_kib, c.disco_saida_livre_kib, c.disco_saida_livre_fim_kib) == (None, None, None)
+    assert c.disco_programa_total_kib == simulador.CARTAO_KIB
     captura = api.abrir_captura(r.arquivo)
     assert api.conferir_integridade(captura) is True
     tensao = np.fromfile(r.arquivo, dtype="<u2", offset=c.tamanho_cabecalho)[1::3]
@@ -365,9 +368,8 @@ def test_o_ler_adc_simulado_grava_no_cartao_e_recusa_o_que_o_de_verdade_recusa(t
     sem)."""
     import subprocess
     pasta = tmp_path / "placa"
-    simulador.montar_sistema_falso(pasta)
-    firmware = pasta / "home" / "debian" / "firmware"
-    ambiente = {"PATH": os.environ["PATH"], "HOME": str(firmware.parent)}
+    raiz, firmware = simulador.montar_sistema_falso(pasta)
+    ambiente = {"PATH": os.environ["PATH"], "HOME": str(firmware.parent), "SHAN_RAIZ": str(raiz)}
 
     def ler_adc(*argumentos, cwd=firmware):
         return subprocess.run(["sh", str(firmware / "ler_adc"), *argumentos], cwd=cwd, env=ambiente,
@@ -378,6 +380,10 @@ def test_o_ler_adc_simulado_grava_no_cartao_e_recusa_o_que_o_de_verdade_recusa(t
     c = motor.ler_cabecalho(firmware / "no_cartao.bin")
     assert c.crc32_valido and c.blocos_gravados == 2 and c.titulo == "No cartão"
     assert motor.conferir_crc_das_amostras(firmware / "no_cartao.bin", c) is True
+    # O disco é o cartão, e a captura gasta o tamanho dela entre o livre do início e o do fim.
+    assert c.disco_saida_total_kib == c.disco_programa_total_kib == simulador.CARTAO_KIB
+    gasto = c.disco_saida_livre_kib - c.disco_saida_livre_fim_kib
+    assert gasto == pytest.approx((firmware / "no_cartao.bin").stat().st_size / 1024, abs=2)
     # A faixa, a sonda, a grandeza, o SPI e as esperas de CS vão para o cabeçalho, como no de verdade; o canal da
     # tomada (±9 V no pino) satura em ±2,56 V.
     r = ler_adc("300000", "1,0", "--blocos", "1", "-o", "opcoes.bin", "--faixa-adc", "1:5.12",

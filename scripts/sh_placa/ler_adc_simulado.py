@@ -30,7 +30,7 @@ import shlex
 import signal
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -171,6 +171,18 @@ def _erro(texto: str) -> None:
     _linha(sys.stderr, f"Erro: {texto}")
 
 
+def _disco_do_cartao() -> tuple[int, int]:
+    """O total e o livre do cartão da placa simulada, como o agente os vê (o tamanho dele, menos o sistema e os
+    arquivos da pasta do firmware, que é esta); desconhecidos fora dela."""
+    raiz = os.environ.get("SHAN_RAIZ")
+    try:
+        total, reservado = (int(x) for x in (Path(raiz) / "run/simulador/disco").read_text().split()[:2])
+    except (TypeError, OSError, ValueError):
+        return cs.VALOR_DESCONHECIDO, cs.VALOR_DESCONHECIDO
+    usado = sum(f.lstat().st_size for f in Path.cwd().rglob("*") if f.is_file() and not f.is_symlink())
+    return total, max(0, total - reservado - usado // 1024)
+
+
 def _agora() -> float:
     """O relógio da placa simulada: o deste computador mais o desvio dela (o que o agente lê)."""
     raiz = os.environ.get("SHAN_RAIZ")
@@ -195,8 +207,10 @@ class Captura:
             grandezas=tuple(GRANDEZAS[c.grandeza] for c in p.canais), ganhos=tuple(c.ganho or 0.0 for c in p.canais),
             faixas=self.faixas, sondas=tuple(c.sonda for c in p.canais), modo_spi=CODIGOS_DO_SPI[p.spi],
             atrasos_cs=p.atrasos_cs)
+        total, livre = _disco_do_cartao()
         self.sistema = cs.Sistema(os.environ.get("SHAN_KERNEL", ""), os.environ.get("SHAN_SISTEMA", ""),
-                                  os.environ.get("SHAN_PLACA", ""), versao_firmware=os.environ.get("SHAN_VERSAO", ""))
+                                  os.environ.get("SHAN_PLACA", ""), versao_firmware=os.environ.get("SHAN_VERSAO", ""),
+                                  disco_total_kib=total, disco_livre_kib=livre, saida_no_disco=not pedido.continua)
         ticks = 200_000_000 // pedido.frequencia
         self.taxa_real = 200_000_000 / ticks
         self.segundos_por_bloco = por_bloco / self.taxa_real
@@ -206,7 +220,10 @@ class Captura:
             _linha(sys.stderr, json.dumps({"evento": evento, "formato": 1, **campos}, ensure_ascii=False))
 
     def _cabecalho(self, fim: cs.Fim | None) -> bytes:
-        return cs.montar_cabecalho(self.configuracao, inicio=self.inicio, sistema=self.sistema,
+        sistema = self.sistema
+        if fim is not None and sistema.saida_no_disco:
+            sistema = replace(sistema, disco_livre_fim_kib=_disco_do_cartao()[1])
+        return cs.montar_cabecalho(self.configuracao, inicio=self.inicio, sistema=sistema,
                                    identidade=self.identidade, fim=fim)
 
     def rodar(self) -> int:
