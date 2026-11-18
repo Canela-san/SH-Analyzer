@@ -2320,6 +2320,16 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **Testes:** o `ci.sh` completo passou: 1 919 em cada Python (eram 1 741), o `placa` com 477 (eram 329) e a
     interface com 850 (eram 824); o `.venv` intocado (o mesmo `pyvenv.cfg` antes e depois).
   - **Próximo:** a F4.4, a captura na tela.
+- **18/11/2026 (depois):** **a F4.4, em andamento** (seção 4e, o desenho em `a05fb03`):
+  - **feito e com teste:** a captura no cartão desacoplada da conexão e o nome do arquivo (`1472519`, 20 testes da
+    captura com o `ler_adc` de verdade, mais o do simulador com a transferência) e o `abrir_ao_vivo` do motor
+    (`dcfd8f1`); a suíte fora da interface passou (1 670);
+  - **feito, sem teste próprio ainda:** o serviço da captura, o ao vivo e o cockpit na seção (o último commit da
+    interface); os 20 testes da seção e da área passam com ele;
+  - **Parado em:** os testes da F4.4 na interface (`tests/test_gui_captura_na_tela.py`: a captura no simulador, o
+    ao vivo, o Parar, a queda, o cartão com a transferência, a senha, o `.parcial`, o fechar a janela), a imagem sem
+    tela do cockpit, a CI completa, a bancada na placa (o `ler_adc` novo numa pasta à parte, apagada depois) e os
+    docs (a F4.4 ☑, a arquitetura, a memória).
 ---
 
 ## 8. Perguntas em aberto
