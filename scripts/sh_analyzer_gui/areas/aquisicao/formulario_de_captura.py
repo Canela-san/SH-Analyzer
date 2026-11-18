@@ -259,13 +259,26 @@ class LinhaDoCanal(QWidget):
         linha.addWidget(self.faixa)
         linha.addWidget(self.lsb)
         linha.addStretch(1)
-        linha.addWidget(self.sugerir)
         linha.addWidget(self.ganho)
+        # A sugestão da conferência numa linha dela (só quando há uma): ao lado da faixa, do LSB e do ganho, ela
+        # passaria da largura do formulário.
+        self.motivo_da_sugestao = QLabel()
+        self.motivo_da_sugestao.setObjectName("texto_mudo")
+        self.motivo_da_sugestao.setFont(fonte("secundario"))
+        self.motivo_da_sugestao.setWordWrap(True)
+        self.linha_da_sugestao = QWidget()
+        sugestao = QHBoxLayout(self.linha_da_sugestao)
+        sugestao.setContentsMargins(46, 0, 0, 0)
+        sugestao.setSpacing(6)
+        sugestao.addWidget(self.sugerir)
+        sugestao.addWidget(self.motivo_da_sugestao, 1)
+        self.linha_da_sugestao.setVisible(False)
         coluna = QVBoxLayout(self)
         coluna.setContentsMargins(0, 2, 0, 4)
         coluna.setSpacing(4)
         coluna.addLayout(cima)
         coluna.addWidget(self.baixo)
+        coluna.addWidget(self.linha_da_sugestao)
 
         self.ligado.toggled.connect(self._ligado_mudou)
         self.grandeza.currentIndexChanged.connect(lambda _: self.mudou.emit())
@@ -327,10 +340,15 @@ class LinhaDoCanal(QWidget):
         mostra = faixa_v is not None and self.ligado.isChecked() and \
             abs(faixa_v - self.faixa.currentData()) >= pd.TOLERANCIA_DA_FAIXA_V
         self.sugerir.setVisible(mostra)
-        if faixa_v is not None:
+        self.linha_da_sugestao.setVisible(mostra)
+        if mostra:
+            menor = faixa_v < self.faixa.currentData()
             self.sugerir.setText(traduzir("usar {}").format(texto_da_faixa(faixa_v)))
+            self.motivo_da_sugestao.setText(traduzir("pela conferência: mais resolução") if menor else
+                                            traduzir("pela conferência: não cabe nesta"))
             self.sugerir.setToolTip(traduzir("A faixa que a última conferência sugere para o sinal deste canal: a menor "
-                                             "que o comporta, com 15 % de folga (mais resolução)."))
+                                             "que o comporta com 15 % de folga, ou a maior, se ele saturou (o pico "
+                                             "cortado não diz qual cabe)."))
 
     def marcar(self, campos: set[str]) -> None:
         """Os campos com um erro ficam marcados."""

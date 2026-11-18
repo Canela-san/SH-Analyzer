@@ -16,6 +16,7 @@ from sh_analyzer_gui import preferencias  # noqa: E402
 from sh_analyzer_gui.app import criar_aplicacao  # noqa: E402
 from sh_analyzer_gui.areas.aquisicao.area import AreaDeAquisicao  # noqa: E402
 from sh_analyzer_gui.areas.aquisicao.capturar import Capturar, resumo_do_pedido  # noqa: E402
+from sh_analyzer_gui.areas.aquisicao.formulario_de_captura import LARGURA  # noqa: E402
 from sh_analyzer_gui.modelo.objetos import Projeto  # noqa: E402
 from sh_analyzer_gui.servicos.conexao_da_placa import ConexaoDaPlaca  # noqa: E402
 from sh_analyzer_gui.servicos.conferencia_da_placa import ConferenciaDaPlaca  # noqa: E402
@@ -235,6 +236,7 @@ def test_conferir_antes_na_placa_simulada_sugere_a_faixa(area, qtbot, tmp_path):
     assert any(t.startswith("Canal 0: ") and "pp no pino" in t for t in textos)
     assert any(t.startswith("Canal 1: o pico") and "usa 88 % de ±10,24 V, a maior faixa" in t for t in textos)
     assert f.linhas[0].sugerir.isVisible() and f.linhas[0].sugerir.text() == "usar ±2,56 V"
+    assert f.linhas[0].motivo_da_sugestao.text() == "pela conferência: mais resolução"
     assert not f.linhas[1].sugerir.isVisible() and s.usar_as_faixas.isVisible()
     s.usar_as_faixas.click()
     assert f.pedido.canal(0).faixa_v == 5.12 and not f.linhas[0].sugerir.isVisible()
@@ -254,7 +256,9 @@ def test_conferir_com_a_faixa_pequena_demais_mostra_a_saturacao(area, qtbot):
     assert feita.faixas_sugeridas == {1: 20.48}
     assert any("fundo de escala em ±2,56 V (saturou): confira em ±10,24 V, a maior faixa" in t
                for t in s.lista_da_conferencia.textos)
-    assert s.usar_as_faixas.isVisibleTo(s)
+    assert s.usar_as_faixas.isVisibleTo(s) and f.linhas[1].sugerir.text() == "usar ±10,24 V"
+    assert f.linhas[1].motivo_da_sugestao.text() == "pela conferência: não cabe nesta"
+    assert f.linhas[1].minimumSizeHint().width() <= LARGURA - 28                # a sugestão não alarga a coluna
     qtbot.mouseClick(s.usar_as_faixas, Qt.MouseButton.LeftButton)
     assert f.pedido.canal(1).faixa_v == 20.48 and not s.usar_as_faixas.isVisibleTo(s)
     # Nela, a tomada da placa simulada (±9 V no pino) cabe, sem os 15 % de folga: pronto, com o aviso.
