@@ -37,8 +37,10 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > o que chegou) e no cartão (a captura segue na placa, desacoplada da conexão, e o aplicativo volta a acompanhá-la), e
 > a transferência no fim; validada na placa (seção 5). **A F4.5 está feita** (diário de 18/11): o caderno de bancada,
 > no `anotacoes.md` da sessão do dia (só acrescentado), com as entradas automáticas e as notas, na seção Capturar e na
-> seção Notas do projeto. **A próxima: a F4.6**, as rotinas do `coletar.sh` pelo terminal embutido (o comando montado
-> pelo formulário, com as pausas "mude a bancada e tecle Enter"). **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
+> seção Notas do projeto. **A F4.6 está feita** (diário de 18/11): a seção Rotinas, com os modos do `coletar.sh` num
+> formulário (a bancada vem do pedido da Capturar), a ajuda lida da placa e o "Rodar no terminal" numa aba nova, com as
+> pausas da bancada lá; validada na placa. **A próxima: a F4.7**, o fechamento da Fase 4 (a jornada da captura de ponta
+> a ponta com o simulador e a captura de 1 h na placa). **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
 > a captura contínua e o "Conferir antes" dizem "atualize o firmware da placa" (o código 96 do roteiro, conferido
 > nela), e o aplicativo vai precisar mandar o firmware novo (o `enviar` do `BeagleBone_Setup.sh`, ou a Fase 6).
 >
@@ -178,14 +180,14 @@ sonda em pedaços, sem prender o GIL) e `1257f5b` (o fechamento da saída contí
 **O ambiente:** Python 3.13, PySide6 6.12.0 (na 3.10 e na 3.11, o 6.11.3: seção 2), PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1; no extra `placa`,
 asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5, keyring 25.7.0 (o cofre do Linux é o Secret Service) e pyte 0.8.2. **A CI
 roda em `.venv-ci/<versão>`** (desde 16/11/2026): o `.venv` é o de quem desenvolve, e o `ci.sh` não o troca mais.
-Testes, na última rodada (18/11/2026, depois da revisão da CI): o `ci.sh` completo em 5 min, com 2 431 em Python 3.13
-(a suíte inteira, com a interface) e 2 004 em 3.10 (sem o Qt).
+Testes, na última rodada (18/11/2026, com a F4.6): o `ci.sh` completo em 5 min, com 2 452 em Python 3.13 (a suíte
+inteira, com a interface) e 2 023 em 3.10 (sem o Qt).
 
 **Desde 18/11/2026, a captura pela interface** (a Fase 4 até a F4.5, seção 4e): o formulário com o "Conferir antes",
 a captura na tela (direto no computador ou no cartão, com o ao vivo, o Parar e a queda) e o caderno de bancada.
 
-**Ainda não existe:** as rotinas do `coletar.sh` pelo terminal (a F4.6) e o fechamento da Fase 4 (a F4.7, com a
-captura de 1 h na placa); o resgate pela serial (v1.0); as figuras e as exportações (a Fase 5).
+**Ainda não existe:** o fechamento da Fase 4 (a F4.7, com a captura de 1 h na placa); as rotinas como formulários
+nativos, com as pausas em diálogos (depois da v0.10); o resgate pela serial (v1.0); as figuras e as exportações (a Fase 5).
 
 ---
 
@@ -1800,7 +1802,7 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
     `tests/test_gui_captura_na_tela.py` (10), e o simulador que para em `tests/test_sh_placa_simulador.py` (conferido
     com a correção desligada: ele falha).
 
-### ▶ F4.6: as rotinas do `coletar.sh` pelo terminal
+### ☑ F4.6: as rotinas do `coletar.sh` pelo terminal
 
 - **O conteúdo:** as rotinas (a sonda, a calibração, a campanha) abrem no terminal embutido com o comando montado pelo
   formulário, com as pausas "mude a bancada e tecle Enter" que elas já têm (o plano, 11.5).
@@ -1816,7 +1818,7 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
     cada modo e que todo modo da ajuda está na tabela, e outro roda os comandos montados com `--simular` no
     `coletar.sh` do repositório;
   - **a seção Rotinas** da Aquisição (entre a Capturar e a Arquivos): a lista dos modos à esquerda (com "para e pede
-    a bancada" quando para), o formulário do escolhido, a linha de comando pronta (editável) e "Rodar no terminal",
+    a bancada" quando para), o formulário do escolhido, a linha de comando pronta (só leitura, com o copiar: as outras opções cobrem o resto) e "Rodar no terminal",
     "Simular" (com `--simular`), "Continuar a última" (com `--continuar`) e "Ver a ajuda". Rodar abre uma aba nova do
     terminal com o nome do modo, roda o comando lá (as pausas, o `sudo` e as respostas ficam na aba, gravadas no
     `terminal_bbb_N.txt` do dia) e põe uma entrada no caderno; os valores de cada modo ficam enquanto o aplicativo
@@ -1827,8 +1829,13 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
     no caderno;
   - **pronto quando:** a calibração e a sonda rodam da seção na placa de verdade até a primeira pausa (com
     `--simular`, até o fim do plano).
+- **Feito em 18/11/2026:** o `sh_placa` (as rotinas e o comando, `2a129fc`; o terminal com a entrada inicial e o SPI
+  só fora do padrão, `2a592ff`) e a interface (a seção Rotinas, `dcf011a`). Mudou do desenho: a linha de comando é só
+  leitura (editá-la à mão desligaria o formulário; as "outras opções" cobrem o resto), e o SPI do pedido só entra
+  quando é o lento (o rápido é o padrão do script, como no comando do `ler_adc`). **Na placa** (seção 5): a
+  calibração e a sonda até a primeira pausa, e a calibração com `--simular` até o fim do plano.
 
-### ☐ F4.7: o fechamento da Fase 4
+### ▶ F4.7: o fechamento da Fase 4
 
 - **O conteúdo:** a jornada da captura num teste de ponta a ponta com o simulador (o formulário, a captura, o Parar,
   a queda, a captura na Análise); **na placa de verdade:** uma captura de 1 h direto no computador, sem perder amostra,
@@ -1868,6 +1875,7 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
 | 17/11/2026 | **Uma captura de 152 s pelo SSH** (58 blocos, 116 MiB, um canal, 400 kS/s; parada pelo root) | A taxa medida de 400 000,2 S/s, o pior bloco no ARM em 445 ms (de 2 621 ms), nenhuma amostra atrasada nem buffer sobrescrito; o CRC das amostras certo | idem |
 | 18/11/2026 | **O "Conferir antes" (F4.3) na placa de verdade**, pelo `sh_placa`, pelo USB; o canal 1 na tomada da casa | Um bloco a 400 kS/s em **4,6 s** (2,6 s de captura); o canal 1: de −9,3169 a +9,3241 V no pino (18,64 Vpp, ~128 V rms na tomada), 60,04 Hz, 91 % da maior faixa: **as medidas do motor iguais às do `ler_adc`**, dígito a dígito; em ±2,56 V: 82 % das amostras saturadas, ✗, e a sugestão da maior faixa; os canais 0 e 1 com faixas por canal e o SPI lento a 200 kS/s: íntegra, as faixas e o SPI certos no cabeçalho, o canal 0 (sem nada) com 0,7 LSB rms; o arquivo apagado nos três | o diário de 18/11 (F4.3) |
 | 18/11/2026 | **A captura na tela (F4.4) na placa de verdade**, pelo `sh_placa` e pelas contas da interface, pelo USB; o canal 1 na tomada da casa | **No computador:** 3 blocos a 400 kS/s em 9,0 s, o CRC das amostras certo e a integridade limpa; o quadro do ao vivo com 20 000 amostras (50 ms), 9,37 V de pico no pino, 60,00 Hz. **No cartão, até parar:** o Parar no 2º bloco, o código 0, a cópia pelo SFTP (4 MiB em 0,8 s) conferida pelo CRC-32. **No cartão, com a queda:** a conexão fechada no 1º bloco; 2 s depois, a conexão nova achou a captura rodando (`em_curso`) e a acompanhou até o 4º bloco; a cópia (8 MiB em 1,6 s) conferida. A placa ficou limpa | o diário de 18/11 (F4.4) |
+| 18/11/2026 | **As rotinas (F4.6) na placa de verdade**, pela seção Rotinas e o terminal embutido (a placa com o `coletar.sh` da v0.8) | `calibrar --simular`: o plano inteiro (68 capturas) em 10 s; `calibrar --faixas 20.48`: até a 1ª pausa ("Mude a bancada: gerador: ONDA QUADRADA de 256 Hz…"), depois do `sudo`; `sonda --pontos 3`: até "Iniciar a coleta? [S/n]"; as duas faixas juntas, recusadas pelo próprio script (faltam 57 MB no cartão). Três abas com o nome do modo, três gravações, uma entrada no caderno por rotina | `bancada_f46.py` (fora do repositório) |
 | 16/11/2026 | **A jornada da Aquisição na placa de verdade**, na janela (sem tela), pelo USB: em casa e na tomada do laboratório | Achada em 1,6 s; a primeira conexão (a impressão, a senha, a chave) em 2,5 e 2,6 s; o enlace com 1,0 e 0,9 ms e 4,6 e 6,6 MB/s; uma conferência de 4 MiB transferida e conferida pelo CRC em 0,91 e 0,93 s (o SFTP a 5,2 e 5,3 MiB/s); o relógio acertado com ±0,05 s, de +2,15 s e de −3 h 07 | o diário de 16/11 (F3.10) |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
@@ -2504,6 +2512,23 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **Testes:** o `ci.sh` completo em 307 s (era ~25 min, e a última rodada levou ~70): 2 431 em 3.13 com a
     interface (190 s) e 2 004 em 3.10 sem o Qt (105 s); a interface sozinha, em paralelo, em 94 s; o `.venv` intocado.
   - **Próximo:** a F4.6.
+- **18/11/2026 (madrugada):** **a F4.6, as rotinas do `coletar.sh` pelo terminal** (seção 4e, o desenho em `15902d1`):
+  - **o pedido:** "Faça a F4.6";
+  - **a ordem dos commits, por componente:** o `sh_placa` (as rotinas, `2a129fc`; o terminal com a entrada inicial,
+    `2a592ff`) e a interface (a seção Rotinas, `dcf011a`);
+  - **o que a imagem sem tela mostrou:** o painel das opções tinha a altura do maior modo (o `QStackedWidget` guarda
+    a dica da página maior mesmo com a política `Ignored`), e os campos de um modo curto ficavam espalhados; agora o
+    painel guarda só o formulário do modo escolhido;
+  - **o que a placa mostrou** (seção 5): a calibração com as duas faixas não cabe no cartão (o script recusa:
+    faltam 57 MB, com a captura `FEM_*.bin` do usuário ocupando o espaço); com uma faixa, ela chega à primeira pausa.
+    A pasta `CAL_*` que a rotina interrompida deixou (só o `log.txt` e o `resumo.csv`, sem captura) foi apagada; a
+    captura do usuário intacta, 1,5 GB livres como antes, nenhum `ler_adc` rodando;
+  - **Testes:** `tests/test_sh_placa_rotinas.py` (19: a tabela contra a ajuda de cada modo, o comando, os recusados
+    e os comandos montados rodando com `--simular` no `coletar.sh` do repositório) e `tests/test_gui_rotinas.py` (2:
+    o formulário pelo pedido e a rotina numa aba nova do servidor SSH dos testes, com o plano na tela, o caderno e a
+    ajuda da placa). O `ci.sh` completo passou em 310 s: 2 452 em 3.13 com a interface (eram 2 431) e 2 023 em
+    3.10 sem o Qt (eram 2 004); o `.venv` intocado.
+  - **Próximo:** a F4.7.
 ---
 
 ## 8. Perguntas em aberto
