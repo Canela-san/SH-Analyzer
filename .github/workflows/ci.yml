@@ -38,7 +38,7 @@ jobs:
       - name: Instalar o zpaq e o compilador cruzado do ARM
         run: sudo apt-get update -qq && sudo apt-get install -y -qq zpaq gcc-arm-linux-gnueabihf
 
-      - name: ruff e pytest
+      - name: ruff e pytest (o motor, o sh_placa e o agente, sem o Qt)
         run: scripts/ci.sh testes ${{ matrix.python }}
 
   firmware:
@@ -60,20 +60,6 @@ jobs:
       # de tipo e aviso que só apareceriam no `make` da BeagleBone.
       - name: gcc -Werror no ler_adc.c (x86 e ARM de 32 bits) e shellcheck
         run: scripts/ci.sh firmware
-
-  placa:
-    name: placa (sh_placa e o agente, sem o Qt)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Instalar o uv
-        run: pipx install uv
-
-      # O extra placa (asyncssh, zeroconf, pyserial, keyring), nos dois Pythons da matriz, sem o PySide6.
-      - name: sh_placa e o agente
-        run: scripts/ci.sh placa
 
   interface:
     name: interface gráfica (PySide6, sem tela)
