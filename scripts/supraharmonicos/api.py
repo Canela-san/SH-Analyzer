@@ -320,29 +320,61 @@ def abrir_captura(caminho: Path, *, formato: str | None = None, sondas_dir: Path
     abrir = {"bin": _abrir_bin, "csv": _abrir_csv, "h5": _abrir_hdf5}[tipo]
     with capturar_avisos() as avisos:
         ctx, amostras, formato, taxa_total, declarados, hdf5 = abrir(caminho, formato, sondas_dir, parametros)
-        n_canais = ctx.num_canais
-        n_por_canal = len(amostras) // n_canais        # um quadro final incompleto (arquivo cortado) fica de fora
-        if n_por_canal == 0:
-            raise ErroSHAN(f"{caminho.name}: {len(amostras)} amostra(s), menos que um ciclo dos {n_canais} canais.")
-        canais = []
-        for posicao, numero in enumerate(ctx.canais):
-            try:
-                perfil, problema = perfil_para_correcao(ctx, numero, formato), ""
-            except ErroSHAN as e:          # a CLI pararia aqui; a interface abre a captura e mostra o problema
-                perfil, problema = None, str(e)
-                avisos.append(Aviso("erro", problema))
-            canais.append(CanalDaCaptura(
-                numero=numero, posicao=posicao,
-                amostras=amostras[posicao:n_por_canal * n_canais:n_canais],
-                taxa_hz=taxa_total / n_canais,
-                faixa_v=ctx.faixas[posicao], faixa_confiavel=ctx.faixas_confiaveis[posicao],
-                ganho=ctx.ganhos[posicao], offset_v=ctx.offsets[posicao],
-                grandeza=ctx.grandeza_do_canal(numero), sonda_id=ctx.sonda_id_do_canal(numero),
-                perfil=perfil, formato=formato, problema_sonda=problema,
-                ganho_declarado=declarados[posicao],
-            ))
-    return Captura(caminho, ctx.cabecalho, formato, amostras, tuple(canais), tuple(avisos), ctx, tipo,
-                   parametros, hdf5)
+        canais = _canais_da_captura(caminho, ctx, amostras, formato, taxa_total, declarados, avisos)
+    return Captura(caminho, ctx.cabecalho, formato, amostras, canais, tuple(avisos), ctx, tipo, parametros, hdf5)
+
+
+def abrir_ao_vivo(caminho: Path, blocos: int, *, sondas_dir: Path | None = None) -> Captura:
+    """O que já chegou de uma captura em curso: o ``.parcial`` da saída contínua (``sh_placa.captura``), com o
+    cabeçalho provisório e os ``blocos`` primeiros blocos inteiros (os que as linhas de progresso já contaram; o que
+    vem depois pode estar pela metade). Os canais são os do :func:`abrir_captura`, com as unidades, as faixas, os
+    ganhos e as sondas do cabeçalho; os campos de fim dele ainda não valem (a captura não acabou). Levanta
+    :class:`ErroSHAN` sem o cabeçalho, com ``blocos`` < 1 ou com menos amostras no arquivo que esses blocos."""
+    caminho = Path(caminho)
+    if blocos < 1:
+        raise ErroSHAN(f"{caminho.name}: o ao vivo precisa de pelo menos um bloco inteiro (pedidos {blocos}).")
+    if not caminho.is_file() or ler_cabecalho(caminho) is None:
+        raise ErroSHAN(f"{caminho.name}: não é uma captura do ler_adc em curso (sem o cabeçalho do SH-Analyzer).")
+    with capturar_avisos() as avisos:
+        ctx = resolver_contexto_explicito(caminho, formato="uint16", sondas_dir=sondas_dir)
+        cab = ctx.cabecalho
+        n = blocos * cab.samples_per_buffer
+        todas = carregar_amostras_bin(caminho, "uint16", ctx.offset_amostras)
+        if len(todas) < n:
+            raise ErroSHAN(f"{caminho.name}: {len(todas)} amostras no arquivo, menos que os {blocos} bloco(s) de "
+                           f"{cab.samples_per_buffer}.")
+        amostras = todas[:n]
+        canais = _canais_da_captura(caminho, ctx, amostras, "uint16", _taxa_do_cabecalho(cab),
+                                    _declarados(cab, ctx.num_canais), avisos)
+    return Captura(caminho, cab, "uint16", amostras, canais, tuple(avisos), ctx, "bin", None, None)
+
+
+def _canais_da_captura(caminho: Path, ctx: ContextoCaptura, amostras, formato: str, taxa_total: float,
+                       declarados: list[bool], avisos: list[Aviso]) -> tuple[CanalDaCaptura, ...]:
+    """Os canais das amostras intercaladas (as visões de cada um, sem cópia). Um quadro final incompleto (um arquivo
+    cortado) fica de fora; um perfil de sonda que não serve vira um aviso, e o canal abre sem ele."""
+    n_canais = ctx.num_canais
+    n_por_canal = len(amostras) // n_canais
+    if n_por_canal == 0:
+        raise ErroSHAN(f"{caminho.name}: {len(amostras)} amostra(s), menos que um ciclo dos {n_canais} canais.")
+    canais = []
+    for posicao, numero in enumerate(ctx.canais):
+        try:
+            perfil, problema = perfil_para_correcao(ctx, numero, formato), ""
+        except ErroSHAN as e:          # a CLI pararia aqui; a interface abre a captura e mostra o problema
+            perfil, problema = None, str(e)
+            avisos.append(Aviso("erro", problema))
+        canais.append(CanalDaCaptura(
+            numero=numero, posicao=posicao,
+            amostras=amostras[posicao:n_por_canal * n_canais:n_canais],
+            taxa_hz=taxa_total / n_canais,
+            faixa_v=ctx.faixas[posicao], faixa_confiavel=ctx.faixas_confiaveis[posicao],
+            ganho=ctx.ganhos[posicao], offset_v=ctx.offsets[posicao],
+            grandeza=ctx.grandeza_do_canal(numero), sonda_id=ctx.sonda_id_do_canal(numero),
+            perfil=perfil, formato=formato, problema_sonda=problema,
+            ganho_declarado=declarados[posicao],
+        ))
+    return tuple(canais)
 
 
 def crc32_das_amostras(caminho: Path) -> int | None:

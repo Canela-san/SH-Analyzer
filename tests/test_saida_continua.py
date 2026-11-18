@@ -326,3 +326,28 @@ def test_a_queda_fechada_aqui_da_o_que_o_ler_adc_gravaria_no_cartao(ler_adc, tmp
     inteiro = fechar(q)
     assert (inteiro.blocos, inteiro.pelo_computador, inteiro.crc_confere) == (3, False, True)
     assert q.read_bytes() == fluxo[-T:] + fluxo[T:-T]
+
+
+def test_o_ao_vivo_abre_pela_api_so_os_blocos_inteiros_do_parcial(tmp_path):
+    """``api.abrir_ao_vivo``: o ``.parcial`` que ainda chega (o cabeçalho provisório, dois blocos e meio), aberto com
+    os canais do cabeçalho e só os blocos contados; o sinal de cada canal é o da captura inteira, depois de fechada."""
+    from supraharmonicos import api
+    codigos = amostras(3)
+    provisorio, final = cabecalhos(codigos, 3)
+    parcial = tmp_path / "ao_vivo.bin.parcial"
+    parcial.write_bytes(provisorio + codigos[:2 * POR_BLOCO + 400].tobytes())
+    ao_vivo = api.abrir_ao_vivo(parcial, 2)
+    completo = tmp_path / "ao_vivo.bin"
+    completo.write_bytes(final + codigos.tobytes())
+    captura = api.abrir_captura(completo)
+    assert [c.numero for c in ao_vivo.canais] == list(CANAIS) and len(ao_vivo.amostras) == 2 * POR_BLOCO
+    for numero in CANAIS:
+        n = len(ao_vivo.canal(numero).amostras)
+        assert n == 2 * POR_BLOCO // len(CANAIS) and ao_vivo.canal(numero).taxa_hz == captura.canal(numero).taxa_hz
+        np.testing.assert_array_equal(api.sinal_do_canal(ao_vivo, numero), api.sinal_do_canal(captura, numero, 0, n))
+    for blocos in (0, 3):
+        with pytest.raises(ErroSHAN):
+            api.abrir_ao_vivo(parcial, blocos)
+    (tmp_path / "outro.parcial").write_bytes(b"nada de captura")
+    with pytest.raises(ErroSHAN):
+        api.abrir_ao_vivo(tmp_path / "outro.parcial", 1)

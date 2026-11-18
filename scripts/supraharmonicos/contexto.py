@@ -136,11 +136,13 @@ def resolver_contexto_explicito(caminho_entrada: Path | None, *, formato: str = 
     ``api`` usa para abrir uma captura.
 
     A detecção do cabeçalho vem ANTES de resolver --canais/-f, que podem cair de volta nos metadados dele quando
-    não informados. Só um '.bin' pode ter o cabeçalho -- um '.csv' nunca tem."""
+    não informados. Só um '.bin' pode ter o cabeçalho (ou o '.bin.parcial' dele, a captura da saída contínua que
+    ainda chega) -- um '.csv' nunca tem."""
 
     cabecalho: CabecalhoArquivo | None = None
     offset_amostras = 0
-    if caminho_entrada is not None and caminho_entrada.suffix.lower() == ".bin" and caminho_entrada.exists():
+    nome = caminho_entrada.name.lower() if caminho_entrada is not None else ""
+    if (nome.endswith(".bin") or nome.endswith(".bin.parcial")) and caminho_entrada.exists():
         cabecalho = ler_cabecalho(caminho_entrada)
         if cabecalho is not None:
             offset_amostras = cabecalho.tamanho_cabecalho      # 1024 até a v8; 4096 na v9
