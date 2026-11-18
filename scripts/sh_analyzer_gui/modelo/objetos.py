@@ -25,7 +25,7 @@ from shiboken6 import isValid
 
 from ..dados.captura import CanalDaCaptura, Fonte
 from ..dados.espectros import OPCOES_DO_TIPO
-from ..dados.projeto import TIPOS_DE_VISTA, FonteSalva
+from ..dados.projeto import TIPOS_DE_VISTA, FonteSalva, ModeloDeCaptura
 from ..dados.receita import ReceitaDoTraco, proxima_cor
 
 
@@ -226,12 +226,14 @@ class Projeto(QObject):
     vistaMudou = Signal(object, object)           # vista, campos
     modificadoMudou = Signal(bool)
     nomeMudou = Signal(str)
+    modelosMudaram = Signal()                     # os modelos de captura da Aquisição
 
     def __init__(self, caminho: Path | None = None):
         super().__init__()
         self.caminho = Path(caminho) if caminho is not None else None
         self._fontes: list[FonteDoProjeto] = []
         self._vistas: list[Vista] = []
+        self._modelos: list[ModeloDeCaptura] = []
         self.pilha = QUndoStack(self)
         self.pilha.cleanChanged.connect(self._limpo_mudou)
 
@@ -264,6 +266,17 @@ class Projeto(QObject):
             if vista.id == id:
                 return vista
         raise KeyError(f"o projeto não tem a vista {id!r}")
+
+    @property
+    def modelos_de_captura(self) -> tuple[ModeloDeCaptura, ...]:
+        """Os modelos de captura (o formulário da Aquisição com um nome), na ordem em que foram guardados."""
+        return tuple(self._modelos)
+
+    def modelo_de_captura(self, nome: str) -> ModeloDeCaptura | None:
+        for modelo in self._modelos:
+            if modelo.nome == nome:
+                return modelo
+        return None
 
     def tracos(self) -> Iterator[tuple[Vista, Traco]]:
         """Todos os traços de todas as vistas, com a vista de cada um."""
@@ -315,6 +328,22 @@ class Projeto(QObject):
         for sinal, repasse in self._repasses(vista):
             sinal.disconnect(repasse)
         self.vistaSaiu.emit(vista, indice)
+        return indice
+
+    def _por_modelo(self, modelo: ModeloDeCaptura, indice: int | None = None) -> None:
+        """Guarda ``modelo`` no lugar do de mesmo nome (ou em ``indice``, ou no fim)."""
+        atual = [m.nome for m in self._modelos]
+        if modelo.nome in atual:
+            self._modelos[atual.index(modelo.nome)] = modelo
+        else:
+            indice = len(self._modelos) if indice is None else max(0, min(indice, len(self._modelos)))
+            self._modelos.insert(indice, modelo)
+        self.modelosMudaram.emit()
+
+    def _tirar_modelo(self, nome: str) -> int:
+        indice = [m.nome for m in self._modelos].index(nome)
+        del self._modelos[indice]
+        self.modelosMudaram.emit()
         return indice
 
     def _repasses(self, vista: Vista):

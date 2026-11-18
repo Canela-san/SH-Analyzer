@@ -17,6 +17,7 @@ from collections.abc import Mapping
 
 from PySide6.QtGui import QUndoCommand
 
+from ..dados.projeto import ModeloDeCaptura
 from .objetos import FonteDoProjeto, Projeto, Traco, Vista
 
 ID_MUDAR_TRACOS = 1001
@@ -261,3 +262,40 @@ class RemoverFonte(QUndoCommand):
         self.projeto._inserir_fonte(self.fonte, self.indice)
         for remocao in reversed(self.remocoes):
             remocao.desfazer()
+
+
+class GuardarModeloDeCaptura(QUndoCommand):
+    """Guarda o formulário da captura com um nome (no lugar do de mesmo nome, se houver: o desfazer o devolve)."""
+
+    def __init__(self, projeto: Projeto, modelo: ModeloDeCaptura):
+        if not modelo.nome.strip():
+            raise ValueError("o modelo de captura precisa de um nome")
+        self.anterior = projeto.modelo_de_captura(modelo.nome)
+        super().__init__(f"{'Atualizar' if self.anterior else 'Guardar'} o modelo {modelo.nome}")
+        self.projeto, self.modelo = projeto, modelo
+        self.indice: int | None = None
+
+    def redo(self) -> None:
+        self.projeto._por_modelo(self.modelo)
+
+    def undo(self) -> None:
+        if self.anterior is not None:
+            self.projeto._por_modelo(self.anterior)
+        else:
+            self.projeto._tirar_modelo(self.modelo.nome)
+
+
+class ApagarModeloDeCaptura(QUndoCommand):
+    def __init__(self, projeto: Projeto, nome: str):
+        self.modelo = projeto.modelo_de_captura(nome)
+        if self.modelo is None:
+            raise ValueError(f"o projeto não tem o modelo de captura {nome!r}")
+        super().__init__(f"Apagar o modelo {nome}")
+        self.projeto = projeto
+        self.indice = 0
+
+    def redo(self) -> None:
+        self.indice = self.projeto._tirar_modelo(self.modelo.nome)
+
+    def undo(self) -> None:
+        self.projeto._por_modelo(self.modelo, self.indice)

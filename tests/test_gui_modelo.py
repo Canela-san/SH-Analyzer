@@ -9,11 +9,14 @@ pytest.importorskip("pytestqt")
 
 from capturas_sinteticas import escrever_bin  # noqa: E402
 from sh_analyzer_gui.dados.captura import abrir_fonte  # noqa: E402
+from sh_analyzer_gui.dados.projeto import ModeloDeCaptura  # noqa: E402
 from sh_analyzer_gui.dados.receita import ReceitaDoTraco, ReceitaInvalida  # noqa: E402
 from sh_analyzer_gui.modelo.comandos import (  # noqa: E402
     AdicionarFonte,
     AdicionarTraco,
     AdicionarVista,
+    ApagarModeloDeCaptura,
+    GuardarModeloDeCaptura,
     MudarTracos,
     RemoverFonte,
     RemoverTracos,
@@ -21,7 +24,9 @@ from sh_analyzer_gui.modelo.comandos import (  # noqa: E402
     RenomearVista,
 )
 from sh_analyzer_gui.modelo.objetos import FonteDoProjeto, Projeto, Traco, Vista  # noqa: E402
+from sh_analyzer_gui.modelo.persistencia import descrever, montar  # noqa: E402
 from sh_analyzer_gui.modelo.selecao import Selecao  # noqa: E402
+from sh_placa.pedido import Canal, PedidoDeCaptura  # noqa: E402
 
 
 class Gravador:
@@ -241,6 +246,38 @@ def test_a_selecao_segue_o_projeto(projeto):
     assert selecao.tracos == ()
     selecao.limpar()
     assert len(g.eventos) == 5
+
+
+def test_os_modelos_de_captura_entram_no_desfazer(projeto, tmp_path):
+    """Guardar, atualizar (o mesmo nome) e apagar um modelo de captura são passos do desfazer, como o resto do projeto,
+    e os modelos vão para o arquivo e voltam dele."""
+    g = Gravador().ligar(projeto, "modelosMudaram")
+    rede = ModeloDeCaptura("Rede V + I", PedidoDeCaptura((Canal(0, "corrente"), Canal(1))))
+    calibracao = ModeloDeCaptura("Calibração", PedidoDeCaptura(blocos=4))
+    projeto.pilha.push(GuardarModeloDeCaptura(projeto, rede))
+    projeto.pilha.push(GuardarModeloDeCaptura(projeto, calibracao))
+    assert [m.nome for m in projeto.modelos_de_captura] == ["Rede V + I", "Calibração"]
+    assert projeto.modificado and len(g.eventos) == 2
+
+    nova = ModeloDeCaptura("Rede V + I", rede.pedido.com(duracao_s=600.0))
+    projeto.pilha.push(GuardarModeloDeCaptura(projeto, nova))
+    assert projeto.pilha.undoText() == "Atualizar o modelo Rede V + I"
+    assert projeto.modelos_de_captura == (nova, calibracao)          # no mesmo lugar
+    projeto.pilha.undo()
+    assert projeto.modelo_de_captura("Rede V + I") == rede
+
+    projeto.pilha.push(ApagarModeloDeCaptura(projeto, "Rede V + I"))
+    assert projeto.modelos_de_captura == (calibracao,)
+    projeto.pilha.undo()
+    assert projeto.modelos_de_captura == (rede, calibracao)           # de volta na posição dele
+    with pytest.raises(ValueError):
+        ApagarModeloDeCaptura(projeto, "não existe")
+    with pytest.raises(ValueError):
+        GuardarModeloDeCaptura(projeto, ModeloDeCaptura(" ", PedidoDeCaptura()))
+
+    aberto, avisos = montar(descrever(projeto, tmp_path), None, tmp_path)
+    assert aberto.modelos_de_captura == (rede, calibracao) and not avisos
+    assert not aberto.modificado                                       # abrir não entra no desfazer
 
 
 def test_o_projeto_avisa_quando_fica_modificado(projeto):

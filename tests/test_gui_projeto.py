@@ -11,6 +11,7 @@ from sh_analyzer_gui.dados.cadeia import Cadeia, CorrecaoSonda, Filtro, RemoverD
 from sh_analyzer_gui.dados.captura import ParametrosSemCabecalho
 from sh_analyzer_gui.dados.projeto import (
     FonteSalva,
+    ModeloDeCaptura,
     ProjetoInvalido,
     ProjetoSalvo,
     TracoSalvo,
@@ -19,6 +20,7 @@ from sh_analyzer_gui.dados.projeto import (
     localizar_fonte,
 )
 from sh_analyzer_gui.dados.receita import ReceitaDoTraco
+from sh_placa.pedido import Canal, PedidoDeCaptura
 
 CADEIA = Cadeia((CorrecaoSonda(), Filtro("passa_altas", (2000.0,), 4), RemoverDC(ligada=False)))
 
@@ -31,14 +33,20 @@ def exemplo() -> ProjetoSalvo:
     vistas = (VistaSalva("v1", "Afundamento", "tempo", (TracoSalvo("t1", r1), TracoSalvo("t2", r2)),
                          {"sobrepor": True}),
               VistaSalva("v2", "Vazia", "tempo", opcoes={"sobrepor": False}))
-    return ProjetoSalvo(fontes, vistas, {"janela": "AAEC"}, "0.8.0")
+    modelos = (ModeloDeCaptura("Rede V + I", PedidoDeCaptura((Canal(0, "corrente", "sct013_100a_sn001", 5.12, 19.65),
+                                                              Canal(1, ganho=19.357)), duracao_s=3600.0,
+                                                             titulo="Rede de casa")),
+               ModeloDeCaptura("Calibração da tensão", PedidoDeCaptura(blocos=4, destino="cartao")))
+    return ProjetoSalvo(fontes, vistas, {"janela": "AAEC"}, "0.8.0", modelos)
 
 
 def test_ida_e_volta_pelo_json():
     p = exemplo()
     dados = json.loads(json.dumps(arq.para_dict(p)))
-    assert dados["formato"] == arq.FORMATO and dados["versao"] == arq.VERSAO == 3
+    assert dados["formato"] == arq.FORMATO and dados["versao"] == arq.VERSAO == 4
     assert arq.de_dict(dados) == p
+    assert [m["nome"] for m in dados["modelos_de_captura"]] == ["Rede V + I", "Calibração da tensão"]
+    assert dados["modelos_de_captura"][0]["pedido"]["canais"][0]["sonda"] == "sct013_100a_sn001"
     assert "sem_cabecalho" not in dados["fontes"][0]                     # só nas sem o cabeçalho
     assert dados["fontes"][1]["sem_cabecalho"] == {"taxa_total_hz": 400_000.0, "canais": [3, 1]}
     t1, t2 = dados["vistas"][0]["tracos"]
@@ -62,6 +70,19 @@ def test_o_projeto_da_versao_1_abre_sem_nenhuma_etapa():
     dados["vistas"][0]["tracos"][0]["etapas"] = []
     with pytest.raises(ProjetoInvalido, match="desconhecidos: etapas"):
         arq.de_dict(dados)
+
+
+def test_o_projeto_da_versao_3_abre_sem_modelos_de_captura():
+    dados = arq.para_dict(exemplo())
+    dados["versao"] = 3
+    dados.pop("modelos_de_captura")
+    assert arq.de_dict(json.loads(json.dumps(dados))).modelos_de_captura == ()
+
+
+def test_um_modelo_com_um_valor_fora_das_regras_abre_e_o_formulario_o_mostra():
+    dados = arq.para_dict(exemplo())
+    dados["modelos_de_captura"][1]["pedido"]["taxa_hz"] = 900_000
+    assert arq.de_dict(dados).modelos_de_captura[1].pedido.taxa_hz == 900_000
 
 
 def test_a_vista_de_tempo_de_antes_das_opcoes_abre_com_as_padrao():
@@ -107,6 +128,11 @@ def test_salvar_e_abrir_o_arquivo(tmp_path):
     (lambda d: d["fontes"][1]["sem_cabecalho"].update(taxa_total_hz=-1), "taxa total"),
     (lambda d: d["fontes"][1]["sem_cabecalho"].update(canais=[3, 3]), "repetido"),
     (lambda d: d["vistas"][0]["opcoes"].update(cor=1), "desconhecidas: cor"),
+    (lambda d: d.update(modelos_de_captura={}), "não são uma lista"),
+    (lambda d: d["modelos_de_captura"][1].update(nome="Rede V + I"), "dois modelos de captura com o nome"),
+    (lambda d: d["modelos_de_captura"][0].update(nome="  "), "sem nome"),
+    (lambda d: d["modelos_de_captura"][0].pop("pedido"), "pedido"),
+    (lambda d: d["modelos_de_captura"][0]["pedido"].update(taxa_hz="400k"), "'Rede V \\+ I': o campo 'taxa_hz'"),
 ])
 def test_um_projeto_invalido_e_recusado_com_a_mensagem(mexer, trecho):
     dados = arq.para_dict(exemplo())

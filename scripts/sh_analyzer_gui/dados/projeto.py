@@ -1,11 +1,12 @@
 """O arquivo de projeto ``.shproj`` (docs/gui-plan.md, 7.3): JSON legível e versionado, com as receitas e nunca os
 resultados.
 
-* **O formato:** ``{"formato": "sh-analyzer-projeto", "versao": 3, ...}``. Uma versão nova lê as antigas; um arquivo
+* **O formato:** ``{"formato": "sh-analyzer-projeto", "versao": 4, ...}``. Uma versão nova lê as antigas; um arquivo
   de uma versão mais nova que esta é recusado com a mensagem de atualizar o aplicativo (nunca aberto pela metade).
   A versão 2 trouxe a cadeia de transformações de cada traço (``etapas``); um traço da versão 1 abre sem nenhuma. A
   3 trouxe as opções da vista de tempo (``sobrepor``) e a taxa e os canais de uma captura sem o cabeçalho
-  (``sem_cabecalho``: o ``.bin`` legado, o ``.csv``, um ``.h5`` de um legado).
+  (``sem_cabecalho``: o ``.bin`` legado, o ``.csv``, um ``.h5`` de um legado). A 4 trouxe os modelos de captura da
+  Aquisição (``modelos_de_captura``: o nome e o pedido inteiro, ``sh_placa/pedido.py``).
 * **As fontes** vão pelo caminho relativo à pasta do projeto (a pasta inteira pode mudar de lugar), pelo absoluto (o
   projeto pode mudar sem os dados) e pela identidade das amostras: o CRC do cabeçalho v9 e o tamanho. Se os dois
   caminhos falham, :func:`localizar_fonte` procura pelo CRC (PD-06). Uma captura sem o cabeçalho guarda a taxa e os
@@ -26,12 +27,14 @@ from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
+from sh_placa import pedido as pedido_de_captura
+from sh_placa.pedido import PedidoDeCaptura
 from supraharmonicos.api import ErroSHAN, ParametrosSemCabecalho
 
 from .receita import ReceitaDoTraco, ReceitaInvalida
 
 FORMATO = "sh-analyzer-projeto"
-VERSAO = 3
+VERSAO = 4
 EXTENSAO = ".shproj"
 SUFIXO_AUTOMATICO = "~"
 TIPOS_DE_VISTA = ("tempo", "espectro", "bandas", "espectrograma", "harmonicos")
@@ -75,11 +78,20 @@ class VistaSalva:
 
 
 @dataclass(frozen=True)
+class ModeloDeCaptura:
+    """Um modelo de captura da Aquisição (docs/gui-plan.md, 11.5): o formulário inteiro com um nome ("Rede V + I")."""
+
+    nome: str
+    pedido: PedidoDeCaptura
+
+
+@dataclass(frozen=True)
 class ProjetoSalvo:
     fontes: tuple[FonteSalva, ...] = ()
     vistas: tuple[VistaSalva, ...] = ()
     layout: dict[str, str] = field(default_factory=dict)    # o estado da janela (base64), por nome
     versao_do_aplicativo: str = ""
+    modelos_de_captura: tuple[ModeloDeCaptura, ...] = ()
 
 
 # ------------------------------------------------------------------ caminhos
@@ -125,6 +137,8 @@ def para_dict(projeto: ProjetoSalvo) -> dict:
                     "tracos": [{"id": t.id, **t.receita.para_dict()} for t in v.tracos],
                     **({"opcoes": dict(v.opcoes)} if v.opcoes else {})} for v in projeto.vistas],
         "layout": dict(projeto.layout),
+        "modelos_de_captura": [{"nome": m.nome, "pedido": pedido_de_captura.para_dict(m.pedido)}
+                               for m in projeto.modelos_de_captura],
     }
 
 
@@ -229,7 +243,31 @@ def de_dict(dados) -> ProjetoSalvo:
     layout = dados.get("layout", {})
     if not isinstance(layout, dict) or not all(isinstance(k, str) and isinstance(x, str) for k, x in layout.items()):
         layout = {}                                       # o layout é só conforto: inválido, vale o padrão
-    return ProjetoSalvo(tuple(fontes), tuple(vistas), layout, str(dados.get("aplicativo", "")))
+    modelos = _modelos_de_captura(dados.get("modelos_de_captura", [])) if versao >= 4 else ()
+    return ProjetoSalvo(tuple(fontes), tuple(vistas), layout, str(dados.get("aplicativo", "")), modelos)
+
+
+def _modelos_de_captura(brutos) -> tuple[ModeloDeCaptura, ...]:
+    """Os modelos de captura (a versão 4): o nome, sem repetir, e o pedido com a forma certa (os valores fora das
+    regras do ``ler_adc`` passam: o formulário os mostra)."""
+    if not isinstance(brutos, list):
+        raise ProjetoInvalido("os modelos de captura não são uma lista")
+    modelos: list[ModeloDeCaptura] = []
+    for i, m in enumerate(brutos):
+        onde = f"o modelo de captura {i + 1}"
+        if not isinstance(m, dict):
+            raise ProjetoInvalido(f"{onde} não é um objeto")
+        nome = _campo(m, "nome", str, onde)
+        if not nome.strip():
+            raise ProjetoInvalido(f"{onde} está sem nome")
+        if any(outro.nome == nome for outro in modelos):
+            raise ProjetoInvalido(f"dois modelos de captura com o nome {nome!r}")
+        try:
+            pedido = pedido_de_captura.de_dict(_campo(m, "pedido", dict, onde))
+        except ValueError as e:
+            raise ProjetoInvalido(f"o modelo de captura {nome!r}: {e}") from None
+        modelos.append(ModeloDeCaptura(nome, pedido))
+    return tuple(modelos)
 
 
 # ------------------------------------------------------------------ arquivo

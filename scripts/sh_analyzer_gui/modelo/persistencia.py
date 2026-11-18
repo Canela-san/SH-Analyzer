@@ -41,7 +41,7 @@ def descrever(projeto: Projeto, pasta: Path, *, layout: dict[str, str] | None = 
                               v.opcoes.para_dict() if v.opcoes is not None else {})
                    for v in projeto.vistas)
     return ProjetoSalvo(tuple(descrever_fonte(f, Path(pasta)) for f in projeto.fontes), vistas, dict(layout or {}),
-                        versao_do_aplicativo)
+                        versao_do_aplicativo, projeto.modelos_de_captura)
 
 
 def montar(salvo: ProjetoSalvo, caminho: Path | None, pasta: Path, *,
@@ -78,4 +78,6 @@ def montar(salvo: ProjetoSalvo, caminho: Path | None, pasta: Path, *,
         for t in salva.tracos:
             vista._inserir(Traco(t.receita, t.id))
         projeto._inserir_vista(vista)
+    for modelo in salvo.modelos_de_captura:
+        projeto._por_modelo(modelo)
     return projeto, avisos
