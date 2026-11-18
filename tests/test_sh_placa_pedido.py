@@ -67,7 +67,7 @@ int main(int argc, char **argv) {
 }
 """
 
-MODO_DO_SPI = {"lenta": 0, "rapido:a": 1, "rapido": 2, "rapido:c": 3}
+MODO_DO_SPI = pd.CODIGOS_DO_SPI
 
 
 class HarnessDoC:

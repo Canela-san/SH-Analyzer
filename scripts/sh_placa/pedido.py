@@ -39,6 +39,8 @@ TOLERANCIA_DA_FAIXA_V = 0.005                  # a do analisar_lista_faixas
 MODOS_SPI = ("rapido", "rapido:a", "rapido:c", "lenta")
 """Os modos do ``--spi``: o rápido lendo na fase B (o padrão), na A ou na C, e o lento de antes de 22/10/2026."""
 _SINONIMOS_DO_SPI = {"rápido": "rapido", "rapido:b": "rapido", "lento": "lenta"}
+CODIGOS_DO_SPI = {"lenta": 0, "rapido:a": 1, "rapido": 2, "rapido:c": 3}
+"""O ``modo_spi`` do cabeçalho de cada modo (``MODO_SPI_LENTO``, ``_RAPIDO_A``, ``_B`` e ``_C`` do memoria_pru.h)."""
 SPI_PADRAO = "rapido"
 ATRASOS_CS_PADRAO = (3, 1, 3)                  # ATRASO_CS_SETUP/HOLD/ALTO_PADRAO (memoria_pru.h)
 ATRASO_CS_MAXIMO = 10_000
@@ -250,10 +252,11 @@ def taxa_maxima_hz(spi: str = SPI_PADRAO, atrasos_cs: Sequence[int] = ATRASOS_CS
     return min(FREQUENCIA_MAXIMA_HZ, RELOGIO_DA_PRU_HZ // teto_ticks_da_pru(spi, atrasos_cs))
 
 
-def blocos_para_duracao(segundos: float, taxa_hz: int) -> int:
+def blocos_para_duracao(segundos: float, taxa_hz: int, amostras_por_bloco: int = AMOSTRAS_POR_BLOCO) -> int:
     """Os blocos inteiros que cobrem ``segundos`` à taxa pedida, pelo menos 1 (``calcular_blocos_para_duracao``: a
-    taxa pedida, não a real, e o arredondamento para cima)."""
-    return max(1, math.ceil(segundos * taxa_hz / AMOSTRAS_POR_BLOCO))
+    taxa pedida, não a real, e o arredondamento para cima). ``amostras_por_bloco``: o da placa simulada, nos
+    testes."""
+    return max(1, math.ceil(segundos * taxa_hz / amostras_por_bloco))
 
 
 def texto_da_duracao(segundos: float) -> str:
