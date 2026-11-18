@@ -515,11 +515,11 @@ def test_plano_de_um_canal_passa_do_limite_dos_dois_canais(bancada):
 @com_e2e
 @pytest.mark.parametrize(
     ("diretiva", "mensagem"),
+    # Só os que leem o canal da sonda pelo número dele (num canal só, o 1 é a coluna 0 do arquivo). O CRC e o tamanho
+    # do arquivo não dependem do canal: o de dois canais acima já os confere.
     [
-        ("crc_ruim", "CRC-32 do cabeçalho não confere"),
         ("sonda_errada", "id da sonda no cabeçalho"),
         ("grandeza_tensao", "não está marcado como 'corrente'"),
-        ("truncar", "captura incompleta"),
         ("sat_sonda", "canal da sonda (1) saturou"),
         ("sem_sinal_sonda", "sem sinal no canal da sonda"),
         ("freq_errada", "fora da planejada"),
