@@ -266,3 +266,38 @@ def test_recuperar_um_parcial_que_ficou(tmp_path):
     assert not parcial.exists() and cab.ler_cabecalho(tmp_path / "captura.bin").fim_pelo_computador
     with pytest.raises(ValueError):
         recuperar(tmp_path / "captura.bin")
+
+
+def test_o_conferir_antes_mede_um_bloco_do_pedido_e_apaga_o_arquivo(tmp_path, ler_adc):
+    """O "Conferir antes" (``sh_placa/conferencia.py``): o pedido do formulário com um bloco só, pela saída contínua,
+    medido no motor; a faixa de cada canal é a do pedido, e o arquivo da conferência não fica."""
+    from sh_placa.conferencia import ConferenciaFeita, conferir, pedido_da_conferencia, segundos_da_conferencia
+    from sh_placa.pedido import Canal, PedidoDeCaptura
+
+    b = Bancada(tmp_path, ler_adc)
+    pedido = PedidoDeCaptura((Canal(0, faixa_v=5.12), Canal(3, "corrente")), 400_000, duracao_s=3600.0,
+                             titulo="Rede", destino="cartao", arquivo_no_cartao="rede.bin")
+    assert pedido_da_conferencia(pedido).argumentos() == ["400000", "0,3", "--blocos", "1", "-t", "conferência",
+                                                          "--grandeza", "0:tensao,3:corrente",
+                                                          "--faixa-adc", "0:5.12,3:20.48"]
+    assert segundos_da_conferencia(pedido) == pytest.approx(2.62144)
+    pasta = tmp_path / "conferencias"
+
+    async def cenario():
+        pru = b.placa_falsa.pru(**b.opcoes_da_pru)
+        try:
+            async with b.servidor:
+                async with b.conexao() as c:
+                    return await conferir(c, pedido, pasta, senha_do_sudo=SENHA_DO_SUDO)
+        finally:
+            pru.parar()
+
+    feita = asyncio.run(cenario())
+    assert isinstance(feita, ConferenciaFeita) and feita.recebida.codigo == 0 and not feita.adc_mudo
+    assert [n.canal for n in feita.conferencia.canais] == [0, 3]
+    assert [n.faixa_v for n in feita.conferencia.canais] == [5.12, 20.48]
+    assert feita.conferencia.integra and feita.conferencia.cabecalho.titulo == "conferência"
+    assert all(n.amostras == pru_falsa.AMOSTRAS_POR_BLOCO // 2 for n in feita.conferencia.canais)
+    assert list(pasta.iterdir()) == []
+    for onde in (*(e.comando for e in b.registro.entradas), *b.servidor.comandos, *b.servidor.comandos_de_root):
+        assert SENHA_DO_SUDO not in onde
