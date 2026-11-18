@@ -32,8 +32,13 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > validada na placa (seção 5). **A F4.3 está feita** (diário de 18/11): a seção Capturar, com o formulário de
 > captura (o pedido validado ao vivo pelas regras do `ler_adc.c`, num contrato com o C), os modelos no projeto e o
 > "Conferir antes" (um bloco do próprio pedido, medido no motor com as regras do `coletar.sh conferir`), validado na
-> placa com o canal 1 na tomada de casa (seção 5). **A próxima: a F4.4**, a captura na tela (o botão Capturar, o
-> progresso, o ao vivo, o Parar e a queda). **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
+> placa com o canal 1 na tomada de casa (seção 5). **A F4.4 está feita** (diário de 18/11): a captura na tela, com o
+> cockpit (o tempo, a vazão, a integridade, o sinal e o espectro ao vivo), o Parar, a queda no computador (fechada com
+> o que chegou) e no cartão (a captura segue na placa, desacoplada da conexão, e o aplicativo volta a acompanhá-la), e
+> a transferência no fim; validada na placa (seção 5). **A F4.5 está feita** (diário de 18/11): o caderno de bancada,
+> no `anotacoes.md` da sessão do dia (só acrescentado), com as entradas automáticas e as notas, na seção Capturar e na
+> seção Notas do projeto. **A próxima: a F4.6**, as rotinas do `coletar.sh` pelo terminal embutido (o comando montado
+> pelo formulário, com as pausas "mude a bancada e tecle Enter"). **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
 > a captura contínua e o "Conferir antes" dizem "atualize o firmware da placa" (o código 96 do roteiro, conferido
 > nela), e o aplicativo vai precisar mandar o firmware novo (o `enviar` do `BeagleBone_Setup.sh`, ou a Fase 6).
 >
@@ -51,12 +56,18 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > da placa) troca a placa simulada (o ADC mudo, o cartão cheio, a conexão que cai, o relógio errado...).
 > **A seção Capturar** (na barra lateral da Aquisição): o formulário com o comando embaixo, os problemas em cada
 > campo, o menu "Modelo" e o "Conferir antes" (com o simulador: a faixa sugerida e "Usar as faixas sugeridas").
+> **Capturar** (com o simulador): o cockpit no centro, com o sinal e o espectro ao vivo e o Parar; "No cartão da
+> placa", os blocos e a transferência no fim. **O caderno de bancada**, à direita: as entradas sozinhas (a
+> conferência, a captura, a queda, a transferência, o relógio acertado) e "Escrever uma nota…"; o "x" o esconde, o
+> "Caderno" do título o traz. No diagnóstico, "Para o caderno"; na Análise, a seção "Notas" do projeto.
 >
 > **Com o usuário (quando puder):**
 > - a jornada da Aquisição na tela, com a placa: a placa na lista, um clique, a visão geral, o "Acertar…", os
 >   Arquivos ("Transferir", "Abrir na Análise") e o espectro da tomada;
 > - a seção Capturar na tela: a leitura do formulário (as seções, os problemas no campo, o comando), num monitor de
 >   verdade (a imagem sem tela foi conferida, mas o tamanho das fontes e o espaço são do usuário);
+> - o cockpit e o caderno lado a lado num monitor de verdade: a janela de 1440 px cabe sem rolar de lado (sem tela);
+>   numa menor, o caderno se esconde pelo "x";
 > - o G1 com a cadeia, na tela: `uv run --extra gui python -m sh_analyzer_gui.prototipos.medir_vista --cadeia`
 >   (sem tela, p95 de 11,9 a 12,9 ms durante as materializações e de 14,0 a 14,2 ms depois; se reprovar na tela, o
 >   texto dos eixos em cache, com `QStaticText` (a F1.5), é o próximo passo);
@@ -105,6 +116,10 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
    ```bash
    scripts/ci.sh rapido
    ```
+
+   **Enquanto o `ci.sh` roda, não mexa na árvore nem no `.venv-ci`:** ele testa os arquivos de trabalho, e um `uv run`
+   com `UV_PROJECT_ENVIRONMENT=.venv-ci/...` (o `ruff`, por exemplo) sincroniza o ambiente que ele está usando. Uma
+   rodada com a árvore mudando no meio não vale para commit nenhum (18/11/2026).
 
 3. **Leia a "Próxima tarefa"** acima e a descrição dela na seção 4: os arquivos, o "pronto quando" e os testes.
 4. **Trabalhe em passos pequenos.** A cada passo:
@@ -163,12 +178,14 @@ sonda em pedaços, sem prender o GIL) e `1257f5b` (o fechamento da saída contí
 **O ambiente:** Python 3.13, PySide6 6.12.0 (na 3.10 e na 3.11, o 6.11.3: seção 2), PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1; no extra `placa`,
 asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5, keyring 25.7.0 (o cofre do Linux é o Secret Service) e pyte 0.8.2. **A CI
 roda em `.venv-ci/<versão>`** (desde 16/11/2026): o `.venv` é o de quem desenvolve, e o `ci.sh` não o troca mais.
-Testes, na última rodada (17/11/2026): o `ci.sh` completo, com 1 741 em cada Python, o `placa` com 329 e a interface
-com 824.
+Testes, na última rodada (18/11/2026): o `ci.sh` completo, com 1 922 em cada Python, o `placa` com 487 e a interface
+com 876.
 
-**Ainda não existe:** na Aquisição, capturar pela interface (a Fase 4: o firmware já tem a saída contínua, a F4.1, e
-o `sh_placa` já a recebe, a F4.2; faltam o formulário e a tela) e o resgate pela serial (v1.0); as figuras e as
-exportações (a Fase 5).
+**Desde 18/11/2026, a captura pela interface** (a Fase 4 até a F4.5, seção 4e): o formulário com o "Conferir antes",
+a captura na tela (direto no computador ou no cartão, com o ao vivo, o Parar e a queda) e o caderno de bancada.
+
+**Ainda não existe:** as rotinas do `coletar.sh` pelo terminal (a F4.6) e o fechamento da Fase 4 (a F4.7, com a
+captura de 1 h na placa); o resgate pela serial (v1.0); as figuras e as exportações (a Fase 5).
 
 ---
 
@@ -1718,7 +1735,7 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
     `tests/test_sh_placa_pedido.py`, o cartão com o SFTP em `tests/test_sh_placa_simulador.py` e o `abrir_ao_vivo` em
     `tests/test_saida_continua.py`.
 
-### ▶ F4.5: o caderno de bancada
+### ☑ F4.5: o caderno de bancada
 
 - **O conteúdo:** as notas com hora e as entradas automáticas (a captura, a conferência, a transferência, a
   correção), no `anotacoes.md` da sessão do dia (o mesmo do `sessao_lab.sh`, PD-09); a seção "Notas" no projeto.
@@ -1759,8 +1776,31 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
   - **o simulador que para leva as capturas no cartão junto** (`servidor_do_simulador.py`): o `setsid` as solta da
     conexão de propósito, e uma "até parar" na placa simulada seguiria neste computador depois do aplicativo fechar.
     Como a placa desligada, o simulador que para mata as que rodam (o grupo de cada uma, conferido pelo `ps`).
+- **Feito em 18/11/2026** (o simulador em `2dbc88e`; a interface em `6c27347`):
+  - **como no desenho:** o formato (`dados/caderno.py`), o caderno da sessão (`servicos/caderno.py`), as frases e as
+    ligações (`areas/aquisicao/entradas_do_caderno.py`), a coluna na seção Capturar (`areas/aquisicao/caderno.py`), a
+    lista das entradas, a mesma na Aquisição e no inspetor (`componentes/caderno.py`), a seção Notas da árvore e o
+    inspetor do caderno; o "Para o caderno" no diagnóstico;
+  - **o que a imagem sem tela mostrou:** com a coluna de 300 px, o cockpit não cabia na janela de 1440 px (o padrão):
+    a linha das ações do fim (471 px) rolava de lado. O "Nova captura" foi para o topo do painel do fim, e o "média
+    de N blocos" do espectro e o título do fim quebram: o cockpit pede 398 px, e cabe. As entradas grudavam (o
+    `QTextDocument` não respeita a margem de um `div` dentro de outro: agora são parágrafos), e as linhas de detalhe
+    saíam com duas marcas ("• ✓"; agora só a marca, na cor dela). **E um erro da F4.3:** o ruído em LSB da
+    conferência saía com o ponto ("671.7 LSB"; agora com a vírgula, como o resto);
+  - **o arquivo do `lab`:** o modelo do repositório, criado como o `sessao_lab.sh` o cria, só ganha linhas no fim
+    (o teste confere byte a byte); a seção entra uma vez, e de novo só depois de uma seção do usuário;
+  - **os testes não escrevem mais nos dados de quem desenvolve:** o `conftest.py` põe o `$DADOS` numa pasta
+    temporária, como já fazia com a configuração, o cache e o log. Um teste que montasse a Aquisição sem dizer a pasta
+    escreveria no `anotacoes.md` de verdade (o relógio acertado ao conectar basta);
+  - **na placa de verdade, nada:** o caderno não fala com a placa, e as entradas vêm dos serviços que a F4.4 conferiu
+    nela. A interface na placa ainda espera o `ler_adc` novo na pasta do firmware (o "atualize o firmware");
+  - **os testes:** `tests/test_gui_caderno.py` (16: o formato, o arquivo do `lab`, as entradas à mão, o caderno da
+    sessão com o editor, o dia e o disco, a coluna, as frases, a seção Notas com o inspetor e a coluna lembrada), as
+    entradas da captura, da queda, da volta, da transferência, da conferência e do relatório nos fluxos de
+    `tests/test_gui_captura_na_tela.py` (10), e o simulador que para em `tests/test_sh_placa_simulador.py` (conferido
+    com a correção desligada: ele falha).
 
-### ☐ F4.6: as rotinas do `coletar.sh` pelo terminal
+### ▶ F4.6: as rotinas do `coletar.sh` pelo terminal
 
 - **O conteúdo:** as rotinas (a sonda, a calibração, a campanha) abrem no terminal embutido com o comando montado pelo
   formulário, com as pausas "mude a bancada e tecle Enter" que elas já têm (o plano, 11.5).
@@ -2409,6 +2449,22 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **Testes:** `tests/test_gui_captura_na_tela.py` (9) e os do cartão no `sh_placa` (46 com os do simulador e os da
     tela, juntos), mais os 29 da seção, da área e da captura na tela juntos.
   - **Próximo:** a F4.5, o caderno de bancada.
+- **18/11/2026 (noite):** **a F4.5, o caderno de bancada** (seção 4e, o desenho em `b26b1f4`):
+  - **o pedido:** "termine a F4.4 e faça a F4.5";
+  - **a ordem dos commits, por componente:** o simulador (a placa simulada que para leva as capturas no cartão
+    junto, `2dbc88e`) e a interface (o caderno na Aquisição e a seção Notas do projeto, `6c27347`);
+  - **o que a imagem sem tela mostrou:** a 1 440 px, o cockpit não cabia ao lado do caderno (mínimo de 471 px; o
+    "Nova captura" subiu para o cabeçalho, e o rótulo do espectro e o título do fim quebram a linha: 398 px), as
+    entradas emendavam umas nas outras e as linhas marcadas saíam com "• ✓" (agora parágrafos, só com a marca
+    colorida), e o "671.7 LSB" da F4.3 usava ponto (agora `decimal`);
+  - **isolamento:** o `conftest.py` aponta o `$DADOS` para uma pasta temporária, e nenhum teste escreve no
+    `anotacoes.md` de verdade;
+  - **a placa:** não precisou (o caderno não fala com ela; as entradas vêm dos sinais dos serviços, já validados na
+    F4.4);
+  - **Testes:** o `ci.sh` completo passou: 1 922 em cada Python (eram 1 919), o `placa` com 487 (eram 477) e a
+    interface com 876 (eram 850); o `.venv` intocado. A etapa da interface levou 52 min em série (`-n 0`), o que
+    levou à revisão da CI logo a seguir.
+  - **Próximo:** a F4.6.
 ---
 
 ## 8. Perguntas em aberto
