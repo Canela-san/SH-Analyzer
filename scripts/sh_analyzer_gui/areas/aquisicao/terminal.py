@@ -186,12 +186,14 @@ class AbaDeTerminal(QWidget):
     mudou = Signal(object)                   # a própria aba: o estado ou o título mudou
     _chegou = Signal(object)                 # os bytes da placa, do laço para a thread da interface
 
-    def __init__(self, conexao: ConexaoDaPlaca, numero: int, parent: QWidget | None = None):
+    def __init__(self, conexao: ConexaoDaPlaca, numero: int, parent: QWidget | None = None, *, rotulo: str = "",
+                 comando: str = ""):
         super().__init__(parent)
         from ...componentes.terminal import TelaDeTerminal
 
         self.setObjectName("aba_do_terminal")
-        self.conexao, self.numero = conexao, numero
+        self.conexao, self.numero, self.rotulo = conexao, numero, rotulo
+        self._comando = comando              # roda uma vez, quando o shell abre (não de novo quando a aba reabre)
         self.estado, self.codigo, self.erro = "novo", None, ""
         self.sessao = self.chamada = None
         self.caiu_em: float | None = None
@@ -230,8 +232,9 @@ class AbaDeTerminal(QWidget):
 
     @property
     def titulo(self) -> str:
-        """O título que o shell deu (o ``debian@beaglebone: ~`` do bash), ou "Terminal 2"."""
-        return self.tela.titulo or traduzir("Terminal {}").format(self.numero)
+        """O nome de quem abriu a aba (o modo de uma rotina), o título que o shell deu (o ``debian@beaglebone: ~``
+        do bash) ou "Terminal 2"."""
+        return self.rotulo or self.tela.titulo or traduzir("Terminal {}").format(self.numero)
 
     @property
     def aberta(self) -> bool:
@@ -247,8 +250,10 @@ class AbaDeTerminal(QWidget):
         if self.estado != "novo":            # a mesma aba de novo: uma linha separa o que era do que vem
             quando = time.strftime("%H:%M:%S")
             self.tela.alimentar(f"\x1b[0m\r\n\x1b[2m── {traduzir('reaberto às {}').format(quando)} ──\x1b[0m\r\n".encode())
+        entrada = (self._comando + "\n").encode() if self._comando else b""
+        self._comando = ""
         self.sessao = SessaoDeTerminal(ssh, self.tela.colunas, self.tela.linhas, ao_receber=self._receber,
-                                       gravacao=self.gravacao)
+                                       gravacao=self.gravacao, entrada_inicial=entrada)
         self.estado, self.codigo, self.erro, self.caiu_em = "aberto", None, "", None
         self.chamada = self.conexao.servico.chamar(traduzir("terminal da placa"), self.sessao.rodar,
                                                    ao_terminar=self._terminou)
@@ -523,12 +528,13 @@ class Terminal(QWidget):
 
     # ------------------------------------------------------------------ as abas
 
-    def nova_aba(self) -> AbaDeTerminal | None:
+    def nova_aba(self, rotulo: str = "", comando: str = "") -> AbaDeTerminal | None:
+        """Uma aba nova; com ``comando``, ele roda assim que o shell abre, e a aba leva o nome ``rotulo``."""
         if not self._pode_abrir():
             return None
         usados = {a.numero for a in self.abas_abertas}
         numero = next(n for n in range(1, len(usados) + 2) if n not in usados)
-        aba = AbaDeTerminal(self.conexao, numero)
+        aba = AbaDeTerminal(self.conexao, numero, rotulo=rotulo, comando=comando)
         aba.mudou.connect(self._aba_mudou)
         i = self.abas.addTab(aba, aba.titulo)
         fechar = QToolButton()
@@ -603,6 +609,11 @@ class Terminal(QWidget):
             self.fechar_aba(aba)
 
     # ------------------------------------------------------------------ os atalhos e o terminal do sistema
+
+    def rodar(self, comando: str, rotulo: str) -> AbaDeTerminal | None:
+        """Uma rotina do ``coletar.sh`` numa aba só dela (as pausas, o ``sudo`` e as respostas ficam lá, gravadas
+        no arquivo do dia da aba). ``None``: sem uma placa de verdade conectada."""
+        return self.nova_aba(rotulo, comando)
 
     def escrever_atalho(self, comando: str) -> bool:
         """Escreve ``comando`` na aba da frente, sem o Enter."""

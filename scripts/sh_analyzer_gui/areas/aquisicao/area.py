@@ -37,6 +37,7 @@ from .diagnostico import Diagnostico
 from .dialogo_de_conexao import DialogoDeConexao
 from .dialogo_de_correcao import DialogoDeCorrecao
 from .lateral import SECOES, BarraLateral
+from .rotinas import Rotinas
 from .terminal import Terminal
 from .textos import frase, traduzir
 from .visao_geral import SecaoQueChega, VisaoGeral
@@ -91,11 +92,13 @@ class AreaDeAquisicao(QWidget):
             opcoes.setdefault("abrir_url", abrir_url)
         self.capturar = Capturar(conexao, saude, self.conferencia, captura=self.captura, ao_vivo=self.ao_vivo,
                                  caderno=self.caderno, **opcoes)
+        self.rotinas = Rotinas(conexao, pedido_atual=lambda: self.capturar.formulario.pedido,
+                               rodar_no_terminal=self.rodar_no_terminal, pasta_firmware=self.captura.pasta_firmware)
         entradas_do_caderno.ligar(self.caderno, captura=self.captura, conferencia=self.conferencia,
-                                  transferencias=self.transferencias, saude=saude)
+                                  transferencias=self.transferencias, saude=saude, rotinas=self.rotinas)
         self.paginas: dict[str, QWidget] = {"visao_geral": self.visao_geral, "diagnostico": self.diagnostico,
                                             "arquivos": self.arquivos, "terminal": self.terminal,
-                                            "capturar": self.capturar}
+                                            "capturar": self.capturar, "rotinas": self.rotinas}
         for nome, _titulo, _icone in SECOES:
             if nome not in self.paginas:
                 self.paginas[nome] = SecaoQueChega(nome)
@@ -128,6 +131,13 @@ class AreaDeAquisicao(QWidget):
     def acompanhar(self, projeto) -> None:
         """O projeto da janela: os modelos de captura são dele."""
         self.capturar.acompanhar(projeto)
+
+    def rodar_no_terminal(self, comando: str, rotulo: str) -> bool:
+        """Uma rotina numa aba nova do Terminal, que passa para a frente (``False``: a aba não abriu)."""
+        if self.terminal.rodar(comando, rotulo) is None:
+            return False
+        self.mostrar_secao("terminal")
+        return True
 
     def _secao_escolhida(self, nome: str) -> None:
         if nome == "capturar":

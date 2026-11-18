@@ -99,13 +99,17 @@ def frase_da_correcao(correcao: Correcao) -> str | None:
     return None
 
 
+def frase_da_rotina(rotina, comando: str) -> str:
+    return traduzir("Rotina “{}” no terminal da placa:").format(traduzir(rotina.titulo)) + f"\n`{comando}`"
+
+
 def frase_do_relatorio(relatorio: str) -> str:
     return traduzir("Relatório do diagnóstico:") + "\n\n" + relatorio.strip()
 
 
 def ligar(caderno: CadernoDaSessao, *, captura: CapturaDaPlaca | None = None,
           conferencia: ConferenciaDaPlaca | None = None, transferencias=None,
-          saude: SaudeDaPlaca | None = None) -> None:
+          saude: SaudeDaPlaca | None = None, rotinas=None) -> None:
     """Liga os sinais dos serviços às entradas automáticas de ``caderno``."""
 
     def registrar(frase: str | None) -> None:
@@ -120,3 +124,5 @@ def ligar(caderno: CadernoDaSessao, *, captura: CapturaDaPlaca | None = None,
         transferencias.terminou.connect(lambda item: registrar(frase_da_transferencia(item)))
     if saude is not None:
         saude.corrigiu.connect(lambda correcao: registrar(frase_da_correcao(correcao)))
+    if rotinas is not None:
+        rotinas.rotinaIniciada.connect(lambda rotina, comando: registrar(frase_da_rotina(rotina, comando)))

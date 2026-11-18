@@ -28,7 +28,8 @@ from .placas import ListaDePlacas, Ponto
 from .textos import caminho_curto, frase, hora, nome_da_placa, texto_do_enlace, titulo_do_cenario, traduzir
 
 LARGURA = 248
-SECOES = (("visao_geral", "Visão geral", "pulso"), ("capturar", "Capturar", "play"), ("arquivos", "Arquivos", "pasta"),
+SECOES = (("visao_geral", "Visão geral", "pulso"), ("capturar", "Capturar", "play"), ("rotinas", "Rotinas", "livro"),
+          ("arquivos", "Arquivos", "pasta"),
           ("terminal", "Terminal", "terminal"), ("diagnostico", "Diagnóstico", "escudo"),
           ("manutencao", "Manutenção", "chave"))
 NOMES_DAS_FONTES = {"USB": "o USB", "mDNS": "a rede local (mDNS)", "conhecidas": "as placas conhecidas",

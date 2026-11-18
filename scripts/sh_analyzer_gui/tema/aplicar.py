@@ -353,6 +353,16 @@ QPushButton#atalho_do_terminal QLabel {{ color: {t.texto}; }}
 QPushButton#atalho_do_terminal QLabel#comando_do_atalho {{ color: {t.texto2}; }}
 QPushButton#atalho_do_terminal QLabel:disabled {{ color: {t.mudo}; }}
 QScrollArea#rolagem_do_diagnostico {{ background: {t.fundo}; border: none; }}
+QWidget#conteudo_das_rotinas {{ background: {t.fundo}; }}
+QScrollArea#rolagem_das_rotinas {{ background: {t.fundo}; border: none; }}
+QListWidget#lista_de_rotinas {{ background: transparent; border: none; outline: 0; }}
+QListWidget#lista_de_rotinas::item {{ border-radius: 6px; }}
+QListWidget#lista_de_rotinas::item:hover:!selected {{ background: {t.elevada}; }}
+QListWidget#lista_de_rotinas::item:selected {{ background: {_rgba(t.acento, 0.13)}; }}
+QLabel#titulo_da_rotina {{ color: {t.texto}; }}
+QLabel#modo_da_rotina, QLabel#ajuda_da_opcao {{ color: {t.texto2}; }}
+QPlainTextEdit#ajuda_do_modo {{ background: {t.afundada}; color: {t.texto}; border: 1px solid {t.borda};
+                                border-radius: 6px; padding: 6px; }}
 QHeaderView::section {{ background: {t.superficie}; color: {t.mudo}; border: none;
                         border-bottom: 1px solid {t.borda}; padding: 6px 10px; font-weight: 600; }}
 QTableView, QTreeView, QListView {{ background: {t.superficie}; alternate-background-color: {t.fundo};
