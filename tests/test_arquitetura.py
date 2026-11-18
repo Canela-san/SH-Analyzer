@@ -30,7 +30,7 @@ CAMADAS = {
     "referencia": 1, "osciloscopio": 1, "harmonicos": 1, "bandas_iec": 1, "fase_quadrada": 1, "perfil_complexo": 1,
     # 2 -- composições de camada 1
     "espectro": 2, "conversao": 2, "hdf5": 2, "contexto": 2, "metricas_captura": 2, "compactacao": 2, "exportacao": 2,
-    "razao_quadrada": 2, "ancora_perfil": 2, "saida_continua": 2,
+    "razao_quadrada": 2, "ancora_perfil": 2, "saida_continua": 2, "conferencia": 2,
     # 3 -- aplicação ("api": a fachada sem argparse que a interface gráfica usa)
     "calibracao_sonda": 3, "modos": 3, "aliasing": 3, "api": 3,
     # 4
