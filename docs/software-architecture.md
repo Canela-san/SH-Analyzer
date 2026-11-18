@@ -322,6 +322,8 @@ Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `c
 
 **Testando um script de shell.** `tests/ler_adc_falso.py` imita a linha de comando do `ler_adc` e grava um `.bin` v5 sintético (aceita `--faixa-adc`; `cab_v1` a `cab_v4` imitam firmware antigo e `atrasada`/`sobrescrita`/`preambulo` gravam contadores de integridade não nulos); o arquivo `cenario` (uma diretiva por chamada: `ok`, `sat_sonda`, `falha`, `truncar`, `travar`, ...) faz cada captura falhar de um jeito específico. É assim que se testa o tratamento de erros do `coletar.sh sonda` sem a BeagleBone.
 
+**A suíte é paralela** (`-n auto` no `pyproject.toml`, a interface também: cada processo do xdist abre o seu Qt) e cabe em poucos minutos. Para que continue assim: (1) **uma janela aberta pelo teste é apagada no fim**, com `deleteLater()` na fixture ou registrada com `qtbot.addWidget`: o `conftest.py` apaga de verdade o que foi mandado apagar e acusa a janela do aplicativo que ficou viva (uma esquecida deixava os testes seguintes do mesmo processo 20 vezes mais lentos, e a interface em série chegou a 52 min); (2) **um sinal sintético com muitos harmônicos sai de uma transformada**, não da soma termo a termo: `serie_harmonica` (chirp-z em blocos, em `capturas_sinteticas.py`) nos instantes de uma captura, uma `irfft` para um período; (3) um teste que passa de ~5 s no `--durations` merece uma olhada.
+
 **Escrevendo um teste novo.** `tests/capturas_sinteticas.py` monta `.bin` v1 a v6 a partir de sinais em Volts (`escrever_bin`; `faixas_adc_total_v=(20.48, 5.12)` dá cabeçalho v3 e codifica cada canal na sua faixa; `versao=4` com `integridade=` e `atrasos_cs=` preenche os campos v4; `versao=5` com `versao_firmware=` e `taxa_medida_hz=`, os da v5; `versao=6` com `grade=(folga, atraso, ciclos_rebase, protocolo)` e `blocos=`, os da v6; `amostras_por_buffer=` encolhe o bloco para uma captura curta ter trocas de buffer; os ticks saem de `200 MHz ÷ fs_total`, como no `ler_adc`), uma sonda de resposta conhecida (`planta_h`) e pastas de calibração (`criar_pasta_calibracao`). A fixture `cli` (em `conftest.py`) roda `main([...])` no mesmo processo e devolve `(código, stdout, stderr)`. Nenhum teste precisa de hardware.
 
 **Mudança de comportamento intencional?** Teste que valida comportamento *antigo* deve ser atualizado no mesmo PR, com a razão no commit.
@@ -331,9 +333,9 @@ Quando acrescentar um teste: prefira `main([...])` no mesmo processo (fixture `c
 **Rodar a CI na sua máquina:** `scripts/ci.sh`. O workflow chama esse mesmo script, então os comandos e as versões das ferramentas ficam num lugar só, e o que passa local passa no GitHub:
 
 ```bash
-scripts/ci.sh                 # tudo: ruff + pytest em Python 3.10 e 3.13 (com e2e) + sh_placa + firmware + interface (~15 min)
-scripts/ci.sh rapido          # ruff + pytest -m "not e2e" (3.13) + firmware: antes de cada commit (~30 s)
-scripts/ci.sh testes 3.10     # uma versão do Python, suíte completa
+scripts/ci.sh                 # tudo: o firmware e a suíte inteira em 3.13 (com a interface) e em 3.10 (sem o Qt) (~5 min)
+scripts/ci.sh rapido          # ruff + pytest -m "not e2e" sem o Qt (3.13) + firmware: antes de cada commit
+scripts/ci.sh testes 3.10     # uma versão do Python, sem o Qt: o motor, o sh_placa e o agente
 scripts/ci.sh firmware        # gcc -Werror no ler_adc.c + shellcheck
 scripts/ci.sh interface       # os testes da interface gráfica (tests/test_gui_*.py e test_interface.py, sem tela)
 ```
@@ -342,7 +344,7 @@ Precisa do `uv` (ele baixa sozinho o Python 3.10 e o `shellcheck`) e do `gcc`. S
 
 `.github/workflows/ci.yml` tem três jobs, a cada push na `main` e no `feat/interface` (a interface gráfica até a v0.9) e a cada pull request, num Ubuntu de versão fixa (`ubuntu-24.04`, não `ubuntu-latest`, para que uma troca de imagem não mude as ferramentas sem aviso):
 
-* **testes:** instala o `uv` e o `zpaq` e roda `scripts/ci.sh testes <versão>` em duas versões do Python: **3.10** (o mínimo declarado em `requires-python`) e **3.13**. Leva cerca de 1 a 2 minutos.
+* **testes:** instala o `uv` e o `zpaq` e roda `scripts/ci.sh testes <versão>` em duas versões do Python: **3.10** (o mínimo declarado em `requires-python`) e **3.13**, com o extra `placa` e sem o Qt: o motor, o `sh_placa` e o agente na mesma rodada (os testes da arquitetura conferem num processo novo que a rede e o Qt não vazam para o motor). Leva cerca de 2 a 4 minutos.
 * **firmware:** `scripts/ci.sh firmware`: compila o `firmware/ler_adc.c` no x86 com `gcc -Wall -Wextra -Werror -fsyntax-only` (pega erros que só apareceriam no `make` da BeagleBone) e passa o `shellcheck` em `firmware/*.sh` e `scripts/*.sh`. O `shellcheck` vem numa **versão fixa** (`shellcheck-py`, pelo `uvx`): o do `apt` do Ubuntu era o 0.9, que acusava um `A && B || C` que o 0.11 local não via, e a CI falhou por isso. O `spi_core.asm` e o `pru_main.c` precisam do `clpru` (proprietário, da TI): ficam de fora, e o simulador `tests/pru_sim.py` cobre a lógica do assembly.
 * **interface:** `scripts/ci.sh interface`: instala o extra `gui-dev` (PySide6, pyqtgraph e pytest-qt) e as bibliotecas do sistema que o Qt usa sem tela, e roda os testes da interface (`tests/test_gui_*.py` e `test_interface.py`; os de desempenho só com `--desempenho`), da arquitetura (o motor e a camada de dados sem o Qt) e da marca. Os outros jobs não instalam o Qt: o motor não depende dele.
 

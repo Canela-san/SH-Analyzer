@@ -178,8 +178,8 @@ sonda em pedaços, sem prender o GIL) e `1257f5b` (o fechamento da saída contí
 **O ambiente:** Python 3.13, PySide6 6.12.0 (na 3.10 e na 3.11, o 6.11.3: seção 2), PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1; no extra `placa`,
 asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5, keyring 25.7.0 (o cofre do Linux é o Secret Service) e pyte 0.8.2. **A CI
 roda em `.venv-ci/<versão>`** (desde 16/11/2026): o `.venv` é o de quem desenvolve, e o `ci.sh` não o troca mais.
-Testes, na última rodada (18/11/2026): o `ci.sh` completo, com 1 922 em cada Python, o `placa` com 487 e a interface
-com 876.
+Testes, na última rodada (18/11/2026, depois da revisão da CI): o `ci.sh` completo em 5 min, com 2 431 em Python 3.13
+(a suíte inteira, com a interface) e 2 004 em 3.10 (sem o Qt).
 
 **Desde 18/11/2026, a captura pela interface** (a Fase 4 até a F4.5, seção 4e): o formulário com o "Conferir antes",
 a captura na tela (direto no computador ou no cartão, com o ao vivo, o Parar e a queda) e o caderno de bancada.
@@ -2464,6 +2464,22 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **Testes:** o `ci.sh` completo passou: 1 922 em cada Python (eram 1 919), o `placa` com 487 (eram 477) e a
     interface com 876 (eram 850); o `.venv` intocado. A etapa da interface levou 52 min em série (`-n 0`), o que
     levou à revisão da CI logo a seguir.
+  - **Próximo:** a F4.6.
+- **18/11/2026 (noite, depois):** **a revisão da CI** (o pedido: "As CIs estão demorando muito, faça uma revisão para
+  agilizar muito o tempo de execução, simplifique os testes e remova redundâncias"):
+  - **o vazamento das janelas** (`e43da75`): o `deleteLater` das fixtures nunca apagava nada (fora de um laço de
+    eventos, o `processEvents` não apaga), e cada teste deixava a janela viva (~1 200 widgets, as pirâmides abertas);
+    o tema de cada teste novo passava por todas, e a interface em série chegou a 52 min. O `conftest.py` agora apaga
+    o que foi mandado apagar ao fim de cada fixture e acusa a janela do aplicativo que ficou viva (três testes a
+    deixavam: a `Bancada` da captura na tela, o seletor de unidade e uma janela de layout);
+  - **as somas termo a termo:** a quadrada filtrada do `medir_sinal` por uma `irfft` (`fff33fd`, 128 s para 0,2 s) e as
+    quadradas sintéticas por uma chirp-z em blocos (`cf56f39`, os mesmos códigos, até 100 vezes mais rápidas);
+  - **redundância:** o coletar sonda de um canal sem o CRC e o tamanho, que não dependem do canal (`f430d55`);
+  - **o `ci.sh`** (`ec2807e`): uma rodada do pytest por Python (o `sh_placa` junto, a etapa `placa` e o job dela
+    saíram), a interface em paralelo (o `-n 0` saiu), um ambiente por Python e por Qt (o `--exact` não reinstala o
+    PySide6 a cada etapa) e o BLAS com uma thread por processo do xdist;
+  - **Testes:** o `ci.sh` completo em 307 s (era ~25 min, e a última rodada levou ~70): 2 431 em 3.13 com a
+    interface (190 s) e 2 004 em 3.10 sem o Qt (105 s); a interface sozinha, em paralelo, em 94 s; o `.venv` intocado.
   - **Próximo:** a F4.6.
 ---
 
