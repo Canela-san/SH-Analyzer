@@ -1652,12 +1652,42 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
     (o `ler_adc` de verdade com a PRU falsa), os modelos em `tests/test_gui_projeto.py` e `tests/test_gui_modelo.py`, e
     o disco e as opções do `ler_adc` simulado em `tests/test_sh_placa_simulador.py`.
 
-### ☐ F4.4: a captura na tela
+### ▶ F4.4: a captura na tela
 
 - **O conteúdo:** o tempo e a barra, os bytes e a vazão, os contadores de integridade, o sinal ao vivo (os últimos
   50 ms do bloco mais recente) e o espectro ao vivo (Welch, com a média dos blocos); **Parar**; no fim, o CRC
   conferido e a captura no projeto; **a queda:** o parcial fechado e o aviso, com o que se perdeu; **o destino no
   cartão:** o `-o` na placa e, no fim, a transferência sozinha (se pedida).
+- **O desenho** (18/11/2026, antes do código):
+  - **o nome do arquivo** (`sh_placa/pedido.py`, `nome_do_arquivo`): o do `ler_adc` (`captura_AAAAMMDD_HHMMSS.bin`),
+    com o relógio deste computador (o da placa pode estar errado: ela não tem bateria), e o título em ASCII na frente,
+    se houver; nada é sobrescrito (no computador, `_2`, `_3`...; no cartão, a validação já recusa o nome que existe).
+    No cartão, o pedido leva o nome escolhido no `-o`, e o comando do cockpit é o que rodou;
+  - **o computador:** a `CapturaContinua` da F4.2, como está;
+  - **o cartão, desacoplado da conexão** (`sh_placa/captura.py`, `CapturaNoCartao`): o cabo tem mau contato, e o
+    motivo de gravar no cartão é a captura sobreviver a ele. Na placa, o `ler_adc -o NOME --progresso-json` roda num
+    `setsid` (com o `HUP` ignorado, que ele respeita), com o texto, as linhas de progresso, o PID e o código de saída
+    em `~/firmware/.em_curso/NOME/`. O aplicativo acompanha por um `tail -F` dessas linhas; a queda só interrompe o
+    acompanhamento, e a conexão seguinte (ou o aplicativo aberto de novo) volta a acompanhar do começo do arquivo de
+    progresso. **Parar** é um `sudo kill -INT` no PID, com a senha validada como nas correções. No fim, a pasta
+    `.em_curso` dela é apagada e, se o pedido diz `trazer_no_fim`, a captura entra na fila de transferências (que
+    já espera nenhuma captura rodar e confere o SHA-256);
+  - **o ao vivo** (o computador): a cada bloco inteiro no `.parcial`, uma thread abre o que chegou pela `api` do
+    motor (`abrir_ao_vivo`: o cabeçalho provisório e os blocos inteiros, nas unidades de cada canal, como o
+    `abrir_captura`) e calcula os últimos 50 ms de cada canal e o Welch dele; o espectro mostrado é a média (em
+    potência) dos últimos 8 blocos. O ao vivo anda de bloco em bloco (2,6 s a 400 kS/s): é o que a saída contínua
+    entrega. **No cartão**, as amostras ficam na placa até a transferência: o cockpit mostra o progresso e a
+    integridade de cada bloco, sem o sinal (ler pedaços da captura pela rede, no único núcleo da placa, competiria
+    com ela);
+  - **o fim:** o CRC das amostras conferido (o do `fechar` da F4.2), o resumo da integridade e do que parou a
+    captura (o fim pedido, a queda com o que se perdeu, o ADC mudo), e a captura posta no projeto, com "Abrir na
+    Análise". **Uma captura que ficou pela metade** (o aplicativo fechado no meio: o `.parcial` na pasta da sessão)
+    aparece na seção, com "Fechar a captura" (o `recuperar` da F4.2). Fechar a janela no meio de uma captura para o
+    computador pergunta antes;
+  - **a tela:** o cockpit do B2 no centro da seção, no lugar do comando e do "Antes de capturar", com o formulário
+    travado enquanto a captura roda: a barra de estado (o tempo, a barra, o recebido, a vazão, os contadores,
+    Parar), o sinal ao vivo (um gráfico por canal), o espectro ao vivo (um canal por vez, a faixa de 2 a 150 kHz
+    marcada) e a saída do `ler_adc`. A senha do sudo segue a da conferência. O caderno é a F4.5.
 
 ### ☐ F4.5: o caderno de bancada
 
