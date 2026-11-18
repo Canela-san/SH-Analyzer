@@ -659,19 +659,19 @@ def _validar_sonda(p: PedidoDeCaptura, c: Canal, faixa: float | None, ctx: Conte
         problemas.append(Problema("ganho", "aviso", f"o perfil {c.sonda} foi gerado com o ganho "
                                                     f"{_texto_do_numero(perfil.ganho)}, e este canal tem "
                                                     f"{_texto_do_numero(ganho)}: a corrente corrigida sairia "
-                                                    f"×{ganho / perfil.ganho:.4g}", n))
+                                                    f"{_vezes(ganho / perfil.ganho)}", n))
     # A faixa só pesa quando o perfil não foi gerado em volts reais do pino (a captura nova sempre é: o cabeçalho
     # traz a faixa do ADC, e o conferir_calibracao_perfil dispensa a comparação).
     if perfil.faixa_v is not None and faixa is not None and not perfil.faixa_confiavel and \
             not math.isclose(perfil.faixa_v, faixa, rel_tol=TOLERANCIA_DA_CALIBRACAO):
         problemas.append(Problema("faixa", "aviso", f"o perfil {c.sonda} foi gerado com a faixa "
                                                     f"{_texto_da_faixa(perfil.faixa_v)} V: as amplitudes sairiam "
-                                                    f"×{faixa / perfil.faixa_v:.4g}", n))
+                                                    f"{_vezes(faixa / perfil.faixa_v)}", n))
     if perfil.faixa_de_frequencia_hz is not None and isinstance(p.taxa_hz, int) and \
             1 <= p.taxa_hz <= FREQUENCIA_MAXIMA_HZ:
         _, maxima = perfil.faixa_de_frequencia_hz
         if p.nyquist_por_canal_hz > maxima * 1.001:
-            problemas.append(Problema("sonda", "info", f"o perfil {c.sonda} vale até {maxima / 1e3:.1f} kHz: acima, "
+            problemas.append(Problema("sonda", "info", f"o perfil {c.sonda} vale até {_decimal(maxima / 1e3, 1)} kHz: acima, "
                                                        "a correção fica a do último ponto", n))
     return problemas
 
@@ -691,7 +691,7 @@ def _validar_taxa(p: PedidoDeCaptura, *, sem_teto: bool) -> list[Problema]:
                                                           "(o teto da PRU): acima, as amostras atrasam"))
     if RELOGIO_DA_PRU_HZ % p.taxa_hz:
         problemas.append(Problema("taxa", "info", f"a PRU amostra a cada {p.ticks} ticks de 5 ns: a taxa real é "
-                                                  f"{p.taxa_real_hz:.2f} S/s (um divisor de 200 MHz sai exato)"))
+                                                  f"{_decimal(p.taxa_real_hz, 2)} S/s (um divisor de 200 MHz sai exato)"))
     nyquist = p.nyquist_por_canal_hz
     minima, maxima = BANDA_DOS_SUPRAHARMONICOS_HZ
     if p.canais and nyquist < maxima:
@@ -699,7 +699,7 @@ def _validar_taxa(p: PedidoDeCaptura, *, sem_teto: bool) -> list[Problema]:
             texto = "nada da faixa dos supraharmônicos (2 a 150 kHz) fica coberto"
         else:
             texto = "a faixa de 2 a 150 kHz não fica coberta"
-        problemas.append(Problema("taxa", "aviso", f"cada canal vai até {nyquist / 1e3:.1f} kHz (a Nyquist): "
+        problemas.append(Problema("taxa", "aviso", f"cada canal vai até {_decimal(nyquist / 1e3, 1)} kHz (a Nyquist): "
                                                    f"{texto}"))
     return problemas
 
@@ -763,16 +763,30 @@ def _validar_avancado(p: PedidoDeCaptura) -> list[Problema]:
     return problemas
 
 
+def _decimal(valor: float, casas: int) -> str:
+    """Com a vírgula, como os textos do ``sh_placa`` (``diagnostico.py``)."""
+    return f"{valor:.{casas}f}".replace(".", ",")
+
+
 def _mb(n: float) -> str:
-    return f"{n / 1e9:.2f} GB" if n >= 1e9 else f"{n / 1e6:.0f} MB"
+    """"512 MiB", "2,7 GiB": as unidades binárias, como a interface."""
+    unidades, i = ("B", "KiB", "MiB", "GiB", "TiB"), 0
+    while abs(n) >= 1024 and i < len(unidades) - 1:
+        n /= 1024
+        i += 1
+    return f"{n:.0f} {unidades[i]}" if i == 0 or abs(n) >= 10 else f"{_decimal(n, 1)} {unidades[i]}"
 
 
 def _mbs(n: float) -> str:
-    return f"{n / 1e6:.2f} MB/s"
+    return f"{_mb(n)}/s"
+
+
+def _vezes(razao: float) -> str:
+    return "×" + f"{razao:.4g}".replace(".", ",")
 
 
 def _minutos(m: float) -> str:
-    return f"{m / 60:.1f} h" if m >= 120 else f"{m:.0f} min"
+    return f"{_decimal(m / 60, 1)} h" if m >= 120 else f"{m:.0f} min"
 
 
 # ------------------------------------------------------------------ os modelos de captura (o projeto)

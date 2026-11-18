@@ -326,14 +326,14 @@ def test_acima_do_teto_da_pru_e_erro_e_forcada_e_aviso():
 
 def test_a_taxa_que_nao_divide_200_mhz_diz_a_real():
     [info] = _do(pd.validar(PedidoDeCaptura(taxa_hz=300_000)), "taxa", "info")
-    assert "300300.30 S/s" in info.mensagem
+    assert "300300,30 S/s" in info.mensagem
     assert not _do(pd.validar(PedidoDeCaptura(taxa_hz=400_000)), "taxa", "info")
 
 
 def test_avisa_quando_a_nyquist_por_canal_nao_cobre_os_150_khz():
     assert not _do(pd.validar(PedidoDeCaptura()), "taxa")                     # 200 kHz com 1 canal
     [aviso] = _do(pd.validar(PedidoDeCaptura((Canal(0), Canal(1)))), "taxa", "aviso")
-    assert "100.0 kHz" in aviso.mensagem and "150" in aviso.mensagem
+    assert "100,0 kHz" in aviso.mensagem and "150" in aviso.mensagem
     [aviso] = _do(pd.validar(PedidoDeCaptura(taxa_hz=2_000)), "taxa", "aviso")
     assert "nada da faixa" in aviso.mensagem
 
@@ -346,9 +346,9 @@ def test_duracao_e_blocos():
 
 
 def test_o_espaco_no_destino():
-    hora = PedidoDeCaptura(duracao_s=3600.0)                                   # 2,88 GB
+    hora = PedidoDeCaptura(duracao_s=3600.0)                                   # 2,88 GB = 2,7 GiB
     [erro] = _do(pd.validar(hora, Contexto(livre_no_computador=2_000_000_000)), "destino", "erro")
-    assert "2.88 GB" in erro.mensagem and "2.00 GB" in erro.mensagem
+    assert "2,7 GiB" in erro.mensagem and "1,9 GiB" in erro.mensagem
     assert _do(pd.validar(hora, Contexto(livre_no_computador=3_000_000_000)), "destino", "aviso")
     assert not pd.validar(hora, Contexto(livre_no_computador=10**12))
     # O cartão é o espaço da placa, não o do computador.
@@ -427,7 +427,7 @@ def test_o_perfil_que_falta_na_pasta(perfis):
 def test_o_ganho_diferente_do_da_calibracao_do_perfil(perfis):
     ctx = Contexto(perfis=perfis)
     [aviso] = _do(pd.validar(PedidoDeCaptura((Canal(0, "corrente", "sct013_100a_sn001", 5.12),)), ctx), "ganho")
-    assert aviso.nivel == "aviso" and "19.65" in aviso.mensagem and "×0.05089" in aviso.mensagem
+    assert aviso.nivel == "aviso" and "19.65" in aviso.mensagem and "×0,05089" in aviso.mensagem
 
 
 def test_a_faixa_do_perfil_so_pesa_quando_ele_nao_foi_gerado_em_volts_reais(tmp_path):
@@ -446,7 +446,7 @@ def test_a_nyquist_acima_da_faixa_do_perfil(perfis):
     ctx = Contexto(perfis=perfis)
     sct = Canal(0, "corrente", "sct013_100a_sn001", 5.12, 19.65)
     [info] = _do(pd.validar(PedidoDeCaptura((sct,)), ctx), "sonda", "info")    # 200 kHz contra 173 kHz
-    assert "173.2 kHz" in info.mensagem
+    assert "173,2 kHz" in info.mensagem
     assert not _do(pd.validar(PedidoDeCaptura((sct,), 340_000), ctx), "sonda")    # 170 kHz
 
 
