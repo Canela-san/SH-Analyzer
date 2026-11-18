@@ -93,8 +93,19 @@ def test_o_nivel_diz_a_faixa_sugerida_o_ruido_e_o_problema():
     assert rede.rms_lsb == pytest.approx(rede.rms_v / (20.48 / 65536))
     justa = cf.medir_canal(cf_codigos(sinais["rede"], 5.12), 1, 5.12, fs)
     assert justa.faixa_sugerida_v is None                                                   # já é a menor
+    assert not rede.sem_folga and not justa.sem_folga
+    # Saturado, o pico cortado não diz qual faixa cabe: a sugerida é a maior (a da faixa_automatica do comum.sh);
+    # saturado já na maior, nenhuma.
     satura = cf.medir_canal(cf_codigos(sinais["satura"], 5.12), 1, 5.12, fs)
-    assert satura.satura and satura.problema and satura.faixa_sugerida_v is None
+    assert satura.satura and satura.problema and satura.faixa_sugerida_v == 20.48 and not satura.sem_folga
+    na_maior = cf.medir_canal(cf_codigos(sinais["satura"] * 4, 20.48), 1, 20.48, fs)
+    assert na_maior.satura and na_maior.faixa_sugerida_v is None
+    # A tomada no divisor (9,3 V de pico, como na placa em 18/11/2026): cabe na maior, sem os 15 % de folga.
+    tomada = cf.medir_canal(cf_codigos(sinais["rede"] * 9.33 / 1.21, 20.48), 1, 20.48, fs)
+    assert tomada.sem_folga and not tomada.satura and tomada.faixa_sugerida_v is None
+    assert tomada.uso_da_faixa == pytest.approx(0.91, abs=0.01)
+    meia = cf.medir_canal(cf_codigos(sinais["rede"] * 4.6 / 1.21, 10.24), 1, 10.24, fs)
+    assert meia.sem_folga and meia.faixa_sugerida_v == 20.48                 # a maior faixa dá a folga
     parado = cf.medir_canal(cf_codigos(sinais["parado"]), 1, 20.48, fs)
     assert parado.parado and parado.problema and not parado.so_ruido
     ruido = cf.medir_canal(cf_codigos(sinais["ruido"]), 1, 20.48, fs)

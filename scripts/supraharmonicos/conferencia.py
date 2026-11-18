@@ -98,12 +98,18 @@ class NivelDoCanal:
         return self.pico_v / (self.faixa_v / 2)
 
     @property
+    def sem_folga(self) -> bool:
+        """O pico passa da folga de 15 % da faixa, sem saturar (na maior faixa, um surto pequeno satura)."""
+        return not self.satura and self.pico_v > FOLGA_DA_FAIXA * self.faixa_v / 2
+
+    @property
     def faixa_sugerida_v(self) -> float | None:
-        """A menor faixa que comporta o sinal, se for outra que a da captura (``None`` com o canal parado ou
-        saturado: a saturação pede uma faixa maior, e a conferência diz qual não dá para saber)."""
-        if self.parado or self.satura:
+        """A faixa que o canal pede, se for outra que a da captura: a menor que comporta o pico com a folga; no canal
+        saturado, a maior (o pico cortado não diz qual cabe: é nela que a ``faixa_automatica`` do ``comum.sh`` mede, e
+        a conferência seguinte acha a menor). ``None`` com o canal parado ou saturado já na maior faixa."""
+        if self.parado:
             return None
-        ideal = faixa_para_o_pico(self.pico_v)
+        ideal = max(FAIXAS_ADC_TOTAL_V.values()) if self.satura else faixa_para_o_pico(self.pico_v)
         return None if math.isclose(ideal, self.faixa_v, rel_tol=1e-3) else ideal
 
     @property
