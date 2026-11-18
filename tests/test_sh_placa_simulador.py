@@ -378,10 +378,22 @@ def test_o_ler_adc_simulado_grava_no_cartao_e_recusa_o_que_o_de_verdade_recusa(t
     c = motor.ler_cabecalho(firmware / "no_cartao.bin")
     assert c.crc32_valido and c.blocos_gravados == 2 and c.titulo == "No cartão"
     assert motor.conferir_crc_das_amostras(firmware / "no_cartao.bin", c) is True
-    for argumentos, mensagem in ((["400k"], "frequência inválida"), (["400000", "0,9"], "lista de canais inválida"),
+    # A faixa, a sonda, a grandeza, o SPI e as esperas de CS vão para o cabeçalho, como no de verdade; o canal da
+    # tomada (±9 V no pino) satura em ±2,56 V.
+    r = ler_adc("300000", "1,0", "--blocos", "1", "-o", "opcoes.bin", "--faixa-adc", "1:5.12",
+                "--grandeza", "0:corrente,1:temperatura", "--sonda", "0:sct013_100a_sn001", "--ganho", "0:19.65",
+                "--spi", "lenta", "--atraso-cs", "4,1,3")
+    assert r.returncode == 0, r.stderr
+    c = motor.ler_cabecalho(firmware / "opcoes.bin")
+    assert c.lista_canais == (0, 1) and c.faixa_adc_codigo_por_canal == (0, 2)
+    assert c.grandeza_por_canal == (1, 2) and c.sonda_id_por_canal == ("sct013_100a_sn001", "")
+    assert c.ganho_por_canal == (19.65, None) and c.modo_spi == 0 and c.atraso_cs_iteracoes == (4, 1, 3)
+    assert c.amostras_saturadas_por_canal[0] == 0 < c.amostras_saturadas_por_canal[1]
+    for argumentos, mensagem in ((["400k"], "frequência inválida"), (["400000", "0,9"], "canal '9' inválido"),
                                  (["400000", "1", "--blocos", "-1"], "--blocos"),
                                  (["400000", "1", "--nada"], "opção desconhecida '--nada'"),
-                                 (["400000", "1", "--blocos", "1", "--duracao", "1s"], "não podem ser usados juntos")):
+                                 (["400000", "1", "--blocos", "1", "--duracao", "1s"], "não podem ser usados juntos"),
+                                 (["420000"], "teto da PRU"), (["--faixa-adc", "1:5"], "faixa '5'")):
         r = ler_adc(*argumentos)
         assert r.returncode == 2 and mensagem in r.stderr, (argumentos, r.stderr)
     assert "--progresso-json" in ler_adc("--help").stdout

@@ -2,6 +2,9 @@
 (a frequência, os canais e as opções dele) e as capturas que ele faz, com as amostras da rede de 60 Hz com
 supraharmônicos (``capturas_simuladas``), contínuas de um bloco para o outro:
 
+* **a linha de comando**, lida como o C a lê (``sh_placa/pedido.py``, conferido contra o ``ler_adc.c``): os mesmos
+  erros de uso e o mesmo teto da PRU; a faixa, a sonda, o SPI e as esperas de CS de cada captura vão para o
+  cabeçalho, e o sinal satura numa faixa pequena demais para ele;
 * **a saída contínua** (``-o -``): o cabeçalho provisório, os blocos no ritmo da taxa (um bloco de 1 048 576 amostras
   a cada 2,6 s, a 400 kS/s) e o cabeçalho final depois do último; o texto, todo no stderr;
 * **o cartão** (``-o ARQUIVO``): o arquivo na pasta do firmware, com o cabeçalho final no lugar do provisório;
@@ -27,21 +30,18 @@ import shlex
 import signal
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 from . import capturas_simuladas as cs
+from .pedido import CODIGOS_DO_SPI, ErroDeUso, LinhaDeComando, blocos_para_duracao, ler_argumentos
 
 OK, ERRO, USO, SOBRESCRITO, ADC_MUDO, INTERROMPIDA, SAIDA_FECHADA = range(7)
 MOTIVOS = ("ok", "erro", "uso", "sobrescrito", "adc_mudo", "interrompida", "saida_fechada")
-FREQUENCIA_MAXIMA_HZ = 500_000
 PROTOCOLO_DA_PRU = cs.PROTOCOLO_DA_PRU
-GRANDEZAS = {"tensao": cs.GRANDEZA_TENSAO, "tensão": cs.GRANDEZA_TENSAO, "corrente": cs.GRANDEZA_CORRENTE}
-COM_VALOR = {"--blocos", "--duracao", "-o", "--saida", "-t", "--titulo", "-d", "--descricao", "--grandeza", "--sonda",
-             "--ganho", "--faixa-adc", "--atraso-cs", "--spi"}
-SEM_VALOR = {"--forcar-taxa", "-v", "--verbose", "--verboso", "--progresso-json"}
+GRANDEZAS = {"tensao": cs.GRANDEZA_TENSAO, "corrente": cs.GRANDEZA_CORRENTE, "temperatura": 2}
 ANTIGAS = {"-o -", "--progresso-json"}
 """O que o ``ler_adc`` de antes da F4.1 (o cenário ``firmware_antigo``) não tem."""
 
@@ -61,112 +61,30 @@ FALHAS = {
 """Os cenários em que o ``ler_adc`` de verdade não captura: o erro dele (o código 1, antes de qualquer amostra)."""
 
 
-class ErroDeUso(Exception):
-    pass
-
-
-@dataclass
+@dataclass(frozen=True)
 class Pedido:
-    frequencia: int = 400_000
-    canais: tuple[int, ...] = (1,)
-    blocos: int = 1
-    duracao_pedida_s: float = 0.0
-    arquivo: str | None = None
-    titulo: str = ""
-    descricao: str = ""
-    grandezas: dict[int, int] = field(default_factory=dict)
-    ganhos: dict[int, float] = field(default_factory=dict)
-    progresso_json: bool = False
+    """A captura pedida, como a placa simulada a usa: a linha de comando lida (``pedido.ler_argumentos``), os blocos
+    de uma duração contados no bloco dela (os testes o diminuem) e o nome do arquivo no cartão."""
+
+    linha: LinhaDeComando
+    blocos: int
+    arquivo: str
+
+    @property
+    def frequencia(self) -> int:
+        return self.linha.pedido.taxa_hz
+
+    @property
+    def canais(self) -> tuple[int, ...]:
+        return self.linha.pedido.numeros
 
     @property
     def continua(self) -> bool:
-        return self.arquivo == "-"
+        return self.linha.continua
 
-
-def analisar(argv: list[str], amostras_por_bloco: int) -> Pedido:
-    """A linha de comando, como a do ``ler_adc.c`` (``analisar_argumentos``); ``ErroDeUso`` com a mensagem dele."""
-    p = Pedido()
-    i = 0
-    if argv and not argv[0].startswith("-"):
-        p.frequencia = _frequencia(argv[0])
-        i = 1
-    valores: dict[str, str] = {}
-    canais_texto = None
-    while i < len(argv):
-        a = argv[i]
-        if a in COM_VALOR:
-            if i + 1 >= len(argv):
-                raise ErroDeUso(f"{a} precisa de um valor.")
-            valores[a] = argv[i + 1]
-            i += 2
-            continue
-        if a in SEM_VALOR:
-            p.progresso_json = p.progresso_json or a == "--progresso-json"
-        elif a.startswith("-"):
-            raise ErroDeUso(f"opção desconhecida '{a}' (veja ler_adc --help).")
-        elif canais_texto is None:
-            canais_texto = a
-        else:
-            raise ErroDeUso(f"argumento a mais: '{a}' (os canais já são '{canais_texto}'; a frequência vem antes "
-                            "deles).")
-        i += 1
-    if canais_texto is not None:
-        try:
-            p.canais = tuple(int(c) for c in canais_texto.split(","))
-        except ValueError:
-            raise ErroDeUso(f"lista de canais inválida '{canais_texto}': use números de 0 a 7 (ex.: 0,1).") from None
-        if not p.canais or any(not 0 <= c <= 7 for c in p.canais) or len(set(p.canais)) != len(p.canais):
-            raise ErroDeUso(f"lista de canais inválida '{canais_texto}': canais de 0 a 7, sem repetir.")
-    if "--blocos" in valores and "--duracao" in valores:
-        raise ErroDeUso("--blocos e --duracao não podem ser usados juntos.")
-    if "--blocos" in valores:
-        texto = valores["--blocos"]
-        if not texto.isdigit():
-            raise ErroDeUso(f"--blocos '{texto}': use um inteiro >= 0 (0 = até Ctrl+C).")
-        p.blocos = int(texto)
-    elif "--duracao" in valores:
-        p.duracao_pedida_s = _duracao(valores["--duracao"])
-        p.blocos = max(1, -(-int(p.duracao_pedida_s * p.frequencia) // amostras_por_bloco))
-    p.arquivo = valores.get("-o", valores.get("--saida"))
-    if p.arquivo == "":
-        raise ErroDeUso("nome de arquivo vazio em -o.")
-    p.titulo = valores.get("-t", valores.get("--titulo", ""))
-    p.descricao = valores.get("-d", valores.get("--descricao", ""))
-    if len(p.titulo.encode()) > 127:
-        raise ErroDeUso(f"--titulo tem {len(p.titulo.encode())} bytes; o limite é 127.")
-    for item in filter(None, valores.get("--grandeza", "").split(",")):
-        canal, _, nome = item.partition(":")
-        if not canal.isdigit() or int(canal) not in p.canais or nome not in GRANDEZAS:
-            raise ErroDeUso(f"--grandeza '{item}': use CANAL:tensao ou CANAL:corrente, com um canal da captura.")
-        p.grandezas[int(canal)] = GRANDEZAS[nome]
-    for item in filter(None, valores.get("--ganho", "").split(",")):
-        canal, _, ganho = item.partition(":")
-        try:
-            if int(canal) not in p.canais or float(ganho) <= 0:
-                raise ValueError
-            p.ganhos[int(canal)] = float(ganho)
-        except ValueError:
-            raise ErroDeUso(f"--ganho '{item}': use CANAL:GANHO, com um canal da captura e o ganho > 0.") from None
-    return p
-
-
-def _frequencia(texto: str) -> int:
-    if not texto.isdigit() or not 1 <= int(texto) <= FREQUENCIA_MAXIMA_HZ:
-        raise ErroDeUso(f"frequência inválida '{texto}': use um inteiro em Hz, de 1 a {FREQUENCIA_MAXIMA_HZ} (ex.: "
-                        "400000; sufixos como '400k' não são aceitos).")
-    return int(texto)
-
-
-def _duracao(texto: str) -> float:
-    multiplicador = {"": 1, "s": 1, "m": 60, "h": 3600}.get(texto.lstrip("0123456789.").lower())
-    numero = texto.rstrip("sSmMhH")
-    try:
-        valor = float(numero) * multiplicador if multiplicador else -1.0
-    except ValueError:
-        valor = -1.0
-    if valor <= 0:
-        raise ErroDeUso(f"--duracao '{texto}': use segundos (30, 30s), minutos (5m) ou horas (1h).")
-    return valor
+    @property
+    def progresso_json(self) -> bool:
+        return self.linha.progresso_json
 
 
 AJUDA = """Uso: ler_adc [FREQUENCIA] [CANAIS] [opções]   (a placa simulada do SH-Analyzer)
@@ -177,7 +95,8 @@ AJUDA = """Uso: ler_adc [FREQUENCIA] [CANAIS] [opções]   (a placa simulada do 
   --duracao T           a duração (30, 30s, 5m, 1h), em vez de --blocos
   -o, --saida ARQUIVO   o arquivo da captura; -o - a manda pelo stdout (o cabeçalho final depois do último bloco)
   -t, --titulo TEXTO    -d, --descricao TEXTO
-  --grandeza C:tensao|corrente   --ganho C:G   --sonda C:ID   --faixa-adc C:F   --atraso-cs S,H,A   --spi MODO
+  --grandeza C:tensao|corrente|temperatura   --ganho C:G   --sonda C:ID   --faixa-adc C:F
+  --spi MODO   --atraso-cs S,H,A   --forcar-taxa
   --progresso-json      uma linha JSON por bloco no stderr (inicio, bloco, fim)
 
 Códigos de saída: 0 ok, 1 erro, 2 uso, 3 buffer sobrescrito, 4 ADC mudo, 5 interrompida, 6 a saída fechou.
@@ -222,8 +141,8 @@ def main(argv: list[str] | None = None) -> int:
         if antigo and ("--progresso-json" in argv or _tem_o_traco(argv)):
             raise ErroDeUso("opção desconhecida '--progresso-json' (veja ler_adc --help)." if "--progresso-json" in argv
                             else "nome de arquivo inválido '-' em -o.")
-        pedido = analisar(argv, por_bloco)
-        if pedido.continua and os.isatty(1):
+        linha = ler_argumentos(argv)
+        if linha.continua and os.isatty(1):
             raise ErroDeUso("-o - escreve a captura (binária) no stdout, e ele é um terminal: mande-a para um pipe ou "
                             "um arquivo (ler_adc -o - | ...), ou use -o ARQUIVO.")
     except ErroDeUso as e:
@@ -232,9 +151,10 @@ def main(argv: list[str] | None = None) -> int:
     if cenario in FALHAS:
         _erro(FALHAS[cenario])
         return ERRO
-    if pedido.arquivo is None:
-        pedido.arquivo = time.strftime("captura_%Y%m%d_%H%M%S.bin", time.localtime(_agora()))
-    return Captura(pedido, por_bloco, cenario, " ".join(shlex.quote(a) for a in argv)).rodar()
+    p = linha.pedido
+    blocos = blocos_para_duracao(p.duracao_s, p.taxa_hz, por_bloco) if p.duracao_s is not None else p.blocos
+    arquivo = linha.arquivo or time.strftime("captura_%Y%m%d_%H%M%S.bin", time.localtime(_agora()))
+    return Captura(Pedido(linha, blocos, arquivo), por_bloco, cenario, " ".join(shlex.quote(a) for a in argv)).rodar()
 
 
 def _tem_o_traco(argv: list[str]) -> bool:
@@ -268,10 +188,13 @@ class Captura:
         self.parar = False
         self.inicio = _agora()
         self.identidade = f"{self.inicio!r}:{os.getpid()}"
+        p = pedido.linha.pedido
+        self.faixas = tuple(c.faixa_v for c in p.canais)
         self.configuracao = cs.Configuracao(
-            pedido.canais, pedido.frequencia, por_bloco, pedido.duracao_pedida_s, pedido.titulo, pedido.descricao,
-            comando, grandezas=tuple(pedido.grandezas.get(c, cs.GRANDEZA_TENSAO) for c in pedido.canais),
-            ganhos=tuple(pedido.ganhos.get(c, 0.0) for c in pedido.canais))
+            p.numeros, p.taxa_hz, por_bloco, p.duracao_s or 0.0, p.titulo, p.descricao, comando,
+            grandezas=tuple(GRANDEZAS[c.grandeza] for c in p.canais), ganhos=tuple(c.ganho or 0.0 for c in p.canais),
+            faixas=self.faixas, sondas=tuple(c.sonda for c in p.canais), modo_spi=CODIGOS_DO_SPI[p.spi],
+            atrasos_cs=p.atrasos_cs)
         self.sistema = cs.Sistema(os.environ.get("SHAN_KERNEL", ""), os.environ.get("SHAN_SISTEMA", ""),
                                   os.environ.get("SHAN_PLACA", ""), versao_firmware=os.environ.get("SHAN_VERSAO", ""))
         ticks = 200_000_000 // pedido.frequencia
@@ -317,7 +240,7 @@ class Captura:
                 visto = time.monotonic()
                 mudo = self.cenario == "adc_mudo"
                 codigos = (np.zeros(self.por_bloco, dtype="<u2") if mudo else
-                           cs.codigos_do_bloco(p.canais, self.taxa_real, self.por_bloco, blocos))
+                           cs.codigos_do_bloco(p.canais, self.taxa_real, self.por_bloco, blocos, faixas=self.faixas))
                 saida.escrever(codigos.tobytes())
                 medida.somar(codigos)
                 blocos += 1

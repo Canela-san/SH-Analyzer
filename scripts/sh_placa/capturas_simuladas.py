@@ -98,9 +98,13 @@ def sinal_da_rede(n: int, taxa_por_canal: float, semente: int = 0, *, inicio: in
     return corrente / GANHO_DA_CORRENTE, tensao / GANHO_DA_TENSAO
 
 
-def em_codigos(volts: np.ndarray) -> np.ndarray:
-    """Volts no pino para os códigos do ADC (``uint16`` com o zero no meio da faixa), como o ``adc_tool`` lê."""
-    return np.clip(np.round((volts + FAIXA_V / 2) / FAIXA_V * 65536), 0, 65535).astype("<u2")
+FAIXAS_V = (20.48, 10.24, 5.12)               # o código de cada faixa é a posição (FAIXA_ADC_ESPAN_V do C)
+
+
+def em_codigos(volts: np.ndarray, faixa_v: float = FAIXA_V) -> np.ndarray:
+    """Volts no pino para os códigos do ADC (``uint16`` com o zero no meio da faixa), como o ``adc_tool`` lê: o que
+    passa da faixa fica no fundo de escala (a saturação do ADC)."""
+    return np.clip(np.round((volts + faixa_v / 2) / faixa_v * 65536), 0, 65535).astype("<u2")
 
 
 def grandeza_do_canal(canal: int) -> int:
@@ -110,10 +114,11 @@ def grandeza_do_canal(canal: int) -> int:
 
 
 def codigos_do_bloco(canais: tuple[int, ...], taxa_total_hz: float, amostras_por_bloco: int, bloco: int,
-                     semente: int = 0) -> np.ndarray:
+                     semente: int = 0, faixas: tuple[float, ...] = ()) -> np.ndarray:
     """As amostras intercaladas do bloco ``bloco`` (a partir de 0) de uma captura contínua dos ``canais``: a amostra
     ``p`` da captura é do canal ``canais[p % k]`` (um bloco não tem um número inteiro de varreduras com 3, 5, 6 ou 7
-    canais), e o sinal de cada canal continua de um bloco para o outro."""
+    canais), e o sinal de cada canal continua de um bloco para o outro. ``faixas``: a faixa total de cada canal (a do
+    ``--faixa-adc``; sem ela, ±10,24 V)."""
     k = len(canais)
     taxa_por_canal = taxa_total_hz / k
     codigos = np.empty(amostras_por_bloco, dtype="<u2")
@@ -125,7 +130,8 @@ def codigos_do_bloco(canais: tuple[int, ...], taxa_total_hz: float, amostras_por
             continue
         corrente, tensao = sinal_da_rede(n, taxa_por_canal, semente, inicio=(primeira + i0) // k,
                                          fase_da_rede=-2 * np.pi / 3 * ((canal // 2) % 3))
-        codigos[i0::k] = em_codigos(corrente if grandeza_do_canal(canal) == GRANDEZA_CORRENTE else tensao)
+        codigos[i0::k] = em_codigos(corrente if grandeza_do_canal(canal) == GRANDEZA_CORRENTE else tensao,
+                                    faixas[j] if faixas else FAIXA_V)
     return codigos
 
 
@@ -182,6 +188,10 @@ class Configuracao:
     comando: str = ""
     grandezas: tuple[int, ...] = ()       # a de cada canal; sem ela, a da placa simulada (grandeza_do_canal)
     ganhos: tuple[float, ...] = ()        # o --ganho de cada canal; 0 = não declarado
+    faixas: tuple[float, ...] = ()        # a faixa total de cada canal (FAIXAS_V); sem ela, ±10,24 V
+    sondas: tuple[str, ...] = ()          # o --sonda de cada canal; "" = nenhuma
+    modo_spi: int = MODO_SPI
+    atrasos_cs: tuple[int, int, int] = ATRASOS_CS
 
 
 @dataclass(frozen=True)
@@ -252,6 +262,8 @@ def montar_cabecalho(configuracao: Configuracao, *, inicio: float, sistema: Sist
     lista = [*c.canais, *[0xFF] * (8 - k)]
     inicio_s, inicio_ns = int(inicio), int(round((inicio % 1) * 1e9)) % 1_000_000_000
     grandezas = list(c.grandezas or (grandeza_do_canal(canal) for canal in c.canais))
+    faixas = [FAIXAS_V.index(f) for f in c.faixas] if c.faixas else [0] * k
+    sondas = [_texto(s, 32) for s in c.sondas] if c.sondas else [b""] * k
     ticks = 200_000_000 // c.taxa_total_hz
     blocos, total = (fim.blocos or fim.amostras // c.amostras_por_bloco, fim.amostras) if fim else (0, 0)
     integridade = fim.integridade if fim else (0, 0, 0)
@@ -260,9 +272,9 @@ def montar_cabecalho(configuracao: Configuracao, *, inicio: float, sistema: Sist
         *lista, c.amostras_por_bloco, 2, 200_000_000, ticks, 0, c.duracao_pedida_s, blocos, total,
         _texto(c.descricao, 272), _texto(sistema.kernel, 32), inicio_ns, 1 if sistema.relogio_sincronizado else 0,
         sistema.ligada_s, 310,
-        *grandezas, *[0xFF] * (8 - k), *[b""] * 8, *[0] * k, *[0xFF] * (8 - k),
-        *integridade, *ATRASOS_CS, _texto(sistema.versao_firmware, 32), fim.taxa_medida_hz if fim else 0.0, 2,
-        18, 0, 2 if fim else 0, PROTOCOLO_DA_PRU, MODO_SPI, 0, 0,
+        *grandezas, *[0xFF] * (8 - k), *sondas, *[b""] * (8 - k), *faixas, *[0xFF] * (8 - k),
+        *integridade, *c.atrasos_cs, _texto(sistema.versao_firmware, 32), fim.taxa_medida_hz if fim else 0.0, 2,
+        18, 0, 2 if fim else 0, PROTOCOLO_DA_PRU, c.modo_spi, 0, 0,
         _texto(c.titulo, 128), _texto(sistema.sistema, 64), _texto(sistema.placa, 32),
         sistema.disco_total_kib, sistema.disco_livre_kib, sistema.disco_livre_kib, sistema.disco_total_kib,
         sistema.disco_livre_kib, sistema.memoria_kib, 0)
