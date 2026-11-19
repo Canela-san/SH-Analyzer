@@ -189,6 +189,18 @@ def aceita_prefixos(simbolo: str) -> bool:
     return aceita_prefixos(numerador) if barra and numerador else True
 
 
+PREFIXO_DO_EXPOENTE = {-12: "p", -9: "n", -6: "µ", -3: "m", 0: "", 3: "k", 6: "M", 9: "G"}
+"""O prefixo do SI de cada expoente de engenharia (os números da tela, os eixos das vistas e das figuras)."""
+
+
+def expoente_de_engenharia(valor: float, maximo: int = 9) -> int:
+    """O expoente do prefixo do SI de ``valor`` (múltiplo de 3, de -12 a ``maximo``): o que deixa a mantissa entre 1
+    e 1000. ``0`` para o zero e o que não é número."""
+    if valor == 0 or not math.isfinite(valor):
+        return 0
+    return max(-12, min(maximo, int(math.floor(math.log10(abs(valor)) / 3) * 3)))
+
+
 def grandeza(simbolo: str) -> str:
     """A grandeza da unidade, ou ``""`` se ela não é conhecida."""
     u = procurar(simbolo)
