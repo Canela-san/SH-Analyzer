@@ -60,7 +60,8 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > para o dono do projeto.** Dois requisitos da v0.11 não entraram em nenhuma tarefa da fase, a importação de dados de
 > fora (PD-03) e a fonte derivada (TR-08): foram, com os outros detalhes que ficaram, para a lista de depois da Fase 7
 > (`docs/gui-plan.md`, seção 16; decidido em 19/11). **A Fase 6 (a manutenção da placa) está em tarefas** (seção 4g,
-> F6.1 a F6.9), ampliada a pedido do usuário com o monitor, os serviços, a rede e o disco; **a próxima é a F6.1**. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
+> F6.1 a F6.9), ampliada a pedido do usuário com o monitor, os serviços, a rede e o disco; **a F6.1 está feita**
+> (as tarefas destacadas na placa e o agente da manutenção); **a próxima é a F6.2**. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
 > a captura contínua e o "Conferir antes" dizem "atualize o firmware da placa" (o código 96 do roteiro, conferido
 > nela), e o aplicativo vai precisar mandar o firmware novo (o `enviar` do `BeagleBone_Setup.sh`, ou a Fase 6).
 >
@@ -2162,7 +2163,7 @@ A ordem leva cedo ao que a placa de verdade mais precisa (o firmware novo) e dei
 depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commits seguem o componente (o agente, o
 `sh_placa`, o simulador, a GUI).
 
-### ▶ F6.1: as tarefas destacadas e o que o agente lê para a manutenção
+### ☑ F6.1: as tarefas destacadas e o que o agente lê para a manutenção
 
 - **O conteúdo:** `sh_placa/tarefas.py`: uma tarefa longa na placa (a atualização do firmware, a limpeza), lançada
   com o `setsid` e desacoplada da conexão, com o sudo validado dentro dela (a senha pelo stdin, no askpass da
@@ -2178,8 +2179,20 @@ depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commi
 - **Pronto quando:** uma tarefa lançada no simulador segue depois da conexão cair e é reencontrada e acompanhada até o
   fim; o sudo dentro dela funciona na placa de verdade; cada comando novo do agente responde na árvore falsa e na
   placa de verdade (o Python 3.7 dela).
+- **Feita em 19/11/2026** (`7401109` o agente, `5c02679` o `sh_placa`, `6bf0f58` o simulador, `2113eab` os testes).
+  **Na placa de verdade:** a tarefa com o sudo lançada em 0,37 s, os passos e o log ao vivo, a senha errada recusada
+  antes de começar, a lista e a limpeza; o sudo validado no `setsid` vale para os comandos seguintes dele (simples,
+  num pipe, numa substituição, numa função, num subshell), e o `sudo -k` o esquece. Os comandos novos do agente
+  responderam nela: a partição já ocupa o eMMC inteiro (3,82 GB), o diário é só da RAM (4,9 MB), o `nodejs` do
+  `bonescript-autorun` ocupa 38 MB, e o `state` e o `firmware` do remoteproc são do grupo `remoteproc` (o `debian`
+  está nele: subir e parar a PRU não pede sudo; instalar em `/lib/firmware`, sim). **Decisões:** o roteiro da
+  tarefa é lido com o `.` no shell que validou o sudo (um `bash` filho poderia não herdar a credencial); os fluxos do
+  agente (o monitor, os logs ao vivo) são um processo só, até o canal fechar (cada partida do Python custa ~0,3 s do
+  núcleo único); o `ler_adc` simulado falha pelo estado da árvore (o remoteproc, a linha do kernel, os overlays, o
+  firmware instalado), e não pelo nome do cenário: a correção desfaz o erro, como na placa de verdade; o boot da
+  placa simulada lê o `uEnv.txt` (o assistente da F6.4 é conferido de ponta a ponta nele).
 
-### ☐ F6.2: a atualização do firmware, sem Qt
+### ▶ F6.2: a atualização do firmware, sem Qt
 
 - **O conteúdo:** `sh_placa/atualizacao.py`. **O firmware do aplicativo:** o `firmware/` do repositório (os
   arquivos do `git ls-files`, a versão do `git describe`, com `-dirty` e o aviso se há mudanças não commitadas) ou o
