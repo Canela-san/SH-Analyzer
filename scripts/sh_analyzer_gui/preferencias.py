@@ -14,6 +14,8 @@ sem erro.
   materializações (os traços transformados).
 * **As unidades próprias** (``dados/unidades.py``) ficam gravadas como JSON: ``[{"simbolo", "grandeza",
   "prefixos"}]``.
+* **Os modelos de estilo das figuras** (FG-02, ``dados/figura.py``): os estilos que o usuário salvou com um nome,
+  que valem em qualquer projeto, como JSON: ``[{"nome", "estilo"}]``.
 * **As placas conhecidas** (``sh_placa/conhecidas.py``: as em que o usuário já conectou, pelo nº de série, com o nome,
   a chave de host, os endereços e se o relógio dela é acertado a cada conexão), também como JSON. A chave SSH do
   aplicativo e os hosts conhecidos ficam numa pasta ao lado da configuração (:func:`pasta_da_placa`).
@@ -34,6 +36,7 @@ from supraharmonicos.api import PASTA_DAS_SONDAS_PADRAO
 from .componentes.numeros import SEPARADORES, definir_separador_decimal
 from .configuracao import configuracoes, gravar, ler_texto
 from .dados import cache as cache_de_piramides
+from .dados import figura as fig
 from .dados import materializacao, unidades
 from .graficos.faixa import definir_prefixos_nos_eixos
 from .tema.aplicar import MODOS, MOVIMENTOS, aparencia
@@ -156,6 +159,39 @@ def mudar_unidades(lista: Iterable[unidades.Unidade]) -> None:
     gravar(CHAVE_DAS_UNIDADES, json.dumps([{"simbolo": u.simbolo, "grandeza": u.grandeza, "prefixos": u.prefixos}
                                            for u in unidades.proprias()], ensure_ascii=False))
     aparencia().avisar()
+
+
+# ------------------------------------------------------------------ os modelos de estilo das figuras
+
+CHAVE_DOS_ESTILOS = "figuras/modelos_de_estilo"
+
+
+def modelos_de_estilo() -> list[fig.ModeloDeEstilo]:
+    """Os modelos de estilo salvos, na ordem em que foram salvos (um que não vale fica de fora)."""
+    try:
+        dados = json.loads(ler_texto(CHAVE_DOS_ESTILOS, "[]"))
+    except ValueError:
+        return []
+    return fig.modelos_de_estilo_de_json(dados)
+
+
+def mudar_modelos_de_estilo(modelos: Iterable[fig.ModeloDeEstilo]) -> None:
+    gravar(CHAVE_DOS_ESTILOS, json.dumps(fig.modelos_de_estilo_para_json(modelos), ensure_ascii=False))
+
+
+def guardar_modelo_de_estilo(modelo: fig.ModeloDeEstilo) -> None:
+    """Guarda ``modelo`` (um de mesmo nome é trocado, no lugar dele)."""
+    modelos = modelos_de_estilo()
+    nomes = [m.nome for m in modelos]
+    if modelo.nome in nomes:
+        modelos[nomes.index(modelo.nome)] = modelo
+    else:
+        modelos.append(modelo)
+    mudar_modelos_de_estilo(modelos)
+
+
+def apagar_modelo_de_estilo(nome: str) -> None:
+    mudar_modelos_de_estilo(m for m in modelos_de_estilo() if m.nome != nome)
 
 
 # ------------------------------------------------------------------ as placas conhecidas

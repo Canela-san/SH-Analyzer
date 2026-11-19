@@ -8,6 +8,8 @@ resultados.
   (``sem_cabecalho``: o ``.bin`` legado, o ``.csv``, um ``.h5`` de um legado). A 4 trouxe os modelos de captura da
   Aquisição (``modelos_de_captura``: o nome e o pedido inteiro, ``sh_placa/pedido.py``). A 5 trouxe as figuras
   (``figuras``: o modelo de página, a grade de painéis ligados às vistas ou congelados, o estilo; ``dados/figura.py``).
+  A 6 trouxe o estilo de cada elemento das figuras (o de cada traço, a legenda, os nomes e os prefixos dos eixos, os
+  tamanhos e a moldura), os insets e as anotações das vistas (``anotacoes``: ``dados/anotacoes.py``).
 * **As fontes** vão pelo caminho relativo à pasta do projeto (a pasta inteira pode mudar de lugar), pelo absoluto (o
   projeto pode mudar sem os dados) e pela identidade das amostras: o CRC do cabeçalho v9 e o tamanho. Se os dois
   caminhos falham, :func:`localizar_fonte` procura pelo CRC (PD-06). Uma captura sem o cabeçalho guarda a taxa e os
@@ -37,7 +39,7 @@ from .figura import Figura, FiguraInvalida
 from .receita import ReceitaDoTraco, ReceitaInvalida
 
 FORMATO = "sh-analyzer-projeto"
-VERSAO = 5
+VERSAO = 6
 EXTENSAO = ".shproj"
 SUFIXO_AUTOMATICO = "~"
 TIPOS_DE_VISTA = ("tempo", "espectro", "bandas", "espectrograma", "harmonicos")

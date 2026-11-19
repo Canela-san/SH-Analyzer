@@ -16,7 +16,10 @@ O ``dados.h5`` descreve a figura como o SH-Analyzer a desenhou, já com o leiaut
   os rótulos, os títulos, os textos e a legenda;
 * ``/eixos/NN/linhas/MM``: ``x`` e ``y``, os pontos de cada curva na resolução da figura (a redução M4 do
   SH-Analyzer: o mínimo, o máximo, o primeiro e o último ponto de cada coluna de pixels), e o atributo ``estilo``
-  (JSON: a cor, a espessura, o tracejado); ``rotulo`` é o nome do traço.
+  (JSON: a cor, a espessura, o tracejado, o marcador); ``rotulo`` é o nome do traço.
+
+A legenda de um eixo aponta as curvas por ``[eixo, linha]`` (a de fora do eixo junta as de várias faixas): as
+legendas são postas depois de todos os eixos.
 
 As fontes que a figura usa e não vêm com o Matplotlib estão em ``fontes/`` (com as licenças). Com a mesma versão do
 Matplotlib, a figura refeita em PNG tem os mesmos pixels da ``figura.png``; com outra, pequenas diferenças no texto
@@ -62,21 +65,34 @@ def montar(dados: h5py.File) -> Figure:
     figura = Figure(figsize=(float(atributos["largura_pol"]), float(atributos["altura_pol"])),
                     dpi=float(atributos["dpi"]))
     FigureCanvasAgg(figura)
+    eixos, legendas = [], []
     for nome in sorted(dados["eixos"]):
-        _eixo(figura, dados["eixos"][nome])
+        ax, legenda = _eixo(figura, dados["eixos"][nome])
+        eixos.append(ax)
+        legendas.append(legenda)
+    for ax, legenda in zip(eixos, legendas):
+        if legenda:
+            ax.legend([eixos[i].lines[j] for i, j in legenda["linhas"]], legenda["textos"], loc="lower left",
+                      bbox_to_anchor=legenda["canto"], bbox_transform=ax.transAxes, borderaxespad=0.0,
+                      ncols=legenda.get("colunas", 1))
     return figura
 
 
-def _eixo(figura: Figure, grupo: h5py.Group) -> None:
+def _estilo_da_linha(estilo: dict) -> dict:
+    """O estilo do JSON para o ``plot`` (o ``markevery`` de duas frações é uma tupla, e não uma lista de índices)."""
+    if isinstance(estilo.get("markevery"), list):
+        estilo["markevery"] = tuple(estilo["markevery"])
+    return estilo
+
+
+def _eixo(figura: Figure, grupo: h5py.Group):
     e = _json(grupo.attrs["eixo"])
     ax = figura.add_axes(e["posicao"])
     ax.set_xscale(e["x"]["escala"])
     ax.set_yscale(e["y"]["escala"])
-    linhas = []
     for nome in sorted(grupo["linhas"]):
         dados_da_linha = grupo["linhas"][nome]
-        (linha,) = ax.plot(dados_da_linha["x"][:], dados_da_linha["y"][:], **_json(dados_da_linha.attrs["estilo"]))
-        linhas.append(linha)
+        ax.plot(dados_da_linha["x"][:], dados_da_linha["y"][:], **_estilo_da_linha(_json(dados_da_linha.attrs["estilo"])))
     for k, eixo in (("x", ax.xaxis), ("y", ax.yaxis)):
         d = e[k]
         eixo.set_major_locator(FixedLocator(d["marcas"]))
@@ -97,10 +113,7 @@ def _eixo(figura: Figure, grupo: h5py.Group) -> None:
     for t in e["textos"]:
         ax.text(t["x"], t["y"], t["texto"], transform=ax.transAxes if t["em"] == "eixos" else ax.transData,
                 **t["estilo"])
-    legenda = e.get("legenda")
-    if legenda:
-        ax.legend([linhas[i] for i in legenda["linhas"]], legenda["textos"], loc="lower left",
-                  bbox_to_anchor=legenda["canto"], bbox_transform=ax.transAxes, borderaxespad=0.0)
+    return ax, e.get("legenda")
 
 
 def comparar(refeita: Path, original: Path) -> str:

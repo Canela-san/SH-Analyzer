@@ -54,8 +54,8 @@ VERSAO = 1
 DPI_DA_REFERENCIA = 600.0
 SCRIPT = Path(__file__).resolve().parents[1] / "recursos" / "refazer_figura.py"
 ESTILO_DA_LINHA = ("color", "linestyle", "linewidth", "alpha", "antialiased", "rasterized", "zorder", "label",
-                   "marker", "markersize", "drawstyle", "dash_capstyle", "dash_joinstyle", "solid_capstyle",
-                   "solid_joinstyle")
+                   "marker", "markersize", "markevery", "markerfacecolor", "markeredgecolor", "markeredgewidth",
+                   "fillstyle", "drawstyle", "dash_capstyle", "dash_joinstyle", "solid_capstyle", "solid_joinstyle")
 ESTILO_DO_TEXTO = ("color", "fontsize", "fontweight", "fontstyle", "horizontalalignment", "verticalalignment",
                    "rotation", "zorder")
 
@@ -86,7 +86,7 @@ def descrever(pagina: PaginaDesenhada) -> list[tuple[dict, list[tuple[np.ndarray
             "y": _eixo(ax.yaxis, ax.get_ylim(), ax.get_yscale()),
             "titulos": {onde: ax.get_title(loc=onde) for onde in ("left", "center", "right")},
             "textos": [_texto(t, ax) for t in ax.texts],
-            "legenda": _legenda(ax, renderizador),
+            "legenda": _legenda(ax, mpl.axes, renderizador),
         }, linhas))
     return saida
 
@@ -114,7 +114,7 @@ def _estilo(artista, nomes) -> dict:
     estilo = {}
     for nome in nomes:
         valor = getattr(artista, f"get_{nome}")()
-        if nome == "color":
+        if nome.endswith("color") and not (isinstance(valor, str) and valor in ("none", "auto")):
             valor = to_hex(valor, keep_alpha=True)
         estilo[nome] = _json_simples(valor)
     return estilo
@@ -150,24 +150,27 @@ def _texto(t, ax) -> dict:
     return {"x": float(x), "y": float(y), "texto": t.get_text(), "em": em, "estilo": estilo}
 
 
-def _legenda(ax, renderizador) -> dict | None:
-    """A legenda: os textos, as curvas (as posições em ``ax.lines``) e o canto de baixo à esquerda dela, em fração
-    do eixo (onde o ``loc`` a pôs neste desenho)."""
+def _legenda(ax, eixos, renderizador) -> dict | None:
+    """A legenda: os textos, as curvas (``[eixo, linha]``: a posição do eixo na página e a da curva nele; a legenda
+    de fora do eixo junta as curvas de todas as faixas do painel), as colunas e o canto de baixo à esquerda dela, em
+    fração do eixo (onde o ``loc`` a pôs neste desenho)."""
     legenda = ax.get_legend()
     if legenda is None or not legenda.get_visible():
         return None
     caixa = legenda.get_window_extent(renderizador)
     x0, y0 = ax.transAxes.inverted().transform((caixa.x0, caixa.y0))
     textos = [t.get_text() for t in legenda.get_texts()]
-    livres = list(range(len(ax.lines)))
+    proprio = list(eixos).index(ax)
+    ordem = [proprio] + [i for i in range(len(eixos)) if i != proprio]
+    livres = [(i, j) for i in ordem for j in range(len(eixos[i].lines))]
     indices = []
     for texto in textos:
-        i = next((i for i in livres if ax.lines[i].get_label() == texto), None)
-        if i is None:
-            raise PacoteInvalido(f"a legenda {texto!r} não é de uma curva do eixo")
-        livres.remove(i)
-        indices.append(i)
-    return {"textos": textos, "linhas": indices, "canto": [float(x0), float(y0)]}
+        par = next((par for par in livres if eixos[par[0]].lines[par[1]].get_label() == texto), None)
+        if par is None:
+            raise PacoteInvalido(f"a legenda {texto!r} não é de uma curva da figura")
+        livres.remove(par)
+        indices.append(list(par))
+    return {"textos": textos, "linhas": indices, "colunas": int(legenda._ncols), "canto": [float(x0), float(y0)]}
 
 
 def dados_h5(descricao, rc: Mapping, *, largura_pol: float, altura_pol: float, dpi: float, figura: Figura,

@@ -1,4 +1,4 @@
-"""O desenho da figura com o Matplotlib (a F5.2; docs/gui-plan.md, 10.1 e 10.3), sem Qt: a figura do projeto
+r"""O desenho da figura com o Matplotlib (a F5.2; docs/gui-plan.md, 10.1 e 10.3), sem Qt: a figura do projeto
 (``figura.py``) vira uma página do Matplotlib no tamanho dela, que a prévia (a área Figuras) e a exportação (a F5.4)
 usam iguais.
 
@@ -25,7 +25,15 @@ envoltória da pirâmide, com a primeira e a última de cada coluna lidas direto
 captura inteira. ``todos_os_pontos=True`` desliga a redução.
 
 **Os números** saem no idioma da figura (o separador decimal, o sinal de menos tipográfico) e com o prefixo do SI comum
-ao eixo ("Tensão (kV)"); o tempo em ms abaixo de 2 s, como o ``adc_tool``.
+ao eixo ("Tensão (kV)"); o tempo em ms abaixo de 2 s, como o ``adc_tool``. O painel pode fixar o prefixo de cada eixo
+e trocar o nome da grandeza (a unidade vem sempre atrás, com o prefixo dos números).
+
+**O estilo de cada elemento** (F5.7): o da figura vai nos ``rcParams`` (:func:`parametros_do_estilo`: as letras, as
+espessuras, as marcas, a moldura, a grade), e o de cada traço do painel (``Painel.tracos``: a cor, a espessura, o
+tracejado, o marcador, o nome) e a legenda (num canto, fora do eixo ou nenhuma) vão nos artistas. Os marcadores ficam
+espaçados na linha (:data:`MARCADORES_POR_EIXO` por eixo, defasados entre os traços), e não em cada ponto da redução.
+**Os textos do usuário** (os nomes, os rótulos) aceitam a matemática do mathtext (``$\Delta t$``); um que o mathtext
+não entende sai como foi escrito, sem derrubar o desenho (:func:`erro_no_texto` diz por quê).
 
 **As vistas que ainda não entram** (as bandas, o espectrograma, os harmônicos) deixam o painel com um aviso; o
 espectro congelado também (a cópia da vista não guarda o espectro, e recalculá-lo fica para depois).
@@ -35,12 +43,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
 import numpy as np
-from matplotlib import font_manager, rc_context
+from matplotlib import cbook, font_manager, rc_context
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure as FiguraDoMatplotlib
 from matplotlib.ticker import FuncFormatter, NullFormatter, ScalarFormatter
@@ -49,7 +57,7 @@ from supraharmonicos.api import Cancelado
 
 from .consulta import Amostras, consultar
 from .espectros import Desenho, envoltoria_log
-from .figura import Estilo, Figura, Painel
+from .figura import Estilo, EstiloDoTraco, Figura, Painel
 from .piramide import Piramide
 from .projeto import VistaSalva
 from .receita import ReceitaDoTraco
@@ -64,6 +72,12 @@ COLUNAS_POR_PIXEL = 2
 DPI_DO_LEIAUTE = 150.0
 LIMIAR_DO_TEMPO_EM_MS = 2.0
 FOLGA_DO_Y = 0.04
+MARCADORES_POR_EIXO = 10
+LUGARES_DA_LEGENDA = {"melhor": {"loc": "best"}, "sup_dir": {"loc": "upper right"}, "sup_esq": {"loc": "upper left"},
+                      "inf_dir": {"loc": "lower right"}, "inf_esq": {"loc": "lower left"},
+                      "fora_dir": {"loc": "upper left", "bbox_to_anchor": (1.02, 1.0), "borderaxespad": 0.0},
+                      "fora_acima": {"loc": "lower right", "bbox_to_anchor": (1.0, 1.02), "borderaxespad": 0.0}}
+"""Os ``Painel.legenda`` no Matplotlib (fora do eixo, a legenda é uma só, com os traços de todas as faixas)."""
 LOTE_DO_M4 = 1 << 23                    # amostras lidas de uma vez na redução exata (~64 MB em float64)
 TEXTOS = {"pt-BR": {"tempo": "Tempo", "frequencia": "Frequência", "valor": "Valor", "nivel": "Nível",
                     "depois": "Este tipo de vista entra nas figuras depois", "vazio": "Painel vazio",
@@ -102,6 +116,7 @@ class SerieDoTempo:
     inicio: int = 0
     tracejado: bool = False
     grandeza: str = ""                  # a do canal ("tensão"), quando a unidade não a diz (uma unidade digitada)
+    traco: str = ""                     # o id do traço na vista (o estilo dele no painel)
 
     def __post_init__(self) -> None:
         if not (self.taxa_hz > 0 and math.isfinite(self.taxa_hz)):
@@ -121,6 +136,7 @@ class SerieDoEspectro:
     rotulo_y: str = ""
     frequencia_log: bool = False
     tracejado: bool = False
+    traco: str = ""                     # o id do traço de tempo de que ele veio (o estilo dele no painel)
 
 
 class DadosDaFigura(Protocol):
@@ -189,16 +205,37 @@ def parametros_do_estilo(estilo: Estilo) -> dict:
     """Os ``rcParams`` do estilo: o desenho e a rasterização rodam dentro deles (o Matplotlib lê parte deles na
     hora de desenhar, e não na de criar)."""
     familia, matematica = FAMILIAS_DO_MATPLOTLIB[estilo.familia]
+    direcao = "in" if estilo.marcas_para_dentro else "out"
     return {"font.family": familia, "mathtext.fontset": matematica, "font.size": estilo.texto_pt,
             "axes.labelsize": estilo.texto_pt, "axes.titlesize": estilo.rotulo_do_painel_pt,
-            "legend.fontsize": estilo.texto_pt, "xtick.labelsize": estilo.marcas_pt,
+            "legend.fontsize": estilo.legenda_pt, "xtick.labelsize": estilo.marcas_pt,
             "ytick.labelsize": estilo.marcas_pt, "axes.linewidth": estilo.eixo_pt,
             "xtick.major.width": estilo.eixo_pt, "ytick.major.width": estilo.eixo_pt,
             "xtick.minor.width": estilo.eixo_pt * 0.7, "ytick.minor.width": estilo.eixo_pt * 0.7,
-            "xtick.direction": "in", "ytick.direction": "in", "xtick.top": True, "ytick.right": True,
+            "xtick.direction": direcao, "ytick.direction": direcao, "xtick.top": estilo.moldura,
+            "ytick.right": estilo.moldura, "axes.spines.top": estilo.moldura, "axes.spines.right": estilo.moldura,
+            "axes.grid": estilo.grade, "axes.grid.which": "major", "axes.axisbelow": True, "grid.color": "0.85",
+            "grid.linestyle": "-", "grid.linewidth": estilo.eixo_pt * 0.8, "grid.alpha": 1.0,
             "lines.linewidth": estilo.linha_pt, "path.simplify": False, "axes.unicode_minus": True,
             "axes.titlelocation": "left", "axes.titlepad": 3.0, "legend.frameon": False,
             "figure.facecolor": "white", "axes.facecolor": "white", "savefig.facecolor": "white"}
+
+
+@dataclass(frozen=True)
+class EixosDoPainel:
+    """O que o desenho achou para os eixos de um painel, nas unidades sem prefixo (s, Hz, V): os limites, as unidades
+    e os nomes automáticos (a área Figuras os mostra nos campos vazios e parte deles para o inset e as anotações).
+    ``y`` é ``None`` num painel com várias faixas (cada uma tem o seu); ``faixas`` conta os eixos de tempo."""
+
+    tipo: str
+    x: tuple[float, float]
+    unidade_x: str
+    nome_x: str
+    y: tuple[float, float] | None
+    unidade_y: str
+    nome_y: str
+    faixas: int = 1
+    log: bool = False
 
 
 @dataclass(eq=False)
@@ -211,6 +248,7 @@ class PaginaDesenhada:
     rc: dict = field(default_factory=dict)
     paineis: dict[str, tuple[float, float, float, float]] = field(default_factory=dict)
     curvas: list = field(default_factory=list)          # as linhas dos dados (rasterizá-las, na exportação)
+    eixos: dict[str, EixosDoPainel] = field(default_factory=dict)
 
     def pixels(self) -> np.ndarray:
         """A página rasterizada (RGBA, ``altura × largura × 4``) no dpi dela: a prévia e o teste de fidelidade."""
@@ -351,10 +389,14 @@ def _numeros_do_log(separador: str) -> FuncFormatter:
     return FuncFormatter(lambda v, _p=None: f"{v:.10g}".replace("-", "−").replace(".", separador))
 
 
-def _prefixo(unidade: str, maior: float) -> tuple[float, str]:
-    """O fator e o prefixo do SI que deixam ``maior`` entre 1 e 1000 (nenhum numa unidade sem prefixo, como °C, ou
-    num eixo sem unidade)."""
-    if not unidade or not aceita_prefixos(unidade) or not (maior > 0 and math.isfinite(maior)):
+def _prefixo(unidade: str, maior: float, fixo: int | None = None) -> tuple[float, str]:
+    """O fator e o prefixo do SI que deixam ``maior`` entre 1 e 1000, ou o ``fixo`` (o expoente que o painel
+    escolheu); nenhum numa unidade sem prefixo, como °C, ou num eixo sem unidade."""
+    if not unidade or not aceita_prefixos(unidade):
+        return 1.0, ""
+    if fixo is not None:
+        return 10.0 ** -fixo, PREFIXO_DO_EXPOENTE[fixo]
+    if not (maior > 0 and math.isfinite(maior)):
         return 1.0, ""
     expoente = expoente_de_engenharia(maior)
     return 10.0 ** -expoente, PREFIXO_DO_EXPOENTE[expoente]
@@ -438,7 +480,8 @@ def _plano_do_tempo(painel: Painel, vista: VistaSalva, dados: DadosDaFigura) -> 
     sobrepor = bool(vista.opcoes.get("sobrepor", False))
     for t in vista.tracos:
         if t.receita.visivel and (s := dados.tempo(vista, t.receita)) is not None and s.piramide.n_amostras:
-            por_faixa.setdefault(0 if sobrepor else t.receita.faixa, []).append(s)
+            por_faixa.setdefault(0 if sobrepor else t.receita.faixa, []).append(
+                s if s.traco == t.id else replace(s, traco=t.id))
     if not por_faixa:
         return _Plano(painel, "sem_dados")
     todas = [s for series in por_faixa.values() for s in series]
@@ -624,7 +667,7 @@ def desenhar(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFig
                 primeiro_y.setdefault(ky, eixos[0])
                 eixos_y.setdefault(ky, []).append((p.coluna, eixos[0]))
             if rotulos[p.id]:
-                eixos[0].set_title(rotulos[p.id])
+                eixos[0].set_title(_seguro(rotulos[p.id]))
             eixos_do_painel[p.id] = eixos
         _so_os_de_fora(eixos_x, eixos_y)
         # A segunda passada: com o leiaute feito, cada curva reduzida nas colunas dos pixels do eixo dela, no dpi
@@ -644,7 +687,21 @@ def desenhar(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFig
             _reduzir(curva, exato=exato, todos=todos_os_pontos, ler=leitura.leu)
         if progresso is not None:
             progresso(1.0)
-    return PaginaDesenhada(mpl, rc, caixas, [c.linha for c in curvas])
+    return PaginaDesenhada(mpl, rc, caixas, [c.linha for c in curvas],
+                           {p.painel.id: e for p in planos if (e := _eixos_do_plano(p, figura, textos)) is not None})
+
+
+def _eixos_do_plano(plano: _Plano, figura: Figura, textos: dict) -> EixosDoPainel | None:
+    if plano.tipo == "tempo":
+        um = plano.faixas[0] if len(plano.faixas) == 1 else None
+        return EixosDoPainel("tempo", plano.janela, "s", textos["tempo"], um.limites_y if um else None,
+                             um.unidade if um else "",
+                             _nome_da_grandeza(um.unidade, um.grandeza, figura.idioma, textos) if um else "",
+                             len(plano.faixas))
+    if plano.tipo == "espectro":
+        return EixosDoPainel("espectro", plano.janela, "Hz", textos["frequencia"], plano.limites_y, plano.rotulo_y,
+                             textos["nivel"], log=plano.log)
+    return None
 
 
 def _eixos_das_faixas(mpl, celula, n: int, junto_x, junto_y) -> list:
@@ -687,35 +744,118 @@ def _numeros(eixo, separador: str) -> None:
     eixo.yaxis.set_major_formatter(_NumerosDoIdioma(separador))
 
 
+def erro_no_texto(texto: str) -> str | None:
+    """Por que ``texto`` não se desenha (a matemática entre ``$`` que o mathtext não entende), ou ``None``. Os campos
+    da área Figuras conferem com ela antes de aceitar um texto."""
+    if not texto or not cbook.is_math_text(texto):
+        return None
+    from matplotlib.mathtext import MathTextParser
+
+    try:
+        MathTextParser("path").parse(texto, dpi=72)
+    except ValueError as erro:
+        linhas = [linha.strip() for linha in str(erro).splitlines() if linha.strip()]
+        return linhas[-1] if linhas else "a matemática entre $ não se desenha"
+    return None
+
+
+def _seguro(texto: str) -> str:
+    """Um texto do usuário pronto para o Matplotlib: o que o mathtext não entende sai como foi escrito."""
+    return texto.replace("$", r"\$") if erro_no_texto(texto) else texto
+
+
+def _rotulo(nome_automatico: str, nome_do_painel: str | None, unidade: str) -> str:
+    """O rótulo de um eixo: o nome da grandeza (o do painel, se ele tem um) e a unidade com o prefixo."""
+    nome = nome_automatico if nome_do_painel is None else _seguro(nome_do_painel)
+    if not nome:
+        return ""
+    return f"{nome} ({unidade})" if unidade else nome
+
+
+def _plotar(eixo, painel: Painel, id_do_traco: str, cor: str, nome: str, tracejado: bool, suavizar: bool,
+            ordem: tuple[int, int]):
+    """Uma linha vazia (a redução a enche) com o estilo do traço no painel. ``ordem`` = (k, n): o k-ésimo dos n
+    traços com marcador no eixo (os marcadores de um ficam entre os do outro)."""
+    e: EstiloDoTraco = painel.estilo_do_traco(id_do_traco)
+    estilo = {"color": e.cor or cor, "linestyle": e.tracejado or ("--" if tracejado else "-"),
+              "label": _seguro(e.nome if e.nome is not None else nome), "antialiased": suavizar}
+    if e.espessura_pt is not None:
+        estilo["linewidth"] = e.espessura_pt
+    if e.marcador:
+        espessura = e.espessura_pt if e.espessura_pt is not None else _rc_da_linha()
+        passo = 1.0 / MARCADORES_POR_EIXO
+        k, n = ordem
+        estilo.update(marker=e.marcador, markersize=2.5 + 2.5 * espessura,
+                      markevery=(passo * k / max(n, 1), passo))
+    linha, = eixo.plot([], [], **estilo)
+    return linha
+
+
+def _rc_da_linha() -> float:
+    from matplotlib import rcParams
+
+    return float(rcParams["lines.linewidth"])
+
+
+def _ordem_dos_marcadores(painel: Painel, ids: list[str]) -> dict[str, tuple[int, int]]:
+    com = [i for i in ids if painel.estilo_do_traco(i).marcador]
+    return {i: (com.index(i) if i in com else 0, len(com)) for i in ids}
+
+
+def _legenda(eixo, painel: Painel, linhas: list) -> None:
+    """A legenda de um eixo com ``linhas``: a automática com mais de uma; um canto escolhido, com qualquer uma."""
+    if painel.legenda == "nenhuma" or not linhas or (painel.legenda == "melhor" and len(linhas) < 2):
+        return
+    lugar = dict(LUGARES_DA_LEGENDA[painel.legenda])
+    if painel.legenda == "fora_acima":
+        lugar["ncols"] = len(linhas)
+    eixo.legend(handles=linhas, **lugar)
+
+
+def _fator_do_tempo(janela: tuple[float, float], prefixo: int | None) -> tuple[float, str]:
+    if prefixo is not None:
+        return 10.0 ** -prefixo, f"{PREFIXO_DO_EXPOENTE[prefixo]}s"
+    return (1000.0, "ms") if janela[1] - janela[0] < LIMIAR_DO_TEMPO_EM_MS else (1.0, "s")
+
+
 def _desenhar_o_tempo(eixos: list, plano: _Plano, figura: Figura, textos: dict, suavizar: bool) -> list[_Curva]:
-    janela = plano.janela
-    fator_x = 1000.0 if janela[1] - janela[0] < LIMIAR_DO_TEMPO_EM_MS else 1.0
-    curvas = []
+    janela, painel = plano.janela, plano.painel
+    fator_x, unidade_x = _fator_do_tempo(janela, painel.prefixo_x)
+    um_y = len(plano.faixas) == 1
+    curvas, todas = [], []
     for eixo, faixa in zip(eixos, plano.faixas, strict=True):
         y0, y1 = faixa.limites_y
-        fator_y, prefixo = _prefixo(faixa.unidade, max(abs(y0), abs(y1)))
+        fator_y, prefixo = _prefixo(faixa.unidade, max(abs(y0), abs(y1)), painel.prefixo_y if um_y else None)
+        ordem = _ordem_dos_marcadores(painel, [s.traco for s in faixa.series])
+        linhas = []
         for s in faixa.series:
-            linha, = eixo.plot([], [], color=s.cor, linestyle="--" if s.tracejado else "-", label=s.nome,
-                               antialiased=suavizar)
+            linha = _plotar(eixo, painel, s.traco, s.cor, s.nome, s.tracejado, suavizar, ordem[s.traco])
+            linhas.append(linha)
             curvas.append(_Curva(linha, eixo, s.amostras, s.piramide, s.t0 + s.inicio / s.taxa_hz, 1.0 / s.taxa_hz,
                                  fator_x, fator_y, s.escala, s.deslocamento))
         eixo.set_ylim(y0 * fator_y, y1 * fator_y)
         nome = _nome_da_grandeza(faixa.unidade, faixa.grandeza, figura.idioma, textos)
-        eixo.set_ylabel(f"{nome} ({prefixo}{faixa.unidade})" if faixa.unidade else nome)
+        unidade = f"{prefixo}{faixa.unidade}" if faixa.unidade else ""
+        eixo.set_ylabel(_rotulo(nome, painel.nome_y if um_y else None, unidade))
         _numeros(eixo, figura.separador_decimal)
-        if len(faixa.series) > 1:
-            eixo.legend(loc="best")
+        if not painel.legenda.startswith("fora"):
+            _legenda(eixo, painel, linhas)
+        todas += linhas
+    if painel.legenda.startswith("fora"):
+        _legenda(eixos[0], painel, todas)
     eixos[0].set_xlim(janela[0] * fator_x, janela[1] * fator_x)
-    eixos[-1].set_xlabel(f"{textos['tempo']} ({'ms' if fator_x == 1000.0 else 's'})")
+    eixos[-1].set_xlabel(_rotulo(textos["tempo"], painel.nome_x, unidade_x))
     return curvas
 
 
 def _desenhar_o_espectro(eixo, plano: _Plano, figura: Figura, textos: dict, suavizar: bool) -> list[_Curva]:
-    fator_x, prefixo_x = _prefixo("Hz", max(abs(plano.janela[0]), abs(plano.janela[1])))
-    curvas = []
+    painel = plano.painel
+    fator_x, prefixo_x = _prefixo("Hz", max(abs(plano.janela[0]), abs(plano.janela[1])), painel.prefixo_x)
+    ordem = _ordem_dos_marcadores(painel, [s.traco for s in plano.espectros])
+    curvas, linhas = [], []
     for s in plano.espectros:
-        linha, = eixo.plot([], [], color=s.cor, linestyle="--" if s.tracejado else "-", label=s.nome,
-                           antialiased=suavizar)
+        linha = _plotar(eixo, painel, s.traco, s.cor, s.nome, s.tracejado, suavizar, ordem[s.traco])
+        linhas.append(linha)
         d = s.desenho
         curvas.append(_Curva(linha, eixo, d.niveis, d.piramide, d.f0, d.df, fator_x,
                              desenho_log=d if plano.log else None))
@@ -727,10 +867,9 @@ def _desenhar_o_espectro(eixo, plano: _Plano, figura: Figura, textos: dict, suav
     if plano.log:
         eixo.xaxis.set_major_formatter(_numeros_do_log(figura.separador_decimal))
         eixo.xaxis.set_minor_formatter(NullFormatter())
-    eixo.set_xlabel(f"{textos['frequencia']} ({prefixo_x}Hz)")
-    eixo.set_ylabel(f"{textos['nivel']} ({plano.rotulo_y})" if plano.rotulo_y else textos["nivel"])
-    if len(plano.espectros) > 1:
-        eixo.legend(loc="best")
+    eixo.set_xlabel(_rotulo(textos["frequencia"], painel.nome_x, f"{prefixo_x}Hz"))
+    eixo.set_ylabel(_rotulo(textos["nivel"], painel.nome_y, plano.rotulo_y))
+    _legenda(eixo, painel, linhas)
     return curvas
 
 
