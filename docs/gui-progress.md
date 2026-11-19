@@ -42,8 +42,8 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > pausas da bancada lá; validada na placa. **A F4.7 está feita** (diário de 18/11): a jornada da captura de ponta a
 > ponta na janela, com o simulador (`tests/test_gui_jornada_captura.py`), e 1 h direto no computador na placa de
 > verdade, sem perder amostra, aberta na Análise (seção 5). **A tag v0.10** fica para o dono do projeto. **A Fase 5
-> (figuras e exportação) está em tarefas** (seção 4f, F5.1 a F5.10). **A próxima: a F5.1**, o modelo da figura, sem
-> Qt. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
+> (figuras e exportação) está em tarefas** (seção 4f, F5.1 a F5.10). **A F5.1 está feita** (diário de 18/11): o
+> modelo da figura e a versão 5 do projeto. **A próxima: a F5.2**, o desenho com o Matplotlib e a fidelidade. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
 > a captura contínua e o "Conferir antes" dizem "atualize o firmware da placa" (o código 96 do roteiro, conferido
 > nela), e o aplicativo vai precisar mandar o firmware novo (o `enviar` do `BeagleBone_Setup.sh`, ou a Fase 6).
 >
@@ -183,8 +183,8 @@ sonda em pedaços, sem prender o GIL) e `1257f5b` (o fechamento da saída contí
 **O ambiente:** Python 3.13, PySide6 6.12.0 (na 3.10 e na 3.11, o 6.11.3: seção 2), PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1; no extra `placa`,
 asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5, keyring 25.7.0 (o cofre do Linux é o Secret Service) e pyte 0.8.2. **A CI
 roda em `.venv-ci/<versão>`** (desde 16/11/2026): o `.venv` é o de quem desenvolve, e o `ci.sh` não o troca mais.
-Testes, na última rodada (18/11/2026, com a F4.7): o `ci.sh` completo em 5 min, com 2 454 em Python 3.13 (a suíte
-inteira, com a interface) e 2 023 em 3.10 (sem o Qt).
+Testes, na última rodada (18/11/2026, com a F5.1): o `ci.sh` completo em 5 min, com 2 479 em Python 3.13 (a suíte
+inteira, com a interface) e 2 047 em 3.10 (sem o Qt).
 
 **Desde 18/11/2026, a captura pela interface** (a Fase 4 até a F4.5, seção 4e): o formulário com o "Conferir antes",
 a captura na tela (direto no computador ou no cartão, com o ao vivo, o Parar e a queda) e o caderno de bancada.
@@ -1871,7 +1871,7 @@ A ordem leva cedo ao "pronto quando" (o modelo, o desenho, a tela, o PDF e o pac
 de cada elemento, os insets e as anotações) para depois do caminho inteiro de pé. Cada tarefa tem os testes dela e
 o diário.
 
-### ▶ F5.1: o modelo da figura, sem Qt
+### ☑ F5.1: o modelo da figura, sem Qt
 
 - **O conteúdo:** `dados/figura.py`: os modelos de página (IEEE de 88 e 181 mm, Elsevier de 90, 140 e 190 mm, o
   relatório FAPESP em A4 com as margens da ABNT, o slide 16:9 e o pôster A0), a figura (o modelo, a grade de
@@ -1881,8 +1881,17 @@ o diário.
   do `.shproj`, que ainda lê a 4) e os números do SI com o separador do idioma.
 - **Pronto quando:** a figura vai e volta do `.shproj` igual, um projeto da versão 4 abre sem figuras, e o que não
   vale (um painel fora da grade, um modelo desconhecido, um tamanho negativo) é recusado com a razão.
+- **Feito em 18/11/2026** (`5e4e545`): `dados/figura.py` (os oito modelos de página, a figura, o painel, o estilo, os
+  rótulos automáticos e a ida e a volta), a versão 5 do `.shproj` (a leitura de uma vista virou uma função, usada
+  também pela vista congelada de um painel) e as figuras no projeto observável (`figurasMudaram`, `_por_figura`,
+  `_tirar_figura`; os comandos com desfazer vêm com a tela, na F5.3). **Decisões:** a vista congelada é a cópia da
+  vista (os traços com as receitas e as opções), e não dos dados: as capturas não mudam, e a figura congelada se
+  refaz igual; as famílias de letra são a STIX (do tipo Times, que vem com o Matplotlib) e a DejaVu Sans (idem), e a
+  Inter e a IBM Plex Sans (do aplicativo); a Latin Modern e a TeX Gyre Termes do plano ficam de fora até alguém
+  pedir (seriam mais arquivos de fonte no pacote); os números do SI com o separador do idioma usam o `formatar_si`
+  que já existia (`componentes/numeros.py`, sem Qt).
 
-### ☐ F5.2: o desenho com o Matplotlib e a fidelidade
+### ▶ F5.2: o desenho com o Matplotlib e a fidelidade
 
 - **O conteúdo:** `figura → matplotlib.figure.Figure` (sem Qt): cada painel desenha os traços da vista dele (tempo e
   espectro primeiro; as bandas, o espectrograma e os harmônicos depois), com os dados pela pirâmide reduzidos pelo M4
@@ -2653,6 +2662,17 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     `tests/test_gui_captura_na_tela.py` (a pasta do firmware nos dois destinos). O `ci.sh` completo passou em
     311 s: 2 454 em 3.13 com a interface e 2 023 em 3.10 sem o Qt; o `.venv` intocado.
   - **Próximo:** a Fase 5, a quebrar em tarefas (seção 4f).
+- **18/11/2026 (quase meia-noite):** **a medição de 1 h guardada e a F5.1** (o pedido: "guarde essa medição na minha pasta de dados em
+  documentos, depois continue o desenvolvimento da GUI"):
+  - **a medição:** `~/Documents/sh-analyzer-data/lab/2026-11-18/f4_7_1_h_da_tomada_20261118_221756.bin` (movida da
+    pasta de rascunho, o CRC conferido de novo no lugar novo), e as duas entradas automáticas dela no `anotacoes.md`
+    do dia (o começo, com o comando, e o fim, com o resumo), com o caminho novo;
+  - **a Fase 5 em tarefas** (seção 4f, `933cf3f`): o modelo, o desenho, a tela, a exportação da figura, a dos dados
+    e o pacote primeiro (o caminho até o "pronto quando"), o estilo, os insets e as anotações depois;
+  - **a F5.1** (`5e4e545`, a seção 4f diz o quê e as decisões);
+  - **Testes:** `tests/test_gui_figura.py` (25). O `ci.sh` completo passou em 322 s: 2 479 em 3.13 com a interface
+    e 2 047 em 3.10 sem o Qt; o `.venv` intocado.
+  - **Próximo:** a F5.2.
 ---
 
 ## 8. Perguntas em aberto
