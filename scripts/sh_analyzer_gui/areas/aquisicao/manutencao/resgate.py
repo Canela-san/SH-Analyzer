@@ -111,6 +111,12 @@ class PaginaDoResgate(QWidget):
         caixa.addWidget(self.porque)
         caixa.addWidget(self.comando)
         self.situacao = texto("", "texto_mudo")
+        self.pelo_cartao_sd = texto(traduzir(
+            "Se nem a porta serial aparece (o boot parou antes do Linux): ligue a placa pelo cartão microSD com uma "
+            "imagem Debian da BeagleBone, segurando o botão S2 (o do lado do cartão) até os LEDs piscarem. Entre pela "
+            "serial ou pelo SSH; o eMMC é o /dev/mmcblk1p1: sudo mount /dev/mmcblk1p1 /mnt, e sudo cp "
+            "/mnt/boot/uEnv.txt.sh-analyzer-<data> /mnt/boot/uEnv.txt. Tire o cartão e ligue de novo."), "texto_mudo")
+        self.pelo_cartao_sd.setObjectName("resgate_pelo_cartao_sd")
 
         # o console e os atalhos
         self.area_do_console = QWidget()
@@ -139,7 +145,9 @@ class PaginaDoResgate(QWidget):
         coluna.addLayout(linha)
         coluna.addWidget(self.permissao)
         coluna.addWidget(self.situacao)
+        coluna.addWidget(self.pelo_cartao_sd)
         coluna.addWidget(self.area_do_console, 1)
+        coluna.addStretch(0)                      # sem o console, o espaço fica embaixo (com ele, é dele)
         self.atualizar()
 
     # ------------------------------------------------------------------ as portas
@@ -174,6 +182,7 @@ class PaginaDoResgate(QWidget):
         self.fechar.setVisible(aberto)
         self.abrir.setEnabled(p is not None and p.acessivel)
         self.permissao.setVisible(p is not None and not p.acessivel and not aberto)
+        self.pelo_cartao_sd.setVisible(not aberto)
         if p is not None and not p.acessivel:
             porque, comandos = console_serial.como_liberar(p)
             self.porque.setText(porque)

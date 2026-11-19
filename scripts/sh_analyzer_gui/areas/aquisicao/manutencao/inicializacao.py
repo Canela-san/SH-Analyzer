@@ -159,6 +159,11 @@ class PaginaDaInicializacao(QWidget):
         self.sem_copias = texto(traduzir("Nenhuma ainda: cada gravação guarda o uEnv.txt de antes em "
                                          "/boot/uEnv.txt.sh-analyzer-<data>."), "texto_mudo")
         self.corpo_das_copias.addWidget(self.sem_copias)
+        self.se_nao_voltar = texto(traduzir(
+            "Se a placa não voltar depois de uma gravação: a Manutenção sem placa tem o console serial (resgate), com "
+            "o atalho que restaura uma destas cópias, e o caminho pelo cartão microSD."), "texto_mudo")
+        self.se_nao_voltar.setObjectName("se_a_placa_nao_voltar")
+        self.corpo_das_copias.addWidget(self.se_nao_voltar)
         self.linhas_das_copias: list[LinhaDaCopiaDoUenv] = []
 
         conteudo = QWidget()
@@ -290,7 +295,7 @@ class PaginaDaInicializacao(QWidget):
             linha = LinhaDaCopiaDoUenv(copia)
             linha.botao.setEnabled(not self.sistema.ocupado)
             linha.restaurar.connect(self.sistema.ler_copia)
-            self.corpo_das_copias.addWidget(linha)
+            self.corpo_das_copias.insertWidget(self.corpo_das_copias.indexOf(self.se_nao_voltar), linha)
             self.linhas_das_copias.append(linha)
         self.sem_copias.setVisible(not copias)
 
