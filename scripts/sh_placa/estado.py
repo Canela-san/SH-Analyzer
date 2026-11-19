@@ -439,6 +439,14 @@ class LinhaDeLog:
     def erro(self) -> bool:
         return self.nivel is not None and self.nivel <= 3
 
+    def relevante(self, termos) -> bool:
+        """Se a linha é "o que importa" (o filtro do agente, para as que chegam ao vivo): um erro, ou um dos
+        ``termos`` (a PRU, os pinos, o firmware, o USB, o cartão) no texto ou na origem."""
+        if self.erro:
+            return True
+        texto = f"{self.texto} {self.origem or ''}".lower()
+        return any(termo in texto for termo in termos)
+
 
 @dataclass(frozen=True)
 class LogsDaPlaca:

@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 import os
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -106,7 +108,8 @@ printf '%s
 
 PGREP = r"""#!{python}
 # O pgrep da placa simulada: o de verdade, só com os processos desta placa (os de executável dentro da pasta dos
-# processos dela, SHAN_PROCESSOS): um programa deste computador com o mesmo nome não é uma captura na placa.
+# processos dela, SHAN_PROCESSOS, ou os que os comandos dela lançaram, com o SHAN_PROCESSOS dela no ambiente): um
+# programa deste computador com o mesmo nome não é uma captura na placa.
 import os, subprocess, sys
 
 raiz = os.path.realpath(os.environ["SHAN_PROCESSOS"]) + os.sep
@@ -114,9 +117,16 @@ raiz = os.path.realpath(os.environ["SHAN_PROCESSOS"]) + os.sep
 
 def desta_placa(pid):
     try:
-        return os.path.realpath(f"/proc/{{pid}}/exe").startswith(raiz)
+        if os.path.realpath(f"/proc/{{pid}}/exe").startswith(raiz):
+            return True
+        with open(f"/proc/{{pid}}/environ", "rb") as f:
+            ambiente = f.read().split(b"\0")
     except OSError:
         return False
+    for variavel in ambiente:
+        if variavel.startswith(b"SHAN_PROCESSOS="):
+            return os.path.realpath(variavel[15:].decode("utf-8", "replace")) + os.sep == raiz
+    return False
 
 
 r = subprocess.run([{pgrep!r}, *sys.argv[1:]], capture_output=True, text=True)
@@ -163,6 +173,7 @@ class ServidorDoSimulador:
         self._ja_caiu: set[str] = set()                    # os arquivos que já cortaram uma transferência
         self.tempo_do_boot_s = tempo_do_boot_s
         self.desligada = False                             # o systemctl poweroff: só volta com ligar()
+        self._cpu: list[int] | None = None                 # o /proc/stat que anda (_avancar_o_processador)
         self.reinicios = 0
         self._vigia: asyncio.Task | None = None            # o que atende os pedidos de reiniciar e desligar
         self._reiniciando: asyncio.Task | None = None
@@ -243,9 +254,32 @@ class ServidorDoSimulador:
         """O pedido do ``systemctl reboot`` ou ``poweroff`` da placa, que :meth:`_vigiar_os_pedidos` atende."""
         return self.raiz / "run" / "simulador" / "pedido"
 
+    def _avancar_o_processador(self) -> None:
+        """O ``/proc/stat`` da placa anda, como o de uma placa ligada: 100 jiffies por segundo (um núcleo), com uma
+        ocupação plausível (de 8 a 20 %, numa onda lenta), para o monitor ter o que mostrar. Gravado de uma vez (o
+        agente nunca lê um pela metade)."""
+        arquivo = self.raiz / "proc" / "stat"
+        if self._cpu is None:
+            try:
+                self._cpu = [int(x) for x in arquivo.read_text().splitlines()[0].split()[1:]]
+            except (OSError, ValueError, IndexError):
+                return
+        jiffies = round(INTERVALO_DOS_PEDIDOS_S * 100)
+        ocupados = round(jiffies * (0.14 + 0.06 * math.sin(time.monotonic() / 7.0)))
+        self._cpu[0] += ocupados
+        self._cpu[3] += jiffies - ocupados
+        linha = " ".join(map(str, self._cpu))
+        novo = arquivo.with_name("stat.novo")
+        try:
+            novo.write_text(f"cpu  {linha}\ncpu0 {linha}\n")
+            os.replace(novo, arquivo)
+        except OSError:
+            pass
+
     async def _vigiar_os_pedidos(self) -> None:
         while True:
             await asyncio.sleep(INTERVALO_DOS_PEDIDOS_S)
+            self._avancar_o_processador()
             try:
                 pedido = self.pedido.read_text().strip()
             except OSError:
@@ -301,6 +335,25 @@ class ServidorDoSimulador:
     def _parar_o_que_roda_destacado(self) -> None:
         self._parar_as_capturas_no_cartao()
         self._parar_as_tarefas()
+        self._parar_os_processos_da_placa()
+
+    def _parar_os_processos_da_placa(self) -> None:
+        """O que ainda roda e foi lançado pelos comandos desta placa (o ``SHAN_RAIZ`` dela no ambiente: um ``ler_adc``
+        destacado do terminal, que nem a captura nem as tarefas conhecem). A placa de verdade, desligada, não deixa
+        nada rodando; a simulada, fechada, também não."""
+        marca = f"SHAN_RAIZ={self.raiz}".encode()
+        eu = os.getpid()
+        for nome in os.listdir("/proc") if os.path.isdir("/proc") else ():
+            if not nome.isdigit() or int(nome) == eu:
+                continue
+            try:
+                with open(f"/proc/{nome}/environ", "rb") as f:
+                    ambiente = f.read().split(b"\0")
+            except OSError:
+                continue
+            if marca in ambiente:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.kill(int(nome), signal.SIGKILL)
 
     def _parar_as_tarefas(self) -> None:
         """As tarefas destacadas que ainda rodam (``sh_placa/tarefas.py``: o ``rodar.sh``, líder do grupo do

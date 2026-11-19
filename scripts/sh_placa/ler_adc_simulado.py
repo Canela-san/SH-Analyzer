@@ -129,8 +129,23 @@ class _Saida:
         self._f.close()
 
 
+def _chamar_se_ler_adc() -> None:
+    """O processo passa a se chamar ``ler_adc`` (o ``PR_SET_NAME``), como o binário de verdade: o ``pgrep -x ler_adc``
+    da placa (a captura que já roda, a que o monitor mostra) o acha. Fora do Linux, nada."""
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        import ctypes
+
+        ctypes.CDLL(None, use_errno=True).prctl(15, b"ler_adc", 0, 0, 0)       # 15: PR_SET_NAME
+    except (OSError, AttributeError):
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if argv is sys.argv[1:] or argv == sys.argv[1:]:
+        _chamar_se_ler_adc()                         # só quando é o processo do ler_adc (não num teste que o chama)
     cenario = os.environ.get("SHAN_CENARIO", "normal")
     por_bloco = int(os.environ.get("SHAN_AMOSTRAS_POR_BLOCO") or cs.AMOSTRAS_POR_BLOCO_DO_FIRMWARE)
     antigo = cenario == "firmware_antigo" or os.environ.get("SHAN_ANTIGO") == "1"

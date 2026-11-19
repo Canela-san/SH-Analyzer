@@ -88,7 +88,9 @@ cmdline=coherent_pool=1M net.ifnames=0 lpj=1990656 rng_core.default_quality=100 
 {mem}
 """
 
-KMSG = """6,330,1852353605,-;remoteproc remoteproc1: stopped remote processor 4a334000.pru
+KMSG = """6,120,1210334,-;random: crng init done
+6,121,5104871,-;NET: Registered protocol family 10
+6,330,1852353605,-;remoteproc remoteproc1: stopped remote processor 4a334000.pru
  SUBSYSTEM=remoteproc
  DEVICE=+remoteproc:remoteproc1
 6,331,2916323129,-;remoteproc remoteproc1: powering up 4a334000.pru
@@ -99,7 +101,8 @@ KMSG = """6,330,1852353605,-;remoteproc remoteproc1: stopped remote processor 4a
 3,336,3100000000,-;mmcblk1: error -110 transferring data, sector 3014656, nr 8, cmd response 0x900, card status 0xb00
 """
 """O ``/dev/kmsg`` da placa (o formato do kernel: ``prioridade,número,µs desde o boot,-;mensagem``, e as linhas com
-espaço na frente, que são do registro de cima), com as mensagens da PRU de uma captura e um erro do cartão."""
+espaço na frente, que são do registro de cima), com as mensagens da PRU de uma captura, o USB, um erro do cartão e
+duas do boot que não importam."""
 
 JOURNAL = (
     '{"__REALTIME_TIMESTAMP": "1794787200000000", "PRIORITY": "6", "SYSLOG_IDENTIFIER": "systemd", '

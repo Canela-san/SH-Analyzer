@@ -19,6 +19,7 @@ import os
 import shlex
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
@@ -100,6 +101,20 @@ class TransporteSSH:
                                                 descricao=f"agente: {' '.join(argv)}")
         return resultado.codigo, resultado.saida, resultado.erro
 
+    async def seguir(self, argv: list[str], ao_ler: Callable[[str], None]) -> int | None:
+        """Um comando de fluxo do agente (o ``monitor``, o ``seguir_logs``): ``ao_ler(linha)`` a cada linha, até o
+        agente terminar (o código) ou a tarefa ser cancelada (o agente recebe o ``TERM`` na placa). A queda é
+        ``ErroDeConexao``."""
+        descricao = f"agente: {' '.join(argv)} (ao vivo)"
+        async with self.conexao.canal(self.comando(argv), descricao) as (processo, desfecho):
+            processo.stdin.write(self._codigo)
+            processo.stdin.write_eof()
+            async for linha in processo.stdout:
+                ao_ler(linha)
+            await processo.wait()
+            self.conexao.concluir(processo, desfecho, descricao)
+        return desfecho.codigo
+
 
 class ClienteDoAgente:
     """Fala com o agente: :meth:`versao`, :meth:`estado`, :meth:`saude` (o estado com o diagnóstico),
@@ -160,5 +175,38 @@ class ClienteDoAgente:
             raise ErroDaPlaca("o agente respondeu o relógio sem a hora")
         return relogio
 
-    async def logs(self, linhas: int = 50) -> LogsDaPlaca:
-        return LogsDaPlaca.de_json(await self.chamar("logs", str(linhas)))
+    async def logs(self, linhas: int = 50, todos: bool = False) -> LogsDaPlaca:
+        """O kernel e o diário: com ``todos``, as últimas ``linhas`` de cada um; sem, só as do firmware e os erros."""
+        args = [str(linhas)] + (["--todos"] if todos else [])
+        return LogsDaPlaca.de_json(await self.chamar("logs", *args))
+
+    async def seguir(self, comando: str, *args: str, ao_receber: Callable[[dict], None]) -> None:
+        """Um comando de fluxo (``monitor``, ``seguir_logs``): o cabeçalho conferido (o protocolo, o erro de uso) e
+        ``ao_receber(dados)`` a cada linha JSON, até o agente terminar ou a tarefa ser cancelada."""
+        seguir = getattr(self.transporte, "seguir", None)
+        if seguir is None:
+            raise ErroDaPlaca("este transporte não segue comandos ao vivo (só o SSH)")
+        cabecalho: list[dict] = []
+
+        def ao_ler(linha: str) -> None:
+            try:
+                dados = json.loads(linha)
+            except json.JSONDecodeError:
+                return
+            if not isinstance(dados, dict):
+                return
+            if not cabecalho:
+                cabecalho.append(dados)
+                if dados.get("protocolo") != PROTOCOLO:
+                    raise ErroDaPlaca(f"o agente fala o protocolo {dados.get('protocolo')!r}, e este cliente, o "
+                                      f"{PROTOCOLO}")
+                if "erro" in dados:
+                    raise ErroDaPlaca(f"o agente recusou o comando: {dados['erro']}")
+                return
+            if "erro" in dados and len(dados) == 1:
+                raise ErroDaPlaca(f"o agente parou: {dados['erro']}")
+            ao_receber(dados)
+
+        codigo = await seguir([comando, *args], ao_ler)
+        if not cabecalho:
+            raise ErroDaPlaca(f"o agente não respondeu ao {comando} (código {codigo})")
