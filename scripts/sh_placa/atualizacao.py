@@ -46,6 +46,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -314,7 +315,7 @@ passo compilar ok "ler_adc e fw_pru.out"
 
 # ---- guardar: a cópia de segurança (o código da placa, os binários, a VERSAO e o firmware instalado na PRU)
 passo guardar comecou
-C="$A/$(date +%Y-%m-%d_%H%M%S)_$(printf '%s' "$VERSAO_ANTIGA" | tr -cd 'A-Za-z0-9._-' | cut -c1-64)"
+C="$A/{carimbo}_$(printf '%s' "$VERSAO_ANTIGA" | tr -cd 'A-Za-z0-9._-' | cut -c1-64)"
 [ -n "$VERSAO_ANTIGA" ] || C="${{C}}sem-versao"
 mkdir -p "$C" || falhar guardar "não deu para criar a cópia em $C (o cartão está cheio?)"
 for f in "${{DA_PLACA[@]}}" {binarios} VERSAO; do
@@ -404,10 +405,14 @@ exit {atualizada}
 """
 
 
-def roteiro_da_atualizacao(plano: PlanoDeAtualizacao, id_: str) -> str:
+def roteiro_da_atualizacao(plano: PlanoDeAtualizacao, id_: str, carimbo: str | None = None) -> str:
     """O roteiro da tarefa (ver o módulo; a interface o mostra no "Ver o roteiro"). Os arquivos que vão pelo SFTP
     (os novos e os mudados) já estão na preparação quando ele roda (:func:`enviar`); os outros, ele copia da origem
-    (a pasta do firmware, ou a cópia anterior)."""
+    (a pasta do firmware, ou a cópia anterior). ``carimbo``: a data no nome da cópia de segurança, do relógio deste
+    computador (o da placa pode estar errado: ela não tem bateria no relógio), como o ``enviar``."""
+    carimbo = carimbo or time.strftime("%Y-%m-%d_%H%M%S")
+    if not re.fullmatch(r"[0-9_-]{1,32}", carimbo):
+        raise ValueError(f"carimbo inválido: {carimbo!r}")
     f = plano.firmware
     if f.origem in ("anterior", "placa"):
         pares = list(f.hashes_na_placa)
@@ -428,7 +433,7 @@ def roteiro_da_atualizacao(plano: PlanoDeAtualizacao, id_: str) -> str:
                            versao_nova=shlex.quote(f.versao), versao_antiga=shlex.quote(plano.versao_da_placa or ""),
                            listas=listas, binarios=" ".join(BINARIOS), pru_na_copia=PRU_INSTALADA_NA_COPIA,
                            pinos=pinos, taxa=TAXA_DA_CONFERENCIA, atualizada=ATUALIZADA, falhou_antes=FALHOU_ANTES,
-                           voltou=VOLTOU, falhou_ao_voltar=FALHOU_AO_VOLTAR)
+                           voltou=VOLTOU, falhou_ao_voltar=FALHOU_AO_VOLTAR, carimbo=carimbo)
 
 
 async def enviar(conexao: ConexaoSSH, plano: PlanoDeAtualizacao, id_: str, ao_enviar=None) -> int:
