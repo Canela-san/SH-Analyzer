@@ -53,7 +53,7 @@ class ItemDoDiagnostico:
     nivel: str                              # "ok", "info", "aviso" ou "erro"
     resumo: str                             # os fatos lidos, numa linha
     problemas: tuple[Problema, ...] = ()
-    correcao: str | None = None             # o "Corrigir" daqui: "relogio" ou "pinos"
+    correcao: str | None = None             # o "Corrigir" daqui: "relogio", "pinos", "pru" ou "firmware"
 
 
 def _decimal(valor: float, casas: int) -> str:
@@ -245,6 +245,11 @@ def itens_do_diagnostico(estado: EstadoDaPlaca, versao_do_aplicativo: str | None
             correcao = "pinos"
         elif chave == "relogio" and estado.relogio is not None and (dela or not estado.relogio.sincronizado):
             correcao = "relogio"
+        elif chave == "firmware" and dela:
+            codigos = {p.codigo for p in dela}
+            correcao = "firmware" if codigos - {"pru_desatualizada"} else "pru"
+        elif chave == "pru" and {p.codigo for p in dela} & {"pru_com_falha", "pru_outro_firmware"}:
+            correcao = "pru"
         itens.append(ItemDoDiagnostico(chave, titulo, _pior(dela), resumo, tuple(dela), correcao))
     if outros:
         itens.append(ItemDoDiagnostico("outros", "Outras conferências", _pior(outros),
