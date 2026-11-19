@@ -18,8 +18,16 @@ agente, e ele fala sempre o protocolo do aplicativo que o mandou, mesmo com um f
 * ``capturas`` -- os ``.bin`` da pasta do firmware e das pastas de coleta, com o resumo do cabeçalho (o título, a
   taxa, os canais, a duração, a integridade), e os ``resumo.csv`` das coletas;
 * ``relogio`` -- a hora da placa e se o NTP a sincronizou (o mesmo ``adjtimex`` que o ``ler_adc`` grava no cabeçalho);
-* ``logs [N]`` -- as últimas N linhas (50) do kernel e do diário do systemd que falam da PRU, dos pinos e do
-  firmware, e as de erro.
+* ``logs [N] [--todos]`` -- as últimas N linhas (50) do kernel e do diário do systemd que falam da PRU, dos pinos e
+  do firmware, e as de erro (com ``--todos``, todas);
+* **os da manutenção** (a Fase 6): ``firmware_arquivos [ARQ...]`` (o hash de cada arquivo do código, os binários e o
+  firmware instalado na PRU: o que muda numa atualização), ``anteriores`` (as cópias de segurança do firmware),
+  ``inicializacao`` (o ``/boot/uEnv.txt`` inteiro, a linha do kernel, os overlays e os ``.dtbo`` da PRU: o assistente
+  de pinos e overlays), ``sistema`` (o nome, o fuso, a memória, o cartão e a partição, o que ocupa o cartão, a rede e
+  os serviços da imagem), ``internet`` (se a placa alcança a internet) e ``processos [N]`` (os que mais pesam);
+* **os fluxos**, que respondem uma linha JSON por vez até o canal fechar (a primeira é o cabeçalho, com o
+  ``protocolo``): ``monitor [INTERVALO] [N]`` (o processador, a memória, a temperatura, a carga e a rede) e
+  ``seguir_logs`` (o diário ao vivo).
 
 À mão, na placa, também vale ``python3 ~/firmware/agente/shan_agente.py saude``. O aplicativo lê um objeto JSON do
 stdout, com ``"protocolo"`` (a versão deste formato) e ``"agente"``. Um comando desconhecido, ou com argumentos
@@ -58,7 +66,7 @@ import zlib
 # compilado a cada chamada, e no único núcleo da placa cada importação custa (o subprocess, ~50 ms).
 
 PROTOCOLO = 1
-AGENTE = "3"
+AGENTE = "4"
 
 PINOS_DA_PRU = {"P9_28": "pruout", "P9_29": "pruout", "P9_30": "pruin", "P9_31": "pruout"}   # os do setup.sh
 REMOTEPROC_PRU0 = "/sys/class/remoteproc/remoteproc1"                                       # o do ler_adc.c
@@ -841,9 +849,9 @@ def _relevante(texto, prioridade):
         any(t in texto.lower() for t in TERMOS_DOS_LOGS)
 
 
-def logs_do_kernel(quantas):
-    """As mensagens do kernel (o ``/dev/kmsg``, o que o ``dmesg`` lê) da PRU, dos pinos e do firmware, e as de erro;
-    ``None`` se o kernel não deixa ler (``dmesg_restrict``)."""
+def logs_do_kernel(quantas, todos=False):
+    """As mensagens do kernel (o ``/dev/kmsg``, o que o ``dmesg`` lê) da PRU, dos pinos e do firmware, e as de erro
+    (com ``todos``, todas); ``None`` se o kernel não deixa ler (``dmesg_restrict``)."""
     import errno
 
     try:
@@ -880,49 +888,573 @@ def logs_do_kernel(quantas):
             prioridade, desde_o_boot = int(partes[0]) & 7, int(partes[2]) / 1e6
         except (IndexError, ValueError):
             continue
-        if _relevante(texto, prioridade):
+        if todos or _relevante(texto, prioridade):
             linhas.append({"utc": None if boot is None else boot + desde_o_boot, "desde_o_boot_s": desde_o_boot,
                            "nivel": prioridade, "origem": "kernel", "texto": texto})
     return linhas[-quantas:]
 
 
-def logs_do_diario(quantas):
+def _entrada_do_diario(linha, todos=False):
+    """Uma linha do ``journalctl -o json`` como o agente a responde (o ``utc``, o nível, a origem, o texto); ``None``
+    para a que não se lê, a binária e, sem ``todos``, a que não é do firmware nem um erro."""
+    try:
+        e = json.loads(linha)
+    except ValueError:
+        return None
+    if not isinstance(e, dict) or not isinstance(e.get("MESSAGE"), str):
+        return None                            # uma mensagem binária vem como lista de bytes
+    texto = e["MESSAGE"]
+    try:
+        prioridade = int(e.get("PRIORITY"))
+    except (TypeError, ValueError):
+        prioridade = None
+    kernel = e.get("_TRANSPORT") == "kernel"
+    origem = "kernel" if kernel else (e.get("SYSLOG_IDENTIFIER") or e.get("_COMM"))
+    if not todos and not _relevante(texto + " " + (origem or ""), prioridade):
+        return None
+    try:
+        utc = int(e["__REALTIME_TIMESTAMP"]) / 1e6
+    except (KeyError, TypeError, ValueError):
+        utc = None
+    return {"utc": utc, "nivel": prioridade, "origem": origem, "texto": texto}
+
+
+def logs_do_diario(quantas, todos=False):
     """As linhas do diário do systemd deste boot (``journalctl -o json``, :data:`FILTRO_DO_DIARIO`) que falam do
-    firmware, e as de erro; as do kernel ficam de fora (já vêm do ``/dev/kmsg``). ``None`` sem o ``journalctl``, ou se
-    ele falhou."""
+    firmware, e as de erro (com ``todos``, as últimas ``quantas``, sem o filtro); as do kernel ficam de fora (já vêm
+    do ``/dev/kmsg``). ``None`` sem o ``journalctl``, ou se ele falhou."""
     import subprocess
 
     journalctl = programa("journalctl")
     if journalctl is None:
         return None
+    filtro = [] if todos else list(FILTRO_DO_DIARIO)
+    lidas = quantas if todos else LINHAS_LIDAS_DO_DIARIO
     try:
-        r = subprocess.run([sistema(journalctl), "-o", "json", "--no-pager", "-b", "-n", str(LINHAS_LIDAS_DO_DIARIO),
-                            *FILTRO_DO_DIARIO], capture_output=True, timeout=20)
+        r = subprocess.run([sistema(journalctl), "-o", "json", "--no-pager", "-b", "-n", str(lidas)] + filtro,
+                           capture_output=True, timeout=20)
     except (OSError, subprocess.SubprocessError):
         return None
     if r.returncode != 0:
         return None
     linhas = []
     for linha in r.stdout.decode("utf-8", "replace").splitlines():
-        try:
-            e = json.loads(linha)
-        except ValueError:
-            continue
-        if not isinstance(e, dict) or e.get("_TRANSPORT") == "kernel" or not isinstance(e.get("MESSAGE"), str):
-            continue                           # uma mensagem binária vem como lista de bytes
-        texto = e["MESSAGE"]
-        try:
-            prioridade = int(e.get("PRIORITY"))
-        except (TypeError, ValueError):
-            prioridade = None
-        origem = e.get("SYSLOG_IDENTIFIER") or e.get("_COMM")
-        if _relevante(texto + " " + (origem or ""), prioridade):
-            try:
-                utc = int(e["__REALTIME_TIMESTAMP"]) / 1e6
-            except (KeyError, TypeError, ValueError):
-                utc = None
-            linhas.append({"utc": utc, "nivel": prioridade, "origem": origem, "texto": texto})
+        entrada = _entrada_do_diario(linha, todos)
+        if entrada is not None and entrada["origem"] != "kernel":
+            linhas.append(entrada)
     return linhas[-quantas:]
+
+
+# ------------------------------------------------------------------ a manutenção (a Fase 6)
+
+SUBPASTAS_DO_CODIGO = ("coleta", "agente")
+"""As pastas de código dentro da pasta do firmware (as outras são das coletas: capturas, manifestos)."""
+EXTENSOES_DA_COMPILACAO = (".bin", ".obj", ".o", ".map", ".out", ".tmp", ".parcial")
+"""O que não é código na pasta do firmware: as capturas e o que o ``make`` gera."""
+BINARIOS = ("ler_adc", "fw_pru.out")
+LIMITE_DO_HASH = 8 << 20                 # um arquivo de código maior que isto não é código
+PRU_INSTALADA_NA_COPIA = "am335x-pru0-fw.instalado"
+"""Na cópia de segurança de uma atualização: o firmware que estava instalado na PRU (o ``/lib/firmware``)."""
+UENV = "/boot/uEnv.txt"
+PREFIXO_DAS_COPIAS_DO_UENV = "uEnv.txt.sh-analyzer-"
+LIMITE_DO_UENV = 64 * 1024
+SERVICOS_DA_IMAGEM = (
+    ("cloud9.socket", "opcional", "O Cloud9, o editor web da imagem (porta 3000)."),
+    ("cloud9.service", "opcional", "O Cloud9 rodando (aberto pelo socket)."),
+    ("bonescript.socket", "opcional", "O BoneScript, a biblioteca web da imagem (porta 80, pelo nginx)."),
+    ("bonescript.service", "opcional", "O BoneScript rodando (aberto pelo socket)."),
+    ("bonescript-autorun.service", "opcional", "Roda sozinho os programas do Cloud9 na pasta autorun."),
+    ("nodered.socket", "opcional", "O Node-RED, o editor de fluxos da imagem (porta 1880)."),
+    ("nodered.service", "opcional", "O Node-RED rodando (aberto pelo socket)."),
+    ("nginx.service", "opcional", "O servidor web da imagem (a página da placa na porta 80)."),
+    ("apache2.service", "opcional", "Um servidor web (algumas imagens o trazem no lugar do nginx)."),
+    ("ssh.service", "necessario", "O SSH: o caminho do aplicativo até a placa."),
+    ("dnsmasq.service", "necessario", "Dá o endereço ao computador pelo USB (o DHCP das redes do gadget)."),
+    ("avahi-daemon.service", "necessario", "O mDNS: a placa achada como beaglebone.local."),
+    ("connman.service", "necessario", "Liga a Ethernet e o Wi-Fi."),
+    ("systemd-timesyncd.service", "necessario", "Acerta o relógio pela internet (NTP), quando há internet."),
+    ("serial-getty@ttyGS0.service", "necessario", "O console pela porta serial do USB (o resgate)."),
+)
+"""Os serviços da imagem da BeagleBoard que a manutenção mostra (vistos na placa de verdade, 19/11/2026): os
+``opcional`` não servem ao SH-Analyzer e disputam o núcleo único com a captura; os ``necessario`` não se desligam."""
+PROPRIEDADES_DO_SERVICO = ("Id", "Description", "LoadState", "ActiveState", "SubState", "UnitFileState", "MainPID")
+INTERFACES_IGNORADAS = ("lo",)
+HOST_DA_INTERNET = ("deb.debian.org", 80)
+LIMITE_DE_PROCESSOS = 50
+
+
+def pasta_do_home():
+    """O home do usuário da placa: a pasta acima da do firmware (na raiz falsa, o home simulado)."""
+    return os.path.dirname(os.path.abspath(pasta_do_firmware()))
+
+
+def pasta_das_anteriores():
+    """Onde ficam as cópias de segurança do firmware: ``~/firmware-anteriores``, a do ``enviar``."""
+    return os.path.abspath(pasta_do_firmware()) + "-anteriores"
+
+
+def _sha256(caminho, limite=LIMITE_DO_HASH):
+    import hashlib
+
+    try:
+        if os.path.getsize(caminho) > limite:
+            return None
+        h = hashlib.sha256()
+        with open(caminho, "rb") as f:
+            for pedaco in iter(lambda: f.read(1 << 16), b""):
+                h.update(pedaco)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+def _e_codigo(nome):
+    return not nome.startswith(".") and not nome.endswith(EXTENSOES_DA_COMPILACAO) and nome not in BINARIOS \
+        and nome != "VERSAO"
+
+
+def arquivos_do_codigo(pasta):
+    """O código na pasta do firmware (caminhos relativos, com ``/``): os arquivos do alto e os de
+    :data:`SUBPASTAS_DO_CODIGO`, sem as capturas nem o que a compilação gera."""
+    rels = []
+    for sub in ("",) + SUBPASTAS_DO_CODIGO:
+        base = os.path.join(pasta, sub) if sub else pasta
+        try:
+            nomes = sorted(os.listdir(base))
+        except OSError:
+            continue
+        for nome in nomes:
+            if _e_codigo(nome) and os.path.isfile(os.path.join(base, nome)):
+                rels.append(sub + "/" + nome if sub else nome)
+    return rels
+
+
+def _descrever_arquivo(caminho):
+    try:
+        info = os.stat(caminho)
+    except OSError:
+        return None
+    return {"sha256": _sha256(caminho), "bytes": info.st_size, "modificado": info.st_mtime,
+            "executavel": bool(info.st_mode & 0o111)}
+
+
+def firmware_arquivos(rels):
+    """Os arquivos do código do firmware da placa (os pedidos, ou todos), com o hash, o tamanho e a data; os binários;
+    e o firmware instalado na PRU. É o que o aplicativo compara com o dele antes de atualizar (só o que mudou vai)."""
+    pasta = pasta_do_firmware()
+    for rel in rels:
+        if rel.startswith("/") or ".." in rel.split("/"):
+            raise ErroDeUso(f"um caminho fora da pasta do firmware: {rel!r}")
+    lista = list(rels) if rels else arquivos_do_codigo(pasta)
+    return {"pasta": pasta, "existe": os.path.isdir(pasta), "versao": versao()["firmware"],
+            "arquivos": {rel: _descrever_arquivo(os.path.join(pasta, rel)) for rel in lista},
+            "binarios": {nome: _descrever_arquivo(os.path.join(pasta, nome)) for nome in BINARIOS},
+            "pru_instalada": _descrever_arquivo(sistema(FIRMWARE_INSTALADO))}
+
+
+def _versao_da_copia(caminho, nome):
+    texto = None
+    try:
+        with open(os.path.join(caminho, "VERSAO"), encoding="utf-8", errors="replace") as f:
+            texto = f.read(64).strip() or None
+    except OSError:
+        pass
+    if texto is None:                       # o nome do enviar: AAAA-MM-DD_HHMMSS_<versão>
+        partes = nome.split("_", 2)
+        texto = partes[2] if len(partes) == 3 else None
+    return texto
+
+
+def anteriores():
+    """As cópias de segurança do firmware (``~/firmware-anteriores``), as mais novas primeiro: a versão, a data, o
+    tamanho, os arquivos e se a cópia dá para voltar (tem o código; os binários e a PRU instalada, se a cópia é de
+    uma atualização pelo aplicativo). As do ``enviar`` guardam os arquivos das subpastas no alto da cópia."""
+    base = pasta_das_anteriores()
+    try:
+        nomes = sorted(os.listdir(base), reverse=True)
+    except OSError:
+        return {"pasta": base, "copias": []}
+    copias = []
+    for nome in nomes:
+        caminho = os.path.join(base, nome)
+        if nome.startswith(".") or not os.path.isdir(caminho):
+            continue
+        arquivos, total = [], 0
+        for atual, pastas, nomes_dos_arquivos in os.walk(caminho):
+            pastas[:] = sorted(p for p in pastas if not p.startswith("."))
+            for n in sorted(nomes_dos_arquivos):
+                completo = os.path.join(atual, n)
+                try:
+                    total += os.lstat(completo).st_size
+                except OSError:
+                    continue
+                arquivos.append(os.path.relpath(completo, caminho).replace(os.sep, "/"))
+        copias.append({"nome": nome, "versao": _versao_da_copia(caminho, nome), "bytes": total,
+                       "modificado": _mtime(caminho), "arquivos": arquivos,
+                       "codigo": "ler_adc.c" in arquivos and "Makefile" in arquivos,
+                       "binarios": all(b in arquivos for b in BINARIOS),
+                       "pru_instalada": PRU_INSTALADA_NA_COPIA in arquivos})
+    return {"pasta": base, "copias": copias}
+
+
+def inicializacao():
+    """O que o assistente de pinos e overlays lê: o ``/boot/uEnv.txt`` inteiro (com o hash, para a gravação conferir
+    que ninguém o mudou entre a leitura e a escrita), a linha do kernel deste boot, o kernel, os overlays carregados,
+    os ``.dtbo`` da PRU e as cópias que o assistente já fez."""
+    caminho = sistema(UENV)
+    texto = None
+    try:
+        with open(caminho, "rb") as f:
+            bruto = f.read(LIMITE_DO_UENV + 1)
+        texto = None if len(bruto) > LIMITE_DO_UENV else bruto.decode("utf-8", "replace")
+    except OSError:
+        bruto = None
+    copias = []
+    pasta = os.path.dirname(caminho)
+    try:
+        nomes = sorted(os.listdir(pasta), reverse=True)
+    except OSError:
+        nomes = []
+    for nome in nomes:
+        if nome.startswith(PREFIXO_DAS_COPIAS_DO_UENV):
+            try:
+                info = os.stat(os.path.join(pasta, nome))
+            except OSError:
+                continue
+            copias.append({"nome": nome, "bytes": info.st_size, "modificado": info.st_mtime})
+    import hashlib
+
+    return {"uenv": {"caminho": UENV, "texto": texto, "bytes": None if bruto is None else len(bruto),
+                     "sha256": None if bruto is None else hashlib.sha256(bruto).hexdigest()},
+            "cmdline": ler_texto("/proc/cmdline"), "kernel": ler_texto("/proc/sys/kernel/osrelease"),
+            "overlays": overlays_carregados(), "dtbos_da_pru": dtbos_da_pru(), "copias": copias,
+            "pinos": pinos()}
+
+
+def _rodar(argv, tempo=10, entrada=None):
+    """``(código, stdout)`` de um programa da placa (na raiz falsa, o dela); ``None`` se não deu para rodar."""
+    import subprocess
+
+    caminho = programa(argv[0])
+    if caminho is None:
+        return None
+    try:
+        r = subprocess.run([sistema(caminho)] + list(argv[1:]), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           input=entrada, timeout=tempo)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.returncode, r.stdout.decode("utf-8", "replace")
+
+
+def servicos():
+    """Os serviços da imagem (:data:`SERVICOS_DA_IMAGEM`): o estado (``active``…), se sobe no boot
+    (``enabled``…), o PID e a memória dele. ``None`` sem o ``systemctl``."""
+    unidades = [u for u, _p, _t in SERVICOS_DA_IMAGEM]
+    r = _rodar(["systemctl", "show", "--no-pager", "-p", ",".join(PROPRIEDADES_DO_SERVICO)] + unidades)
+    if r is None:
+        return None
+    blocos, atual = [], {}
+    for linha in r[1].splitlines() + [""]:
+        if not linha.strip():
+            if atual:
+                blocos.append(atual)
+            atual = {}
+            continue
+        chave, _, valor = linha.partition("=")
+        atual[chave] = valor
+    por_id = {b.get("Id"): b for b in blocos}
+    lista = []
+    for unidade, papel, texto in SERVICOS_DA_IMAGEM:
+        b = por_id.get(unidade)
+        if b is None or b.get("LoadState") == "not-found":
+            continue
+        try:
+            pid = int(b.get("MainPID") or 0)
+        except ValueError:
+            pid = 0
+        memoria = None
+        if pid:
+            for linha in (ler_texto(f"/proc/{pid}/status", 8192) or "").splitlines():
+                if linha.startswith("VmRSS:"):
+                    try:
+                        memoria = int(linha.split()[1])
+                    except (IndexError, ValueError):
+                        pass
+        lista.append({"unidade": unidade, "papel": papel, "texto": texto, "descricao": b.get("Description"),
+                      "ativo": b.get("ActiveState"), "sub": b.get("SubState"), "no_boot": b.get("UnitFileState"),
+                      "pid": pid or None, "memoria_kib": memoria})
+    return lista
+
+
+def rede():
+    """As interfaces (o estado, o MAC, os bytes) e os endereços (do ``ip -o addr``)."""
+    base = sistema("/sys/class/net")
+    try:
+        nomes = sorted(os.listdir(base))
+    except OSError:
+        return None
+    enderecos = {}
+    r = _rodar(["ip", "-o", "addr", "show"])
+    if r is not None and r[0] == 0:
+        for linha in r[1].splitlines():
+            partes = linha.split()
+            if len(partes) >= 4 and partes[2] in ("inet", "inet6"):
+                enderecos.setdefault(partes[1], []).append(partes[3])
+    lista = []
+    for nome in nomes:
+        if nome in INTERFACES_IGNORADAS:
+            continue
+        caminho = "/sys/class/net/" + nome
+        lista.append({"nome": nome, "estado": ler_texto(caminho + "/operstate"), "mac": ler_texto(caminho + "/address"),
+                      "rx_bytes": ler_numero(caminho + "/statistics/rx_bytes", int),
+                      "tx_bytes": ler_numero(caminho + "/statistics/tx_bytes", int),
+                      "enderecos": enderecos.get(nome, [])})
+    return lista
+
+
+def _tamanho_da_pasta(caminho):
+    total, achou = 0, os.path.isdir(caminho)
+    for atual, _pastas, arquivos in os.walk(caminho):
+        for nome in arquivos:
+            try:
+                total += os.lstat(os.path.join(atual, nome)).st_size
+            except OSError:
+                pass
+    return total if achou else None
+
+
+def _bloco_da_raiz():
+    """O cartão e a partição da raiz (``mmcblk1``, ``mmcblk1p1``), da linha do kernel (``root=/dev/mmcblk1p1``)."""
+    m = re.search(r"\broot=/dev/(mmcblk\d+)(p\d+)\b", ler_texto("/proc/cmdline") or "")
+    return (m.group(1), m.group(1) + m.group(2)) if m else (None, None)
+
+
+def cartao():
+    """O cartão (o eMMC ou o SD) e a partição da raiz, em bytes, e quanto do cartão fica fora dela (o que expandir a
+    partição ganharia; só a última partição cresce). O script da imagem que expande, se ela o tem."""
+    disco_, particao = _bloco_da_raiz()
+    if disco_ is None:
+        return None
+    setores = ler_numero(f"/sys/block/{disco_}/size", int)
+    tamanho = ler_numero(f"/sys/block/{disco_}/{particao}/size", int)
+    inicio = ler_numero(f"/sys/block/{disco_}/{particao}/start", int)
+    if setores is None or tamanho is None or inicio is None:
+        return {"disco": disco_, "particao": particao, "bytes": None, "particao_bytes": None, "fora_bytes": None}
+    script = "/opt/scripts/tools/grow_partition.sh"
+    return {"disco": disco_, "particao": particao, "bytes": setores * 512, "particao_bytes": tamanho * 512,
+            "fora_bytes": max(0, setores - inicio - tamanho) * 512,
+            "script_de_expandir": script if os.path.isfile(sistema(script)) else None}
+
+
+def ocupacao():
+    """O que ocupa o cartão e pode ser limpo (em bytes; ``None`` se não deu para ler): as cópias do firmware, as
+    tarefas, o diário do systemd (o persistente; o da RAM some no reinício) e o cache do ``apt``. As capturas ficam
+    com os Arquivos (só se apaga o conferido no computador)."""
+    pasta = pasta_do_firmware()
+    capturas = resumo_das_capturas(pasta)
+    return {"anteriores": _tamanho_da_pasta(pasta_das_anteriores()),
+            "tarefas": _tamanho_da_pasta(os.path.join(pasta_do_home(), ".sh-analyzer", "tarefas")),
+            "diario": _tamanho_da_pasta(sistema("/var/log/journal")),
+            "diario_na_ram": _tamanho_da_pasta(sistema("/run/log/journal")),
+            "apt": _tamanho_da_pasta(sistema("/var/cache/apt/archives")),
+            "capturas": None if capturas is None else capturas["bytes"]}
+
+
+def _memoria():
+    campos = {}
+    for linha in (ler_texto("/proc/meminfo", 16384) or "").splitlines():
+        nome, _, resto = linha.partition(":")
+        try:
+            campos[nome] = int(resto.split()[0])
+        except (IndexError, ValueError):
+            pass
+    return {"total_kib": campos.get("MemTotal"), "disponivel_kib": campos.get("MemAvailable"),
+            "swap_total_kib": campos.get("SwapTotal"), "swap_livre_kib": campos.get("SwapFree")}
+
+
+def _fuso():
+    fuso = ler_texto("/etc/timezone")
+    if fuso:
+        return fuso
+    try:
+        destino = os.readlink(sistema("/etc/localtime"))
+    except OSError:
+        return None
+    return destino.split("zoneinfo/", 1)[1] if "zoneinfo/" in destino else None
+
+
+def sistema_detalhe():
+    """A página Sistema da manutenção: o nome, o fuso, a memória, o cartão e a partição, a ocupação, a rede e os
+    serviços da imagem."""
+    pasta = pasta_do_firmware()
+    return {"nome": ler_texto("/etc/hostname"), "fuso": _fuso(), "kernel": ler_texto("/proc/sys/kernel/osrelease"),
+            "sistema": sistema_operacional(), "ligada_s": ler_numero("/proc/uptime"), "memoria": _memoria(),
+            "disco": disco(pasta), "cartao": cartao(), "ocupacao": ocupacao(), "rede": rede(),
+            "servicos": servicos()}
+
+
+def internet():
+    """Se a placa alcança a internet (o ``apt`` e o NTP precisam): o nome de :data:`HOST_DA_INTERNET` resolvido e uma
+    conexão TCP a ele, com o tempo. Na raiz falsa, a resposta do simulador (``/run/simulador/internet``)."""
+    if raiz() != "/":
+        texto = ler_texto(SIMULADOR + "/internet")
+        return {"dns": texto == "sim", "alcanca": texto == "sim", "ms": 42.0 if texto == "sim" else None}
+    import socket
+
+    host, porta = HOST_DA_INTERNET
+    inicio = time.time()
+    try:
+        endereco = socket.getaddrinfo(host, porta, socket.AF_INET, socket.SOCK_STREAM)[0][4]
+    except (OSError, IndexError):
+        return {"dns": False, "alcanca": False, "ms": None}
+    try:
+        with socket.create_connection(endereco, timeout=3):
+            pass
+    except OSError:
+        return {"dns": True, "alcanca": False, "ms": None}
+    return {"dns": True, "alcanca": True, "ms": (time.time() - inicio) * 1000.0}
+
+
+def _tempo_da_cpu():
+    """``(total, ocioso)`` em jiffies, da linha ``cpu`` do ``/proc/stat``."""
+    for linha in (ler_texto("/proc/stat", 8192) or "").splitlines():
+        if linha.startswith("cpu "):
+            try:
+                valores = [int(x) for x in linha.split()[1:]]
+            except ValueError:
+                return None
+            return sum(valores), valores[3] + (valores[4] if len(valores) > 4 else 0)
+    return None
+
+
+def _tempo_dos_processos():
+    """``{pid: (jiffies do processo, nome, uid, rss em páginas, linha de comando)}`` de cada processo."""
+    base = sistema("/proc")
+    tempos = {}
+    try:
+        nomes = os.listdir(base)
+    except OSError:
+        return tempos
+    for nome in nomes:
+        if not nome.isdigit():
+            continue
+        try:
+            with open(os.path.join(base, nome, "stat"), encoding="utf-8", errors="replace") as f:
+                stat = f.read()
+            with open(os.path.join(base, nome, "cmdline"), "rb") as f:
+                linha = f.read(512).replace(b"\x00", b" ").decode("utf-8", "replace").strip()
+            uid = None
+            with open(os.path.join(base, nome, "status"), encoding="utf-8", errors="replace") as f:
+                for l_ in f:
+                    if l_.startswith("Uid:"):
+                        uid = int(l_.split()[1])
+                        break
+        except (OSError, ValueError):
+            continue
+        fim = stat.rfind(")")
+        comando = stat[stat.find("(") + 1:fim]
+        campos = stat[fim + 2:].split()
+        try:
+            tempos[int(nome)] = (int(campos[11]) + int(campos[12]), comando, uid, int(campos[21]), linha)
+        except (IndexError, ValueError):
+            continue
+    return tempos
+
+
+def processos(quantos, janela_s=0.5):
+    """Os processos que mais pesam: o processador (em %, medido em ``janela_s``) e a memória residente, com o dono e
+    a linha de comando."""
+    import pwd
+
+    antes, cpu_antes = _tempo_dos_processos(), _tempo_da_cpu()
+    time.sleep(janela_s)
+    depois, cpu_depois = _tempo_dos_processos(), _tempo_da_cpu()
+    decorrido = (cpu_depois[0] - cpu_antes[0]) if cpu_antes and cpu_depois else 0
+    pagina_kib = os.sysconf("SC_PAGE_SIZE") // 1024
+    lista = []
+    eu = os.getpid()
+    for pid, (tempo, comando, uid, rss, linha) in depois.items():
+        if pid == eu:
+            continue                        # o próprio agente, que mede
+        anterior = antes.get(pid)
+        uso = 100.0 * (tempo - anterior[0]) / decorrido if anterior and decorrido > 0 else 0.0
+        try:
+            dono = pwd.getpwuid(uid).pw_name if uid is not None and raiz() == "/" else None
+        except KeyError:
+            dono = None
+        lista.append({"pid": pid, "nome": comando, "dono": dono, "uid": uid, "cpu": uso, "memoria_kib": rss * pagina_kib,
+                      "linha": linha})
+    lista.sort(key=lambda p: (-p["cpu"], -p["memoria_kib"]))
+    total = 100.0 * (1.0 - (cpu_depois[1] - cpu_antes[1]) / decorrido) if cpu_antes and cpu_depois and decorrido else None
+    return {"cpu": total, "processos": lista[:quantos], "total": len(lista)}
+
+
+def amostra(anterior):
+    """Uma amostra do monitor: o processador (desde ``anterior``, o ``_tempo_da_cpu`` da amostra de antes), a memória,
+    a temperatura, a carga e os bytes de cada interface de rede."""
+    cpu = _tempo_da_cpu()
+    uso = None
+    if cpu and anterior and cpu[0] > anterior[0]:
+        uso = 100.0 * (1.0 - (cpu[1] - anterior[1]) / float(cpu[0] - anterior[0]))
+    carga = (ler_texto("/proc/loadavg") or "").split()
+    temperatura = ler_numero("/sys/class/thermal/thermal_zone0/temp")
+    redes = {}
+    try:
+        nomes = os.listdir(sistema("/sys/class/net"))
+    except OSError:
+        nomes = []
+    for nome in nomes:
+        if nome not in INTERFACES_IGNORADAS:
+            redes[nome] = [ler_numero(f"/sys/class/net/{nome}/statistics/rx_bytes", int),
+                           ler_numero(f"/sys/class/net/{nome}/statistics/tx_bytes", int)]
+    memoria = _memoria()
+    try:
+        carga1 = float(carga[0])
+    except (IndexError, ValueError):
+        carga1 = None
+    return cpu, {"t": time.time(), "cpu": uso, "carga": carga1,
+                 "temperatura_c": None if temperatura is None else temperatura / 1000.0,
+                 "memoria_kib": memoria["total_kib"], "disponivel_kib": memoria["disponivel_kib"], "rede": redes}
+
+
+def monitor(intervalo, quantas):
+    """Uma linha JSON por amostra (:func:`amostra`), a cada ``intervalo`` s, até ``quantas`` (0: até o canal fechar).
+    Um processo só, em vez de um Python novo a cada amostra (cada partida custa ~0,3 s do núcleo único da placa)."""
+    anterior, n = _tempo_da_cpu(), 0
+    try:
+        while quantas == 0 or n < quantas:
+            time.sleep(intervalo)
+            anterior, dados = amostra(anterior)
+            sys.stdout.write(json.dumps(dados) + "\n")
+            sys.stdout.flush()
+            n += 1
+    except (BrokenPipeError, KeyboardInterrupt):
+        pass
+    return None
+
+
+def seguir_logs():
+    """O diário do systemd ao vivo (``journalctl -f -o json``, o kernel junto), uma linha JSON por entrada, até o
+    canal fechar."""
+    import subprocess
+
+    journalctl = programa("journalctl")
+    if journalctl is None:
+        sys.stdout.write(json.dumps({"erro": "a placa não tem o journalctl"}) + "\n")
+        return None
+    processo = subprocess.Popen([sistema(journalctl), "-f", "-o", "json", "-n", "0", "--no-pager"],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        for linha in processo.stdout:
+            entrada = _entrada_do_diario(linha.decode("utf-8", "replace"), todos=True)
+            if entrada is not None:
+                sys.stdout.write(json.dumps(entrada, ensure_ascii=False) + "\n")
+                sys.stdout.flush()
+    except (BrokenPipeError, KeyboardInterrupt):
+        pass
+    finally:
+        processo.kill()
+    return None
 
 
 # ------------------------------------------------------------------ os comandos
@@ -994,8 +1526,9 @@ def capturas():
             "coletas": [ler_manifesto(pasta, rel) for rel in _varrer(pasta)[1]]}
 
 
-def logs(quantas=50):
-    return {"kernel": logs_do_kernel(quantas), "diario": logs_do_diario(quantas), "termos": list(TERMOS_DOS_LOGS)}
+def logs(quantas=50, todos=False):
+    return {"kernel": logs_do_kernel(quantas, todos), "diario": logs_do_diario(quantas, todos),
+            "termos": list(TERMOS_DOS_LOGS), "todos": todos}
 
 
 def _sem_argumentos(funcao):
@@ -1006,20 +1539,57 @@ def _sem_argumentos(funcao):
     return comando
 
 
-def _comando_logs(argumentos):
-    if len(argumentos) > 1:
-        raise ErroDeUso("logs leva no máximo um argumento, o número de linhas")
+def _inteiro(texto, nome, minimo, maximo):
     try:
-        quantas = int(argumentos[0]) if argumentos else 50
+        valor = int(texto)
     except ValueError:
-        raise ErroDeUso(f"o número de linhas não é um número: {argumentos[0]!r}") from None
-    if not 1 <= quantas <= 1000:
-        raise ErroDeUso(f"o número de linhas vai de 1 a 1000: {quantas}")
-    return logs(quantas)
+        raise ErroDeUso(f"{nome} não é um número: {texto!r}") from None
+    if not minimo <= valor <= maximo:
+        raise ErroDeUso(f"{nome} vai de {minimo} a {maximo}: {valor}")
+    return valor
+
+
+def _comando_logs(argumentos):
+    todos = "--todos" in argumentos
+    resto = [a for a in argumentos if a != "--todos"]
+    if len(resto) > 1:
+        raise ErroDeUso("logs leva no máximo o número de linhas e --todos")
+    return logs(_inteiro(resto[0], "o número de linhas", 1, 5000) if resto else 50, todos)
+
+
+def _comando_processos(argumentos):
+    if len(argumentos) > 1:
+        raise ErroDeUso("processos leva no máximo um argumento, quantos")
+    return processos(_inteiro(argumentos[0], "quantos", 1, LIMITE_DE_PROCESSOS) if argumentos else 15)
+
+
+def _comando_monitor(argumentos):
+    if len(argumentos) > 2:
+        raise ErroDeUso("monitor leva no máximo o intervalo (em s) e quantas amostras (0: até o canal fechar)")
+    try:
+        intervalo = float(argumentos[0]) if argumentos else 2.0
+    except ValueError:
+        raise ErroDeUso(f"o intervalo não é um número: {argumentos[0]!r}") from None
+    if not 0.2 <= intervalo <= 60:
+        raise ErroDeUso(f"o intervalo vai de 0,2 a 60 s: {intervalo}")
+    quantas = _inteiro(argumentos[1], "quantas", 0, 100000) if len(argumentos) > 1 else 0
+    return lambda: monitor(intervalo, quantas)
+
+
+def _comando_seguir_logs(argumentos):
+    if argumentos:
+        raise ErroDeUso(f"o comando não leva argumentos: {' '.join(argumentos)}")
+    return seguir_logs
 
 
 COMANDOS = {"versao": _sem_argumentos(versao), "estado": _sem_argumentos(estado), "saude": _sem_argumentos(saude),
-            "capturas": _sem_argumentos(capturas), "relogio": _sem_argumentos(relogio), "logs": _comando_logs}
+            "capturas": _sem_argumentos(capturas), "relogio": _sem_argumentos(relogio), "logs": _comando_logs,
+            "firmware_arquivos": firmware_arquivos, "anteriores": _sem_argumentos(anteriores),
+            "inicializacao": _sem_argumentos(inicializacao), "sistema": _sem_argumentos(sistema_detalhe),
+            "internet": _sem_argumentos(internet), "processos": _comando_processos}
+FLUXOS = {"monitor": _comando_monitor, "seguir_logs": _comando_seguir_logs}
+"""Os comandos que respondem uma linha JSON por vez, até o canal fechar (o monitor, os logs ao vivo): cada um confere
+os argumentos e devolve a função que escreve as linhas, chamada depois do cabeçalho."""
 
 
 def _responder(resposta, codigo):
@@ -1030,10 +1600,16 @@ def _responder(resposta, codigo):
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     comando = argv[0] if argv else ""
-    if comando not in COMANDOS:
+    if comando not in COMANDOS and comando not in FLUXOS:
         return _responder({"protocolo": PROTOCOLO, "agente": AGENTE, "erro": f"comando desconhecido: {comando!r} (os "
-                           f"comandos: {', '.join(sorted(COMANDOS))})"}, 2)
+                           f"comandos: {', '.join(sorted(list(COMANDOS) + list(FLUXOS)))})"}, 2)
     try:
+        if comando in FLUXOS:
+            fluxo = FLUXOS[comando](argv[1:])
+            sys.stdout.write(json.dumps({"protocolo": PROTOCOLO, "agente": AGENTE, "comando": comando}) + "\n")
+            sys.stdout.flush()
+            fluxo()
+            return 0
         dados = COMANDOS[comando](argv[1:])
     except ErroDeUso as e:
         return _responder({"protocolo": PROTOCOLO, "agente": AGENTE, "comando": comando, "erro": str(e)}, 2)

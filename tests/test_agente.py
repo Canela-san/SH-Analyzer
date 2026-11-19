@@ -62,7 +62,7 @@ def placa(tmp_path):
 def test_estado_le_cada_campo(placa):
     raiz, pasta = placa
     rc, e = rodar("estado", raiz=raiz, pasta=pasta)
-    assert rc == 0 and e["protocolo"] == 1 and e["comando"] == "estado" and e["agente"] == "3"
+    assert rc == 0 and e["protocolo"] == 1 and e["comando"] == "estado" and e["agente"] == "4"
     assert e["placa"] == {"nome": "A335BNLT", "revisao": "00C0", "serie": SERIE_SIMULADA,
                           "modelo": "TI AM335x BeagleBone Black"}
     assert e["sistema"] == "BeagleBoard.org Debian Buster IoT Image 2020-04-06"
@@ -514,16 +514,137 @@ def test_o_filtro_do_diario_vai_para_o_journalctl(placa):
 def test_versao_e_comandos_errados(placa):
     raiz, pasta = placa
     rc, v = rodar("versao", raiz=raiz, pasta=pasta)
-    assert rc == 0 and v["firmware"] == VERSAO_SIMULADA and v["agente"] == "3"
+    assert rc == 0 and v["firmware"] == VERSAO_SIMULADA and v["agente"] == "4"
     rc, erro = rodar("formatar_o_disco", raiz=raiz, pasta=pasta)
     assert rc == 2 and "comando desconhecido" in erro["erro"] and erro["protocolo"] == 1
-    assert "capturas, estado, logs, relogio, saude, versao" in erro["erro"]
+    assert ("anteriores, capturas, estado, firmware_arquivos, inicializacao, internet, logs, monitor, processos, "
+            "relogio, saude, seguir_logs, sistema, versao") in erro["erro"]
     rc, erro = rodar(raiz=raiz, pasta=pasta)
     assert rc == 2
     for argv, trecho in ((("estado", "--tudo"), "não leva argumentos"), (("logs", "muitas"), "não é um número"),
-                         (("logs", "0"), "de 1 a 1000"), (("logs", "5", "6"), "no máximo um")):
+                         (("logs", "0"), "de 1 a 5000"), (("logs", "5", "6"), "no máximo"),
+                         (("firmware_arquivos", "../etc/passwd"), "fora da pasta do firmware"),
+                         (("processos", "0"), "de 1 a 50"), (("monitor", "0.01"), "de 0,2 a 60 s")):
         rc, erro = rodar(*argv, raiz=raiz, pasta=pasta)
         assert rc == 2 and trecho in erro["erro"] and erro["comando"] == argv[0]
+
+
+# ------------------------------------------------------------------ a manutenção (a Fase 6)
+
+def test_os_arquivos_do_firmware(placa):
+    """O código da pasta (sem as capturas, os binários e a VERSAO), com o hash de cada um; os binários e a PRU
+    instalada à parte; um caminho pedido que não existe vira null."""
+    import hashlib
+
+    raiz, pasta = placa
+    (pasta / "coleta").mkdir()
+    (pasta / "coleta" / "comum.sh").write_text("# comum\n")
+    (pasta / "pru_main.obj").write_bytes(b"obj")
+    rc, f = rodar("firmware_arquivos", raiz=raiz, pasta=pasta)
+    assert rc == 0 and f["existe"] and f["versao"] == VERSAO_SIMULADA
+    assert sorted(f["arquivos"]) == ["coleta/comum.sh", "ler_adc.c", "memoria_pru.h", "pru_main.c", "spi_core.asm"]
+    assert f["arquivos"]["ler_adc.c"]["sha256"] == hashlib.sha256((pasta / "ler_adc.c").read_bytes()).hexdigest()
+    assert f["binarios"]["ler_adc"]["executavel"] and f["binarios"]["fw_pru.out"]["bytes"] == 64
+    assert f["pru_instalada"]["sha256"] == hashlib.sha256((pasta / "fw_pru.out").read_bytes()).hexdigest()
+    rc, f = rodar("firmware_arquivos", "Makefile", "coleta/comum.sh", raiz=raiz, pasta=pasta)
+    assert rc == 0 and f["arquivos"]["Makefile"] is None and f["arquivos"]["coleta/comum.sh"]["bytes"] == 8
+
+
+def test_as_copias_anteriores(placa):
+    """As cópias de segurança, as mais novas primeiro: a do ``enviar`` (os arquivos das subpastas no alto, a versão no
+    nome) e a de uma atualização pelo aplicativo (a VERSAO dentro, a PRU instalada junto)."""
+    raiz, pasta = placa
+    rc, a = rodar("anteriores", raiz=raiz, pasta=pasta)
+    assert rc == 0 and a["copias"] == [] and a["pasta"].endswith("firmware-anteriores")
+    base = pasta.parent / "firmware-anteriores"
+    enviar = base / "2026-11-15_171901_v0.8-6-gd11b1f2"
+    enviar.mkdir(parents=True)
+    for nome in ("ler_adc.c", "Makefile", "comum.sh", "ler_adc", "fw_pru.out"):
+        (enviar / nome).write_text(nome)
+    nossa = base / "2026-11-19_200000_v0.8-137-g9b0ae82"
+    (nossa / "coleta").mkdir(parents=True)
+    for nome in ("ler_adc.c", "Makefile", "coleta/comum.sh", "VERSAO", "am335x-pru0-fw.instalado"):
+        (nossa / nome).write_text("v0.8-137-g9b0ae82-dirty\n" if nome == "VERSAO" else nome)
+    rc, a = rodar("anteriores", raiz=raiz, pasta=pasta)
+    assert [c["nome"] for c in a["copias"]] == [nossa.name, enviar.name]
+    primeira, segunda = a["copias"]
+    assert primeira["versao"] == "v0.8-137-g9b0ae82-dirty" and primeira["pru_instalada"] and not primeira["binarios"]
+    assert "coleta/comum.sh" in primeira["arquivos"] and primeira["codigo"]
+    assert segunda["versao"] == "v0.8-6-gd11b1f2" and segunda["binarios"] and not segunda["pru_instalada"]
+
+
+def test_a_inicializacao(placa):
+    """O ``uEnv.txt`` inteiro com o hash, a linha do kernel, os overlays, os .dtbo da PRU e as cópias do assistente."""
+    import hashlib
+
+    raiz, pasta = placa
+    (raiz / "boot" / "uEnv.txt.sh-analyzer-20261119-120000").write_text("antigo\n")
+    rc, i = rodar("inicializacao", raiz=raiz, pasta=pasta)
+    texto = (raiz / "boot" / "uEnv.txt").read_bytes()
+    assert rc == 0 and i["uenv"]["texto"] == texto.decode() and i["uenv"]["sha256"] == hashlib.sha256(texto).hexdigest()
+    assert "mem=496M" in i["cmdline"] and "AM335X-PRU-RPROC-4-19-TI-00A0" in i["overlays"]
+    assert "AM335X-PRU-UIO-00A0" in i["dtbos_da_pru"] and i["copias"][0]["nome"].endswith("20261119-120000")
+    assert i["pinos"]["P9_30"]["modo"] == "pruin"
+
+
+def test_o_sistema(placa):
+    """O nome, o fuso, o cartão (a partição já ocupa o cartão, como na placa de verdade), a ocupação, a rede com os
+    endereços e os serviços da imagem (os opcionais e os necessários, com o PID e a memória)."""
+    raiz, pasta = placa
+    rc, s = rodar("sistema", raiz=raiz, pasta=pasta)
+    assert rc == 0 and s["nome"] == "beaglebone" and s["fuso"] == "Etc/UTC"
+    assert s["cartao"]["fora_bytes"] == 0 and s["cartao"]["bytes"] == 7_471_104 * 512
+    assert s["cartao"]["script_de_expandir"] == "/opt/scripts/tools/grow_partition.sh"
+    assert s["ocupacao"]["anteriores"] is None and s["ocupacao"]["diario_na_ram"] == 4096 and s["ocupacao"]["apt"] == 0
+    rede = {r["nome"]: r for r in s["rede"]}
+    assert rede["usb1"]["enderecos"][0] == "192.168.6.2/24" and rede["eth0"]["estado"] == "down"
+    servicos = {x["unidade"]: x for x in s["servicos"]}
+    assert servicos["bonescript-autorun.service"]["pid"] == 894 and servicos["bonescript-autorun.service"][
+        "memoria_kib"] == 9529 * 4
+    assert servicos["cloud9.socket"]["papel"] == "opcional" and servicos["ssh.service"]["papel"] == "necessario"
+    assert "apache2.service" not in servicos                  # a imagem não o tem
+    (raiz / "run" / "simulador" / "internet").write_text("sim\n")
+    rc, i = rodar("internet", raiz=raiz, pasta=pasta)
+    assert rc == 0 and i["alcanca"]
+
+
+def test_os_processos_e_o_monitor(placa):
+    raiz, pasta = placa
+    rc, p = rodar("processos", "3", raiz=raiz, pasta=pasta)
+    assert rc == 0 and len(p["processos"]) == 3 and p["total"] == 4
+    nodejs = next(x for x in p["processos"] if x["pid"] == 894)
+    assert nodejs["linha"] == "/usr/bin/nodejs autorun.js" and nodejs["memoria_kib"] == 9529 * os.sysconf(
+        "SC_PAGE_SIZE") // 1024
+    ambiente = dict(os.environ, SHAN_RAIZ=str(raiz), SHAN_PASTA=str(pasta))
+    r = subprocess.run([sys.executable, str(AGENTE), "monitor", "0.2", "2"], capture_output=True, text=True,
+                       env=ambiente, timeout=30)
+    linhas = [json.loads(x) for x in r.stdout.splitlines()]
+    assert r.returncode == 0 and linhas[0]["comando"] == "monitor" and len(linhas) == 3
+    assert linhas[1]["memoria_kib"] == 478796 and linhas[2]["rede"]["usb1"] == [1119687, 1121178]
+
+
+def test_todos_os_logs_e_ao_vivo(placa):
+    """Com ``--todos``, as linhas do kernel e do diário sem o filtro; ao vivo, o que chega no diário."""
+    raiz, pasta = placa
+    rc, filtrados = rodar("logs", raiz=raiz, pasta=pasta)
+    rc, todos = rodar("logs", "--todos", raiz=raiz, pasta=pasta)
+    assert rc == 0 and todos["todos"] and len(todos["kernel"]) > len(filtrados["kernel"])
+    assert any("USB device" in x["texto"] for x in todos["kernel"])
+    assert any(x["origem"] == "systemd" for x in todos["diario"])
+    ambiente = dict(os.environ, SHAN_RAIZ=str(raiz), SHAN_PASTA=str(pasta))
+    vivo = subprocess.Popen([sys.executable, str(AGENTE), "seguir_logs"], stdout=subprocess.PIPE, text=True,
+                            env=ambiente)
+    try:
+        assert json.loads(vivo.stdout.readline())["comando"] == "seguir_logs"
+        time.sleep(0.5)
+        with open(raiz / "var/log/journal-do-simulador.json", "a") as f:
+            f.write(json.dumps({"__REALTIME_TIMESTAMP": "1794787400000000", "PRIORITY": "4",
+                                "SYSLOG_IDENTIFIER": "ler_adc", "MESSAGE": "uma linha nova"}) + "\n")
+        linha = json.loads(vivo.stdout.readline())
+        assert linha["texto"] == "uma linha nova" and linha["origem"] == "ler_adc" and linha["nivel"] == 4
+    finally:
+        vivo.kill()
+        vivo.wait()
 
 
 # ------------------------------------------------------------------ os contratos com o firmware
