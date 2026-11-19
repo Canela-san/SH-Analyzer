@@ -39,13 +39,12 @@ import asyncssh
 
 from .conexao import CHAVES_DE_HOST
 from .conhecidas import PlacaConhecida
+from .console_serial import IDS_DO_GADGET, _listar_portas_seriais, _nome_do_produto
 from .destino import Destino
 from .simulador import SERIE_SIMULADA
 
 log = logging.getLogger(__name__)
 
-IDS_DO_GADGET = {(0x1D6B, 0x0104), (0x0451, 0x6141)}
-"""O VID:PID do gadget USB das imagens da BeagleBoard (o da Linux Foundation; o da TI nas imagens antigas)."""
 IPS_DO_USB = {"192.168.6.2": "ECM", "192.168.7.2": "RNDIS"}
 IP_PREFERIDO_DO_USB = "192.168.7.2" if sys.platform == "win32" else "192.168.6.2"
 """Os dois respondem no Linux; o ECM é o da rede do Linux (e o único fora do Windows), e o RNDIS, o do Windows."""
@@ -171,21 +170,6 @@ class SondaSSH:
         impressao = chave.get_fingerprint()
         self._chaves[(host, porta)] = (time.monotonic(), saudacao, impressao)
         return impressao
-
-
-def _nome_do_produto(produto: str | None) -> str | None:
-    """``BeagleBoneBlack`` (o produto do gadget) vira ``BeagleBone Black``."""
-    if not produto:
-        return None
-    if produto.startswith("BeagleBone") and len(produto) > len("BeagleBone"):
-        resto = produto[len("BeagleBone"):]
-        return "BeagleBone " + "".join(f" {c}" if c.isupper() and i else c for i, c in enumerate(resto))
-    return produto
-
-
-def _listar_portas_seriais() -> list:
-    from serial.tools import list_ports
-    return list_ports.comports()
 
 
 class FonteUSB:
