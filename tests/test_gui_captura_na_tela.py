@@ -306,3 +306,15 @@ def test_o_quadro_ao_vivo_e_o_ultimo_bloco_pela_api(tmp_path):
     primeiro = api.espectro(api.sinal_do_canal(captura, 0, 0, por_bloco // k), 200_000.0)
     esperado = 10 * np.log10((10 ** (ultimo.db / 10) + 10 ** (primeiro.db / 10)) / 2)
     np.testing.assert_allclose(a.db, esperado, rtol=1e-9)
+
+
+def test_a_pasta_do_firmware_vale_tambem_para_a_captura_no_computador(bancada, qtbot):
+    """A pasta do firmware do serviço (a de um ``ler_adc`` compilado à parte, como na bancada da F4.7) vale para os
+    dois destinos: numa pasta sem o ``ler_adc``, a captura direto no computador diz isso, e não usa a de sempre."""
+    b = bancada
+    s, c = b.secao, b.captura
+    c.pasta_firmware = "outra_pasta"
+    s.formulario.definir_pedido(PedidoDeCaptura((Canal(1),), 400_000, blocos=1))
+    s.capturar_agora()
+    qtbot.waitUntil(lambda: c.estado == "falhou", timeout=ESPERA_MS)
+    assert "não tem o ler_adc compilado" in c.erro

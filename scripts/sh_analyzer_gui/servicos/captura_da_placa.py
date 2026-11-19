@@ -265,7 +265,8 @@ class CapturaDaPlaca(QObject):
             return None
         self._senha = senha
         captura = CapturaContinua(conexao_ssh, pedido.argumentos(), arquivo, senha_do_sudo=senha,
-                                  ao_progresso=self._progresso_no_laco, ao_texto=self._texto_no_laco)
+                                  pasta_firmware=self.pasta_firmware, ao_progresso=self._progresso_no_laco,
+                                  ao_texto=self._texto_no_laco)
         self._no_laco = captura
         recebida = await captura.rodar()
         await self._guardar_no_cofre(conexao_ssh.destino.conta, senha, obter_o_cofre)
