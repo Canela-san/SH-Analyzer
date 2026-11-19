@@ -45,8 +45,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > (figuras e exportação) está em tarefas** (seção 4f, F5.1 a F5.10). **A F5.1 está feita** (diário de 18/11): o
 > modelo da figura e a versão 5 do projeto. **A F5.2 e a F5.3 estão feitas** (diário de 19/11): o desenho com o
 > Matplotlib (o M4 nas colunas dos pixels, conferido contra todos os pontos) e a área Figuras (a vista vira figura
-> com um clique, o painel ligado acompanha a vista, congelar, desfazer). **A próxima: a F5.4**, a exportação da
-> figura. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
+> com um clique, o painel ligado acompanha a vista, congelar, desfazer). **A F5.4 está feita** (diário de 19/11): a
+> figura sai em PDF, SVG, EPS, PGF, PNG e TIFF, com a proveniência nos metadados, e vai para a área de
+> transferência. **A próxima: a F5.5**, a exportação dos dados. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
 > a captura contínua e o "Conferir antes" dizem "atualize o firmware da placa" (o código 96 do roteiro, conferido
 > nela), e o aplicativo vai precisar mandar o firmware novo (o `enviar` do `BeagleBone_Setup.sh`, ou a Fase 6).
 >
@@ -186,13 +187,13 @@ sonda em pedaços, sem prender o GIL) e `1257f5b` (o fechamento da saída contí
 **O ambiente:** Python 3.13, PySide6 6.12.0 (na 3.10 e na 3.11, o 6.11.3: seção 2), PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1; no extra `placa`,
 asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5, keyring 25.7.0 (o cofre do Linux é o Secret Service) e pyte 0.8.2. **A CI
 roda em `.venv-ci/<versão>`** (desde 16/11/2026): o `.venv` é o de quem desenvolve, e o `ci.sh` não o troca mais.
-Testes, na última rodada (19/11/2026, com a F5.3): o `ci.sh` completo em 324 s, com 2 502 em Python 3.13 (a
-suíte inteira, com a interface) e 2 062 em 3.10 (sem o Qt).
+Testes, na última rodada (19/11/2026, com a F5.4): o `ci.sh` completo em 333 s, com 2 525 em Python 3.13 (a
+suíte inteira, com a interface) e 2 082 em 3.10 (sem o Qt).
 
 **Desde 18/11/2026, a captura pela interface** (a Fase 4 até a F4.5, seção 4e): o formulário com o "Conferir antes",
 a captura na tela (direto no computador ou no cartão, com o ao vivo, o Parar e a queda) e o caderno de bancada.
 
-**Ainda não existe:** as rotinas como formulários nativos, com as pausas em diálogos (depois da v0.10); o resgate pela serial (v1.0); as exportações (a Fase 5, da F5.4 em diante).
+**Ainda não existe:** as rotinas como formulários nativos, com as pausas em diálogos (depois da v0.10); o resgate pela serial (v1.0); as exportações (a Fase 5, da F5.5 em diante).
 
 ---
 
@@ -1944,15 +1945,34 @@ o diário.
   edições da figura são funções sem Qt em `dados/figura.py` (pôr um painel na primeira célula livre ou numa linha
   nova, com a página crescendo uma linha; trocar o modelo com o estilo dele). **Conferido na tela sem tela:** a área
   em 1 400 × 900 com dois painéis (um ligado e um congelado).
-### ▶ F5.4: a exportação da figura
+### ☑ F5.4: a exportação da figura
 
 - **O conteúdo:** PDF (fontes Type 42, a proveniência nos metadados), SVG (o texto editável ou em curvas), EPS, PGF,
   PNG e TIFF (dpi de 150 a 1 200; o TIFF com LZW); "rasterizar só as curvas densas" e "todos os pontos" (com o aviso
   acima de ~2 M pontos); copiar a figura para a área de transferência (PNG e SVG, FG-09).
 - **Pronto quando:** cada formato sai e é conferido (o PDF com as fontes embutidas e o tamanho da página do modelo, o
   PNG no dpi pedido), e a exportação longa roda fora da thread da interface, com o progresso.
-
-### ☐ F5.5: a exportação dos dados
+- **Feita em 19/11/2026** (`d62a619`, `e260379`, `2e01ec9`, `ce671f8`, `b87759b`): `dados/exportar_figura.py` e
+  `dados/proveniencia.py` (sem Qt) e a seção Exportar da área Figuras (o formato, a resolução, o texto editável do
+  SVG, as curvas rasterizadas, "todos os pontos" com a conta e o aviso, o "Exportar figura…" numa tarefa pesada com
+  o andamento na seção e no painel das tarefas, e o copiar). **Conferido em cada formato:** o PDF no tamanho da
+  página (88 × 100 mm = 249,4 × 283,5 pt), as fontes como TrueType embutida (`/FontFile2`, sem Type 3) e a
+  proveniência no `Subject`; o SVG do tamanho da página, com o texto como texto ou em curvas; o EPS com a caixa da
+  página e a proveniência num comentário depois do `%%EndComments`; o PGF compilado pelo xelatex num documento (sem
+  caractere faltando); o PNG e o TIFF em RGB, no número de pixels e no dpi pedidos, o TIFF em LZW, com a proveniência
+  na `Description` e na `ImageDescription`. **A proveniência** (o aplicativo, a figura, cada painel com a vista e as
+  receitas, e as capturas usadas com o caminho, o tamanho, o CRC e o cabeçalho resumido) fica pronta para o
+  `proveniencia.json` da F5.5. **Decisões:** o dpi vale também nos vetoriais (é a resolução do M4, 600 por padrão, e a
+  das curvas rasterizadas); o leiaute é achado em até 150 dpi e só a redução usa o dpi pedido (um pôster A0 a
+  1 200 dpi não aloca 9 GB de pixels para isso); uma imagem passa no máximo de 300 M pixels (o A0 em TIFF vai até
+  439 dpi, e a seção diz isso ali); as imagens têm um número inteiro de pixels, arredondado (o Matplotlib truncava
+  519,7 px em 519); o PGF precisa de um LaTeX instalado (o botão fica desabilitado sem ele, com a razão), mede o texto
+  com o LaTeX do sistema e deixa as fontes para o documento; o PNG copiado sai a 300 dpi, ou menos numa página
+  grande (~6 000 px no lado maior). **Um defeito achado:** com o PySide6 6.12, um `QMimeData` criado no Python e
+  deixado na área de transferência derruba o processo na saída (até num script de seis linhas); a área de
+  transferência agora é limpa no `atexit` se ainda tem o que o aplicativo pôs (comparado pelo objeto C++), e a
+  figura copiada não sobrevive ao aplicativo fechado.
+### ▶ F5.5: a exportação dos dados
 
 - **O conteúdo:** CSV, HDF5 (o leiaute do `adc_tool`), MAT (v5 até 2 GB, v7.3 acima) e NPZ (FG-07): a janela, a
   região dos cursores ou a captura inteira, em blocos e com progresso; crus ou em unidades; com ou sem as
@@ -2720,6 +2740,13 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     `tests/test_gui_jornada_figura.py` (2); o `test_gui_janela.py` com as Figuras habilitadas; e o `test_gui_eixos.py` espera os números do eixo dos harmônicos antes de medir (a primeira rodada da CI os mediu vazios, sob carga). O `ci.sh` completo
     passou em 324 s: 2 502 em 3.13 com a interface e 2 062 em 3.10 sem o Qt; o `.venv` intocado.
   - **Próximo:** a F5.4 (a exportação da figura).
+- **19/11/2026 (madrugada, depois):** **a F5.4** (o pedido: "faça a F5.4"; a seção 4f diz o quê e as decisões):
+  - a exportação sem Qt (`d62a619`) e os testes de cada formato (`e260379`); a área de transferência que não derruba
+    o aplicativo na saída (`2e01ec9`); a seção Exportar (`ce671f8`) e os testes pela janela (`b87759b`);
+  - **Testes:** `tests/test_gui_exportar_figura.py` (20), `tests/test_gui_area_de_transferencia.py` (2) e um caso
+    novo em `tests/test_gui_jornada_figura.py`. O `ci.sh` completo passou em 333 s: 2 525 em 3.13 com a interface
+    e 2 082 em 3.10 sem o Qt; o `.venv` intocado.
+  - **Próximo:** a F5.5 (a exportação dos dados).
 ---
 
 ## 8. Perguntas em aberto
