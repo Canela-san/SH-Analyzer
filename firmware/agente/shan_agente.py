@@ -1482,6 +1482,7 @@ def estado():
         "sistema": sistema_operacional(),
         "kernel": ler_texto("/proc/sys/kernel/osrelease"),
         "ligada_s": ler_numero("/proc/uptime"),
+        "boot": ler_texto("/proc/sys/kernel/random/boot_id"),
         "carga": carga,
         "memoria_disponivel_kib": memoria_disponivel_kib(),
         "temperatura_c": None if temperatura is None else temperatura / 1000.0,
