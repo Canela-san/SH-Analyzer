@@ -9,6 +9,10 @@ processo pai, e este shell sai logo depois do ``&``; o sudo do fundo, adotado pe
 credencial, pediria a senha e falharia calado (foi o que a placa de verdade fez em 19/11/2026). Com uma captura rodando (o ``ler_adc``), recusa
 (:data:`SAIDA_CAPTURA_RODANDO`), a não ser com ``mesmo_capturando``: a captura seria cortada.
 
+**A senha, os serviços, a limpeza e a partição** (a F6.7): trocar a senha do usuário pelo ``chpasswd`` (a nova pelo
+stdin, nunca na linha de comando); ligar e desligar os serviços da imagem (``systemctl enable/disable --now``); limpar
+as tarefas terminadas, o diário guardado e o cache do ``apt``; expandir a partição da raiz pelo script da imagem.
+
 **O ``ler_adc`` esquecido** (:func:`capturas_rodando`, :func:`parar_ler_adc`, a F6.6): o que o ``pgrep`` acha na placa
 (uma captura do terminal, de um ``coletar.sh``, de outra janela) e o parar como o Ctrl+C: o ``INT``, que fecha o
 arquivo e para a PRU; o ``TERM`` só se ele não sair em :data:`ESPERA_DO_INT_S`.
@@ -16,6 +20,8 @@ arquivo e para a PRU; o ``TERM`` só se ele não sair em :data:`ESPERA_DO_INT_S`
 
 from __future__ import annotations
 
+import re
+import shlex
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -122,3 +128,127 @@ async def parar_ler_adc(conexao: ConexaoSSH, senha_do_sudo: str) -> str:
         raise ErroDaPlaca(f"o ler_adc não parou (código {r.codigo}): {(r.erro or r.saida).strip()[-200:]}")
     return r.saida.strip().splitlines()[-1] if r.saida.strip() else ""
 
+
+# ------------------------------------------------------------------ a senha
+
+SAIDA_SEM_A_SENHA_NOVA = 87
+SAIDA_CHPASSWD_FALHOU = 88
+
+
+def conferir_a_senha_nova(nova: str) -> str | None:
+    """O porquê de a senha nova não servir (``None``: serve): vazia, curta, com uma quebra de linha (o ``chpasswd``
+    leria duas) ou igual ao nome do usuário."""
+    if not nova:
+        return "a senha nova está vazia"
+    if "\n" in nova or "\r" in nova:
+        return "a senha nova não pode ter uma quebra de linha"
+    if len(nova) < 6:
+        return "a senha nova precisa de pelo menos 6 caracteres"
+    return None
+
+
+def roteiro_da_senha(usuario: str = "debian") -> str:
+    """O que roda na placa para trocar a senha de ``usuario`` (o "Ver o comando"): a senha nova vai pelo stdin, depois
+    da do sudo, e chega ao ``chpasswd`` pelo ``printf`` do shell (um comando de dentro dele: não aparece no ``ps``)."""
+    return validar_o_sudo() + (
+        f"IFS= read -r nova || exit {SAIDA_SEM_A_SENHA_NOVA}\n"
+        f"[ -n \"$nova\" ] || exit {SAIDA_SEM_A_SENHA_NOVA}\n"
+        f"printf '%s:%s\\n' {shlex.quote(usuario)} \"$nova\" | sudo -n chpasswd || exit {SAIDA_CHPASSWD_FALHOU}\n"
+        "nova=\n"
+        "echo 'senha trocada'\n")
+
+
+async def trocar_senha(conexao: ConexaoSSH, senha_do_sudo: str, nova: str, usuario: str = "debian") -> None:
+    """Troca a senha de ``usuario`` (a do SSH e a do sudo, daí em diante) pelo ``chpasswd``."""
+    problema = conferir_a_senha_nova(nova)
+    if problema is not None:
+        raise ValueError(problema)
+    r = await conexao.executar(roteiro_da_senha(usuario), entrada=f"{senha_do_sudo}\n{nova}\n", tempo_limite=30,
+                               descricao=f"trocar a senha de {usuario} (sudo, chpasswd)")
+    if r.codigo == SAIDA_SENHA_RECUSADA:
+        raise ErroDoSudo("a placa recusou a senha do sudo (a de agora)", senha_recusada=True)
+    if r.codigo == SAIDA_SEM_DIRETORIO:
+        raise ErroDoSudo("a placa não deixou criar o diretório temporário em /dev/shm (onde a senha fica, na RAM)")
+    if r.codigo != 0:
+        raise ErroDaPlaca(f"a senha não foi trocada (código {r.codigo}): "
+                          f"{(r.erro or r.saida).strip()[-200:] or 'sem saída'}")
+
+
+# ------------------------------------------------------------------ os serviços da imagem
+
+UNIDADE = re.compile(r"^[A-Za-z0-9@._-]+\.(service|socket)$")
+
+
+def roteiro_do_servico(unidade: str, ligar: bool) -> str:
+    if not UNIDADE.match(unidade):
+        raise ValueError(f"unidade do systemd inválida: {unidade!r}")
+    return com_sudo(f"systemctl {'enable' if ligar else 'disable'} --now {shlex.quote(unidade)}")
+
+
+async def ligar_servico(conexao: ConexaoSSH, unidade: str, ligar: bool, senha_do_sudo: str) -> None:
+    """Liga (``enable --now``) ou desliga (``disable --now``) um serviço da imagem: vale agora e nos próximos boots."""
+    r = await conexao.executar(roteiro_do_servico(unidade, ligar), entrada=senha_do_sudo + "\n", tempo_limite=60,
+                               descricao=f"{'ligar' if ligar else 'desligar'} o {unidade} (sudo, systemctl)")
+    _conferir(r, f"o systemctl não {'ligou' if ligar else 'desligou'} o {unidade}")
+
+
+# ------------------------------------------------------------------ a limpeza do cartão
+
+LIMPEZAS = {"tarefas": "as tarefas terminadas da manutenção", "diario": "o diário do systemd guardado no cartão",
+            "apt": "os pacotes que o apt baixou"}
+TAMANHO_DO_DIARIO = "16M"
+
+
+def roteiro_de_limpar(qual: str) -> str:
+    """O que roda na placa para limpar ``qual`` (``"diario"``: o diário guardado fica com
+    :data:`TAMANHO_DO_DIARIO`, o deste boot inteiro; ``"apt"``: o ``apt-get clean``). As tarefas vão sem o sudo
+    (:func:`limpar_as_tarefas`)."""
+    if qual == "diario":
+        return com_sudo(f"journalctl --vacuum-size={TAMANHO_DO_DIARIO}")
+    if qual == "apt":
+        return com_sudo("apt-get clean")
+    raise ValueError(f"limpeza desconhecida: {qual!r}")
+
+
+async def limpar(conexao: ConexaoSSH, qual: str, senha_do_sudo: str) -> None:
+    r = await conexao.executar(roteiro_de_limpar(qual), entrada=senha_do_sudo + "\n", tempo_limite=120,
+                               descricao=f"limpar {LIMPEZAS[qual]} (sudo)")
+    _conferir(r, f"não deu para limpar {LIMPEZAS[qual]}")
+
+
+async def limpar_as_tarefas(conexao: ConexaoSSH) -> int:
+    """Apaga as tarefas que terminaram (ou foram interrompidas) da manutenção; a que roda fica. Quantas apagou."""
+    from .tarefas import TarefaNaPlaca, tarefas_na_placa
+
+    apagadas = 0
+    for tarefa in await tarefas_na_placa(conexao):
+        if tarefa.terminou or tarefa.interrompida:
+            await TarefaNaPlaca(conexao, tarefa.id).limpar()
+            apagadas += 1
+    return apagadas
+
+
+# ------------------------------------------------------------------ a partição
+
+def roteiro_de_expandir(script: str) -> str:
+    """O script da imagem que faz a partição da raiz ocupar o cartão inteiro (o ``grow_partition.sh`` da
+    BeagleBoard); o sistema de arquivos cresce no próximo boot."""
+    if not re.match(r"^/[A-Za-z0-9_./-]+$", script) or ".." in script:
+        raise ValueError(f"caminho de script inválido: {script!r}")
+    return com_sudo('"${SHAN_RAIZ:-}"' + shlex.quote(script))     # na placa de verdade, o SHAN_RAIZ é vazio
+
+
+async def expandir_a_particao(conexao: ConexaoSSH, script: str, senha_do_sudo: str) -> str:
+    r = await conexao.executar(roteiro_de_expandir(script), entrada=senha_do_sudo + "\n", tempo_limite=300,
+                               descricao="expandir a partição da raiz (sudo, grow_partition.sh)")
+    _conferir(r, "a partição não foi expandida")
+    return (r.saida or "").strip()[-400:]
+
+
+def _conferir(r, falhou: str) -> None:
+    if r.codigo == SAIDA_SENHA_RECUSADA:
+        raise ErroDoSudo("a placa recusou a senha do sudo", senha_recusada=True)
+    if r.codigo == SAIDA_SEM_DIRETORIO:
+        raise ErroDoSudo("a placa não deixou criar o diretório temporário em /dev/shm (onde a senha fica, na RAM)")
+    if r.codigo != 0:
+        raise ErroDaPlaca(f"{falhou} (código {r.codigo}): {(r.erro or r.saida).strip()[-200:] or 'sem saída'}")

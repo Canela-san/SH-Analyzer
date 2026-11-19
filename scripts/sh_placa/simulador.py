@@ -133,6 +133,36 @@ SETORES_DO_CARTAO = 7_471_104
 INICIO_DA_PARTICAO = 8192
 SETORES_DA_PARTICAO = 7_462_912
 """O eMMC da placa de verdade (o ``/sys/block/mmcblk1``, 19/11/2026): a partição já ocupa o cartão inteiro."""
+SETORES_DO_CARTAO_GRANDE = 30_535_680
+"""No cartão cheio: um cartão de 16 GB com a imagem de 4 GB gravada, sem a partição expandida (o caso de sempre de
+"cartão cheio" num cartão grande)."""
+EXPANDIR_A_PARTICAO = r"""#!/bin/sh
+# O grow_partition.sh da placa simulada: a partição da raiz até o fim do cartão, no próximo boot (como o de verdade,
+# que muda a tabela de partições e deixa o sistema de arquivos crescer depois do reinício). Só o root.
+[ "${SHAN_COMO_ROOT:-}" = 1 ] || { echo "grow_partition.sh: precisa do root" >&2; exit 1; }
+b="$SHAN_RAIZ/sys/block/mmcblk1"
+echo $(( $(cat "$b/size") - $(cat "$b/mmcblk1p1/start") )) > "$SHAN_RAIZ/run/simulador/particao"
+echo "a partição mmcblk1p1 vai até o fim do cartão: o sistema de arquivos cresce no próximo boot"
+"""
+JOURNALCTL = r"""#!/bin/sh
+# O journalctl da placa simulada: o diário falso; com -f, o que chegar nele; o --vacuum-* apaga os arquivados (só o
+# root). Fica na raiz falsa (o agente) e no PATH dos comandos dela: um "sudo journalctl" da placa simulada nunca
+# chega ao journalctl deste computador.
+r="${SHAN_RAIZ:-${0%/bin/journalctl}}"
+arquivo="$r/var/log/journal-do-simulador.json"
+case " $* " in *" -f "*) exec tail -n 0 -f "$arquivo" ;; esac
+case " $* " in *" --vacuum-"*)
+    [ "${SHAN_COMO_ROOT:-}" = 1 ] || { echo "Failed to vacuum: Permission denied" >&2; exit 1; }
+    rm -f "$r"/var/log/journal/*/*.journal~; echo "Vacuuming done"; exit 0 ;;
+esac
+cat "$arquivo"
+"""
+APT_GET = r"""#!/bin/sh
+# O apt-get da placa simulada: só o "clean" (o cache dos pacotes baixados), e só o root.
+[ "$1" = clean ] || { echo "E: o apt-get da placa simulada só faz o clean" >&2; exit 100; }
+[ "${SHAN_COMO_ROOT:-}" = 1 ] || { echo "E: Could not open lock file /var/cache/apt/archives/lock - open (13: Permission denied)" >&2; exit 100; }
+rm -f "$SHAN_RAIZ"/var/cache/apt/archives/*.deb
+"""
 VERSAO_MODELO = "SHAN-VERSAO-MODELO"
 """No modelo do ``ler_adc`` (``run/simulador/ler_adc.modelo``): o lugar da versão, que o ``make`` da placa simulada
 troca pela da pasta que ele compila."""
@@ -338,11 +368,14 @@ def _ip() -> str:
 
 def programas_da_placa(senha_trocada: str = ".senha-da-placa") -> dict[str, str]:
     """Os programas da placa simulada que ficam no PATH dos comandos dela (o ``sudo``, o ``config-pin`` e o ``pgrep``
-    à parte): o ``make``, o ``tee`` do kernel, o ``systemctl``, o ``chpasswd`` e o ``ip``."""
+    à parte): o ``make``, o ``tee`` do kernel, o ``systemctl``, o ``chpasswd``, o ``ip``, o ``apt-get`` e o
+    ``journalctl``. Todo programa que muda o sistema e que um comando da placa simulada roda tem de estar aqui: senão,
+    ele roda o deste computador."""
     trocas = {"@PYTHON@": sys.executable, "@FALHA@": MARCA_DE_FALHA_DE_COMPILACAO, "@MODELO@": VERSAO_MODELO,
               "@ANTIGO@": MARCA_DO_FIRMWARE_ANTIGO, "@PRU@": MARCA_DA_PRU_QUE_NAO_SOBE.decode(),
               "@TEE@": shutil.which("tee") or "/usr/bin/tee", "@SENHA@": senha_trocada}
-    programas = {"make": MAKE, "tee": TEE, "systemctl": SYSTEMCTL, "chpasswd": CHPASSWD, "ip": _ip()}
+    programas = {"make": MAKE, "tee": TEE, "systemctl": SYSTEMCTL, "chpasswd": CHPASSWD, "ip": _ip(),
+                 "apt-get": APT_GET, "journalctl": JOURNALCTL}
     for nome, texto in programas.items():
         for marca, valor in trocas.items():
             texto = texto.replace(marca, valor)
@@ -396,13 +429,16 @@ def montar_sistema_falso(pasta: Path, cenario: str = "normal", versao_firmware: 
         _escrever(raiz, f"/sys/class/net/{nome}/statistics/rx_bytes", "1119687\n" if ipv4 else "0\n")
         _escrever(raiz, f"/sys/class/net/{nome}/statistics/tx_bytes", "1121178\n" if ipv4 else "0\n")
     _escrever(raiz, "/sys/class/net/lo/operstate", "unknown\n")
-    _escrever(raiz, "/sys/block/mmcblk1/size", f"{SETORES_DO_CARTAO}\n")
+    cheio = cenario == "disco_cheio"
+    _escrever(raiz, "/sys/block/mmcblk1/size", f"{SETORES_DO_CARTAO_GRANDE if cheio else SETORES_DO_CARTAO}\n")
     _escrever(raiz, "/sys/block/mmcblk1/mmcblk1p1/size", f"{SETORES_DA_PARTICAO}\n")
     _escrever(raiz, "/sys/block/mmcblk1/mmcblk1p1/start", f"{INICIO_DA_PARTICAO}\n")
-    _escrever(raiz, "/opt/scripts/tools/grow_partition.sh", "#!/bin/sh\necho 'a partição já ocupa o cartão'\n",
-              executavel=True)
+    _escrever(raiz, "/opt/scripts/tools/grow_partition.sh",
+              EXPANDIR_A_PARTICAO if cheio else "#!/bin/sh\necho 'a partição já ocupa o cartão'\n", executavel=True)
     _escrever(raiz, "/run/log/journal/0123456789abcdef/system.journal", b"LPKSHHRH" + b"\0" * 4088)
     (raiz / "var" / "cache" / "apt" / "archives").mkdir(parents=True, exist_ok=True)
+    if cheio:
+        _o_que_limpar(raiz, Path(pasta) / "home" / "debian", agora)
     _escrever(raiz, "/run/simulador/internet", "nao\n")
     _escrever(raiz, "/run/simulador/servicos.json", json.dumps(SERVICOS, indent=1))
     programas = programas_da_placa()
@@ -454,9 +490,7 @@ def montar_sistema_falso(pasta: Path, cenario: str = "normal", versao_firmware: 
         _escrever(raiz, f"/usr/bin/{ferramenta}", "#!/bin/sh\nexit 0\n", executavel=True)
     _escrever(raiz, "/dev/kmsg", KMSG)
     _escrever(raiz, "/var/log/journal-do-simulador.json", JOURNAL)
-    _escrever(raiz, "/bin/journalctl", '#!/bin/sh\n# o journalctl da placa simulada: o diário falso; com -f, o que chegar nele\n'
-              'arquivo="${0%/bin/journalctl}/var/log/journal-do-simulador.json"\n'
-              'case " $* " in *" -f "*) exec tail -n 0 -f "$arquivo" ;; esac\ncat "$arquivo"\n', executavel=True)
+    _escrever(raiz, "/bin/journalctl", JOURNALCTL, executavel=True)
 
     firmware.mkdir(parents=True, exist_ok=True)
     versao = VERSAO_ANTIGA if cenario == "firmware_antigo" else versao_firmware
@@ -488,6 +522,32 @@ def montar_sistema_falso(pasta: Path, cenario: str = "normal", versao_firmware: 
     livre = LIVRE_NO_CARTAO_CHEIO_KIB if cenario == "disco_cheio" else LIVRE_NORMAL_KIB
     _escrever(raiz, "/run/simulador/disco", f"{CARTAO_KIB} {CARTAO_KIB - livre - usado_kib}\n")
     return raiz, firmware
+
+
+def _esparso(caminho: Path, tamanho: int) -> None:
+    """Um arquivo de ``tamanho`` bytes que não ocupa o disco deste computador (o ``truncate``)."""
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    with open(caminho, "wb") as f:
+        f.truncate(tamanho)
+
+
+def _o_que_limpar(raiz: Path, home: Path, agora: float) -> None:
+    """No cartão cheio: o cache do ``apt`` (três pacotes), o diário guardado no cartão (o de agora e dois arquivados)
+    e duas tarefas da manutenção que terminaram e ficaram."""
+    for nome, mb in (("python3-numpy_1.16.2-1_armhf.deb", 22), ("nodejs_10.24.0-1_armhf.deb", 31),
+                     ("linux-image-4.19.94-ti-r73_1buster_armhf.deb", 38)):
+        _esparso(raiz / "var/cache/apt/archives" / nome, mb * 1024 * 1024)
+    diario = raiz / "var/log/journal/0123456789abcdef"
+    _esparso(diario / "system.journal", 8 * 1024 * 1024)
+    for i in (1, 2):
+        _esparso(diario / f"system@00059f0c8a7e2b{i}d-000000000000{i}a2f.journal~", 40 * 1024 * 1024)
+    for i, horas in ((1, 50), (2, 26)):
+        pasta = home / ".sh-analyzer" / "tarefas" / f"manutencao-antiga-2026111{i}-0930{i}0-c0d{i}"
+        pasta.mkdir(parents=True, exist_ok=True)
+        for arquivo, conteudo in (("tipo", "manutencao-antiga"), ("titulo", f"Uma tarefa antiga ({i})"),
+                                  ("inicio", f"{agora - horas * 3600:.0f}"), ("pid", "99999"), ("codigo", "0"),
+                                  ("passos", ""), ("resultado", ""), ("log", "terminou\n")):
+            (pasta / arquivo).write_text(conteudo + ("\n" if conteudo and arquivo != "log" else ""))
 
 
 def _gravar_as_capturas(firmware: Path, cenario: str, versao: str, agora_na_placa: float,
@@ -586,6 +646,12 @@ def aplicar_o_boot(raiz: Path, desligada_s: float = 40.0) -> None:
     (raiz / "run/systemd/timesync/synchronized").unlink(missing_ok=True)
     _escrever(raiz, "/proc/uptime", "35.10 30.02\n")
     _escrever(raiz, "/proc/sys/kernel/random/boot_id", f"{uuid.uuid4()}\n")       # um boot novo
+    pedida = raiz / "run/simulador/particao"                      # o grow_partition.sh: a tabela nova vale agora
+    try:
+        _escrever(raiz, "/sys/block/mmcblk1/mmcblk1p1/size", f"{int(pedida.read_text().strip())}\n")
+        pedida.unlink()
+    except (OSError, ValueError):
+        pass
 
 
 class Simulador:
