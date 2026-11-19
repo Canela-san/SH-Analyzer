@@ -629,6 +629,28 @@ def cabecalho_em_dict(captura: Captura) -> dict:
     return dados
 
 
+def cabecalho_para_hdf5(captura: Captura) -> tuple[dict, bytes] | None:
+    """O cabeçalho da captura como o ``--export-hdf5`` o grava: os atributos (os do cabeçalho, a frequência da PRU e
+    o arquivo de origem) e os bytes dele (o ``/cabecalho_bruto``). Para quem exporta um trecho da captura noutro
+    leiaute (a exportação dos dados da interface). None sem o cabeçalho."""
+    cab = captura.cabecalho
+    if cab is None:
+        return None
+    atributos = dict(cab.para_attrs_hdf5())
+    if cab.frequencia_pru_hz is not None:
+        atributos["frequencia_pru_hz"] = cab.frequencia_pru_hz
+    atributos["arquivo_origem"] = captura.hdf5.arquivo if captura.hdf5 is not None else captura.caminho.name
+    if captura.tipo == "h5":
+        import h5py
+
+        with h5py.File(captura.caminho, "r") as f5:
+            bruto = bytes(np.asarray(f5["cabecalho_bruto"][:], dtype=np.uint8))
+    else:
+        with open(captura.caminho, "rb") as f:
+            bruto = f.read(cab.tamanho_cabecalho)
+    return atributos, bruto
+
+
 def _para_json(valor):
     """Um valor do cabeçalho no que o JSON aceita: as tuplas viram listas, os escalares do numpy viram os do Python,
     os bytes viram hexadecimal e um número não finito vira ``None`` (o JSON não tem NaN)."""

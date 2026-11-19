@@ -186,6 +186,34 @@ def test_o_cabecalho_em_dict_vai_inteiro_para_o_json(tmp_path):
     json.dumps(antigo, allow_nan=False)
 
 
+def test_o_cabecalho_para_hdf5_e_o_do_export_hdf5(tmp_path):
+    """Os atributos e os bytes do cabeçalho que a exportação da interface grava são os do ``--export-hdf5``: do
+    ``.bin`` e do ``.h5`` que saiu dele, iguais; sem o cabeçalho, nada."""
+    import h5py
+    from supraharmonicos.api import abrir_captura, cabecalho_para_hdf5
+    from supraharmonicos.hdf5 import exportar_hdf5
+
+    caminho = escrever_bin(tmp_path / "c.bin", [np.zeros(4096), np.ones(4096)], canais=(1, 3), versao=9)
+    captura = abrir_captura(caminho, sondas_dir=tmp_path)
+    atributos, bruto = cabecalho_para_hdf5(captura)
+    cab = captura.cabecalho
+    assert len(bruto) == cab.tamanho_cabecalho == 4096 and bruto[:4] == caminho.read_bytes()[:4]
+    destino = tmp_path / "c.h5"
+    exportar_hdf5(caminho, destino, "uint16", [1, 3], cab, [20.48] * 2, [1.0] * 2, [10.24] * 2, False,
+                  cab.tamanho_cabecalho, 0, None)
+    with h5py.File(destino) as f5:
+        for chave, valor in atributos.items():
+            np.testing.assert_array_equal(f5.attrs[chave], valor, err_msg=chave)
+        assert bytes(f5["cabecalho_bruto"][:]) == bruto
+    do_h5 = cabecalho_para_hdf5(abrir_captura(destino, sondas_dir=tmp_path))
+    assert do_h5[1] == bruto and do_h5[0]["arquivo_origem"] == "c.bin"
+    from supraharmonicos.api import ParametrosSemCabecalho
+
+    sem = escrever_bin(tmp_path / "s.bin", [np.zeros(9), np.zeros(9)], com_cabecalho=False)
+    assert cabecalho_para_hdf5(abrir_captura(sem, formato="uint16",
+                                             parametros=ParametrosSemCabecalho.de_texto(200_000, "0,1"))) is None
+
+
 def test_a_unidade_do_canal_segue_o_ganho_declarado(tmp_path):
     """Sem o ganho declarado na captura, o valor é a tensão no pino (V), mesmo num canal de corrente; com ele, a
     unidade da grandeza."""
