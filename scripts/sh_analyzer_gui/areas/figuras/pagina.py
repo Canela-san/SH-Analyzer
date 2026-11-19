@@ -4,15 +4,19 @@ com a moldura do acento; o clique num painel o escolhe.
 
 A imagem chega desenhada no dpi que :meth:`PaginaDaFigura.dpi_do_desenho` pede (o da tela, vezes o zoom e a escala
 do monitor): ela aparece pixel a pixel, sem reamostrar.
+
+**A visão** (FG-05, embaixo, ao lado do zoom): a prévia em tons de cinza ou com um daltonismo simulado
+(``dados/visao_de_cores.py``), sem desenhar de novo; a exportação sai com as cores.
 """
 
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPen
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QScrollArea, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QScrollArea, QToolButton, QVBoxLayout, QWidget
 
 from ...componentes.painel import EstadoVazio
+from ...dados.visao_de_cores import VISOES, simular
 from ...tema.aplicar import aparencia
 from ...tema.icones import IconeDoTema
 
@@ -96,6 +100,7 @@ class PaginaDaFigura(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.caber = False                         # False: o tamanho real
         self._tamanho_mm: tuple[float, float] | None = None
+        self._desenho = None                       # (pixels, caixas): a última página, nas cores dela
 
         self.folha = _Folha()
         self.folha.clicado.connect(self.painelClicado)
@@ -125,10 +130,19 @@ class PaginaDaFigura(QWidget):
         self.ajustar.setToolTip(self.tr("Caber na tela"))
         IconeDoTema(self.ajustar, "expandir")
         self.ajustar.clicked.connect(lambda: self.definir_caber(True))
+        self.visao = QComboBox()
+        self.visao.setObjectName("visao_da_pagina")
+        for id_, nome in VISOES.items():
+            self.visao.addItem(self.tr(nome), id_)
+        self.visao.setToolTip(self.tr("A prévia como sai numa impressão em tons de cinza, ou como a vê quem tem "
+                                      "daltonismo. Só a prévia muda: a exportação sai com as cores."))
+        self.visao.currentIndexChanged.connect(self._mostrar_o_desenho)
         barra = QWidget()
         barra.setObjectName("barra_do_zoom")
         linha_do_zoom = QHBoxLayout(barra)
-        linha_do_zoom.setContentsMargins(10, 4, 4, 4)
+        linha_do_zoom.setContentsMargins(4, 4, 4, 4)
+        linha_do_zoom.addWidget(self.visao)
+        linha_do_zoom.addSpacing(6)
         linha_do_zoom.addWidget(self.zoom)
         linha_do_zoom.addWidget(self.real)
         linha_do_zoom.addWidget(self.ajustar)
@@ -178,6 +192,14 @@ class PaginaDaFigura(QWidget):
 
     def mostrar(self, pixels, caixas: dict, dpi: float) -> None:
         """A página desenhada: ``pixels`` RGBA (altura × largura × 4) em ``dpi``."""
+        self._desenho = (pixels, caixas)
+        self._mostrar_o_desenho()
+
+    def _mostrar_o_desenho(self, *_a) -> None:
+        if self._desenho is None:
+            return
+        pixels, caixas = self._desenho
+        pixels = simular(pixels, self.visao.currentData())
         altura, largura = pixels.shape[:2]
         imagem = QImage(pixels.data, largura, altura, 4 * largura, QImage.Format.Format_RGBA8888).copy()
         imagem.setDevicePixelRatio(self.devicePixelRatioF() or 1.0)

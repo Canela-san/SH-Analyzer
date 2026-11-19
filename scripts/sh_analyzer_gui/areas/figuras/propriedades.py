@@ -1,6 +1,7 @@
-"""As propriedades da figura escolhida (a direita do F1): a página (o nome, o modelo, a altura, a fonte, os números),
-a grade (as linhas, as colunas, os eixos compartilhados, pôr um painel) e o painel escolhido (a vista dele, ligado
-ou congelado, o rótulo, tirá-lo).
+"""As propriedades da figura escolhida (a direita do F1): a página (o nome, o modelo, a altura, os números), o estilo
+(``estilo.py``: as letras, as espessuras, as marcas, a moldura, a grade e os modelos de estilo), a grade (as linhas,
+as colunas, os eixos compartilhados, pôr um painel) e o painel escolhido (a vista dele, ligado ou congelado, o
+rótulo, tirá-lo; os eixos e os traços dele, ``elementos.py``).
 
 Cada mudança sai como a figura nova (``mudar``), que a área empilha como um passo de desfazer (``MudarFigura``); a
 altura e o tamanho da letra, girados, juntam os passos seguidos. Congelar pede a cópia da vista à área
@@ -9,15 +10,14 @@ altura e o tamanho da letra, girados, juntam os passos seguidos. Congelar pede a
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 
-from PySide6.QtCore import QLocale, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -30,31 +30,16 @@ from PySide6.QtWidgets import (
 from ...componentes.basicos import Botao, Segmentado
 from ...componentes.numeros import separador_decimal
 from ...dados import figura as fig
+from ...dados.desenho_da_figura import EixosDoPainel
 from ...dados.figura import Figura, FiguraInvalida, Painel
+from .elementos import SecaoDosEixos, SecaoDosTracos, TracoDoPainel
+from .estilo import SecaoDoEstilo
 from .exportacao import SecaoDeExportacao
+from .secoes import campo_decimal, secao
 
 IDIOMAS = ("pt-BR", "en")
 TIPOS = {"tempo": "tempo", "espectro": "espectro", "bandas": "bandas", "espectrograma": "espectrograma",
          "harmonicos": "harmônicos"}
-
-
-def _local() -> QLocale:
-    """Os números dos campos com o separador decimal do aplicativo."""
-    local = QLocale(QLocale.Language.Portuguese, QLocale.Country.Brazil) if separador_decimal() == "," \
-        else QLocale(QLocale.Language.English, QLocale.Country.UnitedStates)
-    local.setNumberOptions(QLocale.NumberOption.OmitGroupSeparator)
-    return local
-
-
-def _campo_decimal(sufixo: str, minimo: float, maximo: float, passo: float) -> QDoubleSpinBox:
-    campo = QDoubleSpinBox()
-    campo.setLocale(_local())
-    campo.setDecimals(1)
-    campo.setRange(minimo, maximo)
-    campo.setSingleStep(passo)
-    campo.setSuffix(f" {sufixo}")
-    campo.setKeyboardTracking(False)
-    return campo
 
 
 class PropriedadesDaFigura(QScrollArea):
@@ -72,6 +57,8 @@ class PropriedadesDaFigura(QScrollArea):
         self.painel: Painel | None = None
         self._vistas: list[tuple[str, str, str]] = []
         self._enchendo = False
+        self.eixos: dict[str, EixosDoPainel] = {}                  # os do último desenho, por painel
+        self.tracos_de: Callable[[Painel], list[TracoDoPainel]] = lambda _p: []
 
         conteudo = QWidget()
         conteudo.setObjectName("conteudo_das_propriedades")
@@ -91,17 +78,9 @@ class PropriedadesDaFigura(QScrollArea):
         self.modelo.activated.connect(self._modelo)
         self.largura = QLabel()
         self.largura.setObjectName("largura_da_figura")
-        self.altura = _campo_decimal("mm", fig.ALTURA_MINIMA_MM, 1189.0, 1.0)
+        self.altura = campo_decimal("mm", fig.ALTURA_MINIMA_MM, 1189.0, 1.0)
         self.altura.setObjectName("altura_da_figura")
         self.altura.valueChanged.connect(self._altura)
-        self.familia = QComboBox()
-        self.familia.setObjectName("familia_da_figura")
-        self.familia.addItems(list(fig.FAMILIAS))
-        self.familia.activated.connect(self._familia)
-        self.texto_pt = _campo_decimal("pt", 4.0, 72.0, 0.5)
-        self.texto_pt.setObjectName("texto_da_figura")
-        self.texto_pt.setFixedWidth(76)
-        self.texto_pt.valueChanged.connect(self._texto_pt)
         self.idioma = Segmentado([self.tr("1,5 (pt-BR)"), self.tr("1.5 (en)")])
         self.idioma.setObjectName("idioma_da_figura")
         self.idioma.escolhaMudou.connect(self._idioma)
@@ -110,12 +89,13 @@ class PropriedadesDaFigura(QScrollArea):
         tamanho.addWidget(self.largura)
         tamanho.addWidget(QLabel("×"))
         tamanho.addWidget(self.altura, 1)
-        letra = QHBoxLayout()
-        letra.addWidget(self.familia, 1)
-        letra.addWidget(self.texto_pt)
         self._secao(self.tr("Página"), [(self.tr("Nome"), self.nome), (self.tr("Modelo"), self.modelo),
-                                       (self.tr("Tamanho"), tamanho), (self.tr("Fonte"), letra),
-                                       (self.tr("Números"), self.idioma)])
+                                       (self.tr("Tamanho"), tamanho), (self.tr("Números"), self.idioma)])
+
+        # O estilo da figura inteira
+        self.estilo = SecaoDoEstilo(self._tentar)
+        self.familia, self.texto_pt = self.estilo.familia, self.estilo.tamanhos["texto_pt"]
+        self.coluna.addWidget(self.estilo)
 
         # A grade
         self.linhas, self.colunas = QSpinBox(), QSpinBox()
@@ -173,6 +153,10 @@ class PropriedadesDaFigura(QScrollArea):
         self.secao_do_painel = self._secao(self.titulo_do_painel, [
             (self.tr("Vista"), self.vista), (self.tr("Estado"), self.estado), (self.tr("Rótulo"), rotulo),
             ("", self.tirar)])
+        self.secao_dos_eixos = SecaoDosEixos(self._tentar)
+        self.secao_dos_tracos = SecaoDosTracos(self._tentar)
+        self.coluna.addWidget(self.secao_dos_eixos)
+        self.coluna.addWidget(self.secao_dos_tracos)
 
         for caixa in (self.modelo, self.familia, self.vista):          # os nomes longos não alargam o painel
             caixa.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -189,24 +173,7 @@ class PropriedadesDaFigura(QScrollArea):
         self.coluna.addStretch(1)
 
     def _secao(self, titulo: str | QLabel, linhas) -> QFrame:
-        quadro = QFrame()
-        quadro.setObjectName("secao_da_figura")
-        grade = QGridLayout(quadro)
-        grade.setContentsMargins(0, 8, 0, 10)
-        grade.setHorizontalSpacing(10)
-        grade.setVerticalSpacing(6)
-        rotulo_do_titulo = titulo if isinstance(titulo, QLabel) else QLabel(titulo)
-        rotulo_do_titulo.setObjectName("titulo_da_secao_da_figura")
-        grade.addWidget(rotulo_do_titulo, 0, 0, 1, 2)
-        for i, (nome, campo) in enumerate(linhas, start=1):
-            rotulo = QLabel(nome)
-            rotulo.setObjectName("rotulo_da_propriedade")
-            grade.addWidget(rotulo, i, 0)
-            if isinstance(campo, QWidget):
-                grade.addWidget(campo, i, 1)
-            else:
-                grade.addLayout(campo, i, 1)
-        grade.setColumnStretch(1, 1)
+        quadro = secao(titulo, linhas)
         self.coluna.addWidget(quadro)
         return quadro
 
@@ -227,8 +194,6 @@ class PropriedadesDaFigura(QScrollArea):
             self.largura.setText(f"{figura.largura_mm:g} mm".replace(".", separador_decimal()))
             self.altura.setRange(fig.ALTURA_MINIMA_MM, figura.pagina.altura_maxima_mm)
             self.altura.setValue(figura.altura_mm)
-            self.familia.setCurrentText(figura.estilo.familia)
-            self.texto_pt.setValue(figura.estilo.texto_pt)
             self.idioma.escolher(IDIOMAS.index(figura.idioma))
             menor = fig.menor_grade(figura)
             self.linhas.setMinimum(menor[0])
@@ -240,12 +205,24 @@ class PropriedadesDaFigura(QScrollArea):
             self._mostrar_o_painel(figura)
         finally:
             self._enchendo = False
+        self.estilo.mostrar(figura)
+
+    def definir_eixos(self, eixos: dict[str, EixosDoPainel]) -> None:
+        """Os eixos do último desenho: os limites e os nomes automáticos que os campos vazios mostram."""
+        self.eixos = dict(eixos)
+        if self.figura is not None and self.painel is not None and not self.painel.vazio:
+            self.secao_dos_eixos.mostrar(self.figura, self.painel, self.eixos.get(self.painel.id))
 
     def _mostrar_o_painel(self, figura: Figura) -> None:
         p = self.painel
         self.secao_do_painel.setVisible(p is not None)
+        for secao_do_painel in (self.secao_dos_eixos, self.secao_dos_tracos):
+            secao_do_painel.setVisible(p is not None and not p.vazio)
         if p is None:
             return
+        if not p.vazio:
+            self.secao_dos_eixos.mostrar(figura, p, self.eixos.get(p.id))
+            self.secao_dos_tracos.mostrar(figura, p, self.tracos_de(p))
         automatico = figura.rotulos()[p.id] if p.rotulo is None else ""
         self.titulo_do_painel.setText(self.tr("Painel {}").format(figura.rotulos()[p.id] or "").strip())
         self.vista.clear()
@@ -300,20 +277,6 @@ class PropriedadesDaFigura(QScrollArea):
 
     def _altura(self, valor: float) -> None:
         self._tentar(lambda: self.figura.com(altura_mm=valor), self.tr("Mudar a altura"), juntar=True)
-
-    def _familia(self, _indice: int) -> None:
-        familia = self.familia.currentText()
-        self._tentar(lambda: self.figura.com(estilo=replace(self.figura.estilo, familia=familia)),
-                     self.tr("Trocar a fonte"))
-
-    def _texto_pt(self, valor: float) -> None:
-        def criar():
-            e = self.figura.estilo
-            fator = valor / e.texto_pt
-            return self.figura.com(estilo=replace(
-                e, texto_pt=valor, marcas_pt=min(72.0, max(4.0, round(e.marcas_pt * fator, 1))),
-                rotulo_do_painel_pt=min(72.0, max(4.0, round(e.rotulo_do_painel_pt * fator, 1)))))
-        self._tentar(criar, self.tr("Mudar o tamanho da letra"), juntar=True)
 
     def _idioma(self, indice: int) -> None:
         self._tentar(lambda: self.figura.com(idioma=IDIOMAS[indice]), self.tr("Mudar os números"))

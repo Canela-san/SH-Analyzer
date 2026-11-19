@@ -28,10 +28,10 @@ from ...componentes.numeros import formatar_bytes
 from ...componentes.painel import TituloDoPainel
 from ...componentes.toast import Toast
 from ...dados import figura as fig
-from ...dados.desenho_da_figura import colher, desenhar, pontos, registrar_as_fontes
+from ...dados.desenho_da_figura import colher, desenhar, pontos, registrar_as_fontes, vista_do_painel
 from ...dados.exportar_figura import OpcoesDeExportacao, em_bytes, nome_do_arquivo
 from ...dados.exportar_figura import exportar as exportar_figura
-from ...dados.figura import Figura
+from ...dados.figura import Figura, Painel
 from ...dados.pacote import empacotar as empacotar_figura
 from ...dados.proveniencia import da_figura
 from ...modelo.comandos import AdicionarFigura, MudarFigura, RemoverFigura
@@ -40,7 +40,9 @@ from ...modelo.persistencia import descrever_vista
 from ...servicos.tarefas import Tarefa
 from ...tema.aplicar import aparencia
 from ...tema.icones import IconeDoTema, icone
+from ...tema.tokens import CLARO, cor_do_traco
 from .dados_do_projeto import DadosDoProjeto
+from .elementos import TracoDoPainel
 from .pagina import PaginaDaFigura
 from .propriedades import PropriedadesDaFigura
 
@@ -143,6 +145,7 @@ class AreaDeFiguras(QWidget):
         self.propriedades.congelarPedido.connect(self.congelar)
         self.propriedades.acrescentarPedido.connect(self.acrescentar_painel)
         self.propriedades.apagarPedido.connect(self.apagar_figura)
+        self.propriedades.tracos_de = self.tracos_do_painel
         self.exportacao = self.propriedades.exportacao
         self.exportacao.exportarPedido.connect(self.exportar)
         self.exportacao.copiarPedido.connect(self.copiar)
@@ -381,6 +384,23 @@ class AreaDeFiguras(QWidget):
         self.dados.terminar()
         return vistas, colhidos
 
+    def tracos_do_painel(self, painel: Painel) -> list[TracoDoPainel]:
+        """Os traços que o painel desenha, como a vista os mostra (o espectro: os da vista de tempo ligada a ele)."""
+        if self.projeto is None:
+            return []
+        vista = vista_do_painel(painel, {v.id: descrever_vista(v) for v in self.projeto.vistas})
+        if vista is None:
+            return []
+        if vista.tipo == "espectro":
+            return [TracoDoPainel(s.traco, s.nome, s.cor, s.tracejado) for s in self.dados.espectros(vista)] \
+                if self.dados is not None and painel.congelado is None else []
+        tracos = []
+        for t in vista.tracos:
+            if t.receita.visivel:
+                cor, tracejado = cor_do_traco(t.receita.cor, CLARO)
+                tracos.append(TracoDoPainel(t.id, t.receita.nome, cor, tracejado))
+        return tracos
+
     def _contar_pontos(self) -> int:
         figura = self.figura
         if figura is None:
@@ -505,7 +525,7 @@ class AreaDeFiguras(QWidget):
 
         def trabalho(_progresso, _cancelado):
             pagina = desenhar(figura, vistas, colhidos, dpi=dpi, exato=False)
-            return pagina.pixels(), pagina.paineis
+            return pagina.pixels(), pagina.paineis, pagina.eixos
 
         self._desenhando = self.tarefas.iniciar(self.tr("Desenhar a figura {}").format(figura.nome), trabalho,
                                                 "figuras", mostrar=False,
@@ -520,7 +540,8 @@ class AreaDeFiguras(QWidget):
             self.pedir_desenho()
         if geracao != self._geracao or tarefa.estado != "concluida":
             return
-        pixels, caixas = tarefa.resultado
+        pixels, caixas, eixos = tarefa.resultado
         self.pagina.mostrar(pixels, caixas, dpi)
+        self.propriedades.definir_eixos(eixos)
         self.pagina.escolher(self.painel_id)
         self.desenhada.emit()

@@ -85,7 +85,8 @@ class DadosDoProjeto:
             rotulo = {"rms": r.unidade, "dbc": "dBc"}.get(opcoes.escala) or r.espectro.rotulo(r.unidade)
             cor, tracejado = cor_do_traco(r.traco.receita.cor, CLARO)
             series.append(SerieDoEspectro(r.desenho, r.traco.receita.nome, cor, rotulo,
-                                          frequencia_log=opcoes.frequencia_log, tracejado=tracejado))
+                                          frequencia_log=opcoes.frequencia_log, tracejado=tracejado,
+                                          traco=r.traco.id))
         return series
 
     def janela(self, vista: VistaSalva) -> tuple[float, float] | None:
