@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
 
-from ....componentes.basicos import Segmentado
+from ....componentes.basicos import Botao, Segmentado
 from ....componentes.numeros import formatar_bytes
 from ....componentes.painel import EstadoVazio
 from ....servicos.conexao_da_placa import ConexaoDaPlaca
@@ -18,6 +18,7 @@ from .comuns import DialogoDaAcao, DialogoDaSenhaNova
 from .firmware import DialogoDaAtualizacao, PaginaDoFirmware
 from .inicializacao import PaginaDaInicializacao
 from .logs import PaginaDosLogs
+from .resgate import PaginaDoResgate
 from .sistema import PaginaDoSistema
 
 PAGINAS = (("firmware", "Firmware", "chave"), ("inicializacao", "Inicialização", "chip"),
@@ -29,7 +30,7 @@ class Manutencao(QWidget):
 
     def __init__(self, conexao: ConexaoDaPlaca, manutencao: ManutencaoDaPlaca, sistema: SistemaDaPlaca,
                  monitor: MonitorDaPlaca, dialogos_de=None, captura_rodando=None, registrar_no_caderno=None,
-                 senha_padrao=None, parent: QWidget | None = None):
+                 senha_padrao=None, opcoes_do_resgate: dict | None = None, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("secao_manutencao")
         self.conexao, self.manutencao, self.sistema, self.dialogos_de = conexao, manutencao, sistema, dialogos_de
@@ -63,14 +64,23 @@ class Manutencao(QWidget):
         topo.addStretch(1)
         coluna.addLayout(topo)
         coluna.addWidget(self.pilha, 1)
+        self.abrir_o_resgate = Botao(traduzir("Console serial (resgate)…"), "secundario", "terminal")
+        self.abrir_o_resgate.setObjectName("abrir_o_resgate")
+        self.abrir_o_resgate.setToolTip(traduzir("Quando a placa liga mas o SSH não responde: o login pela porta serial "
+                                                 "do mesmo cabo USB."))
+        self.abrir_o_resgate.clicked.connect(self.mostrar_o_resgate)
         self.vazio = EstadoVazio(traduzir("Nenhuma placa conectada"),
                                  traduzir("A manutenção cuida da placa conectada: o firmware (atualizar com a volta "
                                           "sozinha, voltar a uma versão anterior), a inicialização (o uEnv.txt), o "
-                                          "sistema (o monitor, reiniciar e desligar com segurança) e os logs."),
-                                 icone_nome="chave", largura_do_texto=440)
+                                          "sistema (o monitor, reiniciar e desligar com segurança) e os logs. Sem a "
+                                          "rede, o console serial resgata."),
+                                 icone_nome="chave", largura_do_texto=440, botao=self.abrir_o_resgate)
+        self.resgate = PaginaDoResgate(**(opcoes_do_resgate or {}))
+        self.resgate.voltar.connect(lambda: self.estados.setCurrentIndex(0))
         self.estados = QStackedWidget()
         self.estados.addWidget(self.vazio)
         self.estados.addWidget(conectada)
+        self.estados.addWidget(self.resgate)
         fora = QVBoxLayout(self)
         fora.setContentsMargins(0, 0, 0, 0)
         fora.addWidget(self.estados)
@@ -78,7 +88,9 @@ class Manutencao(QWidget):
         self._conexao_mudou()
 
     def _conexao_mudou(self) -> None:
-        self.estados.setCurrentIndex(1 if self.conexao.estado in ("conectada", "reconectando") else 0)
+        conectada = self.conexao.estado in ("conectada", "reconectando")
+        if conectada or self.estados.currentIndex() != 2:           # o resgate aberto fica até o "Voltar"
+            self.estados.setCurrentIndex(1 if conectada else 0)
         if self.isVisible():
             self.manutencao.ler_se_preciso()
             self.sistema.ler_se_preciso()
@@ -87,6 +99,12 @@ class Manutencao(QWidget):
         super().showEvent(evento)
         self.manutencao.ler_se_preciso()           # o firmware é lido quando a seção aparece (o git, o plano)
         self.sistema.ler_se_preciso()
+
+    def mostrar_o_resgate(self) -> PaginaDoResgate:
+        """O console serial, no lugar do estado sem placa (a rede não sobe, mas a porta serial do USB está lá)."""
+        self.resgate.atualizar()
+        self.estados.setCurrentIndex(2)
+        return self.resgate
 
     def mostrar_pagina(self, nome: str) -> None:
         indice = [n for n, _t, _i in PAGINAS].index(nome)
