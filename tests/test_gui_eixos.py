@@ -95,6 +95,8 @@ def test_nas_vistas_de_frequencia_o_zoom_muda_os_numeros(janela, tempo, qtbot, t
     pronta = (lambda: bool(w.resultados)) if tipo == "espectro" else (lambda: w.resultado is not None)
     qtbot.waitUntil(pronta, timeout=10_000)
     caixa, x, y = w.grafico.getViewBox(), w.grafico.getAxis("bottom"), w.grafico.getAxis("left")
+    # O resultado chega antes de o gráfico ganhar a faixa dele (sob carga, a CI mediu os dois eixos vazios).
+    qtbot.waitUntil(lambda: bool(numeros(w.grafico, x)) and bool(numeros(w.grafico, y)), timeout=10_000)
     antes = numeros(w.grafico, x), numeros(w.grafico, y)
     (x0, x1), (y0, y1) = caixa.viewRange()
     caixa.setRange(xRange=(x0 + 0.3 * (x1 - x0), x0 + 0.35 * (x1 - x0)),
