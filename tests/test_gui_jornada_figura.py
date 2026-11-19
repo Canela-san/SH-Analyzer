@@ -229,3 +229,34 @@ def test_exportar_e_copiar_pela_janela(janela, qtbot, tmp_path, monkeypatch):
     secao.formato.botao(list(ex.FORMATOS).index("tiff")).click()
     secao.dpi.setValue(1200)
     assert not secao.exportar.isEnabled() and "use até 439 dpi" in secao.aviso.text()
+
+
+def test_o_pacote_reproduzivel_pela_janela(janela, qtbot, tmp_path):
+    """F5.6 na janela: o "Pacote reproduzível…" pergunta onde (o .zip entra sozinho) e grava numa tarefa; o pacote
+    tem a figura no formato escolhido, a referência, os dados, o script e a proveniência da captura, e o script refaz
+    a figura com os mesmos pixels, sem o SH-Analyzer."""
+    import zipfile
+
+    from test_gui_pacote import _refazer
+
+    assert janela.controle.abrir_capturas([_captura(tmp_path / "dados")])
+    (fonte,) = janela.projeto.fontes
+    qtbot.waitUntil(lambda: fonte.piramides is not None, timeout=ESPERA_MS)
+    _plotar(janela, fonte, 1)
+    area = janela.figuras
+    _esperar_a_pagina(qtbot, area, lambda: qtbot.mouseClick(janela.botao_figura_da_vista, Qt.MouseButton.LeftButton))
+    secao = area.exportacao
+    assert secao.empacotar.isEnabled()
+    janela.controle.dialogos = DialogosFalsos(tmp_path / "pacote")
+    with qtbot.waitSignal(area.empacotada, timeout=ESPERA_MS) as sinal:
+        qtbot.mouseClick(secao.empacotar, Qt.MouseButton.LeftButton)
+        assert not secao.empacotar.isEnabled() and secao.aviso.text().startswith("Empacotando")
+    assert sinal.args == [tmp_path / "pacote.zip"] and secao.empacotar.isEnabled()
+    with zipfile.ZipFile(tmp_path / "pacote.zip") as z:
+        assert {"pacote/figura.pdf", "pacote/figura.png", "pacote/dados.h5", "pacote/refazer_figura.py"} <= set(
+            z.namelist())
+        proveniencia = json.loads(z.read("pacote/proveniencia.json"))
+        z.extractall(tmp_path / "aberto")
+    assert proveniencia["fontes"][0]["crc32_amostras"] == fonte.fonte.captura.cabecalho.crc32_amostras
+    resultado = _refazer(tmp_path / "aberto" / "pacote")
+    assert "os mesmos pixels da figura.png" in resultado.stdout, resultado.stdout + resultado.stderr
