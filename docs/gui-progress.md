@@ -66,7 +66,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > em `~/firmware-anteriores/`); **a F6.3 também** (a seção Manutenção com o firmware na tela); **a F6.4 e a F6.5
 > também** (o assistente do `uEnv.txt` na página Inicialização; reiniciar e desligar na página Sistema, com a queda
 > esperada: a placa de verdade reiniciou pela janela e voltou em 64 s, com o relógio acertado); **a próxima é a
-> F6.6**. **A placa de verdade tem o firmware desta versão desde 19/11/2026** (a F6.2: v0.8-291-gc03a1cf, com a saída
+> F6.7** (a F6.6, os logs e o monitor, também feita). **A placa de verdade tem o firmware desta versão desde 19/11/2026** (a F6.2: v0.8-291-gc03a1cf, com a saída
 > contínua); antes, o `ler_adc` v0.8 sem o `-o -`.
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
@@ -2302,7 +2302,7 @@ depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commi
   ao padrão a cada boot (o `ler_adc` os põe no modo certo na captura seguinte, como o `setup.sh`). **O desligar não
   foi testado na placa de verdade** (precisa de alguém na bancada para ligar de novo).
 
-### ☐ F6.6: os logs e o monitor
+### ☑ F6.6: os logs e o monitor
 
 - **O conteúdo:** **os logs** (a página Logs): o kernel e o diário, o nível, a origem, "só o que importa" (a PRU, os
   pinos, o firmware, o `ler_adc`, o USB, o cartão), a busca, ao vivo, salvar e mandar para o caderno. **O monitor**
@@ -2310,6 +2310,20 @@ depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commi
   processos que mais pesam, com "Parar…" para um `ler_adc` esquecido.
 - **Pronto quando:** na placa de verdade, os logs filtram e seguem ao vivo, e o monitor anda durante uma captura sem
   atrasar amostra.
+- **Feita em 19/11/2026.** Os comandos ao vivo do agente (`ClienteDoAgente.seguir`: o `monitor` e o `seguir_logs`,
+  uma linha JSON por vez, num processo só na placa; cancelar manda o `TERM`); o serviço `servicos/monitor_da_placa.py`
+  (cada fluxo só com a página à vista, parado na queda e religado na volta). **A página Logs**
+  (`manutencao/logs.py`): o que importa (o agente filtra: a PRU, os pinos, o firmware, o `ler_adc` e, agora, o USB e
+  o cartão, e os erros) ou tudo, o nível, a origem, a busca, ao vivo (só o que importa, pelo mesmo filtro), "Salvar…"
+  e "Para o caderno". **O monitor** (`manutencao/monitor.py`, na página Sistema): o processador, a memória em uso, a
+  temperatura e a carga, um gráfico por medida (a linha fina na cor do acento, o valor e há quanto tempo sob o mouse;
+  "esta placa não informa a temperatura" quando é o caso), os processos que mais pesam, e o `ler_adc` que roda sem
+  esta janela com "Parar…" (o `INT`, como o Ctrl+C; o `TERM` só depois de 10 s). O simulador ficou mais fiel: o
+  processador anda, o `ler_adc` falso se chama `ler_adc` no `pgrep` (antes, uma captura simulada nunca aparecia nele),
+  e nada lançado pela placa simulada sobrevive a ela. Testes: `tests/test_gui_logs_e_monitor.py`. **Na placa de
+  verdade:** os logs em 2,5 s (789 linhas no "Tudo"), a linha de um `logger` chegou ao vivo em 0,3 s, o monitor custa
+  1,6% do processador; a placa não informa a temperatura. **O monitor durante uma captura** fica para a jornada da
+  F6.9 (uma captura contínua com o monitor à vista, conferindo os blocos).
 
 ### ☐ F6.7: o sistema: a senha, os serviços, a rede, o disco e a partição
 
