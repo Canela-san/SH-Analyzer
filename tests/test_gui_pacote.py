@@ -110,7 +110,7 @@ def test_a_legenda_no_lugar_que_o_desenho_achou(tmp_path):
     _figura, pasta, _nomes = _empacotar(tmp_path, "legenda")
     with h5py.File(pasta / "dados.h5") as f5:
         legenda = json.loads(f5["eixos/00"].attrs["eixo"])["legenda"]
-    assert legenda["textos"] == ["V_A", "V_B"] and legenda["linhas"] == [0, 1]
+    assert legenda["textos"] == ["V_A", "V_B"] and legenda["linhas"] == [[0, 0], [0, 1]] and legenda["colunas"] == 1
     assert all(0.0 <= v <= 1.0 for v in legenda["canto"])
 
 

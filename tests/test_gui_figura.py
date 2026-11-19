@@ -73,7 +73,7 @@ def _com_figuras() -> arq.ProjetoSalvo:
 def test_a_figura_vai_e_volta_pelo_projeto():
     p = _com_figuras()
     dados = json.loads(json.dumps(arq.para_dict(p)))
-    assert dados["versao"] == 5 and [f["id"] for f in dados["figuras"]] == ["fig1", "fig2"]
+    assert dados["versao"] == arq.VERSAO and [f["id"] for f in dados["figuras"]] == ["fig1", "fig2"]
     assert arq.de_dict(dados) == p
     # Um estilo salvo pela metade completa com o do modelo de página.
     dados["figuras"][1]["estilo"] = {"familia": "STIX"}
