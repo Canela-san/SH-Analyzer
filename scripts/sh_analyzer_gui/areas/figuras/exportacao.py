@@ -37,7 +37,7 @@ class SecaoDeExportacao(QFrame):
         titulo = QLabel(self.tr("Exportar"))
         titulo.setObjectName("titulo_da_secao_da_figura")
         self.formato = Segmentado([ex.FORMATOS[f].nome for f in FORMATOS])
-        self.formato.setObjectName("formato_da_exportacao")
+        self.formato.setProperty("compacto", True)          # os seis formatos na largura da lateral
         self.formato.escolhaMudou.connect(self._formato_mudou)
         self.descricao = QLabel()
         self.descricao.setObjectName("rotulo_da_propriedade")

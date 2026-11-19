@@ -211,6 +211,7 @@ QComboBox QLineEdit {{ background: transparent; border: none; padding: 0; }}
 QWidget#segmentado {{ background: {t.superficie}; border: 1px solid {t.borda}; border-radius: 8px; }}
 QWidget#segmentado QToolButton {{ background: transparent; border: none; border-radius: 6px; color: {t.texto2};
                                   padding: 4px 12px; }}
+QWidget#segmentado[compacto="true"] QToolButton {{ padding: 4px 4px; }}
 QWidget#segmentado QToolButton:checked {{ background: {_rgba(t.acento, 0.13)}; color: {t.acento}; font-weight: 600; }}
 QWidget#segmentado QToolButton:hover:!checked {{ color: {t.texto}; }}
 QFrame#cartao {{ background: {t.afundada}; border: 1px solid {t.borda}; border-radius: 8px; }}
