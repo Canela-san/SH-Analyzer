@@ -66,7 +66,8 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > em `~/firmware-anteriores/`); **a F6.3 também** (a seção Manutenção com o firmware na tela); **a F6.4 e a F6.5
 > também** (o assistente do `uEnv.txt` na página Inicialização; reiniciar e desligar na página Sistema, com a queda
 > esperada: a placa de verdade reiniciou pela janela e voltou em 64 s, com o relógio acertado); **a próxima é a
-> F6.8** (a F6.6, os logs e o monitor, e a F6.7, o sistema, também feitas). **A placa de verdade tem o firmware desta versão desde 19/11/2026** (a F6.2: v0.8-291-gc03a1cf, com a saída
+> F6.9**, a jornada e o fechamento (a F6.6, os logs e o monitor, a F6.7, o sistema, e a F6.8, o resgate pela serial,
+> também feitas). **A placa de verdade tem o firmware desta versão desde 19/11/2026** (a F6.2: v0.8-291-gc03a1cf, com a saída
 > contínua); antes, o `ler_adc` v0.8 sem o `-o -`.
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
@@ -2355,13 +2356,26 @@ depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commi
   alcança a internet; **a senha foi trocada para a mesma** (o caminho do `chpasswd` conferido, como combinado) e o
   sudo seguinte funcionou. Nenhum serviço foi desligado na placa de verdade (é decisão do usuário).
 
-### ☐ F6.8: o resgate pela serial
+### ☑ F6.8: o resgate pela serial
 
 - **O conteúdo:** o console pela porta serial do gadget USB (o `pyserial`) numa aba do Terminal, com o terminal
   embutido; o aviso de permissão (no Linux, o grupo `dialout`, com o comando exato); o roteiro de resgate (a cópia do
   `uEnv.txt`, o boot pelo cartão SD) no assistente e no Terminal.
 - **Pronto quando:** num par de pseudoterminais, o console mostra o login e manda o que se digita; na placa de
   verdade, a porta aparece, e a falta de permissão é explicada.
+- **Feita em 19/11/2026.** `sh_placa/console_serial.py`: as portas seriais (a do gadget da placa primeiro, pelos
+  IDs USB, que a descoberta passa a importar daqui), se este usuário pode abrir cada uma e, se não, o porquê e o
+  comando (`sudo usermod -aG dialout <usuário>`, e sair da sessão: o aplicativo não mexe nos grupos do sistema), e o
+  console a 115200 8N1. **O lugar mudou do plano:** em vez de uma aba do Terminal, a página "Resgate pela serial" fica
+  na Manutenção sem placa (o botão "Console serial (resgate)…"), porque é quando o SSH não responde que ela importa.
+  Ali: a porta, "Procurar de novo", o console no terminal do aplicativo (lido numa thread; a porta fecha com a página
+  fora de vista, e "a porta caiu" quando o cabo sai) e os atalhos do resgate (as redes, o SSH e o `dnsmasq`, ligar os
+  dois, as cópias do `uEnv.txt`, restaurar uma, os erros do boot; o Enter é de quem lê). O caminho pelo cartão
+  microSD (o botão S2, o eMMC em `/dev/mmcblk1p1`, a cópia de volta) fica na mesma página, e o cartão das cópias do
+  assistente aponta para ela. Testes: `tests/test_gui_resgate.py` (o login chegando num pseudoterminal, o que se
+  digita e os atalhos indo, a porta sem permissão). **Na placa de verdade:** a porta aparece (`/dev/ttyACM0`, a da
+  placa), e este usuário não está no `dialout`: a página diz o porquê e o comando, sem botão de abrir. O console na
+  porta de verdade não foi aberto (o grupo é decisão do usuário).
 
 ### ☐ F6.9: a jornada da Fase 6 e o fechamento
 
