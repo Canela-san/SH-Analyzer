@@ -284,6 +284,9 @@ QScrollArea#propriedades_da_figura {{ border-left: 1px solid {t.borda}; }}
 QFrame#secao_da_figura {{ border-bottom: 1px solid {t.borda}; }}
 QLabel#titulo_da_secao_da_figura {{ color: {t.texto}; font-weight: 600; }}
 QLabel#rotulo_da_propriedade, QLabel#largura_da_figura {{ color: {t.texto2}; }}
+QLabel#aviso_da_exportacao {{ color: {t.texto2}; }}
+QLabel#aviso_da_exportacao[nivel="aviso"] {{ color: {t.aviso}; }}
+QLabel#aviso_da_exportacao[nivel="erro"] {{ color: {t.erro}; }}
 QWidget#lateral_aquisicao {{ background: {t.superficie}; border-right: 1px solid {t.borda}; }}
 QFrame#cartao_da_placa {{ background: {t.afundada}; border: 1px solid {t.borda}; border-radius: 10px; }}
 QFrame#cartao_da_placa[nivel="aviso"] {{ border-color: {_rgba(t.aviso, 0.5)}; }}

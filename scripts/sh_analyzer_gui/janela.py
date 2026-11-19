@@ -199,7 +199,8 @@ class JanelaPrincipal(QMainWindow):
             abrir_no_projeto=lambda caminhos: self.controle.abrir_capturas(caminhos),
             mostrar_na_analise=self._mostrar_na_analise)
         self.aquisicao.caderno.mudou.connect(self.area.cadernos_mudaram)
-        self.figuras = AreaDeFiguras(self.area, self.tarefas, self.materializacoes, vista_ativa=self.vista_ativa)
+        self.figuras = AreaDeFiguras(self.area, self.tarefas, self.materializacoes, vista_ativa=self.vista_ativa,
+                                     dialogos_de=lambda: self.controle.dialogos)
         self.figuras.resumoMudou.connect(self.status_da_figura.setText)
         self.paginas = QStackedWidget()
         self.paginas.setObjectName("paginas_das_areas")

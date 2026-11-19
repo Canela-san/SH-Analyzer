@@ -39,7 +39,7 @@ import numpy as np
 from matplotlib import rc_context
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
-from supraharmonicos.api import Cancelado
+from supraharmonicos.api import Cancelado, ErroSHAN
 
 from .desenho_da_figura import DadosDaFigura, PaginaDesenhada, desenhar, pontos
 from .figura import Figura
@@ -73,8 +73,12 @@ FORMATOS: dict[str, FormatoDeFigura] = {f.id: f for f in (
 )}
 
 
-class OpcoesInvalidas(ValueError):
+class OpcoesInvalidas(ErroSHAN, ValueError):
     """A exportação pedida não pode sair assim (a razão vai na mensagem)."""
+
+
+class FalhaNaExportacao(ErroSHAN):
+    """O arquivo não saiu (o LaTeX do PGF recusou o texto, o disco cheio): a razão vai na mensagem."""
 
 
 @dataclass(frozen=True)
@@ -160,13 +164,21 @@ def exportar(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFig
     rc = {**pagina.rc, "pdf.fonttype": 42, "ps.fonttype": 42,
           "svg.fonttype": "none" if opcoes.texto_editavel else "path", "svg.hashsalt": figura.id,
           "pgf.rcfonts": False, "pgf.texsystem": sistema_do_latex() or SISTEMAS_DO_LATEX[0]}
-    with rc_context(rc):
-        if formato.id == "pgf" and isinstance(destino, (str, Path)):
-            _pgf_no_arquivo(pagina, Path(destino), dpi, proveniencia)
-        else:
-            conteudo = (_vetorial(pagina, figura, formato.id, dpi, criador, proveniencia) if formato.vetorial
-                        else _imagem(pagina, figura, formato.id, dpi, criador, proveniencia))
-            _gravar(destino, conteudo)
+    try:
+        with rc_context(rc):
+            if formato.id == "pgf" and isinstance(destino, (str, Path)):
+                _pgf_no_arquivo(pagina, Path(destino), dpi, proveniencia)
+            else:
+                conteudo = (_vetorial(pagina, figura, formato.id, dpi, criador, proveniencia) if formato.vetorial
+                            else _imagem(pagina, figura, formato.id, dpi, criador, proveniencia))
+                _gravar(destino, conteudo)
+    except OSError as erro:
+        raise FalhaNaExportacao(f"a figura não foi gravada: {erro}") from erro
+    except Exception as erro:
+        if formato.id != "pgf":
+            raise
+        # O backend do PGF roda o LaTeX para medir cada texto; um que ele não compõe para tudo.
+        raise FalhaNaExportacao(f"o LaTeX ({rc['pgf.texsystem']}) não compôs o texto da figura: {erro}") from erro
     if progresso is not None:
         progresso(1.0)
 
@@ -256,6 +268,6 @@ def _gravar(destino: Path | BinaryIO, conteudo: bytes) -> None:
         destino.write(conteudo)
 
 
-__all__ = ["DPI_MAXIMO", "FORMATOS", "LIMITE_DE_PIXELS", "LIMITE_DE_PONTOS", "FormatoDeFigura", "OpcoesDeExportacao",
-           "OpcoesInvalidas", "conferir", "dpi_maximo", "em_bytes", "exportar", "nome_do_arquivo", "pontos",
+__all__ = ["DPI_MAXIMO", "FORMATOS", "LIMITE_DE_PIXELS", "LIMITE_DE_PONTOS", "FalhaNaExportacao", "FormatoDeFigura",
+           "OpcoesDeExportacao", "OpcoesInvalidas", "conferir", "dpi_maximo", "em_bytes", "exportar", "nome_do_arquivo", "pontos",
            "sistema_do_latex"]

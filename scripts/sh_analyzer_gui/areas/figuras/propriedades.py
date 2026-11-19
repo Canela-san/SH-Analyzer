@@ -31,6 +31,7 @@ from ...componentes.basicos import Botao, Segmentado
 from ...componentes.numeros import separador_decimal
 from ...dados import figura as fig
 from ...dados.figura import Figura, FiguraInvalida, Painel
+from .exportacao import SecaoDeExportacao
 
 IDIOMAS = ("pt-BR", "en")
 TIPOS = {"tempo": "tempo", "espectro": "espectro", "bandas": "bandas", "espectrograma": "espectrograma",
@@ -177,6 +178,9 @@ class PropriedadesDaFigura(QScrollArea):
             caixa.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             caixa.setMinimumContentsLength(10)
 
+        self.exportacao = SecaoDeExportacao()
+        self.coluna.addWidget(self.exportacao)
+
         self.apagar = Botao(self.tr("Apagar a figura"), "fantasma", "x")
         self.apagar.setObjectName("apagar_a_figura")
         self.apagar.clicked.connect(self.apagarPedido)
@@ -213,6 +217,7 @@ class PropriedadesDaFigura(QScrollArea):
         self.figura, self._vistas = figura, vistas
         self.painel = next((p for p in figura.paineis if p.id == painel), None) if figura is not None else None
         self.widget().setEnabled(figura is not None)
+        self.exportacao.mostrar(figura)
         if figura is None:
             return
         self._enchendo = True

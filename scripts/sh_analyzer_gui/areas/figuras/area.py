@@ -14,20 +14,29 @@ nada se desenha: o pedido fica para quando ela aparecer.
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
+from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QCoreApplication, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QImage
 from PySide6.QtWidgets import QHBoxLayout, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 from shiboken6 import isValid
 
+from ...componentes import area_de_transferencia
+from ...componentes.numeros import formatar_bytes
 from ...componentes.painel import TituloDoPainel
+from ...componentes.toast import Toast
 from ...dados import figura as fig
-from ...dados.desenho_da_figura import colher, desenhar, registrar_as_fontes
+from ...dados.desenho_da_figura import colher, desenhar, pontos, registrar_as_fontes
+from ...dados.exportar_figura import OpcoesDeExportacao, em_bytes, nome_do_arquivo
+from ...dados.exportar_figura import exportar as exportar_figura
 from ...dados.figura import Figura
+from ...dados.proveniencia import da_figura
 from ...modelo.comandos import AdicionarFigura, MudarFigura, RemoverFigura
 from ...modelo.objetos import Projeto, Vista, novo_id
 from ...modelo.persistencia import descrever_vista
+from ...servicos.tarefas import Tarefa
 from ...tema.aplicar import aparencia
 from ...tema.icones import IconeDoTema, icone
 from .dados_do_projeto import DadosDoProjeto
@@ -36,7 +45,19 @@ from .propriedades import PropriedadesDaFigura
 
 ESPERA_MS = 120                 # junta os pedidos de desenho de uma rajada (girar a altura, o zoom da vista)
 LARGURA_DAS_LATERAIS = 260
+LADO_DA_COPIA_PX = 6000
 LARGURA_DAS_PROPRIEDADES = 340
+
+
+def _versao() -> str:
+    """A versão do aplicativo (a que ``app.criar_aplicacao`` registra), para a proveniência."""
+    return QCoreApplication.applicationVersion() or "dev"
+
+
+def dpi_da_copia(f: Figura) -> float:
+    """O dpi do PNG copiado: 300, ou menos numa página grande (até ~6 000 px no lado maior; 150 no mínimo)."""
+    lado = max(f.largura_mm, f.altura_mm) / 25.4
+    return float(max(150, min(300, math.floor(LADO_DA_COPIA_PX / lado))))
 
 
 def descricao_da_pagina(f: Figura) -> str:
@@ -48,13 +69,17 @@ def descricao_da_pagina(f: Figura) -> str:
 class AreaDeFiguras(QWidget):
     resumoMudou = Signal(str)            # a linha da barra de status
     desenhada = Signal()                 # uma página nova apareceu (os testes esperam por ela)
+    exportada = Signal(object)           # o caminho da figura exportada
+    copiada = Signal()
 
-    def __init__(self, analise, tarefas, materializacoes, vista_ativa=lambda: None, parent: QWidget | None = None):
+    def __init__(self, analise, tarefas, materializacoes, vista_ativa=lambda: None, dialogos_de=lambda: None,
+                 parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("area_figuras")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.analise, self.tarefas, self.materializacoes = analise, tarefas, materializacoes
-        self.vista_ativa = vista_ativa
+        self.vista_ativa, self.dialogos_de = vista_ativa, dialogos_de
+        self._pasta_da_exportacao: Path | None = None
         self.projeto: Projeto | None = None
         self.dados: DadosDoProjeto | None = None
         self.figura_id: str | None = None
@@ -116,6 +141,10 @@ class AreaDeFiguras(QWidget):
         self.propriedades.congelarPedido.connect(self.congelar)
         self.propriedades.acrescentarPedido.connect(self.acrescentar_painel)
         self.propriedades.apagarPedido.connect(self.apagar_figura)
+        self.exportacao = self.propriedades.exportacao
+        self.exportacao.exportarPedido.connect(self.exportar)
+        self.exportacao.copiarPedido.connect(self.copiar)
+        self.exportacao.contar_pontos = self._contar_pontos
 
         linha = QHBoxLayout(self)
         linha.setContentsMargins(0, 0, 0, 0)
@@ -341,6 +370,101 @@ class AreaDeFiguras(QWidget):
         if self._pendente:
             self.pedir_desenho()
 
+    def _colher(self, figura: Figura):
+        """As vistas como estão e os dados da figura, colhidos aqui (na thread da interface)."""
+        vistas = {v.id: descrever_vista(v) for v in self.projeto.vistas}
+        self.dados.comecar()
+        colhidos = colher(figura, vistas, self.dados)
+        self.dados.terminar()
+        return vistas, colhidos
+
+    def _contar_pontos(self) -> int:
+        figura = self.figura
+        if figura is None:
+            return 0
+        vistas, colhidos = self._colher(figura)
+        return pontos(figura, vistas, colhidos)
+
+    # ------------------------------------------------------------------ exportar e copiar
+
+    def exportar(self, opcoes: OpcoesDeExportacao, caminho: Path | None = None) -> Tarefa | None:
+        """Exporta a figura escolhida (pergunta onde, sem ``caminho``) numa tarefa, com o progresso na seção e no
+        painel das tarefas; no fim, o aviso na janela."""
+        figura = self.figura
+        if figura is None:
+            return None
+        formato = opcoes.dados_do_formato
+        if caminho is None:
+            pasta = self._pasta_da_exportacao or (self.projeto.caminho.parent if self.projeto.caminho else Path.home())
+            dialogos = self.dialogos_de()
+            caminho = dialogos.salvar_arquivo(self.tr("Exportar a figura"), f"{formato.nome} (*{formato.extensao})",
+                                              str(pasta / nome_do_arquivo(figura, opcoes))) if dialogos else None
+            if caminho is None:
+                return None
+        caminho = Path(caminho)
+        if caminho.suffix.lower() not in {formato.extensao, ".tiff" if formato.id == "tiff" else formato.extensao}:
+            caminho = caminho.with_name(caminho.name + formato.extensao)
+        self._pasta_da_exportacao = caminho.parent
+        vistas, colhidos = self._colher(figura)
+        proveniencia = da_figura(figura, vistas, self.dados.fontes_da_proveniencia(), aplicativo=_versao())
+        self.exportacao.definir_ocupada(True, self.tr("Exportando…"))
+
+        def trabalho(progresso, cancelado):
+            exportar_figura(figura, vistas, colhidos, caminho, opcoes, proveniencia=proveniencia,
+                            aplicativo=_versao(), progresso=progresso, cancelado=cancelado)
+            return caminho
+
+        return self.tarefas.iniciar(
+            self.tr("Exportar a figura {} ({})").format(figura.nome, formato.nome), trabalho, "figuras", pesada=True,
+            ao_progredir=lambda _t, f: self.exportacao.definir_ocupada(
+                True, self.tr("Exportando… {} %").format(round(100 * f))),
+            ao_terminar=self._exportou)
+
+    def _exportou(self, tarefa: Tarefa) -> None:
+        if not isValid(self):
+            return
+        self.exportacao.definir_ocupada(False)
+        if tarefa.estado == "concluida":
+            caminho = tarefa.resultado
+            Toast.mostrar(self.window(), self.tr("Figura exportada: {} ({})").format(
+                caminho.name, formatar_bytes(caminho.stat().st_size)), "sucesso")
+            self.exportada.emit(caminho)
+        elif tarefa.estado == "falhou":
+            Toast.mostrar(self.window(), self.tr("A figura não foi exportada: {}").format(tarefa.erro), "erro")
+
+    def copiar(self) -> Tarefa | None:
+        """FG-09: a figura na área de transferência, em PNG (:func:`dpi_da_copia`) e em SVG (o texto editável)."""
+        figura = self.figura
+        if figura is None:
+            return None
+        vistas, colhidos = self._colher(figura)
+        proveniencia = da_figura(figura, vistas, self.dados.fontes_da_proveniencia(), aplicativo=_versao())
+
+        def trabalho(progresso, cancelado):
+            kw = {"proveniencia": proveniencia, "aplicativo": _versao(), "cancelado": cancelado}
+            png = em_bytes(figura, vistas, colhidos, OpcoesDeExportacao("png", dpi_da_copia(figura)),
+                           progresso=lambda f: progresso(f / 2), **kw)
+            svg = em_bytes(figura, vistas, colhidos, OpcoesDeExportacao("svg"),
+                           progresso=lambda f: progresso(0.5 + f / 2), **kw)
+            return png, svg
+
+        self.exportacao.definir_ocupada(True, self.tr("Copiando…"))
+        return self.tarefas.iniciar(self.tr("Copiar a figura {}").format(figura.nome), trabalho, "figuras",
+                                    pesada=True, ao_terminar=self._copiou)
+
+    def _copiou(self, tarefa: Tarefa) -> None:
+        if not isValid(self):
+            return
+        self.exportacao.definir_ocupada(False)
+        if tarefa.estado != "concluida":
+            if tarefa.estado == "falhou":
+                Toast.mostrar(self.window(), self.tr("A figura não foi copiada: {}").format(tarefa.erro), "erro")
+            return
+        png, svg = tarefa.resultado
+        area_de_transferencia.copiar({"image/png": png, "image/svg+xml": svg}, QImage.fromData(png, "PNG"))
+        Toast.mostrar(self.window(), self.tr("Figura copiada (PNG e SVG)"), "sucesso")
+        self.copiada.emit()
+
     def _desenhar(self) -> None:
         """Colhe os dados aqui e desenha a página numa thread de trabalho."""
         figura = self.figura
@@ -353,10 +477,7 @@ class AreaDeFiguras(QWidget):
             self._de_novo = True
             return
         self._pendente = False
-        vistas = {v.id: descrever_vista(v) for v in self.projeto.vistas}
-        self.dados.comecar()
-        colhidos = colher(figura, vistas, self.dados)
-        self.dados.terminar()
+        vistas, colhidos = self._colher(figura)
         self.pagina.definir_tamanho(figura.largura_mm, figura.altura_mm)
         dpi = self.pagina.dpi_do_desenho()
         self._geracao += 1
