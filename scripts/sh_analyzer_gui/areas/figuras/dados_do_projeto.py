@@ -14,10 +14,6 @@ de desenhar numa de trabalho).
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import supraharmonicos.api as api
-
 from ...dados import unidades
 from ...dados.cadeia import Cadeia
 from ...dados.desenho_da_figura import SerieDoEspectro, SerieDoTempo
@@ -25,7 +21,7 @@ from ...dados.projeto import VistaSalva
 from ...dados.proveniencia import FonteDaProveniencia
 from ...dados.receita import ReceitaDoTraco
 from ...modelo.objetos import Projeto, Vista
-from ...modelo.persistencia import descrever_fonte, descrever_vista
+from ...modelo.persistencia import descrever_vista, fontes_da_proveniencia
 from ...tema.tokens import CLARO, cor_do_traco
 
 
@@ -102,20 +98,4 @@ class DadosDoProjeto:
         return viva if viva is not None and descrever_vista(viva) == vista else None
 
     def fontes_da_proveniencia(self) -> dict[str, FonteDaProveniencia]:
-        """As capturas do projeto como a proveniência as diz: o caminho, o tamanho, o CRC e o cabeçalho (o de uma
-        ausente, o que o projeto lembra dela)."""
-        saida = {}
-        for f in self.projeto.fontes:
-            if f.esta_ausente:
-                salva, cabecalho = f.origem, {}
-            else:
-                cabecalho = api.cabecalho_em_dict(f.fonte.captura)
-                try:
-                    salva = descrever_fonte(f, f.caminho.parent)
-                except OSError:                   # o arquivo sumiu depois de aberto
-                    salva = None
-            saida[f.id] = FonteDaProveniencia(
-                f.id, f.nome, salva.caminho_absoluto if salva is not None else str(Path(f.caminho).resolve()),
-                salva.tamanho if salva is not None else None, salva.crc32_amostras if salva is not None else None,
-                cabecalho)
-        return saida
+        return fontes_da_proveniencia(self.projeto)

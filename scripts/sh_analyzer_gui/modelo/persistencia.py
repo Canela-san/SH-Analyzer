@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+import supraharmonicos.api as api
 
 from ..dados.captura import Aviso, ErroSHAN, Fonte, abrir_fonte, crc_das_amostras
 from ..dados.espectros import OPCOES_DO_TIPO
@@ -21,6 +24,32 @@ from ..dados.projeto import (
     localizar_fonte,
 )
 from .objetos import FonteDoProjeto, Projeto, Traco, Vista
+
+if TYPE_CHECKING:
+    from ..dados.proveniencia import FonteDaProveniencia
+
+
+def fontes_da_proveniencia(projeto: Projeto) -> dict[str, FonteDaProveniencia]:
+    """As capturas do projeto como a proveniência das exportações as diz: o caminho, o tamanho, o CRC e o cabeçalho
+    (o de uma ausente, o que o projeto lembra dela)."""
+    # Aqui dentro: a proveniência traz o Matplotlib, que o início do aplicativo não carrega.
+    from ..dados.proveniencia import FonteDaProveniencia
+
+    saida = {}
+    for f in projeto.fontes:
+        if f.esta_ausente:
+            salva, cabecalho = f.origem, {}
+        else:
+            cabecalho = api.cabecalho_em_dict(f.fonte.captura)
+            try:
+                salva = descrever_fonte(f, f.caminho.parent)
+            except OSError:                   # o arquivo sumiu depois de aberto
+                salva = None
+        saida[f.id] = FonteDaProveniencia(
+            f.id, f.nome, salva.caminho_absoluto if salva is not None else str(Path(f.caminho).resolve()),
+            salva.tamanho if salva is not None else None, salva.crc32_amostras if salva is not None else None,
+            cabecalho)
+    return saida
 
 
 def descrever_fonte(fonte: FonteDoProjeto, pasta: Path) -> FonteSalva:

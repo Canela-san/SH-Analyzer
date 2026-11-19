@@ -279,6 +279,9 @@ class JanelaPrincipal(QMainWindow):
         self._acao("figura_da_vista", self.tr("Fazer uma figura com a vista"), icone="imagem",
                    dica=self.tr("Fazer uma figura com a vista (a área Figuras)"),
                    da_analise=True).triggered.connect(self.figura_da_vista_ativa)
+        self._acao("exportar_dados", self.tr("Exportar os dados da vista…"), icone="baixar",
+                   dica=self.tr("Exportar os dados da vista (CSV, HDF5, MAT ou NPZ)"),
+                   da_analise=True).triggered.connect(lambda: self.area.exportar_dados())
         self._acao("fechar_vista", self.tr("Fechar a vista"), atalho="Ctrl+W", icone="x",
                    da_analise=True).triggered.connect(lambda: self.area.fechar_vista_ativa())
         self._acao("espectro", self.tr("Abrir o espectro da vista"), atalho="Ctrl+E", icone="espectro",
@@ -424,10 +427,15 @@ class JanelaPrincipal(QMainWindow):
         self.botao_figura_da_vista = botao_de_icone(self.acoes["figura_da_vista"])
         self.botao_figura_da_vista.setObjectName("figura_da_vista")
         botoes_do_canto.addWidget(self.botao_figura_da_vista)
+        self.botao_exportar_dados = botao_de_icone(self.acoes["exportar_dados"])
+        self.botao_exportar_dados.setObjectName("exportar_dados_da_vista")
+        botoes_do_canto.addWidget(self.botao_exportar_dados)
         botoes_do_canto.addWidget(botao_de_icone(self.acoes["nova_vista"]))
         self.vistas.setCornerWidget(canto, Qt.Corner.TopRightCorner)
         self.vistas.currentChanged.connect(lambda i: self.acoes["figura_da_vista"].setEnabled(i >= 0))
+        self.vistas.currentChanged.connect(lambda i: self.acoes["exportar_dados"].setEnabled(i >= 0))
         self.acoes["figura_da_vista"].setEnabled(False)
+        self.acoes["exportar_dados"].setEnabled(False)
 
         abrir = Botao(self.tr("Abrir captura…"), "primario", "pasta")
         abrir.setObjectName("botao_abrir_central")

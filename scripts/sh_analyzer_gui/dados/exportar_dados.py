@@ -11,7 +11,7 @@ recusado); cada um começa na amostra dele mais perto do início do trecho, e o 
 | Formato | Como |
 |---|---|
 | CSV | o tempo e uma coluna por traço, com o cabeçalho de metadados em comentários ``#``; o separador e o decimal escolhidos |
-| HDF5 | o leiaute do ``adc_tool`` (``supraharmonicos/hdf5.py``): ``/amostras`` (os códigos, linhas × colunas) ou ``/valores``, os atributos na raiz (os do cabeçalho da captura, quando os traços vêm de uma só, e o ``/cabecalho_bruto``), e as transformações de cada coluna como atributo |
+| HDF5 | no estilo do ``adc_tool`` (``supraharmonicos/hdf5.py``): ``/amostras`` (os códigos, linhas × colunas) ou ``/valores``, e os atributos das colunas na raiz (as transformações de cada uma em JSON); quando os traços vêm de uma captura só, o grupo ``/captura`` com o cabeçalho dela como o ``--export-hdf5`` o grava (os atributos e o ``cabecalho_bruto``) |
 | MAT | o v5 até :data:`LIMITE_DO_MAT_V5` bytes por variável, gravado em blocos (o ``scipy.io.savemat`` pediria tudo na memória); acima, o v7.3 (o HDF5 com o cabeçalho do MATLAB) |
 | NPZ | os ``.npy`` gravados em blocos direto no ``.zip``, sem compressão |
 
@@ -50,7 +50,7 @@ class FormatoDeDados:
 
 FORMATOS: dict[str, FormatoDeDados] = {f.id: f for f in (
     FormatoDeDados("csv", "CSV", ".csv", "Texto: planilhas e qualquer programa"),
-    FormatoDeDados("hdf5", "HDF5", ".h5", "O leiaute do adc_tool, com os atributos da captura"),
+    FormatoDeDados("hdf5", "HDF5", ".h5", "No estilo do adc_tool, com o cabeçalho da captura"),
     FormatoDeDados("mat", "MAT", ".mat", "MATLAB e Octave (v7.3 acima de 2 GB)"),
     FormatoDeDados("npz", "NPZ", ".npz", "Python (numpy.load)"),
 )}
@@ -168,24 +168,30 @@ def conferir(trecho: TrechoDeDados, opcoes: OpcoesDosDados) -> None:
             raise DadosInvalidos("os traços vêm de capturas com códigos de tipos diferentes: exporte em unidades")
 
 
+def nome_do_arquivo(nome: str, regiao: str, opcoes: OpcoesDosDados) -> str:
+    """O nome sugerido: o da vista e a região (``"Vista 1 - janela.csv"``), sem o que não vai num nome de arquivo."""
+    base = "".join(c if c.isalnum() or c in " -_." else "_" for c in nome).strip() or "dados"
+    return f"{base} - {regiao}{FORMATOS[opcoes.formato].extensao}"
+
+
 def caminho_da_proveniencia(destino: Path) -> Path:
     """O ``proveniencia.json`` que acompanha ``destino``: ``dados.csv`` -> ``dados.proveniencia.json``."""
     return destino.with_name(destino.stem + ".proveniencia.json")
 
 
 def exportar(trecho: TrechoDeDados, destino: Path, opcoes: OpcoesDosDados, *, proveniencia: Mapping,
-             fonte_unica: Mapping | None = None, progresso: Callable[[float], None] | None = None,
+             captura: tuple[Mapping, bytes] | None = None, progresso: Callable[[float], None] | None = None,
              cancelado: Callable[[], bool] | None = None, linhas_por_bloco: int = LINHAS_POR_BLOCO) -> list[Path]:
     """Grava ``trecho`` em ``destino`` e a proveniência ao lado; devolve os dois caminhos. Os dois saem inteiros ou
-    não saem (um ``.parcial`` renomeado no fim). ``fonte_unica`` (os traços vêm de uma captura só): ``atributos`` (os
-    do cabeçalho para o HDF5) e ``cabecalho_bruto`` (os bytes)."""
+    não saem (um ``.parcial`` renomeado no fim). ``captura``: o cabeçalho da captura de onde todos os traços vêm
+    (``api.cabecalho_para_hdf5``: os atributos e os bytes), que o HDF5 guarda no grupo ``/captura``."""
     conferir(trecho, opcoes)
     destino = Path(destino)
     parcial = destino.with_name(destino.name + ".parcial")
     escrever = {"csv": _csv, "hdf5": _hdf5, "mat": _mat, "npz": _npz}[opcoes.formato]
     blocos = _Blocos(trecho, linhas_por_bloco, progresso, cancelado)
     try:
-        escrever(trecho, parcial, opcoes, proveniencia, fonte_unica or {}, blocos)
+        escrever(trecho, parcial, opcoes, proveniencia, captura, blocos)
     except BaseException:
         parcial.unlink(missing_ok=True)
         raise
@@ -227,14 +233,21 @@ def _metadados(trecho: TrechoDeDados, opcoes: OpcoesDosDados, proveniencia: Mapp
         "escala_por_coluna": [c.escala if opcoes.crus else 1.0 for c in colunas],
         "deslocamento_por_coluna": [c.deslocamento if opcoes.crus else 0.0 for c in colunas],
         "t0_s_por_coluna": trecho.t0_por_coluna,
-        "transformacoes_por_coluna": [c.receita.get("cadeia", []) for c in colunas],
+        "transformacoes_por_coluna": [_aplicadas(c) for c in colunas],
         "proveniencia": em_texto(proveniencia),
     }
 
 
+def _aplicadas(coluna: ColunaDeDados) -> list:
+    """As etapas da cadeia que a coluna tem aplicadas (as ligadas; nenhuma numa coluna do canal)."""
+    if coluna.codigos:
+        return []
+    return [e for e in coluna.receita.get("etapas", []) if not isinstance(e, Mapping) or e.get("ligada", True)]
+
+
 # ------------------------------------------------------------------ CSV
 
-def _csv(trecho, caminho, opcoes, proveniencia, _fonte_unica, blocos) -> None:
+def _csv(trecho, caminho, opcoes, proveniencia, _captura, blocos) -> None:
     sep, dec = opcoes.separador, opcoes.decimal
     meta = _metadados(trecho, opcoes, proveniencia)
 
@@ -247,8 +260,8 @@ def _csv(trecho, caminho, opcoes, proveniencia, _fonte_unica, blocos) -> None:
         conta = (f"valor = código × {numero(c.escala)} + {numero(c.deslocamento)} {c.unidade}".rstrip()
                  if opcoes.crus else c.unidade or "sem unidade")
         linhas.append(f"# {c.nome}: {conta}; t0_s {numero(t0)}"
-                      + (f"; transformações: {json.dumps(c.receita.get('cadeia', []), ensure_ascii=False)}"
-                         if c.receita.get("cadeia") else ""))
+                      + (f"; transformações: {json.dumps(_aplicadas(c), ensure_ascii=False)}"
+                         if _aplicadas(c) else ""))
     linhas.append(f"# proveniência: {caminho.name.removesuffix('.parcial').rsplit('.', 1)[0]}.proveniencia.json")
     cabecalho = sep.join(["tempo_s"] + [f"{c.nome} ({c.unidade})" if c.unidade and not opcoes.crus else c.nome
                                          for c in trecho.colunas])
@@ -274,18 +287,23 @@ class _TrocaODecimal:
 
 # ------------------------------------------------------------------ HDF5 (o leiaute do adc_tool)
 
-def _hdf5(trecho, caminho, opcoes, proveniencia, fonte_unica, blocos) -> None:
+def _hdf5(trecho, caminho, opcoes, proveniencia, captura, blocos) -> None:
     import h5py
 
     meta = _metadados(trecho, opcoes, proveniencia)
     k = len(trecho.colunas)
     with h5py.File(caminho, "w") as f5:
-        for chave, valor in (fonte_unica.get("atributos") or {}).items():
-            f5.attrs[chave] = valor
         _atributos(f5.attrs, meta)
-        if fonte_unica.get("cabecalho_bruto"):
-            bruto = f5.create_dataset("cabecalho_bruto", data=np.frombuffer(fonte_unica["cabecalho_bruto"], np.uint8))
-            bruto.attrs["descricao"] = "Os bytes do cabeçalho do .bin de origem, como gravados pelo ler_adc."
+        if captura is not None:
+            atributos, bruto = captura
+            grupo = f5.create_group("captura")
+            for chave, valor in atributos.items():
+                grupo.attrs[chave] = valor
+            grupo.attrs["descricao"] = ("A captura de onde os traços vêm: o cabeçalho dela, como o adc_tool "
+                                        "--export-hdf5 o grava (os atributos e os bytes).")
+            dados_do_cabecalho = grupo.create_dataset("cabecalho_bruto", data=np.frombuffer(bruto, np.uint8))
+            dados_do_cabecalho.attrs["descricao"] = ("Os bytes do cabeçalho do .bin de origem, como gravados pelo "
+                                                     "ler_adc (a versão no atributo 'cabecalho_versao').")
         if opcoes.crus:
             tipo = np.asarray(trecho.colunas[0].amostras[:0]).dtype
             dados = f5.create_dataset("amostras", shape=(trecho.n, k), dtype=tipo, chunks=True)
@@ -318,7 +336,7 @@ def _atributos(attrs, meta: Mapping) -> None:
 
 # ------------------------------------------------------------------ NPZ (os .npy em blocos dentro do .zip)
 
-def _npz(trecho, caminho, opcoes, proveniencia, _fonte_unica, blocos) -> None:
+def _npz(trecho, caminho, opcoes, proveniencia, _captura, blocos) -> None:
     meta = _metadados(trecho, opcoes, proveniencia)
     k = len(trecho.colunas)
     tipo = np.asarray(trecho.colunas[0].amostras[:0]).dtype if opcoes.crus else np.dtype(np.float64)
@@ -343,7 +361,7 @@ _MX = {"char": 4, "double": 6, "int16": 10, "uint16": 11}
 _CLASSE = {np.dtype(np.float64): "double", np.dtype(np.int16): "int16", np.dtype(np.uint16): "uint16"}
 
 
-def _mat(trecho, caminho, opcoes, proveniencia, _fonte_unica, blocos) -> None:
+def _mat(trecho, caminho, opcoes, proveniencia, _captura, blocos) -> None:
     meta = _metadados(trecho, opcoes, proveniencia)
     tipo = np.asarray(trecho.colunas[0].amostras[:0]).dtype if opcoes.crus else np.dtype(np.float64)
     if tipo not in _CLASSE:
@@ -460,4 +478,4 @@ def _mat_v73(trecho, caminho, opcoes, meta, nome, tipo, blocos) -> None:
 
 __all__ = ["DECIMAIS", "FORMATOS", "LIMITE_DO_MAT_V5", "LINHAS_POR_BLOCO", "SEPARADORES", "ColunaDeDados",
            "DadosInvalidos", "OpcoesDosDados", "TrechoDeDados", "caminho_da_proveniencia", "conferir", "exportar",
-           "recortar"]
+           "nome_do_arquivo", "recortar"]

@@ -8,21 +8,29 @@ mexe mais na tela.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QSize, Qt, QUrl, Signal
+from pathlib import Path
+
+import supraharmonicos.api as api
+from PySide6.QtCore import QCoreApplication, QObject, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QLabel, QTabBar, QTabWidget, QToolButton, QWidget
+from PySide6.QtWidgets import QDialog, QLabel, QTabBar, QTabWidget, QToolButton, QWidget
 from shiboken6 import isValid
 
 from ...componentes.avisos import ListaDeAvisos
-from ...componentes.numeros import formatar_si
+from ...componentes.numeros import formatar_bytes, formatar_si
+from ...componentes.toast import Toast
+from ...dados import exportar_dados as ed
 from ...dados.espectros import OPCOES_DO_TIPO
+from ...dados.proveniencia import dos_dados
 from ...dados.receita import ReceitaDoTraco
 from ...modelo.comandos import AdicionarTraco, AdicionarVista, RemoverFonte, RemoverTracos, RemoverVista
 from ...modelo.objetos import FonteDoProjeto, Projeto, Traco, Vista
+from ...modelo.persistencia import fontes_da_proveniencia
 from ...servicos.medidas import PedidoDeMedida, ServicoDeMedidas
 from ...tema.aplicar import aparencia
 from ...tema.icones import IconeDoTema, icone
 from .arvore import PainelDoProjeto
+from .exportar_dados import NOMES_DAS_REGIOES, ColetaDaVista, DialogoDeExportarDados, PedidoDeDados
 from .inspetor import TEXTOS_DA_INTEGRIDADE, Inspetor
 from .medidas import TabelaDeMedidas
 from .vista_espectro import VistaDeEspectro
@@ -41,6 +49,7 @@ def nome_do_traco(fonte: FonteDoProjeto, numero: int) -> str:
 
 class AreaDeAnalise(QObject):
     exibicaoMudou = Signal(object)        # a vista: a janela que ela mostra ou o espectro dela (a figura acompanha)
+    dadosExportados = Signal(object)      # o caminho do arquivo (a F5.5)
 
     def __init__(self, janela, painel: PainelDoProjeto, inspetor: Inspetor, avisos: ListaDeAvisos,
                  status_fonte: QLabel, status_integridade: QLabel, abas: QTabWidget, medidas: TabelaDeMedidas):
@@ -52,6 +61,9 @@ class AreaDeAnalise(QObject):
         self.janela, self.painel, self.inspetor, self.avisos = janela, painel, inspetor, avisos
         self.status_fonte, self.status_integridade, self.abas = status_fonte, status_integridade, abas
         self.projeto: Projeto | None = None
+        self.dialogo_de_dados: DialogoDeExportarDados | None = None
+        self._pedido_de_dados: PedidoDeDados | None = None       # o último: o diálogo abre com ele
+        self._pasta_dos_dados: Path | None = None
         self.fonte_ativa: FonteDoProjeto | None = None
         painel.canalAtivado.connect(self.plotar_canal)
         painel.vistaAtivada.connect(self.ativar_vista)
@@ -294,6 +306,96 @@ class AreaDeAnalise(QObject):
         vista = Vista(nome)
         self.projeto.pilha.push(AdicionarVista(self.projeto, vista))
         return vista
+
+    # ------------------------------------------------------------------ a exportação dos dados (F5.5)
+
+    def exportar_dados(self, vista: Vista | None = None, pedido: PedidoDeDados | None = None,
+                       caminho: Path | None = None):
+        """FG-07: os dados da vista de tempo (a ativa, sem ``vista``). Sem ``pedido``, abre o diálogo (sem bloquear),
+        e o "Exportar…" dele pergunta onde gravar; com ``pedido``, exporta direto (pergunta onde, sem ``caminho``).
+        Devolve o diálogo, a tarefa ou ``None`` (com o aviso do porquê)."""
+        vista = vista or self.vista_ativa()
+        widget = self.widget_da_vista(vista) if vista is not None else None
+        if not isinstance(widget, VistaDeTempo):
+            Toast.mostrar(self.janela, self.tr("Os dados saem de uma vista de tempo: abra uma"), "aviso")
+            return None
+        if not any(t.receita.visivel for t in vista.tracos):
+            Toast.mostrar(self.janela, self.tr("A vista não tem nenhum traço visível"), "aviso")
+            return None
+        coleta = ColetaDaVista(vista, widget, self.projeto, self.janela.materializacoes, self)
+        if pedido is not None:
+            return self._exportar_dados(coleta, pedido, caminho)
+        dialogo = DialogoDeExportarDados(coleta, self._pedido_de_dados, self.janela)
+
+        def fechou(resultado: int) -> None:
+            if self.dialogo_de_dados is dialogo:
+                self.dialogo_de_dados = None
+            pedido_escolhido = dialogo.pedido() if resultado == QDialog.DialogCode.Accepted else None
+            dialogo.deleteLater()
+            if pedido_escolhido is not None:
+                self._exportar_dados(coleta, pedido_escolhido, None)
+            else:
+                self._largar_coleta(coleta)
+
+        dialogo.finished.connect(fechou)
+        self.dialogo_de_dados = dialogo
+        dialogo.open()
+        return dialogo
+
+    def _exportar_dados(self, coleta: ColetaDaVista, pedido: PedidoDeDados, caminho: Path | None):
+        try:
+            trecho = coleta.trecho(pedido)
+        except ed.DadosInvalidos as erro:
+            self._largar_coleta(coleta)
+            Toast.mostrar(self.janela, self.tr("Os dados não foram exportados: {}").format(erro), "erro")
+            return None
+        self._pedido_de_dados = pedido
+        formato = ed.FORMATOS[pedido.opcoes.formato]
+        regiao = NOMES_DAS_REGIOES[pedido.regiao]
+        if caminho is None:
+            pasta = self._pasta_dos_dados or (self.projeto.caminho.parent if self.projeto.caminho else Path.home())
+            caminho = self.janela.controle.dialogos.salvar_arquivo(
+                self.tr("Exportar os dados da vista"), f"{formato.nome} (*{formato.extensao})",
+                str(pasta / ed.nome_do_arquivo(coleta.vista.nome, regiao, pedido.opcoes)))
+            if caminho is None:
+                self._largar_coleta(coleta)
+                return None
+        caminho = Path(caminho)
+        if caminho.suffix.lower() != formato.extensao:
+            caminho = caminho.with_name(caminho.name + formato.extensao)
+        self._pasta_dos_dados = caminho.parent
+        fontes = coleta.fontes_usadas(trecho)
+        proveniencia = dos_dados(trecho, pedido.opcoes, fontes_da_proveniencia(self.projeto),
+                                 aplicativo=QCoreApplication.applicationVersion() or "dev", regiao=regiao)
+        # O cabeçalho da captura vai no HDF5 quando os traços vêm de uma só (o grupo /captura).
+        captura = fontes[0].fonte.captura if len(fontes) == 1 and formato.id == "hdf5" else None
+
+        def trabalho(progresso, cancelado):
+            ed.exportar(trecho, caminho, pedido.opcoes, proveniencia=proveniencia,
+                        captura=api.cabecalho_para_hdf5(captura) if captura is not None else None,
+                        progresso=progresso, cancelado=cancelado)
+            return caminho
+
+        return self.janela.tarefas.iniciar(
+            self.tr("Exportar os dados de {} ({})").format(coleta.vista.nome, formato.nome), trabalho, "dados",
+            pesada=True, ao_terminar=lambda tarefa: self._dados_exportados(tarefa, coleta))
+
+    def _largar_coleta(self, coleta: ColetaDaVista) -> None:
+        if isValid(coleta):
+            coleta.soltar()
+            coleta.deleteLater()
+
+    def _dados_exportados(self, tarefa, coleta: ColetaDaVista) -> None:
+        self._largar_coleta(coleta)
+        if not isValid(self):
+            return
+        if tarefa.estado == "concluida":
+            caminho = tarefa.resultado
+            Toast.mostrar(self.janela, self.tr("Dados exportados: {} ({}), com a proveniência ao lado").format(
+                caminho.name, formatar_bytes(caminho.stat().st_size)), "sucesso")
+            self.dadosExportados.emit(caminho)
+        elif tarefa.estado == "falhou":
+            Toast.mostrar(self.janela, self.tr("Os dados não foram exportados: {}").format(tarefa.erro), "erro")
 
     # ------------------------------------------------------------------ a seleção
 
