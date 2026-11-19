@@ -5,12 +5,12 @@ usa e por quê, os perfis marcados nas opções da vista, com desfazer e no proj
 import json
 
 import numpy as np
-import pyqtgraph as pg
 import pytest
 
 pytest.importorskip("PySide6")
 pytest.importorskip("pytestqt")
 
+import pyqtgraph as pg  # noqa: E402
 import supraharmonicos.api as api  # noqa: E402
 from capturas_sinteticas import escrever_bin  # noqa: E402
 from PySide6.QtCore import Qt  # noqa: E402
