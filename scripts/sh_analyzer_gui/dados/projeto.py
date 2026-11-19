@@ -6,7 +6,8 @@ resultados.
   A versão 2 trouxe a cadeia de transformações de cada traço (``etapas``); um traço da versão 1 abre sem nenhuma. A
   3 trouxe as opções da vista de tempo (``sobrepor``) e a taxa e os canais de uma captura sem o cabeçalho
   (``sem_cabecalho``: o ``.bin`` legado, o ``.csv``, um ``.h5`` de um legado). A 4 trouxe os modelos de captura da
-  Aquisição (``modelos_de_captura``: o nome e o pedido inteiro, ``sh_placa/pedido.py``).
+  Aquisição (``modelos_de_captura``: o nome e o pedido inteiro, ``sh_placa/pedido.py``). A 5 trouxe as figuras
+  (``figuras``: o modelo de página, a grade de painéis ligados às vistas ou congelados, o estilo; ``dados/figura.py``).
 * **As fontes** vão pelo caminho relativo à pasta do projeto (a pasta inteira pode mudar de lugar), pelo absoluto (o
   projeto pode mudar sem os dados) e pela identidade das amostras: o CRC do cabeçalho v9 e o tamanho. Se os dois
   caminhos falham, :func:`localizar_fonte` procura pelo CRC (PD-06). Uma captura sem o cabeçalho guarda a taxa e os
@@ -31,10 +32,12 @@ from sh_placa import pedido as pedido_de_captura
 from sh_placa.pedido import PedidoDeCaptura
 from supraharmonicos.api import ErroSHAN, ParametrosSemCabecalho
 
+from . import figura as fig
+from .figura import Figura, FiguraInvalida
 from .receita import ReceitaDoTraco, ReceitaInvalida
 
 FORMATO = "sh-analyzer-projeto"
-VERSAO = 4
+VERSAO = 5
 EXTENSAO = ".shproj"
 SUFIXO_AUTOMATICO = "~"
 TIPOS_DE_VISTA = ("tempo", "espectro", "bandas", "espectrograma", "harmonicos")
@@ -92,6 +95,7 @@ class ProjetoSalvo:
     layout: dict[str, str] = field(default_factory=dict)    # o estado da janela (base64), por nome
     versao_do_aplicativo: str = ""
     modelos_de_captura: tuple[ModeloDeCaptura, ...] = ()
+    figuras: tuple[Figura, ...] = ()
 
 
 # ------------------------------------------------------------------ caminhos
@@ -133,13 +137,18 @@ def para_dict(projeto: ProjetoSalvo) -> dict:
         "versao": VERSAO,
         "aplicativo": projeto.versao_do_aplicativo,
         "fontes": [_fonte_para_dict(f) for f in projeto.fontes],
-        "vistas": [{"id": v.id, "nome": v.nome, "tipo": v.tipo,
-                    "tracos": [{"id": t.id, **t.receita.para_dict()} for t in v.tracos],
-                    **({"opcoes": dict(v.opcoes)} if v.opcoes else {})} for v in projeto.vistas],
+        "vistas": [_vista_para_dict(v) for v in projeto.vistas],
         "layout": dict(projeto.layout),
         "modelos_de_captura": [{"nome": m.nome, "pedido": pedido_de_captura.para_dict(m.pedido)}
                                for m in projeto.modelos_de_captura],
+        "figuras": [fig.para_dict(f, _vista_para_dict) for f in projeto.figuras],
     }
+
+
+def _vista_para_dict(v: VistaSalva) -> dict:
+    return {"id": v.id, "nome": v.nome, "tipo": v.tipo,
+            "tracos": [{"id": t.id, **t.receita.para_dict()} for t in v.tracos],
+            **({"opcoes": dict(v.opcoes)} if v.opcoes else {})}
 
 
 def _fonte_para_dict(fonte: FonteSalva) -> dict:
@@ -205,46 +214,72 @@ def de_dict(dados) -> ProjetoSalvo:
     campos_da_receita = {f.name for f in fields(ReceitaDoTraco)} - {"cadeia"}
     if versao >= 2:
         campos_da_receita.add("etapas")
-    vistas = []
-    for i, v in enumerate(_campo(dados, "vistas", list, "o projeto")):
-        onde = f"a vista {i + 1}"
-        if not isinstance(v, dict):
-            raise ProjetoInvalido(f"{onde} não é um objeto")
-        tracos = []
-        for j, t in enumerate(_campo(v, "tracos", list, onde)):
-            onde_t = f"o traço {j + 1} de {onde}"
-            if not isinstance(t, dict):
-                raise ProjetoInvalido(f"{onde_t} não é um objeto")
-            desconhecidos = set(t) - campos_da_receita - {"id"}
-            if desconhecidos:
-                raise ProjetoInvalido(f"{onde_t} tem campos desconhecidos: {', '.join(sorted(desconhecidos))}")
-            try:
-                receita = ReceitaDoTraco.de_dict(t)
-            except TypeError as e:
-                raise ProjetoInvalido(f"{onde_t} está incompleto ({e})") from None
-            except ReceitaInvalida as e:
-                raise ProjetoInvalido(f"{onde_t}: {e}") from None
-            if receita.fonte not in ids:
-                raise ProjetoInvalido(f"{onde_t} aponta para uma fonte que não está no projeto")
-            tracos.append(TracoSalvo(_campo(t, "id", str, onde_t), receita))
-        nome, tipo = _campo(v, "nome", str, onde), _campo(v, "tipo", str, onde)
-        if not nome.strip():
-            raise ProjetoInvalido(f"{onde} está sem nome")
-        if tipo not in TIPOS_DE_VISTA:
-            raise ProjetoInvalido(f"{onde} é de um tipo que esta versão não abre ({tipo!r}): atualize o aplicativo")
-        opcoes = v.get("opcoes", {})
-        from .espectros import OPCOES_DO_TIPO, OpcoesInvalidas
-        try:
-            opcoes = OPCOES_DO_TIPO[tipo].de_dict(opcoes).para_dict()
-        except (OpcoesInvalidas, TypeError) as e:
-            raise ProjetoInvalido(f"{onde}: {e}") from None
-        vistas.append(VistaSalva(id=_campo(v, "id", str, onde), nome=nome, tipo=tipo, tracos=tuple(tracos),
-                                 opcoes=opcoes))
+
+    def vista_de_dict(v, onde: str) -> VistaSalva:
+        return _vista_de_dict(v, onde, ids, campos_da_receita)
+
+    vistas = [vista_de_dict(v, f"a vista {i + 1}") for i, v in enumerate(_campo(dados, "vistas", list, "o projeto"))]
     layout = dados.get("layout", {})
     if not isinstance(layout, dict) or not all(isinstance(k, str) and isinstance(x, str) for k, x in layout.items()):
         layout = {}                                       # o layout é só conforto: inválido, vale o padrão
     modelos = _modelos_de_captura(dados.get("modelos_de_captura", [])) if versao >= 4 else ()
-    return ProjetoSalvo(tuple(fontes), tuple(vistas), layout, str(dados.get("aplicativo", "")), modelos)
+    figuras = _figuras(dados.get("figuras", []), {v.id for v in vistas}, vista_de_dict) if versao >= 5 else ()
+    return ProjetoSalvo(tuple(fontes), tuple(vistas), layout, str(dados.get("aplicativo", "")), modelos, figuras)
+
+
+def _vista_de_dict(v, onde: str, ids: list[str], campos_da_receita: set[str]) -> VistaSalva:
+    """Uma vista (a do projeto, ou a congelada num painel de figura), com os traços apontando para as fontes ``ids``."""
+    if not isinstance(v, dict):
+        raise ProjetoInvalido(f"{onde} não é um objeto")
+    tracos = []
+    for j, t in enumerate(_campo(v, "tracos", list, onde)):
+        onde_t = f"o traço {j + 1} de {onde}"
+        if not isinstance(t, dict):
+            raise ProjetoInvalido(f"{onde_t} não é um objeto")
+        desconhecidos = set(t) - campos_da_receita - {"id"}
+        if desconhecidos:
+            raise ProjetoInvalido(f"{onde_t} tem campos desconhecidos: {', '.join(sorted(desconhecidos))}")
+        try:
+            receita = ReceitaDoTraco.de_dict(t)
+        except TypeError as e:
+            raise ProjetoInvalido(f"{onde_t} está incompleto ({e})") from None
+        except ReceitaInvalida as e:
+            raise ProjetoInvalido(f"{onde_t}: {e}") from None
+        if receita.fonte not in ids:
+            raise ProjetoInvalido(f"{onde_t} aponta para uma fonte que não está no projeto")
+        tracos.append(TracoSalvo(_campo(t, "id", str, onde_t), receita))
+    nome, tipo = _campo(v, "nome", str, onde), _campo(v, "tipo", str, onde)
+    if not nome.strip():
+        raise ProjetoInvalido(f"{onde} está sem nome")
+    if tipo not in TIPOS_DE_VISTA:
+        raise ProjetoInvalido(f"{onde} é de um tipo que esta versão não abre ({tipo!r}): atualize o aplicativo")
+    opcoes = v.get("opcoes", {})
+    from .espectros import OPCOES_DO_TIPO, OpcoesInvalidas
+    try:
+        opcoes = OPCOES_DO_TIPO[tipo].de_dict(opcoes).para_dict()
+    except (OpcoesInvalidas, TypeError) as e:
+        raise ProjetoInvalido(f"{onde}: {e}") from None
+    return VistaSalva(id=_campo(v, "id", str, onde), nome=nome, tipo=tipo, tracos=tuple(tracos), opcoes=opcoes)
+
+
+def _figuras(brutas, vistas: set[str], vista_de_dict) -> tuple[Figura, ...]:
+    """As figuras (a versão 5): ids sem repetir, e cada painel ligado a uma vista que está no projeto."""
+    if not isinstance(brutas, list):
+        raise ProjetoInvalido("as figuras não são uma lista")
+    figuras: list[Figura] = []
+    for i, bruta in enumerate(brutas):
+        onde = f"a figura {i + 1}"
+        try:
+            figura = fig.de_dict(bruta, onde, vista_de_dict)
+        except FiguraInvalida as e:
+            raise ProjetoInvalido(str(e)) from None
+        if any(outra.id == figura.id for outra in figuras):
+            raise ProjetoInvalido(f"duas figuras com o id {figura.id!r}")
+        soltas = figura.vistas_ligadas() - vistas
+        if soltas:
+            raise ProjetoInvalido(f"{onde} ({figura.nome!r}) aponta para uma vista que não está no projeto")
+        figuras.append(figura)
+    return tuple(figuras)
 
 
 def _modelos_de_captura(brutos) -> tuple[ModeloDeCaptura, ...]:

@@ -25,6 +25,7 @@ from shiboken6 import isValid
 
 from ..dados.captura import CanalDaCaptura, Fonte
 from ..dados.espectros import OPCOES_DO_TIPO
+from ..dados.figura import Figura
 from ..dados.projeto import TIPOS_DE_VISTA, FonteSalva, ModeloDeCaptura
 from ..dados.receita import ReceitaDoTraco, proxima_cor
 
@@ -227,6 +228,7 @@ class Projeto(QObject):
     modificadoMudou = Signal(bool)
     nomeMudou = Signal(str)
     modelosMudaram = Signal()                     # os modelos de captura da Aquisição
+    figurasMudaram = Signal()                     # as figuras (a área Figuras)
 
     def __init__(self, caminho: Path | None = None):
         super().__init__()
@@ -234,6 +236,7 @@ class Projeto(QObject):
         self._fontes: list[FonteDoProjeto] = []
         self._vistas: list[Vista] = []
         self._modelos: list[ModeloDeCaptura] = []
+        self._figuras: list[Figura] = []
         self.pilha = QUndoStack(self)
         self.pilha.cleanChanged.connect(self._limpo_mudou)
 
@@ -271,6 +274,17 @@ class Projeto(QObject):
     def modelos_de_captura(self) -> tuple[ModeloDeCaptura, ...]:
         """Os modelos de captura (o formulário da Aquisição com um nome), na ordem em que foram guardados."""
         return tuple(self._modelos)
+
+    @property
+    def figuras(self) -> tuple[Figura, ...]:
+        """As figuras do projeto (``dados/figura.py``: valores imutáveis; quem muda é o comando, trocando a inteira)."""
+        return tuple(self._figuras)
+
+    def figura(self, id: str) -> Figura:
+        for figura in self._figuras:
+            if figura.id == id:
+                return figura
+        raise KeyError(f"o projeto não tem a figura {id!r}")
 
     def modelo_de_captura(self, nome: str) -> ModeloDeCaptura | None:
         for modelo in self._modelos:
@@ -344,6 +358,22 @@ class Projeto(QObject):
         indice = [m.nome for m in self._modelos].index(nome)
         del self._modelos[indice]
         self.modelosMudaram.emit()
+        return indice
+
+    def _por_figura(self, figura: Figura, indice: int | None = None) -> None:
+        """Guarda ``figura`` no lugar da de mesmo id (ou em ``indice``, ou no fim)."""
+        atual = [f.id for f in self._figuras]
+        if figura.id in atual:
+            self._figuras[atual.index(figura.id)] = figura
+        else:
+            indice = len(self._figuras) if indice is None else max(0, min(indice, len(self._figuras)))
+            self._figuras.insert(indice, figura)
+        self.figurasMudaram.emit()
+
+    def _tirar_figura(self, id: str) -> int:
+        indice = [f.id for f in self._figuras].index(id)
+        del self._figuras[indice]
+        self.figurasMudaram.emit()
         return indice
 
     def _repasses(self, vista: Vista):
