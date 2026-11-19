@@ -97,12 +97,11 @@ def test_o_titulo_do_painel_nao_cobre_o_conteudo(janela):
 
 
 def test_as_areas_e_as_paginas(janela, qtbot):
-    """A Análise e a Aquisição; as Figuras dizem quando chegam. Cada área é uma página da janela, com a sua parte na
-    barra de status, e os painéis da Análise somem com ela e voltam como estavam."""
+    """A Análise, as Figuras e a Aquisição: cada área é uma página da janela, com a sua parte na barra de status, e
+    os painéis da Análise somem com ela e voltam como estavam."""
     areas = janela.barra.areas
     assert areas.escolhida == AREA_ANALISE and areas.botao(AREA_ANALISE).isEnabled()
-    assert areas.botao(AREA_AQUISICAO).isEnabled()
-    assert not areas.botao(AREA_FIGURAS).isEnabled() and areas.botao(AREA_FIGURAS).toolTip() == "Chega na v0.11"
+    assert areas.botao(AREA_AQUISICAO).isEnabled() and areas.botao(AREA_FIGURAS).isEnabled()
     janela.conexao_da_placa.descoberta = Descoberta([FonteSimulador()])   # sem sondar a rede de verdade
     janela.acoes["painel_inspetor"].trigger()                     # um painel recolhido na Análise
     areas.botao(AREA_AQUISICAO).click()
@@ -115,8 +114,10 @@ def test_as_areas_e_as_paginas(janela, qtbot):
         assert widgets and not any(w.isVisible() for w in widgets), nome
     oferecidas = {a.objectName() for a in janela.acoes_da_paleta()}
     assert "espectro" not in oferecidas and {"abrir", "paleta", "configuracoes"} <= oferecidas
-    areas.botao(AREA_FIGURAS).click()                             # desabilitada: nada muda
-    assert janela.area_atual == AREA_AQUISICAO
+    areas.botao(AREA_FIGURAS).click()
+    assert janela.area_atual == AREA_FIGURAS and janela.figuras.isVisible() and not janela.dock_projeto.isVisible()
+    assert janela.status_por_area.currentWidget() is janela.status_da_figura
+    assert janela.status_da_figura.text() == "Nenhuma figura"
     janela.mostrar_area(AREA_ANALISE)
     assert areas.escolhida == AREA_ANALISE and janela.dock_projeto.isVisible()
     assert not janela.dock_inspetor.isVisible() and janela.status_fonte.isVisible()

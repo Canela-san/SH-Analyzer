@@ -44,9 +44,9 @@ class Dados:
         unidade, escala, cor = ("V", 0.1, AZUL) if k == 0 else ("A", 1e-5, LARANJA)
         return dd.SerieDoTempo(self.piramides[k], self.canais[k], TAXA, receita.nome, cor, unidade, escala=escala)
 
-    def espectro(self, vista, indice):
+    def espectros(self, vista):
         log = vista.opcoes.get("frequencia_log", False)
-        return dd.SerieDoEspectro(self._espectro, "V", AZUL, "dBV", frequencia_log=log) if self._espectro else None
+        return [dd.SerieDoEspectro(self._espectro, "V", AZUL, "dBV", frequencia_log=log)] if self._espectro else []
 
     def janela(self, vista):
         return self._janela
@@ -232,3 +232,48 @@ def test_as_fontes_e_as_grandezas_em_ingles():
         pagina = dd.desenhar(f, {"v": _vista("v", TENSAO)}, Dados(1000), dpi=60)
         rotulo = pagina.mpl.axes[0].yaxis.label
         assert rotulo.get_fontname() == dd.FAMILIAS_DO_MATPLOTLIB[familia][0] and rotulo.get_fontsize() == 9
+
+
+def test_os_dados_colhidos_desenham_a_mesma_pagina():
+    """A área colhe na thread da interface e desenha noutra: os dados colhidos dão a mesma página que os de origem.
+    O painel congelado não pergunta a janela à vista (mostra a cópia inteira, ou os limites dele), e a caixa de cada
+    painel cai dentro da página."""
+    class Contando(Dados):
+        janelas = 0
+
+        def janela(self, vista):
+            Contando.janelas += 1
+            return super().janela(vista)
+
+    dados = Contando(50_000, janela=(0.0, 0.02))
+    vista = _vista("v", TENSAO, CORRENTE)
+    f = Figura("f", "F", "ieee_1", altura_mm=120.0, linhas=2, paineis=(
+        Painel("a", 0, 0, vista="v"), Painel("b", 1, 0, vista="v", congelado=vista)))
+    vistas = {"v": vista}
+    direto = dd.desenhar(f, vistas, dados, dpi=80)
+    colhidos = dd.colher(f, vistas, dados)
+    assert Contando.janelas == 2                                  # o painel ligado, na página e na colheita
+    pelos_colhidos = dd.desenhar(f, vistas, colhidos, dpi=80)
+    assert np.array_equal(direto.pixels(), pelos_colhidos.pixels())
+    a, b = direto.mpl.axes[0], direto.mpl.axes[2]
+    assert a.get_xlim() == (0.0, 20.0) and b.get_xlim()[1] == pytest.approx(49_999 / TAXA * 1e3)
+    altura, largura = direto.pixels().shape[:2]
+    for x0, y0, x1, y1 in direto.paineis.values():
+        assert 0 <= x0 < x1 <= largura and 0 <= y0 < y1 <= altura
+    assert direto.paineis["a"][3] <= direto.paineis["b"][1] + 1   # (a) em cima de (b)
+
+
+def test_a_grandeza_do_canal_no_rotulo():
+    """Uma unidade fora do catálogo ("u.a.") com a grandeza do canal: o rótulo usa a grandeza."""
+    class ComGrandeza(Dados):
+        def tempo(self, vista, receita):
+            s = super().tempo(vista, receita)
+            return dd.SerieDoTempo(s.piramide, s.amostras, s.taxa_hz, s.nome, s.cor, "u.a.", escala=1e-3,
+                                   grandeza="vibração")
+
+    f = fig.nova("f", "F", vista="v")
+    dados = ComGrandeza(1000, janela=(0.0, 0.001))                 # sem os impulsos: até ~3,3 u.a.
+    pagina = dd.desenhar(f, {"v": _vista("v", TENSAO)}, dados, dpi=60)
+    assert pagina.mpl.axes[0].get_ylabel() == "Vibração (u.a.)"
+    en = dd.desenhar(replace(f, idioma="en"), {"v": _vista("v", TENSAO)}, dados, dpi=60)
+    assert en.mpl.axes[0].get_ylabel() == "vibração (u.a.)"        # fora do catálogo: como o canal a escreve
