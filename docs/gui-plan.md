@@ -876,6 +876,10 @@ Toda exportação leva um `proveniencia.json`:
 - as versões (aplicativo, motor, firmware da captura);
 - os comandos equivalentes da CLI.
 
+Feito na F5.5: o HDF5 descreve as colunas na raiz e guarda o cabeçalho da captura (como o `--export-hdf5` o grava)
+no grupo `/captura`; o MAT v5 é gravado em blocos, sem pedir tudo na memória; um traço de tempo próprio entra com o
+trecho dele que aparece na região.
+
 ### 10.5 O pacote reproduzível
 
 Um `.zip` com:
@@ -887,6 +891,11 @@ Um `.zip` com:
 - um `LEIA-ME.md`.
 
 Quem recebe o pacote refaz a figura sem o SH-Analyzer, que é o que um revisor ou um repositório de dados pede.
+
+Feito na F5.6: o `dados.h5` descreve a figura como ficou depois do desenho (as posições do leiaute, as marcas e os
+textos delas, a legenda, as curvas na resolução da figura), e o script põe tudo no lugar, sem refazer o leiaute: com
+a mesma versão do Matplotlib, os mesmos pixels da `figura.png` do pacote. As fontes do aplicativo que a figura usa vão
+junto, com as licenças.
 
 ---
 

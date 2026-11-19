@@ -47,7 +47,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > Matplotlib (o M4 nas colunas dos pixels, conferido contra todos os pontos) e a área Figuras (a vista vira figura
 > com um clique, o painel ligado acompanha a vista, congelar, desfazer). **A F5.4 está feita** (diário de 19/11): a
 > figura sai em PDF, SVG, EPS, PGF, PNG e TIFF, com a proveniência nos metadados, e vai para a área de
-> transferência. **A próxima: a F5.5**, a exportação dos dados. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
+> transferência. **A F5.5 e a F5.6 estão feitas** (diário de 19/11): os dados da vista saem em CSV, HDF5, MAT e
+> NPZ (a captura de 1 h inteira, em blocos), e a figura sai num pacote reproduzível, que um script refaz com os
+> mesmos pixels sem o SH-Analyzer. **A próxima: a F5.7**, o estilo de cada elemento. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
 > a captura contínua e o "Conferir antes" dizem "atualize o firmware da placa" (o código 96 do roteiro, conferido
 > nela), e o aplicativo vai precisar mandar o firmware novo (o `enviar` do `BeagleBone_Setup.sh`, ou a Fase 6).
 >
@@ -69,6 +71,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > placa", os blocos e a transferência no fim. **O caderno de bancada**, à direita: as entradas sozinhas (a
 > conferência, a captura, a queda, a transferência, o relógio acertado) e "Escrever uma nota…"; o "x" o esconde, o
 > "Caderno" do título o traz. No diagnóstico, "Para o caderno"; na Análise, a seção "Notas" do projeto.
+> **As exportações:** no canto das abas da Análise, o botão da imagem faz da vista uma figura (a área Figuras, com a
+> seção Exportar: a figura, o copiar e o "Pacote reproduzível…") e o da seta para baixo abre "Exportar os dados da
+> vista" (o formato, a região, os valores; com um traço transformado, o diálogo espera a materialização).
 >
 > **Com o usuário (quando puder):**
 > - a jornada da Aquisição na tela, com a placa: a placa na lista, um clique, a visão geral, o "Acertar…", os
@@ -187,13 +192,13 @@ sonda em pedaços, sem prender o GIL) e `1257f5b` (o fechamento da saída contí
 **O ambiente:** Python 3.13, PySide6 6.12.0 (na 3.10 e na 3.11, o 6.11.3: seção 2), PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1; no extra `placa`,
 asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5, keyring 25.7.0 (o cofre do Linux é o Secret Service) e pyte 0.8.2. **A CI
 roda em `.venv-ci/<versão>`** (desde 16/11/2026): o `.venv` é o de quem desenvolve, e o `ci.sh` não o troca mais.
-Testes, na última rodada (19/11/2026, com a F5.4): o `ci.sh` completo em 333 s, com 2 525 em Python 3.13 (a
-suíte inteira, com a interface) e 2 082 em 3.10 (sem o Qt).
+Testes, na última rodada (19/11/2026, com a F5.5 e a F5.6): o `ci.sh` completo em 355 s, com 2 561 em Python
+3.13 (a suíte inteira, com a interface) e 2 114 em 3.10 (sem o Qt).
 
 **Desde 18/11/2026, a captura pela interface** (a Fase 4 até a F4.5, seção 4e): o formulário com o "Conferir antes",
 a captura na tela (direto no computador ou no cartão, com o ao vivo, o Parar e a queda) e o caderno de bancada.
 
-**Ainda não existe:** as rotinas como formulários nativos, com as pausas em diálogos (depois da v0.10); o resgate pela serial (v1.0); as exportações (a Fase 5, da F5.5 em diante).
+**Ainda não existe:** as rotinas como formulários nativos, com as pausas em diálogos (depois da v0.10); o resgate pela serial (v1.0); o estilo de cada elemento da figura e o resto da Fase 5 (da F5.7 em diante).
 
 ---
 
@@ -1972,7 +1977,7 @@ o diário.
   deixado na área de transferência derruba o processo na saída (até num script de seis linhas); a área de
   transferência agora é limpa no `atexit` se ainda tem o que o aplicativo pôs (comparado pelo objeto C++), e a
   figura copiada não sobrevive ao aplicativo fechado.
-### ▶ F5.5: a exportação dos dados
+### ☑ F5.5: a exportação dos dados
 
 - **O conteúdo:** CSV, HDF5 (o leiaute do `adc_tool`), MAT (v5 até 2 GB, v7.3 acima) e NPZ (FG-07): a janela, a
   região dos cursores ou a captura inteira, em blocos e com progresso; crus ou em unidades; com ou sem as
@@ -1980,15 +1985,46 @@ o diário.
   traço, as versões e os comandos equivalentes da CLI).
 - **Pronto quando:** os quatro formatos voltam iguais aos dados da tela (lidos de novo nos testes), e a captura
   inteira de 1 h sai em blocos sem estourar a memória.
-
-### ☐ F5.6: o pacote reproduzível
+- **Feita em 19/11/2026** (`fd44335`, `62cf864`, `4c0d805`, `972afae`, `e5f3498`, `fc3942c`, `95f7a5d`):
+  `dados/exportar_dados.py` (sem Qt), o diálogo e a coleta dos traços (`areas/analise/exportar_dados.py`), a ação
+  "Exportar os dados da vista…" (o botão no canto das abas) e `api.cabecalho_para_hdf5` no motor. **Conferido:** cada
+  formato lido de volta igual aos valores da tela (o HDF5, o MAT e o NPZ exatos; o CSV com 15 algarismos, nos três
+  separadores), os crus no tipo da captura com a escala de cada coluna, o MAT v5 lido pelo SciPy e o v7.3 com o
+  cabeçalho do MATLAB, o pico de memória que não cresce com o trecho, o cancelar sem arquivo pela metade.
+  **A medição de 1 h** (`f4_7_1_h_da_tomada`, 1 440 743 424 amostras de um canal, 2,88 GB, só lida): inteira em
+  códigos, o HDF5 em 2,7 a 6,4 s, o MAT (v7.3: passa de 2 GB) em 6,0 s e o NPZ em 6,2 s, trechos conferidos com a
+  captura, e a memória anônima do processo subiu no máximo 18 MB (as páginas da captura mapeadas são do cache do
+  arquivo, e não do processo). **Decisões:** o tempo explícito só vai no CSV (nos outros, `taxa_hz` e `t0_s`); o
+  HDF5 descreve as colunas na raiz e guarda o cabeçalho da captura no grupo `/captura`, como o `--export-hdf5` o
+  grava (o `num_canais` da captura na raiz enganaria um leitor do leiaute do `adc_tool`); o MAT v5 é gravado em
+  blocos, coluna a coluna (o `scipy.io.savemat` pediria tudo na memória), e passa ao v7.3 acima de 2 GB por
+  variável; os valores "como na tela", "sem as transformações" (o canal com o ganho e o offset do traço, e a cadeia
+  na proveniência como não aplicada) ou os códigos do ADC; um traço de tempo próprio entra com o trecho dele que
+  aparece na região; traços de taxas diferentes são recusados (exporte-os separados); o diálogo lembra a última
+  escolha e avisa que um CSV acima de 20 M valores é lento (~330 mil linhas por segundo com duas colunas). **Um
+  defeito achado:** o seletor de formatos da figura (F5.4) tinha perdido o estilo do segmentado (o nome do objeto
+  trocado); com o estilo, os seis formatos não cabiam na lateral, e o segmentado compacto cabe.
+### ☑ F5.6: o pacote reproduzível
 
 - **O conteúdo:** o `.zip` (FG-08) com a figura nos formatos escolhidos, o `dados.h5` com os dados de cada painel na
   resolução usada, o `refazer_figura.py` (só NumPy, h5py e Matplotlib), o `proveniencia.json` e um `LEIA-ME.md`.
 - **Pronto quando:** num processo sem o SH-Analyzer no caminho, o `refazer_figura.py` refaz a figura, e ela dá os
   mesmos pixels que a exportada pelo aplicativo.
-
-### ☐ F5.7: o estilo de cada elemento e os modelos de estilo
+- **Feita em 19/11/2026** (`affd304`, `e5a376a`, `dad2045`, `072ff50`): `dados/pacote.py` (sem Qt),
+  `recursos/refazer_figura.py` e o botão "Pacote reproduzível…" da seção Exportar. **Conferido:** num processo com o
+  `-I` e os pacotes do SH-Analyzer bloqueados (um `import` deles falharia), o script refaz com os mesmos pixels as
+  figuras de tempo (as faixas, a legenda), de espectro (o eixo em log), com painéis sem desenho numa fonte do
+  aplicativo (a Inter, que vai no pacote com a licença) e a de uma captura aberta pela janela. **Decisões:** um
+  desenho só dá todos os arquivos do pacote (a figura no formato da seção, a `figura.png` de referência e o
+  `dados.h5`); o `dados.h5` descreve a figura **como ficou depois do desenho da PNG**: a posição de cada eixo que o
+  leiaute achou, os limites, as marcas e os textos delas (o script não refaz o leiaute nem a escolha das marcas:
+  põe os eixos nas posições e as marcas com os textos), a legenda no canto em que o desenho a pôs, os textos e as
+  curvas na resolução da figura (a redução M4); a referência sai no dpi da exportação até 600 (um pôster a 1 200 dpi
+  não vira uma PNG de 1 G pixels); o que a descrição não conhece (uma imagem, uma área preenchida) recusa o pacote;
+  os mesmos pixels valem com a mesma versão do Matplotlib (o script avisa se é outra). **Um defeito achado no
+  caminho:** o localizador das marcas conta quantas cabem pelo tamanho dos números, que vem do estilo: lida fora
+  do `rc_context` do desenho, a descrição tinha outras marcas (6 615 pixels diferentes); lida dentro, nenhum.
+### ▶ F5.7: o estilo de cada elemento e os modelos de estilo
 
 - **O conteúdo:** editar tudo o que se vê (FG-04): fontes e tamanhos em pt, espessuras, cores, tracejados,
   marcadores, a legenda (qualquer canto ou fora do eixo), os limites, os rótulos e as unidades; os modelos de estilo
@@ -2747,6 +2783,18 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     novo em `tests/test_gui_jornada_figura.py`. O `ci.sh` completo passou em 333 s: 2 525 em 3.13 com a interface
     e 2 082 em 3.10 sem o Qt; o `.venv` intocado.
   - **Próximo:** a F5.5 (a exportação dos dados).
+- **19/11/2026 (de manhã):** **a F5.5 e a F5.6** (o pedido: "Faça a F5.5 e F5.6"; a seção 4f diz o quê e as decisões):
+  - a exportação dos dados sem Qt (`fd44335`) e os testes (`62cf864`); o cabeçalho da captura para o HDF5 no motor
+    (`4c0d805`, `972afae`); o diálogo na Análise (`e5f3498`) e os testes pela janela (`fc3942c`); o estilo do
+    seletor de formatos da figura (`95f7a5d`);
+  - a medição de 1 h exportada inteira (HDF5, MAT v7.3 e NPZ, ~3 a 6 s cada) para a pasta temporária e apagada
+    depois; a captura só foi lida;
+  - o pacote reproduzível sem Qt (`affd304`) e os testes (`e5a376a`); o botão na seção Exportar (`dad2045`) e o
+    teste pela janela (`072ff50`);
+  - **Testes:** `tests/test_gui_exportar_dados.py` (18), `tests/test_gui_jornada_dados.py` (2),
+    `tests/test_gui_pacote.py` (13), um caso novo em `tests/test_api.py` e em `tests/test_gui_jornada_figura.py`. O
+    `ci.sh` completo passou em 355 s: 2 561 em 3.13 com a interface e 2 114 em 3.10 sem o Qt; o `.venv` intocado.
+  - **Próximo:** a F5.7 (o estilo de cada elemento e os modelos de estilo).
 ---
 
 ## 8. Perguntas em aberto
