@@ -163,3 +163,15 @@ def test_gravar_restaurar_e_reiniciar_na_placa_simulada(tmp_path):
     assert any("systemctl reboot" in x for x in placa.comandos_de_root)
     for comando in placa.comandos:
         assert placa.senha_do_sudo not in comando
+
+
+def test_o_que_espera_um_reinicio():
+    """O que o uEnv.txt já pede e este boot não tem (a página mostra "Gravado, esperando um reinício")."""
+    lido = {"uenv": {"texto": texto()}, "cmdline": "console=ttyO0,115200n8 mem=496M quiet",
+            "overlays": ["BB-ADC-00A0", OVERLAY_DA_PRU]}
+    assert uenv.pendentes(lido) == []
+    lido.update(cmdline="console=ttyO0,115200n8 quiet", overlays=["BB-ADC-00A0", "BB-HDMI-TDA998x-00A0"])
+    assert uenv.pendentes(lido) == ["o mem=496M (a memória dos buffers)", f"o overlay da PRU {OVERLAY_DA_PRU}",
+                                    "o vídeo do HDMI desligado"]
+    assert uenv.pendentes({"uenv": {"texto": None}}) == []
+    assert uenv.pendentes({"uenv": {"texto": "if x; then y; fi\n"}, "overlays": []}) == []   # o estranho: nada
