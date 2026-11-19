@@ -10,10 +10,11 @@
     baixo** (medidas, tarefas, avisos), só embaixo das vistas. Os painéis são da Análise: as outras áreas ocupam a
     janela inteira, e voltar à Análise os traz como estavam;
   * a **Aquisição** (``areas/aquisicao``, o B1), com a placa conectada (``self.conexao_da_placa``);
-  * as Figuras chegam na v0.11;
+  * as **Figuras** (``areas/figuras``, o F1): as figuras do projeto, a página no tamanho real e as propriedades; o
+    botão de imagem ao lado das abas da Análise faz da vista aberta uma figura (``figura_da_vista_ativa``);
 
-* a **barra de status**: a parte de cada área (a fonte e a integridade na Análise; a conexão e o enlace na
-  Aquisição), a tarefa em andamento e a versão.
+* a **barra de status**: a parte de cada área (a fonte e a integridade na Análise; a figura escolhida nas Figuras; a
+  conexão e o enlace na Aquisição), a tarefa em andamento e a versão.
 
 **Os atalhos de uma área valem só com ela à vista:** as ações da Análise (as vistas, os painéis, remover traços com
 Delete) moram no Estúdio, e o Qt só as dispara com ele visível; a paleta também só as oferece ali. Abrir uma captura ou
@@ -72,6 +73,7 @@ from .areas.aquisicao.area import AreaDeAquisicao
 from .areas.aquisicao.barra_de_status import StatusDaPlaca
 from .areas.aquisicao.textos import resumo
 from .areas.configuracoes import DialogoDeConfiguracoes
+from .areas.figuras.area import AreaDeFiguras
 from .componentes.avisos import ListaDeAvisos
 from .componentes.barra_superior import BarraSuperior
 from .componentes.basicos import Botao
@@ -174,7 +176,6 @@ class JanelaPrincipal(QMainWindow):
         self.barra.botao_tema.setDefaultAction(self.acoes["alternar_tema"])
         self.barra.botao_ajustes.setDefaultAction(self.acoes["configuracoes"])
         self.barra.definir_menu_do_projeto(self._menu_do_projeto())
-        self.barra.areas.habilitar(AREA_FIGURAS, False, self.tr("Chega na {}").format("v0.11"))
         self.barra.areaMudou.connect(self.mostrar_area)
         self.barra.chip_placa.clicked.connect(lambda: self.mostrar_area(AREA_AQUISICAO))
 
@@ -198,9 +199,12 @@ class JanelaPrincipal(QMainWindow):
             abrir_no_projeto=lambda caminhos: self.controle.abrir_capturas(caminhos),
             mostrar_na_analise=self._mostrar_na_analise)
         self.aquisicao.caderno.mudou.connect(self.area.cadernos_mudaram)
+        self.figuras = AreaDeFiguras(self.area, self.tarefas, self.materializacoes, vista_ativa=self.vista_ativa)
+        self.figuras.resumoMudou.connect(self.status_da_figura.setText)
         self.paginas = QStackedWidget()
         self.paginas.setObjectName("paginas_das_areas")
-        self._paginas_das_areas = {AREA_ANALISE: self.estudio, AREA_AQUISICAO: self.aquisicao}
+        self._paginas_das_areas = {AREA_ANALISE: self.estudio, AREA_FIGURAS: self.figuras,
+                                   AREA_AQUISICAO: self.aquisicao}
         for pagina in self._paginas_das_areas.values():
             self.paginas.addWidget(pagina)
         self.setCentralWidget(self.paginas)
@@ -271,6 +275,9 @@ class JanelaPrincipal(QMainWindow):
                    atalho="Ctrl+Shift+S").triggered.connect(lambda: controle.salvar_como())
         self._acao("nova_vista", self.tr("Nova vista"), icone="mais",
                    da_analise=True).triggered.connect(lambda: self.area.nova_vista())
+        self._acao("figura_da_vista", self.tr("Fazer uma figura com a vista"), icone="imagem",
+                   dica=self.tr("Fazer uma figura com a vista (a área Figuras)"),
+                   da_analise=True).triggered.connect(self.figura_da_vista_ativa)
         self._acao("fechar_vista", self.tr("Fechar a vista"), atalho="Ctrl+W", icone="x",
                    da_analise=True).triggered.connect(lambda: self.area.fechar_vista_ativa())
         self._acao("espectro", self.tr("Abrir o espectro da vista"), atalho="Ctrl+E", icone="espectro",
@@ -311,6 +318,7 @@ class JanelaPrincipal(QMainWindow):
         self.servico_de_fontes.acompanhar(projeto)
         self.area.acompanhar(projeto)
         self.aquisicao.acompanhar(projeto)
+        self.figuras.acompanhar(projeto)
 
     def vista_ativa(self) -> Vista | None:
         """A vista da aba aberta: onde um canal novo é plotado."""
@@ -408,7 +416,17 @@ class JanelaPrincipal(QMainWindow):
         self.vistas.setDocumentMode(True)
         self.vistas.setTabsClosable(False)    # o botão de fechar de cada aba é nosso (areas.analise.area)
         self.vistas.setMovable(False)         # a ordem das abas é a das vistas no projeto
-        self.vistas.setCornerWidget(botao_de_icone(self.acoes["nova_vista"]), Qt.Corner.TopRightCorner)
+        canto = QWidget()
+        botoes_do_canto = QHBoxLayout(canto)
+        botoes_do_canto.setContentsMargins(0, 0, 0, 0)
+        botoes_do_canto.setSpacing(0)
+        self.botao_figura_da_vista = botao_de_icone(self.acoes["figura_da_vista"])
+        self.botao_figura_da_vista.setObjectName("figura_da_vista")
+        botoes_do_canto.addWidget(self.botao_figura_da_vista)
+        botoes_do_canto.addWidget(botao_de_icone(self.acoes["nova_vista"]))
+        self.vistas.setCornerWidget(canto, Qt.Corner.TopRightCorner)
+        self.vistas.currentChanged.connect(lambda i: self.acoes["figura_da_vista"].setEnabled(i >= 0))
+        self.acoes["figura_da_vista"].setEnabled(False)
 
         abrir = Botao(self.tr("Abrir captura…"), "primario", "pasta")
         abrir.setObjectName("botao_abrir_central")
@@ -571,8 +589,11 @@ class JanelaPrincipal(QMainWindow):
         self.status_da_placa = StatusDaPlaca(self.conexao_da_placa)
         self.status_por_area = QStackedWidget()
         self.status_por_area.setObjectName("status_por_area")
+        self.status_da_figura = QLabel()
+        self.status_da_figura.setObjectName("status_da_figura")
         self.status_por_area.addWidget(da_analise)
         self.status_por_area.addWidget(self.status_da_placa)
+        self.status_por_area.addWidget(self.status_da_figura)
         barra.addWidget(self.status_por_area, 1)
         self.status_tarefa = QLabel()
         self.status_tarefa.setObjectName("status_tarefa")
@@ -624,8 +645,8 @@ class JanelaPrincipal(QMainWindow):
         return next(i for i, p in self._paginas_das_areas.items() if p is pagina)
 
     def mostrar_area(self, indice: int) -> None:
-        """Mostra a área ``indice`` (``AREA_ANALISE``, ``AREA_AQUISICAO``): a página dela, a parte dela na barra de
-        status e o seletor da barra superior. Uma área que ainda não existe (as Figuras) fica como está."""
+        """Mostra a área ``indice`` (``AREA_ANALISE``, ``AREA_FIGURAS``, ``AREA_AQUISICAO``): a página dela, a parte
+        dela na barra de status e o seletor da barra superior."""
         pagina = self._paginas_das_areas.get(indice)
         if pagina is None:
             return
@@ -634,7 +655,16 @@ class JanelaPrincipal(QMainWindow):
             self.barra.areas.escolher(indice)
             self.barra.areas.blockSignals(False)
         self.paginas.setCurrentWidget(pagina)
-        self.status_por_area.setCurrentIndex(0 if indice == AREA_ANALISE else 1)
+        self.status_por_area.setCurrentIndex({AREA_ANALISE: 0, AREA_AQUISICAO: 1, AREA_FIGURAS: 2}[indice])
+
+    def figura_da_vista_ativa(self) -> bool:
+        """FG-01: a vista aberta na Análise vira uma figura, e a janela vai para as Figuras com ela escolhida."""
+        vista = self.vista_ativa()
+        if vista is None:
+            return False
+        self.figuras.figura_da_vista(vista)
+        self.mostrar_area(AREA_FIGURAS)
+        return True
 
     def _mostrar_na_analise(self, caminhos) -> None:
         """As capturas na Análise: as que ainda não estão no projeto entram, e a área troca."""

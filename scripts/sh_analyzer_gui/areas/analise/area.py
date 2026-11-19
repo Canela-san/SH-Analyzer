@@ -8,7 +8,7 @@ mexe mais na tela.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QSize, Qt, QUrl
+from PySide6.QtCore import QObject, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QLabel, QTabBar, QTabWidget, QToolButton, QWidget
 from shiboken6 import isValid
@@ -40,6 +40,8 @@ def nome_do_traco(fonte: FonteDoProjeto, numero: int) -> str:
 
 
 class AreaDeAnalise(QObject):
+    exibicaoMudou = Signal(object)        # a vista: a janela que ela mostra ou o espectro dela (a figura acompanha)
+
     def __init__(self, janela, painel: PainelDoProjeto, inspetor: Inspetor, avisos: ListaDeAvisos,
                  status_fonte: QLabel, status_integridade: QLabel, abas: QTabWidget, medidas: TabelaDeMedidas):
         super().__init__(janela)
@@ -157,6 +159,7 @@ class AreaDeAnalise(QObject):
         widget = VistaDeTempo(vista, self.projeto, self.janela.selecao, materializacoes=self.janela.materializacoes)
         widget.tracoClicado.connect(self._traco_clicado)
         widget.regiaoMudou.connect(self._regiao_mudou)
+        widget.regiaoMudou.connect(lambda *_a, v=vista: self.exibicaoMudou.emit(v))
         widget.semRegiao.connect(self._sem_regiao)
         self.abas.insertTab(i, widget, icone("onda", aparencia().tema.texto2), vista.nome)
         self._por_botao_de_fechar(i, widget)
@@ -173,6 +176,8 @@ class AreaDeAnalise(QObject):
         widget.medidasMudaram.connect(self._medidas_da_vista)
         if vista.tipo == "espectro":
             widget.calculado.connect(self._espectro_calculado)
+            widget.calculado.connect(lambda v=vista: self.exibicaoMudou.emit(v))
+            widget.grafico.getViewBox().sigXRangeChanged.connect(lambda *_a, v=vista: self.exibicaoMudou.emit(v))
         self.abas.insertTab(i, widget, icone(nome_do_icone, aparencia().tema.texto2), vista.nome)
         self._por_botao_de_fechar(i, widget)
         self.abas.setCurrentIndex(i)
@@ -268,7 +273,18 @@ class AreaDeAnalise(QObject):
     def _fechar_aba(self, i: int) -> None:
         vista = getattr(self.abas.widget(i), "vista", None)
         if vista is not None:
-            self.projeto.pilha.push(RemoverVista(self.projeto, vista))
+            self.projeto.pilha.push(RemoverVista(self.projeto, vista, self.janela_da_vista(vista)))
+
+    def janela_da_vista(self, vista: Vista) -> tuple[float, float] | None:
+        """O que a vista mostra no x: o tempo (s) na de tempo, a frequência (Hz) na de espectro; ``None`` nas outras
+        ou sem nada desenhado."""
+        widget = self.widget_da_vista(vista)
+        if isinstance(widget, VistaDeTempo):
+            return widget.janela_de_tempo()
+        if isinstance(widget, VistaDeEspectro) and widget.resultados:
+            x0, x1 = widget.grafico.getViewBox().viewRange()[0]
+            return (10.0 ** x0, 10.0 ** x1) if widget.opcoes.frequencia_log else (max(0.0, x0), x1)
+        return None
 
     def nova_vista(self) -> Vista:
         nomes = {v.nome for v in self.projeto.vistas}

@@ -267,6 +267,23 @@ QStatusBar QLabel[nivel="aviso"] {{ color: {t.aviso}; }}
 QPushButton[variante="perigo"]:disabled {{ color: {t.mudo}; border-color: {t.borda}; }}
 QPushButton[variante="primario"]:disabled {{ background: {t.superficie}; color: {t.mudo}; border-color: {t.borda}; }}
 QWidget#area_aquisicao, QStackedWidget#secoes_aquisicao {{ background: {t.fundo}; }}
+QWidget#area_figuras, QWidget#pagina_da_figura {{ background: {t.fundo}; }}
+QWidget#lateral_figuras {{ background: {t.superficie}; border-right: 1px solid {t.borda}; }}
+QListWidget#lista_de_figuras, QListWidget#modelos_de_pagina {{ background: transparent; border: none; outline: 0;
+                                                               padding: 4px 6px; }}
+QListWidget#lista_de_figuras::item {{ padding: 6px 8px; border-radius: 6px; color: {t.texto}; }}
+QListWidget#modelos_de_pagina::item {{ padding: 4px 8px; border-radius: 6px; color: {t.texto2}; }}
+QListWidget#lista_de_figuras::item:hover:!selected, QListWidget#modelos_de_pagina::item:hover {{
+    background: {t.elevada}; color: {t.texto}; }}
+QListWidget#lista_de_figuras::item:selected {{ background: {_rgba(t.acento, 0.13)}; color: {t.acento}; }}
+QScrollArea#rolagem_da_pagina, QWidget#suporte_da_folha {{ background: {t.fundo}; border: none; }}
+QWidget#barra_do_zoom {{ background: {t.elevada}; border: 1px solid {t.borda}; border-radius: 8px; }}
+QLabel#zoom_da_pagina {{ color: {t.texto2}; }}
+QScrollArea#propriedades_da_figura, QWidget#conteudo_das_propriedades {{ background: {t.superficie}; border: none; }}
+QScrollArea#propriedades_da_figura {{ border-left: 1px solid {t.borda}; }}
+QFrame#secao_da_figura {{ border-bottom: 1px solid {t.borda}; }}
+QLabel#titulo_da_secao_da_figura {{ color: {t.texto}; font-weight: 600; }}
+QLabel#rotulo_da_propriedade, QLabel#largura_da_figura {{ color: {t.texto2}; }}
 QWidget#lateral_aquisicao {{ background: {t.superficie}; border-right: 1px solid {t.borda}; }}
 QFrame#cartao_da_placa {{ background: {t.afundada}; border: 1px solid {t.borda}; border-radius: 10px; }}
 QFrame#cartao_da_placa[nivel="aviso"] {{ border-color: {_rgba(t.aviso, 0.5)}; }}

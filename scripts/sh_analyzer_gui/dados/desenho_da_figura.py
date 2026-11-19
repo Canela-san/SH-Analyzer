@@ -27,13 +27,14 @@ captura inteira. ``todos_os_pontos=True`` desliga a redução.
 **Os números** saem no idioma da figura (o separador decimal, o sinal de menos tipográfico) e com o prefixo do SI comum
 ao eixo ("Tensão (kV)"); o tempo em ms abaixo de 2 s, como o ``adc_tool``.
 
-**As vistas que ainda não entram** (as bandas, o espectrograma, os harmônicos) deixam o painel com um aviso.
+**As vistas que ainda não entram** (as bandas, o espectrograma, os harmônicos) deixam o painel com um aviso; o
+espectro congelado também (a cópia da vista não guarda o espectro, e recalculá-lo fica para depois).
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -43,6 +44,7 @@ from matplotlib import font_manager, rc_context
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure as FiguraDoMatplotlib
 from matplotlib.ticker import FuncFormatter, NullFormatter, ScalarFormatter
+from matplotlib.transforms import Bbox
 
 from .consulta import Amostras, consultar
 from .espectros import Desenho, envoltoria_log
@@ -63,9 +65,10 @@ FOLGA_DO_Y = 0.04
 LOTE_DO_M4 = 1 << 23                    # amostras lidas de uma vez na redução exata (~64 MB em float64)
 TEXTOS = {"pt-BR": {"tempo": "Tempo", "frequencia": "Frequência", "valor": "Valor", "nivel": "Nível",
                     "depois": "Este tipo de vista entra nas figuras depois", "vazio": "Painel vazio",
-                    "sem_dados": "Sem dados"},
+                    "sem_dados": "Sem dados", "espectro_congelado": "O espectro congelado entra nas figuras depois"},
           "en": {"tempo": "Time", "frequencia": "Frequency", "valor": "Value", "nivel": "Level",
-                 "depois": "This view type comes to figures later", "vazio": "Empty panel", "sem_dados": "No data"}}
+                 "depois": "This view type comes to figures later", "vazio": "Empty panel", "sem_dados": "No data",
+                 "espectro_congelado": "Frozen spectra come to figures later"}}
 GRANDEZAS_EM_INGLES = {
     "aceleração": "Acceleration", "ângulo": "Angle", "campo magnético": "Magnetic field", "comprimento": "Length",
     "corrente": "Current", "deformação": "Strain", "deslocamento": "Displacement", "energia": "Energy",
@@ -96,6 +99,7 @@ class SerieDoTempo:
     deslocamento: float = 0.0
     inicio: int = 0
     tracejado: bool = False
+    grandeza: str = ""                  # a do canal ("tensão"), quando a unidade não a diz (uma unidade digitada)
 
     def __post_init__(self) -> None:
         if not (self.taxa_hz > 0 and math.isfinite(self.taxa_hz)):
@@ -122,9 +126,47 @@ class DadosDaFigura(Protocol):
 
     def tempo(self, vista: VistaSalva, receita: ReceitaDoTraco) -> SerieDoTempo | None: ...
 
-    def espectro(self, vista: VistaSalva, indice: int) -> SerieDoEspectro | None: ...
+    def espectros(self, vista: VistaSalva) -> Sequence[SerieDoEspectro]: ...
 
     def janela(self, vista: VistaSalva) -> tuple[float, float] | None: ...
+
+
+class DadosColhidos:
+    """O que :func:`colher` tirou de outro :class:`DadosDaFigura`, guardado: a área Figuras colhe na thread da
+    interface (as vistas abertas, as materializações) e desenha numa de trabalho, que só lê estes vetores."""
+
+    def __init__(self):
+        self._tempo: dict[tuple[int, ReceitaDoTraco], SerieDoTempo | None] = {}
+        self._espectros: dict[int, list[SerieDoEspectro]] = {}
+        self._janela: dict[int, tuple[float, float] | None] = {}
+
+    def tempo(self, vista: VistaSalva, receita: ReceitaDoTraco) -> SerieDoTempo | None:
+        return self._tempo.get((id(vista), receita))
+
+    def espectros(self, vista: VistaSalva) -> list[SerieDoEspectro]:
+        return self._espectros.get(id(vista), [])
+
+    def janela(self, vista: VistaSalva) -> tuple[float, float] | None:
+        return self._janela.get(id(vista))
+
+
+def colher(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFigura) -> DadosColhidos:
+    """Tudo o que :func:`desenhar` vai pedir a ``dados`` para desenhar ``figura`` com ``vistas`` (as mesmas, que
+    seguram as vistas vivas até o desenho)."""
+    colhidos = DadosColhidos()
+    for painel in figura.paineis:
+        vista = vista_do_painel(painel, vistas)
+        if vista is None:
+            continue
+        if painel.congelado is None:
+            colhidos._janela[id(vista)] = dados.janela(vista)
+        if vista.tipo == "tempo":
+            for t in vista.tracos:
+                if t.receita.visivel:
+                    colhidos._tempo[(id(vista), t.receita)] = dados.tempo(vista, t.receita)
+        elif vista.tipo == "espectro" and painel.congelado is None:
+            colhidos._espectros[id(vista)] = list(dados.espectros(vista))
+    return colhidos
 
 
 # ------------------------------------------------------------------ as fontes e o estilo
@@ -159,10 +201,13 @@ def parametros_do_estilo(estilo: Estilo) -> dict:
 
 @dataclass(eq=False)
 class PaginaDesenhada:
-    """A página do Matplotlib e o estilo dela (a rasterização roda dentro dele)."""
+    """A página do Matplotlib e o estilo dela (a rasterização roda dentro dele), e onde cada painel ficou: ``paineis``
+    leva o id à caixa ``(x0, y0, x1, y1)`` em pixels da página, de cima para baixo (os eixos, os números, os rótulos
+    e o título): a área Figuras escolhe o painel clicado por ela."""
 
     mpl: FiguraDoMatplotlib
     rc: dict = field(default_factory=dict)
+    paineis: dict[str, tuple[float, float, float, float]] = field(default_factory=dict)
 
     def pixels(self) -> np.ndarray:
         """A página rasterizada (RGBA, ``altura × largura × 4``) no dpi dela: a prévia e o teste de fidelidade."""
@@ -307,11 +352,11 @@ def _prefixo(unidade: str, maior: float) -> tuple[float, str]:
     return 10.0 ** -expoente, PREFIXO_DO_EXPOENTE[expoente]
 
 
-def _nome_da_grandeza(unidade: str, idioma: str, textos: dict) -> str:
-    nome = grandeza_da_unidade(unidade) if unidade else ""
+def _nome_da_grandeza(unidade: str, grandeza: str, idioma: str, textos: dict) -> str:
+    nome = grandeza or (grandeza_da_unidade(unidade) if unidade else "")
     if not nome:
         return textos["valor"]
-    return GRANDEZAS_EM_INGLES.get(nome, nome.capitalize()) if idioma == "en" else nome[0].upper() + nome[1:]
+    return GRANDEZAS_EM_INGLES.get(nome.lower(), nome) if idioma == "en" else nome[0].upper() + nome[1:]
 
 
 # ------------------------------------------------------------------ o plano de cada painel
@@ -323,6 +368,7 @@ class _Faixa:
     series: list[SerieDoTempo]
     unidade: str
     limites_y: tuple[float, float]
+    grandeza: str = ""
 
 
 @dataclass(eq=False)
@@ -330,7 +376,7 @@ class _Plano:
     """O que um painel vai desenhar, antes de haver eixos: o tipo, a janela do x (s ou Hz) e o resto do tipo."""
 
     painel: Painel
-    tipo: str                                 # "tempo", "espectro", "vazio", "depois" ou "sem_dados"
+    tipo: str                 # "tempo", "espectro", "vazio", "depois", "espectro_congelado" ou "sem_dados"
     janela: tuple[float, float] = (0.0, 1.0)
     faixas: list[_Faixa] = field(default_factory=list)
     espectros: list[SerieDoEspectro] = field(default_factory=list)
@@ -357,8 +403,19 @@ class _Plano:
         return None
 
 
+def vista_do_painel(painel: Painel, vistas: Mapping[str, VistaSalva]) -> VistaSalva | None:
+    """O que o painel desenha: a cópia congelada, ou a vista ligada (``None``: o painel vazio, ou a vista sumiu)."""
+    return painel.congelado or (vistas.get(painel.vista) if painel.vista else None)
+
+
+def _janela_da_vista(painel: Painel, vista: VistaSalva, dados: DadosDaFigura) -> tuple[float, float] | None:
+    """Os limites do x: os do painel ou, num painel ligado, os que a vista mostra agora (o congelado sem limites
+    próprios mostra tudo)."""
+    return painel.limites_x or (dados.janela(vista) if painel.congelado is None else None)
+
+
 def _plano(painel: Painel, vistas: Mapping[str, VistaSalva], dados: DadosDaFigura) -> _Plano:
-    vista = painel.congelado or (vistas.get(painel.vista) if painel.vista else None)
+    vista = vista_do_painel(painel, vistas)
     if vista is None:
         return _Plano(painel, "vazio")
     if vista.tipo == "tempo":
@@ -377,14 +434,16 @@ def _plano_do_tempo(painel: Painel, vista: VistaSalva, dados: DadosDaFigura) -> 
     if not por_faixa:
         return _Plano(painel, "sem_dados")
     todas = [s for series in por_faixa.values() for s in series]
-    janela = painel.limites_x or dados.janela(vista) or (
+    janela = _janela_da_vista(painel, vista, dados) or (
         min(s.t0 + s.inicio / s.taxa_hz for s in todas),
         max(s.t0 + (s.inicio + s.piramide.n_amostras - 1) / s.taxa_hz for s in todas))
     faixas = []
     for numero in sorted(por_faixa):
         series = por_faixa[numero]
-        unidades = {s.unidade for s in series}
-        faixas.append(_Faixa(series, unidades.pop() if len(unidades) == 1 else "", _limites_do_tempo(series, janela)))
+        unidades, grandezas = {s.unidade for s in series}, {s.grandeza for s in series}
+        unidade = next(iter(unidades)) if len(unidades) == 1 else ""
+        grandeza = next(iter(grandezas)) if len(unidades) == 1 and len(grandezas) == 1 else ""
+        faixas.append(_Faixa(series, unidade, _limites_do_tempo(series, janela), grandeza))
     if painel.limites_y and len(faixas) == 1:
         faixas[0].limites_y = painel.limites_y
     return _Plano(painel, "tempo", janela, faixas=faixas)
@@ -413,13 +472,15 @@ def _com_folga(mn: float, mx: float) -> tuple[float, float]:
 
 
 def _plano_do_espectro(painel: Painel, vista: VistaSalva, dados: DadosDaFigura) -> _Plano:
-    series = [s for s in (dados.espectro(vista, i) for i in range(len(vista.tracos))) if s is not None]
+    if painel.congelado is not None:
+        return _Plano(painel, "espectro_congelado")
+    series = list(dados.espectros(vista))
     if not series:
         return _Plano(painel, "sem_dados")
     log = series[0].frequencia_log
     f_min = min(s.desenho.f0 + (s.desenho.df if log else 0.0) for s in series)
     f_max = max(s.desenho.f0 + s.desenho.df * (len(s.desenho.niveis) - 1) for s in series)
-    janela = painel.limites_x or dados.janela(vista) or (f_min, f_max)
+    janela = _janela_da_vista(painel, vista, dados) or (f_min, f_max)
     limites_y = painel.limites_y
     if limites_y is None:
         mn, mx = math.inf, -math.inf
@@ -502,6 +563,7 @@ def desenhar(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFig
         eixos_x: dict[tuple, list] = {}
         eixos_y: dict[tuple, list] = {}
         curvas: list[_Curva] = []
+        eixos_do_painel: dict[str, list] = {}
         for plano in planos:
             p = plano.painel
             celula = grade[p.linha:p.linha + p.linhas, p.coluna:p.coluna + p.colunas]
@@ -524,13 +586,19 @@ def desenhar(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFig
                 eixos_y.setdefault(ky, []).append((p.coluna, eixos[0]))
             if rotulos[p.id]:
                 eixos[0].set_title(rotulos[p.id])
+            eixos_do_painel[p.id] = eixos
         _so_os_de_fora(eixos_x, eixos_y)
         # A segunda passada: com o leiaute feito, cada curva reduzida nas colunas dos pixels do eixo dela.
         mpl.draw_without_rendering()
         renderizador = canvas.get_renderer()
         for curva in curvas:
             _reduzir(curva, renderizador, exato=exato, todos=todos_os_pontos)
-    return PaginaDesenhada(mpl, rc)
+        altura = mpl.bbox.height
+        caixas = {}
+        for id_, eixos in eixos_do_painel.items():
+            uniao = Bbox.union([e.get_tightbbox(renderizador) for e in eixos])
+            caixas[id_] = (uniao.x0, altura - uniao.y1, uniao.x1, altura - uniao.y0)
+    return PaginaDesenhada(mpl, rc, caixas)
 
 
 def _eixos_das_faixas(mpl, celula, n: int, junto_x, junto_y) -> list:
@@ -586,7 +654,7 @@ def _desenhar_o_tempo(eixos: list, plano: _Plano, figura: Figura, textos: dict, 
             curvas.append(_Curva(linha, eixo, s.amostras, s.piramide, s.t0 + s.inicio / s.taxa_hz, 1.0 / s.taxa_hz,
                                  fator_x, fator_y, s.escala, s.deslocamento))
         eixo.set_ylim(y0 * fator_y, y1 * fator_y)
-        nome = _nome_da_grandeza(faixa.unidade, figura.idioma, textos)
+        nome = _nome_da_grandeza(faixa.unidade, faixa.grandeza, figura.idioma, textos)
         eixo.set_ylabel(f"{nome} ({prefixo}{faixa.unidade})" if faixa.unidade else nome)
         _numeros(eixo, figura.separador_decimal)
         if len(faixa.series) > 1:
