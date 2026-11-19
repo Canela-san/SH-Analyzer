@@ -97,6 +97,7 @@ class SaudeDaPlaca(QObject):
         self.relogio_acertado_em: float | None = None
         self.aviso_do_relogio = ""              # o relógio a cada conexão não deu (falta a senha, por exemplo)
         self._sessao = 0
+        self._reinicios = 0                        # os reinícios esperados desta conexão já vistos
         self._estado_da_conexao = conexao.estado
         self._falta_ler = self._falta_o_relogio = False
         self._senha_do_sudo: str | None = None
@@ -126,6 +127,7 @@ class SaudeDaPlaca(QObject):
         anterior, self._estado_da_conexao = self._estado_da_conexao, c.estado
         if c.estado == "conectada" and c.sessoes != self._sessao:
             self._sessao = c.sessoes                 # uma conexão nova: começa do que ela trouxe
+            self._reinicios = c.reinicios
             self._limpar()
             self.saude, self.conferida_em = c.estado_da_placa, time.time()
             self._falta_ler = True
@@ -133,6 +135,14 @@ class SaudeDaPlaca(QObject):
             self.mudou.emit()
         elif c.estado == "conectada" and anterior == "reconectando":
             self.saude, self.conferida_em = c.estado_da_placa, time.time()   # voltou de uma queda, com a saúde
+            if c.reinicios != self._reinicios:
+                # voltou do reinício pedido: um boot novo (o relógio da placa sem bateria se perdeu, o firmware e as
+                # capturas podem ter mudado). Lê tudo de novo e acerta o relógio, se a placa deixou.
+                self._reinicios = c.reinicios
+                self.relogio_acertado = self.relogio_acertado_em = None
+                self.aviso_do_relogio = ""
+                self._falta_ler = True
+                self._falta_o_relogio = c.conexao_ssh is not None and bool(c.lembrar_acertar_relogio())
             self.mudou.emit()
         elif c.estado in ("desconectada", "falhou", "bloqueada") and self._sessao:
             self._sessao = 0

@@ -17,8 +17,19 @@ nenhuma delas fala com o ``sh_placa`` sozinha. Tudo o que fala com a placa roda 
   saída para uma placa regravada: a próxima conexão mostra a impressão nova para conferir;
 * ``conectada``: com :attr:`estado_da_placa` (o ``estado`` do agente) e, logo depois, :attr:`enlace`;
 * ``reconectando``: a conexão caiu (o cabo USB com mau contato é o caso comum) e o serviço tenta de novo sozinho,
-  por um minuto, com a mesma chave e a mesma senha;
+  por um minuto, com a mesma chave e a mesma senha; ou a placa reinicia (a queda esperada: :attr:`queda_esperada` é
+  ``"reinicio"``) e o serviço espera ela voltar, por até quatro minutos;
+* ``desligando``: a placa pediu para desligar (a queda esperada ``"desligamento"``) e o serviço espera ela sumir da
+  rede; depois, ``desconectada`` com :attr:`desligada` (já pode tirar da tomada);
 * ``falhou``: não conectou, ou caiu e não voltou (:attr:`motivo`).
+
+**A queda esperada** (:meth:`esperar`, a F6.5): quem pede o reinício ou o desligamento avisa antes. A queda que vem
+não conta como do cabo (:attr:`quedas`). **No reinício**, a volta só vale com o boot novo (o ``boot_id`` do
+``estado``: a placa que ainda está descendo aceita conexões por um instante), e sai ``reiniciou`` (:attr:`reinicios`
+conta; a saúde lê tudo de novo e acerta o relógio, que a placa sem bateria perde). **No desligamento**, a placa só
+"sumiu" quando nem recusa a conexão (recusar é o kernel ainda de pé, desmontando o cartão): pelo USB, a interface
+some; na rede, ninguém responde. Aí sai ``desligou``. A queda que não vem no prazo (:data:`PRAZO_DA_QUEDA_S`) sai em
+``quedaNaoVeio``.
 
 **A primeira conexão** (:attr:`primeira_conexao`, logo depois de conectar): o que aconteceu (a impressão confirmada, a
 chave do aplicativo instalada, a senha padrão da imagem) e a pergunta do relógio, que :meth:`responder_relogio`
@@ -72,7 +83,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 ESTADOS = ("desconectada", "conectando", "confirmar_host", "pedir_senha", "bloqueada", "conectada", "reconectando",
-           "falhou")
+           "desligando", "falhou")
 ESPERANDO_O_USUARIO = ("confirmar_host", "pedir_senha")
 INTERVALO_DA_BUSCA_MS = 5_000
 INTERVALO_DA_BUSCA_CONECTADA_MS = 30_000
@@ -80,6 +91,20 @@ ESPERAS_DA_RECONEXAO_S = (1, 2, 3, 5, 5, 5, 8, 8, 10, 10)
 """As esperas antes de cada tentativa de reconectar: ~1 min ao todo (a placa que reiniciou leva uns 40 s para
 subir o SSH; o cabo que voltou, um segundo)."""
 ESPERA_AO_ENCERRAR_S = 3.0
+QUEDAS_ESPERADAS = ("reinicio", "desligamento")
+PRAZO_DA_QUEDA_S = 90
+"""Quanto a queda esperada pode demorar depois do aviso (o ``systemctl`` para os serviços antes de cortar o SSH)."""
+ESPERA_DO_REINICIO_S = 240
+"""Quanto a placa que reinicia pode demorar para voltar (a de verdade leva ~1 min: o u-boot, o kernel, o SSH e a rede
+pelo USB, que o computador configura de novo)."""
+INTERVALO_DO_REINICIO_S = 3.0
+ESPERA_DO_MESMO_BOOT_S = 60
+"""A placa que segue respondendo no mesmo boot por isto, depois da queda, não está reiniciando (a que desce para de
+responder em segundos): a queda era outra (o cabo), e a conexão volta sem o reinício."""
+ESPERA_DO_DESLIGAMENTO_S = 90
+"""Quanto a placa que desliga pode demorar para sumir da rede (o sistema desmonta o cartão antes)."""
+ESPERA_PELO_SALTO_S = 20
+"""Pelo salto, não dá para ver a placa sumir: espera-se isto, e o aviso pede para conferir os LEDs."""
 
 
 @dataclass(frozen=True)
@@ -152,6 +177,9 @@ class ConexaoDaPlaca(QObject):
     relogioRespondido = Signal(bool)                      # a resposta da primeira conexão (acertar a cada conexão?)
     _pediuConfirmacao = Signal(object, str, object)       # do laço: (destino, impressão, futuro)
     _caiu = Signal(object, str)                           # do laço: (conexão, motivo)
+    reiniciou = Signal()                                  # a placa voltou do reinício esperado (o boot novo)
+    desligou = Signal()                                   # a placa desligada sumiu da rede: pode tirar da tomada
+    quedaNaoVeio = Signal(str)                            # a queda esperada (o motivo) não veio, ou não terminou
 
     def __init__(self, servico: ServicoDaPlaca, *, descoberta: Descoberta | None = None, pasta: Path | None = None,
                  cofre: Any = None, parent: QObject | None = None):
@@ -178,6 +206,11 @@ class ConexaoDaPlaca(QObject):
         self.primeira_conexao: PrimeiraConexao | None = None
         self.conectada_em: float | None = None
         self.sessoes = 0                                  # quantas conexões deram certo (a saúde vê uma nova)
+        self.queda_esperada: str | None = None            # QUEDAS_ESPERADAS: o reinício ou o desligamento pedido
+        self.reinicios = 0                                # os reinícios esperados que voltaram (a saúde lê de novo)
+        self.desligada = False                            # a última conexão acabou com a placa desligada
+        self.aviso_do_desligamento = ""                   # pelo salto: não deu para ver a placa sumir
+        self._boot_antes_da_queda: str | None = None
         self.placas: list[PlacaVista] = []
         self.falhas_da_busca: list[str] = []
         self.procurando = False
@@ -192,6 +225,9 @@ class ConexaoDaPlaca(QObject):
         self._busca = QTimer(self)
         self._busca.setSingleShot(True)
         self._busca.timeout.connect(self.procurar)
+        self._prazo_da_queda = QTimer(self)
+        self._prazo_da_queda.setSingleShot(True)
+        self._prazo_da_queda.timeout.connect(self._a_queda_nao_veio)
         self._pediuConfirmacao.connect(self._ao_pedir_confirmacao)
         self._caiu.connect(self._ao_cair)
 
@@ -400,6 +436,7 @@ class ConexaoDaPlaca(QObject):
         self.bloqueio = None
         self.impressao_pedida = self.destino_pedido = None
         self.primeira_conexao = None
+        self.desligada, self.aviso_do_desligamento = False, ""
         self._mudar("conectando")
         if tentativa.destino is None:
             self._chamada_de_conexao = self.servico.chamar("conectar ao simulador", self._abrir_simulador, tentativa,
@@ -652,14 +689,137 @@ class ConexaoDaPlaca(QObject):
         sessao = self._sessao
         if sessao is None or sessao.conexao is not conexao or self.estado != "conectada":
             return
-        sessao.quedas += 1
+        esperada = self.queda_esperada
+        self._prazo_da_queda.stop()
+        if esperada is None:
+            sessao.quedas += 1
         self.motivo = motivo
         if self._chamada_do_enlace is not None:
             self._chamada_do_enlace.cancelar()
             self._chamada_do_enlace, self.medindo_enlace = None, False
+        if esperada == "desligamento":
+            self._mudar("desligando")
+            self._chamada_de_reconexao = self.servico.chamar("esperar a placa desligar", self._esperar_sumir, sessao,
+                                                             ao_terminar=self._sumiu)
+            return
         self._mudar("reconectando")
-        self._chamada_de_reconexao = self.servico.chamar("reconectar", self._reconectar, sessao,
-                                                         ao_terminar=self._reconectou)
+        if esperada == "reinicio":
+            self._chamada_de_reconexao = self.servico.chamar("esperar a placa reiniciar", self._voltar_do_reinicio,
+                                                             sessao, self._boot_antes_da_queda,
+                                                             ao_terminar=self._voltou_do_reinicio)
+        else:
+            self._chamada_de_reconexao = self.servico.chamar("reconectar", self._reconectar, sessao,
+                                                             ao_terminar=self._reconectou)
+
+    # ------------------------------------------------------------------ a queda esperada (o reinício, o desligamento)
+
+    def esperar(self, motivo: str | None) -> None:
+        """Avisa que a próxima queda é esperada (``"reinicio"`` ou ``"desligamento"``, :data:`QUEDAS_ESPERADAS`):
+        quem pede chama isto antes de mandar o comando. ``None`` desfaz o aviso (o comando falhou antes)."""
+        if motivo is not None and motivo not in QUEDAS_ESPERADAS:
+            raise ValueError(f"queda esperada desconhecida: {motivo!r}")
+        if motivo is not None and self.estado != "conectada":
+            return
+        self.queda_esperada = motivo
+        self._boot_antes_da_queda = self.estado_da_placa.boot if motivo and self.estado_da_placa else None
+        if motivo is None:
+            self._prazo_da_queda.stop()
+        else:
+            self._prazo_da_queda.start(PRAZO_DA_QUEDA_S * 1000)
+        self.mudou.emit()
+
+    def _a_queda_nao_veio(self) -> None:
+        if self.queda_esperada is None or self.estado != "conectada":
+            return
+        motivo, self.queda_esperada = self.queda_esperada, None
+        self.mudou.emit()
+        self.quedaNaoVeio.emit(motivo)
+
+    async def _voltar_do_reinicio(self, sessao: _Sessao, boot_antes: str | None) -> tuple[EstadoDaPlaca, bool]:
+        """Espera a placa voltar do reinício, tentando a cada :data:`INTERVALO_DO_REINICIO_S` por até
+        :data:`ESPERA_DO_REINICIO_S`: ``(estado, True)``. Vale só a volta com o boot novo (o ``boot_id``); a placa que
+        ainda está descendo (o mesmo boot) é largada e esperada de novo, e a que segue no mesmo boot por
+        :data:`ESPERA_DO_MESMO_BOOT_S` não reiniciou: ``(estado, False)``. Sem o ``boot_id``, vale a primeira volta."""
+        laco = asyncio.get_running_loop()
+        fim = laco.time() + ESPERA_DO_REINICIO_S
+        mesmo_boot_desde: float | None = None
+        ultimo: Exception | None = None
+        while laco.time() < fim:
+            await asyncio.sleep(INTERVALO_DO_REINICIO_S)
+            try:
+                await sessao.conexao.conectar()
+                estado = await sessao.cliente.saude()
+            except (ChaveDoHostTrocada, ErroDeAutenticacao, HostNaoConfirmado):
+                raise
+            except ErroDeConexao as e:
+                ultimo, mesmo_boot_desde = e, None
+                await sessao.conexao.fechar()
+                continue
+            if boot_antes is None or estado.boot is None or estado.boot != boot_antes:
+                return estado, True
+            mesmo_boot_desde = laco.time() if mesmo_boot_desde is None else mesmo_boot_desde
+            if laco.time() - mesmo_boot_desde >= ESPERA_DO_MESMO_BOOT_S:
+                return estado, False
+            ultimo = ErroDeConexao("a placa ainda não tinha reiniciado (o mesmo boot)")
+            await sessao.conexao.fechar()
+        raise ErroDeConexao(f"a placa não voltou do reinício em {ESPERA_DO_REINICIO_S // 60} min ({ultimo}). "
+                            "A serial mostra o boot dela (a Manutenção, Resgate)")
+
+    async def _esperar_sumir(self, sessao: _Sessao) -> bool | None:
+        """Depois da queda do desligamento, espera a placa sumir: ``True`` quando sumiu, ``False`` se ainda responde
+        depois de :data:`ESPERA_DO_DESLIGAMENTO_S`, ``None`` pelo salto (não dá para ver: espera
+        :data:`ESPERA_PELO_SALTO_S`). A placa simulada diz que desligou; a de verdade sumiu quando duas tentativas
+        seguidas na porta do SSH nem são recusadas (recusar é o kernel ainda de pé)."""
+        if sessao.conexao is not None:
+            await sessao.conexao.fechar()
+        laco = asyncio.get_running_loop()
+        fim = laco.time() + ESPERA_DO_DESLIGAMENTO_S
+        if sessao.simulador is not None:
+            while laco.time() < fim:
+                if sessao.simulador.desligada:
+                    return True
+                await asyncio.sleep(0.2)
+            return False
+        destino = sessao.tentativa.destino
+        if destino is None or destino.salto is not None:
+            await asyncio.sleep(ESPERA_PELO_SALTO_S)
+            return None
+        sem_resposta = 0
+        while laco.time() < fim:
+            try:
+                _, escritor = await asyncio.wait_for(asyncio.open_connection(destino.host, destino.porta), 2.0)
+                escritor.close()
+                sem_resposta = 0                     # o SSH ainda aceita: o sistema não parou
+            except ConnectionRefusedError:
+                sem_resposta = 0                     # o kernel recusa: ainda de pé
+            except (OSError, asyncio.TimeoutError):
+                sem_resposta += 1                    # a interface sumiu, ou ninguém responde
+                if sem_resposta >= 2:
+                    return True
+            await asyncio.sleep(1.0)
+        return False
+
+    def _sumiu(self, chamada: Chamada) -> None:
+        if chamada is not self._chamada_de_reconexao:
+            return
+        self._chamada_de_reconexao = None
+        if chamada.estado == "cancelada":
+            return
+        self._largar()
+        if chamada.estado == "concluida" and chamada.resultado is not False:
+            self.desligada, self.motivo = True, ""
+            self.aviso_do_desligamento = "" if chamada.resultado else (
+                "A placa está pelo salto: daqui não dá para ver quando ela some. Espere os LEDs dela apagarem antes "
+                "de tirar da tomada.")
+            self._mudar("desconectada")
+            self.desligou.emit()
+        else:
+            self.motivo = (chamada.erro if chamada.estado == "falhou" else
+                           f"a conexão caiu, mas a placa ainda responde depois de {ESPERA_DO_DESLIGAMENTO_S} s: o "
+                           "desligamento não terminou. Não a tire da tomada ainda")
+            self._mudar("falhou")
+            self.quedaNaoVeio.emit("desligamento")
+        self.placasMudaram.emit()
 
     async def _reconectar(self, sessao: _Sessao) -> EstadoDaPlaca:
         """Tenta de novo, com esperas crescentes, até ~1 min. A chave de host trocada e a autenticação recusada param
@@ -678,16 +838,32 @@ class ConexaoDaPlaca(QObject):
         total = sum(ESPERAS_DA_RECONEXAO_S)
         raise ErroDeConexao(f"a conexão caiu e não voltou em {total} s ({ultimo})")
 
-    def _reconectou(self, chamada: Chamada) -> None:
+    def _voltou_do_reinicio(self, chamada: Chamada) -> None:
+        if chamada.estado == "concluida":
+            estado, reiniciou = chamada.resultado
+            self._reconectou(chamada, estado=estado, reiniciou=reiniciou)
+        else:
+            self._reconectou(chamada)
+
+    def _reconectou(self, chamada: Chamada, *, estado: EstadoDaPlaca | None = None,
+                    reiniciou: bool | None = None) -> None:
+        """A volta da queda (``reiniciou``: ``None`` na queda do cabo; no reinício esperado, se o boot é novo)."""
         if chamada is not self._chamada_de_reconexao:
             return
         self._chamada_de_reconexao = None
         if chamada.estado == "cancelada":
             return
+        reinicio, self.queda_esperada = self.queda_esperada == "reinicio", None
         if chamada.estado == "concluida":
-            self.estado_da_placa = chamada.resultado
+            self.estado_da_placa = estado if estado is not None else chamada.resultado
             self.motivo = ""
+            if reiniciou:
+                self.reinicios += 1
             self._mudar("conectada")
+            if reiniciou:
+                self.reiniciou.emit()
+            elif reinicio:
+                self.quedaNaoVeio.emit("reinicio")       # voltou no mesmo boot: a placa não reiniciou
             return
         sessao, self._sessao = self._sessao, None
         if sessao is not None:
@@ -700,6 +876,8 @@ class ConexaoDaPlaca(QObject):
         else:
             self.motivo = chamada.erro
             self._mudar("falhou")
+        if reinicio:
+            self.quedaNaoVeio.emit("reinicio")
         self.placasMudaram.emit()
 
     # ------------------------------------------------------------------ desconectar
@@ -760,6 +938,8 @@ class ConexaoDaPlaca(QObject):
         sessao, self._sessao = self._sessao, None
         if sessao is not None and fechar:
             self._fechar_em_segundo_plano(sessao)
+        self._prazo_da_queda.stop()
+        self.queda_esperada = self._boot_antes_da_queda = None
         self.estado_da_placa = self.enlace = self.autenticada_com = self.conectada_em = None
         self.impressao_pedida = self.destino_pedido = None
         self.medindo_enlace, self.erro_do_enlace = False, ""
