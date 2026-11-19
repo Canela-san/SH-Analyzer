@@ -213,6 +213,7 @@ def test_um_servico_a_senha_e_a_internet_pela_tela(qtbot, abrir):
     esperar_a_leitura(qtbot, area)
     pagina = area.manutencao.sistema_
     assert "ssh.service" not in pagina.servicos.botoes                    # o necessário não tem botão
+    assert "cloud9.socket" in pagina.servicos.botoes and "cloud9.service" not in pagina.servicos.botoes
     pagina.servicos.botoes["bonescript-autorun.service"].click()
     assert area.manutencao.dialogo.confirmar.text() == "Desligar"
     confirmar(qtbot, area)

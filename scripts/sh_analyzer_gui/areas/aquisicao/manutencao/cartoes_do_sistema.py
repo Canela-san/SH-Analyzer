@@ -164,8 +164,11 @@ class CartaoDosServicos(_Cartao):
     def atualizar(self) -> None:
         self._limpar()
         self.botoes = {}
+        sockets = {s.get("unidade", "").removesuffix(".socket") for s in self.sistema.servicos
+                   if s.get("unidade", "").endswith(".socket") and s.get("ativo") is not None}
         for s in self.sistema.servicos:
             unidade = s.get("unidade") or ""
+            pelo_socket = unidade.endswith(".service") and unidade.removesuffix(".service") in sockets
             if s.get("ativo") is None:
                 continue
             ativo = s.get("ativo") == "active"
@@ -176,7 +179,9 @@ class CartaoDosServicos(_Cartao):
             if s.get("memoria_kib"):
                 estado.append(formatar_bytes(s["memoria_kib"] * 1024))
             botao = None
-            if s.get("papel") == "opcional" and no_boot in ("enabled", "disabled"):
+            if pelo_socket:
+                estado.append(traduzir("aberto pelo {}.socket").format(unidade.removesuffix(".service")))
+            elif s.get("papel") == "opcional" and no_boot in ("enabled", "disabled"):
                 ligar = not ativo and no_boot == "disabled"
                 botao = Botao(traduzir("Ligar…") if ligar else traduzir("Desligar…"), "secundario")
                 botao.setObjectName(f"{'ligar' if ligar else 'desligar'}_{unidade}")
