@@ -472,3 +472,31 @@ def test_a_placa_simulada_que_para_leva_a_captura_no_cartao_junto(tmp_path):
     else:
         os.kill(pid, 9)
         pytest.fail("a captura no cartão seguiu rodando depois de a placa simulada parar")
+
+
+def test_o_sudo_em_segundo_plano_de_um_shell_que_saiu_pede_a_senha(tmp_path):
+    """Como na placa de verdade (19/11/2026): sem terminal, a credencial do sudo é do processo pai, conferido na hora.
+    Um ``sudo -n … &`` cujo shell sai logo depois já é do init e pede a senha; o root que destaca
+    (``sudo -n sh -c '… &'``) não depende disso."""
+    from sh_placa.correcoes import com_sudo
+
+    async def cenario():
+        async with ServidorDoSimulador(tmp_path / "placa", "normal", vazao_bytes_s=None) as placa:
+            async with entrar(placa) as c:
+                for roteiro in (
+                        "sudo -n setsid sh -c 'sleep 0.3; touch \"$HOME/fundo\"' </dev/null 2>\"$HOME/fundo.erro\" "
+                        ">/dev/null &",
+                        "sudo -n sh -c 'setsid sh -c \"sleep 0.3; touch $HOME/root\" </dev/null >/dev/null 2>&1 &'"):
+                    r = await c.executar(com_sudo("true\n" + roteiro + "\necho ok"),
+                                         entrada=placa.senha_do_sudo + "\n")
+                    assert r.codigo == 0
+                for _ in range(50):
+                    if (placa.home / "root").exists() and (placa.home / "fundo.erro").stat().st_size:
+                        break
+                    await asyncio.sleep(0.1)
+                await asyncio.sleep(0.5)
+                return placa.home
+
+    casa = asyncio.run(cenario())
+    assert (casa / "root").exists() and not (casa / "fundo").exists()
+    assert "a password is required" in (casa / "fundo.erro").read_text()
