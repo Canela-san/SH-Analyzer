@@ -294,6 +294,9 @@ class JanelaPrincipal(QMainWindow):
                    icone="camadas", da_analise=True).triggered.connect(lambda: self.area.abrir_analise("espectrograma"))
         self._acao("harmonicos", self.tr("Abrir os harmônicos da vista"), atalho="Ctrl+Shift+H", icone="pulso",
                    da_analise=True).triggered.connect(lambda: self.area.abrir_analise("harmonicos"))
+        self._acao("alinhar", self.tr("Alinhar o traço selecionado a outro…"), icone="relogio",
+                   dica=self.tr("O deslocamento no tempo que alinha o traço a outro da vista (TR-07)"),
+                   da_analise=True).triggered.connect(lambda: self.area.alinhar())
         # A grade das vistas (AN-09): as disposições, uma de cada vez, e os eixos ligados entre as células.
         self.grupo_das_disposicoes = QActionGroup(self)
         for d in DISPOSICOES:

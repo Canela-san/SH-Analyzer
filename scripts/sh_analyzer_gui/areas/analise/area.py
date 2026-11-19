@@ -8,6 +8,7 @@ mexe mais na tela.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import supraharmonicos.api as api
@@ -20,16 +21,18 @@ from ...componentes.avisos import ListaDeAvisos
 from ...componentes.grade_de_vistas import CELULAS
 from ...componentes.numeros import formatar_bytes, formatar_si
 from ...componentes.toast import Toast
+from ...dados import alinhamento as al
 from ...dados import exportar_dados as ed
 from ...dados.espectros import OPCOES_DO_TIPO
 from ...dados.proveniencia import dos_dados
 from ...dados.receita import ReceitaDoTraco
-from ...modelo.comandos import AdicionarTraco, AdicionarVista, RemoverFonte, RemoverTracos, RemoverVista
+from ...modelo.comandos import AdicionarTraco, AdicionarVista, MudarTracos, RemoverFonte, RemoverTracos, RemoverVista
 from ...modelo.objetos import FonteDoProjeto, Projeto, Traco, Vista
 from ...modelo.persistencia import fontes_da_proveniencia
-from ...servicos.medidas import PedidoDeMedida, ServicoDeMedidas
+from ...servicos.medidas import PedidoDeMedida, ServicoDeMedidas, valores_no_trecho
 from ...tema.aplicar import aparencia
 from ...tema.icones import IconeDoTema, icone
+from .alinhar import DialogoDeAlinhar
 from .arvore import PainelDoProjeto
 from .exportar_dados import NOMES_DAS_REGIOES, ColetaDaVista, DialogoDeExportarDados, PedidoDeDados
 from .inspetor import TEXTOS_DA_INTEGRIDADE, Inspetor
@@ -74,6 +77,8 @@ class AreaDeAnalise(QObject):
         painel.fecharFontePedido.connect(self.fechar_fonte)
         painel.notaAtivada.connect(self.abrir_no_editor)
         inspetor.do_caderno.abrirPedido.connect(self.abrir_no_editor)
+        inspetor.do_traco.alinharPedido.connect(self.alinhar)
+        self.dialogo_de_alinhar: DialogoDeAlinhar | None = None
         self.abrir_url = QDesktopServices.openUrl            # os testes trocam por um que não abre nada
         aparencia().mudou.connect(self._estado_da_ativa)      # a taxa e a duração, com o separador de agora
 
@@ -115,6 +120,101 @@ class AreaDeAnalise(QObject):
             widget.deleteLater()
         for i, vista in enumerate(self.projeto.vistas):
             self._vista_entrou(vista, i)
+
+    # ------------------------------------------------------------------ alinhar (TR-07)
+
+    def alinhar(self, traco: Traco | None = None) -> DialogoDeAlinhar | None:
+        """O "Alinhar…": o diálogo que mede o atraso de ``traco`` (sem ele, o selecionado na vista aberta) em relação
+        a outro traço da vista de tempo dele, e o "Aplicar" muda o deslocamento (um passo de desfazer)."""
+        if traco is None:
+            selecionados = self.janela.selecao.tracos if self.janela.selecao is not None else ()
+            traco = selecionados[-1] if len(selecionados) == 1 else None
+        vista = next((v for v in self.projeto.vistas if traco is not None and traco in v.tracos), None)
+        widget = self.widget_da_vista(vista) if vista is not None else None
+        if not isinstance(widget, VistaDeTempo):
+            return None
+        presentes = [t for t in vista.tracos
+                     if t is not traco and t.receita.visivel and self._fonte_presente(t.receita.fonte)]
+        if self.dialogo_de_alinhar is not None and isValid(self.dialogo_de_alinhar):
+            self.dialogo_de_alinhar.close()
+        dialogo = DialogoDeAlinhar(traco, presentes, lambda: widget.regiao() if isValid(widget) else None,
+                                   lambda *a: self._medir_o_atraso(widget, traco, *a), self.janela)
+        widget.regiaoMudou.connect(dialogo.pedir)
+        dialogo.finished.connect(lambda _r: isValid(widget) and widget.regiaoMudou.disconnect(dialogo.pedir))
+        dialogo.accepted.connect(lambda: self._aplicar_o_alinhamento(dialogo))
+        self.dialogo_de_alinhar = dialogo
+        dialogo.open()
+        return dialogo
+
+    def _fonte_presente(self, fonte_id: str) -> bool:
+        try:
+            return not self.projeto.fonte(fonte_id).esta_ausente
+        except KeyError:
+            return False
+
+    def _medir_o_atraso(self, widget: VistaDeTempo, traco: Traco, metodo: str, referencia: Traco, busca: float,
+                        ao_terminar):
+        """A tarefa que lê os dois trechos (o da referência; o do traço, com a busca dos dois lados) e mede o atraso.
+        O resultado é um ``Alinhamento`` ou o motivo (texto) de não haver um."""
+        trecho = widget.regiao()
+        problema = None
+        if trecho is None:
+            problema = self.tr("a vista ainda não tem um trecho desenhado")
+        elif widget.tem_tempo_proprio(traco) or widget.tem_tempo_proprio(referencia):
+            problema = self.tr("um dos traços tem o tempo próprio (a escala do tempo destravada): trave a escala do "
+                               "tempo para alinhar")
+        planos, encolhida = [], ""
+        if problema is None:
+            a, b, _ = trecho
+            # A referência só onde o traço tem dados dos dois lados da busca (e onde ela mesma tem): com a captura
+            # inteira à vista, ela encolhe a busca de cada lado.
+            def tempo_de(t):
+                canal = self.projeto.fonte(t.receita.fonte).canal(t.receita.canal)
+                return t.receita.deslocamento_s, t.receita.deslocamento_s + len(canal.amostras) / canal.taxa_hz
+
+            (r0, r1), (t0, t1) = tempo_de(referencia), tempo_de(traco)
+            a2, b2 = max(a, r0, t0 + busca), min(b, r1, t1 - busca)
+            if b2 - a2 <= 0:
+                problema = self.tr("o trecho não cabe na busca: os dois traços precisam de dados no trecho, e o traço "
+                                   "também {} para cada lado (diminua a busca)").format(formatar_si(busca, "s", 3))
+            elif (a2, b2) != (a, b):
+                encolhida = self.tr("a referência foi lida de {} a {}, onde o traço tem dados para a busca dos dois "
+                                    "lados").format(formatar_si(a2, "s", 6), formatar_si(b2, "s", 6))
+            a, b = a2, b2
+        if problema is None:
+            for t, inicio, fim in ((referencia, a, b), (traco, a - busca, b + busca)):
+                fonte = self.projeto.fonte(t.receita.fonte)
+                taxa = fonte.canal(t.receita.canal).taxa_hz
+                if (fim - inicio) * taxa > al.MAXIMO_DE_AMOSTRAS:
+                    problema = self.tr("trecho grande demais ({} amostras): aproxime o zoom, use os cursores ou "
+                                       "diminua a busca").format(int((fim - inicio) * taxa))
+                    break
+                planos.append((fonte, t.receita, inicio, fim, self.servico_de_medidas._contexto(fonte, t.receita)))
+
+        def trabalho(progresso, cancelado):
+            if problema is not None:
+                return problema
+            try:
+                trechos = [al.Trecho(*valores_no_trecho(*plano)) for plano in planos]
+                feito = al.alinhar(metodo, *trechos)
+            except (al.AlinhamentoImpossivel, api.ErroSHAN) as e:
+                return str(e)
+            if encolhida:
+                feito = replace(feito, aviso="; ".join(x for x in (feito.aviso, encolhida) if x))
+            return feito
+
+        return self.janela.tarefas.iniciar(self.tr("Alinhar"), trabalho, "alinhar", mostrar=False,
+                                           ao_terminar=ao_terminar)
+
+    def _aplicar_o_alinhamento(self, dialogo: DialogoDeAlinhar) -> None:
+        novo, referencia = dialogo.novo_deslocamento(), dialogo.referencia_escolhida()
+        traco = dialogo.traco
+        if novo is None or referencia is None or not any(traco in v.tracos for v in self.projeto.vistas):
+            return
+        comando = MudarTracos([traco], texto=self.tr("Alinhar {} a {}").format(traco.nome, referencia.nome),
+                              deslocamento_s=novo)
+        if comando.muda_algo:
+            self.projeto.pilha.push(comando)
 
     # ------------------------------------------------------------------ a grade (AN-09)
 

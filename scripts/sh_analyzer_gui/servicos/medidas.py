@@ -170,3 +170,22 @@ def medir_pontos(captura, receita, indices, contexto=None, n_amostras: int | Non
                                            contexto).valores[0])
 
     return [valor(i) * receita.ganho + receita.offset if i >= 0 else math.nan for i in indices]
+
+
+def valores_no_trecho(fonte, receita, inicio: float, fim: float, contexto=None):
+    """Os valores do traço (com a cadeia, o ganho e o offset) entre ``inicio`` e ``fim`` (s, no tempo da vista, com
+    o deslocamento do traço), o tempo na vista da primeira amostra e a taxa: ``(valores, t0, taxa)``. ``contexto``:
+    o da cadeia (``None`` sem cadeia). A primeira amostra é a que está em ``inicio`` ou logo depois, e a última a que
+    está em ``fim`` ou logo antes; fora da captura, o trecho encolhe (pode ficar vazio)."""
+    from supraharmonicos.api import sinal_do_canal
+
+    canal = fonte.canal(receita.canal)
+    n, taxa, deslocamento = len(canal.amostras), canal.taxa_hz, receita.deslocamento_s
+    i0 = min(max(math.ceil((inicio - deslocamento) * taxa - 1e-9), 0), n)
+    i1 = min(max(math.floor((fim - deslocamento) * taxa + 1e-9) + 1, i0), n)
+    captura = fonte.fonte.captura
+    if contexto is None or receita.cadeia.vazia:
+        valores = sinal_do_canal(captura, receita.canal, i0, i1)
+    else:
+        valores = receita.cadeia.previa(mat.leitor_do_canal(captura, receita.canal), n, i0, i1, contexto).valores
+    return valores * receita.ganho + receita.offset, deslocamento + i0 / taxa, taxa

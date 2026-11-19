@@ -16,7 +16,7 @@ import datetime
 from pathlib import Path
 
 import supraharmonicos.api as api
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -68,6 +68,8 @@ def _comum(valores):
 
 
 class InspetorDoTraco(QScrollArea):
+    alinharPedido = Signal(object)              # o traço: o "Alinhar…" (a Análise abre o diálogo, TR-07)
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("inspetor_do_traco")
@@ -185,9 +187,21 @@ class InspetorDoTraco(QScrollArea):
         self.deslocamento = CampoComUnidade("s", 0.0, digitos=5)
         self.deslocamento.setObjectName("campo_deslocamento")
         self.deslocamento.valorMudou.connect(lambda v: self._mudar(self.deslocamento, deslocamento_s=v))
+        self.alinhar = QToolButton()
+        self.alinhar.setObjectName("botao_alinhar")
+        self.alinhar.setText(self.tr("Alinhar…"))
+        self.alinhar.setToolTip(self.tr("O deslocamento que alinha este traço a outro da vista, pela correlação "
+                                        "cruzada ou pelo cruzamento por zero (Alt + arrastar o traço também o anda)"))
+        self.alinhar.clicked.connect(lambda: self.tracos and self.alinharPedido.emit(self.tracos[0]))
+        deslocamento = QWidget()
+        linha = QHBoxLayout(deslocamento)
+        linha.setContentsMargins(0, 0, 0, 0)
+        linha.setSpacing(6)
+        linha.addWidget(self.deslocamento, 1)
+        linha.addWidget(self.alinhar)
         coluna.addWidget(self._secao(self.tr("Escala e tempo"), [
             (self.tr("Faixa"), self.faixa), (self.tr("Unidade"), unidade), (self.tr("Ganho"), ganho),
-            (self.tr("Offset"), self.offset), (self.tr("Deslocamento"), self.deslocamento)]))
+            (self.tr("Offset"), self.offset), (self.tr("Deslocamento"), deslocamento)]))
 
         # Processamento
         self.processamento = SecaoDeProcessamento()
@@ -342,6 +356,7 @@ class InspetorDoTraco(QScrollArea):
         self.unidade.definir(unidade)
         self.unidade.definir_dica(self._dica_da_unidade(unidade, do_canal))
         self.dois_pontos.setEnabled(do_canal is not None)
+        self.alinhar.setEnabled(len(tracos) == 1)
         self.offset.unidade = unidade or ""
         self.ganho.unidade = unidade_do_ganho(unidade or "", do_canal or "")
         for campo, valor in ((self.ganho, _comum(r.ganho for r in receitas)),

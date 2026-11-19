@@ -142,6 +142,7 @@ class VistaDeTempo(QWidget):
         coluna.addWidget(self.vazio, 1)
         coluna.addWidget(self.minimapa)
 
+        self._arrasto: tuple | None = None     # Alt + arrastar: o traço, o deslocamento no começo e a marca do gesto
         self._parada = QTimer(self)
         self._parada.setSingleShot(True)
         self._parada.setInterval(PARADA_DO_HISTORICO_MS)
@@ -429,6 +430,7 @@ class VistaDeTempo(QWidget):
         faixa.ligada_a = None
         caixa.clicada.connect(self._clicou)
         caixa.centroPedido.connect(self._centro_pedido)
+        caixa.arrastoComAlt.connect(lambda x0, y0, x, fase, c=caixa: self._arrastar_no_tempo(c, x0, y0, x, fase))
         caixa.caixaUsada.connect(lambda: self.acao_caixa.setChecked(False))
         caixa.menuPedido.connect(lambda x, y, posicao, c=caixa: self._menu(c, x, y, posicao))
         caixa.armar_zoom_em_caixa(self.acao_caixa.isChecked())
@@ -1093,6 +1095,28 @@ class VistaDeTempo(QWidget):
 
     def _clicou(self, x: float, y: float, modificadores) -> None:
         self.tracoClicado.emit(self.traco_em(self.sender(), x, y), modificadores)
+
+    # ------------------------------------------------------------------ Alt + arrastar (TR-07)
+
+    def _arrastar_no_tempo(self, caixa, x0: float, y0: float, x: float, fase: str) -> None:
+        """Alt + arrastar anda no tempo o traço em que o arrasto começou: o deslocamento dele segue o mouse, e o gesto
+        inteiro é um passo de desfazer. Começado fora de um traço, nada anda."""
+        if fase == "inicio":
+            traco = self.traco_em(caixa, x0, y0)
+            self._arrasto = None
+            if traco is not None and not self.tem_tempo_proprio(traco):
+                self._arrasto = (traco, traco.receita.deslocamento_s, object())
+        if self._arrasto is None:
+            return
+        traco, de, marca = self._arrasto
+        if fase == "fim":
+            self._arrasto = None
+        if traco not in self.vista.tracos:
+            return
+        comando = MudarTracos([traco], juntar=marca, texto=self.tr("Deslocar {} no tempo").format(traco.nome),
+                              deslocamento_s=de + (x - x0))
+        if comando.muda_algo:
+            self.projeto.pilha.push(comando)
 
     # ------------------------------------------------------------------ o botão do meio
 

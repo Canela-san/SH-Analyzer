@@ -284,11 +284,13 @@ class CaixaDaFaixa(CaixaComEscalas):
     clicada = Signal(float, float, object)
     centroPedido = Signal(float, float)             # o clique rápido do meio: onde foi
     caixaUsada = Signal()                           # um zoom em caixa terminou (quem armou desarma)
+    arrastoComAlt = Signal(float, float, float, str)  # Alt + arrastar: x e y do começo, x de agora, a fase (TR-07)
 
     def __init__(self):
         super().__init__(enableMenu=False)
         self.setMouseEnabled(x=True, y=False)          # arrastar anda no tempo; o Y fica onde está
         self.zoom_em_caixa = False
+        self._com_alt = False                          # um Alt + arrastar em curso (o Alt pode ser solto no meio)
         self.aplicar_tema(aparencia().tema)
 
     def aplicar_tema(self, t: Tema) -> None:
@@ -369,6 +371,17 @@ class CaixaDaFaixa(CaixaComEscalas):
         self.translateBy(y=zero - (y0 + y1) / 2)
 
     def mouseDragEvent(self, evento, axis=None):
+        if axis is None and evento.button() == Qt.MouseButton.LeftButton and (
+                self._com_alt or (evento.isStart() and evento.modifiers()
+                                                     & Qt.KeyboardModifier.AltModifier)):
+            # Alt + arrastar um traço o anda no tempo (quem ouve decide qual traço e muda o deslocamento dele).
+            evento.accept()
+            comeco = self.mapSceneToView(evento.buttonDownScenePos())
+            agora = self.mapSceneToView(evento.scenePos())
+            fase = "inicio" if evento.isStart() else "fim" if evento.isFinish() else "meio"
+            self._com_alt = not evento.isFinish()
+            self.arrastoComAlt.emit(comeco.x(), comeco.y(), agora.x(), fase)
+            return
         if self.zoom_em_caixa and axis is None and evento.button() == Qt.MouseButton.LeftButton:
             evento.accept()
             if evento.isFinish():
