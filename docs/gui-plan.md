@@ -786,7 +786,7 @@ unidade do traço; a escrita põe o prefixo só onde ele cabe (1,5 mV, mas 23,5 
 | **XY** | Um traço contra outro (V × I, laços de histerese), com a persistência dos ciclos | v1.0 |
 | **Histograma** | A distribuição das amostras, a ocupação da faixa do ADC e a saturação | v1.0 |
 | **Instrumento** | O modo osciloscópio (AN-08) | v1.0 |
-| **Perfil de sonda** | O Bode do perfil (ES-07) | v0.11 |
+| **Perfil de sonda** | O Bode do perfil (ES-07): os perfis em uso, os da pasta das sondas e os abertos, a curva que a correção divide, as barras de erro, a faixa válida e qual perfil cada canal usa e por quê. Ainda não vira figura | v0.11 (feita na F5.9) |
 | **Métricas de bancada** | Os cartões do `medir_captura` | v1.0 |
 
 ### 9.6 Comparar
@@ -794,7 +794,12 @@ unidade do traço; a escrita põe o prefixo só onde ele cabe (1,5 mV, mas 23,5 
 - **Sobrepor capturas diferentes,** com o deslocamento no tempo e o alinhamento automático (TR-07).
 - **A diferença A − B** como traço (TR-05). O sinal da diferença usa a paleta divergente (seção 12.3).
 - **Dobrar por ciclo:** sobrepõe N ciclos sincronizados pelo cruzamento de zero, para ver a variação ciclo a ciclo (a persistência do mockup A2).
-- **Vistas lado a lado ou em grade,** com os eixos ligados (AN-09).
+- **Vistas lado a lado ou em grade,** com os eixos ligados (AN-09). Feito na F5.9: o centro da Análise em uma,
+  duas (lado a lado ou empilhadas), três (uma e duas) ou quatro (2 × 2) células; a aba escolhida é a célula ativa (a
+  do inspetor e das medidas); as vistas de tempo da grade andam juntas no tempo, e as de espectro na frequência (em
+  Hz); a disposição e as vistas de cada célula voltam com o projeto. O alinhamento (TR-07) mede o atraso nas amostras,
+  pela correlação cruzada (refinada abaixo de uma amostra pela soma de Fourier do espectro cruzado) ou pelos
+  cruzamentos por zero, e o "Aplicar" muda o deslocamento; o Alt + arrastar anda o traço no tempo.
 
 ---
 
@@ -1541,10 +1546,11 @@ O G1 passa com a cadeia ligada, durante e depois das materializações (`tests/t
 
 ### Fase 5: figuras e exportação (3 semanas)
 
-- [ ] O compositor: os modelos de página, os painéis ligados, os rótulos, os insets, as anotações e o estilo de cada elemento.
-- [ ] A exportação da figura (PDF, SVG, EPS, PGF, PNG, TIFF), com o teste de fidelidade.
-- [ ] A exportação dos dados (CSV, HDF5, MAT, NPZ) com a proveniência; o pacote reproduzível.
-- [ ] As vistas em grade e as anotações nas vistas; o alinhamento de traços; os perfis de sonda.
+- [x] O compositor: os modelos de página, os painéis ligados, os rótulos, os insets, as anotações e o estilo de cada elemento.
+- [x] A exportação da figura (PDF, SVG, EPS, PGF, PNG, TIFF), com o teste de fidelidade.
+- [x] A exportação dos dados (CSV, HDF5, MAT, NPZ) com a proveniência; o pacote reproduzível.
+- [x] As vistas em grade e as anotações nas vistas; o alinhamento de traços; os perfis de sonda.
+- [ ] Da v0.11, fora das tarefas da fase: a importação de dados de fora (PD-03) e a fonte derivada (TR-08).
 
 **Pronto quando:** uma figura IEEE sai em PDF e em pacote reproduzível, e o script do pacote refaz a figura sem o aplicativo. **Tag v0.11.**
 

@@ -53,8 +53,13 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > da figura (as letras e os tamanhos em pt, as espessuras, as cores, os tracejados, os marcadores, a legenda em
 > qualquer canto ou fora do eixo, os limites, os nomes e os prefixos dos eixos), os modelos de estilo e a prévia em
 > tons de cinza e com daltonismo; as anotações (o texto, a seta, a região e a cota de Δt) na Análise e nas figuras,
-> e o inset de ampliação com as linhas de ligação. **A próxima: a F5.9**, as vistas em grade, o alinhamento de
-> traços e os perfis de sonda. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
+> e o inset de ampliação com as linhas de ligação. **A F5.9 e a F5.10 estão feitas** (diário de 19/11): as vistas
+> em grade com os eixos ligados, o alinhamento de traços (a correlação cruzada e o cruzamento por zero, abaixo de um
+> décimo de amostra, e o Alt + arrastar), a vista dos perfis de sonda (o Bode e qual perfil cada canal usa) e a
+> jornada da Fase 5 de ponta a ponta (`tests/test_gui_jornada_fase5.py`). **A Fase 5 está feita; a tag v0.11 fica
+> para o dono do projeto.** Dois requisitos da v0.11 não entraram em nenhuma tarefa da fase e ficam para antes da
+> tag ou para a próxima: a importação de dados de fora (PD-03) e a fonte derivada (TR-08). **A próxima: a Fase 6**
+> (a manutenção da placa), a pôr em tarefas no começo dela. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
 > a captura contínua e o "Conferir antes" dizem "atualize o firmware da placa" (o código 96 do roteiro, conferido
 > nela), e o aplicativo vai precisar mandar o firmware novo (o `enviar` do `BeagleBone_Setup.sh`, ou a Fase 6).
 >
@@ -201,14 +206,20 @@ sonda em pedaços, sem prender o GIL) e `1257f5b` (o fechamento da saída contí
 **O ambiente:** Python 3.13, PySide6 6.12.0 (na 3.10 e na 3.11, o 6.11.3: seção 2), PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1; no extra `placa`,
 asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5, keyring 25.7.0 (o cofre do Linux é o Secret Service) e pyte 0.8.2. **A CI
 roda em `.venv-ci/<versão>`** (desde 16/11/2026): o `.venv` é o de quem desenvolve, e o `ci.sh` não o troca mais.
-Testes, na última rodada (19/11/2026, com a F5.7 e a F5.8): o `ci.sh` completo em 360 s, com 2 587 em Python
-3.13 (a suíte inteira, com a interface) e 2 136 em 3.10 (sem o Qt).
+Testes, na última rodada (19/11/2026, com a F5.9 e a F5.10): o `ci.sh` completo em 399 s, com 2 611 em Python
+3.13 (a suíte inteira, com a interface) e 2 145 em 3.10 (sem o Qt).
 
 **Desde 18/11/2026, a captura pela interface** (a Fase 4 até a F4.5, seção 4e): o formulário com o "Conferir antes",
 a captura na tela (direto no computador ou no cartão, com o ao vivo, o Parar e a queda) e o caderno de bancada.
 
-**Ainda não existe:** as rotinas como formulários nativos, com as pausas em diálogos (depois da v0.10); o resgate pela serial (v1.0); o resto da Fase 5 (da F5.9 em diante: as vistas em grade, o alinhamento de traços, os perfis de sonda e o
-fechamento).
+**Desde 19/11/2026, as figuras e a exportação** (a Fase 5, seção 4f): a área Figuras, a exportação da figura e dos
+dados, o pacote reproduzível, o estilo de cada elemento, os insets e as anotações; na Análise, as vistas em grade, o
+alinhamento de traços e a vista dos perfis de sonda.
+
+**Ainda não existe:** a importação de dados de fora (PD-03: o osciloscópio, o CSV genérico, o WAV) e a fonte
+derivada (TR-08), dois da v0.11 que a Fase 5 não pôs em tarefas; a figura do Bode de um perfil (a vista dos perfis
+não vira painel); as rotinas como formulários nativos, com as pausas em diálogos (depois da v0.10); a Fase 6 (o
+firmware, os pinos e o sistema da placa, o resgate pela serial) e a Fase 7 (os itens da v1.0).
 
 ---
 
@@ -2081,16 +2092,53 @@ o diário.
   inset, desenhadas antes dele, ficavam com a posição da gravação anterior (816 pixels diferentes no pacote); o
   leiaute agora fica o da primeira passada, a mesma em que a redução se alinha aos pixels.
 
-### ▶ F5.9: as vistas em grade, o alinhamento de traços e os perfis de sonda
+### ☑ F5.9: as vistas em grade, o alinhamento de traços e os perfis de sonda
 
-- **O conteúdo:** o que a Fase 5 do plano junta à Análise: as vistas em grade, o alinhamento de traços (o atraso
-  entre capturas) e o editor dos perfis de sonda.
-- **Pronto quando:** a desenhar no começo da tarefa (o plano só os nomeia).
+- **O conteúdo:** o que a Fase 5 do plano junta à Análise: as vistas em grade com os eixos ligados (AN-09), o
+  alinhamento de traços (TR-07: a correlação cruzada, o cruzamento por zero e o Alt + arrastar) e os perfis de
+  sonda (ES-07: a lista, o Bode com as barras de erro e a faixa válida, qual perfil cada canal usa e por quê).
+- **Pronto quando** (desenhado no começo da tarefa): duas vistas de tempo lado a lado andam juntas no tempo, e dois
+  espectros na frequência (em Hz, um linear e outro log); a célula ativa é a do inspetor e das medidas, e a grade
+  volta com o projeto. Duas capturas do mesmo sinal com um atraso fracionário conhecido ficam alinhadas pelas duas
+  maneiras abaixo de um décimo de amostra (sem ruído; com ruído, o erro é o do ruído), com desfazer, e o Alt +
+  arrastar anda um traço num passo. A vista dos perfis desenha a curva que a correção divide (o `ganho_em` do motor,
+  conferido ponto a ponto), as barras e a faixa válida do arquivo, e diz o perfil e o porquê de cada canal.
+- **Feita em 19/11/2026** (`d05c401`, `8fc7259`; `98ad233`, `256570a`; `2286a35`, `e45e073`): a grade
+  (`componentes/grade_de_vistas.py`: as abas imitam o pedaço do `QTabWidget` que a janela usava, e cada vista é um
+  widget só, que a célula recebe), a ligação dos eixos (`areas/analise/ligacao_dos_eixos.py`), o alinhamento
+  (`dados/alinhamento.py`, sem Qt, e o diálogo `areas/analise/alinhar.py`), a vista dos perfis
+  (`dados/perfis_de_sonda.py` e `areas/analise/vista_sonda.py`) e a versão 7 do projeto (o tipo `sonda`, a janela e
+  os cursores de cada vista). **Conferido:** a grade e os eixos ligados pela janela (o zoom numa vista, a outra
+  acompanha a cada passo; desligados, cada uma no seu; religados, a ativa manda), a grade de volta com o projeto; o
+  atraso de 1,2345 ms (246,9 amostras) medido exato sem ruído pelas duas maneiras, com ruído a até 0,04 amostra (a
+  correlação) e 0,1 (o cruzamento), num ruído branco a 2·10⁻⁵ amostra, com taxas diferentes a 0,1; na janela, duas
+  capturas com 146,9 amostras de atraso alinhadas a menos de 0,05 amostra; o Bode com a curva do motor, as barras,
+  a faixa e o valor de cada ponto sob o mouse.
+  **Decisões:** a aba escolhida é a célula ativa (escolher a aba de uma vista que já aparece ativa a célula dela; a
+  de uma que não aparece a põe numa célula vazia ou na ativa), e o clique numa célula a ativa sem atrapalhar o gesto;
+  o alinhamento mede nas amostras (com a cadeia, o ganho e o offset), na região dos cursores ou na janela visível, e
+  procura o traço até 10 % do trecho para cada lado (a referência encolhe onde o traço não tem dados para a busca);
+  num sinal periódico vale o menor atraso que alinha, e o resultado diz que o sinal se repete; o pico da correlação
+  é refinado pela soma de Fourier do espectro cruzado (a parábola erra até 0,15 amostra num sinal de banda larga), e
+  o cruzamento por zero é o zero de uma reta com pesos que vão a zero nas pontas, no nível da média de um número
+  inteiro de períodos. **O editor de perfis ficou de fora** (a descrição antiga desta tarefa o pedia; o ES-07 não):
+  um perfil é a medida de uma calibração (o `gerar_perfil` e o `medir_fase` gravam como ele foi medido), e mudar os
+  pontos à mão tira a rastreabilidade; a vista mostra, compara e diz quem usa cada um. **Dois defeitos achados:**
+  o rótulo do eixo y do espectro na figura repetia o nome ("Nível (Magnitude (dBV))", desde a F5.2: agora "Nível
+  (dBV)"); e o painel ligado de uma figura mudava ao abrir o projeto de novo, porque a janela e os cursores da vista
+  não eram guardados (o espectro entre os cursores caía na janela visível): a versão 7 os guarda.
 
-### ☐ F5.10: o fechamento da Fase 5
+### ☑ F5.10: o fechamento da Fase 5
 
 - **O conteúdo:** a jornada da figura num teste de ponta a ponta (da captura à figura IEEE em PDF e em pacote, com o
   script do pacote refazendo a figura fora do aplicativo); o plano e este arquivo em dia.
+- **Feita em 19/11/2026** (`tests/test_gui_jornada_fase5.py`): duas capturas da rede com a sonda registrada no
+  canal da corrente; a corrente corrigida pelo botão do inspetor; a segunda captura alinhada à primeira pelo
+  "Alinhar…" (a menos de 0,1 amostra); o espectro ao lado do tempo na grade; três ciclos no tempo e uma cota de Δt
+  entre os cursores; a figura IEEE de uma coluna com o tempo em (a) e o espectro em (b); o PDF com a página de 88 mm,
+  o texto que se busca ("Tempo (ms)", "Nível (dBV)", a cota) e a proveniência das duas capturas; o pacote, cujo
+  script refaz a figura com os mesmos pixels sem o SH-Analyzer; o projeto salvo e aberto de novo com a mesma página
+  (pixel a pixel), a grade, a janela, os cursores, o alinhamento e a correção.
 
 ---
 
@@ -2098,6 +2146,7 @@ o diário.
 
 | Data | O quê | Resultado | Onde |
 |---|---|---|---|
+| 19/11/2026 | **O alinhamento de traços (F5.9)**: um atraso fracionário conhecido (1,2345 ms, 246,9 amostras a 200 kHz) entre duas cópias da rede de 60 Hz com a 3ª harmônica e uma ondulação de 5 kHz | Sem ruído: a correlação cruzada exata (0,0000 amostra) e o cruzamento por zero a 0,007; com ruído de 1 % (as duas cópias), a correlação a até 0,04 amostra e o cruzamento a até 0,1 (6 cruzamentos; 600 dão 0,01); num ruído branco, 2·10⁻⁵ amostra; com taxas diferentes (125 e 200 kHz), 0,1. A conta: 0,6 s num trecho de 200 k amostras, 5,4 s em 6 M | `tests/test_gui_alinhamento.py` |
 | 12/11/2026 | Pirâmide: construção e consulta (100 M amostras) | 308 a 315 M amostras/s; consulta 0,12 a 0,14 ms; +7,1 % de espaço | `plotagem_gui.py piramide` |
 | 12/11/2026 | Banda cheia, 8 traços: linha × polígono | 60 a 67 ms × 10,9 a 11,7 ms por quadro | `plotagem_gui.py banda espessura` |
 | 12/11/2026 | Cores: contraste e daltonismo, nos dois temas | Tudo aprovado | `paleta_cores.py` |
@@ -2849,6 +2898,20 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     `tests/test_gui_anotacoes.py` (8) e `tests/test_gui_jornada_anotacoes.py` (1). O `ci.sh` completo passou em
     360 s: 2 587 em 3.13 com a interface e 2 136 em 3.10 sem o Qt; o `.venv` intocado.
   - **Próximo:** a F5.9 (as vistas em grade, o alinhamento de traços e os perfis de sonda).
+- **19/11/2026 (à noite):** **a F5.9 e a F5.10, o fim da Fase 5** (o pedido: "faça a F5.9 F5.10 e me diga o que
+  mais falta no software"; a seção 4f diz o quê, o "pronto quando" desenhado e as decisões):
+  - a grade das vistas e os eixos ligados (`d05c401`) e os testes (`8fc7259`);
+  - o alinhamento de traços, o "Alinhar…" e o Alt + arrastar (`98ad233`) e os testes (`256570a`);
+  - a vista dos perfis de sonda, a versão 7 do projeto (a janela e os cursores de cada vista) e o rótulo do
+    espectro na figura (`2286a35`) e os testes, com a jornada da Fase 5 (`e45e073`);
+  - **Testes:** `tests/test_gui_grade_de_vistas.py` (7), `tests/test_gui_alinhamento.py` (8),
+    `tests/test_gui_jornada_alinhar.py` (3), `tests/test_gui_perfis_de_sonda.py` (3) e
+    `tests/test_gui_jornada_fase5.py` (1). O `ci.sh` completo levou 399 s: 2 611 em 3.13 com a interface; na 3.10 sem
+    o Qt, o teste dos perfis importava o PyQtGraph antes de conferir o PySide6 (corrigido, e a etapa refeita: 2 145).
+    Uma rodada da interface teve uma falha intermitente no "exportar e copiar pela janela" (a figura da F5.4), que
+    passou sozinha, no arquivo e na rodada seguinte inteira; o `.venv` intocado. A correção do import: `2b072c8`.
+  - **Próximo:** a Fase 6 (a manutenção da placa), a pôr em tarefas; antes da tag v0.11, decidir se a importação de
+    dados de fora (PD-03) e a fonte derivada (TR-08) entram nela.
 ---
 
 ## 8. Perguntas em aberto
