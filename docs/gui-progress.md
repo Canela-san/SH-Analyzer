@@ -41,9 +41,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > formulário (a bancada vem do pedido da Capturar), a ajuda lida da placa e o "Rodar no terminal" numa aba nova, com as
 > pausas da bancada lá; validada na placa. **A F4.7 está feita** (diário de 18/11): a jornada da captura de ponta a
 > ponta na janela, com o simulador (`tests/test_gui_jornada_captura.py`), e 1 h direto no computador na placa de
-> verdade, sem perder amostra, aberta na Análise (seção 5). **A tag v0.10** fica para o dono do projeto. **A próxima:
-> a Fase 5** (figuras e exportação, `docs/gui-plan.md`): quebrá-la em tarefas numa seção 4f, como as outras, antes de
-> começar. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
+> verdade, sem perder amostra, aberta na Análise (seção 5). **A tag v0.10** fica para o dono do projeto. **A Fase 5
+> (figuras e exportação) está em tarefas** (seção 4f, F5.1 a F5.10). **A próxima: a F5.1**, o modelo da figura, sem
+> Qt. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
 > a captura contínua e o "Conferir antes" dizem "atualize o firmware da placa" (o código 96 do roteiro, conferido
 > nela), e o aplicativo vai precisar mandar o firmware novo (o `enviar` do `BeagleBone_Setup.sh`, ou a Fase 6).
 >
@@ -1859,6 +1859,94 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
 - **Feito em 18/11/2026:** o teste de ponta a ponta (`5e3249c`) e um defeito achado na bancada (`dcc1db0`: a captura
   direto no computador ignorava a pasta do firmware do serviço, que só a do cartão usava). **Na placa** (seção 5): 1 h
   sem perder amostra, aberta na Análise. O plano em dia (`docs/gui-plan.md`: a Fase 4 cumprida, 11.5 e 11.6).
+
+## 4f. Fase 5 em tarefas: figuras e exportação
+
+O plano (`docs/gui-plan.md`, seção 10 e a Fase 5): a área Figuras (o mockup F1: a lista de figuras e modelos à
+esquerda, a página no tamanho real ao centro, as propriedades do elemento à direita), a exportação da figura com a
+fidelidade da seção 10.3, a exportação dos dados com a proveniência e o pacote reproduzível. **Pronto quando:** uma
+figura IEEE sai em PDF e em pacote reproduzível, e o script do pacote refaz a figura sem o aplicativo. **Tag v0.11.**
+
+A ordem leva cedo ao "pronto quando" (o modelo, o desenho, a tela, o PDF e o pacote) e deixa o acabamento (o estilo
+de cada elemento, os insets e as anotações) para depois do caminho inteiro de pé. Cada tarefa tem os testes dela e
+o diário.
+
+### ▶ F5.1: o modelo da figura, sem Qt
+
+- **O conteúdo:** `dados/figura.py`: os modelos de página (IEEE de 88 e 181 mm, Elsevier de 90, 140 e 190 mm, o
+  relatório FAPESP em A4 com as margens da ABNT, o slide 16:9 e o pôster A0), a figura (o modelo, a grade de
+  painéis, o idioma dos números) e o painel (ligado a uma vista do projeto pelo id, ou congelado com os dados do
+  momento; o rótulo (a), (b)…; os limites; os eixos compartilhados na linha e na coluna) e o estilo (as fontes
+  embutidas e os tamanhos em pt, as espessuras); a figura no arquivo de projeto (`ProjetoSalvo.figuras`, a versão 5
+  do `.shproj`, que ainda lê a 4) e os números do SI com o separador do idioma.
+- **Pronto quando:** a figura vai e volta do `.shproj` igual, um projeto da versão 4 abre sem figuras, e o que não
+  vale (um painel fora da grade, um modelo desconhecido, um tamanho negativo) é recusado com a razão.
+
+### ☐ F5.2: o desenho com o Matplotlib e a fidelidade
+
+- **O conteúdo:** `figura → matplotlib.figure.Figure` (sem Qt): cada painel desenha os traços da vista dele (tempo e
+  espectro primeiro; as bandas, o espectrograma e os harmônicos depois), com os dados pela pirâmide reduzidos pelo M4
+  na resolução de saída (2 colunas por pixel do dispositivo final), as unidades do SI com prefixo, os rótulos (a),
+  (b)…, os eixos compartilhados e a legenda; as fontes do aplicativo registradas no Matplotlib.
+- **Pronto quando:** o teste de fidelidade passa (a curva reduzida e a de todos os pontos dão os mesmos pixels na
+  resolução de saída, seção 10.3), e uma figura de dois painéis sai com os números do idioma escolhido.
+
+### ☐ F5.3: a área Figuras na tela
+
+- **O conteúdo:** a área (o F1) com a lista das figuras do projeto e dos modelos de página, a página em tamanho real
+  (a prévia Agg do próprio desenho da F5.2, refeita fora da thread da interface), as propriedades do painel escolhido;
+  "uma vista vira figura com um clique" (FG-01) e o painel ligado que acompanha a vista; congelar; desfazer.
+- **Pronto quando:** pelos gestos, uma vista vira uma figura IEEE de uma coluna, um segundo painel entra na grade, a
+  vista muda e a figura acompanha, e o projeto salvo e reaberto mostra a mesma página.
+
+### ☐ F5.4: a exportação da figura
+
+- **O conteúdo:** PDF (fontes Type 42, a proveniência nos metadados), SVG (o texto editável ou em curvas), EPS, PGF,
+  PNG e TIFF (dpi de 150 a 1 200; o TIFF com LZW); "rasterizar só as curvas densas" e "todos os pontos" (com o aviso
+  acima de ~2 M pontos); copiar a figura para a área de transferência (PNG e SVG, FG-09).
+- **Pronto quando:** cada formato sai e é conferido (o PDF com as fontes embutidas e o tamanho da página do modelo, o
+  PNG no dpi pedido), e a exportação longa roda fora da thread da interface, com o progresso.
+
+### ☐ F5.5: a exportação dos dados
+
+- **O conteúdo:** CSV, HDF5 (o leiaute do `adc_tool`), MAT (v5 até 2 GB, v7.3 acima) e NPZ (FG-07): a janela, a
+  região dos cursores ou a captura inteira, em blocos e com progresso; crus ou em unidades; com ou sem as
+  transformações; sempre com o `proveniencia.json` (as fontes com o CRC, o cabeçalho resumido, a receita de cada
+  traço, as versões e os comandos equivalentes da CLI).
+- **Pronto quando:** os quatro formatos voltam iguais aos dados da tela (lidos de novo nos testes), e a captura
+  inteira de 1 h sai em blocos sem estourar a memória.
+
+### ☐ F5.6: o pacote reproduzível
+
+- **O conteúdo:** o `.zip` (FG-08) com a figura nos formatos escolhidos, o `dados.h5` com os dados de cada painel na
+  resolução usada, o `refazer_figura.py` (só NumPy, h5py e Matplotlib), o `proveniencia.json` e um `LEIA-ME.md`.
+- **Pronto quando:** num processo sem o SH-Analyzer no caminho, o `refazer_figura.py` refaz a figura, e ela dá os
+  mesmos pixels que a exportada pelo aplicativo.
+
+### ☐ F5.7: o estilo de cada elemento e os modelos de estilo
+
+- **O conteúdo:** editar tudo o que se vê (FG-04): fontes e tamanhos em pt, espessuras, cores, tracejados,
+  marcadores, a legenda (qualquer canto ou fora do eixo), os limites, os rótulos e as unidades; os modelos de estilo
+  próprios, salvos do estilo atual (FG-02); a prévia em tons de cinza e com a simulação de daltonismo (FG-05).
+- **Pronto quando:** cada propriedade muda a prévia e a exportação igual, com desfazer, e um modelo de estilo salvo
+  aplica-se a outra figura.
+
+### ☐ F5.8: os insets e as anotações
+
+- **O conteúdo:** o *inset* de ampliação com as linhas de ligação, as anotações (texto, seta, região, cota de Δt) e a
+  matemática pelo mathtext (FG-03); as anotações também nas vistas da Análise.
+- **Pronto quando:** uma figura com um inset e as quatro anotações sai igual na prévia, no PDF e no pacote.
+
+### ☐ F5.9: as vistas em grade, o alinhamento de traços e os perfis de sonda
+
+- **O conteúdo:** o que a Fase 5 do plano junta à Análise: as vistas em grade, o alinhamento de traços (o atraso
+  entre capturas) e o editor dos perfis de sonda.
+- **Pronto quando:** a desenhar no começo da tarefa (o plano só os nomeia).
+
+### ☐ F5.10: o fechamento da Fase 5
+
+- **O conteúdo:** a jornada da figura num teste de ponta a ponta (da captura à figura IEEE em PDF e em pacote, com o
+  script do pacote refazendo a figura fora do aplicativo); o plano e este arquivo em dia.
 
 ---
 
