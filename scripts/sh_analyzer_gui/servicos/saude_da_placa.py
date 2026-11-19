@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 from sh_placa.agente import ErroDaPlaca
 from sh_placa.estado import CapturasDaPlaca, EstadoDaPlaca
 from sh_placa.registro import Entrada
@@ -44,6 +44,9 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 ESTADOS_DA_CORRECAO = ("rodando", "precisa_da_senha", "senha_recusada", "feita", "falhou")
+CONFERIR_DEPOIS_DO_BOOT_S = 30.0
+"""Depois de um reinício pedido, a saúde é conferida de novo uma vez, passado isto: a placa de verdade volta ao SSH com
+o boot ainda subindo (a carga perto de 6, a PRU às vezes ainda sem o driver)."""
 
 
 @dataclass(frozen=True)
@@ -102,6 +105,9 @@ class SaudeDaPlaca(QObject):
         self._falta_ler = self._falta_o_relogio = False
         self._senha_do_sudo: str | None = None
         self._chamadas: set[Chamada] = set()
+        self._depois_do_boot = QTimer(self)                 # conferir de novo quando o boot terminar de subir
+        self._depois_do_boot.setSingleShot(True)
+        self._depois_do_boot.timeout.connect(self._conferir_depois_do_boot)
         self._registrou.connect(self._ao_registrar)
         self._parar_de_ouvir = conexao.registro.ouvir(self._registrou_no_laco)
         conexao.mudou.connect(self._conexao_mudou)
@@ -143,6 +149,9 @@ class SaudeDaPlaca(QObject):
                 self.aviso_do_relogio = ""
                 self._falta_ler = True
                 self._falta_o_relogio = c.conexao_ssh is not None and bool(c.lembrar_acertar_relogio())
+                # O SSH volta antes de o boot acabar (a carga alta, a PRU ainda sem o driver): o diagnóstico de agora
+                # pode mostrar o que some sozinho em segundos. Confere de novo, uma vez, quando o boot assentar.
+                self._depois_do_boot.start(int(CONFERIR_DEPOIS_DO_BOOT_S * 1000))
             self.mudou.emit()
         elif c.estado in ("desconectada", "falhou", "bloqueada") and self._sessao:
             self._sessao = 0
@@ -150,6 +159,10 @@ class SaudeDaPlaca(QObject):
             self.mudou.emit()
             self.correcaoMudou.emit()
         self._continuar()
+
+    def _conferir_depois_do_boot(self) -> None:
+        if self.conexao.estado == "conectada" and self._sessao:
+            self.conferir()
 
     def _continuar(self) -> None:
         """O próximo passo depois de conectar, quando a placa está livre: as capturas e o firmware; depois, o relógio a

@@ -206,6 +206,9 @@ def descrever_acao(acao: AcaoDoSistema, agora: float | None = None) -> tuple[str
             texto_ = traduzir("A placa reiniciou e voltou{}.").format(em)
         else:
             texto_ = traduzir("A placa desligou: já pode tirar da tomada.")
+        if acao.energia == "reiniciar":
+            texto_ += " " + traduzir("Os pinos da PRU voltam ao padrão a cada boot: a próxima captura os configura "
+                                     "(como o setup.sh).")
         if acao.mensagem:
             texto_ += " " + frase(acao.mensagem)
         selo = {"gravar_uenv": "gravado", "restaurar_uenv": "restaurado", "reiniciar": "reiniciada",
