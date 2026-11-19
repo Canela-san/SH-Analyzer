@@ -40,7 +40,7 @@ def _colunas(captura, transformada: bool = False):
     if transformada:
         filtrado = np.convolve(v.amostras.astype(np.float64) * v.escala, np.ones(5) / 5, mode="same")
         colunas.append(ColunaDeDados("V_A filtrada", filtrado, v.taxa_hz, 0.0, 1.0, 0.0, "V", "tensão", codigos=False,
-                                     fonte="f1", receita={"canal": 1, "cadeia": [{"tipo": "media", "n": 5}]}))
+                                     fonte="f1", receita={"canal": 1, "etapas": [{"tipo": "media", "n": 5}]}))
     return colunas
 
 
@@ -54,8 +54,8 @@ def _fontes(captura):
                                            captura.cabecalho.crc32_amostras, api.cabecalho_em_dict(captura))}
 
 
-def _exportar(tmp_path, trecho, opcoes, captura, **kw):
-    p = prov.dos_dados(trecho, opcoes, _fontes(captura), aplicativo="0.8.0", regiao="janela")
+def _exportar(tmp_path, trecho, opcoes, origem, **kw):
+    p = prov.dos_dados(trecho, opcoes, _fontes(origem), aplicativo="0.8.0", regiao="janela")
     destino = tmp_path / f"dados{ed.FORMATOS[opcoes.formato].extensao}"
     saida = ed.exportar(trecho, destino, opcoes, proveniencia=p, **kw)
     assert saida == [destino, ed.caminho_da_proveniencia(destino)] and not list(tmp_path.glob("*.parcial"))
@@ -117,13 +117,14 @@ def test_o_csv_crus(tmp_path, captura):
 
 def test_o_hdf5(tmp_path, captura):
     trecho = ed.recortar(_colunas(captura, True), [(0.0, 0.1)] * 3)
-    bruto = b"\x01\x02\x03"
+    atributos, bruto = api.cabecalho_para_hdf5(captura)
     destino = _exportar(tmp_path, trecho, OpcoesDosDados("hdf5"), captura, linhas_por_bloco=7_000,
-                        fonte_unica={"atributos": {"cabecalho_versao": 9}, "cabecalho_bruto": bruto})
+                        captura=(atributos, bruto))
     with h5py.File(destino) as f5:
         np.testing.assert_array_equal(f5["valores"][:], _esperado(trecho))
         assert list(f5.attrs["nomes"]) == ["V_A", "I_A", "V_A filtrada"] and f5.attrs["taxa_hz"] == trecho.taxa_hz
-        assert f5.attrs["cabecalho_versao"] == 9 and bytes(f5["cabecalho_bruto"][:]) == bruto
+        assert f5["captura"].attrs["cabecalho_versao"] == 9 and bytes(f5["captura/cabecalho_bruto"][:]) == bruto
+        assert f5["captura"].attrs["arquivo_origem"] == "rede.bin"
         assert json.loads(f5.attrs["transformacoes_por_coluna"])[2] == [{"tipo": "media", "n": 5}]
         assert json.loads(f5.attrs["proveniencia"])["dados"]["linhas"] == trecho.n
 
