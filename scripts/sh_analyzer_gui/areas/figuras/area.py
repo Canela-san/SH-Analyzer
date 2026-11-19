@@ -34,7 +34,7 @@ from ...dados.exportar_figura import exportar as exportar_figura
 from ...dados.figura import Figura, Painel
 from ...dados.pacote import empacotar as empacotar_figura
 from ...dados.proveniencia import da_figura
-from ...modelo.comandos import AdicionarFigura, MudarFigura, RemoverFigura
+from ...modelo.comandos import AdicionarFigura, MudarAnotacoes, MudarFigura, RemoverFigura
 from ...modelo.objetos import Projeto, Vista, novo_id
 from ...modelo.persistencia import descrever_vista
 from ...servicos.tarefas import Tarefa
@@ -146,6 +146,8 @@ class AreaDeFiguras(QWidget):
         self.propriedades.acrescentarPedido.connect(self.acrescentar_painel)
         self.propriedades.apagarPedido.connect(self.apagar_figura)
         self.propriedades.tracos_de = self.tracos_do_painel
+        self.propriedades.secao_das_anotacoes.anotacoes_de = self.anotacoes_do_painel
+        self.propriedades.secao_das_anotacoes.mudar_anotacoes = self.mudar_anotacoes
         self.exportacao = self.propriedades.exportacao
         self.exportacao.exportarPedido.connect(self.exportar)
         self.exportacao.copiarPedido.connect(self.copiar)
@@ -400,6 +402,27 @@ class AreaDeFiguras(QWidget):
                 cor, tracejado = cor_do_traco(t.receita.cor, CLARO)
                 tracos.append(TracoDoPainel(t.id, t.receita.nome, cor, tracejado))
         return tracos
+
+    def anotacoes_do_painel(self, painel: Painel) -> tuple:
+        """As anotações que o painel desenha: as da vista ligada, ou as da cópia congelada."""
+        if painel.congelado is not None:
+            return painel.congelado.anotacoes
+        vista = next((v for v in self.projeto.vistas if v.id == painel.vista), None) if self.projeto else None
+        return vista.anotacoes if vista is not None else ()
+
+    def mudar_anotacoes(self, painel: Painel, anotacoes: tuple, texto: str) -> None:
+        """As anotações do painel trocadas: na vista ligada (um passo dela, que a Análise também mostra) ou na cópia
+        congelada (um passo da figura)."""
+        figura = self.figura
+        if self.projeto is None or figura is None:
+            return
+        if painel.congelado is not None:
+            novo = replace(painel, congelado=replace(painel.congelado, anotacoes=tuple(anotacoes)))
+            self._mudar(fig.trocar_painel(figura, novo), texto, False)
+            return
+        vista = next((v for v in self.projeto.vistas if v.id == painel.vista), None)
+        if vista is not None:
+            self._empilhar(MudarAnotacoes(vista, anotacoes, texto=texto))
 
     def _contar_pontos(self) -> int:
         figura = self.figura

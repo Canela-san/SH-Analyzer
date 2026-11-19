@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 
 import pyqtgraph as pg
 from pyqtgraph import Point
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QTransform
 
 
@@ -346,9 +346,19 @@ def _aplicar(item, escala: Escala) -> None:
 
 class CaixaComEscalas(pg.ViewBox):
     """A ``ViewBox`` em que os gestos passam pelas escalas dos traços (``escalas``, posta por
-    :class:`EscalasDaCaixa`). Sem ``com_tempo``, o x de um gesto é sempre da caixa."""
+    :class:`EscalasDaCaixa`). Sem ``com_tempo``, o x de um gesto é sempre da caixa. O clique direito sai em
+    ``menuPedido(x, y, posição na tela)``, nas unidades da caixa: a vista monta o menu (as anotações)."""
 
     escalas: EscalasDaCaixa | None = None
+    menuPedido = Signal(float, float, object)
+
+    def mouseClickEvent(self, evento):
+        if evento.button() == Qt.MouseButton.RightButton and self.sceneBoundingRect().contains(evento.scenePos()):
+            ponto = self.mapSceneToView(evento.scenePos())
+            self.menuPedido.emit(ponto.x(), ponto.y(), evento.screenPos().toPoint())
+            evento.accept()
+            return
+        super().mouseClickEvent(evento)
 
     def scaleBy(self, s=None, center=None, x=None, y=None):
         if s is not None:

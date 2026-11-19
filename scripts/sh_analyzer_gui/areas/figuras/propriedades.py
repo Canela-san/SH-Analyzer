@@ -1,7 +1,7 @@
 """As propriedades da figura escolhida (a direita do F1): a página (o nome, o modelo, a altura, os números), o estilo
 (``estilo.py``: as letras, as espessuras, as marcas, a moldura, a grade e os modelos de estilo), a grade (as linhas,
 as colunas, os eixos compartilhados, pôr um painel) e o painel escolhido (a vista dele, ligado ou congelado, o
-rótulo, tirá-lo; os eixos e os traços dele, ``elementos.py``).
+rótulo, tirá-lo; os eixos e os traços dele, ``elementos.py``; o inset e as anotações, ``anotacoes.py``).
 
 Cada mudança sai como a figura nova (``mudar``), que a área empilha como um passo de desfazer (``MudarFigura``); a
 altura e o tamanho da letra, girados, juntam os passos seguidos. Congelar pede a cópia da vista à área
@@ -32,6 +32,7 @@ from ...componentes.numeros import separador_decimal
 from ...dados import figura as fig
 from ...dados.desenho_da_figura import EixosDoPainel
 from ...dados.figura import Figura, FiguraInvalida, Painel
+from .anotacoes import SecaoDasAnotacoes, SecaoDoInset
 from .elementos import SecaoDosEixos, SecaoDosTracos, TracoDoPainel
 from .estilo import SecaoDoEstilo
 from .exportacao import SecaoDeExportacao
@@ -155,8 +156,10 @@ class PropriedadesDaFigura(QScrollArea):
             ("", self.tirar)])
         self.secao_dos_eixos = SecaoDosEixos(self._tentar)
         self.secao_dos_tracos = SecaoDosTracos(self._tentar)
-        self.coluna.addWidget(self.secao_dos_eixos)
-        self.coluna.addWidget(self.secao_dos_tracos)
+        self.secao_do_inset = SecaoDoInset(self._tentar)
+        self.secao_das_anotacoes = SecaoDasAnotacoes(self._tentar)
+        for secao_do_painel in self._secoes_do_painel:
+            self.coluna.addWidget(secao_do_painel)
 
         for caixa in (self.modelo, self.familia, self.vista):          # os nomes longos não alargam o painel
             caixa.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -207,22 +210,32 @@ class PropriedadesDaFigura(QScrollArea):
             self._enchendo = False
         self.estilo.mostrar(figura)
 
+    @property
+    def _secoes_do_painel(self):
+        return (self.secao_dos_eixos, self.secao_dos_tracos, self.secao_do_inset, self.secao_das_anotacoes)
+
     def definir_eixos(self, eixos: dict[str, EixosDoPainel]) -> None:
-        """Os eixos do último desenho: os limites e os nomes automáticos que os campos vazios mostram."""
+        """Os eixos do último desenho: os limites e os nomes automáticos que os campos vazios mostram, e de onde o
+        inset e as anotações novas partem."""
         self.eixos = dict(eixos)
         if self.figura is not None and self.painel is not None and not self.painel.vazio:
-            self.secao_dos_eixos.mostrar(self.figura, self.painel, self.eixos.get(self.painel.id))
+            e = self.eixos.get(self.painel.id)
+            for secao_do_painel in (self.secao_dos_eixos, self.secao_do_inset, self.secao_das_anotacoes):
+                secao_do_painel.mostrar(self.figura, self.painel, e)
 
     def _mostrar_o_painel(self, figura: Figura) -> None:
         p = self.painel
         self.secao_do_painel.setVisible(p is not None)
-        for secao_do_painel in (self.secao_dos_eixos, self.secao_dos_tracos):
+        for secao_do_painel in self._secoes_do_painel:
             secao_do_painel.setVisible(p is not None and not p.vazio)
         if p is None:
             return
         if not p.vazio:
-            self.secao_dos_eixos.mostrar(figura, p, self.eixos.get(p.id))
+            e = self.eixos.get(p.id)
+            self.secao_dos_eixos.mostrar(figura, p, e)
             self.secao_dos_tracos.mostrar(figura, p, self.tracos_de(p))
+            self.secao_do_inset.mostrar(figura, p, e)
+            self.secao_das_anotacoes.mostrar(figura, p, e)
         automatico = figura.rotulos()[p.id] if p.rotulo is None else ""
         self.titulo_do_painel.setText(self.tr("Painel {}").format(figura.rotulos()[p.id] or "").strip())
         self.vista.clear()

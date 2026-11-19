@@ -28,6 +28,9 @@ ligado entre elas.
 * **O botão do meio:** arrastar move a vista nas duas direções, sem mudar as escalas, em cima de um traço ou não
   (os traços não mudam). Um clique rápido põe o 0 do eixo Y no meio da faixa e tira o deslocamento em Y do traço
   clicado (ou dos selecionados nela).
+* **As anotações** (F5.8; ``anotacoes.py``): o clique direito numa faixa põe ali um texto, uma seta, uma região ou
+  uma cota de Δt (a região e a cota entre os cursores, se ligados), e muda ou tira a que está perto; elas ficam na
+  faixa em que foram postas e vão para a figura com a vista.
 * **Os cursores** (``C``): duas linhas verticais, as mesmas em todas as faixas; arrastar uma a move, e as setas
   movem a última mexida amostra a amostra (Shift: 10 amostras). A região a medir (``regiaoMudou``) é a dos cursores
   ou, sem eles, a janela visível; ela sai 250 ms depois da última mudança.
@@ -44,7 +47,7 @@ from shiboken6 import isValid
 
 from ...componentes.chip import ChipDeTraco
 from ...componentes.fluxo import LayoutDeFluxo
-from ...componentes.numeros import decimal, formatar_si
+from ...componentes.numeros import decimal, formatar_si, separador_decimal
 from ...dados import unidades
 from ...dados.piramide import Piramide
 from ...graficos.clique import mais_perto
@@ -62,6 +65,7 @@ from ...tema.aplicar import aparencia
 from ...tema.icones import IconeDoTema
 from ...tema.tokens import Tema, cor_do_traco
 from .acoes_da_escala import acoes_da_escala, atualizar_acoes_da_escala, estado_do_chip
+from .anotacoes import AnotacoesDaVista
 
 PARADA_DO_HISTORICO_MS = 400
 ESPERA_DA_MEDIDA_MS = 250
@@ -154,6 +158,8 @@ class VistaDeTempo(QWidget):
         self._espera_da_previa.setInterval(ESPERA_DA_PREVIA_MS)
         self._espera_da_previa.timeout.connect(self._pedir_previas)
 
+        self.anotacoes = AnotacoesDaVista(vista, projeto, self._caixa_da_faixa, separador=separador_decimal,
+                                          parent=self)
         vista.tracoEntrou.connect(self._estrutura_mudou)
         vista.tracoSaiu.connect(self._estrutura_mudou)
         vista.tracoMudou.connect(self._traco_mudou)
@@ -162,6 +168,23 @@ class VistaDeTempo(QWidget):
         aparencia().mudou.connect(self._tema_mudou)
         self._tema_mudou(aparencia().tema)
         self.reconstruir(ajustar=True)
+
+    # ------------------------------------------------------------------ as anotações
+
+    def _caixa_da_faixa(self, numero: int):
+        """A caixa em que ficam as anotações da faixa ``numero`` (sobrepondo, a única)."""
+        faixa = self.faixas.get(0 if self.sobrepor else numero)
+        return faixa.getViewBox() if faixa is not None else None
+
+    def numero_da_caixa(self, caixa) -> int:
+        """A faixa de uma caixa, como as anotações a guardam (sobrepondo, a primeira dos traços)."""
+        if self.sobrepor:
+            return min((t.receita.faixa for t in self.vista.tracos), default=0)
+        return next((n for n, f in self.faixas.items() if f.getViewBox() is caixa), 0)
+
+    def _menu(self, caixa, x: float, y: float, posicao) -> None:
+        regiao = self._cursores.regiao()
+        self.anotacoes.menu(caixa, self.numero_da_caixa(caixa), x, y, regiao, posicao)
 
     # ------------------------------------------------------------------ a barra da vista
 
@@ -351,6 +374,7 @@ class VistaDeTempo(QWidget):
         self._atualizar_info()
         self._selecao_mudou(self.selecao.tracos)
         self._por_cursores()
+        self.anotacoes.refazer()
         self._espera_da_medida.start()
 
     @staticmethod
@@ -405,6 +429,7 @@ class VistaDeTempo(QWidget):
         caixa.clicada.connect(self._clicou)
         caixa.centroPedido.connect(self._centro_pedido)
         caixa.caixaUsada.connect(lambda: self.acao_caixa.setChecked(False))
+        caixa.menuPedido.connect(lambda x, y, posicao, c=caixa: self._menu(c, x, y, posicao))
         caixa.armar_zoom_em_caixa(self.acao_caixa.isChecked())
         caixa.aplicar_tema(aparencia().tema)
         faixa.rotulo_y = faixa.rotulo_x = None
@@ -1082,6 +1107,7 @@ class VistaDeTempo(QWidget):
         for traco, item in self.itens.items():
             item.definir_cor(cor_do_traco(traco.receita.cor, t)[0])
         self._cursores.aplicar_tema(t)
+        self.anotacoes.refazer()
         for faixa in self.faixas.values():
             faixa.rotulo_y = faixa.rotulo_x = None   # a cor do rótulo segue a do traço, que muda com o tema
         self._rotular_faixas()

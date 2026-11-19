@@ -53,16 +53,26 @@ def secao(titulo: str | QLabel, linhas) -> QFrame:
     rotulo_do_titulo = titulo if isinstance(titulo, QLabel) else QLabel(titulo)
     rotulo_do_titulo.setObjectName("titulo_da_secao_da_figura")
     grade.addWidget(rotulo_do_titulo, 0, 0, 1, 2)
+    quadro.rotulos = {}
     for i, (nome, campo) in enumerate(linhas, start=1):
         rotulo = QLabel(nome)
         rotulo.setObjectName("rotulo_da_propriedade")
         grade.addWidget(rotulo, i, 0)
         if isinstance(campo, QWidget):
             grade.addWidget(campo, i, 1)
+            quadro.rotulos[id(campo)] = rotulo
         else:
             grade.addLayout(campo, i, 1)
     grade.setColumnStretch(1, 1)
     return quadro
+
+
+def mostrar_linha(quadro: QFrame, campo: QWidget, visivel: bool) -> None:
+    """Mostra ou esconde a linha de ``campo`` na seção (o campo e o rótulo dele)."""
+    campo.setVisible(visivel)
+    rotulo = quadro.rotulos.get(id(campo))
+    if rotulo is not None:
+        rotulo.setVisible(visivel)
 
 
 class CampoDoLimite(CampoComUnidade):

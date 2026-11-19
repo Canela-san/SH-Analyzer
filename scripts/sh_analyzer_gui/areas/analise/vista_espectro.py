@@ -3,6 +3,8 @@
 * **Os traços** são os visíveis da vista de tempo ligada (``OpcoesDoEspectro.vista_de_tempo``; sem ela, a primeira do
   projeto), cada um com a sua cadeia: mudar a cadeia, o ganho ou a visibilidade lá muda o espectro aqui. Os números
   são os da ``api`` (``dados/espectros.py``).
+* **As anotações** (F5.8; ``anotacoes.py``): o clique direito no gráfico põe um texto, uma seta, uma região ou uma
+  cota de Δf (entre os cursores, se ligados), e muda ou tira a que está perto.
 * **O trecho:** a região dos cursores da vista de tempo (o padrão; sem eles, a janela visível), a janela visível ou
   a captura inteira. A conta refaz a cada parada do zoom ou dos cursores de lá, se o trecho mudou.
 * **A escala:** dB (a amplitude de pico, a convenção do ``adc_tool``: dBV na tensão), o valor RMS de cada tom ou dBc
@@ -51,7 +53,7 @@ from shiboken6 import isValid
 from ...componentes.basicos import CampoComUnidade, Segmentado
 from ...componentes.chip import ChipDeTraco
 from ...componentes.fluxo import LayoutDeFluxo
-from ...componentes.numeros import decimal, formatar_si
+from ...componentes.numeros import decimal, formatar_si, separador_decimal
 from ...dados import espectros as esp
 from ...dados.cadeia import CorrecaoSonda
 from ...graficos.clique import distancia_a_linha, mais_perto
@@ -66,6 +68,7 @@ from ...tema.aplicar import aparencia
 from ...tema.icones import IconeDoTema
 from ...tema.tokens import Tema, cor_do_traco
 from .acoes_da_escala import acoes_da_escala, atualizar_acoes_da_escala, estado_do_chip
+from .anotacoes import AnotacoesDaVista
 from .medidas import LinhaDaTabela, MedidasDaVista, numero_para_planilha
 
 ESPERA_MS = 40
@@ -293,6 +296,12 @@ class VistaDeEspectro(QWidget):
         self.cursores = CursoresDaVista(para_eixo=self._x, do_eixo=self._f, parent=self)
         self.cursores.por_nas([self.grafico.getViewBox()])
         self.cursores.mudou.connect(self.emitir_regiao)
+        caixa = self.grafico.getViewBox()
+        self.anotacoes = AnotacoesDaVista(self.vista, self.projeto, lambda _numero: caixa, frequencia=True,
+                                          para_eixo=self._x,
+                                          do_eixo=self._f, separador=separador_decimal, parent=self)
+        caixa.menuPedido.connect(lambda x, y, posicao: self.anotacoes.menu(caixa, 0, self._f(x), y,
+                                                                         self.cursores.regiao(), posicao))
         self.valor_no_mouse = pg.TextItem(anchor=(0, 1))
         self.valor_no_mouse.setZValue(50)
         self.ponto_no_mouse = pg.ScatterPlotItem(size=7, pen=pg.mkPen(None))
@@ -625,6 +634,8 @@ class VistaDeEspectro(QWidget):
             x0, x1 = vb.viewRange()[0]
             faixa_hz = (10.0 ** x0, 10.0 ** x1) if self._log_desenhado else (x0, x1)
         self.grafico.setLogMode(x=o.frequencia_log, y=False)
+        if trocou_o_log or self._log_desenhado is None:
+            self.anotacoes.refazer()                  # as posições no eixo mudaram (o log10 da frequência)
         self._log_desenhado = o.frequencia_log
         if trocou_o_log:
             # O PyQtGraph liga o ajuste automático ao trocar a escala: a mesma faixa de frequências, na escala nova.
@@ -1010,6 +1021,7 @@ class VistaDeEspectro(QWidget):
             eixo.aplicar_tema(t)
         self.grade.aplicar_tema(t)
         self.cursores.aplicar_tema(t)
+        self.anotacoes.refazer()
         self.valor_no_mouse.setColor(QColor(t.texto))
         self.valor_no_mouse.fill = pg.mkBrush(QColor(t.elevada))
         if self.resultados:
