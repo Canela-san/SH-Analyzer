@@ -23,8 +23,11 @@ errado) e os da configuração dela, que o diagnóstico tem de reconhecer.
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -33,6 +36,7 @@ from . import capturas_simuladas
 from .agente import ClienteDoAgente, TransporteLocal
 from .capturas_simuladas import Sistema, gravar_captura
 from .cenarios import CENARIOS, Cenario  # noqa: F401 (o Cenario, para quem importa daqui)
+from .ler_adc_simulado import MARCA_DA_PRU_QUE_NAO_SOBE
 from .ler_adc_simulado import roteiro as roteiro_do_ler_adc
 
 VERSAO_SIMULADA = "v0.8.0-simulador"
@@ -121,6 +125,220 @@ DESVIO_DO_RELOGIO_ERRADO_S = -(2 * 86_400 + 5 * 3600 + 13 * 60 + 27.0)
 ao desligar), e fica atrás do computador."""
 
 
+SETORES_DO_CARTAO = 7_471_104
+INICIO_DA_PARTICAO = 8192
+SETORES_DA_PARTICAO = 7_462_912
+"""O eMMC da placa de verdade (o ``/sys/block/mmcblk1``, 19/11/2026): a partição já ocupa o cartão inteiro."""
+VERSAO_MODELO = "SHAN-VERSAO-MODELO"
+"""No modelo do ``ler_adc`` (``run/simulador/ler_adc.modelo``): o lugar da versão, que o ``make`` da placa simulada
+troca pela da pasta que ele compila."""
+MARCA_DO_FIRMWARE_ANTIGO = "SHAN_SEM_SAIDA_CONTINUA"
+"""No ``ler_adc.c`` da placa simulada: o firmware de antes da saída contínua (o ``make`` dela compila um ``ler_adc``
+sem o ``-o -``)."""
+MARCA_DE_FALHA_DE_COMPILACAO = "SHAN_FALHA_DE_COMPILACAO"
+"""Num arquivo do código da placa simulada: o ``make`` dela falha (o erro de compilação de uma atualização)."""
+SERVICOS = {
+    "cloud9.socket": ["active", "listening", "enabled", 0, "Cloud9 IDE"],
+    "cloud9.service": ["inactive", "dead", "static", 0, "Cloud9 IDE"],
+    "bonescript.socket": ["active", "listening", "enabled", 0, "BoneScript API"],
+    "bonescript.service": ["inactive", "dead", "disabled", 0, "BoneScript API"],
+    "bonescript-autorun.service": ["active", "running", "enabled", 894, "Bonescript autorun"],
+    "nodered.socket": ["active", "listening", "enabled", 0, "Node-RED"],
+    "nodered.service": ["inactive", "dead", "disabled", 0, "Node-RED"],
+    "nginx.service": ["active", "running", "enabled", 1015, "A high performance web server"],
+    "ssh.service": ["active", "running", "enabled", 946, "OpenBSD Secure Shell server"],
+    "dnsmasq.service": ["active", "running", "disabled", 1115, "dnsmasq - A lightweight DHCP and caching DNS server"],
+    "avahi-daemon.service": ["active", "running", "enabled", 872, "Avahi mDNS/DNS-SD Stack"],
+    "connman.service": ["active", "running", "enabled", 887, "Connection service"],
+    "systemd-timesyncd.service": ["active", "running", "enabled", 843, "Network Time Synchronization"],
+    "serial-getty@ttyGS0.service": ["active", "running", "enabled", 4357, "Serial Getty on ttyGS0"],
+}
+"""Os serviços da imagem na placa simulada (``ActiveState``, ``SubState``, ``UnitFileState``, ``MainPID``,
+``Description``), como os da placa de verdade em 19/11/2026; o ``systemctl`` dela os lê e os muda."""
+PROCESSOS = {1: ("systemd", "/sbin/init", 0, 1674), 894: ("nodejs", "/usr/bin/nodejs autorun.js", 0, 9529),
+             946: ("sshd", "/usr/sbin/sshd -D", 0, 1194), 1015: ("nginx", "nginx: worker process", 33, 1389)}
+"""``pid: (nome, linha de comando, uid, páginas residentes)`` dos processos da placa simulada."""
+REDE = {"usb0": ("98:5d:ad:42:e4:7e", "192.168.7.2/24", "fe80::9a5d:adff:fe42:e47e/64"),
+        "usb1": ("98:5d:ad:42:e4:82", "192.168.6.2/24", "fe80::9a5d:adff:fe42:e482/64"),
+        "eth0": ("98:5d:ad:42:e4:7c", None, None)}
+
+
+MAKE = r"""#!@PYTHON@
+# O make da placa simulada: "compila" o firmware da pasta de agora (o ler_adc, do modelo da placa com a versão da
+# pasta; o fw_pru.out, do código da PRU) e falha com a marca de erro de compilação num arquivo do código.
+import hashlib, os, shlex, sys
+from pathlib import Path
+
+raiz, pasta = Path(os.environ["SHAN_RAIZ"]), Path.cwd()
+alvos = [a for a in sys.argv[1:] if not a.startswith("-")]
+versao = (pasta / "VERSAO").read_text().strip() if (pasta / "VERSAO").is_file() else "sem-versao"
+if alvos[:1] == ["clean"]:
+    for nome in ("ler_adc", "fw_pru.out", "pru_main.obj", "spi_core.obj", "pru_core.map"):
+        (pasta / nome).unlink(missing_ok=True)
+    print("rm -f ler_adc fw_pru.out *.obj *.map")
+    sys.exit(0)
+if alvos[:1] == ["versao"]:
+    print(versao)
+    sys.exit(0)
+for nome in ("ler_adc.c", "memoria_pru.h", "pru_main.c", "spi_core.asm"):
+    if not (pasta / nome).is_file():
+        print("make: *** No rule to make target '%s', needed by 'ler_adc'.  Stop." % nome, file=sys.stderr)
+        sys.exit(2)
+for arquivo in sorted(pasta.iterdir()):
+    if arquivo.suffix in (".c", ".h", ".asm") and "@FALHA@" in arquivo.read_text(errors="replace"):
+        print("%s:1:1: error: @FALHA@" % arquivo.name, file=sys.stderr)
+        print("make: *** [Makefile:40: ler_adc] Error 1", file=sys.stderr)
+        sys.exit(2)
+print("gcc -O2 -Wall -Wextra -std=gnu11 -o ler_adc ler_adc.c")
+texto = (raiz / "run/simulador/ler_adc.modelo").read_text()
+texto = texto.replace("SHAN_VERSAO=@MODELO@", "SHAN_VERSAO=" + shlex.quote(versao))
+if "@ANTIGO@" in (pasta / "ler_adc.c").read_text(errors="replace"):
+    texto = texto.replace("SHAN_ANTIGO=0", "SHAN_ANTIGO=1")
+(pasta / "ler_adc").write_text(texto)
+(pasta / "ler_adc").chmod(0o755)
+print("clpru --silicon_version=3 -o2 pru_main.c spi_core.asm -o fw_pru.out")
+codigo = b"".join((pasta / nome).read_bytes() for nome in ("pru_main.c", "spi_core.asm", "memoria_pru.h"))
+fw = b"\x7fELF" + hashlib.sha256(codigo).digest()
+if b"@PRU@" in codigo:
+    fw += b"@PRU@"
+(pasta / "fw_pru.out").write_bytes(fw)
+"""
+"""O ``make`` da placa simulada (o do ``firmware/Makefile``: ``clean``, ``versao`` e a compilação)."""
+
+TEE = r"""#!/bin/sh
+# O tee da placa simulada: o deste computador, menos no remoteproc da PRU, que o "kernel" dela interpreta (o start, o
+# stop e o nome do firmware, com os erros do kernel de verdade).
+alvo=
+for a in "$@"; do
+    case "$a" in */sys/class/remoteproc/remoteproc*/state|*/sys/class/remoteproc/remoteproc*/firmware) alvo=$a ;; esac
+done
+[ -n "$alvo" ] || exec @TEE@ "$@"
+pedido=$(cat)
+printf '%s\n' "$pedido"
+d=$(dirname "$alvo")
+estado=$(cat "$d/state" 2>/dev/null)
+case "$alvo" in
+    */firmware)
+        [ "$estado" = running ] && { echo "tee: $alvo: Device or resource busy" >&2; exit 1; }
+        printf '%s\n' "$pedido" > "$alvo"
+        exit 0 ;;
+esac
+case "$pedido" in
+    start)
+        [ "$estado" = running ] && { echo "tee: $alvo: Device or resource busy" >&2; exit 1; }
+        if grep -q @PRU@ "$SHAN_RAIZ/lib/firmware/$(cat "$d/firmware")" 2>/dev/null; then
+            echo crashed > "$d/state"
+            echo "tee: $alvo: Invalid argument" >&2
+            exit 1
+        fi
+        echo running > "$d/state" ;;
+    stop)
+        [ "$estado" = running ] || { echo "tee: $alvo: Invalid argument" >&2; exit 1; }
+        echo offline > "$d/state" ;;
+    *) echo "tee: $alvo: Invalid argument" >&2; exit 1 ;;
+esac
+"""
+"""O ``tee`` da placa simulada: o kernel do remoteproc (o ``echo start | tee .../state`` do ``setup.sh``)."""
+
+SYSTEMCTL = r"""#!@PYTHON@
+# O systemctl da placa simulada: os serviços da imagem (run/simulador/servicos.json), o reinício e o desligar (um
+# pedido que o servidor do simulador atende). O que muda a placa só com o sudo, como o de verdade.
+import json, os, sys
+from pathlib import Path
+
+raiz = Path(os.environ["SHAN_RAIZ"])
+arquivo = raiz / "run/simulador/servicos.json"
+servicos = json.loads(arquivo.read_text())
+args = [a for a in sys.argv[1:] if a not in ("--no-pager", "--quiet", "-q", "--no-block")]
+como_root = os.environ.get("SHAN_COMO_ROOT") == "1"
+if not args:
+    sys.exit(1)
+acao, resto = args[0], args[1:]
+if acao == "show":
+    props, unidades, i = None, [], 0
+    while i < len(resto):
+        if resto[i] == "-p":
+            props, i = resto[i + 1].split(","), i + 2
+            continue
+        unidades.append(resto[i])
+        i += 1
+    blocos = []
+    for u in unidades:
+        v = servicos.get(u)
+        d = dict(Id=u, Description=v[4] if v else u, LoadState="loaded" if v else "not-found",
+                 ActiveState=v[0] if v else "inactive", SubState=v[1] if v else "dead",
+                 UnitFileState=v[2] if v else "", MainPID=str(v[3] if v and v[0] == "active" else 0))
+        blocos.append("\n".join("%s=%s" % (k, d[k]) for k in (props or d) if k in d))
+    print("\n\n".join(blocos))
+    sys.exit(0)
+if acao == "is-active":
+    v = servicos.get(resto[0]) if resto else None
+    print(v[0] if v else "inactive")
+    sys.exit(0 if v and v[0] == "active" else 3)
+if not como_root:
+    print("Failed to %s: Interactive authentication required." % acao, file=sys.stderr)
+    sys.exit(4)
+if acao in ("reboot", "poweroff"):
+    (raiz / "run/simulador/pedido").write_text(acao)
+    sys.exit(0)
+if acao in ("enable", "disable", "start", "stop", "restart"):
+    agora = "--now" in resto
+    for u in (a for a in resto if not a.startswith("-")):
+        if u not in servicos:
+            print("Failed to %s unit: Unit %s not found." % (acao, u), file=sys.stderr)
+            sys.exit(5)
+        s = servicos[u]
+        if acao == "enable" and s[2] != "static":
+            s[2] = "enabled"
+        if acao == "disable" and s[2] != "static":
+            s[2] = "disabled"
+        if acao in ("start", "restart") or (acao == "enable" and agora):
+            s[0], s[1] = "active", "listening" if u.endswith(".socket") else "running"
+        if acao == "stop" or (acao == "disable" and agora):
+            s[0], s[1] = "inactive", "dead"
+    arquivo.write_text(json.dumps(servicos, indent=1))
+    sys.exit(0)
+print("Unknown operation '%s'." % acao, file=sys.stderr)
+sys.exit(1)
+"""
+"""O ``systemctl`` da placa simulada."""
+
+CHPASSWD = r"""#!/bin/sh
+# O chpasswd da placa simulada: "usuário:senha" pelo stdin; só o root (o sudo dela).
+[ "${SHAN_COMO_ROOT:-}" = 1 ] || { echo "chpasswd: Permission denied." >&2; exit 1; }
+IFS= read -r linha || exit 1
+[ "${linha%%:*}" = debian ] || { echo "chpasswd: line 1: user '${linha%%:*}' does not exist" >&2; exit 1; }
+printf '%s' "${linha#*:}" > "$HOME/@SENHA@"
+"""
+"""O ``chpasswd`` da placa simulada: a senha nova vale para o sudo e para o SSH dela."""
+
+
+def _ip() -> str:
+    """O ``ip`` da placa simulada: o ``ip -o addr show`` das interfaces dela."""
+    linhas = []
+    for i, (nome, (_mac, v4, v6)) in enumerate(REDE.items(), 5):
+        for endereco in (v4, v6):
+            if endereco:
+                familia, escopo = ("inet6", "link") if ":" in endereco else ("inet", "global")
+                linhas.append(f"{i}: {nome}    {familia} {endereco} scope {escopo} {nome}\\       valid_lft forever "
+                              "preferred_lft forever")
+    return "#!/bin/sh\n# O ip da placa simulada.\ncat <<'FIM'\n" + "\n".join(linhas) + "\nFIM\n"
+
+
+def programas_da_placa(senha_trocada: str = ".senha-da-placa") -> dict[str, str]:
+    """Os programas da placa simulada que ficam no PATH dos comandos dela (o ``sudo``, o ``config-pin`` e o ``pgrep``
+    à parte): o ``make``, o ``tee`` do kernel, o ``systemctl``, o ``chpasswd`` e o ``ip``."""
+    trocas = {"@PYTHON@": sys.executable, "@FALHA@": MARCA_DE_FALHA_DE_COMPILACAO, "@MODELO@": VERSAO_MODELO,
+              "@ANTIGO@": MARCA_DO_FIRMWARE_ANTIGO, "@PRU@": MARCA_DA_PRU_QUE_NAO_SOBE.decode(),
+              "@TEE@": shutil.which("tee") or "/usr/bin/tee", "@SENHA@": senha_trocada}
+    programas = {"make": MAKE, "tee": TEE, "systemctl": SYSTEMCTL, "chpasswd": CHPASSWD, "ip": _ip()}
+    for nome, texto in programas.items():
+        for marca, valor in trocas.items():
+            texto = texto.replace(marca, valor)
+        programas[nome] = texto
+    return programas
+
+
 def _escrever(raiz: Path, caminho: str, conteudo: str | bytes, executavel: bool = False) -> Path:
     destino = raiz / caminho.lstrip("/")
     destino.parent.mkdir(parents=True, exist_ok=True)
@@ -151,6 +369,33 @@ def montar_sistema_falso(pasta: Path, cenario: str = "normal", versao_firmware: 
     _escrever(raiz, "/proc/loadavg", "0.31 0.24 0.18 1/120 999\n")
     _escrever(raiz, "/proc/meminfo", "MemTotal:  478796 kB\nMemFree:  250000 kB\nMemAvailable:  319488 kB\n")
     _escrever(raiz, "/sys/class/thermal/thermal_zone0/temp", "52000\n")
+    _escrever(raiz, "/proc/stat", "cpu  1200 0 640 90000 120 0 14 0 0 0\ncpu0 1200 0 640 90000 120 0 14 0 0 0\n")
+    for pid, (nome, linha, uid, paginas) in PROCESSOS.items():
+        _escrever(raiz, f"/proc/{pid}/stat", f"{pid} ({nome}) S 1 {pid} {pid} 0 -1 0 0 0 0 0 40 12 0 0 20 0 1 0 "
+                                            f"100 1000000 {paginas} 0\n")
+        _escrever(raiz, f"/proc/{pid}/cmdline", linha.replace(" ", "\0") + "\0")
+        _escrever(raiz, f"/proc/{pid}/status", f"Name:\t{nome}\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\n"
+                                              f"VmRSS:\t{paginas * 4} kB\n")
+    _escrever(raiz, "/etc/hostname", "beaglebone\n")
+    _escrever(raiz, "/etc/timezone", "Etc/UTC\n")
+    for nome, (mac, ipv4, _ipv6) in REDE.items():
+        _escrever(raiz, f"/sys/class/net/{nome}/operstate", ("up" if ipv4 else "down") + "\n")
+        _escrever(raiz, f"/sys/class/net/{nome}/address", mac + "\n")
+        _escrever(raiz, f"/sys/class/net/{nome}/statistics/rx_bytes", "1119687\n" if ipv4 else "0\n")
+        _escrever(raiz, f"/sys/class/net/{nome}/statistics/tx_bytes", "1121178\n" if ipv4 else "0\n")
+    _escrever(raiz, "/sys/class/net/lo/operstate", "unknown\n")
+    _escrever(raiz, "/sys/block/mmcblk1/size", f"{SETORES_DO_CARTAO}\n")
+    _escrever(raiz, "/sys/block/mmcblk1/mmcblk1p1/size", f"{SETORES_DA_PARTICAO}\n")
+    _escrever(raiz, "/sys/block/mmcblk1/mmcblk1p1/start", f"{INICIO_DA_PARTICAO}\n")
+    _escrever(raiz, "/opt/scripts/tools/grow_partition.sh", "#!/bin/sh\necho 'a partição já ocupa o cartão'\n",
+              executavel=True)
+    _escrever(raiz, "/run/log/journal/0123456789abcdef/system.journal", b"LPKSHHRH" + b"\0" * 4088)
+    (raiz / "var" / "cache" / "apt" / "archives").mkdir(parents=True, exist_ok=True)
+    _escrever(raiz, "/run/simulador/internet", "nao\n")
+    _escrever(raiz, "/run/simulador/servicos.json", json.dumps(SERVICOS, indent=1))
+    programas = programas_da_placa()
+    for nome in ("ip", "systemctl"):                 # os que o agente roda (os do PATH ficam com o servidor)
+        _escrever(raiz, f"/bin/{nome}", programas[nome], executavel=True)
     # O timesyncd sempre roda; o arquivo "synchronized" só existe depois de o NTP acertar a hora.
     (raiz / "run" / "systemd" / "timesync").mkdir(parents=True, exist_ok=True)
     desvio = DESVIO_DO_RELOGIO_ERRADO_S if cenario == "relogio_errado" else 0.0
@@ -197,23 +442,28 @@ def montar_sistema_falso(pasta: Path, cenario: str = "normal", versao_firmware: 
         _escrever(raiz, f"/usr/bin/{ferramenta}", "#!/bin/sh\nexit 0\n", executavel=True)
     _escrever(raiz, "/dev/kmsg", KMSG)
     _escrever(raiz, "/var/log/journal-do-simulador.json", JOURNAL)
-    _escrever(raiz, "/bin/journalctl", '#!/bin/sh\ncat "${0%/bin/journalctl}/var/log/journal-do-simulador.json"\n',
-              executavel=True)
+    _escrever(raiz, "/bin/journalctl", '#!/bin/sh\n# o journalctl da placa simulada: o diário falso; com -f, o que chegar nele\n'
+              'arquivo="${0%/bin/journalctl}/var/log/journal-do-simulador.json"\n'
+              'case " $* " in *" -f "*) exec tail -n 0 -f "$arquivo" ;; esac\ncat "$arquivo"\n', executavel=True)
 
     firmware.mkdir(parents=True, exist_ok=True)
     versao = VERSAO_ANTIGA if cenario == "firmware_antigo" else versao_firmware
     (firmware / "VERSAO").write_text(versao + "\n")
-    fontes = {"ler_adc.c": "/* o ler_adc da placa simulada */\n", "pru_main.c": "/* a PRU0 */\n",
+    antigo = cenario == "firmware_antigo"
+    fontes = {"ler_adc.c": "/* o ler_adc da placa simulada" + (f" ({MARCA_DO_FIRMWARE_ANTIGO})" if antigo else "")
+                           + " */\n", "pru_main.c": "/* a PRU0 */\n",
               "spi_core.asm": "; o laço da PRU0\n",
               "memoria_pru.h": "// o contrato ARM <-> PRU\n#define VERSAO_PROTOCOLO_PRU 5u\n"}
     for nome, texto in fontes.items():
         (firmware / nome).write_text(texto, encoding="utf-8")
         os.utime(firmware / nome, (FONTES_COMPILADAS_EM, FONTES_COMPILADAS_EM))
     fw_pru = b"\x7fELF" + b"o fw_pru.out da placa simulada".ljust(60, b"\x00")
+    bloco = amostras_por_bloco or capturas_simuladas.BLOCO_DAS_CAPTURAS
+    _escrever(raiz, "/run/simulador/ler_adc.modelo", roteiro_do_ler_adc(
+        "normal" if antigo else cenario, bloco, _sistema(cenario, VERSAO_MODELO)))
     if cenario != "sem_compilar":
         ler_adc = firmware / "ler_adc"
-        ler_adc.write_text(roteiro_do_ler_adc(cenario, amostras_por_bloco or capturas_simuladas.BLOCO_DAS_CAPTURAS,
-                                              _sistema(cenario, versao)))
+        ler_adc.write_text(roteiro_do_ler_adc(cenario, bloco, _sistema(cenario, versao), antigo=antigo))
         ler_adc.chmod(0o755)
         (firmware / "fw_pru.out").write_bytes(fw_pru)
         for nome in ("ler_adc", "fw_pru.out"):
@@ -252,6 +502,76 @@ def _sistema(cenario: str, versao: str) -> Sistema:
     return Sistema(KERNEL_SIMULADO, SISTEMA_SIMULADO, f"A335BNLT 00C0 {SERIE_SIMULADA}", versao_firmware=versao,
                    relogio_sincronizado=cenario != "relogio_errado", disco_total_kib=CARTAO_KIB,
                    disco_livre_kib=LIVRE_NORMAL_KIB)
+
+
+def chaves_do_uenv(texto: str) -> dict[str, str]:
+    """As chaves ativas de um ``uEnv.txt`` (a última vale, como no u-boot)."""
+    chaves = {}
+    for linha in texto.splitlines():
+        linha = linha.strip()
+        if linha and not linha.startswith("#") and "=" in linha:
+            chave, _, valor = linha.partition("=")
+            chaves[chave.strip()] = valor.strip()
+    return chaves
+
+
+def aplicar_o_boot(raiz: Path, desligada_s: float = 40.0) -> None:
+    """O boot da placa simulada, depois de um reinício (o ``systemctl reboot``): o u-boot lê o ``/boot/uEnv.txt`` e
+    monta a linha do kernel (o ``optargs`` logo depois do console, o ``cmdline`` no fim) e os overlays (o da PRU, se o
+    ``.dtbo`` existe; o do HDMI, com ou sem o áudio, se o vídeo não está desligado); a PRU0 existe só com o overlay
+    dela, e fica parada; os pinos voltam ao ``default`` (o ``config-pin`` não é permanente), e sem o
+    ``cape_universal`` nem existem; o relógio volta de onde parou ao desligar (o ``timesyncd`` guarda a hora: atrasado
+    o tempo em que a placa ficou desligada) e sem o NTP; o tempo ligada recomeça."""
+    try:
+        texto = (raiz / "boot/uEnv.txt").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        texto = ""
+    u = chaves_do_uenv(texto)
+    partes = ["console=ttyO0,115200n8"]
+    if u.get("optargs"):
+        partes.append(u["optargs"])
+    partes.append("bone_capemgr.uboot_capemgr_enabled=1 root=/dev/mmcblk1p1 ro rootfstype=ext4 rootwait")
+    if u.get("cmdline"):
+        partes.append(u["cmdline"])
+    _escrever(raiz, "/proc/cmdline", " ".join(partes) + "\n")
+    pasta = raiz / "proc/device-tree/chosen/overlays"
+    shutil.rmtree(pasta, ignore_errors=True)
+    overlays = []
+    if u.get("enable_uboot_overlays") == "1":
+        if u.get("disable_uboot_overlay_adc") != "1":
+            overlays.append("BB-ADC-00A0")
+        if u.get("disable_uboot_overlay_emmc") != "1":
+            overlays.append("BB-BONE-eMMC1-01-00A0")
+        if u.get("disable_uboot_overlay_video") != "1":
+            overlays.append("BB-NHDMI-TDA998x-00A0" if u.get("disable_uboot_overlay_audio") == "1"
+                            else "BB-HDMI-TDA998x-00A0")
+        pru = u.get("uboot_overlay_pru", "")
+        if pru and (raiz / pru.lstrip("/")).is_file():
+            overlays.append(Path(pru).name.removesuffix(".dtbo"))
+    _escrever(raiz, "/proc/device-tree/chosen/overlays/name", "overlays\x00")
+    for overlay in overlays:
+        _escrever(raiz, f"/proc/device-tree/chosen/overlays/{overlay}", "Fri Apr  3 23:36:17 2020\x00")
+    rproc = raiz / "sys/class/remoteproc/remoteproc1"
+    if any(re.search(r"PRU-RPROC", o) for o in overlays):
+        _escrever(raiz, "/sys/class/remoteproc/remoteproc1/state", "offline\n")
+        _escrever(raiz, "/sys/class/remoteproc/remoteproc1/firmware", "am335x-pru0-fw\n")
+        _escrever(raiz, "/sys/class/remoteproc/remoteproc1/name", "4a334000.pru\n")
+    else:
+        shutil.rmtree(rproc, ignore_errors=True)
+    for pino in ("P9_28", "P9_29", "P9_30", "P9_31"):
+        estado = f"/sys/devices/platform/ocp/ocp:{pino}_pinmux/state"
+        if u.get("enable_uboot_cape_universal") == "1":
+            _escrever(raiz, estado, "default\n")
+        else:
+            shutil.rmtree((raiz / estado.lstrip("/")).parent, ignore_errors=True)
+    relogio = raiz / "run/simulador/relogio"
+    try:
+        desvio = float(relogio.read_text().strip() or 0)
+    except (OSError, ValueError):
+        desvio = 0.0
+    _escrever(raiz, "/run/simulador/relogio", f"{desvio - desligada_s!r}\n")
+    (raiz / "run/systemd/timesync/synchronized").unlink(missing_ok=True)
+    _escrever(raiz, "/proc/uptime", "35.10 30.02\n")
 
 
 class Simulador:

@@ -31,7 +31,8 @@ from typing import TYPE_CHECKING
 import asyncssh
 
 from .destino import SENHA_PADRAO_DA_IMAGEM, Destino
-from .simulador import montar_sistema_falso
+from .simulador import aplicar_o_boot, montar_sistema_falso, programas_da_placa
+from .tarefas import PASTA_DAS_TAREFAS
 
 if TYPE_CHECKING:
     from .chaves import ChaveDoAplicativo, HostsConhecidos
@@ -44,6 +45,12 @@ FRACAO_DA_QUEDA = 0.4
 """No cenário ``conexao_instavel``: cada conexão cai depois de :data:`QUEDA_A_CADA_S`, e cada arquivo, na primeira vez
 que é lido além desta fração dele (a retomada continua do ponto em que parou)."""
 
+
+TEMPO_DO_BOOT_S = 6.0
+"""Quanto a placa simulada leva para voltar de um reinício (a de verdade, ~40 s até o SSH)."""
+INTERVALO_DOS_PEDIDOS_S = 0.2
+SENHA_TROCADA = ".senha-da-placa"
+"""No home da placa simulada: a senha que o ``chpasswd`` dela pôs (a do sudo e a do SSH, daí em diante)."""
 
 PASTA_EM_CURSO = ".em_curso"
 """A pasta das capturas no cartão em curso, na pasta do firmware (a ``PASTA_EM_CURSO`` do ``captura_no_cartao.py``)."""
@@ -65,7 +72,8 @@ while [ $# -gt 0 ]; do
 done
 if [ "$validar" = 1 ]; then
     [ -x "$SUDO_ASKPASS" ] || { echo "sudo: no askpass program specified" >&2; exit 1; }
-    if [ "$("$SUDO_ASKPASS")" != "$SHAN_SENHA_DO_SUDO" ]; then
+    senha=$(cat "$HOME/.senha-da-placa" 2>/dev/null || printf '%s' "$SHAN_SENHA_DO_SUDO")
+    if [ "$("$SUDO_ASKPASS")" != "$senha" ]; then
         echo "Sorry, try again." >&2
         echo "sudo: 1 incorrect password attempt" >&2
         exit 1
@@ -75,11 +83,12 @@ if [ "$validar" = 1 ]; then
 fi
 [ -f "$estampa" ] || { echo "sudo: a password is required" >&2; exit 1; }
 printf '%s\0' "$*" >> "$HOME/.sudo-comandos"
-exec "$@"
+exec env SHAN_COMO_ROOT=1 "$@"
 """
 """O sudo da placa simulada: faz o que o de verdade faz com ``-A``, ``-v``, ``-n`` e ``-k`` (a senha pelo
 ``SUDO_ASKPASS``, a credencial validada e esquecida) e roda o comando como o usuário deste computador (na raiz falsa:
-o acerto do relógio escreve o desvio dela, e não mexe no relógio daqui)."""
+o acerto do relógio escreve o desvio dela, e não mexe no relógio daqui), com ``SHAN_COMO_ROOT=1``: os programas dela
+que só o root roda (o ``systemctl reboot``, o ``chpasswd``) recusam sem ele, como os de verdade."""
 
 CONFIG_PIN = r"""#!/bin/sh
 # O config-pin da placa simulada: o modo no pinmux da árvore falsa.
@@ -126,7 +135,8 @@ class ServidorDoSimulador:
     def __init__(self, pasta: Path | None = None, cenario: str = "normal", *, usuario: str = "debian",
                  senha: str | None = None, senha_do_sudo: str = SENHA_PADRAO_DA_IMAGEM,
                  enderecos: tuple[str, ...] = ("127.0.0.1",), processos: Path | None = None,
-                 amostras_por_bloco: int | None = None, vazao_bytes_s: float | None = VAZAO_DO_USB_BYTES_S):
+                 amostras_por_bloco: int | None = None, vazao_bytes_s: float | None = VAZAO_DO_USB_BYTES_S,
+                 tempo_do_boot_s: float = TEMPO_DO_BOOT_S):
         if sys.platform == "win32":
             raise RuntimeError("o simulador da placa precisa de um shell POSIX (/bin/sh): no Windows, não há")
         self._temporaria = pasta is None
@@ -146,13 +156,19 @@ class ServidorDoSimulador:
         self._servidores: list[asyncssh.SSHAcceptor] = []
         self._livre_em = 0.0                               # quando o "cabo" fica livre de novo (a vazão do SFTP)
         self._ja_caiu: set[str] = set()                    # os arquivos que já cortaram uma transferência
+        self.tempo_do_boot_s = tempo_do_boot_s
+        self.desligada = False                             # o systemctl poweroff: só volta com ligar()
+        self.reinicios = 0
+        self._vigia: asyncio.Task | None = None            # o que atende os pedidos de reiniciar e desligar
+        self._reiniciando: asyncio.Task | None = None
         self.porta = 0
         self.chave_do_host = asyncssh.generate_private_key("ssh-ed25519")
         binarios = self.pasta / "bin"
         binarios.mkdir(exist_ok=True)
         (binarios / "python3").symlink_to(sys.executable)
         pgrep = PGREP.format(python=sys.executable, pgrep=shutil.which("pgrep") or "/usr/bin/pgrep")
-        for nome, roteiro in (("sudo", SUDO), ("config-pin", CONFIG_PIN), ("pgrep", pgrep)):
+        programas = {"sudo": SUDO, "config-pin": CONFIG_PIN, "pgrep": pgrep, **programas_da_placa(SENHA_TROCADA)}
+        for nome, roteiro in programas.items():
             (binarios / nome).write_text(roteiro)
             (binarios / nome).chmod(0o755)
         self.ram = self.pasta / "ram"                    # a /dev/shm da placa (o SHAN_RAM do sudo)
@@ -210,18 +226,92 @@ class ServidorDoSimulador:
                 line_editor=False)               # o PTY é o do sistema, como o sshd da placa
             self._servidores.append(servidor)
             self.porta = servidor.sockets[0].getsockname()[1]
+        self.desligada = False
+        if self._vigia is None:
+            self._vigia = asyncio.create_task(self._vigiar_os_pedidos())
         return self
 
-    async def parar(self) -> None:
-        """Derruba as conexões e para de escutar; volta com todo comando morto e colhido (com o canal fechado, o
-        vigia de cada um mata o grupo dele), para nenhum processo sobreviver à placa."""
+    # ------------------------------------------------------------------ reiniciar e desligar
+
+    @property
+    def pedido(self) -> Path:
+        """O pedido do ``systemctl reboot`` ou ``poweroff`` da placa, que :meth:`_vigiar_os_pedidos` atende."""
+        return self.raiz / "run" / "simulador" / "pedido"
+
+    async def _vigiar_os_pedidos(self) -> None:
+        while True:
+            await asyncio.sleep(INTERVALO_DOS_PEDIDOS_S)
+            try:
+                pedido = self.pedido.read_text().strip()
+            except OSError:
+                continue
+            self.pedido.unlink(missing_ok=True)
+            if pedido == "reboot" and self._reiniciando is None:
+                self._reiniciando = asyncio.create_task(self.reiniciar())
+            elif pedido == "poweroff":
+                await self.desligar()
+
+    async def _cair(self) -> None:
+        """A placa some da rede: as conexões caem, a escuta para, e tudo o que rodava nela morre."""
         self.derrubar()
         for servidor in self._servidores:
             servidor.close()
             await servidor.wait_closed()
         self._servidores = []
         await asyncio.gather(*self._rodando, return_exceptions=True)
-        await asyncio.to_thread(self._parar_as_capturas_no_cartao)
+        await asyncio.to_thread(self._parar_o_que_roda_destacado)
+
+    async def reiniciar(self) -> None:
+        """O reinício (o ``systemctl reboot`` da placa): cai, fica fora :attr:`tempo_do_boot_s` e volta pelo boot do
+        ``uEnv.txt`` (``aplicar_o_boot``), escutando na mesma porta."""
+        try:
+            await self._cair()
+            await asyncio.sleep(self.tempo_do_boot_s)
+            await asyncio.to_thread(aplicar_o_boot, self.raiz, self.tempo_do_boot_s)
+            self.reinicios += 1
+            await self.iniciar()
+        finally:
+            self._reiniciando = None
+
+    async def desligar(self) -> None:
+        """O desligar (o ``systemctl poweroff``): cai e não volta, até :meth:`ligar`."""
+        await self._cair()
+        self.desligada = True
+
+    async def ligar(self) -> ServidorDoSimulador:
+        """A placa desligada ligada de novo (alguém na bancada): o boot e a escuta na mesma porta."""
+        await asyncio.to_thread(aplicar_o_boot, self.raiz, 600.0)
+        return await self.iniciar()
+
+    async def parar(self) -> None:
+        """Derruba as conexões e para de escutar; volta com todo comando morto e colhido (com o canal fechado, o
+        vigia de cada um mata o grupo dele), para nenhum processo sobreviver à placa."""
+        for tarefa in (self._vigia, self._reiniciando):
+            if tarefa is not None:
+                tarefa.cancel()
+                await asyncio.gather(tarefa, return_exceptions=True)
+        self._vigia = self._reiniciando = None
+        await self._cair()
+
+    def _parar_o_que_roda_destacado(self) -> None:
+        self._parar_as_capturas_no_cartao()
+        self._parar_as_tarefas()
+
+    def _parar_as_tarefas(self) -> None:
+        """As tarefas destacadas que ainda rodam (``sh_placa/tarefas.py``: o ``rodar.sh``, líder do grupo do
+        ``setsid``), conferidas pelo ``ps`` antes."""
+        for arquivo in self.home.glob(f"{PASTA_DAS_TAREFAS}/*/pid"):
+            if (arquivo.parent / "codigo").exists():
+                continue
+            try:
+                pid = int(arquivo.read_text().strip())
+                saida = subprocess.run(["ps", "-o", "args=", "-p", str(pid)], capture_output=True, text=True,
+                                       timeout=5).stdout
+            except (OSError, ValueError, subprocess.SubprocessError):
+                continue
+            if "rodar.sh" in saida:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(pid, signal.SIGKILL)
 
     def _parar_as_capturas_no_cartao(self) -> None:
         """As capturas no cartão que ainda rodam na placa simulada (sem o ``codigo``): o grupo de cada uma (o shell
@@ -361,7 +451,9 @@ class _LadoDoServidor(asyncssh.SSHServer):
         return self.dono.senha is not None
 
     def validate_password(self, username: str, password: str) -> bool:
-        return self.dono.senha is not None and username == self.dono.usuario and password == self.dono.senha
+        trocada = self.dono.home / SENHA_TROCADA          # a do chpasswd da placa, se ela trocou
+        senha = trocada.read_text() if trocada.exists() else self.dono.senha
+        return senha is not None and username == self.dono.usuario and password == senha
 
 
 class _SFTPDoSimulador(asyncssh.SFTPServer):

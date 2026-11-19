@@ -133,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     cenario = os.environ.get("SHAN_CENARIO", "normal")
     por_bloco = int(os.environ.get("SHAN_AMOSTRAS_POR_BLOCO") or cs.AMOSTRAS_POR_BLOCO_DO_FIRMWARE)
-    antigo = cenario == "firmware_antigo"
+    antigo = cenario == "firmware_antigo" or os.environ.get("SHAN_ANTIGO") == "1"
     if any(a in ("-h", "--help") for a in argv):
         _linha(sys.stdout, AJUDA_ANTIGA if antigo else AJUDA)
         return OK
@@ -148,13 +148,58 @@ def main(argv: list[str] | None = None) -> int:
     except ErroDeUso as e:
         _erro(str(e))
         return USO
-    if cenario in FALHAS:
-        _erro(FALHAS[cenario])
+    falha = falha_da_placa(cenario)
+    if falha is not None:
+        _erro(falha)
         return ERRO
     p = linha.pedido
     blocos = blocos_para_duracao(p.duracao_s, p.taxa_hz, por_bloco) if p.duracao_s is not None else p.blocos
     arquivo = linha.arquivo or time.strftime("captura_%Y%m%d_%H%M%S.bin", time.localtime(_agora()))
     return Captura(Pedido(linha, blocos, arquivo), por_bloco, cenario, " ".join(shlex.quote(a) for a in argv)).rodar()
+
+
+MARCA_DA_PRU_QUE_NAO_SOBE = b"SHAN_PRU_NAO_SOBE"
+"""No firmware da PRU da placa simulada: a PRU com ele não sobe (a falha que a atualização tem de desfazer sozinha)."""
+
+
+def falha_da_placa(cenario: str) -> str | None:
+    """O erro do ``ler_adc`` de verdade numa placa mal configurada, lido do estado da placa simulada (``SHAN_RAIZ``),
+    como o de verdade lê a placa: sem o remoteproc da PRU, sem o ``mem=496M``, com o áudio do HDMI, com a PRU que não
+    sobe e com o firmware da PRU que não é o desta pasta. Uma correção (o ``uEnv.txt`` com o reinício, a atualização
+    do firmware) desfaz o erro, qualquer que seja o cenário em que a placa começou. Fora dela, o do cenário."""
+    raiz = os.environ.get("SHAN_RAIZ")
+    if not raiz:
+        return FALHAS.get(cenario)
+    r = Path(raiz)
+    rproc = r / "sys/class/remoteproc/remoteproc1"
+    if not rproc.is_dir():
+        return FALHAS["sem_overlay_da_pru"]
+    try:
+        cmdline = (r / "proc/cmdline").read_text(errors="replace")
+    except OSError:
+        cmdline = ""
+    if "mem=496M" not in cmdline.split():
+        return FALHAS["sem_mem_496m"]
+    try:
+        overlays = os.listdir(r / "proc/device-tree/chosen/overlays")
+    except OSError:
+        overlays = []
+    if any("HDMI-TDA998x" in nome and "NHDMI" not in nome for nome in overlays):
+        return FALHAS["audio_hdmi"]
+    try:
+        instalado = (r / "lib/firmware/am335x-pru0-fw").read_bytes()
+    except OSError:
+        instalado = b""
+    try:
+        estado = (rproc / "state").read_text().strip()
+    except OSError:
+        estado = ""
+    if MARCA_DA_PRU_QUE_NAO_SOBE in instalado or estado == "crashed":
+        return FALHAS["pru_com_falha"]
+    local = Path.cwd() / "fw_pru.out"
+    if local.is_file() and local.read_bytes() != instalado:
+        return FALHAS["pru_desatualizada"]
+    return None
 
 
 def _tem_o_traco(argv: list[str]) -> bool:
@@ -303,7 +348,7 @@ class Captura:
         self.parar = True
 
 
-def roteiro(cenario: str, amostras_por_bloco: int, sistema: cs.Sistema) -> str:
+def roteiro(cenario: str, amostras_por_bloco: int, sistema: cs.Sistema, *, antigo: bool = False) -> str:
     """O ``ler_adc`` da pasta do firmware da placa simulada: este módulo, pelo Python deste aplicativo (o caminho dele:
     o ``python3`` da placa simulada é o mesmo programa fora do ambiente virtual, sem o numpy), com o cenário, o bloco
     e o sistema dela no ambiente."""
@@ -312,7 +357,7 @@ def roteiro(cenario: str, amostras_por_bloco: int, sistema: cs.Sistema) -> str:
               "sys.exit(main())")
     ambiente = {"SHAN_CENARIO": cenario, "SHAN_AMOSTRAS_POR_BLOCO": str(int(amostras_por_bloco)),
                 "SHAN_KERNEL": sistema.kernel, "SHAN_SISTEMA": sistema.sistema, "SHAN_PLACA": sistema.placa,
-                "SHAN_VERSAO": sistema.versao_firmware}
+                "SHAN_VERSAO": sistema.versao_firmware, "SHAN_ANTIGO": "1" if antigo else "0"}
     variaveis = " ".join(f"{nome}={shlex.quote(valor)}" for nome, valor in ambiente.items())
     return ("#!/bin/sh\n# O ler_adc da placa simulada (sh_placa/ler_adc_simulado.py).\n"
             f"{variaveis} exec {shlex.quote(sys.executable)} -c {shlex.quote(codigo)} \"$@\"\n")
