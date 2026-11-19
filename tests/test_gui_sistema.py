@@ -11,7 +11,7 @@ pytest.importorskip("pytestqt")
 pytest.importorskip("asyncssh")
 
 import test_gui_simulador  # noqa: E402
-from PySide6.QtWidgets import QLabel  # noqa: E402
+from PySide6.QtWidgets import QLabel, QWidget  # noqa: E402
 from sh_analyzer_gui.servicos import conexao_da_placa  # noqa: E402
 from test_gui_simulador import ESPERA_MS  # noqa: E402
 
@@ -167,3 +167,85 @@ def test_desligar_pela_tela(qtbot, abrir):
     assert area.manutencao.sistema_.cartao_da_acao.texto.text() == "A placa desligou: já pode tirar da tomada."
     assert any("A placa desligou" in w.text() for w in area.lateral.findChildren(QLabel))
     assert any("Placa desligada" in e.texto for e in area.caderno.entradas)
+
+
+def test_o_cartao_cheio_limpo_e_expandido_pela_tela(qtbot, abrir):
+    area = abrir("disco_cheio")
+    c, s = area.conexao, area.servico_do_sistema
+    area.mostrar_secao("manutencao")
+    area.manutencao.mostrar_pagina("sistema")
+    esperar_a_leitura(qtbot, area)
+    cartao = area.manutencao.sistema_.cartao
+    assert set(cartao.botoes) == {"expandir", "apt", "diario", "tarefas"}
+    assert "91 MiB" in cartao.findChild(QWidget, "limpeza_apt").findChildren(QLabel)[0].text()
+    for qual in ("apt", "diario", "tarefas"):
+        cartao.botoes[qual].click()
+        dialogo = area.manutencao.dialogo
+        assert dialogo.confirmar.text() == "Limpar" and dialogo.ver.isHidden() == (qual == "tarefas")
+        confirmar(qtbot, area)
+        a = esperar_o_fim(qtbot, area)
+        assert a.estado == "feita" and a.detalhes["qual"] == qual, a.mensagem
+        qtbot.waitUntil(lambda: not s.lendo, timeout=ESPERA_MS)
+        assert qual not in cartao.botoes or qual == "diario"
+    assert ((s.detalhe["ocupacao"]["diario"]) == 8 * 1024 * 1024 and "diario" in cartao.botoes)   # fica o de agora
+    assert "2 tarefa(s)" in area.manutencao.sistema_.cartao_da_acao.texto.text()
+
+    cartao.botoes["expandir"].click()
+    dialogo = area.manutencao.dialogo
+    assert dialogo.reiniciar_depois.isChecked() and "sistema de arquivos" in dialogo.reiniciar_depois.text()
+    confirmar(qtbot, area)
+    a = esperar_o_fim(qtbot, area)
+    assert a.estado == "feita" and c.reinicios == 1, a.mensagem
+    qtbot.waitUntil(lambda: not s.lendo and s.detalhe["cartao"]["fora_bytes"] == 0, timeout=ESPERA_MS)
+    assert "expandir" not in cartao.botoes and "o sistema de arquivos cresceu" in \
+        area.manutencao.sistema_.cartao_da_acao.texto.text()
+    entradas = [e.texto for e in area.caderno.entradas]
+    assert any("Partição da placa expandida" in e and "reiniciou" in e for e in entradas)
+    assert sum("Cartão da placa:" in e for e in entradas) == 3
+
+
+def test_um_servico_a_senha_e_a_internet_pela_tela(qtbot, abrir):
+    area = abrir("normal")
+    c, s = area.conexao, area.servico_do_sistema
+    simulador = c._sessao.simulador
+    area.mostrar_secao("manutencao")
+    area.manutencao.mostrar_pagina("sistema")
+    esperar_a_leitura(qtbot, area)
+    pagina = area.manutencao.sistema_
+    assert "ssh.service" not in pagina.servicos.botoes                    # o necessário não tem botão
+    pagina.servicos.botoes["bonescript-autorun.service"].click()
+    assert area.manutencao.dialogo.confirmar.text() == "Desligar"
+    confirmar(qtbot, area)
+    assert esperar_o_fim(qtbot, area).estado == "feita"
+    qtbot.waitUntil(lambda: not s.lendo and pagina.servicos.botoes["bonescript-autorun.service"].text() == "Ligar…",
+                    timeout=ESPERA_MS)
+
+    # a senha: as duas novas conferidas; a nova vale para o sudo e para o SSH da placa simulada
+    nova = "outra senha, bem longa"
+    pagina.senha.trocar.click()
+    dialogo = area.manutencao.dialogo
+    dialogo.nova.setText(nova)
+    dialogo.de_novo.setText(nova + "x")
+    dialogo.confirmar.click()
+    assert dialogo.isVisible() and "não são iguais" in dialogo.mensagem.text() and s.acao.nome == "servico"
+    dialogo.de_novo.setText(nova)
+    confirmar(qtbot, area)
+    a = esperar_o_fim(qtbot, area)
+    assert a.nome == "trocar_senha" and a.estado == "feita", a.mensagem
+    assert (simulador.home / ".senha-da-placa").read_text() == nova and area.saude.senha_do_sudo == nova
+    assert not dialogo.nova.text() and not dialogo.de_novo.text()
+    entradas = "\n".join(e.texto for e in area.caderno.entradas)
+    assert "Senha do usuário da placa trocada" in entradas and nova not in entradas
+    for comando in simulador.comandos:
+        assert nova not in comando
+    pagina.cartao_da_acao.dispensar.click()
+
+    # o sudo seguinte já usa a nova (a da sessão)
+    pagina.servicos.botoes["bonescript-autorun.service"].click()
+    confirmar(qtbot, area)
+    assert esperar_o_fim(qtbot, area).estado == "feita"
+
+    pagina.rede.testar.click()
+    qtbot.waitUntil(lambda: s.internet is not None, timeout=ESPERA_MS)
+    assert "não alcança" in pagina.rede.internet.text()
+    assert pagina.rede.findChild(QWidget, "interface_usb0") is not None
