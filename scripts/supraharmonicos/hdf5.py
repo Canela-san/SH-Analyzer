@@ -292,6 +292,15 @@ class ConteudoHdf5:
     versao_codigo: str | None
 
 
+def ler_cabecalho_bruto(caminho: Path) -> bytes | None:
+    """Só o ``/cabecalho_bruto`` de um ``.h5`` do ``--export-hdf5`` (None se ele não tem), sem ler as amostras."""
+    import h5py
+
+    with h5py.File(caminho, "r") as f5:
+        dados = f5.get("cabecalho_bruto")
+        return None if dados is None else bytes(np.asarray(dados[:], dtype=np.uint8))
+
+
 def ler_hdf5(caminho: Path, *, limite_bytes: int = LIMITE_DO_HDF5_EM_MEMORIA) -> ConteudoHdf5:
     """Lê um ``.h5`` do ``adc_tool --export-hdf5``: o ``/amostras`` (os códigos do ADC, sem calibração) para a
     memória, os atributos da exportação e o ``/cabecalho_bruto``. Não usa o ``/tensao_v`` (float32, e sem a correção

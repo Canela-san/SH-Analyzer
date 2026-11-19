@@ -96,7 +96,7 @@ from .espectro import (
 from .filtros import aplicar_filtro_digital, projetar_filtro_sos
 from .fundamental import cruzamentos_da_fundamental, recortar_ciclos_inteiros
 from .harmonicos import TabelaHarmonicos, calcular_harmonicos
-from .hdf5 import ler_hdf5
+from .hdf5 import ler_cabecalho_bruto, ler_hdf5
 from .metricas_captura import calcular_basicas
 from .sonda import SONDAS_DIR_PADRAO, PerfilSonda, alcance_da_correcao, carregar_perfil_sonda
 from .sonda import aplicar_correcao_sonda as aplicar_correcao_sonda  # a cadeia de transformações da interface usa
@@ -641,10 +641,7 @@ def cabecalho_para_hdf5(captura: Captura) -> tuple[dict, bytes] | None:
         atributos["frequencia_pru_hz"] = cab.frequencia_pru_hz
     atributos["arquivo_origem"] = captura.hdf5.arquivo if captura.hdf5 is not None else captura.caminho.name
     if captura.tipo == "h5":
-        import h5py
-
-        with h5py.File(captura.caminho, "r") as f5:
-            bruto = bytes(np.asarray(f5["cabecalho_bruto"][:], dtype=np.uint8))
+        bruto = ler_cabecalho_bruto(captura.caminho) or b""
     else:
         with open(captura.caminho, "rb") as f:
             bruto = f.read(cab.tamanho_cabecalho)
