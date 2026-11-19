@@ -17,13 +17,18 @@ As capturas vêm de quem tem o projeto aberto (:class:`FonteDaProveniencia`): aq
 from __future__ import annotations
 
 import json
+import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from .desenho_da_figura import vista_do_painel
 from .figura import Figura
 from .projeto import VistaSalva
+
+if TYPE_CHECKING:
+    from .exportar_dados import OpcoesDosDados, TrechoDeDados
 
 FORMATO = "sh-analyzer-proveniencia"
 VERSAO = 1
@@ -32,7 +37,7 @@ CAMPOS_DO_CABECALHO = (
     "timestamp_iso_utc", "duracao_real_segundos", "lista_canais", "grandeza_por_canal", "ganho_por_canal",
     "sonda_id_por_canal", "frequencia_hz", "taxa_medida_hz", "total_amostras_gravadas", "blocos_gravados",
     "crc32_amostras", "amostras_atrasadas", "buffers_sobrescritos", "quadros_preambulo_ruim", "linha_de_comando",
-    "parametros", "hdf5")
+    "num_canais", "parametros", "hdf5")
 """O cabeçalho resumido: o que identifica a captura e diz se ela é íntegra (o inteiro está no arquivo dela)."""
 
 
@@ -82,6 +87,60 @@ def da_figura(figura: Figura, vistas: Mapping[str, VistaSalva], fontes: Mapping[
 def _fonte(f: FonteDaProveniencia) -> dict:
     return {"id": f.id, "nome": f.nome, "caminho": f.caminho, "tamanho": f.tamanho,
             "crc32_amostras": f.crc32_amostras, "cabecalho": resumo_do_cabecalho(f.cabecalho)}
+
+
+def dos_dados(trecho: TrechoDeDados, opcoes: OpcoesDosDados, fontes: Mapping[str, FonteDaProveniencia], *,
+              aplicativo: str, regiao: str, momento: datetime | None = None) -> dict:
+    """A proveniência de uma exportação de dados (o ``proveniencia.json``): o que saiu (o formato, o trecho, as
+    colunas com a receita de cada traço), as capturas usadas e os comandos equivalentes da CLI."""
+    momento = momento or datetime.now(timezone.utc).astimezone()
+    usadas = []
+    for c in trecho.colunas:
+        if c.fonte and c.fonte not in usadas:
+            usadas.append(c.fonte)
+    colunas = [{"nome": c.nome, "unidade": c.unidade, "grandeza": c.grandeza, "fonte": c.fonte,
+                "primeira_amostra": i, "t0_s": t0, "transformada": not c.codigos,
+                "escala": c.escala, "deslocamento": c.deslocamento, "receita": dict(c.receita)}
+               for c, i, t0 in zip(trecho.colunas, trecho.inicios, trecho.t0_por_coluna, strict=True)]
+    return {
+        "formato": FORMATO, "versao": VERSAO,
+        "aplicativo": {"nome": "SH-Analyzer", "versao": aplicativo},
+        "gerado_em": momento.isoformat(timespec="seconds"),
+        "dados": {"formato": opcoes.formato, "crus": opcoes.crus, "regiao": regiao, "linhas": trecho.n,
+                  "taxa_hz": trecho.taxa_hz, "t0_s": trecho.t0_s,
+                  **({"separador": opcoes.separador, "decimal": opcoes.decimal} if opcoes.formato == "csv" else {})},
+        "colunas": colunas,
+        "fontes": [_fonte(fontes[f]) for f in usadas if f in fontes],
+        "comandos_da_cli": comandos_da_cli(trecho, fontes),
+    }
+
+
+def comandos_da_cli(trecho: TrechoDeDados, fontes: Mapping[str, FonteDaProveniencia]) -> list[dict]:
+    """O que a CLI faz igual, por captura: o ``adc_tool --export-hdf5`` do mesmo trecho (os códigos e a calibração
+    dos canais dela; o ganho, o offset e o nome de cada traço ficam na proveniência). Um traço com transformações não
+    tem equivalente (a cadeia é da interface)."""
+    saida = []
+    for id_ in dict.fromkeys(c.fonte for c in trecho.colunas if c.fonte):
+        dela = [(c, i) for c, i in zip(trecho.colunas, trecho.inicios, strict=True) if c.fonte == id_]
+        nomes = [c.nome for c, _i in dela]
+        fonte = fontes.get(id_)
+        if fonte is None or any(not c.codigos for c, _i in dela):
+            saida.append({"tracos": nomes, "comando": None,
+                          "nota": "sem equivalente na CLI: as transformações da interface (a cadeia do traço)"})
+            continue
+        cab = fonte.cabecalho
+        k = int(cab.get("num_canais") or len(cab.get("lista_canais") or []) or
+                len((cab.get("parametros") or {}).get("canais") or []) or 1)
+        primeira = dela[0][1]
+        partes = ["adc_tool.py", fonte.caminho, "--export-hdf5", "saida.h5",
+                  "--inicio", str(primeira * k), "--fim", str((primeira + trecho.n) * k), "--incluir-tensao"]
+        parametros = cab.get("parametros")
+        if parametros:
+            partes += ["-f", f"{parametros['taxa_total_hz']:g}", "--canais",
+                       ",".join(str(c) for c in parametros["canais"])]
+        saida.append({"tracos": nomes, "comando": shlex.join(partes),
+                      "nota": "os códigos e a calibração de todos os canais da captura no mesmo trecho"})
+    return saida
 
 
 def em_texto(proveniencia: Mapping) -> str:
