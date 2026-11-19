@@ -161,10 +161,11 @@ def test_as_capturas_e_as_coletas(tmp_path):
 def test_os_logs():
     with Simulador() as cliente:
         logs = asyncio.run(cliente.logs(20))
-    assert len(logs.kernel) == 6 and [linha.origem for linha in logs.diario] == ["sudo", "wpa_supplicant"]
+    assert len(logs.kernel) == 7 and [linha.origem for linha in logs.diario] == ["sudo", "wpa_supplicant"]
     todas = logs.todas()
-    assert len(todas) == 8 and [linha.utc for linha in todas] == sorted(linha.utc for linha in todas)
-    assert [linha.erro for linha in logs.kernel] == [False] * 5 + [True]
+    assert len(todas) == 9 and [linha.utc for linha in todas] == sorted(linha.utc for linha in todas)
+    assert [linha.erro for linha in logs.kernel] == [False] * 6 + [True]
+    assert not any("crng" in linha.texto for linha in logs.kernel)          # a do boot que não importa
     assert LogsDaPlaca.de_json({"kernel": None, "diario": []}) == LogsDaPlaca(None, ())
 
 

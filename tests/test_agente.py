@@ -481,9 +481,11 @@ def test_os_logs_filtrados(placa):
     rc, r = rodar("logs", raiz=raiz, pasta=pasta)
     assert rc == 0
     kernel = [x["texto"] for x in r["kernel"]]
-    assert kernel[0] == "remoteproc remoteproc1: stopped remote processor 4a334000.pru" and len(kernel) == 6
+    assert kernel[0] == "remoteproc remoteproc1: stopped remote processor 4a334000.pru" and len(kernel) == 7
     assert kernel[-1].startswith("mmcblk1: error -110")                     # um erro do kernel entra sempre
-    assert not any("usb 1-1" in t for t in kernel) and not any(t.startswith(" ") for t in kernel)
+    assert any("usb 1-1" in t for t in kernel)                              # o USB importa (o cabo com mau contato)
+    assert not any("crng" in t or "protocol family" in t for t in kernel)   # as do boot, não
+    assert not any(t.startswith(" ") for t in kernel)
     agora = time.time()
     assert r["kernel"][1]["utc"] == pytest.approx(agora - 8040.52 + 2916.323129, abs=30)
     assert r["kernel"][1]["desde_o_boot_s"] == pytest.approx(2916.323129) and r["kernel"][-1]["nivel"] == 3
