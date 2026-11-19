@@ -66,7 +66,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > em `~/firmware-anteriores/`); **a F6.3 também** (a seção Manutenção com o firmware na tela); **a F6.4 e a F6.5
 > também** (o assistente do `uEnv.txt` na página Inicialização; reiniciar e desligar na página Sistema, com a queda
 > esperada: a placa de verdade reiniciou pela janela e voltou em 64 s, com o relógio acertado); **a próxima é a
-> F6.7** (a F6.6, os logs e o monitor, também feita). **A placa de verdade tem o firmware desta versão desde 19/11/2026** (a F6.2: v0.8-291-gc03a1cf, com a saída
+> F6.8** (a F6.6, os logs e o monitor, e a F6.7, o sistema, também feitas). **A placa de verdade tem o firmware desta versão desde 19/11/2026** (a F6.2: v0.8-291-gc03a1cf, com a saída
 > contínua); antes, o `ler_adc` v0.8 sem o `-o -`.
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
@@ -2325,7 +2325,7 @@ depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commi
   1,6% do processador; a placa não informa a temperatura. **O monitor durante uma captura** fica para a jornada da
   F6.9 (uma captura contínua com o monitor à vista, conferindo os blocos).
 
-### ☐ F6.7: o sistema: a senha, os serviços, a rede, o disco e a partição
+### ☑ F6.7: o sistema: a senha, os serviços, a rede, o disco e a partição
 
 - **O conteúdo:** **a senha** (trocar, pelo `chpasswd` com a senha no stdin, e o cofre atualizado); **os serviços da
   imagem** (o Cloud9, o BoneScript, o Node-RED, o nginx: desligar e ligar de novo, com o que cada um é; os
@@ -2336,6 +2336,24 @@ depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commi
   reinício).
 - **Pronto quando:** cada ferramenta funciona no simulador e lê na placa de verdade; a limpeza nunca apaga uma
   captura.
+- **Feita em 19/11/2026.** `sh_placa/sistema.py`: a senha pelo `chpasswd` (a nova pelo stdin, depois da do sudo, e
+  pelo `printf` do shell até ele: nunca numa linha de comando), os serviços (`systemctl enable/disable --now`), a
+  limpeza (o `apt-get clean`, o `journalctl --vacuum-size=16M`, as tarefas terminadas) e a partição (o
+  `grow_partition.sh` da imagem). Na página Sistema (`manutencao/cartoes_do_sistema.py`): **o cartão** (o espaço, a
+  partição com "Expandir…" e o reinício logo depois, o que dá para limpar com o tamanho e "Limpar…", e onde ficam as
+  cópias do firmware e as capturas), **os serviços** (o que cada um é, se roda, se sobe no boot, a memória; os
+  opcionais com "Desligar…"/"Ligar…"; o `.service` aberto por um `.socket` sem botão próprio; os necessários sem
+  botão), **a rede** (as interfaces ligadas com os endereços e os bytes, "Testar a internet") e **a senha** ("Trocar
+  a senha…": as duas conferidas, a nova na sessão e no cofre; o aviso da senha padrão da imagem). Todas pelo diálogo
+  das ações (o sudo, o "Ver o comando"), com o cartão da ação e o caderno (a senha nunca vai para ele). O cenário
+  "Cartão cheio" do simulador ganhou o que limpar (o cache do `apt`, o diário guardado, duas tarefas) e um cartão de
+  16 GB com a imagem de 4 GB; **o `journalctl` e o `apt-get` falsos ficam no PATH dos comandos da placa simulada**:
+  um `sudo journalctl --vacuum` dela tinha caído no `journalctl` deste computador (sem efeito: o diário daqui só dá
+  leitura ao usuário, conferido), e agora não cai. Testes: `tests/test_sh_placa_sistema.py` e
+  `tests/test_gui_sistema.py`. **Na placa de verdade:** a página mostra os 14 serviços (o `bonescript-autorun` usa
+  38 MiB), as duas redes do USB, a partição ocupando o eMMC todo (sem "Expandir…") e nada a limpar; a placa não
+  alcança a internet; **a senha foi trocada para a mesma** (o caminho do `chpasswd` conferido, como combinado) e o
+  sudo seguinte funcionou. Nenhum serviço foi desligado na placa de verdade (é decisão do usuário).
 
 ### ☐ F6.8: o resgate pela serial
 
