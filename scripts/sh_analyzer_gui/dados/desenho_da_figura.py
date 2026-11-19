@@ -34,7 +34,7 @@ espectro congelado também (a cópia da vista não guarda o espectro, e recalcul
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -45,6 +45,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure as FiguraDoMatplotlib
 from matplotlib.ticker import FuncFormatter, NullFormatter, ScalarFormatter
 from matplotlib.transforms import Bbox
+from supraharmonicos.api import Cancelado
 
 from .consulta import Amostras, consultar
 from .espectros import Desenho, envoltoria_log
@@ -60,6 +61,7 @@ FAMILIAS_DO_MATPLOTLIB = {"STIX": ("STIXGeneral", "stix"), "DejaVu Sans": ("Deja
                           "Inter": ("Inter", "dejavusans"), "IBM Plex Sans": ("IBM Plex Sans", "dejavusans")}
 """A família do estilo -> (o nome dela no Matplotlib, as letras da matemática)."""
 COLUNAS_POR_PIXEL = 2
+DPI_DO_LEIAUTE = 150.0
 LIMIAR_DO_TEMPO_EM_MS = 2.0
 FOLGA_DO_Y = 0.04
 LOTE_DO_M4 = 1 << 23                    # amostras lidas de uma vez na redução exata (~64 MB em float64)
@@ -208,6 +210,7 @@ class PaginaDesenhada:
     mpl: FiguraDoMatplotlib
     rc: dict = field(default_factory=dict)
     paineis: dict[str, tuple[float, float, float, float]] = field(default_factory=dict)
+    curvas: list = field(default_factory=list)          # as linhas dos dados (rasterizá-las, na exportação)
 
     def pixels(self) -> np.ndarray:
         """A página rasterizada (RGBA, ``altura × largura × 4``) no dpi dela: a prévia e o teste de fidelidade."""
@@ -218,10 +221,12 @@ class PaginaDesenhada:
 
 # ------------------------------------------------------------------ a redução
 
-def m4(valores: np.ndarray, bordas: np.ndarray, *, piramide: Piramide | None = None) -> tuple[np.ndarray, np.ndarray]:
+def m4(valores: np.ndarray, bordas: np.ndarray, *, piramide: Piramide | None = None,
+       ler: Callable[[int], None] | None = None) -> tuple[np.ndarray, np.ndarray]:
     """O M4 das colunas ``[bordas[c], bordas[c + 1])`` (posições em ``valores``): as posições (em ordem, sem repetir)
     da primeira, da mínima, da máxima e da última amostra de cada coluna, e os valores delas. Com ``piramide``, a
-    mínima e a máxima vêm da envoltória dela, no meio da coluna (a prévia: sem ler as amostras do meio)."""
+    mínima e a máxima vêm da envoltória dela, no meio da coluna (a prévia: sem ler as amostras do meio). ``ler(n)``
+    sai depois de cada lote lido (o progresso; ele pode interromper levantando uma exceção)."""
     bordas = np.asarray(bordas, dtype=np.int64)
     bordas = bordas[np.concatenate([[True], bordas[1:] > bordas[:-1]])]
     if len(bordas) < 2:
@@ -243,7 +248,7 @@ def m4(valores: np.ndarray, bordas: np.ndarray, *, piramide: Piramide | None = N
             ordem = np.argsort(posicoes, kind="stable")
             posicoes, saida = posicoes[ordem], saida[ordem]
         return posicoes, saida
-    i_min, i_max = _argextremos(valores, bordas)
+    i_min, i_max = _argextremos(valores, bordas, ler)
     indices = np.sort(np.stack([primeiros, i_min, i_max, ultimos], axis=1), axis=1)
     distintos = np.ones(indices.shape, dtype=bool)
     distintos[:, 1:] = indices[:, 1:] != indices[:, :-1]
@@ -251,7 +256,8 @@ def m4(valores: np.ndarray, bordas: np.ndarray, *, piramide: Piramide | None = N
     return indices.astype(np.float64), np.asarray(valores[indices], np.float64)
 
 
-def _argextremos(valores: np.ndarray, bordas: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _argextremos(valores: np.ndarray, bordas: np.ndarray,
+                 ler: Callable[[int], None] | None = None) -> tuple[np.ndarray, np.ndarray]:
     """A posição da (primeira) mínima e da (primeira) máxima de cada coluna, lendo as amostras em lotes de colunas
     inteiras. Os NaN não contam; uma coluna só de NaN fica com a primeira posição."""
     n_colunas = len(bordas) - 1
@@ -268,6 +274,8 @@ def _argextremos(valores: np.ndarray, bordas: np.ndarray) -> tuple[np.ndarray, n
             onde = np.flatnonzero(trecho == np.repeat(extremos_, tamanhos))
             colunas, primeira = np.unique(coluna[onde], return_index=True)
             saida[c + colunas] = bordas[c] + onde[primeira]
+        if ler is not None:
+            ler(len(trecho))
         c = fim
     return i_min, i_max
 
@@ -496,6 +504,26 @@ def _plano_do_espectro(painel: Painel, vista: VistaSalva, dados: DadosDaFigura) 
                   rotulo_y=series[0].rotulo_y)
 
 
+def pontos(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFigura) -> int:
+    """Quantos pontos as curvas da figura têm na janela de cada painel: o que "todos os pontos" desenha (e o que deixa
+    o arquivo vetorial grande)."""
+    planos = [_plano(p, vistas, dados) for p in figura.em_ordem()]
+    _compartilhar(planos, figura)
+    total = 0
+    for plano in planos:
+        for faixa in plano.faixas:
+            for s in faixa.series:
+                a = math.ceil((plano.janela[0] - s.t0) * s.taxa_hz) - s.inicio
+                z = math.floor((plano.janela[1] - s.t0) * s.taxa_hz) - s.inicio + 1
+                total += max(0, min(s.piramide.n_amostras, z) - max(0, a))
+        for s in plano.espectros:
+            d = s.desenho
+            a = max(0, math.floor((plano.janela[0] - d.f0) / d.df))
+            z = min(len(d.niveis), math.ceil((plano.janela[1] - d.f0) / d.df) + 1)
+            total += max(0, z - a)
+    return total
+
+
 def _compartilhar(planos: list[_Plano], figura: Figura) -> None:
     """Os painéis que dividem um eixo passam a ter a mesma janela (a união) ou os mesmos limites do y (a união)."""
     if figura.eixos_x_compartilhados:
@@ -543,17 +571,28 @@ class _Curva:
 
 
 def desenhar(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFigura, *, dpi: float = 300.0,
-             exato: bool = True, todos_os_pontos: bool = False, suavizar: bool = True) -> PaginaDesenhada:
+             exato: bool = True, todos_os_pontos: bool = False, suavizar: bool = True,
+             progresso: Callable[[float], None] | None = None, cancelado: Callable[[], bool] | None = None,
+             pixels_inteiros: bool = False) -> PaginaDesenhada:
     """A figura no tamanho da página (``figura.largura_mm`` × ``figura.altura_mm``) e em ``dpi`` (o da exportação,
-    ou o da tela na prévia). ``suavizar=False`` desliga o antisserrilhado das curvas (o teste de fidelidade)."""
+    ou o da tela na prévia). ``suavizar=False`` desliga o antisserrilhado das curvas (o teste de fidelidade).
+
+    O leiaute é achado em no máximo :data:`DPI_DO_LEIAUTE` (ele é em polegadas: não depende do dpi), e só a redução
+    usa o ``dpi``: um pôster A0 a 1 200 dpi não aloca a página inteira em pixels para isso. ``progresso(fração)`` sai
+    a cada lote de amostras lido pela redução exata; ``cancelado()`` verdadeiro a interrompe (``Cancelado``).
+    ``pixels_inteiros``: a página com um número inteiro de pixels em ``dpi``, o mais perto do tamanho do modelo (as
+    imagens: o Matplotlib truncaria 519,7 px em 519)."""
     registrar_as_fontes()
     rc = parametros_do_estilo(figura.estilo)
     textos = TEXTOS[figura.idioma]
     planos = [_plano(p, vistas, dados) for p in figura.em_ordem()]
     _compartilhar(planos, figura)
     with rc_context(rc):
-        mpl = FiguraDoMatplotlib(figsize=(figura.largura_mm / 25.4, figura.altura_mm / 25.4), dpi=dpi,
-                                 layout="constrained")
+        dpi_do_leiaute = min(dpi, DPI_DO_LEIAUTE)
+        tamanho = (figura.largura_mm / 25.4, figura.altura_mm / 25.4)
+        if pixels_inteiros:
+            tamanho = tuple((round(polegadas * dpi) + 1e-6) / dpi for polegadas in tamanho)
+        mpl = FiguraDoMatplotlib(figsize=tamanho, dpi=dpi_do_leiaute, layout="constrained")
         canvas = FigureCanvasAgg(mpl)
         mpl.get_layout_engine().set(w_pad=2 / 72, h_pad=2 / 72, wspace=0.02, hspace=0.02)
         grade = mpl.add_gridspec(figura.linhas, figura.colunas)
@@ -588,17 +627,24 @@ def desenhar(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFig
                 eixos[0].set_title(rotulos[p.id])
             eixos_do_painel[p.id] = eixos
         _so_os_de_fora(eixos_x, eixos_y)
-        # A segunda passada: com o leiaute feito, cada curva reduzida nas colunas dos pixels do eixo dela.
+        # A segunda passada: com o leiaute feito, cada curva reduzida nas colunas dos pixels do eixo dela, no dpi
+        # de saída.
         mpl.draw_without_rendering()
         renderizador = canvas.get_renderer()
-        for curva in curvas:
-            _reduzir(curva, renderizador, exato=exato, todos=todos_os_pontos)
+        escala = dpi / dpi_do_leiaute
         altura = mpl.bbox.height
         caixas = {}
         for id_, eixos in eixos_do_painel.items():
             uniao = Bbox.union([e.get_tightbbox(renderizador) for e in eixos])
-            caixas[id_] = (uniao.x0, altura - uniao.y1, uniao.x1, altura - uniao.y0)
-    return PaginaDesenhada(mpl, rc, caixas)
+            caixas[id_] = (uniao.x0 * escala, (altura - uniao.y1) * escala, uniao.x1 * escala,
+                           (altura - uniao.y0) * escala)
+        mpl.set_dpi(dpi)
+        leitura = _Leitura(curvas, exato=exato, todos=todos_os_pontos, progresso=progresso, cancelado=cancelado)
+        for curva in curvas:
+            _reduzir(curva, exato=exato, todos=todos_os_pontos, ler=leitura.leu)
+        if progresso is not None:
+            progresso(1.0)
+    return PaginaDesenhada(mpl, rc, caixas, [c.linha for c in curvas])
 
 
 def _eixos_das_faixas(mpl, celula, n: int, junto_x, junto_y) -> list:
@@ -688,19 +734,48 @@ def _desenhar_o_espectro(eixo, plano: _Plano, figura: Figura, textos: dict, suav
     return curvas
 
 
-def _reduzir(curva: _Curva, renderizador, *, exato: bool, todos: bool) -> None:
+def _colunas_e_janela(curva: _Curva) -> tuple[int, int, int, int]:
+    """As colunas do eixo na tela (``k0``, ``k1``: os meios pixels) e as posições da janela (``i0``, ``i1``)."""
+    eixo = curva.eixo
+    xa, xb = sorted(v / curva.fator_x for v in eixo.get_xlim())
+    caixa = eixo.get_window_extent()
+    k0, k1 = math.floor(caixa.x0 * COLUNAS_POR_PIXEL), math.ceil(caixa.x1 * COLUNAS_POR_PIXEL)
+    n = len(curva.valores)
+    i0 = max(0, math.floor((xa - curva.x0) / curva.passo) - 1)
+    i1 = min(n, math.ceil((xb - curva.x0) / curva.passo) + 2)
+    return k0, k1, i0, i1
+
+
+class _Leitura:
+    """A conta do progresso da redução: as amostras que a redução exata vai ler, e as já lidas."""
+
+    def __init__(self, curvas: list[_Curva], *, exato: bool, todos: bool, progresso, cancelado):
+        self.progresso, self.cancelado, self.lidas = progresso, cancelado, 0
+        self.total = 0
+        if exato and not todos:
+            for c in curvas:
+                if c.desenho_log is None:
+                    k0, k1, i0, i1 = _colunas_e_janela(c)
+                    if i1 - i0 > 4 * (k1 - k0):
+                        self.total += i1 - i0
+
+    def leu(self, n: int) -> None:
+        if self.cancelado is not None and self.cancelado():
+            raise Cancelado()
+        self.lidas += n
+        if self.progresso is not None and self.total:
+            self.progresso(min(1.0, self.lidas / self.total))
+
+
+def _reduzir(curva: _Curva, *, exato: bool, todos: bool, ler: Callable[[int], None] | None = None) -> None:
     """Os dados da linha: os pontos que pintam a janela do eixo (o M4 nas colunas dos pixels, ou todos)."""
     eixo = curva.eixo
     xa, xb = sorted(v / curva.fator_x for v in eixo.get_xlim())
-    caixa = eixo.get_window_extent(renderizador)
-    k0, k1 = math.floor(caixa.x0 * COLUNAS_POR_PIXEL), math.ceil(caixa.x1 * COLUNAS_POR_PIXEL)
+    k0, k1, i0, i1 = _colunas_e_janela(curva)
     if curva.desenho_log is not None:
         x, y = envoltoria_log(curva.desenho_log, xa, xb, max(2, k1 - k0))
         curva.linha.set_data(np.asarray(x) * curva.fator_x, y)
         return
-    n = len(curva.valores)
-    i0 = max(0, math.floor((xa - curva.x0) / curva.passo) - 1)
-    i1 = min(n, math.ceil((xb - curva.x0) / curva.passo) + 2)
     if i1 <= i0:
         curva.linha.set_data([], [])
         return
@@ -715,6 +790,6 @@ def _reduzir(curva: _Curva, renderizador, *, exato: bool, todos: bool) -> None:
         bordas = np.ceil((x_das_bordas - curva.x0) / curva.passo)
         bordas = np.clip(np.concatenate([[i0], bordas, [i1]]), i0, i1).astype(np.int64)
         posicoes, valores = m4(curva.valores, np.maximum.accumulate(bordas),
-                               piramide=None if exato else curva.piramide)
+                               piramide=None if exato else curva.piramide, ler=ler)
     x = (curva.x0 + posicoes * curva.passo) * curva.fator_x
     curva.linha.set_data(x, (valores * curva.escala + curva.deslocamento) * curva.fator_y)
