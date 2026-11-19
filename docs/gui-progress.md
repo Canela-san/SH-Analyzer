@@ -1840,6 +1840,20 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
 - **O conteúdo:** a jornada da captura num teste de ponta a ponta com o simulador (o formulário, a captura, o Parar,
   a queda, a captura na Análise); **na placa de verdade:** uma captura de 1 h direto no computador, sem perder amostra,
   aberta na Análise; o plano e este arquivo em dia.
+- **O desenho (18/11/2026):**
+  - **o teste de ponta a ponta,** `tests/test_gui_jornada_captura.py`, na janela e pelos gestos, como o da F3.10:
+    a Aquisição, o simulador achado e conectado com um clique, a seção Capturar pela coluna da esquerda, o pedido (um
+    modelo posto no formulário, o título digitado), o "Conferir antes", o Capturar com o ao vivo no cockpit, o Parar,
+    a captura que entra no projeto e o "Abrir na Análise" com o canal plotado (as amostras do arquivo são as que o
+    cockpit contou); depois uma captura no cartão, a queda do cabo no meio, a volta do acompanhamento, a cópia
+    conferida e trazida para o projeto; e o caderno da sessão com tudo na ordem;
+  - **na placa de verdade:** o aplicativo inteiro (a janela, sem tela), conectado pelo USB, o canal 1 na tomada de
+    casa, 400 kS/s, 1 h direto no computador, com o `ler_adc` deste branch compilado numa pasta à parte (`~/f47`,
+    apagada no fim; a placa segue com a v0.8). Pronto quando: o CRC das amostras confere, a integridade é zero (nenhuma
+    amostra atrasada, nenhum buffer sobrescrito, nenhum preâmbulo ruim), o número de amostras é o pedido, e a captura
+    abre na Análise com a pirâmide feita e o canal plotado (o tempo de cada passo vai para a seção 5). A queda do cabo
+    no meio (o mau contato) fecha a captura com o que chegou: se acontecer, a rodada se repete;
+  - **o plano e este arquivo:** a Fase 4 marcada como feita, com o que mudou do plano (11.5 e 11.6).
 
 ---
 
