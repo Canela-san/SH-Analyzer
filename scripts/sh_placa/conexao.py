@@ -466,8 +466,11 @@ class ConexaoSSH:
         if self.ao_cair is not None:
             self.ao_cair(motivo)
 
-    def _registrar_fato(self, descricao: str) -> None:
+    def registrar_fato(self, descricao: str) -> None:
+        """Um fato no registro de atividade (o que não é um comando: uma conexão, um envio pelo SFTP)."""
         self.registro.registrar(Entrada(time.time(), self.destino.conta, "conexao", descricao))
+
+    _registrar_fato = registrar_fato
 
 
 def _encerrar(processo: asyncssh.SSHClientProcess) -> None:

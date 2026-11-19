@@ -20,7 +20,8 @@ askpass a apaga ao ser lido) e apaga o diretório logo depois. Daí em diante o 
 ``como_root``), no mesmo shell (o roteiro é lido com o ``.``, e não num ``bash`` filho: a credencial do sudo vale
 para o shell que a validou). No fim, de qualquer jeito, ``sudo -k``. Conferido na placa de verdade em 19/11/2026: a
 credencial validada no ``setsid`` vale para os comandos seguintes dele (simples, num pipe, numa substituição, numa
-função). **A senha nunca está numa linha de comando**, num argumento, no registro de atividade ou no log; a senha
+função; mas não numa função chamada num pipe, que roda num subshell: lá, o ``sudo -n`` direto). **A senha nunca está
+numa linha de comando**, num argumento, no registro de atividade ou no log; a senha
 errada é :class:`~sh_placa.correcoes.ErroDoSudo`, e a tarefa nem começa.
 
 **Acompanhar** (:meth:`TarefaNaPlaca.acompanhar`): um ``tail -F`` dos passos e do log, desde o começo, até o
@@ -79,7 +80,7 @@ passo() {   # passo NOME ESTADO [TEXTO]: uma linha em passos (o estado: comecou,
 resultado() {   # resultado CHAVE VALOR: uma linha em resultado
     printf '%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\n' ' ')" >> "$SHAN_TAREFA/resultado"
 }
-como_root() { sudo -n "$@"; }
+como_root() { sudo -n "$@"; }   # nunca num pipe: lá a função roda num subshell, e a credencial é do shell
 if [ -n "$_askpass" ]; then
     SUDO_ASKPASS="$_askpass/askpass" sudo -A -p '' -v 2>/dev/null
     _v=$?
@@ -87,11 +88,14 @@ if [ -n "$_askpass" ]; then
     [ "$_v" -eq 0 ] || exit 98
     : > "$SHAN_TAREFA/sudo"
 fi
+umask 022
 . "$SHAN_TAREFA/roteiro.sh"
 """
 """O que roda destacado (``setsid``): a saída para o ``log``, o PID, o sudo validado, as funções do roteiro e, no
 fim (o ``trap`` do ``EXIT``, também no ``exit`` do roteiro), o código. O roteiro é lido com o ``.``: no mesmo shell
-que validou o sudo."""
+que validou o sudo, com o ``umask`` de sempre (o 077 do lançamento é para a pasta da tarefa e o askpass: um arquivo
+de sistema criado com ele ficaria só do root, e o kernel lê o firmware da PRU com as credenciais de quem pede o
+``start``)."""
 
 _LANCAR = r"""set -u
 umask 077
