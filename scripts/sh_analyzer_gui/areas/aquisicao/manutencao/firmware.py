@@ -1,11 +1,8 @@
-"""A seção Manutenção da Aquisição (docs/gui-plan.md, 11.10; a Fase 6): as páginas no alto (o Firmware, e as que as
-tarefas seguintes acrescentam), cada uma numa coluna no meio, como o diagnóstico.
-
-**O Firmware** (a F6.3): a versão da placa e a deste aplicativo, iguais pelo código (o plano compara os hashes), o
-que muda, o aviso das mudanças não commitadas; "Atualizar a placa…" e "Compilar e carregar de novo…" (o diálogo da
-atualização confirma, mostra o roteiro e pede a senha do sudo quando a sessão e o cofre não a têm); os passos ao vivo,
-com o log, e o desfecho (atualizada, voltou à anterior, falhou); as cópias anteriores na placa, com "Voltar a esta…" e
-"Apagar…". Nada roda na placa sem a confirmação.
+"""A página Firmware da Manutenção (a F6.3): a versão da placa e a deste aplicativo, iguais pelo código (o plano compara
+os hashes), o que muda, o aviso das mudanças não commitadas; "Atualizar a placa…" e "Compilar e carregar de novo…" (o
+diálogo da atualização confirma, mostra o roteiro e pede a senha do sudo quando a sessão e o cofre não a têm); os
+passos ao vivo, com o log, e o desfecho (atualizada, voltou à anterior, falhou); as cópias anteriores na placa, com
+"Voltar a esta…" e "Apagar…". Nada roda na placa sem a confirmação.
 """
 
 from __future__ import annotations
@@ -21,27 +18,21 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPlainTextEdit,
     QProgressBar,
-    QScrollArea,
-    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 from sh_placa.atualizacao import PASSOS, roteiro_da_atualizacao
 
-from ...componentes.basicos import Botao, Segmentado
-from ...componentes.numeros import formatar_bytes
-from ...componentes.painel import EstadoVazio
-from ...servicos.conexao_da_placa import ConexaoDaPlaca
-from ...servicos.manutencao_da_placa import EstadoDaAtualizacao, ManutencaoDaPlaca
-from ...tema.fontes import fonte_mono
-from ...tema.tokens import TAMANHOS
-from .pecas import IconeDoNivel, Selo, fonte, repolir
-from .textos import frase, traduzir
+from ....componentes.basicos import Botao
+from ....componentes.numeros import formatar_bytes
+from ....servicos.manutencao_da_placa import EstadoDaAtualizacao, ManutencaoDaPlaca
+from ....tema.tokens import TAMANHOS
+from ..pecas import IconeDoNivel, Selo, fonte, repolir
+from ..textos import frase, traduzir
+from .comuns import LARGURA_DO_DIALOGO, TextoMono, cartao, coluna_central
+from .comuns import texto as _texto
 
-LARGURA_MAXIMA = 920
-LARGURA_DO_DIALOGO = 560
 NOMES_DOS_PASSOS = dict(PASSOS)
 NIVEL_DO_PASSO = {"comecou": "info", "ok": "ok", "aviso": "aviso", "falhou": "erro"}
 NIVEL_DO_DESFECHO = {"atualizada": "ok", "voltou": "aviso", "falhou_antes": "erro", "falhou_ao_voltar": "erro",
@@ -49,70 +40,6 @@ NIVEL_DO_DESFECHO = {"atualizada": "ok", "voltou": "aviso", "falhou_antes": "err
 TITULOS_DOS_DESFECHOS = {"atualizada": "Firmware atualizado", "voltou": "A placa voltou à versão anterior",
                          "falhou_antes": "A atualização não mudou a placa", "falhou_ao_voltar": "A placa precisa de você",
                          "interrompida": "A atualização foi interrompida", "rodando": "Ainda roda"}
-
-
-def _texto(texto: str = "", nome: str = "texto_do_dialogo", selecionavel: bool = True) -> QLabel:
-    rotulo = QLabel(texto)
-    rotulo.setObjectName(nome)
-    rotulo.setWordWrap(True)
-    if selecionavel:
-        rotulo.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    return rotulo
-
-
-class TextoMono(QPlainTextEdit):
-    """Um texto longo na fonte mono, só de leitura (o log de uma tarefa, um roteiro)."""
-
-    def __init__(self, linhas_visiveis: int = 12, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setObjectName("texto_mono_longo")
-        self.setReadOnly(True)
-        self.setFont(fonte_mono(TAMANHOS["secundario"]))
-        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.setMaximumBlockCount(5000)
-        altura = self.fontMetrics().lineSpacing() * linhas_visiveis + 16
-        self.setFixedHeight(altura)
-
-    def acrescentar(self, texto: str) -> None:
-        barra = self.verticalScrollBar()
-        no_fim = barra.value() >= barra.maximum() - 2
-        cursor = self.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        cursor.insertText(texto)
-        if no_fim:
-            barra.setValue(barra.maximum())
-
-
-def _coluna_central(conteudo: QWidget, nome: str) -> QScrollArea:
-    """A coluna de no máximo :data:`LARGURA_MAXIMA` no meio, rolando (como o diagnóstico)."""
-    conteudo.setMaximumWidth(LARGURA_MAXIMA)
-    centro = QWidget()
-    centro.setObjectName("conteudo_do_diagnostico")
-    linha = QHBoxLayout(centro)
-    linha.setContentsMargins(0, 0, 0, 0)
-    linha.addStretch(1)
-    linha.addWidget(conteudo, 100)
-    linha.addStretch(1)
-    rolagem = QScrollArea()
-    rolagem.setObjectName(nome)
-    rolagem.setWidgetResizable(True)
-    rolagem.setFrameShape(QFrame.Shape.NoFrame)
-    rolagem.setWidget(centro)
-    return rolagem
-
-
-def cartao(titulo: str = "", nome: str = "item_do_diagnostico") -> tuple[QFrame, QVBoxLayout]:
-    """Um cartão (o do diagnóstico), com o título em negrito, se houver."""
-    quadro = QFrame()
-    quadro.setObjectName(nome)
-    coluna = QVBoxLayout(quadro)
-    coluna.setContentsMargins(14, 12, 14, 12)
-    coluna.setSpacing(6)
-    if titulo:
-        rotulo = QLabel(titulo)
-        rotulo.setFont(fonte("corpo", QFont.Weight.DemiBold))
-        coluna.addWidget(rotulo)
-    return quadro, coluna
 
 
 # ------------------------------------------------------------------ a confirmação
@@ -415,7 +342,7 @@ class PaginaDoFirmware(QWidget):
         coluna.addStretch(1)
         fora = QVBoxLayout(self)
         fora.setContentsMargins(0, 0, 0, 0)
-        fora.addWidget(_coluna_central(conteudo, "rolagem_do_firmware"))
+        fora.addWidget(coluna_central(conteudo, "rolagem_do_firmware"))
         manutencao.mudou.connect(self.atualizar)
         manutencao.atualizacaoMudou.connect(self._atualizacao_mudou)
         manutencao.logDaAtualizacao.connect(self.log.acrescentar)
@@ -559,75 +486,3 @@ class PaginaDoFirmware(QWidget):
         self.desfecho.show()
         if not self.log.toPlainText() and a.log:
             self.log.setPlainText("".join(a.log))
-
-
-# ------------------------------------------------------------------ a seção
-
-PAGINAS = (("firmware", "Firmware", "chave"),)
-
-
-class Manutencao(QWidget):
-    """A seção Manutenção: as páginas (:data:`PAGINAS`) no alto e a escolhida embaixo; sem placa, o estado vazio."""
-
-    def __init__(self, conexao: ConexaoDaPlaca, manutencao: ManutencaoDaPlaca, dialogos_de=None,
-                 captura_rodando=None, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setObjectName("secao_manutencao")
-        self.conexao, self.manutencao, self.dialogos_de = conexao, manutencao, dialogos_de
-        self.dialogo: DialogoDaAtualizacao | None = None
-        self.firmware = PaginaDoFirmware(manutencao, dialogos_de, captura_rodando)
-        self.firmware.confirmar.connect(self.confirmar_atualizacao)
-        self.paginas: dict[str, QWidget] = {"firmware": self.firmware}
-        self.escolha = Segmentado([traduzir(t) for _n, t, _i in PAGINAS], icones=[i for _n, _t, i in PAGINAS])
-        self.escolha.setObjectName("paginas_da_manutencao")
-        self.pilha = QStackedWidget()
-        for nome, _t, _i in PAGINAS:
-            self.pilha.addWidget(self.paginas[nome])
-        self.escolha.escolhaMudou.connect(lambda i: self.pilha.setCurrentIndex(i))
-        conectada = QWidget()
-        coluna = QVBoxLayout(conectada)
-        coluna.setContentsMargins(0, 12, 0, 0)
-        coluna.setSpacing(0)
-        topo = QHBoxLayout()
-        topo.addStretch(1)
-        topo.addWidget(self.escolha)
-        topo.addStretch(1)
-        coluna.addLayout(topo)
-        coluna.addWidget(self.pilha, 1)
-        self.vazio = EstadoVazio(traduzir("Nenhuma placa conectada"),
-                                 traduzir("A manutenção cuida do firmware da placa conectada: atualizar com a volta "
-                                          "sozinha, voltar a uma versão anterior, compilar e carregar de novo."),
-                                 icone_nome="chave", largura_do_texto=440)
-        self.estados = QStackedWidget()
-        self.estados.addWidget(self.vazio)
-        self.estados.addWidget(conectada)
-        fora = QVBoxLayout(self)
-        fora.setContentsMargins(0, 0, 0, 0)
-        fora.addWidget(self.estados)
-        conexao.mudou.connect(self._conexao_mudou)
-        self._conexao_mudou()
-
-    def _conexao_mudou(self) -> None:
-        self.estados.setCurrentIndex(1 if self.conexao.estado in ("conectada", "reconectando") else 0)
-        if self.isVisible():
-            self.manutencao.ler_se_preciso()
-
-    def showEvent(self, evento) -> None:
-        super().showEvent(evento)
-        self.manutencao.ler_se_preciso()           # o firmware é lido quando a seção aparece (o git, o plano)
-
-    def mostrar_pagina(self, nome: str) -> None:
-        indice = [n for n, _t, _i in PAGINAS].index(nome)
-        self.escolha.escolher(indice)
-        self.pilha.setCurrentIndex(indice)
-
-    @property
-    def pagina(self) -> str:
-        return PAGINAS[self.pilha.currentIndex()][0]
-
-    def confirmar_atualizacao(self, origem) -> DialogoDaAtualizacao:
-        if self.dialogo is not None:
-            self.dialogo.deleteLater()
-        self.dialogo = DialogoDaAtualizacao(self.manutencao, origem, self.window())
-        self.dialogo.open()
-        return self.dialogo
