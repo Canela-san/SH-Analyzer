@@ -25,6 +25,7 @@ FORMATOS = tuple(ex.FORMATOS)
 class SecaoDeExportacao(QFrame):
     exportarPedido = Signal(object)          # OpcoesDeExportacao
     copiarPedido = Signal()
+    empacotarPedido = Signal(object)         # OpcoesDeExportacao: o pacote reproduzível, com a figura nelas
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -72,6 +73,11 @@ class SecaoDeExportacao(QFrame):
         self.copiar.setObjectName("copiar_figura")
         self.copiar.setToolTip(self.tr("Copiar a figura (PNG e SVG) para a área de transferência"))
         self.copiar.clicked.connect(self.copiarPedido)
+        self.empacotar = Botao(self.tr("Pacote reproduzível…"), "secundario", "pacote")
+        self.empacotar.setObjectName("empacotar_figura")
+        self.empacotar.setToolTip(self.tr("Um .zip com a figura, os dados dela, um script em Python que a refaz e a "
+                                          "proveniência"))
+        self.empacotar.clicked.connect(lambda: (o := self.opcoes()) is not None and self.empacotarPedido.emit(o))
 
         grade = QGridLayout(self)
         grade.setContentsMargins(0, 8, 0, 10)
@@ -92,6 +98,7 @@ class SecaoDeExportacao(QFrame):
         botoes.addWidget(self.exportar, 1)
         botoes.addWidget(self.copiar)
         grade.addLayout(botoes, 8, 0, 1, 2)
+        grade.addWidget(self.empacotar, 9, 0, 1, 2)
         grade.setColumnStretch(1, 1)
         self._sem_latex = ex.sistema_do_latex() is None
         if self._sem_latex:
@@ -151,8 +158,8 @@ class SecaoDeExportacao(QFrame):
         self.texto_editavel.setVisible(f.id == "svg")
         self.rasterizar.setVisible(f.vetorial)
         pode = self.figura is not None and not self._ocupada
-        self.exportar.setEnabled(pode)
-        self.copiar.setEnabled(pode)
+        for botao in (self.exportar, self.copiar, self.empacotar):
+            botao.setEnabled(pode)
         if self._ocupada:
             return
         self._avisar("", "info")
@@ -160,6 +167,7 @@ class SecaoDeExportacao(QFrame):
             return
         if self.opcoes() is None:
             self.exportar.setEnabled(False)
+            self.empacotar.setEnabled(False)
             return
         if self.todos.isChecked() and self.contar_pontos is not None:
             n = self.contar_pontos()

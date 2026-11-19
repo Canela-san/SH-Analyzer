@@ -32,6 +32,7 @@ from ...dados.desenho_da_figura import colher, desenhar, pontos, registrar_as_fo
 from ...dados.exportar_figura import OpcoesDeExportacao, em_bytes, nome_do_arquivo
 from ...dados.exportar_figura import exportar as exportar_figura
 from ...dados.figura import Figura
+from ...dados.pacote import empacotar as empacotar_figura
 from ...dados.proveniencia import da_figura
 from ...modelo.comandos import AdicionarFigura, MudarFigura, RemoverFigura
 from ...modelo.objetos import Projeto, Vista, novo_id
@@ -70,6 +71,7 @@ class AreaDeFiguras(QWidget):
     resumoMudou = Signal(str)            # a linha da barra de status
     desenhada = Signal()                 # uma página nova apareceu (os testes esperam por ela)
     exportada = Signal(object)           # o caminho da figura exportada
+    empacotada = Signal(object)          # o caminho do pacote reproduzível
     copiada = Signal()
 
     def __init__(self, analise, tarefas, materializacoes, vista_ativa=lambda: None, dialogos_de=lambda: None,
@@ -144,6 +146,7 @@ class AreaDeFiguras(QWidget):
         self.exportacao = self.propriedades.exportacao
         self.exportacao.exportarPedido.connect(self.exportar)
         self.exportacao.copiarPedido.connect(self.copiar)
+        self.exportacao.empacotarPedido.connect(self.empacotar)
         self.exportacao.contar_pontos = self._contar_pontos
 
         linha = QHBoxLayout(self)
@@ -390,47 +393,64 @@ class AreaDeFiguras(QWidget):
     def exportar(self, opcoes: OpcoesDeExportacao, caminho: Path | None = None) -> Tarefa | None:
         """Exporta a figura escolhida (pergunta onde, sem ``caminho``) numa tarefa, com o progresso na seção e no
         painel das tarefas; no fim, o aviso na janela."""
+        return self._exportar(opcoes, caminho, pacote=False)
+
+    def empacotar(self, opcoes: OpcoesDeExportacao, caminho: Path | None = None) -> Tarefa | None:
+        """FG-08: o pacote reproduzível (um ``.zip`` com a figura no formato de ``opcoes``, os dados dela, o script
+        que a refaz e a proveniência), como a exportação: numa tarefa, perguntando onde sem ``caminho``."""
+        return self._exportar(opcoes, caminho, pacote=True)
+
+    def _exportar(self, opcoes: OpcoesDeExportacao, caminho: Path | None, *, pacote: bool) -> Tarefa | None:
         figura = self.figura
         if figura is None:
             return None
         formato = opcoes.dados_do_formato
+        extensao = ".zip" if pacote else formato.extensao
         if caminho is None:
             pasta = self._pasta_da_exportacao or (self.projeto.caminho.parent if self.projeto.caminho else Path.home())
             dialogos = self.dialogos_de()
-            caminho = dialogos.salvar_arquivo(self.tr("Exportar a figura"), f"{formato.nome} (*{formato.extensao})",
-                                              str(pasta / nome_do_arquivo(figura, opcoes))) if dialogos else None
+            sugestao = nome_do_arquivo(figura, opcoes).removesuffix(formato.extensao) + extensao
+            titulo, filtro = ((self.tr("Exportar o pacote reproduzível"), self.tr("Pacote reproduzível (*.zip)"))
+                              if pacote else (self.tr("Exportar a figura"), f"{formato.nome} (*{formato.extensao})"))
+            caminho = dialogos.salvar_arquivo(titulo, filtro, str(pasta / sugestao)) if dialogos else None
             if caminho is None:
                 return None
         caminho = Path(caminho)
-        if caminho.suffix.lower() not in {formato.extensao, ".tiff" if formato.id == "tiff" else formato.extensao}:
-            caminho = caminho.with_name(caminho.name + formato.extensao)
+        if caminho.suffix.lower() not in {extensao, ".tiff" if formato.id == "tiff" and not pacote else extensao}:
+            caminho = caminho.with_name(caminho.name + extensao)
         self._pasta_da_exportacao = caminho.parent
         vistas, colhidos = self._colher(figura)
         proveniencia = da_figura(figura, vistas, self.dados.fontes_da_proveniencia(), aplicativo=_versao())
-        self.exportacao.definir_ocupada(True, self.tr("Exportando…"))
+        andamento = self.tr("Empacotando…") if pacote else self.tr("Exportando…")
+        self.exportacao.definir_ocupada(True, andamento)
 
         def trabalho(progresso, cancelado):
-            exportar_figura(figura, vistas, colhidos, caminho, opcoes, proveniencia=proveniencia,
-                            aplicativo=_versao(), progresso=progresso, cancelado=cancelado)
+            gravar = empacotar_figura if pacote else exportar_figura
+            gravar(figura, vistas, colhidos, caminho, opcoes, proveniencia=proveniencia, aplicativo=_versao(),
+                   progresso=progresso, cancelado=cancelado)
             return caminho
 
+        nome = (self.tr("Empacotar a figura {} ({})") if pacote else self.tr("Exportar a figura {} ({})")).format(
+            figura.nome, formato.nome)
         return self.tarefas.iniciar(
-            self.tr("Exportar a figura {} ({})").format(figura.nome, formato.nome), trabalho, "figuras", pesada=True,
-            ao_progredir=lambda _t, f: self.exportacao.definir_ocupada(
-                True, self.tr("Exportando… {} %").format(round(100 * f))),
-            ao_terminar=self._exportou)
+            nome, trabalho, "figuras", pesada=True,
+            ao_progredir=lambda _t, f: self.exportacao.definir_ocupada(True, f"{andamento} {round(100 * f)} %"),
+            ao_terminar=lambda tarefa: self._exportou(tarefa, pacote))
 
-    def _exportou(self, tarefa: Tarefa) -> None:
+    def _exportou(self, tarefa: Tarefa, pacote: bool) -> None:
         if not isValid(self):
             return
         self.exportacao.definir_ocupada(False)
         if tarefa.estado == "concluida":
             caminho = tarefa.resultado
-            Toast.mostrar(self.window(), self.tr("Figura exportada: {} ({})").format(
-                caminho.name, formatar_bytes(caminho.stat().st_size)), "sucesso")
-            self.exportada.emit(caminho)
+            texto = self.tr("Pacote reproduzível: {} ({})") if pacote else self.tr("Figura exportada: {} ({})")
+            Toast.mostrar(self.window(), texto.format(caminho.name, formatar_bytes(caminho.stat().st_size)),
+                          "sucesso")
+            (self.empacotada if pacote else self.exportada).emit(caminho)
         elif tarefa.estado == "falhou":
-            Toast.mostrar(self.window(), self.tr("A figura não foi exportada: {}").format(tarefa.erro), "erro")
+            texto = (self.tr("O pacote não foi feito: {}") if pacote
+                     else self.tr("A figura não foi exportada: {}"))
+            Toast.mostrar(self.window(), texto.format(tarefa.erro), "erro")
 
     def copiar(self) -> Tarefa | None:
         """FG-09: a figura na área de transferência, em PNG (:func:`dpi_da_copia`) e em SVG (o texto editável)."""
