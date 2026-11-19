@@ -1,6 +1,7 @@
 """O resgate pela serial (a F6.8), sem tela: a porta da placa achada (o gadget), o console aberto num
 pseudoterminal no lugar dela (o login que chega, o que se digita e os atalhos indo para o outro lado), a porta que cai,
-a porta sem permissão (o porquê e o comando do grupo, sem botão de abrir) e o caminho na Manutenção sem placa."""
+a porta sem permissão (o porquê e o comando do grupo, sem botão de abrir), o caminho pelo cartão microSD e o caminho
+na Manutenção sem placa."""
 
 import os
 import sys
@@ -66,7 +67,9 @@ def test_o_console_serial_num_pseudoterminal(qtbot, qapp, config_limpa, pseudote
     pagina.show()
     assert pagina.escolha.currentText().startswith("BeagleBone Black") and pagina.abrir.isEnabled()
     assert not pagina.permissao.isVisible()
+    assert pagina.pelo_cartao_sd.isVisible() and "/dev/mmcblk1p1" in pagina.pelo_cartao_sd.text()
     assert pagina.abrir_o_console() and pagina.fechar.isVisible() and not pagina.escolha.isEnabled()
+    assert not pagina.pelo_cartao_sd.isVisible()                      # o caminho do cartão é para sem a serial
 
     os.write(mestre, b"\r\nDebian GNU/Linux 10 beaglebone ttyGS0\r\n\r\nbeaglebone login: ")
     qtbot.waitUntil(lambda: any("beaglebone login:" in linha for linha in pagina.tela.linhas_visiveis()),
