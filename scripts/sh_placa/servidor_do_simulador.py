@@ -57,7 +57,7 @@ PASTA_EM_CURSO = ".em_curso"
 
 SUDO = r"""#!/bin/sh
 # O sudo da placa simulada: -A (a senha pelo SUDO_ASKPASS), -v (só validar), -n (sem perguntar), -k (esquecer).
-estampa="$HOME/.sudo-validado"
+estampa="$HOME/.sudo-validado.$PPID"   # sem terminal, a credencial do sudo é do processo pai (o shell que validou)
 [ "$1" = "-k" ] && { rm -f "$estampa"; exit 0; }
 validar=0
 while [ $# -gt 0 ]; do
@@ -86,7 +86,8 @@ printf '%s\0' "$*" >> "$HOME/.sudo-comandos"
 exec env SHAN_COMO_ROOT=1 "$@"
 """
 """O sudo da placa simulada: faz o que o de verdade faz com ``-A``, ``-v``, ``-n`` e ``-k`` (a senha pelo
-``SUDO_ASKPASS``, a credencial validada e esquecida) e roda o comando como o usuário deste computador (na raiz falsa:
+``SUDO_ASKPASS``, a credencial validada e esquecida; sem terminal, a credencial é do processo pai, como na placa de
+verdade: um ``sudo -n`` numa função chamada num pipe, num subshell, não a tem) e roda o comando como o usuário deste computador (na raiz falsa:
 o acerto do relógio escreve o desvio dela, e não mexe no relógio daqui), com ``SHAN_COMO_ROOT=1``: os programas dela
 que só o root roda (o ``systemctl reboot``, o ``chpasswd``) recusam sem ele, como os de verdade."""
 
@@ -268,8 +269,8 @@ class ServidorDoSimulador:
             await self._cair()
             await asyncio.sleep(self.tempo_do_boot_s)
             await asyncio.to_thread(aplicar_o_boot, self.raiz, self.tempo_do_boot_s)
-            self.reinicios += 1
             await self.iniciar()
+            self.reinicios += 1                            # só depois de escutar: quem espera por ele já conecta
         finally:
             self._reiniciando = None
 

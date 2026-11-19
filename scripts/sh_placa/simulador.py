@@ -226,7 +226,14 @@ esac
 case "$pedido" in
     start)
         [ "$estado" = running ] && { echo "tee: $alvo: Device or resource busy" >&2; exit 1; }
-        if grep -q @PRU@ "$SHAN_RAIZ/lib/firmware/$(cat "$d/firmware")" 2>/dev/null; then
+        fw="$SHAN_RAIZ/lib/firmware/$(cat "$d/firmware")"
+        if [ "${SHAN_COMO_ROOT:-}" != 1 ] && [ -z "$(find "$fw" -perm -0004 2>/dev/null)" ]; then
+            echo "remoteproc remoteproc1: loading /lib/firmware/$(cat "$d/firmware") failed with error -13" \
+                >> "$SHAN_RAIZ/dev/kmsg"
+            echo "tee: $alvo: Permission denied" >&2      # o kernel lê o firmware como quem pede o start
+            exit 1
+        fi
+        if grep -q @PRU@ "$fw" 2>/dev/null; then
             echo crashed > "$d/state"
             echo "tee: $alvo: Invalid argument" >&2
             exit 1
@@ -453,7 +460,8 @@ def montar_sistema_falso(pasta: Path, cenario: str = "normal", versao_firmware: 
     fontes = {"ler_adc.c": "/* o ler_adc da placa simulada" + (f" ({MARCA_DO_FIRMWARE_ANTIGO})" if antigo else "")
                            + " */\n", "pru_main.c": "/* a PRU0 */\n",
               "spi_core.asm": "; o laço da PRU0\n",
-              "memoria_pru.h": "// o contrato ARM <-> PRU\n#define VERSAO_PROTOCOLO_PRU 5u\n"}
+              "memoria_pru.h": "// o contrato ARM <-> PRU\n#define VERSAO_PROTOCOLO_PRU 5u\n",
+              "Makefile": "# o Makefile da placa simulada (o make dela é o do simulador: servidor_do_simulador.py)\n"}
     for nome, texto in fontes.items():
         (firmware / nome).write_text(texto, encoding="utf-8")
         os.utime(firmware / nome, (FONTES_COMPILADAS_EM, FONTES_COMPILADAS_EM))
