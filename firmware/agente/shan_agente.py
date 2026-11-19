@@ -112,7 +112,8 @@ LIMITE_DE_CAPTURAS = 2000
 LIMITE_DE_LINHAS = 5000
 
 TERMOS_DOS_LOGS = ("remoteproc", "pru", "pinctrl", "pinmux", "mcasp", "capemgr", "uio", "ler_adc", "config-pin",
-                   "setup.sh", "coletar", "shan_agente")
+                   "setup.sh", "coletar", "shan_agente", "usb", "musb", "gadget", "mmc", "ext4")
+"""O que é "o que importa" nos logs: a PRU, os pinos, o firmware, o USB (o cabo com mau contato) e o cartão."""
 PRIORIDADE_DE_ERRO = 3                   # err, crit, alert e emerg entram sempre
 LINHAS_LIDAS_DO_DIARIO = 500
 FILTRO_DO_DIARIO = ("SYSLOG_IDENTIFIER=sudo", "+", "PRIORITY=0", "PRIORITY=1", "PRIORITY=2", "PRIORITY=3")
