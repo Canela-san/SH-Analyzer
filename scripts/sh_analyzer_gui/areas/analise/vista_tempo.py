@@ -83,6 +83,7 @@ class VistaDeTempo(QWidget):
     tracoClicado = Signal(object, object)
     regiaoMudou = Signal(float, float, bool)      # início, fim (s), se é a dos cursores
     semRegiao = Signal()                          # nenhum traço desenhado: nada a medir
+    tempoMudou = Signal(float, float)             # a janela de tempo (s), a cada passo do zoom e do pan (a grade)
 
     def __init__(self, vista: Vista, projeto: Projeto, selecao: Selecao, parent: QWidget | None = None,
                  materializacoes: ServicoDeMaterializacao | None = None):
@@ -1018,9 +1019,22 @@ class VistaDeTempo(QWidget):
         for faixa in self.faixas.values():
             faixa.escalas.ajustar(0.02)
 
+    def mostrar_tempo(self, inicio: float, fim: float) -> None:
+        """Mostra ``[inicio, fim]`` (s) no tempo, sem mexer no Y (os eixos ligados da grade)."""
+        principal = self._faixa_principal()
+        if principal is not None and fim > inicio:
+            principal.getViewBox().setXRange(inicio, fim, padding=0)
+
+    @property
+    def tem_dados(self) -> bool:
+        return bool(self.itens)
+
     def _tempo_mudou(self, *_) -> None:
         if not isValid(self):
             return
+        janela = self.janela_de_tempo()
+        if janela is not None:
+            self.tempoMudou.emit(*janela)
         self._atualizar_info()
         if self.minimapa.isVisible() and not self._minimapa_atrasado.isActive():
             self._minimapa_atrasado.start()

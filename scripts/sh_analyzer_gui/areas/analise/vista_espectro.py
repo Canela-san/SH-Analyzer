@@ -124,6 +124,7 @@ class VistaDeEspectro(QWidget):
     semRegiao = Signal()
     calculado = Signal()                          # um resultado novo chegou (os testes esperam por ele)
     medidasMudaram = Signal(object)               # MedidasDaVista dos cursores (ou None): a tabela de Medidas
+    frequenciaMudou = Signal(float, float)        # a faixa de frequência visível (Hz), a cada passo (a grade)
 
     def __init__(self, vista: Vista, projeto: Projeto, selecao: Selecao, *, tarefas, materializacoes,
                  vista_de_tempo: Callable[[str | None], object], parent: QWidget | None = None):
@@ -732,7 +733,29 @@ class VistaDeEspectro(QWidget):
         self.escalas.definir_selecao(selecionados)
         self._escalas_mudaram()
 
+    def faixa_de_frequencia(self) -> tuple[float, float]:
+        """A frequência visível (Hz), na escala linear ou na log."""
+        x0, x1 = self.grafico.getViewBox().viewRange()[0]
+        return (10.0 ** x0, 10.0 ** x1) if self.opcoes.frequencia_log else (x0, x1)
+
+    def mostrar_frequencias(self, f0: float, f1: float) -> None:
+        """Mostra ``[f0, f1]`` (Hz) no eixo da frequência, sem mexer no Y (os eixos ligados da grade); na escala log,
+        o que fica abaixo de 0 Hz não aparece."""
+        if self.opcoes.frequencia_log:
+            if f1 <= 0:
+                return
+            f0 = f0 if f0 > 0 else f1 / 1e3
+            self.grafico.getViewBox().setXRange(math.log10(f0), math.log10(f1), padding=0)
+        elif f1 > f0:
+            self.grafico.getViewBox().setXRange(f0, f1, padding=0)
+
+    @property
+    def tem_dados(self) -> bool:
+        return bool(self.resultados)
+
     def _zoom_mudou(self, *_) -> None:
+        if isValid(self):
+            self.frequenciaMudou.emit(*self.faixa_de_frequencia())
         if self.opcoes.frequencia_log:
             self._espera_da_envoltoria.start()
 

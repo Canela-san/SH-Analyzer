@@ -252,8 +252,13 @@ QToolButton#aba_do_trilho {{ color: {t.texto2}; padding: 4px 8px; }}
 QToolButton#aba_do_trilho:hover {{ color: {t.texto}; }}
 QLabel#titulo_vazio {{ color: {t.texto}; }}
 QLabel#texto_vazio {{ color: {t.texto2}; }}
-QTabWidget#vistas::pane, QTabWidget#painel_inferior::pane {{ border: none; }}
-QTabWidget#vistas > QTabBar, QTabWidget#painel_inferior > QTabBar {{ background: {t.superficie}; }}
+QTabWidget#painel_inferior::pane {{ border: none; }}
+QTabWidget#painel_inferior > QTabBar, QWidget#barra_das_vistas {{ background: {t.superficie}; }}
+QFrame#celula_da_grade[sozinha="false"] {{ border: 1px solid {t.borda}; }}
+QFrame#celula_da_grade[ativa="true"] {{ border: 1px solid {t.acento}; }}
+QToolButton#nome_da_celula {{ color: {t.texto2}; border: none; padding: 2px 6px; }}
+QFrame#celula_da_grade[ativa="true"] QToolButton#nome_da_celula {{ color: {t.texto}; }}
+QLabel#vazio_da_celula {{ color: {t.texto2}; padding: 16px; }}
 QTabWidget#painel_inferior {{ background: {t.superficie}; }}
 QTabWidget#painel_inferior > QStackedWidget {{ background: {t.superficie}; }}
 QLabel#badge {{ color: {t.texto2}; background: {t.elevada}; border: 1px solid {t.borda}; border-radius: 8px;

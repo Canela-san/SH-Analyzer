@@ -32,6 +32,7 @@ CAMINHOS = {
     "olho": "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z",
     "onda": "M2 12c2-6.5 4-6.5 6 0s4 6.5 6 0 4-6.5 6 0 2 4 2 4",
     "espectro": "M4 20V11 M9 20V4 M14 20v-8 M19 20v-5",
+    "disposicao": "M4 4h16v16H4z M12 4v16",
     "grade": "M4 4h7v7H4z M13 4h7v7h-7z M4 13h7v7H4z M13 13h7v7h-7z",
     "baixar": "M12 4v11 M7 10l5 5 5-5 M5 20h14",
     "enviar": "M12 20V9 M7 14l5-5 5 5 M5 4h14",

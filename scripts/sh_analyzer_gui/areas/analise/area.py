@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QDialog, QLabel, QTabBar, QTabWidget, QToolButton,
 from shiboken6 import isValid
 
 from ...componentes.avisos import ListaDeAvisos
+from ...componentes.grade_de_vistas import CELULAS
 from ...componentes.numeros import formatar_bytes, formatar_si
 from ...componentes.toast import Toast
 from ...dados import exportar_dados as ed
@@ -32,6 +33,7 @@ from ...tema.icones import IconeDoTema, icone
 from .arvore import PainelDoProjeto
 from .exportar_dados import NOMES_DAS_REGIOES, ColetaDaVista, DialogoDeExportarDados, PedidoDeDados
 from .inspetor import TEXTOS_DA_INTEGRIDADE, Inspetor
+from .ligacao_dos_eixos import LigacaoDosEixos
 from .medidas import TabelaDeMedidas
 from .vista_espectro import VistaDeEspectro
 from .vista_tempo import VistaDeTempo
@@ -58,6 +60,7 @@ class AreaDeAnalise(QObject):
         self.servico_de_medidas = ServicoDeMedidas(janela.tarefas, self, materializacoes=janela.materializacoes)
         self.servico_de_medidas.prontas.connect(medidas.mostrar)
         abas.currentChanged.connect(self._aba_mudou)
+        self.ligacao = LigacaoDosEixos(abas, self)
         self.janela, self.painel, self.inspetor, self.avisos = janela, painel, inspetor, avisos
         self.status_fonte, self.status_integridade, self.abas = status_fonte, status_integridade, abas
         self.projeto: Projeto | None = None
@@ -89,6 +92,7 @@ class AreaDeAnalise(QObject):
         for sinal, alvo in self._ligacoes(projeto):
             sinal.connect(alvo)
         self.janela.selecao.mudou.connect(self._tracos_selecionados)
+        self.abas.definir_disposicao("uma")           # um projeto começa com uma vista; o salvo traz a grade dele
         self._refazer_abas()
         self.inspetor.mostrar("", None)
         for fonte in projeto.fontes:
@@ -111,6 +115,37 @@ class AreaDeAnalise(QObject):
             widget.deleteLater()
         for i, vista in enumerate(self.projeto.vistas):
             self._vista_entrou(vista, i)
+
+    # ------------------------------------------------------------------ a grade (AN-09)
+
+    def definir_disposicao(self, disposicao: str) -> None:
+        self.abas.definir_disposicao(disposicao)
+
+    def ligar_os_eixos(self, ligar: bool) -> None:
+        self.ligacao.ligar(ligar)
+        acao = self.janela.acoes.get("ligar_eixos")
+        if acao is not None and acao.isChecked() != ligar:
+            acao.setChecked(ligar)
+
+    def estado_da_grade(self) -> dict:
+        """A disposição, a vista de cada célula (pelo id; ``None``: vazia) e os eixos ligados, para o projeto."""
+        return {"disposicao": self.abas.disposicao, "ligar": self.ligacao.ligada,
+                "celulas": [getattr(getattr(c.widget, "vista", None), "id", None) for c in self.abas.celulas]}
+
+    def restaurar_grade(self, estado: dict) -> bool:
+        """A grade guardada no projeto (:meth:`estado_da_grade`). A grade é só conforto: um estado estragado, ou de
+        vistas que não existem mais, deixa o que estiver (``False``)."""
+        if not isinstance(estado, dict) or estado.get("disposicao") not in CELULAS:
+            return False
+        ids = estado.get("celulas", [])
+        if not isinstance(ids, list):
+            return False
+        por_id = {v.id: self.widget_da_vista(v) for v in self.projeto.vistas}
+        widgets = [por_id.get(i) if isinstance(i, str) else None for i in ids]
+        self.abas.definir_disposicao(estado["disposicao"], widgets)
+        if isinstance(estado.get("ligar"), bool):
+            self.ligar_os_eixos(estado["ligar"])
+        return True
 
     def widget_da_vista(self, vista: Vista) -> VistaDeTempo | None:
         for i in range(self.abas.count()):

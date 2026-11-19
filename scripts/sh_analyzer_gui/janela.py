@@ -42,6 +42,7 @@ from pathlib import Path
 from PySide6.QtCore import QByteArray, QSize, Qt
 from PySide6.QtGui import (
     QAction,
+    QActionGroup,
     QCloseEvent,
     QDragEnterEvent,
     QDropEvent,
@@ -59,7 +60,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QStackedWidget,
-    QTabWidget,
+    QToolButton,
     QWidget,
 )
 from shiboken6 import isValid
@@ -78,6 +79,7 @@ from .componentes.avisos import ListaDeAvisos
 from .componentes.barra_superior import BarraSuperior
 from .componentes.basicos import Botao
 from .componentes.dialogo_de_erro import DialogoDeErro
+from .componentes.grade_de_vistas import DISPOSICOES, AbasEmGrade, nome_da_disposicao
 from .componentes.painel import EstadoVazio, PainelComAbas, TituloDoPainel, TrilhoDoPainel, botao_de_icone
 from .componentes.paleta import DialogoDeAtalhos, PaletaDeComandos
 from .componentes.tarefas import ListaDeTarefas
@@ -292,6 +294,21 @@ class JanelaPrincipal(QMainWindow):
                    icone="camadas", da_analise=True).triggered.connect(lambda: self.area.abrir_analise("espectrograma"))
         self._acao("harmonicos", self.tr("Abrir os harmônicos da vista"), atalho="Ctrl+Shift+H", icone="pulso",
                    da_analise=True).triggered.connect(lambda: self.area.abrir_analise("harmonicos"))
+        # A grade das vistas (AN-09): as disposições, uma de cada vez, e os eixos ligados entre as células.
+        self.grupo_das_disposicoes = QActionGroup(self)
+        for d in DISPOSICOES:
+            a = self._acao(f"disposicao_{d}", self.tr("Vistas: {}").format(nome_da_disposicao(d).lower()),
+                           icone="disposicao", da_analise=True)
+            a.setCheckable(True)
+            a.setChecked(d == "uma")
+            self.grupo_das_disposicoes.addAction(a)
+            a.triggered.connect(lambda _=False, d=d: self.area.definir_disposicao(d))
+        a = self._acao("ligar_eixos", self.tr("Ligar os eixos das vistas da grade"), icone="link",
+                       dica=self.tr("As vistas de tempo da grade andam juntas no tempo, e as de espectro na "
+                                    "frequência"), da_analise=True)
+        a.setCheckable(True)
+        a.setChecked(True)
+        a.toggled.connect(lambda ligar: self.area.ligar_os_eixos(ligar))
         a = self._acao("remover_selecionados", self.tr("Remover os traços selecionados"),
                        atalho=QKeySequence.StandardKey.Delete, da_analise=True)
         a.triggered.connect(lambda: self.area.remover_selecionados())
@@ -415,7 +432,7 @@ class JanelaPrincipal(QMainWindow):
 
     def _criar_centro(self) -> QWidget:
         """As abas das vistas e, sem nenhuma, o estado vazio no lugar delas."""
-        self.vistas = QTabWidget()
+        self.vistas = AbasEmGrade()
         self.vistas.setObjectName("vistas")
         self.vistas.setDocumentMode(True)
         self.vistas.setTabsClosable(False)    # o botão de fechar de cada aba é nosso (areas.analise.area)
@@ -430,7 +447,25 @@ class JanelaPrincipal(QMainWindow):
         self.botao_exportar_dados = botao_de_icone(self.acoes["exportar_dados"])
         self.botao_exportar_dados.setObjectName("exportar_dados_da_vista")
         botoes_do_canto.addWidget(self.botao_exportar_dados)
+        self.botao_disposicao = QToolButton()
+        self.botao_disposicao.setObjectName("disposicao_das_vistas")
+        self.botao_disposicao.setProperty("variante", "fantasma")
+        self.botao_disposicao.setAutoRaise(True)
+        self.botao_disposicao.setIconSize(QSize(16, 16))
+        self.botao_disposicao.setFixedSize(QSize(28, 28))
+        self.botao_disposicao.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.botao_disposicao.setToolTip(self.tr("A disposição das vistas: uma, duas, três ou quatro de cada vez"))
+        IconeDoTema(self.botao_disposicao, "disposicao", "texto2")
+        menu = QMenu(self.botao_disposicao)
+        for d in DISPOSICOES:
+            menu.addAction(self.acoes[f"disposicao_{d}"])
+        menu.addSeparator()
+        menu.addAction(self.acoes["ligar_eixos"])
+        self.botao_disposicao.setMenu(menu)
+        botoes_do_canto.addWidget(self.botao_disposicao)
         botoes_do_canto.addWidget(botao_de_icone(self.acoes["nova_vista"]))
+        self.vistas.celulasMudaram.connect(
+            lambda: self.acoes[f"disposicao_{self.vistas.disposicao}"].setChecked(True))
         self.vistas.setCornerWidget(canto, Qt.Corner.TopRightCorner)
         self.vistas.currentChanged.connect(lambda i: self.acoes["figura_da_vista"].setEnabled(i >= 0))
         self.vistas.currentChanged.connect(lambda i: self.acoes["exportar_dados"].setEnabled(i >= 0))
