@@ -97,3 +97,5 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["T20"]
+# O script do pacote reproduzível da figura roda sozinho, fora do aplicativo, e fala pelo terminal.
+"scripts/sh_analyzer_gui/recursos/refazer_figura.py" = ["T20"]

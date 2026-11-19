@@ -146,24 +146,50 @@ def exportar(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFig
     binário). O progresso vai de 0 a 1 (o desenho até 0,8; a gravação depois); ``cancelado()`` interrompe a
     redução (``Cancelado``)."""
     conferir(figura, opcoes)
-    formato, dpi = opcoes.dados_do_formato, opcoes.dpi_efetivo
-    if formato.id == "pgf" and opcoes.rasterizar_curvas and not isinstance(destino, (str, Path)):
+    if opcoes.formato == "pgf" and opcoes.rasterizar_curvas and not isinstance(destino, (str, Path)):
         raise OpcoesInvalidas("o PGF com as curvas rasterizadas grava as imagens ao lado dele: precisa de um arquivo")
+    pagina = desenhar_para_exportar(figura, vistas, dados, opcoes, progresso=parte_do_progresso(progresso, 0.0, 0.8),
+                                    cancelado=cancelado)
+    gravar(pagina, figura, destino, opcoes, proveniencia=proveniencia, aplicativo=aplicativo)
+    if progresso is not None:
+        progresso(1.0)
 
-    def parte(inicio: float, fim: float):
-        return (lambda f: progresso(inicio + (fim - inicio) * f)) if progresso is not None else None
 
-    pagina = desenhar(figura, vistas, dados, dpi=dpi, exato=True, todos_os_pontos=opcoes.todos_os_pontos,
-                      progresso=parte(0.0, 0.8), cancelado=cancelado, pixels_inteiros=not formato.vetorial)
+def parte_do_progresso(progresso: Callable[[float], None] | None, inicio: float, fim: float):
+    """O ``progresso`` de uma etapa que vai de ``inicio`` a ``fim`` do todo."""
+    return (lambda f: progresso(inicio + (fim - inicio) * f)) if progresso is not None else None
+
+
+def desenhar_para_exportar(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFigura,
+                           opcoes: OpcoesDeExportacao, *, progresso: Callable[[float], None] | None = None,
+                           cancelado: Callable[[], bool] | None = None) -> PaginaDesenhada:
+    """O desenho da exportação: a redução exata no dpi pedido, a imagem com um número inteiro de pixels e, nos
+    vetoriais, as curvas rasterizadas se pedido."""
+    formato = opcoes.dados_do_formato
+    pagina = desenhar(figura, vistas, dados, dpi=opcoes.dpi_efetivo, exato=True,
+                      todos_os_pontos=opcoes.todos_os_pontos, progresso=progresso, cancelado=cancelado,
+                      pixels_inteiros=not formato.vetorial)
     if cancelado is not None and cancelado():
         raise Cancelado()
     if opcoes.rasterizar_curvas and formato.vetorial:
         for linha in pagina.curvas:
             linha.set_rasterized(True)
+    return pagina
+
+
+def parametros_da_gravacao(pagina: PaginaDesenhada, figura: Figura, opcoes: OpcoesDeExportacao) -> dict:
+    """Os ``rcParams`` da gravação: os do estilo e os dos formatos (as fontes TrueType embutidas, o texto do SVG)."""
+    return {**pagina.rc, "pdf.fonttype": 42, "ps.fonttype": 42,
+            "svg.fonttype": "none" if opcoes.texto_editavel else "path", "svg.hashsalt": figura.id,
+            "pgf.rcfonts": False, "pgf.texsystem": sistema_do_latex() or SISTEMAS_DO_LATEX[0]}
+
+
+def gravar(pagina: PaginaDesenhada, figura: Figura, destino: Path | BinaryIO, opcoes: OpcoesDeExportacao, *,
+           proveniencia: Mapping | None = None, aplicativo: str = "") -> None:
+    """Grava a página já desenhada no formato de ``opcoes`` (no dpi atual dela)."""
+    formato, dpi = opcoes.dados_do_formato, opcoes.dpi_efetivo
     criador = f"SH-Analyzer {aplicativo}".strip()
-    rc = {**pagina.rc, "pdf.fonttype": 42, "ps.fonttype": 42,
-          "svg.fonttype": "none" if opcoes.texto_editavel else "path", "svg.hashsalt": figura.id,
-          "pgf.rcfonts": False, "pgf.texsystem": sistema_do_latex() or SISTEMAS_DO_LATEX[0]}
+    rc = parametros_da_gravacao(pagina, figura, opcoes)
     try:
         with rc_context(rc):
             if formato.id == "pgf" and isinstance(destino, (str, Path)):
@@ -179,8 +205,6 @@ def exportar(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFig
             raise
         # O backend do PGF roda o LaTeX para medir cada texto; um que ele não compõe para tudo.
         raise FalhaNaExportacao(f"o LaTeX ({rc['pgf.texsystem']}) não compôs o texto da figura: {erro}") from erro
-    if progresso is not None:
-        progresso(1.0)
 
 
 def em_bytes(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFigura, opcoes: OpcoesDeExportacao,
@@ -269,5 +293,6 @@ def _gravar(destino: Path | BinaryIO, conteudo: bytes) -> None:
 
 
 __all__ = ["DPI_MAXIMO", "FORMATOS", "LIMITE_DE_PIXELS", "LIMITE_DE_PONTOS", "FalhaNaExportacao", "FormatoDeFigura",
-           "OpcoesDeExportacao", "OpcoesInvalidas", "conferir", "dpi_maximo", "em_bytes", "exportar", "nome_do_arquivo", "pontos",
+           "OpcoesDeExportacao", "OpcoesInvalidas", "conferir", "desenhar_para_exportar", "dpi_maximo", "em_bytes",
+           "exportar", "gravar", "nome_do_arquivo", "parametros_da_gravacao", "parte_do_progresso", "pontos",
            "sistema_do_latex"]
