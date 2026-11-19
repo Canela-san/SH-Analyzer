@@ -542,12 +542,13 @@ def test_os_arquivos_do_firmware(placa):
     (pasta / "pru_main.obj").write_bytes(b"obj")
     rc, f = rodar("firmware_arquivos", raiz=raiz, pasta=pasta)
     assert rc == 0 and f["existe"] and f["versao"] == VERSAO_SIMULADA
-    assert sorted(f["arquivos"]) == ["coleta/comum.sh", "ler_adc.c", "memoria_pru.h", "pru_main.c", "spi_core.asm"]
+    assert sorted(f["arquivos"]) == ["Makefile", "coleta/comum.sh", "ler_adc.c", "memoria_pru.h", "pru_main.c",
+                                     "spi_core.asm"]
     assert f["arquivos"]["ler_adc.c"]["sha256"] == hashlib.sha256((pasta / "ler_adc.c").read_bytes()).hexdigest()
     assert f["binarios"]["ler_adc"]["executavel"] and f["binarios"]["fw_pru.out"]["bytes"] == 64
     assert f["pru_instalada"]["sha256"] == hashlib.sha256((pasta / "fw_pru.out").read_bytes()).hexdigest()
-    rc, f = rodar("firmware_arquivos", "Makefile", "coleta/comum.sh", raiz=raiz, pasta=pasta)
-    assert rc == 0 and f["arquivos"]["Makefile"] is None and f["arquivos"]["coleta/comum.sh"]["bytes"] == 8
+    rc, f = rodar("firmware_arquivos", "setup.sh", "coleta/comum.sh", raiz=raiz, pasta=pasta)
+    assert rc == 0 and f["arquivos"]["setup.sh"] is None and f["arquivos"]["coleta/comum.sh"]["bytes"] == 8
 
 
 def test_as_copias_anteriores(placa):

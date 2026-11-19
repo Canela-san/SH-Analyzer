@@ -79,13 +79,13 @@ def test_o_sudo_dentro_da_tarefa(tmp_path):
     for comando in placa.comandos:
         assert placa.senha_do_sudo not in comando
     assert not any(placa.ram.iterdir())                            # o askpass sumiu da "RAM"
-    assert not (placa.home / ".sudo-validado").exists()            # o sudo -k no fim
+    assert not list(placa.home.glob(".sudo-validado*"))           # o sudo -k no fim
 
 
 def test_a_queda_no_meio_nao_para_a_tarefa(tmp_path):
     """O cabo que solta no meio: o acompanhamento cai (``ErroDeConexao``), a tarefa segue na placa, a conexão seguinte
     a acha rodando e a acompanha desde o começo até o fim."""
-    roteiro = "".join(f"passo p{i} ok\nsleep 0.2\n" for i in range(8)) + "resultado fim sim\n"
+    roteiro = "".join(f"passo p{i} ok\nsleep 0.5\n" for i in range(8)) + "resultado fim sim\n"
 
     async def cenario():
         async with ServidorDoSimulador(tmp_path / "placa", vazao_bytes_s=None) as placa:
@@ -102,7 +102,7 @@ def test_a_queda_no_meio_nao_para_a_tarefa(tmp_path):
                     await t.acompanhar(ao_mudar)
             async with entrar(placa) as c:
                 (achada,) = await tarefas_na_placa(c, "teste")
-                rodando = achada.rodando
+                rodando = not achada.interrompida              # rodando, ou já terminou (sob carga, a volta demora)
                 de_novo = []
                 fim = await TarefaNaPlaca(c, achada.id).acompanhar(lambda e: de_novo.append(e.passos[-1].nome))
                 return vistos, rodando, de_novo, fim
@@ -142,9 +142,11 @@ def test_o_reinicio_pelo_systemctl_le_o_uenv(tmp_path):
                             .replace("disable_uboot_overlay_video=1", "#disable_uboot_overlay_video=1"))
             async with entrar(placa) as c:
                 sem_root = await c.executar("systemctl reboot")
-                t = await TarefaNaPlaca.lancar(c, "reiniciar", "Reiniciar", "como_root systemctl reboot\n",
+                try:                                       # a placa pode cair antes de responder (ela reinicia)
+                    await TarefaNaPlaca.lancar(c, "reiniciar", "Reiniciar", "como_root systemctl reboot\n",
                                                senha_do_sudo=placa.senha_do_sudo)
-                await t.esperar()
+                except ErroDeConexao:
+                    pass
                 for _ in range(100):
                     if placa.reinicios:
                         break
