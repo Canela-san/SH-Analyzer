@@ -43,7 +43,7 @@ def exemplo() -> ProjetoSalvo:
 def test_ida_e_volta_pelo_json():
     p = exemplo()
     dados = json.loads(json.dumps(arq.para_dict(p)))
-    assert dados["formato"] == arq.FORMATO and dados["versao"] == arq.VERSAO == 6
+    assert dados["formato"] == arq.FORMATO and dados["versao"] == arq.VERSAO == 7
     assert arq.de_dict(dados) == p
     assert [m["nome"] for m in dados["modelos_de_captura"]] == ["Rede V + I", "Calibração da tensão"]
     assert dados["modelos_de_captura"][0]["pedido"]["canais"][0]["sonda"] == "sct013_100a_sn001"
@@ -219,3 +219,20 @@ def test_localizar_pelo_crc_quando_a_captura_mudou_de_lugar(tmp_path):
     sem_crc = FonteSalva("f1", "../antigo/a.bin", antigo.as_posix(), len(conteudo), None)
     assert localizar_fonte(sem_crc, projeto, crc_de) is None        # sem CRC, o tamanho sozinho não basta
     assert localizar_fonte(fonte, tmp_path / "vazio", crc_de) is None
+
+
+def test_a_janela_e_os_cursores_de_cada_vista_vao_e_voltam():
+    """A versão 7: o x que cada vista mostrava e os cursores ligados da de tempo (o painel ligado de uma figura e o
+    espectro entre os cursores saem iguais depois de abrir). Estragados, ficam de fora, e o projeto abre."""
+    from dataclasses import replace
+
+    p = exemplo()
+    vista = replace(p.vistas[0], janela=(0.01, 0.06), cursores=(0.04, 0.02))     # C1 à direita de C2 vale
+    p = replace(p, vistas=(vista, *p.vistas[1:]))
+    dados = json.loads(json.dumps(arq.para_dict(p)))
+    assert dados["vistas"][0]["janela"] == [0.01, 0.06] and dados["vistas"][0]["cursores"] == [0.04, 0.02]
+    assert arq.de_dict(dados) == p
+    for janela, cursores in (([0.06, 0.01], [0.1]), (["a", 1], None), ([0, float("inf")], [1, "x"])):
+        dados["vistas"][0]["janela"], dados["vistas"][0]["cursores"] = janela, cursores
+        aberta = arq.de_dict(json.loads(json.dumps(dados).replace("Infinity", "1e999"))).vistas[0]
+        assert aberta.janela is None and aberta.cursores is None

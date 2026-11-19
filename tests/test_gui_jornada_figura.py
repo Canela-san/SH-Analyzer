@@ -157,7 +157,7 @@ def test_o_espectro_vira_figura_com_o_que_a_vista_calculou(janela, qtbot, tmp_pa
     (serie,) = area.dados.espectros(salva)
     (resultado,) = widget.resultados
     assert serie.desenho is resultado.desenho and serie.frequencia_log == espectro.opcoes.frequencia_log
-    assert serie.rotulo_y == resultado.espectro.rotulo(resultado.unidade)
+    assert serie.rotulo_y == "dB" + resultado.unidade          # a unidade: a figura escreve "Nível (dBV)"
     assert area.dados.janela(salva) == janela.area.janela_da_vista(espectro)
 
 

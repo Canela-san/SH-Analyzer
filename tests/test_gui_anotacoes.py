@@ -69,7 +69,7 @@ def test_as_anotacoes_vao_e_voltam_pelo_projeto():
     vista = replace(p.vistas[0], anotacoes=QUATRO)
     p = ProjetoSalvo(p.fontes, (vista, *p.vistas[1:]), p.layout, p.versao_do_aplicativo, p.modelos_de_captura)
     dados = json.loads(json.dumps(arq.para_dict(p)))
-    assert dados["versao"] == 6 and dados["vistas"][0]["anotacoes"][3] == {
+    assert dados["versao"] >= 6 and dados["vistas"][0]["anotacoes"][3] == {
         "id": "d", "tipo": "cota", "x0": 0.1, "y0": -0.015, "x1": 0.1125, "faixa": 1}
     assert arq.de_dict(dados) == p
     dados["vistas"][0]["anotacoes"].append(dict(dados["vistas"][0]["anotacoes"][0]))
