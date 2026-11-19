@@ -79,6 +79,7 @@ def test_o_uenv_ajustado_e_a_placa_reiniciada_pela_tela(qtbot, abrir):
     assert c.reinicios == 1 and c.quedas == 0 and c.estado == "conectada" and c.estado_da_placa.boot != boot_antes
     assert a.detalhes["copia"].startswith("/boot/uEnv.txt.sh-analyzer-") and a.detalhes["voltou_em_s"] > 0
     assert pagina.cartao_da_acao.isVisible() and "voltou" in pagina.cartao_da_acao.texto.text()
+    assert "Os pinos da PRU voltam ao padrão" in pagina.cartao_da_acao.texto.text()
     entradas = [e.texto for e in area.caderno.entradas]
     assert any("/boot/uEnv.txt da placa gravado" in e and "a placa reiniciou" in e and "```diff" in e
                for e in entradas)
@@ -105,6 +106,8 @@ def test_o_uenv_ajustado_e_a_placa_reiniciada_pela_tela(qtbot, abrir):
     confirmar(qtbot, area)
     a = esperar_o_fim(qtbot, area)
     assert a.estado == "feita" and a.energia is None and c.reinicios == 1
+    assert "vale no próximo boot" in pagina.cartao_da_acao.texto.text()
+    assert "pinos" not in pagina.cartao_da_acao.texto.text()
     qtbot.waitUntil(lambda: not s.lendo and "audio" in [m.nome for m in s.propostas], timeout=ESPERA_MS)
     assert len(pagina.linhas_das_copias) == 2
     assert any("restaurado da cópia" in e.texto and "vale no próximo boot" in e.texto for e in area.caderno.entradas)
@@ -161,5 +164,6 @@ def test_desligar_pela_tela(qtbot, abrir):
     a = esperar_o_fim(qtbot, area)
     assert a.estado == "feita", a.mensagem
     assert c.estado == "desconectada" and c.desligada and c.quedas == 0
+    assert area.manutencao.sistema_.cartao_da_acao.texto.text() == "A placa desligou: já pode tirar da tomada."
     assert any("A placa desligou" in w.text() for w in area.lateral.findChildren(QLabel))
     assert any("Placa desligada" in e.texto for e in area.caderno.entradas)
