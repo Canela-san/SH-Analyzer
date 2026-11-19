@@ -3,6 +3,8 @@ abrir uma captura e plotar a tensão, transformar a vista numa figura IEEE de um
 segundo painel na grade, ligá-lo à mesma vista e congelá-lo; mudar a vista e ver o painel ligado acompanhar e o
 congelado ficar; desfazer; salvar o projeto, abrir de novo e ver a mesma página. Sem tela."""
 
+import json
+
 import numpy as np
 import pytest
 
@@ -157,3 +159,73 @@ def test_o_espectro_vira_figura_com_o_que_a_vista_calculou(janela, qtbot, tmp_pa
     assert serie.desenho is resultado.desenho and serie.frequencia_log == espectro.opcoes.frequencia_log
     assert serie.rotulo_y == resultado.espectro.rotulo(resultado.unidade)
     assert area.dados.janela(salva) == janela.area.janela_da_vista(espectro)
+
+
+def test_exportar_e_copiar_pela_janela(janela, qtbot, tmp_path, monkeypatch):
+    """F5.4 na janela: o "Exportar figura…" pergunta onde e grava numa tarefa (a interface segue enquanto ela roda,
+    com o andamento na seção), o PDF sai com a proveniência da captura, o PNG no dpi pedido; "todos os pontos" diz
+    quantos vão e avisa acima do limite; o dpi que a página não aguenta é recusado ali mesmo; e o copiar põe o PNG e
+    o SVG na área de transferência."""
+    from PySide6.QtGui import QGuiApplication
+    from sh_analyzer_gui.dados import exportar_figura as ex
+
+    assert janela.controle.abrir_capturas([_captura(tmp_path / "dados")])
+    (fonte,) = janela.projeto.fontes
+    qtbot.waitUntil(lambda: fonte.piramides is not None, timeout=ESPERA_MS)
+    _plotar(janela, fonte, 1)
+    area = janela.figuras
+    _esperar_a_pagina(qtbot, area, lambda: qtbot.mouseClick(janela.botao_figura_da_vista, Qt.MouseButton.LeftButton))
+    secao = area.exportacao
+    assert secao.id_do_formato == "pdf" and secao.dpi.value() == 600 and secao.exportar.isEnabled()
+
+    # 1. O PDF: a pergunta de onde (sem a extensão, que entra sozinha) e a tarefa; a interface não espera por ela.
+    janela.controle.dialogos = DialogosFalsos(tmp_path / "saida" / "tensao")
+    (tmp_path / "saida").mkdir()
+    pdf = tmp_path / "saida" / "tensao.pdf"
+    with qtbot.waitSignal(area.exportada, timeout=ESPERA_MS) as sinal:
+        qtbot.mouseClick(secao.exportar, Qt.MouseButton.LeftButton)
+        assert not secao.exportar.isEnabled() and secao.aviso.text().startswith("Exportando")
+    assert sinal.args == [pdf] and secao.exportar.isEnabled()
+    conteudo = pdf.read_bytes()
+    from test_gui_exportar_figura import _string_do_pdf
+
+    proveniencia = json.loads(_string_do_pdf(conteudo, b"Subject"))
+    (origem,) = proveniencia["fontes"]
+    assert origem["nome"] == "rede.bin" and origem["crc32_amostras"] == fonte.fonte.captura.cabecalho.crc32_amostras
+    assert proveniencia["paineis"][0]["vista"]["tracos"][0]["canal"] == 1
+
+    # 2. O PNG a 150 dpi, na mesma pasta.
+    secao.formato.botao(list(ex.FORMATOS).index("png")).click()
+    secao.dpi.setValue(150)
+    janela.controle.dialogos = DialogosFalsos(tmp_path / "saida" / "tensao.png")
+    with qtbot.waitSignal(area.exportada, timeout=ESPERA_MS):
+        qtbot.mouseClick(secao.exportar, Qt.MouseButton.LeftButton)
+    imagem = QImage(str(tmp_path / "saida" / "tensao.png"))
+    assert (imagem.width(), imagem.height()) == (round(88 / 25.4 * 150), round(66 / 25.4 * 150))
+
+    # 3. Todos os pontos: a conta e o aviso acima do limite.
+    secao.todos.setChecked(True)
+    assert secao.aviso.text() == "20 k pontos na figura" and secao.exportar.isEnabled()
+    monkeypatch.setattr(ex, "LIMITE_DE_PONTOS", 1000)
+    secao.todos.setChecked(False)
+    secao.todos.setChecked(True)
+    assert "fica grande" in secao.aviso.text() and secao.aviso.property("nivel") == "aviso"
+    secao.todos.setChecked(False)
+
+    # 4. Copiar: o PNG e o SVG na área de transferência.
+    with qtbot.waitSignal(area.copiada, timeout=ESPERA_MS):
+        qtbot.mouseClick(secao.copiar, Qt.MouseButton.LeftButton)
+    mime = QGuiApplication.clipboard().mimeData()
+    assert mime.hasImage() and bytes(mime.data("image/png")).startswith(b"\x89PNG")
+    assert b"<svg" in bytes(mime.data("image/svg+xml"))
+
+    # 5. O pôster em TIFF a 1 200 dpi não cabe: a razão aparece, e o botão espera.
+    modelos = area.modelos
+    poster = modelos.item([modelos.item(k).data(Qt.ItemDataRole.UserRole) for k in range(modelos.count())].index(
+        "poster"))
+    qtbot.mouseClick(modelos.viewport(), Qt.MouseButton.LeftButton, pos=modelos.visualItemRect(poster).center())
+    area.propriedades.altura.setValue(1189.0)
+    assert (janela.projeto.figuras[0].modelo, janela.projeto.figuras[0].altura_mm) == ("poster", 1189.0)
+    secao.formato.botao(list(ex.FORMATOS).index("tiff")).click()
+    secao.dpi.setValue(1200)
+    assert not secao.exportar.isEnabled() and "use até 439 dpi" in secao.aviso.text()
