@@ -9,7 +9,10 @@ resultados.
   Aquisição (``modelos_de_captura``: o nome e o pedido inteiro, ``sh_placa/pedido.py``). A 5 trouxe as figuras
   (``figuras``: o modelo de página, a grade de painéis ligados às vistas ou congelados, o estilo; ``dados/figura.py``).
   A 6 trouxe o estilo de cada elemento das figuras (o de cada traço, a legenda, os nomes e os prefixos dos eixos, os
-  tamanhos e a moldura), os insets e as anotações das vistas (``anotacoes``: ``dados/anotacoes.py``).
+  tamanhos e a moldura), os insets e as anotações das vistas (``anotacoes``: ``dados/anotacoes.py``). A 7, a vista
+  dos perfis de sonda (o tipo ``sonda``, com os perfis do Bode nas opções), a janela que cada vista mostrava
+  (``janela``: o tempo ou a frequência) e os cursores ligados da vista de tempo (``cursores``): o painel ligado de
+  uma figura, e o espectro entre os cursores, saem iguais depois de abrir o projeto.
 * **As fontes** vão pelo caminho relativo à pasta do projeto (a pasta inteira pode mudar de lugar), pelo absoluto (o
   projeto pode mudar sem os dados) e pela identidade das amostras: o CRC do cabeçalho v9 e o tamanho. Se os dois
   caminhos falham, :func:`localizar_fonte` procura pelo CRC (PD-06). Uma captura sem o cabeçalho guarda a taxa e os
@@ -24,6 +27,7 @@ Sem Qt. A tradução entre isto e o modelo observável fica em ``modelo/persiste
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 from collections.abc import Callable, Iterable
@@ -41,10 +45,10 @@ from .figura import Figura, FiguraInvalida
 from .receita import ReceitaDoTraco, ReceitaInvalida
 
 FORMATO = "sh-analyzer-projeto"
-VERSAO = 6
+VERSAO = 7
 EXTENSAO = ".shproj"
 SUFIXO_AUTOMATICO = "~"
-TIPOS_DE_VISTA = ("tempo", "espectro", "bandas", "espectrograma", "harmonicos")
+TIPOS_DE_VISTA = ("tempo", "espectro", "bandas", "espectrograma", "harmonicos", "sonda")
 """Os tipos de vista que esta versão abre."""
 LIMITE_DA_BUSCA = 5000
 """Quantos arquivos a busca pelo CRC olha, no máximo (uma pasta enorme não trava a abertura)."""
@@ -83,6 +87,8 @@ class VistaSalva:
     tracos: tuple[TracoSalvo, ...] = ()
     opcoes: dict = field(default_factory=dict)     # as do tipo (``espectros.OPCOES_DO_TIPO``); {}: as padrão
     anotacoes: tuple[Anotacao, ...] = ()          # ``dados/anotacoes.py`` (a versão 6)
+    janela: tuple[float, float] | None = None     # o x que a vista mostrava (s ou Hz; a versão 7)
+    cursores: tuple[float, float] | None = None   # os cursores da vista de tempo, ligados (s; a versão 7)
 
 
 @dataclass(frozen=True)
@@ -154,7 +160,9 @@ def _vista_para_dict(v: VistaSalva) -> dict:
     return {"id": v.id, "nome": v.nome, "tipo": v.tipo,
             "tracos": [{"id": t.id, **t.receita.para_dict()} for t in v.tracos],
             **({"opcoes": dict(v.opcoes)} if v.opcoes else {}),
-            **({"anotacoes": [anot.para_dict(a) for a in v.anotacoes]} if v.anotacoes else {})}
+            **({"anotacoes": [anot.para_dict(a) for a in v.anotacoes]} if v.anotacoes else {}),
+            **({"janela": list(v.janela)} if v.janela is not None else {}),
+            **({"cursores": list(v.cursores)} if v.cursores is not None else {})}
 
 
 def _fonte_para_dict(fonte: FonteSalva) -> dict:
@@ -270,7 +278,23 @@ def _vista_de_dict(v, onde: str, ids: list[str], campos_da_receita: set[str]) ->
     except AnotacaoInvalida as e:
         raise ProjetoInvalido(str(e)) from None
     return VistaSalva(id=_campo(v, "id", str, onde), nome=nome, tipo=tipo, tracos=tuple(tracos), opcoes=opcoes,
-                      anotacoes=anotacoes)
+                      anotacoes=anotacoes, janela=_par(v.get("janela"), ordenado=True),
+                      cursores=_par(v.get("cursores")))
+
+
+def _par(valor, *, ordenado: bool = False) -> tuple[float, float] | None:
+    """A janela (dois números finitos, em ordem) ou os cursores (em qualquer ordem: C1 pode estar à direita de C2)
+    de uma vista. Qualquer outra coisa é nenhum: a janela e os cursores são o estado da tela, e um estragado não
+    impede de abrir o projeto (a vista se ajusta, os cursores ficam desligados)."""
+    if not isinstance(valor, list) or len(valor) != 2:
+        return None
+    try:
+        a, b = (float(x) for x in valor)
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(a) and math.isfinite(b)) or (ordenado and not a < b):
+        return None
+    return a, b
 
 
 def _figuras(brutas, vistas: set[str], vista_de_dict) -> tuple[Figura, ...]:

@@ -143,6 +143,7 @@ class VistaDeTempo(QWidget):
         coluna.addWidget(self.minimapa)
 
         self._arrasto: tuple | None = None     # Alt + arrastar: o traço, o deslocamento no começo e a marca do gesto
+        self._janela_pedida: tuple[float, float] | None = None   # a do projeto, antes de haver o que desenhar
         self._parada = QTimer(self)
         self._parada.setSingleShot(True)
         self._parada.setInterval(PARADA_DO_HISTORICO_MS)
@@ -369,7 +370,10 @@ class VistaDeTempo(QWidget):
         self.grafico.setVisible(tem)
         self.vazio.setVisible(not tem)
         if principal is not None:
-            if janela_de_tempo is not None:
+            if self._janela_pedida is not None and self.itens:
+                principal.getViewBox().setXRange(*self._janela_pedida, padding=0)
+                self._janela_pedida = None
+            elif janela_de_tempo is not None:
                 principal.getViewBox().setXRange(*janela_de_tempo, padding=0)
             elif ajustar or principal_antes is None:
                 self.ajustar()
@@ -1022,10 +1026,16 @@ class VistaDeTempo(QWidget):
             faixa.escalas.ajustar(0.02)
 
     def mostrar_tempo(self, inicio: float, fim: float) -> None:
-        """Mostra ``[inicio, fim]`` (s) no tempo, sem mexer no Y (os eixos ligados da grade)."""
+        """Mostra ``[inicio, fim]`` (s) no tempo, sem mexer no Y (os eixos ligados da grade, a janela do projeto).
+        Sem nada desenhado ainda, fica pedida: vale quando os dados chegarem, no lugar do ajuste à captura."""
+        if not fim > inicio:
+            return
         principal = self._faixa_principal()
-        if principal is not None and fim > inicio:
-            principal.getViewBox().setXRange(inicio, fim, padding=0)
+        if principal is None or not self.itens:
+            self._janela_pedida = (inicio, fim)
+            return
+        self._janela_pedida = None
+        principal.getViewBox().setXRange(inicio, fim, padding=0)
 
     @property
     def tem_dados(self) -> bool:

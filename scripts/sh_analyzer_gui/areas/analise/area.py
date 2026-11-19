@@ -17,6 +17,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QDialog, QLabel, QTabBar, QTabWidget, QToolButton, QWidget
 from shiboken6 import isValid
 
+from ... import preferencias
 from ...componentes.avisos import ListaDeAvisos
 from ...componentes.grade_de_vistas import CELULAS
 from ...componentes.numeros import formatar_bytes, formatar_si
@@ -39,6 +40,7 @@ from .inspetor import TEXTOS_DA_INTEGRIDADE, Inspetor
 from .ligacao_dos_eixos import LigacaoDosEixos
 from .medidas import TabelaDeMedidas
 from .vista_espectro import VistaDeEspectro
+from .vista_sonda import VistaDePerfis
 from .vista_tempo import VistaDeTempo
 from .vistas_de_mapa import VistaDeBandas, VistaDeEspectrograma, VistaDeHarmonicos
 
@@ -283,7 +285,7 @@ class AreaDeAnalise(QObject):
         de frequência aberta segue)."""
         ativa = self.janela.vista_ativa()
         if ativa is not None and ativa.tipo != "tempo":
-            ativa = next((v for v in self.projeto.vistas if v.id == ativa.opcoes.vista_de_tempo), None)
+            ativa = next((v for v in self.projeto.vistas if v.id == getattr(ativa.opcoes, "vista_de_tempo", None)), None)
         if ativa is None:
             ativa = next((v for v in self.projeto.vistas if v.tipo == "tempo"), None)
         if ativa is None:
@@ -312,7 +314,34 @@ class AreaDeAnalise(QObject):
         self._por_botao_de_fechar(i, widget)
         self.abas.setCurrentIndex(i)
 
+    def abrir_perfis(self) -> Vista:
+        """A vista dos perfis de sonda (ES-07): a que o projeto já tem fica aberta; sem uma, uma nova."""
+        existente = next((v for v in self.projeto.vistas if v.tipo == "sonda"), None)
+        if existente is not None:
+            self.ativar_vista(existente)
+            return existente
+        vista = Vista(self.tr("Perfis de sonda"), "sonda")
+        self.projeto.pilha.push(AdicionarVista(self.projeto, vista))
+        return vista
+
+    def _perfis_entrou(self, vista: Vista, i: int) -> None:
+        dialogos = self.janela.controle.dialogos
+
+        def escolher():
+            return dialogos.abrir_arquivo(self.tr("Abrir um perfil de sonda"), self.tr("Perfis de sonda (*.json)"),
+                                          str(preferencias.pasta("sondas")))
+
+        widget = VistaDePerfis(vista, self.projeto, self.janela.selecao,
+                               pasta_das_sondas=lambda: preferencias.pasta("sondas"), escolher_arquivo=escolher)
+        widget.semRegiao.connect(self._sem_regiao)
+        self.abas.insertTab(i, widget, icone("sonda", aparencia().tema.texto2), vista.nome)
+        self._por_botao_de_fechar(i, widget)
+        self.abas.setCurrentIndex(i)
+
     def _vista_de_frequencia_entrou(self, vista: Vista, i: int) -> None:
+        if vista.tipo == "sonda":
+            self._perfis_entrou(vista, i)
+            return
         classe, nome_do_icone = {"espectro": (VistaDeEspectro, "espectro"), "bandas": (VistaDeBandas, "grade"),
                                  "espectrograma": (VistaDeEspectrograma, "camadas"),
                                  "harmonicos": (VistaDeHarmonicos, "pulso")}[vista.tipo]
@@ -421,6 +450,29 @@ class AreaDeAnalise(QObject):
         vista = getattr(self.abas.widget(i), "vista", None)
         if vista is not None:
             self.projeto.pilha.push(RemoverVista(self.projeto, vista, self.janela_da_vista(vista)))
+
+    def restaurar_janelas(self, janelas: dict[str, tuple[float, float]],
+                          cursores: dict[str, tuple[float, float]] | None = None) -> None:
+        """O x que cada vista mostrava quando o projeto foi salvo e os cursores ligados (pelo id): a de tempo e a de
+        espectro mostram a janela assim que tiverem os dados."""
+        cursores = cursores or {}
+        for vista in self.projeto.vistas:
+            widget, janela = self.widget_da_vista(vista), janelas.get(vista.id)
+            if isinstance(widget, VistaDeTempo) and vista.id in cursores:
+                widget.ligar_cursores(True)
+                widget.cursores = list(cursores[vista.id])
+            if janela is None:
+                continue
+            if isinstance(widget, VistaDeTempo):
+                widget.mostrar_tempo(*janela)
+            elif isinstance(widget, VistaDeEspectro):
+                widget.mostrar_frequencias(*janela)
+
+    def cursores_da_vista(self, vista: Vista) -> tuple[float, float] | None:
+        """Os cursores ligados da vista de tempo (s), ou ``None``."""
+        widget = self.widget_da_vista(vista)
+        posicoes = widget.cursores if isinstance(widget, VistaDeTempo) else None
+        return tuple(posicoes) if posicoes is not None else None
 
     def janela_da_vista(self, vista: Vista) -> tuple[float, float] | None:
         """O que a vista mostra no x: o tempo (s) na de tempo, a frequência (Hz) na de espectro; ``None`` nas outras
@@ -666,7 +718,8 @@ class AreaDeAnalise(QObject):
         vista = vista or self.janela.vista_ativa()
         if vista is not None and vista.tipo != "tempo":       # o espectro segue uma vista de tempo: o traço vai nela
             tempos = [v for v in projeto.vistas if v.tipo == "tempo"]
-            vista = next((v for v in tempos if v.id == vista.opcoes.vista_de_tempo), tempos[0] if tempos else None)
+            vista = next((v for v in tempos if v.id == getattr(vista.opcoes, "vista_de_tempo", None)),
+                         tempos[0] if tempos else None)
         nome = nome_do_traco(fonte, numero)
         projeto.pilha.beginMacro(self.tr("Plotar {}").format(nome))
         try:

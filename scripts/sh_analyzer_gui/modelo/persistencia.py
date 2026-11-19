@@ -8,6 +8,7 @@ Abrir um projeto não entra no desfazer: o projeto montado começa com a pilha l
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -70,9 +71,14 @@ def descrever_vista(vista: Vista) -> VistaSalva:
 
 
 def descrever(projeto: Projeto, pasta: Path, *, layout: dict[str, str] | None = None,
-              versao_do_aplicativo: str = "") -> ProjetoSalvo:
-    """O projeto como vai para o arquivo; os caminhos das capturas ficam relativos a ``pasta`` (a do projeto)."""
-    vistas = tuple(descrever_vista(v) for v in projeto.vistas)
+              versao_do_aplicativo: str = "",
+              janelas: Callable[[Vista], tuple[float, float] | None] | None = None,
+              cursores: Callable[[Vista], tuple[float, float] | None] | None = None) -> ProjetoSalvo:
+    """O projeto como vai para o arquivo; os caminhos das capturas ficam relativos a ``pasta`` (a do projeto).
+    ``janelas(vista)`` e ``cursores(vista)``: o x que cada vista mostra e os cursores ligados dela (a Análise sabe),
+    para ela voltar igual."""
+    vistas = tuple(replace(descrever_vista(v), janela=janelas(v) if janelas is not None else None,
+                           cursores=cursores(v) if cursores is not None else None) for v in projeto.vistas)
     return ProjetoSalvo(tuple(descrever_fonte(f, Path(pasta)) for f in projeto.fontes), vistas, dict(layout or {}),
                         versao_do_aplicativo, projeto.modelos_de_captura, projeto.figuras)
 

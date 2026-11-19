@@ -301,6 +301,8 @@ class ControleDoProjeto(QObject):
                 self.janela.restaurar_estado(QByteArray(base64.b64decode(estado, validate=True)))
             except ValueError:
                 pass                                   # o layout é só conforto: estragado, fica o atual
+        self.janela.area.restaurar_janelas({v.id: v.janela for v in salvo.vistas if v.janela is not None},
+                                           {v.id: v.cursores for v in salvo.vistas if v.cursores is not None})
         grade = salvo.layout.get("grade")
         if grade:
             try:
@@ -347,6 +349,7 @@ class ControleDoProjeto(QObject):
         estado = base64.b64encode(bytes(self.janela.estado())).decode("ascii")
         grade = json.dumps(self.janela.area.estado_da_grade())
         return descrever(self.projeto, pasta, layout={"janela": estado, "grade": grade},
+                         janelas=self.janela.area.janela_da_vista, cursores=self.janela.area.cursores_da_vista,
                          versao_do_aplicativo=QApplication.instance().applicationVersion())
 
     # ------------------------------------------------------------------ automático

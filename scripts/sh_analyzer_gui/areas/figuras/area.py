@@ -69,6 +69,8 @@ def descricao_da_pagina(f: Figura) -> str:
     return f"{f.pagina.nome} · {n} {'painel' if n == 1 else 'painéis'}"
 
 
+TIPOS_COM_FIGURA = ("tempo", "espectro", "bandas", "espectrograma", "harmonicos")
+
 class AreaDeFiguras(QWidget):
     resumoMudou = Signal(str)            # a linha da barra de status
     desenhada = Signal()                 # uma página nova apareceu (os testes esperam por ela)
@@ -257,7 +259,7 @@ class AreaDeFiguras(QWidget):
 
     def _mostrar(self) -> None:
         figura = self.figura
-        vistas = [(v.id, v.nome, v.tipo) for v in self.projeto.vistas] if self.projeto is not None else []
+        vistas = [(v.id, v.nome, v.tipo) for v in self._vistas_de_dados()] if self.projeto is not None else []
         self.propriedades.mostrar(figura, self.painel_id, vistas)
         self.pagina.escolher(self.painel_id)
         self.pagina.mostrar_vazio(figura is None)
@@ -287,7 +289,7 @@ class AreaDeFiguras(QWidget):
     def escolher_painel(self, id_: str) -> None:
         if id_ != self.painel_id:
             self.painel_id = id_
-            self.propriedades.mostrar(self.figura, id_, [(v.id, v.nome, v.tipo) for v in self.projeto.vistas])
+            self.propriedades.mostrar(self.figura, id_, [(v.id, v.nome, v.tipo) for v in self._vistas_de_dados()])
             self.pagina.escolher(id_)
 
     def _lista_mudou(self, linha: int) -> None:
@@ -310,10 +312,14 @@ class AreaDeFiguras(QWidget):
         self.escolher_figura(figura.id)
         return figura
 
+    def _vistas_de_dados(self) -> list:
+        """As vistas que viram painel (a dos perfis de sonda ainda não: o desenho da figura não faz o Bode)."""
+        return [v for v in self.projeto.vistas if v.tipo in TIPOS_COM_FIGURA]
+
     def nova_figura(self, id_do_modelo: str = "ieee_1") -> Figura:
         """O + da lista: com a vista aberta na Análise, a figura dela; sem nenhuma, uma figura com o painel vazio."""
         vista = self.vista_ativa()
-        if vista is not None:
+        if vista is not None and vista.tipo in TIPOS_COM_FIGURA:
             return self.figura_da_vista(vista, id_do_modelo)
         n = len(self.projeto.figuras) + 1
         figura = fig.nova(novo_id(), self.tr("Figura {}").format(n), id_do_modelo, id_do_painel=novo_id())

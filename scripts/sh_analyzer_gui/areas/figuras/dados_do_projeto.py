@@ -82,7 +82,7 @@ class DadosDoProjeto:
         for r in getattr(widget, "resultados", ()):
             if r.desenho is None:
                 continue
-            rotulo = {"rms": r.unidade, "dbc": "dBc"}.get(opcoes.escala) or r.espectro.rotulo(r.unidade)
+            rotulo = {"rms": r.unidade, "dbc": "dBc"}.get(opcoes.escala) or _unidade_em_db(r.espectro, r.unidade)
             cor, tracejado = cor_do_traco(r.traco.receita.cor, CLARO)
             series.append(SerieDoEspectro(r.desenho, r.traco.receita.nome, cor, rotulo,
                                           frequencia_log=opcoes.frequencia_log, tracejado=tracejado,
@@ -100,3 +100,10 @@ class DadosDoProjeto:
 
     def fontes_da_proveniencia(self) -> dict[str, FonteDaProveniencia]:
         return fontes_da_proveniencia(self.projeto)
+
+
+def _unidade_em_db(espectro, unidade: str) -> str:
+    """A unidade do eixo y de um espectro em dB (a figura escreve o nome, "Nível (dBV)"): a do rótulo do motor sem o
+    nome da grandeza ("Magnitude (dBV)" dá "dBV"; "PSD (dB re V²/Hz)", "dB re V²/Hz")."""
+    rotulo = espectro.rotulo(unidade)
+    return rotulo[rotulo.index("(") + 1:-1] if rotulo.endswith(")") and "(" in rotulo else rotulo

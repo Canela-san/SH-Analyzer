@@ -148,6 +148,7 @@ class VistaDeEspectro(QWidget):
         self._ajustar_y = False                               # só o Y (a unidade dele mudou)
         self._log_desenhado: bool | None = None               # a escala da frequência do último desenho
         self._opcoes_vistas = vista.opcoes                    # as da última mudança vista (para saber o que mudou)
+        self._faixa_pedida: tuple[float, float] | None = None
         self._montar()
         self._espera_da_envoltoria = QTimer(self)
         self._espera_da_envoltoria.setSingleShot(True)
@@ -654,6 +655,8 @@ class VistaDeEspectro(QWidget):
         if self._ajustar and prontos:
             self._ajustar = self._ajustar_y = False
             vb.autoRange(padding=0.02)
+            if self._faixa_pedida is not None:              # a do projeto: o x dela, o y do ajuste
+                self.mostrar_frequencias(*self._faixa_pedida)
         elif self._ajustar_y and prontos:
             self._ajustar_y = False
             limites = list(self._limites_y_visiveis(prontos).values())
@@ -739,8 +742,13 @@ class VistaDeEspectro(QWidget):
         return (10.0 ** x0, 10.0 ** x1) if self.opcoes.frequencia_log else (x0, x1)
 
     def mostrar_frequencias(self, f0: float, f1: float) -> None:
-        """Mostra ``[f0, f1]`` (Hz) no eixo da frequência, sem mexer no Y (os eixos ligados da grade); na escala log,
-        o que fica abaixo de 0 Hz não aparece."""
+        """Mostra ``[f0, f1]`` (Hz) no eixo da frequência, sem mexer no Y (os eixos ligados da grade, a janela do
+        projeto); na escala log, o que fica abaixo de 0 Hz não aparece. Sem espectro ainda, fica pedida: vale quando
+        o primeiro chegar, no lugar do ajuste automático do x."""
+        if not self.resultados:
+            self._faixa_pedida = (f0, f1)
+            return
+        self._faixa_pedida = None
         if self.opcoes.frequencia_log:
             if f1 <= 0:
                 return

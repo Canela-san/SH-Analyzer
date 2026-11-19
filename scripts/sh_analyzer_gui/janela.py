@@ -294,6 +294,9 @@ class JanelaPrincipal(QMainWindow):
                    icone="camadas", da_analise=True).triggered.connect(lambda: self.area.abrir_analise("espectrograma"))
         self._acao("harmonicos", self.tr("Abrir os harmônicos da vista"), atalho="Ctrl+Shift+H", icone="pulso",
                    da_analise=True).triggered.connect(lambda: self.area.abrir_analise("harmonicos"))
+        self._acao("perfis_de_sonda", self.tr("Abrir os perfis de sonda"), icone="sonda",
+                   dica=self.tr("Os perfis de sonda: o Bode de cada um e qual perfil cada canal usa (ES-07)"),
+                   da_analise=True).triggered.connect(lambda: self.area.abrir_perfis())
         self._acao("alinhar", self.tr("Alinhar o traço selecionado a outro…"), icone="relogio",
                    dica=self.tr("O deslocamento no tempo que alinha o traço a outro da vista (TR-07)"),
                    da_analise=True).triggered.connect(lambda: self.area.alinhar())
@@ -470,8 +473,7 @@ class JanelaPrincipal(QMainWindow):
         self.vistas.celulasMudaram.connect(
             lambda: self.acoes[f"disposicao_{self.vistas.disposicao}"].setChecked(True))
         self.vistas.setCornerWidget(canto, Qt.Corner.TopRightCorner)
-        self.vistas.currentChanged.connect(lambda i: self.acoes["figura_da_vista"].setEnabled(i >= 0))
-        self.vistas.currentChanged.connect(lambda i: self.acoes["exportar_dados"].setEnabled(i >= 0))
+        self.vistas.currentChanged.connect(self._acoes_da_vista)
         self.acoes["figura_da_vista"].setEnabled(False)
         self.acoes["exportar_dados"].setEnabled(False)
 
@@ -557,6 +559,13 @@ class JanelaPrincipal(QMainWindow):
         """Abre o painel de baixo na página ``indice`` (a aba do trilho)."""
         self.dock_inferior.show()
         self.painel_inferior.setCurrentIndex(indice)
+
+    def _acoes_da_vista(self, _indice: int = -1) -> None:
+        """A figura e a exportação dos dados valem para as vistas de dados (a dos perfis de sonda não tem os dois)."""
+        vista = self.vista_ativa() if getattr(self, "area", None) is not None else None
+        com_dados = vista is not None and vista.tipo != "sonda"
+        for nome in ("figura_da_vista", "exportar_dados"):
+            self.acoes[nome].setEnabled(com_dados)
 
     def _atualizar_centro(self, _indice: int = -1) -> None:
         """As abas, ou o estado vazio sem nenhuma (também chamado ao fechar a janela, quando as abas saem)."""
@@ -707,7 +716,7 @@ class JanelaPrincipal(QMainWindow):
     def figura_da_vista_ativa(self) -> bool:
         """FG-01: a vista aberta na Análise vira uma figura, e a janela vai para as Figuras com ela escolhida."""
         vista = self.vista_ativa()
-        if vista is None:
+        if vista is None or vista.tipo == "sonda":
             return False
         self.figuras.figura_da_vista(vista)
         self.mostrar_area(AREA_FIGURAS)

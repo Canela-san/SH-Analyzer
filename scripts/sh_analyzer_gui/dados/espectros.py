@@ -500,8 +500,26 @@ class OpcoesDoTempo(_OpcoesComDicionario):
             raise OpcoesInvalidas("sobrepor tem de ser verdadeiro ou falso")
 
 
+@dataclass(frozen=True)
+class OpcoesDaSonda(_OpcoesComDicionario):
+    """A vista dos perfis de sonda (ES-07): os perfis no Bode, pelo caminho do ``.json``. ``None``: ainda sem
+    escolha (vêm os que o projeto usa); ``()``: nenhum."""
+
+    perfis: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if self.perfis is None:
+            return
+        if not isinstance(self.perfis, (list, tuple)) or not all(isinstance(c, str) and c for c in self.perfis):
+            raise OpcoesInvalidas(f"perfis inválidos: {self.perfis!r} (os caminhos dos .json)")
+        object.__setattr__(self, "perfis", tuple(dict.fromkeys(self.perfis)))
+
+    def para_dict(self) -> dict:
+        return {"perfis": None if self.perfis is None else list(self.perfis)}
+
+
 OPCOES_DO_TIPO = {"tempo": OpcoesDoTempo, "espectro": OpcoesDoEspectro, "bandas": OpcoesDasBandas,
-                  "espectrograma": OpcoesDoEspectrograma, "harmonicos": OpcoesDosHarmonicos}
+                  "espectrograma": OpcoesDoEspectrograma, "harmonicos": OpcoesDosHarmonicos, "sonda": OpcoesDaSonda}
 """A classe das opções de cada tipo de vista. As de um projeto de antes da vista de tempo ter opções (``{}``) são as
 padrão."""
 
