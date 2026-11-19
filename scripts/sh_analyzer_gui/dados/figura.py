@@ -249,6 +249,50 @@ def nova(id: str, nome: str, id_do_modelo: str = "ieee_1", vista: str | None = N
     return Figura(id, nome, id_do_modelo, paineis=(Painel(id_do_painel or f"{id}-1", vista=vista),))
 
 
+# ------------------------------------------------------------------ as edições (a área Figuras)
+
+def acrescentar_painel(f: Figura, id_do_painel: str, vista: str | None = None) -> Figura:
+    """``f`` com um painel novo: na primeira célula livre (na ordem de leitura) ou, com a grade cheia, numa linha
+    nova embaixo, da largura da grade; a página cresce a altura de uma linha (até a máxima do modelo)."""
+    ocupadas = set().union(*(p.celulas for p in f.paineis)) if f.paineis else set()
+    livre = next(((i, j) for i in range(f.linhas) for j in range(f.colunas) if (i, j) not in ocupadas), None)
+    if livre is not None:
+        return replace(f, paineis=f.paineis + (Painel(id_do_painel, livre[0], livre[1], vista=vista),))
+    if f.linhas >= GRADE_MAXIMA:
+        raise FiguraInvalida(f"a grade da figura {f.nome!r} já tem {GRADE_MAXIMA} linhas")
+    altura = min(f.altura_mm * (f.linhas + 1) / f.linhas, f.pagina.altura_maxima_mm)
+    return replace(f, linhas=f.linhas + 1, altura_mm=altura,
+                   paineis=f.paineis + (Painel(id_do_painel, f.linhas, 0, colunas=f.colunas, vista=vista),))
+
+
+def trocar_painel(f: Figura, painel: Painel) -> Figura:
+    """``f`` com ``painel`` no lugar do de mesmo id."""
+    if painel.id not in {p.id for p in f.paineis}:
+        raise FiguraInvalida(f"a figura {f.nome!r} não tem o painel {painel.id!r}")
+    return replace(f, paineis=tuple(painel if p.id == painel.id else p for p in f.paineis))
+
+
+def tirar_painel(f: Figura, id_do_painel: str) -> Figura:
+    """``f`` sem o painel (a grade fica; a célula dele fica livre)."""
+    if id_do_painel not in {p.id for p in f.paineis}:
+        raise FiguraInvalida(f"a figura {f.nome!r} não tem o painel {id_do_painel!r}")
+    return replace(f, paineis=tuple(p for p in f.paineis if p.id != id_do_painel))
+
+
+def menor_grade(f: Figura) -> tuple[int, int]:
+    """As linhas e as colunas que os painéis ocupam (a grade não encolhe abaixo disso)."""
+    return (max((p.linha + p.linhas for p in f.paineis), default=1),
+            max((p.coluna + p.colunas for p in f.paineis), default=1))
+
+
+def trocar_modelo(f: Figura, id_do_modelo: str) -> Figura:
+    """``f`` noutro modelo de página: a largura e o estilo dele; a altura de agora, dentro do que ele aceita (o slide
+    tem a altura dele)."""
+    pagina = modelo(id_do_modelo)
+    altura = min(max(f.altura_mm, ALTURA_MINIMA_MM), pagina.altura_maxima_mm)
+    return replace(f, modelo=id_do_modelo, altura_mm=altura, estilo=pagina.estilo)
+
+
 # ------------------------------------------------------------------ o arquivo de projeto
 
 _CAMPOS_DO_ESTILO = ("familia", "texto_pt", "marcas_pt", "rotulo_do_painel_pt", "linha_pt", "eixo_pt")

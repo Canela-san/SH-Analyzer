@@ -34,12 +34,16 @@ def descrever_fonte(fonte: FonteDoProjeto, pasta: Path) -> FonteSalva:
                       formato=captura.formato, sem_cabecalho=captura.parametros)
 
 
+def descrever_vista(vista: Vista) -> VistaSalva:
+    """A vista como vai para o arquivo (e como fica no painel congelado de uma figura): os traços e as opções."""
+    return VistaSalva(vista.id, vista.nome, vista.tipo, tuple(TracoSalvo(t.id, t.receita) for t in vista.tracos),
+                      vista.opcoes.para_dict() if vista.opcoes is not None else {})
+
+
 def descrever(projeto: Projeto, pasta: Path, *, layout: dict[str, str] | None = None,
               versao_do_aplicativo: str = "") -> ProjetoSalvo:
     """O projeto como vai para o arquivo; os caminhos das capturas ficam relativos a ``pasta`` (a do projeto)."""
-    vistas = tuple(VistaSalva(v.id, v.nome, v.tipo, tuple(TracoSalvo(t.id, t.receita) for t in v.tracos),
-                              v.opcoes.para_dict() if v.opcoes is not None else {})
-                   for v in projeto.vistas)
+    vistas = tuple(descrever_vista(v) for v in projeto.vistas)
     return ProjetoSalvo(tuple(descrever_fonte(f, Path(pasta)) for f in projeto.fontes), vistas, dict(layout or {}),
                         versao_do_aplicativo, projeto.modelos_de_captura, projeto.figuras)
 

@@ -14,14 +14,18 @@ já recolhido (o processo caiu assim num teste). Um comando de vários passos gu
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 
 from PySide6.QtGui import QUndoCommand
 
+from ..dados.figura import Figura
 from ..dados.projeto import ModeloDeCaptura
 from .objetos import FonteDoProjeto, Projeto, Traco, Vista
+from .persistencia import descrever_vista
 
 ID_MUDAR_TRACOS = 1001
 """O ``id()`` das mudanças que se juntam (arrastar um valor gera uma mudança por passo; o desfazer volta tudo)."""
+ID_MUDAR_FIGURA = 1002
 
 _CAMPOS = {"nome": "o nome", "cor": "a cor", "ganho": "o ganho", "offset": "o offset",
            "deslocamento_s": "o deslocamento no tempo", "faixa": "a faixa", "unidade": "a unidade"}
@@ -166,18 +170,25 @@ class AdicionarVista(QUndoCommand):
 
 
 class RemoverVista(QUndoCommand):
-    """Tira a vista do projeto, com os traços dentro dela (o desfazer a devolve inteira, no mesmo lugar)."""
+    """Tira a vista do projeto, com os traços dentro dela (o desfazer a devolve inteira, no mesmo lugar). Os painéis
+    de figura ligados a ela ficam congelados com o que ela mostrava (a cópia dela e a ``janela``, a faixa do x que ela
+    exibia): a figura não perde o painel, e o projeto continua válido; o desfazer os religa."""
 
-    def __init__(self, projeto: Projeto, vista: Vista):
+    def __init__(self, projeto: Projeto, vista: Vista, janela: tuple[float, float] | None = None):
         super().__init__(f"Fechar a vista {vista.nome}")
         self.projeto, self.vista = projeto, vista
         self.indice = projeto.vistas.index(vista)
+        copia = descrever_vista(vista)
+        self.figuras = _trocas_de_figuras(projeto, lambda p: replace(
+            p, congelado=copia, limites_x=p.limites_x or janela) if p.vista == vista.id and p.congelado is None else p)
 
     def redo(self) -> None:
+        _trocar(self.projeto, self.figuras, desfazer=False)
         self.indice = self.projeto._retirar_vista(self.vista)
 
     def undo(self) -> None:
         self.projeto._inserir_vista(self.vista, self.indice)
+        _trocar(self.projeto, self.figuras, desfazer=True)
 
 
 class RenomearVista(QUndoCommand):
@@ -252,14 +263,21 @@ class RemoverFonte(QUndoCommand):
         super().__init__(f"Fechar {fonte.nome}")
         self.projeto, self.fonte, self.remocoes = projeto, fonte, remocoes
         self.indice = projeto.fontes.index(fonte)
+        # Os painéis congelados guardam os traços dela na cópia: eles saem dali também (o projeto salvo não pode
+        # apontar para uma captura que não está nele).
+        self.figuras = _trocas_de_figuras(projeto, lambda p: replace(p, congelado=replace(
+            p.congelado, tracos=tuple(t for t in p.congelado.tracos if t.receita.fonte != fonte.id)))
+            if p.congelado is not None and any(t.receita.fonte == fonte.id for t in p.congelado.tracos) else p)
 
     def redo(self) -> None:
         for remocao in self.remocoes:
             remocao.fazer()
+        _trocar(self.projeto, self.figuras, desfazer=False)
         self.indice = self.projeto._retirar_fonte(self.fonte)
 
     def undo(self) -> None:
         self.projeto._inserir_fonte(self.fonte, self.indice)
+        _trocar(self.projeto, self.figuras, desfazer=True)
         for remocao in reversed(self.remocoes):
             remocao.desfazer()
 
@@ -299,3 +317,86 @@ class ApagarModeloDeCaptura(QUndoCommand):
 
     def undo(self) -> None:
         self.projeto._por_modelo(self.modelo, self.indice)
+
+
+# ------------------------------------------------------------------ as figuras (a área Figuras, F5.3)
+
+def _trocas_de_figuras(projeto: Projeto, mudar_painel) -> list[tuple[Figura, Figura]]:
+    """As figuras que ``mudar_painel`` (painel -> painel) muda: ``(antes, depois)`` de cada uma."""
+    trocas = []
+    for figura in projeto.figuras:
+        paineis = tuple(mudar_painel(p) for p in figura.paineis)
+        if paineis != figura.paineis:
+            trocas.append((figura, figura.com(paineis=paineis)))
+    return trocas
+
+
+def _trocar(projeto: Projeto, trocas: list[tuple[Figura, Figura]], *, desfazer: bool) -> None:
+    for antes, depois in trocas:
+        projeto._por_figura(antes if desfazer else depois)
+
+
+def _conferir_as_vistas(projeto: Projeto, figura: Figura) -> None:
+    """Uma figura só entra no projeto com os painéis ligados a vistas que estão nele (como o arquivo exige)."""
+    soltas = figura.vistas_ligadas() - {v.id for v in projeto.vistas}
+    if soltas:
+        raise ValueError(f"a figura {figura.nome!r} aponta para uma vista que não está no projeto: "
+                         f"{', '.join(sorted(soltas))}")
+
+
+class AdicionarFigura(QUndoCommand):
+    def __init__(self, projeto: Projeto, figura: Figura, indice: int | None = None):
+        if any(f.id == figura.id for f in projeto.figuras):
+            raise ValueError(f"a figura {figura.id!r} já está no projeto")
+        _conferir_as_vistas(projeto, figura)
+        super().__init__(f"Nova figura {figura.nome}")
+        self.projeto, self.figura, self.indice = projeto, figura, indice
+
+    def redo(self) -> None:
+        self.projeto._por_figura(self.figura, self.indice)
+
+    def undo(self) -> None:
+        self.indice = self.projeto._tirar_figura(self.figura.id)
+
+
+class RemoverFigura(QUndoCommand):
+    def __init__(self, projeto: Projeto, id: str):
+        self.figura = projeto.figura(id)
+        super().__init__(f"Apagar a figura {self.figura.nome}")
+        self.projeto, self.indice = projeto, 0
+
+    def redo(self) -> None:
+        self.indice = self.projeto._tirar_figura(self.figura.id)
+
+    def undo(self) -> None:
+        self.projeto._por_figura(self.figura, self.indice)
+
+
+class MudarFigura(QUndoCommand):
+    """Toda edição de uma figura (o nome, a página, a grade, um painel): a figura de mesmo id trocada por ``nova``.
+    Com ``juntar``, mudanças seguidas da mesma figura viram um passo só (girar a altura não enche a pilha). Uma
+    ``nova`` igual à de agora não vira passo nenhum."""
+
+    def __init__(self, projeto: Projeto, nova: Figura, texto: str, *, juntar: bool = False):
+        self.antes = projeto.figura(nova.id)
+        _conferir_as_vistas(projeto, nova)
+        super().__init__(f"{texto} ({nova.nome})")
+        self.projeto, self.depois, self.juntar = projeto, nova, juntar
+        self.setObsolete(nova == self.antes)
+
+    def id(self) -> int:
+        return ID_MUDAR_FIGURA if self.juntar else -1
+
+    def mergeWith(self, outro: QUndoCommand) -> bool:
+        if not (isinstance(outro, MudarFigura) and outro.juntar and outro.projeto is self.projeto
+                and outro.depois.id == self.depois.id and outro.text() == self.text()):
+            return False
+        self.depois = outro.depois
+        self.setObsolete(self.depois == self.antes)
+        return True
+
+    def redo(self) -> None:
+        self.projeto._por_figura(self.depois)
+
+    def undo(self) -> None:
+        self.projeto._por_figura(self.antes)
