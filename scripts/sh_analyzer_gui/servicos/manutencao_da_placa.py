@@ -56,6 +56,7 @@ class EstadoDaAtualizacao:
     log: list[str] = field(default_factory=list)
     desfecho: Desfecho | None = None
     mensagem: str = ""                       # o porquê de não ter começado (a senha, a placa)
+    de_antes: bool = False                   # achada já terminada ao conectar (ninguém viu o fim dela)
 
     @property
     def rodando(self) -> bool:
@@ -215,8 +216,10 @@ class ManutencaoDaPlaca(QObject):
                 self.atualizacaoMudou.emit()
             return
         if self.atualizacao is None or not self.atualizacao.rodando:
-            self.atualizacao = EstadoDaAtualizacao("rodando", alvo.titulo, alvo.resultado.get("versao", ""),
-                                                   tarefa=alvo)
+            origem = ("placa" if alvo.titulo.startswith("Compilar") else "anterior" if alvo.titulo.startswith("Voltar")
+                      else "aplicativo")
+            self.atualizacao = EstadoDaAtualizacao("rodando", alvo.titulo, alvo.resultado.get("versao", ""), origem,
+                                                   tarefa=alvo, de_antes=alvo.terminou or alvo.interrompida)
         self._id_da_tarefa = alvo.id
         self.atualizacaoMudou.emit()
         self._acompanhar()

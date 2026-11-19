@@ -222,7 +222,9 @@ class PlanoDeAtualizacao:
 
     @property
     def nada_muda(self) -> bool:
-        return not self.novos and not self.mudados and self.firmware.versao == self.versao_da_placa
+        """O código da placa é o que iria (pelo hash): o texto da versão não importa (o ``git describe`` muda a cada
+        commit do repositório, mesmo sem mudança no firmware; como no ``versao.py``)."""
+        return not self.novos and not self.mudados
 
 
 async def planejar(cliente: ClienteDoAgente, firmware: FirmwareParaEnviar) -> PlanoDeAtualizacao:

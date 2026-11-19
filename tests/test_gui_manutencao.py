@@ -90,7 +90,9 @@ def test_o_firmware_antigo_atualizado_pela_tela(qtbot, abrir, firmware_limpo):
     area.mostrar_secao("manutencao")
     a = atualizar_pela_tela(qtbot, area, pagina.linhas_das_copias[0].botao_voltar)
     assert a.desfecho.estado == "atualizada" and a.desfecho.versao == VERSAO_ANTIGA
+    assert pagina.selo.text() == "De volta à versão escolhida"
     assert VERSAO_ANTIGA in pagina.subtitulo.text() and pagina.atualizar_placa.isEnabled()
+    assert any("de volta a uma versão anterior" in e.texto for e in area.caderno.entradas)
 
 
 def test_a_pru_que_nao_sobe_volta_sozinha_na_tela(qtbot, abrir, firmware_limpo):

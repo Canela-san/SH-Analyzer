@@ -442,7 +442,8 @@ class PaginaDoFirmware(QWidget):
             return
         muda = len(plano.novos) + len(plano.mudados)
         if plano.nada_muda:
-            resumo = traduzir("A placa tem o firmware deste aplicativo ({}).").format(f.versao)
+            resumo = traduzir("A placa tem o firmware deste aplicativo: o código é o mesmo ({}).").format(
+                plano.versao_da_placa or f.versao)
         else:
             resumo = traduzir("A placa tem o {}; este aplicativo, o {}: {} arquivo(s) mudam.").format(
                 plano.versao_da_placa or traduzir("sem versão"), f.versao, muda)
@@ -544,9 +545,14 @@ class PaginaDoFirmware(QWidget):
             self.selo.definir("erro", traduzir("falhou"))
             self.desfecho.setText(frase(a.mensagem))
         else:
-            self.selo.definir(NIVEL_DO_DESFECHO.get(d.estado, "info"), traduzir(TITULOS_DOS_DESFECHOS.get(
-                d.estado, d.estado)))
+            titulo = TITULOS_DOS_DESFECHOS.get(d.estado, d.estado)
+            if d.estado == "atualizada":
+                titulo = {"placa": "Compilado e carregado", "anterior": "De volta à versão escolhida"}.get(
+                    a.origem, titulo)
+            self.selo.definir(NIVEL_DO_DESFECHO.get(d.estado, "info"), traduzir(titulo))
             texto = frase(d.mensagem) + (" " + frase(d.aviso) if d.aviso else "")
+            if a.de_antes:
+                texto = traduzir("Achada ao conectar (ninguém tinha visto o fim dela): ") + texto
             if d.copia and d.estado in ("atualizada", "falhou_ao_voltar"):
                 texto += " " + traduzir("A cópia de antes ficou em {}.").format(d.copia)
             self.desfecho.setText(texto)

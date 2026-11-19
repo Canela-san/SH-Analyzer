@@ -109,7 +109,10 @@ def frase_da_atualizacao(a) -> str | None:
     if d is None:
         return traduzir("{}: não terminou ({})").format(traduzir(a.titulo), _minuscula(a.mensagem)) if a.mensagem \
             else None
-    texto = {"atualizada": traduzir("Firmware da placa atualizado: {}"),
+    feita = {"placa": traduzir("Firmware da placa compilado e carregado de novo: {}"),
+             "anterior": traduzir("Firmware da placa de volta a uma versão anterior: {}")}.get(
+        a.origem, traduzir("Firmware da placa atualizado: {}"))
+    texto = {"atualizada": feita,
              "voltou": traduzir("A atualização do firmware falhou, e a placa voltou à versão anterior: {}"),
              "falhou_antes": traduzir("A atualização do firmware não mudou a placa: {}"),
              "falhou_ao_voltar": traduzir("A atualização do firmware falhou e a placa não voltou sozinha: {}"),
@@ -119,6 +122,8 @@ def frase_da_atualizacao(a) -> str | None:
     frase_ = texto.format(_minuscula(d.mensagem))
     if d.copia and d.estado != "falhou_antes":
         frase_ += traduzir(" (a cópia de antes: `{}`)").format(d.copia)
+    if a.de_antes:
+        frase_ = traduzir("Achada ao conectar, de antes desta conexão: {}").format(_minuscula(frase_))
     return frase_
 
 
