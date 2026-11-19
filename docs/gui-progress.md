@@ -60,10 +60,11 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > para o dono do projeto.** Dois requisitos da v0.11 não entraram em nenhuma tarefa da fase, a importação de dados de
 > fora (PD-03) e a fonte derivada (TR-08): foram, com os outros detalhes que ficaram, para a lista de depois da Fase 7
 > (`docs/gui-plan.md`, seção 16; decidido em 19/11). **A Fase 6 (a manutenção da placa) está em tarefas** (seção 4g,
-> F6.1 a F6.9), ampliada a pedido do usuário com o monitor, os serviços, a rede e o disco; **a F6.1 está feita**
-> (as tarefas destacadas na placa e o agente da manutenção); **a próxima é a F6.2**. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
-> a captura contínua e o "Conferir antes" dizem "atualize o firmware da placa" (o código 96 do roteiro, conferido
-> nela), e o aplicativo vai precisar mandar o firmware novo (o `enviar` do `BeagleBone_Setup.sh`, ou a Fase 6).
+> F6.1 a F6.9), ampliada a pedido do usuário com o monitor, os serviços, a rede e o disco; **a F6.1 e a F6.2 estão
+> feitas** (as tarefas destacadas na placa, o agente da manutenção e a atualização do firmware com a volta sozinha);
+> **a placa de verdade recebeu o firmware desta versão** (v0.8-291-gc03a1cf, com a saída contínua; a cópia da v0.8-137
+> em `~/firmware-anteriores/`); **a próxima é a F6.3**. **A placa de verdade tem o firmware desta versão desde
+> 19/11/2026** (a F6.2: v0.8-291-gc03a1cf, com a saída contínua); antes, o `ler_adc` v0.8 sem o `-o -`.
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
@@ -2192,7 +2193,7 @@ depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commi
   firmware instalado), e não pelo nome do cenário: a correção desfaz o erro, como na placa de verdade; o boot da
   placa simulada lê o `uEnv.txt` (o assistente da F6.4 é conferido de ponta a ponta nele).
 
-### ▶ F6.2: a atualização do firmware, sem Qt
+### ☑ F6.2: a atualização do firmware, sem Qt
 
 - **O conteúdo:** `sh_placa/atualizacao.py`. **O firmware do aplicativo:** o `firmware/` do repositório (os
   arquivos do `git ls-files`, a versão do `git describe`, com `-dirty` e o aviso se há mudanças não commitadas) ou o
@@ -2210,8 +2211,25 @@ depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commi
   a cópia guardada e as capturas intactas; a compilação que falha não muda nada; a PRU que não sobe volta à anterior;
   a queda do cabo no meio não interrompe a tarefa; e na placa de verdade o firmware desta versão entra, com a cópia
   da v0.8.
+- **Feita em 19/11/2026** (`35899a5`, `e7233be` o `sh_placa`; `3a8b1f9` o simulador; `c03a1cf` os testes). **Na
+  placa de verdade, a primeira tentativa falhou e mostrou dois erros que o simulador não pegava:** o `umask 077` do
+  lançamento chegou ao roteiro, e o firmware da PRU instalado pelo root ficou com o modo 600 (o kernel o lê com as
+  credenciais de quem pede o `start`, o `debian` pelo grupo `remoteproc`: `-13`); e o `sudo -n` numa função chamada
+  num pipe roda num subshell, onde a credencial (sem terminal, do processo pai) não vale. A volta sozinha devolveu os
+  arquivos, mas não ligou a PRU pelos mesmos motivos; o modo 644 foi posto de volta à mão, e a placa ficou como
+  estava (a PRU sobe e para, o firmware igual ao original pelo hash). **O simulador passou a imitar os dois** (a
+  credencial do sudo por processo pai; o kernel que recusa um firmware que o usuário não lê), e pegou um terceiro
+  igual (a captura da conferência num `( … )`). **Na segunda tentativa, a placa recebeu o v0.8-291-gc03a1cf em
+  29 s:** 2 arquivos enviados (234 kB), 12 copiados lá, a compilação em 22 s, a cópia da v0.8-137 guardada com o
+  firmware da PRU, a conferência de um bloco a 400 kS/s com a integridade limpa (o canal 1 na tomada, 18,4 Vpp no
+  pino). A captura do usuário na pasta ficou intacta, e o `ler_adc` da placa agora tem a saída contínua.
+  **Decisões:** a cópia vai no lugar do `enviar` (`~/firmware-anteriores/<data>_<versão>/`), agora com o firmware
+  instalado na PRU junto, e a data é a do computador (a placa não tem bateria no relógio); as cópias do `enviar`
+  guardam os arquivos das subpastas no alto, e voltar a uma delas os põe de volta nas subpastas; os arquivos do
+  código da placa que não estão no firmware novo ficam (nada que não é do firmware é apagado); o código 4 do
+  `ler_adc` na conferência (o ADC sem resposta) é um aviso, não uma falha do firmware.
 
-### ☐ F6.3: a seção Manutenção e o firmware na tela
+### ▶ F6.3: a seção Manutenção e o firmware na tela
 
 - **O conteúdo:** a seção Manutenção (no lugar do "chega na v1.0"), com as páginas Firmware, Inicialização,
   Sistema, Logs e Serviços. **O firmware:** a versão da placa e a do aplicativo (iguais pelo código), o que muda
