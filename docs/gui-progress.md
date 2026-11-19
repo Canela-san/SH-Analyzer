@@ -57,9 +57,10 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > em grade com os eixos ligados, o alinhamento de traços (a correlação cruzada e o cruzamento por zero, abaixo de um
 > décimo de amostra, e o Alt + arrastar), a vista dos perfis de sonda (o Bode e qual perfil cada canal usa) e a
 > jornada da Fase 5 de ponta a ponta (`tests/test_gui_jornada_fase5.py`). **A Fase 5 está feita; a tag v0.11 fica
-> para o dono do projeto.** Dois requisitos da v0.11 não entraram em nenhuma tarefa da fase e ficam para antes da
-> tag ou para a próxima: a importação de dados de fora (PD-03) e a fonte derivada (TR-08). **A próxima: a Fase 6**
-> (a manutenção da placa), a pôr em tarefas no começo dela. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
+> para o dono do projeto.** Dois requisitos da v0.11 não entraram em nenhuma tarefa da fase, a importação de dados de
+> fora (PD-03) e a fonte derivada (TR-08): foram, com os outros detalhes que ficaram, para a lista de depois da Fase 7
+> (`docs/gui-plan.md`, seção 16; decidido em 19/11). **A Fase 6 (a manutenção da placa) está em tarefas** (seção 4g,
+> F6.1 a F6.9), ampliada a pedido do usuário com o monitor, os serviços, a rede e o disco; **a próxima é a F6.1**. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
 > a captura contínua e o "Conferir antes" dizem "atualize o firmware da placa" (o código 96 do roteiro, conferido
 > nela), e o aplicativo vai precisar mandar o firmware novo (o `enviar` do `BeagleBone_Setup.sh`, ou a Fase 6).
 >
@@ -216,10 +217,9 @@ a captura na tela (direto no computador ou no cartão, com o ao vivo, o Parar e 
 dados, o pacote reproduzível, o estilo de cada elemento, os insets e as anotações; na Análise, as vistas em grade, o
 alinhamento de traços e a vista dos perfis de sonda.
 
-**Ainda não existe:** a importação de dados de fora (PD-03: o osciloscópio, o CSV genérico, o WAV) e a fonte
-derivada (TR-08), dois da v0.11 que a Fase 5 não pôs em tarefas; a figura do Bode de um perfil (a vista dos perfis
-não vira painel); as rotinas como formulários nativos, com as pausas em diálogos (depois da v0.10); a Fase 6 (o
-firmware, os pinos e o sistema da placa, o resgate pela serial) e a Fase 7 (os itens da v1.0).
+**Ainda não existe:** a Fase 6 (o firmware, os pinos e o sistema da placa, o resgate pela serial; seção 4g) e a
+Fase 7 (os itens da v1.0). O resto que ficou (a importação de dados de fora, a fonte derivada, a figura do Bode, as
+rotinas como formulários nativos…) está na lista de depois da Fase 7 (`docs/gui-plan.md`, seção 16).
 
 ---
 
@@ -2139,6 +2139,133 @@ o diário.
   o texto que se busca ("Tempo (ms)", "Nível (dBV)", a cota) e a proveniência das duas capturas; o pacote, cujo
   script refaz a figura com os mesmos pixels sem o SH-Analyzer; o projeto salvo e aberto de novo com a mesma página
   (pixel a pixel), a grade, a janela, os cursores, o alinhamento e a correção.
+
+---
+
+## 4g. Fase 6 em tarefas: a manutenção da placa
+
+O plano (`docs/gui-plan.md`, seções 11.9 e 11.10, e a Fase 6): tudo o que hoje se faz na placa pelo
+`BeagleBone_Setup.sh` ou à mão no terminal, pela interface, com a mesma prudência da seção 11.1 (o comando à vista,
+a cópia de segurança, a confirmação, o registro de atividade). **Pronto quando:** a placa de verdade recebe o
+firmware desta versão pelo aplicativo, com a cópia de segurança e a conferência (e passa a capturar direto no
+computador, o que o `ler_adc` v0.8 dela não faz); no simulador, uma falha forçada na compilação não toca a placa, e
+uma PRU que não sobe com o firmware novo volta sozinha à versão anterior; o assistente do `uEnv.txt` corrige no
+simulador os cenários de configuração com o reinício guiado e a conferência na volta; e os logs, o monitor, os
+serviços, o disco e o desligar seguro funcionam na placa de verdade.
+
+**Na placa de verdade, o que não se testa sem o usuário:** gravar o `uEnv.txt` (a placa dele já está certa, e um
+erro a deixaria sem boot: o assistente é conferido de ponta a ponta no simulador e, nela, só lendo e propondo), trocar
+a senha (só para a mesma), desligar (ela só volta com alguém na bancada) e o console pela serial (o usuário daqui não
+está no grupo `dialout`, que dá acesso à `/dev/ttyACM0`).
+
+A ordem leva cedo ao que a placa de verdade mais precisa (o firmware novo) e deixa as ferramentas do sistema para
+depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commits seguem o componente (o agente, o
+`sh_placa`, o simulador, a GUI).
+
+### ▶ F6.1: as tarefas destacadas e o que o agente lê para a manutenção
+
+- **O conteúdo:** `sh_placa/tarefas.py`: uma tarefa longa na placa (a atualização do firmware, a limpeza), lançada
+  com o `setsid` e desacoplada da conexão, com o sudo validado dentro dela (a senha pelo stdin, no askpass da
+  `/dev/shm`, lida uma vez), o estado, os passos (uma linha JSON por passo) e o log em `~/.sh-analyzer/tarefas/<id>/`;
+  acompanhar (o log e os passos ao vivo), reencontrar depois de uma queda, limpar. **O agente** ganha os comandos da
+  manutenção: os hashes dos arquivos do firmware e as versões anteriores guardadas, o `uEnv.txt` inteiro com o que o
+  assistente precisa, o sistema (as partições e o cartão, a rede, os serviços da imagem, os processos), os logs com
+  filtros (todas as linhas, o nível, a origem) e o monitor (uma linha JSON a cada intervalo, num processo só, até o
+  canal fechar). **O simulador** ganha o `make` (que "compila" a partir do código da pasta, e falha com uma marca no
+  código), o kernel do remoteproc (o `start` sobe a PRU, menos com um firmware marcado para não subir), o `systemctl`
+  (os serviços, o reinício e o desligar), o `chpasswd` e o boot que lê o `uEnv.txt` (a linha do kernel e os overlays
+  da volta vêm dele).
+- **Pronto quando:** uma tarefa lançada no simulador segue depois da conexão cair e é reencontrada e acompanhada até o
+  fim; o sudo dentro dela funciona na placa de verdade; cada comando novo do agente responde na árvore falsa e na
+  placa de verdade (o Python 3.7 dela).
+
+### ☐ F6.2: a atualização do firmware, sem Qt
+
+- **O conteúdo:** `sh_placa/atualizacao.py`. **O firmware do aplicativo:** o `firmware/` do repositório (os
+  arquivos do `git ls-files`, a versão do `git describe`, com `-dirty` e o aviso se há mudanças não commitadas) ou o
+  que vai junto no instalador (com a `VERSAO` gravada na construção). **O plano:** os arquivos que mudam, por hash
+  (só eles vão pelo SFTP; os iguais são copiados na placa). **A tarefa na placa** (F6.1), passo a passo: preparar
+  (uma pasta de preparação), compilar lá (como o usuário; uma falha aqui não toca em nada), guardar a cópia de
+  segurança (em `~/firmware-anteriores/<data>_<versão>/`, o lugar do `enviar`, agora com o firmware instalado da PRU
+  junto), instalar (os arquivos do código e os binários, um por um com `mv`; nunca uma captura nem outro arquivo do
+  usuário), carregar na PRU (o `/lib/firmware/am335x-pru0-fw`, os pinos, o `start`), conferir (a versão, a PRU
+  rodando, o protocolo do `memoria_pru.h` e uma captura de um bloco: o `ler_adc` novo roda e a integridade fica
+  limpa) e limpar. **Se instalar ou conferir falha, volta sozinha** à cópia de segurança e confere de novo. **Voltar a
+  uma versão anterior** é a mesma tarefa, com a cópia da placa como origem; e "compilar e carregar de novo" (o
+  `setup.sh`), com a pasta da placa.
+- **Pronto quando:** no simulador, a atualização do firmware antigo para o deste aplicativo termina com a versão nova,
+  a cópia guardada e as capturas intactas; a compilação que falha não muda nada; a PRU que não sobe volta à anterior;
+  a queda do cabo no meio não interrompe a tarefa; e na placa de verdade o firmware desta versão entra, com a cópia
+  da v0.8.
+
+### ☐ F6.3: a seção Manutenção e o firmware na tela
+
+- **O conteúdo:** a seção Manutenção (no lugar do "chega na v1.0"), com as páginas Firmware, Inicialização,
+  Sistema, Logs e Serviços. **O firmware:** a versão da placa e a do aplicativo (iguais pelo código), o que muda
+  (os arquivos), o aviso do `-dirty`; "Atualizar…" (a confirmação com a senha do sudo, "Ver o roteiro"), os passos
+  ao vivo com o log, o resultado (feita, voltou à anterior, falhou) e a entrada no caderno; as versões anteriores na
+  placa, com "Voltar a esta…" e "Apagar"; "Compilar e carregar de novo". **O diagnóstico** ganha o "Corrigir" do
+  firmware (atualizar), da PRU (recarregar o firmware compilado) e dos itens do `uEnv.txt` (o assistente, F6.4).
+- **Pronto quando:** pela janela, com o simulador, o firmware antigo é atualizado e o diagnóstico fica verde; a falha
+  forçada mostra a volta; e, na placa de verdade, o mesmo pela janela (sem tela).
+
+### ☐ F6.4: o assistente de pinos e overlays (o `uEnv.txt`)
+
+- **O conteúdo:** `sh_placa/uenv.py`, sem Qt: lê o `uEnv.txt` e o estado real (os overlays carregados, a linha do
+  kernel, os `.dtbo` da PRU para o kernel instalado), reconhece a estrutura (recusa o que não conhece) e propõe só o
+  necessário, cada mudança com o porquê: o áudio do HDMI desligado, o overlay da PRU certo para o kernel (detectado,
+  e o do UIO comentado), o `cape_universal`, o `mem=496M`; e, opcional, o vídeo do HDMI desligado. Na tela (a página
+  Inicialização): as mudanças marcáveis, o **diff**, "Gravar e reiniciar…" (a cópia `/boot/uEnv.txt.sh-analyzer-
+  AAAAMMDD-HHMMSS`, a gravação atômica com o `mv`, o `sync`, o reinício guiado e a conferência na volta), as cópias
+  anteriores com "Restaurar…", e o roteiro de resgate se a placa não voltar.
+- **Pronto quando:** no simulador, os cenários de configuração (o áudio do HDMI, sem o overlay da PRU, sem o
+  `mem=496M`) são corrigidos pelo assistente e, depois do reinício, o diagnóstico fica verde; um `uEnv.txt` com uma
+  linha desconhecida é recusado; na placa de verdade, o assistente lê e diz que não há o que mudar.
+
+### ☐ F6.5: reiniciar, desligar com segurança e esperar a placa
+
+- **O conteúdo:** reiniciar e desligar pela interface (com a captura rodando, pergunta antes); a conexão sabe que a
+  queda é esperada: no reinício, espera a placa voltar (até 3 min, com o tempo à vista), reconecta, confere e acerta
+  o relógio (se o usuário deixou: a placa não tem bateria no relógio); no desligar, espera a placa sumir (o SSH e o
+  USB) e diz quando dá para tirar da tomada.
+- **Pronto quando:** no simulador, o reinício volta sozinho com o diagnóstico novo, e o desligar termina com "pode
+  tirar da tomada"; na placa de verdade, o reinício pela janela volta conectado e com o relógio certo.
+
+### ☐ F6.6: os logs e o monitor
+
+- **O conteúdo:** **os logs** (a página Logs): o kernel e o diário, o nível, a origem, "só o que importa" (a PRU, os
+  pinos, o firmware, o `ler_adc`, o USB, o cartão), a busca, ao vivo, salvar e mandar para o caderno. **O monitor**
+  (na página Sistema): o processador, a memória, a temperatura e a carga ao vivo, num gráfico do tema, e os
+  processos que mais pesam, com "Parar…" para um `ler_adc` esquecido.
+- **Pronto quando:** na placa de verdade, os logs filtram e seguem ao vivo, e o monitor anda durante uma captura sem
+  atrasar amostra.
+
+### ☐ F6.7: o sistema: a senha, os serviços, a rede, o disco e a partição
+
+- **O conteúdo:** **a senha** (trocar, pelo `chpasswd` com a senha no stdin, e o cofre atualizado); **os serviços da
+  imagem** (o Cloud9, o BoneScript, o Node-RED, o nginx: desligar e ligar de novo, com o que cada um é; os
+  necessários, como o SSH, o `dnsmasq` do USB e o `avahi` do mDNS, não se desligam); **a rede** (as interfaces, os
+  endereços, se a placa alcança a internet, o nome da placa); **o disco e a limpeza** (as partições, o que ocupa o
+  cartão, limpar as versões anteriores do firmware, as tarefas, o diário e o cache do `apt`; as capturas, só pelos
+  Arquivos, conferidas); **a partição** (expandir, se o cartão tem espaço fora dela, com o script da imagem e o
+  reinício).
+- **Pronto quando:** cada ferramenta funciona no simulador e lê na placa de verdade; a limpeza nunca apaga uma
+  captura.
+
+### ☐ F6.8: o resgate pela serial
+
+- **O conteúdo:** o console pela porta serial do gadget USB (o `pyserial`) numa aba do Terminal, com o terminal
+  embutido; o aviso de permissão (no Linux, o grupo `dialout`, com o comando exato); o roteiro de resgate (a cópia do
+  `uEnv.txt`, o boot pelo cartão SD) no assistente e no Terminal.
+- **Pronto quando:** num par de pseudoterminais, o console mostra o login e manda o que se digita; na placa de
+  verdade, a porta aparece, e a falta de permissão é explicada.
+
+### ☐ F6.9: a jornada da Fase 6 e o fechamento
+
+- **O conteúdo:** a jornada na janela, com o simulador: o firmware antigo atualizado (com a falha forçada que
+  volta), o `uEnv.txt` corrigido com o reinício, os logs, os serviços e o desligar; na placa de verdade, o firmware
+  desta versão pela janela, o reinício, a captura direto no computador com o `ler_adc` novo; a documentação e a CI.
+- **Pronto quando:** o "pronto quando" da fase.
 
 ---
 

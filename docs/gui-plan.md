@@ -1550,15 +1550,28 @@ O G1 passa com a cadeia ligada, durante e depois das materializações (`tests/t
 - [x] A exportação da figura (PDF, SVG, EPS, PGF, PNG, TIFF), com o teste de fidelidade.
 - [x] A exportação dos dados (CSV, HDF5, MAT, NPZ) com a proveniência; o pacote reproduzível.
 - [x] As vistas em grade e as anotações nas vistas; o alinhamento de traços; os perfis de sonda.
-- [ ] Da v0.11, fora das tarefas da fase: a importação de dados de fora (PD-03) e a fonte derivada (TR-08).
+- A importação de dados de fora (PD-03) e a fonte derivada (TR-08), da v0.11, não entraram em nenhuma tarefa da fase: foram para a lista de depois da Fase 7 (decidido em 19/11/2026).
 
 **Pronto quando:** uma figura IEEE sai em PDF e em pacote reproduzível, e o script do pacote refaz a figura sem o aplicativo. **Tag v0.11.**
 
 ### Fase 6: manutenção da placa (3 semanas, com bancada)
 
-- [ ] A atualização do firmware com a volta automática.
+**Em tarefas** (F6.1 a F6.9) em `docs/gui-progress.md`, seção 4g, com o "pronto quando" da fase. Ampliada em
+19/11/2026 (o usuário pediu a fase "recheada de ferramentas para a BeagleBone"): além do plano, o monitor ao vivo, os
+serviços da imagem, a rede, o disco e a limpeza.
+
+- [ ] As tarefas destacadas na placa (`setsid`, o estado e o log em `~/.sh-analyzer/tarefas/`) e o agente da manutenção.
+- [ ] A atualização do firmware com a volta automática; voltar a uma versão anterior; compilar e carregar de novo.
 - [ ] O assistente de pinos e overlays, com diff, cópia, reinício e conferência.
-- [ ] O sistema: desligar com segurança, logs, partição e senha; o resgate pela serial.
+- [ ] Reiniciar e desligar com segurança, esperando a placa voltar ou sumir.
+- [ ] Os logs filtrados e ao vivo; o monitor (processador, memória, temperatura, processos).
+- [ ] O sistema: a senha, os serviços da imagem, a rede, o disco, a limpeza e a partição.
+- [ ] O resgate pela serial.
+
+**Pronto quando:** a placa de verdade recebe o firmware desta versão pelo aplicativo, com a cópia de segurança e a
+conferência; no simulador, uma falha forçada volta sozinha à versão anterior, e o assistente do `uEnv.txt` corrige os
+cenários de configuração com o reinício guiado; os logs, o monitor, os serviços, o disco e o desligar seguro funcionam
+na placa de verdade.
 
 ### Fase 7: acabamento (3 semanas)
 
@@ -1570,6 +1583,25 @@ O G1 passa com a cadeia ligada, durante e depois das materializações (`tests/t
 **Pronto quando:** as jornadas da seção 1.2 rodam sem ajuda, e os portões de desempenho passam no Windows e no Linux. **Tag v1.0.**
 
 **Total estimado:** ~26 semanas de meio período.
+
+### Depois da Fase 7: os detalhes que ficaram
+
+Decidido em 19/11/2026: o que ainda não foi feito e não está numa fase vai para esta lista, para depois da v1.0 (a
+ordem não é a de prioridade):
+
+- [ ] **Importar dados de fora** (PD-03): o osciloscópio, o CSV genérico com o assistente das colunas, o WAV.
+- [ ] **A fonte derivada** (TR-08): um traço transformado que vira fonte, para exportar ou plotar de novo.
+- [ ] **A figura do Bode** de um perfil de sonda (a vista dos perfis como painel de uma figura).
+- [ ] **As rotinas do `coletar.sh` como formulários nativos**, com as pausas da bancada em diálogos (o agente expõe as
+  pausas como perguntas; 11.5).
+- [ ] **A cópia no cartão durante a saída contínua**, como seguro contra a queda (11.6; era a v1.1).
+- [ ] **O overlay próprio `SH-ANALYZER-PRU`**, compilado na placa com o `dtc`, que dispensa o `config-pin` (11.10).
+- [ ] **O compartilhamento Samba** na placa, restrito à interface USB (11.7).
+- [ ] **O IP fixo na Ethernet** da placa (11.10).
+- [ ] **A regra de sudo sem senha** para os comandos do firmware (11.2), se a decisão em aberto 3 (seção 19) for por ela.
+- [ ] **Importar MAT e COMTRADE** (PD-10); **exportar WAV, Parquet e COMTRADE** (FG-10); **os assistentes de
+  calibração** (ES-08).
+
 
 ---
 
