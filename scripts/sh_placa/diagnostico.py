@@ -42,6 +42,9 @@ CATEGORIAS = (
 """``(chave, título, códigos)``, na ordem da tabela 11.9. ``tests/test_sh_placa_diagnostico.py`` confere que todo
 código que o agente pode emitir tem um item."""
 NIVEIS_DOS_ITENS = ("erro", "aviso", "info", "ok")
+CODIGOS_DO_UENV = {"pru_ausente", "pru_em_outro_remoteproc", "mem_496m", "mem_496m_no_proximo_boot",
+                   "ram_sobre_os_buffers", "overlay_da_pru", "audio_hdmi", "audio_hdmi_no_proximo_boot"}
+"""Os problemas que o assistente do ``uEnv.txt`` (``uenv.py``) corrige, com o reinício."""
 ESTADOS_DA_PRU = {"running": "rodando", "offline": "parada (o normal entre capturas)", "crashed": "parada com falha",
                   "suspended": "suspensa"}
 
@@ -53,7 +56,7 @@ class ItemDoDiagnostico:
     nivel: str                              # "ok", "info", "aviso" ou "erro"
     resumo: str                             # os fatos lidos, numa linha
     problemas: tuple[Problema, ...] = ()
-    correcao: str | None = None             # o "Corrigir" daqui: "relogio", "pinos", "pru" ou "firmware"
+    correcao: str | None = None             # o "Corrigir" daqui: "relogio", "pinos", "pru", "firmware" ou "uenv"
 
 
 def _decimal(valor: float, casas: int) -> str:
@@ -250,6 +253,8 @@ def itens_do_diagnostico(estado: EstadoDaPlaca, versao_do_aplicativo: str | None
             correcao = "firmware" if codigos - {"pru_desatualizada"} else "pru"
         elif chave == "pru" and {p.codigo for p in dela} & {"pru_com_falha", "pru_outro_firmware"}:
             correcao = "pru"
+        elif chave in ("pru", "memoria_dos_buffers", "overlays") and {p.codigo for p in dela} & CODIGOS_DO_UENV:
+            correcao = "uenv"
         itens.append(ItemDoDiagnostico(chave, titulo, _pior(dela), resumo, tuple(dela), correcao))
     if outros:
         itens.append(ItemDoDiagnostico("outros", "Outras conferências", _pior(outros),
