@@ -828,6 +828,12 @@ O layout é o do mockup **F1**: a lista de figuras e modelos à esquerda, a pág
 - **Os rótulos:** unidades do SI com prefixo automático e o separador decimal pelo idioma da figura ("1,5" em pt-BR, "1.5" em en). A matemática sai pelo mathtext do Matplotlib (`$\Delta t$`).
 - **A prévia é o próprio Matplotlib** (Agg) desenhando a página na resolução da tela: o que se vê é o que sai (WYSIWYG). Numa página são poucos milhares de pontos por traço, e o Matplotlib dá conta.
 
+Feito na F5.7 e na F5.8: o estilo da figura (as letras, os tamanhos, as espessuras, as marcas, a moldura, a grade) e
+o de cada traço no painel (a cor, a espessura, o tracejado, o marcador, o nome), a legenda em qualquer canto ou fora,
+os nomes, os prefixos e os limites dos eixos; os modelos de estilo nas preferências; a prévia em tons de cinza e com
+os daltonismos (FG-05); as anotações são da vista (AN-11: a Análise e as figuras dela mostram as mesmas) e o inset é
+do painel. As fontes da figura ficam as que o aplicativo já tinha (STIX, Inter, IBM Plex Sans, DejaVu Sans).
+
 ### 10.2 A exportação da figura
 
 | Formato | Para quê | Detalhes |

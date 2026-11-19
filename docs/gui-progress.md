@@ -49,7 +49,12 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > figura sai em PDF, SVG, EPS, PGF, PNG e TIFF, com a proveniência nos metadados, e vai para a área de
 > transferência. **A F5.5 e a F5.6 estão feitas** (diário de 19/11): os dados da vista saem em CSV, HDF5, MAT e
 > NPZ (a captura de 1 h inteira, em blocos), e a figura sai num pacote reproduzível, que um script refaz com os
-> mesmos pixels sem o SH-Analyzer. **A próxima: a F5.7**, o estilo de cada elemento. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
+> mesmos pixels sem o SH-Analyzer. **A F5.7 e a F5.8 estão feitas** (diário de 19/11): o estilo de cada elemento
+> da figura (as letras e os tamanhos em pt, as espessuras, as cores, os tracejados, os marcadores, a legenda em
+> qualquer canto ou fora do eixo, os limites, os nomes e os prefixos dos eixos), os modelos de estilo e a prévia em
+> tons de cinza e com daltonismo; as anotações (o texto, a seta, a região e a cota de Δt) na Análise e nas figuras,
+> e o inset de ampliação com as linhas de ligação. **A próxima: a F5.9**, as vistas em grade, o alinhamento de
+> traços e os perfis de sonda. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
 > a captura contínua e o "Conferir antes" dizem "atualize o firmware da placa" (o código 96 do roteiro, conferido
 > nela), e o aplicativo vai precisar mandar o firmware novo (o `enviar` do `BeagleBone_Setup.sh`, ou a Fase 6).
 >
@@ -74,6 +79,10 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > **As exportações:** no canto das abas da Análise, o botão da imagem faz da vista uma figura (a área Figuras, com a
 > seção Exportar: a figura, o copiar e o "Pacote reproduzível…") e o da seta para baixo abre "Exportar os dados da
 > vista" (o formato, a região, os valores; com um traço transformado, o diálogo espera a materialização).
+> **O estilo e as anotações:** na área Figuras, à direita, as seções Estilo (com "Salvar o estilo…" e os modelos
+> salvos), Eixos, Traços, Inset ("Ampliar um trecho") e Anotações; embaixo, ao lado do zoom, a visão da prévia
+> (tons de cinza, os três daltonismos). Na Análise, o clique direito numa faixa (ou no espectro) põe um texto, uma
+> seta, uma região ou uma cota (entre os cursores, com eles ligados) e muda ou tira a que está perto.
 >
 > **Com o usuário (quando puder):**
 > - a jornada da Aquisição na tela, com a placa: a placa na lista, um clique, a visão geral, o "Acertar…", os
@@ -192,13 +201,14 @@ sonda em pedaços, sem prender o GIL) e `1257f5b` (o fechamento da saída contí
 **O ambiente:** Python 3.13, PySide6 6.12.0 (na 3.10 e na 3.11, o 6.11.3: seção 2), PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1; no extra `placa`,
 asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5, keyring 25.7.0 (o cofre do Linux é o Secret Service) e pyte 0.8.2. **A CI
 roda em `.venv-ci/<versão>`** (desde 16/11/2026): o `.venv` é o de quem desenvolve, e o `ci.sh` não o troca mais.
-Testes, na última rodada (19/11/2026, com a F5.5 e a F5.6): o `ci.sh` completo em 355 s, com 2 561 em Python
-3.13 (a suíte inteira, com a interface) e 2 114 em 3.10 (sem o Qt).
+Testes, na última rodada (19/11/2026, com a F5.7 e a F5.8): o `ci.sh` completo em 360 s, com 2 587 em Python
+3.13 (a suíte inteira, com a interface) e 2 136 em 3.10 (sem o Qt).
 
 **Desde 18/11/2026, a captura pela interface** (a Fase 4 até a F4.5, seção 4e): o formulário com o "Conferir antes",
 a captura na tela (direto no computador ou no cartão, com o ao vivo, o Parar e a queda) e o caderno de bancada.
 
-**Ainda não existe:** as rotinas como formulários nativos, com as pausas em diálogos (depois da v0.10); o resgate pela serial (v1.0); o estilo de cada elemento da figura e o resto da Fase 5 (da F5.7 em diante).
+**Ainda não existe:** as rotinas como formulários nativos, com as pausas em diálogos (depois da v0.10); o resgate pela serial (v1.0); o resto da Fase 5 (da F5.9 em diante: as vistas em grade, o alinhamento de traços, os perfis de sonda e o
+fechamento).
 
 ---
 
@@ -2024,21 +2034,54 @@ o diário.
   os mesmos pixels valem com a mesma versão do Matplotlib (o script avisa se é outra). **Um defeito achado no
   caminho:** o localizador das marcas conta quantas cabem pelo tamanho dos números, que vem do estilo: lida fora
   do `rc_context` do desenho, a descrição tinha outras marcas (6 615 pixels diferentes); lida dentro, nenhum.
-### ▶ F5.7: o estilo de cada elemento e os modelos de estilo
+### ☑ F5.7: o estilo de cada elemento e os modelos de estilo
 
 - **O conteúdo:** editar tudo o que se vê (FG-04): fontes e tamanhos em pt, espessuras, cores, tracejados,
   marcadores, a legenda (qualquer canto ou fora do eixo), os limites, os rótulos e as unidades; os modelos de estilo
   próprios, salvos do estilo atual (FG-02); a prévia em tons de cinza e com a simulação de daltonismo (FG-05).
 - **Pronto quando:** cada propriedade muda a prévia e a exportação igual, com desfazer, e um modelo de estilo salvo
   aplica-se a outra figura.
+- **Feita em 19/11/2026** (`45c8b4a`, `5bcaafa`, `78df770`): o modelo (`dados/figura.py`: o `Estilo` com o tamanho
+  da legenda, as marcas para dentro ou para fora, a moldura inteira ou só os eixos e a grade; o `EstiloDoTraco` de
+  cada traço no painel; a legenda, os nomes e os prefixos dos eixos do painel; o `ModeloDeEstilo`), o desenho
+  (`dados/desenho_da_figura.py`), a visão da prévia (`dados/visao_de_cores.py`), os modelos nas preferências e as
+  seções Estilo, Eixos e Traços (`areas/figuras/estilo.py` e `elementos.py`). **Conferido:** quinze propriedades
+  mudadas pela janela, uma a uma, mudam a prévia e entram no SVG exportado, cada uma num passo de desfazer, e
+  desfeitas todas a página volta pixel a pixel; um modelo salvo numa figura aplica-se a outra (e o desfazer o
+  volta); o pacote com o estilo mudado (outra fonte, marcadores, a legenda fora do eixo, a grade, sem a moldura)
+  refeito com os mesmos pixels. **Decisões:** o nome de um eixo é o da grandeza e a unidade vem sempre atrás, com
+  o prefixo dos números (um rótulo inteiro escrito à mão desmentiria o prefixo); o y (o nome, o prefixo, os
+  limites) vale no painel de um eixo y só; a legenda automática aparece com dois traços no eixo, e um canto
+  escolhido a mostra com um; fora do eixo ela é uma só, com os traços de todas as faixas; os marcadores ficam
+  espaçados (dez por eixo, defasados entre os traços), e não em cada ponto da redução; um texto com matemática
+  que o mathtext não entende sai como foi escrito (o campo o marca, com a razão); os modelos de estilo ficam nas
+  preferências, e não no projeto (valem em qualquer projeto), e o primeiro da lista é sempre o da página; a visão
+  em cinza (a luminância da Rec. 709) e os daltonismos (Machado et al., 2009) mudam só a prévia; o projeto passa
+  à versão 6, e a legenda de um estilo da versão 5 fica do tamanho do texto, como era desenhada.
 
-### ☐ F5.8: os insets e as anotações
+### ☑ F5.8: os insets e as anotações
 
 - **O conteúdo:** o *inset* de ampliação com as linhas de ligação, as anotações (texto, seta, região, cota de Δt) e a
   matemática pelo mathtext (FG-03); as anotações também nas vistas da Análise.
 - **Pronto quando:** uma figura com um inset e as quatro anotações sai igual na prévia, no PDF e no pacote.
+- **Feita em 19/11/2026** (`c62a2ea`, `1d93b0d`, `9d37ca2`): as anotações (`dados/anotacoes.py`, sem Qt) nas vistas
+  (`Vista.anotacoes`, o `MudarAnotacoes` e a versão 6 do projeto), na Análise (`areas/analise/anotacoes.py`: o
+  clique direito numa faixa ou no espectro) e na figura (o desenho, a seção Anotações); o inset (`Painel.inset`, a
+  seção Inset); o pacote que descreve as anotações, as regiões e os insets. **Conferido:** as quatro anotações
+  postas pelo menu da vista de tempo (a região e a cota entre os cursores), com desfazer; a figura da vista as
+  leva, a seção Anotações muda uma (e a Análise acompanha), o inset amplia o meio do x; a prévia é o desenho da
+  exportação (a 1 pixel: a leitura das amostras pela pirâmide), o PDF rasterizado pelo `pdftoppm` cai a 3 pixels da
+  PNG (o avanço das letras no Agg) e o `refazer_figura.py` refaz a figura do pacote com os mesmos pixels.
+  **Decisões:** as anotações são da vista, e não da figura (AN-11: as mesmas na Análise e em cada figura dela; o
+  painel congelado leva a cópia); as coordenadas são as dos dados (s ou Hz, e a unidade da faixa), na faixa em que
+  foram postas; a cota sem texto escreve o Δt (ou o Δf) com o prefixo do SI; uma anotação fora dos limites não
+  aparece; o inset é do painel e amplia uma faixa, com as curvas reduzidas nas colunas dos pixels dele e o y
+  automático dos extremos do trecho. **Um defeito achado:** o leiaute "constrained" era refeito em cada gravação
+  (o PDF, depois a PNG de referência do pacote), com as medidas de cada renderizador, e as linhas de ligação do
+  inset, desenhadas antes dele, ficavam com a posição da gravação anterior (816 pixels diferentes no pacote); o
+  leiaute agora fica o da primeira passada, a mesma em que a redução se alinha aos pixels.
 
-### ☐ F5.9: as vistas em grade, o alinhamento de traços e os perfis de sonda
+### ▶ F5.9: as vistas em grade, o alinhamento de traços e os perfis de sonda
 
 - **O conteúdo:** o que a Fase 5 do plano junta à Análise: as vistas em grade, o alinhamento de traços (o atraso
   entre capturas) e o editor dos perfis de sonda.
@@ -2795,6 +2838,17 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     `tests/test_gui_pacote.py` (13), um caso novo em `tests/test_api.py` e em `tests/test_gui_jornada_figura.py`. O
     `ci.sh` completo passou em 355 s: 2 561 em 3.13 com a interface e 2 114 em 3.10 sem o Qt; o `.venv` intocado.
   - **Próximo:** a F5.7 (o estilo de cada elemento e os modelos de estilo).
+- **19/11/2026 (à tarde):** **a F5.7 e a F5.8** (o pedido: "Faça o F5.7 e F5.8"; a seção 4f diz o quê e as
+  decisões):
+  - o estilo de cada elemento no modelo, no desenho e no pacote (`45c8b4a`), as seções Estilo, Eixos e Traços e a
+    visão da prévia (`5bcaafa`) e os testes (`78df770`);
+  - as anotações das vistas e o inset no modelo, no desenho e no pacote, com o leiaute congelado depois da primeira
+    passada (`c62a2ea`), o clique direito na Análise e as seções Inset e Anotações (`1d93b0d`) e os testes
+    (`9d37ca2`);
+  - **Testes:** `tests/test_gui_estilo_da_figura.py` (14), `tests/test_gui_jornada_estilo.py` (3),
+    `tests/test_gui_anotacoes.py` (8) e `tests/test_gui_jornada_anotacoes.py` (1). O `ci.sh` completo passou em
+    360 s: 2 587 em 3.13 com a interface e 2 136 em 3.10 sem o Qt; o `.venv` intocado.
+  - **Próximo:** a F5.9 (as vistas em grade, o alinhamento de traços e os perfis de sonda).
 ---
 
 ## 8. Perguntas em aberto
