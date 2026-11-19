@@ -248,6 +248,33 @@ def propor(texto: str, kernel: str | None, dtbos: list[str]) -> list[Mudanca]:
     return mudancas
 
 
+def pendentes(lido: dict) -> list[str]:
+    """O que o ``uEnv.txt`` já pede e este boot ainda não tem (vale depois de reiniciar), pelo que o agente leu (o
+    comando ``inicializacao``): a linha do kernel deste boot e os overlays que o u-boot aplicou."""
+    texto = (lido.get("uenv") or {}).get("texto")
+    if texto is None:
+        return []
+    try:
+        u = chaves(ler_o_uenv(texto))
+    except UenvEstranho:
+        return []
+    faltam = []
+    if _tem_mem(u) and MEM not in (lido.get("cmdline") or "").split():
+        faltam.append(f"o {MEM} (a memória dos buffers)")
+    overlays = lido.get("overlays")
+    if overlays is not None and u.get("enable_uboot_overlays") == "1":
+        pru = u.get("uboot_overlay_pru")
+        nome = pru.rsplit("/", 1)[-1].removesuffix(".dtbo") if pru else None
+        if nome and nome not in overlays:
+            faltam.append(f"o overlay da PRU {nome}")
+        hdmi = [o for o in overlays if "HDMI" in o.upper()]
+        if u.get("disable_uboot_overlay_video") == "1" and hdmi:
+            faltam.append("o vídeo do HDMI desligado")
+        elif u.get("disable_uboot_overlay_audio") == "1" and any(o.upper().startswith("BB-HDMI-") for o in hdmi):
+            faltam.append("o áudio do HDMI desligado")
+    return faltam
+
+
 def aplicar(texto: str, nomes, kernel: str | None, dtbos: list[str]) -> str:
     """O ``uEnv.txt`` com as mudanças ``nomes`` (na :data:`ORDEM`), mexendo só nas linhas delas."""
     linhas = ler_o_uenv(texto)

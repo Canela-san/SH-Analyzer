@@ -118,6 +118,11 @@ class EstadoDaPlaca:
         return _numero(self._campo("ligada_s"))
 
     @property
+    def boot(self) -> str | None:
+        """O identificador deste boot (o ``/proc/sys/kernel/random/boot_id``): muda a cada reinício."""
+        return self._campo("boot")
+
+    @property
     def carga(self) -> float | None:
         """A carga média do último minuto (um núcleo só: 1,0 é ele ocupado o tempo todo)."""
         carga = self._campo("carga")

@@ -30,6 +30,7 @@ import shutil
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 from . import capturas_simuladas
@@ -373,6 +374,7 @@ def montar_sistema_falso(pasta: Path, cenario: str = "normal", versao_firmware: 
     _escrever(raiz, "/etc/dogtag", SISTEMA_SIMULADO + "\n")
     _escrever(raiz, "/proc/sys/kernel/osrelease", KERNEL_SIMULADO + "\n")
     _escrever(raiz, "/proc/uptime", "8040.52 15000.11\n")
+    _escrever(raiz, "/proc/sys/kernel/random/boot_id", f"{uuid.uuid4()}\n")
     _escrever(raiz, "/proc/loadavg", "0.31 0.24 0.18 1/120 999\n")
     _escrever(raiz, "/proc/meminfo", "MemTotal:  478796 kB\nMemFree:  250000 kB\nMemAvailable:  319488 kB\n")
     _escrever(raiz, "/sys/class/thermal/thermal_zone0/temp", "52000\n")
@@ -580,6 +582,7 @@ def aplicar_o_boot(raiz: Path, desligada_s: float = 40.0) -> None:
     _escrever(raiz, "/run/simulador/relogio", f"{desvio - desligada_s!r}\n")
     (raiz / "run/systemd/timesync/synchronized").unlink(missing_ok=True)
     _escrever(raiz, "/proc/uptime", "35.10 30.02\n")
+    _escrever(raiz, "/proc/sys/kernel/random/boot_id", f"{uuid.uuid4()}\n")       # um boot novo
 
 
 class Simulador:

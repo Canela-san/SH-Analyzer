@@ -21,6 +21,10 @@ SAIDA_CAPTURA_RODANDO = 85
 ACOES = {"reboot": "reiniciar a placa", "poweroff": "desligar a placa"}
 
 
+class CapturaRodando(ErroDaPlaca):
+    """Uma captura roda na placa (o ``ler_adc``): reiniciar ou desligar a cortaria."""
+
+
 def roteiro_de_energia(acao: str, mesmo_capturando: bool = False) -> str:
     """O que roda na placa para ``acao`` (``"reboot"`` ou ``"poweroff"``): o "Ver o comando"."""
     if acao not in ACOES:
@@ -40,7 +44,8 @@ async def _energia(conexao: ConexaoSSH, acao: str, senha_do_sudo: str, mesmo_cap
     if r.codigo == SAIDA_SEM_DIRETORIO:
         raise ErroDoSudo("a placa não deixou criar o diretório temporário em /dev/shm (onde a senha fica, na RAM)")
     if r.codigo == SAIDA_CAPTURA_RODANDO:
-        raise ErroDaPlaca("uma captura está rodando na placa (ler_adc): pare-a antes, ou confirme que pode cortá-la")
+        raise CapturaRodando("uma captura está rodando na placa (ler_adc): pare-a antes, ou confirme que pode "
+                             "cortá-la")
     if r.codigo != 0:
         raise ErroDaPlaca(f"a placa não aceitou {ACOES[acao]} (código {r.codigo}): "
                           f"{(r.erro or r.saida).strip()[-200:] or 'sem saída'}")
