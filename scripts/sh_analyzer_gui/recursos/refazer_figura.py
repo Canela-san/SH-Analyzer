@@ -18,8 +18,12 @@ O ``dados.h5`` descreve a figura como o SH-Analyzer a desenhou, já com o leiaut
   SH-Analyzer: o mínimo, o máximo, o primeiro e o último ponto de cada coluna de pixels), e o atributo ``estilo``
   (JSON: a cor, a espessura, o tracejado, o marcador); ``rotulo`` é o nome do traço.
 
-A legenda de um eixo aponta as curvas por ``[eixo, linha]`` (a de fora do eixo junta as de várias faixas): as
-legendas são postas depois de todos os eixos.
+* ``/eixos/NN/insets/KK``: os insets do eixo (a ampliação de um trecho), descritos do mesmo jeito, com a posição na
+  fração do eixo (``no_eixo``) e o estilo das linhas de ligação (``ligacoes``).
+
+Os textos são os do ``ax.text`` e as anotações (o texto, a seta e a cota: ``ax.annotate``); as regiões são
+``ax.axvspan``. A legenda de um eixo aponta as curvas por ``[eixo, linha]`` (a de fora do eixo junta as de várias
+faixas): as legendas são postas depois de todos os eixos.
 
 As fontes que a figura usa e não vêm com o Matplotlib estão em ``fontes/`` (com as licenças). Com a mesma versão do
 Matplotlib, a figura refeita em PNG tem os mesmos pixels da ``figura.png``; com outra, pequenas diferenças no texto
@@ -88,6 +92,24 @@ def _estilo_da_linha(estilo: dict) -> dict:
 def _eixo(figura: Figure, grupo: h5py.Group):
     e = _json(grupo.attrs["eixo"])
     ax = figura.add_axes(e["posicao"])
+    _montar(ax, grupo, e)
+    if "insets" in grupo:
+        for nome in sorted(grupo["insets"]):
+            g = grupo["insets"][nome]
+            d = _json(g.attrs["eixo"])
+            dentro = ax.inset_axes(d["no_eixo"])
+            _montar(dentro, g, d)
+            if d.get("ligacoes"):
+                ax.indicate_inset_zoom(dentro, **d["ligacoes"])
+    return ax, e.get("legenda")
+
+
+def _coordenadas(valor):
+    return tuple(valor) if isinstance(valor, list) else valor
+
+
+def _montar(ax, grupo: h5py.Group, e: dict) -> None:
+    """As curvas, as marcas, os limites, os títulos, as regiões e os textos de um eixo (ou de um inset)."""
     ax.set_xscale(e["x"]["escala"])
     ax.set_yscale(e["y"]["escala"])
     for nome in sorted(grupo["linhas"]):
@@ -110,10 +132,16 @@ def _eixo(figura: Figure, grupo: h5py.Group):
     for onde, titulo in e["titulos"].items():
         if titulo:
             ax.set_title(titulo, loc=onde)
+    for f in e.get("faixas", []):
+        ax.axvspan(f["x0"], f["x1"], **f["estilo"])
     for t in e["textos"]:
-        ax.text(t["x"], t["y"], t["texto"], transform=ax.transAxes if t["em"] == "eixos" else ax.transData,
-                **t["estilo"])
-    return ax, e.get("legenda")
+        if t.get("tipo") == "anotacao":
+            ax.annotate(t["texto"], t["xy"], xytext=t["xytext"], xycoords=_coordenadas(t["xycoords"]),
+                        textcoords=_coordenadas(t["textcoords"]), arrowprops=t["seta"],
+                        annotation_clip=t["recorte"], **t["estilo"])
+        else:
+            ax.text(t["x"], t["y"], t["texto"], transform=ax.transAxes if t["em"] == "eixos" else ax.transData,
+                    **t["estilo"])
 
 
 def comparar(refeita: Path, original: Path) -> str:

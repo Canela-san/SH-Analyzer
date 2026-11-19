@@ -66,7 +66,7 @@ def descrever_fonte(fonte: FonteDoProjeto, pasta: Path) -> FonteSalva:
 def descrever_vista(vista: Vista) -> VistaSalva:
     """A vista como vai para o arquivo (e como fica no painel congelado de uma figura): os traços e as opções."""
     return VistaSalva(vista.id, vista.nome, vista.tipo, tuple(TracoSalvo(t.id, t.receita) for t in vista.tracos),
-                      vista.opcoes.para_dict() if vista.opcoes is not None else {})
+                      vista.opcoes.para_dict() if vista.opcoes is not None else {}, vista.anotacoes)
 
 
 def descrever(projeto: Projeto, pasta: Path, *, layout: dict[str, str] | None = None,
@@ -110,6 +110,7 @@ def montar(salvo: ProjetoSalvo, caminho: Path | None, pasta: Path, *,
                       OPCOES_DO_TIPO[salva.tipo].de_dict(salva.opcoes) if salva.tipo in OPCOES_DO_TIPO else None)
         for t in salva.tracos:
             vista._inserir(Traco(t.receita, t.id))
+        vista._definir_anotacoes(salva.anotacoes)
         projeto._inserir_vista(vista)
     for modelo in salvo.modelos_de_captura:
         projeto._por_modelo(modelo)

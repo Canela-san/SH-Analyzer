@@ -35,6 +35,11 @@ espaçados na linha (:data:`MARCADORES_POR_EIXO` por eixo, defasados entre os tr
 **Os textos do usuário** (os nomes, os rótulos) aceitam a matemática do mathtext (``$\Delta t$``); um que o mathtext
 não entende sai como foi escrito, sem derrubar o desenho (:func:`erro_no_texto` diz por quê).
 
+**As anotações e o inset** (F5.8): as anotações da vista (``dados/anotacoes.py``: o texto, a seta, a região e a cota)
+vão sobre os traços, na faixa delas, nas unidades do eixo; uma fora dos limites não aparece. O inset é um eixo dentro
+do painel (num canto, ``Painel.inset``) com os mesmos traços da faixa dele no trecho ampliado: as curvas dele são
+reduzidas nas colunas dos pixels dele, como as do eixo, e as linhas de ligação saem do retângulo do trecho.
+
 **As vistas que ainda não entram** (as bandas, o espectrograma, os harmônicos) deixam o painel com um aviso; o
 espectro congelado também (a cópia da vista não guarda o espectro, e recalculá-lo fica para depois).
 """
@@ -51,10 +56,11 @@ import numpy as np
 from matplotlib import cbook, font_manager, rc_context
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure as FiguraDoMatplotlib
-from matplotlib.ticker import FuncFormatter, NullFormatter, ScalarFormatter
+from matplotlib.ticker import FuncFormatter, MaxNLocator, NullFormatter, ScalarFormatter
 from matplotlib.transforms import Bbox
 from supraharmonicos.api import Cancelado
 
+from .anotacoes import Anotacao, texto_da_cota
 from .consulta import Amostras, consultar
 from .espectros import Desenho, envoltoria_log
 from .figura import Estilo, EstiloDoTraco, Figura, Painel
@@ -73,6 +79,10 @@ DPI_DO_LEIAUTE = 150.0
 LIMIAR_DO_TEMPO_EM_MS = 2.0
 FOLGA_DO_Y = 0.04
 MARCADORES_POR_EIXO = 10
+MARCAS_DO_INSET = 3
+COR_DAS_ANOTACOES = "#1a1a1a"
+COR_DAS_REGIOES = "#808080"
+COR_DAS_LIGACOES = "#4d4d4d"
 LUGARES_DA_LEGENDA = {"melhor": {"loc": "best"}, "sup_dir": {"loc": "upper right"}, "sup_esq": {"loc": "upper left"},
                       "inf_dir": {"loc": "lower right"}, "inf_esq": {"loc": "lower left"},
                       "fora_dir": {"loc": "upper left", "bbox_to_anchor": (1.02, 1.0), "borderaxespad": 0.0},
@@ -225,7 +235,8 @@ def parametros_do_estilo(estilo: Estilo) -> dict:
 class EixosDoPainel:
     """O que o desenho achou para os eixos de um painel, nas unidades sem prefixo (s, Hz, V): os limites, as unidades
     e os nomes automáticos (a área Figuras os mostra nos campos vazios e parte deles para o inset e as anotações).
-    ``y`` é ``None`` num painel com várias faixas (cada uma tem o seu); ``faixas`` conta os eixos de tempo."""
+    ``y`` é ``None`` num painel com várias faixas (cada uma tem o seu); ``faixas`` conta os eixos de tempo, e
+    ``por_faixa`` dá o de cada um, de cima para baixo: ``(o número da faixa, os limites do y, a unidade, o nome)``."""
 
     tipo: str
     x: tuple[float, float]
@@ -236,6 +247,7 @@ class EixosDoPainel:
     nome_y: str
     faixas: int = 1
     log: bool = False
+    por_faixa: tuple[tuple[int, tuple[float, float], str, str], ...] = ()
 
 
 @dataclass(eq=False)
@@ -419,6 +431,7 @@ class _Faixa:
     unidade: str
     limites_y: tuple[float, float]
     grandeza: str = ""
+    numero: int = 0                     # o receita.faixa dos traços (o das anotações)
 
 
 @dataclass(eq=False)
@@ -433,6 +446,7 @@ class _Plano:
     log: bool = False
     limites_y: tuple[float, float] | None = None
     rotulo_y: str = ""
+    anotacoes: tuple[Anotacao, ...] = ()
 
     @property
     def chave_x(self) -> tuple | None:
@@ -494,10 +508,11 @@ def _plano_do_tempo(painel: Painel, vista: VistaSalva, dados: DadosDaFigura) -> 
         unidades, grandezas = {s.unidade for s in series}, {s.grandeza for s in series}
         unidade = next(iter(unidades)) if len(unidades) == 1 else ""
         grandeza = next(iter(grandezas)) if len(unidades) == 1 and len(grandezas) == 1 else ""
-        faixas.append(_Faixa(series, unidade, _limites_do_tempo(series, janela), grandeza))
+        faixas.append(_Faixa(series, unidade, _limites_do_tempo(series, janela), grandeza, numero))
     if painel.limites_y and len(faixas) == 1:
         faixas[0].limites_y = painel.limites_y
-    return _Plano(painel, "tempo", janela, faixas=faixas)
+    anotacoes = tuple(replace(a, faixa=0) for a in vista.anotacoes) if sobrepor else vista.anotacoes
+    return _Plano(painel, "tempo", janela, faixas=faixas, anotacoes=anotacoes)
 
 
 def _limites_do_tempo(series: list[SerieDoTempo], janela: tuple[float, float]) -> tuple[float, float]:
@@ -532,19 +547,21 @@ def _plano_do_espectro(painel: Painel, vista: VistaSalva, dados: DadosDaFigura) 
     f_min = min(s.desenho.f0 + (s.desenho.df if log else 0.0) for s in series)
     f_max = max(s.desenho.f0 + s.desenho.df * (len(s.desenho.niveis) - 1) for s in series)
     janela = _janela_da_vista(painel, vista, dados) or (f_min, f_max)
-    limites_y = painel.limites_y
-    if limites_y is None:
-        mn, mx = math.inf, -math.inf
-        for s in series:
-            d = s.desenho
-            a = max(0, math.ceil((janela[0] - d.f0) / d.df))
-            z = min(len(d.niveis), math.floor((janela[1] - d.f0) / d.df) + 1)
-            trecho = d.niveis[a:z][np.isfinite(d.niveis[a:z])]
-            if len(trecho):
-                mn, mx = min(mn, float(trecho.min())), max(mx, float(trecho.max()))
-        limites_y = _com_folga(mn, mx)
+    limites_y = painel.limites_y or _limites_do_espectro(series, janela)
     return _Plano(painel, "espectro", janela, espectros=series, log=log, limites_y=limites_y,
-                  rotulo_y=series[0].rotulo_y)
+                  rotulo_y=series[0].rotulo_y, anotacoes=vista.anotacoes)
+
+
+def _limites_do_espectro(series: list[SerieDoEspectro], janela: tuple[float, float]) -> tuple[float, float]:
+    mn, mx = math.inf, -math.inf
+    for s in series:
+        d = s.desenho
+        a = max(0, math.ceil((janela[0] - d.f0) / d.df))
+        z = min(len(d.niveis), math.floor((janela[1] - d.f0) / d.df) + 1)
+        trecho = d.niveis[a:z][np.isfinite(d.niveis[a:z])]
+        if len(trecho):
+            mn, mx = min(mn, float(trecho.min())), max(mx, float(trecho.max()))
+    return _com_folga(mn, mx)
 
 
 def pontos(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFigura) -> int:
@@ -554,17 +571,26 @@ def pontos(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFigur
     _compartilhar(planos, figura)
     total = 0
     for plano in planos:
-        for faixa in plano.faixas:
-            for s in faixa.series:
-                a = math.ceil((plano.janela[0] - s.t0) * s.taxa_hz) - s.inicio
-                z = math.floor((plano.janela[1] - s.t0) * s.taxa_hz) - s.inicio + 1
-                total += max(0, min(s.piramide.n_amostras, z) - max(0, a))
-        for s in plano.espectros:
-            d = s.desenho
-            a = max(0, math.floor((plano.janela[0] - d.f0) / d.df))
-            z = min(len(d.niveis), math.ceil((plano.janela[1] - d.f0) / d.df) + 1)
-            total += max(0, z - a)
+        inset = plano.painel.inset if plano.tipo in ("tempo", "espectro") else None
+        for janela, faixas in ((plano.janela, plano.faixas),
+                               *(((inset.limites_x, [_faixa_do_inset(plano, inset)]),) if inset else ())):
+            for faixa in faixas:
+                for s in faixa.series:
+                    a = math.ceil((janela[0] - s.t0) * s.taxa_hz) - s.inicio
+                    z = math.floor((janela[1] - s.t0) * s.taxa_hz) - s.inicio + 1
+                    total += max(0, min(s.piramide.n_amostras, z) - max(0, a))
+            if plano.tipo == "espectro":
+                for s in plano.espectros:
+                    d = s.desenho
+                    a = max(0, math.floor((janela[0] - d.f0) / d.df))
+                    z = min(len(d.niveis), math.ceil((janela[1] - d.f0) / d.df) + 1)
+                    total += max(0, z - a)
     return total
+
+
+def _faixa_do_inset(plano: _Plano, inset) -> _Faixa:
+    """A faixa que o inset amplia (a última, se ele pede uma que a vista não tem mais); o espectro não tem faixas."""
+    return plano.faixas[min(inset.faixa, len(plano.faixas) - 1)] if plano.faixas else _Faixa([], "", (0.0, 1.0))
 
 
 def _compartilhar(planos: list[_Plano], figura: Figura) -> None:
@@ -673,6 +699,10 @@ def desenhar(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFig
         # A segunda passada: com o leiaute feito, cada curva reduzida nas colunas dos pixels do eixo dela, no dpi
         # de saída.
         mpl.draw_without_rendering()
+        # O leiaute fica o desta passada: a redução se alinha aos pixels destes eixos, e as gravações seguintes (o
+        # PDF, a PNG de referência do pacote) não o refazem com as medidas de outro renderizador (o inset e as
+        # linhas de ligação dele, desenhadas antes dele, ficariam com posições de gravações diferentes).
+        mpl.set_layout_engine("none")
         renderizador = canvas.get_renderer()
         escala = dpi / dpi_do_leiaute
         altura = mpl.bbox.height
@@ -694,13 +724,15 @@ def desenhar(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFig
 def _eixos_do_plano(plano: _Plano, figura: Figura, textos: dict) -> EixosDoPainel | None:
     if plano.tipo == "tempo":
         um = plano.faixas[0] if len(plano.faixas) == 1 else None
+        por_faixa = tuple((f.numero, f.limites_y, f.unidade,
+                           _nome_da_grandeza(f.unidade, f.grandeza, figura.idioma, textos)) for f in plano.faixas)
         return EixosDoPainel("tempo", plano.janela, "s", textos["tempo"], um.limites_y if um else None,
-                             um.unidade if um else "",
-                             _nome_da_grandeza(um.unidade, um.grandeza, figura.idioma, textos) if um else "",
-                             len(plano.faixas))
+                             um.unidade if um else "", por_faixa[0][3] if um else "", len(plano.faixas),
+                             por_faixa=por_faixa)
     if plano.tipo == "espectro":
         return EixosDoPainel("espectro", plano.janela, "Hz", textos["frequencia"], plano.limites_y, plano.rotulo_y,
-                             textos["nivel"], log=plano.log)
+                             textos["nivel"], log=plano.log,
+                             por_faixa=((0, plano.limites_y, plano.rotulo_y, textos["nivel"]),))
     return None
 
 
@@ -845,7 +877,77 @@ def _desenhar_o_tempo(eixos: list, plano: _Plano, figura: Figura, textos: dict, 
         _legenda(eixos[0], painel, todas)
     eixos[0].set_xlim(janela[0] * fator_x, janela[1] * fator_x)
     eixos[-1].set_xlabel(_rotulo(textos["tempo"], painel.nome_x, unidade_x))
+    fatores_y = [_prefixo(f.unidade, max(abs(f.limites_y[0]), abs(f.limites_y[1])),
+                          painel.prefixo_y if um_y else None)[0] for f in plano.faixas]
+    if painel.inset is not None:
+        k = plano.faixas.index(_faixa_do_inset(plano, painel.inset))
+        curvas += _inset_do_tempo(eixos[k], plano.faixas[k], plano, figura, suavizar, fator_x, fatores_y[k])
+    numeros = [f.numero for f in plano.faixas]
+    for a in plano.anotacoes:
+        if a.faixa in numeros:
+            k = numeros.index(a.faixa)
+            _anotar(eixos[k], a, fator_x, fatores_y[k], figura, frequencia=False)
     return curvas
+
+
+def _inset_do_tempo(eixo, faixa: _Faixa, plano: _Plano, figura: Figura, suavizar: bool, fator_x: float,
+                    fator_y: float) -> list[_Curva]:
+    inset, painel = plano.painel.inset, plano.painel
+    dentro = eixo.inset_axes(inset.posicao)
+    ordem = _ordem_dos_marcadores(painel, [s.traco for s in faixa.series])
+    curvas = []
+    for s in faixa.series:
+        linha = _plotar(dentro, painel, s.traco, s.cor, s.nome, s.tracejado, suavizar, ordem[s.traco])
+        curvas.append(_Curva(linha, dentro, s.amostras, s.piramide, s.t0 + s.inicio / s.taxa_hz, 1.0 / s.taxa_hz,
+                             fator_x, fator_y, s.escala, s.deslocamento))
+    y0, y1 = inset.limites_y or _limites_do_tempo(faixa.series, inset.limites_x)
+    _eixo_do_inset(eixo, dentro, inset, figura, (inset.limites_x[0] * fator_x, inset.limites_x[1] * fator_x),
+                   (y0 * fator_y, y1 * fator_y))
+    return curvas
+
+
+def _eixo_do_inset(eixo, dentro, inset, figura: Figura, limites_x, limites_y, log: bool = False) -> None:
+    if log:
+        dentro.set_xscale("log")
+    dentro.set_xlim(*limites_x)
+    dentro.set_ylim(*limites_y)
+    _numeros(dentro, figura.separador_decimal)
+    for numeros in ((dentro.yaxis,) if log else (dentro.xaxis, dentro.yaxis)):
+        numeros.set_major_locator(MaxNLocator(nbins=MARCAS_DO_INSET))       # o inset é pequeno: poucas marcas
+    if log:
+        dentro.xaxis.set_major_formatter(_numeros_do_log(figura.separador_decimal))
+        dentro.xaxis.set_minor_formatter(NullFormatter())
+    if inset.ligacoes:
+        eixo.indicate_inset_zoom(dentro, edgecolor=COR_DAS_LIGACOES, linewidth=figura.estilo.eixo_pt, alpha=1.0)
+
+
+def _anotar(eixo, a: Anotacao, fator_x: float, fator_y: float, figura: Figura, *, frequencia: bool) -> None:
+    """Uma anotação no eixo (as coordenadas dela nas unidades do eixo: o prefixo de cada um)."""
+    x0, y0 = a.x0 * fator_x, a.y0 * fator_y
+    texto = _seguro(a.texto)
+    estilo = {"color": COR_DAS_ANOTACOES, "fontsize": figura.estilo.texto_pt}
+    seta = {"color": COR_DAS_ANOTACOES, "linewidth": figura.estilo.eixo_pt * 1.6, "shrinkA": 0.0, "shrinkB": 0.0}
+    if a.tipo == "texto":
+        if texto:
+            eixo.annotate(texto, (x0, y0), ha="left", va="bottom", **estilo)
+    elif a.tipo == "seta":
+        eixo.annotate(texto, (x0, y0), xytext=(a.x1 * fator_x, a.y1 * fator_y), ha="center", va="center",
+                      arrowprops={"arrowstyle": "-|>", "mutation_scale": 0.9 * figura.estilo.texto_pt,
+                                  **seta, "shrinkA": 2.0}, **estilo)
+    elif a.tipo == "regiao":
+        eixo.axvspan(x0, a.x1 * fator_x, facecolor=COR_DAS_REGIOES, alpha=0.18, edgecolor="none", linewidth=0.0,
+                     zorder=0.9)
+        if texto:
+            eixo.annotate(texto, (x0, 1.0), xycoords=("data", "axes fraction"), xytext=(2.0, -2.0),
+                          textcoords="offset points", ha="left", va="top", **estilo)
+    else:
+        x1 = a.x1 * fator_x
+        eixo.annotate("", (x0, y0), xytext=(x1, y0), arrowprops={"arrowstyle": "<|-|>",
+                                                                 "mutation_scale": 0.7 * figura.estilo.texto_pt,
+                                                                 **seta})
+        rotulo = texto_da_cota(a, frequencia=frequencia, separador=figura.separador_decimal, matematica=True)
+        eixo.annotate(_seguro(rotulo), ((x0 + x1) / 2, y0), xytext=(0.0, 2.0), textcoords="offset points",
+                      ha="center", va="bottom", **estilo)
 
 
 def _desenhar_o_espectro(eixo, plano: _Plano, figura: Figura, textos: dict, suavizar: bool) -> list[_Curva]:
@@ -870,6 +972,26 @@ def _desenhar_o_espectro(eixo, plano: _Plano, figura: Figura, textos: dict, suav
     eixo.set_xlabel(_rotulo(textos["frequencia"], painel.nome_x, f"{prefixo_x}Hz"))
     eixo.set_ylabel(_rotulo(textos["nivel"], painel.nome_y, plano.rotulo_y))
     _legenda(eixo, painel, linhas)
+    if painel.inset is not None:
+        curvas += _inset_do_espectro(eixo, plano, figura, suavizar, fator_x)
+    for a in plano.anotacoes:
+        _anotar(eixo, a, fator_x, 1.0, figura, frequencia=True)
+    return curvas
+
+
+def _inset_do_espectro(eixo, plano: _Plano, figura: Figura, suavizar: bool, fator_x: float) -> list[_Curva]:
+    inset, painel = plano.painel.inset, plano.painel
+    dentro = eixo.inset_axes(inset.posicao)
+    ordem = _ordem_dos_marcadores(painel, [s.traco for s in plano.espectros])
+    curvas = []
+    for s in plano.espectros:
+        linha = _plotar(dentro, painel, s.traco, s.cor, s.nome, s.tracejado, suavizar, ordem[s.traco])
+        d = s.desenho
+        curvas.append(_Curva(linha, dentro, d.niveis, d.piramide, d.f0, d.df, fator_x,
+                             desenho_log=d if plano.log else None))
+    limites_y = inset.limites_y or _limites_do_espectro(plano.espectros, inset.limites_x)
+    _eixo_do_inset(eixo, dentro, inset, figura, (inset.limites_x[0] * fator_x, inset.limites_x[1] * fator_x),
+                   limites_y, log=plano.log)
     return curvas
 
 

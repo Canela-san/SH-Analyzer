@@ -34,7 +34,9 @@ from sh_placa import pedido as pedido_de_captura
 from sh_placa.pedido import PedidoDeCaptura
 from supraharmonicos.api import ErroSHAN, ParametrosSemCabecalho
 
+from . import anotacoes as anot
 from . import figura as fig
+from .anotacoes import Anotacao, AnotacaoInvalida
 from .figura import Figura, FiguraInvalida
 from .receita import ReceitaDoTraco, ReceitaInvalida
 
@@ -80,6 +82,7 @@ class VistaSalva:
     tipo: str
     tracos: tuple[TracoSalvo, ...] = ()
     opcoes: dict = field(default_factory=dict)     # as do tipo (``espectros.OPCOES_DO_TIPO``); {}: as padrão
+    anotacoes: tuple[Anotacao, ...] = ()          # ``dados/anotacoes.py`` (a versão 6)
 
 
 @dataclass(frozen=True)
@@ -150,7 +153,8 @@ def para_dict(projeto: ProjetoSalvo) -> dict:
 def _vista_para_dict(v: VistaSalva) -> dict:
     return {"id": v.id, "nome": v.nome, "tipo": v.tipo,
             "tracos": [{"id": t.id, **t.receita.para_dict()} for t in v.tracos],
-            **({"opcoes": dict(v.opcoes)} if v.opcoes else {})}
+            **({"opcoes": dict(v.opcoes)} if v.opcoes else {}),
+            **({"anotacoes": [anot.para_dict(a) for a in v.anotacoes]} if v.anotacoes else {})}
 
 
 def _fonte_para_dict(fonte: FonteSalva) -> dict:
@@ -261,7 +265,12 @@ def _vista_de_dict(v, onde: str, ids: list[str], campos_da_receita: set[str]) ->
         opcoes = OPCOES_DO_TIPO[tipo].de_dict(opcoes).para_dict()
     except (OpcoesInvalidas, TypeError) as e:
         raise ProjetoInvalido(f"{onde}: {e}") from None
-    return VistaSalva(id=_campo(v, "id", str, onde), nome=nome, tipo=tipo, tracos=tuple(tracos), opcoes=opcoes)
+    try:
+        anotacoes = anot.lista_de_dict(v.get("anotacoes", []), onde)
+    except AnotacaoInvalida as e:
+        raise ProjetoInvalido(str(e)) from None
+    return VistaSalva(id=_campo(v, "id", str, onde), nome=nome, tipo=tipo, tracos=tuple(tracos), opcoes=opcoes,
+                      anotacoes=anotacoes)
 
 
 def _figuras(brutas, vistas: set[str], vista_de_dict) -> tuple[Figura, ...]:

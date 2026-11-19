@@ -232,6 +232,32 @@ class MudarOpcoesDaVista(QUndoCommand):
         self.vista._definir_opcoes(self.antes)
 
 
+class MudarAnotacoes(QUndoCommand):
+    """Troca as anotações de uma vista (pôr, mudar, tirar uma: a lista inteira, de uma vez). Com ``juntar``, as
+    mudanças seguidas da mesma vista viram um passo só (arrastar uma região)."""
+
+    ID = 4102
+
+    def __init__(self, vista: Vista, anotacoes, *, texto: str, juntar: bool = False):
+        super().__init__(texto)
+        self.vista, self.antes, self.depois, self.juntar = vista, vista.anotacoes, tuple(anotacoes), juntar
+
+    def id(self) -> int:
+        return self.ID if self.juntar else -1
+
+    def mergeWith(self, outro) -> bool:
+        if not isinstance(outro, MudarAnotacoes) or outro.vista is not self.vista or not outro.juntar:
+            return False
+        self.depois = outro.depois
+        return True
+
+    def redo(self) -> None:
+        self.vista._definir_anotacoes(self.depois)
+
+    def undo(self) -> None:
+        self.vista._definir_anotacoes(self.antes)
+
+
 class AdicionarFonte(QUndoCommand):
     """Põe uma captura aberta no projeto. Plotar os canais é outro passo (``AdicionarTraco``)."""
 

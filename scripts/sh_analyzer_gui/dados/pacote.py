@@ -17,7 +17,9 @@ lida depois do desenho da ``figura.png`` (o último): o script põe os eixos nas
 com a mesma versão do Matplotlib.
 
 **O que a descrição não conhece** (um artista que o desenho das figuras ainda não usa: uma imagem, uma área
-preenchida) recusa o pacote com a razão: um pacote que não refaz a figura não sai.
+preenchida) recusa o pacote com a razão: um pacote que não refaz a figura não sai. Ela conhece (F5.8) as anotações
+(o texto, a seta e a cota são ``annotate``; a região, um ``axvspan``) e os insets (um eixo dentro do eixo, na fração
+dele, com as linhas de ligação do ``indicate_inset_zoom``).
 """
 
 from __future__ import annotations
@@ -34,6 +36,9 @@ import matplotlib
 import numpy as np
 from matplotlib import font_manager, rc_context
 from matplotlib.colors import to_hex
+from matplotlib.inset import InsetIndicator
+from matplotlib.patches import Rectangle
+from matplotlib.text import Annotation
 from supraharmonicos.api import ErroSHAN
 
 from .desenho_da_figura import PASTA_DAS_FONTES, DadosDaFigura, PaginaDesenhada
@@ -50,7 +55,7 @@ from .figura import Figura
 from .projeto import VistaSalva
 
 FORMATO = "sh-analyzer-figura"
-VERSAO = 1
+VERSAO = 2
 DPI_DA_REFERENCIA = 600.0
 SCRIPT = Path(__file__).resolve().parents[1] / "recursos" / "refazer_figura.py"
 ESTILO_DA_LINHA = ("color", "linestyle", "linewidth", "alpha", "antialiased", "rasterized", "zorder", "label",
@@ -58,6 +63,7 @@ ESTILO_DA_LINHA = ("color", "linestyle", "linewidth", "alpha", "antialiased", "r
                    "fillstyle", "drawstyle", "dash_capstyle", "dash_joinstyle", "solid_capstyle", "solid_joinstyle")
 ESTILO_DO_TEXTO = ("color", "fontsize", "fontweight", "fontstyle", "horizontalalignment", "verticalalignment",
                    "rotation", "zorder")
+ESTILO_DA_FAIXA = ("facecolor", "edgecolor", "alpha", "linewidth", "zorder")
 
 
 class PacoteInvalido(ErroSHAN, ValueError):
@@ -66,10 +72,11 @@ class PacoteInvalido(ErroSHAN, ValueError):
 
 # ------------------------------------------------------------------ a descrição da figura desenhada
 
-def descrever(pagina: PaginaDesenhada) -> list[tuple[dict, list[tuple[np.ndarray, np.ndarray, dict]]]]:
-    """Cada eixo da página **depois de desenhada** (as posições são as do leiaute desse desenho): a descrição dele
-    e as curvas (``x``, ``y`` e o estilo). Rode dentro do ``rc_context`` do desenho: o localizador das marcas conta
-    quantas cabem pelo tamanho dos números, que vem do estilo."""
+def descrever(pagina: PaginaDesenhada) -> list[tuple[dict, list, list]]:
+    """Cada eixo da página **depois de desenhada** (as posições são as do leiaute desse desenho): a descrição dele,
+    as curvas (``x``, ``y`` e o estilo) e os insets (cada um, a descrição e as curvas dele). Rode dentro do
+    ``rc_context`` do desenho: o localizador das marcas conta quantas cabem pelo tamanho dos números, que vem do
+    estilo."""
     mpl = pagina.mpl
     for nome in ("texts", "lines", "patches", "images", "legends", "artists", "subfigs"):
         if getattr(mpl, nome, None):
@@ -77,23 +84,57 @@ def descrever(pagina: PaginaDesenhada) -> list[tuple[dict, list[tuple[np.ndarray
     renderizador = mpl.canvas.get_renderer()
     saida = []
     for ax in mpl.axes:
-        _conferir_os_artistas(ax)
-        linhas = [(np.asarray(linha.get_xdata(), dtype=np.float64), np.asarray(linha.get_ydata(), dtype=np.float64),
-                   _estilo(linha, ESTILO_DA_LINHA)) for linha in ax.lines]
-        saida.append(({
-            "posicao": [float(v) for v in ax.get_position().bounds],
-            "x": _eixo(ax.xaxis, ax.get_xlim(), ax.get_xscale()),
-            "y": _eixo(ax.yaxis, ax.get_ylim(), ax.get_yscale()),
-            "titulos": {onde: ax.get_title(loc=onde) for onde in ("left", "center", "right")},
-            "textos": [_texto(t, ax) for t in ax.texts],
-            "legenda": _legenda(ax, mpl.axes, renderizador),
-        }, linhas))
+        descricao, linhas = _descrever_o_eixo(ax, mpl.axes, renderizador)
+        descricao["posicao"] = [float(v) for v in ax.get_position().bounds]
+        insets = []
+        for dentro in ax.child_axes:
+            d, curvas = _descrever_o_eixo(dentro, mpl.axes, renderizador)
+            pai, filho = ax.get_position(), dentro.get_position()
+            d["no_eixo"] = [(filho.x0 - pai.x0) / pai.width, (filho.y0 - pai.y0) / pai.height,
+                            filho.width / pai.width, filho.height / pai.height]
+            d["ligacoes"] = _ligacoes(ax, dentro)
+            insets.append((d, curvas))
+        saida.append((descricao, linhas, insets))
     return saida
 
 
+def _descrever_o_eixo(ax, eixos, renderizador) -> tuple[dict, list]:
+    _conferir_os_artistas(ax)
+    linhas = [(np.asarray(linha.get_xdata(), dtype=np.float64), np.asarray(linha.get_ydata(), dtype=np.float64),
+               _estilo(linha, ESTILO_DA_LINHA)) for linha in ax.lines]
+    return {
+        "x": _eixo(ax.xaxis, ax.get_xlim(), ax.get_xscale()),
+        "y": _eixo(ax.yaxis, ax.get_ylim(), ax.get_yscale()),
+        "titulos": {onde: ax.get_title(loc=onde) for onde in ("left", "center", "right")},
+        "textos": [_texto(t, ax) for t in ax.texts],
+        "faixas": [_faixa(r) for r in ax.patches],
+        "legenda": _legenda(ax, eixos, renderizador),
+    }, linhas
+
+
+def _ligacoes(ax, dentro) -> dict | None:
+    """As linhas de ligação de um inset (o ``indicate_inset_zoom``): o estilo do retângulo, que elas repetem."""
+    for artista in ax.artists:
+        if isinstance(artista, InsetIndicator) and getattr(artista, "_inset_ax", None) is dentro:
+            r = artista.rectangle
+            return {"edgecolor": to_hex(r.get_edgecolor(), keep_alpha=True), "linewidth": float(r.get_linewidth()),
+                    "alpha": _json_simples(r.get_alpha()), "zorder": float(artista.get_zorder())}
+    return None
+
+
+def _faixa(r) -> dict:
+    """Uma região (o ``axvspan``: do x0 ao x1, da altura inteira do eixo)."""
+    if not isinstance(r, Rectangle) or r.get_y() != 0 or r.get_height() != 1:
+        raise PacoteInvalido(f"o pacote ainda não descreve {type(r).__name__} num eixo")
+    return {"x0": float(r.get_x()), "x1": float(r.get_x() + r.get_width()), "estilo": _estilo(r, ESTILO_DA_FAIXA)}
+
+
 def _conferir_os_artistas(ax) -> None:
-    conhecidos = {id(a) for a in (*ax.lines, *ax.texts, ax.patch, ax.xaxis, ax.yaxis, *ax.spines.values(),
-                                  ax.title, getattr(ax, "_left_title", None), getattr(ax, "_right_title", None))}
+    conhecidos = {id(a) for a in (*ax.lines, *ax.texts, *ax.patches, *ax.child_axes, ax.patch, ax.xaxis, ax.yaxis,
+                                  *ax.spines.values(), ax.title, getattr(ax, "_left_title", None),
+                                  getattr(ax, "_right_title", None))}
+    conhecidos |= {id(a) for a in ax.artists
+                   if isinstance(a, InsetIndicator) and getattr(a, "_inset_ax", None) in ax.child_axes}
     legenda = ax.get_legend()
     for artista in ax.get_children():
         if id(artista) in conhecidos or artista is legenda or not artista.get_visible():
@@ -136,7 +177,23 @@ def _eixo(eixo, limites, escala: str) -> dict:
     }
 
 
+def _coordenadas(valor, texto: str):
+    if isinstance(valor, str):
+        return valor
+    if isinstance(valor, tuple) and len(valor) == 2 and all(isinstance(v, str) for v in valor):
+        return list(valor)
+    raise PacoteInvalido(f"o pacote ainda não descreve as coordenadas da anotação {texto!r}")
+
+
 def _texto(t, ax) -> dict:
+    if isinstance(t, Annotation):
+        estilo = _estilo(t, ESTILO_DO_TEXTO)
+        estilo["ha"], estilo["va"] = estilo.pop("horizontalalignment"), estilo.pop("verticalalignment")
+        seta = {k: _json_simples(v) for k, v in t.arrowprops.items()} if t.arrowprops else None
+        return {"tipo": "anotacao", "texto": t.get_text(), "xy": [float(v) for v in t.xy],
+                "xytext": [float(v) for v in t.xyann], "xycoords": _coordenadas(t.xycoords, t.get_text()),
+                "textcoords": _coordenadas(t.anncoords, t.get_text()), "seta": seta,
+                "recorte": t.get_annotation_clip(), "estilo": estilo}
     transformacao = t.get_transform()
     if transformacao is ax.transAxes:
         em = "eixos"
@@ -147,7 +204,7 @@ def _texto(t, ax) -> dict:
     x, y = t.get_position()
     estilo = _estilo(t, ESTILO_DO_TEXTO)
     estilo["ha"], estilo["va"] = estilo.pop("horizontalalignment"), estilo.pop("verticalalignment")
-    return {"x": float(x), "y": float(y), "texto": t.get_text(), "em": em, "estilo": estilo}
+    return {"tipo": "texto", "x": float(x), "y": float(y), "texto": t.get_text(), "em": em, "estilo": estilo}
 
 
 def _legenda(ax, eixos, renderizador) -> dict | None:
@@ -188,20 +245,30 @@ def dados_h5(descricao, rc: Mapping, *, largura_pol: float, altura_pol: float, d
         a["aplicativo"] = f"SH-Analyzer {aplicativo}".strip()
         a["figura"] = figura.nome
         a["descricao"] = ("A figura como o SH-Analyzer a desenhou, já com o leiaute feito; o refazer_figura.py a "
-                          "refaz. /eixos/NN: o atributo 'eixo' (JSON) e /eixos/NN/linhas/MM com x, y e o 'estilo'.")
+                          "refaz. /eixos/NN: o atributo 'eixo' (JSON) e /eixos/NN/linhas/MM com x, y e o 'estilo'; "
+                          "/eixos/NN/insets/KK: os insets do eixo, do mesmo jeito.")
         eixos = f5.create_group("eixos")
-        for i, (eixo, linhas) in enumerate(descricao):
-            g = eixos.create_group(f"{i:02d}")
-            g.attrs["eixo"] = json.dumps(eixo, ensure_ascii=False)
-            g.attrs["rotulo_x"], g.attrs["rotulo_y"] = eixo["x"]["rotulo"], eixo["y"]["rotulo"]
-            grupo_das_linhas = g.create_group("linhas")
-            for j, (x, y, estilo) in enumerate(linhas):
-                linha = grupo_das_linhas.create_group(f"{j:02d}")
-                linha.create_dataset("x", data=x)
-                linha.create_dataset("y", data=y)
-                linha.attrs["estilo"] = json.dumps(estilo, ensure_ascii=False)
-                linha.attrs["rotulo"] = str(estilo.get("label", ""))
+        for i, (eixo, linhas, insets) in enumerate(descricao):
+            g = _grupo_do_eixo(eixos, f"{i:02d}", eixo, linhas)
+            if insets:
+                grupo_dos_insets = g.create_group("insets")
+                for k, (inset, linhas_do_inset) in enumerate(insets):
+                    _grupo_do_eixo(grupo_dos_insets, f"{k:02d}", inset, linhas_do_inset)
     return saida.getvalue()
+
+
+def _grupo_do_eixo(pai, nome: str, eixo: dict, linhas):
+    g = pai.create_group(nome)
+    g.attrs["eixo"] = json.dumps(eixo, ensure_ascii=False)
+    g.attrs["rotulo_x"], g.attrs["rotulo_y"] = eixo["x"]["rotulo"], eixo["y"]["rotulo"]
+    grupo_das_linhas = g.create_group("linhas")
+    for j, (x, y, estilo) in enumerate(linhas):
+        linha = grupo_das_linhas.create_group(f"{j:02d}")
+        linha.create_dataset("x", data=x)
+        linha.create_dataset("y", data=y)
+        linha.attrs["estilo"] = json.dumps(estilo, ensure_ascii=False)
+        linha.attrs["rotulo"] = str(estilo.get("label", ""))
+    return g
 
 
 def fontes_da_figura(rc: Mapping) -> list[Path]:

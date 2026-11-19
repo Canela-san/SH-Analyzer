@@ -84,10 +84,21 @@ class Vista(QObject):
         self._opcoes = (opcoes or OPCOES_DO_TIPO[tipo]()) if tipo in OPCOES_DO_TIPO else None
         self._nome = nome.strip()
         self._tracos: list[Traco] = []
+        self._anotacoes: tuple = ()             # ``dados.anotacoes.Anotacao``: o texto, a seta, a região, a cota
 
     @property
     def nome(self) -> str:
         return self._nome
+
+    @property
+    def anotacoes(self) -> tuple:
+        return self._anotacoes
+
+    def _definir_anotacoes(self, anotacoes) -> None:
+        anotacoes = tuple(anotacoes)
+        if anotacoes != self._anotacoes:
+            self._anotacoes = anotacoes
+            self.mudou.emit(self, frozenset({"anotacoes"}))
 
     @property
     def tracos(self) -> tuple[Traco, ...]:
