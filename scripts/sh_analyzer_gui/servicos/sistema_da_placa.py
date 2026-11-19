@@ -307,7 +307,9 @@ class SistemaDaPlaca(QObject):
         if a is None or not a.esperando_o_usuario:
             return False
         a.mesmo_capturando = a.mesmo_capturando or mesmo_capturando
-        if a.nome in ("reiniciar", "desligar") or a.detalhes.get("gravado"):
+        if a.nome == "parar_ler_adc":
+            self._parar_de_novo(a, senha, guardar)
+        elif a.nome in ("reiniciar", "desligar") or a.detalhes.get("gravado"):
             self._energia(a, senha, guardar)
         else:
             self._gravar_de_novo(a, senha, guardar)
@@ -361,6 +363,45 @@ class SistemaDaPlaca(QObject):
             self.saude.conferir()                # o "no próximo boot" do diagnóstico
             return
         self._energia(acao, senha, False)
+
+    # ------------------------------------------------------------------ o ler_adc esquecido
+
+    def parar_ler_adc(self, senha: str | None = None, guardar: bool = False) -> bool:
+        """Para os ``ler_adc`` que rodam na placa (uma captura que esta janela não começou), como o Ctrl+C."""
+        acao = AcaoDoSistema("parar_ler_adc", "Parar o ler_adc da placa")
+        if not self._comecar(acao):
+            return False
+        self._parar_de_novo(acao, senha, guardar)
+        return True
+
+    def _parar_de_novo(self, acao: AcaoDoSistema, senha: str | None, guardar: bool) -> None:
+        from sh_placa import sistema
+
+        conexao_ssh = self.conexao.conexao_ssh
+        if conexao_ssh is None:
+            self._terminar(acao, "falhou", "sem conexão com a placa")
+            return
+        acao.estado, acao.mensagem = "rodando", ""
+        self.acaoMudou.emit()
+
+        async def parar(senha_):
+            return await sistema.parar_ler_adc(conexao_ssh, senha_)
+
+        self._chamar("parar o ler_adc da placa", self._com_a_senha, self._senha(senha), guardar, self.conexao.cofre,
+                     parar, ao_terminar=lambda ch: self._parou(ch, acao))
+
+    def _parou(self, chamada: Chamada, acao: AcaoDoSistema) -> None:
+        if chamada.estado != "concluida":
+            self._falhou(acao, chamada)
+            return
+        if chamada.resultado is None:
+            self._terminar(acao, "precisa_da_senha", "A placa pede a senha do sudo (a do usuário dela): esta sessão "
+                                                     "e o cofre do sistema não a têm.")
+            return
+        dito, senha, aviso = chamada.resultado
+        self.saude.lembrar_senha_do_sudo(senha)
+        acao.detalhes["dito"] = dito
+        self._terminar(acao, "feita", aviso)
 
     # ------------------------------------------------------------------ reiniciar e desligar
 

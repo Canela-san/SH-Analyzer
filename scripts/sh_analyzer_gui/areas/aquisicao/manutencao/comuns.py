@@ -180,6 +180,9 @@ def descrever_acao(acao: AcaoDoSistema, agora: float | None = None) -> tuple[str
     d = acao.detalhes
     copia = d.get("copia")
     sobre_a_copia = traduzir(" A cópia de antes ficou em {}.").format(copia) if copia else ""
+    if acao.estado == "rodando" and acao.nome == "parar_ler_adc":
+        return "info", traduzir("parando"), traduzir("Parando o ler_adc como o Ctrl+C (o INT: ele fecha o arquivo e "
+                                                     "para a PRU)…")
     if acao.estado == "rodando":
         if acao.energia is not None and (d.get("gravado") or acao.nome in ("reiniciar", "desligar")):
             return "info", traduzir("pedindo"), (traduzir("Pedindo o reinício à placa…") if acao.energia == "reiniciar"
@@ -204,6 +207,10 @@ def descrever_acao(acao: AcaoDoSistema, agora: float | None = None) -> tuple[str
             texto_ += sobre_a_copia
         elif acao.nome == "reiniciar":
             texto_ = traduzir("A placa reiniciou e voltou{}.").format(em)
+        elif acao.nome == "parar_ler_adc":
+            dito = d.get("dito", "")
+            texto_ = (traduzir("O ler_adc parou (PID {}).").format(dito.split(":", 1)[1].strip())
+                      if dito.startswith("parado:") else traduzir("Nenhum ler_adc rodava mais na placa."))
         else:
             texto_ = traduzir("A placa desligou: já pode tirar da tomada.")
         if acao.energia == "reiniciar":
@@ -212,7 +219,7 @@ def descrever_acao(acao: AcaoDoSistema, agora: float | None = None) -> tuple[str
         if acao.mensagem:
             texto_ += " " + frase(acao.mensagem)
         selo = {"gravar_uenv": "gravado", "restaurar_uenv": "restaurado", "reiniciar": "reiniciada",
-                "desligar": "desligada"}.get(acao.nome, "feita")
+                "desligar": "desligada", "parar_ler_adc": "parado"}.get(acao.nome, "feita")
         return "ok", traduzir(selo), texto_
     if acao.estado == "falhou":
         texto_ = frase(acao.mensagem) or traduzir("A ação falhou.")

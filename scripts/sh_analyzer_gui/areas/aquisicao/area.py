@@ -29,6 +29,7 @@ from ...servicos.captura_da_placa import CapturaDaPlaca
 from ...servicos.conexao_da_placa import ESPERANDO_O_USUARIO, ConexaoDaPlaca
 from ...servicos.conferencia_da_placa import ConferenciaDaPlaca
 from ...servicos.manutencao_da_placa import ManutencaoDaPlaca
+from ...servicos.monitor_da_placa import MonitorDaPlaca
 from ...servicos.saude_da_placa import SaudeDaPlaca
 from ...servicos.sistema_da_placa import SistemaDaPlaca
 from ...servicos.transferencias import TransferenciasDaPlaca
@@ -101,8 +102,10 @@ class AreaDeAquisicao(QWidget):
         self.servico_da_manutencao = manutencao if manutencao is not None else ManutencaoDaPlaca(conexao, saude,
                                                                                                  parent=self)
         self.servico_do_sistema = sistema if sistema is not None else SistemaDaPlaca(conexao, saude, parent=self)
-        self.manutencao = Manutencao(conexao, self.servico_da_manutencao, self.servico_do_sistema, dialogos_de,
-                                     captura_rodando=lambda: self.captura.rodando)
+        self.servico_do_monitor = MonitorDaPlaca(conexao, parent=self)
+        self.manutencao = Manutencao(conexao, self.servico_da_manutencao, self.servico_do_sistema,
+                                     self.servico_do_monitor, dialogos_de, captura_rodando=lambda: self.captura.rodando,
+                                     registrar_no_caderno=self.caderno.registrar)
         entradas_do_caderno.ligar(self.caderno, captura=self.captura, conferencia=self.conferencia,
                                   transferencias=self.transferencias, saude=saude, rotinas=self.rotinas,
                                   manutencao=self.servico_da_manutencao, sistema=self.servico_do_sistema)

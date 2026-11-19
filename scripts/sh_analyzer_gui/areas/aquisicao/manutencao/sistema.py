@@ -1,6 +1,6 @@
-"""A página Sistema da Manutenção (a F6.5; a F6.7 acrescenta a senha, os serviços, a rede e o cartão): o Linux da
-placa (o nome, o sistema, o kernel, há quanto tempo está ligada, o fuso, a memória) e a energia: "Reiniciar…" e
-"Desligar…", seguros (o sistema para antes; desligar da tomada com ele ligado pode corromper o cartão). O diálogo
+"""A página Sistema da Manutenção (a F6.5 e a F6.6; a F6.7 acrescenta a senha, os serviços, a rede e o cartão): o
+Linux da placa (o nome, o sistema, o kernel, há quanto tempo está ligada, o fuso, a memória), o monitor ao vivo
+(``monitor.py``: os gráficos, os processos, o ``ler_adc`` esquecido) e a energia: "Reiniciar…" e "Desligar…", seguros (o sistema para antes; desligar da tomada com ele ligado pode corromper o cartão). O diálogo
 confirma, pede o sudo e, com uma captura rodando, pergunta se pode cortá-la; o cartão da ação conta os segundos até a
 placa voltar (ou sumir: aí já pode tirar da tomada).
 """
@@ -13,18 +13,22 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from ....componentes.basicos import Botao
 from ....componentes.numeros import formatar_bytes
+from ....servicos.monitor_da_placa import MonitorDaPlaca
 from ....servicos.sistema_da_placa import SistemaDaPlaca
 from ..pecas import fonte
 from ..textos import frase, traduzir
 from .comuns import CartaoDaAcao, cartao, coluna_central, fato, ha_quanto_tempo, texto
+from .monitor import CartaoDoMonitor
 
 
 class PaginaDoSistema(QWidget):
-    """A página Sistema. ``confirmar(tipo, None)`` pede à seção o diálogo de ``"reiniciar"`` ou ``"desligar"``."""
+    """A página Sistema. ``confirmar(tipo, None)`` pede à seção o diálogo de ``"reiniciar"``, ``"desligar"`` ou
+    ``"parar_ler_adc"``."""
 
     confirmar = Signal(str, object)
 
-    def __init__(self, sistema: SistemaDaPlaca, parent: QWidget | None = None):
+    def __init__(self, sistema: SistemaDaPlaca, monitor: MonitorDaPlaca, captura_rodando=None,
+                 parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("pagina_do_sistema")
         self.sistema = sistema
@@ -42,7 +46,9 @@ class PaginaDoSistema(QWidget):
         cabecalho.addLayout(textos, 1)
         cabecalho.addWidget(self.ler_de_novo, 0, Qt.AlignmentFlag.AlignTop)
 
-        self.cartao_da_acao = CartaoDaAcao(sistema, ("reiniciar", "desligar"))
+        self.cartao_da_acao = CartaoDaAcao(sistema, ("reiniciar", "desligar", "parar_ler_adc"))
+        self.monitor = CartaoDoMonitor(monitor, captura_rodando)
+        self.monitor.pararCaptura.connect(lambda: self.confirmar.emit("parar_ler_adc", None))
 
         self.cartao_da_placa, self.corpo_da_placa = cartao(traduzir("A placa"))
         self.fatos: list[QWidget] = []
@@ -69,7 +75,7 @@ class PaginaDoSistema(QWidget):
         self.coluna.setContentsMargins(24, 20, 24, 20)
         self.coluna.setSpacing(14)
         self.coluna.addLayout(cabecalho)
-        for w in (self.cartao_da_acao, self.cartao_da_placa, self.cartao_da_energia):
+        for w in (self.cartao_da_acao, self.cartao_da_placa, self.monitor, self.cartao_da_energia):
             self.coluna.addWidget(w)
         self.coluna.addStretch(1)
         fora = QVBoxLayout(self)
@@ -78,6 +84,14 @@ class PaginaDoSistema(QWidget):
         sistema.mudou.connect(self.atualizar)
         sistema.acaoMudou.connect(self._acao_mudou)
         self.atualizar()
+
+    def showEvent(self, evento) -> None:
+        super().showEvent(evento)
+        self.monitor.ligar(True)
+
+    def hideEvent(self, evento) -> None:
+        super().hideEvent(evento)
+        self.monitor.ligar(False)
 
     def atualizar(self) -> None:
         s = self.sistema
@@ -116,3 +130,7 @@ class PaginaDoSistema(QWidget):
         livre = not self.sistema.ocupado and self.sistema.conexao.estado == "conectada"
         self.reiniciar.setEnabled(livre)
         self.desligar.setEnabled(livre)
+        self.monitor.parar.setEnabled(livre)
+        a = self.sistema.acao
+        if a is not None and a.nome == "parar_ler_adc" and a.estado == "feita":
+            self.monitor.monitor.ler_processos()        # o ler_adc parado some da lista

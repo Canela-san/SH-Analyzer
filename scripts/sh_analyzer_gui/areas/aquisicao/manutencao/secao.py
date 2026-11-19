@@ -10,22 +10,25 @@ from ....componentes.basicos import Segmentado
 from ....componentes.painel import EstadoVazio
 from ....servicos.conexao_da_placa import ConexaoDaPlaca
 from ....servicos.manutencao_da_placa import ManutencaoDaPlaca
+from ....servicos.monitor_da_placa import MonitorDaPlaca
 from ....servicos.sistema_da_placa import SistemaDaPlaca
 from ..textos import traduzir
 from .comuns import DialogoDaAcao
 from .firmware import DialogoDaAtualizacao, PaginaDoFirmware
 from .inicializacao import PaginaDaInicializacao
+from .logs import PaginaDosLogs
 from .sistema import PaginaDoSistema
 
 PAGINAS = (("firmware", "Firmware", "chave"), ("inicializacao", "Inicialização", "chip"),
-           ("sistema", "Sistema", "energia"))
+           ("sistema", "Sistema", "energia"), ("logs", "Logs", "pagina"))
 
 
 class Manutencao(QWidget):
     """A seção Manutenção: as páginas (:data:`PAGINAS`) no alto e a escolhida embaixo; sem placa, o estado vazio."""
 
     def __init__(self, conexao: ConexaoDaPlaca, manutencao: ManutencaoDaPlaca, sistema: SistemaDaPlaca,
-                 dialogos_de=None, captura_rodando=None, parent: QWidget | None = None):
+                 monitor: MonitorDaPlaca, dialogos_de=None, captura_rodando=None, registrar_no_caderno=None,
+                 parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("secao_manutencao")
         self.conexao, self.manutencao, self.sistema, self.dialogos_de = conexao, manutencao, sistema, dialogos_de
@@ -35,10 +38,14 @@ class Manutencao(QWidget):
         self.firmware.confirmar.connect(self.confirmar_atualizacao)
         self.inicializacao = PaginaDaInicializacao(sistema)
         self.inicializacao.confirmar.connect(self.confirmar_acao)
-        self.sistema_ = PaginaDoSistema(sistema)
+        self.monitor = monitor
+        self.sistema_ = PaginaDoSistema(sistema, monitor, captura_rodando)
         self.sistema_.confirmar.connect(self.confirmar_acao)
+        self.logs = PaginaDosLogs(monitor, dialogos_de)
+        if registrar_no_caderno is not None:
+            self.logs.paraOCaderno.connect(registrar_no_caderno)
         self.paginas: dict[str, QWidget] = {"firmware": self.firmware, "inicializacao": self.inicializacao,
-                                            "sistema": self.sistema_}
+                                            "sistema": self.sistema_, "logs": self.logs}
         self.escolha = Segmentado([traduzir(t) for _n, t, _i in PAGINAS], icones=[i for _n, _t, i in PAGINAS])
         self.escolha.setObjectName("paginas_da_manutencao")
         self.pilha = QStackedWidget()
@@ -58,7 +65,7 @@ class Manutencao(QWidget):
         self.vazio = EstadoVazio(traduzir("Nenhuma placa conectada"),
                                  traduzir("A manutenção cuida da placa conectada: o firmware (atualizar com a volta "
                                           "sozinha, voltar a uma versão anterior), a inicialização (o uEnv.txt), o "
-                                          "sistema (reiniciar e desligar com segurança)."),
+                                          "sistema (o monitor, reiniciar e desligar com segurança) e os logs."),
                                  icone_nome="chave", largura_do_texto=440)
         self.estados = QStackedWidget()
         self.estados.addWidget(self.vazio)
@@ -161,4 +168,13 @@ class Manutencao(QWidget):
                 captura_rodando=capturando, perigo=True,
                 comecar=lambda senha, guardar, _r, mesmo: s.desligar(senha, guardar, mesmo),
                 parent=self.window()))
+        if tipo == "parar_ler_adc":
+            capturas = self.monitor.capturas
+            return self._abrir(DialogoDaAcao(
+                s, janela=traduzir("Parar o ler_adc"), titulo=traduzir("Parar o ler_adc que roda na placa"),
+                explicacao=traduzir("{} Ele recebe o INT, como o Ctrl+C: fecha o arquivo da captura (o que ela "
+                                    "gravou até ali fica) e para a PRU; só se não sair em 10 s, o TERM.").format(
+                    "; ".join(f"PID {c.pid}: {c.linha}" for c in capturas) or traduzir("Nenhum ler_adc à vista agora.")),
+                confirmar=traduzir("Parar"), comando=sh_sistema.roteiro_de_parar_ler_adc(), perigo=True,
+                comecar=lambda senha, guardar, _r, _m: s.parar_ler_adc(senha, guardar), parent=self.window()))
         raise ValueError(f"ação desconhecida: {tipo!r}")
