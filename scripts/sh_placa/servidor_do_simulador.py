@@ -57,8 +57,10 @@ PASTA_EM_CURSO = ".em_curso"
 
 SUDO = r"""#!/bin/sh
 # O sudo da placa simulada: -A (a senha pelo SUDO_ASKPASS), -v (só validar), -n (sem perguntar), -k (esquecer).
-estampa="$HOME/.sudo-validado.$PPID"   # sem terminal, a credencial do sudo é do processo pai (o shell que validou)
-[ "$1" = "-k" ] && { rm -f "$estampa"; exit 0; }
+# Sem terminal, a credencial do sudo é do processo pai (o shell que validou), conferido na hora: o sudo de verdade
+# leva uns décimos para começar na BeagleBone, e um "sudo -n ... &" cujo shell saiu nesse meio-tempo já é do init.
+pai() { set -- $(sed 's/^.*) //' "/proc/$$/stat" 2>/dev/null); echo "${2:-$PPID}"; }
+[ "$1" = "-k" ] && { rm -f "$HOME/.sudo-validado.$(pai)"; exit 0; }
 validar=0
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -78,16 +80,18 @@ if [ "$validar" = 1 ]; then
         echo "sudo: 1 incorrect password attempt" >&2
         exit 1
     fi
-    touch "$estampa"
+    touch "$HOME/.sudo-validado.$(pai)"
     exit 0
 fi
-[ -f "$estampa" ] || { echo "sudo: a password is required" >&2; exit 1; }
+sleep 0.1
+[ -f "$HOME/.sudo-validado.$(pai)" ] || { echo "sudo: a password is required" >&2; exit 1; }
 printf '%s\0' "$*" >> "$HOME/.sudo-comandos"
 exec env SHAN_COMO_ROOT=1 "$@"
 """
 """O sudo da placa simulada: faz o que o de verdade faz com ``-A``, ``-v``, ``-n`` e ``-k`` (a senha pelo
-``SUDO_ASKPASS``, a credencial validada e esquecida; sem terminal, a credencial é do processo pai, como na placa de
-verdade: um ``sudo -n`` numa função chamada num pipe, num subshell, não a tem) e roda o comando como o usuário deste computador (na raiz falsa:
+``SUDO_ASKPASS``, a credencial validada e esquecida; sem terminal, a credencial é do processo pai, conferido na hora,
+como na placa de verdade: um ``sudo -n`` numa função chamada num pipe, num subshell, não a tem, nem o ``sudo -n ... &``
+cujo shell já saiu) e roda o comando como o usuário deste computador (na raiz falsa:
 o acerto do relógio escreve o desvio dela, e não mexe no relógio daqui), com ``SHAN_COMO_ROOT=1``: os programas dela
 que só o root roda (o ``systemctl reboot``, o ``chpasswd``) recusam sem ele, como os de verdade."""
 

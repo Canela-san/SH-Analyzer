@@ -3,7 +3,10 @@ tomada corrompe o cartão; o desligar seguro para o sistema antes.
 
 **Reiniciar e desligar** (:func:`reiniciar`, :func:`desligar`): pelo sudo, o ``systemctl reboot`` (ou ``poweroff``)
 destacado e um segundo depois, para o comando voltar com o código antes de a conexão cair (a queda, aqui, é
-esperada: quem chama avisa a conexão antes, ``ConexaoDaPlaca.esperar``). Com uma captura rodando (o ``ler_adc``), recusa
+esperada: quem chama avisa a conexão antes, ``ConexaoDaPlaca.esperar``). **Quem destaca é o root**
+(``sudo -n sh -c 'setsid … &'``), e não um ``sudo -n … &`` deste shell: sem terminal, a credencial do sudo é do
+processo pai, e este shell sai logo depois do ``&``; o sudo do fundo, adotado pelo init antes de conferir a
+credencial, pediria a senha e falharia calado (foi o que a placa de verdade fez em 19/11/2026). Com uma captura rodando (o ``ler_adc``), recusa
 (:data:`SAIDA_CAPTURA_RODANDO`), a não ser com ``mesmo_capturando``: a captura seria cortada.
 """
 
@@ -32,7 +35,7 @@ def roteiro_de_energia(acao: str, mesmo_capturando: bool = False) -> str:
     conferir = "" if mesmo_capturando else \
         f"if pgrep -x ler_adc > /dev/null 2>&1; then echo 'uma captura está rodando (ler_adc)' >&2; exit {SAIDA_CAPTURA_RODANDO}; fi\n"
     return com_sudo("true\n" + conferir +
-                    f"sudo -n setsid sh -c 'sleep 1; systemctl {acao}' < /dev/null > /dev/null 2>&1 &\n"
+                    f"sudo -n sh -c 'setsid sh -c \"sleep 1; systemctl {acao}\" < /dev/null > /dev/null 2>&1 &'\n"
                     f"echo 'a placa vai {'reiniciar' if acao == 'reboot' else 'desligar'} em 1 s'")
 
 
