@@ -23,7 +23,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > roda de ponta a ponta com o simulador (`tests/test_gui_jornada_aquisicao.py`) e rodou na placa de verdade, na janela
 > sem tela, em casa e na tomada do laboratório (seção 5).
 >
-> **A Fase 4, a captura, está em tarefas** (seção 4e, F4.1 a F4.7). **A F4.1 está feita** (diário de 16/11): o
+> **A Fase 4, a captura, está feita** (seção 4e, F4.1 a F4.7; diário de 18/11). **A F4.1 está feita** (diário de 16/11): o
 > `ler_adc -o -` (a captura pelo stdout, com o cabeçalho final depois do último bloco), o código 6 (a saída que fechou
 > ou parou de andar por 10 s) e o `--progresso-json`, validados na placa de verdade (seção 5). **A F4.2 está feita**
 > (diário de 17/11): a captura contínua no computador, sem Qt (`sh_placa/captura.py` e o fechamento do motor,
@@ -39,8 +39,11 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > no `anotacoes.md` da sessão do dia (só acrescentado), com as entradas automáticas e as notas, na seção Capturar e na
 > seção Notas do projeto. **A F4.6 está feita** (diário de 18/11): a seção Rotinas, com os modos do `coletar.sh` num
 > formulário (a bancada vem do pedido da Capturar), a ajuda lida da placa e o "Rodar no terminal" numa aba nova, com as
-> pausas da bancada lá; validada na placa. **A próxima: a F4.7**, o fechamento da Fase 4 (a jornada da captura de ponta
-> a ponta com o simulador e a captura de 1 h na placa). **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
+> pausas da bancada lá; validada na placa. **A F4.7 está feita** (diário de 18/11): a jornada da captura de ponta a
+> ponta na janela, com o simulador (`tests/test_gui_jornada_captura.py`), e 1 h direto no computador na placa de
+> verdade, sem perder amostra, aberta na Análise (seção 5). **A tag v0.10** fica para o dono do projeto. **A próxima:
+> a Fase 5** (figuras e exportação, `docs/gui-plan.md`): quebrá-la em tarefas numa seção 4f, como as outras, antes de
+> começar. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
 > a captura contínua e o "Conferir antes" dizem "atualize o firmware da placa" (o código 96 do roteiro, conferido
 > nela), e o aplicativo vai precisar mandar o firmware novo (o `enviar` do `BeagleBone_Setup.sh`, ou a Fase 6).
 >
@@ -180,14 +183,13 @@ sonda em pedaços, sem prender o GIL) e `1257f5b` (o fechamento da saída contí
 **O ambiente:** Python 3.13, PySide6 6.12.0 (na 3.10 e na 3.11, o 6.11.3: seção 2), PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1; no extra `placa`,
 asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5, keyring 25.7.0 (o cofre do Linux é o Secret Service) e pyte 0.8.2. **A CI
 roda em `.venv-ci/<versão>`** (desde 16/11/2026): o `.venv` é o de quem desenvolve, e o `ci.sh` não o troca mais.
-Testes, na última rodada (18/11/2026, com a F4.6): o `ci.sh` completo em 5 min, com 2 452 em Python 3.13 (a suíte
+Testes, na última rodada (18/11/2026, com a F4.7): o `ci.sh` completo em 5 min, com 2 454 em Python 3.13 (a suíte
 inteira, com a interface) e 2 023 em 3.10 (sem o Qt).
 
 **Desde 18/11/2026, a captura pela interface** (a Fase 4 até a F4.5, seção 4e): o formulário com o "Conferir antes",
 a captura na tela (direto no computador ou no cartão, com o ao vivo, o Parar e a queda) e o caderno de bancada.
 
-**Ainda não existe:** o fechamento da Fase 4 (a F4.7, com a captura de 1 h na placa); as rotinas como formulários
-nativos, com as pausas em diálogos (depois da v0.10); o resgate pela serial (v1.0); as figuras e as exportações (a Fase 5).
+**Ainda não existe:** as rotinas como formulários nativos, com as pausas em diálogos (depois da v0.10); o resgate pela serial (v1.0); as figuras e as exportações (a Fase 5).
 
 ---
 
@@ -1835,7 +1837,7 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
   quando é o lento (o rápido é o padrão do script, como no comando do `ler_adc`). **Na placa** (seção 5): a
   calibração e a sonda até a primeira pausa, e a calibração com `--simular` até o fim do plano.
 
-### ▶ F4.7: o fechamento da Fase 4
+### ☑ F4.7: o fechamento da Fase 4
 
 - **O conteúdo:** a jornada da captura num teste de ponta a ponta com o simulador (o formulário, a captura, o Parar,
   a queda, a captura na Análise); **na placa de verdade:** uma captura de 1 h direto no computador, sem perder amostra,
@@ -1854,6 +1856,9 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
     abre na Análise com a pirâmide feita e o canal plotado (o tempo de cada passo vai para a seção 5). A queda do cabo
     no meio (o mau contato) fecha a captura com o que chegou: se acontecer, a rodada se repete;
   - **o plano e este arquivo:** a Fase 4 marcada como feita, com o que mudou do plano (11.5 e 11.6).
+- **Feito em 18/11/2026:** o teste de ponta a ponta (`5e3249c`) e um defeito achado na bancada (`dcc1db0`: a captura
+  direto no computador ignorava a pasta do firmware do serviço, que só a do cartão usava). **Na placa** (seção 5): 1 h
+  sem perder amostra, aberta na Análise. O plano em dia (`docs/gui-plan.md`: a Fase 4 cumprida, 11.5 e 11.6).
 
 ---
 
@@ -1890,6 +1895,7 @@ entrega blocos de 1 048 576 amostras (2,6 s a 400 kS/s; 21 s a 50 kS/s), e o `le
 | 18/11/2026 | **O "Conferir antes" (F4.3) na placa de verdade**, pelo `sh_placa`, pelo USB; o canal 1 na tomada da casa | Um bloco a 400 kS/s em **4,6 s** (2,6 s de captura); o canal 1: de −9,3169 a +9,3241 V no pino (18,64 Vpp, ~128 V rms na tomada), 60,04 Hz, 91 % da maior faixa: **as medidas do motor iguais às do `ler_adc`**, dígito a dígito; em ±2,56 V: 82 % das amostras saturadas, ✗, e a sugestão da maior faixa; os canais 0 e 1 com faixas por canal e o SPI lento a 200 kS/s: íntegra, as faixas e o SPI certos no cabeçalho, o canal 0 (sem nada) com 0,7 LSB rms; o arquivo apagado nos três | o diário de 18/11 (F4.3) |
 | 18/11/2026 | **A captura na tela (F4.4) na placa de verdade**, pelo `sh_placa` e pelas contas da interface, pelo USB; o canal 1 na tomada da casa | **No computador:** 3 blocos a 400 kS/s em 9,0 s, o CRC das amostras certo e a integridade limpa; o quadro do ao vivo com 20 000 amostras (50 ms), 9,37 V de pico no pino, 60,00 Hz. **No cartão, até parar:** o Parar no 2º bloco, o código 0, a cópia pelo SFTP (4 MiB em 0,8 s) conferida pelo CRC-32. **No cartão, com a queda:** a conexão fechada no 1º bloco; 2 s depois, a conexão nova achou a captura rodando (`em_curso`) e a acompanhou até o 4º bloco; a cópia (8 MiB em 1,6 s) conferida. A placa ficou limpa | o diário de 18/11 (F4.4) |
 | 18/11/2026 | **As rotinas (F4.6) na placa de verdade**, pela seção Rotinas e o terminal embutido (a placa com o `coletar.sh` da v0.8) | `calibrar --simular`: o plano inteiro (68 capturas) em 10 s; `calibrar --faixas 20.48`: até a 1ª pausa ("Mude a bancada: gerador: ONDA QUADRADA de 256 Hz…"), depois do `sudo`; `sonda --pontos 3`: até "Iniciar a coleta? [S/n]"; as duas faixas juntas, recusadas pelo próprio script (faltam 57 MB no cartão). Três abas com o nome do modo, três gravações, uma entrada no caderno por rotina | `bancada_f46.py` (fora do repositório) |
+| 18/11/2026 | **1 h direto no computador (F4.7, o "pronto quando" da Fase 4)**, pelo aplicativo inteiro (a janela, sem tela), com o `ler_adc` deste branch em `~/f47`: o canal 1 na tomada de casa, 400 kS/s, ±10,24 V | 3 603 s sem queda; 1 374 blocos, 1 440 743 424 amostras (2,88 GB); o CRC das amostras confere; 0 amostras atrasadas, 0 buffers sobrescritos, 0 preâmbulos ruins, atraso máximo de 0 ciclos; a taxa medida 399 999,84 Hz; na Análise, a pirâmide em 3,8 s e o canal plotado em 0,07 s (128,7 V rms) | `bancada_f47.py` (fora do repositório) |
 | 16/11/2026 | **A jornada da Aquisição na placa de verdade**, na janela (sem tela), pelo USB: em casa e na tomada do laboratório | Achada em 1,6 s; a primeira conexão (a impressão, a senha, a chave) em 2,5 e 2,6 s; o enlace com 1,0 e 0,9 ms e 4,6 e 6,6 MB/s; uma conferência de 4 MiB transferida e conferida pelo CRC em 0,91 e 0,93 s (o SFTP a 5,2 e 5,3 MiB/s); o relógio acertado com ±0,05 s, de +2,15 s e de −3 h 07 | o diário de 16/11 (F3.10) |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
@@ -2543,6 +2549,22 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     ajuda da placa). O `ci.sh` completo passou em 310 s: 2 452 em 3.13 com a interface (eram 2 431) e 2 023 em
     3.10 sem o Qt (eram 2 004); o `.venv` intocado.
   - **Próximo:** a F4.7.
+- **18/11/2026 (madrugada, depois):** **a F4.7, o fechamento da Fase 4** (seção 4e, o desenho em `58f59c2`):
+  - **o pedido:** "faça a F4.7";
+  - **os commits:** a interface (a pasta do firmware na captura direto no computador, `dcc1db0`; a jornada da captura
+    de ponta a ponta, `5e3249c`) e os docs (o plano e este arquivo);
+  - **o que a bancada mostrou primeiro:** com o `ler_adc` novo em `~/f47`, a captura direto no computador ainda
+    dizia "atualize o firmware": o serviço passava a pasta do firmware só para a captura no cartão. Corrigido, com o
+    teste que a confere nos dois destinos;
+  - **a placa** (seção 5): o aplicativo inteiro na janela sem tela, 1 h da tomada de casa a 400 kS/s, sem queda do
+    cabo; o CRC confere, a integridade é zero, as amostras são as pedidas (1 374 blocos inteiros), e a captura abre na
+    Análise em 3,8 s (a pirâmide) com a tensão de 128,7 V rms. O `ler_adc` deste branch foi compilado em `~/f47` com
+    `-Werror` e apagado no fim; nenhum `ler_adc` rodando, a captura do usuário intacta, 1,5 GB livres como antes. A
+    captura de 1 h (2,9 GB) ficou fora do repositório, na pasta de rascunho da sessão;
+  - **Testes:** `tests/test_gui_jornada_captura.py` (1, na janela, ~14 s) e o caso novo em
+    `tests/test_gui_captura_na_tela.py` (a pasta do firmware nos dois destinos). O `ci.sh` completo passou em
+    311 s: 2 454 em 3.13 com a interface e 2 023 em 3.10 sem o Qt; o `.venv` intocado.
+  - **Próximo:** a Fase 5, a quebrar em tarefas (seção 4f).
 ---
 
 ## 8. Perguntas em aberto

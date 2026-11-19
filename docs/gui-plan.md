@@ -1011,7 +1011,7 @@ Para os contadores ao vivo, o `ler_adc` ganha uma opção `--progresso-json`, co
 
 **As rotinas do `coletar.sh`:**
 
-- **v0.10:** abrem no terminal embutido com o comando montado pelo formulário. Funcionam no primeiro dia, com as pausas "mude a bancada e tecle Enter" que elas já têm.
+- **v0.10:** abrem no terminal embutido com o comando montado pelo formulário. Funcionam no primeiro dia, com as pausas "mude a bancada e tecle Enter" que elas já têm. **Feito na F4.6:** numa seção própria da Aquisição (Rotinas), com as opções principais de cada modo (a bancada vem do pedido da Capturar), a ajuda lida da placa e a linha pronta (só leitura: as outras opções vão num campo livre); cada rotina roda numa aba nova do terminal e entra no caderno.
 - **Depois:** viram formulários nativos. O agente expõe as pausas como perguntas, e a interface as mostra como diálogos.
 
 ### 11.6 A saída contínua: capturar direto no computador
@@ -1036,6 +1036,8 @@ O cartão da placa limita a duração de uma captura, e a saída contínua tira 
 - o `ler_adc` recebe `EPIPE` e para com um código de saída novo (6, "saída fechada");
 - o aplicativo fecha o arquivo parcial: calcula ele mesmo os campos de fim, marca no cabeçalho (na reserva da v9) que o fim foi escrito pelo computador e avisa;
 - o que chegou é uma captura válida e conferível.
+
+**Na F4.4:** a saída que não anda por 10 s também é a queda (o cabo que sai não fecha o pipe do `ssh` na placa, e o `ler_adc` sai com o 6). No cartão, a captura roda desacoplada da conexão (`setsid`), e o aplicativo volta a acompanhá-la quando a conexão volta.
 
 **Depois (v1.1):** gravar também uma cópia no cartão enquanto houver espaço, como seguro contra a queda.
 
@@ -1508,15 +1510,16 @@ O G1 passa com a cadeia ligada, durante e depois das materializações (`tests/t
 
 ### Fase 4: Aquisição, a captura (4 semanas, com bancada)
 
-**Em tarefas** (F4.1 a F4.7) em `docs/gui-progress.md`, seção 4e.
+**Em tarefas** (F4.1 a F4.7) em `docs/gui-progress.md`, seção 4e. **Feita em 18/11/2026.**
 
 - [x] **No firmware, em commits só dele:** o `ler_adc -o -` (saída contínua, cabeçalho final no fim, código 6), o `--progresso-json` e os testes com a `pru_falsa`. **Validar em bancada** antes de seguir. **Feito** (F4.1, 16/11/2026), validado na placa; o código 6 também vale para a saída que não anda por 10 s (o cabo que sai não fecha o pipe do `ssh` na placa).
-- [ ] O formulário de captura com a validação ao vivo e os modelos; "conferir antes".
-- [ ] A captura contínua com a prévia ao vivo e os contadores; parar; fechar a captura parcial depois de uma queda. **Sem a tela, feita** (F4.2, 17/11/2026): o `sh_placa` recebe a captura pelo SSH, para e fecha o parcial; validada na placa. Falta a tela (F4.4).
-- [ ] O caderno de bancada com as entradas automáticas.
-- [ ] As rotinas do `coletar.sh` pelo terminal, com o comando montado.
+- [x] O formulário de captura com a validação ao vivo e os modelos; "conferir antes". **Feito** (F4.3, 18/11/2026), validado na placa.
+- [x] A captura contínua com a prévia ao vivo e os contadores; parar; fechar a captura parcial depois de uma queda. **Feita** (sem a tela, F4.2, 17/11/2026; a tela, F4.4, 18/11/2026), validada na placa; no cartão, a captura segue desacoplada da conexão e volta a ser acompanhada.
+- [x] O caderno de bancada com as entradas automáticas. **Feito** (F4.5, 18/11/2026): o `anotacoes.md` da sessão, só acrescentado.
+- [x] As rotinas do `coletar.sh` pelo terminal, com o comando montado. **Feito** (F4.6, 18/11/2026), validado na placa.
 
 **Pronto quando:** uma captura de 1 h vai direto para o computador, sem perder amostra, e abre na Análise no fim. **Tag v0.10.**
+**Cumprido** por `tests/test_gui_jornada_captura.py` (na janela e pelos gestos, com o simulador: o pedido, o "Conferir antes", a captura com o ao vivo, o Parar, a captura plotada na Análise, a do cartão com a queda do cabo e a cópia conferida, e o caderno na ordem) e, na placa de verdade (18/11/2026), pelo aplicativo inteiro na janela sem tela: 1 h da tomada de casa a 400 kS/s direto no computador, 1 374 blocos (1 440 743 424 amostras, 2,88 GB), o CRC das amostras conferido, nenhuma amostra atrasada, nenhum buffer sobrescrito, nenhum preâmbulo ruim, e a captura aberta na Análise (a pirâmide em 3,8 s, o canal plotado em 0,07 s). A tag v0.10 fica para o dono do projeto.
 
 ### Fase 5: figuras e exportação (3 semanas)
 
