@@ -63,7 +63,8 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > F6.1 a F6.9), ampliada a pedido do usuário com o monitor, os serviços, a rede e o disco; **a F6.1 e a F6.2 estão
 > feitas** (as tarefas destacadas na placa, o agente da manutenção e a atualização do firmware com a volta sozinha);
 > **a placa de verdade recebeu o firmware desta versão** (v0.8-291-gc03a1cf, com a saída contínua; a cópia da v0.8-137
-> em `~/firmware-anteriores/`); **a próxima é a F6.3**. **A placa de verdade tem o firmware desta versão desde
+> em `~/firmware-anteriores/`); **a F6.3 também** (a seção Manutenção com o firmware na tela);
+> **a próxima é a F6.4**. **A placa de verdade tem o firmware desta versão desde
 > 19/11/2026** (a F6.2: v0.8-291-gc03a1cf, com a saída contínua); antes, o `ler_adc` v0.8 sem o `-o -`.
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
@@ -2229,7 +2230,7 @@ depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commi
   código da placa que não estão no firmware novo ficam (nada que não é do firmware é apagado); o código 4 do
   `ler_adc` na conferência (o ADC sem resposta) é um aviso, não uma falha do firmware.
 
-### ▶ F6.3: a seção Manutenção e o firmware na tela
+### ☑ F6.3: a seção Manutenção e o firmware na tela
 
 - **O conteúdo:** a seção Manutenção (no lugar do "chega na v1.0"), com as páginas Firmware, Inicialização,
   Sistema, Logs e Serviços. **O firmware:** a versão da placa e a do aplicativo (iguais pelo código), o que muda
@@ -2239,8 +2240,18 @@ depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commi
   firmware (atualizar), da PRU (recarregar o firmware compilado) e dos itens do `uEnv.txt` (o assistente, F6.4).
 - **Pronto quando:** pela janela, com o simulador, o firmware antigo é atualizado e o diagnóstico fica verde; a falha
   forçada mostra a volta; e, na placa de verdade, o mesmo pela janela (sem tela).
+- **Feita em 19/11/2026** (`ab9730f` o `sh_placa`; `063eefc`, `a3bb65d` a GUI; `d7e14db` os testes). A seção
+  Manutenção (`areas/aquisicao/manutencao.py`, com as páginas no alto) e o serviço dela
+  (`servicos/manutencao_da_placa.py`); o "Atualizar…" (o firmware diferente) e o "Recarregar…" (a PRU desatualizada,
+  com falha ou com outro firmware) no diagnóstico. **Na placa de verdade, pela janela (sem tela):** a página leu em
+  0,7 s ("o código é o mesmo"); o "Compilar e carregar de novo…" passou pelos passos em 30 s, sem pedir a senha (a da
+  sessão); o "Apagar…" tirou a cópia repetida; o diagnóstico ficou verde. **Decisões:** o firmware é lido quando a
+  seção aparece (o `git` roda numa thread que não se cancela, e ler a cada conexão segurava o fim do laço); ao
+  conectar, só a lista das tarefas na placa, para acompanhar uma atualização em curso; uma que terminou e ninguém viu
+  aparece na página e vai para o caderno como "de antes desta conexão"; "nada muda" é pelo código (o texto do `git
+  describe` muda a cada commit, como no diagnóstico).
 
-### ☐ F6.4: o assistente de pinos e overlays (o `uEnv.txt`)
+### ▶ F6.4: o assistente de pinos e overlays (o `uEnv.txt`)
 
 - **O conteúdo:** `sh_placa/uenv.py`, sem Qt: lê o `uEnv.txt` e o estado real (os overlays carregados, a linha do
   kernel, os `.dtbo` da PRU para o kernel instalado), reconhece a estrutura (recusa o que não conhece) e propõe só o
