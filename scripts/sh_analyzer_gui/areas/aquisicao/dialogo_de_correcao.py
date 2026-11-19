@@ -37,7 +37,7 @@ def _lista(pinos: list[str]) -> str:
 
 
 class DialogoDeCorrecao(QDialog):
-    """A confirmação da correção ``nome`` (``"pinos"`` ou ``"relogio"``)."""
+    """A confirmação da correção ``nome`` (``"pinos"``, ``"relogio"`` ou ``"pru"``)."""
 
     def __init__(self, saude: SaudeDaPlaca, nome: str, parent: QWidget | None = None):
         super().__init__(parent)
@@ -124,6 +124,15 @@ class DialogoDeCorrecao(QDialog):
                 "tenta isso ao capturar).").format(_lista(errados)))
             self.confirmar.setText(traduzir("Pôr {} no modo da PRU").format(_lista(errados)))
             return
+        if self.nome == "pru":
+            self.setWindowTitle(traduzir("O firmware da PRU"))
+            self.titulo.setText(traduzir("Recarregar o firmware da PRU"))
+            self.explicacao.setText(traduzir(
+                "Instala o fw_pru.out compilado na pasta do firmware como o da PRU0 (/lib/firmware/am335x-pru0-fw), põe "
+                "os pinos no modo dela e a liga de novo, como o setup.sh faz, sem compilar. Roda como root, pelo sudo; "
+                "a senha vai só pelo stdin, para um arquivo na RAM da placa que some em seguida."))
+            self.confirmar.setText(traduzir("Recarregar a PRU"))
+            return
         self.setWindowTitle(traduzir("O relógio da placa"))
         self.titulo.setText(traduzir("Acertar o relógio da placa"))
         relogio = e.relogio if e is not None else None
@@ -138,6 +147,14 @@ class DialogoDeCorrecao(QDialog):
     def _confirmar(self) -> None:
         if self.nome == "pinos":
             self.saude.corrigir_pinos()
+            return
+        senha = self.campo_senha.text() if self.caixa_da_senha.isVisible() else None
+        if self.nome == "pru":
+            if self.caixa_da_senha.isVisible() and not senha:
+                self.campo_senha.setFocus()
+                return
+            self.campo_senha.clear()
+            self.saude.recarregar_pru(senha, guardar=self.guardar.isChecked())
             return
         if self.a_cada_conexao.isChecked() != bool(self.saude.lembrar_acertar()):
             self.saude.permitir_acertar_a_cada_conexao(self.a_cada_conexao.isChecked())

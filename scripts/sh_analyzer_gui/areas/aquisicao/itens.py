@@ -3,6 +3,7 @@ computador conhece) e os itens do ``sh_placa/diagnostico.py``, os problemas prim
 
 from __future__ import annotations
 
+from sh_placa.atualizacao import roteiro_de_recarregar
 from sh_placa.correcoes import comando_dos_pinos, roteiro_do_relogio
 from sh_placa.diagnostico import ItemDoDiagnostico, itens_do_diagnostico
 
@@ -11,7 +12,9 @@ from ...servicos.saude_da_placa import SaudeDaPlaca
 from .textos import caminho_curto, texto_do_enlace, traduzir
 
 ORDEM_DOS_NIVEIS = {"erro": 0, "aviso": 1, "info": 2, "ok": 3}
-TEXTOS_DAS_CORRECOES = {"pinos": "Corrigir…", "relogio": "Acertar…"}
+TEXTOS_DAS_CORRECOES = {"pinos": "Corrigir…", "relogio": "Acertar…", "pru": "Recarregar…", "firmware": "Atualizar…"}
+SEM_COMANDO = ("firmware",)
+"""As correções que abrem uma página (a do firmware, na Manutenção), em vez de rodar um comando."""
 
 
 def resumo_da_conexao(conexao: ConexaoDaPlaca) -> str:
@@ -37,7 +40,11 @@ def itens_da_placa(conexao: ConexaoDaPlaca, saude: SaudeDaPlaca) -> list[ItemDoD
 
 
 def comando_da_correcao(nome: str, saude: SaudeDaPlaca) -> str:
-    """O que a correção ``nome`` roda na placa agora (o "Ver o comando")."""
+    """O que a correção ``nome`` roda na placa agora (o "Ver o comando"); vazio na que abre uma página."""
+    if nome in SEM_COMANDO:
+        return ""
+    if nome == "pru":
+        return roteiro_de_recarregar()
     if nome == "pinos":
         errados = saude.saude.pinos_errados if saude.saude is not None else []
         return comando_dos_pinos(errados) if errados else ""

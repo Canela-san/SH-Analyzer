@@ -96,7 +96,30 @@ def frase_da_correcao(correcao: Correcao) -> str | None:
         if feita:
             return traduzir("Pinos da PRU corrigidos: {}").format(_minuscula(correcao.mensagem))
         return traduzir("A correção dos pinos da PRU não deu: {}").format(_minuscula(correcao.mensagem))
+    if correcao.nome == "pru":
+        if feita:
+            return traduzir("Firmware da PRU recarregado: {}").format(_minuscula(correcao.mensagem))
+        return traduzir("O firmware da PRU não foi recarregado: {}").format(_minuscula(correcao.mensagem))
     return None
+
+
+def frase_da_atualizacao(a) -> str | None:
+    """O fim de uma atualização do firmware (``servicos/manutencao_da_placa.py``)."""
+    d = a.desfecho
+    if d is None:
+        return traduzir("{}: não terminou ({})").format(traduzir(a.titulo), _minuscula(a.mensagem)) if a.mensagem \
+            else None
+    texto = {"atualizada": traduzir("Firmware da placa atualizado: {}"),
+             "voltou": traduzir("A atualização do firmware falhou, e a placa voltou à versão anterior: {}"),
+             "falhou_antes": traduzir("A atualização do firmware não mudou a placa: {}"),
+             "falhou_ao_voltar": traduzir("A atualização do firmware falhou e a placa não voltou sozinha: {}"),
+             "interrompida": traduzir("A atualização do firmware foi interrompida: {}")}.get(d.estado)
+    if texto is None:
+        return None
+    frase_ = texto.format(_minuscula(d.mensagem))
+    if d.copia and d.estado != "falhou_antes":
+        frase_ += traduzir(" (a cópia de antes: `{}`)").format(d.copia)
+    return frase_
 
 
 def frase_da_rotina(rotina, comando: str) -> str:
@@ -109,7 +132,7 @@ def frase_do_relatorio(relatorio: str) -> str:
 
 def ligar(caderno: CadernoDaSessao, *, captura: CapturaDaPlaca | None = None,
           conferencia: ConferenciaDaPlaca | None = None, transferencias=None,
-          saude: SaudeDaPlaca | None = None, rotinas=None) -> None:
+          saude: SaudeDaPlaca | None = None, rotinas=None, manutencao=None) -> None:
     """Liga os sinais dos serviços às entradas automáticas de ``caderno``."""
 
     def registrar(frase: str | None) -> None:
@@ -126,3 +149,5 @@ def ligar(caderno: CadernoDaSessao, *, captura: CapturaDaPlaca | None = None,
         saude.corrigiu.connect(lambda correcao: registrar(frase_da_correcao(correcao)))
     if rotinas is not None:
         rotinas.rotinaIniciada.connect(lambda rotina, comando: registrar(frase_da_rotina(rotina, comando)))
+    if manutencao is not None:
+        manutencao.atualizacaoTerminou.connect(lambda a: registrar(frase_da_atualizacao(a)))

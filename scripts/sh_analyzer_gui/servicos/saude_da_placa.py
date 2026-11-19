@@ -207,9 +207,10 @@ class SaudeDaPlaca(QObject):
         saude = await cliente.saude() if com_a_saude else None
         capturas = await cliente.capturas()
         versao = saude.versao_do_firmware if saude is not None else versao
-        if simulada:
+        if simulada:                          # o do simulador; ou o do repositório, se a placa simulada o recebeu
             from sh_placa.simulador import VERSAO_SIMULADA
-            firmware = VERSAO_SIMULADA
+            do_repositorio = await asyncio.to_thread(firmware_do_aplicativo, versao)
+            firmware = versao if versao is not None and versao == do_repositorio else VERSAO_SIMULADA
         else:
             firmware = await asyncio.to_thread(firmware_do_aplicativo, versao)
         return saude, capturas, firmware
@@ -347,6 +348,60 @@ class SaudeDaPlaca(QObject):
                     self._mudar_a_correcao(Correcao("relogio", "senha_recusada", "A placa recusou a senha do sudo."))
                 return
             self._mudar_a_correcao(Correcao("relogio", "falhou", chamada.erro, automatica))
+            return
+        self._mudar_a_correcao(None)
+
+    def recarregar_pru(self, senha: str | None = None, guardar: bool = False) -> None:
+        """O "Recarregar" da PRU (o passo do ``setup.sh``: o ``fw_pru.out`` compilado instalado e a PRU ligada de
+        novo), pelo sudo, com a senha como no relógio."""
+        conexao_ssh, cliente = self.conexao.conexao_ssh, self.conexao.cliente
+        if conexao_ssh is None or self._corrigindo():
+            return
+        senha = senha or self._senha_do_sudo or self.conexao.senha_da_placa()
+        self._mudar_a_correcao(Correcao("pru", "rodando"))
+        self._chamar("recarregar a PRU", self._pru_no_laco, conexao_ssh, cliente, senha, guardar, self.conexao.cofre,
+                     ao_terminar=self._recarregou)
+
+    @staticmethod
+    async def _pru_no_laco(conexao_ssh, cliente, senha: str | None, guardar: bool, obter_o_cofre):
+        from sh_placa.atualizacao import recarregar_a_pru
+
+        cofre = obter_o_cofre()
+        conta = conexao_ssh.destino.conta
+        if senha is None:
+            senha = await asyncio.to_thread(cofre.senha, conta)
+            if senha is None:
+                return None
+        texto = await recarregar_a_pru(conexao_ssh, senha)
+        aviso = ""
+        if guardar:
+            try:
+                await asyncio.to_thread(cofre.guardar, conta, senha)
+            except ErroDaPlaca as e:
+                aviso = str(e)
+        return texto, await cliente.saude(), senha, aviso
+
+    def _recarregou(self, chamada: Chamada) -> None:
+        if chamada.estado == "concluida":
+            if chamada.resultado is None:
+                self._mudar_a_correcao(Correcao("pru", "precisa_da_senha"))
+                return
+            texto, saude, senha, aviso = chamada.resultado
+            self._senha_do_sudo = senha
+            self.saude, self.conferida_em = saude, time.time()
+            mensagem = "A PRU0 rodando o firmware compilado da placa." + (f" {aviso}" if aviso else "")
+            self._mudar_a_correcao(Correcao("pru", "feita", mensagem))
+            self.mudou.emit()
+            return
+        if chamada.estado == "falhou":
+            from sh_placa.correcoes import ErroDoSudo
+
+            e = chamada.excecao
+            if isinstance(e, ErroDoSudo) and e.senha_recusada:
+                self._senha_do_sudo = None
+                self._mudar_a_correcao(Correcao("pru", "senha_recusada", "A placa recusou a senha do sudo."))
+                return
+            self._mudar_a_correcao(Correcao("pru", "falhou", chamada.erro))
             return
         self._mudar_a_correcao(None)
 

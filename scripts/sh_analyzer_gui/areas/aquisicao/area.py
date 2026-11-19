@@ -28,6 +28,7 @@ from ...servicos.caderno import CadernoDaSessao
 from ...servicos.captura_da_placa import CapturaDaPlaca
 from ...servicos.conexao_da_placa import ESPERANDO_O_USUARIO, ConexaoDaPlaca
 from ...servicos.conferencia_da_placa import ConferenciaDaPlaca
+from ...servicos.manutencao_da_placa import ManutencaoDaPlaca
 from ...servicos.saude_da_placa import SaudeDaPlaca
 from ...servicos.transferencias import TransferenciasDaPlaca
 from . import entradas_do_caderno
@@ -37,6 +38,7 @@ from .diagnostico import Diagnostico
 from .dialogo_de_conexao import DialogoDeConexao
 from .dialogo_de_correcao import DialogoDeCorrecao
 from .lateral import SECOES, BarraLateral
+from .manutencao import Manutencao
 from .rotinas import Rotinas
 from .terminal import Terminal
 from .textos import frase, traduzir
@@ -55,7 +57,7 @@ class AreaDeAquisicao(QWidget):
                  executar_programa=None, conferencia: ConferenciaDaPlaca | None = None,
                  opcoes_da_captura: dict | None = None, captura: CapturaDaPlaca | None = None,
                  abrir_no_projeto=None, mostrar_na_analise=None, caderno: CadernoDaSessao | None = None,
-                 parent: QWidget | None = None):
+                 manutencao: ManutencaoDaPlaca | None = None, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("area_aquisicao")
         self.conexao, self.saude = conexao, saude
@@ -94,11 +96,17 @@ class AreaDeAquisicao(QWidget):
                                  caderno=self.caderno, **opcoes)
         self.rotinas = Rotinas(conexao, pedido_atual=lambda: self.capturar.formulario.pedido,
                                rodar_no_terminal=self.rodar_no_terminal, pasta_firmware=self.captura.pasta_firmware)
+        self.servico_da_manutencao = manutencao if manutencao is not None else ManutencaoDaPlaca(conexao, saude,
+                                                                                                 parent=self)
+        self.manutencao = Manutencao(conexao, self.servico_da_manutencao, dialogos_de,
+                                     captura_rodando=lambda: self.captura.rodando)
         entradas_do_caderno.ligar(self.caderno, captura=self.captura, conferencia=self.conferencia,
-                                  transferencias=self.transferencias, saude=saude, rotinas=self.rotinas)
+                                  transferencias=self.transferencias, saude=saude, rotinas=self.rotinas,
+                                  manutencao=self.servico_da_manutencao)
         self.paginas: dict[str, QWidget] = {"visao_geral": self.visao_geral, "diagnostico": self.diagnostico,
                                             "arquivos": self.arquivos, "terminal": self.terminal,
-                                            "capturar": self.capturar, "rotinas": self.rotinas}
+                                            "capturar": self.capturar, "rotinas": self.rotinas,
+                                            "manutencao": self.manutencao}
         for nome, _titulo, _icone in SECOES:
             if nome not in self.paginas:
                 self.paginas[nome] = SecaoQueChega(nome)
@@ -173,8 +181,13 @@ class AreaDeAquisicao(QWidget):
     def conectar_por_ip(self) -> None:
         self.dialogo.abrir_para_destino()
 
-    def corrigir(self, nome: str) -> DialogoDeCorrecao:
-        """A confirmação da correção ``nome`` (nada roda antes dela)."""
+    def corrigir(self, nome: str) -> DialogoDeCorrecao | None:
+        """A confirmação da correção ``nome`` (nada roda antes dela); a do firmware abre a página dele na
+        Manutenção."""
+        if nome == "firmware":
+            self.mostrar_secao("manutencao")
+            self.manutencao.mostrar_pagina("firmware")
+            return None
         if self.dialogo_de_correcao is not None:
             self.dialogo_de_correcao.deleteLater()
         self.dialogo_de_correcao = DialogoDeCorrecao(self.saude, nome, self.window())

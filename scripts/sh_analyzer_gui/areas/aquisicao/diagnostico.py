@@ -89,6 +89,7 @@ class CartaoDoItem(QFrame):
             ver = Botao(traduzir("Ver o comando"), "fantasma")
             ver.setObjectName(f"ver_o_comando_{item.correcao}")
             ver.setCheckable(True)
+            ver.setVisible(bool(comando))
             ver.toggled.connect(self.comando.setVisible)
             corrigir = Botao(traduzir(TEXTOS_DAS_CORRECOES[item.correcao]), "secundario")
             corrigir.setObjectName(f"corrigir_{item.correcao}")
