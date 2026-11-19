@@ -63,9 +63,11 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > F6.1 a F6.9), ampliada a pedido do usuário com o monitor, os serviços, a rede e o disco; **a F6.1 e a F6.2 estão
 > feitas** (as tarefas destacadas na placa, o agente da manutenção e a atualização do firmware com a volta sozinha);
 > **a placa de verdade recebeu o firmware desta versão** (v0.8-291-gc03a1cf, com a saída contínua; a cópia da v0.8-137
-> em `~/firmware-anteriores/`); **a F6.3 também** (a seção Manutenção com o firmware na tela);
-> **a próxima é a F6.4**. **A placa de verdade tem o firmware desta versão desde
-> 19/11/2026** (a F6.2: v0.8-291-gc03a1cf, com a saída contínua); antes, o `ler_adc` v0.8 sem o `-o -`.
+> em `~/firmware-anteriores/`); **a F6.3 também** (a seção Manutenção com o firmware na tela); **a F6.4 e a F6.5
+> também** (o assistente do `uEnv.txt` na página Inicialização; reiniciar e desligar na página Sistema, com a queda
+> esperada: a placa de verdade reiniciou pela janela e voltou em 64 s, com o relógio acertado); **a próxima é a
+> F6.6**. **A placa de verdade tem o firmware desta versão desde 19/11/2026** (a F6.2: v0.8-291-gc03a1cf, com a saída
+> contínua); antes, o `ler_adc` v0.8 sem o `-o -`.
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
@@ -2251,7 +2253,7 @@ depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commi
   aparece na página e vai para o caderno como "de antes desta conexão"; "nada muda" é pelo código (o texto do `git
   describe` muda a cada commit, como no diagnóstico).
 
-### ▶ F6.4: o assistente de pinos e overlays (o `uEnv.txt`)
+### ☑ F6.4: o assistente de pinos e overlays (o `uEnv.txt`)
 
 - **O conteúdo:** `sh_placa/uenv.py`, sem Qt: lê o `uEnv.txt` e o estado real (os overlays carregados, a linha do
   kernel, os `.dtbo` da PRU para o kernel instalado), reconhece a estrutura (recusa o que não conhece) e propõe só o
@@ -2263,8 +2265,19 @@ depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commi
 - **Pronto quando:** no simulador, os cenários de configuração (o áudio do HDMI, sem o overlay da PRU, sem o
   `mem=496M`) são corrigidos pelo assistente e, depois do reinício, o diagnóstico fica verde; um `uEnv.txt` com uma
   linha desconhecida é recusado; na placa de verdade, o assistente lê e diz que não há o que mudar.
+- **Feita em 19/11/2026.** `sh_placa/uenv.py` (ler, propor, aplicar mexendo numa linha só por mudança, o diff, o
+  `pendentes`: o que o arquivo já pede e este boot não tem; gravar pelo sudo num comando de root só, que confere o
+  hash lido, faz a cópia, grava ao lado e troca com o `mv`, e devolve o hash gravado); a página **Inicialização**
+  (`areas/aquisicao/manutencao/inicializacao.py`): o que este boot carregou, as mudanças marcáveis com o porquê e o
+  diff ao vivo, "Gravar…" (o diálogo das ações: o diff, o comando, "Reiniciar a placa logo depois", o sudo), o cartão
+  "Gravado, esperando um reinício", as cópias com "Restaurar…" (o diff da cópia antes); o "Ajustar…" do diagnóstico
+  (áudio do HDMI, overlay da PRU, `mem=496M`) abre a página. O serviço é o `servicos/sistema_da_placa.py` (as ações do
+  sistema, uma por vez); a seção virou o pacote `areas/aquisicao/manutencao/`. Testes: `tests/test_sh_placa_uenv.py`
+  e `tests/test_gui_sistema.py` (o áudio do HDMI corrigido pela tela, reiniciado e verde; a cópia restaurada sem
+  reiniciar). **Na placa de verdade** (só leitura, como combinado): "Nada a mudar" (o vídeo do HDMI já desligado, o
+  overlay `AM335X-PRU-RPROC-4-19-TI-00A0`, o `mem=496M` neste boot), nenhuma cópia; nada foi gravado.
 
-### ☐ F6.5: reiniciar, desligar com segurança e esperar a placa
+### ☑ F6.5: reiniciar, desligar com segurança e esperar a placa
 
 - **O conteúdo:** reiniciar e desligar pela interface (com a captura rodando, pergunta antes); a conexão sabe que a
   queda é esperada: no reinício, espera a placa voltar (até 3 min, com o tempo à vista), reconecta, confere e acerta
@@ -2272,6 +2285,22 @@ depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commi
   USB) e diz quando dá para tirar da tomada.
 - **Pronto quando:** no simulador, o reinício volta sozinho com o diagnóstico novo, e o desligar termina com "pode
   tirar da tomada"; na placa de verdade, o reinício pela janela volta conectado e com o relógio certo.
+- **Feita em 19/11/2026.** `sh_placa/sistema.py` (o `systemctl reboot`/`poweroff` destacado **pelo root**, um
+  segundo depois; recusa com o `ler_adc` rodando, a não ser com o corte confirmado); a **queda esperada** na
+  `ConexaoDaPlaca` (`esperar`): o reinício espera até 4 min e só vale com o **boot novo** (o `boot_id`, que o agente
+  passou a mandar; a placa que segue no mesmo boot por 1 min não reiniciou, e a conexão diz isso), não conta como
+  queda do cabo, e a saúde lê tudo de novo, acerta o relógio (se a placa deixou) e confere outra vez 30 s depois (o
+  boot ainda assentando); o desligamento espera a placa **sumir** (nem recusar a conexão) e diz "já pode tirar da
+  tomada" (pelo salto, pede para conferir os LEDs). A página **Sistema** (o nome, o sistema, o kernel, ligada há, o
+  fuso, a memória; a energia com "Reiniciar…" e "Desligar…"), o cartão da ação contando os segundos, "reiniciando…" e
+  "desligando…" na barra lateral e na lista, as entradas do caderno. **O que a placa de verdade ensinou:** a primeira
+  versão lançava `sudo -n … &` e saía; sem terminal, a credencial do sudo é do processo pai, e o sudo do fundo,
+  adotado pelo init antes de conferir, pedia a senha e falhava calado (a tela disse "a placa não reiniciou: ela
+  continua no mesmo boot", certo). O sudo do simulador agora confere o pai na hora, como o de verdade, e pega esse
+  erro (`tests/test_sh_placa_simulador.py`). **Na placa de verdade:** o reinício pela janela voltou em 64 s, com o
+  boot novo, nenhuma queda contada, o relógio (16 s atrasado depois do boot) acertado sozinho; os pinos da PRU voltam
+  ao padrão a cada boot (o `ler_adc` os põe no modo certo na captura seguinte, como o `setup.sh`). **O desligar não
+  foi testado na placa de verdade** (precisa de alguém na bancada para ligar de novo).
 
 ### ☐ F6.6: os logs e o monitor
 
