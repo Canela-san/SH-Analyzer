@@ -43,7 +43,10 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > ponta na janela, com o simulador (`tests/test_gui_jornada_captura.py`), e 1 h direto no computador na placa de
 > verdade, sem perder amostra, aberta na Análise (seção 5). **A tag v0.10** fica para o dono do projeto. **A Fase 5
 > (figuras e exportação) está em tarefas** (seção 4f, F5.1 a F5.10). **A F5.1 está feita** (diário de 18/11): o
-> modelo da figura e a versão 5 do projeto. **A próxima: a F5.2**, o desenho com o Matplotlib e a fidelidade. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
+> modelo da figura e a versão 5 do projeto. **A F5.2 e a F5.3 estão feitas** (diário de 19/11): o desenho com o
+> Matplotlib (o M4 nas colunas dos pixels, conferido contra todos os pontos) e a área Figuras (a vista vira figura
+> com um clique, o painel ligado acompanha a vista, congelar, desfazer). **A próxima: a F5.4**, a exportação da
+> figura. **A placa de verdade ainda tem o `ler_adc` antigo** (v0.8, sem o `-o -`):
 > a captura contínua e o "Conferir antes" dizem "atualize o firmware da placa" (o código 96 do roteiro, conferido
 > nela), e o aplicativo vai precisar mandar o firmware novo (o `enviar` do `BeagleBone_Setup.sh`, ou a Fase 6).
 >
@@ -183,13 +186,13 @@ sonda em pedaços, sem prender o GIL) e `1257f5b` (o fechamento da saída contí
 **O ambiente:** Python 3.13, PySide6 6.12.0 (na 3.10 e na 3.11, o 6.11.3: seção 2), PyQtGraph 0.14.0, NumPy 2.5.4, SciPy 1.18.1; no extra `placa`,
 asyncssh 2.24.1, zeroconf 0.154.0, pyserial 3.5, keyring 25.7.0 (o cofre do Linux é o Secret Service) e pyte 0.8.2. **A CI
 roda em `.venv-ci/<versão>`** (desde 16/11/2026): o `.venv` é o de quem desenvolve, e o `ci.sh` não o troca mais.
-Testes, na última rodada (18/11/2026, com a F5.1): o `ci.sh` completo em 5 min, com 2 479 em Python 3.13 (a suíte
-inteira, com a interface) e 2 047 em 3.10 (sem o Qt).
+Testes, na última rodada (19/11/2026, com a F5.3): o `ci.sh` completo em 324 s, com 2 502 em Python 3.13 (a
+suíte inteira, com a interface) e 2 062 em 3.10 (sem o Qt).
 
 **Desde 18/11/2026, a captura pela interface** (a Fase 4 até a F4.5, seção 4e): o formulário com o "Conferir antes",
 a captura na tela (direto no computador ou no cartão, com o ao vivo, o Parar e a queda) e o caderno de bancada.
 
-**Ainda não existe:** as rotinas como formulários nativos, com as pausas em diálogos (depois da v0.10); o resgate pela serial (v1.0); as figuras e as exportações (a Fase 5).
+**Ainda não existe:** as rotinas como formulários nativos, com as pausas em diálogos (depois da v0.10); o resgate pela serial (v1.0); as exportações (a Fase 5, da F5.4 em diante).
 
 ---
 
@@ -1891,7 +1894,7 @@ o diário.
   pedir (seriam mais arquivos de fonte no pacote); os números do SI com o separador do idioma usam o `formatar_si`
   que já existia (`componentes/numeros.py`, sem Qt).
 
-### ▶ F5.2: o desenho com o Matplotlib e a fidelidade
+### ☑ F5.2: o desenho com o Matplotlib e a fidelidade
 
 - **O conteúdo:** `figura → matplotlib.figure.Figure` (sem Qt): cada painel desenha os traços da vista dele (tempo e
   espectro primeiro; as bandas, o espectrograma e os harmônicos depois), com os dados pela pirâmide reduzidos pelo M4
@@ -1899,16 +1902,49 @@ o diário.
   (b)…, os eixos compartilhados e a legenda; as fontes do aplicativo registradas no Matplotlib.
 - **Pronto quando:** o teste de fidelidade passa (a curva reduzida e a de todos os pontos dão os mesmos pixels na
   resolução de saída, seção 10.3), e uma figura de dois painéis sai com os números do idioma escolhido.
-
-### ☐ F5.3: a área Figuras na tela
+- **Feita em 19/11/2026** (`4972da3`, `01395a4`, `9fca9ec`): `dados/desenho_da_figura.py` (sem Qt): a página no
+  tamanho do modelo (o leiaute *constrained* do Matplotlib), a grade com os painéis largos, a vista de tempo como ela
+  está na tela (uma faixa por eixo, o tempo compartilhado e os números do tempo só embaixo; a que sobrepõe, num eixo
+  com a legenda), o espectro (linear e log), os eixos compartilhados entre painéis (a união das janelas), os rótulos
+  (a), (b)…, o prefixo do SI comum ao eixo ("Tensão (kV)", nenhum em °C ou sem unidade), o tempo em ms abaixo de 2 s,
+  o separador e o menos tipográfico do idioma, as grandezas em inglês, as fontes do aplicativo registradas, e as
+  vistas que ainda não entram com um aviso no painel. Os limites do y são os extremos exatos da janela (os blocos
+  pela pirâmide e as pontas lidas das amostras). **O M4** roda em duas passadas: a primeira acha o leiaute, a segunda
+  reduz cada traço nas colunas que caem sobre os meios pixels do eixo; o exato (a exportação) lê as amostras em lotes
+  de 8 M, a prévia usa a envoltória da pirâmide. **A fidelidade, medida:** sem o antisserrilhado, a curva reduzida e
+  a de todos os pontos (500 mil) ficam a 1 pixel uma da outra (a distância de Hausdorff entre as tintas: nenhum dos
+  impulsos de uma amostra some, nada aparece), com ~5 % dos pixels de tinta diferentes, todos na borda do traço (a
+  prévia, ~9 %). **Decisão:** a promessa do plano ("os mesmos pixels") vale para a linha de 1 pixel; no traço de
+  0,75 pt (1,6 px a 150 dpi, 3,1 px a 300 dpi), a borda depende de onde cada ponto cai dentro da coluna, e nem 8
+  colunas por pixel a zeram (o alinhamento das colunas aos pixels também não muda a conta). Desenhar a curva inteira
+  em pedaços dá os mesmos pixels que de uma vez (o Agg não perde tinta na referência). O teste afirma o que vale: a
+  distância de 1 pixel e menos de 6 % (12 % na prévia), o que pega um traço deslocado (que mudaria metade da tinta)
+  ou um pico perdido.
+### ☑ F5.3: a área Figuras na tela
 
 - **O conteúdo:** a área (o F1) com a lista das figuras do projeto e dos modelos de página, a página em tamanho real
   (a prévia Agg do próprio desenho da F5.2, refeita fora da thread da interface), as propriedades do painel escolhido;
   "uma vista vira figura com um clique" (FG-01) e o painel ligado que acompanha a vista; congelar; desfazer.
 - **Pronto quando:** pelos gestos, uma vista vira uma figura IEEE de uma coluna, um segundo painel entra na grade, a
   vista muda e a figura acompanha, e o projeto salvo e reaberto mostra a mesma página.
-
-### ☐ F5.4: a exportação da figura
+- **Feita em 19/11/2026** (`03a171e`, `6e4a7d7`, `0b64c40`): `areas/figuras/` (a área no F1: a lista das figuras e
+  dos modelos de página, a página no tamanho real ou do tamanho que cabe, as propriedades da página, da grade e do
+  painel escolhido; o clique num painel o escolhe), o botão de imagem ao lado das abas da Análise (FG-01: a vista
+  aberta vira uma figura IEEE de uma coluna e a janela vai para as Figuras), a linha da figura na barra de status, e
+  os comandos com desfazer (`AdicionarFigura`, `MudarFigura`, que junta os passos de girar a altura, e
+  `RemoverFigura`). **O painel ligado acompanha a vista:** os traços, as opções e a janela que ela mostra (a Análise
+  avisa, `exibicaoMudou`), e a materialização de um traço com cadeia quando ela fica pronta. **Congelar** guarda a
+  cópia da vista e a janela do momento; religar volta a acompanhar as duas. **A prévia é o desenho da F5.2** no dpi
+  da tela: os dados são colhidos na thread da interface (`colher`, só referências) e o Matplotlib desenha numa de
+  trabalho; com a área escondida, nada se desenha. **Decisões:** fechar a vista de um painel ligado o congela (com a
+  janela que ela mostrava), e fechar uma captura tira os traços dela das cópias congeladas, no mesmo passo de
+  desfazer: o projeto continua salvável (o arquivo exige as vistas e as capturas de cada painel); os espectros vêm
+  do que a vista de espectro já calculou (os traços da vista de tempo ligada a ela), sem refazer a FFT, e o espectro
+  congelado mostra um aviso até ganhar o cálculo próprio (o botão "Congelado" fica para a vista de tempo); as
+  edições da figura são funções sem Qt em `dados/figura.py` (pôr um painel na primeira célula livre ou numa linha
+  nova, com a página crescendo uma linha; trocar o modelo com o estilo dele). **Conferido na tela sem tela:** a área
+  em 1 400 × 900 com dois painéis (um ligado e um congelado).
+### ▶ F5.4: a exportação da figura
 
 - **O conteúdo:** PDF (fontes Type 42, a proveniência nos metadados), SVG (o texto editável ou em curvas), EPS, PGF,
   PNG e TIFF (dpi de 150 a 1 200; o TIFF com LZW); "rasterizar só as curvas densas" e "todos os pontos" (com o aviso
@@ -2673,6 +2709,17 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **Testes:** `tests/test_gui_figura.py` (25). O `ci.sh` completo passou em 322 s: 2 479 em 3.13 com a interface
     e 2 047 em 3.10 sem o Qt; o `.venv` intocado.
   - **Próximo:** a F5.2.
+- **19/11/2026 (madrugada):** **a F5.2 e a F5.3** (o pedido: "faça a 5.2 e 5.3"):
+  - **a F5.2** (`4972da3`, `01395a4`, `9fca9ec`): o desenho da figura com o Matplotlib, sem Qt; o prefixo do SI foi
+    para `dados/unidades.py` (o desenho não pode importar os componentes); a fidelidade medida (seção 4f): 1 pixel de
+    Hausdorff, ~5 % da tinta na borda do traço;
+  - **a F5.3** (`03a171e`, `6e4a7d7`, `0b64c40`): a área Figuras, a jornada da figura pelos gestos (da vista à página,
+    um segundo painel congelado, a vista que muda, o desfazer, salvar e abrir de novo com a mesma página) e o espectro
+    que vira figura com o que a vista calculou;
+  - **Testes:** `tests/test_gui_desenho_da_figura.py` (15), `tests/test_gui_figuras.py` (6) e
+    `tests/test_gui_jornada_figura.py` (2); o `test_gui_janela.py` com as Figuras habilitadas; e o `test_gui_eixos.py` espera os números do eixo dos harmônicos antes de medir (a primeira rodada da CI os mediu vazios, sob carga). O `ci.sh` completo
+    passou em 324 s: 2 502 em 3.13 com a interface e 2 062 em 3.10 sem o Qt; o `.venv` intocado.
+  - **Próximo:** a F5.4 (a exportação da figura).
 ---
 
 ## 8. Perguntas em aberto

@@ -842,8 +842,11 @@ O layout é o do mockup **F1**: a lista de figuras e modelos à esquerda, a pág
 ### 10.3 Fidelidade da exportação
 
 - **Os traços densos são reduzidos pelo M4 na resolução de saída**, com 2 colunas por pixel do dispositivo final (por exemplo, 88 mm a 600 dpi dão 2 079 px e 4 158 colunas).
-  - Desenhar o resultado nessa resolução dá **os mesmos pixels** que desenhar todos os pontos (Jugel et al., 2014).
-  - Um teste confere isso, rasterizando os dois e comparando.
+  - Desenhar o resultado nessa resolução dá **os mesmos pixels** que desenhar todos os pontos na linha de 1 pixel
+    (Jugel et al., 2014); no traço mais grosso da página, a borda pode mudar de 1 pixel (ela depende de onde cada
+    ponto cai dentro da coluna), sem pico perdido nem tinta inventada.
+  - Um teste confere isso, rasterizando os dois e comparando (medido na F5.2: 1 pixel de distância de Hausdorff entre
+    as tintas, ~5 % dos pixels de tinta na borda; `docs/gui-progress.md`, seção 4f).
 - **"Todos os pontos"** fica disponível para quem precisa, com o aviso do tamanho do arquivo quando passa de ~2 M pontos.
 - **"Rasterizar só as curvas densas":** o Matplotlib desenha as curvas como imagem embutida no dpi escolhido (`rasterized=True`), e os eixos e o texto continuam vetoriais. É o melhor dos dois mundos para capturas longas.
 
