@@ -75,6 +75,14 @@ def resumo(conexao: ConexaoDaPlaca) -> Resumo:
     if estado == "conectada":
         nome = nome_da_placa(conexao)
         return Resumo("conectada", f"{nome} · {caminho_curto(conexao)}", traduzir("Conectada a {} ({}).").format(nome, alvo))
+    if estado == "reconectando" and conexao.queda_esperada == "reinicio":
+        return Resumo("atencao", traduzir("Reiniciando…"),
+                      traduzir("{} está reiniciando: a conexão volta sozinha.").format(nome_da_placa(conexao)))
+    if estado == "desligando":
+        return Resumo("atencao", traduzir("Desligando…"),
+                      traduzir("Esperando {} desligar: ainda não a tire da tomada.").format(nome_da_placa(conexao)))
+    if estado == "desconectada" and conexao.desligada:
+        return Resumo("sem_placa", traduzir("Desligada"), traduzir("A placa desligou: já pode tirar da tomada."))
     if estado == "reconectando":
         return Resumo("atencao", traduzir("Reconectando…"),
                       traduzir("A conexão com {} caiu; tentando de novo sozinho.").format(nome_da_placa(conexao)))

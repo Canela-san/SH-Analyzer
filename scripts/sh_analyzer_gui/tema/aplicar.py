@@ -318,6 +318,8 @@ QFrame#bloco_mono {{ background: {t.afundada}; border: 1px solid {t.borda}; bord
 QFrame#pergunta_do_relogio {{ background: {t.superficie}; border: 1px solid {t.borda}; border-radius: 10px; }}
 QFrame#painel_da_placa, QFrame#item_do_diagnostico {{ background: {t.superficie}; border: 1px solid {t.borda};
                                                      border-radius: 10px; }}
+QFrame#cartao_pendente {{ background: {_rgba(t.aviso, 0.07)}; border: 1px solid {_rgba(t.aviso, 0.45)};
+                         border-radius: 10px; }}
 QLabel#titulo_do_painel_da_placa {{ color: {t.texto}; }}
 QLabel#conferida_em, QLabel#pasta_das_capturas, QLabel#resumo_da_linha {{ color: {t.mudo}; }}
 QLabel#resumo_do_item {{ color: {t.texto2}; }}

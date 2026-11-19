@@ -80,7 +80,10 @@ def lado_e_ponto(placa, conexao: ConexaoDaPlaca) -> tuple[str, str, bool]:
     """O texto da direita e o ponto (o papel da cor e se é cheio) de uma placa da lista."""
     if conexao.e_a_conectada(placa):
         if conexao.estado == "reconectando":
-            return traduzir("reconectando…"), "aviso", True
+            return (traduzir("reiniciando…") if conexao.queda_esperada == "reinicio" else traduzir("reconectando…"),
+                    "aviso", True)
+        if conexao.estado == "desligando":
+            return traduzir("desligando…"), "aviso", True
         return traduzir("conectada"), "ok", True
     if conexao.placa is not None and conexao.placa.chave == placa.chave and conexao.estado != "desconectada":
         if conexao.estado in CONECTANDO:

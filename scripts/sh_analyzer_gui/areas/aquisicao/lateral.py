@@ -153,9 +153,16 @@ class CartaoDaPlaca(QFrame):
             self._mostrar("acento", True, traduzir("Esperando a sua resposta"), texto.format(pedido))
             self._botoes((traduzir("Responder"), "responder"), (traduzir("Cancelar"), "cancelar"))
             return
+        elif estado == "reconectando" and c.queda_esperada == "reinicio":
+            self._mostrar("aviso", True, nome_da_placa(c), traduzir("Reiniciando: a conexão volta sozinha."))
         elif estado == "reconectando":
             self._mostrar("aviso", True, nome_da_placa(c), traduzir("A conexão caiu: tentando de novo sozinho."),
                           frase(c.motivo))
+        elif estado == "desligando":
+            self._mostrar("aviso", True, nome_da_placa(c), traduzir("Desligando: ainda não a tire da tomada."))
+        elif estado == "desconectada" and c.desligada:
+            self._mostrar("mudo", False, traduzir("A placa desligou"),
+                          frase(c.aviso_do_desligamento) or traduzir("Já pode tirar da tomada."))
         elif estado == "bloqueada":
             conta = c.bloqueio.destino.conta if c.bloqueio is not None else alvo
             self._mostrar("erro", True, traduzir("Conexão bloqueada"),

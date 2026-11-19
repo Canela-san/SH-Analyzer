@@ -127,6 +127,38 @@ def frase_da_atualizacao(a) -> str | None:
     return frase_
 
 
+def frase_da_acao_do_sistema(a) -> str | None:
+    """O fim de uma ação do sistema da placa (``servicos/sistema_da_placa.py``): o ``uEnv.txt`` gravado (com o diff),
+    o reinício, o desligamento."""
+    d = a.detalhes
+    if a.estado == "falhou":
+        if a.mensagem == "cancelada":
+            return None
+        return traduzir("{}: não deu certo ({})").format(traduzir(a.titulo), _minuscula(a.mensagem))
+    voltou = d.get("voltou_em_s")
+    em = traduzir(", e voltou em {} s").format(int(voltou)) if voltou is not None else ""
+    if a.nome in ("gravar_uenv", "restaurar_uenv"):
+        if a.nome == "gravar_uenv":
+            frase_ = traduzir("/boot/uEnv.txt da placa gravado ({})").format(
+                "; ".join(traduzir(m) for m in d.get("mudancas", [])))
+        else:
+            frase_ = traduzir("/boot/uEnv.txt da placa restaurado da cópia {}").format(d.get("origem", ""))
+        if a.energia == "reiniciar":
+            frase_ += traduzir("; a placa reiniciou{}").format(em)
+        else:
+            frase_ += traduzir("; vale no próximo boot")
+        if d.get("copia"):
+            frase_ += traduzir(" (a cópia de antes: `{}`)").format(d["copia"])
+        if d.get("diff"):
+            frase_ += ":\n```diff\n" + d["diff"].rstrip("\n") + "\n```"
+        return frase_
+    if a.nome == "reiniciar":
+        return traduzir("Placa reiniciada{}").format(em)
+    if a.nome == "desligar":
+        return traduzir("Placa desligada pelo aplicativo")
+    return None
+
+
 def frase_da_rotina(rotina, comando: str) -> str:
     return traduzir("Rotina “{}” no terminal da placa:").format(traduzir(rotina.titulo)) + f"\n`{comando}`"
 
@@ -137,7 +169,7 @@ def frase_do_relatorio(relatorio: str) -> str:
 
 def ligar(caderno: CadernoDaSessao, *, captura: CapturaDaPlaca | None = None,
           conferencia: ConferenciaDaPlaca | None = None, transferencias=None,
-          saude: SaudeDaPlaca | None = None, rotinas=None, manutencao=None) -> None:
+          saude: SaudeDaPlaca | None = None, rotinas=None, manutencao=None, sistema=None) -> None:
     """Liga os sinais dos serviços às entradas automáticas de ``caderno``."""
 
     def registrar(frase: str | None) -> None:
@@ -156,3 +188,5 @@ def ligar(caderno: CadernoDaSessao, *, captura: CapturaDaPlaca | None = None,
         rotinas.rotinaIniciada.connect(lambda rotina, comando: registrar(frase_da_rotina(rotina, comando)))
     if manutencao is not None:
         manutencao.atualizacaoTerminou.connect(lambda a: registrar(frase_da_atualizacao(a)))
+    if sistema is not None:
+        sistema.acaoTerminou.connect(lambda a: registrar(frase_da_acao_do_sistema(a)))

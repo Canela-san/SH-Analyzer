@@ -12,8 +12,9 @@ from ...servicos.saude_da_placa import SaudeDaPlaca
 from .textos import caminho_curto, texto_do_enlace, traduzir
 
 ORDEM_DOS_NIVEIS = {"erro": 0, "aviso": 1, "info": 2, "ok": 3}
-TEXTOS_DAS_CORRECOES = {"pinos": "Corrigir…", "relogio": "Acertar…", "pru": "Recarregar…", "firmware": "Atualizar…"}
-SEM_COMANDO = ("firmware",)
+TEXTOS_DAS_CORRECOES = {"pinos": "Corrigir…", "relogio": "Acertar…", "pru": "Recarregar…", "firmware": "Atualizar…",
+                        "uenv": "Ajustar…"}
+SEM_COMANDO = ("firmware", "uenv")
 """As correções que abrem uma página (a do firmware, na Manutenção), em vez de rodar um comando."""
 
 

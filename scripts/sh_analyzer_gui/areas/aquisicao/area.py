@@ -30,6 +30,7 @@ from ...servicos.conexao_da_placa import ESPERANDO_O_USUARIO, ConexaoDaPlaca
 from ...servicos.conferencia_da_placa import ConferenciaDaPlaca
 from ...servicos.manutencao_da_placa import ManutencaoDaPlaca
 from ...servicos.saude_da_placa import SaudeDaPlaca
+from ...servicos.sistema_da_placa import SistemaDaPlaca
 from ...servicos.transferencias import TransferenciasDaPlaca
 from . import entradas_do_caderno
 from .arquivos import Arquivos
@@ -57,7 +58,8 @@ class AreaDeAquisicao(QWidget):
                  executar_programa=None, conferencia: ConferenciaDaPlaca | None = None,
                  opcoes_da_captura: dict | None = None, captura: CapturaDaPlaca | None = None,
                  abrir_no_projeto=None, mostrar_na_analise=None, caderno: CadernoDaSessao | None = None,
-                 manutencao: ManutencaoDaPlaca | None = None, parent: QWidget | None = None):
+                 manutencao: ManutencaoDaPlaca | None = None, sistema: SistemaDaPlaca | None = None,
+                 parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("area_aquisicao")
         self.conexao, self.saude = conexao, saude
@@ -98,11 +100,12 @@ class AreaDeAquisicao(QWidget):
                                rodar_no_terminal=self.rodar_no_terminal, pasta_firmware=self.captura.pasta_firmware)
         self.servico_da_manutencao = manutencao if manutencao is not None else ManutencaoDaPlaca(conexao, saude,
                                                                                                  parent=self)
-        self.manutencao = Manutencao(conexao, self.servico_da_manutencao, dialogos_de,
+        self.servico_do_sistema = sistema if sistema is not None else SistemaDaPlaca(conexao, saude, parent=self)
+        self.manutencao = Manutencao(conexao, self.servico_da_manutencao, self.servico_do_sistema, dialogos_de,
                                      captura_rodando=lambda: self.captura.rodando)
         entradas_do_caderno.ligar(self.caderno, captura=self.captura, conferencia=self.conferencia,
                                   transferencias=self.transferencias, saude=saude, rotinas=self.rotinas,
-                                  manutencao=self.servico_da_manutencao)
+                                  manutencao=self.servico_da_manutencao, sistema=self.servico_do_sistema)
         self.paginas: dict[str, QWidget] = {"visao_geral": self.visao_geral, "diagnostico": self.diagnostico,
                                             "arquivos": self.arquivos, "terminal": self.terminal,
                                             "capturar": self.capturar, "rotinas": self.rotinas,
@@ -182,11 +185,11 @@ class AreaDeAquisicao(QWidget):
         self.dialogo.abrir_para_destino()
 
     def corrigir(self, nome: str) -> DialogoDeCorrecao | None:
-        """A confirmação da correção ``nome`` (nada roda antes dela); a do firmware abre a página dele na
-        Manutenção."""
-        if nome == "firmware":
+        """A confirmação da correção ``nome`` (nada roda antes dela); a do firmware e a do ``uEnv.txt`` abrem a página
+        delas na Manutenção (a do firmware, a da inicialização)."""
+        if nome in ("firmware", "uenv"):
             self.mostrar_secao("manutencao")
-            self.manutencao.mostrar_pagina("firmware")
+            self.manutencao.mostrar_pagina("firmware" if nome == "firmware" else "inicializacao")
             return None
         if self.dialogo_de_correcao is not None:
             self.dialogo_de_correcao.deleteLater()
