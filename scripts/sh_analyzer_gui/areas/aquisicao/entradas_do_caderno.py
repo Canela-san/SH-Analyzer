@@ -154,6 +154,17 @@ def frase_da_acao_do_sistema(a) -> str | None:
         return frase_
     if a.nome == "reiniciar":
         return traduzir("Placa reiniciada{}").format(em)
+    if a.nome == "servico":
+        return (traduzir("Serviço da placa ligado: {}") if d.get("ligar") else
+                traduzir("Serviço da placa desligado (não sobe mais no boot): {}")).format(d.get("unidade", ""))
+    if a.nome == "limpar":
+        return traduzir("Cartão da placa: {} limpo").format(_minuscula(traduzir(a.titulo.removeprefix("Limpar "))))
+    if a.nome == "expandir":
+        return traduzir("Partição da placa expandida até o fim do cartão") + (
+            traduzir("; a placa reiniciou{}").format(em) if a.energia == "reiniciar" else
+            traduzir("; o sistema de arquivos cresce no próximo boot"))
+    if a.nome == "trocar_senha":
+        return traduzir("Senha do usuário da placa trocada (a do SSH e a do sudo)")
     if a.nome == "desligar":
         return traduzir("Placa desligada pelo aplicativo")
     return None

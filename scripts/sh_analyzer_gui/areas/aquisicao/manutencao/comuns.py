@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from ....componentes.basicos import Botao
+from ....componentes.numeros import formatar_bytes
 from ....servicos.sistema_da_placa import AcaoDoSistema, SistemaDaPlaca
 from ....tema.aplicar import aparencia
 from ....tema.fontes import fonte_mono
@@ -184,10 +185,16 @@ def descrever_acao(acao: AcaoDoSistema, agora: float | None = None) -> tuple[str
         return "info", traduzir("parando"), traduzir("Parando o ler_adc como o Ctrl+C (o INT: ele fecha o arquivo e "
                                                      "para a PRU)…")
     if acao.estado == "rodando":
-        if acao.energia is not None and (d.get("gravado") or acao.nome in ("reiniciar", "desligar")):
+        if acao.energia is not None and (d.get("gravado") or d.get("feito") or acao.nome in ("reiniciar", "desligar")):
             return "info", traduzir("pedindo"), (traduzir("Pedindo o reinício à placa…") if acao.energia == "reiniciar"
                                                  else traduzir("Pedindo o desligamento à placa…"))
-        return "info", traduzir("gravando"), traduzir("Gravando o /boot/uEnv.txt, com a cópia de segurança…")
+        if acao.nome in ("gravar_uenv", "restaurar_uenv"):
+            return "info", traduzir("gravando"), traduzir("Gravando o /boot/uEnv.txt, com a cópia de segurança…")
+        textos = {"servico": (traduzir("Ligando o {}…") if d.get("ligar") else traduzir("Desligando o {}…")).format(
+                      d.get("unidade", "")),
+                  "limpar": traduzir("Limpando…"), "expandir": traduzir("Mudando a tabela de partições…"),
+                  "trocar_senha": traduzir("Trocando a senha (o chpasswd)…")}
+        return "info", traduzir("rodando"), textos.get(acao.nome, traduzir("Rodando…"))
     if acao.estado == "esperando_a_placa":
         segundos = int(agora - acao.pediu_em) if acao.pediu_em is not None else 0
         if acao.energia == "reiniciar":
@@ -207,6 +214,23 @@ def descrever_acao(acao: AcaoDoSistema, agora: float | None = None) -> tuple[str
             texto_ += sobre_a_copia
         elif acao.nome == "reiniciar":
             texto_ = traduzir("A placa reiniciou e voltou{}.").format(em)
+        elif acao.nome == "servico":
+            texto_ = (traduzir("O {} está ligado: roda agora e sobe nos próximos boots.") if d.get("ligar") else
+                      traduzir("O {} está desligado: parou e não sobe mais no boot.")).format(d.get("unidade", ""))
+        elif acao.nome == "limpar":
+            if d.get("qual") == "tarefas":
+                texto_ = traduzir("{} tarefa(s) terminada(s) apagada(s).").format(d.get("resultado") or 0)
+            else:
+                texto_ = traduzir("Limpo (ocupava {}).").format(formatar_bytes(d.get("antes") or 0))
+        elif acao.nome == "expandir":
+            texto_ = (traduzir("A partição vai até o fim do cartão, e a placa voltou{}: o sistema de arquivos "
+                               "cresceu.").format(em) if acao.energia == "reiniciar" else
+                      traduzir("A tabela de partições mudou: o sistema de arquivos cresce no próximo boot (Sistema, "
+                               "Reiniciar)."))
+        elif acao.nome == "trocar_senha":
+            texto_ = traduzir("Senha trocada: vale para o SSH e para o sudo da placa, daí em diante.") + " " + (
+                traduzir("O cofre do sistema guarda a nova.") if d.get("no_cofre") else
+                traduzir("O cofre do sistema não guarda senha desta placa."))
         elif acao.nome == "parar_ler_adc":
             dito = d.get("dito", "")
             texto_ = (traduzir("O ler_adc parou (PID {}).").format(dito.split(":", 1)[1].strip())
@@ -219,7 +243,8 @@ def descrever_acao(acao: AcaoDoSistema, agora: float | None = None) -> tuple[str
         if acao.mensagem:
             texto_ += " " + frase(acao.mensagem)
         selo = {"gravar_uenv": "gravado", "restaurar_uenv": "restaurado", "reiniciar": "reiniciada",
-                "desligar": "desligada", "parar_ler_adc": "parado"}.get(acao.nome, "feita")
+                "desligar": "desligada", "parar_ler_adc": "parado", "servico": "feito", "limpar": "limpo",
+                "expandir": "expandida", "trocar_senha": "trocada"}.get(acao.nome, "feita")
         return "ok", traduzir(selo), texto_
     if acao.estado == "falhou":
         texto_ = frase(acao.mensagem) or traduzir("A ação falhou.")
@@ -301,7 +326,8 @@ class DialogoDaAcao(QDialog):
 
     def __init__(self, sistema: SistemaDaPlaca, *, janela: str, titulo: str, explicacao: str, confirmar: str,
                  comecar, diff: str = "", comando: str = "", reiniciar_depois: bool | None = None,
-                 captura_rodando: bool = False, perigo: bool = False, parent: QWidget | None = None):
+                 captura_rodando: bool = False, perigo: bool = False, rotulo_do_reinicio: str = "",
+                 parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("dialogo_da_acao")
         self.setWindowModality(Qt.WindowModality.WindowModal)
@@ -317,8 +343,8 @@ class DialogoDaAcao(QDialog):
         self.diff = Diff(10)
         self.diff.setPlainText(diff)
         self.diff.setVisible(bool(diff))
-        self.reiniciar_depois = QCheckBox(traduzir("Reiniciar a placa logo depois (o uEnv.txt só vale no próximo "
-                                                   "boot)"))
+        self.reiniciar_depois = QCheckBox(rotulo_do_reinicio or traduzir(
+            "Reiniciar a placa logo depois (o uEnv.txt só vale no próximo boot)"))
         self.reiniciar_depois.setObjectName("reiniciar_depois")
         self.reiniciar_depois.setChecked(bool(reiniciar_depois))
         self.reiniciar_depois.setVisible(reiniciar_depois is not None)
@@ -435,3 +461,66 @@ class DialogoDaAcao(QDialog):
         if self._comecou and a is not None and a.esperando_o_usuario:
             self.sistema.dispensar()
         super().reject()
+
+
+class DialogoDaSenhaNova(DialogoDaAcao):
+    """Trocar a senha do usuário da placa: a nova duas vezes (conferidas aqui: iguais, sem quebra de linha, com 6
+    caracteres ou mais) e "Guardar a nova no cofre do sistema"; a de agora (a do sudo) só se a sessão e o cofre não a
+    têm. A nova nunca vai numa linha de comando: pelo stdin, até o ``chpasswd``."""
+
+    def __init__(self, sistema: SistemaDaPlaca, *, comando: str = "", parent: QWidget | None = None):
+        super().__init__(sistema, janela=traduzir("Trocar a senha"), titulo=traduzir("Trocar a senha da placa"),
+                         explicacao=traduzir("A senha nova vale para o SSH e para o sudo da placa, daí em diante. O "
+                                             "aplicativo continua entrando pela chave dele."),
+                         confirmar=traduzir("Trocar a senha"), comando=comando, comecar=self._trocar, parent=parent)
+        self.setObjectName("dialogo_da_senha_nova")
+        self.nova = QLineEdit()
+        self.nova.setObjectName("senha_nova")
+        self.nova.setEchoMode(QLineEdit.EchoMode.Password)
+        self.nova.setPlaceholderText(traduzir("a senha nova"))
+        self.de_novo = QLineEdit()
+        self.de_novo.setObjectName("senha_nova_de_novo")
+        self.de_novo.setEchoMode(QLineEdit.EchoMode.Password)
+        self.de_novo.setPlaceholderText(traduzir("a senha nova, de novo"))
+        self.guardar_a_nova = QCheckBox(traduzir("Guardar a senha nova no cofre do sistema"))
+        self.guardar_a_nova.setObjectName("guardar_a_senha_nova")
+        self.campo_senha.setPlaceholderText(traduzir("a senha de agora (a do sudo)"))
+        self.guardar.hide()                       # a de agora não vai para o cofre: ela deixa de valer
+        coluna = self.layout()
+        indice = coluna.indexOf(self.explicacao) + 1
+        for i, w in enumerate((self.nova, self.de_novo, self.guardar_a_nova)):
+            w.setFixedWidth(LARGURA_DO_DIALOGO - 48)
+            coluna.insertWidget(indice + i, w)
+        self.de_novo.returnPressed.connect(self._confirmar)
+
+    def _trocar(self, senha, _guardar, _reiniciar, _mesmo) -> bool:
+        return self.sistema.trocar_senha(self.nova.text(), senha, self.guardar_a_nova.isChecked())
+
+    def _confirmar(self) -> None:
+        from sh_placa.sistema import conferir_a_senha_nova
+
+        if not self._comecou or self.sistema.acao is None or not self.sistema.acao.esperando_o_usuario:
+            problema = conferir_a_senha_nova(self.nova.text())
+            if problema is None and self.nova.text() != self.de_novo.text():
+                problema = "as duas senhas novas não são iguais"
+            if problema is not None:
+                self.mensagem.setText(frase(problema))
+                self.mensagem.setObjectName("erro_do_dialogo")
+                repolir(self.mensagem)
+                self.mensagem.show()
+                self.nova.setFocus()
+                return
+        super()._confirmar()
+
+    def accept(self) -> None:
+        self.nova.clear()
+        self.de_novo.clear()
+        super().accept()
+
+    def reject(self) -> None:
+        a = self.sistema.acao
+        if not (a is not None and a.estado == "rodando" and self._comecou):
+            self.nova.clear()
+            self.de_novo.clear()
+        super().reject()
+

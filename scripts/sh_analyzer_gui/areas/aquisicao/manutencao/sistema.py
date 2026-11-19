@@ -1,6 +1,8 @@
-"""A página Sistema da Manutenção (a F6.5 e a F6.6; a F6.7 acrescenta a senha, os serviços, a rede e o cartão): o
-Linux da placa (o nome, o sistema, o kernel, há quanto tempo está ligada, o fuso, a memória), o monitor ao vivo
-(``monitor.py``: os gráficos, os processos, o ``ler_adc`` esquecido) e a energia: "Reiniciar…" e "Desligar…", seguros (o sistema para antes; desligar da tomada com ele ligado pode corromper o cartão). O diálogo
+"""A página Sistema da Manutenção (a F6.5, a F6.6 e a F6.7): o Linux da placa (o nome, o sistema, o kernel, há quanto
+tempo está ligada, o fuso, a memória), o monitor ao vivo (``monitor.py``: os gráficos, os processos, o ``ler_adc``
+esquecido), o cartão e a limpeza, os serviços da imagem, a rede, a senha (``cartoes_do_sistema.py``) e a energia:
+"Reiniciar…" e "Desligar…", seguros (o sistema para antes; desligar da tomada com ele ligado pode corromper o
+cartão). O diálogo
 confirma, pede o sudo e, com uma captura rodando, pergunta se pode cortá-la; o cartão da ação conta os segundos até a
 placa voltar (ou sumir: aí já pode tirar da tomada).
 """
@@ -17,17 +19,19 @@ from ....servicos.monitor_da_placa import MonitorDaPlaca
 from ....servicos.sistema_da_placa import SistemaDaPlaca
 from ..pecas import fonte
 from ..textos import frase, traduzir
+from .cartoes_do_sistema import CartaoDaRede, CartaoDaSenha, CartaoDoCartao, CartaoDosServicos
 from .comuns import CartaoDaAcao, cartao, coluna_central, fato, ha_quanto_tempo, texto
 from .monitor import CartaoDoMonitor
 
+ACOES_DA_PAGINA = ("reiniciar", "desligar", "parar_ler_adc", "servico", "limpar", "expandir", "trocar_senha")
+
 
 class PaginaDoSistema(QWidget):
-    """A página Sistema. ``confirmar(tipo, None)`` pede à seção o diálogo de ``"reiniciar"``, ``"desligar"`` ou
-    ``"parar_ler_adc"``."""
+    """A página Sistema. ``confirmar(tipo, argumento)`` pede à seção o diálogo de uma das :data:`ACOES_DA_PAGINA`."""
 
     confirmar = Signal(str, object)
 
-    def __init__(self, sistema: SistemaDaPlaca, monitor: MonitorDaPlaca, captura_rodando=None,
+    def __init__(self, sistema: SistemaDaPlaca, monitor: MonitorDaPlaca, captura_rodando=None, senha_padrao=None,
                  parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("pagina_do_sistema")
@@ -46,7 +50,7 @@ class PaginaDoSistema(QWidget):
         cabecalho.addLayout(textos, 1)
         cabecalho.addWidget(self.ler_de_novo, 0, Qt.AlignmentFlag.AlignTop)
 
-        self.cartao_da_acao = CartaoDaAcao(sistema, ("reiniciar", "desligar", "parar_ler_adc"))
+        self.cartao_da_acao = CartaoDaAcao(sistema, ACOES_DA_PAGINA)
         self.monitor = CartaoDoMonitor(monitor, captura_rodando)
         self.monitor.pararCaptura.connect(lambda: self.confirmar.emit("parar_ler_adc", None))
 
@@ -75,7 +79,14 @@ class PaginaDoSistema(QWidget):
         self.coluna.setContentsMargins(24, 20, 24, 20)
         self.coluna.setSpacing(14)
         self.coluna.addLayout(cabecalho)
-        for w in (self.cartao_da_acao, self.cartao_da_placa, self.monitor, self.cartao_da_energia):
+        self.cartao = CartaoDoCartao(sistema)
+        self.servicos = CartaoDosServicos(sistema)
+        self.rede = CartaoDaRede(sistema)
+        self.senha = CartaoDaSenha(sistema, senha_padrao)
+        for c in (self.cartao, self.servicos, self.rede, self.senha):
+            c.confirmar.connect(self.confirmar.emit)
+        for w in (self.cartao_da_acao, self.cartao_da_placa, self.monitor, self.cartao, self.servicos, self.rede,
+                  self.senha, self.cartao_da_energia):
             self.coluna.addWidget(w)
         self.coluna.addStretch(1)
         fora = QVBoxLayout(self)
@@ -97,12 +108,13 @@ class PaginaDoSistema(QWidget):
         s = self.sistema
         d = s.detalhe
         self.ler_de_novo.setEnabled(not s.lendo)
+        for w in (self.cartao_da_placa, self.cartao, self.servicos, self.rede, self.senha):
+            w.setVisible(d is not None)
         if d is None:
             self.subtitulo.setText(traduzir("Lendo o sistema da placa…") if s.lendo else frase(s.erro))
-            self.cartao_da_placa.hide()
         else:
-            self.subtitulo.setText(traduzir("O Linux da placa e a energia dela."))
-            self.cartao_da_placa.show()
+            self.subtitulo.setText(traduzir("O Linux da placa: o que roda, o cartão, os serviços, a rede, a senha e "
+                                            "a energia."))
             self._fatos(d)
         self._acao_mudou()
 

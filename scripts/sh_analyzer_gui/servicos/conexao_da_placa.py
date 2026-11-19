@@ -711,6 +711,15 @@ class ConexaoDaPlaca(QObject):
             self._chamada_de_reconexao = self.servico.chamar("reconectar", self._reconectar, sessao,
                                                              ao_terminar=self._reconectou)
 
+    def senha_trocada(self, nova: str) -> None:
+        """A senha do usuário da placa mudou (a manutenção a trocou): a sessão passa a usar a nova (a reconexão por
+        senha, o sudo); a chave do aplicativo continua valendo."""
+        if self._tentativa is not None and self._tentativa.senha is not None:
+            self._tentativa = replace(self._tentativa, senha=nova)
+        sessao = self._sessao
+        if sessao is not None and sessao.conexao is not None and sessao.conexao.senha is not None:
+            sessao.conexao.senha = nova
+
     # ------------------------------------------------------------------ a queda esperada (o reinício, o desligamento)
 
     def esperar(self, motivo: str | None) -> None:

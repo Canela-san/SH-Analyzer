@@ -20,6 +20,7 @@ para ele.
 from __future__ import annotations
 
 from PySide6.QtWidgets import QHBoxLayout, QStackedWidget, QWidget
+from sh_placa.destino import SENHA_PADRAO_DA_IMAGEM
 
 from ... import preferencias
 from ...componentes.toast import Toast
@@ -105,7 +106,9 @@ class AreaDeAquisicao(QWidget):
         self.servico_do_monitor = MonitorDaPlaca(conexao, parent=self)
         self.manutencao = Manutencao(conexao, self.servico_da_manutencao, self.servico_do_sistema,
                                      self.servico_do_monitor, dialogos_de, captura_rodando=lambda: self.captura.rodando,
-                                     registrar_no_caderno=self.caderno.registrar)
+                                     registrar_no_caderno=self.caderno.registrar,
+                                     senha_padrao=lambda: SENHA_PADRAO_DA_IMAGEM in (conexao.senha_da_placa(),
+                                                                                    saude.senha_do_sudo))
         entradas_do_caderno.ligar(self.caderno, captura=self.captura, conferencia=self.conferencia,
                                   transferencias=self.transferencias, saude=saude, rotinas=self.rotinas,
                                   manutencao=self.servico_da_manutencao, sistema=self.servico_do_sistema)

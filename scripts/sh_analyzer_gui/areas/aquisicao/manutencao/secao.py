@@ -7,13 +7,14 @@ from __future__ import annotations
 from PySide6.QtWidgets import QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
 
 from ....componentes.basicos import Segmentado
+from ....componentes.numeros import formatar_bytes
 from ....componentes.painel import EstadoVazio
 from ....servicos.conexao_da_placa import ConexaoDaPlaca
 from ....servicos.manutencao_da_placa import ManutencaoDaPlaca
 from ....servicos.monitor_da_placa import MonitorDaPlaca
 from ....servicos.sistema_da_placa import SistemaDaPlaca
 from ..textos import traduzir
-from .comuns import DialogoDaAcao
+from .comuns import DialogoDaAcao, DialogoDaSenhaNova
 from .firmware import DialogoDaAtualizacao, PaginaDoFirmware
 from .inicializacao import PaginaDaInicializacao
 from .logs import PaginaDosLogs
@@ -28,7 +29,7 @@ class Manutencao(QWidget):
 
     def __init__(self, conexao: ConexaoDaPlaca, manutencao: ManutencaoDaPlaca, sistema: SistemaDaPlaca,
                  monitor: MonitorDaPlaca, dialogos_de=None, captura_rodando=None, registrar_no_caderno=None,
-                 parent: QWidget | None = None):
+                 senha_padrao=None, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("secao_manutencao")
         self.conexao, self.manutencao, self.sistema, self.dialogos_de = conexao, manutencao, sistema, dialogos_de
@@ -39,7 +40,7 @@ class Manutencao(QWidget):
         self.inicializacao = PaginaDaInicializacao(sistema)
         self.inicializacao.confirmar.connect(self.confirmar_acao)
         self.monitor = monitor
-        self.sistema_ = PaginaDoSistema(sistema, monitor, captura_rodando)
+        self.sistema_ = PaginaDoSistema(sistema, monitor, captura_rodando, senha_padrao)
         self.sistema_.confirmar.connect(self.confirmar_acao)
         self.logs = PaginaDosLogs(monitor, dialogos_de)
         if registrar_no_caderno is not None:
@@ -177,4 +178,54 @@ class Manutencao(QWidget):
                     "; ".join(f"PID {c.pid}: {c.linha}" for c in capturas) or traduzir("Nenhum ler_adc à vista agora.")),
                 confirmar=traduzir("Parar"), comando=sh_sistema.roteiro_de_parar_ler_adc(), perigo=True,
                 comecar=lambda senha, guardar, _r, _m: s.parar_ler_adc(senha, guardar), parent=self.window()))
+        if tipo == "servico":
+            unidade, ligar = argumento
+            servico = next((x for x in s.servicos if x.get("unidade") == unidade), {})
+            memoria = servico.get("memoria_kib")
+            explicacao = traduzir(servico.get("texto") or "") + " " + (
+                traduzir("Ele volta a rodar agora e sobe nos próximos boots.") if ligar else
+                traduzir("Ele para agora e não sobe mais no boot{}; dá para ligar de novo por aqui.").format(
+                    traduzir(" (libera {} de memória)").format(formatar_bytes(memoria * 1024)) if memoria else ""))
+            return self._abrir(DialogoDaAcao(
+                s, janela=traduzir("Serviços da imagem"),
+                titulo=(traduzir("Ligar o {}") if ligar else traduzir("Desligar o {}")).format(unidade),
+                explicacao=explicacao.strip(), confirmar=traduzir("Ligar") if ligar else traduzir("Desligar"),
+                comando=sh_sistema.roteiro_do_servico(unidade, ligar),
+                comecar=lambda senha, guardar, _r, _m: s.ligar_servico(unidade, ligar, senha, guardar),
+                parent=self.window()))
+        if tipo == "limpar":
+            qual = argumento
+            tamanho = ((s.detalhe or {}).get("ocupacao") or {}).get(qual) or 0
+            textos = {"apt": traduzir("Os pacotes que o apt baixou ({}) saem de /var/cache/apt/archives; o apt baixa de "
+                                      "novo se um dia precisar."),
+                      "diario": traduzir("O diário do systemd guardado no cartão ({}) fica com 16 MB: o mais antigo "
+                                         "sai; o deste boot fica inteiro."),
+                      "tarefas": traduzir("As pastas das tarefas da manutenção que terminaram ({}) saem de "
+                                          "~/.sh-analyzer/tarefas; a que roda fica.")}
+            return self._abrir(DialogoDaAcao(
+                s, janela=traduzir("Limpar o cartão"), titulo=traduzir("Limpar {}").format(
+                    traduzir(sh_sistema.LIMPEZAS[qual])),
+                explicacao=textos[qual].format(formatar_bytes(tamanho)), confirmar=traduzir("Limpar"),
+                comando="" if qual == "tarefas" else sh_sistema.roteiro_de_limpar(qual),
+                comecar=lambda senha, guardar, _r, _m: s.limpar(qual, senha, guardar), parent=self.window()))
+        if tipo == "expandir":
+            cartao = (s.detalhe or {}).get("cartao") or {}
+            return self._abrir(DialogoDaAcao(
+                s, janela=traduzir("Expandir a partição"), titulo=traduzir("Expandir a partição até o fim do cartão"),
+                explicacao=traduzir("O script da imagem ({}) muda a tabela de partições: a {} passa a ir até o fim do "
+                                    "cartão, ganhando {}. O sistema de arquivos cresce no boot seguinte. Faça antes "
+                                    "de encher o cartão, com as capturas já no computador.").format(
+                    cartao.get("script_de_expandir"), cartao.get("particao"),
+                    formatar_bytes(cartao.get("fora_bytes") or 0)),
+                confirmar=traduzir("Expandir"),
+                comando=sh_sistema.roteiro_de_expandir(cartao.get("script_de_expandir") or "/opt/x") + "\n" +
+                comando_do_reinicio, reiniciar_depois=True, rotulo_do_reinicio=traduzir(
+                    "Reiniciar a placa logo depois (o sistema de arquivos só cresce no boot)"),
+                captura_rodando=capturando,
+                comecar=lambda senha, guardar, reiniciar, _m: s.expandir_a_particao(
+                    "reiniciar" if reiniciar else None, senha, guardar), parent=self.window()))
+        if tipo == "trocar_senha":
+            return self._abrir(DialogoDaSenhaNova(s, comando=sh_sistema.roteiro_da_senha(
+                s.conexao.conexao_ssh.destino.usuario if s.conexao.conexao_ssh is not None else "debian"),
+                parent=self.window()))
         raise ValueError(f"ação desconhecida: {tipo!r}")

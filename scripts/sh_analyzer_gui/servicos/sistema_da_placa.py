@@ -22,10 +22,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, Signal
+from sh_placa.agente import ErroDaPlaca
 from shiboken6 import isValid
 
 from .conexao_da_placa import ConexaoDaPlaca
@@ -58,6 +60,7 @@ class AcaoDoSistema:
     comecou_em: float = field(default_factory=time.monotonic)
     pediu_em: float | None = None            # quando o reinício (ou o desligamento) foi pedido
     terminou_em: float | None = None
+    refazer: Callable[[str | None, bool], None] | None = field(default=None, repr=False)   # a resposta do usuário
 
     @property
     def rodando(self) -> bool:
@@ -81,6 +84,8 @@ class SistemaDaPlaca(QObject):
         self.propostas: list[Mudanca] = []
         self.uenv_estranho = ""                # o porquê de o assistente não mexer no uEnv.txt
         self.detalhe: dict | None = None
+        self.internet: dict | None = None
+        self.testando_internet = False
         self.lendo = False
         self.erro = ""
         self.acao: AcaoDoSistema | None = None
@@ -98,6 +103,7 @@ class SistemaDaPlaca(QObject):
         if c.estado == "conectada" and c.sessoes != self._sessao:
             self._sessao = c.sessoes
             self.inicializacao, self.detalhe, self.propostas, self.uenv_estranho, self.erro = None, None, [], "", ""
+            self.internet, self.testando_internet = None, False
             if self.acao is not None and not self.acao.rodando:
                 self.acao = None
                 self.acaoMudou.emit()
@@ -247,8 +253,6 @@ class SistemaDaPlaca(QObject):
     async def _com_a_senha(self, senha: str | None, guardar: bool, obter_o_cofre, funcao, *args):
         """Roda ``funcao(senha, *args)`` com a senha (a dada, senão a do cofre); ``None`` sem nenhuma. Guarda a senha
         no cofre, se pedido, depois que a placa a aceitou. Devolve ``(resultado, senha, aviso do cofre)``."""
-        from sh_placa.agente import ErroDaPlaca
-
         cofre = obter_o_cofre()
         conta = self.conexao.conexao_ssh.destino.conta if self.conexao.conexao_ssh is not None else ""
         if senha is None:
@@ -307,7 +311,11 @@ class SistemaDaPlaca(QObject):
         if a is None or not a.esperando_o_usuario:
             return False
         a.mesmo_capturando = a.mesmo_capturando or mesmo_capturando
-        if a.nome == "parar_ler_adc":
+        if a.refazer is not None and not a.detalhes.get("feito"):
+            a.refazer(senha, guardar)
+        elif a.refazer is not None:
+            self._energia(a, senha, guardar)
+        elif a.nome == "parar_ler_adc":
             self._parar_de_novo(a, senha, guardar)
         elif a.nome in ("reiniciar", "desligar") or a.detalhes.get("gravado"):
             self._energia(a, senha, guardar)
@@ -402,6 +410,169 @@ class SistemaDaPlaca(QObject):
         self.saude.lembrar_senha_do_sudo(senha)
         acao.detalhes["dito"] = dito
         self._terminar(acao, "feita", aviso)
+
+    # ------------------------------------------------------------------ as ações com o sudo (a F6.7)
+
+    def _com_sudo(self, acao: AcaoDoSistema, descricao: str, funcao, senha: str | None, guardar: bool,
+                  depois: Callable[[AcaoDoSistema, Any, str], None] | None = None) -> None:
+        """Roda ``funcao(conexao_ssh, senha)`` com a senha do sudo (a da sessão, a da placa ou a do cofre) e termina a
+        ação; ``depois(acao, resultado, senha)`` no lugar do "feita" (o reinício que vem depois, por exemplo). A senha
+        recusada e a que falta param esperando o usuário (:meth:`repetir`)."""
+        conexao_ssh = self.conexao.conexao_ssh
+        if conexao_ssh is None:
+            self._terminar(acao, "falhou", "sem conexão com a placa")
+            return
+        acao.refazer = lambda senha_, guardar_: self._com_sudo(acao, descricao, funcao, senha_, guardar_, depois)
+        acao.estado, acao.mensagem = "rodando", ""
+        self.acaoMudou.emit()
+
+        async def rodar(senha_):
+            return await funcao(conexao_ssh, senha_)
+
+        self._chamar(descricao, self._com_a_senha, self._senha(senha), guardar, self.conexao.cofre, rodar,
+                     ao_terminar=lambda ch: self._fez(ch, acao, depois))
+
+    def _fez(self, chamada: Chamada, acao: AcaoDoSistema, depois) -> None:
+        if chamada.estado != "concluida":
+            self._falhou(acao, chamada)
+            return
+        if chamada.resultado is None:
+            self._terminar(acao, "precisa_da_senha", "A placa pede a senha do sudo (a do usuário dela): esta sessão "
+                                                     "e o cofre do sistema não a têm.")
+            return
+        resultado, senha, aviso = chamada.resultado
+        self.saude.lembrar_senha_do_sudo(senha)
+        acao.detalhes.update(resultado=resultado, feito=True)
+        if depois is not None:
+            depois(acao, resultado, senha)
+            return
+        self._terminar(acao, "feita", aviso)
+        self.ler()
+
+    def ligar_servico(self, unidade: str, ligar: bool, senha: str | None = None, guardar: bool = False) -> bool:
+        """Liga (``enable --now``) ou desliga (``disable --now``) um serviço opcional da imagem."""
+        from sh_placa import sistema
+
+        servico = next((s for s in self.servicos if s.get("unidade") == unidade), None)
+        if servico is None or servico.get("papel") != "opcional":
+            return False                          # os necessários (o SSH, o dnsmasq do USB) não se desligam
+        acao = AcaoDoSistema("servico", f"{'Ligar' if ligar else 'Desligar'} o {unidade}",
+                             detalhes={"unidade": unidade, "ligar": ligar})
+        if not self._comecar(acao):
+            return False
+        self._com_sudo(acao, f"{'ligar' if ligar else 'desligar'} o {unidade}",
+                       lambda c, s: sistema.ligar_servico(c, unidade, ligar, s), senha, guardar)
+        return True
+
+    def limpar(self, qual: str, senha: str | None = None, guardar: bool = False) -> bool:
+        """Limpa ``qual`` do cartão (``"tarefas"``, ``"diario"``, ``"apt"``); o liberado vai em ``detalhes``."""
+        from sh_placa import sistema
+
+        if qual not in sistema.LIMPEZAS:
+            return False
+        antes = (self.detalhe or {}).get("ocupacao", {}).get(qual)
+        acao = AcaoDoSistema("limpar", f"Limpar {sistema.LIMPEZAS[qual]}", detalhes={"qual": qual, "antes": antes})
+        if not self._comecar(acao):
+            return False
+        if qual == "tarefas":                     # sem o sudo: as tarefas são do usuário
+            acao.estado = "rodando"
+            self.acaoMudou.emit()
+            conexao_ssh = self.conexao.conexao_ssh
+            self._chamar("limpar as tarefas terminadas", sistema.limpar_as_tarefas, conexao_ssh,
+                         ao_terminar=lambda ch: self._limpou_as_tarefas(ch, acao))
+            return True
+        self._com_sudo(acao, f"limpar {sistema.LIMPEZAS[qual]}", lambda c, s: sistema.limpar(c, qual, s), senha,
+                       guardar)
+        return True
+
+    def _limpou_as_tarefas(self, chamada: Chamada, acao: AcaoDoSistema) -> None:
+        if chamada.estado != "concluida":
+            self._falhou(acao, chamada)
+            return
+        acao.detalhes.update(resultado=chamada.resultado, feito=True)
+        self._terminar(acao, "feita")
+        self.ler()
+
+    def expandir_a_particao(self, energia: str | None = "reiniciar", senha: str | None = None,
+                            guardar: bool = False) -> bool:
+        """A partição da raiz até o fim do cartão (o script da imagem); o sistema de arquivos cresce no boot seguinte,
+        e, com ``energia``, a placa reinicia logo."""
+        from sh_placa import sistema
+
+        script = ((self.detalhe or {}).get("cartao") or {}).get("script_de_expandir")
+        if not script:
+            return False
+        acao = AcaoDoSistema("expandir", "Expandir a partição", energia=energia,
+                             detalhes={"fora": ((self.detalhe or {}).get("cartao") or {}).get("fora_bytes")})
+
+        def depois(acao_, dito, senha_):
+            acao_.detalhes["dito"] = dito
+            if acao_.energia is None:
+                self._terminar(acao_, "feita")
+                self.ler()
+            else:
+                self._energia(acao_, senha_, False)
+
+        if not self._comecar(acao):
+            return False
+        self._com_sudo(acao, "expandir a partição", lambda c, s: sistema.expandir_a_particao(c, script, s), senha,
+                       guardar, depois)
+        return True
+
+    def trocar_senha(self, nova: str, senha: str | None = None, guardar: bool = False) -> bool:
+        """Troca a senha do usuário da placa (a do SSH e a do sudo, daí em diante). A de agora é a do sudo de sempre
+        (a da sessão, a da placa, a do cofre, ou ``senha``); a nova passa a valer na sessão e vai para o cofre se ele
+        tinha a antiga ou se ``guardar``."""
+        from sh_placa import sistema
+
+        if sistema.conferir_a_senha_nova(nova) is not None or self.conexao.conexao_ssh is None:
+            return False
+        conexao_ssh = self.conexao.conexao_ssh
+        conta, usuario = conexao_ssh.destino.conta, conexao_ssh.destino.usuario
+        obter_o_cofre = self.conexao.cofre
+        acao = AcaoDoSistema("trocar_senha", "Trocar a senha da placa", detalhes={"usuario": usuario})
+
+        async def trocar(c, senha_):
+            await sistema.trocar_senha(c, senha_, nova, usuario)
+            cofre = obter_o_cofre()
+            no_cofre = await asyncio.to_thread(cofre.senha, conta) is not None
+            aviso = ""
+            if guardar or no_cofre:
+                try:
+                    await asyncio.to_thread(cofre.guardar, conta, nova)
+                except ErroDaPlaca as e:
+                    aviso = str(e)
+            return guardar or no_cofre, aviso
+
+        def depois(acao_, resultado, _senha_antiga):
+            no_cofre, aviso = resultado
+            self.saude.lembrar_senha_do_sudo(nova)
+            self.conexao.senha_trocada(nova)
+            acao_.detalhes.update(no_cofre=no_cofre, resultado=None)
+            self._terminar(acao_, "feita", aviso)
+
+        if not self._comecar(acao):
+            return False
+        self._com_sudo(acao, "trocar a senha da placa", trocar, senha, False, depois)
+        return True
+
+    @property
+    def servicos(self) -> list[dict]:
+        return list((self.detalhe or {}).get("servicos") or [])
+
+    def testar_internet(self) -> Chamada | None:
+        """Se a placa alcança a internet (o ``apt`` e o NTP precisam): o resultado em :attr:`internet`."""
+        cliente = self.conexao.cliente
+        if cliente is None or self.testando_internet:
+            return None
+        self.testando_internet = True
+        self.mudou.emit()
+        return self._chamar("testar a internet da placa", cliente.chamar, "internet", ao_terminar=self._testou)
+
+    def _testou(self, chamada: Chamada) -> None:
+        self.testando_internet = False
+        self.internet = chamada.resultado if chamada.estado == "concluida" else {"erro": chamada.erro}
+        self.mudou.emit()
 
     # ------------------------------------------------------------------ reiniciar e desligar
 
