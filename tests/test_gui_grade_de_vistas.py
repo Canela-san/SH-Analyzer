@@ -101,7 +101,7 @@ def test_no_2x2_as_colunas_andam_juntas(qtbot):
 
 # ---------------------------------------------------------------------- na janela
 
-def _duas_vistas_de_tempo(janela, qtbot, tmp_path):
+def _duas_vistas_de_tempo(janela, qtbot, tmp_path):  # noqa: F811
     f1 = abrir(janela, qtbot, captura(tmp_path / "a"))
     f2 = abrir(janela, qtbot, captura(tmp_path / "b", n=60_000))
     janela.area.plotar_canal(f1, 0)
@@ -111,7 +111,7 @@ def _duas_vistas_de_tempo(janela, qtbot, tmp_path):
     return v1, v2
 
 
-def test_as_vistas_de_tempo_da_grade_andam_juntas(janela, qtbot, tmp_path):
+def test_as_vistas_de_tempo_da_grade_andam_juntas(janela, qtbot, tmp_path):  # noqa: F811
     v1, v2 = _duas_vistas_de_tempo(janela, qtbot, tmp_path)
     w1, w2 = janela.area.widget_da_vista(v1), janela.area.widget_da_vista(v2)
     janela.acoes["disposicao_lado_a_lado"].trigger()
@@ -137,7 +137,7 @@ def test_as_vistas_de_tempo_da_grade_andam_juntas(janela, qtbot, tmp_path):
     assert w2.janela_de_tempo() == pytest.approx((0.03, 0.05))       # religadas: a ativa manda
 
 
-def test_os_espectros_andam_juntos_na_frequencia_em_hz(janela, qtbot, tmp_path):
+def test_os_espectros_andam_juntos_na_frequencia_em_hz(janela, qtbot, tmp_path):  # noqa: F811
     v1, v2 = _duas_vistas_de_tempo(janela, qtbot, tmp_path)
     janela.area.ativar_vista(v1)
     e1 = janela.area.abrir_espectro()
@@ -154,7 +154,7 @@ def test_os_espectros_andam_juntos_na_frequencia_em_hz(janela, qtbot, tmp_path):
     assert w2.faixa_de_frequencia() == pytest.approx((500.0, 5000.0), rel=1e-6)
 
 
-def test_a_grade_volta_com_o_projeto(janela, qtbot, tmp_path):
+def test_a_grade_volta_com_o_projeto(janela, qtbot, tmp_path):  # noqa: F811
     v1, v2 = _duas_vistas_de_tempo(janela, qtbot, tmp_path)
     janela.area.restaurar_grade({"disposicao": "empilhadas", "celulas": [v1.id, v2.id], "ligar": False})
     assert janela.area.estado_da_grade() == {"disposicao": "empilhadas", "celulas": [v1.id, v2.id], "ligar": False}
