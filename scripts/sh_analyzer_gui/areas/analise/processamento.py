@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMenu,
     QSpinBox,
     QToolButton,
@@ -35,7 +36,20 @@ from PySide6.QtWidgets import (
 )
 
 from ...componentes.basicos import CampoComUnidade
-from ...dados.cadeia import Cadeia, CorrecaoSonda, Etapa, EtapaInvalida, Filtro, RemoverDC
+from ...dados.cadeia import (
+    Cadeia,
+    CorrecaoSonda,
+    Derivar,
+    Envoltoria,
+    Etapa,
+    EtapaInvalida,
+    Expressao,
+    Filtro,
+    FrequenciaInstantanea,
+    Integrar,
+    RemoverDC,
+    RMSMovel,
+)
 from ...modelo.comandos import MudarTracos
 from ...modelo.objetos import Projeto, Traco
 
@@ -65,12 +79,52 @@ def nova_etapa(chave: str, taxa_hz: float) -> Etapa:
         return CorrecaoSonda()
     if chave == "remover_dc":
         return RemoverDC()
+    if chave == "derivar":
+        return Derivar()
+    if chave == "integrar":
+        return Integrar(max(1.0, min(5.0, taxa_hz / 4)))
+    if chave == "rms_movel":
+        return RMSMovel()
+    if chave == "envoltoria":
+        return Envoltoria(min(20.0, taxa_hz / 8))
+    if chave == "frequencia_instantanea":
+        return FrequenciaInstantanea(60.0)
+    if chave in EXPRESSOES_PRONTAS:
+        return Expressao(EXPRESSOES_PRONTAS[chave][0])
     raise KeyError(chave)
 
 
+EXPRESSOES_PRONTAS = {"expressao": ("a", "Expressão…"), "a_menos_b": ("a - c1", "A − B (a diferença)"),
+                      "a_vezes_b": ("a * c1", "A × B (a potência instantânea)"),
+                      "a_sobre_b": ("a / c1", "A ÷ B (a razão)")}
+"""As expressões prontas do menu (a de c1; o canal muda no campo da etapa)."""
+
 ETAPAS_NOVAS = (("passa_altas", "Passa-altas"), ("passa_baixas", "Passa-baixas"), ("passa_faixa", "Passa-faixa"),
                 ("rejeita_faixa", "Rejeita-faixa"), ("correcao_sonda", "Correção de sonda"),
-                ("remover_dc", "Remover o DC"))
+                ("remover_dc", "Remover o DC"), ("derivar", "Derivar"), ("integrar", "Integrar"),
+                ("rms_movel", "RMS móvel"), ("envoltoria", "Envoltória (Hilbert)"),
+                ("frequencia_instantanea", "Frequência instantânea"),
+                *((chave, nome) for chave, (_e, nome) in EXPRESSOES_PRONTAS.items()))
+
+NOMES_DAS_ETAPAS = {Derivar: "Derivar", Integrar: "Integrar", RMSMovel: "RMS móvel", Envoltoria: "Envoltória",
+                    FrequenciaInstantanea: "Frequência instantânea", Expressao: "Expressão"}
+PARAMETROS_DAS_ETAPAS = {
+    Integrar: (("corte_hz", "Corte do passa-altas", "Hz", 1.0, "Abaixo de ~10× o corte, a integral perde amplitude e "
+                "fase (a 10×, 0,5 % e 5,7°); um corte baixo pede uma memória longa"),),
+    RMSMovel: (("janela_ms", "Janela", "s", 1e-3, "A janela centrada do RMS; use ciclos inteiros da fundamental "
+                "(16,667 ms a 60 Hz, 20 ms a 50 Hz)"),),
+    Envoltoria: (("freq_min_hz", "Frequência mínima", "Hz", 1.0, "A menor frequência que a envoltória acompanha "
+                  "sem erro (o FIR de Hilbert tem 8 períodos dela)"),),
+    FrequenciaInstantanea: (("nominal_hz", "Frequência nominal", "Hz", 1.0, "O passa-faixa em volta dela (de 0,5× a "
+                             "2×) tira os harmônicos antes dos cruzamentos por zero"),),
+}
+"""Os parâmetros numéricos de cada etapa: o campo, o rótulo, a unidade do campo, o fator do campo para a etapa e a
+dica."""
+EXPLICACOES = {
+    Derivar: "A derivada no tempo, pela diferença central (× a taxa). A unidade vira a do canal por segundo.",
+    RemoverDC: "Tira a média do canal inteiro (calculada uma vez, das amostras), passada pelas etapas de antes. O "
+               "traço não muda de altura a cada pan.",
+}
 
 
 def inserir(cadeia: Cadeia, etapa: Etapa) -> Cadeia:
@@ -86,7 +140,7 @@ def nome_da_etapa(etapa: Etapa) -> str:
         return NOMES_DOS_FILTROS[etapa.filtro]
     if isinstance(etapa, CorrecaoSonda):
         return "Correção de sonda"
-    return "Remover o DC"
+    return NOMES_DAS_ETAPAS.get(type(etapa), "Remover o DC")
 
 
 class CartaoDeEtapa(QFrame):
@@ -117,8 +171,8 @@ class CartaoDeEtapa(QFrame):
                                                                    self.tr("Ligar") if marcada else self.tr("Desligar")))
         self.resumo = QToolButton()
         self.resumo.setObjectName("resumo_etapa")
-        self.resumo.setText(f"{nome_da_etapa(etapa)} · {etapa.resumo()}" if not isinstance(etapa, RemoverDC)
-                            else nome_da_etapa(etapa))
+        self.resumo.setText(f"{nome_da_etapa(etapa)} · {etapa.resumo()}"
+                            if not isinstance(etapa, (RemoverDC, Derivar)) else nome_da_etapa(etapa))
         self.resumo.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.resumo.setAutoRaise(True)
         self.resumo.setCheckable(True)
@@ -204,12 +258,63 @@ class CartaoDeEtapa(QFrame):
             self.problema.setWordWrap(True)
             self.problema.hide()
             grade.addWidget(self.problema, 1, 0, 1, 2)
+        elif isinstance(etapa, Expressao):
+            self.expressao = QLineEdit(etapa.expressao)
+            self.expressao.setObjectName("expressao_etapa")
+            self.expressao.setToolTip(self.tr(
+                "a é o traço; c0, c1… os canais da captura (na unidade física). Valem + − × ÷ ^, os parênteses, pi, e "
+                "e as funções abs, sqrt, exp, log, log10, sin, cos, tan, atan, sign, min, max, atan2 e hypot. Use o "
+                "ponto nos decimais."))
+            self.expressao.editingFinished.connect(self._expressao_mudou)
+            self.unidade_da_saida = QLineEdit(etapa.unidade_da_saida)
+            self.unidade_da_saida.setObjectName("unidade_da_expressao")
+            self.unidade_da_saida.setPlaceholderText(self.tr("a da entrada"))
+            self.unidade_da_saida.setToolTip(self.tr("A unidade do resultado (W para a × b com V e A); vazia, a da "
+                                                     "entrada"))
+            self.unidade_da_saida.editingFinished.connect(self._expressao_mudou)
+            grade.addWidget(QLabel(self.tr("Conta")), 0, 0)
+            grade.addWidget(self.expressao, 0, 1)
+            grade.addWidget(QLabel(self.tr("Unidade")), 1, 0)
+            grade.addWidget(self.unidade_da_saida, 1, 1)
+            self.problema = QLabel()
+            self.problema.setObjectName("problema_etapa")
+            self.problema.setWordWrap(True)
+            self.problema.hide()
+            grade.addWidget(self.problema, 2, 0, 1, 2)
+        elif type(etapa) in PARAMETROS_DAS_ETAPAS:
+            self.campos = {}
+            for linha, (campo, rotulo, unidade, fator, dica) in enumerate(PARAMETROS_DAS_ETAPAS[type(etapa)]):
+                editor = CampoComUnidade(unidade, getattr(etapa, campo) * fator, minimo=0.0, digitos=5)
+                editor.setObjectName(f"parametro_{campo}")
+                editor.setToolTip(self.tr(dica))
+                editor.valorMudou.connect(lambda v, c=campo, f=fator: self._parametro_mudou(c, v / f))
+                self.campos[campo] = editor
+                grade.addWidget(QLabel(self.tr(rotulo)), linha, 0)
+                grade.addWidget(editor, linha, 1)
         else:
-            texto = QLabel(self.tr("Tira a média do canal inteiro (calculada uma vez, das amostras), passada pelas "
-                                   "etapas de antes. O traço não muda de altura a cada pan."))
+            texto = QLabel(self.tr(EXPLICACOES.get(type(etapa), EXPLICACOES[RemoverDC])))
             texto.setWordWrap(True)
             grade.addWidget(texto, 0, 0, 1, 2)
         grade.setColumnStretch(1, 1)
+
+    def _parametro_mudou(self, campo: str, valor: float) -> None:
+        try:
+            nova = replace(self.etapa, **{campo: valor})
+        except EtapaInvalida as e:
+            self.campos[campo].marcar_invalido(str(e))
+            return
+        self._propor(nova, self.campos[campo])
+
+    def _expressao_mudou(self) -> None:
+        try:
+            nova = replace(self.etapa, expressao=self.expressao.text(),
+                           unidade_da_saida=self.unidade_da_saida.text().strip())
+        except EtapaInvalida as e:
+            self.problema.setText(str(e))
+            self.problema.show()
+            return
+        self.problema.hide()
+        self._propor(nova, self.expressao)
 
     def _propor(self, etapa: Etapa, campo=None, texto: str = "") -> bool:
         """Manda a etapa nova se ela vale para todos os canais selecionados; senão, marca o campo."""
@@ -217,6 +322,11 @@ class CartaoDeEtapa(QFrame):
             if isinstance(etapa, Filtro):
                 for taxa in self.taxas:
                     api.validar_filtro(etapa.filtro, etapa.cortes, etapa.ordem, taxa)
+            elif type(etapa) in PARAMETROS_DAS_ETAPAS:
+                from ...dados.cadeia import ContextoDaCadeia
+
+                for taxa in self.taxas:
+                    etapa.validar(ContextoDaCadeia(taxa))
         except api.ErroSHAN as e:
             if isinstance(campo, CampoComUnidade):
                 campo.marcar_invalido(str(e))
@@ -307,6 +417,8 @@ class SecaoDeProcessamento(QWidget):
             acao.triggered.connect(lambda _=False, c=chave: self.adicionar(c))
             self.acoes.append(acao)
             self.menu.addAction(acao)
+            if chave in ("rejeita_faixa", "remover_dc", "frequencia_instantanea"):
+                self.menu.addSeparator()          # os filtros · a sonda e o DC · as transformações · as contas
         self.botao_adicionar = QToolButton()
         self.botao_adicionar.setObjectName("adicionar_etapa")
         self.botao_adicionar.setText(self.tr("Adicionar etapa"))
