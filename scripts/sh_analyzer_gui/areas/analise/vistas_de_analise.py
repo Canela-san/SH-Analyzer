@@ -507,7 +507,7 @@ class VistaDeEventos(VistaLigada):
                 aviso = self.tr("sem os picos de supraharmônicos: {}").format(e)
         resto = (lambda f: progresso(0.5 + 0.5 * f)) if progresso is not None and o.supraharmonicos else progresso
         lista = q.eventos(trecho, q.CriteriosDosEventos(o.referencia or None, o.tensao), indices_prontos=indices,
-                          progresso=resto, cancelado=cancelado)
+                          progresso=resto, cancelado=cancelado, numero=_numero)
         return ResultadoDosEventos(lista, indices, aviso)
 
     def eventos_mostrados(self) -> list:
@@ -599,7 +599,7 @@ class VistaDeQualidade(VistaLigada):
     tempo, os agregados de 150/180 ciclos e a tabela das estatísticas de todos os índices."""
 
     nome_da_conta = "Qualidade de energia"
-    opcoes_do_desenho = ("indice", "agregados")
+    opcoes_do_desenho = ("indice", "agregados", "marcar")
 
     def _montar_conteudo(self, coluna: QVBoxLayout) -> None:
         self.setObjectName("vista_qualidade")
@@ -614,7 +614,14 @@ class VistaDeQualidade(VistaLigada):
         self.agregados.setToolTip(self.tr("Os agregados de ~3 s (15 janelas): o RMS dos índices de RMS, a média dos "
                                           "outros (IEC 61000-4-30)"))
         self.agregados.toggled.connect(lambda v: self._mudar(agregados=bool(v)))
-        for w in (self.indice, self.agregados):
+        self.marcar = QCheckBox(self.tr("Marcar os eventos"))
+        self.marcar.setObjectName("marcar_da_qualidade")
+        self.marcar.setToolTip(self.tr("Marca as janelas com um afundamento, uma elevação ou uma interrupção da tensão "
+                                       "(o RMS de meio ciclo fora de 90 % a 110 % da mediana) e as tira das "
+                                       "estatísticas e dos agregados, como a IEC 61000-4-30 manda; num traço de "
+                                       "corrente, desligue"))
+        self.marcar.toggled.connect(lambda v: self._mudar(marcar=bool(v)))
+        for w in (self.indice, self.agregados, self.marcar):
             self._linha.addWidget(w)
         _botao_de_copiar(self, "copiar_janelas_da_qualidade", self.tr("Copiar as janelas"),
                          self.tr("Copia todos os índices de cada janela (uma linha por janela) para a planilha"),
@@ -626,9 +633,10 @@ class VistaDeQualidade(VistaLigada):
         self.grafico.showGrid(x=True, y=True, alpha=0.15)
         self.grafico.setLabel("bottom", self.tr("tempo"), units="s")
         self.curva = pg.PlotDataItem([], [])
+        self.curva_marcada = pg.PlotDataItem([], [])
         self.curva_agregada = pg.PlotDataItem([], [])
-        self.grafico.addItem(self.curva)
-        self.grafico.addItem(self.curva_agregada)
+        for item in (self.curva, self.curva_marcada, self.curva_agregada):
+            self.grafico.addItem(item)
         self.tabela = _tabela("tabela_qualidade", 6)
         divisor = QSplitter(Qt.Orientation.Vertical)
         divisor.addWidget(self.grafico)
@@ -639,9 +647,10 @@ class VistaDeQualidade(VistaLigada):
     def _mostrar_opcoes_proprias(self) -> None:
         o = self.opcoes
         self.indice.setCurrentIndex(esp.INDICES_DE_QUALIDADE.index(o.indice))
-        self.agregados.blockSignals(True)
-        self.agregados.setChecked(o.agregados)
-        self.agregados.blockSignals(False)
+        for caixa, valor in ((self.agregados, o.agregados), (self.marcar, o.marcar)):
+            caixa.blockSignals(True)
+            caixa.setChecked(valor)
+            caixa.blockSignals(False)
         if self.resultado is not None:
             self._desenhar()
 
@@ -666,11 +675,18 @@ class VistaDeQualidade(VistaLigada):
             return _numero(valor, 4) + " Hz"
         return formatar_si(valor, unidade, 5) if unidade else _numero(valor, 4)
 
+    def marcadas(self) -> np.ndarray:
+        """As janelas marcadas na tela (nenhuma, com a marcação desligada)."""
+        r = self.resultado
+        if r is None:
+            return np.zeros(0, dtype=bool)
+        return r.marcadas() if self.opcoes.marcar else np.zeros(r.n_janelas, dtype=bool)
+
     def _desenhar(self) -> None:
         r = self.resultado
         if r is None:
-            self.curva.setData([], [])
-            self.curva_agregada.setData([], [])
+            for item in (self.curva, self.curva_marcada, self.curva_agregada):
+                item.setData([], [])
             self.tabela.setRowCount(0)
             return
         t = aparencia().tema
@@ -678,17 +694,24 @@ class VistaDeQualidade(VistaLigada):
         fator, unidade = self._escala(nome)
         t0 = self.traco.receita.deslocamento_s
         duracoes = r.ciclos_por_janela / r.valores["frequencia"]
+        marcadas = self.marcadas()
         cor = QColor(cor_do_traco(self.traco.receita.cor, t)[0])
         simbolo = "o" if r.n_janelas <= 400 else None
-        self.curva.setData(t0 + r.inicios_s + duracoes / 2, fator * r.valores[nome], pen=pg.mkPen(cor, width=1),
+        x, y = t0 + r.inicios_s + duracoes / 2, fator * r.valores[nome]
+        self.curva.setData(x, np.where(marcadas, np.nan, y), connect="finite", pen=pg.mkPen(cor, width=1),
                            symbol=simbolo, symbolSize=4, symbolBrush=cor, symbolPen=None)
+        mudo = QColor(t.mudo)
+        self.curva_marcada.setData(x[marcadas], y[marcadas], pen=None, symbol="o", symbolSize=6,
+                                   symbolBrush=None, symbolPen=pg.mkPen(mudo, width=1))
         n_ag = len(r.agregados_s)
         if self.opcoes.agregados and n_ag:
             ultimo = np.arange(n_ag) * q.JANELAS_DA_AGREGACAO + q.JANELAS_DA_AGREGACAO - 1
             centros = (r.agregados_s + r.inicios_s[ultimo] + duracoes[ultimo]) / 2
-            self.curva_agregada.setData(t0 + centros, fator * r.agregados[nome], symbol="s", symbolSize=6,
-                                        pen=pg.mkPen(QColor(t.texto1), width=2, style=Qt.PenStyle.DashLine),
-                                        symbolBrush=QColor(t.texto1), symbolPen=None)
+            validos = ~r.agregados_marcados(marcadas)
+            self.curva_agregada.setData(t0 + centros[validos], fator * r.agregados[nome][validos], symbol="s",
+                                        symbolSize=6,
+                                        pen=pg.mkPen(QColor(t.texto), width=2, style=Qt.PenStyle.DashLine),
+                                        symbolBrush=QColor(t.texto), symbolPen=None)
         else:
             self.curva_agregada.setData([], [])
         self.grafico.setLabel("left", self.tr(q.NOMES_DOS_INDICES[nome]), units=unidade)
@@ -696,9 +719,10 @@ class VistaDeQualidade(VistaLigada):
         self._ligar_o_tempo(self.grafico.getViewBox())
         self.tabela.setHorizontalHeaderLabels([self.tr("Índice"), self.tr("Mínimo"), self.tr("Média"), "P95", "P99",
                                                self.tr("Máximo")])
+        estatisticas = r.estatisticas_de(~marcadas) if marcadas.any() else r.estatisticas
         linhas = []
         for indice in esp.INDICES_DE_QUALIDADE:
-            e = r.estatisticas[indice]
+            e = estatisticas[indice]
             linhas.append((self.tr(q.NOMES_DOS_INDICES[indice]),
                            *(self._texto(indice, v) for v in (e.minimo, e.media, e.p95, e.p99, e.maximo))))
         _preencher(self.tabela, linhas)
@@ -713,12 +737,14 @@ class VistaDeQualidade(VistaLigada):
             _fator, unidade = self._escala(nome)
             cabecalho.append(f"{self.tr(q.NOMES_DOS_INDICES[nome])} ({unidade})" if unidade
                              else self.tr(q.NOMES_DOS_INDICES[nome]))
+        cabecalho.append(self.tr("Marcada"))
         t0 = self.traco.receita.deslocamento_s
+        marcadas = self.marcadas()
         linhas = ["\t".join(cabecalho)]
         for k in range(r.n_janelas):
             linhas.append("\t".join([numero_para_planilha(t0 + float(r.inicios_s[k]))] + [
                 numero_para_planilha(self._escala(nome)[0] * float(r.valores[nome][k]))
-                for nome in esp.INDICES_DE_QUALIDADE]))
+                for nome in esp.INDICES_DE_QUALIDADE] + ["1" if marcadas[k] else "0"]))
         return "\n".join(linhas) + "\n"
 
     def _descricao(self) -> list[str]:
@@ -727,6 +753,10 @@ class VistaDeQualidade(VistaLigada):
             return []
         partes = [self.tr("{} janelas de {} ciclos (IEC 61000-4-30) · {} agregados de {} ciclos").format(
             r.n_janelas, r.ciclos_por_janela, len(r.agregados_s), q.JANELAS_DA_AGREGACAO * r.ciclos_por_janela)]
+        n_marcadas = int(np.sum(self.marcadas()))
+        if n_marcadas:
+            partes.append(self.tr("{} janela(s) marcada(s) por um afundamento, uma elevação ou uma interrupção: fora "
+                                  "das estatísticas (os círculos vazios)").format(n_marcadas))
         if r.trechos_sem_fundamental:
             partes.append(self.tr("⚠ {} pedaço(s) sem a fundamental ficaram de fora").format(r.trechos_sem_fundamental))
         return partes
