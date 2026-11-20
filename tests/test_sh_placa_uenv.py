@@ -7,7 +7,6 @@ depois de lido, a restauração, e o reinício que lê o ``uEnv.txt`` novo (o di
 import asyncio
 
 import pytest
-
 from sh_placa import uenv
 from sh_placa.simulador import KERNEL_SIMULADO, OVERLAY_DA_PRU, UENV
 

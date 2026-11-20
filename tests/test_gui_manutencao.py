@@ -12,9 +12,12 @@ pytest.importorskip("PySide6")
 pytest.importorskip("pytestqt")
 pytest.importorskip("asyncssh")
 
+import test_gui_simulador  # noqa: E402
 from sh_placa import atualizacao  # noqa: E402
 from sh_placa.simulador import VERSAO_ANTIGA  # noqa: E402
-from test_gui_simulador import ESPERA_MS, abrir  # noqa: E402,F401
+from test_gui_simulador import ESPERA_MS  # noqa: E402
+
+abrir = test_gui_simulador.abrir        # a fixture que conecta ao simulador
 
 ESPERA_DA_ATUALIZACAO_MS = 90_000
 FIRMWARE = atualizacao.firmware_do_aplicativo()
