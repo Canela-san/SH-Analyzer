@@ -56,6 +56,7 @@ from ...componentes.fluxo import LayoutDeFluxo
 from ...componentes.numeros import decimal, formatar_si, separador_decimal
 from ...dados import espectros as esp
 from ...dados.cadeia import CorrecaoSonda
+from ...dados.qualidade import intervalo_do_welch
 from ...graficos.clique import distancia_a_linha, mais_perto
 from ...graficos.cursores import CursoresDaVista
 from ...graficos.escalas import CaixaComEscalas, EscalasDaCaixa
@@ -928,8 +929,10 @@ class VistaDeEspectro(QWidget):
         if prontos:
             e = prontos[0].espectro
             if e.parametros.metodo == "welch":
-                partes.append(self.tr("Welch · {} · {} · {} segmentos").format(
-                    e.rotulo_janela, formatar_si(e.resolucao_hz, "Hz", 3), e.n_segmentos))
+                baixo, alto = intervalo_do_welch(e)
+                partes.append(self.tr("Welch · {} · {} · {} segmentos · IC 95 % de cada bin: {} / +{} dB").format(
+                    e.rotulo_janela, formatar_si(e.resolucao_hz, "Hz", 3), e.n_segmentos,
+                    decimal(f"{baixo:.2f}").replace("-", "−"), decimal(f"{alto:.2f}")))
             else:
                 sinc = (self.tr(" · f₁ = {} · {} ciclos").format(formatar_si(e.f0_hz, "Hz", 6), e.n_ciclos)
                         if e.f0_hz else "")
