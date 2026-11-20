@@ -175,3 +175,37 @@ def test_mudar_o_ganho_nao_refaz_os_cartoes(janela, tracos):
     assert sec.cartoes[0] is cartao                                    # o mesmo cartão (e o foco, se houver)
     janela.projeto.pilha.push(MudarTracos([a], cadeia=Cadeia()))
     assert not sec.cartoes
+
+
+def test_as_etapas_da_fase_7_no_cartao(janela, tracos, qtbot):
+    """F7.1 e F7.2: o integrador com o campo do corte, a unidade que a cadeia dá ao traço, e a expressão com o outro
+    canal da captura (A × B), materializada como os outros traços."""
+    a, _ = tracos
+    janela.selecao.definir([a])
+    sec = secao(janela)
+    sec.adicionar("integrar")
+    corte = sec.cartoes[0].campos["corte_hz"]
+    editar(corte, "10")
+    assert a.receita.cadeia.etapas[0].corte_hz == 10.0 and a.receita.unidade_de("V") == "V·s"
+    editar(sec.cartoes[0].campos["corte_hz"], "0,001")                    # memória longa demais: recusado
+    assert a.receita.cadeia.etapas[0].corte_hz == 10.0
+    sec.remover(0)
+
+    sec.adicionar("a_vezes_b")
+    cartao = sec.cartoes[0]
+    assert a.receita.cadeia.etapas[0].expressao == "a * c1"
+    cartao.expressao.setText("a ** foo")
+    cartao.expressao.editingFinished.emit()
+    assert "nome desconhecido" in cartao.problema.text() and a.receita.cadeia.etapas[0].expressao == "a * c1"
+    cartao.expressao.setText("a × c1")
+    cartao.unidade_da_saida.setText("W")
+    cartao.unidade_da_saida.editingFinished.emit()
+    assert a.receita.cadeia.etapas[0].unidade_da_saida == "W" and a.receita.unidade_de("V") == "W"
+    def pronta():
+        estado = janela.materializacoes.estado_de(a)
+        return estado.pronta if estado is not None else None
+
+    qtbot.waitUntil(lambda: pronta() is not None, timeout=20_000)
+    t = np.arange(20_000) / 200_000
+    esperado = np.sin(2 * np.pi * 60 * t) * np.cos(2 * np.pi * 60 * t)
+    np.testing.assert_allclose(pronta().amostras, esperado, atol=1e-3)     # o ADC de 16 bits nos dois canais
