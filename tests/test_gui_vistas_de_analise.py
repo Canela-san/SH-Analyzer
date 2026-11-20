@@ -207,7 +207,8 @@ def test_as_metricas_de_bancada(janela, tom_e_imagem, qtbot):
     m = widget.resultado
     assert widget.vista.tipo == "metricas" and m.espectro.tem_tom
     assert m.espectro.freq_tom_hz == pytest.approx(1000, abs=0.01) and m.espectro.thd_db == pytest.approx(-60, abs=0.5)
-    assert widget.cartoes["tom"].texto.startswith("1,0000") and widget.cartoes["thd"].texto.endswith("dB")
+    assert widget.cartoes["tom"].texto.endswith("Hz") and widget.cartoes["thd"].texto.startswith("−60,")
+    assert widget.cartoes["ruido"].texto.endswith(" LSB") and "m" not in widget.cartoes["ruido"].texto
     assert widget.cartoes["enob"].texto.endswith("bits") and len(widget._barras) >= 1
     texto = texto_da_tabela(widget.tabela)
     assert "SINAD" in texto and "H3" in texto and "LSB" in texto
