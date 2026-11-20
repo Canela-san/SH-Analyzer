@@ -1558,20 +1558,27 @@ O G1 passa com a cadeia ligada, durante e depois das materializações (`tests/t
 
 **Em tarefas** (F6.1 a F6.9) em `docs/gui-progress.md`, seção 4g, com o "pronto quando" da fase. Ampliada em
 19/11/2026 (o usuário pediu a fase "recheada de ferramentas para a BeagleBone"): além do plano, o monitor ao vivo, os
-serviços da imagem, a rede, o disco e a limpeza.
+serviços da imagem, a rede, o disco e a limpeza. **Feita em 20/11/2026.**
 
-- [ ] As tarefas destacadas na placa (`setsid`, o estado e o log em `~/.sh-analyzer/tarefas/`) e o agente da manutenção.
-- [ ] A atualização do firmware com a volta automática; voltar a uma versão anterior; compilar e carregar de novo.
-- [ ] O assistente de pinos e overlays, com diff, cópia, reinício e conferência.
-- [ ] Reiniciar e desligar com segurança, esperando a placa voltar ou sumir.
-- [ ] Os logs filtrados e ao vivo; o monitor (processador, memória, temperatura, processos).
-- [ ] O sistema: a senha, os serviços da imagem, a rede, o disco, a limpeza e a partição.
-- [ ] O resgate pela serial.
+- [x] As tarefas destacadas na placa (`setsid`, o estado e o log em `~/.sh-analyzer/tarefas/`) e o agente da manutenção. **Feito** (F6.1), conferido na placa.
+- [x] A atualização do firmware com a volta automática; voltar a uma versão anterior; compilar e carregar de novo. **Feita** (F6.2 e F6.3); a placa de verdade atualizada pela janela.
+- [x] O assistente de pinos e overlays, com diff, cópia, reinício e conferência. **Feito** (F6.4); na placa de verdade, só lido (nada a mudar).
+- [x] Reiniciar e desligar com segurança, esperando a placa voltar ou sumir. **Feito** (F6.5); o reinício conferido na placa, o desligar só no simulador.
+- [x] Os logs filtrados e ao vivo; o monitor (processador, memória, temperatura, processos). **Feito** (F6.6), conferido na placa, também durante uma captura.
+- [x] O sistema: a senha, os serviços da imagem, a rede, o disco, a limpeza e a partição. **Feito** (F6.7); na placa, lido, e a senha trocada para a mesma.
+- [x] O resgate pela serial. **Feito** (F6.8), na Manutenção sem placa, com o caminho pelo cartão microSD; na placa, a porta achada e a falta do `dialout` explicada.
 
 **Pronto quando:** a placa de verdade recebe o firmware desta versão pelo aplicativo, com a cópia de segurança e a
 conferência; no simulador, uma falha forçada volta sozinha à versão anterior, e o assistente do `uEnv.txt` corrige os
 cenários de configuração com o reinício guiado; os logs, o monitor, os serviços, o disco e o desligar seguro funcionam
 na placa de verdade.
+**Cumprido** por `tests/test_gui_jornada_fase6.py` (na janela e pelos gestos, com o simulador: o firmware antigo, a
+PRU que não sobe e volta sozinha, a atualização; o `uEnv.txt` com o reinício; os logs ao vivo; um serviço desligado; o
+desligar) e, na placa de verdade (19 e 20/11/2026), pela janela sem tela: o firmware desta versão com a cópia e a
+conferência, o reinício, e 3 min a 400 kS/s direto no computador com o monitor rodando, sem perder amostra; os logs,
+o monitor, os serviços e o disco lidos. **Menos o desligar**, que na placa de verdade espera alguém na bancada (no
+simulador, até a placa sumir). A jornada achou na placa a PRU que só aparece ~25 s depois de o SSH voltar do boot: a
+captura e a atualização agora esperam por ela.
 
 ### Fase 7: acabamento (3 semanas)
 

@@ -65,10 +65,12 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > **a placa de verdade recebeu o firmware desta versão** (v0.8-291-gc03a1cf, com a saída contínua; a cópia da v0.8-137
 > em `~/firmware-anteriores/`); **a F6.3 também** (a seção Manutenção com o firmware na tela); **a F6.4 e a F6.5
 > também** (o assistente do `uEnv.txt` na página Inicialização; reiniciar e desligar na página Sistema, com a queda
-> esperada: a placa de verdade reiniciou pela janela e voltou em 64 s, com o relógio acertado); **a próxima é a
-> F6.9**, a jornada e o fechamento (a F6.6, os logs e o monitor, a F6.7, o sistema, e a F6.8, o resgate pela serial,
-> também feitas). **A placa de verdade tem o firmware desta versão desde 19/11/2026** (a F6.2: v0.8-291-gc03a1cf, com a saída
-> contínua); antes, o `ler_adc` v0.8 sem o `-o -`.
+> esperada: a placa de verdade reiniciou pela janela e voltou em 64 s, com o relógio acertado); **a F6.6 a
+> F6.9 também** (os logs e o monitor, o sistema, o resgate pela serial e a jornada da fase, que achou na placa de
+> verdade a PRU que só aparece depois do SSH no boot). **A Fase 6 está feita** (diário de 20/11); **a próxima é a
+> Fase 7** (o acabamento), a pôr em tarefas no começo dela. **A placa de verdade tem o firmware desta versão desde
+> 20/11/2026** (v0.8-337-g6f1f2b2: a saída contínua e o `ler_adc` que espera a PRU; as cópias das versões de antes em
+> `~/firmware-anteriores/`); antes da F6.2, o `ler_adc` v0.8 sem o `-o -`.
 >
 > **Para o usuário ver na tela:** plotar um canal; no inspetor, "Adicionar etapa" (ou Ctrl+K, "passa-altas"); Ctrl+E
 > (espectro), Ctrl+Shift+B (bandas IEC), Ctrl+Shift+E (espectrograma), Ctrl+Shift+H (harmônicos); Ctrl+, (as
@@ -2377,12 +2379,42 @@ depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commi
   placa), e este usuário não está no `dialout`: a página diz o porquê e o comando, sem botão de abrir. O console na
   porta de verdade não foi aberto (o grupo é decisão do usuário).
 
-### ☐ F6.9: a jornada da Fase 6 e o fechamento
+### ☑ F6.9: a jornada da Fase 6 e o fechamento
 
 - **O conteúdo:** a jornada na janela, com o simulador: o firmware antigo atualizado (com a falha forçada que
   volta), o `uEnv.txt` corrigido com o reinício, os logs, os serviços e o desligar; na placa de verdade, o firmware
   desta versão pela janela, o reinício, a captura direto no computador com o `ler_adc` novo; a documentação e a CI.
 - **Pronto quando:** o "pronto quando" da fase.
+- **Feita em 19 e 20/11/2026.** **A jornada na janela** (`tests/test_gui_jornada_fase6.py`, pelos gestos, com o
+  simulador, em ~35 s): a placa com o firmware antigo e o "Atualizar…" do diagnóstico; uma versão cuja PRU não sobe
+  (a placa volta sozinha à de antes, e o diagnóstico continua pedindo); a versão deste aplicativo, conferida por um
+  bloco do `ler_adc`; o cenário do HDMI com áudio, o "Ajustar…", a gravação com a cópia e o reinício que volta com o
+  boot novo; os logs ao vivo (a linha do USB chega sozinha) levados ao caderno; um serviço da imagem desligado; e o
+  desligar até a placa sumir, com o caderno contando tudo na ordem. A jornada achou um defeito: o "Ler de novo" do
+  firmware não relia o firmware do aplicativo (a árvore mudada com o aplicativo aberto não aparecia); agora relê.
+  **Na placa de verdade** (pela janela, sem tela): o firmware desta versão em 35 s (a cópia da anterior guardada, as
+  de antes intactas), o reinício em 51 s com o boot novo, e a captura direto no computador. **A primeira tentativa
+  falhou:** a captura pedida 6 s depois de a placa voltar morreu com o código 135 (SIGBUS), calada. O SSH volta do
+  boot aos ~45 s, e o driver da PRU só aparece aos ~71 s (o `dmesg` e o `systemd-analyze` dela); sem ele, o PRU-ICSS
+  fica sem clock, e a primeira escrita na RAM da PRU pelo `/dev/mem` derruba o processo. **A correção, nas pontas:** o
+  `ler_adc` confere o remoteproc antes de tocar a RAM e recusa com o porquê; o agente separa a PRU que ainda sobe
+  (`pru_subindo`, um aviso, com a placa ligada há menos de 180 s e o overlay certo) da que falta (`pru_ausente`); a
+  saúde confere de novo a cada 10 s enquanto ela sobe; a seção Capturar fica impedida, com o porquê, e livre sozinha
+  quando ela aparece; a atualização e o "Recarregar…" esperam a PRU no começo do boot (antes, uma atualização logo
+  depois do reinício falharia e voltaria); e o simulador ganhou o `/proc/uptime` que anda e a PRU que aparece alguns
+  segundos depois do SSH. **De novo na placa**, com o firmware corrigido (v0.8-337-g6f1f2b2) pelo mesmo caminho: logo
+  depois do boot (41 s), a captura impedida com o porquê; livre sozinha 26 s depois (aos 72 s, o diagnóstico da PRU
+  verde); **3 min a 400 kS/s direto no computador com o monitor à vista na página Sistema**: 69 blocos, 72 351 744
+  amostras, o CRC das amostras confere, nenhuma amostra atrasada, nenhum buffer sobrescrito, nenhum preâmbulo ruim,
+  atraso máximo de 0 ciclos; o monitor com 178 amostras (o processador da placa em 41 % na média, com o `sshd`
+  cifrando o fluxo; o `ler_adc` não aparece como captura alheia). A mesma rodada mostrou a "Ligada há" da página
+  Sistema parada no valor da leitura (47 s, com a placa ligada havia minutos): agora anda com o monitor. **Testes
+  novos:** a jornada, o `ler_adc` sem o remoteproc, o agente (subindo × ausente), o simulador, a atualização logo
+  depois do reinício (conferido que falha sem a espera) e a captura que espera na tela. **A CI:** na 3.13 com a
+  interface, 2 665 passaram e 2 falharam por tempo, com a máquina carregada por outro programa (um `zpaq` em quatro
+  núcleos; a rodada levou 9 min, contra 3,5 das anteriores): o "a interface não trava durante a transferência" (um
+  intervalo de 295 ms, o limite é 250) e o "pacote reproduzível pela janela" (1,8 % dos pixels da figura refeita
+  diferentes); os dois passam sozinhos no mesmo ambiente. Na 3.10 sem o Qt, 2 185 passaram.
 
 ---
 
@@ -2421,6 +2453,8 @@ depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commi
 | 18/11/2026 | **A captura na tela (F4.4) na placa de verdade**, pelo `sh_placa` e pelas contas da interface, pelo USB; o canal 1 na tomada da casa | **No computador:** 3 blocos a 400 kS/s em 9,0 s, o CRC das amostras certo e a integridade limpa; o quadro do ao vivo com 20 000 amostras (50 ms), 9,37 V de pico no pino, 60,00 Hz. **No cartão, até parar:** o Parar no 2º bloco, o código 0, a cópia pelo SFTP (4 MiB em 0,8 s) conferida pelo CRC-32. **No cartão, com a queda:** a conexão fechada no 1º bloco; 2 s depois, a conexão nova achou a captura rodando (`em_curso`) e a acompanhou até o 4º bloco; a cópia (8 MiB em 1,6 s) conferida. A placa ficou limpa | o diário de 18/11 (F4.4) |
 | 18/11/2026 | **As rotinas (F4.6) na placa de verdade**, pela seção Rotinas e o terminal embutido (a placa com o `coletar.sh` da v0.8) | `calibrar --simular`: o plano inteiro (68 capturas) em 10 s; `calibrar --faixas 20.48`: até a 1ª pausa ("Mude a bancada: gerador: ONDA QUADRADA de 256 Hz…"), depois do `sudo`; `sonda --pontos 3`: até "Iniciar a coleta? [S/n]"; as duas faixas juntas, recusadas pelo próprio script (faltam 57 MB no cartão). Três abas com o nome do modo, três gravações, uma entrada no caderno por rotina | `bancada_f46.py` (fora do repositório) |
 | 18/11/2026 | **1 h direto no computador (F4.7, o "pronto quando" da Fase 4)**, pelo aplicativo inteiro (a janela, sem tela), com o `ler_adc` deste branch em `~/f47`: o canal 1 na tomada de casa, 400 kS/s, ±10,24 V | 3 603 s sem queda; 1 374 blocos, 1 440 743 424 amostras (2,88 GB); o CRC das amostras confere; 0 amostras atrasadas, 0 buffers sobrescritos, 0 preâmbulos ruins, atraso máximo de 0 ciclos; a taxa medida 399 999,84 Hz; na Análise, a pirâmide em 3,8 s e o canal plotado em 0,07 s (128,7 V rms) | `bancada_f47.py` (fora do repositório) |
+| 20/11/2026 | **A manutenção pela janela na placa de verdade (F6.9)**: o firmware desta versão, o reinício e a captura logo depois | A atualização em 35 s (a cópia guardada); o reinício em 51 s com o boot novo; o SSH de volta aos ~45 s do boot e o driver da PRU aos ~71 s: a captura impedida aos 41 s, com o porquê, e livre sozinha aos 72 s (antes da correção, a captura nessa hora morria com SIGBUS) | `placa_f69.py` (fora do repositório) |
+| 20/11/2026 | **3 min a 400 kS/s direto no computador com o monitor rodando** (a página Sistema à vista, uma amostra por segundo) | 69 blocos, 72 351 744 amostras; o CRC das amostras confere; 0 amostras atrasadas, 0 buffers sobrescritos, 0 preâmbulos ruins, atraso máximo de 0 ciclos; o processador da placa em 41 % na média (o `sshd` cifrando o fluxo) | idem |
 | 16/11/2026 | **A jornada da Aquisição na placa de verdade**, na janela (sem tela), pelo USB: em casa e na tomada do laboratório | Achada em 1,6 s; a primeira conexão (a impressão, a senha, a chave) em 2,5 e 2,6 s; o enlace com 1,0 e 0,9 ms e 4,6 e 6,6 MB/s; uma conferência de 4 MiB transferida e conferida pelo CRC em 0,91 e 0,93 s (o SFTP a 5,2 e 5,3 MiB/s); o relógio acertado com ±0,05 s, de +2,15 s e de −3 h 07 | o diário de 16/11 (F3.10) |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
@@ -3156,6 +3190,24 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     passou sozinha, no arquivo e na rodada seguinte inteira; o `.venv` intocado. A correção do import: `2b072c8`.
   - **Próximo:** a Fase 6 (a manutenção da placa), a pôr em tarefas; antes da tag v0.11, decidir se a importação de
     dados de fora (PD-03) e a fonte derivada (TR-08) entram nela.
+- **19 e 20/11/2026:** **a Fase 6, a manutenção da placa** (o pedido: "faça a fase 6, essa é a mais importante então
+  planeje bem e recheie o software de ferramentas e opções para utilizar com a beaglebone"; o que não foi feito foi
+  para a lista de depois da Fase 7, `docs/gui-plan.md`, seção 16):
+  - a fase em tarefas (`f81c2b1`) e as nove, cada uma com a entrada "Feita em" na seção 4g e conferida na placa de
+    verdade até onde o usuário deixou: as tarefas destacadas e o agente da manutenção (F6.1), a atualização do
+    firmware com a volta sozinha (F6.2), a seção Manutenção (F6.3), o assistente do `uEnv.txt` (F6.4), reiniciar e
+    desligar (F6.5), os logs e o monitor (F6.6), o sistema (F6.7), o resgate pela serial (F6.8) e a jornada (F6.9);
+  - **o que a placa de verdade ensinou:** o `sudo -n` sem terminal é do processo pai (nem num pipe, nem `… &` num
+    shell que sai: quem destaca é o root); o firmware da PRU instalado com `install -m 0644`; a PRU só aparece no
+    remoteproc ~25 s depois de o SSH voltar do boot (o SIGBUS da F6.9); o simulador ficou fiel a cada um;
+  - **Não conferido na placa de verdade** (por decisão do usuário, ou por precisar de alguém na bancada): gravar o
+    `uEnv.txt`, desligar, abrir o console pela serial, desligar um serviço, limpar e expandir a partição; a senha
+    só trocada para a mesma. Tudo isso roda de ponta a ponta no simulador;
+  - **Testes:** `test_sh_placa_tarefas.py`, `test_sh_placa_atualizacao.py`, `test_gui_manutencao.py`,
+    `test_sh_placa_uenv.py`, `test_gui_sistema.py`, `test_gui_logs_e_monitor.py`, `test_sh_placa_sistema.py`,
+    `test_gui_resgate.py` e `test_gui_jornada_fase6.py`; a CI como na F6.9;
+  - **Próximo:** a Fase 7 (o acabamento), a pôr em tarefas; o desligar seguro, na placa de verdade, quando houver
+    alguém na bancada.
 ---
 
 ## 8. Perguntas em aberto
