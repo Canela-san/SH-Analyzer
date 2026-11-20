@@ -638,10 +638,26 @@ class OpcoesDaTransferencia(_OpcoesComDicionario):
         _numero_em(self.resolucao_hz, 0.01, 1e6, "resolução")
 
 
+@dataclass(frozen=True)
+class OpcoesDasMetricas(_OpcoesComDicionario):
+    """A vista das métricas de bancada (F7.8): o traço, o trecho (a captura inteira, como no ``medir_captura``) e
+    quantos harmônicos entram no THD."""
+
+    traco: int = 0
+    trecho: str = "captura"
+    vista_de_tempo: str | None = None
+    harmonicos: int = 9
+
+    def __post_init__(self) -> None:
+        _validar_comum(self)
+        _inteiro_em(self.harmonicos, 2, 50, "número de harmônicos")
+
+
 OPCOES_DO_TIPO = {"tempo": OpcoesDoTempo, "espectro": OpcoesDoEspectro, "bandas": OpcoesDasBandas,
                   "espectrograma": OpcoesDoEspectrograma, "harmonicos": OpcoesDosHarmonicos, "sonda": OpcoesDaSonda,
                   "xy": OpcoesDoXY, "histograma": OpcoesDoHistograma, "eventos": OpcoesDosEventos,
-                  "qualidade": OpcoesDaQualidade, "transferencia": OpcoesDaTransferencia}
+                  "qualidade": OpcoesDaQualidade, "transferencia": OpcoesDaTransferencia,
+                  "metricas": OpcoesDasMetricas}
 """A classe das opções de cada tipo de vista. As de um projeto de antes da vista de tempo ter opções (``{}``) são as
 padrão."""
 
