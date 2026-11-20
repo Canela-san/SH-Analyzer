@@ -208,7 +208,29 @@ class EixoDoTema(pg.AxisItem):
         return [(e, v.tolist()) for e, _, v in niveis]
 
     def tickStrings(self, valores, escala, espacamento):
+        if self.logMode:
+            return [rotulo_logaritmico(v) for v in valores]
         return [decimal(s).replace("-", "−") for s in super().tickStrings(valores, escala, espacamento)]
+
+
+_PREFIXOS_DO_LOG = ((9, "G"), (6, "M"), (3, "k"), (0, ""), (-3, "m"), (-6, "µ"), (-9, "n"))
+
+
+def rotulo_logaritmico(expoente: float) -> str:
+    """O número de uma marca do eixo logarítmico (``expoente`` = log₁₀ do valor): só o 1, o 2 e o 5 de cada década,
+    com o prefixo do SI ("200", "2k", "50k"); as outras marcas ficam sem número. O PyQtGraph escreve todas (2·10³,
+    3·10³…), e as do fim da década se sobrepõem."""
+    if not math.isfinite(expoente):
+        return ""
+    valor = 10.0 ** expoente
+    decada = math.floor(expoente + 1e-9)
+    mantissa = valor / 10.0 ** decada
+    if min(abs(mantissa - m) for m in (1.0, 2.0, 5.0, 10.0)) > 1e-6 * mantissa:
+        return ""
+    for potencia, prefixo in _PREFIXOS_DO_LOG:
+        if valor >= 10.0 ** potencia * (1 - 1e-9):
+            return f"{valor / 10.0 ** potencia:.6g}{prefixo}"
+    return f"{valor:.3g}"
 
 
 def marcas_principais(eixo: pg.AxisItem, inicio: float, fim: float, pixels: float) -> np.ndarray:
