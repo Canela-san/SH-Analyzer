@@ -1115,8 +1115,18 @@ struct placa {
     volatile struct shared_control *ctrl;
 };
 
-// Confere a reserva da DDR e os pinos da PRU e mapeia a RAM compartilhada e os buffers. 0, ou -1 com o erro impresso.
+// Confere a PRU0 no remoteproc, a reserva da DDR e os pinos da PRU e mapeia a RAM compartilhada e os buffers. 0, ou -1
+// com o erro impresso.
 static int abrir_placa(struct placa *p) {
+    // Sem o driver da PRU, o PRU-ICSS fica sem clock, e a primeira escrita na RAM dela pelo /dev/mem derruba o processo
+    // com SIGBUS (o código 135, sem mensagem). Acontece logo depois de ligar: na placa de verdade, o driver aparece
+    // perto de 70 s depois do boot (19/11/2026), e o SSH já responde antes disso.
+    if (access(REMOTEPROC_PRU0_ESTADO, F_OK) != 0) {
+        erro("a PRU0 ainda não está no remoteproc (%s não existe): a placa está terminando o boot (o driver da PRU "
+             "aparece perto de 70 s depois de ligar: espere e tente de novo) ou o overlay da PRU não está carregado "
+             "(o uboot_overlay_pru do /boot/uEnv.txt).", REMOTEPROC_PRU0_ESTADO);
+        return -1;
+    }
     p->bytes_por_buffer = (size_t)SAMPLES_PER_BUFFER * sizeof(uint16_t);
     unsigned long long fim_ddr = (unsigned long long)DDR_RESERVED_PHYS + p->bytes_por_buffer * BUFFERS_PING_PONG;
     if (conferir_ddr_reservada(CAMINHO_IOMEM, DDR_RESERVED_PHYS, fim_ddr) != 0) {
