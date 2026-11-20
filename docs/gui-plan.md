@@ -1613,6 +1613,10 @@ ordem não é a de prioridade):
 - [ ] **A regra de sudo sem senha** para os comandos do firmware (11.2), se a decisão em aberto 3 (seção 19) for por ela.
 - [ ] **Importar MAT e COMTRADE** (PD-10); **exportar WAV, Parquet e COMTRADE** (FG-10); **os assistentes de
   calibração** (ES-08).
+- [ ] **O pacote de origem das capturas no projeto** (achado na F7.10, 20/11/2026): uma captura aberta de um
+  `.zpaq.tar` fica no cache dos pacotes, e o projeto salvo aponta para ela; limpo o cache, ela fica ausente até o
+  pacote ser aberto de novo. Guardar no `FonteSalva` o pacote e o membro, e reextrair (numa tarefa) ao abrir o
+  projeto quando a extraída sumiu.
 - [ ] **A figura do pacote reproduzível que difere sob carga** (achado no fechamento da Fase 6, 20/11/2026): numa
   rodada completa da CI com a máquina carregada, o `test_o_pacote_reproduzivel_pela_janela` refez a figura com 1,8 %
   dos pixels diferentes (sozinho, passa). Suspeita: o `rcParams` do Matplotlib é global do processo, e o desenho do

@@ -69,7 +69,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > F6.9 também** (os logs e o monitor, o sistema, o resgate pela serial e a jornada da fase, que achou na placa de
 > verdade a PRU que só aparece depois do SSH no boot). **A Fase 6 está feita** (diário de 20/11). **A Fase 7 está em
 > tarefas** (seção 4h, F7.1 a F7.12; o acabamento e as análises, ampliada a pedido do usuário com as análises para
-> pesquisadores); **a F7.1 a F7.7 estão feitas** (as transformações novas, a expressão entre canais, o XY com a potência, o histograma com as estatísticas, os eventos, a qualidade de energia e a transferência); **a próxima é a F7.8**. **A placa de verdade tem o firmware desta versão desde
+> pesquisadores); **a F7.1 a F7.10 estão feitas** (as transformações novas, a expressão entre canais, o XY com a potência, o histograma com as estatísticas, os eventos, a qualidade de energia, a transferência, as métricas de bancada, o aliasing, o Instrumento e os pacotes); **a próxima é a F7.11**. **A placa de verdade tem o firmware desta versão desde
 > 20/11/2026** (v0.8-337-g6f1f2b2: a saída contínua e o `ler_adc` que espera a PRU; as cópias das versões de antes em
 > `~/firmware-anteriores/`); antes da F6.2, o `ler_adc` v0.8 sem o `-o -`.
 >
@@ -2555,26 +2555,49 @@ resposta conhecida), como as do motor; os commits seguem o componente (a GUI, os
   Percival e Walden, de qualquer janela e sobreposição; cobre o ruído branco em 90–99 % dos bins). **O eixo
   logarítmico** numera só o 1, o 2 e o 5 de cada década (os números do PyQtGraph se sobrepunham).
 
-### ☐ F7.8: as métricas de bancada (ME-05) e o assistente de aliasing (ES-06)
+### ☑ F7.8: as métricas de bancada (ME-05) e o assistente de aliasing (ES-06)
 
 - **O conteúdo:** a vista **Métricas de bancada**, com os cartões do `medir_captura` (o ruído, o SNR, o SINAD, o ENOB,
   o SFDR e o jitter) e o que cada um quer dizer; **o aviso de imagem provável** no espectro, e **o assistente de
   aliasing** (2 ou 3 capturas em taxas diferentes, o `aliasing` do motor).
 - **Pronto quando:** os cartões dão os números do `medir_captura` e o assistente, os do `aliasing`.
+- **Feita em 20/11/2026.** `dados/bancada.py` chama as funções do `metricas_captura` com os padrões da CLI (o
+  transitório da troca de faixa pulado, até 4 M amostras, o LSB e o fundo de escala do canal com o ganho do traço):
+  nos testes, o CSV do `medir_captura` no mesmo arquivo dá os mesmos números a 1e-4. A vista: os cartões (cada um
+  com o que quer dizer na dica; o LSB, os bits e os dB sem prefixo do SI), os harmônicos em dBc (os dobrados pela
+  Nyquist vazados, os abaixo do piso marcados) e a tabela de tudo; com cadeia, o aviso de que o SINAD e o ENOB
+  descrevem o traço, não o ADC. **O assistente de aliasing** (Análises → Assistente de aliasing…): de 2 a 4 fontes
+  abertas, o canal comum e os parâmetros da CLI; a tabela (real, imagem com a entrada, ambíguo) é a do `aliasing`
+  (os mesmos componentes do CSV dela). **O espectro** avisa os picos acima de onde o filtro do ADC (2ª ordem,
+  ~15 kHz) deixa uma entrada em fs − f a menos de 20 dB: ~0,24·fs (96 kHz a 400 kS/s).
 
-### ☐ F7.9: o modo Instrumento e a densidade (AN-08, AN-06)
+### ☑ F7.9: o modo Instrumento e a densidade (AN-08, AN-06)
 
 - **O conteúdo:** a vista **Instrumento**, como um osciloscópio: os traços sobrepostos, cada um com a escala por
   divisão e o offset, o sincronismo pelo cruzamento por zero de um traço escolhido (subindo ou descendo, com o nível),
   a persistência dos ciclos como densidade (o "fósforo": onde o sinal passa mais) e a medida do ciclo médio.
 - **Pronto quando:** num sinal com a fase conhecida, os ciclos se sobrepõem no sincronismo, e a densidade conta as
   amostras certas.
+- **Feita em 20/11/2026.** `dados/instrumento.py`: o gatilho de Schmitt vetorizado (a histerese contra o ruído; o
+  *holdoff* opcional), os disparos lidos em pedaços (iguais aos do trecho inteiro), a persistência que conta cada
+  amostra sem interpolar (a soma é a das janelas) e o ciclo médio (Welford) com o desvio. A vista: 10 × 8 divisões,
+  a escala 1-2-5 automática ou a de cada traço (unidade/div e offset, guardadas no projeto), o tempo/div automático
+  (dois ciclos), a borda e o nível; o "fósforo" na cor de cada traço (a opacidade é o log da contagem) e o ciclo
+  médio por cima; a tabela com o RMS, o pico a pico, a média e os ciclos de cada traço, e a frequência e o desvio
+  do período do disparo. Nos testes, a corrente a 30° cruza o zero 1,39 ms depois do disparo (±20 µs).
 
-### ☐ F7.10: os pacotes `.zpaq.tar` (PD-04)
+### ☑ F7.10: os pacotes `.zpaq.tar` (PD-04)
 
 - **O conteúdo:** abrir um pacote do `compactacao` (pelo diálogo, pelos recentes, arrastando): extraído para o cache,
   com o progresso, conferido pelo CRC, e as capturas dele na árvore.
 - **Pronto quando:** um pacote feito pelo `compactar` abre e dá as mesmas amostras.
+- **Feita em 20/11/2026.** `dados/pacotes.py`: a extração do motor (`Pacote.restaurar`: cada peça e cada arquivo
+  conferidos pelo SHA-256 do manifesto) para o **cache dos pacotes** (uma pasta por pacote, com o limite e o
+  "Limpar" nas Configurações, como os outros caches; nunca apaga a pasta de uma captura aberta), numa tarefa com o
+  progresso e o cancelamento. Abrir de novo o mesmo pacote usa a pasta (a marca de completa e os tamanhos). O
+  pacote abre pelo Ctrl+O, pelos recentes (entra o pacote, e não as extraídas) e arrastando. **Limite:** um projeto
+  salvo aponta para as capturas extraídas; se o cache for limpo, elas ficam ausentes até o pacote ser aberto de
+  novo (na lista depois da Fase 7: guardar o pacote de origem no projeto).
 
 ### ☐ F7.11: a primeira execução, os estados vazios e a ajuda (GE-07, GE-08)
 
