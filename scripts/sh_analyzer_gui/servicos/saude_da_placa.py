@@ -44,6 +44,9 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 ESTADOS_DA_CORRECAO = ("rodando", "precisa_da_senha", "senha_recusada", "feita", "falhou")
+CONFERIR_ENQUANTO_A_PRU_SOBE_S = 10.0
+"""Com a PRU0 ainda subindo (o ``pru_subindo`` do agente: a placa ligou há pouco), a saúde é conferida de novo a cada
+tanto, até ela aparecer: a captura espera por ela."""
 CONFERIR_DEPOIS_DO_BOOT_S = 30.0
 """Depois de um reinício pedido, a saúde é conferida de novo uma vez, passado isto: a placa de verdade volta ao SSH com
 o boot ainda subindo (a carga perto de 6, a PRU às vezes ainda sem o driver)."""
@@ -108,6 +111,7 @@ class SaudeDaPlaca(QObject):
         self._depois_do_boot = QTimer(self)                 # conferir de novo quando o boot terminar de subir
         self._depois_do_boot.setSingleShot(True)
         self._depois_do_boot.timeout.connect(self._conferir_depois_do_boot)
+        self.mudou.connect(self._acompanhar_a_pru)
         self._registrou.connect(self._ao_registrar)
         self._parar_de_ouvir = conexao.registro.ouvir(self._registrou_no_laco)
         conexao.mudou.connect(self._conexao_mudou)
@@ -162,7 +166,15 @@ class SaudeDaPlaca(QObject):
 
     def _conferir_depois_do_boot(self) -> None:
         if self.conexao.estado == "conectada" and self._sessao:
-            self.conferir()
+            self.conferir()                     # se uma leitura já roda, o fim dela traz a saúde nova (e a PRU)
+
+    def _acompanhar_a_pru(self) -> None:
+        """A PRU0 que ainda sobe (o boot que não terminou): confere de novo daqui a pouco, até ela aparecer."""
+        pru = self.saude.pru_indisponivel if self.saude is not None else None
+        intervalo = int(CONFERIR_ENQUANTO_A_PRU_SOBE_S * 1000)
+        if pru is not None and pru.codigo == "pru_subindo" and self.conexao.estado == "conectada" \
+                and not 0 <= self._depois_do_boot.remainingTime() <= intervalo:
+            self._depois_do_boot.start(intervalo)   # o de depois do reinício (30 s) fica mais perto
 
     def _continuar(self) -> None:
         """O próximo passo depois de conectar, quando a placa está livre: as capturas e o firmware; depois, o relógio a

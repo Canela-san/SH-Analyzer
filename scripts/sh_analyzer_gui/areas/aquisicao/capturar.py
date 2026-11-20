@@ -457,7 +457,7 @@ class Capturar(QWidget):
     def validar(self) -> list[Problema]:
         pedido = self.formulario.pedido
         contexto = self.contexto()
-        self.problemas = pd.validar(pedido, contexto)
+        self.problemas = self._problemas_da_placa() + pd.validar(pedido, contexto)
         self.formulario.mostrar_problemas(self.problemas)
         self.formulario.definir_texto_do_destino(self._texto_do_destino(pedido, contexto))
         self.comando.definir(pd.comando(pedido))
@@ -479,6 +479,20 @@ class Capturar(QWidget):
         self.lista_do_pedido.definir(p for p in self.problemas if p.nivel != "info")
         self._mostrar_os_botoes()
         return self.problemas
+
+    def _problemas_da_placa(self) -> list[Problema]:
+        """O que a saúde diz que impede qualquer captura, seja qual for o pedido: a PRU0 fora do remoteproc (o
+        ``ler_adc`` recusa). A da PRU que ainda sobe some sozinha (a saúde confere de novo até ela aparecer)."""
+        estado = self.saude.saude if self.conexao.conectada else None
+        pru = estado.pru_indisponivel if estado is not None else None
+        if pru is None:
+            return []
+        if pru.codigo == "pru_subindo":
+            return [Problema("placa", "erro", traduzir(
+                "A placa ainda está terminando o boot: a PRU0 aparece perto de 70 s depois de ligar, e a captura "
+                "fica livre sozinha quando ela aparecer."))]
+        return [Problema("placa", "erro", traduzir(
+            "A PRU0 não aparece no remoteproc (o overlay da PRU no /boot/uEnv.txt): veja o Diagnóstico."))]
 
     def _texto_do_destino(self, p: PedidoDeCaptura, ctx: Contexto) -> str:
         if p.destino == "computador":
