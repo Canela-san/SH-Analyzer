@@ -84,6 +84,7 @@ class SistemaDaPlaca(QObject):
         self.propostas: list[Mudanca] = []
         self.uenv_estranho = ""                # o porquê de o assistente não mexer no uEnv.txt
         self.detalhe: dict | None = None
+        self.detalhe_lido_em = 0.0                         # o time.monotonic() da leitura (a "Ligada há" que anda)
         self.internet: dict | None = None
         self.testando_internet = False
         self.lendo = False
@@ -157,12 +158,19 @@ class SistemaDaPlaca(QObject):
         detalhe = await cliente.chamar("sistema")
         return inicializacao, detalhe
 
+    @property
+    def ligada_s(self) -> float | None:
+        """Há quanto tempo a placa está ligada, agora: o do ``sistema`` lido, mais o que passou desde a leitura."""
+        ligada = (self.detalhe or {}).get("ligada_s")
+        return None if ligada is None else ligada + time.monotonic() - self.detalhe_lido_em
+
     def _leu(self, chamada: Chamada) -> None:
         from sh_placa import uenv
 
         self.lendo = False
         if chamada.estado == "concluida":
             self.inicializacao, self.detalhe = chamada.resultado
+            self.detalhe_lido_em = time.monotonic()
             self.propostas, self.uenv_estranho = [], ""
             texto = self.texto_do_uenv
             if texto is None:

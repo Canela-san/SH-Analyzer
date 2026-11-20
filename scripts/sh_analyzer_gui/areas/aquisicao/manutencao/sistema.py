@@ -52,6 +52,8 @@ class PaginaDoSistema(QWidget):
 
         self.cartao_da_acao = CartaoDaAcao(sistema, ACOES_DA_PAGINA)
         self.monitor = CartaoDoMonitor(monitor, captura_rodando)
+        self.ligada_ha: QLabel | None = None
+        monitor.amostraNova.connect(self._andar_a_ligada)     # a "Ligada há" anda com o monitor (uma vez por s)
         self.monitor.pararCaptura.connect(lambda: self.confirmar.emit("parar_ler_adc", None))
 
         self.cartao_da_placa, self.corpo_da_placa = cartao(traduzir("A placa"))
@@ -128,15 +130,20 @@ class PaginaDoSistema(QWidget):
             (traduzir("Nome"), d.get("nome") or ""),
             (traduzir("Sistema"), d.get("sistema") or ""),
             (traduzir("Kernel"), d.get("kernel") or ""),
-            (traduzir("Ligada há"), ha_quanto_tempo(d.get("ligada_s"))),
+            (traduzir("Ligada há"), ha_quanto_tempo(self.sistema.ligada_s)),
             (traduzir("Fuso horário"), d.get("fuso") or traduzir("não configurado (UTC)")),
             (traduzir("Memória"), traduzir("{} disponível de {}").format(formatar_bytes(livre * 1024),
                                                                        formatar_bytes(total * 1024))
              if total and livre is not None else ""),
         ]
         self.fatos = [fato(nome, valor) for nome, valor in fatos]
+        self.ligada_ha = self.fatos[3].findChild(QLabel, "valor_do_fato")
         for w in self.fatos:
             self.corpo_da_placa.addWidget(w)
+
+    def _andar_a_ligada(self, _amostra=None) -> None:
+        if self.ligada_ha is not None and self.sistema.ligada_s is not None:
+            self.ligada_ha.setText(ha_quanto_tempo(self.sistema.ligada_s))
 
     def _acao_mudou(self) -> None:
         livre = not self.sistema.ocupado and self.sistema.conexao.estado == "conectada"
