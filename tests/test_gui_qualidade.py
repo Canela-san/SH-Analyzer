@@ -187,3 +187,21 @@ def test_o_rms_de_meio_ciclo_vetorizado():
     fins, valores = q._rms_de_meio_ciclo(x, cruz)
     assert len(fins) == len(valores) == 2 * len(cruz) - 3
     assert np.allclose(valores, 1 / math.sqrt(2), rtol=1e-6)
+
+
+def test_os_graus_de_liberdade_do_welch():
+    hann = scipy.signal.get_window("hann", 2000)
+    assert q.graus_de_liberdade_do_welch(hann, 1000, 500) == pytest.approx(2 * q.medias_equivalentes(500), rel=2e-3)
+    assert q.graus_de_liberdade_do_welch(np.ones(100), 100, 40) == pytest.approx(80)     # sem sobreposição: 2K
+    assert q.graus_de_liberdade_do_welch(hann, 500, 500) < q.graus_de_liberdade_do_welch(hann, 1000, 500)
+
+
+def test_o_intervalo_do_welch_cobre_o_ruido():
+    """A densidade do ruído branco: em ~95 % dos bins, o verdadeiro (σ²·2/fs) cai dentro do intervalo."""
+    rng = np.random.default_rng(4)
+    x = rng.standard_normal(400_000)
+    e = api.espectro(x, FS, api.ParametrosEspectro(metodo="welch", janela="hann", resolucao_hz=500.0, modo="ruido"))
+    baixo, alto = q.intervalo_do_welch(e)
+    verdadeiro_db = 10 * np.log10(2 / FS)
+    dentro = (e.db[1:-1] - verdadeiro_db >= -alto) & (e.db[1:-1] - verdadeiro_db <= -baixo)
+    assert 0.9 <= np.mean(dentro) <= 0.99, np.mean(dentro)
