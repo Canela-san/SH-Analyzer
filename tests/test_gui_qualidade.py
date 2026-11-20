@@ -155,3 +155,35 @@ def test_o_intervalo_de_confianca_da_transferencia_cobre_o_verdadeiro():
     assert np.all(alto[usados] > r.magnitude_db[usados]) and np.all(baixo[usados] < r.magnitude_db[usados])
     assert np.median(alto - baixo) < np.median((lambda t: t[1] - t[0])(q.transferencia(
         x[:20_000], y[:20_000], FS, 2_000.0).intervalo()))                     # mais médias, intervalo menor
+
+
+def test_as_janelas_marcadas_pelos_eventos_de_tensao(tmp_path):
+    """O *flagging* da IEC 61000-4-30: as janelas com o degrau ficam marcadas e saem das estatísticas; o degrau não
+    vira um pico de supraharmônicos."""
+    t = np.arange(int(FS * 3)) / FS
+    amplitude = np.full(len(t), 8.0)
+    amplitude[(t >= 0.5) & (t < 0.6)] = 4.0
+    amplitude[(t >= 2.2) & (t < 2.3)] = 0.0
+    x = amplitude * np.sin(W * t) + 0.4 * np.sin(5 * W * t) + 0.003 * np.sin(2 * np.pi * 30_000 * t)
+    tr = trecho(abrir(tmp_path, x))
+    r = q.indices(tr)
+    marcadas = r.marcadas()
+    fins = r.inicios_s + r.ciclos_por_janela / r.valores["frequencia"]
+    com_degrau = ((r.inicios_s < 0.6) & (fins > 0.5)) | ((r.inicios_s < 2.3) & (fins > 2.2))
+    assert np.array_equal(marcadas, com_degrau), (marcadas, com_degrau)
+    assert r.estatisticas["frequencia"].maximo > 61                     # a janela da interrupção: sem a fundamental
+    limpas = r.estatisticas_de(~marcadas)
+    assert limpas["frequencia"].maximo == pytest.approx(60.0, abs=0.01)
+    assert limpas["thd"].p95 == pytest.approx(0.05, rel=2e-3)
+    assert r.agregados_marcados(marcadas).tolist() == [True]
+    assert not [e for e in q.eventos(tr, indices_prontos=r) if e.tipo == "supraharmonicos"]
+    rms = q.CriteriosDosEventos(tensao=False)                          # sem a tensão, nada é marcado
+    assert [e for e in q.eventos(tr, rms, indices_prontos=r) if e.tipo == "supraharmonicos"]
+
+
+def test_o_rms_de_meio_ciclo_vetorizado():
+    x = np.sin(2 * np.pi * np.arange(1000) / 100)
+    cruz = np.arange(0, 1000, 100, dtype=float)
+    fins, valores = q._rms_de_meio_ciclo(x, cruz)
+    assert len(fins) == len(valores) == 2 * len(cruz) - 3
+    assert np.allclose(valores, 1 / math.sqrt(2), rtol=1e-6)
