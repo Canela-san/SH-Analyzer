@@ -127,3 +127,13 @@ def test_os_primeiros_passos_levam_a_primeira_medida(primeira_vez, qtbot):
     assert not outra.primeiros_passos.isVisible()
     outra.close()
     outra.deleteLater()
+
+
+def test_o_exemplo_pelo_estado_vazio(janela, qtbot):
+    from PySide6.QtWidgets import QPushButton
+
+    botao = janela.vazio_central.findChild(QPushButton, "botao_exemplo_central")
+    assert botao is not None and janela.centro.currentWidget() is janela.vazio_central
+    botao.click()
+    qtbot.waitUntil(lambda: bool(janela.projeto.fontes), timeout=ESPERA_MS)
+    assert janela.projeto.fontes[0].nome == "exemplo-rede-60Hz.bin"
