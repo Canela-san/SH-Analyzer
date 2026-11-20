@@ -242,3 +242,26 @@ def test_o_assistente_de_aliasing(janela, tom_e_imagem, qtbot):
     texto = texto_da_tabela(dialogo.tabela)
     assert texto.startswith("Entrada\tEm A") and "imagem nas duas, de 250,00 kHz" in texto
     dialogo.close()
+
+
+def test_o_instrumento(janela, tracos, qtbot):
+    widget = abrir(janela, qtbot, "instrumento")
+    r = widget.resultado
+    assert widget.vista.tipo == "instrumento" and r.disparo.n >= 20
+    assert r.tempo_por_divisao == pytest.approx(0.005)                  # 2 ciclos de 60 Hz em 10 div: 3,3 ms → 5 ms
+    v, i = r.canais
+    assert v.por_divisao == pytest.approx(5.0) and v.persistencia.amostras > 0   # 9 V de pico: 2,25 V por div → 5
+    assert np.interp(0.0, v.ciclo.tempos_s, v.ciclo.media) == pytest.approx(0.0, abs=0.05)
+    assert v.ciclo.rms == pytest.approx(9 / math.sqrt(2), rel=0.01)
+    assert widget.tabela.rowCount() == 3 and widget.tabela.item(2, 0).text() == "Disparo"
+    widget.borda.escolher(1)                                            # descendo: o ciclo médio começa no pico
+    qtbot.waitUntil(lambda: widget.opcoes.borda == "descendo" and widget.resultado is not r, timeout=ESPERA_MS)
+    v2 = widget.resultado.canais[0]
+    assert np.interp(-1 / 240, v2.ciclo.tempos_s, v2.ciclo.media) == pytest.approx(9.0, rel=0.02)
+    widget.traco_da_escala.setCurrentIndex(1)
+    widget.por_divisao.setText("1 V/div")
+    widget.por_divisao.editingFinished.emit()
+    assert widget.opcoes.escalas == ((0.0, 0.0), (1.0, 0.0))
+    qtbot.waitUntil(lambda: widget.resultado.canais[1].por_divisao == 1.0, timeout=ESPERA_MS)
+    salvo = widget.opcoes.para_dict()
+    assert type(widget.opcoes).de_dict(salvo) == widget.opcoes

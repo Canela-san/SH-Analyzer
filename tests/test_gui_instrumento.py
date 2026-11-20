@@ -92,3 +92,8 @@ def test_a_persistencia_conta_as_amostras(captura):
     linha_do_zero = int((0.0 + 10) / 20 * 64)
     perto = p.contagens[coluna_do_disparo, linha_do_zero - 1:linha_do_zero + 1].sum()
     assert perto > 0.8 * p.contagens[coluna_do_disparo].sum()                 # no disparo, o traço passa no zero
+
+
+def test_o_passo_1_2_5():
+    assert [ins.passo_125(v) for v in (0.7, 1.0, 1.3, 3.0, 7.2, 0.0031, 2e-3)] == pytest.approx(
+        [1.0, 1.0, 2.0, 5.0, 10.0, 0.005, 0.002])
