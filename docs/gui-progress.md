@@ -69,7 +69,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > F6.9 também** (os logs e o monitor, o sistema, o resgate pela serial e a jornada da fase, que achou na placa de
 > verdade a PRU que só aparece depois do SSH no boot). **A Fase 6 está feita** (diário de 20/11). **A Fase 7 está em
 > tarefas** (seção 4h, F7.1 a F7.12; o acabamento e as análises, ampliada a pedido do usuário com as análises para
-> pesquisadores); **a próxima é a F7.1** (as transformações novas da cadeia). **A placa de verdade tem o firmware desta versão desde
+> pesquisadores); **a F7.1 e a F7.2 estão feitas** (as transformações novas e a expressão entre canais); **a próxima é a F7.3**. **A placa de verdade tem o firmware desta versão desde
 > 20/11/2026** (v0.8-337-g6f1f2b2: a saída contínua e o `ler_adc` que espera a PRU; as cópias das versões de antes em
 > `~/firmware-anteriores/`); antes da F6.2, o `ler_adc` v0.8 sem o `-o -`.
 >
@@ -2438,7 +2438,7 @@ lista de depois da Fase 7).
 Cada conta nova é a de uma referência conferida nos testes (a SciPy, uma fórmula fechada ou um sinal sintético com a
 resposta conhecida), como as do motor; os commits seguem o componente (a GUI, os dados, os testes, os docs).
 
-### ☐ F7.1: as transformações novas da cadeia (TR-06)
+### ☑ F7.1: as transformações novas da cadeia (TR-06)
 
 - **O conteúdo:** as etapas **derivar** (a diferença central, × a taxa), **integrar** (com um passa-altas de primeira
   ordem no corte escolhido, para o DC não acumular: a conta é a de um filtro, e o bloco a bloco vale), **RMS móvel**
@@ -2448,8 +2448,18 @@ resposta conhecida), como as do motor; os commits seguem o componente (a GUI, os
   que a cadeia muda** (V → V/s, V·s, Hz), mostrada no traço e nos eixos.
 - **Pronto quando:** cada etapa confere com a referência (a SciPy no vetor inteiro, um seno de amplitude e frequência
   conhecidas) e o bloco a bloco dá o mesmo que o vetor inteiro longe das bordas.
+- **Feita em 20/11/2026.** As etapas em `dados/cadeia.py`: `Derivar` (o erro é o da diferença central, (ωΔt)²/6),
+  `Integrar` (o integrador com fuga 1/(s + 2π·fc) pela bilinear, causal, a 1e-5 da analógica a 60 Hz; o corte que
+  pediria mais de 10 s de memória é recusado com o mínimo), `RMSMovel` (a 1e-9 num seno com a janela de ciclos
+  inteiros), `Envoltoria` (o FIR de Hilbert de 8 períodos da menor frequência, com a janela de Blackman: a 1e-6 do
+  `scipy.signal.hilbert`) e `FrequenciaInstantanea` (o passa-faixa de 0,5× a 2× a nominal e os cruzamentos por zero
+  interpolados: a 1e-3 Hz com o 5º harmônico; um degrau de 60 para 61 Hz aparece no ciclo dele). O bloco a bloco
+  confere com o vetor inteiro a ≤ 1e-9. **A unidade** que cada etapa dá à saída (`Etapa.unidade`,
+  `Cadeia.unidade_de`): o traço mostra V/s, V·s, Hz. As etapas não lineares não têm ganho em DC: um "remover o DC"
+  depois delas avisa que tira a média do trecho. No Processamento, cada etapa tem os seus campos, com a dica do que o
+  parâmetro faz. Testes: `tests/test_gui_cadeia_fase7.py` e `tests/test_gui_processamento.py`.
 
-### ☐ F7.2: a matemática entre canais (TR-05)
+### ☑ F7.2: a matemática entre canais (TR-05)
 
 - **O conteúdo:** a etapa **Expressão**, com o traço (`a`) e os canais da mesma captura (`c0` a `c7`, na unidade
   física), os números, `+ − × ÷ ^`, e as funções `abs`, `sqrt`, `exp`, `log`, `log10`, `sin`, `cos`, `sign`, `min`,
@@ -2457,6 +2467,14 @@ resposta conhecida), como as do motor; os commits seguem o componente (a GUI, os
   A × B (a potência instantânea) e A ÷ B no menu do traço; a unidade da expressão.
 - **Pronto quando:** a expressão dá o mesmo que a conta em NumPy, recusa o que não está na lista (com o porquê), e o
   traço com a expressão materializa e plota como os outros.
+- **Feita em 20/11/2026.** `dados/expressao.py`: a `ast` do Python com a lista do que vale (os números, `a`, `c0` a
+  `c15`, `pi`, `e`, as quatro operações, a potência até 64, o sinal e 14 funções), compilada numa função de NumPy;
+  tudo o mais é recusado com o porquê e a posição (o atributo, o índice, a comparação, o `lambda`, a vírgula decimal).
+  A etapa `Expressao` lê os outros canais no mesmo ponto da captura: a cadeia agora passa a posição do trecho às
+  etapas (`Etapa.aplicar_em`), e o contexto sabe ler os canais (`ContextoDaCadeia.ler_canal`). Um valor sem número (a
+  divisão por zero) vira 0, com um aviso que diz quantos. O ganho em DC só existe na conta `k·a`. No menu "Adicionar
+  etapa": a expressão livre e os atalhos A − B, A × B (a potência instantânea) e A ÷ B, com o c1; o cartão tem a conta
+  e a unidade do resultado (W para V × A).
 
 ### ☐ F7.3: o XY e a potência (ME-03)
 
