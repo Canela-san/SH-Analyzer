@@ -171,22 +171,21 @@ class ManutencaoDaPlaca(QObject):
             self.ler()
 
     def ler(self) -> Chamada | None:
-        """O firmware deste aplicativo, o plano, as cópias anteriores e a atualização que roda na placa."""
+        """O firmware deste aplicativo (lido de novo a cada vez: a árvore pode ter mudado com o aplicativo aberto), o
+        plano, as cópias anteriores e a atualização que roda na placa."""
         cliente, conexao_ssh = self.conexao.cliente, self.conexao.conexao_ssh
         if cliente is None or conexao_ssh is None or self.lendo:
             return None
         self.lendo, self.erro = True, ""
         self.mudou.emit()
-        return self._chamar("ler o firmware da placa", self._ler_no_laco, cliente, conexao_ssh, self.firmware,
-                            ao_terminar=self._leu)
+        return self._chamar("ler o firmware da placa", self._ler_no_laco, cliente, conexao_ssh, ao_terminar=self._leu)
 
     @staticmethod
-    async def _ler_no_laco(cliente, conexao_ssh, firmware):
+    async def _ler_no_laco(cliente, conexao_ssh):
         from sh_placa import atualizacao
         from sh_placa.tarefas import tarefas_na_placa
 
-        if firmware is None:
-            firmware = await asyncio.to_thread(atualizacao.firmware_do_aplicativo)
+        firmware = await asyncio.to_thread(atualizacao.firmware_do_aplicativo)
         plano = await atualizacao.planejar(cliente, firmware) if firmware is not None else None
         copias = await atualizacao.copias_anteriores(cliente)
         tarefas = await tarefas_na_placa(conexao_ssh, atualizacao.TIPO)
