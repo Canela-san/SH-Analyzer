@@ -49,7 +49,7 @@ VERSAO = 7
 EXTENSAO = ".shproj"
 SUFIXO_AUTOMATICO = "~"
 TIPOS_DE_VISTA = ("tempo", "espectro", "bandas", "espectrograma", "harmonicos", "sonda", "xy", "histograma", "eventos",
-                  "qualidade", "transferencia", "metricas")
+                  "qualidade", "transferencia", "metricas", "instrumento")
 """Os tipos de vista que esta versão abre."""
 LIMITE_DA_BUSCA = 5000
 """Quantos arquivos a busca pelo CRC olha, no máximo (uma pasta enorme não trava a abertura)."""

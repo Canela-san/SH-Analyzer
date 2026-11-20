@@ -222,3 +222,15 @@ def ciclo_medio(trecho: TrechoDoTraco, disparo: Disparo, antes_s: float, depois_
     desvio = np.sqrt(m2 / (n - 1)) if n > 1 else np.zeros(pontos)
     return CicloMedio(grade / taxa, media if n else np.full(pontos, np.nan), desvio, n,
                       minimo if n else math.nan, maximo if n else math.nan)
+
+
+def passo_125(valor: float) -> float:
+    """O menor passo da série 1-2-5 (…, 0,1, 0,2, 0,5, 1, 2, 5, 10…) que não é menor que ``valor``: a escala por
+    divisão do osciloscópio."""
+    if not valor > 0 or not math.isfinite(valor):
+        return 1.0
+    decada = 10.0 ** math.floor(math.log10(valor))
+    for m in (1.0, 2.0, 5.0, 10.0):
+        if m * decada >= valor * (1 - 1e-9):
+            return m * decada
+    return 10.0 * decada

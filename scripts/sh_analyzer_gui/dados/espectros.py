@@ -653,11 +653,59 @@ class OpcoesDasMetricas(_OpcoesComDicionario):
         _inteiro_em(self.harmonicos, 2, 50, "número de harmônicos")
 
 
+BORDAS_DO_DISPARO = ("subindo", "descendo")
+
+
+@dataclass(frozen=True)
+class OpcoesDoInstrumento(_OpcoesComDicionario):
+    """A vista Instrumento (F7.9): o traço de disparo (``traco``), o nível, a borda e a histerese (0: 2 % da faixa
+    do traço), o tempo por divisão (0: dois ciclos na tela), a posição do disparo (a fração da tela antes dele), a
+    persistência e a escala de cada traço (``escalas``: ``(unidade por divisão, offset)`` na ordem da vista de
+    tempo; a unidade por divisão 0 é a automática)."""
+
+    traco: int = 0
+    trecho: str = "captura"
+    vista_de_tempo: str | None = None
+    nivel: float = 0.0
+    borda: str = "subindo"
+    histerese: float = 0.0
+    tempo_por_divisao: float = 0.0
+    posicao_do_disparo: float = 0.1
+    persistencia: bool = True
+    escalas: tuple[tuple[float, float], ...] = ()
+
+    def __post_init__(self) -> None:
+        _validar_comum(self)
+        _numero_em(self.nivel, -1e12, 1e12, "nível do disparo")
+        if self.borda not in BORDAS_DO_DISPARO:
+            raise OpcoesInvalidas(f"borda inválida: {self.borda!r} (use {', '.join(BORDAS_DO_DISPARO)})")
+        _numero_em(self.histerese, 0.0, 1e12, "histerese")
+        _numero_em(self.tempo_por_divisao, 0.0, 3600.0, "tempo por divisão")
+        _numero_em(self.posicao_do_disparo, 0.0, 0.9, "posição do disparo")
+        _booleano(self.persistencia, "persistência")
+        escalas = tuple(tuple(e) for e in self.escalas) if isinstance(self.escalas, (list, tuple)) else None
+        if escalas is None or any(len(e) != 2 for e in escalas):
+            raise OpcoesInvalidas("as escalas são pares (unidade por divisão, offset)")
+        for por_divisao, offset in escalas:
+            _numero_em(por_divisao, 0.0, 1e12, "escala por divisão")
+            _numero_em(offset, -1e12, 1e12, "offset")
+        object.__setattr__(self, "escalas", tuple((float(a), float(b)) for a, b in escalas))
+
+    def escala(self, posicao: int) -> tuple[float, float]:
+        """A escala do traço da ``posicao`` (``(0, 0)``: a automática, sem offset)."""
+        return self.escalas[posicao] if posicao < len(self.escalas) else (0.0, 0.0)
+
+    def com_escala(self, posicao: int, por_divisao: float, offset: float) -> OpcoesDoInstrumento:
+        escalas = list(self.escalas) + [(0.0, 0.0)] * max(0, posicao + 1 - len(self.escalas))
+        escalas[posicao] = (float(por_divisao), float(offset))
+        return self.com(escalas=tuple(escalas))
+
+
 OPCOES_DO_TIPO = {"tempo": OpcoesDoTempo, "espectro": OpcoesDoEspectro, "bandas": OpcoesDasBandas,
                   "espectrograma": OpcoesDoEspectrograma, "harmonicos": OpcoesDosHarmonicos, "sonda": OpcoesDaSonda,
                   "xy": OpcoesDoXY, "histograma": OpcoesDoHistograma, "eventos": OpcoesDosEventos,
                   "qualidade": OpcoesDaQualidade, "transferencia": OpcoesDaTransferencia,
-                  "metricas": OpcoesDasMetricas}
+                  "metricas": OpcoesDasMetricas, "instrumento": OpcoesDoInstrumento}
 """A classe das opções de cada tipo de vista. As de um projeto de antes da vista de tempo ter opções (``{}``) são as
 padrão."""
 
