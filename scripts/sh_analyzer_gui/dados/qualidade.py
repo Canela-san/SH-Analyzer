@@ -14,7 +14,8 @@ estatísticas** de cada índice: o mínimo, a média, o P95, o P99 e o máximo d
 * **afundamentos, elevações e interrupções**: o RMS de um ciclo atualizado a cada meio ciclo (o U_rms(½) da norma)
   contra a tensão de referência (a dada, ou a mediana do trecho): abaixo de 90 % é um afundamento, abaixo de 5 % uma
   interrupção, acima de 110 % uma elevação; o fim, quando volta para dentro com a histerese de 2 %;
-* **os picos de supraharmônicos**: as janelas de 200 ms em que o RMS de 2 a 150 kHz passa de 10× (20 dB) a mediana;
+* **os picos de supraharmônicos**: as janelas de 200 ms em que o RMS de 2 a 9 kHz ou o de 9 a 150 kHz passa de 10×
+  (20 dB) a mediana dele (as janelas vizinhas juntas num evento só);
 * **a saturação**: as sequências de amostras no menor ou no maior código do ADC (só no traço sem cadeia);
 * **as descontinuidades**: os saltos de uma amostra para a outra maiores que 8 desvios robustos da diferença (o
   desvio pela mediana do módulo, que um salto não puxa) e que não seguem a forma de onda;
@@ -97,10 +98,37 @@ class IndicesDeQualidade:
     ciclos_por_janela: int
     estatisticas: dict[str, EstatisticaDoIndice] = field(default_factory=dict)
     trechos_sem_fundamental: int = 0
+    rms_meio_minimo: np.ndarray | None = None     # o menor e o maior RMS de meio ciclo em cada janela
+    rms_meio_maximo: np.ndarray | None = None
 
     @property
     def n_janelas(self) -> int:
         return len(self.inicios_s)
+
+    def marcadas(self, referencia: float | None = None) -> np.ndarray:
+        """As janelas marcadas (o *flagging* da IEC 61000-4-30): as que têm um RMS de meio ciclo abaixo de 90 % ou
+        acima de 110 % da referência (a dada, ou a mediana do RMS das janelas), num afundamento, numa elevação ou numa
+        interrupção. A norma tira os valores delas das estatísticas, e marca os agregados que as incluem: a
+        frequência, o THD e os outros índices de uma janela com um degrau na tensão não descrevem a rede."""
+        vazio = np.zeros(self.n_janelas, dtype=bool)
+        if self.rms_meio_minimo is None or not self.n_janelas:
+            return vazio
+        ref = referencia or float(np.nanmedian(self.valores["rms"]))
+        if not ref > 0:
+            return vazio
+        with np.errstate(invalid="ignore"):
+            return (self.rms_meio_minimo < LIMIAR_DO_AFUNDAMENTO * ref) | (self.rms_meio_maximo > LIMIAR_DA_ELEVACAO * ref)
+
+    def agregados_marcados(self, marcadas: np.ndarray) -> np.ndarray:
+        """Os agregados que incluem uma janela marcada."""
+        n_ag = len(self.agregados_s)
+        if not n_ag:
+            return np.zeros(0, dtype=bool)
+        return marcadas[:n_ag * JANELAS_DA_AGREGACAO].reshape(n_ag, JANELAS_DA_AGREGACAO).any(axis=1)
+
+    def estatisticas_de(self, manter: np.ndarray) -> dict[str, EstatisticaDoIndice]:
+        """As estatísticas só das janelas de ``manter`` (as não marcadas, por exemplo)."""
+        return {nome: _estatistica(v[manter]) for nome, v in self.valores.items()}
 
 
 def _estatistica(x: np.ndarray) -> EstatisticaDoIndice:
@@ -150,7 +178,7 @@ def indices(trecho: TrechoDoTraco, *, progresso: Callable[[float], None] | None 
     a, fim = trecho.inicio, trecho.fim
     if fim - a < 4:
         raise api.ErroSHAN("o trecho é curto demais para os índices de qualidade")
-    inicios, linhas = [], []
+    inicios, linhas, extremos = [], [], []
     sem_fundamental = 0
     n_ciclos = None
     pos, alvo, continua = a, float(a), False
@@ -176,11 +204,15 @@ def indices(trecho: TrechoDoTraco, *, progresso: Callable[[float], None] | None 
         sobra = int(SOBRA_EM_CICLOS * taxa / max(f1, 1.0))
         limite = len(x) if b >= fim else len(x) - sobra
         usados = None
+        fins_meio, rms_meio = _rms_de_meio_ciclo(x, cruz)
         while k + n_ciclos < len(cruz) and cruz[k + n_ciclos] <= limite:
             i0, i1 = int(round(cruz[k])), int(round(cruz[k + n_ciclos]))
             duracao = (cruz[k + n_ciclos] - cruz[k]) / taxa
             linhas.append(_indices_da_janela(x[i0:i1], n_ciclos, duracao, taxa))
             inicios.append((pos + cruz[k]) / taxa)
+            j0, j1 = np.searchsorted(fins_meio, [cruz[k], cruz[k + n_ciclos]], side="right")
+            meio = rms_meio[j0:j1]
+            extremos.append((float(np.min(meio)), float(np.max(meio))) if len(meio) else (math.nan, math.nan))
             usados = k + n_ciclos
             k += n_ciclos
         if b >= fim:
@@ -194,10 +226,11 @@ def indices(trecho: TrechoDoTraco, *, progresso: Callable[[float], None] | None 
             progresso((pos - a) / (fim - a))
     if not linhas:
         raise api.ErroSHAN("o trecho não tem uma fundamental de 45 a 65 Hz: os índices de qualidade precisam dela")
-    return _montar(np.array(inicios), linhas, n_ciclos, sem_fundamental)
+    return _montar(np.array(inicios), linhas, n_ciclos, sem_fundamental, np.array(extremos))
 
 
-def _montar(inicios: np.ndarray, linhas: list[dict], n_ciclos: int, sem_fundamental: int) -> IndicesDeQualidade:
+def _montar(inicios: np.ndarray, linhas: list[dict], n_ciclos: int, sem_fundamental: int,
+            extremos: np.ndarray) -> IndicesDeQualidade:
     valores = {nome: np.array([linha[nome] for linha in linhas]) for nome in INDICES}
     n_ag = len(inicios) // JANELAS_DA_AGREGACAO
     agregados = {}
@@ -207,7 +240,8 @@ def _montar(inicios: np.ndarray, linhas: list[dict], n_ciclos: int, sem_fundamen
                            else np.mean(blocos, axis=1))
     agregados_s = inicios[:n_ag * JANELAS_DA_AGREGACAO:JANELAS_DA_AGREGACAO] if n_ag else np.zeros(0)
     estatisticas = {nome: _estatistica(v) for nome, v in valores.items()}
-    return IndicesDeQualidade(inicios, valores, agregados_s, agregados, n_ciclos, estatisticas, sem_fundamental)
+    return IndicesDeQualidade(inicios, valores, agregados_s, agregados, n_ciclos, estatisticas, sem_fundamental,
+                              extremos[:, 0].copy(), extremos[:, 1].copy())
 
 
 # ------------------------------------------------------------------ os eventos (F7.5)
@@ -241,18 +275,22 @@ def _rms_de_meio_ciclo(x: np.ndarray, cruz: np.ndarray) -> tuple[np.ndarray, np.
     """O RMS de um ciclo, atualizado a cada meio ciclo (os meios ciclos entre os cruzamentos subindo): os instantes
     (o fim de cada janela, em amostras de ``x``) e os valores."""
     meios = np.sort(np.concatenate([cruz, (cruz[:-1] + cruz[1:]) / 2]))
-    quadrados = np.concatenate([[0.0], np.cumsum(x * x)])
+    if len(meios) < 3:
+        return np.zeros(0), np.zeros(0)
+    quadrados = np.concatenate([[0.0], np.cumsum(np.asarray(x, dtype=np.float64) ** 2)])
     idx = np.clip(np.round(meios).astype(np.int64), 0, len(x))
-    fins, valores = [], []
-    for k in range(2, len(idx)):
-        a, b = idx[k - 2], idx[k]
-        if b > a:
-            fins.append(meios[k])
-            valores.append(math.sqrt((quadrados[b] - quadrados[a]) / (b - a)))
-    return np.array(fins), np.array(valores)
+    a, b = idx[:-2], idx[2:]
+    validos = b > a
+    a, b = a[validos], b[validos]
+    return meios[2:][validos], np.sqrt(np.maximum(quadrados[b] - quadrados[a], 0.0) / (b - a))
 
 
-def _eventos_de_tensao(instantes_s: np.ndarray, rms: np.ndarray, referencia: float) -> list[Evento]:
+def _numero(valor: float, casas: int) -> str:
+    return f"{valor:.{casas}f}"
+
+
+def _eventos_de_tensao(instantes_s: np.ndarray, rms: np.ndarray, referencia: float,
+                       numero: Callable[[float, int], str] = _numero) -> list[Evento]:
     eventos = []
     estado, inicio, extremo = None, 0.0, 0.0
     for t, v in zip(instantes_s, rms):
@@ -275,11 +313,11 @@ def _eventos_de_tensao(instantes_s: np.ndarray, rms: np.ndarray, referencia: flo
             terminou = r <= LIMIAR_DA_ELEVACAO - HISTERESE
         if terminou:
             eventos.append(Evento(estado, inicio, t - inicio, extremo,
-                                  f"{100 * extremo / referencia:.1f} % da referência"))
+                                  f"{numero(100 * extremo / referencia, 1)} % da referência"))
             estado = None
     if estado is not None:
         eventos.append(Evento(estado, inicio, float(instantes_s[-1]) - inicio, extremo,
-                              f"{100 * extremo / referencia:.1f} % da referência (até o fim do trecho)"))
+                              f"{numero(100 * extremo / referencia, 1)} % da referência (até o fim do trecho)"))
     return eventos
 
 
@@ -293,8 +331,9 @@ def _sequencias(mascara: np.ndarray) -> list[tuple[int, int]]:
 
 def eventos(trecho: TrechoDoTraco, opcoes: CriteriosDosEventos = CriteriosDosEventos(), *,
             indices_prontos: IndicesDeQualidade | None = None, progresso=None, cancelado=None,
-            pedaco: int | None = None) -> list[Evento]:
-    """Os eventos do trecho, em ordem de tempo (ver o começo do módulo)."""
+            pedaco: int | None = None, numero: Callable[[float, int], str] = _numero) -> list[Evento]:
+    """Os eventos do trecho, em ordem de tempo (ver o começo do módulo). ``numero(valor, casas)`` escreve os números
+    dos detalhes (a interface passa o dela, com o separador decimal das configurações)."""
     pedaco = pedaco or PEDACO
     canal = trecho.captura.canal(trecho.numero)
     taxa = canal.taxa_hz
@@ -344,7 +383,7 @@ def eventos(trecho: TrechoDoTraco, opcoes: CriteriosDosEventos = CriteriosDosEve
         rms_arr, t_arr = np.array(rms), np.array(instantes)
         referencia = opcoes.referencia or float(np.median(rms_arr))
         if referencia > 0:
-            lista.extend(_eventos_de_tensao(t_arr, rms_arr, referencia))
+            lista.extend(_eventos_de_tensao(t_arr, rms_arr, referencia, numero))
     # os saltos vizinhos (o mesmo degrau visto por duas diferenças) viram um só
     ultimo = -10
     for amostra, salto in sorted(saltos):
@@ -353,14 +392,23 @@ def eventos(trecho: TrechoDoTraco, opcoes: CriteriosDosEventos = CriteriosDosEve
         ultimo = amostra
     q = indices_prontos
     if q is not None and q.n_janelas:
+        # as janelas marcadas (um degrau na tensão espalha a fundamental pelo espectro) ficam de fora
+        marcadas = q.marcadas(opcoes.referencia) if opcoes.tensao else np.zeros(q.n_janelas, dtype=bool)
         for nome in ("supra_9_150k", "supra_2_9k"):
-            v = q.valores[nome]
+            v = np.where(marcadas, np.nan, q.valores[nome])
             mediana = float(np.nanmedian(v)) if np.isfinite(v).any() else math.nan
             if not mediana > 0:
                 continue
-            for k in np.nonzero(v > FATOR_DO_PICO_SUPRA * mediana)[0]:
-                lista.append(Evento("supraharmonicos", float(q.inicios_s[k]), q.ciclos_por_janela / q.valores[
-                    "frequencia"][k], float(v[k]), f"{NOMES_DOS_INDICES[nome]}: {v[k] / mediana:.1f}× a mediana"))
+            # as janelas vizinhas acima do limiar são um evento só: do começo da primeira ao fim da última
+            duracoes = q.ciclos_por_janela / q.valores["frequencia"]
+            with np.errstate(invalid="ignore"):
+                acima = v > FATOR_DO_PICO_SUPRA * mediana
+            for k0, k1 in _sequencias(acima):
+                pico = float(np.max(v[k0:k1]))
+                inicio = float(q.inicios_s[k0])
+                lista.append(Evento("supraharmonicos", inicio, float(q.inicios_s[k1 - 1] + duracoes[k1 - 1]) - inicio,
+                                    pico, f"{NOMES_DOS_INDICES[nome]}: {numero(pico / mediana, 1)}× a mediana "
+                                          f"({k1 - k0} janela(s))"))
     cab = trecho.captura.cabecalho
     for campo, texto in (("buffers_sobrescritos", "buffer(s) sobrescrito(s): amostras perdidas"),
                          ("amostras_atrasadas", "amostra(s) atrasada(s): a PRU não acompanhou a taxa")):

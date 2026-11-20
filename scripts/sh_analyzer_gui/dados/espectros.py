@@ -602,20 +602,23 @@ INDICES_DE_QUALIDADE = ("frequencia", "rms", "thd", "fator_k", "crista", "forma"
 
 @dataclass(frozen=True)
 class OpcoesDaQualidade(_OpcoesComDicionario):
-    """A vista da qualidade de energia (F7.6): o traço, o trecho, o índice no gráfico e se mostra os agregados de
-    150/180 ciclos por cima das janelas."""
+    """A vista da qualidade de energia (F7.6): o traço, o trecho, o índice no gráfico, se mostra os agregados de
+    150/180 ciclos por cima das janelas e se marca as janelas com afundamento, elevação ou interrupção (o *flagging*
+    da IEC 61000-4-30: fora das estatísticas; num traço de corrente, desligue)."""
 
     traco: int = 0
     trecho: str = "captura"
     vista_de_tempo: str | None = None
     indice: str = "thd"
     agregados: bool = True
+    marcar: bool = True
 
     def __post_init__(self) -> None:
         _validar_comum(self)
         if self.indice not in INDICES_DE_QUALIDADE:
             raise OpcoesInvalidas(f"índice inválido: {self.indice!r} (use {', '.join(INDICES_DE_QUALIDADE)})")
         _booleano(self.agregados, "agregados")
+        _booleano(self.marcar, "marcar")
 
 
 @dataclass(frozen=True)
