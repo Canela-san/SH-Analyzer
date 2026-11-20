@@ -28,6 +28,7 @@ from .areas.analise.sem_cabecalho import DialogoSemCabecalho
 from .configuracao import esquecer, gravar, lembrar, ler_lista, ler_texto, pasta_de_recuperacao
 from .dados import projeto as arquivo
 from .dados.captura import Aviso, CapturaSemCabecalho, ErroSHAN, Fonte, ParametrosSemCabecalho, abrir_fonte
+from .dados.pacotes import eh_pacote
 from .modelo.comandos import AdicionarFonte
 from .modelo.objetos import FonteDoProjeto, Projeto
 from .modelo.persistencia import descrever, montar
@@ -41,7 +42,8 @@ CHAVE_DA_TAXA_E_DOS_CANAIS = "capturas/sem_cabecalho"
 """A última taxa e os últimos canais de uma captura sem o cabeçalho: a sugestão da próxima."""
 NOME_SEM_TITULO = "sem-titulo" + arquivo.EXTENSAO
 FILTRO = "Projetos do SH-Analyzer (*.shproj)"
-FILTRO_DE_ABRIR = ("Capturas e projetos (*.bin *.csv *.h5 *.hdf5 *.shproj);;Capturas do SH-Analyzer (*.bin);;"
+FILTRO_DE_ABRIR = ("Capturas, pacotes e projetos (*.bin *.csv *.h5 *.hdf5 *.tar *.shproj);;"
+                   "Capturas do SH-Analyzer (*.bin);;Pacotes do compactar (*.zpaq.tar *.tar);;"
                    "Exportadas pelo adc_tool (*.csv *.h5 *.hdf5);;Projetos do SH-Analyzer (*.shproj);;"
                    "Todos os arquivos (*)")
 ORIGEM_DO_PROJETO = "projeto"
@@ -205,21 +207,42 @@ class ControleDoProjeto(QObject):
         return [Path(c) for c in ler_lista(CHAVE_DAS_CAPTURAS_RECENTES)]
 
     def abrir_arquivos(self, caminhos=None) -> bool:
-        """Ctrl+O e o arrastar e soltar: capturas (``.bin``, ``.csv``, ``.h5``) entram no projeto aberto; um projeto
-        (``.shproj``) substitui o aberto (o primeiro, se vierem vários)."""
+        """Ctrl+O, os recentes e o arrastar e soltar: capturas (``.bin``, ``.csv``, ``.h5``) entram no projeto
+        aberto; um pacote (``.zpaq.tar``) é extraído numa tarefa e as capturas dele entram quando ela termina; um
+        projeto (``.shproj``) substitui o aberto (o primeiro, se vierem vários)."""
         if caminhos is None:
             caminhos = self.dialogos.abrir_arquivos(self.tr("Abrir"), FILTRO_DE_ABRIR, self._pasta_inicial())
         caminhos = [Path(c) for c in caminhos]
         projetos = [c for c in caminhos if c.suffix.lower() == arquivo.EXTENSAO]
-        capturas = [c for c in caminhos if c.suffix.lower() != arquivo.EXTENSAO]
+        pacotes = [c for c in caminhos if c.suffix.lower() != arquivo.EXTENSAO and eh_pacote(c)]
+        capturas = [c for c in caminhos if c.suffix.lower() != arquivo.EXTENSAO and not eh_pacote(c)]
         if projetos and not self.abrir(projetos[0]):
             return False
-        return bool(self.abrir_capturas(capturas)) or bool(projetos)
+        for pacote in pacotes:
+            self.abrir_pacote(pacote)
+        return bool(self.abrir_capturas(capturas)) or bool(projetos) or bool(pacotes)
 
-    def abrir_capturas(self, caminhos) -> list[FonteDoProjeto]:
+    def abrir_pacote(self, caminho: Path):
+        """Extrai o pacote para o cache (ou o acha lá) numa tarefa, com o progresso na barra de tarefas, e abre as
+        capturas dele; o pacote (e não as extraídas) entra nos recentes. Devolve a tarefa."""
+        caminho = Path(caminho)
+
+        def terminou(capturas, erro: str) -> None:
+            if capturas is None:
+                if erro:
+                    self._erro(self.tr("Não foi possível abrir {}: {}").format(caminho.name, erro))
+                return
+            lembrar(CHAVE_DAS_CAPTURAS_RECENTES, str(caminho.resolve()))
+            abertas = self.abrir_capturas(capturas, lembrar_recentes=False)
+            log.info("pacote aberto: %s (%d captura(s), %d nova(s) no projeto)", caminho, len(capturas), len(abertas))
+
+        return self.janela.pacotes.abrir(caminho, terminou)
+
+    def abrir_capturas(self, caminhos, *, lembrar_recentes: bool = True) -> list[FonteDoProjeto]:
         """Abre cada captura pela ``api`` e a põe no projeto (um passo de desfazer cada). Uma que não abre vira uma
         mensagem, e as outras seguem; uma que já está no projeto não entra de novo; uma sem o cabeçalho pergunta a
-        taxa e os canais (cancelar a deixa de fora)."""
+        taxa e os canais (cancelar a deixa de fora). ``lembrar_recentes``: as extraídas de um pacote não entram
+        nos recentes (entra o pacote)."""
         abertas = []
         for caminho in map(Path, caminhos):
             ja = next((f for f in self.projeto.fontes if not f.esta_ausente and
@@ -240,7 +263,8 @@ class ControleDoProjeto(QObject):
             log.info("captura aberta: %s (%s, %s, %d canal(is) a %g Hz)", caminho, aberta.captura.tipo,
                      f"cabeçalho v{cab.versao_cabecalho}" if cab is not None else "sem cabeçalho",
                      len(fonte.canais), fonte.canais[0].taxa_hz if fonte.canais else 0.0)
-            lembrar(CHAVE_DAS_CAPTURAS_RECENTES, str(caminho.resolve()))
+            if lembrar_recentes:
+                lembrar(CHAVE_DAS_CAPTURAS_RECENTES, str(caminho.resolve()))
             abertas.append(fonte)
         return abertas
 

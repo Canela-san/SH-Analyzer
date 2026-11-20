@@ -87,6 +87,7 @@ from .configuracao import gravar, ler_bytes
 from .controle_do_projeto import ControleDoProjeto
 from .dados.cache import CacheDePiramides
 from .dados.materializacao import CacheDeMaterializacoes
+from .dados.pacotes import CacheDePacotes
 from .modelo.objetos import Projeto, Vista
 from .modelo.selecao import Selecao
 from .registro import caminho_do_log
@@ -94,6 +95,7 @@ from .servicos.conexao_da_placa import ConexaoDaPlaca
 from .servicos.erros import ErroInesperado, relator
 from .servicos.fontes import ServicoDeFontes
 from .servicos.materializar import ServicoDeMaterializacao
+from .servicos.pacotes import ServicoDePacotes
 from .servicos.placa import ServicoDaPlaca
 from .servicos.saude_da_placa import SaudeDaPlaca
 from .servicos.tarefas import GerenciadorDeTarefas
@@ -164,6 +166,9 @@ class JanelaPrincipal(QMainWindow):
             preferencias.pasta_do_cache("piramides"), preferencias.limite("piramides")))
         self.materializacoes = ServicoDeMaterializacao(self.tarefas, parent=self, cache=CacheDeMaterializacoes(
             preferencias.pasta_do_cache("materializacoes"), preferencias.limite("materializacoes")))
+        self.pacotes = ServicoDePacotes(self.tarefas, parent=self, abertas=self._capturas_abertas,
+                                        cache=CacheDePacotes(preferencias.pasta_do_cache("pacotes"),
+                                                             preferencias.limite("pacotes")))
         # A placa: as chamadas no laço asyncio da thread própria, que nasce na primeira chamada (a Aquisição).
         self.placa = ServicoDaPlaca(parent=self)
         self.conexao_da_placa = ConexaoDaPlaca(self.placa, parent=self)
@@ -431,11 +436,18 @@ class JanelaPrincipal(QMainWindow):
         return dialogo
 
     def aplicar_cache(self) -> None:
-        """A pasta e os limites do cache das configurações, nos dois serviços (o limite menor apaga na hora os
+        """A pasta e os limites do cache das configurações, nos três serviços (o limite menor apaga na hora os
         menos usados, nunca o que está aberto)."""
         self.servico_de_fontes.definir_cache(preferencias.pasta_do_cache("piramides"), preferencias.limite("piramides"))
         self.materializacoes.definir_cache(preferencias.pasta_do_cache("materializacoes"),
                                            preferencias.limite("materializacoes"))
+        self.pacotes.definir_cache(preferencias.pasta_do_cache("pacotes"), preferencias.limite("pacotes"))
+
+    def _capturas_abertas(self) -> set[Path]:
+        """Os arquivos das capturas abertas no projeto (o cache dos pacotes não apaga as pastas deles)."""
+        if self.projeto is None:
+            return set()
+        return {f.caminho for f in self.projeto.fontes if not f.esta_ausente}
 
     def mostrar_atalhos(self) -> DialogoDeAtalhos:
         self.dialogo_de_atalhos = DialogoDeAtalhos(self.acoes_da_paleta(), self)
@@ -460,7 +472,7 @@ class JanelaPrincipal(QMainWindow):
         for menu, recentes, abrir, nome in (
                 (self.menu_recentes, self.controle.recentes(), self.controle.abrir, lambda c: c.stem),
                 (self.menu_capturas_recentes, self.controle.recentes_capturas(),
-                 lambda c: self.controle.abrir_capturas([c]), lambda c: c.name)):
+                 lambda c: self.controle.abrir_arquivos([c]), lambda c: c.name)):
             menu.clear()
             existentes = [c for c in recentes if c.is_file()]
             for caminho in existentes:

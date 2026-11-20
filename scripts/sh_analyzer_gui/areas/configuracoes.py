@@ -364,8 +364,10 @@ class DialogoDeConfiguracoes(QDialog):
     def _pagina_cache(self) -> QWidget:
         pagina, formulario = self._pagina(self.tr("Cache"))
         dicas = {"piramides": self.tr("Os resumos das capturas que deixam a navegação imediata."),
-                 "materializacoes": self.tr("Os traços com transformações, calculados na captura inteira.")}
-        rotulos = {"piramides": self.tr("Pirâmides"), "materializacoes": self.tr("Traços transformados")}
+                 "materializacoes": self.tr("Os traços com transformações, calculados na captura inteira."),
+                 "pacotes": self.tr("As capturas extraídas dos pacotes .zpaq.tar abertos.")}
+        rotulos = {"piramides": self.tr("Pirâmides"), "materializacoes": self.tr("Traços transformados"),
+                   "pacotes": self.tr("Pacotes extraídos")}
         self.usos: dict[str, QLabel] = {}
         self.limites: dict[str, QSpinBox] = {}
         self.botoes_de_limpar: dict[str, Botao] = {}
@@ -445,7 +447,8 @@ class DialogoDeConfiguracoes(QDialog):
         self._mostrar_usos()
 
     def _servico(self, nome: str):
-        return self.janela.servico_de_fontes if nome == "piramides" else self.janela.materializacoes
+        return {"piramides": self.janela.servico_de_fontes, "materializacoes": self.janela.materializacoes,
+                "pacotes": self.janela.pacotes}[nome]
 
     def _limpar(self, nome: str) -> None:
         liberados = self._servico(nome).limpar_cache()

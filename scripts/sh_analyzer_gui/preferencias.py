@@ -37,7 +37,7 @@ from .componentes.numeros import SEPARADORES, definir_separador_decimal
 from .configuracao import configuracoes, gravar, ler_texto
 from .dados import cache as cache_de_piramides
 from .dados import figura as fig
-from .dados import materializacao, unidades
+from .dados import materializacao, pacotes, unidades
 from .graficos.faixa import definir_prefixos_nos_eixos
 from .tema.aplicar import MODOS, MOVIMENTOS, aparencia
 from .tema.fontes import escolher_fonte, familias_disponiveis
@@ -54,10 +54,10 @@ CHAVE_DO_PEDIDO = "aquisicao/ultimo_pedido"
 CHAVE_DO_CADERNO = "aquisicao/caderno_visivel"
 PASTAS = ("dados", "sondas", "cache")
 CHAVES_DAS_PASTAS = {nome: f"pastas/{nome}" for nome in PASTAS}
-CACHES = ("piramides", "materializacoes")
+CACHES = ("piramides", "materializacoes", "pacotes")
 CHAVES_DOS_LIMITES = {nome: f"cache/limite_{nome}_bytes" for nome in CACHES}
 LIMITES_PADRAO = {"piramides": cache_de_piramides.LIMITE_PADRAO_BYTES,
-                  "materializacoes": materializacao.LIMITE_PADRAO_BYTES}
+                  "materializacoes": materializacao.LIMITE_PADRAO_BYTES, "pacotes": pacotes.LIMITE_PADRAO_BYTES}
 LIMITE_MINIMO_BYTES = 256 * 1024**2
 """O menor limite aceito: abaixo dele, o cache quase não guardaria nada entre uma sessão e outra (o que está aberto
 fica sempre, mesmo acima do limite)."""
@@ -305,7 +305,7 @@ def mudar_pasta(nome: str, caminho: Path | None) -> None:
 
 
 def pasta_do_cache(nome: str) -> Path:
-    """A pasta de um dos caches (``"piramides"`` ou ``"materializacoes"``) dentro da pasta do cache."""
+    """A pasta de um dos caches (``"piramides"``, ``"materializacoes"`` ou ``"pacotes"``) dentro da pasta do cache."""
     if nome not in CACHES:
         raise ValueError(f"cache desconhecido: {nome!r} (use {', '.join(CACHES)})")
     return pasta("cache") / nome
