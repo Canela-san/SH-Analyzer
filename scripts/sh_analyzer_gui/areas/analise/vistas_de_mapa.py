@@ -78,6 +78,9 @@ class VistaLigada(QWidget):
 
     nome_da_conta = "Conta"
     unidade_x = "s"                 # a unidade do eixo x (o tempo; nos harmônicos, a ordem)
+    opcoes_do_desenho: tuple[str, ...] = ()
+    """Os campos das opções que só mudam o desenho: trocá-los redesenha o resultado, sem refazer a conta (a subclasse
+    redesenha em ``_mostrar_opcoes_proprias``)."""
 
     def __init__(self, vista: Vista, projeto: Projeto, selecao: Selecao, *, tarefas, materializacoes,
                  vista_de_tempo: Callable[[str | None], object], parent: QWidget | None = None):
@@ -366,7 +369,8 @@ class VistaLigada(QWidget):
         self._nota = nota
         opcoes = self.opcoes
         chave_extra, extra = self._extras(tempo, tracos, traco, a, b)
-        chave = (id(traco), r.fonte, r.canal, r.cadeia, r.ganho, r.offset, a, b, opcoes, pronta is not None,
+        da_conta = opcoes.com(**{c: getattr(type(opcoes)(), c) for c in self.opcoes_do_desenho})
+        chave = (id(traco), r.fonte, r.canal, r.cadeia, r.ganho, r.offset, a, b, da_conta, pronta is not None,
                  chave_extra)
         if chave == self._chave_calculada and not self.aguardando:
             self._mostrar_info()               # o mesmo trecho com as mesmas opções: nada a refazer
