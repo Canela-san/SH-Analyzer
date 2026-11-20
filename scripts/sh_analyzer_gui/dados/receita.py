@@ -113,8 +113,8 @@ class ReceitaDoTraco:
         return cls(**valores)
 
     def unidade_de(self, unidade_do_canal: str) -> str:
-        """A unidade dos valores do traço: a dele ou, sem uma, a do canal."""
-        return self.unidade or unidade_do_canal
+        """A unidade dos valores do traço: a dele ou, sem uma, a que a cadeia dá ao canal (V → V/s na derivada)."""
+        return self.unidade or self.cadeia.unidade_de(unidade_do_canal)
 
     def afim(self, escala_do_canal: float, deslocamento_do_canal: float) -> tuple[float, float]:
         """A conversão inteira, do código do ADC ao valor mostrado: ``y = escala * codigo + deslocamento``, juntando

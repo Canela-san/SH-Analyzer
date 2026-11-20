@@ -74,11 +74,15 @@ def carregador_de_perfis() -> Callable[[str], object]:
 
 
 def contexto_do_canal(canal: api.CanalDaCaptura, media: float | None = None,
-                      carregar_perfil: Callable[[str], object] | None = None) -> ContextoDaCadeia:
-    """O contexto da cadeia de um traço deste canal: a taxa, o perfil que a captura registra e a média do canal."""
+                      carregar_perfil: Callable[[str], object] | None = None, *,
+                      captura: api.Captura | None = None) -> ContextoDaCadeia:
+    """O contexto da cadeia de um traço deste canal: a taxa, o perfil que a captura registra, a média do canal e,
+    com a captura, como ler os outros canais dela (a expressão)."""
+    ler = None if captura is None else (lambda numero, a, b: api.sinal_do_canal(captura, numero, a, b))
     return ContextoDaCadeia(canal.taxa_hz, perfil_do_canal=canal.perfil, media=media,
                             problema_sonda=canal.problema_sonda,
-                            carregar_perfil=carregar_perfil or carregador_de_perfis())
+                            carregar_perfil=carregar_perfil or carregador_de_perfis(),
+                            ler_canal=ler, n_canais=len(captura.canais) if captura is not None else 0)
 
 
 def leitor_do_canal(captura: api.Captura, numero: int) -> Callable[[int, int], np.ndarray]:

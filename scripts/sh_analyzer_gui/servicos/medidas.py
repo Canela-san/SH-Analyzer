@@ -149,7 +149,7 @@ class ServicoDeMedidas(QObject):
             return None
         if self.materializacoes is not None:
             return self.materializacoes.contexto(fonte, receita.canal)
-        return mat.contexto_do_canal(fonte.canal(receita.canal))
+        return mat.contexto_do_canal(fonte.canal(receita.canal), captura=fonte.fonte.captura)
 
     def _terminou(self, tarefa: Tarefa) -> None:
         if tarefa is not self._atual:

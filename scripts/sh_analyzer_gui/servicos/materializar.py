@@ -99,7 +99,8 @@ class ServicoDeMaterializacao(QObject):
 
     def contexto(self, fonte: FonteDoProjeto, numero: int) -> ContextoDaCadeia:
         """O contexto da cadeia de um traço deste canal (com a média, se já foi calculada)."""
-        return mat.contexto_do_canal(fonte.canal(numero), self._medias.get((fonte.id, numero)), self._carregar)
+        return mat.contexto_do_canal(fonte.canal(numero), self._medias.get((fonte.id, numero)), self._carregar,
+                                     captura=fonte.fonte.captura)
 
     def media_conhecida(self, fonte: FonteDoProjeto, numero: int) -> float | None:
         return self._medias.get((fonte.id, numero))
@@ -195,7 +196,7 @@ class ServicoDeMaterializacao(QObject):
             if precisa:
                 parte = 0.1                       # a média: uma passada só de leitura, mais rápida que a cadeia
                 media = mat.media_do_canal(canal, progresso=lambda f: progresso(parte * f), cancelado=cancelado)
-            ctx = mat.contexto_do_canal(canal, media, carregar)
+            ctx = mat.contexto_do_canal(canal, media, carregar, captura=captura)
             chave = mat.chave_da_materializacao(origem.chave, numero, cadeia, ctx)
 
             def parcial(amostras, piramide):
