@@ -120,7 +120,7 @@ def test_salvar_e_abrir_o_arquivo(tmp_path):
     (lambda d: d["vistas"][0]["tracos"][0].update(etapas={"tipo": "remover_dc"}), "etapas são uma lista"),
     (lambda d: d["vistas"][0]["tracos"][0]["etapas"].append({"tipo": "derivada"}), "etapa desconhecida"),
     (lambda d: d["vistas"][0]["tracos"][0]["etapas"][1].update(ordem=40), "ordem do filtro"),
-    (lambda d: d["vistas"][0].update(tipo="xy"), "tipo que esta versão não abre"),
+    (lambda d: d["vistas"][0].update(tipo="polar"), "tipo que esta versão não abre"),
     (lambda d: d["vistas"][0].update(nome=" "), "sem nome"),
     (lambda d: d["vistas"][0]["opcoes"].update(sobrepor="sim"), "sobrepor"),
     (lambda d: d["fontes"][1]["sem_cabecalho"].pop("canais"), "a taxa e os canais de a fonte 2 estão incompletos"),
