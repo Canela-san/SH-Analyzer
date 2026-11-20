@@ -546,12 +546,47 @@ def _transferencia(ler_x, ler_y, m: int, taxa_hz: float, resolucao_hz: float, *,
     return Transferencia(frequencias, h, np.clip(np.nan_to_num(coerencia), 0.0, 1.0), pxy, pxx, pyy, segmentos, n)
 
 
-def intervalo_de_confianca_db(medias: int, confianca: float = 0.95) -> tuple[float, float]:
+def graus_de_liberdade_do_welch(janela: np.ndarray, passo: int, segmentos: int) -> float:
+    """Os graus de liberdade ν de uma densidade do Welch com ``segmentos`` segmentos da ``janela``, um a cada
+    ``passo`` amostras: ν = 2K / (1 + 2·Σⱼ (1 − j/K)·ρ(j)²), com ρ(j) a correlação da janela com ela mesma deslocada
+    de j passos (Percival e Walden, *Spectral Analysis for Physical Applications*, 1993, 7.3). Na Hann com 50 %,
+    ρ(1) = 1/6, a aproximação de :func:`medias_equivalentes`; sem sobreposição, ν = 2K."""
+    w = np.asarray(janela, dtype=np.float64)
+    n = len(w)
+    energia = float(np.dot(w, w))
+    if segmentos < 1 or not energia > 0:
+        return math.nan
+    soma, j = 0.0, 1
+    while j < segmentos and j * passo < n:
+        rho = float(np.dot(w[:n - j * passo], w[j * passo:])) / energia
+        soma += (1.0 - j / segmentos) * rho ** 2
+        j += 1
+    return 2.0 * segmentos / (1.0 + 2.0 * soma)
+
+
+def intervalo_de_confianca_db(medias: int, confianca: float = 0.95, *,
+                              graus: float | None = None) -> tuple[float, float]:
     """O intervalo de confiança de uma densidade do Welch, em dB em volta da estimativa: com ν graus de liberdade
-    (Hann com 50 % de sobreposição: ν = 2·:func:`medias_equivalentes`), o verdadeiro fica entre
-    ν·P/χ²(ν, 1−α/2) e ν·P/χ²(ν, α/2)."""
+    (``graus``, de :func:`graus_de_liberdade_do_welch`; sem eles, a Hann com 50 % de sobreposição: ν =
+    2·:func:`medias_equivalentes`), o verdadeiro fica entre ν·P/χ²(ν, 1−α/2) e ν·P/χ²(ν, α/2)."""
     from scipy.stats import chi2
 
-    nu = 2 * medias_equivalentes(medias)
+    nu = graus if graus is not None else 2 * medias_equivalentes(medias)
+    if not nu > 0:
+        return math.nan, math.nan
     alfa = 1 - confianca
     return (10 * math.log10(nu / chi2.ppf(1 - alfa / 2, nu)), 10 * math.log10(nu / chi2.ppf(alfa / 2, nu)))
+
+
+def intervalo_do_welch(espectro: api.Espectro, confianca: float = 0.95) -> tuple[float, float]:
+    """O intervalo de confiança (dB) de cada bin de um espectro do Welch do motor: a janela, o segmento e o passo
+    dele (a sobreposição), com os graus de liberdade de :func:`graus_de_liberdade_do_welch`. Vale para um bin de
+    ruído (um processo aleatório); um tom estável varia muito menos."""
+    from supraharmonicos.espectro import obter_janela, tamanho_segmento_welch
+
+    p = espectro.parametros
+    n = tamanho_segmento_welch(espectro.taxa_hz, p.resolucao_hz)
+    passo = max(1, int(round(n * (1.0 - p.sobreposicao))))
+    janela = obter_janela(espectro.janela, n, p.kaiser_beta)
+    return intervalo_de_confianca_db(espectro.n_segmentos, confianca,
+                                     graus=graus_de_liberdade_do_welch(janela, passo, espectro.n_segmentos))
