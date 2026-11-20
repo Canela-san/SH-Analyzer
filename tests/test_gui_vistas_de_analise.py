@@ -11,6 +11,7 @@ pytest.importorskip("pytestqt")
 
 from capturas_sinteticas import FS_TOTAL_2CH, escrever_bin  # noqa: E402
 from dialogos_falsos import DialogosFalsos  # noqa: E402
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication, QToolButton  # noqa: E402
 from sh_analyzer_gui.app import criar_aplicacao  # noqa: E402
 from sh_analyzer_gui.areas.analise.vistas_de_analise import texto_da_tabela  # noqa: E402
@@ -178,3 +179,65 @@ def test_a_transferencia_com_o_intervalo_e_os_cursores(janela, entrada_e_saida, 
     widget.resolucao.setText("500 Hz")
     widget.resolucao.editingFinished.emit()
     qtbot.waitUntil(lambda: widget.resultado.amostras_por_segmento == 400, timeout=ESPERA_MS)
+
+
+@pytest.fixture
+def tom_e_imagem(janela, tmp_path):
+    """400 kS/s por canal: 1 kHz a 9 V com o 3º harmônico a −60 dBc, e uma entrada de 250 kHz (a imagem em 150 kHz);
+    e a mesma entrada a 312,5 kS/s (a imagem em 62,5 kHz)."""
+    fs = 400_000
+    t = np.arange(int(fs * 0.5)) / fs
+    rng = np.random.default_rng(6)
+    x = 9 * np.sin(2 * np.pi * 1000 * t) + 9e-3 * np.sin(2 * np.pi * 3000 * t) + 2e-3 * rng.standard_normal(len(t))
+    y = 0.5 * np.sin(2 * np.pi * 250_000 * t) + 1e-3 * rng.standard_normal(len(t))
+    caminhos = [escrever_bin(tmp_path / "t400.bin", [x, y], fs_total=2 * fs, faixas_adc_total_v=20.48)]
+    fs2 = 312_500                    # 200 MHz ÷ 320 ticks por par de canais: a taxa do cabeçalho é exata
+    t2 = np.arange(int(fs2 * 0.5)) / fs2
+    y2 = 0.5 * np.sin(2 * np.pi * 250_000 * t2) + 1e-3 * rng.standard_normal(len(t2))
+    caminhos.append(escrever_bin(tmp_path / "t312.bin", [np.zeros_like(y2), y2], fs_total=2 * fs2,
+                                 faixas_adc_total_v=20.48))
+    fontes = janela.controle.abrir_capturas(caminhos)
+    janela.area.plotar_canal(fontes[0], 0)
+    janela.area.plotar_canal(fontes[0], 1)
+    return fontes
+
+
+def test_as_metricas_de_bancada(janela, tom_e_imagem, qtbot):
+    widget = abrir(janela, qtbot, "metricas")
+    m = widget.resultado
+    assert widget.vista.tipo == "metricas" and m.espectro.tem_tom
+    assert m.espectro.freq_tom_hz == pytest.approx(1000, abs=0.01) and m.espectro.thd_db == pytest.approx(-60, abs=0.5)
+    assert widget.cartoes["tom"].texto.startswith("1,0000") and widget.cartoes["thd"].texto.endswith("dB")
+    assert widget.cartoes["enob"].texto.endswith("bits") and len(widget._barras) >= 1
+    texto = texto_da_tabela(widget.tabela)
+    assert "SINAD" in texto and "H3" in texto and "LSB" in texto
+    widget.harmonicos.setValue(5)
+    qtbot.waitUntil(lambda: len(widget.resultado.espectro.harmonicos) == 4, timeout=ESPERA_MS)
+
+
+def test_o_aviso_de_imagem_no_espectro(janela, tom_e_imagem, qtbot):
+    janela.acoes["espectro"].trigger()
+    espectro = janela.area.widget_da_vista(janela.vista_ativa())
+    espectro.acao_picos.setChecked(True)
+    qtbot.waitUntil(lambda: "podem ser imagens" in espectro.info.text(), timeout=ESPERA_MS)
+    assert "1 pico(s) acima de 96,1 kHz" in espectro.info.text()             # o de 150 kHz; o de 3 kHz, não
+
+
+def test_o_assistente_de_aliasing(janela, tom_e_imagem, qtbot):
+    from sh_analyzer_gui.areas.analise.vistas_de_bancada import DialogoDeAliasing
+
+    assert janela.acoes["aliasing"] in janela.menu_de_analises.actions()
+    janela.acoes["aliasing"].trigger()
+    dialogo = janela.findChild(DialogoDeAliasing, "dialogo_aliasing")
+    assert dialogo is not None and not dialogo.analisar.isEnabled()
+    for i in range(dialogo.lista.count()):
+        dialogo.lista.item(i).setCheckState(Qt.CheckState.Checked)
+    dialogo.canal.setCurrentIndex(dialogo.canal.findData(1))
+    assert dialogo.analisar.isEnabled()
+    dialogo.analisar.click()
+    qtbot.waitUntil(lambda: dialogo.resultado is not None, timeout=ESPERA_MS)
+    imagens = [c for c in dialogo.resultado.componentes if c.frequencia_entrada_hz and not any(c.reais)]
+    assert [round(c.frequencia_entrada_hz / 1e3) for c in imagens] == [250]
+    texto = texto_da_tabela(dialogo.tabela)
+    assert texto.startswith("Entrada\tEm A") and "imagem nas duas, de 250,00 kHz" in texto
+    dialogo.close()
