@@ -50,6 +50,9 @@ que é lido além desta fração dele (a retomada continua do ponto em que parou
 
 TEMPO_DO_BOOT_S = 6.0
 """Quanto a placa simulada leva para voltar de um reinício (a de verdade, ~40 s até o SSH)."""
+ATRASO_DA_PRU_S = 4.0
+"""Depois de um boot, quanto a PRU da placa simulada leva, com o SSH já de volta, para aparecer no remoteproc (a de
+verdade, ~25 s: o SSH aos ~45 s do boot, o driver da PRU aos ~71 s; 19/11/2026)."""
 INTERVALO_DOS_PEDIDOS_S = 0.2
 SENHA_TROCADA = ".senha-da-placa"
 """No home da placa simulada: a senha que o ``chpasswd`` dela pôs (a do sudo e a do SSH, daí em diante)."""
@@ -151,7 +154,7 @@ class ServidorDoSimulador:
                  senha: str | None = None, senha_do_sudo: str = SENHA_PADRAO_DA_IMAGEM,
                  enderecos: tuple[str, ...] = ("127.0.0.1",), processos: Path | None = None,
                  amostras_por_bloco: int | None = None, vazao_bytes_s: float | None = VAZAO_DO_USB_BYTES_S,
-                 tempo_do_boot_s: float = TEMPO_DO_BOOT_S):
+                 tempo_do_boot_s: float = TEMPO_DO_BOOT_S, atraso_da_pru_s: float | None = None):
         if sys.platform == "win32":
             raise RuntimeError("o simulador da placa precisa de um shell POSIX (/bin/sh): no Windows, não há")
         self._temporaria = pasta is None
@@ -174,6 +177,9 @@ class ServidorDoSimulador:
         self.tempo_do_boot_s = tempo_do_boot_s
         self.desligada = False                             # o systemctl poweroff: só volta com ligar()
         self._cpu: list[int] | None = None                 # o /proc/stat que anda (_avancar_o_processador)
+        self.atraso_da_pru_s = ATRASO_DA_PRU_S if atraso_da_pru_s is None else atraso_da_pru_s
+        self._ligada_em = self._ler_a_ligacao()            # o /proc/uptime que anda (_avancar_o_relogio_do_boot)
+        self._pru_aparece_em: float | None = None          # a PRU segurada depois de um boot (_segurar_a_pru)
         self.reinicios = 0
         self._vigia: asyncio.Task | None = None            # o que atende os pedidos de reiniciar e desligar
         self._reiniciando: asyncio.Task | None = None
@@ -276,10 +282,57 @@ class ServidorDoSimulador:
         except OSError:
             pass
 
+    def _ler_a_ligacao(self) -> float | None:
+        """Quando a placa ligou, no relógio monotônico daqui (do ``/proc/uptime`` que o boot escreveu)."""
+        try:
+            return time.monotonic() - float((self.raiz / "proc" / "uptime").read_text().split()[0])
+        except (OSError, ValueError, IndexError):
+            return None
+
+    def _avancar_o_relogio_do_boot(self) -> None:
+        """O ``/proc/uptime`` anda, como o de uma placa ligada (o agente diz há quanto tempo; a atualização espera a
+        PRU pelo começo do boot). Gravado de uma vez."""
+        if self._ligada_em is None:
+            return
+        ligada = time.monotonic() - self._ligada_em
+        arquivo = self.raiz / "proc" / "uptime"
+        novo = arquivo.with_name("uptime.novo")
+        try:
+            novo.write_text(f"{ligada:.2f} {0.9 * ligada:.2f}\n")
+            os.replace(novo, arquivo)
+        except OSError:
+            pass
+
+    @property
+    def _pru_segurada(self) -> Path:
+        return self.raiz / "run" / "simulador" / "remoteproc1-no-boot"
+
+    def _segurar_a_pru(self) -> None:
+        """Logo depois do boot (:func:`aplicar_o_boot`), a PRU ainda não está no remoteproc: o driver dela aparece
+        :attr:`atraso_da_pru_s` depois, já com o SSH de volta, como na placa de verdade."""
+        self._ligada_em = self._ler_a_ligacao()
+        rproc = self.raiz / "sys" / "class" / "remoteproc" / "remoteproc1"
+        if self.atraso_da_pru_s <= 0 or not rproc.is_dir():
+            return
+        shutil.rmtree(self._pru_segurada, ignore_errors=True)
+        rproc.rename(self._pru_segurada)
+        self._pru_aparece_em = time.monotonic() + self.atraso_da_pru_s
+
+    def _soltar_a_pru(self) -> None:
+        if self._pru_aparece_em is None or time.monotonic() < self._pru_aparece_em:
+            return
+        self._pru_aparece_em = None
+        try:
+            self._pru_segurada.rename(self.raiz / "sys" / "class" / "remoteproc" / "remoteproc1")
+        except OSError:
+            pass
+
     async def _vigiar_os_pedidos(self) -> None:
         while True:
             await asyncio.sleep(INTERVALO_DOS_PEDIDOS_S)
             self._avancar_o_processador()
+            self._avancar_o_relogio_do_boot()
+            self._soltar_a_pru()
             try:
                 pedido = self.pedido.read_text().strip()
             except OSError:
@@ -307,6 +360,7 @@ class ServidorDoSimulador:
             await self._cair()
             await asyncio.sleep(self.tempo_do_boot_s)
             await asyncio.to_thread(aplicar_o_boot, self.raiz, self.tempo_do_boot_s)
+            self._segurar_a_pru()
             await self.iniciar()
             self.reinicios += 1                            # só depois de escutar: quem espera por ele já conecta
         finally:
@@ -320,6 +374,7 @@ class ServidorDoSimulador:
     async def ligar(self) -> ServidorDoSimulador:
         """A placa desligada ligada de novo (alguém na bancada): o boot e a escuta na mesma porta."""
         await asyncio.to_thread(aplicar_o_boot, self.raiz, 600.0)
+        self._segurar_a_pru()
         return await self.iniciar()
 
     async def parar(self) -> None:

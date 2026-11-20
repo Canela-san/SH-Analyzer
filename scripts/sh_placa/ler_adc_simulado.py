@@ -53,8 +53,10 @@ FALHAS = {
     "sem_mem_496m": "a memória dos buffers da PRU (0x9F000000-0x9F3FFFFF) é RAM do Linux (/proc/iomem: 80000000-"
                     "9FDFFFFF : System RAM): a PRU escreveria por cima do sistema. Ponha 'mem=496M' na linha cmdline= "
                     "do /boot/uEnv.txt e reinicie a placa.",
-    "sem_overlay_da_pru": "a PRU0 não existe (/sys/class/remoteproc/remoteproc1): o /boot/uEnv.txt sem o overlay do "
-                          "remoteproc da PRU.",
+    "sem_overlay_da_pru": "a PRU0 ainda não está no remoteproc (/sys/class/remoteproc/remoteproc1/state não existe): a "
+                          "placa está terminando o boot (o driver da PRU aparece perto de 70 s depois de ligar: espere "
+                          "e tente de novo) ou o overlay da PRU não está carregado (o uboot_overlay_pru do "
+                          "/boot/uEnv.txt).",
     "audio_hdmi": "os pinos da PRU (P9_28, P9_29, P9_30, P9_31) estão com o áudio do HDMI (o overlay do HDMI com "
                   "áudio): desligue-o no /boot/uEnv.txt (disable_uboot_overlay_audio=1) e reinicie a placa.",
 }
