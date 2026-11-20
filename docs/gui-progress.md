@@ -69,7 +69,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > F6.9 também** (os logs e o monitor, o sistema, o resgate pela serial e a jornada da fase, que achou na placa de
 > verdade a PRU que só aparece depois do SSH no boot). **A Fase 6 está feita** (diário de 20/11). **A Fase 7 está em
 > tarefas** (seção 4h, F7.1 a F7.12; o acabamento e as análises, ampliada a pedido do usuário com as análises para
-> pesquisadores); **a F7.1 a F7.4 estão feitas** (as transformações novas, a expressão entre canais, o XY com a potência e o histograma com as estatísticas); **a próxima é a F7.5**. **A placa de verdade tem o firmware desta versão desde
+> pesquisadores); **a F7.1 a F7.7 estão feitas** (as transformações novas, a expressão entre canais, o XY com a potência, o histograma com as estatísticas, os eventos, a qualidade de energia e a transferência); **a próxima é a F7.8**. **A placa de verdade tem o firmware desta versão desde
 > 20/11/2026** (v0.8-337-g6f1f2b2: a saída contínua e o `ler_adc` que espera a PRU; as cópias das versões de antes em
 > `~/firmware-anteriores/`); antes da F6.2, o `ler_adc` v0.8 sem o `-o -`.
 >
@@ -2506,29 +2506,54 @@ resposta conhecida), como as do motor; os commits seguem o componente (a GUI, os
   32 M amostras (acima, do histograma fino de 65 536 colunas, com o erro dito na vista). A vista mostra as colunas
   (linear ou log), a CDF e a tabela (com o fator de crista). O ganho e o offset do traço entram nas contas.
 
-### ☐ F7.5: os eventos detectados (AN-10)
+### ☑ F7.5: os eventos detectados (AN-10)
 
 - **O conteúdo:** a vista **Eventos**: os afundamentos, as elevações e as interrupções (o RMS de meio ciclo contra a
   tensão de referência, com os limiares da IEC 61000-4-30: 90 %, 110 %, 5 %), os picos de supraharmônicos (a energia
   de 2 a 150 kHz acima do limiar), a saturação, as descontinuidades e as trocas de buffer do cabeçalho; uma lista que
   leva a vista de tempo até cada um.
 - **Pronto quando:** num sinal sintético com eventos conhecidos, cada um é achado no instante e com a duração certos.
+- **Feita em 20/11/2026.** `dados/qualidade.py` (`eventos`): o U_rms(½) (o RMS de um ciclo a cada meio ciclo, nos
+  cruzamentos do motor) contra a referência (a dada, ou a mediana), com a histerese de 2 % no fim; a saturação pelos
+  códigos do ADC (sem cadeia), os saltos pela segunda diferença acima de 8 desvios robustos, os picos de 2–9 kHz e
+  9–150 kHz acima de 10× a mediana (as janelas vizinhas num evento só; as janelas marcadas, ver a F7.6, de fora: o
+  degrau da tensão espalha a fundamental pelo espectro e virava um "pico"), e os contadores do cabeçalho. A captura é
+  lida em pedaços. A vista: o gráfico com uma linha por tipo, ligado ao tempo, e a tabela; o clique numa linha mostra
+  o evento na vista de tempo com uma margem; o filtro de tipo só redesenha. Nos testes, o afundamento, a elevação e a
+  interrupção caem a ±1 ciclo do instante, a saturação na amostra certa.
 
-### ☐ F7.6: a qualidade de energia (IEC 61000-4-30)
+### ☑ F7.6: a qualidade de energia (IEC 61000-4-30)
 
 - **O conteúdo:** a vista **Qualidade de energia**: os índices por janela de 10/12 ciclos (a frequência, o RMS, o THD,
   o fator de crista, o fator K, o fator de forma, a distorção de 2 a 9 kHz e de 9 a 150 kHz), a agregação de 150/180
   ciclos, as estatísticas (o mínimo, a média, o P95, o P99, o máximo) e a tabela exportável.
 - **Pronto quando:** os índices conferem com a conta direta num sinal sintético (a rede com harmônicos e um ruído de
   supraharmônicos conhecido) e com o motor (o THD).
+- **Feita em 20/11/2026.** `indices`: as janelas de 10/12 ciclos contíguas, sincronizadas pelos cruzamentos do motor,
+  com a captura lida em pedaços que se sobrepõem 3 ciclos (o transitório do `sosfiltfilt` no fim de cada pedaço fica
+  de fora; os pedaços dão as mesmas janelas do trecho inteiro a 2 amostras); o THD até a 40ª, o fator K até a 50ª, a
+  crista, a forma e as faixas de supraharmônicos da FFT retangular dos ciclos inteiros; os agregados de 15 janelas.
+  **A marcação da norma** (o *flagging*): a janela com um RMS de meio ciclo fora de 90–110 % da mediana fica marcada,
+  fora das estatísticas, e o agregado que a inclui também (a janela de uma interrupção dava 263 Hz e THD de 47 %). Na
+  rede sintética: 60 Hz a 1e-3, o THD de 5 % a 0,2 %, o RMS e o fator K a 0,1 %, a faixa de 9–150 kHz a 2 %. A vista
+  liga o gráfico ao tempo, troca o índice, os agregados e a marcação **sem refazer a conta** (os campos só de desenho
+  da `VistaLigada`) e copia todas as janelas para a planilha.
 
-### ☐ F7.7: a análise entre dois canais
+### ☑ F7.7: a análise entre dois canais
 
 - **O conteúdo:** a vista **Transferência**: a função de transferência H₁ (a magnitude em dB e a fase), a coerência
   (a confiança de cada frequência) e a densidade espectral cruzada entre dois traços, pelo Welch; **o intervalo de
   confiança** de 95 % do Welch (o χ² com os graus de liberdade da média) no espectro.
 - **Pronto quando:** num filtro conhecido (a entrada com ruído, a saída filtrada), a magnitude e a fase conferem com a
   resposta do filtro, e a coerência e a densidade cruzada com a `scipy.signal`.
+- **Feita em 20/11/2026.** `transferencia_do_trecho`: o Welch (Hann, 50 %) acumulado em pedaços, igual ao
+  `scipy.signal.welch`/`csd` a 1e-10; H₁, a coerência e as densidades; **o intervalo de confiança de H₁** (o círculo
+  de Bendat e Piersol com a F de Snedecor), que cobre o verdadeiro em ≥ 90 % dos bins num filtro com ruído na saída.
+  O segundo traço fica alinhado no tempo dos dois lados (o deslocamento de cada um; o que um não tem sai dos dois,
+  também no XY). A vista: o ganho e a fase com a faixa do intervalo, a coerência, os cursores com |H|, a fase e γ²,
+  e os dados para a planilha. **O espectro do Welch** diz o intervalo de cada bin (os graus de liberdade de
+  Percival e Walden, de qualquer janela e sobreposição; cobre o ruído branco em 90–99 % dos bins). **O eixo
+  logarítmico** numera só o 1, o 2 e o 5 de cada década (os números do PyQtGraph se sobrepunham).
 
 ### ☐ F7.8: as métricas de bancada (ME-05) e o assistente de aliasing (ES-06)
 
