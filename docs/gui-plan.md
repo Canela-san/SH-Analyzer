@@ -1608,6 +1608,13 @@ ordem não é a de prioridade):
 - [ ] **A regra de sudo sem senha** para os comandos do firmware (11.2), se a decisão em aberto 3 (seção 19) for por ela.
 - [ ] **Importar MAT e COMTRADE** (PD-10); **exportar WAV, Parquet e COMTRADE** (FG-10); **os assistentes de
   calibração** (ES-08).
+- [ ] **A figura do pacote reproduzível que difere sob carga** (achado no fechamento da Fase 6, 20/11/2026): numa
+  rodada completa da CI com a máquina carregada, o `test_o_pacote_reproduzivel_pela_janela` refez a figura com 1,8 %
+  dos pixels diferentes (sozinho, passa). Suspeita: o `rcParams` do Matplotlib é global do processo, e o desenho do
+  pacote (`dados/pacote.py`, numa tarefa) pode se sobrepor ao da prévia da área Figuras (na thread da interface) e
+  herdar o rc dele; descartar também o cache de fontes reescrito por outro processo e a figura empacotada antes de os
+  dados da vista chegarem. A correção provável: um lock único em volta de todo desenho com o Matplotlib, com um teste
+  que force a sobreposição.
 
 
 ---
