@@ -102,6 +102,11 @@ from .tema.aplicar import aparencia
 from .tema.icones import IconeDoTema
 from .tema.tokens import Tema
 
+ANALISES_DO_MENU = (("espectro", "bandas", "espectrograma", "harmonicos"),
+                    ("xy", "histograma", "eventos", "qualidade", "transferencia", "metricas", "instrumento"),
+                    ("perfis_de_sonda", "aliasing", "alinhar"))
+"""O menu "Análises" do canto das abas, em grupos (a frequência; as análises da Fase 7; as ferramentas)."""
+
 log = logging.getLogger(__name__)
 
 TAMANHO_INICIAL = (1440, 900)
@@ -294,6 +299,12 @@ class JanelaPrincipal(QMainWindow):
                    icone="camadas", da_analise=True).triggered.connect(lambda: self.area.abrir_analise("espectrograma"))
         self._acao("harmonicos", self.tr("Abrir os harmônicos da vista"), atalho="Ctrl+Shift+H", icone="pulso",
                    da_analise=True).triggered.connect(lambda: self.area.abrir_analise("harmonicos"))
+        self._acao("xy", self.tr("Abrir o XY e a potência da vista"), icone="mira",
+                   dica=self.tr("Um traço contra outro (o laço V × I) e a potência pela IEEE 1459"),
+                   da_analise=True).triggered.connect(lambda: self.area.abrir_analise("xy"))
+        self._acao("histograma", self.tr("Abrir o histograma e as estatísticas da vista"), icone="regua",
+                   dica=self.tr("A distribuição do traço, a saturação do ADC e as estatísticas do trecho"),
+                   da_analise=True).triggered.connect(lambda: self.area.abrir_analise("histograma"))
         self._acao("perfis_de_sonda", self.tr("Abrir os perfis de sonda"), icone="sonda",
                    dica=self.tr("Os perfis de sonda: o Bode de cada um e qual perfil cada canal usa (ES-07)"),
                    da_analise=True).triggered.connect(lambda: self.area.abrir_perfis())
@@ -469,6 +480,24 @@ class JanelaPrincipal(QMainWindow):
         menu.addAction(self.acoes["ligar_eixos"])
         self.botao_disposicao.setMenu(menu)
         botoes_do_canto.addWidget(self.botao_disposicao)
+        self.botao_analises = QToolButton()
+        self.botao_analises.setObjectName("analises_da_vista")
+        self.botao_analises.setProperty("variante", "fantasma")
+        self.botao_analises.setAutoRaise(True)
+        self.botao_analises.setIconSize(QSize(16, 16))
+        self.botao_analises.setFixedSize(QSize(28, 28))
+        self.botao_analises.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.botao_analises.setToolTip(self.tr("As análises da vista de tempo: o espectro, as bandas, os harmônicos, "
+                                               "o XY, o histograma…"))
+        IconeDoTema(self.botao_analises, "pulso", "texto2")
+        self.menu_de_analises = QMenu(self.botao_analises)
+        for grupo in ANALISES_DO_MENU:
+            for nome in grupo:
+                if nome in self.acoes:
+                    self.menu_de_analises.addAction(self.acoes[nome])
+            self.menu_de_analises.addSeparator()
+        self.botao_analises.setMenu(self.menu_de_analises)
+        botoes_do_canto.addWidget(self.botao_analises)
         botoes_do_canto.addWidget(botao_de_icone(self.acoes["nova_vista"]))
         self.vistas.celulasMudaram.connect(
             lambda: self.acoes[f"disposicao_{self.vistas.disposicao}"].setChecked(True))
@@ -562,10 +591,11 @@ class JanelaPrincipal(QMainWindow):
 
     def _acoes_da_vista(self, _indice: int = -1) -> None:
         """A figura e a exportação dos dados valem para as vistas de dados (a dos perfis de sonda não tem os dois)."""
+        from .areas.figuras.area import TIPOS_COM_FIGURA
+
         vista = self.vista_ativa() if getattr(self, "area", None) is not None else None
-        com_dados = vista is not None and vista.tipo != "sonda"
-        for nome in ("figura_da_vista", "exportar_dados"):
-            self.acoes[nome].setEnabled(com_dados)
+        self.acoes["figura_da_vista"].setEnabled(vista is not None and vista.tipo in TIPOS_COM_FIGURA)
+        self.acoes["exportar_dados"].setEnabled(vista is not None and vista.tipo != "sonda")
 
     def _atualizar_centro(self, _indice: int = -1) -> None:
         """As abas, ou o estado vazio sem nenhuma (também chamado ao fechar a janela, quando as abas saem)."""
@@ -715,8 +745,10 @@ class JanelaPrincipal(QMainWindow):
 
     def figura_da_vista_ativa(self) -> bool:
         """FG-01: a vista aberta na Análise vira uma figura, e a janela vai para as Figuras com ela escolhida."""
+        from .areas.figuras.area import TIPOS_COM_FIGURA
+
         vista = self.vista_ativa()
-        if vista is None or vista.tipo == "sonda":
+        if vista is None or vista.tipo not in TIPOS_COM_FIGURA:
             return False
         self.figuras.figura_da_vista(vista)
         self.mostrar_area(AREA_FIGURAS)

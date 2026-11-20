@@ -169,6 +169,14 @@ class VistaLigada(QWidget):
     def _mostrar_opcoes_proprias(self) -> None:
         pass
 
+    def _extras(self, tempo, tracos, traco, inicio: int, fim: int):
+        """O que a conta precisa além do traço (o segundo traço do XY): ``(chave, dado)``; a chave entra na do
+        resultado (mudou, refaz). Sem nada, ``(None, None)``."""
+        return None, None
+
+    def _conta_com(self, trecho: esp.TrechoDoTraco, extra, progresso, cancelado):
+        return self._conta(trecho, progresso, cancelado)
+
     def _novo_grafico(self) -> pg.PlotWidget:
         grafico = pg.PlotWidget(axisItems={"bottom": EixoDoTema("bottom", expoente_maximo=0),
                                            "left": EixoDoTema("left")})
@@ -354,17 +362,19 @@ class VistaLigada(QWidget):
         estado = self.materializacoes.estado_de(traco)
         pronta = estado.pronta.amostras if estado is not None and estado.pronta is not None else None
         trecho = esp.TrechoDoTraco(fonte.fonte.captura, r.canal, r.cadeia, self.materializacoes.contexto(fonte, r.canal),
-                                   a, b, r.ganho, pronta)
+                                   a, b, r.ganho, pronta, r.offset)
         self._nota = nota
         opcoes = self.opcoes
-        chave = (id(traco), r.fonte, r.canal, r.cadeia, r.ganho, a, b, opcoes, pronta is not None)
+        chave_extra, extra = self._extras(tempo, tracos, traco, a, b)
+        chave = (id(traco), r.fonte, r.canal, r.cadeia, r.ganho, r.offset, a, b, opcoes, pronta is not None,
+                 chave_extra)
         if chave == self._chave_calculada and not self.aguardando:
             self._mostrar_info()               # o mesmo trecho com as mesmas opções: nada a refazer
             return
 
         def calcular(progresso, cancelado):
             try:
-                return self._conta(trecho, progresso, cancelado), ""
+                return self._conta_com(trecho, extra, progresso, cancelado), ""
             except esp.AguardandoMaterializacao:
                 return None, "aguardando"
             except api.ErroSHAN as e:

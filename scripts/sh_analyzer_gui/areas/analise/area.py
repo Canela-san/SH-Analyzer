@@ -42,6 +42,7 @@ from .medidas import TabelaDeMedidas
 from .vista_espectro import VistaDeEspectro
 from .vista_sonda import VistaDePerfis
 from .vista_tempo import VistaDeTempo
+from .vistas_de_analise import VistaDeHistograma, VistaDeXY
 from .vistas_de_mapa import VistaDeBandas, VistaDeEspectrograma, VistaDeHarmonicos
 
 NOME_DA_PRIMEIRA_VISTA = "Tempo"
@@ -292,7 +293,8 @@ class AreaDeAnalise(QObject):
             return None
         nomes = {v.nome for v in self.projeto.vistas}
         rotulos = {"espectro": self.tr("Espectro de {}"), "bandas": self.tr("Bandas de {}"),
-                   "espectrograma": self.tr("Espectrograma de {}"), "harmonicos": self.tr("Harmônicos de {}")}
+                   "espectrograma": self.tr("Espectrograma de {}"), "harmonicos": self.tr("Harmônicos de {}"),
+                   "xy": self.tr("XY de {}"), "histograma": self.tr("Histograma de {}")}
         nome, n = rotulos[tipo].format(ativa.nome), 2
         base = nome
         while nome in nomes:
@@ -344,7 +346,8 @@ class AreaDeAnalise(QObject):
             return
         classe, nome_do_icone = {"espectro": (VistaDeEspectro, "espectro"), "bandas": (VistaDeBandas, "grade"),
                                  "espectrograma": (VistaDeEspectrograma, "camadas"),
-                                 "harmonicos": (VistaDeHarmonicos, "pulso")}[vista.tipo]
+                                 "harmonicos": (VistaDeHarmonicos, "pulso"), "xy": (VistaDeXY, "mira"),
+                                 "histograma": (VistaDeHistograma, "regua")}[vista.tipo]
         widget = classe(vista, self.projeto, self.janela.selecao, tarefas=self.janela.tarefas,
                         materializacoes=self.janela.materializacoes, vista_de_tempo=self._vista_de_tempo_por_id)
         widget.tracoClicado.connect(self._traco_clicado)
