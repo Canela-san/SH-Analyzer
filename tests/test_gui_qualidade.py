@@ -79,7 +79,7 @@ def test_a_saturacao_e_o_salto(tmp_path):
     x[30_000:30_010] = 12.0                                     # passa do fundo de escala: 10 amostras saturadas
     x[60_000] += 3.0                                            # um salto de uma amostra
     captura = abrir(tmp_path, x)
-    eventos = q.eventos(trecho(captura), q.OpcoesDosEventos(tensao=False))
+    eventos = q.eventos(trecho(captura), q.CriteriosDosEventos(tensao=False))
     saturacao = [e for e in eventos if e.tipo == "saturacao"]
     assert len(saturacao) == 1 and saturacao[0].valor == 10 and saturacao[0].inicio_s == pytest.approx(30_000 / FS)
     saltos = [e for e in eventos if e.tipo == "descontinuidade"]
@@ -115,3 +115,43 @@ def test_o_intervalo_de_confianca_do_welch():
     assert -1.5 < baixo < 0 < alto < 1.5
     estreito = q.intervalo_de_confianca_db(10_000)
     assert abs(estreito[0]) < abs(baixo) and estreito[1] < alto
+
+
+def test_a_transferencia_em_pedacos_e_a_do_scipy():
+    rng = np.random.default_rng(7)
+    x, y = rng.standard_normal(30_001), rng.standard_normal(30_001)
+    r = q.transferencia(x, y, FS, 1_000.0)
+    _, pxx = scipy.signal.welch(x, fs=FS, nperseg=200, noverlap=100)
+    _, pxy = scipy.signal.csd(x, y, fs=FS, nperseg=200, noverlap=100)
+    assert np.allclose(r.pxx, pxx, rtol=1e-10) and np.allclose(r.pxy, pxy, rtol=1e-10, atol=1e-18)
+    pedacos = q._transferencia(lambda i, j: x[i:j], lambda i, j: y[i:j], len(x), FS, 1_000.0, pedaco=1_000)
+    assert pedacos.medias == r.medias == 299
+    assert np.allclose(pedacos.pxy, r.pxy, rtol=1e-12, atol=1e-20) and np.allclose(pedacos.pyy, r.pyy, rtol=1e-12)
+
+
+def test_a_transferencia_entre_dois_canais(tmp_path):
+    rng = np.random.default_rng(3)
+    x = rng.standard_normal(200_000)
+    b, a = scipy.signal.butter(1, 2_000, fs=FS)
+    captura = abrir(tmp_path, x, 0.5 * scipy.signal.lfilter(b, a, x))
+    r = q.transferencia_do_trecho(trecho(captura, 0), trecho(captura, 1), 1_000.0, pedaco=20_000)
+    _, h = scipy.signal.freqz(b, a, worN=r.frequencias[2:40], fs=FS)          # o 1º bin: o vazamento da Hann
+    assert np.max(np.abs(r.magnitude_db[2:40] - 20 * np.log10(0.5 * np.abs(h)))) < 0.2   # com a quantização do ADC
+
+
+def test_o_intervalo_de_confianca_da_transferencia_cobre_o_verdadeiro():
+    rng = np.random.default_rng(11)
+    x = rng.standard_normal(200_000)
+    b, a = scipy.signal.butter(2, 8_000, fs=FS)
+    y = scipy.signal.lfilter(b, a, x) + 0.3 * rng.standard_normal(len(x))
+    r = q.transferencia(x, y, FS, 2_000.0)
+    baixo, alto, meia_fase = r.intervalo(0.95)
+    _, h = scipy.signal.freqz(b, a, worN=r.frequencias, fs=FS)
+    verdadeiro = 20 * np.log10(np.abs(h))
+    dentro = (verdadeiro >= baixo) & (verdadeiro <= alto)
+    fase_dentro = np.abs(np.angle(np.exp(1j * (np.angle(h) - np.angle(r.h))), deg=True)) <= meia_fase
+    usados = slice(1, len(h) - 1)
+    assert 0.9 <= np.mean(dentro[usados]) and 0.9 <= np.mean(fase_dentro[usados])
+    assert np.all(alto[usados] > r.magnitude_db[usados]) and np.all(baixo[usados] < r.magnitude_db[usados])
+    assert np.median(alto - baixo) < np.median((lambda t: t[1] - t[0])(q.transferencia(
+        x[:20_000], y[:20_000], FS, 2_000.0).intervalo()))                     # mais médias, intervalo menor
