@@ -23,11 +23,14 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
+from . import como_python
 from .estado import CapturasDaPlaca, EstadoDaPlaca, LogsDaPlaca, RelogioDaPlaca
 
 PROTOCOLO = 1
 """A versão do formato das respostas que este cliente entende (``PROTOCOLO`` do agente)."""
-AGENTE = Path(__file__).resolve().parents[2] / "firmware" / "agente" / "shan_agente.py"
+AGENTE = (Path(getattr(sys, "_MEIPASS", "")) if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[2]
+          ) / "firmware" / "agente" / "shan_agente.py"
+"""O agente que vai para a placa: o do repositório, ou o do ``firmware/`` que vai no aplicativo empacotado."""
 TEMPO_LIMITE_S = 20.0
 PASTA_DO_FIRMWARE = "firmware"
 """A pasta do firmware na placa, relativa ao home (a do ``BeagleBone_Setup.sh``)."""
@@ -58,7 +61,7 @@ class TransporteLocal:
         self.raiz, self.pasta_firmware, self.agente = raiz, pasta_firmware, Path(agente)
 
     async def executar(self, argv: list[str]) -> tuple[int, str, str]:
-        ambiente = dict(os.environ)
+        ambiente = {**os.environ, **como_python.ambiente()}     # no pacote, o executável vira um Python
         if self.raiz is not None:
             ambiente["SHAN_RAIZ"] = str(self.raiz)
         if self.pasta_firmware is not None:

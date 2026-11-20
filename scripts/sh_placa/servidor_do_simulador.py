@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 
 import asyncssh
 
+from . import como_python
 from .destino import SENHA_PADRAO_DA_IMAGEM, Destino
 from .simulador import aplicar_o_boot, montar_sistema_falso, programas_da_placa
 from .tarefas import PASTA_DAS_TAREFAS
@@ -198,7 +199,8 @@ class ServidorDoSimulador:
         self.ambiente = {"HOME": str(self.home), "PATH": f"{binarios}{os.pathsep}{os.environ.get('PATH', '')}",
                          "SHAN_RAIZ": str(self.raiz), "LANG": "C.UTF-8", "SHAN_SENHA_DO_SUDO": self.senha_do_sudo,
                          "SHAN_RAM": str(self.ram),
-                         "SHAN_PROCESSOS": str(processos if processos is not None else self.pasta)}
+                         "SHAN_PROCESSOS": str(processos if processos is not None else self.pasta),
+                         **como_python.ambiente()}       # no pacote, o python3 dela é o executável como Python
 
     @property
     def destino(self) -> Destino:
