@@ -69,7 +69,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > F6.9 também** (os logs e o monitor, o sistema, o resgate pela serial e a jornada da fase, que achou na placa de
 > verdade a PRU que só aparece depois do SSH no boot). **A Fase 6 está feita** (diário de 20/11). **A Fase 7 está em
 > tarefas** (seção 4h, F7.1 a F7.12; o acabamento e as análises, ampliada a pedido do usuário com as análises para
-> pesquisadores); **a F7.1 a F7.10 estão feitas** (as transformações novas, a expressão entre canais, o XY com a potência, o histograma com as estatísticas, os eventos, a qualidade de energia, a transferência, as métricas de bancada, o aliasing, o Instrumento e os pacotes); **a próxima é a F7.11**. **A placa de verdade tem o firmware desta versão desde
+> pesquisadores); **a F7.1 a F7.11 estão feitas** (as transformações novas, a expressão entre canais, o XY com a potência, o histograma com as estatísticas, os eventos, a qualidade de energia, a transferência, as métricas de bancada, o aliasing, o Instrumento, os pacotes, a ajuda e os primeiros passos); **a próxima é a F7.12**. **A placa de verdade tem o firmware desta versão desde
 > 20/11/2026** (v0.8-337-g6f1f2b2: a saída contínua e o `ler_adc` que espera a PRU; as cópias das versões de antes em
 > `~/firmware-anteriores/`); antes da F6.2, o `ler_adc` v0.8 sem o `-o -`.
 >
@@ -2599,12 +2599,24 @@ resposta conhecida), como as do motor; os commits seguem o componente (a GUI, os
   salvo aponta para as capturas extraídas; se o cache for limpo, elas ficam ausentes até o pacote ser aberto de
   novo (na lista depois da Fase 7: guardar o pacote de origem no projeto).
 
-### ☐ F7.11: a primeira execução, os estados vazios e a ajuda (GE-07, GE-08)
+### ☑ F7.11: a primeira execução, os estados vazios e a ajuda (GE-07, GE-08)
 
 - **O conteúdo:** a primeira execução guiada (com o simulador: abrir uma captura de exemplo, plotar, medir); os
   estados vazios que dizem o próximo passo; a ajuda contextual (o "?" de cada painel abre a seção do guia, num leitor
   dentro do aplicativo); **o guia da GUI** em `docs/gui-guide.md`.
 - **Pronto quando:** a primeira execução leva do nada à primeira medida, e cada "?" abre a seção certa.
+- **Feita em 20/11/2026.** **O guia** (`docs/gui-guide.md`): uma seção por painel, vista, análise e área, cada uma
+  com o identificador que o "?" pede; conferido contra o código (os atalhos, os formatos das figuras, o mouse da
+  vista de tempo). **O leitor** (`ajuda.py`): o guia numa janela que não bloqueia, uma seção de cada vez, com a lista
+  e a busca. **O "?"** em todas as vistas (as ligadas, a de tempo, o espectro, os perfis), nos painéis do projeto, do
+  inspetor e de baixo (a seção da aba à frente), nas Figuras, na Aquisição, nas Configurações e nos diálogos de
+  alinhar e de aliasing; **o F1** (e o botão da barra de cima) abre a seção do que está à frente. **Os primeiros
+  passos**: um cartão no canto da área central na primeira execução (abrir o exemplo, plotar a tensão, ligar os
+  cursores, abrir o espectro e, opcional, ir à Aquisição), cada passo marcado sozinho pelo estado da janela, com o
+  botão que o faz; a captura de exemplo é a da placa simulada (a bancada com 16, 40 e 72 kHz), gerada na pasta do
+  cache. Fechado, não volta sozinho (a paleta o traz). O estado vazio do centro abre também o exemplo. Nos testes
+  (`tests/test_gui_ajuda.py`), cada "?" da janela abre a seção dele, o F1 segue a vista e o cartão leva do nada ao
+  espectro; o `config_limpa` dos testes marca o cartão como visto.
 
 ### ☐ F7.12: os instaladores, a jornada e o fechamento
 
