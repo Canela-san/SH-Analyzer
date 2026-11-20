@@ -11,8 +11,7 @@ from sh_analyzer_gui.dados import bancada as bc
 from sh_analyzer_gui.dados.cadeia import Cadeia, Filtro
 from sh_analyzer_gui.dados.espectros import TrechoDoTraco
 from sh_analyzer_gui.dados.materializacao import contexto_do_canal
-from supraharmonicos import api
-from supraharmonicos import cli_aliasing, cli_medir_captura
+from supraharmonicos import api, cli_aliasing, cli_medir_captura
 
 FS_TOTAL = 400_000
 
