@@ -42,7 +42,13 @@ from .medidas import TabelaDeMedidas
 from .vista_espectro import VistaDeEspectro
 from .vista_sonda import VistaDePerfis
 from .vista_tempo import VistaDeTempo
-from .vistas_de_analise import VistaDeHistograma, VistaDeXY
+from .vistas_de_analise import (
+    VistaDeEventos,
+    VistaDeHistograma,
+    VistaDeQualidade,
+    VistaDeTransferencia,
+    VistaDeXY,
+)
 from .vistas_de_mapa import VistaDeBandas, VistaDeEspectrograma, VistaDeHarmonicos
 
 NOME_DA_PRIMEIRA_VISTA = "Tempo"
@@ -294,7 +300,9 @@ class AreaDeAnalise(QObject):
         nomes = {v.nome for v in self.projeto.vistas}
         rotulos = {"espectro": self.tr("Espectro de {}"), "bandas": self.tr("Bandas de {}"),
                    "espectrograma": self.tr("Espectrograma de {}"), "harmonicos": self.tr("Harmônicos de {}"),
-                   "xy": self.tr("XY de {}"), "histograma": self.tr("Histograma de {}")}
+                   "xy": self.tr("XY de {}"), "histograma": self.tr("Histograma de {}"),
+                   "eventos": self.tr("Eventos de {}"), "qualidade": self.tr("Qualidade de energia de {}"),
+                   "transferencia": self.tr("Transferência de {}")}
         nome, n = rotulos[tipo].format(ativa.nome), 2
         base = nome
         while nome in nomes:
@@ -347,7 +355,9 @@ class AreaDeAnalise(QObject):
         classe, nome_do_icone = {"espectro": (VistaDeEspectro, "espectro"), "bandas": (VistaDeBandas, "grade"),
                                  "espectrograma": (VistaDeEspectrograma, "camadas"),
                                  "harmonicos": (VistaDeHarmonicos, "pulso"), "xy": (VistaDeXY, "mira"),
-                                 "histograma": (VistaDeHistograma, "regua")}[vista.tipo]
+                                 "histograma": (VistaDeHistograma, "regua"), "eventos": (VistaDeEventos, "alerta"),
+                                 "qualidade": (VistaDeQualidade, "raio"),
+                                 "transferencia": (VistaDeTransferencia, "link")}[vista.tipo]
         widget = classe(vista, self.projeto, self.janela.selecao, tarefas=self.janela.tarefas,
                         materializacoes=self.janela.materializacoes, vista_de_tempo=self._vista_de_tempo_por_id)
         widget.tracoClicado.connect(self._traco_clicado)

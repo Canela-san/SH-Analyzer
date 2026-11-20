@@ -305,6 +305,18 @@ class JanelaPrincipal(QMainWindow):
         self._acao("histograma", self.tr("Abrir o histograma e as estatísticas da vista"), icone="regua",
                    dica=self.tr("A distribuição do traço, a saturação do ADC e as estatísticas do trecho"),
                    da_analise=True).triggered.connect(lambda: self.area.abrir_analise("histograma"))
+        self._acao("eventos", self.tr("Abrir os eventos da vista"), icone="alerta",
+                   dica=self.tr("Os afundamentos, as elevações e as interrupções da tensão, os picos de "
+                                "supraharmônicos, a saturação do ADC e os saltos; um clique mostra o evento no tempo"),
+                   da_analise=True).triggered.connect(lambda: self.area.abrir_analise("eventos"))
+        self._acao("qualidade", self.tr("Abrir a qualidade de energia da vista"), icone="raio",
+                   dica=self.tr("A frequência, o RMS, o THD, o fator K, os fatores de crista e de forma e os "
+                                "supraharmônicos em janelas de 10/12 ciclos (IEC 61000-4-30), com as estatísticas"),
+                   da_analise=True).triggered.connect(lambda: self.area.abrir_analise("qualidade"))
+        self._acao("transferencia", self.tr("Abrir a transferência entre dois traços"), icone="link",
+                   dica=self.tr("A função de transferência H₁ de um traço para outro (o ganho e a fase com o "
+                                "intervalo de confiança) e a coerência"),
+                   da_analise=True).triggered.connect(lambda: self.area.abrir_analise("transferencia"))
         self._acao("perfis_de_sonda", self.tr("Abrir os perfis de sonda"), icone="sonda",
                    dica=self.tr("Os perfis de sonda: o Bode de cada um e qual perfil cada canal usa (ES-07)"),
                    da_analise=True).triggered.connect(lambda: self.area.abrir_perfis())
