@@ -27,7 +27,7 @@ CATEGORIAS = (
     ("relogio", "Relógio", ("relogio", "relogio_sem_ntp")),
     ("firmware", "Firmware", ("firmware_diferente", "nao_compilado", "compilacao_antiga", "pru_desatualizada",
                               "versao_desconhecida")),
-    ("pru", "PRU0", ("pru_em_outro_remoteproc", "pru_ausente", "pru_outro_nucleo", "pru_com_falha",
+    ("pru", "PRU0", ("pru_em_outro_remoteproc", "pru_ausente", "pru_subindo", "pru_outro_nucleo", "pru_com_falha",
                      "pru_outro_firmware")),
     ("memoria_dos_buffers", "Memória dos buffers", ("mem_496m", "mem_desconhecida", "mem_496m_no_proximo_boot",
                                                     "ram_sobre_os_buffers")),

@@ -508,7 +508,8 @@ def _duracao(texto: str) -> float:
 class Problema:
     """Um problema do pedido, no campo onde ele aparece: ``"titulo"``, ``"descricao"``, ``"canais"``,
     ``"grandeza"``, ``"sonda"``, ``"faixa"``, ``"ganho"``, ``"taxa"``, ``"duracao"``, ``"destino"``, ``"arquivo"``,
-    ``"spi"`` ou ``"atrasos"``; ``canal`` nos de um canal. O nível é um de :data:`NIVEIS`."""
+    ``"spi"`` ou ``"atrasos"``; ``canal`` nos de um canal (a seção Capturar acrescenta os da ``"placa"``, que a saúde
+    dela diz). O nível é um de :data:`NIVEIS`."""
 
     campo: str
     nivel: str

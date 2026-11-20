@@ -23,6 +23,10 @@ DIFERENCA_DE_RELOGIO_S = 2.0
 NIVEIS = ("erro", "aviso", "info")
 
 
+CODIGOS_SEM_A_PRU = ("pru_subindo", "pru_ausente")
+"""As conferências do agente com a PRU0 fora do remoteproc: a captura não começa (o ``ler_adc`` recusa)."""
+
+
 @dataclass(frozen=True)
 class Problema:
     """Um item do diagnóstico. ``nivel``: ``"erro"`` (impede capturar), ``"aviso"`` ou ``"info"``."""
@@ -217,6 +221,14 @@ class EstadoDaPlaca:
     def tem_diagnostico(self) -> bool:
         """Se a resposta é a da ``saude`` (com as conferências da placa), e não só a do ``estado``."""
         return isinstance(self._campo("conferencias"), list)
+
+    @property
+    def pru_indisponivel(self) -> Problema | None:
+        """A conferência que diz que a PRU0 não está no remoteproc (``pru_subindo``: o boot que não terminou;
+        ``pru_ausente``: o overlay que falta): o ``ler_adc`` não captura sem ela. ``None`` sem o diagnóstico."""
+        if not self.tem_diagnostico:
+            return None
+        return next((c for c in self.conferencias() if c.codigo in CODIGOS_SEM_A_PRU), None)
 
     def conferencias(self) -> list[Problema]:
         """As conferências que a placa fez (a ``saude``), na ordem dela."""

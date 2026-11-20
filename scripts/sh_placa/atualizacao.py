@@ -263,6 +263,11 @@ def _versao_no_nome(versao: str | None) -> str:
     return _VERSAO.sub("", versao or "")[:64] or "sem-versao"
 
 
+PRAZO_DA_PRU_NO_BOOT_S = 180
+"""O ``PRAZO_DA_PRU_NO_BOOT_S`` do agente: até aí, a PRU0 que falta no remoteproc é o boot que não terminou, e o
+roteiro espera por ela antes de carregar o firmware (uma atualização pedida logo depois de um reinício)."""
+
+
 _ROTEIRO = r"""F="$HOME/{pasta}"
 P="$HOME/{preparo}"
 A="$HOME/{anteriores}"
@@ -275,6 +280,9 @@ VERSAO_ANTIGA={versao_antiga}
 {listas}
 C=
 falhar() {{ passo "$1" falhou "$2"; exit {falhou_antes}; }}
+esperar_a_pru() {{   # logo depois de ligar, o driver da PRU ainda sobe (uns 70 s): espera por ele até {prazo} s de boot
+    while [ ! -d "$RPROC" ] && [ "$(cut -d. -f1 "$R/proc/uptime" 2>/dev/null || echo {prazo})" -lt {prazo} ]; do sleep 2; done
+}}
 ultimas() {{ tail -n 3 "$1" 2>/dev/null | tr '\n' ' ' | cut -c1-300; }}
 
 # ---- preparar: a pasta da preparação com o código novo, conferido pelo hash
@@ -345,6 +353,7 @@ pru() {{   # pru start|stop|NOME: o state (ou o firmware) do remoteproc; sem o g
 }}
 carregar() {{   # carregar FW_PRU: instala, põe os pinos e liga a PRU de novo
     passo carregar comecou "{firmware_da_pru}"
+    esperar_a_pru
     [ -d "$RPROC" ] || {{ passo carregar falhou "a PRU0 não existe ($RPROC): o overlay da PRU no /boot/uEnv.txt"; return 1; }}
     como_root install -m 0644 "$1" "$INSTALADO.shan-novo" && como_root mv -f "$INSTALADO.shan-novo" "$INSTALADO" \
         || {{ passo carregar falhou "não deu para instalar o firmware da PRU (o sudo?)"; return 1; }}
@@ -435,7 +444,8 @@ def roteiro_da_atualizacao(plano: PlanoDeAtualizacao, id_: str, carimbo: str | N
                            versao_nova=shlex.quote(f.versao), versao_antiga=shlex.quote(plano.versao_da_placa or ""),
                            listas=listas, binarios=" ".join(BINARIOS), pru_na_copia=PRU_INSTALADA_NA_COPIA,
                            pinos=pinos, taxa=TAXA_DA_CONFERENCIA, atualizada=ATUALIZADA, falhou_antes=FALHOU_ANTES,
-                           voltou=VOLTOU, falhou_ao_voltar=FALHOU_AO_VOLTAR, carimbo=carimbo)
+                           voltou=VOLTOU, falhou_ao_voltar=FALHOU_AO_VOLTAR, carimbo=carimbo,
+                           prazo=PRAZO_DA_PRU_NO_BOOT_S)
 
 
 async def enviar(conexao: ConexaoSSH, plano: PlanoDeAtualizacao, id_: str, ao_enviar=None) -> int:
@@ -520,6 +530,10 @@ def desfecho(e: EstadoDaTarefa) -> Desfecho:
 _RECARREGAR = r"""R="${{SHAN_RAIZ:-}}"
 RPROC="$R/sys/class/remoteproc/remoteproc1"
 F="$HOME/{pasta}"
+esperar_a_pru() {{   # logo depois de ligar, o driver da PRU ainda sobe (uns 70 s): espera por ele até {prazo} s de boot
+    while [ ! -d "$RPROC" ] && [ "$(cut -d. -f1 "$R/proc/uptime" 2>/dev/null || echo {prazo})" -lt {prazo} ]; do sleep 2; done
+}}
+esperar_a_pru
 [ -d "$RPROC" ] || {{ echo "a PRU0 não existe ($RPROC): confira o overlay da PRU no /boot/uEnv.txt" >&2; exit 1; }}
 [ -f "$F/fw_pru.out" ] || {{ echo "não há o $F/fw_pru.out: compile o firmware antes" >&2; exit 1; }}
 sudo -n install -m 0644 "$F/fw_pru.out" "$R{firmware_da_pru}.shan-novo" && sudo -n mv -f "$R{firmware_da_pru}.shan-novo" "$R{firmware_da_pru}" || exit 1
@@ -537,7 +551,7 @@ def roteiro_de_recarregar() -> str:
     em ``/lib/firmware`` (o sudo), os pinos e a PRU ligada de novo."""
     pinos = "".join(f"config-pin {pino} {modo} > /dev/null || exit 1\n" for pino, modo in PINOS)
     return com_sudo("true\n" + _RECARREGAR.format(pasta=PASTA_DO_FIRMWARE, firmware_da_pru=FIRMWARE_DA_PRU,
-                                                   pinos=pinos))
+                                                   pinos=pinos, prazo=PRAZO_DA_PRU_NO_BOOT_S))
 
 
 async def recarregar_a_pru(conexao: ConexaoSSH, senha_do_sudo: str) -> str:
