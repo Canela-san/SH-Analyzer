@@ -76,6 +76,10 @@ FIRMWARE_INSTALADO = "/lib/firmware/" + NOME_DO_FIRMWARE_DA_PRU
 ESTADOS_NORMAIS_DA_PRU = ("running", "offline")
 """O remoteproc da PRU0 numa placa boa: ``running`` durante a captura e ``offline`` entre uma e outra (o ``ler_adc``
 a liga no começo e a para no fim; visto na placa de verdade, 15/11/2026)."""
+PRAZO_DA_PRU_NO_BOOT_S = 180
+"""Até quanto tempo depois de ligar a falta da PRU0 no remoteproc é o boot que não terminou (com o overlay da PRU no
+``uEnv.txt``): o driver dela aparece perto do fim do boot, e o SSH responde antes. Na placa de verdade (19/11/2026),
+aos 71 s, com o boot terminando aos 71 s e o SSH respondendo desde uns 45 s."""
 EEPROMS = ("/sys/bus/nvmem/devices/0-00500/nvmem", "/sys/bus/i2c/devices/0-0050/eeprom")
 BASE_PINMUX = "/sys/devices/platform/ocp"
 FAIXA_DOS_BUFFERS = (0x9F000000, 0x9F3FFFFF)                       # os 16 MB do fim da DDR (memoria_pru.h)
@@ -593,6 +597,10 @@ def conferir(f):
                  "numera os remoteprocs de outro jeito.",
                  "Usar a imagem da BeagleBoard com o kernel 4.19-ti (a do firmware), ou mudar o REMOTEPROC_PRU0 do "
                  "ler_adc.c e o REMOTEPROC do setup.sh.")
+        elif not overlay and (f.get("ligada_s") or PRAZO_DA_PRU_NO_BOOT_S) < PRAZO_DA_PRU_NO_BOOT_S:
+            item("aviso", "pru_subindo", "A placa ligou há {:.0f} s, e a PRU0 ainda não aparece no remoteproc: o driver "
+                 "dela sobe perto do fim do boot (uns 70 s depois de ligar). A captura espera por ela.".format(
+                     f["ligada_s"]))
         else:
             item("erro", "pru_ausente", "A PRU0 não aparece no remoteproc: o overlay da PRU não está carregado."
                  + (" " + overlay[0] if overlay else ""),
