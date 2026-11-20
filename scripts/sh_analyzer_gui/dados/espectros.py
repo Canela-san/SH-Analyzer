@@ -565,9 +565,80 @@ class OpcoesDoHistograma(_OpcoesComDicionario):
             raise OpcoesInvalidas("acumulada tem de ser verdadeiro ou falso")
 
 
+def _numero_em(valor, minimo: float, maximo: float, nome: str) -> None:
+    if isinstance(valor, bool) or not isinstance(valor, (int, float)) or not math.isfinite(valor) \
+            or not minimo <= valor <= maximo:
+        raise OpcoesInvalidas(f"{nome} inválido: {valor!r} (de {minimo:g} a {maximo:g})")
+
+
+def _booleano(valor, nome: str) -> None:
+    if not isinstance(valor, bool):
+        raise OpcoesInvalidas(f"{nome} tem de ser verdadeiro ou falso")
+
+
+@dataclass(frozen=True)
+class OpcoesDosEventos(_OpcoesComDicionario):
+    """A vista dos eventos (F7.5): o traço, o trecho (a captura inteira, por padrão: um clique num evento aproxima a
+    vista de tempo, e a lista não muda com isso), se o traço é uma tensão (os afundamentos, as elevações e as
+    interrupções), a tensão de referência (0: a mediana do trecho) e se procura os picos de supraharmônicos."""
+
+    traco: int = 0
+    trecho: str = "captura"
+    vista_de_tempo: str | None = None
+    tensao: bool = True
+    referencia: float = 0.0
+    supraharmonicos: bool = True
+
+    def __post_init__(self) -> None:
+        _validar_comum(self)
+        _booleano(self.tensao, "tensão")
+        _numero_em(self.referencia, 0.0, 1e12, "tensão de referência")
+        _booleano(self.supraharmonicos, "supraharmônicos")
+
+
+INDICES_DE_QUALIDADE = ("frequencia", "rms", "thd", "fator_k", "crista", "forma", "supra_2_9k", "supra_9_150k")
+"""Os índices da vista de qualidade (``dados/qualidade.py``), na ordem do seletor."""
+
+
+@dataclass(frozen=True)
+class OpcoesDaQualidade(_OpcoesComDicionario):
+    """A vista da qualidade de energia (F7.6): o traço, o trecho, o índice no gráfico e se mostra os agregados de
+    150/180 ciclos por cima das janelas."""
+
+    traco: int = 0
+    trecho: str = "captura"
+    vista_de_tempo: str | None = None
+    indice: str = "thd"
+    agregados: bool = True
+
+    def __post_init__(self) -> None:
+        _validar_comum(self)
+        if self.indice not in INDICES_DE_QUALIDADE:
+            raise OpcoesInvalidas(f"índice inválido: {self.indice!r} (use {', '.join(INDICES_DE_QUALIDADE)})")
+        _booleano(self.agregados, "agregados")
+
+
+@dataclass(frozen=True)
+class OpcoesDaTransferencia(_OpcoesComDicionario):
+    """A vista da transferência (F7.7): o traço da entrada (``traco``), o da saída (``traco_y``), o trecho e a
+    resolução em frequência do Welch."""
+
+    traco: int = 0
+    trecho: str = "captura"
+    vista_de_tempo: str | None = None
+    traco_y: int = 1
+    resolucao_hz: float = 100.0
+
+    def __post_init__(self) -> None:
+        _validar_comum(self)
+        _inteiro_em(self.traco_y, 0, 10_000, "traço da saída")
+        _numero_em(self.resolucao_hz, 0.01, 1e6, "resolução")
+
+
 OPCOES_DO_TIPO = {"tempo": OpcoesDoTempo, "espectro": OpcoesDoEspectro, "bandas": OpcoesDasBandas,
                   "espectrograma": OpcoesDoEspectrograma, "harmonicos": OpcoesDosHarmonicos, "sonda": OpcoesDaSonda,
-                  "xy": OpcoesDoXY, "histograma": OpcoesDoHistograma}
+                  "xy": OpcoesDoXY, "histograma": OpcoesDoHistograma, "eventos": OpcoesDosEventos,
+                  "qualidade": OpcoesDaQualidade, "transferencia": OpcoesDaTransferencia}
 """A classe das opções de cada tipo de vista. As de um projeto de antes da vista de tempo ter opções (``{}``) são as
 padrão."""
 

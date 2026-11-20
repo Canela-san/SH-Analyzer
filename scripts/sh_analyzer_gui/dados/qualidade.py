@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import supraharmonicos.api as api
 
-from .espectros import LIMITE_DA_CADEIA, AguardandoMaterializacao, TrechoDoTraco
+from .espectros import INDICES_DE_QUALIDADE, LIMITE_DA_CADEIA, AguardandoMaterializacao, TrechoDoTraco
 from .materializacao import leitor_do_canal
 
 PEDACO = 1 << 21
@@ -51,7 +51,7 @@ LIMIAR_DA_ELEVACAO = 1.10
 HISTERESE = 0.02
 FATOR_DO_PICO_SUPRA = 10.0
 DESVIOS_DO_SALTO = 8.0
-INDICES = ("frequencia", "rms", "thd", "fator_k", "crista", "forma", "supra_2_9k", "supra_9_150k")
+INDICES = INDICES_DE_QUALIDADE
 NOMES_DOS_INDICES = {"frequencia": "Frequência", "rms": "RMS", "thd": "THD", "fator_k": "Fator K",
                      "crista": "Fator de crista", "forma": "Fator de forma", "supra_2_9k": "RMS de 2 a 9 kHz",
                      "supra_9_150k": "RMS de 9 a 150 kHz"}
@@ -232,7 +232,7 @@ class Evento:
 
 
 @dataclass(frozen=True)
-class OpcoesDosEventos:
+class CriteriosDosEventos:
     referencia: float | None = None       # a tensão de referência (None: a mediana do RMS de ½ ciclo do trecho)
     tensao: bool = True                    # procurar afundamentos, elevações e interrupções (o traço é uma tensão)
 
@@ -291,7 +291,7 @@ def _sequencias(mascara: np.ndarray) -> list[tuple[int, int]]:
     return list(zip(np.nonzero(d == 1)[0], np.nonzero(d == -1)[0]))
 
 
-def eventos(trecho: TrechoDoTraco, opcoes: OpcoesDosEventos = OpcoesDosEventos(), *,
+def eventos(trecho: TrechoDoTraco, opcoes: CriteriosDosEventos = CriteriosDosEventos(), *,
             indices_prontos: IndicesDeQualidade | None = None, progresso=None, cancelado=None,
             pedaco: int | None = None) -> list[Evento]:
     """Os eventos do trecho, em ordem de tempo (ver o começo do módulo)."""
@@ -372,11 +372,22 @@ def eventos(trecho: TrechoDoTraco, opcoes: OpcoesDosEventos = OpcoesDosEventos()
 
 # ------------------------------------------------------------------ a transferência (F7.7)
 
+PEDACO_DA_TRANSFERENCIA = 1 << 20
+"""As amostras de cada pedaço lido na transferência (os segmentos inteiros que cabem nele)."""
+SOBREPOSICAO_DO_HANN = 0.167
+"""A correlação entre segmentos vizinhos da Hann com 50 % de sobreposição (Welch, 1967): ν ≈ 2K / (1 + 2c²)."""
+
+
+def medias_equivalentes(medias: int) -> float:
+    """As médias independentes que valem ``medias`` segmentos da Hann com 50 % de sobreposição: ν/2."""
+    return medias / (1 + 2 * SOBREPOSICAO_DO_HANN ** 2)
+
 
 @dataclass(frozen=True)
 class Transferencia:
     """A função de transferência H₁ = P_xy / P_xx (a saída ``y`` sobre a entrada ``x``), a coerência, a densidade
-    espectral cruzada e as das duas, pelo Welch (Hann, 50 % de sobreposição), com ``medias`` segmentos."""
+    espectral cruzada e as das duas (V²/Hz, de um lado), pelo Welch (Hann, 50 % de sobreposição, a média de cada
+    segmento tirada), com ``medias`` segmentos de ``amostras_por_segmento``."""
 
     frequencias: np.ndarray
     h: np.ndarray
@@ -385,6 +396,7 @@ class Transferencia:
     pxx: np.ndarray
     pyy: np.ndarray
     medias: int
+    amostras_por_segmento: int = 0
 
     @property
     def magnitude_db(self) -> np.ndarray:
@@ -395,37 +407,103 @@ class Transferencia:
     def fase_graus(self) -> np.ndarray:
         return np.degrees(np.angle(self.h))
 
+    def intervalo(self, confianca: float = 0.95) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """O intervalo de confiança de H₁ em cada frequência: |H| mínimo e máximo (dB; −∞ quando o círculo de
+        confiança passa pela origem) e a meia largura da fase (°; 180 quando passa). O círculo em volta de Ĥ tem o raio
+        r² = 2/(n−2) · F₂,ₙ₋₂(confiança) · (1 − γ²)/γ² · |Ĥ|² (Bendat e Piersol, *Random Data*, 4ª ed., 9.2.4), com
+        n as médias independentes (:func:`medias_equivalentes`). Vale para o ruído na saída, não na entrada."""
+        from scipy.stats import f as distribuicao_f
+
+        n = medias_equivalentes(self.medias)
+        vazio = np.full(len(self.h), np.nan)
+        if n <= 2.0:
+            return vazio, vazio.copy(), vazio.copy()
+        g2 = np.clip(self.coerencia, 1e-12, 1.0)
+        modulo = np.abs(self.h)
+        raio = np.sqrt(2.0 / (n - 2.0) * distribuicao_f.ppf(confianca, 2, n - 2.0) * (1.0 - g2) / g2) * modulo
+        with np.errstate(divide="ignore", invalid="ignore"):
+            baixo = np.where(modulo > raio, 20 * np.log10(np.maximum(modulo - raio, 1e-300)), -np.inf)
+            alto = 20 * np.log10(modulo + raio)
+            fase = np.where(modulo > raio, np.degrees(np.arcsin(np.clip(raio / modulo, 0.0, 1.0))), 180.0)
+        return baixo, alto, fase
+
 
 def transferencia(x: np.ndarray, y: np.ndarray, taxa_hz: float, resolucao_hz: float) -> Transferencia:
     """H₁, a coerência e as densidades de ``x`` (a entrada) e ``y`` (a saída), com segmentos de ``taxa/resolução``
-    amostras. Levanta ``api.ErroSHAN`` com menos de dois segmentos."""
-    from scipy.signal import csd, welch
-
+    amostras: os mesmos números do ``scipy.signal.welch``/``csd`` (Hann, 50 %, ``detrend="constant"``). Levanta
+    ``api.ErroSHAN`` com menos de dois segmentos."""
     if len(x) != len(y):
         raise api.ErroSHAN(f"a entrada e a saída têm tamanhos diferentes ({len(x)} e {len(y)} amostras)")
+    x, y = np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64)
+    return _transferencia(lambda i, j: x[i:j], lambda i, j: y[i:j], len(x), taxa_hz, resolucao_hz)
+
+
+def transferencia_do_trecho(entrada: TrechoDoTraco, saida: TrechoDoTraco, resolucao_hz: float, *,
+                            progresso: Callable[[float], None] | None = None,
+                            cancelado: Callable[[], bool] | None = None,
+                            pedaco: int | None = None) -> Transferencia:
+    """A transferência da entrada para a saída, lidas em pedaços (a captura inteira não vai para a memória); os
+    dois trechos começam no mesmo instante, e vale o tamanho do menor."""
+    taxa = entrada.captura.canal(entrada.numero).taxa_hz
+    m = min(entrada.n_amostras, saida.n_amostras)
+    return _transferencia(lambda i, j: ler(entrada, entrada.inicio + i, entrada.inicio + j),
+                          lambda i, j: ler(saida, saida.inicio + i, saida.inicio + j), m, taxa, resolucao_hz,
+                          progresso=progresso, cancelado=cancelado, pedaco=pedaco)
+
+
+def _transferencia(ler_x, ler_y, m: int, taxa_hz: float, resolucao_hz: float, *, progresso=None, cancelado=None,
+                   pedaco: int | None = None) -> Transferencia:
+    from numpy.lib.stride_tricks import sliding_window_view
+    from scipy.signal import get_window
+
+    if not resolucao_hz > 0:
+        raise api.ErroSHAN("a resolução tem de ser positiva")
     n = int(round(taxa_hz / resolucao_hz))
     if n < 8:
         raise api.ErroSHAN("a resolução pedida é grossa demais para a taxa")
-    if len(x) < 2 * n:
-        raise api.ErroSHAN(f"o trecho tem {len(x)} amostras, e a resolução de {resolucao_hz:g} Hz pede pelo menos "
+    if m < 2 * n:
+        raise api.ErroSHAN(f"o trecho tem {m} amostras, e a resolução de {resolucao_hz:g} Hz pede pelo menos "
                            f"{2 * n} (dois segmentos)")
-    opcoes = dict(fs=taxa_hz, window="hann", nperseg=n, noverlap=n // 2, detrend="constant")
-    f, pxx = welch(x, **opcoes)
-    _, pyy = welch(y, **opcoes)
-    _, pxy = csd(x, y, **opcoes)
+    passo = n - n // 2
+    segmentos = 1 + (m - n) // passo
+    janela = get_window("hann", n)
+    por_pedaco = max(1, ((pedaco or PEDACO_DA_TRANSFERENCIA) - n) // passo + 1)
+    sxx = np.zeros(n // 2 + 1)
+    syy = np.zeros(n // 2 + 1)
+    sxy = np.zeros(n // 2 + 1, dtype=np.complex128)
+    for k0 in range(0, segmentos, por_pedaco):
+        if cancelado is not None and cancelado():
+            raise api.Cancelado()
+        k1 = min(segmentos, k0 + por_pedaco)
+        i, j = k0 * passo, (k1 - 1) * passo + n
+        espectros = []
+        for leitor in (ler_x, ler_y):
+            partes = sliding_window_view(np.asarray(leitor(i, j), dtype=np.float64), n)[::passo]
+            espectros.append(np.fft.rfft((partes - partes.mean(axis=1, keepdims=True)) * janela, axis=1))
+        fx, fy = espectros
+        sxx += np.sum(fx.real ** 2 + fx.imag ** 2, axis=0)
+        syy += np.sum(fy.real ** 2 + fy.imag ** 2, axis=0)
+        sxy += np.sum(np.conj(fx) * fy, axis=0)
+        if progresso is not None:
+            progresso(k1 / segmentos)
+    escala = np.full(n // 2 + 1, 2.0 / (taxa_hz * float(np.sum(janela ** 2)) * segmentos))
+    escala[0] /= 2
+    if n % 2 == 0:
+        escala[-1] /= 2
+    pxx, pyy, pxy = sxx * escala, syy * escala, sxy * escala
     with np.errstate(divide="ignore", invalid="ignore"):
         h = pxy / pxx
-        coerencia = np.abs(pxy) ** 2 / (pxx * pyy)
-    medias = 1 + (len(x) - n) // (n - n // 2)
-    return Transferencia(f, h, np.clip(np.nan_to_num(coerencia), 0, 1), pxy, pxx, pyy, medias)
+        coerencia = (pxy.real ** 2 + pxy.imag ** 2) / (pxx * pyy)
+    frequencias = np.fft.rfftfreq(n, 1.0 / taxa_hz)
+    return Transferencia(frequencias, h, np.clip(np.nan_to_num(coerencia), 0.0, 1.0), pxy, pxx, pyy, segmentos, n)
 
 
 def intervalo_de_confianca_db(medias: int, confianca: float = 0.95) -> tuple[float, float]:
     """O intervalo de confiança de uma densidade do Welch, em dB em volta da estimativa: com ν graus de liberdade
-    (Hann com 50 % de sobreposição: ν ≈ 2K / (1 + 2·0,167²), Welch 1967), o verdadeiro fica entre
+    (Hann com 50 % de sobreposição: ν = 2·:func:`medias_equivalentes`), o verdadeiro fica entre
     ν·P/χ²(ν, 1−α/2) e ν·P/χ²(ν, α/2)."""
     from scipy.stats import chi2
 
-    nu = 2 * medias / (1 + 2 * 0.167 ** 2)
+    nu = 2 * medias_equivalentes(medias)
     alfa = 1 - confianca
     return (10 * math.log10(nu / chi2.ppf(1 - alfa / 2, nu)), 10 * math.log10(nu / chi2.ppf(alfa / 2, nu)))
