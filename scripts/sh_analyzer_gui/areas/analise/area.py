@@ -49,6 +49,7 @@ from .vistas_de_analise import (
     VistaDeTransferencia,
     VistaDeXY,
 )
+from .vistas_de_bancada import DialogoDeAliasing, VistaDeMetricas
 from .vistas_de_mapa import VistaDeBandas, VistaDeEspectrograma, VistaDeHarmonicos
 
 NOME_DA_PRIMEIRA_VISTA = "Tempo"
@@ -302,7 +303,8 @@ class AreaDeAnalise(QObject):
                    "espectrograma": self.tr("Espectrograma de {}"), "harmonicos": self.tr("Harmônicos de {}"),
                    "xy": self.tr("XY de {}"), "histograma": self.tr("Histograma de {}"),
                    "eventos": self.tr("Eventos de {}"), "qualidade": self.tr("Qualidade de energia de {}"),
-                   "transferencia": self.tr("Transferência de {}")}
+                   "transferencia": self.tr("Transferência de {}"),
+                   "metricas": self.tr("Métricas de bancada de {}")}
         nome, n = rotulos[tipo].format(ativa.nome), 2
         base = nome
         while nome in nomes:
@@ -323,6 +325,13 @@ class AreaDeAnalise(QObject):
         self.abas.insertTab(i, widget, icone("onda", aparencia().tema.texto2), vista.nome)
         self._por_botao_de_fechar(i, widget)
         self.abas.setCurrentIndex(i)
+
+    def abrir_aliasing(self) -> DialogoDeAliasing:
+        """O assistente de aliasing (ES-06), com as fontes abertas; não bloqueia a janela."""
+        dialogo = DialogoDeAliasing(self.projeto.fontes, self.janela.tarefas, self.janela)
+        dialogo.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialogo.show()
+        return dialogo
 
     def abrir_perfis(self) -> Vista:
         """A vista dos perfis de sonda (ES-07): a que o projeto já tem fica aberta; sem uma, uma nova."""
@@ -357,7 +366,8 @@ class AreaDeAnalise(QObject):
                                  "harmonicos": (VistaDeHarmonicos, "pulso"), "xy": (VistaDeXY, "mira"),
                                  "histograma": (VistaDeHistograma, "regua"), "eventos": (VistaDeEventos, "alerta"),
                                  "qualidade": (VistaDeQualidade, "raio"),
-                                 "transferencia": (VistaDeTransferencia, "link")}[vista.tipo]
+                                 "transferencia": (VistaDeTransferencia, "link"),
+                                 "metricas": (VistaDeMetricas, "chip")}[vista.tipo]
         widget = classe(vista, self.projeto, self.janela.selecao, tarefas=self.janela.tarefas,
                         materializacoes=self.janela.materializacoes, vista_de_tempo=self._vista_de_tempo_por_id)
         widget.tracoClicado.connect(self._traco_clicado)

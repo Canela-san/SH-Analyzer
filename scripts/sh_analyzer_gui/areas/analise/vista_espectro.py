@@ -55,6 +55,7 @@ from ...componentes.chip import ChipDeTraco
 from ...componentes.fluxo import LayoutDeFluxo
 from ...componentes.numeros import decimal, formatar_si, separador_decimal
 from ...dados import espectros as esp
+from ...dados.bancada import limite_das_imagens_hz
 from ...dados.cadeia import CorrecaoSonda
 from ...dados.qualidade import intervalo_do_welch
 from ...graficos.clique import distancia_a_linha, mais_perto
@@ -940,6 +941,13 @@ class VistaDeEspectro(QWidget):
                                                                 sinc))
             partes.append(self.tr("{} de trecho").format(formatar_si(e.n_amostras / e.taxa_hz, "s", 4)))
             partes += [a.texto for a in e.avisos if "sincronizar" in a.texto]
+            limite = limite_das_imagens_hz(e.taxa_hz)
+            suspeitos = {round(p.frequencia_hz) for r in prontos if r.marcas is not None for p in r.marcas.picos
+                         if p.frequencia_hz >= limite}
+            if suspeitos:
+                partes.append(self.tr("⚠ {} pico(s) acima de {} podem ser imagens: uma entrada em fs − f chega menos "
+                                      "de 20 dB abaixo, pelo filtro do ADC (o assistente de aliasing separa)").format(
+                                          len(suspeitos), formatar_si(limite, "Hz", 3)))
         if any(r.aguardando for r in self.resultados):
             partes.append(self.tr("aguardando a transformação da captura inteira"))
         partes += [f"{r.traco.nome}: {r.erro}" for r in self.resultados if r.erro]

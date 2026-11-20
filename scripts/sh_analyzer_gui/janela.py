@@ -317,6 +317,14 @@ class JanelaPrincipal(QMainWindow):
                    dica=self.tr("A função de transferência H₁ de um traço para outro (o ganho e a fase com o "
                                 "intervalo de confiança) e a coerência"),
                    da_analise=True).triggered.connect(lambda: self.area.abrir_analise("transferencia"))
+        self._acao("metricas", self.tr("Abrir as métricas de bancada da vista"), icone="chip",
+                   dica=self.tr("O tom, o THD, o SINAD, o SNR, o ENOB, o SFDR, o ruído, o jitter e os saltos de fase: "
+                                "as contas do medir_captura (ME-05)"),
+                   da_analise=True).triggered.connect(lambda: self.area.abrir_analise("metricas"))
+        self._acao("aliasing", self.tr("Assistente de aliasing…"), icone="espectro",
+                   dica=self.tr("Separa os picos reais das imagens com duas a quatro capturas em taxas diferentes "
+                                "(ES-06)"),
+                   da_analise=True).triggered.connect(lambda: self.area.abrir_aliasing())
         self._acao("perfis_de_sonda", self.tr("Abrir os perfis de sonda"), icone="sonda",
                    dica=self.tr("Os perfis de sonda: o Bode de cada um e qual perfil cada canal usa (ES-07)"),
                    da_analise=True).triggered.connect(lambda: self.area.abrir_perfis())
