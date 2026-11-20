@@ -24,7 +24,7 @@ from ..tema.aplicar import aparencia
 from ..tema.fontes import com_algarismos_tabulares
 from ..tema.icones import IconeDoTema, icone
 from ..tema.tokens import TAMANHOS, Tema
-from .numeros import NumeroInvalido, formatar_si, ler_numero
+from .numeros import NumeroInvalido, decimal, formatar_si, ler_numero
 
 VARIANTES = ("primario", "secundario", "fantasma", "perigo")
 
@@ -232,15 +232,24 @@ class CartaoDeMedida(QFrame):
         self.definir(valor)
         aparencia().mudou.connect(self._reescrever)
 
-    def definir(self, valor: float, unidade: str | None = None) -> None:
+    def definir(self, valor: float, unidade: str | None = None, *, com_prefixo: bool = True) -> None:
+        """O valor e a unidade; ``com_prefixo=False`` escreve o número sem o prefixo do SI (o LSB, os bits, os dB e
+        as amostras não têm múltiplos: 0,5 LSB, e não 500 mLSB)."""
         if unidade is not None:
             self.unidade = unidade
-        self._numero = valor
-        self._valor.setText(formatar_si(valor, self.unidade, self.digitos))
+        self._numero, self._com_prefixo = valor, com_prefixo
+        self._valor.setText(self._escrito())
+
+    def _escrito(self) -> str:
+        if getattr(self, "_com_prefixo", True):
+            return formatar_si(self._numero, self.unidade, self.digitos)
+        if not math.isfinite(self._numero):
+            return formatar_si(self._numero, self.unidade, self.digitos)
+        return f"{decimal(f'{self._numero:.{self.digitos}g}').replace('-', '−')} {self.unidade}".strip()
 
     def _reescrever(self, _tema=None) -> None:
         """O valor escrito de novo (o separador decimal pode ter mudado)."""
-        self._valor.setText(formatar_si(self._numero, self.unidade, self.digitos))
+        self._valor.setText(self._escrito())
 
     @property
     def texto(self) -> str:
