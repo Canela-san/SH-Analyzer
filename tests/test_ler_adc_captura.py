@@ -102,6 +102,14 @@ def test_firmware_de_outro_protocolo_na_pru_e_recusado_sem_criar_o_arquivo(ler_a
     assert not saida.exists() and placa.remoteproc.read_text().startswith("stop")
 
 
+def test_sem_o_driver_da_pru_e_erro_com_o_porque_e_nao_sigbus(ler_adc, placa):
+    """Logo depois do boot, o remoteproc da PRU0 ainda não existe: a RAM dela daria SIGBUS (o código 135, calado)."""
+    placa.remoteproc.unlink()
+    r, _, saida = capturar(ler_adc, placa, "--blocos", 1)
+    assert r.returncode == 1 and "a PRU0 ainda não está no remoteproc" in r.stderr and "terminando o boot" in r.stderr
+    assert not saida.exists() and not placa.remoteproc.exists()
+
+
 def test_pru_que_nao_avisa_que_esta_pronta_e_erro_em_meio_segundo(ler_adc, placa):
     inicio = time.monotonic()
     r, _, saida = capturar(ler_adc, placa, "--blocos", 1, responde=False)
