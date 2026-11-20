@@ -564,12 +564,25 @@ class JanelaPrincipal(QMainWindow):
         abrir.clicked.connect(self.acoes["abrir"].trigger)
         abrir.setEnabled(self.acoes["abrir"].isEnabled())
         self.acoes["abrir"].enabledChanged.connect(abrir.setEnabled)
+        exemplo = Botao(self.tr("Abrir o exemplo"), "secundario")
+        exemplo.setObjectName("botao_exemplo_central")
+        exemplo.setToolTip(self.tr("Uma captura da placa simulada: a rede de 60 Hz com supraharmônicos de 16, 40 e "
+                                   "72 kHz (gerada na pasta do cache)"))
+        exemplo.clicked.connect(self.abrir_o_exemplo)
+        botoes = QWidget()
+        linha = QHBoxLayout(botoes)
+        linha.setContentsMargins(0, 0, 0, 0)
+        linha.addStretch(1)
+        linha.addWidget(abrir)
+        linha.addWidget(exemplo)
+        linha.addStretch(1)
         app = QApplication.instance()
         self.vazio_central = EstadoVazio(
             self.tr("Abra uma captura para começar"),
-            self.tr("Escolha uma captura (.bin, ou o .csv e o .h5 do adc_tool) ou arraste-a para esta janela. As "
-                    "capturas abertas aparecem no painel do projeto, com os canais prontos para plotar."),
-            imagem=app.windowIcon().pixmap(LADO_DA_MARCA, LADO_DA_MARCA), botao=abrir, largura_do_texto=440)
+            self.tr("Escolha uma captura (.bin, ou o .csv e o .h5 do adc_tool) ou um pacote .zpaq.tar, ou arraste-os "
+                    "para esta janela. As capturas abertas aparecem no painel do projeto, com os canais prontos para "
+                    "plotar. Primeira vez? Abra o exemplo, e o F1 abre o guia."),
+            imagem=app.windowIcon().pixmap(LADO_DA_MARCA, LADO_DA_MARCA), botao=botoes, largura_do_texto=440)
         self.vazio_central.simbolo.setObjectName("marca")
 
         self.centro = QStackedWidget()
@@ -824,6 +837,11 @@ class JanelaPrincipal(QMainWindow):
         """O guia (F1) na seção pedida, ou na do que está à frente."""
         return abrir_ajuda(self, secao or self.secao_da_ajuda())
 
+    def abrir_o_exemplo(self) -> None:
+        """A captura de exemplo (gerada uma vez na pasta do cache) no projeto, na Análise."""
+        self.mostrar_area(AREA_ANALISE)
+        self.controle.abrir_capturas([gerar_exemplo(preferencias.pasta("cache"))])
+
     def _passos_iniciais(self) -> list[Passo]:
         """Os passos do cartão, com o estado e as ações desta janela."""
 
@@ -832,10 +850,6 @@ class JanelaPrincipal(QMainWindow):
             if vista is None or vista.tipo != "tempo":
                 vista = next((v for v in self.projeto.vistas if v.tipo == "tempo" and v.tracos), None)
             return self.area.widget_da_vista(vista) if vista is not None else None
-
-        def abrir_o_exemplo():
-            self.mostrar_area(AREA_ANALISE)
-            self.controle.abrir_capturas([gerar_exemplo(preferencias.pasta("cache"))])
 
         def plotar():
             self.mostrar_area(AREA_ANALISE)
@@ -859,7 +873,7 @@ class JanelaPrincipal(QMainWindow):
         return [
             Passo("abrir", self.tr("Abrir uma captura"),
                   self.tr("A de exemplo é a bancada do projeto: a rede de 60 Hz com supraharmônicos."),
-                  self.tr("Abrir o exemplo"), lambda: bool(self.projeto.fontes), abrir_o_exemplo),
+                  self.tr("Abrir o exemplo"), lambda: bool(self.projeto.fontes), self.abrir_o_exemplo),
             Passo("plotar", self.tr("Plotar um canal"),
                   self.tr("Duplo clique num canal do painel do projeto, ou o botão."),
                   self.tr("Plotar a tensão"),
