@@ -12,6 +12,7 @@ pytest.importorskip("pytestqt")
 pytest.importorskip("asyncssh")
 
 import test_gui_simulador  # noqa: E402
+from sh_analyzer_gui.areas.aquisicao.manutencao.comuns import ha_quanto_tempo  # noqa: E402
 from sh_placa.correcoes import com_sudo  # noqa: E402
 from test_gui_simulador import ESPERA_MS  # noqa: E402
 
@@ -105,6 +106,15 @@ def test_o_monitor_anda_e_para_o_ler_adc_esquecido(qtbot, abrir):
     cartao.graficos["cpu"].grab()
     assert cartao.processos.rowCount() > 0 and not cartao.captura.isVisible()
     assert "a cada 1 s" in cartao.situacao.text()
+
+    # a "Ligada há" anda com o monitor (a leitura do sistema é de uma vez só)
+    qtbot.waitUntil(lambda: s.detalhe is not None and not s.lendo, timeout=ESPERA_MS)
+    pagina = area.manutencao.sistema_
+    ligada = s.ligada_s
+    s.detalhe_lido_em -= 3600                                           # como se a leitura fosse de 1 h atrás
+    n = len(m.amostras)
+    qtbot.waitUntil(lambda: len(m.amostras) > n, timeout=ESPERA_MS)
+    assert s.ligada_s >= ligada + 3600 and pagina.ligada_ha.text() == ha_quanto_tempo(s.ligada_s)
 
     # um ler_adc que esta janela não começou (do terminal, de um coletar.sh)
     simulador = c._sessao.simulador
