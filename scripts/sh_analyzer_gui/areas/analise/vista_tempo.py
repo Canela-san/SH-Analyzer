@@ -45,6 +45,7 @@ from PySide6.QtGui import QAction, QColor, QKeySequence
 from PySide6.QtWidgets import QGraphicsItem, QHBoxLayout, QLabel, QSizePolicy, QToolButton, QVBoxLayout, QWidget
 from shiboken6 import isValid
 
+from ...ajuda import botao_de_ajuda
 from ...componentes.chip import ChipDeTraco
 from ...componentes.fluxo import LayoutDeFluxo
 from ...componentes.numeros import decimal, formatar_si, separador_decimal
@@ -256,6 +257,7 @@ class VistaDeTempo(QWidget):
             linha.addWidget(b)
         linha.addStretch(1)
         linha.addWidget(self.info)
+        linha.addWidget(botao_de_ajuda("tempo"))
 
     # ------------------------------------------------------------------ montar as faixas
 

@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 from shiboken6 import isValid
 
+from ...ajuda import botao_de_ajuda
 from ...componentes.basicos import CampoComUnidade, CartaoDeMedida
 from ...componentes.fluxo import LayoutDeFluxo
 from ...componentes.numeros import decimal, formatar_si
@@ -316,6 +317,7 @@ class DialogoDeAliasing(QDialog):
         self.tabela.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         botoes.rejected.connect(self.reject)
+        botoes.addButton(botao_de_ajuda("aliasing"), QDialogButtonBox.ButtonRole.HelpRole)
         coluna = QVBoxLayout(self)
         coluna.addWidget(explicacao)
         coluna.addWidget(self.lista)

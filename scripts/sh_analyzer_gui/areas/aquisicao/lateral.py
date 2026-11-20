@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...ajuda import botao_de_ajuda
 from ...componentes.basicos import Botao
 from ...componentes.painel import fonte_de_titulo
 from ...servicos.conexao_da_placa import ConexaoDaPlaca
@@ -252,6 +253,7 @@ class BarraLateral(QWidget):
         cabecalho.addWidget(titulo)
         cabecalho.addStretch(1)
         cabecalho.addWidget(self.botao_procurar)
+        cabecalho.addWidget(botao_de_ajuda("aquisicao"))
 
         self.lista = ListaDePlacas(conexao)
         self.aviso_da_lista = QLabel()

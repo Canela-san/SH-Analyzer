@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QGridLayout, QLabel, QVBoxLayout, QWidget
 from shiboken6 import isValid
 
+from ...ajuda import botao_de_ajuda
 from ...componentes.basicos import CampoComUnidade, Segmentado
 from ...componentes.numeros import formatar_si
 from ...dados.alinhamento import METODOS, Alinhamento
@@ -77,6 +78,7 @@ class DialogoDeAlinhar(QDialog):
         botoes.addButton(self.tr("Fechar"), QDialogButtonBox.ButtonRole.RejectRole)
         botoes.accepted.connect(self.accept)
         botoes.rejected.connect(self.reject)
+        botoes.addButton(botao_de_ajuda("alinhar"), QDialogButtonBox.ButtonRole.HelpRole)
         coluna = QVBoxLayout(self)
         coluna.addWidget(titulo)
         coluna.addLayout(grade)

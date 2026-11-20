@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 )
 from shiboken6 import isValid
 
+from ...ajuda import botao_de_ajuda
 from ...componentes.basicos import Botao
 from ...componentes.numeros import decimal, formatar_si
 from ...dados import perfis_de_sonda as ps
@@ -85,6 +86,7 @@ class VistaDePerfis(QWidget):
         self.info.setWordWrap(True)
         linha.addWidget(self.abrir)
         linha.addWidget(self.info, 1)
+        linha.addWidget(botao_de_ajuda("perfis"))
 
         self.lista = QListWidget()
         self.lista.setObjectName("lista_de_perfis")

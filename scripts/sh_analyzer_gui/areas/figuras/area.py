@@ -113,6 +113,7 @@ class AreaDeFiguras(QWidget):
         acao_nova.triggered.connect(lambda: self.nova_figura())
         self.nova = titulo.adicionar_botao(acao_nova)
         self.nova.setObjectName("nova_figura")
+        titulo.adicionar_ajuda("figuras")
         self.lista = QListWidget()
         self.lista.setObjectName("lista_de_figuras")
         self.lista.setIconSize(QSize(16, 16))

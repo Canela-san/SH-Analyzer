@@ -74,6 +74,14 @@ class TituloDoPainel(QWidget):
         self._linha.addWidget(b)
         return b
 
+    def adicionar_ajuda(self, secao_id: str) -> QToolButton:
+        """O "?" do painel: abre o guia na seção dele."""
+        from ..ajuda import botao_de_ajuda
+
+        b = botao_de_ajuda(secao_id)
+        self._linha.addWidget(b)
+        return b
+
 
 class EstadoVazio(QWidget):
     """O que uma área mostra quando não há nada nela: um ícone (ou a marca), o título, uma frase do que fazer e,

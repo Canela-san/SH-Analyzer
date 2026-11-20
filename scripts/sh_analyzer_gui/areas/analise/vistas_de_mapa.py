@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 )
 from shiboken6 import isValid
 
+from ...ajuda import SECAO_DO_TIPO, botao_de_ajuda
 from ...componentes.basicos import CampoComUnidade, Segmentado
 from ...componentes.fluxo import LayoutDeFluxo
 from ...componentes.numeros import decimal, formatar_si
@@ -130,6 +131,7 @@ class VistaLigada(QWidget):
         botao.setDefaultAction(self.acao_cursores)
         botao.setAutoRaise(True)
         self._linha.addWidget(botao)
+        self._linha.addWidget(botao_de_ajuda(SECAO_DO_TIPO.get(vista.tipo, "janela")))
         self.cursores = CursoresDaVista(parent=self)
         self.cursores.por_nas([self.grafico.getViewBox()])
         self.cursores.mudou.connect(self.emitir_regiao)

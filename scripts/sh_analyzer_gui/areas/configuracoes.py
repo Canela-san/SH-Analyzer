@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import preferencias
+from ..ajuda import botao_de_ajuda
 from ..componentes.basicos import Botao, Segmentado
 from ..componentes.numeros import formatar_bytes, formatar_duracao, formatar_si
 from ..componentes.toast import Toast
@@ -92,6 +93,7 @@ class DialogoDeConfiguracoes(QDialog):
         fechar.setObjectName("fechar_configuracoes")
         fechar.clicked.connect(self.close)
         rodape = QHBoxLayout()
+        rodape.addWidget(botao_de_ajuda("configuracoes"))
         rodape.addStretch(1)
         rodape.addWidget(fechar)
         corpo = QHBoxLayout()

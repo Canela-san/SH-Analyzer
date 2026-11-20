@@ -39,7 +39,7 @@ import logging
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QSize, Qt
+from PySide6.QtCore import QByteArray, QSize, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -66,6 +66,7 @@ from PySide6.QtWidgets import (
 from shiboken6 import isValid
 
 from . import preferencias
+from .ajuda import SECAO_DO_TIPO, abrir_ajuda, botao_de_ajuda
 from .areas.analise.area import AreaDeAnalise
 from .areas.analise.arvore import PainelDoProjeto
 from .areas.analise.inspetor import Inspetor
@@ -82,6 +83,8 @@ from .componentes.dialogo_de_erro import DialogoDeErro
 from .componentes.grade_de_vistas import DISPOSICOES, AbasEmGrade, nome_da_disposicao
 from .componentes.painel import EstadoVazio, PainelComAbas, TituloDoPainel, TrilhoDoPainel, botao_de_icone
 from .componentes.paleta import DialogoDeAtalhos, PaletaDeComandos
+from .componentes.primeiros_passos import NOME_DO_EXEMPLO, Passo, PrimeirosPassos, gerar_exemplo
+from .componentes.primeiros_passos import ja_vistos as primeiros_passos_vistos
 from .componentes.tarefas import ListaDeTarefas
 from .configuracao import gravar, ler_bytes
 from .controle_do_projeto import ControleDoProjeto
@@ -186,6 +189,7 @@ class JanelaPrincipal(QMainWindow):
         self.barra.botao_desfazer.setDefaultAction(self.acoes["desfazer"])
         self.barra.botao_refazer.setDefaultAction(self.acoes["refazer"])
         self.barra.botao_tema.setDefaultAction(self.acoes["alternar_tema"])
+        self.barra.botao_ajuda.setDefaultAction(self.acoes["ajuda"])
         self.barra.botao_ajustes.setDefaultAction(self.acoes["configuracoes"])
         self.barra.definir_menu_do_projeto(self._menu_do_projeto())
         self.barra.areaMudou.connect(self.mostrar_area)
@@ -195,8 +199,10 @@ class JanelaPrincipal(QMainWindow):
         self.dock_projeto = self._criar_dock("projeto", self.tr("Projeto"), self._criar_projeto(),
                                              Qt.DockWidgetArea.LeftDockWidgetArea, "painel_projeto")
         self.dock_projeto.titulo.adicionar_botao(self.acoes["abrir"])
+        self.dock_projeto.titulo.adicionar_ajuda("projeto")
         self.dock_inspetor = self._criar_dock("inspetor", self.tr("Inspetor"), self._criar_inspetor(),
                                               Qt.DockWidgetArea.RightDockWidgetArea, "painel_inspetor")
+        self.dock_inspetor.titulo.adicionar_ajuda("inspetor")
         self.painel_inferior = self._criar_painel_inferior()
         self.dock_inferior = self._criar_dock("inferior", self.tr("Painel de baixo"), self.painel_inferior,
                                               Qt.DockWidgetArea.BottomDockWidgetArea, "painel_inferior",
@@ -229,6 +235,11 @@ class JanelaPrincipal(QMainWindow):
         aparencia().mudou.connect(self._tema_mudou)
         self._tema_mudou(aparencia().tema)
         self.trocar_projeto(Projeto())
+        self._visitou_a_aquisicao = False
+        self.primeiros_passos = PrimeirosPassos(self._passos_iniciais(), self._centro_com_trilhos)
+        self.primeiros_passos.hide()
+        if not primeiros_passos_vistos():
+            QTimer.singleShot(0, self.primeiros_passos.mostrar)
         self._layout_restaurado = self.restaurar_layout()
         self._primeira_exibicao = True
         # Os erros inesperados de qualquer thread (servicos/erros.py). Pela fila sempre: um erro num paintEvent não
@@ -271,6 +282,12 @@ class JanelaPrincipal(QMainWindow):
         self._acao("paleta", self.tr("Paleta de comandos"), atalho="Ctrl+K").triggered.connect(self.abrir_paleta)
         self._acao("atalhos", self.tr("Atalhos do teclado e do mouse"), atalho="Ctrl+/",
                    icone="livro").triggered.connect(self.mostrar_atalhos)
+        self._acao("ajuda", self.tr("Guia do SH-Analyzer"), atalho="F1", icone="livro",
+                   dica=self.tr("O guia: o que cada painel e cada vista faz, e como ler os números (a seção da vista "
+                                "à frente)")).triggered.connect(self.abrir_ajuda)
+        self._acao("primeiros_passos", self.tr("Primeiros passos"),
+                   dica=self.tr("Do nada à primeira medida, com uma captura de exemplo")).triggered.connect(
+                       lambda: self.primeiros_passos.mostrar())
         self._acao("alternar_tema", self.tr("Alternar o tema claro e escuro"),
                    icone="sol").triggered.connect(preferencias.alternar_tema)
         self._acao("configuracoes", self.tr("Configurações…"), atalho="Ctrl+,",
@@ -563,6 +580,7 @@ class JanelaPrincipal(QMainWindow):
         self._atualizar_centro()
         # Em volta, os trilhos dos painéis recolhidos (postos depois dos painéis: _criar_recolher_e_trilhos).
         conteiner = QWidget()
+        self._centro_com_trilhos = conteiner
         conteiner.setObjectName("centro_com_trilhos")
         conteiner.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._grade_central = QGridLayout(conteiner)
@@ -598,7 +616,14 @@ class JanelaPrincipal(QMainWindow):
         recolher.setObjectName("recolher_inferior")
         recolher.setToolTip(self.tr("Recolher o painel de baixo ({})").format(atalho))
         recolher.triggered.connect(dock.hide)
-        painel.setCornerWidget(botao_de_icone(recolher, "baixo"), Qt.Corner.TopRightCorner)
+        canto = QWidget()
+        linha_do_canto = QHBoxLayout(canto)
+        linha_do_canto.setContentsMargins(0, 0, 0, 0)
+        linha_do_canto.setSpacing(0)
+        linha_do_canto.addWidget(botao_de_ajuda("medidas", qual=lambda: ("medidas", "janela", "janela")[
+            max(painel.currentIndex(), 0)]))
+        linha_do_canto.addWidget(botao_de_icone(recolher, "baixo"))
+        painel.setCornerWidget(canto, Qt.Corner.TopRightCorner)
         trilho = TrilhoDoPainel("baixo")
         for i in range(painel.count()):
             trilho.adicionar_aba(painel.tabText(i), lambda _=False, i=i: self.abrir_painel_de_baixo(i),
@@ -778,6 +803,79 @@ class JanelaPrincipal(QMainWindow):
             self.barra.areas.blockSignals(False)
         self.paginas.setCurrentWidget(pagina)
         self.status_por_area.setCurrentIndex({AREA_ANALISE: 0, AREA_AQUISICAO: 1, AREA_FIGURAS: 2}[indice])
+        if indice == AREA_AQUISICAO:
+            self._visitou_a_aquisicao = True
+
+    # ------------------------------------------------------------------ a ajuda e os primeiros passos
+
+    def secao_da_ajuda(self) -> str:
+        """A seção do guia do que está à frente: a da área, ou a da vista aberta na Análise."""
+        area = self.area_atual
+        if area == AREA_FIGURAS:
+            return "figuras"
+        if area == AREA_AQUISICAO:
+            return "aquisicao"
+        vista = self.vista_ativa()
+        if vista is not None:
+            return SECAO_DO_TIPO.get(vista.tipo, "janela")
+        return "primeiros-passos" if self.projeto is None or not self.projeto.fontes else "janela"
+
+    def abrir_ajuda(self, secao: str | None = None):
+        """O guia (F1) na seção pedida, ou na do que está à frente."""
+        return abrir_ajuda(self, secao or self.secao_da_ajuda())
+
+    def _passos_iniciais(self) -> list[Passo]:
+        """Os passos do cartão, com o estado e as ações desta janela."""
+
+        def tempo_ativo():
+            vista = self.vista_ativa()
+            if vista is None or vista.tipo != "tempo":
+                vista = next((v for v in self.projeto.vistas if v.tipo == "tempo" and v.tracos), None)
+            return self.area.widget_da_vista(vista) if vista is not None else None
+
+        def abrir_o_exemplo():
+            self.mostrar_area(AREA_ANALISE)
+            self.controle.abrir_capturas([gerar_exemplo(preferencias.pasta("cache"))])
+
+        def plotar():
+            self.mostrar_area(AREA_ANALISE)
+            fontes = [f for f in self.projeto.fontes if not f.esta_ausente]
+            if not fontes:
+                return
+            fonte = next((f for f in fontes if f.nome == NOME_DO_EXEMPLO), fontes[0])
+            numeros = [c.numero for c in fonte.canais]
+            self.area.plotar_canal(fonte, 1 if 1 in numeros else numeros[0])
+
+        def ligar_os_cursores():
+            widget = tempo_ativo()
+            if widget is not None:
+                self.area.ativar_vista(widget.vista)
+                widget.acao_cursores.setChecked(True)
+
+        def cursores_ligados() -> bool:
+            widget = tempo_ativo()
+            return widget is not None and getattr(widget, "cursores", None) is not None
+
+        return [
+            Passo("abrir", self.tr("Abrir uma captura"),
+                  self.tr("A de exemplo é a bancada do projeto: a rede de 60 Hz com supraharmônicos."),
+                  self.tr("Abrir o exemplo"), lambda: bool(self.projeto.fontes), abrir_o_exemplo),
+            Passo("plotar", self.tr("Plotar um canal"),
+                  self.tr("Duplo clique num canal do painel do projeto, ou o botão."),
+                  self.tr("Plotar a tensão"),
+                  lambda: any(v.tipo == "tempo" and v.tracos for v in self.projeto.vistas), plotar),
+            Passo("medir", self.tr("Medir com os cursores"),
+                  self.tr("C liga os cursores; a tabela de Medidas, embaixo, traz o RMS e a frequência."),
+                  self.tr("Ligar os cursores"), cursores_ligados, ligar_os_cursores),
+            Passo("espectro", self.tr("Ver o espectro"),
+                  self.tr("Ctrl+E: os supraharmônicos de 16, 40 e 72 kHz do exemplo."),
+                  self.tr("Abrir o espectro"), lambda: any(v.tipo == "espectro" for v in self.projeto.vistas),
+                  lambda: self.acoes["espectro"].trigger()),
+            Passo("aquisicao", self.tr("Experimentar a aquisição"),
+                  self.tr("Na área Aquisição, conecte a placa simulada e faça uma captura."),
+                  self.tr("Ir para a Aquisição"), lambda: self._visitou_a_aquisicao,
+                  lambda: self.mostrar_area(AREA_AQUISICAO), opcional=True),
+        ]
 
     def figura_da_vista_ativa(self) -> bool:
         """FG-01: a vista aberta na Análise vira uma figura, e a janela vai para as Figuras com ela escolhida."""

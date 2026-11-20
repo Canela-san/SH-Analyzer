@@ -50,6 +50,7 @@ from PySide6.QtGui import QAction, QColor, QKeySequence, QPen
 from PySide6.QtWidgets import QCheckBox, QGraphicsItem, QLabel, QSizePolicy, QToolButton, QVBoxLayout, QWidget
 from shiboken6 import isValid
 
+from ...ajuda import botao_de_ajuda
 from ...componentes.basicos import CampoComUnidade, Segmentado
 from ...componentes.chip import ChipDeTraco
 from ...componentes.fluxo import LayoutDeFluxo
@@ -249,6 +250,7 @@ class VistaDeEspectro(QWidget):
             botao.setAutoRaise(True)
             linha.addWidget(botao)
             self.botoes_de_leitura[nome] = botao
+        linha.addWidget(botao_de_ajuda("espectro"))
         self.acao_destravar, self.acao_igualar = acoes_da_escala(self, self.destravar_selecionados,
                                                                  self.igualar_escalas)
         for acao, nome in ((self.acao_destravar, "destravar"), (self.acao_igualar, "igualar")):
