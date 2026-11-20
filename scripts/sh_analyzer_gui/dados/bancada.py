@@ -28,12 +28,12 @@ import numpy as np
 import supraharmonicos.api as api
 from supraharmonicos import aliasing as al
 from supraharmonicos import metricas_captura as mc
+from supraharmonicos.amostras import converter_para_tensao
 from supraharmonicos.constantes import (
     CORTE_SUPRAHARMONICOS_PADRAO,
     DISTANCIA_MINIMA_PICOS_PADRAO,
     DURACAO_TRANSITORIO_FAIXA_S,
 )
-from supraharmonicos.amostras import converter_para_tensao
 
 from .espectros import TrechoDoTraco
 from .qualidade import ler
