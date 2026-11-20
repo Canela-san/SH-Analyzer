@@ -69,7 +69,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > F6.9 também** (os logs e o monitor, o sistema, o resgate pela serial e a jornada da fase, que achou na placa de
 > verdade a PRU que só aparece depois do SSH no boot). **A Fase 6 está feita** (diário de 20/11). **A Fase 7 está em
 > tarefas** (seção 4h, F7.1 a F7.12; o acabamento e as análises, ampliada a pedido do usuário com as análises para
-> pesquisadores); **a F7.1 e a F7.2 estão feitas** (as transformações novas e a expressão entre canais); **a próxima é a F7.3**. **A placa de verdade tem o firmware desta versão desde
+> pesquisadores); **a F7.1 a F7.4 estão feitas** (as transformações novas, a expressão entre canais, o XY com a potência e o histograma com as estatísticas); **a próxima é a F7.5**. **A placa de verdade tem o firmware desta versão desde
 > 20/11/2026** (v0.8-337-g6f1f2b2: a saída contínua e o `ler_adc` que espera a PRU; as cópias das versões de antes em
 > `~/firmware-anteriores/`); antes da F6.2, o `ler_adc` v0.8 sem o `-o -`.
 >
@@ -2476,20 +2476,35 @@ resposta conhecida), como as do motor; os commits seguem o componente (a GUI, os
   etapa": a expressão livre e os atalhos A − B, A × B (a potência instantânea) e A ÷ B, com o c1; o cartão tem a conta
   e a unidade do resultado (W para V × A).
 
-### ☐ F7.3: o XY e a potência (ME-03)
+### ☑ F7.3: o XY e a potência (ME-03)
 
 - **O conteúdo:** a vista **XY** (um traço contra outro: o laço V × I, a histerese), com a persistência dos ciclos;
   **as medidas de potência** da IEEE 1459 entre a tensão e a corrente escolhidas: P, S, a potência reativa da
   fundamental Q₁, a potência de distorção, o fator de potência, o cos φ₁ e a defasagem da fundamental.
 - **Pronto quando:** as medidas conferem com sinais sintéticos de resposta conhecida (a carga resistiva, a indutiva,
   a não linear) e com as fórmulas da norma.
+- **Feita em 20/11/2026.** `dados/analises.py` (`potencia`, `xy`) e a vista XY (`vistas_de_analise.py`): o traço
+  do eixo horizontal (a tensão) contra o do vertical (a corrente, um segundo seletor), a curva ou, acima de 200 mil
+  pontos, a densidade em escala logarítmica (a persistência). A potência: a média em ciclos inteiros vai do primeiro ao
+  último cruzamento por zero da fundamental da tensão (os do motor) **com as pontas fracionárias** (o trapézio com a
+  interpolação nos cruzamentos: cortar a janela em amostras inteiras errava 1e-5); os fasores da fundamental pela
+  projeção nesses ciclos. Nos testes, a carga resistiva, a indutiva de 30° e a não linear (o 3º harmônico de 40 %)
+  dão P, Q₁, S, S_N, FP, cos φ₁, φ₁ e o THD das fórmulas a 1e-6. A tabela copia para a planilha (Ctrl+C, ou o menu);
+  as análises abrem pelo menu **Análises** novo do canto das abas (e pela paleta). Testes:
+  `tests/test_gui_analises.py` e `tests/test_gui_vistas_de_analise.py`.
 
-### ☐ F7.4: o histograma e as estatísticas
+### ☑ F7.4: o histograma e as estatísticas
 
 - **O conteúdo:** a vista **Histograma** (a distribuição do traço, a CDF, a ocupação da faixa do ADC e as amostras
   saturadas); **as estatísticas** do trecho (média, desvio-padrão, assimetria, curtose, os percentis 1, 5, 50, 95 e
   99, o mínimo e o máximo) na vista e na tabela de Medidas.
 - **Pronto quando:** os números conferem com a NumPy e a SciPy; a saturação confere com os códigos do ADC.
+- **Feita em 20/11/2026.** `histograma_e_estatisticas`: sem cadeia, a contagem é a dos **códigos do ADC** (o
+  `bincount`, exata; cada coluna junta um número inteiro de códigos) e as estatísticas saem dela, com a saturação nos
+  dois extremos e a ocupação da faixa; com cadeia, duas passadas pelos valores, os momentos combinados bloco a bloco
+  (a fórmula de Chan: a média, o desvio, a assimetria e a curtose da `scipy.stats` a 1e-9) e os percentis exatos até
+  32 M amostras (acima, do histograma fino de 65 536 colunas, com o erro dito na vista). A vista mostra as colunas
+  (linear ou log), a CDF e a tabela (com o fator de crista). O ganho e o offset do traço entram nas contas.
 
 ### ☐ F7.5: os eventos detectados (AN-10)
 
