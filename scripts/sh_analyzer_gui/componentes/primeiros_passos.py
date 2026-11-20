@@ -21,6 +21,7 @@ from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from ..configuracao import gravar, ler_texto
+from ..tema.aplicar import aparencia
 
 CHAVE_DOS_PRIMEIROS_PASSOS = "ajuda/primeiros_passos"
 VISTOS = "vistos"
@@ -116,6 +117,15 @@ class PrimeirosPassos(QFrame):
         self._relogio.setInterval(INTERVALO_MS)
         self._relogio.timeout.connect(self.conferir)
         parent.installEventFilter(self)
+        aparencia().mudou.connect(self._tema_mudou)
+        self._tema_mudou(aparencia().tema)
+
+    def _tema_mudou(self, t) -> None:
+        """O fundo elevado e a borda do tema (o cartão fica por cima das vistas: sem fundo, o gráfico aparecia
+        através dele); o passo feito na cor de ok."""
+        self.setStyleSheet(f"#primeiros_passos {{ background: {t.elevada}; border: 1px solid {t.borda_forte}; "
+                           f"border-radius: 8px; }} #primeiros_passos QLabel {{ background: transparent; }} "
+                           f"#primeiros_passos QLabel[feito=\"true\"] {{ color: {t.ok}; }}")
 
     # ------------------------------------------------------------------ o estado
 
@@ -133,8 +143,12 @@ class PrimeirosPassos(QFrame):
         estado = self.feitos()
         proximo = next((p.id for p in self.passos if not estado[p.id] and not p.opcional), None)
         for p in self.passos:
-            self.marcas[p.id].setText("✓" if estado[p.id] else "○")
-            self.marcas[p.id].setProperty("feito", estado[p.id])
+            marca = self.marcas[p.id]
+            marca.setText("✓" if estado[p.id] else "○")
+            if marca.property("feito") != estado[p.id]:
+                marca.setProperty("feito", estado[p.id])
+                marca.style().unpolish(marca)
+                marca.style().polish(marca)
             self.botoes[p.id].setEnabled(not estado[p.id] and (p.id == proximo or p.opcional))
         self.concluido.setVisible(proximo is None)
         self.adjustSize()

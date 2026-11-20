@@ -64,7 +64,7 @@ def ler_guia(caminho: Path | None = None) -> list[Secao]:
     def fechar():
         corpo = "\n".join(linhas).strip()
         if corpo:
-            titulo = atual_titulo or (corpo.splitlines()[0].lstrip("# ").strip())
+            titulo = atual_titulo or "Sobre o guia"                 # a introdução, antes da primeira seção
             secoes.append(Secao(atual_id, titulo, corpo))
 
     for linha in texto.splitlines():
@@ -106,6 +106,7 @@ class LeitorDoGuia(QDialog):
         self.texto = QTextBrowser()
         self.texto.setObjectName("texto_do_guia")
         self.texto.setOpenExternalLinks(True)
+        self.texto.document().setDocumentMargin(14)
         esquerda = QWidget()
         coluna = QVBoxLayout(esquerda)
         coluna.setContentsMargins(0, 0, 0, 0)
