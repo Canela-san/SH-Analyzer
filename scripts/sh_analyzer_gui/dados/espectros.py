@@ -192,6 +192,7 @@ class TrechoDoTraco:
     fim: int
     ganho: float = 1.0
     materializada: np.ndarray | None = None     # as amostras transformadas do canal inteiro, se já prontas
+    offset: float = 0.0                          # o do traço (as contas lineares o ignoram; as estatísticas, não)
 
     @property
     def n_amostras(self) -> int:
@@ -518,8 +519,55 @@ class OpcoesDaSonda(_OpcoesComDicionario):
         return {"perfis": None if self.perfis is None else list(self.perfis)}
 
 
+def _inteiro_em(valor, minimo: int, maximo: int, nome: str) -> None:
+    if not (isinstance(valor, int) and not isinstance(valor, bool) and minimo <= valor <= maximo):
+        raise OpcoesInvalidas(f"{nome} inválido: {valor!r} (de {minimo} a {maximo})")
+
+
+@dataclass(frozen=True)
+class OpcoesDoXY(_OpcoesComDicionario):
+    """A vista XY (F7.3): o traço do eixo horizontal (``traco``: a tensão, na potência), o do vertical
+    (``traco_y``: a corrente), o trecho e se mostra a potência da IEEE 1459."""
+
+    traco: int = 0
+    trecho: str = "janela"
+    vista_de_tempo: str | None = None
+    traco_y: int = 1
+    potencia: bool = True
+
+    def __post_init__(self) -> None:
+        _validar_comum(self)
+        _inteiro_em(self.traco_y, 0, 10_000, "traço do eixo vertical")
+        if not isinstance(self.potencia, bool):
+            raise OpcoesInvalidas("potência tem de ser verdadeiro ou falso")
+
+
+ESCALAS_DO_HISTOGRAMA = ("linear", "log")
+
+
+@dataclass(frozen=True)
+class OpcoesDoHistograma(_OpcoesComDicionario):
+    """A vista do histograma (F7.4): o traço, o trecho, quantas colunas, a escala das contagens e a curva acumulada."""
+
+    traco: int = 0
+    trecho: str = "janela"
+    vista_de_tempo: str | None = None
+    colunas: int = 200
+    escala: str = "linear"
+    acumulada: bool = False
+
+    def __post_init__(self) -> None:
+        _validar_comum(self)
+        _inteiro_em(self.colunas, 2, 100_000, "número de colunas")
+        if self.escala not in ESCALAS_DO_HISTOGRAMA:
+            raise OpcoesInvalidas(f"escala inválida: {self.escala!r} (use {', '.join(ESCALAS_DO_HISTOGRAMA)})")
+        if not isinstance(self.acumulada, bool):
+            raise OpcoesInvalidas("acumulada tem de ser verdadeiro ou falso")
+
+
 OPCOES_DO_TIPO = {"tempo": OpcoesDoTempo, "espectro": OpcoesDoEspectro, "bandas": OpcoesDasBandas,
-                  "espectrograma": OpcoesDoEspectrograma, "harmonicos": OpcoesDosHarmonicos, "sonda": OpcoesDaSonda}
+                  "espectrograma": OpcoesDoEspectrograma, "harmonicos": OpcoesDosHarmonicos, "sonda": OpcoesDaSonda,
+                  "xy": OpcoesDoXY, "histograma": OpcoesDoHistograma}
 """A classe das opções de cada tipo de vista. As de um projeto de antes da vista de tempo ter opções (``{}``) são as
 padrão."""
 
