@@ -78,10 +78,14 @@ def _tabela(nome: str, colunas: int) -> QTableWidget:
 
 
 def _preencher(tabela: QTableWidget, linhas: list[tuple[str, ...]]) -> None:
+    """As linhas na tabela; o texto longo, inteiro na dica da célula (a coluna estreita o corta)."""
     tabela.setRowCount(len(linhas))
     for k, linha in enumerate(linhas):
         for c, texto in enumerate(linha):
-            tabela.setItem(k, c, QTableWidgetItem(texto))
+            item = QTableWidgetItem(texto)
+            if len(texto) > 24:
+                item.setToolTip(texto)
+            tabela.setItem(k, c, item)
 
 
 def _numero(valor: float, casas: int = 4) -> str:

@@ -23,10 +23,12 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QSplitter,
     QVBoxLayout,
@@ -82,6 +84,10 @@ class VistaDeMetricas(VistaLigada):
         self._linha.addWidget(rotulo)
         self._linha.addWidget(self.harmonicos)
         painel = QWidget()
+        rolagem = QScrollArea()
+        rolagem.setWidgetResizable(True)
+        rolagem.setFrameShape(QFrame.Shape.NoFrame)
+        rolagem.setWidget(painel)
         self._fluxo = LayoutDeFluxo(painel, espaco=8)
         self._fluxo.setContentsMargins(8, 6, 8, 6)
         self.cartoes: dict[str, CartaoDeMedida] = {}
@@ -106,9 +112,9 @@ class VistaDeMetricas(VistaLigada):
         baixo.addWidget(self.tabela)
         baixo.setSizes([520, 420])
         divisor = QSplitter(Qt.Orientation.Vertical)
-        divisor.addWidget(painel)
+        divisor.addWidget(rolagem)
         divisor.addWidget(baixo)
-        divisor.setSizes([170, 420])
+        divisor.setSizes([210, 400])
         coluna.addWidget(divisor, 1)
 
     def _mostrar_opcoes_proprias(self) -> None:
@@ -139,28 +145,42 @@ class VistaDeMetricas(VistaLigada):
             "sfdr": (e.sfdr_dbc, "dBc"), "ruido": (e.ruido_rms / m.lsb if m.lsb > 0 else math.nan, "LSB"),
             "densidade": (e.densidade_ruido, f"{unidade}/√Hz"),
             "jitter": (m.jitter.rms_ns * 1e-9 if m.jitter is not None else math.nan, "s"),
-            "salto": (m.continuidade.salto_max_amostras if m.continuidade is not None else math.nan, ""),
+            "salto": (m.continuidade.salto_max_amostras if m.continuidade is not None else math.nan,
+                      self.tr("amostra")),
             "saturacao": (100 * m.saturacao, "%"),
         }
         for chave, (valor, u) in valores.items():
-            self.cartoes[chave].definir(valor, u)
+            self.cartoes[chave].definir(valor, u, com_prefixo=chave in ("tom", "amplitude", "densidade", "jitter"))
         t = aparencia().tema
         cor = QColor(cor_do_traco(self.traco.receita.cor, t)[0])
+        self._desenhar_os_harmonicos(e, cor)
+        self.tabela.setHorizontalHeaderLabels([self.tr("Grandeza"), self.tr("Valor"), self.tr("O que é")])
+        _preencher(self.tabela, self._linhas(m, unidade))
+
+    def _desenhar_os_harmonicos(self, e, cor: QColor) -> None:
+        """Os harmônicos de 2 até o pedido, em dBc: as barras cheias; os dobrados pela Nyquist, vazadas; os abaixo do
+        piso do ruído, um traço no piso (estão lá, mas não se medem)."""
         separaveis = [h for h in e.harmonicos if h.nivel_dbc is not None and math.isfinite(h.nivel_dbc)]
-        if separaveis:
-            piso = min(h.nivel_dbc for h in separaveis) - 10.0
-            for dobrados in (False, True):
-                grupo = [h for h in separaveis if h.aliasado == dobrados]
-                if not grupo:
-                    continue
+        niveis = [h.nivel_dbc for h in separaveis]
+        piso = (min(niveis) if niveis else -100.0) - 20.0
+        for dobrados in (False, True):
+            grupo = [h for h in separaveis if h.aliasado == dobrados]
+            if grupo:
                 barras = pg.BarGraphItem(x=[h.ordem for h in grupo], height=[h.nivel_dbc - piso for h in grupo],
                                          y0=piso, width=0.6, brush=None if dobrados else pg.mkBrush(cor),
                                          pen=pg.mkPen(cor, width=1.5))
                 self.grafico.addItem(barras)
                 self._barras.append(barras)
-            self.grafico.getViewBox().autoRange(padding=0.05)
-        self.tabela.setHorizontalHeaderLabels([self.tr("Grandeza"), self.tr("Valor"), self.tr("O que é")])
-        _preencher(self.tabela, self._linhas(m, unidade))
+        abaixo = [h.ordem for h in e.harmonicos if h.nivel_dbc is not None and not math.isfinite(h.nivel_dbc)]
+        if abaixo:
+            marcas = pg.ScatterPlotItem(abaixo, [piso] * len(abaixo), symbol="_", size=14,
+                                        pen=pg.mkPen(QColor(aparencia().tema.mudo), width=2))
+            self.grafico.addItem(marcas)
+            self._barras.append(marcas)
+        ordens = [h.ordem for h in e.harmonicos] or [2]
+        self.grafico.getAxis("bottom").setTicks([[(k, str(k)) for k in ordens]])
+        self.grafico.setXRange(min(ordens) - 0.6, max(ordens) + 0.6, padding=0)
+        self.grafico.setYRange(piso, max(niveis) + 10.0 if niveis else piso + 40.0, padding=0)
 
     def _linhas(self, m: bc.MetricasDeBancada, unidade: str) -> list[tuple[str, str, str]]:
         e, b = m.espectro, m.basicas
