@@ -124,9 +124,13 @@ def _apagar_os_widgets_do_teste():
 
 @pytest.fixture
 def config_limpa(tmp_path, monkeypatch):
-    """Uma pasta de configuração da interface só deste teste (``sh_analyzer_gui.configuracao``)."""
-    monkeypatch.setenv("SH_ANALYZER_CONFIG", str(tmp_path / "config"))
-    return tmp_path / "config"
+    """Uma pasta de configuração da interface só deste teste (``sh_analyzer_gui.configuracao``), com os primeiros
+    passos já vistos (o cartão não aparece por cima das vistas; o teste dele apaga a marca)."""
+    pasta = tmp_path / "config"
+    pasta.mkdir(exist_ok=True)
+    (pasta / "SH-Analyzer.ini").write_text("[ajuda]\nprimeiros_passos=vistos\n", encoding="utf-8")
+    monkeypatch.setenv("SH_ANALYZER_CONFIG", str(pasta))
+    return pasta
 
 
 @pytest.fixture
