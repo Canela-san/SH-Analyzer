@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import re
 import subprocess
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -273,3 +274,23 @@ def test_o_roteiro_de_compilar_de_novo():
     texto = roteiro_da_atualizacao(plano, "x-1")
     assert 'ORIGEM="$HOME/firmware"' in texto and "HASHES=()" in texto and "NOVOS=()" in texto
     assert ArquivoDoFirmware("a", b"x").sha256 == hashlib.sha256(b"x").hexdigest()
+
+
+def test_a_atualizacao_logo_depois_do_reinicio_espera_a_pru(tmp_path):
+    """Pedida com a placa recém-ligada (o SSH responde, mas a PRU0 ainda está sem o driver), a atualização espera a
+    PRU aparecer para carregar o firmware, em vez de falhar e voltar à versão de antes."""
+    firmware = firmware_do_aplicativo(RAIZ)
+
+    async def cenario():
+        async with ServidorDoSimulador(tmp_path / "placa", "firmware_antigo", vazao_bytes_s=None,
+                                       amostras_por_bloco=BLOCO, tempo_do_boot_s=0.2, atraso_da_pru_s=8.0) as placa:
+            await placa.reiniciar()
+            inicio = time.monotonic()
+            async with entrar(placa) as c:
+                plano = await planejar(ClienteDoAgente(TransporteSSH(c)), firmware)
+                _tarefa, passos, fim = await atualizar_e_acompanhar(c, plano, placa.senha_do_sudo)
+            return passos, fim, time.monotonic() - inicio
+
+    passos, fim, levou_s = rodar(cenario())
+    assert desfecho(fim).estado == "atualizada", fim.log
+    assert ("voltar", "comecou") not in passos and levou_s >= 8.0

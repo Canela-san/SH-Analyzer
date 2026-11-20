@@ -500,3 +500,36 @@ def test_o_sudo_em_segundo_plano_de_um_shell_que_saiu_pede_a_senha(tmp_path):
     casa = asyncio.run(cenario())
     assert (casa / "root").exists() and not (casa / "fundo").exists()
     assert "a password is required" in (casa / "fundo.erro").read_text()
+
+
+def test_a_pru_aparece_depois_do_ssh_no_boot(tmp_path):
+    """Como na placa de verdade (19/11/2026: o SSH aos ~45 s do boot, o driver da PRU aos ~71 s): depois de um
+    reinício, a placa simulada já responde, mas a PRU0 ainda não está no remoteproc; a saúde diz que ela sobe (o
+    ``/proc/uptime`` anda desde o boot), o ``ler_adc`` recusa com o porquê, e ela aparece sozinha."""
+    import subprocess
+
+    async def saude(placa):
+        async with entrar(placa) as c:
+            return await ClienteDoAgente(TransporteSSH(c)).saude()
+
+    async def cenario():
+        async with ServidorDoSimulador(tmp_path / "placa", "normal", vazao_bytes_s=None, tempo_do_boot_s=0.2,
+                                       atraso_da_pru_s=2.0) as placa:
+            antes = await saude(placa)
+            await placa.reiniciar()
+            subindo = await saude(placa)
+            ambiente = {"PATH": os.environ["PATH"], "HOME": str(placa.home), "SHAN_RAIZ": str(placa.raiz)}
+            r = await asyncio.to_thread(subprocess.run, ["sh", str(placa.home / "firmware" / "ler_adc"), "400000",
+                                                         "0", "--blocos", "1", "-o", "x.bin"],
+                                        cwd=placa.home / "firmware", env=ambiente, capture_output=True, text=True,
+                                        timeout=60)
+            await asyncio.sleep(2.5)
+            depois = await saude(placa)
+            return antes, subindo, r, depois
+
+    antes, subindo, r, depois = asyncio.run(cenario())
+    assert antes.pru_indisponivel is None and antes.ligada_s > 8000
+    assert subindo.pru_indisponivel is not None and subindo.pru_indisponivel.codigo == "pru_subindo"
+    assert 35 <= subindo.ligada_s < 40
+    assert r.returncode == 1 and "a PRU0 ainda não está no remoteproc" in r.stderr
+    assert depois.pru_indisponivel is None and depois.ligada_s > subindo.ligada_s + 2

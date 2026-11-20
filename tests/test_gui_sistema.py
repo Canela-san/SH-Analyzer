@@ -12,7 +12,8 @@ pytest.importorskip("asyncssh")
 
 import test_gui_simulador  # noqa: E402
 from PySide6.QtWidgets import QLabel, QWidget  # noqa: E402
-from sh_analyzer_gui.servicos import conexao_da_placa  # noqa: E402
+from sh_analyzer_gui.servicos import conexao_da_placa, saude_da_placa  # noqa: E402
+from sh_placa import servidor_do_simulador  # noqa: E402
 from test_gui_simulador import ESPERA_MS  # noqa: E402
 
 abrir = test_gui_simulador.abrir        # a fixture que conecta ao simulador
@@ -149,6 +150,35 @@ def test_a_queda_do_cabo_na_espera_nao_vira_reinicio(qtbot, abrir, monkeypatch):
     assert c.servico.laco.agendar(c._sessao.simulador.derrubar)
     qtbot.waitUntil(lambda: nao_veio == ["reinicio"], timeout=ESPERA_MS)
     assert c.estado == "conectada" and c.reinicios == 0 and c.queda_esperada is None
+
+
+def test_a_captura_espera_a_pru_depois_do_reinicio(qtbot, abrir, monkeypatch):
+    """Como na placa de verdade (19/11/2026): o SSH volta do reinício antes de o driver da PRU aparecer, e um
+    ler_adc nessa hora morria com SIGBUS. A captura fica impedida, com o porquê, e livre sozinha quando a saúde
+    (conferida de novo enquanto a PRU sobe) a vê."""
+    monkeypatch.setattr(servidor_do_simulador, "ATRASO_DA_PRU_S", 6.0)
+    monkeypatch.setattr(saude_da_placa, "CONFERIR_ENQUANTO_A_PRU_SOBE_S", 0.5)
+    area = abrir("normal")
+    area.mostrar_secao("manutencao")
+    area.manutencao.mostrar_pagina("sistema")
+    esperar_a_leitura(qtbot, area)
+    area.manutencao.sistema_.reiniciar.click()
+    confirmar(qtbot, area)
+    assert esperar_o_fim(qtbot, area).estado == "feita"
+    area.mostrar_secao("capturar")
+    s = area.capturar
+    qtbot.waitUntil(lambda: area.saude.saude is not None and area.saude.saude.pru_indisponivel is not None,
+                    timeout=ESPERA_MS)
+    s.validar()
+    assert not s.pode_capturar() and not s.capturar.isEnabled() and not s.conferir.isEnabled()
+    assert any(p.campo == "placa" and "terminando o boot" in p.mensagem for p in s.problemas)
+    area.mostrar_secao("diagnostico")
+    assert area.diagnostico.cartoes["pru"].item.nivel == "aviso"
+    area.mostrar_secao("capturar")
+    qtbot.waitUntil(s.pode_capturar, timeout=ESPERA_MS)                 # a PRU apareceu, sem ninguém pedir
+    assert s.capturar.isEnabled() and not any(p.campo == "placa" for p in s.problemas)
+    area.mostrar_secao("diagnostico")
+    assert area.diagnostico.cartoes["pru"].item.nivel == "ok"
 
 
 def test_desligar_pela_tela(qtbot, abrir):

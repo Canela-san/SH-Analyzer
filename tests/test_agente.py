@@ -171,6 +171,27 @@ def test_a_saude_de_cada_cenario(tmp_path, cenario):
     assert "AM335X-PRU-RPROC-4-19-TI-00A0" in s["dtbo_da_pru"] and s["ferramentas"]["make"] == "/usr/bin/make"
 
 
+def test_a_pru_que_ainda_sobe_logo_depois_de_ligar(tmp_path):
+    """Sem a PRU0 no remoteproc e com o overlay dela no uEnv.txt: logo depois de ligar, é o boot que não terminou (o
+    driver aparece perto de 70 s, com o SSH já respondendo); passado o prazo, ou sem o overlay, é a PRU que falta."""
+    import shutil
+
+    def codigos(raiz, pasta, ligada_s):
+        (raiz / "proc/uptime").write_text(f"{ligada_s} {ligada_s * 0.9:.2f}\n")
+        return {c["codigo"]: c for c in rodar("saude", raiz=raiz, pasta=pasta)[1]["conferencias"]}
+
+    raiz, pasta = montar_sistema_falso(tmp_path / "boot", "normal")
+    shutil.rmtree(raiz / "sys/class/remoteproc/remoteproc1")
+    agora = codigos(raiz, pasta, 52.4)
+    assert "pru_ausente" not in agora and agora["pru_subindo"]["nivel"] == "aviso"
+    assert "ligou há 52 s" in agora["pru_subindo"]["texto"] and agora["pru_subindo"]["correcao"] is None
+    depois = codigos(raiz, pasta, 181.0)
+    assert "pru_subindo" not in depois and depois["pru_ausente"]["nivel"] == "erro"
+    raiz, pasta = montar_sistema_falso(tmp_path / "sem", "sem_overlay_da_pru")
+    sem = codigos(raiz, pasta, 52.4)
+    assert "pru_subindo" not in sem and "pru_ausente" in sem
+
+
 def test_a_saude_diz_como_corrigir(tmp_path):
     """O que a correção diz depende do que a placa tem: o overlay certo para o kernel dela, e se o uEnv.txt já tem o
     mem=496M (então é só reiniciar)."""
