@@ -67,8 +67,9 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > também** (o assistente do `uEnv.txt` na página Inicialização; reiniciar e desligar na página Sistema, com a queda
 > esperada: a placa de verdade reiniciou pela janela e voltou em 64 s, com o relógio acertado); **a F6.6 a
 > F6.9 também** (os logs e o monitor, o sistema, o resgate pela serial e a jornada da fase, que achou na placa de
-> verdade a PRU que só aparece depois do SSH no boot). **A Fase 6 está feita** (diário de 20/11); **a próxima é a
-> Fase 7** (o acabamento), a pôr em tarefas no começo dela. **A placa de verdade tem o firmware desta versão desde
+> verdade a PRU que só aparece depois do SSH no boot). **A Fase 6 está feita** (diário de 20/11). **A Fase 7 está em
+> tarefas** (seção 4h, F7.1 a F7.12; o acabamento e as análises, ampliada a pedido do usuário com as análises para
+> pesquisadores); **a próxima é a F7.1** (as transformações novas da cadeia). **A placa de verdade tem o firmware desta versão desde
 > 20/11/2026** (v0.8-337-g6f1f2b2: a saída contínua e o `ler_adc` que espera a PRU; as cópias das versões de antes em
 > `~/firmware-anteriores/`); antes da F6.2, o `ler_adc` v0.8 sem o `-o -`.
 >
@@ -2415,6 +2416,120 @@ depois do caminho de pé. Cada tarefa tem os testes dela e o diário, e os commi
   núcleos; a rodada levou 9 min, contra 3,5 das anteriores): o "a interface não trava durante a transferência" (um
   intervalo de 295 ms, o limite é 250) e o "pacote reproduzível pela janela" (1,8 % dos pixels da figura refeita
   diferentes); os dois passam sozinhos no mesmo ambiente. Na 3.10 sem o Qt, 2 185 passaram.
+
+---
+
+## 4h. Fase 7 em tarefas: o acabamento e as análises
+
+O plano (`docs/gui-plan.md`, a Fase 7 e os itens v1.0 da seção 3): o acabamento (a primeira execução guiada, os
+estados vazios, a ajuda contextual, o guia da GUI, os instaladores na CI) e os itens v1.0 da Análise (o modo
+Instrumento, a densidade, os eventos detectados, a matemática entre traços, as transformações novas, as medidas entre
+traços, as métricas de bancada, o assistente de aliasing, os pacotes `.zpaq.tar`). **Ampliada em 20/11/2026** a
+pedido do usuário ("Doutores e PHDs vão usar esse software, então adicione várias funções de análises úteis"): a
+qualidade de energia pela IEC 61000-4-30, a análise entre dois canais (a coerência e a função de transferência), as
+estatísticas e o histograma. **Pronto quando:** as jornadas da seção 1.2 rodam sem ajuda, e os portões de desempenho
+passam (aqui, no Linux; o Windows na CI).
+
+**Fora desta fase, por decisão ou por depender de pessoas:** o inglês (GE-06; a decisão em aberto 4 do plano, que é
+do usuário: depende de a GUI ser mostrada fora do grupo); o teste com três pesquisadores (precisa deles; o roteiro
+fica pronto na F7.12); reamostrar um traço (TR-06: um traço com outra taxa é a fonte derivada, TR-08, que está na
+lista de depois da Fase 7).
+
+Cada conta nova é a de uma referência conferida nos testes (a SciPy, uma fórmula fechada ou um sinal sintético com a
+resposta conhecida), como as do motor; os commits seguem o componente (a GUI, os dados, os testes, os docs).
+
+### ☐ F7.1: as transformações novas da cadeia (TR-06)
+
+- **O conteúdo:** as etapas **derivar** (a diferença central, × a taxa), **integrar** (com um passa-altas de primeira
+  ordem no corte escolhido, para o DC não acumular: a conta é a de um filtro, e o bloco a bloco vale), **RMS móvel**
+  (a janela em ciclos da fundamental ou em ms), **envoltória** (o módulo do sinal analítico, pela transformada de
+  Hilbert num FIR de fase zero) e **frequência instantânea** (a derivada da fase do sinal analítico, depois de um
+  passa-faixa em volta da fundamental, ou pelos cruzamentos por zero, um valor por ciclo, interpolado); **a unidade
+  que a cadeia muda** (V → V/s, V·s, Hz), mostrada no traço e nos eixos.
+- **Pronto quando:** cada etapa confere com a referência (a SciPy no vetor inteiro, um seno de amplitude e frequência
+  conhecidas) e o bloco a bloco dá o mesmo que o vetor inteiro longe das bordas.
+
+### ☐ F7.2: a matemática entre canais (TR-05)
+
+- **O conteúdo:** a etapa **Expressão**, com o traço (`a`) e os canais da mesma captura (`c0` a `c7`, na unidade
+  física), os números, `+ − × ÷ ^`, e as funções `abs`, `sqrt`, `exp`, `log`, `log10`, `sin`, `cos`, `sign`, `min`,
+  `max`; lida por um analisador próprio (a `ast` do Python com a lista do que vale, nunca `eval`); os atalhos A − B,
+  A × B (a potência instantânea) e A ÷ B no menu do traço; a unidade da expressão.
+- **Pronto quando:** a expressão dá o mesmo que a conta em NumPy, recusa o que não está na lista (com o porquê), e o
+  traço com a expressão materializa e plota como os outros.
+
+### ☐ F7.3: o XY e a potência (ME-03)
+
+- **O conteúdo:** a vista **XY** (um traço contra outro: o laço V × I, a histerese), com a persistência dos ciclos;
+  **as medidas de potência** da IEEE 1459 entre a tensão e a corrente escolhidas: P, S, a potência reativa da
+  fundamental Q₁, a potência de distorção, o fator de potência, o cos φ₁ e a defasagem da fundamental.
+- **Pronto quando:** as medidas conferem com sinais sintéticos de resposta conhecida (a carga resistiva, a indutiva,
+  a não linear) e com as fórmulas da norma.
+
+### ☐ F7.4: o histograma e as estatísticas
+
+- **O conteúdo:** a vista **Histograma** (a distribuição do traço, a CDF, a ocupação da faixa do ADC e as amostras
+  saturadas); **as estatísticas** do trecho (média, desvio-padrão, assimetria, curtose, os percentis 1, 5, 50, 95 e
+  99, o mínimo e o máximo) na vista e na tabela de Medidas.
+- **Pronto quando:** os números conferem com a NumPy e a SciPy; a saturação confere com os códigos do ADC.
+
+### ☐ F7.5: os eventos detectados (AN-10)
+
+- **O conteúdo:** a vista **Eventos**: os afundamentos, as elevações e as interrupções (o RMS de meio ciclo contra a
+  tensão de referência, com os limiares da IEC 61000-4-30: 90 %, 110 %, 5 %), os picos de supraharmônicos (a energia
+  de 2 a 150 kHz acima do limiar), a saturação, as descontinuidades e as trocas de buffer do cabeçalho; uma lista que
+  leva a vista de tempo até cada um.
+- **Pronto quando:** num sinal sintético com eventos conhecidos, cada um é achado no instante e com a duração certos.
+
+### ☐ F7.6: a qualidade de energia (IEC 61000-4-30)
+
+- **O conteúdo:** a vista **Qualidade de energia**: os índices por janela de 10/12 ciclos (a frequência, o RMS, o THD,
+  o fator de crista, o fator K, o fator de forma, a distorção de 2 a 9 kHz e de 9 a 150 kHz), a agregação de 150/180
+  ciclos, as estatísticas (o mínimo, a média, o P95, o P99, o máximo) e a tabela exportável.
+- **Pronto quando:** os índices conferem com a conta direta num sinal sintético (a rede com harmônicos e um ruído de
+  supraharmônicos conhecido) e com o motor (o THD).
+
+### ☐ F7.7: a análise entre dois canais
+
+- **O conteúdo:** a vista **Transferência**: a função de transferência H₁ (a magnitude em dB e a fase), a coerência
+  (a confiança de cada frequência) e a densidade espectral cruzada entre dois traços, pelo Welch; **o intervalo de
+  confiança** de 95 % do Welch (o χ² com os graus de liberdade da média) no espectro.
+- **Pronto quando:** num filtro conhecido (a entrada com ruído, a saída filtrada), a magnitude e a fase conferem com a
+  resposta do filtro, e a coerência e a densidade cruzada com a `scipy.signal`.
+
+### ☐ F7.8: as métricas de bancada (ME-05) e o assistente de aliasing (ES-06)
+
+- **O conteúdo:** a vista **Métricas de bancada**, com os cartões do `medir_captura` (o ruído, o SNR, o SINAD, o ENOB,
+  o SFDR e o jitter) e o que cada um quer dizer; **o aviso de imagem provável** no espectro, e **o assistente de
+  aliasing** (2 ou 3 capturas em taxas diferentes, o `aliasing` do motor).
+- **Pronto quando:** os cartões dão os números do `medir_captura` e o assistente, os do `aliasing`.
+
+### ☐ F7.9: o modo Instrumento e a densidade (AN-08, AN-06)
+
+- **O conteúdo:** a vista **Instrumento**, como um osciloscópio: os traços sobrepostos, cada um com a escala por
+  divisão e o offset, o sincronismo pelo cruzamento por zero de um traço escolhido (subindo ou descendo, com o nível),
+  a persistência dos ciclos como densidade (o "fósforo": onde o sinal passa mais) e a medida do ciclo médio.
+- **Pronto quando:** num sinal com a fase conhecida, os ciclos se sobrepõem no sincronismo, e a densidade conta as
+  amostras certas.
+
+### ☐ F7.10: os pacotes `.zpaq.tar` (PD-04)
+
+- **O conteúdo:** abrir um pacote do `compactacao` (pelo diálogo, pelos recentes, arrastando): extraído para o cache,
+  com o progresso, conferido pelo CRC, e as capturas dele na árvore.
+- **Pronto quando:** um pacote feito pelo `compactar` abre e dá as mesmas amostras.
+
+### ☐ F7.11: a primeira execução, os estados vazios e a ajuda (GE-07, GE-08)
+
+- **O conteúdo:** a primeira execução guiada (com o simulador: abrir uma captura de exemplo, plotar, medir); os
+  estados vazios que dizem o próximo passo; a ajuda contextual (o "?" de cada painel abre a seção do guia, num leitor
+  dentro do aplicativo); **o guia da GUI** em `docs/gui-guide.md`.
+- **Pronto quando:** a primeira execução leva do nada à primeira medida, e cada "?" abre a seção certa.
+
+### ☐ F7.12: os instaladores, a jornada e o fechamento
+
+- **O conteúdo:** os instaladores gerados na CI (o PyInstaller no Linux e no Windows, num job manual e nas tags); a
+  jornada da Fase 7 na janela; os portões de desempenho; o roteiro do teste com três pesquisadores; a CI e os docs.
+- **Pronto quando:** o "pronto quando" da fase, aqui no Linux.
 
 ---
 

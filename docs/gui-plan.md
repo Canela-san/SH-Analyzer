@@ -1582,6 +1582,11 @@ captura e a atualização agora esperam por ela.
 
 ### Fase 7: acabamento (3 semanas)
 
+**Em tarefas** (F7.1 a F7.12) em `docs/gui-progress.md`, seção 4h. Ampliada em 20/11/2026 (o usuário: "Doutores e
+PHDs vão usar esse software, então adicione várias funções de análises úteis"): além dos itens v1.0, a qualidade de
+energia pela IEC 61000-4-30, a análise entre dois canais (a coerência e a função de transferência) e as estatísticas.
+O inglês fica para a decisão em aberto 4; o teste com três pesquisadores, para quando houver os três.
+
 - [ ] Animações e microinterações revistas tela a tela; estados vazios; a primeira execução guiada com o simulador.
 - [ ] O modo Instrumento, a densidade, os eventos detectados, a matemática entre traços (os itens v1.0 da seção 3).
 - [ ] O inglês; a ajuda contextual; os instaladores gerados na CI; o guia da GUI em `docs/`.
