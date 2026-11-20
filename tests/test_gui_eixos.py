@@ -4,6 +4,8 @@ invalidar o desenho do eixo; o do ``EixoDoTema`` só o fazia quando o prefixo mu
 zoom, no pan e na mudança de escala. Aqui, os números conferidos são os pintados (``EixoDoTema.numeros``), em cada
 vista. Sem tela."""
 
+import math
+
 import numpy as np
 import pytest
 
@@ -103,3 +105,11 @@ def test_nas_vistas_de_frequencia_o_zoom_muda_os_numeros(janela, tempo, qtbot, t
                    yRange=(y0 + 0.4 * (y1 - y0), y0 + 0.45 * (y1 - y0)), padding=0)
     assert numeros(w.grafico, x) != antes[0]
     assert numeros(w.grafico, y) != antes[1]
+
+
+def test_o_eixo_logaritmico_numera_o_1_o_2_e_o_5():
+    from sh_analyzer_gui.graficos.faixa import rotulo_logaritmico
+
+    valores = (0.5, 1, 3, 10, 20, 70, 500, 1_000, 2_000, 9_000, 50_000, 200_000, 1e6)
+    assert [rotulo_logaritmico(math.log10(v)) for v in valores] == [
+        "500m", "1", "", "10", "20", "", "500", "1k", "2k", "", "50k", "200k", "1M"]
