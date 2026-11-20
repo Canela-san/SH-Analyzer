@@ -40,6 +40,7 @@ from .inspetor import TEXTOS_DA_INTEGRIDADE, Inspetor
 from .ligacao_dos_eixos import LigacaoDosEixos
 from .medidas import TabelaDeMedidas
 from .vista_espectro import VistaDeEspectro
+from .vista_instrumento import VistaDeInstrumento
 from .vista_sonda import VistaDePerfis
 from .vista_tempo import VistaDeTempo
 from .vistas_de_analise import (
@@ -304,7 +305,7 @@ class AreaDeAnalise(QObject):
                    "xy": self.tr("XY de {}"), "histograma": self.tr("Histograma de {}"),
                    "eventos": self.tr("Eventos de {}"), "qualidade": self.tr("Qualidade de energia de {}"),
                    "transferencia": self.tr("Transferência de {}"),
-                   "metricas": self.tr("Métricas de bancada de {}")}
+                   "metricas": self.tr("Métricas de bancada de {}"), "instrumento": self.tr("Instrumento de {}")}
         nome, n = rotulos[tipo].format(ativa.nome), 2
         base = nome
         while nome in nomes:
@@ -367,7 +368,8 @@ class AreaDeAnalise(QObject):
                                  "histograma": (VistaDeHistograma, "regua"), "eventos": (VistaDeEventos, "alerta"),
                                  "qualidade": (VistaDeQualidade, "raio"),
                                  "transferencia": (VistaDeTransferencia, "link"),
-                                 "metricas": (VistaDeMetricas, "chip")}[vista.tipo]
+                                 "metricas": (VistaDeMetricas, "chip"),
+                                 "instrumento": (VistaDeInstrumento, "onda")}[vista.tipo]
         widget = classe(vista, self.projeto, self.janela.selecao, tarefas=self.janela.tarefas,
                         materializacoes=self.janela.materializacoes, vista_de_tempo=self._vista_de_tempo_por_id)
         widget.tracoClicado.connect(self._traco_clicado)

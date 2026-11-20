@@ -321,6 +321,10 @@ class JanelaPrincipal(QMainWindow):
                    dica=self.tr("O tom, o THD, o SINAD, o SNR, o ENOB, o SFDR, o ruído, o jitter e os saltos de fase: "
                                 "as contas do medir_captura (ME-05)"),
                    da_analise=True).triggered.connect(lambda: self.area.abrir_analise("metricas"))
+        self._acao("instrumento", self.tr("Abrir o Instrumento da vista"), icone="onda",
+                   dica=self.tr("Os traços sobrepostos no disparo de um deles, como num osciloscópio: a escala por "
+                                "divisão, a persistência e o ciclo médio"),
+                   da_analise=True).triggered.connect(lambda: self.area.abrir_analise("instrumento"))
         self._acao("aliasing", self.tr("Assistente de aliasing…"), icone="espectro",
                    dica=self.tr("Separa os picos reais das imagens com duas a quatro capturas em taxas diferentes "
                                 "(ES-06)"),
