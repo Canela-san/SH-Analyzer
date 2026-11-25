@@ -46,7 +46,7 @@ def test_da_captura_de_campo_ao_evento_a_qualidade_e_a_transferencia(janela, qtb
 
     # 1. A captura aberta e os dois canais na vista de tempo.
     (fonte,) = janela.controle.abrir_capturas([caminho])
-    tensao = janela.area.plotar_canal(fonte, 0)
+    janela.area.plotar_canal(fonte, 0)
     tempo = janela.vista_ativa()
     janela.area.plotar_canal(fonte, 1, tempo)
 
