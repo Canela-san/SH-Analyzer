@@ -98,3 +98,42 @@ def test_os_dados_que_a_receita_e_o_instalador_nomeiam():
     # Para leigos: o atalho na área de trabalho vem marcado, e a atualização calada reabre o aplicativo.
     assert 'Name: "atalho"' in instalador and "unchecked" not in instalador
     assert "{param:REABRIR|0}" in instalador and "CloseApplications=yes" in instalador
+
+
+def test_o_pacote_deb(tmp_path):
+    """O ``.deb`` (``empacotamento/deb.py``) montado de uma pasta falsa: o comando, o atalho com o tipo dos projetos,
+    a fonte do apt (a mesma que o repositório publica) e o controle; a instalação de verdade é conferida em
+    contêineres limpos pela CI dos instaladores."""
+    import deb
+    from sh_analyzer_gui import atalho
+
+    app = tmp_path / "app"
+    (app / "_internal").mkdir(parents=True)
+    (app / deb.EXECUTAVEL).write_text("#!/bin/sh\n")
+    raiz = tmp_path / "raiz"
+    raiz.mkdir()
+    deb.montar(app, raiz, "0.9.0", b"chave")
+    assert (raiz / "opt/sh-analyzer" / deb.EXECUTAVEL).is_file()
+    assert (raiz / "usr/bin/sh-analyzer").read_text() == '#!/bin/sh\nexec /opt/sh-analyzer/sh-analyzer-gui "$@"\n'
+    desktop = (raiz / "usr/share/applications/sh-analyzer.desktop").read_text()
+    assert "Exec=/usr/bin/sh-analyzer %f" in desktop and "Icon=sh-analyzer\n" in desktop
+    assert f"MimeType={atalho.TIPO_DO_PROJETO};" in desktop
+    assert (raiz / "etc/apt/sources.list.d/sh-analyzer.sources").read_text() == deb.fonte_do_apt()
+    assert "Signed-By: /usr/share/keyrings/sh-analyzer.gpg" in deb.fonte_do_apt()
+    assert (raiz / "usr/share/keyrings/sh-analyzer.gpg").read_bytes() == b"chave"
+    assert (raiz / "DEBIAN/conffiles").read_text() == "/etc/apt/sources.list.d/sh-analyzer.sources\n"
+    controle = (raiz / "DEBIAN/control").read_text()
+    assert "Package: sh-analyzer\nVersion: 0.9.0\n" in controle and "libxcb-cursor0" in controle
+    for caminho in [raiz, *raiz.rglob("*")]:
+        assert not caminho.stat().st_mode & 0o022, caminho                  # o root é o único que escreve
+
+
+def test_a_versao_do_pacote():
+    import deb
+
+    assert deb.mesma_versao("0.9", "0.9.0") and deb.mesma_versao("1", "1.0.0")
+    assert not deb.mesma_versao("0.9", "0.9.1")
+    versao = deb.versao_do_pacote()
+    texto = (RAIZ / "pyproject.toml").read_text()
+    assert f'version = "{versao.split("+")[0]}"' in texto
+    assert "+" not in versao or versao.split("+")[1].startswith("git")
