@@ -582,11 +582,10 @@ def intervalo_do_welch(espectro: api.Espectro, confianca: float = 0.95) -> tuple
     """O intervalo de confiança (dB) de cada bin de um espectro do Welch do motor: a janela, o segmento e o passo
     dele (a sobreposição), com os graus de liberdade de :func:`graus_de_liberdade_do_welch`. Vale para um bin de
     ruído (um processo aleatório); um tom estável varia muito menos."""
-    from supraharmonicos.espectro import obter_janela, tamanho_segmento_welch
 
     p = espectro.parametros
-    n = tamanho_segmento_welch(espectro.taxa_hz, p.resolucao_hz)
+    n = api.tamanho_segmento_welch(espectro.taxa_hz, p.resolucao_hz)
     passo = max(1, int(round(n * (1.0 - p.sobreposicao))))
-    janela = obter_janela(espectro.janela, n, p.kaiser_beta)
+    janela = api.obter_janela(espectro.janela, n, p.kaiser_beta)
     return intervalo_de_confianca_db(espectro.n_segmentos, confianca,
                                      graus=graus_de_liberdade_do_welch(janela, passo, espectro.n_segmentos))

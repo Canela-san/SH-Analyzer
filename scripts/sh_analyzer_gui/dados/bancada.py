@@ -26,17 +26,17 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import supraharmonicos.api as api
-from supraharmonicos import aliasing as al
-from supraharmonicos import metricas_captura as mc
-from supraharmonicos.amostras import converter_para_tensao
-from supraharmonicos.constantes import (
+from supraharmonicos.api import (
     CORTE_SUPRAHARMONICOS_PADRAO,
     DISTANCIA_MINIMA_PICOS_PADRAO,
     DURACAO_TRANSITORIO_FAIXA_S,
+    converter_para_tensao,
 )
 
 from .espectros import TrechoDoTraco
 from .qualidade import ler
+
+al, mc = api.aliasing, api.metricas_captura           # as contas do assistente de aliasing e do medir_captura
 
 MAXIMO_DE_AMOSTRAS = 1 << 22
 """As amostras analisadas (≈ 10 s a 400 kS/s), o ``--max-amostras`` padrão do ``medir_captura``."""

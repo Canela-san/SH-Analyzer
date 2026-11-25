@@ -21,7 +21,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 import supraharmonicos.api as api
-from supraharmonicos import compactacao as cp
+
+cp = api.compactacao                                   # os pacotes do compactar (o manifesto, a extração conferida)
 
 LIMITE_PADRAO_BYTES = 20 * 1024**3
 MARCA_COMPLETA = ".completo"
