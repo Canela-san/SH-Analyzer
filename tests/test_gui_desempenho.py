@@ -245,3 +245,119 @@ def test_o_espectro_de_milhoes_de_bins_arrasta_a_60_quadros(qapp, config_limpa, 
         j.projeto.pilha.setClean()
         j.close()
         j.deleteLater()
+
+
+BLOCOS_DA_CAPTURA_LONGA = 60
+"""157 s da placa simulada (os dois canais a 200 kS/s, 31,5 M amostras cada): a rede com os supraharmônicos."""
+
+
+@pytest.fixture(scope="module")
+def captura_longa(tmp_path_factory):
+    from sh_placa.capturas_simuladas import AMOSTRAS_POR_BLOCO_DO_FIRMWARE, Sistema, gravar_captura
+
+    caminho = tmp_path_factory.mktemp("longa") / "placa_simulada.bin"
+    # o bloco do firmware: o conftest diminui o das capturas simuladas para os outros testes
+    return gravar_captura(caminho, inicio=time.time(), blocos=BLOCOS_DA_CAPTURA_LONGA, sistema=Sistema("", "", ""),
+                          amostras_por_bloco=AMOSTRAS_POR_BLOCO_DO_FIRMWARE)
+
+
+def _trecho(captura, canal):
+    from sh_analyzer_gui.dados.cadeia import Cadeia
+    from sh_analyzer_gui.dados.espectros import TrechoDoTraco
+    from sh_analyzer_gui.dados.materializacao import contexto_do_canal
+
+    c = captura.canal(canal)
+    return TrechoDoTraco(captura, canal, Cadeia(), contexto_do_canal(c, captura=captura), 0, len(c.amostras))
+
+
+def test_f7_as_analises_numa_captura_longa(request, captura_longa):
+    """As contas da Fase 7 (F7.12) na captura inteira, em pedaços: os índices de qualidade e os eventos acima de
+    4 M amostras/s (1 h de um canal a 200 kS/s em 3 min; medidos 7,4 e 6,5 M/s em 25/11/2026: 85 % do tempo é o
+    cruzamento da fundamental do motor, a FFT de cada pedaço), a transferência acima de 12 M/s (23 M/s), o
+    Instrumento com 5000 ciclos de dois traços (o disparo, o ciclo médio e a persistência) em menos de 5 s (2,3 s) e
+    o disparo com o rejeitar AF em menos de 1,5 s (0,4 s)."""
+    from sh_analyzer_gui.dados import instrumento as ins
+    from sh_analyzer_gui.dados import qualidade as q
+    from supraharmonicos import api
+
+    captura = api.abrir_captura(captura_longa)
+    v, i = _trecho(captura, 1), _trecho(captura, 0)
+    n = v.n_amostras
+    medidas = {}
+
+    def medir(nome, conta):
+        inicio = time.perf_counter()
+        resultado = conta()
+        medidas[nome] = time.perf_counter() - inicio
+        return resultado
+
+    indices = medir("indices", lambda: q.indices(v))
+    medir("eventos", lambda: q.eventos(v, indices_prontos=indices))
+    medir("transferencia", lambda: q.transferencia_do_trecho(i, v, 100.0))
+    antes, depois = 0.0033, 0.03
+
+    def instrumento():
+        d = ins.disparos_do_trecho(v, 0.0, "subindo", 0.5, antes, depois)
+        for t in (v, i):
+            ins.ciclo_medio(t, d, antes, depois)
+            ins.densidade(t, d, antes, depois, (-20.0, 20.0), colunas=500, linhas=256)
+        return d
+
+    assert medir("instrumento", instrumento).n == ins.MAXIMO_DE_CICLOS
+    medir("rejeitar_af", lambda: ins.disparos_do_trecho(v, 0.0, "subindo", 0.5, antes, depois,
+                                                         rejeitar_af_hz=ins.CORTE_DO_REJEITAR_AF_HZ))
+    texto = ", ".join(f"{k}: {s:.2f} s" for k, s in medidas.items())
+    request.node.add_report_section("call", "tempos", f"{n} amostras por canal; {texto}")      # pytest -rP mostra
+    assert indices.n_janelas > 700, texto
+    assert n / medidas["indices"] > 4e6 and n / medidas["eventos"] > 4e6, texto
+    assert n / medidas["transferencia"] > 12e6, texto
+    assert medidas["instrumento"] < 5.0 and medidas["rejeitar_af"] < 1.5, texto
+
+
+def test_f7_a_tela_leve_durante_a_qualidade(request, captura_longa, monkeypatch, tmp_path):
+    """A vista de tempo (a tensão e a corrente da captura longa) navegada enquanto os índices de qualidade da
+    captura inteira rodam em segundo plano, como a vista de qualidade os pede: p95 <= 16 ms por quadro (sem tela,
+    uma referência; o G1 vale na tela do usuário)."""
+    pytest.importorskip("PySide6")
+    pytest.importorskip("pytestqt")
+    from dialogos_falsos import DialogosFalsos
+    from PySide6.QtWidgets import QApplication
+    from sh_analyzer_gui.app import criar_aplicacao
+    from sh_analyzer_gui.dados import qualidade as q
+    from sh_analyzer_gui.janela import JanelaPrincipal
+    from sh_analyzer_gui.prototipos import navegar
+    from supraharmonicos import api
+
+    qtbot = request.getfixturevalue("qtbot")
+    monkeypatch.setenv("SH_ANALYZER_CONFIG", str(tmp_path / "config"))
+    criar_aplicacao([], tema="escuro")
+    janela = JanelaPrincipal()
+    janela.controle.dialogos = DialogosFalsos()
+    janela.resize(1600, 1000)
+    janela.show()
+    qtbot.waitExposed(janela)
+    (fonte,) = janela.controle.abrir_capturas([captura_longa])
+    qtbot.waitUntil(lambda: fonte.piramides is not None, timeout=120_000)
+    janela.area.plotar_canal(fonte, 1)
+    janela.area.plotar_canal(fonte, 0, janela.vista_ativa())
+    vista = janela.area.widget_da_vista(janela.vista_ativa())
+    qtbot.wait(300)
+    item = next(iter(vista.itens.values()))
+    canal = fonte.canal(1)
+    app = QApplication.instance()
+    navegar.percorrer_zoom(app, vista.grafico, item, len(canal.amostras), canal.taxa_hz)     # aquece
+    captura = api.abrir_captura(captura_longa)
+    tarefa = janela.tarefas.iniciar("Qualidade", lambda progresso, cancelado: q.indices(
+        _trecho(captura, 1), progresso=progresso, cancelado=cancelado))
+    qtbot.wait(200)
+    durante = navegar.resumo_dos_quadros(
+        navegar.percorrer_zoom(app, vista.grafico, item, len(canal.amostras), canal.taxa_hz))
+    rodando = tarefa.ativa
+    qtbot.waitUntil(lambda: not tarefa.ativa, timeout=120_000)
+    janela.projeto.pilha.setClean()
+    janela.close()
+    janela.deleteLater()
+    texto = f"durante: mediana {durante[0] * 1e3:.1f} ms, p95 {durante[1] * 1e3:.1f} ms"
+    request.node.add_report_section("call", "quadros", texto)          # pytest -rP mostra
+    assert rodando, "a conta terminou antes do percurso: a medida não vale"
+    assert durante[1] <= 0.016, texto
