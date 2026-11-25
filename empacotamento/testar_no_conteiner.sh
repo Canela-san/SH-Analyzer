@@ -65,18 +65,21 @@ case "${1:-}" in
         ;;
     atualizar)
         etapa "o repositório local, a instalação e o upgrade"
-        # Só a fonte de teste: a do pacote aponta para o repositório publicado.
+        # As fontes do sistema (as dependências) mais a de teste, numa pasta à parte: a fonte que o pacote instala
+        # aponta para o repositório publicado, que aqui fica de fora.
+        mkdir -p /tmp/fontes
+        cp /etc/apt/sources.list.d/*.sources /tmp/fontes/ 2>/dev/null || true
         ln -sfn "$2" /repo
         cp /repo/sh-analyzer.gpg /usr/share/keyrings/sh-analyzer-teste.gpg
         printf 'Types: deb\nURIs: file:/repo\nSuites: stable\nComponents: main\nSigned-By: %s\n' \
-            /usr/share/keyrings/sh-analyzer-teste.gpg > /etc/apt/sources.list.d/teste.sources
-        apt_get update -o Dir::Etc::sourceparts=- -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/teste.sources
-        apt_get install -y -o Dir::Etc::sourceparts=- -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/teste.sources \
-            sh-analyzer
+            /usr/share/keyrings/sh-analyzer-teste.gpg > /tmp/fontes/teste.sources
+        so_estas=(-o Dir::Etc::sourceparts=/tmp/fontes)
+        apt_get update "${so_estas[@]}"
+        apt_get install -y "${so_estas[@]}" sh-analyzer
         antes=$(instalado)
         ln -sfn "$3" /repo
-        apt_get update -o Dir::Etc::sourceparts=- -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/teste.sources
-        apt_get upgrade -y -o Dir::Etc::sourceparts=- -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/teste.sources
+        apt_get update "${so_estas[@]}"
+        apt_get upgrade -y "${so_estas[@]}"
         depois=$(instalado)
         echo "instalado: $antes; depois do upgrade: $depois"
         dpkg --compare-versions "$depois" gt "$antes"

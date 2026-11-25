@@ -50,8 +50,12 @@ ARQUIVO_DA_CHAVE = Path("/usr/share/keyrings/sh-analyzer.gpg")
 ARQUIVO_DA_FONTE = Path("/etc/apt/sources.list.d/sh-analyzer.sources")
 
 DEPENDENCIAS = (
-    "libgl1", "libegl1", "libxcb1", "libxcb-cursor0", "libwayland-client0", "libwayland-cursor0",
-    "libwayland-egl1", "libdrm2", "fontconfig",
+    "libgl1", "libegl1", "libdrm2", "fontconfig",
+    # o xcb (o X11) do Qt: as que o plugin dele pede e o PyInstaller não leva
+    "libxcb1", "libxcb-cursor0", "libxcb-icccm4", "libxcb-image0", "libxcb-keysyms1", "libxcb-render-util0",
+    "libxcb-shape0", "libxcb-xkb1", "libxkbcommon-x11-0",
+    # o Wayland
+    "libwayland-client0", "libwayland-cursor0", "libwayland-egl1",
 )
 RECOMENDADOS = ("zpaq", "fonts-dejavu-core")
 """O zpaq: os pacotes ``.zpaq.tar`` (sem ele, o aplicativo avisa); as fontes: a interface num sistema sem nenhuma."""
