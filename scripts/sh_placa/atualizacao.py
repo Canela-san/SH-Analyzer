@@ -45,7 +45,6 @@ import logging
 import re
 import shlex
 import subprocess
-import sys
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -55,7 +54,7 @@ from typing import TYPE_CHECKING
 from .agente import PASTA_DO_FIRMWARE, ClienteDoAgente, ErroDaPlaca
 from .correcoes import com_sudo
 from .tarefas import EstadoDaTarefa, TarefaNaPlaca, novo_id
-from .versao import CAMINHOS_DO_FIRMWARE, RAIZ_DO_REPOSITORIO
+from .versao import ARQUIVO_DOS_EXECUTAVEIS, CAMINHOS_DO_FIRMWARE, RAIZ_DO_REPOSITORIO, pasta_do_pacote
 
 if TYPE_CHECKING:                       # só a anotação: este módulo não carrega o asyncssh
     from .conexao import ConexaoSSH
@@ -120,21 +119,28 @@ class FirmwareParaEnviar:
         return tuple(destino for destino, _origem in self.hashes_na_placa)
 
 
-def _ler_pasta(pasta: Path) -> tuple[ArquivoDoFirmware, ...]:
+def _ler_pasta(pasta: Path, executaveis: set[str] | None = None) -> tuple[ArquivoDoFirmware, ...]:
+    """Os arquivos do ``firmware/`` do pacote; executável: o que está em ``executaveis`` (a lista do Git, gravada na
+    construção) ou, sem ela, o que tem o bit de execução."""
     arquivos = []
     for caminho in sorted(pasta.rglob("*")):
         rel = caminho.relative_to(pasta).as_posix()
         if caminho.is_file() and rel != "VERSAO" and "__pycache__" not in rel:
-            arquivos.append(ArquivoDoFirmware(rel, caminho.read_bytes(), bool(caminho.stat().st_mode & 0o111)))
+            executavel = rel in executaveis if executaveis is not None else bool(caminho.stat().st_mode & 0o111)
+            arquivos.append(ArquivoDoFirmware(rel, caminho.read_bytes(), executavel))
     return tuple(arquivos)
 
 
-def firmware_do_aplicativo(raiz: Path = RAIZ_DO_REPOSITORIO) -> FirmwareParaEnviar | None:
-    """O ``firmware/`` deste aplicativo (ver o módulo); ``None`` fora de um repositório e sem a pasta do pacote."""
-    pacote = Path(getattr(sys, "_MEIPASS", "")) / "firmware" if getattr(sys, "frozen", False) else None
-    if pacote is not None and (pacote / "VERSAO").is_file():
-        return FirmwareParaEnviar((pacote / "VERSAO").read_text(encoding="utf-8").strip() or "sem-versao", "pacote",
-                                  _ler_pasta(pacote))
+def firmware_do_aplicativo(raiz: Path = RAIZ_DO_REPOSITORIO, *, pacote: Path | None = None
+                           ) -> FirmwareParaEnviar | None:
+    """O ``firmware/`` deste aplicativo (ver o módulo); ``None`` fora de um repositório e sem a pasta do pacote.
+    ``pacote``: a pasta do aplicativo empacotado (padrão: :func:`~sh_placa.versao.pasta_do_pacote`)."""
+    pacote = pacote if pacote is not None else pasta_do_pacote()
+    if pacote is not None and (pacote / "firmware" / "VERSAO").is_file():
+        lista = pacote / ARQUIVO_DOS_EXECUTAVEIS
+        executaveis = set(lista.read_text(encoding="utf-8").split()) if lista.is_file() else None
+        return FirmwareParaEnviar((pacote / "firmware" / "VERSAO").read_text(encoding="utf-8").strip()
+                                  or "sem-versao", "pacote", _ler_pasta(pacote / "firmware", executaveis))
     try:
         lista = subprocess.run(["git", "-C", str(raiz), "ls-files", "-z", "--", "firmware"], capture_output=True,
                                timeout=10, check=True).stdout

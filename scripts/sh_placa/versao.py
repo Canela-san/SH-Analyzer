@@ -30,6 +30,9 @@ TEMPO_DO_GIT_S = 10.0
 ARQUIVO_DOS_COMMITS = "firmware.commits"
 """No aplicativo empacotado, ao lado do ``firmware/``: os commits (um por linha, o hash inteiro) cujo firmware é o
 do pacote."""
+ARQUIVO_DOS_EXECUTAVEIS = "firmware.executaveis"
+"""No aplicativo empacotado, ao lado do ``firmware/``: os arquivos dele (relativos, um por linha) que o Git guarda
+como executáveis (no Windows, o arquivo não tem o bit de execução)."""
 
 
 def pasta_do_pacote() -> Path | None:
