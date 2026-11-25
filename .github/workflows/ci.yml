@@ -6,8 +6,9 @@ name: CI
 
 on:
   push:
-    branches: [main, feat/interface]   # feat/interface: a interface gráfica até a v0.9 (docs/gui-plan.md)
+    branches: [main]
   pull_request:
+  workflow_dispatch:   # o botão "Run workflow" da aba Actions
 
 # Cancela execuções antigas da mesma branch/PR quando chega um push novo.
 concurrency:
