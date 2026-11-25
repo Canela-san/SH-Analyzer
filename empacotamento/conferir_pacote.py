@@ -64,6 +64,10 @@ def conferir_dados() -> str:
     assert nomes["coletar.sh"].executavel, "o coletar.sh do pacote sem a marca de executável"
     assert versao.firmware_do_aplicativo(None) == fw.versao
     assert agente.AGENTE.is_file(), f"sem o agente em {agente.AGENTE}"
+    import matplotlib
+
+    assert "sh-analyzer" in Path(matplotlib.get_cachedir()).parts, (     # e não a temporária do gancho do PyInstaller
+        f"o cache do Matplotlib numa pasta temporária: {matplotlib.get_cachedir()}")
     return f"{len(secoes)} seções do guia, {len(sondas)} sondas, o firmware {fw.versao} ({len(fw.arquivos)} arquivos)"
 
 
