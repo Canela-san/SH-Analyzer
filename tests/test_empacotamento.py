@@ -93,5 +93,8 @@ def test_os_dados_que_a_receita_e_o_instalador_nomeiam():
     assert (RAIZ / "empacotamento" / "AVISOS.txt").is_file() and (RAIZ / "LICENSE").is_file()
     assert {p.name for p in (RAIZ / "empacotamento" / "licencas").glob("*.txt")} == {"LGPL-3.0.txt", "GPL-3.0.txt"}
     instalador = (RAIZ / "empacotamento" / "sh-analyzer-gui.iss").read_text()
-    assert r"{#Pasta}\_internal\LICENSE" in instalador and r"{#Pasta}\_internal\AVISOS.txt" in instalador
+    assert r"{app}\_internal\AVISOS.txt" in instalador                      # o atalho dos avisos e das licenças
     assert "SHAnalyzer.Projeto" in instalador and ".shproj" in instalador
+    # Para leigos: o atalho na área de trabalho vem marcado, e a atualização calada reabre o aplicativo.
+    assert 'Name: "atalho"' in instalador and "unchecked" not in instalador
+    assert "{param:REABRIR|0}" in instalador and "CloseApplications=yes" in instalador

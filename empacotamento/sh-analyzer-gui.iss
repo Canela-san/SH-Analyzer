@@ -1,16 +1,26 @@
-; O instalador do Windows (Inno Setup 6; F7.12 em docs/gui-progress.md, 4h): a pasta do PyInstaller, o atalho no menu
-; Iniciar (e, se pedido, na área de trabalho), a associação dos projetos .shproj e os avisos das licenças. A CI dos
-; instaladores (.github/workflows/instaladores.yml) o compila depois do empacotamento/construir.sh, com:
+; O instalador do Windows (Inno Setup 6; F7.12 em docs/gui-progress.md, 4h): a pasta do PyInstaller, os atalhos no
+; menu Iniciar e na área de trabalho, a associação dos projetos .shproj e os avisos das licenças. A CI dos instaladores
+; (.github/workflows/instaladores.yml) o compila depois do empacotamento/construir.sh, com:
 ;
-;   SH_VERSAO        a versão (o git describe)
-;   SH_PASTA_DO_APP  a pasta construída (PASTA\dist\sh-analyzer-gui)
-;   SH_SAIDA         onde o instalador fica
+;   SH_VERSAO           a versão mostrada (o git describe)
+;   SH_VERSAO_NUMERICA  a versão nos detalhes do arquivo (quatro números: 0.9.0.0)
+;   SH_PASTA_DO_APP     a pasta construída (PASTA\dist\sh-analyzer-gui)
+;   SH_ICONE            o ícone do instalador (o .ico que a receita gera em PASTA\obra)
+;   SH_SAIDA            onde o instalador fica
 ;
-; Instala só para o usuário, sem pedir o administrador (pode-se escolher para todos na primeira tela).
+; Feito para quem nunca instalou nada: só para o usuário, sem pedir o administrador nem perguntar a pasta, e duas
+; telas (os atalhos e o fim, que abre o aplicativo). Por cima de uma versão instalada, é a atualização: mesma pasta,
+; o aplicativo aberto é fechado antes, e as configurações e as capturas ficam (nem a desinstalação as apaga).
+; O aviso de versão nova do aplicativo o roda calado, com /SILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /REABRIR=1.
 
 #define Versao GetEnv("SH_VERSAO")
 #define Pasta GetEnv("SH_PASTA_DO_APP")
 #define Saida GetEnv("SH_SAIDA")
+#define Icone GetEnv("SH_ICONE")
+#define VersaoNumerica GetEnv("SH_VERSAO_NUMERICA")
+#if VersaoNumerica == ""
+  #define VersaoNumerica "0.0.0.0"
+#endif
 #define Executavel "sh-analyzer-gui.exe"
 
 [Setup]
@@ -24,13 +34,22 @@ DefaultDirName={autopf}\SH-Analyzer
 DefaultGroupName=SH-Analyzer
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
+PrivilegesRequiredOverridesAllowed=commandline
+DisableDirPage=auto
+DisableReadyPage=yes
+CloseApplications=yes
+RestartApplications=no
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ChangesAssociations=yes
-LicenseFile={#Pasta}\_internal\LICENSE
-InfoBeforeFile={#Pasta}\_internal\AVISOS.txt
 UninstallDisplayIcon={app}\{#Executavel}
+UninstallDisplayName=SH-Analyzer
+VersionInfoVersion={#VersaoNumerica}
+VersionInfoProductName=SH-Analyzer
+VersionInfoDescription=Instalador do SH-Analyzer
+#if Icone != ""
+SetupIconFile={#Icone}
+#endif
 OutputDir={#Saida}
 OutputBaseFilename=sh-analyzer-{#Versao}-windows-x64
 Compression=lzma2/max
@@ -41,7 +60,7 @@ WizardStyle=modern
 Name: "portugues"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
 [Tasks]
-Name: "atalho"; Description: "Um atalho na área de trabalho"; Flags: unchecked
+Name: "atalho"; Description: "Um atalho na área de trabalho"
 
 [Files]
 Source: "{#Pasta}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -60,3 +79,11 @@ Root: HKA; Subkey: "Software\Classes\SHAnalyzer.Projeto\shell\open\command"; Val
 
 [Run]
 Filename: "{app}\{#Executavel}"; Description: "Abrir o SH-Analyzer"; Flags: nowait postinstall skipifsilent
+; A atualização pelo aviso do aplicativo: calada, e o aplicativo volta aberto.
+Filename: "{app}\{#Executavel}"; Flags: nowait; Check: Reabrir
+
+[Code]
+function Reabrir: Boolean;
+begin
+  Result := ExpandConstant('{param:REABRIR|0}') = '1';
+end;
