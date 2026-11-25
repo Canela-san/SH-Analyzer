@@ -16,6 +16,8 @@ sem erro.
   "prefixos"}]``.
 * **Os modelos de estilo das figuras** (FG-02, ``dados/figura.py``): os estilos que o usuário salvou com um nome,
   que valem em qualquer projeto, como JSON: ``[{"nome", "estilo"}]``.
+* **O aviso de versão nova** (``servicos/versao_nova.py``): se procura (o padrão: sim), quando procurou pela última
+  vez (uma vez por dia) e a versão que o usuário mandou pular.
 * **As placas conhecidas** (``sh_placa/conhecidas.py``: as em que o usuário já conectou, pelo nº de série, com o nome,
   a chave de host, os endereços e se o relógio dela é acertado a cada conexão), também como JSON. A chave SSH do
   aplicativo e os hosts conhecidos ficam numa pasta ao lado da configuração (:func:`pasta_da_placa`).
@@ -52,6 +54,9 @@ CHAVE_DAS_PLACAS = "placa/conhecidas"
 CHAVE_DO_CENARIO = "placa/cenario_do_simulador"
 CHAVE_DO_PEDIDO = "aquisicao/ultimo_pedido"
 CHAVE_DO_CADERNO = "aquisicao/caderno_visivel"
+CHAVE_DAS_VERSOES_NOVAS = "atualizacoes/procurar"
+CHAVE_DA_ULTIMA_CONSULTA = "atualizacoes/ultima_consulta"
+CHAVE_DA_VERSAO_PULADA = "atualizacoes/versao_pulada"
 PASTAS = ("dados", "sondas", "cache")
 CHAVES_DAS_PASTAS = {nome: f"pastas/{nome}" for nome in PASTAS}
 CACHES = ("piramides", "materializacoes", "pacotes")
@@ -134,6 +139,37 @@ def mudar_prefixos_nos_eixos(ligados: bool) -> None:
     definir_prefixos_nos_eixos(ligados)
     gravar(CHAVE_DOS_PREFIXOS, "sim" if ligados else "nao")
     aparencia().avisar()
+
+
+# ------------------------------------------------------------------ o aviso de versão nova
+
+def procurar_versoes_novas() -> bool:
+    """Se a janela procura uma versão nova ao abrir (uma vez por dia; o padrão: sim)."""
+    return ler_texto(CHAVE_DAS_VERSOES_NOVAS, "sim") != "nao"
+
+
+def mudar_procurar_versoes_novas(ligado: bool) -> None:
+    gravar(CHAVE_DAS_VERSOES_NOVAS, "sim" if ligado else "nao")
+
+
+def ultima_consulta() -> float | None:
+    """Quando a última consulta foi feita (segundos da época), ou ``None``."""
+    try:
+        return float(ler_texto(CHAVE_DA_ULTIMA_CONSULTA, ""))
+    except ValueError:
+        return None
+
+
+def marcar_consulta(quando: float) -> None:
+    gravar(CHAVE_DA_ULTIMA_CONSULTA, repr(float(quando)))
+
+
+def versao_pulada() -> str:
+    return ler_texto(CHAVE_DA_VERSAO_PULADA, "")
+
+
+def pular_versao(versao: str) -> None:
+    gravar(CHAVE_DA_VERSAO_PULADA, versao)
 
 
 # ------------------------------------------------------------------ as unidades próprias

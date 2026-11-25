@@ -36,6 +36,7 @@ painel também, e o painel recolhido deixa a aba dele na borda da área central,
 from __future__ import annotations
 
 import logging
+import time
 from functools import partial
 from pathlib import Path
 
@@ -86,14 +87,18 @@ from .componentes.paleta import DialogoDeAtalhos, PaletaDeComandos
 from .componentes.primeiros_passos import NOME_DO_EXEMPLO, Passo, PrimeirosPassos, gerar_exemplo
 from .componentes.primeiros_passos import ja_vistos as primeiros_passos_vistos
 from .componentes.tarefas import ListaDeTarefas
+from .componentes.toast import Toast
+from .componentes.versao_nova import CartaoDeVersaoNova
 from .configuracao import gravar, ler_bytes
 from .controle_do_projeto import ControleDoProjeto
 from .dados.cache import CacheDePiramides
 from .dados.materializacao import CacheDeMaterializacoes
 from .dados.pacotes import CacheDePacotes
+from .dados.piramide import Cancelado
 from .modelo.objetos import Projeto, Vista
 from .modelo.selecao import Selecao
 from .registro import caminho_do_log
+from .servicos import versao_nova
 from .servicos.conexao_da_placa import ConexaoDaPlaca
 from .servicos.erros import ErroInesperado, relator
 from .servicos.fontes import ServicoDeFontes
@@ -115,6 +120,8 @@ ANALISES_DO_MENU = (("espectro", "bandas", "espectrograma", "harmonicos"),
 log = logging.getLogger(__name__)
 
 TAMANHO_INICIAL = (1440, 900)
+ATRASO_DA_CONSULTA_DE_VERSAO_MS = 4000
+"""A consulta de versão nova espera a janela assentar: a partida fica só com o que o usuário pediu."""
 TAMANHO_MINIMO = (960, 600)
 LADO_DA_MARCA = 72              # px da marca no estado vazio
 LARGURA_DO_PROJETO = 264
@@ -240,6 +247,12 @@ class JanelaPrincipal(QMainWindow):
         self.primeiros_passos.hide()
         if not primeiros_passos_vistos():
             QTimer.singleShot(0, self.primeiros_passos.mostrar)
+        # O aviso de versão nova (servicos/versao_nova.py): consultado depois de a janela abrir.
+        self.versao_nova = CartaoDeVersaoNova(self._centro_com_trilhos)
+        self.versao_nova.atualizarPedido.connect(self._atualizar_o_aplicativo)
+        self.versao_nova.pularPedido.connect(self._pular_versao)
+        self.modo_de_instalacao = versao_nova.como_foi_instalado()
+        self.instalador_ao_fechar: Path | None = None
         self._layout_restaurado = self.restaurar_layout()
         self._primeira_exibicao = True
         # Os erros inesperados de qualquer thread (servicos/erros.py). Pela fila sempre: um erro num paintEvent não
@@ -934,6 +947,7 @@ class JanelaPrincipal(QMainWindow):
             self._primeira_exibicao = False
             if not self._layout_restaurado:
                 self.layout_padrao()
+            QTimer.singleShot(ATRASO_DA_CONSULTA_DE_VERSAO_MS, self.consultar_versao_nova)
 
     # ------------------------------------------------------------------ o erro inesperado
 
@@ -964,7 +978,91 @@ class JanelaPrincipal(QMainWindow):
         self.materializacoes.encerrar()
         self.conexao_da_placa.encerrar()  # a conexão fechada (e a pasta do simulador apagada) antes do laço parar
         self.placa.encerrar()            # nem a thread do laço da placa
+        if self.instalador_ao_fechar is not None:
+            # A atualização pedida no aviso: o instalador calado fecha o que restar e reabre o aplicativo.
+            versao_nova.iniciar_instalador(self.instalador_ao_fechar)
         super().closeEvent(evento)
+
+    # ------------------------------------------------------------------ o aviso de versão nova
+
+    def _versao_local(self) -> str:
+        return QApplication.applicationVersion() or "0"
+
+    def consultar_versao_nova(self, *, forcar: bool = False):
+        """Procura uma versão nova numa tarefa sem painel (uma vez por dia, se ligado nas configurações e fora do
+        código; ``forcar``: agora, pelo botão das configurações, avisando também quando não há). Devolve a tarefa, ou
+        ``None`` se não procurou."""
+        if not forcar and (self.modo_de_instalacao == "dev" or not preferencias.procurar_versoes_novas()
+                           or not versao_nova.deve_consultar(preferencias.ultima_consulta(), time.time())):
+            return None
+        preferencias.marcar_consulta(time.time())
+        local = self._versao_local()
+
+        def consultar(_progresso, _cancelado):
+            try:
+                return versao_nova.consultar(local)
+            except Exception as erro:         # sem rede, o GitHub fora, uma resposta estranha: fica para amanhã
+                log.info("a consulta de versão nova falhou: %s", erro)
+                return erro
+
+        return self.tarefas.iniciar(self.tr("Procurar versão nova"), consultar, "versao_nova", mostrar=False,
+                                    ao_terminar=partial(self._versao_consultada, forcar))
+
+    def _versao_consultada(self, forcar: bool, tarefa) -> None:
+        if not isValid(self) or tarefa.estado != "concluida":
+            return
+        resultado = tarefa.resultado
+        if isinstance(resultado, versao_nova.Lancamento):
+            if forcar or resultado.versao != preferencias.versao_pulada():
+                self.versao_nova.mostrar(resultado, self._versao_local(), self.modo_de_instalacao)
+        elif forcar:
+            texto = (self.tr("Não deu para procurar agora (sem internet?).") if isinstance(resultado, Exception)
+                     else self.tr("Você já tem a versão mais nova ({0}).").format(self._versao_local()))
+            Toast.mostrar(self, texto)
+
+    def _pular_versao(self) -> None:
+        if self.versao_nova.lancamento is not None:
+            preferencias.pular_versao(self.versao_nova.lancamento.versao)
+
+    def _atualizar_o_aplicativo(self) -> None:
+        """O Atualizar agora (só no Windows): baixa e confere o instalador numa tarefa do painel; no fim, fecha a
+        janela (que oferece salvar o projeto) e o instalador roda no closeEvent."""
+        if self.instalador_ao_fechar is not None:       # já baixado; o fechar tinha sido cancelado
+            self._fechar_para_instalar()
+            return
+        lancamento, local = self.versao_nova.lancamento, self._versao_local()
+        if lancamento is None:
+            return
+
+        def baixar(progresso, cancelado):
+            try:
+                return versao_nova.baixar_instalador(lancamento, local, progresso, cancelado)
+            except InterruptedError:
+                raise Cancelado from None
+            except (versao_nova.ErroDeAtualizacao, OSError, ValueError) as erro:
+                return erro
+
+        self.versao_nova.baixando(0.0)
+        self.tarefas.iniciar(self.tr("Baixar o SH-Analyzer {0}").format(lancamento.versao), baixar, "versao_nova",
+                             ao_progredir=lambda _t, fracao: self.versao_nova.baixando(fracao),
+                             ao_terminar=self._instalador_baixado)
+
+    def _instalador_baixado(self, tarefa) -> None:
+        if not isValid(self):
+            return
+        if tarefa.estado == "cancelada":
+            self.versao_nova.falhou(self.tr("o download foi cancelado"))
+            return
+        if tarefa.estado != "concluida" or not isinstance(tarefa.resultado, Path):
+            motivo = tarefa.erro if tarefa.estado == "falhou" else tarefa.resultado
+            self.versao_nova.falhou(str(motivo))
+            return
+        self.instalador_ao_fechar = tarefa.resultado
+        self._fechar_para_instalar()
+
+    def _fechar_para_instalar(self) -> None:
+        if not self.close():                            # o usuário cancelou (o projeto não salvo)
+            self.versao_nova.esperando_fechar()
 
     # ------------------------------------------------------------------ arrastar e soltar
 

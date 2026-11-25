@@ -60,7 +60,7 @@ def _dica(texto: str) -> QLabel:
 class DialogoDeConfiguracoes(QDialog):
     """``janela``: a ``JanelaPrincipal`` (os serviços do cache e as perguntas ao usuário)."""
 
-    SECOES = ("aparencia", "numeros", "unidades", "pastas", "cache")
+    SECOES = ("aparencia", "numeros", "unidades", "pastas", "cache", "atualizacoes")
 
     def __init__(self, janela):
         super().__init__(janela)
@@ -77,7 +77,8 @@ class DialogoDeConfiguracoes(QDialog):
                    "numeros": (self.tr("Números"), "regua", self._pagina_numeros()),
                    "unidades": (self.tr("Unidades"), "chip", self._pagina_unidades()),
                    "pastas": (self.tr("Pastas"), "pasta", self._pagina_pastas()),
-                   "cache": (self.tr("Cache"), "disco", self._pagina_cache())}
+                   "cache": (self.tr("Cache"), "disco", self._pagina_cache()),
+                   "atualizacoes": (self.tr("Atualizações"), "baixar", self._pagina_atualizacoes())}
         self._icones: list[tuple[QListWidgetItem, str]] = []
         for nome in self.SECOES:
             titulo, nome_do_icone, pagina = paginas[nome]
@@ -460,6 +461,24 @@ class DialogoDeConfiguracoes(QDialog):
     def _mostrar_usos(self) -> None:
         for nome, rotulo in self.usos.items():
             rotulo.setText(self.tr("em uso: {}").format(formatar_bytes(self._servico(nome).cache.tamanho_bytes)))
+
+    def _pagina_atualizacoes(self) -> QWidget:
+        """O aviso de versão nova (``servicos/versao_nova.py``): ligar ou desligar, e procurar agora."""
+        pagina, formulario = self._pagina(self.tr("Atualizações"))
+        self.procurar_versoes = QCheckBox(self.tr("Procurar uma versão nova ao abrir (no máximo uma vez por dia)"))
+        self.procurar_versoes.setObjectName("procurar_versoes_novas")
+        self.procurar_versoes.setChecked(preferencias.procurar_versoes_novas())
+        self.procurar_versoes.toggled.connect(preferencias.mudar_procurar_versoes_novas)
+        formulario.addRow(self.tr("Versões novas"), self._com_dica(
+            self.procurar_versoes,
+            self.tr("A consulta pergunta ao GitHub qual é a última versão publicada do SH-Analyzer e não envia nada "
+                    "seu. Com uma versão nova, um aviso no canto oferece instalá-la: no Windows, com um clique; no "
+                    "Linux instalado pelo apt, ela chega pelo Atualizador de Programas do sistema.")))
+        procurar_agora = Botao(self.tr("Procurar agora"), "secundario", "baixar")
+        procurar_agora.setObjectName("procurar_versao_agora")
+        procurar_agora.clicked.connect(lambda: self.janela.consultar_versao_nova(forcar=True))
+        formulario.addRow("", procurar_agora)
+        return pagina
 
     def _pagina_mudou(self, linha: int) -> None:
         if 0 <= linha < len(self.SECOES) and self.SECOES[linha] == "cache":
