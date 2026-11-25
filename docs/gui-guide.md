@@ -182,7 +182,10 @@ captura e o diagnóstico (real, imagem, ambíguo: uma taxa a mais decide). As am
 
 Os traços da vista sobrepostos no disparo de um deles, como num osciloscópio: 10 divisões de tempo e 8 de valor, o
 tempo por divisão (automático: dois ciclos) e a escala por divisão e o offset de cada traço (automática: a série
-1-2-5). O disparo tem a borda, o nível e a histerese (o ruído em cima do nível não dispara de novo). **A persistência**
+1-2-5). O disparo tem a borda, o nível e a histerese (o ruído em cima do nível não dispara de novo). **Rejeitar AF**
+procura o disparo no traço passado por um passa-baixa de 1 kHz, de ida e volta (sem atraso): a rede dispara uma vez
+por ciclo mesmo com um surto de supraharmônicos por cima, que cruzaria o nível muitas vezes; os traços na tela não
+mudam (para disparar num sinal acima de ~1 kHz, deixe-o desligado). **A persistência**
 pinta cada traço mais forte onde mais amostras passaram; o **ciclo médio** vem por cima, e a tabela traz o RMS, o pico
 a pico e a média dele, e a frequência e o desvio do período do disparo.
 
