@@ -7,8 +7,9 @@ sem o ``.desktop`` com esse nome, aparece o ícone genérico (a engrenagem). No 
 da janela (``StartupWMClass``, o nome do aplicativo).
 
 ``sh-analyzer-gui --instalar-atalho`` grava os dois arquivos; ``--remover-atalho`` os apaga. O atalho abre o
-aplicativo da pasta de onde foi instalado (pelo ``uv``, numa cópia do repositório). O AppImage (docs/gui-plan.md,
-seção 15) trará o seu próprio.
+aplicativo da pasta de onde foi instalado (pelo ``uv``, numa cópia do repositório). O pacote ``.deb``
+(``empacotamento/deb.py``) traz o seu, em ``/usr/share/applications``, feito por :func:`conteudo` também; com ele
+instalado, o ``--instalar-atalho`` não grava a cópia do usuário (seriam dois ícones iguais no menu).
 
 Sem Qt: roda e se testa sem interface.
 """
@@ -23,6 +24,12 @@ from pathlib import Path
 
 ID_DO_APLICATIVO = "sh-analyzer"
 """O ``app_id`` da janela no Wayland e o nome do ``.desktop`` (sem a extensão)."""
+
+TIPO_DO_PROJETO = "application/x-sh-analyzer-projeto"
+"""O tipo MIME dos projetos ``.shproj`` (registrado pelo pacote ``.deb``: :func:`tipo_mime`)."""
+
+ATALHO_DO_SISTEMA = Path("/usr/share/applications") / f"{ID_DO_APLICATIVO}.desktop"
+"""Onde o pacote ``.deb`` põe o atalho."""
 
 _RESERVADOS = set(' \t\n"\'\\><~|&;$*?#()`')
 
@@ -79,8 +86,28 @@ def conteudo(comando: list[str], icone: Path) -> str:
         "Categories=Science;Engineering;",
         "Keywords=supraharmônicos;osciloscópio;captura;espectro;",
         "StartupWMClass=SH-Analyzer",
+        f"MimeType={TIPO_DO_PROJETO};",
         "",
     ])
+
+
+def tipo_mime() -> str:
+    """O ``shared-mime-info`` dos projetos: ``*.shproj`` é um :data:`TIPO_DO_PROJETO`, que o atalho abre."""
+    return "\n".join([
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">',
+        f'  <mime-type type="{TIPO_DO_PROJETO}">',
+        "    <comment>Projeto do SH-Analyzer</comment>",
+        '    <glob pattern="*.shproj"/>',
+        "  </mime-type>",
+        "</mime-info>",
+        "",
+    ])
+
+
+def do_sistema(caminho: Path = ATALHO_DO_SISTEMA) -> Path | None:
+    """O atalho do pacote ``.deb``, se ele estiver instalado."""
+    return caminho if caminho.is_file() else None
 
 
 def instalar(dados: Path | None = None, comando: list[str] | None = None) -> tuple[Path, Path]:

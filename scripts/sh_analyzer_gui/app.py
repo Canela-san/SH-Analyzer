@@ -130,6 +130,9 @@ def _atalho(remover: bool) -> int:
         apagados = atalho.remover()
         sys.stdout.write("".join(f"apagado: {c}\n" for c in apagados) or "não havia atalho instalado\n")
         return 0
+    if (do_sistema := atalho.do_sistema()) is not None:
+        sys.stdout.write(f"O SH-Analyzer instalado pelo sistema já tem o atalho ({do_sistema}); nada a fazer.\n")
+        return 0
     desktop, icone = atalho.instalar()
     sys.stdout.write(f"atalho: {desktop}\nícone: {icone}\n"
                      "Feche e abra o SH-Analyzer de novo para o ícone aparecer na barra.\n")

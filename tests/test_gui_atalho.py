@@ -72,3 +72,32 @@ def test_a_pasta_padrao_segue_o_xdg_data_home(monkeypatch, tmp_path):
     assert atalho.caminhos()[0] == tmp_path / "applications" / f"{atalho.ID_DO_APLICATIVO}.desktop"
     monkeypatch.delenv("XDG_DATA_HOME")
     assert atalho.pasta_de_dados().parts[-2:] == (".local", "share")
+
+
+def test_o_tipo_dos_projetos(tmp_path):
+    """O ``.desktop`` declara o tipo dos ``.shproj``, e o XML do ``shared-mime-info`` (o do pacote ``.deb``) o liga
+    à extensão."""
+    import xml.etree.ElementTree as ET
+
+    desktop, _ = atalho.instalar(tmp_path, ["/usr/bin/sh-analyzer"])
+    assert ler(desktop)["MimeType"] == f"{atalho.TIPO_DO_PROJETO};"
+    raiz = ET.fromstring(atalho.tipo_mime())
+    ns = "{http://www.freedesktop.org/standards/shared-mime-info}"
+    tipo = raiz.find(f"{ns}mime-type")
+    assert tipo.get("type") == atalho.TIPO_DO_PROJETO and tipo.find(f"{ns}glob").get("pattern") == "*.shproj"
+
+
+def test_com_o_atalho_do_sistema_o_do_usuario_nao_e_gravado(tmp_path, monkeypatch, capsys):
+    """Instalado pelo ``.deb``, o ``--instalar-atalho`` não grava a cópia em ``~/.local`` (dois ícones no menu)."""
+    from sh_analyzer_gui import app
+
+    sistema = tmp_path / "sistema.desktop"
+    assert atalho.do_sistema(sistema) is None
+    sistema.write_text("[Desktop Entry]\n")
+    assert atalho.do_sistema(sistema) == sistema
+    monkeypatch.setattr(atalho, "do_sistema", lambda: sistema)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "dados"))
+    monkeypatch.setattr(app.sys, "platform", "linux")
+    assert app._atalho(remover=False) == 0
+    assert "já tem o atalho" in capsys.readouterr().out
+    assert not (tmp_path / "dados").exists()
