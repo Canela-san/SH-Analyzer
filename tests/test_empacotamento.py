@@ -6,6 +6,7 @@ pacote construído é conferido por dentro pelo ``empacotamento/construir.sh`` (
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import struct
 import subprocess
 import sys
@@ -137,3 +138,38 @@ def test_a_versao_do_pacote():
     texto = (RAIZ / "pyproject.toml").read_text()
     assert f'version = "{versao.split("+")[0]}"' in texto
     assert "+" not in versao or versao.split("+")[1].startswith("git")
+
+
+@pytest.mark.skipif(not all(shutil.which(p) for p in ("apt-ftparchive", "gpg", "gpgv", "dpkg-deb")),
+                    reason="sem o apt-ftparchive, o gpg ou o dpkg-deb")
+def test_o_repositorio_apt(tmp_path, monkeypatch):
+    """O repositório de um ``.deb`` mínimo, assinado por uma chave de teste: a lista, o ``InRelease`` que o ``gpgv``
+    aceita com a chave publicada, e a fonte igual à do pacote. A instalação e o upgrade pelo apt são conferidos em
+    contêineres limpos pela CI dos instaladores."""
+    import deb
+    import repositorio_apt
+
+    gnupg = tmp_path / "gnupg"
+    gnupg.mkdir(mode=0o700)
+    monkeypatch.setenv("GNUPGHOME", str(gnupg))
+    monkeypatch.setattr(deb, "chave_binaria", lambda: None)            # a chave de teste, e não a do projeto
+    subprocess.run(["gpg", "--batch", "--passphrase", "", "--quick-gen-key", "teste", "ed25519", "sign", "never"],
+                   check=True, capture_output=True)
+    raiz = tmp_path / "raiz" / "DEBIAN"
+    raiz.mkdir(parents=True)
+    (raiz / "control").write_text("Package: sh-analyzer\nVersion: 0.9.0\nArchitecture: amd64\n"
+                                  "Maintainer: x <x@x>\nDescription: x\n x\n")
+    debs = tmp_path / "debs"
+    debs.mkdir()
+    subprocess.run(["dpkg-deb", "--root-owner-group", "--build", str(raiz.parent),
+                    str(debs / "sh-analyzer_0.9.0_amd64.deb")], check=True, capture_output=True)
+    saida = tmp_path / "repo"
+    inrelease = repositorio_apt.montar(sorted(debs.glob("*.deb")), saida)
+    assert inrelease == saida / "dists/stable/InRelease"
+    pacotes = (saida / "dists/stable/main/binary-amd64/Packages").read_text()
+    assert "Package: sh-analyzer" in pacotes and "Filename: pool/main/s/sh-analyzer/sh-analyzer_0.9.0" in pacotes
+    assert "Suite: stable" in (saida / "dists/stable/Release").read_text()
+    assert subprocess.run(["gpgv", "--keyring", str(saida / "sh-analyzer.gpg"), str(inrelease)],
+                          capture_output=True).returncode == 0
+    assert (saida / "sh-analyzer.sources").read_text() == deb.fonte_do_apt()
+    assert "sudo apt install sh-analyzer" in (saida / "index.html").read_text()
