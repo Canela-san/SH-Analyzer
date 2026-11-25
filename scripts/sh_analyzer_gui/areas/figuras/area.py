@@ -28,7 +28,7 @@ from ...componentes.numeros import formatar_bytes
 from ...componentes.painel import TituloDoPainel
 from ...componentes.toast import Toast
 from ...dados import figura as fig
-from ...dados.desenho_da_figura import colher, desenhar, pontos, registrar_as_fontes, vista_do_painel
+from ...dados.desenho_da_figura import colher, desenhar, pontos, vista_do_painel
 from ...dados.exportar_figura import OpcoesDeExportacao, em_bytes, nome_do_arquivo
 from ...dados.exportar_figura import exportar as exportar_figura
 from ...dados.figura import Figura, Painel
@@ -95,7 +95,6 @@ class AreaDeFiguras(QWidget):
         self._de_novo = False
         self._pendente = False
         self._fontes_ouvidas: set = set()
-        registrar_as_fontes()
 
         self.espera = QTimer(self)
         self.espera.setSingleShot(True)
