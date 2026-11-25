@@ -69,7 +69,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > F6.9 também** (os logs e o monitor, o sistema, o resgate pela serial e a jornada da fase, que achou na placa de
 > verdade a PRU que só aparece depois do SSH no boot). **A Fase 6 está feita** (diário de 20/11). **A Fase 7 está em
 > tarefas** (seção 4h, F7.1 a F7.12; o acabamento e as análises, ampliada a pedido do usuário com as análises para
-> pesquisadores); **a Fase 7 está feita** (F7.1 a F7.12; diário de 25/11): as transformações novas, a expressão entre canais, o XY com a potência, o histograma com as estatísticas, os eventos, a qualidade de energia, a transferência, as métricas de bancada, o aliasing, o Instrumento, os pacotes, a ajuda e os primeiros passos, e os instaladores, conferidos por dentro do executável (a CI deles nunca rodou: nada foi enviado ao GitHub). **Fora da fase, com o usuário:** o inglês (a decisão em aberto 4), o teste com três pesquisadores (o roteiro em `docs/gui-teste-com-pesquisadores.md`) e a tag v1.0; o que ficou para depois está na seção 16 do plano. **A placa de verdade tem o firmware desta versão desde
+> pesquisadores); **a Fase 7 está feita** (F7.1 a F7.12; diário de 25/11): as transformações novas, a expressão entre canais, o XY com a potência, o histograma com as estatísticas, os eventos, a qualidade de energia, a transferência, as métricas de bancada, o aliasing, o Instrumento, os pacotes, a ajuda e os primeiros passos, e os instaladores, conferidos por dentro do executável. **A v0.9 foi publicada** (diário de 25/11, à tarde): os commits no `main` do GitHub, os instaladores conferidos na CI de lá (o `.deb` em contêineres limpos, o do Windows instalado e desinstalado no runner), o repositório apt no Pages e o aviso de versão nova. **Fora da fase, com o usuário:** o inglês (a decisão em aberto 4), o teste com três pesquisadores (o roteiro em `docs/gui-teste-com-pesquisadores.md`) e a tag v1.0; o que ficou para depois está na seção 16 do plano. **A placa de verdade tem o firmware desta versão desde
 > 20/11/2026** (v0.8-337-g6f1f2b2: a saída contínua e o `ler_adc` que espera a PRU; as cópias das versões de antes em
 > `~/firmware-anteriores/`); antes da F6.2, o `ler_adc` v0.8 sem o `-o -`.
 >
@@ -3468,6 +3468,29 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     primeira rodada da CI dos instaladores no GitHub (o Windows nunca foi construído) e a tag v1.0;
   - **Próximo:** com o usuário: rodar o workflow dos instaladores quando o branch for ao GitHub, o teste com os três
     pesquisadores, e a lista de depois da Fase 7.
+- **25/11/2026 (à tarde):** **a v0.9 no GitHub, o apt e os instaladores conferidos** (o pedido: instalação pelo apt
+  ("quero poder adicionar o repositório e depois rodar sudo apt install sh-analyzer"), melhorar os instaladores e as
+  automações do GitHub, o push dos commits, a tag e a release v0.9, a CI do GitHub conferida, e desinstalar a versão
+  local para o usuário instalar a nova):
+  - **o push:** os ~430 commits do `feat/interface` foram para o `main` (fast-forward); a CI passa a rodar só no
+    `main`, e ganhou o botão de rodar à mão;
+  - **o Linux:** o pacote `.deb` (`empacotamento/deb.py`) e o repositório apt assinado no Pages
+    (`empacotamento/repositorio_apt.py`, `.github/workflows/apt.yml`); a chave do repositório criada neste dia (a
+    privada no segredo `APT_CHAVE_GPG` e numa cópia fora do git, com o dono; a pública em `empacotamento/apt/`);
+  - **o Windows:** o instalador em duas telas, com o atalho na área de trabalho marcado e a atualização calada que
+    reabre o aplicativo (`/REABRIR=1`);
+  - **o aviso de versão nova** (`servicos/versao_nova.py`, `componentes/versao_nova.py`, Configurações →
+    Atualizações);
+  - **o que a CI do GitHub achou:** o PGF sem LaTeX no runner e duas corridas de tempo nos testes da transferência
+    (corrigidas: o LaTeX fingido, a queda feita pela placa simulada); no `.deb` construído no 22.04, faltavam as
+    bibliotecas do xcb que o Qt pede (a janela no X não abria num sistema limpo; agora são dependências); no Windows,
+    a saída em cp1252 derrubava a conferência e o erro não tratado abria a caixa de diálogo do PyInstaller, que
+    travava a CI (agora o pacote escreve em UTF-8, o erro sai com o código 1, e cada conferência tem um prazo);
+  - **Testes novos:** `test_gui_versao_nova.py` (contra um GitHub local), `test_gui_versao_nova_tela.py`, os do
+    `.deb` e do repositório em `test_empacotamento.py`; `empacotamento/testar_no_conteiner.sh` (o `.deb` num
+    contêiner limpo, o upgrade e os comandos do README);
+  - **Próximo:** com o usuário: instalar a v0.9 pelo apt no Pop!_OS e o `.exe` num Windows de verdade, o teste com os
+    três pesquisadores, e a lista de depois da Fase 7.
 ---
 
 ## 8. Perguntas em aberto

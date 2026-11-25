@@ -1436,20 +1436,35 @@ Estas telas serão desenhadas na fase em que entram:
 
 ## 15. Distribuição e licenças
 
-- **Windows:** PyInstaller numa pasta e um instalador do Inno Setup:
-  - atalho no menu Iniciar;
-  - associação dos `.shproj`;
-  - o aviso da LGPL do Qt.
+- **Windows:** PyInstaller numa pasta e um instalador do Inno Setup (`empacotamento/sh-analyzer-gui.iss`), feito para
+  quem nunca instalou nada:
+  - só para o usuário, sem pedir o administrador nem a pasta, em duas telas (os atalhos e o fim, que abre o aplicativo);
+  - atalho no menu Iniciar e na área de trabalho (marcado), associação dos `.shproj`, o aviso da LGPL do Qt;
+  - por cima de uma versão instalada, é a atualização (fecha o aplicativo aberto; as configurações e as capturas
+    ficam); o aviso de versão nova o roda calado, e o `/REABRIR=1` reabre o aplicativo.
 
-  A assinatura de código é opcional (seção 19).
-- **Linux:** AppImage, testado em X11 e Wayland; o Flatpak fica para depois.
+  A assinatura de código é opcional (seção 19): sem ela, o Windows mostra o aviso do SmartScreen na primeira vez.
+- **Linux:** o pacote `.deb` (`empacotamento/deb.py`: `/opt/sh-analyzer`, o atalho, o ícone, o tipo dos `.shproj` e a
+  página do AppStream) num repositório apt assinado no GitHub Pages (`empacotamento/repositorio_apt.py` e
+  `.github/workflows/apt.yml`, a cada release publicada): adicionar o repositório uma vez e `sudo apt install
+  sh-analyzer`; as versões novas chegam pelo Atualizador do sistema. Construído no Ubuntu 22.04: vale no Ubuntu e no
+  Pop!_OS 22.04 e 24.04 e no Debian 12 e 13 (a CI o instala e abre em cada um). A chave do repositório fica no
+  segredo `APT_CHAVE_GPG` (a pública em `empacotamento/apt/`). Para as outras distribuições, a pasta num `.tar.gz`;
+  o AppImage ou o Flatpak ficam para depois.
 - **Para quem desenvolve:** `uv run --extra gui sh-analyzer-gui`.
 - **O firmware vai junto:** o `firmware/` da versão do aplicativo, para atualizar a placa sem o repositório (seção 11.10).
 - **O tamanho:** a primeira medida no Linux (13/11/2026) deu uma pasta de 382 MB, 128 MB compactada em zstd e 150 MB em gzip, sem os módulos do Qt que não são usados (WebEngine, Multimedia, 3D…). Com o `sh_placa`, o firmware, o guia e as licenças (25/11/2026), 420 MB.
 - **Como se constrói** (F7.12): `empacotamento/construir.sh PASTA` (o PyInstaller num ambiente à parte e a conferência por dentro do executável); na CI, `.github/workflows/instaladores.yml`, à mão e nas tags.
   - O que ainda dá para tirar: as duas cópias do OpenBLAS (o NumPy e o SciPy trazem cada um a sua, 48 MB) e o Qt Quick, o Qml e o Pdf, que entraram apesar das exclusões (21 MB).
   - A partida, empacotado: 0,36 s em 13/11/2026 (a janela de então); 2,6 a 3,0 s em 25/11/2026, sem tela, com as sete áreas montadas (ver a lista de depois da Fase 7).
-- **Atualizações:** um aviso de versão nova, consultando os releases do GitHub, desligável; sem atualização automática.
+- **Atualizações:** o aviso de versão nova (`servicos/versao_nova.py`): uma consulta por dia à última release do
+  GitHub, desligável nas configurações. No Windows, o "Atualizar agora" baixa o instalador, confere o SHA-256 do
+  `SHA256SUMS` da release, fecha o aplicativo e o reabre atualizado; pelo apt, o aviso só diz que a versão chega pelo
+  Atualizador do sistema.
+- **A release** (`.github/workflows/instaladores.yml`, numa tag `v*`): os instaladores conferidos de verdade (o `.deb`
+  instalado, aberto e removido em contêineres limpos, o upgrade por um repositório apt de teste; o do Windows
+  instalado, atualizado e desinstalado calado no runner) vão para um rascunho, com o `SHA256SUMS` e as notas
+  (`empacotamento/notas-da-versao.md`); publicar o rascunho põe o `.deb` no repositório apt.
 
 | Componente | Licença | Observação |
 |---|---|---|
@@ -1600,8 +1615,9 @@ O inglês fica para a decisão em aberto 4; o teste com três pesquisadores, par
 mostrado no tempo, a qualidade com a janela do afundamento marcada, o Instrumento com o Rejeitar AF, a transferência
 conhecida a 0,3 dB, a ajuda de cada vista, o projeto de volta com os mesmos números), pelas jornadas das fases
 anteriores e pelos portões (`pytest --desempenho`), e pelo instalador do Linux conferido por dentro do executável.
-**Falta, com o usuário:** o Windows (a CI dos instaladores nunca rodou), o inglês e o teste com três pesquisadores;
-depois deles, a tag v1.0.
+**A v0.9** (25/11/2026) foi a primeira release da interface: os instaladores conferidos na CI do GitHub (Linux e
+Windows) e o repositório apt (seção 15). **Falta, com o usuário:** o instalador num Windows de verdade, o inglês e o
+teste com três pesquisadores; depois deles, a tag v1.0.
 
 **Total estimado:** ~26 semanas de meio período.
 
@@ -1626,11 +1642,14 @@ ordem não é a de prioridade):
   `.zpaq.tar` fica no cache dos pacotes, e o projeto salvo aponta para ela; limpo o cache, ela fica ausente até o
   pacote ser aberto de novo. Guardar no `FonteSalva` o pacote e o membro, e reextrair (numa tarefa) ao abrir o
   projeto quando a extraída sumiu.
-- [ ] **A primeira rodada da CI dos instaladores** (F7.12): o workflow `instaladores.yml` nunca rodou; o Windows
-  (o PyInstaller e o Inno Setup) nunca foi construído. Rodar à mão quando o branch for ao GitHub, e instalar o
-  `.exe` num Windows de verdade (a associação dos `.shproj`, o atalho, o RNDIS da placa).
-- [ ] **O AppImage do Linux** (seção 15), testado no X11 e no Wayland; hoje, a pasta num `.tar.gz`. No X11, o Qt
-  precisa do `libxcb-cursor0` do sistema (o PyInstaller não o leva).
+- [x] **A primeira rodada da CI dos instaladores** (F7.12; feita em 25/11/2026, na v0.9): o Windows construído,
+  instalado, atualizado e desinstalado calado no runner; o `.deb` nos contêineres limpos. Falta instalar o `.exe` num
+  Windows de verdade (a tela do instalador, o SmartScreen, a associação dos `.shproj`, o RNDIS da placa).
+- [ ] **A assinatura do instalador do Windows** (seção 19): sem ela, o SmartScreen avisa na primeira vez ("Mais
+  informações → Executar assim mesmo"). Precisa de um certificado de assinatura de código (o Azure Trusted Signing ou
+  um certificado OV), uma decisão do dono do projeto.
+- [ ] **O AppImage ou o Flatpak** (seção 15), para as distribuições fora da família Debian; hoje, a pasta num
+  `.tar.gz`.
 - [ ] **Os índices de qualidade mais rápidos** (F7.12): 6,9 M amostras/s, 85 % no cruzamento da fundamental do motor
   (a FFT de cada pedaço de 2 M amostras para a estimativa grosseira); decimar antes, ou estimar uma vez por trecho,
   com o teste de que os instantes não mudam.
