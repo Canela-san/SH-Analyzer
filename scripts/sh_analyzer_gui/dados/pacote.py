@@ -41,7 +41,7 @@ from matplotlib.patches import Rectangle
 from matplotlib.text import Annotation
 from supraharmonicos.api import ErroSHAN
 
-from .desenho_da_figura import PASTA_DAS_FONTES, DadosDaFigura, PaginaDesenhada
+from .desenho_da_figura import PASTA_DAS_FONTES, DadosDaFigura, PaginaDesenhada, registrar_as_fontes
 from .exportar_figura import (
     OpcoesDeExportacao,
     conferir,
@@ -274,6 +274,7 @@ def _grupo_do_eixo(pai, nome: str, eixo: dict, linhas):
 def fontes_da_figura(rc: Mapping) -> list[Path]:
     """As fontes do aplicativo que o estilo usa (a família de ``font.family``) e as licenças delas; nenhuma para as
     que vêm com o Matplotlib."""
+    registrar_as_fontes()                    # a lista do Matplotlib com as do aplicativo (já, se houve um desenho)
     familias = rc.get("font.family")
     familias = {familias} if isinstance(familias, str) else set(familias or ())
     pasta = PASTA_DAS_FONTES.resolve()

@@ -47,6 +47,7 @@ espectro congelado também (a cópia da vista não guarda o espectro, e recalcul
 from __future__ import annotations
 
 import math
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -200,15 +201,19 @@ def colher(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFigur
 # ------------------------------------------------------------------ as fontes e o estilo
 
 _registradas = False
+_registrando = threading.Lock()
 
 
 def registrar_as_fontes() -> None:
-    """As fontes do aplicativo no Matplotlib (uma vez; a STIX e a DejaVu já vêm com ele)."""
+    """As fontes do aplicativo no Matplotlib (uma vez; a STIX e a DejaVu já vêm com ele). Na primeira figura, e não
+    na partida (ler a Inter variável leva ~0,8 s); com o lock, porque os desenhos rodam em tarefas, e duas delas não
+    podem registrar ao mesmo tempo (o ``fontManager`` não é seguro entre threads)."""
     global _registradas
-    if not _registradas:
-        for arquivo in sorted(PASTA_DAS_FONTES.glob("*.ttf")):
-            font_manager.fontManager.addfont(str(arquivo))
-        _registradas = True
+    with _registrando:
+        if not _registradas:
+            for arquivo in sorted(PASTA_DAS_FONTES.glob("*.ttf")):
+                font_manager.fontManager.addfont(str(arquivo))
+            _registradas = True
 
 
 def parametros_do_estilo(estilo: Estilo) -> dict:
