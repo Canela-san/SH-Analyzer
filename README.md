@@ -70,6 +70,7 @@ Essa separação é proposital: o projeto põe a **integridade dos dados** acima
 
 **No computador**
 
+* **O aplicativo** (a interface gráfica): a análise, as figuras e a placa, com o guia embutido; instalado pelo apt no Linux e por um instalador no Windows ([Início rápido](#o-aplicativo)).
 * **Harmônicos:** FFT sincronizada com a rede, componentes, subgrupos e grupos da IEC 61000-4-7, THD, THDS e THDG.
 * **Supraharmônicos:** espectro médio (Welch), lista de picos, espectrograma e bandas de 200 Hz de 2 a 9 kHz, com a agregação de 3 s e 10 min da IEC 61000-4-30.
 * **Correção da cadeia:** cada canal é corrigido pela resposta em frequência medida da cadeia inteira (sonda, condicionamento e o filtro interno do ADC).
@@ -115,12 +116,36 @@ Os números completos, com a data, o firmware e a pasta dos dados de cada um, es
 
 ## 🚀 Início rápido
 
+### O aplicativo
+
+O **SH-Analyzer** tem uma interface gráfica: abre as capturas, analisa (espectro, eventos, qualidade de energia, função de transferência, modo Instrumento), faz as figuras para artigo e conversa com a placa, sem a linha de comando. O [guia do aplicativo](docs/gui-guide.md) também está dentro dele (o "?" de cada painel e o F1).
+
+**Ubuntu, Pop!_OS e Debian** (Ubuntu 22.04 ou mais novo, Debian 12 ou mais novo): adicione o repositório uma vez e instale.
+
+```bash
+sudo wget -qO /usr/share/keyrings/sh-analyzer.gpg https://canela-san.github.io/SH-Analyzer/sh-analyzer.gpg
+```
+
+```bash
+sudo wget -qO /etc/apt/sources.list.d/sh-analyzer.sources https://canela-san.github.io/SH-Analyzer/sh-analyzer.sources
+```
+
+```bash
+sudo apt update && sudo apt install sh-analyzer
+```
+
+Ele aparece no menu de aplicativos, e as versões novas chegam pelo Atualizador de Programas do sistema.
+
+**Windows 10 e 11:** baixe o instalador (`sh-analyzer-…-windows-x64.exe`) na [última release](https://github.com/Canela-san/SH-Analyzer/releases/latest) e abra-o. Ele instala para o seu usuário, sem pedir o administrador, e cria o atalho na área de trabalho. As versões seguintes são oferecidas pelo próprio aplicativo, com um clique. O instalador ainda não é assinado: se o Windows mostrar "O Windows protegeu o computador", clique em **Mais informações → Executar assim mesmo**.
+
+### A linha de comando
+
 Você precisa de duas máquinas: a **BeagleBone** (captura) e o **seu computador** (análise).
 
 > [!WARNING]
 > **Ligue a fonte de 5 V na BeagleBone.** A placa de aquisição recebe o +5 V por um pino que a BeagleBone só energiza pela entrada da fonte: alimentada só pelo USB, ela liga, mas o ADC fica desligado (o `ler_adc` para com "o ADC não está respondendo"). O USB continua sendo a ligação com o computador.
 
-### 1. Capturar
+#### 1. Capturar
 
 Com a BeagleBone na fonte e ligada ao computador por USB, o `BeagleBone_Setup.sh` faz tudo do computador: acerta o relógio dela, leva o firmware, compila e carrega a PRU. Ela precisa do `gcc` e do compilador `clpru` da Texas Instruments.
 
@@ -140,7 +165,7 @@ sudo ./ler_adc --duracao 10s
 
 O resultado é um `captura_AAAAMMDD_HHMMSS.bin`: cerca de 10 s a 400 kS/s (a taxa padrão) no canal 1. Todas as opções estão em `sudo ./ler_adc --help`.
 
-### 2. Analisar
+#### 2. Analisar
 
 Traga o `.bin` para o computador (`scripts/BeagleBone_Setup.sh trazer`) e instale o [`uv`](https://docs.astral.sh/uv/). Ele baixa as dependências Python na primeira execução, sem `pip install` nem ambiente virtual manual.
 
@@ -209,6 +234,7 @@ Pastas e documentos têm nomes em inglês, minúsculos e sem espaço; o código 
 
 | Documento | Para quem | Conteúdo |
 |---|---|---|
+| [`docs/gui-guide.md`](docs/gui-guide.md) | Quem vai **usar o aplicativo** | A interface gráfica, vista a vista: abrir, analisar, as figuras, a placa e as configurações (o mesmo guia do "?" e do F1) |
 | [`docs/user-guide.md`](docs/user-guide.md) | Quem vai **usar** | Passo a passo: capturar, analisar, calibrar sondas, formato do `.bin`, problemas comuns |
 | [`docs/lab-procedure.md`](docs/lab-procedure.md) | Quem vai **testar em bancada** | Testes T0 a T11: sinal a injetar, comandos, o que anotar, critérios de aceitação e o passo a passo da próxima ida |
 | [`docs/bench-results.md`](docs/bench-results.md) | Quem vai **citar um resultado** | Os números medidos, teste a teste, com a data, o firmware, a pasta dos dados e as figuras |

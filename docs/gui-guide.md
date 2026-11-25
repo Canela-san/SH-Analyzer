@@ -221,3 +221,16 @@ a placa de verdade.
 O tema, o idioma dos números (o separador decimal), os prefixos do SI nos eixos, as pastas (os dados, as sondas e o
 cache) e o **cache**: as pirâmides, os traços transformados e os pacotes extraídos, cada um com o limite (passar dele
 apaga os menos usados; o que está aberto fica) e o "Limpar".
+
+**As atualizações:** ao abrir (no máximo uma vez por dia), o aplicativo pergunta ao GitHub qual é a última versão
+publicada. Só isso vai na consulta, nada seu. Com uma versão nova, um aviso no canto de cima mostra a versão e as
+**Novidades** e oferece:
+
+- **no Windows**, o **Atualizar agora**: baixa o instalador, confere a soma SHA-256 publicada com ele, fecha o
+  aplicativo (oferecendo salvar o projeto) e o abre de novo já atualizado;
+- **no Linux instalado pelo apt**, nada a fazer aqui: a versão nova chega pelo Atualizador de Programas do sistema (ou
+  `sudo apt upgrade`);
+- **na pasta do `.tar.gz`**, o **Baixar**, que abre a página da versão.
+
+**Pular esta versão** não avisa mais dela. A consulta pode ser desligada em Configurações → Atualizações, onde também
+há o **Procurar agora**.
