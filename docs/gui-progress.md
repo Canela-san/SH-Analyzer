@@ -69,7 +69,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > F6.9 também** (os logs e o monitor, o sistema, o resgate pela serial e a jornada da fase, que achou na placa de
 > verdade a PRU que só aparece depois do SSH no boot). **A Fase 6 está feita** (diário de 20/11). **A Fase 7 está em
 > tarefas** (seção 4h, F7.1 a F7.12; o acabamento e as análises, ampliada a pedido do usuário com as análises para
-> pesquisadores); **a F7.1 a F7.11 estão feitas** (as transformações novas, a expressão entre canais, o XY com a potência, o histograma com as estatísticas, os eventos, a qualidade de energia, a transferência, as métricas de bancada, o aliasing, o Instrumento, os pacotes, a ajuda e os primeiros passos); **a próxima é a F7.12**. **A placa de verdade tem o firmware desta versão desde
+> pesquisadores); **a Fase 7 está feita** (F7.1 a F7.12; diário de 25/11): as transformações novas, a expressão entre canais, o XY com a potência, o histograma com as estatísticas, os eventos, a qualidade de energia, a transferência, as métricas de bancada, o aliasing, o Instrumento, os pacotes, a ajuda e os primeiros passos, e os instaladores, conferidos por dentro do executável (a CI deles nunca rodou: nada foi enviado ao GitHub). **Fora da fase, com o usuário:** o inglês (a decisão em aberto 4), o teste com três pesquisadores (o roteiro em `docs/gui-teste-com-pesquisadores.md`) e a tag v1.0; o que ficou para depois está na seção 16 do plano. **A placa de verdade tem o firmware desta versão desde
 > 20/11/2026** (v0.8-337-g6f1f2b2: a saída contínua e o `ler_adc` que espera a PRU; as cópias das versões de antes em
 > `~/firmware-anteriores/`); antes da F6.2, o `ler_adc` v0.8 sem o `-o -`.
 >
@@ -2618,11 +2618,41 @@ resposta conhecida), como as do motor; os commits seguem o componente (a GUI, os
   (`tests/test_gui_ajuda.py`), cada "?" da janela abre a seção dele, o F1 segue a vista e o cartão leva do nada ao
   espectro; o `config_limpa` dos testes marca o cartão como visto.
 
-### ☐ F7.12: os instaladores, a jornada e o fechamento
+### ☑ F7.12: os instaladores, a jornada e o fechamento
 
 - **O conteúdo:** os instaladores gerados na CI (o PyInstaller no Linux e no Windows, num job manual e nas tags); a
   jornada da Fase 7 na janela; os portões de desempenho; o roteiro do teste com três pesquisadores; a CI e os docs.
 - **Pronto quando:** o "pronto quando" da fase, aqui no Linux.
+- **Feita em 25/11/2026.** **Os instaladores:** a receita do PyInstaller (`empacotamento/sh-analyzer-gui.spec`, com
+  o que vai junto em `empacotamento/receita.py`) leva o firmware desta versão (com a `VERSAO`, os commits com o mesmo
+  firmware, para a placa enviada de outro commit não parecer "outra versão", e os executáveis pela lista do Git), o
+  agente, o guia, as sondas, os avisos das licenças (`empacotamento/AVISOS.txt`, a LGPL e a GPL 3, os metadados de
+  cada biblioteca) e, no Windows, o ícone gerado da marca; o zeroconf e o pyte vão como arquivos `.py` (a LGPL pede
+  que dê para trocá-los). **O executável faz de Python** com `SHAN_COMO_PYTHON=1` (`sh_placa/como_python.py`): no
+  pacote, o `sys.executable` é ele, e a placa simulada e o agente local precisam de um Python. `empacotamento/construir.sh`
+  constrói num ambiente à parte (o `.venv` intocado) e confere o pacote **por dentro**
+  (`empacotamento/conferir_pacote.py`, rodado pelo executável: os 231 módulos, os dados, o agente, a captura de
+  exemplo medida e, fora do Windows, um bloco da placa simulada pelo SSH), com a configuração, o cache e o cofre de
+  mentira. **A conferência achou um defeito que só existia no pacote:** o `scipy.fft` não carregava (o
+  `scipy._external.array_api_compat`, que o SciPy 1.18 importa pelo nome, ficava de fora): o espectro e a f1 não
+  funcionariam no instalador. A CI dos instaladores (`.github/workflows/instaladores.yml`) roda à mão e nas tags
+  `v*`, no Linux (a pasta num `.tar.gz`) e no Windows (o Inno Setup: `empacotamento/sh-analyzer-gui.iss`, o atalho, a
+  associação dos `.shproj` e os avisos), e numa tag faz o rascunho da release; **nunca rodou** (nada foi enviado ao
+  GitHub). No Linux, aqui: a pasta de 420 MB, construída em 62 a 78 s, a partida em 2,6 a 3,0 s sem tela (a primeira, que monta o cache das fontes do Matplotlib, ~6 s); o gancho do
+  PyInstaller punha o cache do Matplotlib numa pasta temporária a cada partida (+2,5 s): ele vai para a pasta do
+  aplicativo, uma por instalação. **O Instrumento ganhou o
+  "Rejeitar AF"** (achado pela jornada: com um surto de supraharmônicos por cima da rede, o disparo por borda cruzava o
+  nível 366 vezes em 180 ciclos): o disparo procurado num passa-baixa de 1 kHz de ida e volta, sem atraso, com uma
+  margem lida de cada lado de cada pedaço. **A jornada da Fase 7** (`tests/test_gui_jornada_fase7.py`): uma captura
+  de campo com um afundamento e um surto; o evento achado e mostrado no tempo pelo clique; a janela do afundamento
+  marcada na qualidade e fora das estatísticas; o Instrumento disparando uma vez por ciclo com o Rejeitar AF; a
+  transferência da tensão para a corrente (o passa-baixa conhecido, a 0,3 dB); o F1 de cada vista; e o projeto salvo
+  e aberto de novo com as opções e os mesmos números. **Os portões** (`tests/test_gui_desempenho.py -k f7`, seção
+  5). **O roteiro do teste com três pesquisadores:** `docs/gui-teste-com-pesquisadores.md`. **A CI completa achou**
+  três módulos da interface falando com o motor por fora da `api` (a bancada, os pacotes e o intervalo do Welch: a
+  `api` agora os expõe, e passou à camada 4 do motor) e um teste que criava um `QGuiApplication` e derrubava os
+  seguintes; **a medida da partida achou** o registro das fontes no Matplotlib na montagem da janela (0,8 s: agora na
+  primeira figura, com um lock entre as tarefas de desenho).
 
 ---
 
@@ -2664,6 +2694,9 @@ resposta conhecida), como as do motor; os commits seguem o componente (a GUI, os
 | 20/11/2026 | **A manutenção pela janela na placa de verdade (F6.9)**: o firmware desta versão, o reinício e a captura logo depois | A atualização em 35 s (a cópia guardada); o reinício em 51 s com o boot novo; o SSH de volta aos ~45 s do boot e o driver da PRU aos ~71 s: a captura impedida aos 41 s, com o porquê, e livre sozinha aos 72 s (antes da correção, a captura nessa hora morria com SIGBUS) | `placa_f69.py` (fora do repositório) |
 | 20/11/2026 | **3 min a 400 kS/s direto no computador com o monitor rodando** (a página Sistema à vista, uma amostra por segundo) | 69 blocos, 72 351 744 amostras; o CRC das amostras confere; 0 amostras atrasadas, 0 buffers sobrescritos, 0 preâmbulos ruins, atraso máximo de 0 ciclos; o processador da placa em 41 % na média (o `sshd` cifrando o fluxo) | idem |
 | 16/11/2026 | **A jornada da Aquisição na placa de verdade**, na janela (sem tela), pelo USB: em casa e na tomada do laboratório | Achada em 1,6 s; a primeira conexão (a impressão, a senha, a chave) em 2,5 e 2,6 s; o enlace com 1,0 e 0,9 ms e 4,6 e 6,6 MB/s; uma conferência de 4 MiB transferida e conferida pelo CRC em 0,91 e 0,93 s (o SFTP a 5,2 e 5,3 MiB/s); o relógio acertado com ±0,05 s, de +2,15 s e de −3 h 07 | o diário de 16/11 (F3.10) |
+| 25/11/2026 | **O instalador do Linux (F7.12)**, construído e conferido por dentro do executável (`empacotamento/construir.sh`) | Pasta de 420 MB, construída em 62 a 78 s; a janela abre e pinta o primeiro quadro (a partida: 2,6 a 3,0 s sem tela (a primeira, que monta o cache das fontes do Matplotlib, ~6 s)); os 231 módulos, os dados, o agente, o exemplo e um bloco da placa simulada pelo SSH, todos pelo executável. A primeira conferência achou o `scipy.fft` sem carregar no pacote (corrigido) | `empacotamento/construir.sh` |
+| 25/11/2026 | **As análises da Fase 7 numa captura de 157 s da placa simulada** (31,5 M amostras por canal, a 200 kS/s) | Os índices de qualidade em 4,5 s (6,9 M amostras/s; 85 % do tempo é o cruzamento da fundamental do motor), os eventos em 5,3 s, a transferência em 1,4 s (23 M/s), o Instrumento com 5 000 ciclos de dois traços em 2,3 s, o disparo com o Rejeitar AF em 0,4 s | `pytest --desempenho tests/test_gui_desempenho.py -k f7` |
+| 25/11/2026 | **A tela durante a qualidade de energia**: a vista de tempo navegada enquanto os índices da captura longa rodam | Mediana de 7,2 ms, p95 de 11,2 ms (sem tela) | idem |
 | 13/11/2026 | 8 traços sobrepostos, 1 600 × 900 px: polígono × linha por coluna | Banda cheia: 6,3 × 29,3 ms; banda oscilante: **16 366** × 19,0 ms; ciclos: 4,4 × 3,2 ms | `plotagem_gui.py colunas` |
 
 ---
@@ -3416,6 +3449,25 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     `test_gui_resgate.py` e `test_gui_jornada_fase6.py`; a CI como na F6.9;
   - **Próximo:** a Fase 7 (o acabamento), a pôr em tarefas; o desligar seguro, na placa de verdade, quando houver
     alguém na bancada.
+- **20 a 25/11/2026:** **a Fase 7, o acabamento e as análises** (o pedido: "coloque a correção na lista de afazeres
+  depois da fase 7. Divida a fase 7 em tarefas e faça todas, lembre-se que Doutores e PHDs vão usar esse software,
+  então adicione várias funções de análises úteis"; a correção, a da figura do pacote sob carga, está na seção 16 do
+  plano):
+  - a fase em tarefas (F7.1 a F7.12, seção 4h) e as doze, cada uma com a entrada "Feita em": as transformações e a
+    expressão entre canais, o XY com a potência e o histograma, os eventos, a qualidade de energia pela IEC
+    61000-4-30 (as janelas marcadas), a transferência com o intervalo de confiança, as métricas de bancada e o
+    aliasing, o Instrumento, os pacotes `.zpaq.tar`, o guia com o "?" e o F1 e os primeiros passos, e os
+    instaladores com a jornada;
+  - **o que o fechamento achou:** o `scipy.fft` sem carregar no pacote (só a conferência por dentro do executável
+    pegaria), o disparo do Instrumento enganado por um surto de supraharmônicos (o Rejeitar AF), a interface falando
+    com o motor por fora da `api` (a regra de arquitetura) e as fontes do Matplotlib lidas na partida (0,8 s);
+  - **Testes novos da F7.12:** `test_sh_placa_como_python.py`, `test_empacotamento.py`,
+    `test_gui_jornada_fase7.py`, os do Rejeitar AF em `test_gui_instrumento.py` e os portões `-k f7`. O `ci.sh`
+    completo passou: 2 776 em 3.13 com a interface (5 min 42 s) e 2 273 em 3.10 sem o Qt; o `.venv` intocado;
+  - **Fora da fase:** o inglês (a decisão em aberto 4), o teste com três pesquisadores (o roteiro está pronto), a
+    primeira rodada da CI dos instaladores no GitHub (o Windows nunca foi construído) e a tag v1.0;
+  - **Próximo:** com o usuário: rodar o workflow dos instaladores quando o branch for ao GitHub, o teste com os três
+    pesquisadores, e a lista de depois da Fase 7.
 ---
 
 ## 8. Perguntas em aberto

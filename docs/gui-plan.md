@@ -1445,9 +1445,10 @@ Estas telas serão desenhadas na fase em que entram:
 - **Linux:** AppImage, testado em X11 e Wayland; o Flatpak fica para depois.
 - **Para quem desenvolve:** `uv run --extra gui sh-analyzer-gui`.
 - **O firmware vai junto:** o `firmware/` da versão do aplicativo, para atualizar a placa sem o repositório (seção 11.10).
-- **O tamanho:** a primeira medida no Linux (13/11/2026) deu uma pasta de 382 MB, 128 MB compactada em zstd e 150 MB em gzip, sem os módulos do Qt que não são usados (WebEngine, Multimedia, 3D…).
+- **O tamanho:** a primeira medida no Linux (13/11/2026) deu uma pasta de 382 MB, 128 MB compactada em zstd e 150 MB em gzip, sem os módulos do Qt que não são usados (WebEngine, Multimedia, 3D…). Com o `sh_placa`, o firmware, o guia e as licenças (25/11/2026), 420 MB.
+- **Como se constrói** (F7.12): `empacotamento/construir.sh PASTA` (o PyInstaller num ambiente à parte e a conferência por dentro do executável); na CI, `.github/workflows/instaladores.yml`, à mão e nas tags.
   - O que ainda dá para tirar: as duas cópias do OpenBLAS (o NumPy e o SciPy trazem cada um a sua, 48 MB) e o Qt Quick, o Qml e o Pdf, que entraram apesar das exclusões (21 MB).
-  - A partida, empacotado: 0,36 s.
+  - A partida, empacotado: 0,36 s em 13/11/2026 (a janela de então); 2,6 a 3,0 s em 25/11/2026, sem tela, com as sete áreas montadas (ver a lista de depois da Fase 7).
 - **Atualizações:** um aviso de versão nova, consultando os releases do GitHub, desligável; sem atualização automática.
 
 | Componente | Licença | Observação |
@@ -1587,12 +1588,20 @@ PHDs vão usar esse software, então adicione várias funções de análises út
 energia pela IEC 61000-4-30, a análise entre dois canais (a coerência e a função de transferência) e as estatísticas.
 O inglês fica para a decisão em aberto 4; o teste com três pesquisadores, para quando houver os três.
 
-- [ ] Animações e microinterações revistas tela a tela; estados vazios; a primeira execução guiada com o simulador.
-- [ ] O modo Instrumento, a densidade, os eventos detectados, a matemática entre traços (os itens v1.0 da seção 3).
-- [ ] O inglês; a ajuda contextual; os instaladores gerados na CI; o guia da GUI em `docs/`.
-- [ ] O teste com três pesquisadores e as correções que ele pedir.
+- [x] Animações e microinterações revistas tela a tela; estados vazios; a primeira execução guiada com o simulador.
+- [x] O modo Instrumento, a densidade, os eventos detectados, a matemática entre traços (os itens v1.0 da seção 3).
+- [ ] O inglês (a decisão em aberto 4); [x] a ajuda contextual; [x] os instaladores gerados na CI (o workflow pronto,
+  nunca rodado: nada foi ao GitHub); [x] o guia da GUI em `docs/gui-guide.md`.
+- [ ] O teste com três pesquisadores e as correções que ele pedir (o roteiro: `docs/gui-teste-com-pesquisadores.md`).
 
 **Pronto quando:** as jornadas da seção 1.2 rodam sem ajuda, e os portões de desempenho passam no Windows e no Linux. **Tag v1.0.**
+
+**Cumprido no Linux** (25/11/2026) por `tests/test_gui_jornada_fase7.py` (uma captura de campo: o evento achado e
+mostrado no tempo, a qualidade com a janela do afundamento marcada, o Instrumento com o Rejeitar AF, a transferência
+conhecida a 0,3 dB, a ajuda de cada vista, o projeto de volta com os mesmos números), pelas jornadas das fases
+anteriores e pelos portões (`pytest --desempenho`), e pelo instalador do Linux conferido por dentro do executável.
+**Falta, com o usuário:** o Windows (a CI dos instaladores nunca rodou), o inglês e o teste com três pesquisadores;
+depois deles, a tag v1.0.
 
 **Total estimado:** ~26 semanas de meio período.
 
@@ -1617,6 +1626,18 @@ ordem não é a de prioridade):
   `.zpaq.tar` fica no cache dos pacotes, e o projeto salvo aponta para ela; limpo o cache, ela fica ausente até o
   pacote ser aberto de novo. Guardar no `FonteSalva` o pacote e o membro, e reextrair (numa tarefa) ao abrir o
   projeto quando a extraída sumiu.
+- [ ] **A primeira rodada da CI dos instaladores** (F7.12): o workflow `instaladores.yml` nunca rodou; o Windows
+  (o PyInstaller e o Inno Setup) nunca foi construído. Rodar à mão quando o branch for ao GitHub, e instalar o
+  `.exe` num Windows de verdade (a associação dos `.shproj`, o atalho, o RNDIS da placa).
+- [ ] **O AppImage do Linux** (seção 15), testado no X11 e no Wayland; hoje, a pasta num `.tar.gz`. No X11, o Qt
+  precisa do `libxcb-cursor0` do sistema (o PyInstaller não o leva).
+- [ ] **Os índices de qualidade mais rápidos** (F7.12): 6,9 M amostras/s, 85 % no cruzamento da fundamental do motor
+  (a FFT de cada pedaço de 2 M amostras para a estimativa grosseira); decimar antes, ou estimar uma vez por trecho,
+  com o teste de que os instantes não mudam.
+- [ ] **A partida mais curta** (F7.12): 2,7 a 3,0 s sem tela (o registro das fontes no Matplotlib, 0,8 s, já foi
+  para a primeira figura). O que sobra: os imports (1,1 s; o Matplotlib entra pela área Figuras, que importa o
+  `desenho_da_figura` ao montar) e a janela (1,1 s; a Aquisição inteira, 0,7 s, montada antes de aparecer). Separar o
+  desenho dos dados da figura e montar as áreas na primeira visita.
 - [ ] **A figura do pacote reproduzível que difere sob carga** (achado no fechamento da Fase 6, 20/11/2026): numa
   rodada completa da CI com a máquina carregada, o `test_o_pacote_reproduzivel_pela_janela` refez a figura com 1,8 %
   dos pixels diferentes (sozinho, passa). Suspeita: o `rcParams` do Matplotlib é global do processo, e o desenho do
