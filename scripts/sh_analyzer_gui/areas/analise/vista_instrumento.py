@@ -3,7 +3,8 @@ osciloscópio, sobrepostos no disparo de um deles. As contas são as de ``dados/
 
 * **A tela** tem 10 divisões de tempo e 8 de valor; cada traço tem a escala por divisão e o offset dele (a
   automática: a série 1-2-5 que põe os ciclos na tela), e o disparo fica em ``posicao_do_disparo`` da largura.
-* **O disparo**: o traço, a borda (subindo ou descendo), o nível e a histerese (o gatilho de Schmitt).
+* **O disparo**: o traço, a borda (subindo ou descendo), o nível e a histerese (o gatilho de Schmitt); e o
+  "rejeitar AF" (o disparo procurado no traço por um passa-baixa de 1 kHz, sem atraso).
 * **A persistência** (o "fósforo"): cada traço na cor dele, mais forte onde mais amostras passaram (a contagem em
   escala logarítmica); **o ciclo médio** por cima, e a tabela das medidas dele e do disparo.
 """
@@ -81,6 +82,13 @@ class VistaDeInstrumento(VistaLigada):
         self.tempo_por_divisao.setToolTip(self.tr("O tempo por divisão (10 na tela); vazio ou 0: dois ciclos do "
                                                   "disparo"))
         self.tempo_por_divisao.valorMudou.connect(lambda v: self._mudar(tempo_por_divisao=float(v)))
+        self.rejeitar_af = QCheckBox(self.tr("Rejeitar AF"))
+        self.rejeitar_af.setObjectName("rejeitar_af")
+        self.rejeitar_af.setToolTip(self.tr(
+            "O disparo procurado no traço de disparo por um passa-baixa de {} (2ª ordem, de ida e volta: sem atraso). "
+            "A rede dispara uma vez por ciclo mesmo com supraharmônicos por cima; os traços na tela não mudam"
+        ).format(formatar_si(ins.CORTE_DO_REJEITAR_AF_HZ, "Hz", 3)))
+        self.rejeitar_af.toggled.connect(lambda v: self._mudar(rejeitar_af=bool(v)))
         self.persistencia = QCheckBox(self.tr("Persistência"))
         self.persistencia.setObjectName("persistencia")
         self.persistencia.setToolTip(self.tr("O \"fósforo\": cada traço mais forte onde mais amostras dos ciclos "
@@ -100,7 +108,8 @@ class VistaDeInstrumento(VistaLigada):
         self.offset.setMaximumWidth(100)
         self.offset.setToolTip(self.tr("O valor no centro da tela"))
         self.offset.valorMudou.connect(lambda v: self._mudar_a_escala(offset=float(v)))
-        for w in (self.borda, QLabel(self.tr("Nível")), self.nivel, self.tempo_por_divisao, self.persistencia,
+        for w in (self.borda, QLabel(self.tr("Nível")), self.nivel, self.rejeitar_af, self.tempo_por_divisao,
+                  self.persistencia,
                   QLabel(self.tr("Escala de")), self.traco_da_escala, self.por_divisao, QLabel(self.tr("offset")),
                   self.offset):
             self._linha.addWidget(w)
@@ -132,9 +141,10 @@ class VistaDeInstrumento(VistaLigada):
             self.tempo_por_divisao.definir_valor(o.tempo_por_divisao)
         else:
             self.tempo_por_divisao.definir_varios(self.tr("automático"))
-        self.persistencia.blockSignals(True)
-        self.persistencia.setChecked(o.persistencia)
-        self.persistencia.blockSignals(False)
+        for caixa, valor in ((self.persistencia, o.persistencia), (self.rejeitar_af, o.rejeitar_af)):
+            caixa.blockSignals(True)
+            caixa.setChecked(valor)
+            caixa.blockSignals(False)
         self._mostrar_a_escala()
 
     def _mostrar_a_escala(self) -> None:
@@ -201,9 +211,11 @@ class VistaDeInstrumento(VistaLigada):
     def _conta_com(self, trecho, extra, progresso, cancelado):
         o = self.opcoes
         taxa = trecho.captura.canal(trecho.numero).taxa_hz
+        corte = ins.CORTE_DO_REJEITAR_AF_HZ if o.rejeitar_af else 0.0
         amostra = ler(trecho, trecho.inicio, min(trecho.fim, trecho.inicio + AMOSTRAS_DA_ESCALA))
         if len(amostra) < 4:
             raise api.ErroSHAN("o trecho é curto demais para o Instrumento")
+        amostra = ins.sinal_de_disparo(amostra, taxa, corte)        # a histerese e os dois ciclos: no sinal do disparo
         histerese = o.histerese or HISTERESE_AUTOMATICA * float(np.ptp(amostra))
         tempo_por_divisao = o.tempo_por_divisao
         if not tempo_por_divisao > 0:
@@ -212,7 +224,7 @@ class VistaDeInstrumento(VistaLigada):
             tempo_por_divisao = ins.passo_125(2 * periodo / DIVISOES_DE_TEMPO)
         largura = DIVISOES_DE_TEMPO * tempo_por_divisao
         antes, depois = o.posicao_do_disparo * largura, (1 - o.posicao_do_disparo) * largura
-        disparo = ins.disparos_do_trecho(trecho, o.nivel, o.borda, histerese, antes, depois,
+        disparo = ins.disparos_do_trecho(trecho, o.nivel, o.borda, histerese, antes, depois, rejeitar_af_hz=corte,
                                          maximo=MAXIMO_DE_CICLOS, cancelado=cancelado)
         if disparo.n == 0:
             raise api.ErroSHAN(f"nenhum disparo: o traço de disparo não cruza {o.nivel:g} na borda "
@@ -302,6 +314,8 @@ class VistaDeInstrumento(VistaLigada):
             return []
         partes = [self.tr("{} disparos · {} · histerese {}").format(
             r.disparo.n, formatar_si(r.tempo_por_divisao, "s/div", 3), _numero(r.histerese, 4))]
+        if self.opcoes.rejeitar_af:
+            partes.append(self.tr("rejeitar AF em {}").format(formatar_si(ins.CORTE_DO_REJEITAR_AF_HZ, "Hz", 3)))
         partes += [self.tr("{}: {}, offset {}").format(c.nome, formatar_si(c.por_divisao, f"{c.unidade}/div", 3),
                                                        formatar_si(c.offset, c.unidade, 4)) for c in r.canais]
         if r.disparo.n >= MAXIMO_DE_CICLOS:
