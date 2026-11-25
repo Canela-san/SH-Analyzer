@@ -1,9 +1,16 @@
-# Os instaladores (F7.12 em docs/gui-progress.md, 4h; docs/gui-plan.md, seção 15): o aplicativo empacotado pelo
-# PyInstaller no Linux e no Windows, conferido por dentro (empacotamento/construir.sh: a janela sem tela, os módulos,
-# os dados, o agente, o exemplo e, no Linux, a placa simulada), e guardado como artefato desta execução: no Linux, a
-# pasta num .tar.gz; no Windows, o instalador do Inno Setup (empacotamento/sh-analyzer-gui.iss). Roda à mão (o botão
-# "Run workflow" da aba Actions) e a cada tag v*; numa tag, os dois vão também para um rascunho de release, que
-# alguém revisa e publica.
+# Os instaladores (docs/gui-plan.md, seção 15): o aplicativo empacotado pelo PyInstaller, conferido por dentro
+# (empacotamento/construir.sh: a janela sem tela, os módulos, os dados, o agente, o exemplo e, no Linux, a placa
+# simulada), e depois instalado de verdade:
+#
+# - Linux: a pasta num .tar.gz e o pacote .deb (empacotamento/deb.py), construídos no Ubuntu 22.04 (a glibc mais
+#   antiga que se quer atender); o .deb é instalado, aberto e removido em contêineres limpos do Ubuntu e do Debian, e
+#   o upgrade é conferido por um repositório apt local (empacotamento/repositorio_apt.py, com uma chave de teste);
+# - Windows: o instalador do Inno Setup (empacotamento/sh-analyzer-gui.iss), instalado calado, aberto, instalado por
+#   cima (a atualização, que reabre o aplicativo) e desinstalado.
+#
+# Roda à mão (o botão "Run workflow" da aba Actions) e a cada tag v*; numa tag, tudo vai para um rascunho de release
+# com o SHA256SUMS e as notas (empacotamento/notas-da-versao.md), que alguém revisa e publica. Publicar a release
+# dispara o .github/workflows/apt.yml, que põe o .deb no repositório apt.
 name: Instaladores
 
 on:
@@ -18,22 +25,17 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # O modo sem tela (offscreen) das conferências ainda usa estas bibliotecas do sistema.
+  BIBLIOTECAS_DO_QT: libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+
 jobs:
-  construir:
-    name: ${{ matrix.nome }}
-    runs-on: ${{ matrix.sistema }}
+  linux:
+    name: Linux (construir)
+    runs-on: ubuntu-22.04
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - nome: Linux
-            sistema: ubuntu-24.04
-          - nome: Windows
-            sistema: windows-2022
-    defaults:
-      run:
-        shell: bash
+    outputs:
+      versao: ${{ steps.versao.outputs.versao }}
     steps:
       # O histórico inteiro: a VERSAO do firmware que vai junto é o git describe, e a lista dos commits com o mesmo
       # firmware sai do log (empacotamento/receita.py).
@@ -41,66 +43,211 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Instalar o uv
-        run: pipx install uv
-
-      # O modo sem tela (offscreen) das conferências ainda usa estas bibliotecas do sistema.
-      - name: Bibliotecas do sistema para o Qt
-        if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - name: Instalar o uv e as bibliotecas do Qt
+        run: |
+          pipx install uv
+          # shellcheck disable=SC2086 # a lista separada em pacotes
+          sudo apt-get update -qq && sudo apt-get install -y -qq $BIBLIOTECAS_DO_QT
 
       - name: Construir e conferir
         run: empacotamento/construir.sh "$RUNNER_TEMP/sh-analyzer"
 
       - name: A versão
         id: versao
-        run: echo "versao=$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
-
-      - name: A pasta num .tar.gz
-        if: runner.os == 'Linux'
         run: |
+          echo "versao=$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
+          # Numa tag, a versão do pacote é a do pyproject.toml, sem o sufixo do git: a tag tem de ser a dela.
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            versao_do_pacote=$(python3 -c 'import sys; sys.path.insert(0, "empacotamento"); import deb; print(deb.versao_do_pacote())')
+            [[ $versao_do_pacote != *+* ]] || { echo "::error::a tag $GITHUB_REF_NAME não é a versão do pyproject.toml ($versao_do_pacote)"; exit 1; }
+          fi
+
+      - name: O .tar.gz e o .deb
+        run: |
+          mkdir -p "$RUNNER_TEMP/saida"
           tar -C "$RUNNER_TEMP/sh-analyzer/dist" -czf \
-            "$RUNNER_TEMP/sh-analyzer-${{ steps.versao.outputs.versao }}-linux-x86_64.tar.gz" sh-analyzer-gui
+            "$RUNNER_TEMP/saida/sh-analyzer-${{ steps.versao.outputs.versao }}-linux-x86_64.tar.gz" sh-analyzer-gui
+          python3 empacotamento/deb.py "$RUNNER_TEMP/sh-analyzer/dist/sh-analyzer-gui" "$RUNNER_TEMP/saida"
+          ls -l "$RUNNER_TEMP/saida"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: ${{ runner.temp }}/saida/*
+          if-no-files-found: error
+          retention-days: 30
+
+  linux-instalar:
+    name: Linux (instalar no ${{ matrix.imagem }})
+    needs: linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        imagem: ["ubuntu:22.04", "ubuntu:24.04", "debian:12", "debian:13"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux
+          path: ${{ runner.temp }}/saida
+
+      - name: Instalar, abrir e remover o .deb
+        run: |
+          deb=$(basename "$RUNNER_TEMP"/saida/sh-analyzer_*.deb)
+          docker run --rm -v "$RUNNER_TEMP/saida:/saida:ro" -v "$PWD/empacotamento:/e:ro" "${{ matrix.imagem }}" \
+            /e/testar_no_conteiner.sh deb "/saida/$deb"
+
+  linux-atualizar:
+    name: Linux (a atualização pelo apt)
+    needs: linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux
+          path: ${{ runner.temp }}/saida
+
+      # Dois repositórios locais assinados por uma chave de teste: o da versão construída e o com uma "versão
+      # seguinte" (o mesmo pacote com a versão trocada). Instalar pelo primeiro e trocar para o segundo é o que o
+      # Atualizador do sistema faz quando sai uma versão nova.
+      - name: Os dois repositórios
+        run: |
+          set -euo pipefail
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          gpg --batch --quiet --passphrase '' --quick-gen-key "teste" ed25519 sign never
+          deb=$(ls "$RUNNER_TEMP"/saida/sh-analyzer_*.deb)
+          versao=$(dpkg-deb -f "$deb" Version)
+          mkdir -p "$RUNNER_TEMP/debs1" "$RUNNER_TEMP/debs2" "$RUNNER_TEMP/arvore"
+          cp "$deb" "$RUNNER_TEMP/debs1/"
+          dpkg-deb -R "$deb" "$RUNNER_TEMP/arvore"
+          sed -i "s/^Version: .*/Version: ${versao}.1/" "$RUNNER_TEMP/arvore/DEBIAN/control"
+          dpkg-deb --root-owner-group -Znone -b "$RUNNER_TEMP/arvore" "$RUNNER_TEMP/debs2/sh-analyzer_${versao}.1_amd64.deb"
+          cp "$deb" "$RUNNER_TEMP/debs2/"
+          python3 empacotamento/repositorio_apt.py --chave-de-teste "$RUNNER_TEMP/debs1" "$RUNNER_TEMP/repo1"
+          python3 empacotamento/repositorio_apt.py --chave-de-teste "$RUNNER_TEMP/debs2" "$RUNNER_TEMP/repo2"
+
+      - name: Instalar e atualizar
+        run: |
+          docker run --rm -v "$RUNNER_TEMP/repo1:/repo1:ro" -v "$RUNNER_TEMP/repo2:/repo2:ro" \
+            -v "$PWD/empacotamento:/e:ro" ubuntu:24.04 /e/testar_no_conteiner.sh atualizar /repo1 /repo2
+
+  windows:
+    name: Windows (construir e instalar)
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Instalar o uv
+        run: pipx install uv
+
+      - name: Construir e conferir
+        run: empacotamento/construir.sh "$RUNNER_TEMP/sh-analyzer"
+
+      - name: A versão
+        id: versao
+        run: |
+          echo "versao=$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
+          echo "numerica=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2).0" >> "$GITHUB_OUTPUT"
 
       # O Inno Setup 6 vem na imagem do Windows da CI; se faltar, o Chocolatey o instala.
       - name: O instalador do Inno Setup
-        if: runner.os == 'Windows'
         env:
           SH_VERSAO: ${{ steps.versao.outputs.versao }}
+          SH_VERSAO_NUMERICA: ${{ steps.versao.outputs.numerica }}
           SH_PASTA_DO_APP: ${{ runner.temp }}\sh-analyzer\dist\sh-analyzer-gui
-          SH_SAIDA: ${{ runner.temp }}
+          SH_ICONE: ${{ runner.temp }}\sh-analyzer\obra\sh-analyzer.ico
+          SH_SAIDA: ${{ runner.temp }}\saida
         run: |
           iscc="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
           [[ -f "$iscc" ]] || choco install innosetup --no-progress -y
           "$iscc" empacotamento/sh-analyzer-gui.iss
+          ls -l "$RUNNER_TEMP/saida"
+
+      # Como um usuário: instala calado (só para ele, sem o administrador), abre o instalado, instala por cima com o
+      # /REABRIR=1 do aviso de versão nova (o aplicativo tem de voltar aberto) e desinstala.
+      - name: Instalar, atualizar e desinstalar
+        env:
+          PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
+          MSYS2_ARG_CONV_EXCL: "*"   # os /VERYSILENT etc. vão ao instalador como estão, e não como caminhos
+        run: |
+          set -euo pipefail
+          instalador=$(ls "$RUNNER_TEMP"/saida/sh-analyzer-*-windows-x64.exe)
+          pasta="$(cygpath -u "$LOCALAPPDATA")/Programs/SH-Analyzer"
+          atalho="$(cygpath -u "$USERPROFILE")/Desktop/SH-Analyzer.lnk"
+          logs="$RUNNER_TEMP/logs"
+          mkdir -p "$logs"
+          aberto() { tasklist /FI "IMAGENAME eq sh-analyzer-gui.exe" | grep -q sh-analyzer-gui; }
+          echo "==> instalar"
+          "$instalador" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/LOG=$(cygpath -w "$logs/instalar.log")"
+          test -f "$pasta/sh-analyzer-gui.exe" || { cat "$logs/instalar.log"; exit 1; }
+          test -f "$atalho" && echo "o atalho na área de trabalho foi criado"
+          "$pasta/sh-analyzer-gui.exe" --versao | tee "$logs/versao.txt"
+          grep -q "SH-Analyzer" "$logs/versao.txt"
+          QT_QPA_PLATFORM=offscreen timeout 180 "$pasta/sh-analyzer-gui.exe" --sair-ao-abrir
+          echo "==> atualizar (por cima, calado, reabrindo)"
+          "$instalador" /SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /REABRIR=1 \
+            "/LOG=$(cygpath -w "$logs/atualizar.log")"
+          for _ in $(seq 30); do aberto && break; sleep 2; done
+          aberto || { cat "$logs/atualizar.log"; echo "não reabriu"; exit 1; }
+          echo "reabriu depois da atualização"
+          taskkill /F /IM sh-analyzer-gui.exe
+          sleep 3
+          echo "==> desinstalar"
+          "$pasta/unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+          for _ in $(seq 60); do [[ -e "$pasta/sh-analyzer-gui.exe" ]] || break; sleep 2; done
+          test ! -e "$pasta/sh-analyzer-gui.exe" && test ! -e "$atalho"
+          echo "desinstalado, sem o atalho"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: sh-analyzer-${{ steps.versao.outputs.versao }}-${{ matrix.nome }}
-          path: |
-            ${{ runner.temp }}/sh-analyzer-*.tar.gz
-            ${{ runner.temp }}/sh-analyzer-*.exe
+          name: windows
+          path: ${{ runner.temp }}/saida/*.exe
           if-no-files-found: error
           retention-days: 30
 
-  rascunho:
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-logs
+          path: ${{ runner.temp }}/logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+  release:
     name: rascunho da release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: construir
+    needs: [linux, linux-instalar, linux-atualizar, windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v5
+
       - uses: actions/download-artifact@v4
         with:
-          path: instaladores
-          merge-multiple: true
+          path: artefatos
 
-      - name: O rascunho, com os dois instaladores
+      - name: O rascunho, com os instaladores e as somas
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          mkdir instaladores
+          cp artefatos/linux/* artefatos/windows/*.exe instaladores/
+          (cd instaladores && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
           gh release create "$GITHUB_REF_NAME" instaladores/* --repo "$GITHUB_REPOSITORY" --draft \
-            --title "SH-Analyzer $GITHUB_REF_NAME" \
-            --notes "Os instaladores desta versão (Linux: a pasta num .tar.gz; Windows: o instalador). Revise antes de publicar."
+            --title "SH-Analyzer $GITHUB_REF_NAME" --notes-file empacotamento/notas-da-versao.md

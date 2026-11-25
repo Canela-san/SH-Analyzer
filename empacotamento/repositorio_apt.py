@@ -72,8 +72,9 @@ O código e o guia estão em <a href="{deb.URL_DO_PROJETO}">{deb.URL_DO_PROJETO}
 """
 
 
-def montar(debs: list[Path], saida: Path, chave: str | None = None) -> Path:
-    """O repositório em ``saida`` (apagada antes), assinado; devolve o ``InRelease``."""
+def montar(debs: list[Path], saida: Path, chave: str | None = None, *, do_gnupg: bool = False) -> Path:
+    """O repositório em ``saida`` (apagada antes), assinado; devolve o ``InRelease``. ``do_gnupg``: publica a chave
+    pública do GnuPG que assina (uma chave de teste), e não a do projeto."""
     if not debs:
         raise SystemExit("nenhum .deb para o repositório")
     if saida.exists():
@@ -102,7 +103,8 @@ def montar(debs: list[Path], saida: Path, chave: str | None = None) -> Path:
     _rodar(*assinar, "--detach-sign", "--armor", "-o", str(dists / "Release.gpg"), str(dists / "Release"))
     # A chave pública do projeto (a mesma do pacote), conferida contra a assinatura: uma chave trocada no segredo da
     # CI não chega publicada.
-    publica = deb.chave_binaria() or _rodar("gpg", "--batch", "--export", *([chave] if chave else [])).stdout
+    publica = None if do_gnupg else deb.chave_binaria()
+    publica = publica or _rodar("gpg", "--batch", "--export", *([chave] if chave else [])).stdout
     if not publica:
         raise SystemExit("sem a chave pública no GnuPG")
     (saida / "sh-analyzer.gpg").write_bytes(publica)
@@ -118,9 +120,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("pasta_dos_debs", type=Path)
     p.add_argument("saida", type=Path)
     p.add_argument("--chave", help="a impressão digital da chave que assina (padrão: a do GNUPGHOME)")
+    p.add_argument("--chave-de-teste", action="store_true",
+                   help="publica a chave pública do GnuPG que assina, e não a do projeto (os testes da CI)")
     a = p.parse_args(argv)
     debs = sorted(a.pasta_dos_debs.glob(f"{deb.PACOTE}_*.deb"))
-    sys.stdout.write(f"{montar(debs, a.saida.resolve(), a.chave)}\n")
+    sys.stdout.write(f"{montar(debs, a.saida.resolve(), a.chave, do_gnupg=a.chave_de_teste)}\n")
     return 0
 
 
