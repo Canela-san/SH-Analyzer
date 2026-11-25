@@ -182,21 +182,15 @@ def test_apagar_so_o_conferido_e_com_confirmacao(qtbot, placas, abrir):
 
 def test_a_queda_no_meio_e_a_retomada_sozinha(qtbot, placas, abrir, monkeypatch):
     monkeypatch.setattr(modulo_da_conexao, "ESPERAS_DA_RECONEXAO_S", (0.2, 0.3, 0.5, 1, 1))
-    servidor = placas.nova()
+    # O cabo que solta: a placa simulada derruba a conexão quando a leitura passa de 40 % do arquivo, do lado dela.
+    # Derrubar pelo progresso que chega à interface corria contra a transferência: num computador rápido (o runner
+    # da CI), ela acabava antes de a queda chegar.
+    servidor = placas.nova(cenario="conexao_instavel")
     original = captura(servidor, "longa.bin", amostras=1 << 22)              # 16 MiB
     area = abrir(servidor)
-    t = area.transferencias
-    caiu = []
-
-    def derrubar_no_meio(item):
-        if not caiu and item.fracao > 0.2:
-            caiu.append(item.transferidos)
-            placas.laco.agendar(servidor.derrubar)                            # o cabo que solta
-
-    t.progrediu.connect(derrubar_no_meio)
-    t.transferir([c for c in area.arquivos._capturas if c.arquivo == "longa.bin"])
+    area.transferencias.transferir([c for c in area.arquivos._capturas if c.arquivo == "longa.bin"])
     item = esperar_conferida(qtbot, area, "longa.bin")
-    assert caiu and item.estado == "conferida"
+    assert item.estado == "conferida"
     assert item.local.read_bytes() == original.read_bytes()
     baixadas = [e for e in area.conexao.registro.entradas if e.descricao.startswith("baixar longa.bin")]
     assert baixadas[0].codigo is None and "retomando de" in baixadas[-1].descricao
