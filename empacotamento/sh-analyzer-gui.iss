@@ -5,7 +5,7 @@
 ;   SH_VERSAO           a versão mostrada (o git describe)
 ;   SH_VERSAO_NUMERICA  a versão nos detalhes do arquivo (quatro números: 0.9.0.0)
 ;   SH_PASTA_DO_APP     a pasta construída (PASTA\dist\sh-analyzer-gui)
-;   SH_ICONE            o ícone do instalador (o .ico que a receita gera em PASTA\obra)
+;   SH_ICONE            o ícone do instalador (o .ico que a receita gera em PASTA\obra\sh-analyzer-gui)
 ;   SH_SAIDA            onde o instalador fica
 ;
 ; Feito para quem nunca instalou nada: só para o usuário, sem pedir o administrador nem perguntar a pasta, e duas

@@ -170,7 +170,7 @@ jobs:
           SH_VERSAO: ${{ steps.versao.outputs.versao }}
           SH_VERSAO_NUMERICA: ${{ steps.versao.outputs.numerica }}
           SH_PASTA_DO_APP: ${{ runner.temp }}\sh-analyzer\dist\sh-analyzer-gui
-          SH_ICONE: ${{ runner.temp }}\sh-analyzer\obra\sh-analyzer.ico
+          SH_ICONE: ${{ runner.temp }}\sh-analyzer\obra\sh-analyzer-gui\sh-analyzer.ico   # a pasta de trabalho do PyInstaller tem o nome da receita
           SH_SAIDA: ${{ runner.temp }}\saida
         run: |
           iscc="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
