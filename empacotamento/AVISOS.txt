@@ -1,0 +1,30 @@
+SH-Analyzer: os componentes de terceiros que vão no aplicativo
+================================================================
+
+O SH-Analyzer é distribuído sob a licença MIT (o arquivo LICENSE do repositório:
+https://github.com/Canela-san/SH-Analyzer). O aplicativo empacotado leva os componentes abaixo, cada um sob a
+licença dele. Os textos das licenças estão na pasta "licencas" (a LGPL 3 e a GPL 3, a que ela incorpora) e, de cada
+biblioteca Python, na pasta "<nome>-<versão>.dist-info" dela (os arquivos LICENSE, COPYING ou licenses/).
+
+Componente                       Licença                          Código-fonte
+-------------------------------  -------------------------------  ----------------------------------------------
+Qt 6 e Qt for Python (PySide6,   LGPL 3                           https://code.qt.io/  e  https://download.qt.io/
+  shiboken6)                                                       official_releases/QtForPython/
+asyncssh                         EPL 2.0 ou GPL 2.0+              https://github.com/ronf/asyncssh
+python-zeroconf                  LGPL 2.1                         https://github.com/python-zeroconf/python-zeroconf
+pyte                             LGPL 3                           https://github.com/selectel/pyte
+PyQtGraph                        MIT                              https://github.com/pyqtgraph/pyqtgraph
+NumPy, SciPy, h5py               BSD                              https://numpy.org, https://scipy.org, https://www.h5py.org
+Matplotlib                       PSF (compatível com a BSD)       https://matplotlib.org
+pyserial                         BSD                              https://github.com/pyserial/pyserial
+keyring, platformdirs            MIT                              https://github.com/jaraco/keyring,
+                                                                  https://github.com/tox-dev/platformdirs
+cryptography                     Apache 2.0 ou BSD                https://github.com/pyca/cryptography
+Python                           PSF                              https://www.python.org
+Inter, IBM Plex, JetBrains       SIL Open Font License 1.1        os arquivos *-OFL.txt em
+  Mono, Atkinson Hyperlegible                                      _internal/sh_analyzer_gui/recursos/fontes
+STIX Two, DejaVu (o Matplotlib)  SIL OFL 1.1 e a da Bitstream     a pasta mpl-data/fonts do Matplotlib
+
+As bibliotecas sob a LGPL (o Qt, o PySide6, o zeroconf, o pyte) são usadas sem modificação e vão como arquivos
+separados na pasta "_internal": quem quiser pode trocá-las por outra versão compatível, ou por uma compilada do
+código-fonte, sem precisar do código do SH-Analyzer. Se precisar de ajuda para isso, abra uma issue no repositório.

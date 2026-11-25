@@ -1,0 +1,106 @@
+# Os instaladores (F7.12 em docs/gui-progress.md, 4h; docs/gui-plan.md, seção 15): o aplicativo empacotado pelo
+# PyInstaller no Linux e no Windows, conferido por dentro (empacotamento/construir.sh: a janela sem tela, os módulos,
+# os dados, o agente, o exemplo e, no Linux, a placa simulada), e guardado como artefato desta execução: no Linux, a
+# pasta num .tar.gz; no Windows, o instalador do Inno Setup (empacotamento/sh-analyzer-gui.iss). Roda à mão (o botão
+# "Run workflow" da aba Actions) e a cada tag v*; numa tag, os dois vão também para um rascunho de release, que
+# alguém revisa e publica.
+name: Instaladores
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: instaladores-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  construir:
+    name: ${{ matrix.nome }}
+    runs-on: ${{ matrix.sistema }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nome: Linux
+            sistema: ubuntu-24.04
+          - nome: Windows
+            sistema: windows-2022
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # O histórico inteiro: a VERSAO do firmware que vai junto é o git describe, e a lista dos commits com o mesmo
+      # firmware sai do log (empacotamento/receita.py).
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Instalar o uv
+        run: pipx install uv
+
+      # O modo sem tela (offscreen) das conferências ainda usa estas bibliotecas do sistema.
+      - name: Bibliotecas do sistema para o Qt
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+
+      - name: Construir e conferir
+        run: empacotamento/construir.sh "$RUNNER_TEMP/sh-analyzer"
+
+      - name: A versão
+        id: versao
+        run: echo "versao=$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
+
+      - name: A pasta num .tar.gz
+        if: runner.os == 'Linux'
+        run: |
+          tar -C "$RUNNER_TEMP/sh-analyzer/dist" -czf \
+            "$RUNNER_TEMP/sh-analyzer-${{ steps.versao.outputs.versao }}-linux-x86_64.tar.gz" sh-analyzer-gui
+
+      # O Inno Setup 6 vem na imagem do Windows da CI; se faltar, o Chocolatey o instala.
+      - name: O instalador do Inno Setup
+        if: runner.os == 'Windows'
+        env:
+          SH_VERSAO: ${{ steps.versao.outputs.versao }}
+          SH_PASTA_DO_APP: ${{ runner.temp }}\sh-analyzer\dist\sh-analyzer-gui
+          SH_SAIDA: ${{ runner.temp }}
+        run: |
+          iscc="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          [[ -f "$iscc" ]] || choco install innosetup --no-progress -y
+          "$iscc" empacotamento/sh-analyzer-gui.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sh-analyzer-${{ steps.versao.outputs.versao }}-${{ matrix.nome }}
+          path: |
+            ${{ runner.temp }}/sh-analyzer-*.tar.gz
+            ${{ runner.temp }}/sh-analyzer-*.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  rascunho:
+    name: rascunho da release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: construir
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: instaladores
+          merge-multiple: true
+
+      - name: O rascunho, com os dois instaladores
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" instaladores/* --repo "$GITHUB_REPOSITORY" --draft \
+            --title "SH-Analyzer $GITHUB_REF_NAME" \
+            --notes "Os instaladores desta versão (Linux: a pasta num .tar.gz; Windows: o instalador). Revise antes de publicar."
