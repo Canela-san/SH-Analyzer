@@ -47,6 +47,12 @@ from pathlib import Path
 
 import numpy as np
 
+# Os módulos que a interface usa inteiros (F7.8 e F7.10): as métricas de bancada do medir_captura, o assistente de
+# aliasing e os pacotes do compactar. Pela api, como o resto (a interface só importa esta fachada); a paridade com a
+# CLI fica nos testes deles.
+from . import aliasing as aliasing
+from . import compactacao as compactacao
+from . import metricas_captura as metricas_captura
 from .amostras import carregar_amostras_bin, carregar_colunas_csv, converter_para_tensao
 from .bandas_iec import (
     FREQ_MIN_IEC_HZ,
@@ -79,6 +85,7 @@ from .constantes import (
     TOLERANCIA_FAIXA_V,
     UNIDADE_GRANDEZA,
 )
+from .constantes import DURACAO_TRANSITORIO_FAIXA_S as DURACAO_TRANSITORIO_FAIXA_S  # a interface
 from .contexto import ContextoCaptura, perfil_para_correcao, resolver_contexto_explicito
 from .erros import Cancelado as Cancelado  # a interface importa daqui
 from .erros import ErroSHAN
@@ -93,6 +100,7 @@ from .espectro import (
     rotulo_janela_completo,
     tamanho_segmento_welch,
 )
+from .espectro import obter_janela as obter_janela  # o intervalo do Welch na interface
 from .filtros import aplicar_filtro_digital, projetar_filtro_sos
 from .fundamental import cruzamentos_da_fundamental, recortar_ciclos_inteiros
 from .harmonicos import TabelaHarmonicos, calcular_harmonicos
