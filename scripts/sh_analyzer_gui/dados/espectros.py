@@ -660,8 +660,9 @@ BORDAS_DO_DISPARO = ("subindo", "descendo")
 class OpcoesDoInstrumento(_OpcoesComDicionario):
     """A vista Instrumento (F7.9): o traço de disparo (``traco``), o nível, a borda e a histerese (0: 2 % da faixa
     do traço), o tempo por divisão (0: dois ciclos na tela), a posição do disparo (a fração da tela antes dele), a
-    persistência e a escala de cada traço (``escalas``: ``(unidade por divisão, offset)`` na ordem da vista de
-    tempo; a unidade por divisão 0 é a automática)."""
+    persistência, a escala de cada traço (``escalas``: ``(unidade por divisão, offset)`` na ordem da vista de
+    tempo; a unidade por divisão 0 é a automática) e o "rejeitar AF" (``rejeitar_af``: o disparo num passa-baixa do
+    traço de disparo, sem atraso; os traços não mudam)."""
 
     traco: int = 0
     trecho: str = "captura"
@@ -673,10 +674,12 @@ class OpcoesDoInstrumento(_OpcoesComDicionario):
     posicao_do_disparo: float = 0.1
     persistencia: bool = True
     escalas: tuple[tuple[float, float], ...] = ()
+    rejeitar_af: bool = False
 
     def __post_init__(self) -> None:
         _validar_comum(self)
         _numero_em(self.nivel, -1e12, 1e12, "nível do disparo")
+        _booleano(self.rejeitar_af, "rejeitar AF")
         if self.borda not in BORDAS_DO_DISPARO:
             raise OpcoesInvalidas(f"borda inválida: {self.borda!r} (use {', '.join(BORDAS_DO_DISPARO)})")
         _numero_em(self.histerese, 0.0, 1e12, "histerese")

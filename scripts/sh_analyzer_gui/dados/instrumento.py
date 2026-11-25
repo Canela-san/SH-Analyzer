@@ -4,7 +4,10 @@ disparo de um deles, como num osciloscópio, sem Qt.
 * **O disparo** (:func:`disparos`): os instantes (com a fração da amostra, pela interpolação linear) em que o traço
   de disparo cruza o nível na borda pedida, com a histerese (o sinal tem de voltar para o outro lado do nível, a uma
   distância dela, antes do próximo: o ruído em cima do nível não dispara de novo) e o tempo morto (*holdoff*: um
-  disparo só depois do fim da janela do anterior, como no osciloscópio).
+  disparo só depois do fim da janela do anterior, como no osciloscópio). Com o **rejeitar AF**
+  (:func:`sinal_de_disparo`), o disparo é procurado no traço passado por um passa-baixa de :data:`CORTE_DO_REJEITAR_AF_HZ`
+  (Butterworth de 2ª ordem, de ida e volta: sem atraso, o instante do disparo é o do traço): a rede dispara uma vez
+  por ciclo mesmo com um surto de supraharmônicos por cima, que cruzaria o nível dezenas de vezes.
 * **A persistência** (:func:`densidade`): cada amostra de cada ciclo cai numa célula (o tempo desde o disparo, o
   valor): a contagem é exata (as amostras, sem interpolar), e o "fósforo" é ela em escala logarítmica.
 * **O ciclo médio** (:func:`ciclo_medio`): os ciclos interpolados numa grade comum e a média e o desvio em cada
@@ -28,6 +31,10 @@ from .qualidade import ler
 
 PEDACO = 1 << 21
 MAXIMO_DE_CICLOS = 5000
+CORTE_DO_REJEITAR_AF_HZ = 1_000.0
+CICLOS_DA_MARGEM_DO_FILTRO = 8
+"""A margem lida de cada lado do pedaço para o passa-baixa de ida e volta (em períodos do corte): a resposta dele
+some em ~1 período; com 8, a borda do pedaço não muda o disparo."""
 PONTOS_DO_CICLO_MEDIO = 1000
 BORDAS = ("subindo", "descendo")
 
@@ -63,6 +70,23 @@ def disparos(x: np.ndarray, nivel: float, borda: str = "subindo", histerese: flo
     return np.array(saida)
 
 
+def sinal_de_disparo(x: np.ndarray, taxa_hz: float, corte_hz: float = 0.0) -> np.ndarray:
+    """O sinal em que o disparo é procurado: ``x``, ou (``corte_hz`` > 0, o rejeitar AF) ``x`` passado por um
+    Butterworth de 2ª ordem em ``corte_hz``, de ida e volta (sem atraso). Levanta ``api.ErroSHAN`` se o corte não cabe
+    na taxa."""
+    if not corte_hz > 0:
+        return np.asarray(x, dtype=np.float64)
+    if corte_hz >= 0.4 * taxa_hz:
+        raise api.ErroSHAN(f"o rejeitar AF ({corte_hz:g} Hz) precisa de uma taxa acima de {corte_hz / 0.4:g} Hz")
+    import scipy.signal
+
+    sos = scipy.signal.butter(2, corte_hz, fs=taxa_hz, output="sos")
+    x = np.asarray(x, dtype=np.float64)
+    if len(x) <= 3 * (2 * len(sos) + 1):
+        return x
+    return scipy.signal.sosfiltfilt(sos, x)
+
+
 @dataclass(frozen=True)
 class Disparo:
     """Os disparos de um trecho: os instantes (em amostras do canal de disparo, desde o começo da captura) e o
@@ -91,23 +115,29 @@ class Disparo:
 
 
 def disparos_do_trecho(trecho: TrechoDoTraco, nivel: float, borda: str, histerese: float, antes_s: float,
-                       depois_s: float, *, tempo_morto_s: float = 0.0, maximo: int = MAXIMO_DE_CICLOS,
-                       pedaco: int = PEDACO, cancelado: Callable[[], bool] | None = None) -> Disparo:
+                       depois_s: float, *, tempo_morto_s: float = 0.0, rejeitar_af_hz: float = 0.0,
+                       maximo: int = MAXIMO_DE_CICLOS, pedaco: int = PEDACO,
+                       cancelado: Callable[[], bool] | None = None) -> Disparo:
     """Os disparos do trecho, lidos em pedaços, com a janela inteira (``antes_s``, ``depois_s``) dentro dele; até
     ``maximo``. As janelas podem se sobrepor (uma de dois ciclos tem um disparo a cada ciclo: a persistência e o
-    ciclo médio usam todos); ``tempo_morto_s`` afasta os disparos, como o *holdoff* do osciloscópio."""
+    ciclo médio usam todos); ``tempo_morto_s`` afasta os disparos, como o *holdoff* do osciloscópio;
+    ``rejeitar_af_hz`` procura o disparo no traço por um passa-baixa (:func:`sinal_de_disparo`), com uma margem lida
+    de cada lado do pedaço para o filtro não sentir a borda."""
     taxa = trecho.captura.canal(trecho.numero).taxa_hz
     antes, depois = antes_s * taxa, depois_s * taxa
     instantes: list[float] = []
     ultimo = -math.inf
     sobra = int(antes + depois) + 2                     # o pedaço começa antes: o gatilho se arma de novo ali
+    margem = int(math.ceil(CICLOS_DA_MARGEM_DO_FILTRO * taxa / rejeitar_af_hz)) if rejeitar_af_hz > 0 else 0
     pos = trecho.inicio
     while pos < trecho.fim and len(instantes) < maximo:
         if cancelado is not None and cancelado():
             raise api.Cancelado()
         b = min(trecho.fim, pos + max(pedaco, 4 * sobra))
         a = max(trecho.inicio, pos - sobra)
-        achados = disparos(ler(trecho, a, b), nivel, borda, histerese) + a
+        a_lido, b_lido = max(trecho.inicio, a - margem), min(trecho.fim, b + margem)
+        x = sinal_de_disparo(ler(trecho, a_lido, b_lido), taxa, rejeitar_af_hz)[a - a_lido:b - a_lido]
+        achados = disparos(x, nivel, borda, histerese) + a
         for t in achados:
             if t <= ultimo + 0.5 or t - ultimo < tempo_morto_s * taxa or t - antes < trecho.inicio \
                     or t + depois > trecho.fim - 1:
