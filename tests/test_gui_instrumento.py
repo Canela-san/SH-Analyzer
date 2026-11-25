@@ -97,3 +97,31 @@ def test_a_persistencia_conta_as_amostras(captura):
 def test_o_passo_1_2_5():
     assert [ins.passo_125(v) for v in (0.7, 1.0, 1.3, 3.0, 7.2, 0.0031, 2e-3)] == pytest.approx(
         [1.0, 1.0, 2.0, 5.0, 10.0, 0.005, 0.002])
+
+
+def test_o_rejeitar_af_dispara_na_rede_com_um_surto_por_cima(tmp_path):
+    """A rede (60 Hz, fase 0,7) com um surto de 20 kHz (1 V em 8 V) por 0,2 s: o disparo por borda cruza o nível no
+    surto; com o rejeitar AF (o passa-baixa de ida e volta), um disparo por ciclo, no cruzamento da rede (sem atraso:
+    a senoide passa pelo filtro com a fase intacta), também com os pedaços (a margem do filtro em cada borda)."""
+    t = np.arange(int(FS * 1.0)) / FS
+    surto = np.where((t >= 0.4) & (t < 0.6), np.sin(2 * np.pi * 20_000 * t), 0.0)
+    captura = api.abrir_captura(escrever_bin(tmp_path / "surto.bin", [8 * np.sin(W * t + 0.7) + surto,
+                                                                      np.zeros_like(t)], versao=9))
+    antes, depois = 0.002, 0.02
+    sem = ins.disparos_do_trecho(trecho(captura, 0), 0.0, "subindo", 0.3, antes, depois)
+    assert sem.n > 70                                              # 59 ciclos inteiros e o surto
+    esperados = (np.arange(1, 61) * 2 * np.pi - 0.7) / W * FS
+    for pedaco in (ins.PEDACO, 7_000):
+        com = ins.disparos_do_trecho(trecho(captura, 0), 0.0, "subindo", 0.3, antes, depois,
+                                     rejeitar_af_hz=ins.CORTE_DO_REJEITAR_AF_HZ, pedaco=pedaco)
+        k = np.round((com.instantes / FS * W + 0.7) / (2 * np.pi)).astype(int) - 1
+        assert len(set(k)) == com.n and com.n >= 57
+        assert np.max(np.abs(com.instantes - esperados[k])) < 0.02          # amostras
+        assert 1 / com.periodo_s == pytest.approx(60.0, abs=1e-3)
+
+
+def test_o_rejeitar_af_precisa_de_taxa():
+    with pytest.raises(api.ErroSHAN, match="rejeitar AF"):
+        ins.sinal_de_disparo(np.zeros(100), 2_000.0, ins.CORTE_DO_REJEITAR_AF_HZ)
+    x = np.arange(10.0)
+    assert np.array_equal(ins.sinal_de_disparo(x, 200_000.0), x)                  # sem o corte: o traço
