@@ -63,8 +63,8 @@ firmware() {
     else
         echo "Aviso: sem o arm-linux-gnueabihf-gcc, o ler_adc.c não é compilado para 32 bits (sudo apt install gcc-arm-linux-gnueabihf)." >&2
     fi
-    etapa "shellcheck (${SHELLCHECK}): firmware/*.sh firmware/coleta/*.sh scripts/*.sh"
-    uvx --quiet --from "$SHELLCHECK" shellcheck -x firmware/*.sh firmware/coleta/*.sh scripts/*.sh
+    etapa "shellcheck (${SHELLCHECK}): firmware/*.sh firmware/coleta/*.sh scripts/*.sh empacotamento/*.sh"
+    uvx --quiet --from "$SHELLCHECK" shellcheck -x firmware/*.sh firmware/coleta/*.sh scripts/*.sh empacotamento/*.sh
 }
 
 command -v zpaq > /dev/null || echo "Aviso: sem o zpaq, os testes do compactar_amostras são pulados (sudo apt install zpaq)." >&2
