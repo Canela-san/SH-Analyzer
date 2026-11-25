@@ -118,7 +118,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 > 18/11/2026: ~128 V rms, 9,3 V de pico no pino, 91 % da maior faixa; antes, na do laboratório, 132 V). A placa não
 > tem bateria no relógio: desligada, ela volta atrasada (3 h 07 numa vez; ~37 h em 18/11).
 
-**Onde trabalhar:** no worktree `.claude/worktrees/interface` (o branch `feat/interface`), para não mexer no checkout do `main`, que é o do laboratório. Se ele não existir, crie-o com `git worktree add .claude/worktrees/interface feat/interface`.
+**Onde trabalhar:** num worktree à parte com o branch `feat/interface`, para não mexer no checkout do `main`, que é o do laboratório. Se ele não existir, crie-o com `git worktree add <pasta> feat/interface`.
 
 ---
 
@@ -127,7 +127,7 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 1. **Entre no worktree do `feat/interface`** e confira a árvore. O checkout principal fica no `main`, para o laboratório:
 
    ```bash
-   cd .claude/worktrees/interface
+   cd <pasta do worktree>
    ```
 
    ```bash
@@ -2748,7 +2748,7 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **Observado, fora da GUI:** o `tests/test_ler_adc_captura.py::test_amostras_atrasadas_e_ruido_no_sdo_vao_para_o_cabecalho_com_aviso` falhou uma vez no `ci.sh rapido` com a máquina carregada (15 amostras atrasadas em vez de 10) e passou 3 vezes isolado. Parece instável: a PRU falsa publicaria os contadores de uma troca de buffer a mais antes de parar. Não foi mexido.
 - **13/11/2026:**
   - **Feito:**
-    - o worktree `.claude/worktrees/interface`, com o `main` do laboratório trazido para o `feat/interface` (merge sem conflito);
+    - o worktree do `feat/interface`, com o `main` do laboratório trazido para o `feat/interface` (merge sem conflito);
     - a F0.3, a pirâmide e o cache (seção 4);
     - a F0.4, a consulta;
     - a F0.5, o `TracoLOD`, o protótipo e as medidas que trocaram o desenho da banda (seção 4);
