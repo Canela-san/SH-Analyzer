@@ -150,6 +150,8 @@ def test_o_poster_vetorial_sai_em_qualquer_dpi():
 
 
 def test_o_pgf_sem_latex_e_sem_arquivo(monkeypatch, dados):
+    # Com um LaTeX (fingido: a CI não tem nenhum), o que falta é o arquivo das imagens das curvas.
+    monkeypatch.setattr(shutil, "which", lambda nome: f"/usr/bin/{nome}")
     with pytest.raises(OpcoesInvalidas, match="arquivo"):
         ex.exportar(FIGURA, VISTAS, dados, io.BytesIO(), OpcoesDeExportacao("pgf", rasterizar_curvas=True))
     monkeypatch.setattr(shutil, "which", lambda _nome: None)

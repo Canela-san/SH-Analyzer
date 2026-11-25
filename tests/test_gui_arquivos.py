@@ -218,7 +218,8 @@ def test_a_interface_nao_trava_durante_a_transferencia(qtbot, placas, abrir):
     area.transferencias.transferir([c for c in area.arquivos._capturas if c.arquivo == "longa.bin"])
     esperar_conferida(qtbot, area, "longa.bin")
     temporizador.stop()
-    assert len(intervalos) > 20 and max(intervalos) < 250, max(intervalos)
+    # Num computador rápido (o runner da CI), a transferência acaba em poucos tiques: conta o maior intervalo.
+    assert len(intervalos) >= 3 and max(intervalos) < 250, (len(intervalos), max(intervalos))
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="o pgrep e o nome do processo, como na placa")
