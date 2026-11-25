@@ -50,6 +50,7 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq $BIBLIOTECAS_DO_QT
 
       - name: Construir e conferir
+        timeout-minutes: 30
         run: empacotamento/construir.sh "$RUNNER_TEMP/sh-analyzer"
 
       - name: A versão
@@ -154,6 +155,7 @@ jobs:
         run: pipx install uv
 
       - name: Construir e conferir
+        timeout-minutes: 30
         run: empacotamento/construir.sh "$RUNNER_TEMP/sh-analyzer"
 
       - name: A versão
@@ -179,6 +181,7 @@ jobs:
       # Como um usuário: instala calado (só para ele, sem o administrador), abre o instalado, instala por cima com o
       # /REABRIR=1 do aviso de versão nova (o aplicativo tem de voltar aberto) e desinstala.
       - name: Instalar, atualizar e desinstalar
+        timeout-minutes: 15
         env:
           PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
           MSYS2_ARG_CONV_EXCL: "*"   # os /VERYSILENT etc. vão ao instalador como estão, e não como caminhos

@@ -46,16 +46,18 @@ export XDG_CONFIG_HOME="$casa/config" XDG_CACHE_HOME="$casa/cache" XDG_DATA_HOME
        XDG_STATE_HOME="$casa/estado" APPDATA="$casa/appdata" LOCALAPPDATA="$casa/localappdata" \
        QT_QPA_PLATFORM=offscreen PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring
 
+# Cada conferência com um prazo: um executável que trava (uma caixa de diálogo do Windows esperando um clique) falha
+# aqui, e não no fim da hora da CI.
 etapa "a versão"
-"$exe" --versao
+timeout 120 "$exe" --versao
 
 etapa "a janela abre e pinta o primeiro quadro (sem tela)"
 inicio=$(date +%s%N)
-"$exe" --sair-ao-abrir
+timeout 300 "$exe" --sair-ao-abrir
 echo "aberta e fechada em $(( ($(date +%s%N) - inicio) / 1000000 )) ms"
 
 etapa "o pacote por dentro (empacotamento/conferir_pacote.py, no executável)"
-SHAN_COMO_PYTHON=1 "$exe" empacotamento/conferir_pacote.py
+SHAN_COMO_PYTHON=1 timeout 900 "$exe" empacotamento/conferir_pacote.py
 
 etapa "o tamanho"
 du -sh "$app" | cut -f1

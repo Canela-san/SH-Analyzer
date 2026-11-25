@@ -5,6 +5,7 @@ do agente local, que fora do pacote são o ``sys.executable``)."""
 import hashlib
 import os
 import sys
+import traceback
 from pathlib import Path
 
 # No Windows, o executável sem console (o da janela) não tem saída quando ninguém a pede: o que for escrito vai para o
@@ -12,6 +13,10 @@ from pathlib import Path
 for _nome in ("stdout", "stderr"):
     if getattr(sys, _nome) is None:
         setattr(sys, _nome, open(os.devnull, "w", encoding="utf-8"))  # noqa: SIM115 (vive o processo inteiro)
+    # A saída em UTF-8, como no Linux: no Windows, o padrão de um pipe é o cp1252, que recusa o "✓" de uma conferência e
+    # os acentos de um caminho (o erro derrubava o programa).
+    elif getattr(sys, _nome).encoding.lower().replace("-", "") != "utf8":
+        getattr(sys, _nome).reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
 def _cache_do_matplotlib() -> None:
@@ -39,7 +44,17 @@ _cache_do_matplotlib()
 from sh_placa import como_python  # noqa: E402
 
 if como_python.pedido():
-    raise SystemExit(como_python.rodar(sys.argv[1:]))
+    # Um erro não tratado sai na saída de erros com o código 1, como no Python. Se subisse até o PyInstaller, o
+    # executável sem console do Windows o mostraria numa caixa de diálogo, que espera um clique para sempre (a CI dos
+    # instaladores ficou parada nela).
+    try:
+        codigo = como_python.rodar(sys.argv[1:])
+    except SystemExit:
+        raise
+    except BaseException:
+        traceback.print_exc()
+        codigo = 1
+    raise SystemExit(codigo)
 
 from sh_analyzer_gui.app import main  # noqa: E402 (só depois: o Python da placa simulada não carrega o Qt)
 
