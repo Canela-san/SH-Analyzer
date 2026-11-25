@@ -70,8 +70,12 @@ def test_as_distribuicoes_com_as_licencas():
         assert {"pyside6", "shiboken6", "pyqtgraph", "platformdirs"} <= nomes
 
 
-def test_o_icone_do_windows(tmp_path):
+def test_o_icone_do_windows(tmp_path, request):
+    """Com a aplicação dos testes (a ``qapp``): o ``gerar_ico`` só cria a dele sem nenhuma, e um ``QGuiApplication``
+    no processo dos testes derrubava os da interface que viessem depois."""
     pytest.importorskip("PySide6.QtSvg")
+    pytest.importorskip("pytestqt")
+    request.getfixturevalue("qapp")
     icone = receita.gerar_ico(tmp_path / "x.ico").read_bytes()
     reservado, tipo, quantos = struct.unpack("<HHH", icone[:6])
     lados = [lado for _, lados in receita.LADOS_DO_ICONE for lado in lados]

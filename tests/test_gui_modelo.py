@@ -196,7 +196,7 @@ def test_vistas_entram_saem_e_mudam_de_nome(projeto):
     with pytest.raises(ValueError):
         RenomearVista(nova, "  ")
     with pytest.raises(ValueError, match="tipo"):
-        Vista("x", tipo="xy")
+        Vista("x", tipo="radar")                                          # o xy existe desde a F7.2
 
 
 @pytest.fixture
