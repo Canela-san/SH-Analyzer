@@ -89,6 +89,7 @@ def test_o_tipo_dos_projetos(tmp_path):
 
 def test_com_o_atalho_do_sistema_o_do_usuario_nao_e_gravado(tmp_path, monkeypatch, capsys):
     """Instalado pelo ``.deb``, o ``--instalar-atalho`` não grava a cópia em ``~/.local`` (dois ícones no menu)."""
+    pytest.importorskip("PySide6")                                  # o app.py é o da interface
     from sh_analyzer_gui import app
 
     sistema = tmp_path / "sistema.desktop"

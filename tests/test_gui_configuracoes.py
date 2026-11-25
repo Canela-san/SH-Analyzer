@@ -314,7 +314,7 @@ def test_a_tela_troca_o_tema_as_fontes_e_o_movimento(janela, qtbot):
     dialogo = janela.abrir_configuracoes()
     qtbot.waitExposed(dialogo)
     assert [dialogo.secoes.item(i).text() for i in range(dialogo.secoes.count())] == \
-        ["Aparência", "Números", "Unidades", "Pastas", "Cache"]
+        ["Aparência", "Números", "Unidades", "Pastas", "Cache", "Atualizações"]
     assert dialogo.tema.escolhida == 1                                  # escuro (o do teste)
     dialogo.tema.escolher(2)
     assert not aparencia().tema.escuro and preferencias.tema_salvo() == "claro"
