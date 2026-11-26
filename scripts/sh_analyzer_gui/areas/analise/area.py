@@ -25,7 +25,7 @@ from ...componentes.primeiros_passos import e_o_exemplo
 from ...componentes.toast import Toast
 from ...dados import alinhamento as al
 from ...dados import exportar_dados as ed
-from ...dados.avisos import do_exemplo
+from ...dados.avisos import do_exemplo, do_importado
 from ...dados.espectros import OPCOES_DO_TIPO
 from ...dados.proveniencia import dos_dados
 from ...dados.receita import ReceitaDoTraco
@@ -664,6 +664,8 @@ class AreaDeAnalise(QObject):
             avisos = fonte.fonte.captura.avisos
             if e_o_exemplo(fonte.caminho):
                 avisos = do_exemplo(avisos)
+            elif getattr(fonte.fonte.captura.hdf5, "importado_de", None):
+                avisos = do_importado(avisos)
             self.avisos.adicionar(avisos, fonte.id, fonte.nome)
 
     # ------------------------------------------------------------------ as notas (os cadernos de bancada)

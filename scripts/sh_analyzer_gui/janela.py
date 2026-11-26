@@ -308,6 +308,9 @@ class JanelaPrincipal(QMainWindow):
         controle = self.controle
         self._acao("abrir", self.tr("Abrir captura…"), atalho=QKeySequence.StandardKey.Open,
                    icone="pasta").triggered.connect(lambda: self._na_analise(controle.abrir_arquivos()))
+        self._acao("importar", self.tr("Importar dados de fora…"), atalho="Ctrl+Shift+I", icone="baixar",
+                   dica=self.tr("Um registro de osciloscópio, um CSV qualquer, um WAV ou um COMTRADE como captura "
+                                "do projeto")).triggered.connect(lambda: self.importar_dados())
         self._acao("novo_projeto", self.tr("Novo projeto"), atalho=QKeySequence.StandardKey.New,
                    icone="arquivo").triggered.connect(controle.novo)
         self._acao("abrir_projeto", self.tr("Abrir projeto…"), atalho="Ctrl+Shift+O",
@@ -489,6 +492,7 @@ class JanelaPrincipal(QMainWindow):
         menu.setObjectName("menu_projeto")
         menu.addAction(self.acoes["novo_projeto"])
         menu.addAction(self.acoes["abrir_projeto"])
+        menu.addAction(self.acoes["importar"])
         self.menu_recentes = menu.addMenu(self.tr("Abrir recente"))
         self.menu_capturas_recentes = menu.addMenu(self.tr("Capturas recentes"))
         menu.addSeparator()
@@ -850,6 +854,21 @@ class JanelaPrincipal(QMainWindow):
     def abrir_ajuda(self, secao: str | None = None):
         """O guia (F1) na seção pedida, ou na do que está à frente."""
         return abrir_ajuda(self, secao or self.secao_da_ajuda())
+
+    def importar_dados(self, caminho: Path | None = None):
+        """O diálogo "Importar dados de fora" (não bloqueia a janela); com ``caminho``, já lendo o arquivo. A
+        captura gravada entra no projeto. Devolve o diálogo."""
+        from .areas.analise.importar import DialogoDeImportacao
+
+        self.mostrar_area(AREA_ANALISE)
+        dialogo = DialogoDeImportacao(self.tarefas, preferencias.pasta("dados"), self)
+        dialogo.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialogo.importadaPronta.connect(lambda destino: self.controle.abrir_capturas([destino]))
+        dialogo.show()
+        if caminho is not None:
+            dialogo.carregar(Path(caminho))
+        self.dialogo_de_importacao = dialogo
+        return dialogo
 
     def abrir_o_exemplo(self) -> None:
         """A captura de exemplo (gerada uma vez na pasta do cache) no projeto, na Análise."""

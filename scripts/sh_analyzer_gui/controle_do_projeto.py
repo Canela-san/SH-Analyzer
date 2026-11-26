@@ -46,10 +46,15 @@ FILTRO = "Projetos do SH-Analyzer (*.shproj)"
 FILTRO_DE_ABRIR = ("Capturas, pacotes e projetos (*.bin *.csv *.h5 *.hdf5 *.tar *.shproj);;"
                    "Capturas do SH-Analyzer (*.bin);;Pacotes do compactar (*.zpaq.tar *.tar);;"
                    "Exportadas pelo adc_tool (*.csv *.h5 *.hdf5);;Projetos do SH-Analyzer (*.shproj);;"
-                   "Todos os arquivos (*)")
+                   "Dados de fora, para importar (*.wav *.cfg *.m *.mat *.txt *.csv);;Todos os arquivos (*)")
 ORIGEM_DO_PROJETO = "projeto"
 """A origem dos avisos da abertura do projeto no painel de avisos (saem juntos ao abrir outro)."""
 
+
+
+EXTENSOES_SO_DE_IMPORTAR = (".wav", ".cfg", ".m", ".mat", ".txt")
+"""O que não é uma captura do SH-Analyzer e só entra pelo "Importar dados de fora…" (o ``.csv`` pode ser uma do
+``adc_tool``: ele é aberto; um que não for diz para importar)."""
 
 class DialogoSemTela(RuntimeError):
     """Um diálogo modal pedido sem tela: nos testes, um diálogo que o teste não previu."""
@@ -217,11 +222,16 @@ class ControleDoProjeto(QObject):
         projetos = [c for c in caminhos if c.suffix.lower() == arquivo.EXTENSAO]
         pacotes = [c for c in caminhos if c.suffix.lower() != arquivo.EXTENSAO and eh_pacote(c)]
         capturas = [c for c in caminhos if c.suffix.lower() != arquivo.EXTENSAO and not eh_pacote(c)]
+        # Os dados de fora (um WAV, um COMTRADE, um registro de osciloscópio): o diálogo de importar, com o arquivo.
+        de_fora = [c for c in capturas if c.suffix.lower() in EXTENSOES_SO_DE_IMPORTAR]
+        capturas = [c for c in capturas if c not in de_fora]
         if projetos and not self.abrir(projetos[0]):
             return False
         for pacote in pacotes:
             self.abrir_pacote(pacote)
-        return bool(self.abrir_capturas(capturas)) or bool(projetos) or bool(pacotes)
+        if de_fora:
+            self.janela.importar_dados(de_fora[0])
+        return bool(self.abrir_capturas(capturas)) or bool(projetos) or bool(pacotes) or bool(de_fora)
 
     def abrir_pacote(self, caminho: Path):
         """Extrai o pacote para o cache (ou o acha lá) numa tarefa, com o progresso na barra de tarefas, e abre as
@@ -258,6 +268,11 @@ class ControleDoProjeto(QObject):
             try:
                 aberta = self._abrir_perguntando(caminho)
             except (ErroSHAN, OSError) as e:
+                if caminho.suffix.lower() == ".csv" and isinstance(e, ErroSHAN):
+                    # Não é um .csv do adc_tool: um CSV qualquer, que entra pelo assistente das colunas.
+                    self._aviso(self.tr("{} não é um .csv do adc_tool: importe-o pelas colunas").format(caminho.name))
+                    self.janela.importar_dados(caminho)
+                    continue
                 self._erro(self.tr("Não foi possível abrir {}: {}").format(caminho.name, e))
                 continue
             if aberta is None:

@@ -44,15 +44,25 @@ Inspetor e na barra de baixo. Uma captura sem cabeçalho pede a taxa e os canais
 
 **Os pacotes** são extraídos para o cache dos pacotes numa tarefa (cada peça e cada arquivo conferidos pelo SHA-256 do
 manifesto) e as capturas deles entram no projeto; abrir de novo o mesmo pacote usa o que já foi extraído. O limite e
-o "Limpar" desse cache estão em Configurações → Cache. Um projeto salvo aponta para as capturas extraídas: se o cache
-for limpo, abra o pacote de novo.
+o "Limpar" desse cache estão em Configurações → Cache. O projeto salvo lembra de qual pacote veio cada captura: se o
+cache for limpo, ao abrir o projeto elas são extraídas de novo, sozinhas.
+
+**Os dados de fora** (Ctrl+Shift+I, "Importar dados de fora…" no menu do projeto, ou arrastando o arquivo): um
+registro de osciloscópio (`.csv`, `.txt`, `.m`, `.mat`), um CSV qualquer, um WAV ou um COMTRADE (o `.cfg` com o
+`.dat`). No CSV, o assistente mostra as primeiras linhas com o separador e o decimal achados; "Escolher as colunas"
+deixa marcar as colunas de valores (clique no título) e a de tempo, ou dizer a taxa. Cada canal ganha a grandeza
+(tensão ou corrente) e a escala (a razão de uma ponta de prova, o fundo de escala de um WAV). A captura importada
+fica ao lado do arquivo (`nome.importado.h5`) e funciona como qualquer outra: espectro, bandas, qualidade, figuras.
+Os valores são guardados em 16 bits, com o pico a 80 % do fundo de escala (o erro fica ~96 dB abaixo do pico).
 
 ## O projeto {#projeto}
 
 O painel do **Projeto** lista as fontes (as capturas abertas, com os canais) e as vistas. Arraste um canal para uma
 vista, ou dê um duplo clique nele, para plotá-lo. O projeto (`.shproj`) guarda as fontes, as vistas, os traços com as
 transformações, as anotações, as figuras e a disposição; Ctrl+S salva, e um salvamento automático recupera o
-trabalho depois de uma queda. Uma captura que mudou de lugar é procurada pelo tamanho e pelo CRC.
+trabalho depois de uma queda. Uma captura que mudou de lugar é procurada pelo tamanho e pelo CRC. Uma que não foi
+achada fica **ausente** (em vermelho), com os traços guardados: o clique direito nela, "Localizar a captura…", aponta
+o arquivo (o CRC das amostras confere que é a mesma), e os traços voltam.
 
 ## O inspetor {#inspetor}
 

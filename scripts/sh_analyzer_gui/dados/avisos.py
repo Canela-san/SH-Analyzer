@@ -103,10 +103,17 @@ def para_a_tela(aviso: api.Aviso, separador: str = ",") -> api.Aviso:
 def do_exemplo(avisos) -> list[api.Aviso]:
     """Os avisos da captura de exemplo dos primeiros passos: a corrente dela vem da sonda ideal da placa simulada
     (100 mV/A, plana), e o aviso de "sem perfil" não pede nada a quem está começando: vira uma informação."""
-    saida = []
-    for a in avisos:
-        if a.nivel == "aviso" and _SEM_PERFIL.fullmatch(a.texto):
-            a = api.Aviso("info", "no exemplo, a corrente vem da sonda ideal da placa simulada (100 mV/A, plana): não "
-                                  "há perfil de sonda a aplicar")
-        saida.append(a)
-    return saida
+    return _sem_perfil_vira(avisos, "no exemplo, a corrente vem da sonda ideal da placa simulada (100 mV/A, plana): "
+                                    "não há perfil de sonda a aplicar")
+
+
+def do_importado(avisos) -> list[api.Aviso]:
+    """Os avisos de dados importados de fora: os valores já estão na unidade física (a do osciloscópio, do
+    analisador), e o "sem perfil" da corrente vira uma informação."""
+    return _sem_perfil_vira(avisos, "os valores importados já estão na unidade física: não há perfil de sonda a "
+                                    "aplicar")
+
+
+def _sem_perfil_vira(avisos, texto: str) -> list[api.Aviso]:
+    return [api.Aviso("info", texto) if a.nivel == "aviso" and _SEM_PERFIL.fullmatch(a.texto) else a
+            for a in avisos]
