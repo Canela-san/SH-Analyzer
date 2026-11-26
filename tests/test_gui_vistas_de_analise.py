@@ -118,11 +118,16 @@ def test_os_eventos_e_o_clique_que_mostra_no_tempo(janela, rede_com_afundamento,
     # Sob carga, a pirâmide da vista de tempo chega depois dos eventos: sem os dados, o clique fica pedido (vale quando
     # eles chegam) e a janela ainda não mudou.
     qtbot.waitUntil(lambda: widget.vista_de_tempo().tem_dados, timeout=ESPERA_MS)
+    widget.tabela.clearSelection()                                # o foco pode ter escolhido a primeira linha
     widget.tabela.selectRow(k)                                    # o clique: o evento na vista de tempo
-    inicio, fim = widget.vista_de_tempo().janela_de_tempo()
+    tempo = widget.vista_de_tempo()
+    inicio, fim = tempo.janela_de_tempo()
     margem = max(0.5 * e.duracao_s, 0.05)
     assert inicio == pytest.approx(e.inicio_s - margem, abs=1e-6)
     assert fim == pytest.approx(e.inicio_s + e.duracao_s + margem, abs=1e-6)
+    tempo.mostrar_tempo(0.0, 0.1)                                 # o tempo andou; o clique na mesma linha volta
+    widget.tabela.cellClicked.emit(k, 0)
+    assert tempo.janela_de_tempo() == pytest.approx((inicio, fim), abs=1e-6)
     calculado = widget.resultado
     widget.filtro.setCurrentIndex(widget.filtro.findData("afundamento"))
     assert widget.tabela.rowCount() == 1 and widget.resultado is calculado

@@ -483,6 +483,9 @@ class VistaDeEventos(VistaLigada):
         self.tabela.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.tabela.horizontalHeader().setStretchLastSection(True)
         self.tabela.itemSelectionChanged.connect(self._ir_ao_evento)
+        # O clique na linha já escolhida também leva ao evento (depois de mexer no tempo, voltar a ele): a seleção não
+        # muda, e o sinal dela não sai.
+        self.tabela.cellClicked.connect(lambda _linha, _coluna: self._ir_ao_evento())
         divisor = QSplitter(Qt.Orientation.Vertical)
         divisor.addWidget(self.grafico)
         divisor.addWidget(self.tabela)
