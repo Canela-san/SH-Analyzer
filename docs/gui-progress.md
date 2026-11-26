@@ -3536,13 +3536,20 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     Figuras e a Aquisição montam depois da primeira pintura, sem o Matplotlib na partida).
   - **Os bugs achados:** a faixa nova da vista de tempo levava a folga do ajuste automático do PyQtGraph para a
     principal (a vista começava em −0,195 s); o detector de descontinuidades via cada degrau de quantização de um
-    sinal lento como um salto (19 161 num segundo a 0,8 V); o eixo do tempo do cabeçalho sem a unidade.
+    sinal lento como um salto (19 161 num segundo a 0,8 V); o eixo do tempo do cabeçalho sem a unidade; a legenda
+    automática da figura em cantos diferentes na PNG e no PDF (o "best" do Matplotlib decide pelos vértices da
+    redução M4, que mudam com o dpi; agora o canto sai de uma grade grossa, fora do inset); o clique no evento já
+    escolhido não levava de volta a ele.
+  - **A CI completa:** 2 843 testes, o firmware e o lint; depois das correções, a interface inteira (1 206) passou.
   - **A revisão gráfica:** as fotos sem tela nos dois temas; os números das tabelas das vistas à direita; o diálogo
     da exportação largo o bastante para os 7 formatos; o PDF do relatório com o CSS que o Qt entende.
   - **Ficou em aberto:** o Bode como painel de figura (o desenho e o pacote não conhecem a vista da sonda nem as
     barras de erro); o Parquet (pediria o `pyarrow`); os P1 com o usuário e os P2 da placa e da distribuição.
-  - **Cuidado aprendido:** o ajuste automático do PyQtGraph roda na pintura: um teste que confere a faixa da vista
-    precisa deixar o laço de eventos andar (`qtbot.wait`) antes, ou passa sem a correção.
+  - **Cuidados aprendidos:** o ajuste automático do PyQtGraph roda na pintura: um teste que confere a faixa da vista
+    precisa deixar o laço de eventos andar (`qtbot.wait`) antes, ou passa sem a correção. O `selectRow` segue os
+    modificadores do último evento de teclado do processo: na suíte inteira, um teste anterior deixava a seleção
+    vazia; selecione com o `selectionModel().select(…, ClearAndSelect | Rows)`. Nas janelas de teste, as Figuras e a
+    Aquisição só montam no primeiro uso (`SH_ANALYZER_AREAS_SO_NO_USO` no `conftest.py`).
 ---
 
 ## 8. Perguntas em aberto
