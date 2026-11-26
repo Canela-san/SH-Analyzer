@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 
 from ...componentes.basicos import Botao, CampoComUnidade
 from ...dados import figura as fig
-from ...dados.anotacoes import TIPOS, Anotacao, AnotacaoInvalida, texto_da_cota
+from ...dados.anotacoes import TIPOS, Anotacao, AnotacaoInvalida, rotulo, texto_da_cota
 from ...dados.desenho_da_figura import EixosDoPainel
 from ...dados.figura import Figura, FiguraInvalida, Inset, Painel
 from ...modelo.objetos import novo_id
@@ -219,6 +219,8 @@ class SecaoDasAnotacoes(_DoPainel):
         menu = QMenu(self.por)
         self.acoes_de_por = {}
         for tipo, nome in TIPOS.items():
+            if tipo == "desenho":                    # o desenho à mão livre se faz na Análise, com a caneta
+                continue
             self.acoes_de_por[tipo] = menu.addAction(self.tr(nome), lambda t=tipo: self.nova(t))
         self.por.setMenu(menu)
         self.tirar = Botao(self.tr("Tirar"), "fantasma", "x")
@@ -278,8 +280,7 @@ class SecaoDasAnotacoes(_DoPainel):
         try:
             self.lista.clear()
             for a in self.anotacoes:
-                texto = texto_da_cota(a, frequencia=frequencia, separador=separador) if a.tipo == "cota" else a.texto
-                self.lista.addItem(QListWidgetItem(f"{TIPOS[a.tipo]}: {texto}" if texto else TIPOS[a.tipo]))
+                self.lista.addItem(QListWidgetItem(rotulo(a, frequencia=frequencia, separador=separador)))
             ids = [a.id for a in self.anotacoes]
             self.lista.setCurrentRow(ids.index(anterior) if anterior in ids else (0 if ids else -1))
             for acao in self.acoes_de_por.values():
@@ -326,7 +327,8 @@ class SecaoDasAnotacoes(_DoPainel):
                 self.x1.definir_valor(a.x1)
             if com_y1:
                 self.y1.definir_valor(a.y1)
-            self.y0.setEnabled(a.tipo != "regiao")
+            self.y0.setEnabled(a.tipo not in ("regiao", "desenho"))
+            self.x0.setEnabled(a.tipo != "desenho")          # o desenho se move inteiro, na Análise
             self.faixa.clear()
             for numero, _limites, unidade, nome in faixas:
                 self.faixa.addItem(f"{nome} ({unidade})" if unidade else nome, numero)
@@ -356,7 +358,12 @@ class SecaoDasAnotacoes(_DoPainel):
         criar = {"texto": lambda: Anotacao(novo_id(), "texto", em_x(0.05), em_y(0.85), texto=self.tr("Texto")),
                  "seta": lambda: Anotacao(novo_id(), "seta", em_x(0.5), em_y(0.5), em_x(0.65), em_y(0.8)),
                  "regiao": lambda: Anotacao(novo_id(), "regiao", em_x(0.4), 0.0, em_x(0.6)),
-                 "cota": lambda: Anotacao(novo_id(), "cota", em_x(0.3), em_y(0.15), em_x(0.5))}
+                 "cota": lambda: Anotacao(novo_id(), "cota", em_x(0.3), em_y(0.15), em_x(0.5)),
+                 "linha": lambda: Anotacao(novo_id(), "linha", em_x(0.3), em_y(0.3), em_x(0.6), em_y(0.7)),
+                 "retangulo": lambda: Anotacao(novo_id(), "retangulo", em_x(0.4), em_y(0.4), em_x(0.6), em_y(0.7)),
+                 "elipse": lambda: Anotacao(novo_id(), "elipse", em_x(0.4), em_y(0.4), em_x(0.6), em_y(0.7)),
+                 "nivel": lambda: Anotacao(novo_id(), "nivel", em_x(0.05), em_y(0.8)),
+                 "marcador": lambda: Anotacao(novo_id(), "marcador", em_x(0.5), em_y(0.5))}
         a = replace(criar[tipo](), faixa=numero)
         self._trocar(self.anotacoes + (a,), self.tr("Pôr uma anotação ({})").format(TIPOS[tipo].lower()))
         ids = [b.id for b in self.anotacoes]

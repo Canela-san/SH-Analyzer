@@ -43,7 +43,7 @@ def exemplo() -> ProjetoSalvo:
 def test_ida_e_volta_pelo_json():
     p = exemplo()
     dados = json.loads(json.dumps(arq.para_dict(p)))
-    assert dados["formato"] == arq.FORMATO and dados["versao"] == arq.VERSAO == 7
+    assert dados["formato"] == arq.FORMATO and dados["versao"] == arq.VERSAO == 8
     assert arq.de_dict(dados) == p
     assert [m["nome"] for m in dados["modelos_de_captura"]] == ["Rede V + I", "Calibração da tensão"]
     assert dados["modelos_de_captura"][0]["pedido"]["canais"][0]["sonda"] == "sct013_100a_sn001"

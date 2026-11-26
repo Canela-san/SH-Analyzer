@@ -9,6 +9,7 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
+from matplotlib.colors import to_hex
 from matplotlib.text import Annotation
 from sh_analyzer_gui.dados import anotacoes as anot
 from sh_analyzer_gui.dados import desenho_da_figura as dd
@@ -76,7 +77,10 @@ def test_as_anotacoes_vao_e_voltam_pelo_projeto():
     with pytest.raises(arq.ProjetoInvalido, match="duas anotações com o mesmo id"):
         arq.de_dict(dados)
     dados["vistas"][0]["anotacoes"] = [{"id": "z", "tipo": "texto", "x0": 0, "cor": "azul"}]
-    with pytest.raises(arq.ProjetoInvalido, match="campos desconhecidos: cor"):
+    with pytest.raises(arq.ProjetoInvalido, match="a cor inválida: 'azul'"):
+        arq.de_dict(dados)
+    dados["vistas"][0]["anotacoes"] = [{"id": "z", "tipo": "texto", "x0": 0, "brilho": 1}]
+    with pytest.raises(arq.ProjetoInvalido, match="campos desconhecidos: brilho"):
         arq.de_dict(dados)
 
 
@@ -178,3 +182,68 @@ def test_o_pacote_com_um_inset_e_as_quatro_anotacoes(tmp_path, monkeypatch):
         assert [t["tipo"] for t in corrente["textos"]] == ["anotacao", "anotacao"]
         tensao = json.loads(f5["eixos/00"].attrs["eixo"])
         assert tensao["faixas"][0]["x0"] == pytest.approx(300.0)
+
+
+# ------------------------------------------------------------------ as anotações novas (o gráfico como caderno)
+
+PONTOS = tuple((0.3 + 0.002 * k, 300.0 + 150.0 * np.sin(k / 4)) for k in range(30))
+TODAS = (Anotacao("t", "texto", 0.05, 200.0, texto="Quadro", caixa=True, preenchimento="#facc15", fonte=11,
+                  negrito=True, italico=True),
+         Anotacao("s", "seta", 0.1, 250.0, 0.2, 600.0, "ponta aberta", cor="#ef4444", ponta="aberta", espessura=2),
+         Anotacao("b", "seta", 0.12, 100.0, 0.18, 0.0, cor="#3b82f6", ponta="circulo"),
+         Anotacao("l", "linha", 0.22, -200.0, 0.28, 200.0, "linha", traco="tracejado", opacidade=0.6),
+         Anotacao("r", "retangulo", 0.3, -400.0, 0.36, -100.0, "caixa", preenchimento="#22c55e", cor="#166534"),
+         Anotacao("e", "elipse", 0.37, 100.0, 0.45, 500.0, traco="pontilhado", espessura=3),
+         Anotacao("n", "nivel", 0.02, 450.0, cor="#f97316"),
+         Anotacao("m", "marcador", 0.25, 500.0, texto="máx", forma="estrela", cor="#a855f7"),
+         Anotacao("d", "desenho", 0.0, 0.0, pontos=PONTOS, cor="#ec4899", espessura=3,
+                  pressoes=tuple(0.2 + 0.8 * k / 29 for k in range(30))),
+         Anotacao("d2", "desenho", 0.0, 0.0, pontos=((0.4, -300.0), (0.42, -350.0), (0.44, -320.0))))
+
+
+def test_os_tipos_novos_o_estilo_e_o_que_o_modelo_recusa():
+    for criar, mensagem in [(lambda: Anotacao("x", "retangulo", 0, 0, 1, 0), "dois y diferentes"),
+                            (lambda: Anotacao("x", "desenho", 0, 0), "pelo menos um ponto"),
+                            (lambda: Anotacao("x", "desenho", 0, 0, pontos=((0, 0),), pressoes=(0.5, 0.5)),
+                             "uma pressão para cada ponto"),
+                            (lambda: Anotacao("x", "texto", 0, pontos=((0, 0),)), "só o desenho tem pontos"),
+                            (lambda: Anotacao("x", "texto", 0, cor="vermelho"), "a cor inválida"),
+                            (lambda: Anotacao("x", "texto", 0, espessura=100), "a espessura vai de 0"),
+                            (lambda: Anotacao("x", "texto", 0, fonte=200), "o tamanho da fonte"),
+                            (lambda: Anotacao("x", "texto", 0, opacidade=0), "a opacidade fora"),
+                            (lambda: Anotacao("x", "texto", 0, traco="ondulado"), "o traço desconhecido"),
+                            (lambda: Anotacao("x", "seta", 0, 0, 1, ponta="dupla2"), "a ponta da seta"),
+                            (lambda: Anotacao("x", "nivel", 0, 0, 1), "só um ponto")]:
+        with pytest.raises(AnotacaoInvalida, match=mensagem):
+            criar()
+    # O retângulo em ordem; o desenho com x0 e y0 do primeiro ponto; mover e esticar.
+    r = Anotacao("r", "retangulo", 2.0, 5.0, 1.0, 3.0)
+    assert (r.x0, r.x1, r.y0, r.y1) == (1.0, 2.0, 3.0, 5.0) and r.limites() == (1.0, 2.0, 3.0, 5.0)
+    d = Anotacao("d", "desenho", 9.0, 9.0, pontos=((1, 2), (3, 4)))
+    assert (d.x0, d.y0) == (1.0, 2.0) and d.movida(1, 1).pontos == ((2.0, 3.0), (4.0, 5.0))
+    assert d.esticada((1, 3, 2, 4), (0, 4, 2, 6)).pontos == ((0.0, 2.0), (4.0, 6.0))
+    # O JSON só leva o que sai do padrão, e volta igual.
+    dados = json.loads(json.dumps([anot.para_dict(a) for a in TODAS]))
+    assert dados[0] == {"id": "t", "tipo": "texto", "x0": 0.05, "y0": 200.0, "texto": "Quadro", "preenchimento":
+                        "#facc15", "fonte": 11.0, "negrito": True, "italico": True, "caixa": True}
+    assert "x0" not in dados[8] and len(dados[8]["pontos"]) == 30
+    assert anot.lista_de_dict(dados, "a vista") == TODAS
+    assert anot.rotulo(TODAS[3]) == "Linha: linha" and anot.texto_do_nivel(TODAS[6], "V") == "450 V"
+
+
+def test_os_tipos_novos_na_figura_e_no_pacote(tmp_path, monkeypatch):
+    pagina = dd.desenhar(_figura(), _com(*TODAS), Dados(200_000), dpi=100)
+    pagina.pixels()
+    tensao = pagina.mpl.axes[0]
+    textos = [t.get_text() for t in tensao.texts]
+    assert {"Quadro", "ponta aberta", "linha", "caixa", "máx"} <= set(textos)
+    assert any(t.get_bbox_patch() is not None for t in tensao.texts if t.get_text() == "Quadro")
+    cores = {to_hex(linha.get_color()) for linha in tensao.lines}
+    assert {"#166534", "#f97316", "#a855f7", "#ec4899"} <= cores
+    assert any(p.get_xy().shape[0] == 5 for p in tensao.patches if hasattr(p, "get_xy"))   # o fundo do retângulo
+    figura = _figura(legenda="sup_esq")
+    monkeypatch.setitem(CASOS, "todas", lambda: (figura, _com(*TODAS), Dados(100_000)))
+    _figura_, pasta, _nomes = _empacotar(tmp_path, "todas")
+    resultado = _refazer(pasta)
+    assert resultado.returncode == 0, resultado.stderr
+    assert "os mesmos pixels da figura.png" in resultado.stdout

@@ -138,7 +138,10 @@ def _montar(ax, grupo: h5py.Group, e: dict) -> None:
         if titulo:
             ax.set_title(titulo, loc=onde)
     for f in e.get("faixas", []):
-        ax.axvspan(f["x0"], f["x1"], **f["estilo"])
+        if "poligono" in f:                       # o fundo de um retângulo ou de uma elipse das anotações
+            ax.fill(*zip(*f["poligono"]), **f["estilo"])
+        else:
+            ax.axvspan(f["x0"], f["x1"], **f["estilo"])
     for t in e["textos"]:
         if t.get("tipo") == "anotacao":
             ax.annotate(t["texto"], t["xy"], xytext=t["xytext"], xycoords=_coordenadas(t["xycoords"]),

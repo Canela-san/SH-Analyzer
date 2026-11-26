@@ -57,12 +57,13 @@ from typing import Protocol
 import numpy as np
 from matplotlib import cbook, font_manager, rc_context
 from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.colors import to_rgba
 from matplotlib.figure import Figure as FiguraDoMatplotlib
 from matplotlib.ticker import FuncFormatter, MaxNLocator, NullFormatter, ScalarFormatter
 from matplotlib.transforms import Bbox
 from supraharmonicos.api import Cancelado
 
-from .anotacoes import Anotacao, texto_da_cota
+from .anotacoes import Anotacao, texto_da_cota, texto_do_nivel
 from .consulta import Amostras, consultar
 from .espectros import Desenho, envoltoria_log
 from .figura import Estilo, EstiloDoTraco, Figura, Painel
@@ -982,7 +983,7 @@ def _desenhar_o_tempo(eixos: list, plano: _Plano, figura: Figura, textos: dict, 
     for a in plano.anotacoes:
         if a.faixa in numeros:
             k = numeros.index(a.faixa)
-            _anotar(eixos[k], a, fator_x, fatores_y[k], figura, frequencia=False)
+            _anotar(eixos[k], a, fator_x, fatores_y[k], figura, frequencia=False, unidade_y=plano.faixas[k].unidade)
     return curvas
 
 
@@ -1018,26 +1019,60 @@ def _eixo_do_inset(eixo, dentro, inset, figura: Figura, limites_x, limites_y, lo
         eixo.indicate_inset_zoom(dentro, edgecolor=COR_DAS_LIGACOES, linewidth=figura.estilo.eixo_pt, alpha=1.0)
 
 
-def _anotar(eixo, a: Anotacao, fator_x: float, fator_y: float, figura: Figura, *, frequencia: bool) -> None:
-    """Uma anotação no eixo (as coordenadas dela nas unidades do eixo: o prefixo de cada um)."""
+_ESTILOS_DO_TRACO = {"solido": "-", "tracejado": "--", "pontilhado": ":", "traco_ponto": "-."}
+_PONTAS_DA_SETA = {"cheia": "-|>", "aberta": "->", "dupla": "<|-|>", "circulo": "-", "nenhuma": "-"}
+_MARCAS_DO_MARCADOR = {"circulo": "o", "quadrado": "s", "losango": "D", "triangulo": "^", "x": "x", "mais": "+",
+                       "estrela": "*"}
+PT_POR_PX = 0.75                  # a espessura da tela (px a 96 dpi) na figura (pt)
+
+
+def _anotar(eixo, a: Anotacao, fator_x: float, fator_y: float, figura: Figura, *, frequencia: bool,
+            unidade_y: str = "") -> None:
+    """Uma anotação no eixo (as coordenadas dela nas unidades do eixo: o prefixo de cada um), com o estilo dela: a
+    cor (vazia: o preto das anotações), a espessura (0: a da figura), o traço, a opacidade, o preenchimento e a
+    fonte. Só com o que o pacote reproduzível descreve (``dados/pacote.py``): os ``annotate``, as linhas (com NaN
+    entre os trechos), as regiões e os polígonos cheios."""
     x0, y0 = a.x0 * fator_x, a.y0 * fator_y
     texto = _seguro(a.texto)
-    estilo = {"color": COR_DAS_ANOTACOES, "fontsize": figura.estilo.texto_pt}
-    seta = {"color": COR_DAS_ANOTACOES, "linewidth": figura.estilo.eixo_pt * 1.6, "shrinkA": 0.0, "shrinkB": 0.0}
+    cor = a.cor or COR_DAS_ANOTACOES
+    espessura = a.espessura * PT_POR_PX if a.espessura else figura.estilo.eixo_pt * 1.6
+    tracado = _ESTILOS_DO_TRACO[a.traco]
+    estilo = {"color": cor, "fontsize": a.fonte or figura.estilo.texto_pt, "alpha": a.opacidade,
+              "fontweight": "bold" if a.negrito else "normal", "fontstyle": "italic" if a.italico else "normal"}
+    if a.caixa:
+        # A transparência na cor do fundo (não no quadro inteiro): é como o pacote reproduzível a guarda.
+        estilo["bbox"] = {"boxstyle": "round,pad=0.25", "edgecolor": cor, "linewidth": 0.6,
+                          "facecolor": to_rgba(a.preenchimento or "#ffffff",
+                                               a.opacidade_do_fundo if a.preenchimento else 0.9)}
+    linha = {"color": cor, "linewidth": espessura, "linestyle": tracado, "alpha": a.opacidade}
+    seta = {"color": cor, "linewidth": espessura, "shrinkA": 0.0, "shrinkB": 0.0, "alpha": a.opacidade}
+
+    def no_meio(x, y, va="center"):
+        if texto:
+            eixo.annotate(texto, (x, y), ha="center", va=va, **estilo)
+
     if a.tipo == "texto":
         if texto:
             eixo.annotate(texto, (x0, y0), ha="left", va="bottom", **estilo)
     elif a.tipo == "seta":
         eixo.annotate(texto, (x0, y0), xytext=(a.x1 * fator_x, a.y1 * fator_y), ha="center", va="center",
-                      arrowprops={"arrowstyle": "-|>", "mutation_scale": 0.9 * figura.estilo.texto_pt,
+                      arrowprops={"arrowstyle": _PONTAS_DA_SETA[a.ponta], "mutation_scale": 0.9 * figura.estilo.texto_pt,
                                   **seta, "shrinkA": 2.0}, **estilo)
+        if a.ponta == "circulo":
+            # Acima do texto (3): o pacote refaz as linhas antes dos textos, e a ordem não pode depender disso.
+            eixo.plot([x0], [y0], marker="o", markersize=2.5 + espessura, color=cor, alpha=a.opacidade, zorder=3.05,
+                      scalex=False, scaley=False)
+    elif a.tipo == "linha":
+        x1, y1 = a.x1 * fator_x, a.y1 * fator_y
+        eixo.plot([x0, x1], [y0, y1], solid_capstyle="round", scalex=False, scaley=False, **linha)
+        no_meio((x0 + x1) / 2, (y0 + y1) / 2, va="bottom")
     elif a.tipo == "regiao":
-        eixo.axvspan(x0, a.x1 * fator_x, facecolor=COR_DAS_REGIOES, alpha=0.18, edgecolor="none", linewidth=0.0,
-                     zorder=0.9)
+        eixo.axvspan(x0, a.x1 * fator_x, facecolor=a.preenchimento or a.cor or COR_DAS_REGIOES,
+                     alpha=a.opacidade_do_fundo * 0.9, edgecolor="none", linewidth=0.0, zorder=0.9)
         if texto:
             eixo.annotate(texto, (x0, 1.0), xycoords=("data", "axes fraction"), xytext=(2.0, -2.0),
                           textcoords="offset points", ha="left", va="top", **estilo)
-    else:
+    elif a.tipo == "cota":
         x1 = a.x1 * fator_x
         eixo.annotate("", (x0, y0), xytext=(x1, y0), arrowprops={"arrowstyle": "<|-|>",
                                                                  "mutation_scale": 0.7 * figura.estilo.texto_pt,
@@ -1045,6 +1080,49 @@ def _anotar(eixo, a: Anotacao, fator_x: float, fator_y: float, figura: Figura, *
         rotulo = texto_da_cota(a, frequencia=frequencia, separador=figura.separador_decimal, matematica=True)
         eixo.annotate(_seguro(rotulo), ((x0 + x1) / 2, y0), xytext=(0.0, 2.0), textcoords="offset points",
                       ha="center", va="bottom", **estilo)
+    elif a.tipo in ("retangulo", "elipse"):
+        x1, y1 = a.x1 * fator_x, a.y1 * fator_y
+        if a.tipo == "retangulo":
+            xs, ys = np.array([x0, x1, x1, x0, x0]), np.array([y0, y0, y1, y1, y0])
+        else:
+            angulos = np.linspace(0.0, 2.0 * np.pi, 129)
+            xs = (x0 + x1) / 2 + (x1 - x0) / 2 * np.cos(angulos)
+            ys = (y0 + y1) / 2 + (y1 - y0) / 2 * np.sin(angulos)
+        if a.preenchimento:
+            eixo.fill(xs, ys, facecolor=a.preenchimento, alpha=a.opacidade_do_fundo * a.opacidade,
+                      edgecolor="none", linewidth=0.0, zorder=1.5)
+        eixo.plot(xs, ys, scalex=False, scaley=False, solid_joinstyle="miter", **linha)
+        no_meio((x0 + x1) / 2, (y0 + y1) / 2)
+    elif a.tipo == "nivel":
+        eixo.plot(eixo.get_xlim(), [y0, y0], scalex=False, scaley=False, **linha)
+        rotulo = a.texto or texto_do_nivel(a, unidade_y, figura.separador_decimal)
+        eixo.annotate(_seguro(rotulo), (x0, y0), xytext=(2.0, 2.0), textcoords="offset points", ha="left",
+                      va="bottom", **estilo)
+    elif a.tipo == "marcador":
+        cheio = a.preenchimento or cor
+        eixo.plot([x0], [y0], linestyle="none", marker=_MARCAS_DO_MARCADOR[a.forma],
+                  markersize=4.0 + (a.espessura or 2.0) * 1.2, color=cor, markerfacecolor=cheio,
+                  markeredgecolor=cor, alpha=a.opacidade, zorder=3, scalex=False, scaley=False)
+        if texto:
+            eixo.annotate(texto, (x0, y0), xytext=(6.0, 0.0), textcoords="offset points", ha="left", va="center",
+                          **estilo)
+    else:                                                       # o desenho à mão livre
+        pontos = np.asarray(a.pontos, dtype=float) * (fator_x, fator_y)
+        redondo = {"solid_capstyle": "round", "solid_joinstyle": "round", "scalex": False, "scaley": False}
+        if len(pontos) == 1:
+            eixo.plot(pontos[:, 0], pontos[:, 1], marker="o", markersize=espessura, color=cor, alpha=a.opacidade,
+                      scalex=False, scaley=False)
+        elif a.pressoes:
+            # A espessura pela pressão: os trechos em 6 grupos, cada grupo uma linha (com NaN entre os trechos).
+            pressoes = np.asarray(a.pressoes, dtype=float)
+            grupos = np.clip(np.round((0.25 + 1.5 * (pressoes[:-1] + pressoes[1:]) / 2) * 3), 0, 6).astype(int)
+            for grupo in np.unique(grupos):
+                i = np.flatnonzero(grupos == grupo)
+                xs = np.column_stack([pontos[i, 0], pontos[i + 1, 0], np.full(len(i), np.nan)]).ravel()
+                ys = np.column_stack([pontos[i, 1], pontos[i + 1, 1], np.full(len(i), np.nan)]).ravel()
+                eixo.plot(xs, ys, color=cor, linewidth=max(0.3, espessura * grupo / 3), alpha=a.opacidade, **redondo)
+        else:
+            eixo.plot(pontos[:, 0], pontos[:, 1], **redondo, **linha)
 
 
 def _desenhar_o_espectro(eixo, plano: _Plano, figura: Figura, textos: dict, suavizar: bool) -> list[_Curva]:

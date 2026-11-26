@@ -39,7 +39,7 @@ import numpy as np
 from matplotlib import font_manager
 from matplotlib.colors import to_hex
 from matplotlib.inset import InsetIndicator
-from matplotlib.patches import Rectangle
+from matplotlib.patches import Polygon, Rectangle
 from matplotlib.text import Annotation
 from supraharmonicos.api import ErroSHAN
 
@@ -65,7 +65,7 @@ ESTILO_DA_LINHA = ("color", "linestyle", "linewidth", "alpha", "antialiased", "r
                    "marker", "markersize", "markevery", "markerfacecolor", "markeredgecolor", "markeredgewidth",
                    "fillstyle", "drawstyle", "dash_capstyle", "dash_joinstyle", "solid_capstyle", "solid_joinstyle")
 ESTILO_DO_TEXTO = ("color", "fontsize", "fontweight", "fontstyle", "horizontalalignment", "verticalalignment",
-                   "rotation", "zorder")
+                   "rotation", "zorder", "alpha")
 ESTILO_DA_FAIXA = ("facecolor", "edgecolor", "alpha", "linewidth", "zorder")
 
 
@@ -128,7 +128,11 @@ def _ligacoes(ax, dentro) -> dict | None:
 
 
 def _faixa(r) -> dict:
-    """Uma região (o ``axvspan``: do x0 ao x1, da altura inteira do eixo)."""
+    """Uma região (o ``axvspan``: do x0 ao x1, da altura inteira do eixo) ou um polígono cheio nos dados (o fundo de
+    um retângulo ou de uma elipse das anotações)."""
+    if isinstance(r, Polygon) and r.get_transform() == r.axes.transData:
+        return {"poligono": [[float(x), float(y)] for x, y in r.get_xy()],
+                "estilo": _estilo(r, ESTILO_DA_FAIXA)}
     if not isinstance(r, Rectangle) or r.get_y() != 0 or r.get_height() != 1:
         raise PacoteInvalido(f"o pacote ainda não descreve {type(r).__name__} num eixo")
     return {"x0": float(r.get_x()), "x1": float(r.get_x() + r.get_width()), "estilo": _estilo(r, ESTILO_DA_FAIXA)}
@@ -196,6 +200,11 @@ def _texto(t, ax) -> dict:
     if isinstance(t, Annotation):
         estilo = _estilo(t, ESTILO_DO_TEXTO)
         estilo["ha"], estilo["va"] = estilo.pop("horizontalalignment"), estilo.pop("verticalalignment")
+        caixa = t.get_bbox_patch()
+        if caixa is not None:                       # o texto num quadro (as anotações com "caixa")
+            estilo["bbox"] = {"boxstyle": "round,pad=0.25", "facecolor": to_hex(caixa.get_facecolor(), keep_alpha=True),
+                              "edgecolor": to_hex(caixa.get_edgecolor(), keep_alpha=True),
+                              "linewidth": float(caixa.get_linewidth())}
         seta = {k: _json_simples(v) for k, v in t.arrowprops.items()} if t.arrowprops else None
         return {"tipo": "anotacao", "texto": t.get_text(), "xy": [float(v) for v in t.xy],
                 "xytext": [float(v) for v in t.xyann], "xycoords": _coordenadas(t.xycoords, t.get_text()),

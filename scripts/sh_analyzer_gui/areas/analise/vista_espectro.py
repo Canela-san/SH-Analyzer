@@ -74,6 +74,7 @@ from ...tema.icones import IconeDoTema
 from ...tema.tokens import TAMANHOS, Tema, cor_do_traco
 from .acoes_da_escala import acoes_da_escala, atualizar_acoes_da_escala, estado_do_chip
 from .anotacoes import AnotacoesDaVista
+from .barra_de_anotacao import BarraDeAnotacao
 from .medidas import LinhaDaTabela, MedidasDaVista, numero_para_planilha
 
 ESPERA_MS = 40
@@ -280,8 +281,28 @@ class VistaDeEspectro(QWidget):
             andar = QAction(self)
             andar.setShortcut(QKeySequence(tecla))
             andar.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-            andar.triggered.connect(lambda _=False, n=passos: self.andar_cursor(n))
+            andar.triggered.connect(lambda _=False, n=passos: self.anotacoes.empurrar(n, 0) or self.andar_cursor(n))
             self.addAction(andar)
+        self.acao_anotar = QAction(self.tr("Anotar"), self)
+        self.acao_anotar.setObjectName("acao_anotar")
+        self.acao_anotar.setCheckable(True)
+        self.acao_anotar.setShortcut(QKeySequence("A"))
+        self.acao_anotar.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.acao_anotar.setToolTip(self.tr("Anotar no gráfico: as formas, os textos e a caneta (A)"))
+        self.acao_anotar.toggled.connect(self.mostrar_anotacao)
+        self.addAction(self.acao_anotar)
+        IconeDoTema(self.acao_anotar, "caneta", papel_ligado="acento")
+        botao = QToolButton()
+        botao.setObjectName("botao_anotar")
+        botao.setDefaultAction(self.acao_anotar)
+        botao.setAutoRaise(True)
+        botao.setIconSize(QSize(16, 16))
+        linha.addWidget(botao)
+        esc = QAction(self)
+        esc.setShortcut(QKeySequence(Qt.Key.Key_Escape))
+        esc.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        esc.triggered.connect(lambda: self.anotacoes.esc())
+        self.addAction(esc)
         self.acao_valores.toggled.connect(self._ligar_valores)
         self.acao_cursores.toggled.connect(self._ligar_cursores)
 
@@ -318,8 +339,11 @@ class VistaDeEspectro(QWidget):
         self.cursores.mudou.connect(self.emitir_regiao)
         caixa = self.grafico.getViewBox()
         self.anotacoes = AnotacoesDaVista(self.vista, self.projeto, lambda _numero: caixa, frequencia=True,
-                                          para_eixo=self._x,
-                                          do_eixo=self._f, separador=separador_decimal, parent=self)
+                                          para_eixo=self._x, do_eixo=self._f,
+                                          log=lambda: self.opcoes.frequencia_log, separador=separador_decimal,
+                                          parent=self)
+        self.barra_de_anotacao = BarraDeAnotacao(self.anotacoes, self)
+        self.barra_de_anotacao.hide()
         caixa.menuPedido.connect(lambda x, y, posicao: self.anotacoes.menu(caixa, 0, self._f(x), y,
                                                                          self.cursores.regiao(), posicao))
         self.valor_no_mouse = pg.TextItem(anchor=(0, 1))
@@ -335,6 +359,7 @@ class VistaDeEspectro(QWidget):
         coluna.setContentsMargins(0, 0, 0, 0)
         coluna.setSpacing(0)
         coluna.addWidget(barra)
+        coluna.addWidget(self.barra_de_anotacao)
         coluna.addWidget(self._legenda)
         coluna.addWidget(self.grafico, 1)
         coluna.addWidget(self.info)
@@ -686,6 +711,15 @@ class VistaDeEspectro(QWidget):
             regiao.setBrush(pg.mkBrush(cor))
             rotulo.label.setColor(QColor(t.mudo))
             rotulo.label.setFont(fonte_da_interface(TAMANHOS["secundario"]))
+
+    def mostrar_anotacao(self, aberta: bool = True) -> None:
+        """Abre (ou fecha) a barra de anotação. Fechada, a ferramenta volta a ser a de escolher."""
+        self.barra_de_anotacao.setVisible(aberta)
+        self.barra_de_anotacao.atalhos_ligados(aberta)
+        if not aberta:
+            self.anotacoes.definir_ferramenta("selecionar")
+        if self.acao_anotar.isChecked() != aberta:
+            self.acao_anotar.setChecked(aberta)
 
     def _x(self, f: float) -> float:
         """A posição de ``f`` no eixo (log10 na frequência logarítmica: é como o PyQtGraph posiciona os itens)."""

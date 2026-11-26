@@ -67,6 +67,7 @@ from ...tema.icones import IconeDoTema
 from ...tema.tokens import Tema, cor_do_traco
 from .acoes_da_escala import acoes_da_escala, atualizar_acoes_da_escala, estado_do_chip
 from .anotacoes import AnotacoesDaVista
+from .barra_de_anotacao import BarraDeAnotacao
 
 PARADA_DO_HISTORICO_MS = 400
 ESPERA_DA_MEDIDA_MS = 250
@@ -163,7 +164,11 @@ class VistaDeTempo(QWidget):
         self._espera_da_previa.timeout.connect(self._pedir_previas)
 
         self.anotacoes = AnotacoesDaVista(vista, projeto, self._caixa_da_faixa, separador=separador_decimal,
-                                          parent=self)
+                                          caixas=self._caixas_das_anotacoes,
+                                          unidade_da_faixa=self._unidade_da_faixa, parent=self)
+        self.barra_de_anotacao = BarraDeAnotacao(self.anotacoes, self)
+        self.barra_de_anotacao.hide()
+        coluna.insertWidget(1, self.barra_de_anotacao)
         vista.tracoEntrou.connect(self._estrutura_mudou)
         vista.tracoSaiu.connect(self._estrutura_mudou)
         vista.tracoMudou.connect(self._traco_mudou)
@@ -179,6 +184,29 @@ class VistaDeTempo(QWidget):
         """A caixa em que ficam as anotações da faixa ``numero`` (sobrepondo, a única)."""
         faixa = self.faixas.get(0 if self.sobrepor else numero)
         return faixa.getViewBox() if faixa is not None else None
+
+    def _caixas_das_anotacoes(self) -> list:
+        """As caixas à vista, com a faixa que uma anotação posta nelas leva."""
+        return [(self.numero_da_caixa(f.getViewBox()), f.getViewBox()) for _n, f in sorted(self.faixas.items())]
+
+    def _unidade_da_faixa(self, numero: int) -> str:
+        traco = next((t for t in self.vista.tracos if t.receita.faixa == numero), None)
+        return self.grandeza_e_unidade(traco)[1] if traco is not None else ""
+
+    def mostrar_anotacao(self, aberta: bool = True) -> None:
+        """Abre (ou fecha) a barra de anotação. Fechada, a ferramenta volta a ser a de escolher."""
+        self.barra_de_anotacao.setVisible(aberta)
+        self.barra_de_anotacao.atalhos_ligados(aberta)
+        if not aberta:
+            self.anotacoes.definir_ferramenta("selecionar")
+        if self.acao_anotar.isChecked() != aberta:
+            self.acao_anotar.setChecked(aberta)
+
+    def _esc(self) -> None:
+        if self.acao_caixa.isChecked():
+            self.acao_caixa.setChecked(False)
+            return
+        self.anotacoes.esc()
 
     def numero_da_caixa(self, caixa) -> int:
         """A faixa de uma caixa, como as anotações a guardam (sobrepondo, a primeira dos traços)."""
@@ -216,7 +244,7 @@ class VistaDeTempo(QWidget):
         self.acao_caixa.toggled.connect(self.armar_zoom_em_caixa)
         desarmar = QAction(self)
         desarmar.setShortcut(QKeySequence(Qt.Key.Key_Escape))
-        desarmar.triggered.connect(lambda: self.acao_caixa.setChecked(False))
+        desarmar.triggered.connect(self._esc)
         self.acao_cursores = QAction(self.tr("Cursores"), self)
         self.acao_cursores.setCheckable(True)
         self.acao_cursores.setShortcut(QKeySequence("C"))
@@ -226,9 +254,16 @@ class VistaDeTempo(QWidget):
         for tecla, passos in (("Left", -1), ("Right", 1), ("Shift+Left", -10), ("Shift+Right", 10)):
             a = QAction(self)
             a.setShortcut(QKeySequence(tecla))
-            a.triggered.connect(lambda _=False, n=passos: self.mover_cursor(n))
+            # Com anotações escolhidas, as setas as andam (1 px; Shift: 10 px); sem elas, movem o cursor.
+            a.triggered.connect(lambda _=False, n=passos: self.anotacoes.empurrar(n, 0) or self.mover_cursor(n))
             mover.append(a)
-        for acao in (self.acao_ajustar, self.acao_voltar, self.acao_caixa, desarmar, self.acao_cursores, *mover):
+        self.acao_anotar = QAction(self.tr("Anotar"), self)
+        self.acao_anotar.setCheckable(True)
+        self.acao_anotar.setShortcut(QKeySequence("A"))
+        self.acao_anotar.setToolTip(self.tr("Anotar no gráfico: as formas, os textos e a caneta (A)"))
+        self.acao_anotar.toggled.connect(self.mostrar_anotacao)
+        for acao in (self.acao_ajustar, self.acao_voltar, self.acao_caixa, desarmar, self.acao_cursores, *mover,
+                     self.acao_anotar):
             acao.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             self.addAction(acao)
         IconeDoTema(self.acao_ajustar, "expandir")
@@ -236,6 +271,7 @@ class VistaDeTempo(QWidget):
         IconeDoTema(self.acao_caixa, "zoom", papel_ligado="acento")
         IconeDoTema(self.acao_sobrepor, "camadas", papel_ligado="acento")
         IconeDoTema(self.acao_cursores, "cursores", papel_ligado="acento")
+        IconeDoTema(self.acao_anotar, "caneta", papel_ligado="acento")
         self.acao_destravar, self.acao_igualar = acoes_da_escala(self, self.destravar_selecionados, self.igualar_escalas,
                                                                  com_tempo=True)
         self.info = QLabel()
@@ -248,7 +284,7 @@ class VistaDeTempo(QWidget):
         linha.setContentsMargins(10, 4, 10, 4)
         linha.setSpacing(4)
         for acao in (self.acao_voltar, self.acao_ajustar, self.acao_caixa, self.acao_cursores, self.acao_sobrepor,
-                     self.acao_destravar, self.acao_igualar):
+                     self.acao_destravar, self.acao_igualar, self.acao_anotar):
             b = QToolButton()
             b.setProperty("variante", "fantasma")
             b.setDefaultAction(acao)

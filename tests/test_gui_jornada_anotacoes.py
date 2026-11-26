@@ -95,8 +95,8 @@ def test_as_quatro_anotacoes_e_o_inset_da_analise_a_figura(janela, qtbot, tmp_pa
     secao.lista.setCurrentRow(3)
     _esperar_a_pagina(qtbot, area, lambda: _escrever(secao.texto, "meio ciclo"))
     assert vista.anotacoes[3].texto == "meio ciclo"
-    assert any(getattr(i, "textItem", None) is not None and i.textItem.toPlainText() == "meio ciclo"
-               for i in anotar.itens[vista.anotacoes[3].id])
+    camada = anotar.itens[vista.anotacoes[3].id]                   # a camada da caixa a desenha com o texto novo
+    assert vista.anotacoes[3] in camada.anotacoes and anotar.texto_de(vista.anotacoes[3]) == "meio ciclo"
     _esperar_a_pagina(qtbot, area, lambda: secao.nova("texto"))
     assert len(vista.anotacoes) == 5 and secao.escolhida.id == vista.anotacoes[4].id
     _esperar_a_pagina(qtbot, area, lambda: qtbot.mouseClick(secao.tirar, Qt.MouseButton.LeftButton))

@@ -648,10 +648,13 @@ class AreaDeAnalise(QObject):
             self._inspetor_da_vista()
 
     def remover_selecionados(self) -> bool:
-        """``Del``: tira da vista ativa os traços selecionados nela (desfazível)."""
+        """``Del``: tira da vista ativa as anotações escolhidas nela ou, sem elas, os traços selecionados (desfazível)."""
         vista = self.vista_ativa()
         if vista is None:
             return False
+        anotacoes = getattr(self.widget_da_vista(vista), "anotacoes", None)
+        if anotacoes is not None and anotacoes.tirar_escolhidas():
+            return True
         tracos = [t for t in self.janela.selecao.tracos if t in vista.tracos]
         if not tracos:
             return False

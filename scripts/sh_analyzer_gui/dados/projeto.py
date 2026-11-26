@@ -12,7 +12,9 @@ resultados.
   tamanhos e a moldura), os insets e as anotações das vistas (``anotacoes``: ``dados/anotacoes.py``). A 7, a vista
   dos perfis de sonda (o tipo ``sonda``, com os perfis do Bode nas opções), a janela que cada vista mostrava
   (``janela``: o tempo ou a frequência) e os cursores ligados da vista de tempo (``cursores``): o painel ligado de
-  uma figura, e o espectro entre os cursores, saem iguais depois de abrir o projeto.
+  uma figura, e o espectro entre os cursores, saem iguais depois de abrir o projeto. A 8, as anotações novas (a
+  linha, o retângulo, a elipse, o nível, o marcador e o desenho à mão livre) e o estilo de cada uma (a cor, a
+  espessura, o traço, o preenchimento, a fonte...): um projeto sem elas é igual ao da 7.
 * **As fontes** vão pelo caminho relativo à pasta do projeto (a pasta inteira pode mudar de lugar), pelo absoluto (o
   projeto pode mudar sem os dados) e pela identidade das amostras: o CRC do cabeçalho v9 e o tamanho. Se os dois
   caminhos falham, :func:`localizar_fonte` procura pelo CRC (PD-06). Uma captura sem o cabeçalho guarda a taxa e os
@@ -45,7 +47,7 @@ from .figura import Figura, FiguraInvalida
 from .receita import ReceitaDoTraco, ReceitaInvalida
 
 FORMATO = "sh-analyzer-projeto"
-VERSAO = 7
+VERSAO = 8
 EXTENSAO = ".shproj"
 SUFIXO_AUTOMATICO = "~"
 TIPOS_DE_VISTA = ("tempo", "espectro", "bandas", "espectrograma", "harmonicos", "sonda", "xy", "histograma", "eventos",

@@ -140,7 +140,7 @@ def test_abrir_um_perfil_de_fora_e_o_projeto(janela, qtbot, tmp_path):  # noqa: 
     caminho = tmp_path / "p.shproj"
     assert janela.controle.salvar_como(caminho)
     dados = json.loads(caminho.read_text(encoding="utf-8"))
-    assert dados["versao"] == 7
+    assert dados["versao"] >= 7
     salva = next(v for v in dados["vistas"] if v["tipo"] == "sonda")
     assert str(fora) in salva["opcoes"]["perfis"]
     assert janela.controle.abrir(caminho)
