@@ -70,6 +70,10 @@ def test_plotar_abre_a_aba_e_as_faixas_pela_unidade(janela, qtbot, tmp_path):
     assert sorted(w.faixas) == [0, 1] and len(w.itens) == 3 and len(w.chips) == 3
     assert w.faixas[0].getAxis("left").rotulo == "tensão (V)"
     assert w.faixas[1].getAxis("left").rotulo == "corrente (A)"
+    # A faixa nova não leva a folga do ajuste automático do PyQtGraph para o tempo (começava em −3,7 %).
+    qtbot.wait(150)                                                     # o ajuste do PyQtGraph roda na pintura
+    for faixa in w.faixas.values():
+        assert faixa.getViewBox().viewRange()[0][0] == pytest.approx(0.0, abs=1e-12)
     assert w.janela_de_tempo()[1] >= 0.19                                # ajustada à captura inteira (0,2 s)
     assert "amostras" in w.info.text()
 

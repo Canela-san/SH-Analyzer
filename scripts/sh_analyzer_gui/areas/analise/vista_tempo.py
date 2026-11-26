@@ -418,6 +418,10 @@ class VistaDeTempo(QWidget):
     def _nova_faixa(self) -> pg.PlotItem:
         eixo_x, eixo_y = EixoDoTema("bottom", expoente_maximo=0), EixoDoTema("left")
         caixa = CaixaDaFaixa()
+        # O tempo é o da faixa principal (a ligação) ou o do ajuste, sem folga: com o ajuste automático do PyQtGraph
+        # ligado, a faixa nova se ajustava aos dados com a folga padrão (3,7 %), e a ligação levava o −0,195 s para
+        # a principal.
+        caixa.enableAutoRange(x=False)
         faixa = pg.PlotItem(viewBox=caixa, axisItems={"bottom": eixo_x, "left": eixo_y})
         faixa.hideButtons()
         faixa.setMenuEnabled(False)
