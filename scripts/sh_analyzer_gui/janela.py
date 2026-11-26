@@ -243,7 +243,7 @@ class JanelaPrincipal(QMainWindow):
         self._tema_mudou(aparencia().tema)
         self.trocar_projeto(Projeto())
         self._visitou_a_aquisicao = False
-        self.primeiros_passos = PrimeirosPassos(self._passos_iniciais(), self._centro_com_trilhos)
+        self.primeiros_passos = PrimeirosPassos(self._passos_iniciais(), self)   # no canto da janela inteira
         self.primeiros_passos.hide()
         if not primeiros_passos_vistos():
             QTimer.singleShot(0, self.primeiros_passos.mostrar)

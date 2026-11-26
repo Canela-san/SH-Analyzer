@@ -6,8 +6,9 @@ com os supraharmônicos de uma casa), plotar a tensão, medir com os cursores, a
 experimentar a aquisição com a placa simulada. Cada passo se marca sozinho quando o estado da janela mostra que foi
 feito (com uma captura do usuário no lugar do exemplo também); o botão de cada um faz o passo por ele.
 
-O cartão mora na área central, no canto de baixo à direita, por cima das vistas, e não bloqueia nada. Fechado (ou
-concluído), ele não volta sozinho: a configuração :data:`CHAVE_DOS_PRIMEIROS_PASSOS` guarda que já foi visto.
+O cartão mora no canto de baixo à direita da janela inteira (acima da barra de status), por cima dos painéis, e não
+bloqueia nada; o "Recolher" o deixa só com o título e o progresso ("2 de 4"), no mesmo canto. Fechado (ou concluído),
+ele não volta sozinho: a configuração :data:`CHAVE_DOS_PRIMEIROS_PASSOS` guarda que já foi visto.
 """
 
 from __future__ import annotations
@@ -18,7 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer
-from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel, QMainWindow, QPushButton, QVBoxLayout,
+                               QWidget)
 
 from ..configuracao import gravar, ler_texto
 from ..tema.aplicar import aparencia
@@ -65,7 +67,8 @@ class Passo:
 
 
 class PrimeirosPassos(QFrame):
-    """O cartão. ``passos`` dá a lista (a janela monta os passos com as ações dela)."""
+    """O cartão. ``passos`` dá a lista (a janela monta os passos com as ações dela); ``parent``, a janela (o cartão
+    fica no canto de baixo à direita dela, acima da barra de status)."""
 
     def __init__(self, passos: list[Passo], parent: QWidget):
         super().__init__(parent)
@@ -73,17 +76,25 @@ class PrimeirosPassos(QFrame):
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.passos = passos
-        titulo = QLabel(self.tr("<b>Primeiros passos</b>"))
-        titulo.setObjectName("titulo_primeiros_passos")
+        self.titulo = QLabel(self.tr("<b>Primeiros passos</b>"))
+        self.titulo.setObjectName("titulo_primeiros_passos")
+        self.recolher = QPushButton(self.tr("Recolher"))
+        self.recolher.setObjectName("recolher_primeiros_passos")
+        self.recolher.setFlat(True)
+        self.recolher.setToolTip(self.tr("Deixa só o título e o progresso no canto; clique de novo para ver os passos"))
+        self.recolher.clicked.connect(lambda: self.definir_recolhido(not self.recolhido))
         fechar = QPushButton(self.tr("Fechar"))
         fechar.setObjectName("fechar_primeiros_passos")
         fechar.setFlat(True)
         fechar.clicked.connect(self.encerrar)
         cabecalho = QHBoxLayout()
-        cabecalho.addWidget(titulo)
+        cabecalho.addWidget(self.titulo)
         cabecalho.addStretch(1)
+        cabecalho.addWidget(self.recolher)
         cabecalho.addWidget(fechar)
-        grade = QGridLayout()
+        self.corpo = QWidget()
+        grade = QGridLayout(self.corpo)
+        grade.setContentsMargins(0, 4, 0, 0)
         grade.setHorizontalSpacing(10)
         grade.setVerticalSpacing(8)
         self.marcas: dict[str, QLabel] = {}
@@ -110,9 +121,10 @@ class PrimeirosPassos(QFrame):
         coluna = QVBoxLayout(self)
         coluna.setContentsMargins(14, 10, 14, 12)
         coluna.addLayout(cabecalho)
-        coluna.addLayout(grade)
+        coluna.addWidget(self.corpo)
         coluna.addWidget(self.concluido)
-        self.setFixedWidth(460)
+        self.setFixedWidth(440)
+        self.recolhido = False
         self._relogio = QTimer(self)
         self._relogio.setInterval(INTERVALO_MS)
         self._relogio.timeout.connect(self.conferir)
@@ -150,9 +162,21 @@ class PrimeirosPassos(QFrame):
                 marca.style().unpolish(marca)
                 marca.style().polish(marca)
             self.botoes[p.id].setEnabled(not estado[p.id] and (p.id == proximo or p.opcional))
-        self.concluido.setVisible(proximo is None)
+        self.concluido.setVisible(proximo is None and not self.recolhido)
+        obrigatorios = [p for p in self.passos if not p.opcional]
+        feitos = sum(estado[p.id] for p in obrigatorios)
+        self.titulo.setText(self.tr("<b>Primeiros passos</b>") + (
+            self.tr(" · {0} de {1}").format(feitos, len(obrigatorios)) if self.recolhido else ""))
         self.adjustSize()
         self._posicionar()
+
+    def definir_recolhido(self, recolhido: bool) -> None:
+        """Recolhe o cartão (só o título com o progresso) ou o abre de novo, no mesmo canto."""
+        self.recolhido = recolhido
+        self.corpo.setVisible(not recolhido)
+        self.recolher.setText(self.tr("Ver os passos") if recolhido else self.tr("Recolher"))
+        self.setFixedWidth(300 if recolhido else 440)
+        self.conferir()
 
     def mostrar(self) -> None:
         self.conferir()
@@ -169,10 +193,15 @@ class PrimeirosPassos(QFrame):
     # ------------------------------------------------------------------ o lugar
 
     def _posicionar(self) -> None:
+        """No canto de baixo à direita da janela, acima da barra de status (se a janela tiver uma à vista)."""
         pai = self.parentWidget()
         if pai is None:
             return
-        self.move(max(MARGEM, pai.width() - self.width() - MARGEM), max(MARGEM, pai.height() - self.height() - MARGEM))
+        baixo = pai.height()
+        if isinstance(pai, QMainWindow) and pai.statusBar().isVisible():
+            baixo -= pai.statusBar().height()
+        self.move(max(MARGEM, pai.width() - self.width() - MARGEM), max(MARGEM, baixo - self.height() - MARGEM))
+        self.raise_()
 
     def eventFilter(self, objeto: QObject, evento: QEvent) -> bool:
         if objeto is self.parentWidget() and evento.type() == QEvent.Type.Resize and self.isVisible():

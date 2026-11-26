@@ -104,6 +104,14 @@ def test_os_primeiros_passos_levam_a_primeira_medida(primeira_vez, qtbot):
     janela = primeira_vez
     cartao = janela.primeiros_passos
     qtbot.waitUntil(cartao.isVisible, timeout=ESPERA_MS)
+    # No canto de baixo à direita da janela inteira (por cima do inspetor), acima da barra de status.
+    assert cartao.parentWidget() is janela
+    canto = cartao.geometry().bottomRight()
+    assert janela.width() - canto.x() <= 24 and janela.statusBar().geometry().top() - canto.y() <= 24
+    cartao.definir_recolhido(True)                                    # recolhido: o título com o progresso, no canto
+    assert not cartao.corpo.isVisible() and "0 de 4" in cartao.titulo.text()
+    assert janela.width() - cartao.geometry().right() <= 24
+    cartao.definir_recolhido(False)
     assert cartao.botoes["abrir"].isEnabled() and not cartao.botoes["plotar"].isEnabled()
     cartao.botoes["abrir"].click()
     qtbot.waitUntil(lambda: cartao.feitos()["abrir"], timeout=ESPERA_MS)
