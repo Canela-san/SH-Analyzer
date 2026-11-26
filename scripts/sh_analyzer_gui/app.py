@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QApplication
 from supraharmonicos.api import aquecer
 
 from sh_analyzer_gui import atalho, preferencias
+from sh_analyzer_gui.componentes import acessibilidade
 from sh_analyzer_gui.configuracao import APLICATIVO, ORGANIZACAO
 from sh_analyzer_gui.janela import JanelaPrincipal
 from sh_analyzer_gui.registro import ligar_o_log
@@ -71,6 +72,7 @@ def criar_aplicacao(argv: list[str] | None = None, tema: str = "sistema") -> QAp
     app.setFont(fonte_da_interface())
     aparencia(app).aplicar(tema)
     ligar_coleta_na_thread_da_interface(app)
+    acessibilidade.instalar(app)                # os botões só com ícone com o nome da dica
     return app
 
 
