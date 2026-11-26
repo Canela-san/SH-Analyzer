@@ -325,7 +325,7 @@ class JanelaPrincipal(QMainWindow):
                    dica=self.tr("Fazer uma figura com a vista (a área Figuras)"),
                    da_analise=True).triggered.connect(self.figura_da_vista_ativa)
         self._acao("exportar_dados", self.tr("Exportar os dados da vista…"), icone="baixar",
-                   dica=self.tr("Exportar os dados da vista (CSV, HDF5, MAT, NPZ, WAV ou COMTRADE)"),
+                   dica=self.tr("Exportar os dados da vista (CSV, HDF5, MAT, NPZ, WAV, COMTRADE ou uma captura derivada)"),
                    da_analise=True).triggered.connect(lambda: self.area.exportar_dados())
         self._acao("relatorio", self.tr("Relatório da captura…"), atalho="Ctrl+Shift+R", icone="pagina",
                    dica=self.tr("Um relatório (HTML ou PDF) dos traços da vista de tempo: o cabeçalho, a integridade, "

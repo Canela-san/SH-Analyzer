@@ -235,7 +235,10 @@ redesenha, e um notebook (`analise.ipynb`) para continuar no Jupyter: a figura, 
 `supraharmonicos.api` e as capturas, os sinais de cada traço com a mesma receita (o filtro, a sonda e o DC; as outras
 etapas são só da interface, e a célula avisa). "Exportar os dados da vista…" grava os números em CSV, HDF5, WAV (ponto flutuante de 32 bits, nas
 unidades; crus, os códigos em PCM de 16 bits) ou COMTRADE 1999 binário (o `.cfg` com o `.dat`), para abrir em outro
-programa de qualidade de energia ou de áudio.
+programa de qualidade de energia ou de áudio. **Captura** grava os traços como estão (com as transformações) numa
+captura nova, que entra no projeto como fonte: a **fonte derivada**, para medir, comparar ou exportar o sinal já
+filtrado ou corrigido como se fosse uma captura (até 40 milhões de valores; ela começa em 0 s, e o instante do
+trecho fica na proveniência ao lado).
 
 ## O relatório da captura {#relatorio}
 

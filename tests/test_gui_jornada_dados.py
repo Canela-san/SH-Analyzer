@@ -22,6 +22,7 @@ from sh_analyzer_gui.dados.cadeia import Cadeia, Filtro  # noqa: E402
 from sh_analyzer_gui.dados.exportar_dados import OpcoesDosDados  # noqa: E402
 from sh_analyzer_gui.janela import JanelaPrincipal  # noqa: E402
 from sh_analyzer_gui.modelo.comandos import MudarTracos  # noqa: E402
+from supraharmonicos import api  # noqa: E402
 from test_gui_jornada_figura import _plotar  # noqa: E402
 
 ESPERA_MS = 30_000
@@ -162,3 +163,12 @@ def test_os_dados_com_e_sem_as_transformacoes(janela, qtbot, tmp_path):
     assert m["amostras"].dtype == canal.amostras.dtype
     np.testing.assert_array_equal(m["amostras"][:, 0], canal.amostras)
     assert m["escala_por_coluna"][0, 0] == canal.escala
+
+    # 4. A fonte derivada (TR-08): os valores com o filtro, numa captura que entra no projeto.
+    derivada = tmp_path / "filtrada.derivada.h5"
+    with qtbot.waitSignal(area.dadosExportados, timeout=ESPERA_MS):
+        area.exportar_dados(vista, PedidoDeDados(OpcoesDosDados("captura"), "inteira"), derivada)
+    assert [f.nome for f in janela.projeto.fontes][-1] == "filtrada.derivada.h5"
+    nova = janela.projeto.fontes[-1]
+    um_codigo = np.ptp(estado.pronta.amostras) / 52_428
+    assert np.max(np.abs(api.sinal_do_canal(nova.fonte.captura, 0) - estado.pronta.amostras)) <= um_codigo

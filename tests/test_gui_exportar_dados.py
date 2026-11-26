@@ -159,6 +159,28 @@ def test_o_wav_em_unidades_e_crus(tmp_path, captura):
     assert crus.dtype == np.int16 and crus.shape == (trecho.n, 2)
 
 
+def test_a_captura_derivada_abre_como_fonte(tmp_path, captura):
+    """A fonte derivada (TR-08): os traços como estão, num .h5 de captura que a api abre com a taxa, as unidades e os
+    valores (a um código de 16 bits), e que diz de onde veio; os crus são recusados."""
+    from supraharmonicos import api
+
+    trecho = ed.recortar(_colunas(captura), [(0.0, 0.2)] * 2)
+    assert ed.nome_do_arquivo("Tempo", "janela", OpcoesDosDados("captura")) == "Tempo - janela.derivada.h5"
+    p = prov.dos_dados(trecho, OpcoesDosDados("captura"), _fontes(captura), aplicativo="0.8.0", regiao="janela")
+    destino, json_ = ed.exportar(trecho, tmp_path / "d.derivada.h5", OpcoesDosDados("captura"), proveniencia=p)
+    assert json_.is_file()
+    derivada = api.abrir_captura(destino)
+    assert derivada.hdf5.importado_de.startswith("derivada no SH-Analyzer de")
+    assert [c.unidade for c in derivada.canais] == ["V", "A"]
+    assert derivada.canal(0).taxa_hz == pytest.approx(trecho.taxa_hz)
+    esperado = _esperado(trecho)
+    for j in range(2):
+        um_codigo = (esperado[:, j].max() - esperado[:, j].min()) / 52_428          # 80 % dos 65 536 códigos
+        assert np.max(np.abs(api.sinal_do_canal(derivada, j) - esperado[:, j])) <= um_codigo
+    with pytest.raises(ed.DadosInvalidos, match="na unidade"):
+        ed.conferir(trecho, OpcoesDosDados("captura", crus=True))
+
+
 def test_o_comtrade_lido_de_volta(tmp_path, captura):
     """O COMTRADE em unidades (o .cfg e o .dat), lido de volta pela importação, a um código de cada canal; os crus
     são recusados."""

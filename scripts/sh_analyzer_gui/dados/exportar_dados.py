@@ -56,7 +56,11 @@ FORMATOS: dict[str, FormatoDeDados] = {f.id: f for f in (
     FormatoDeDados("wav", "WAV", ".wav", "Áudio: em unidades, ponto flutuante de 32 bits; crus, os códigos em 16 bits"),
     FormatoDeDados("comtrade", "COMTRADE", ".cfg", "IEEE C37.111 (1999, binário): o .cfg e o .dat, para os programas "
                                                    "de qualidade de energia"),
+    FormatoDeDados("captura", "Captura", ".h5", "Uma captura nova com os traços como estão (as transformações "
+                                                "aplicadas), que entra no projeto como fonte: a fonte derivada"),
 )}
+LIMITE_DA_CAPTURA = 40_000_000
+"""Os valores (linhas × colunas) da fonte derivada: a gravação os quantiza de uma vez (~400 MB em float64)."""
 LIMITE_DO_WAV = (1 << 32) - 64
 """Os bytes de dados que o cabeçalho do WAV (32 bits) consegue dizer."""
 
@@ -165,6 +169,16 @@ class OpcoesDosDados:
 def conferir(trecho: TrechoDeDados, opcoes: OpcoesDosDados) -> None:
     if opcoes.formato == "comtrade" and opcoes.crus:
         raise DadosInvalidos("o COMTRADE guarda os valores na unidade (o a·x + b de cada canal): exporte em unidades")
+    if opcoes.formato == "captura":
+        if opcoes.crus:
+            raise DadosInvalidos("a captura derivada guarda os valores na unidade: exporte em unidades")
+        if len(trecho.colunas) > 8:
+            raise DadosInvalidos("uma captura tem no máximo 8 canais: deixe visíveis só os traços que vão nela")
+        if trecho.n * len(trecho.colunas) > LIMITE_DA_CAPTURA:
+            raise DadosInvalidos("o trecho é grande demais para a captura derivada (até 40 milhões de valores): "
+                                 "escolha a janela ou os cursores")
+        if len({round(c.taxa_hz) for c in trecho.colunas}) > 1:
+            raise DadosInvalidos("os traços têm taxas diferentes, e uma captura tem uma só")
     if opcoes.formato == "wav":
         largura = 2 if opcoes.crus else 4
         if trecho.n * len(trecho.colunas) * largura > LIMITE_DO_WAV:
@@ -184,6 +198,8 @@ def conferir(trecho: TrechoDeDados, opcoes: OpcoesDosDados) -> None:
 def nome_do_arquivo(nome: str, regiao: str, opcoes: OpcoesDosDados) -> str:
     """O nome sugerido: o da vista e a região (``"Vista 1 - janela.csv"``), sem o que não vai num nome de arquivo."""
     base = "".join(c if c.isalnum() or c in " -_." else "_" for c in nome).strip() or "dados"
+    if opcoes.formato == "captura":
+        return f"{base} - {regiao}.derivada.h5"
     return f"{base} - {regiao}{FORMATOS[opcoes.formato].extensao}"
 
 
@@ -202,6 +218,8 @@ def exportar(trecho: TrechoDeDados, destino: Path, opcoes: OpcoesDosDados, *, pr
     destino = Path(destino)
     if opcoes.formato == "comtrade":
         return _comtrade(trecho, destino, proveniencia, progresso)
+    if opcoes.formato == "captura":
+        return _captura_derivada(trecho, destino, proveniencia, progresso)
     parcial = destino.with_name(destino.name + ".parcial")
     escrever = {"csv": _csv, "hdf5": _hdf5, "mat": _mat, "npz": _npz, "wav": _wav}[opcoes.formato]
     blocos = _Blocos(trecho, linhas_por_bloco, progresso, cancelado)
@@ -405,6 +423,24 @@ def _comtrade(trecho, destino: Path, proveniencia, progresso) -> list[Path]:
     if progresso is not None:
         progresso(1.0)
     return [cfg, dat, json_]
+
+
+def _captura_derivada(trecho, destino: Path, proveniencia, progresso) -> list[Path]:
+    """A fonte derivada (TR-08): os traços como estão, num ``.h5`` de captura (``api.importacao.gravar_como_captura``:
+    os valores quantizados em 16 bits, com a calibração exata), que o projeto abre como uma fonte. A captura começa
+    em 0 s: o instante do trecho fica na proveniência ao lado."""
+    from supraharmonicos.api import importacao
+
+    valores = trecho.bloco(0, trecho.n, crus=False)
+    canais = tuple(importacao.CanalImportado(c.nome, np.asarray(valores[:, j]), c.unidade or "V")
+                   for j, c in enumerate(trecho.colunas))
+    origem = "derivada no SH-Analyzer de " + ", ".join(c.nome for c in trecho.colunas)
+    importacao.gravar_como_captura(importacao.Importado(canais, trecho.taxa_hz, origem), destino)
+    json_ = caminho_da_proveniencia(destino)
+    json_.write_text(json.dumps(proveniencia, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if progresso is not None:
+        progresso(1.0)
+    return [destino, json_]
 
 
 # ------------------------------------------------------------------ MAT

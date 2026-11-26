@@ -615,8 +615,13 @@ class AreaDeAnalise(QObject):
             return
         if tarefa.estado == "concluida":
             caminho = tarefa.resultado
-            Toast.mostrar(self.janela, self.tr("Dados exportados: {} ({}), com a proveniência ao lado").format(
-                caminho.name, formatar_bytes(caminho.stat().st_size)), "sucesso")
+            if caminho.name.endswith(".h5") and self._pedido_de_dados.opcoes.formato == "captura":
+                self.janela.controle.abrir_capturas([caminho])             # a fonte derivada entra no projeto
+                Toast.mostrar(self.janela, self.tr("A captura derivada {} entrou no projeto").format(caminho.name),
+                              "sucesso")
+            else:
+                Toast.mostrar(self.janela, self.tr("Dados exportados: {} ({}), com a proveniência ao lado").format(
+                    caminho.name, formatar_bytes(caminho.stat().st_size)), "sucesso")
             self.dadosExportados.emit(caminho)
         elif tarefa.estado == "falhou":
             Toast.mostrar(self.janela, self.tr("Os dados não foram exportados: {}").format(tarefa.erro), "erro")

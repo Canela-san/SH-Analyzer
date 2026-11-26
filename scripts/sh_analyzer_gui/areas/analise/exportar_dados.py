@@ -252,7 +252,7 @@ class DialogoDeExportarDados(QDialog):
         coluna.addWidget(self.resumo)
         coluna.addWidget(self.aviso)
         coluna.addWidget(botoes)
-        self.setMinimumWidth(self.fontMetrics().averageCharWidth() * 80)
+        self.setMinimumWidth(self.fontMetrics().averageCharWidth() * 104)     # os 7 formatos sem cortar o nome
 
         if coleta.widget.cursores is None:
             self.regiao.habilitar(1, False, self.tr("Os cursores estão desligados (C na vista liga)"))
