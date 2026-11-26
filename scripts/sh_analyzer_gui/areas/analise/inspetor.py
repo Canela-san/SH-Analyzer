@@ -233,8 +233,31 @@ class InspetorDaFonte(QScrollArea):
                 self.estado_piramide.setText(self.tr("Pirâmide ainda não construída"))
 
 
+DESCRICOES_DAS_VISTAS = {
+    "bandas": "As bandas de 200 Hz de 2 a 150 kHz (IEC 61000-4-7, anexo B), em tabela e no tempo.",
+    "espectrograma": "O espectro ao longo do tempo, num mapa de cores perceptual; clique para ir ao instante.",
+    "harmonicos": "Os grupos e subgrupos harmônicos da IEC 61000-4-7, a THD, a THDG e a THDS, em barras e tabela.",
+    "xy": "Um canal contra o outro (a tensão contra a corrente), com a potência ativa, o fator de potência e a "
+          "defasagem.",
+    "histograma": "A distribuição das amostras do trecho, com as estatísticas (média, desvio, assimetria, curtose).",
+    "eventos": "Os afundamentos, as elevações, as interrupções, os picos de supraharmônicos, a saturação e as "
+               "descontinuidades achados na captura; um clique leva até o evento no tempo.",
+    "qualidade": "Os índices de 12 ciclos da IEC 61000-4-30 (frequência, RMS, THD, fatores, supraharmônicos), as "
+                 "janelas com evento marcadas e fora das estatísticas, e os agregados de 150/180 ciclos.",
+    "transferencia": "A função de transferência entre dois canais (o ganho e a fase), com a coerência e o intervalo "
+                     "de confiança.",
+    "metricas": "As métricas de bancada do medir_captura: o ruído, a SNR, o SINAD, o ENOB, o SFDR e o jitter.",
+    "instrumento": "Os ciclos sobrepostos, como num osciloscópio, com o disparo no cruzamento por zero e a "
+                   "persistência.",
+}
+"""O que cada vista derivada mostra, no inspetor (sem traço selecionado)."""
+
+
 class InspetorDaVista(QScrollArea):
-    """As propriedades da vista ativa, sem traço selecionado (por enquanto, a análise de uma vista de espectro)."""
+    """As propriedades da vista ativa, sem traço selecionado: num espectro, a análise dele; nas outras derivadas, o
+    que a vista mostra, de qual vista de tempo ela segue os traços e a ajuda dela."""
+
+    ajudaPedida = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -266,17 +289,41 @@ class InspetorDaVista(QScrollArea):
         fonte.setWeight(QFont.Weight.DemiBold)
         rotulo.setFont(fonte)
         self.espectro = SecaoDoEspectro(LARGURA_DO_ROTULO)
+        self.dica, self.divisoria, self.rotulo_do_espectro = dica, divisoria, rotulo
+        self.descricao = QLabel()
+        self.descricao.setObjectName("descricao_da_vista")
+        self.descricao.setWordWrap(True)
+        self.origem = QLabel()
+        self.origem.setObjectName("subtitulo_inspetor")
+        self.origem.setWordWrap(True)
+        self.ajuda = Botao(self.tr("A ajuda desta vista (F1)"), "secundario", "livro")
+        self.ajuda.setObjectName("ajuda_da_vista")
+        self.ajuda.clicked.connect(self.ajudaPedida)
         coluna.addWidget(self.titulo)
         coluna.addWidget(dica)
+        coluna.addWidget(self.origem)
         coluna.addWidget(divisoria)
         coluna.addWidget(rotulo)
         coluna.addWidget(self.espectro)
+        coluna.addWidget(self.descricao)
+        coluna.addWidget(self.ajuda, 0, Qt.AlignmentFlag.AlignLeft)
         coluna.addStretch(1)
         self.setWidget(conteudo)
 
     def mostrar(self, projeto: Projeto | None, vista, f1=None) -> None:
         self.titulo.setText(vista.nome if vista is not None else "")
-        self.espectro.mostrar(projeto, vista, f1)
+        espectro = vista is not None and vista.tipo == "espectro"
+        self.espectro.mostrar(projeto, vista if espectro else None, f1)
+        for w in (self.dica, self.rotulo_do_espectro, self.espectro):
+            w.setVisible(espectro)
+        descricao = DESCRICOES_DAS_VISTAS.get(getattr(vista, "tipo", ""), "")
+        self.descricao.setText(self.tr(descricao) if descricao else "")
+        self.descricao.setVisible(bool(descricao))
+        self.ajuda.setVisible(vista is not None)
+        alvo = getattr(getattr(vista, "opcoes", None), "vista_de_tempo", None)
+        seguida = next((v for v in projeto.vistas if v.id == alvo), None) if projeto is not None and alvo else None
+        self.origem.setText(self.tr("Segue os traços de \"{}\".").format(seguida.nome) if seguida is not None else "")
+        self.origem.setVisible(seguida is not None)
 
 
 class InspetorDoCaderno(QWidget):
@@ -350,7 +397,8 @@ class Inspetor(QStackedWidget):
         """A vista da aba ativa (as seções que dependem dela: a análise de um espectro)."""
         self.vista_ativa = vista
         self.do_traco.definir_vista(projeto, vista, f1)
-        self.da_vista.mostrar(projeto, vista if vista is not None and vista.tipo == "espectro" else None, f1)
+        self.da_vista.mostrar(projeto, vista if vista is not None and vista.tipo not in ("tempo", "sonda") else None,
+                              f1)
 
     def atualizar_vista(self) -> None:
         """Um espectro novo chegou (outra fundamental muda o que o preset põe)."""

@@ -696,6 +696,7 @@ class JanelaPrincipal(QMainWindow):
 
     def _criar_inspetor(self) -> QWidget:
         self.inspetor = Inspetor()
+        self.inspetor.da_vista.ajudaPedida.connect(lambda: self.abrir_ajuda())
         self.inspetor.do_traco.processamento.dialogos_de = lambda: self.controle.dialogos
         return self.inspetor
 

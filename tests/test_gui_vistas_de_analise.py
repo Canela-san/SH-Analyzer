@@ -283,3 +283,17 @@ def test_os_nomes_dos_eventos_na_fonte_da_interface(janela, tracos, qtbot):
     eventos = abrir(janela, qtbot, "eventos")
     eixo = eventos.grafico.getAxis("left")
     assert eixo.categorias and eixo.style["tickFont"].family() != eventos.grafico.getAxis("bottom").style["tickFont"].family()
+
+
+def test_o_inspetor_das_vistas_derivadas(janela, tracos, qtbot):
+    """Sem traço selecionado, a vista derivada à frente mostra no inspetor o que ela é, de qual vista de tempo segue
+    os traços e a ajuda dela (antes: "Nada selecionado")."""
+    abrir(janela, qtbot, "qualidade")
+    janela.selecao.definir(())
+    janela.area._inspetor_da_vista(trocou_de_aba=True)
+    da_vista = janela.inspetor.da_vista
+    assert janela.inspetor.currentWidget() is da_vista
+    assert "IEC 61000-4-30" in da_vista.descricao.text() and not da_vista.espectro.isVisibleTo(da_vista)
+    assert "Tempo" in da_vista.origem.text()
+    da_vista.ajuda.click()
+    assert janela.leitor_do_guia.secao_atual == "qualidade"

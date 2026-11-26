@@ -429,7 +429,7 @@ class AreaDeAnalise(QObject):
         selecao = self.janela.selecao                     # None enquanto a janela se monta
         if (selecao is not None and selecao.tracos) or (atual is self.inspetor.da_fonte and not trocou_de_aba):
             return
-        if espectro is not None:
+        if vista is not None and vista.tipo not in ("tempo", "sonda"):     # as derivadas: as opções e a ajuda
             self.inspetor.mostrar_vista()
         elif atual is self.inspetor.da_vista:
             self.inspetor.mostrar("", None)
