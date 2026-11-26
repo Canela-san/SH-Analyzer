@@ -217,3 +217,19 @@ def test_de_perto_os_pontos_nao_viram_um_bloco_cheio(qtbot, grafico):
     # Cada coluna tem a linha (1 ou 2 px) e, perto das amostras, o ponto (4 px). O bloco cheio ia até 60 px.
     assert acesas.sum(axis=0).max() <= 12, acesas.sum(axis=0).max()
     assert acesas.mean() < 0.03, acesas.mean()                   # o bloco cheio pintava ~10 % da imagem
+
+
+@pytest.mark.parametrize("largura_s", [1e-6, 1.5e-9, 1e-9, 1e-12])
+def test_bem_de_perto_o_traco_continua_pintado(qtbot, grafico, largura_s):
+    """O retângulo do item, com os dados inteiros, passava de 2³¹ pixels bem de perto (1 ns em 600 px, com 10 ms de
+    dados): a cena do Qt o levava a inteiros, o número dava a volta e o traço não era pintado (sumia num zoom e
+    voltava em outro). Cortado na vista, ele aparece em qualquer zoom."""
+    taxa = 400_000.0
+    t = np.arange(4000) / taxa
+    x = (1000 * np.sin(2 * np.pi * 50 * t)).astype(np.float32)
+    traco = colocar(grafico, x, taxa=taxa)
+    centro = 1000.67 / taxa
+    y = float(np.interp(centro, t, x))
+    antes = traco.pinturas
+    imagem = pixels(mostrar(qtbot, grafico, traco, centro - largura_s / 2, centro + largura_s / 2, y - 500, y + 500))
+    assert traco.pinturas > antes and (imagem > 50).sum() > 0

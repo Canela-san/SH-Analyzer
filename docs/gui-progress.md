@@ -3550,6 +3550,17 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     modificadores do último evento de teclado do processo: na suíte inteira, um teste anterior deixava a seleção
     vazia; selecione com o `selectionModel().select(…, ClearAndSelect | Rows)`. Nas janelas de teste, as Figuras e a
     Aquisição só montam no primeiro uso (`SH_ANALYZER_AREAS_SO_NO_USO` no `conftest.py`).
+- **26/11, os bugs que o usuário viu na v0.9:**
+  - **O traço sumia a partir de um zoom** (e voltava em outro): o `boundingRect` do `TracoLOD` era o dos dados
+    inteiros, e bem de perto (1 ns em 600 px, com 10 ms de dados) passava de 2³¹ pixels; a cena do Qt o leva a
+    inteiros, o número dava a volta e o item parecia fora da tela (o `paint` nem era chamado). Agora ele é cortado
+    na vista a cada consulta.
+  - **Apagar a duração na Captura abria o erro inesperado:** o campo vazio vira NaN, e o `blocos_pedidos` do resumo
+    levantava `ValueError`. O pedido com uma duração que não vale fica sem blocos, tamanho e duração (`-1`), e a
+    validação aponta o campo.
+  - **O diálogo dos pinos da PRU cortava a explicação:** com os 4 pinos, o botão alargava o diálogo, e o layout
+    media a altura do texto na largura da janela (menos linhas que as desenhadas). O rótulo mede na largura fixa
+    dele; com 3 ou mais pinos o botão diz quantos.
 ---
 
 ## 8. Perguntas em aberto

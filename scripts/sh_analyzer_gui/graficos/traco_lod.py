@@ -141,6 +141,7 @@ class TracoLOD(pg.GraphicsObject):
         self.recalculos = 0              # quantas consultas foram feitas (para os testes e o medidor de quadros)
         self.pinturas = 0                # quantas vezes foi pintado (o medidor de quadros por segundo)
         self._limites = self._calcular_limites()
+        self._na_vista: QRectF | None = None  # o retângulo do item cortado na vista (ver o boundingRect)
         self._agendador = QTimer(self)        # filho do item: some junto com ele
         self._agendador.setSingleShot(True)
         self._agendador.setInterval(0)
@@ -242,9 +243,25 @@ class TracoLOD(pg.GraphicsObject):
     def pixelPadding(self):
         return 0
 
-    def boundingRect(self):
+    def _retangulo_dos_dados(self) -> QRectF:
         x0, x1, y0, y1 = self._limites
         return QRectF(x0, y0, max(x1 - x0, 1e-12), max(y1 - y0, 1e-12))
+
+    def boundingRect(self):
+        """O retângulo dos dados cortado na vista (com uma vista de folga de cada lado). O dos dados inteiros, bem de
+        perto, passa de 2³¹ pixels: a cena do Qt o leva a inteiros, o número dá a volta e ela acha que o item está
+        fora da tela (não o pinta). Era o traço que sumia a partir de um zoom, e voltava em outro."""
+        return self._retangulo_dos_dados() if self._na_vista is None else self._na_vista
+
+    def _cortar_na_vista(self) -> None:
+        vista = self.viewRect()
+        cortado = None
+        if vista is not None and vista.isValid():
+            w, h = vista.width(), vista.height()
+            cortado = self._retangulo_dos_dados().intersected(vista.adjusted(-w, -h, w, h))
+        if cortado != self._na_vista:
+            self.prepareGeometryChange()
+            self._na_vista = cortado
 
     # ------------------------------------------------------------------ a vista mudou: agenda uma consulta
 
@@ -294,6 +311,7 @@ class TracoLOD(pg.GraphicsObject):
             self._sujo = True
             return
         self._sujo = False
+        self._cortar_na_vista()
         (x0, x1), (y0, y1) = vb.viewRange()
         _, _, ky, _ = self._escala_propria()
         x0, x1 = self.janela_do_traco(x0, x1)         # a janela visível no tempo do traço
