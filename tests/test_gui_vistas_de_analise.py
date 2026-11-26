@@ -11,7 +11,7 @@ pytest.importorskip("pytestqt")
 
 from capturas_sinteticas import FS_TOTAL_2CH, escrever_bin  # noqa: E402
 from dialogos_falsos import DialogosFalsos  # noqa: E402
-from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtCore import QItemSelectionModel, Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication, QToolButton  # noqa: E402
 from sh_analyzer_gui.app import criar_aplicacao  # noqa: E402
 from sh_analyzer_gui.areas.analise.vistas_de_analise import texto_da_tabela  # noqa: E402
@@ -118,8 +118,11 @@ def test_os_eventos_e_o_clique_que_mostra_no_tempo(janela, rede_com_afundamento,
     # Sob carga, a pirâmide da vista de tempo chega depois dos eventos: sem os dados, o clique fica pedido (vale quando
     # eles chegam) e a janela ainda não mudou.
     qtbot.waitUntil(lambda: widget.vista_de_tempo().tem_dados, timeout=ESPERA_MS)
-    widget.tabela.clearSelection()                                # o foco pode ter escolhido a primeira linha
-    widget.tabela.selectRow(k)                                    # o clique: o evento na vista de tempo
+    # O clique: o evento na vista de tempo. A seleção com o comando explícito: o selectRow segue os modificadores
+    # do último evento de teclado do processo, e um teste anterior que deixou um deles fazia a seleção sair vazia.
+    widget.tabela.selectionModel().select(
+        widget.tabela.model().index(k, 0),
+        QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
     tempo = widget.vista_de_tempo()
     inicio, fim = tempo.janela_de_tempo()
     margem = max(0.5 * e.duracao_s, 0.05)
