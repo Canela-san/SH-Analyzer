@@ -57,6 +57,7 @@ def test_cada_interrogacao_abre_a_secao_dela(janela, qtbot):
         janela.acoes[nome].trigger()
         janela.area.ativar_vista(next(v for v in janela.projeto.vistas if v.tipo == "tempo"))
     secoes = {s.id for s in ajuda.ler_guia()}
+    janela.figuras, janela.aquisicao                                   # as áreas montadas depois da partida
     botoes = _botoes(janela)
     vistos = set()
     for botao in botoes:

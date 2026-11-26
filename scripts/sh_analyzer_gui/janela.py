@@ -72,11 +72,9 @@ from .areas.analise.area import AreaDeAnalise
 from .areas.analise.arvore import PainelDoProjeto
 from .areas.analise.inspetor import Inspetor
 from .areas.analise.medidas import TabelaDeMedidas
-from .areas.aquisicao.area import AreaDeAquisicao
 from .areas.aquisicao.barra_de_status import StatusDaPlaca
 from .areas.aquisicao.textos import resumo
 from .areas.configuracoes import DialogoDeConfiguracoes
-from .areas.figuras.area import AreaDeFiguras
 from .componentes.avisos import ListaDeAvisos
 from .componentes.barra_superior import BarraSuperior
 from .componentes.basicos import Botao
@@ -122,6 +120,8 @@ log = logging.getLogger(__name__)
 TAMANHO_INICIAL = (1440, 900)
 ATRASO_DA_CONSULTA_DE_VERSAO_MS = 4000
 """A consulta de versão nova espera a janela assentar: a partida fica só com o que o usuário pediu."""
+ESPERA_PARA_MONTAR_MS = 150
+"""Depois da primeira pintura, as Figuras e (o dobro) a Aquisição montam: a janela aparece antes delas."""
 TAMANHO_MINIMO = (960, 600)
 LADO_DA_MARCA = 72              # px da marca no estado vazio
 LARGURA_DO_PROJETO = 264
@@ -218,19 +218,12 @@ class JanelaPrincipal(QMainWindow):
         self._criar_barra_de_status()
         self.area = AreaDeAnalise(self, self.painel_projeto, self.inspetor, self.avisos, self.status_fonte,
                                   self.status_integridade, self.vistas, self.tabela_de_medidas)
-        self.aquisicao = AreaDeAquisicao(
-            self.conexao_da_placa, self.saude_da_placa, lambda: self.controle.dialogos, self.transferencias_da_placa,
-            abrir_na_analise=lambda caminhos: self._na_analise(self.controle.abrir_capturas(caminhos)),
-            abrir_no_projeto=lambda caminhos: self.controle.abrir_capturas(caminhos),
-            mostrar_na_analise=self._mostrar_na_analise)
-        self.aquisicao.caderno.mudou.connect(self.area.cadernos_mudaram)
-        self.figuras = AreaDeFiguras(self.area, self.tarefas, self.materializacoes, vista_ativa=self.vista_ativa,
-                                     dialogos_de=lambda: self.controle.dialogos)
-        self.figuras.resumoMudou.connect(self.status_da_figura.setText)
+        # As Figuras e a Aquisição montam depois da primeira pintura (ou no primeiro uso): juntas, ~1,5 s da partida,
+        # com o Matplotlib que só as figuras usam. Até lá, a página delas é um lugar vazio na pilha.
+        self._aquisicao = self._figuras = None
         self.paginas = QStackedWidget()
         self.paginas.setObjectName("paginas_das_areas")
-        self._paginas_das_areas = {AREA_ANALISE: self.estudio, AREA_FIGURAS: self.figuras,
-                                   AREA_AQUISICAO: self.aquisicao}
+        self._paginas_das_areas = {AREA_ANALISE: self.estudio, AREA_FIGURAS: QWidget(), AREA_AQUISICAO: QWidget()}
         for pagina in self._paginas_das_areas.values():
             self.paginas.addWidget(pagina)
         self.setCentralWidget(self.paginas)
@@ -424,8 +417,59 @@ class JanelaPrincipal(QMainWindow):
         self._projeto_mudou()
         self.servico_de_fontes.acompanhar(projeto)
         self.area.acompanhar(projeto)
-        self.aquisicao.acompanhar(projeto)
-        self.figuras.acompanhar(projeto)
+        for montada in (self._aquisicao, self._figuras):
+            if montada is not None:
+                montada.acompanhar(projeto)
+
+    # ------------------------------------------------------------------ as áreas montadas depois
+
+    @property
+    def aquisicao(self):
+        """A área Aquisição (montada no primeiro uso, ou logo depois da primeira pintura)."""
+        if self._aquisicao is None:
+            from .areas.aquisicao.area import AreaDeAquisicao
+
+            area = AreaDeAquisicao(
+                self.conexao_da_placa, self.saude_da_placa, lambda: self.controle.dialogos,
+                self.transferencias_da_placa,
+                abrir_na_analise=lambda caminhos: self._na_analise(self.controle.abrir_capturas(caminhos)),
+                abrir_no_projeto=lambda caminhos: self.controle.abrir_capturas(caminhos),
+                mostrar_na_analise=self._mostrar_na_analise)
+            area.caderno.mudou.connect(self.area.cadernos_mudaram)
+            self._aquisicao = area
+            self._trocar_a_pagina(AREA_AQUISICAO, area)
+            area.acompanhar(self.projeto)
+        return self._aquisicao
+
+    @property
+    def figuras(self):
+        """A área Figuras (montada no primeiro uso, ou logo depois da primeira pintura)."""
+        if self._figuras is None:
+            from .areas.figuras.area import AreaDeFiguras
+
+            area = AreaDeFiguras(self.area, self.tarefas, self.materializacoes, vista_ativa=self.vista_ativa,
+                                 dialogos_de=lambda: self.controle.dialogos)
+            area.resumoMudou.connect(self.status_da_figura.setText)
+            self._figuras = area
+            self._trocar_a_pagina(AREA_FIGURAS, area)
+            area.acompanhar(self.projeto)
+        return self._figuras
+
+    def _trocar_a_pagina(self, indice: int, pagina: QWidget) -> None:
+        vazia = self._paginas_das_areas[indice]
+        posicao = self.paginas.indexOf(vazia)
+        atual = self.paginas.currentWidget() is vazia
+        self.paginas.insertWidget(posicao, pagina)
+        self.paginas.removeWidget(vazia)
+        vazia.deleteLater()
+        self._paginas_das_areas[indice] = pagina
+        if atual:
+            self.paginas.setCurrentWidget(pagina)
+
+    def montar_as_areas(self) -> None:
+        """As duas áreas que faltam, uma por vez, com a janela já na tela."""
+        QTimer.singleShot(ESPERA_PARA_MONTAR_MS, lambda: isValid(self) and self.figuras)
+        QTimer.singleShot(2 * ESPERA_PARA_MONTAR_MS, lambda: isValid(self) and self.aquisicao)
 
     def vista_ativa(self) -> Vista | None:
         """A vista da aba aberta: onde um canal novo é plotado."""
@@ -834,6 +878,10 @@ class JanelaPrincipal(QMainWindow):
     def mostrar_area(self, indice: int) -> None:
         """Mostra a área ``indice`` (``AREA_ANALISE``, ``AREA_FIGURAS``, ``AREA_AQUISICAO``): a página dela, a parte
         dela na barra de status e o seletor da barra superior."""
+        if indice == AREA_FIGURAS:
+            self.figuras                       # noqa: B018 -- monta, se ainda não montou
+        elif indice == AREA_AQUISICAO:
+            self.aquisicao                     # noqa: B018
         pagina = self._paginas_das_areas.get(indice)
         if pagina is None:
             return
@@ -975,6 +1023,8 @@ class JanelaPrincipal(QMainWindow):
         no diagnóstico), ele fica em atenção, com o motivo na dica."""
         r = resumo(self.conexao_da_placa)
         nivel, detalhe = r.nivel, r.detalhe
+        if self.conexao_da_placa.estado != "desconectada" and self._aquisicao is None:
+            self.aquisicao                     # noqa: B018 -- a placa em uso: a área (o caderno, a conferência) já ouve
         saude = self.saude_da_placa.saude
         if nivel == "conectada" and saude is not None and saude.tem_diagnostico:
             erros = [p for p in saude.diagnostico(self.saude_da_placa.firmware_do_aplicativo) if p.nivel == "erro"]
@@ -989,6 +1039,7 @@ class JanelaPrincipal(QMainWindow):
             self._primeira_exibicao = False
             if not self._layout_restaurado:
                 self.layout_padrao()
+            self.montar_as_areas()
             QTimer.singleShot(ATRASO_DA_CONSULTA_DE_VERSAO_MS, self.consultar_versao_nova)
 
     # ------------------------------------------------------------------ o erro inesperado
@@ -1012,7 +1063,7 @@ class JanelaPrincipal(QMainWindow):
             self.dialogo_de_erro = None
 
     def closeEvent(self, evento: QCloseEvent) -> None:
-        if not self.aquisicao.pode_fechar() or not self.controle.pode_descartar():
+        if (self._aquisicao is not None and not self._aquisicao.pode_fechar()) or not self.controle.pode_descartar():
             evento.ignore()
             return
         self.salvar_layout()

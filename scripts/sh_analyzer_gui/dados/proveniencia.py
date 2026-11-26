@@ -23,7 +23,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from .desenho_da_figura import vista_do_painel
 from .figura import Figura
 from .projeto import VistaSalva
 
@@ -58,6 +57,7 @@ def resumo_do_cabecalho(cabecalho: Mapping) -> dict:
 def da_figura(figura: Figura, vistas: Mapping[str, VistaSalva], fontes: Mapping[str, FonteDaProveniencia], *,
               aplicativo: str, momento: datetime | None = None) -> dict:
     """A proveniência de ``figura`` desenhada com ``vistas``: só as capturas que algum painel usa entram."""
+    from .desenho_da_figura import vista_do_painel  # aqui: a exportação dos dados não carrega o Matplotlib
     momento = momento or datetime.now(timezone.utc).astimezone()
     rotulos = figura.rotulos()
     paineis, usadas = [], []
