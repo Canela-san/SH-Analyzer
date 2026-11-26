@@ -265,3 +265,21 @@ def test_o_instrumento(janela, tracos, qtbot):
     qtbot.waitUntil(lambda: widget.resultado.canais[1].por_divisao == 1.0, timeout=ESPERA_MS)
     salvo = widget.opcoes.para_dict()
     assert type(widget.opcoes).de_dict(salvo) == widget.opcoes
+
+
+def test_o_vao_minimo_do_eixo_da_qualidade():
+    """Uma THD quase constante não ocupa a altura toda: o vão é pelo menos 1 % do valor, em volta do meio."""
+    import numpy as np
+    from sh_analyzer_gui.areas.analise.vistas_de_analise import vao_do_indice
+
+    mn, mx = vao_do_indice(np.array([3.9857, np.nan, 3.9867]))
+    assert mx - mn == pytest.approx(0.039867) and (mn + mx) / 2 == pytest.approx(3.9862)
+    assert vao_do_indice(np.array([1.0, 5.0])) == (1.0, 5.0)            # variação de verdade: como está
+    assert vao_do_indice(np.array([0.0, 0.0])) == (-1.0, 1.0)
+    assert vao_do_indice(np.array([np.nan])) is None
+
+
+def test_os_nomes_dos_eventos_na_fonte_da_interface(janela, tracos, qtbot):
+    eventos = abrir(janela, qtbot, "eventos")
+    eixo = eventos.grafico.getAxis("left")
+    assert eixo.categorias and eixo.style["tickFont"].family() != eventos.grafico.getAxis("bottom").style["tickFont"].family()

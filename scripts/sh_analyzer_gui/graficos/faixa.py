@@ -30,7 +30,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
 from ..componentes.numeros import PREFIXO_DO_EXPOENTE, decimal, expoente_de_engenharia
 from ..dados.unidades import aceita_prefixos
 from ..tema.aplicar import aparencia
-from ..tema.fontes import fonte_mono
+from ..tema.fontes import fonte_da_interface, fonte_mono
 from ..tema.tokens import TAMANHOS, Tema
 from .escalas import CaixaComEscalas
 
@@ -95,10 +95,11 @@ class EixoDoTema(pg.AxisItem):
     conversaoMudou = Signal()
     expoente_maximo = 9
 
-    def __init__(self, orientacao: str, *, expoente_maximo: int = 9):
+    def __init__(self, orientacao: str, *, expoente_maximo: int = 9, categorias: bool = False):
         super().__init__(orientacao)
         self.conversao = (1.0, 0.0)             # (k, c): na vista = k·u + c
         self.expoente_maximo = expoente_maximo
+        self.categorias = categorias            # as marcas são nomes (os tipos de evento): a fonte da interface
         self._medidor = MedidorDeTexto()
         self.enableAutoSIPrefix(True)            # o setRange chama o updateAutoSIPrefix (o daqui)
         self.aplicar_tema(aparencia().tema)
@@ -108,7 +109,8 @@ class EixoDoTema(pg.AxisItem):
         mudado). O rótulo volta à cor do eixo: quem o pinta com a cor de um traço o pinta de novo depois."""
         self.setPen(pg.mkPen(t.borda_forte))
         self.setTextPen(pg.mkPen(t.eixo))
-        self.setTickFont(fonte_mono(TAMANHOS["legenda"]))
+        self.setTickFont(fonte_da_interface(TAMANHOS["legenda"]) if getattr(self, "categorias", False)
+                         else fonte_mono(TAMANHOS["legenda"]))
         self.updateAutoSIPrefix()
 
     def definir_rotulo(self, texto: str, unidade: str = "", cor: str | None = None) -> None:

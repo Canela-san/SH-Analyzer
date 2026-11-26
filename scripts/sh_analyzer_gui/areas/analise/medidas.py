@@ -76,10 +76,7 @@ class TabelaDeMedidas(QStackedWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("tabela_de_medidas")
-        self.vazio = EstadoVazio(self.tr("Sem medidas"),
-                                 self.tr("Plote um canal: as medidas da janela visível aparecem aqui; ligue os "
-                                         "cursores (C) para medir entre eles."),
-                                 icone_nome="regua", compacto=True)
+        self.vazio = EstadoVazio(self.tr("Sem medidas"), self._texto_do_vazio(None), icone_nome="regua", compacto=True)
         conteudo = QWidget()
         coluna = QVBoxLayout(conteudo)
         coluna.setContentsMargins(10, 6, 10, 4)
@@ -155,6 +152,20 @@ class TabelaDeMedidas(QStackedWidget):
             self.tabela.resizeColumnToContents(coluna)
         self.tabela.setUpdatesEnabled(True)
 
+    def _texto_do_vazio(self, tipo: str | None) -> str:
+        """O que fazer para ter medidas com a vista ``tipo`` à frente (``None``: nenhuma vista, ou uma de tempo)."""
+        if tipo == "espectro":
+            return self.tr("Ligue os cursores do espectro (C): os níveis neles e a diferença entre eles aparecem aqui.")
+        if tipo not in (None, "tempo"):
+            return self.tr("Os números desta vista estão na tabela dela. As medidas do tempo (RMS, pico, f₁) aparecem "
+                           "aqui com uma vista de tempo à frente.")
+        return self.tr("Plote um canal: as medidas da janela visível aparecem aqui; ligue os cursores (C) para medir "
+                       "entre eles.")
+
+    def explicar_o_vazio(self, tipo: str | None) -> None:
+        """O texto do estado vazio para a vista à frente (``tipo``)."""
+        self.vazio.texto.setText(self._texto_do_vazio(tipo))
+
     def mostrar(self, pedido: PedidoDeMedida | None, medidas: list[MedidaDoTraco]) -> None:
         self.pedido, self.medidas, self.da_vista = pedido, list(medidas), None
         if not medidas or pedido is None:
@@ -168,9 +179,9 @@ class TabelaDeMedidas(QStackedWidget):
             self.resumo.setText(self.tr("Cursores: {} → {} · Δt {} · 1/Δt {}").format(
                 formatar_si(pedido.inicio_s, "s", 7), formatar_si(pedido.fim_s, "s", 7), formatar_si(dt, "s", 5),
                 inverso))
-        else:
+        else:                       # a janela não é uma medida: os algarismos que se leem (os cursores, todos)
             self.resumo.setText(self.tr("Janela visível: {} → {} · {}").format(
-                formatar_si(pedido.inicio_s, "s", 7), formatar_si(pedido.fim_s, "s", 7), formatar_si(dt, "s", 5)))
+                formatar_si(pedido.inicio_s, "s", 5), formatar_si(pedido.fim_s, "s", 5), formatar_si(dt, "s", 4)))
         t = aparencia().tema
         self.tabela.setUpdatesEnabled(False)
         self.tabela.setRowCount(len(medidas))

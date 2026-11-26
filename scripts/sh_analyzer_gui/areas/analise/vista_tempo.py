@@ -1093,7 +1093,8 @@ class VistaDeTempo(QWidget):
             return
         x0, x1 = self.regiao_do_traco(referencia, *janela) if referencia is not None else janela
         amostras = (x1 - x0) * item._taxa
-        self.info.setText(f"{formatar_si(x0, '', 6)} – {formatar_si(x1, 's', 6)} · {formatar_si(x1 - x0, 's', 3)} · "
+        # Cada ponta com a unidade dela (o prefixo pode ser outro: "−195,39 ms – 5,4383 s").
+        self.info.setText(f"{formatar_si(x0, 's', 5)} – {formatar_si(x1, 's', 5)} · {formatar_si(x1 - x0, 's', 3)} · "
                           f"{formatar_si(amostras, '', 3)} amostras".replace("-", "−").replace(" − ", " – "))
 
     # ------------------------------------------------------------------ selecionar

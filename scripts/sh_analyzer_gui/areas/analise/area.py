@@ -454,12 +454,14 @@ class AreaDeAnalise(QObject):
 
     def _sem_regiao(self) -> None:
         if self.sender() is self.abas.currentWidget() and isValid(self.tabela_de_medidas):
+            self.tabela_de_medidas.explicar_o_vazio(getattr(getattr(self.sender(), "vista", None), "tipo", None))
             self.tabela_de_medidas.mostrar(None, [])
 
     def _aba_mudou(self, _i: int) -> None:
         widget = self.abas.currentWidget()
         self._inspetor_da_vista(trocou_de_aba=True)
         if isValid(self.tabela_de_medidas):
+            self.tabela_de_medidas.explicar_o_vazio(getattr(getattr(widget, "vista", None), "tipo", None))
             if widget is None:
                 self.tabela_de_medidas.mostrar(None, [])
             else:

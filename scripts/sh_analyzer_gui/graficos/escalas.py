@@ -304,8 +304,11 @@ class EscalasDaCaixa(QObject):
             return
         x = self.caixa.childrenBounds(items=travados if self.com_tempo and travados else list(visiveis.values()))[0]
         y = self.caixa.childrenBounds(items=travados)[1] if travados else None
-        if x is not None or y is not None:
-            self.caixa.setRange(xRange=x, yRange=y, padding=folga)
+        # O tempo sem folga (a captura começa no 0 da tela, não em −0,2 s); o Y com ela, para o traço não encostar.
+        if x is not None:
+            self.caixa.setXRange(*x, padding=0)
+        if y is not None:
+            self.caixa.setYRange(*y, padding=folga)
         (x0, x1), (y0, y1) = self.caixa.viewRange()
         for traco, item in visiveis.items():
             if traco not in self._soltos:
@@ -315,7 +318,7 @@ class EscalasDaCaixa(QObject):
             if _finitos(limites_y):
                 e = Escala(e.x, Afim.enquadrando(limites_y, (y0, y1), folga))
             if self.com_tempo and _finitos(limites_x):
-                e = Escala(Afim.enquadrando(limites_x, (x0, x1), folga), e.y)
+                e = Escala(Afim.enquadrando(limites_x, (x0, x1), 0.0), e.y)
             self._definir(traco, e)
 
     def manter(self, limites: Mapping) -> None:

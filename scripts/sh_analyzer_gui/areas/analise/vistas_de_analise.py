@@ -465,7 +465,8 @@ class VistaDeEventos(VistaLigada):
         self.filtro.currentIndexChanged.connect(lambda _: self._desenhar() if self.resultado is not None else None)
         for w in (self.tensao, rotulo, self.referencia, self.supra, self.filtro):
             self._linha.addWidget(w)
-        self.grafico = pg.PlotWidget(axisItems={"bottom": EixoDoTema("bottom"), "left": EixoDoTema("left")})
+        self.grafico = pg.PlotWidget(axisItems={"bottom": EixoDoTema("bottom"),
+                                                "left": EixoDoTema("left", categorias=True)})
         self.grafico.setObjectName("grafico_eventos")
         self.grafico.setMenuEnabled(False)
         self.grafico.hideButtons()
@@ -598,6 +599,27 @@ class VistaDeEventos(VistaLigada):
 # ------------------------------------------------------------------ a qualidade de energia (F7.6)
 
 
+VAO_MINIMO_RELATIVO = 0.01
+"""O menor vão do eixo Y da qualidade, relativo ao valor: uma THD de 3,9857 a 3,9867 % não ocupa a altura toda (o
+ruído da conta pareceria uma variação), e a frequência de 60 Hz mostra pelo menos ±0,3 Hz."""
+
+
+def vao_do_indice(y: np.ndarray, relativo: float = VAO_MINIMO_RELATIVO) -> tuple[float, float] | None:
+    """O trecho do Y para os valores ``y`` (os NaN não contam): o dos valores, aberto em volta do meio até
+    ``relativo`` × o maior valor absoluto, quando é menor; None sem valores."""
+    finitos = y[np.isfinite(y)]
+    if not finitos.size:
+        return None
+    mn, mx = float(finitos.min()), float(finitos.max())
+    minimo = relativo * max(abs(mn), abs(mx))
+    if mx - mn < minimo:
+        meio = (mn + mx) / 2
+        mn, mx = meio - minimo / 2, meio + minimo / 2
+    if mx == mn:                                # tudo zero
+        mn, mx = mn - 1.0, mx + 1.0
+    return mn, mx
+
+
 class VistaDeQualidade(VistaLigada):
     """Os índices de qualidade em janelas de 10/12 ciclos (IEC 61000-4-30) ao longo do tempo, ligados à vista de
     tempo, os agregados de 150/180 ciclos e a tabela das estatísticas de todos os índices."""
@@ -686,6 +708,14 @@ class VistaDeQualidade(VistaLigada):
             return np.zeros(0, dtype=bool)
         return r.marcadas() if self.opcoes.marcar else np.zeros(r.n_janelas, dtype=bool)
 
+    def _enquadrar_y(self, y: np.ndarray) -> None:
+        """O Y nos valores, com o vão mínimo (:func:`vao_do_indice`); sem valores, o automático."""
+        vao = vao_do_indice(np.asarray(y, dtype=float))
+        if vao is None:
+            self.grafico.enableAutoRange(axis="y")
+        else:
+            self.grafico.setYRange(*vao, padding=0.08)
+
     def _desenhar(self) -> None:
         r = self.resultado
         if r is None:
@@ -719,7 +749,7 @@ class VistaDeQualidade(VistaLigada):
         else:
             self.curva_agregada.setData([], [])
         self.grafico.setLabel("left", self.tr(q.NOMES_DOS_INDICES[nome]), units=unidade)
-        self.grafico.enableAutoRange(axis="y")
+        self._enquadrar_y(y)
         self._ligar_o_tempo(self.grafico.getViewBox())
         self.tabela.setHorizontalHeaderLabels([self.tr("Índice"), self.tr("Mínimo"), self.tr("Média"), "P95", "P99",
                                                self.tr("Máximo")])
