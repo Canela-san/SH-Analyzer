@@ -11,10 +11,12 @@ from __future__ import annotations
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QListWidget, QListWidgetItem, QStackedWidget, QWidget
 
+from ..dados.avisos import para_a_tela
 from ..dados.captura import Aviso
 from ..tema.aplicar import aparencia
 from ..tema.icones import icone
 from ..tema.tokens import Tema
+from .numeros import separador_decimal
 from .painel import EstadoVazio
 
 ICONES = {"info": ("ok", "acento"), "aviso": ("alerta", "aviso"), "erro": ("alerta", "erro")}
@@ -99,7 +101,8 @@ class ListaDeAvisos(QStackedWidget):
         for aviso, origem, _ in self._avisos:
             nome_icone, papel = ICONES[aviso.nivel]
             rotulo = self._rotulos.get(origem, "")
-            texto = f"{rotulo}: {aviso.texto}" if rotulo else aviso.texto
+            frase = para_a_tela(aviso, separador_decimal()).texto     # as palavras da interface, não as da CLI
+            texto = f"{rotulo}: {frase}" if rotulo else frase
             item = QListWidgetItem(icone(nome_icone, getattr(tema, papel)), texto)
             item.setToolTip(texto)
             self.lista.addItem(item)

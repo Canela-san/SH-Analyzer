@@ -10,10 +10,11 @@ from PySide6.QtCore import QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
-from ..dados.avisos import pior_nivel
+from ..dados.avisos import para_a_tela, pior_nivel
 from ..tema.aplicar import aparencia
 from ..tema.icones import icone
 from ..tema.tokens import TAMANHOS, cor_do_traco
+from .numeros import separador_decimal
 
 ALTURA = 24
 RAIO = 6
@@ -80,7 +81,7 @@ class ChipDeTraco(QWidget):
             self.escala = escala
             mudou_a_dica = True
         if mudou_a_dica:
-            linhas = [f"• {a.texto}" for a in self.avisos]
+            linhas = [f"• {para_a_tela(a, separador_decimal()).texto}" for a in self.avisos]
             if self.escala == "solta":
                 linhas.append(self.tr("Escala própria (destravada): o zoom e o pan do Y com ele selecionado são só "
                                       "dele"))

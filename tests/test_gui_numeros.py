@@ -60,3 +60,23 @@ def test_formatar_duracao(segundos, texto):
     from sh_analyzer_gui.componentes.numeros import formatar_duracao
 
     assert formatar_duracao(segundos) == texto
+
+
+@pytest.mark.parametrize(("valor", "especificacao", "virgula", "ponto"), [
+    (2097152, "d", "2 097 152", "2 097 152"),     # o espaço fino nos milhares, nos dois
+    (8192, "d", "8192", "8192"),                                     # menos de 5 algarismos: junto
+    (5.2431, ".3f", "5,243", "5.243"),
+    (399998.72, ".2f", "399998,72", "399998.72"),
+    (19.357, "g", "19,357", "19.357"),
+])
+def test_formatar_campo(valor, especificacao, virgula, ponto):
+    from sh_analyzer_gui.componentes import numeros
+
+    antes = numeros.separador_decimal()
+    try:
+        numeros.definir_separador_decimal(",")
+        assert numeros.formatar_campo(valor, especificacao) == virgula
+        numeros.definir_separador_decimal(".")
+        assert numeros.formatar_campo(valor, especificacao) == ponto
+    finally:
+        numeros.definir_separador_decimal(antes)

@@ -26,6 +26,7 @@ from supraharmonicos.api import cabecalho_em_dict, descrever_cabecalho
 
 from ...componentes.basicos import Botao
 from ...componentes.caderno import ListaDoCaderno
+from ...componentes.numeros import formatar_campo
 from ...componentes.painel import EstadoVazio
 from ...componentes.toast import Toast
 from ...dados import caderno
@@ -153,7 +154,7 @@ class InspetorDaFonte(QScrollArea):
             copiar.addWidget(self.copiar_json)
             copiar.addStretch(1)
             coluna.addLayout(copiar)
-            for titulo, linhas in descrever_cabecalho(fonte.fonte.captura):
+            for titulo, linhas in descrever_cabecalho(fonte.fonte.captura, formatar_campo):
                 if linhas:
                     coluna.addWidget(self._secao(titulo, linhas))
             self._atualizar_estado()
@@ -163,7 +164,7 @@ class InspetorDaFonte(QScrollArea):
     def texto_do_cabecalho(self) -> str:
         """O cabeçalho em texto, seção a seção, como aparece aqui ("Captura", "  Arquivo: c.bin", ...)."""
         linhas = []
-        for titulo, campos in descrever_cabecalho(self.fonte.fonte.captura):
+        for titulo, campos in descrever_cabecalho(self.fonte.fonte.captura, formatar_campo):
             if campos:
                 linhas.append(titulo)
                 linhas += [f"  {nome}: {valor}" for nome, valor in campos]

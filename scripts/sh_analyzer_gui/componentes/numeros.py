@@ -45,6 +45,21 @@ def decimal(texto: str) -> str:
     return texto if _separador == "." else texto.replace(".", _separador)
 
 
+ESPACO_DO_MILHAR = "\u202f"
+"""O separador de milhar: o espaço fino inquebrável (o do SI e da ABNT), que não se confunde com a vírgula nem com o
+ponto decimal."""
+
+
+def formatar_campo(valor: float, especificacao: str) -> str:
+    """Um número com a especificação do ``format`` (``".3f"``, ``"g"``, ``"d"``) no jeito da tela: o separador
+    decimal das configurações e, nos inteiros de 5 algarismos ou mais, o espaço fino entre os milhares ("2 097 152").
+    É o ``numero`` que a interface passa ao ``api.descrever_cabecalho``."""
+    if especificacao == "d":
+        inteiro = int(valor)
+        return f"{inteiro:,d}".replace(",", ESPACO_DO_MILHAR) if abs(inteiro) >= 10_000 else str(inteiro)
+    return decimal(format(valor, especificacao))
+
+
 class NumeroInvalido(ValueError):
     """O texto não é um número que o campo aceita (com a mensagem pronta para mostrar)."""
 

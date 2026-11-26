@@ -27,7 +27,7 @@ def test_os_avisos_do_canal(tmp_path):
     suposta = canal(tmp_path, versao=2)                                  # v2: o cabeçalho não grava a faixa
     assert not suposta.faixa_confiavel
     (aviso,) = avisos_do_canal(suposta)
-    assert aviso.nivel == "aviso" and "não registra a faixa do ADC" in aviso.texto and "--faixa 20.48" in aviso.texto
+    assert aviso.nivel == "aviso" and "não registra a faixa do ADC" in aviso.texto and "±20.48 V" in aviso.texto
     problema = avisos_do_canal(canal(tmp_path, problema_sonda="o perfil 'X' foi feito para a faixa 10.24"))
     assert [a.texto for a in problema] == ["a sonda registrada não pôde ser usada: o perfil 'X' foi feito para a "
                                            "faixa 10.24"]
@@ -121,3 +121,20 @@ def test_o_chip_mostra_os_avisos_do_traco(janela, qtbot, tmp_path):
     assert espectro.chips[traco].nivel == "erro" and "faixa do ADC" in espectro.chips[traco].toolTip()
     fonte.definir_integridade("confere")
     assert espectro.chips[traco].nivel == "aviso" and "CRC" not in espectro.chips[traco].toolTip()
+
+
+def test_os_avisos_do_motor_nas_palavras_da_interface():
+    """O aviso da CLI (as opções --sonda-perfil) vira o que fazer na janela, e os números ganham a vírgula; versões,
+    IPs e nomes de arquivo ficam como estão."""
+    from sh_analyzer_gui.dados.avisos import com_o_separador, para_a_tela
+
+    cli = api.Aviso("aviso", "canal 0 é de corrente mas não tem sonda/perfil resolvido -- usando só --ganho escalar "
+                             "(sem correção por frequência). Registre a sonda na captura (--sonda em ler_adc) ou use "
+                             "--sonda-perfil 0:ARQUIVO.")
+    tela = para_a_tela(cli)
+    assert tela.nivel == "aviso" and "--" not in tela.texto and "Correção de sonda" in tela.texto
+    ganho = para_a_tela(api.Aviso("info", "Ganho por canal: o declarado na captura (ler_adc --ganho) -- canal 0: 10, "
+                                          "canal 1: 19.357"))
+    assert ganho.texto == "o ganho de cada canal é o declarado na captura: canal 0: 10; canal 1: 19,357"
+    assert com_o_separador("v0.8 em 192.168.6.2, c_1.5.bin, 3.25 V", ",") == "v0.8 em 192.168.6.2, c_1.5.bin, 3,25 V"
+    assert com_o_separador("3.25 V", ".") == "3.25 V"
