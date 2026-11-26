@@ -41,12 +41,13 @@ from .dados import cache as cache_de_piramides
 from .dados import figura as fig
 from .dados import materializacao, pacotes, unidades
 from .graficos.faixa import definir_prefixos_nos_eixos
-from .tema.aplicar import MODOS, MOVIMENTOS, aparencia
+from .tema.aplicar import DENSIDADES, MODOS, MOVIMENTOS, aparencia
 from .tema.fontes import escolher_fonte, familias_disponiveis
 
 CHAVE_DO_TEMA = "aparencia/tema"
 CHAVES_DAS_FONTES = {"interface": "aparencia/fonte_interface", "mono": "aparencia/fonte_mono"}
 CHAVE_DO_MOVIMENTO = "aparencia/movimento"
+CHAVE_DA_DENSIDADE = "aparencia/densidade"
 CHAVE_DO_SEPARADOR = "numeros/separador_decimal"
 CHAVE_DOS_PREFIXOS = "numeros/prefixos_nos_eixos"
 CHAVE_DAS_UNIDADES = "unidades/proprias"
@@ -115,6 +116,17 @@ def movimento_salvo() -> str:
 def mudar_movimento(modo: str) -> None:
     aparencia().definir_movimento(modo)
     gravar(CHAVE_DO_MOVIMENTO, modo)
+
+
+def densidade_salva() -> str:
+    """``"confortavel"`` (o padrão) ou ``"compacta"`` (GE-05)."""
+    densidade = ler_texto(CHAVE_DA_DENSIDADE, "confortavel")
+    return densidade if densidade in DENSIDADES else "confortavel"
+
+
+def mudar_densidade(densidade: str) -> None:
+    aparencia().definir_densidade(densidade)
+    gravar(CHAVE_DA_DENSIDADE, densidade)
 
 
 def separador_salvo() -> str:
@@ -376,6 +388,7 @@ def aplicar_na_partida(app: QApplication | None = None) -> None:
     serviços)."""
     aplicar_fontes_salvas(app)
     aparencia(app).definir_movimento(movimento_salvo())
+    aparencia(app).definir_densidade(densidade_salva())
     definir_separador_decimal(separador_salvo())
     definir_prefixos_nos_eixos(prefixos_salvos())
     unidades.definir_proprias(unidades_salvas())

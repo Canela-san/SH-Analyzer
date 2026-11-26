@@ -91,6 +91,23 @@ def test_as_preferencias_gravadas_valem_na_partida(app):
     assert aparencia().movimento == "sistema" and numeros.separador_decimal() == ","
 
 
+def test_a_densidade_compacta(app):
+    """GE-05: a compacta tira metade do espaço de cima e de baixo dos controles, na hora, e fica gravada."""
+    from PySide6.QtWidgets import QApplication
+
+    try:
+        preferencias.mudar_densidade("compacta")
+        assert aparencia().densidade == "compacta" and preferencias.densidade_salva() == "compacta"
+        assert "QTabBar::tab { background: transparent; color:" in QApplication.instance().styleSheet()
+        assert "padding: 3px 12px" in QApplication.instance().styleSheet()          # as abas: 6px 12px antes
+        assert aplicar.compactar("padding: 4px;") == "padding: 2px 4px;"
+        with pytest.raises(ValueError):
+            preferencias.mudar_densidade("apertada")
+    finally:
+        preferencias.mudar_densidade("confortavel")
+    assert "padding: 6px 12px" in QApplication.instance().styleSheet()
+
+
 def test_o_movimento_segue_o_sistema_ou_a_escolha(app, monkeypatch):
     monkeypatch.setattr(aplicar, "movimento_reduzido_do_sistema", lambda: True)
     preferencias.mudar_movimento("sistema")
@@ -239,8 +256,10 @@ def test_trocar_o_separador_reescreve_os_numeros_da_tela(janela, qtbot, tmp_path
     assert rms == "1,061 V"
     eixo = tempo.faixas[traco.receita.faixa].getAxis("left")
     assert eixo.tickStrings([0.5, 1.0], 1.0, 0.5) == ["0,5", "1,0"]
+    tempo.mostrar_tempo(0.0125, 0.1875)                                  # uma janela com casas decimais
+    qtbot.waitUntil(lambda: "12,5 ms" in tempo.info.text(), timeout=5_000)
     info = tempo.info.text()
-    assert "," in info                                                  # −3,9999 m – 203,995 ms · …
+    assert "," in info                                                  # 12,5 ms – 187,5 ms · …
     modelo = janela.painel_projeto.modelo
     detalhe = modelo.data(modelo.indice_da_fonte(fonte), PAPEL_DETALHE)
     assert "0,2 s" in detalhe

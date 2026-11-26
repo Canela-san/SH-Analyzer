@@ -15,6 +15,8 @@ informa, vale o escuro, o da marca.
 
 from __future__ import annotations
 
+import re
+
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication
@@ -24,6 +26,7 @@ from .tokens import TEMAS, Tema
 
 MODOS = ("sistema", "escuro", "claro")
 MOVIMENTOS = ("sistema", "reduzido", "normal")
+DENSIDADES = ("confortavel", "compacta")
 
 
 class Aparencia(QObject):
@@ -37,6 +40,7 @@ class Aparencia(QObject):
         self.modo = "sistema"
         self.tema: Tema = TEMAS["escuro"]
         self.movimento = "sistema"
+        self.densidade = "confortavel"
 
     def aplicar(self, modo: str = "sistema") -> Tema:
         """Aplica ``modo`` (``"sistema"``, ``"escuro"`` ou ``"claro"``) e devolve o tema em uso."""
@@ -46,9 +50,19 @@ class Aparencia(QObject):
         self.tema = TEMAS[modo] if modo != "sistema" else tema_do_sistema()
         self._app.setStyle("Fusion")
         self._app.setPalette(gerar_paleta(self.tema))
-        self._app.setStyleSheet(gerar_qss(self.tema))
+        self._app.setStyleSheet(gerar_qss(self.tema, self.densidade))
         self.mudou.emit(self.tema)
         return self.tema
+
+    def definir_densidade(self, densidade: str) -> None:
+        """``"confortavel"`` (o padrão) ou ``"compacta"`` (GE-05: os espaços internos dos controles menores, mais
+        linhas na tela); vale na hora, sem reiniciar."""
+        if densidade not in DENSIDADES:
+            raise ValueError(f"densidade desconhecida: {densidade!r} (use {', '.join(DENSIDADES)})")
+        if densidade != self.densidade:
+            self.densidade = densidade
+            self._app.setStyleSheet(gerar_qss(self.tema, densidade))
+            self.mudou.emit(self.tema)
 
     def alternar(self) -> Tema:
         """Troca entre o escuro e o claro (o atalho da barra de status)."""
@@ -128,7 +142,38 @@ def _url(arquivo) -> str:
     return arquivo.as_posix()
 
 
-def gerar_qss(t: Tema) -> str:
+_PADDING = re.compile(r"padding: ([^;}]+)")
+
+
+def _metade(valor: str) -> str:
+    """Um comprimento do QSS pela metade (``"6px"`` vira ``"3px"``, no mínimo 1 px; o ``0`` fica)."""
+    if not valor.endswith("px"):
+        return valor
+    n = int(valor[:-2])
+    return f"{max(1, round(n / 2)) if n else 0}px"
+
+
+def compactar(qss: str) -> str:
+    """A densidade compacta: o espaço interno de cima e de baixo de cada controle pela metade (no mínimo 1 px); o
+    dos lados fica, para o texto não encostar. Os tamanhos fixos (as barras de rolagem, os ícones) não mudam."""
+    def menor(m: re.Match) -> str:
+        partes = m[1].split()
+        if len(partes) == 1:                     # os quatro lados: a vertical pela metade, a horizontal como está
+            partes = [partes[0], partes[0]]
+        partes[0] = _metade(partes[0])
+        if len(partes) >= 3:                     # cima, lados, baixo (e o lado esquerdo)
+            partes[2] = _metade(partes[2])
+        return "padding: " + " ".join(partes)
+    return _PADDING.sub(menor, qss)
+
+
+def gerar_qss(t: Tema, densidade: str = "confortavel") -> str:
+    """A folha de estilos do tema na ``densidade`` (:func:`compactar`)."""
+    qss = _gerar_qss(t)
+    return compactar(qss) if densidade == "compacta" else qss
+
+
+def _gerar_qss(t: Tema) -> str:
     """A folha de estilos do tema. Os botões aceitam ``setProperty("variante", "primario" | "fantasma" |
     "perigo")``. Sem ``font-size``: o tamanho base vem da fonte da aplicação (``fontes.fonte_da_interface``), e um
     ``font-size`` no QSS passaria por cima do ``setFont`` de cada widget. Os campos numéricos (``QSpinBox``) ficam

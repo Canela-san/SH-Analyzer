@@ -359,7 +359,8 @@ class DelegadoDaArvore(QStyledItemDelegate):
     """Desenha cada linha da árvore com o tema (o mockup A1)."""
 
     def sizeHint(self, opcao: QStyleOptionViewItem, indice: QModelIndex) -> QSize:
-        return QSize(super().sizeHint(opcao, indice).width(), ALTURA_DA_LINHA)
+        compacta = aparencia().densidade == "compacta"         # GE-05: mais linhas na tela
+        return QSize(super().sizeHint(opcao, indice).width(), ALTURA_DA_LINHA - (4 if compacta else 0))
 
     def paint(self, p: QPainter, opcao: QStyleOptionViewItem, indice: QModelIndex) -> None:
         t = aparencia().tema

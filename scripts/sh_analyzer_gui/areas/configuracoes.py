@@ -40,7 +40,7 @@ from ..componentes.numeros import formatar_bytes, formatar_duracao, formatar_si
 from ..componentes.toast import Toast
 from ..dados import unidades
 from ..graficos.faixa import prefixos_nos_eixos
-from ..tema.aplicar import MODOS, MOVIMENTOS, aparencia
+from ..tema.aplicar import DENSIDADES, MODOS, MOVIMENTOS, aparencia
 from ..tema.fontes import familias_disponiveis, fonte_escolhida
 from ..tema.icones import icone
 from ..tema.tokens import TAMANHOS
@@ -183,6 +183,12 @@ class DialogoDeConfiguracoes(QDialog):
         formulario.addRow(self.tr("Movimento"), self._com_dica(
             self.movimento, self.tr("Reduzido: nada desliza nem esmaece (as mensagens aparecem e somem de uma vez). "
                                     "O do sistema segue a opção de acessibilidade do sistema operacional.")))
+        self.densidade = Segmentado([self.tr("Confortável"), self.tr("Compacta")],
+                                    DENSIDADES.index(aparencia().densidade))
+        self.densidade.escolhaMudou.connect(lambda i: preferencias.mudar_densidade(DENSIDADES[i]))
+        formulario.addRow(self.tr("Densidade"), self._com_dica(
+            self.densidade, self.tr("Compacta: os controles com menos espaço em cima e embaixo, para caber mais na "
+                                    "tela (num notebook, por exemplo). Vale na hora.")))
         return pagina
 
     def _pagina_numeros(self) -> QWidget:
