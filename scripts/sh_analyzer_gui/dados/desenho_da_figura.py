@@ -742,6 +742,7 @@ def desenhar(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFig
         leitura = _Leitura(curvas, exato=exato, todos=todos_os_pontos, progresso=progresso, cancelado=cancelado)
         for curva in curvas:
             _reduzir(curva, exato=exato, todos=todos_os_pontos, ler=leitura.leu)
+        _assentar_as_legendas(mpl)
         if progresso is not None:
             progresso(1.0)
     return PaginaDesenhada(mpl, rc, caixas, [c.linha for c in curvas],
@@ -868,7 +869,75 @@ def _legenda(eixo, painel: Painel, linhas: list) -> None:
     lugar = dict(LUGARES_DA_LEGENDA[painel.legenda])
     if painel.legenda == "fora_acima":
         lugar["ncols"] = len(linhas)
-    eixo.legend(handles=linhas, **lugar)
+    legenda = eixo.legend(handles=linhas, **lugar)
+    legenda._sh_melhor = painel.legenda == "melhor"     # o canto sai depois dos dados: _assentar_as_legendas
+
+
+CANTOS_DA_LEGENDA = (("upper right", 1.0, 1.0), ("upper left", 0.0, 1.0), ("lower right", 1.0, 0.0),
+                     ("lower left", 0.0, 0.0))
+"""Os cantos da legenda automática, na ordem de preferência do empate."""
+GRADE_DA_LEGENDA = (24, 16)
+CAIXA_DA_LEGENDA = (0.42, 0.32)
+
+
+def _ocupacao(pontos: np.ndarray, colunas: int, linhas: int) -> np.ndarray:
+    """As células de uma grade (em fração do eixo) por onde as linhas passam: cada segmento amostrado na resolução da
+    grade, e não só os vértices (a redução M4 guarda o mínimo e o máximo de cada coluna de pixels, e o traço vertical
+    entre eles cruza células sem vértice)."""
+    grade = np.zeros((linhas, colunas), dtype=bool)
+    p = pontos[np.isfinite(pontos).all(axis=1)]
+    if len(p) < 2:
+        p = np.vstack([p, p]) if len(p) else p
+    if not len(p):
+        return grade
+    a, b = p[:-1], p[1:]
+    n = np.ceil(np.maximum(np.abs(b[:, 0] - a[:, 0]) * colunas, np.abs(b[:, 1] - a[:, 1]) * linhas)).astype(int) + 1
+    n = np.minimum(n, colunas + linhas + 1)
+    qual = np.repeat(np.arange(len(a)), n)
+    t = (np.arange(int(n.sum())) - np.repeat(np.cumsum(n) - n, n)) / np.repeat(np.maximum(n - 1, 1), n)
+    q = a[qual] + (b[qual] - a[qual]) * t[:, None]
+    dentro = (q[:, 0] >= 0) & (q[:, 0] <= 1) & (q[:, 1] >= 0) & (q[:, 1] <= 1)
+    c = np.minimum((q[dentro, 0] * colunas).astype(int), colunas - 1)
+    r = np.minimum((q[dentro, 1] * linhas).astype(int), linhas - 1)
+    grade[r, c] = True
+    return grade
+
+
+def _assentar_as_legendas(mpl) -> None:
+    """O canto de cada legenda automática, depois dos dados: o que cobre menos células da grade por onde as linhas
+    passam, fora do inset. O "best" do Matplotlib decidia pelos vértices desenhados, que a redução M4 faz diferentes
+    em cada dpi: a PNG e o PDF da mesma figura punham a legenda em cantos diferentes, às vezes em cima do inset (que
+    ele não considera)."""
+    colunas, linhas = GRADE_DA_LEGENDA
+    for eixo in mpl.axes:
+        legenda = eixo.get_legend()
+        if legenda is None or not getattr(legenda, "_sh_melhor", False):
+            continue
+        posicao = eixo.get_position().bounds
+        grade = np.zeros((linhas, colunas), dtype=bool)
+        for outro in mpl.axes:                    # o eixo e o gêmeo dele (o twinx do espectro)
+            if outro.get_position().bounds != posicao:
+                continue
+            para_o_eixo = outro.transScale + outro.transLimits
+            for linha in outro.lines:
+                x, y = (np.asarray(v, dtype=float) for v in linha.get_data())
+                if len(x):
+                    grade |= _ocupacao(para_o_eixo.transform(np.column_stack([x, y])), colunas, linhas)
+        inset = getattr(eixo, "_sh_inset", None)
+        largura, altura = CAIXA_DA_LEGENDA
+        melhor, menor = CANTOS_DA_LEGENDA[0][0], None
+        for nome, cx, cy in CANTOS_DA_LEGENDA:
+            x0, y0 = cx - largura * cx, cy - altura * cy
+            c0, c1 = int(x0 * colunas), int(np.ceil((x0 + largura) * colunas))
+            r0, r1 = int(y0 * linhas), int(np.ceil((y0 + altura) * linhas))
+            nota = int(grade[r0:r1, c0:c1].sum())
+            if inset is not None:
+                ix, iy, il, ia = inset
+                if x0 < ix + il and ix < x0 + largura and y0 < iy + ia and iy < y0 + altura:
+                    nota += colunas * linhas
+            if menor is None or nota < menor:
+                melhor, menor = nome, nota
+        legenda.set_loc(melhor)
 
 
 def _fator_do_tempo(janela: tuple[float, float], prefixo: int | None) -> tuple[float, str]:
@@ -921,6 +990,7 @@ def _inset_do_tempo(eixo, faixa: _Faixa, plano: _Plano, figura: Figura, suavizar
                     fator_y: float) -> list[_Curva]:
     inset, painel = plano.painel.inset, plano.painel
     dentro = eixo.inset_axes(inset.posicao)
+    eixo._sh_inset = tuple(inset.posicao)          # a legenda automática foge dele
     ordem = _ordem_dos_marcadores(painel, [s.traco for s in faixa.series])
     curvas = []
     for s in faixa.series:
@@ -1016,6 +1086,7 @@ def _desenhar_o_espectro(eixo, plano: _Plano, figura: Figura, textos: dict, suav
 def _inset_do_espectro(eixo, plano: _Plano, figura: Figura, suavizar: bool, fator_x: float) -> list[_Curva]:
     inset, painel = plano.painel.inset, plano.painel
     dentro = eixo.inset_axes(inset.posicao)
+    eixo._sh_inset = tuple(inset.posicao)          # a legenda automática foge dele
     ordem = _ordem_dos_marcadores(painel, [s.traco for s in plano.espectros])
     curvas = []
     for s in plano.espectros:

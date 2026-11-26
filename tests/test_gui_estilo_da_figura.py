@@ -86,6 +86,19 @@ def test_cada_propriedade_do_traco_no_desenho():
     assert corrente.get_marker() == "None" and corrente.get_markevery() is None
 
 
+def test_a_legenda_automatica_e_a_mesma_em_todo_dpi_e_foge_do_inset():
+    """O canto da automática sai dos dados numa grade grossa (o "best" do Matplotlib decidia pelos vértices da
+    redução M4, diferentes em cada dpi: a PNG e o PDF punham a legenda em cantos diferentes), e não cai no inset."""
+    from sh_analyzer_gui.dados.figura import Inset
+
+    cantos = {dd.desenhar(_figura(), VISTAS, Dados(20_000), dpi=dpi).mpl.axes[0].get_legend()._loc
+              for dpi in (72, 100, 150, 300)}
+    assert len(cantos) == 1
+    for canto, proibido in (("sup_esq", 2), ("sup_dir", 1), ("inf_esq", 3)):
+        figura = _figura(inset=Inset((0.01, 0.02), canto=canto))
+        assert dd.desenhar(figura, VISTAS, Dados(20_000), dpi=100).mpl.axes[0].get_legend()._loc != proibido
+
+
 @pytest.mark.parametrize(("legenda", "eixo", "loc", "fora"), [
     ("melhor", 0, 0, False), ("sup_esq", 0, 2, False), ("inf_dir", 1, 4, False), ("fora_dir", 0, 2, True),
     ("fora_acima", 0, 4, True)])
@@ -93,7 +106,7 @@ def test_a_legenda_em_cada_lugar(legenda, eixo, loc, fora):
     pagina = _desenhar(_figura(legenda=legenda))
     pagina.pixels()
     leg = pagina.mpl.axes[eixo].get_legend()
-    assert leg is not None and leg._loc == loc
+    assert leg is not None and (leg._loc in (1, 2, 3, 4) if legenda == "melhor" else leg._loc == loc)
     textos = [t.get_text() for t in leg.get_texts()]
     if fora:            # uma só, com os traços das duas faixas, fora do eixo de cima
         assert textos == ["V_A", "V_B", "I_A"] and pagina.mpl.axes[1].get_legend() is None
