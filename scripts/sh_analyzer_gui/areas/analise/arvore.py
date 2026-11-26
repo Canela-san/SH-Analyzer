@@ -232,11 +232,23 @@ class ArvoreDoProjeto(QAbstractItemModel):
         if papel == Qt.ItemDataRole.DisplayRole:
             return vista.nome
         if papel == PAPEL_DETALHE:
+            origem = self._vista_de_tempo_de(vista)
+            if origem is not None:                  # uma vista derivada: os traços são os da vista de tempo dela
+                return f"← {origem.nome}"
             n = len(vista.tracos)
             return f"{n} {'traço' if n == 1 else 'traços'}"
         if papel == Qt.ItemDataRole.ToolTipRole:
-            return f"{vista.nome}: um clique abre a aba dela."
+            origem = self._vista_de_tempo_de(vista)
+            de = f" Mostra os traços de \"{origem.nome}\"." if origem is not None else ""
+            return f"{vista.nome}: um clique abre a aba dela.{de}"
         return None
+
+    def _vista_de_tempo_de(self, vista: Vista) -> Vista | None:
+        """A vista de tempo que uma vista derivada (espectro, qualidade…) segue; None numa vista de tempo."""
+        alvo = getattr(vista.opcoes, "vista_de_tempo", None)
+        if vista.tipo == "tempo" or not alvo:
+            return None
+        return next((v for v in self.projeto.vistas if v.id == alvo), None)
 
     # ------------------------------------------------------------------ o projeto mudou
 
@@ -332,6 +344,11 @@ class ArvoreDoProjeto(QAbstractItemModel):
 
 
 ICONES = {"fonte": "arquivo", "vista": "onda", "nota": "livro"}
+ICONE_DO_TIPO_DE_VISTA = {"tempo": "onda", "espectro": "espectro", "bandas": "grade", "espectrograma": "camadas",
+                          "harmonicos": "pulso", "xy": "mira", "histograma": "regua", "eventos": "alerta",
+                          "qualidade": "raio", "transferencia": "link", "metricas": "chip", "instrumento": "onda",
+                          "sonda": "sonda"}
+"""O ícone de cada tipo de vista: o mesmo na aba e na árvore do projeto."""
 INTEGRIDADE = {"confere": ("ok", "ok", "CRC das amostras conferido"),
                "nao_confere": ("alerta", "erro", "o CRC das amostras NÃO confere: o arquivo foi alterado"),
                "erro": ("alerta", "aviso", "não foi possível conferir o CRC"),
@@ -367,7 +384,10 @@ class DelegadoDaArvore(QStyledItemDelegate):
         elif tipo in ICONES:
             fonte = indice.data(PAPEL_OBJETO) if tipo == "fonte" else None
             papel = "erro" if fonte is not None and fonte.esta_ausente else "texto2"
-            p.drawPixmap(int(x), int(meio - 8), icone(ICONES[tipo], getattr(t, papel)).pixmap(16, 16))
+            nome = ICONES[tipo]
+            if tipo == "vista":
+                nome = ICONE_DO_TIPO_DE_VISTA.get(getattr(indice.data(PAPEL_OBJETO), "tipo", ""), nome)
+            p.drawPixmap(int(x), int(meio - 8), icone(nome, getattr(t, papel)).pixmap(16, 16))
             x += 16 + 7
         fonte_texto = QFont(opcao.font)
         if tipo == "grupo":

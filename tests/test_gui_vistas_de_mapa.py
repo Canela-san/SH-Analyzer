@@ -57,7 +57,7 @@ def abrir(janela, qtbot, acao):
 def test_as_bandas_sao_as_da_api_com_a_tabela_e_o_tempo_ligado(janela, qtbot, plotado):
     fonte, traco, tempo = plotado
     w = abrir(janela, qtbot, "bandas")
-    assert w.vista.tipo == "bandas" and w.vista.nome == f"Bandas de {tempo.vista.nome}"
+    assert w.vista.tipo == "bandas" and w.vista.nome == "Bandas IEC"
     esperado = api.bandas_iec(api.sinal_do_canal(fonte.fonte.captura, 0), FS, esp.OpcoesDasBandas().parametros)
     # Os códigos escalados e os volts arredondam diferente: ~1e-12 nas bandas fracas.
     np.testing.assert_allclose(w.resultado.bandas.niveis, esperado.bandas.niveis, rtol=1e-11)

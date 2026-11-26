@@ -78,7 +78,7 @@ def test_abrir_o_espectro_segue_a_vista_de_tempo_com_os_numeros_da_api(janela, a
     fonte, traco, tempo, espectro = aberto
     vista = espectro.vista
     assert vista.tipo == "espectro" and vista.opcoes.vista_de_tempo == tempo.vista.id
-    assert vista.nome == f"Espectro de {tempo.vista.nome}" and janela.vista_ativa() is vista
+    assert vista.nome == "Espectro" and janela.vista_ativa() is vista
     (r,) = espectro.resultados
     a, b = trecho_da_janela(tempo, traco)
     esperado = api.espectro(api.sinal_do_canal(fonte.fonte.captura, 0, a, b), FS, api.ParametrosEspectro("fft"))

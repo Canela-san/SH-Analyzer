@@ -36,7 +36,7 @@ from ...servicos.medidas import PedidoDeMedida, ServicoDeMedidas, valores_no_tre
 from ...tema.aplicar import aparencia
 from ...tema.icones import IconeDoTema, icone
 from .alinhar import DialogoDeAlinhar
-from .arvore import PainelDoProjeto
+from .arvore import ICONE_DO_TIPO_DE_VISTA, PainelDoProjeto
 from .exportar_dados import NOMES_DAS_REGIOES, ColetaDaVista, DialogoDeExportarDados, PedidoDeDados
 from .inspetor import TEXTOS_DA_INTEGRIDADE, Inspetor
 from .ligacao_dos_eixos import LigacaoDosEixos
@@ -302,14 +302,17 @@ class AreaDeAnalise(QObject):
         if ativa is None:
             return None
         nomes = {v.nome for v in self.projeto.vistas}
-        rotulos = {"espectro": self.tr("Espectro de {}"), "bandas": self.tr("Bandas de {}"),
-                   "espectrograma": self.tr("Espectrograma de {}"), "harmonicos": self.tr("Harmônicos de {}"),
-                   "xy": self.tr("XY de {}"), "histograma": self.tr("Histograma de {}"),
-                   "eventos": self.tr("Eventos de {}"), "qualidade": self.tr("Qualidade de energia de {}"),
-                   "transferencia": self.tr("Transferência de {}"),
-                   "metricas": self.tr("Métricas de bancada de {}"), "instrumento": self.tr("Instrumento de {}")}
-        nome, n = rotulos[tipo].format(ativa.nome), 2
-        base = nome
+        # Nomes curtos, pelo tipo (as abas cabem, e a árvore não corta); a vista de tempo entra no nome só quando há
+        # mais de uma, para dizer de qual o espectro é.
+        rotulos = {"espectro": self.tr("Espectro"), "bandas": self.tr("Bandas IEC"),
+                   "espectrograma": self.tr("Espectrograma"), "harmonicos": self.tr("Harmônicos"),
+                   "xy": self.tr("XY"), "histograma": self.tr("Histograma"), "eventos": self.tr("Eventos"),
+                   "qualidade": self.tr("Qualidade"), "transferencia": self.tr("Transferência"),
+                   "metricas": self.tr("Métricas"), "instrumento": self.tr("Instrumento")}
+        nome = rotulos[tipo]
+        if sum(v.tipo == "tempo" for v in self.projeto.vistas) > 1:
+            nome = f"{nome} · {ativa.nome}"
+        base, n = nome, 2
         while nome in nomes:
             nome, n = f"{base} {n}", n + 1
         vista = Vista(nome, tipo, opcoes=OPCOES_DO_TIPO[tipo](vista_de_tempo=ativa.id))
@@ -364,14 +367,11 @@ class AreaDeAnalise(QObject):
         if vista.tipo == "sonda":
             self._perfis_entrou(vista, i)
             return
-        classe, nome_do_icone = {"espectro": (VistaDeEspectro, "espectro"), "bandas": (VistaDeBandas, "grade"),
-                                 "espectrograma": (VistaDeEspectrograma, "camadas"),
-                                 "harmonicos": (VistaDeHarmonicos, "pulso"), "xy": (VistaDeXY, "mira"),
-                                 "histograma": (VistaDeHistograma, "regua"), "eventos": (VistaDeEventos, "alerta"),
-                                 "qualidade": (VistaDeQualidade, "raio"),
-                                 "transferencia": (VistaDeTransferencia, "link"),
-                                 "metricas": (VistaDeMetricas, "chip"),
-                                 "instrumento": (VistaDeInstrumento, "onda")}[vista.tipo]
+        classe = {"espectro": VistaDeEspectro, "bandas": VistaDeBandas, "espectrograma": VistaDeEspectrograma,
+                  "harmonicos": VistaDeHarmonicos, "xy": VistaDeXY, "histograma": VistaDeHistograma,
+                  "eventos": VistaDeEventos, "qualidade": VistaDeQualidade, "transferencia": VistaDeTransferencia,
+                  "metricas": VistaDeMetricas, "instrumento": VistaDeInstrumento}[vista.tipo]
+        nome_do_icone = ICONE_DO_TIPO_DE_VISTA[vista.tipo]
         widget = classe(vista, self.projeto, self.janela.selecao, tarefas=self.janela.tarefas,
                         materializacoes=self.janela.materializacoes, vista_de_tempo=self._vista_de_tempo_por_id)
         widget.tracoClicado.connect(self._traco_clicado)
