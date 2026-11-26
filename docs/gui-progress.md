@@ -8,6 +8,11 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 
 ## Próxima tarefa
 
+> **Depois da v0.9 (25/11/2026):** a lista do que falta, com a prioridade, está no `docs/gui-plan.md`, seção 16
+> ("Depois da v0.9: a lista priorizada"). Ela junta o que os documentos deixaram em aberto e o que a análise da v0.9
+> achou. A próxima tarefa sai dos itens P1. O primeiro é a unidade do espectro na figura com a tensão e a corrente
+> juntas.
+>
 > **A Fase 2 está feita** (seção 4c, F2.1 a F2.11; diário de 15/11): a jornada do pesquisador vai da captura ao
 > espectro corrigido pela sonda, com os números da CLI (`tests/test_gui_jornada.py`), e o G1 passa com a cadeia
 > ligada, durante e depois das materializações. **A tag v0.9** fica para o dono do projeto.
@@ -3491,6 +3496,29 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     contêiner limpo, o upgrade e os comandos do README);
   - **Próximo:** com o usuário: instalar a v0.9 pelo apt no Pop!_OS e o `.exe` num Windows de verdade, o teste com os
     três pesquisadores, e a lista de depois da Fase 7.
+- **25/11/2026 (à noite):** **a análise da v0.9 e a lista priorizada.** O pedido: "veja nos documentos o que faltou
+  fazer, também faça uma análise no software atual e elabore uma lista de melhorias, modificações e features para
+  implementar a partir de agora".
+  - **O que foi feito:**
+    - lidos os pendentes dos documentos (a seção 16 do plano, os ◐ F0.6 e F0.11, o "com o usuário" e o que a F6.9 não
+      conferiu na placa);
+    - lido o código;
+    - aberta a janela sem tela, com a configuração temporária e sem a Aquisição (a placa do USB não foi tocada): a
+      captura de exemplo, o espectro, a qualidade, os eventos e a figura.
+  - **O resultado:** a lista priorizada, P1 a P3, no `gui-plan.md`, seção 16.
+  - **O que a análise achou:**
+    - o espectro com a tensão e a corrente vira figura com o eixo só em dBV;
+    - os números do cabeçalho e dos avisos do motor saem com o ponto;
+    - o exemplo da primeira execução abre com um aviso que fala da CLI;
+    - o cartão dos primeiros passos cobre o gráfico;
+    - a densidade da interface (GE-05) não existe;
+    - os nomes das vistas derivadas e os estados vazios precisam de acertos;
+    - os botões só com ícone não têm o nome acessível.
+  - **Cuidado aprendido:** num script que dirige a janela, use o `exec()` com `QTimer.singleShot`. Um laço de
+    `processEvents` com o `QTest.qWait` deixou a pirâmide parada em 0 % por mais de 30 s: a tarefa ficou sem o GIL. Com o
+    laço de eventos de verdade, ela ficou pronta em ~1 s.
+  - **Nenhum código mudou.**
+  - **Próximo:** os itens P1, a começar pela unidade do espectro na figura.
 ---
 
 ## 8. Perguntas em aberto

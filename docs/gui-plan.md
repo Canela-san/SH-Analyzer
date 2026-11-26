@@ -1665,6 +1665,160 @@ ordem não é a de prioridade):
   dados da vista chegarem. A correção provável: um lock único em volta de todo desenho com o Matplotlib, com um teste
   que force a sobreposição.
 
+### Depois da v0.9: a lista priorizada (25/11/2026)
+
+Junta o que os documentos deixaram em aberto (a lista acima, os ◐ da Fase 0, o "com o usuário" do
+`gui-progress.md`) e o que a análise da v0.9 achou: o código e a janela aberta sem tela com a captura de exemplo (a
+Análise, o espectro, a qualidade, os eventos e a figura). A lista acima continua valendo; aqui os itens dela entram pelo
+nome, com a prioridade:
+
+- **P1:** antes da v1.0. Corrige o que está errado, ou o que o teste com os três pesquisadores vai pegar logo.
+- **P2:** depois da v1.0, de valor alto para os pesquisadores ou para o relatório final.
+- **P3:** quando houver tempo ou pedido.
+
+**P1: o que está errado**
+
+- [ ] **A unidade do espectro na figura com grandezas misturadas.** O `dados/desenho_da_figura.py` dá ao painel o
+  rótulo da primeira série (`rotulo_y=series[0].rotulo_y`). Um espectro com a tensão e a corrente vira figura com um
+  eixo só, "Nível (dBV)", e a corrente desenhada nele. Na tela, o rótulo sai na cor do traço de referência; na figura,
+  nada avisa. Proposta:
+  - separar as grandezas sozinho (um painel por unidade, ou o segundo eixo à direita);
+  - até lá, um aviso no painel da figura.
+- [ ] **Os números do motor fora das preferências.** Dois casos:
+  - os campos do cabeçalho no inspetor vêm prontos da `api` (`supraharmonicos/api.py`, `"{:.2f} Hz"`) e saem com o
+    ponto ("5.243 s", "399998.72 Hz", "4.2 MB") e sem o separador de milhar ("2097152" amostras);
+  - os avisos do motor também ("canal 1: 19.357"), enquanto as medidas saem com a vírgula.
+
+  Proposta: a `api` devolve o valor e a unidade, e a interface formata (`componentes/numeros.py`). Isso também prepara o
+  inglês.
+- [ ] **O exemplo da primeira execução abre com avisos.** A captura de exemplo põe dois avisos no painel. Um deles é do
+  nível "aviso": o canal 0 é de corrente e não tem o perfil da sonda. O texto ainda manda usar as opções da CLI
+  (`--sonda em ler_adc`, `--sonda-perfil 0:ARQUIVO`). Proposta:
+  - o exemplo com o perfil da sonda (ou com a grandeza que não pede um);
+  - os avisos do motor com a ação da interface ("Escolher o perfil…" no inspetor) no lugar da opção da CLI.
+- [ ] **O cartão "Primeiros passos" cobre o gráfico.** Ele ocupa ~40 % da área central, por cima do traço e do botão
+  "Abrir…" do estado vazio, até ser fechado. Proposta: encaixá-lo num canto, ou recolhê-lo num chip ("Primeiros passos
+  2/5") que abre de novo.
+- [ ] **O pacote de origem das capturas no projeto** (da lista acima). Com o cache limpo, o projeto aponta para uma
+  captura extraída que não existe mais.
+- [ ] **A figura do pacote reproduzível que difere sob carga** (da lista acima). Conferir primeiro se o lock entre as
+  tarefas de desenho da F7.12 já resolve. Hoje é um teste instável na CI completa.
+- [ ] **A densidade da interface** (GE-05, v0.9). As Configurações têm o tema, o movimento, o separador, os prefixos e
+  as atualizações; a densidade (compacta e confortável) não existe.
+
+**P1: os acertos pequenos da tela** (achados na janela sem tela, a 1 440 × 900 px)
+
+- [ ] **Os nomes das vistas derivadas:** "Espectro de Tempo", "Qualidade de energia de Tempo", "Eventos de Tempo".
+  - Com quatro abas, a barra já rola, e a árvore corta o nome ("Qualidade de...gia de Tempo").
+  - Proposta: nomes curtos pelo tipo e pelo canal ("Espectro · canal 1").
+- [ ] **A árvore do projeto:**
+  - todas as vistas aparecem com o ícone da onda, enquanto as abas têm o ícone de cada tipo;
+  - as vistas derivadas dizem "0 traços" e mostram dois.
+- [ ] **O painel Medidas com o canal já plotado.** Com o espectro, a qualidade ou os eventos na frente e sem os
+  cursores, ele diz "Plote um canal". Proposta: dizer o que fazer naquela vista (os cursores do espectro), ou mostrar as
+  medidas da vista de tempo.
+- [ ] **O inspetor das vistas de qualidade e de eventos** mostra "Nada selecionado". Proposta: as opções da vista, como
+  já acontece no espectro.
+- [ ] **A escala automática da qualidade exagera variações mínimas.** Uma THD de 3,9857 a 3,9867 % ocupa a altura toda
+  e parece instável. Proposta: um vão mínimo relativo nas séries dos índices, ou a opção "incluir o zero".
+- [ ] **Os eventos:** os nomes das categorias no eixo saem numa fonte monoespaçada, diferente do resto da interface.
+- [ ] **A janela visível:**
+  - os números têm dígitos demais ("−195,3904 ms → 5,438265 s");
+  - a vista inicial começa em −0,195 s numa captura que começa em 0.
+- [ ] **A acessibilidade.** Só `componentes/painel.py` e `componentes/chip.py` dão o nome acessível. Os botões só com
+  ícone (a barra de cada vista, as abas, a barra superior) ficam mudos num leitor de tela. Proposta: o nome acessível
+  tirado da dica, com um teste que percorre a janela.
+
+**P1: com o usuário**
+
+- [ ] **As validações na tela:**
+  - o G2 (4K a 200 %) e o G5 (o disco frio) da F0.6;
+  - o "pronto quando" da Fase 1 (1 h, 8 traços de 2 fontes);
+  - a jornada da Aquisição, a Capturar e o cockpit com o caderno, num monitor de verdade;
+  - a v0.9 instalada pelo apt no Pop!_OS.
+- [ ] **O Windows de verdade:** o instalador, o SmartScreen, a associação dos `.shproj`, o RNDIS da placa e os
+  portões de desempenho (F0.11 e o "pronto quando" da Fase 7).
+- [ ] **Na placa, com alguém na bancada** (o que a F6.9 não conferiu):
+  - gravar o `uEnv.txt`;
+  - desligar;
+  - o console pela serial (o usuário entra no grupo `dialout`);
+  - desligar um serviço;
+  - limpar e expandir a partição;
+  - trocar a senha de verdade.
+- [ ] **O teste com três pesquisadores** (o roteiro em `docs/gui-teste-com-pesquisadores.md`), as correções que ele
+  pedir, e depois a tag v1.0.
+- [ ] **As decisões em aberto (seção 19):**
+  - o inglês (4);
+  - a assinatura no Windows (5);
+  - a regra de sudo (3);
+  - o tema padrão (1): o código já abre no "do sistema", e falta só registrar a decisão.
+
+  **Se o inglês entrar na v1.0**, faltam:
+  - o `pyside6-lupdate`, os `.ts` e `.qm` e o seletor de idioma (os ~960 textos da tela já passam pelo `self.tr`);
+  - os textos que vêm do motor, do `sh_placa` e dos `dados/` sem Qt, que só existem em português (ver os números do
+    motor, acima);
+  - o guia (`docs/gui-guide.md`) em inglês. O desenho da figura já fala pt-BR e en.
+
+**P2: as análises, para os pesquisadores e para o relatório final**
+
+- [ ] **Importar dados de fora** (PD-03, e o MAT e o COMTRADE do PD-10; da lista acima). Sobe de prioridade: a
+  demonstração principal do relatório final será no laboratório, contra o osciloscópio de referência, e comparar as
+  duas medições na mesma vista é o caminho natural.
+- [ ] **Os limites das normas no espectro e nas bandas.** Hoje nada fala de limite, nem a interface nem o motor.
+  Proposta:
+  - os níveis de compatibilidade de 2 a 150 kHz (IEC 61000-2-2) e as faixas do CENELEC EN 50065-1 (A a D), em curvas
+    por cima do espectro;
+  - o "passa" ou "excede" de cada banda na tabela;
+  - os valores conferidos na norma, sem copiá-los de memória.
+- [ ] **O relatório da captura.** Um botão que gera um PDF (ou HTML) com:
+  - o cabeçalho e a integridade;
+  - os índices da qualidade e os eventos;
+  - as figuras escolhidas e a proveniência.
+
+  Serve para o caderno, para o relatório da FAPESP e para anexar a um artigo.
+- [ ] **A análise em lote e as tendências.** Escolher uma pasta, ou as sessões de vários dias, e calcular os mesmos
+  índices em cada captura (as bandas, a THD, os eventos): uma tabela e um gráfico de tendência, exportáveis. Hoje cada
+  captura é analisada à mão; o motor tem os modos em lote da CLI (`modos.py`), ainda fora da `api`.
+- [ ] **Comparar espectros de capturas diferentes.** A diferença em dB (A − B), ou a razão dos espectros médios (antes
+  e depois de ligar uma carga, dois dias), com o mesmo método e a mesma resolução garantidos. Hoje a transferência
+  (F7.7) é só entre os canais da mesma captura.
+- [ ] **A fonte derivada** (TR-08), **a figura do Bode** (ES-07 como painel) e **exportar WAV, Parquet e COMTRADE**
+  (FG-10), da lista acima.
+- [ ] **O notebook.** O pacote reproduzível também como `.ipynb`, com a cadeia da vista pela `supraharmonicos.api`,
+  para quem continua a análise no Jupyter.
+
+**P2: a placa e a calibração**
+
+- [ ] **Os assistentes de calibração** (ES-08, da lista acima). O relatório final quer um perfil de tensão e um de
+  corrente até 200 kHz, com mais pontos e menor erro, talvez com novas coletas. Um assistente pela interface faria isso:
+  - a coleta pela rotina `sonda`;
+  - o `gerar_perfil_sonda`;
+  - o Bode conferido;
+  - o perfil antigo arquivado.
+- [ ] **As rotinas do `coletar.sh` como formulários nativos** (AQ-13) e **a cópia no cartão durante a saída
+  contínua**, da lista acima.
+- [ ] **O overlay próprio**, **o Samba**, **o IP fixo** e **o sudo sem senha** (este depende da decisão 3), da lista
+  acima.
+
+**P2: o desempenho e a distribuição**
+
+- [ ] **A partida mais curta** (da lista acima): 2,7 a 3,0 s, contra a meta de 1,5 s (seção 4.1).
+- [ ] **Os índices de qualidade mais rápidos** (da lista acima).
+- [ ] **O instalador menor.** Ele tem 420 MB; a F0.11 deixou para cortar as duas cópias do OpenBLAS (48 MB) e o Qt
+  Quick, o Qml e o Pdf (21 MB).
+- [ ] **O AppImage ou o Flatpak** e **a assinatura do Windows** (decisão 5), da lista acima.
+
+**P3: quando houver tempo ou pedido**
+
+- [ ] **O ADC novo.** A placa será refeita com outro ADC (o ADS8688 não atende). O formulário da Capturar e o contrato
+  com o `ler_adc.c` seguem as regras do ADS8688 (as faixas, o ganho). Proposta: separar as regras do ADC num perfil da
+  placa, para a interface acompanhar a placa nova sem reescrever a Capturar.
+- [ ] **Os módulos grandes:** `janela.py` (1 087 linhas), `vista_tempo.py` (1 168), `vista_espectro.py` (1 075) e
+  `desenho_da_figura.py` (1 061). Separar as responsabilidades quando forem mexidos. Na janela, por exemplo, a montagem
+  das áreas (que também encurta a partida), a atualização e os primeiros passos.
+- [ ] **A qualidade do código na CI:**
+  - a cobertura mede só o motor (`--cov=scripts/supraharmonicos`): medir também o `sh_analyzer_gui` e o `sh_placa`;
+  - um verificador de tipos (o pyright), começando pelo `sh_placa` e pelos `dados/` sem Qt.
 
 ---
 
