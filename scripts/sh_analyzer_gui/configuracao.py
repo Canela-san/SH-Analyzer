@@ -75,3 +75,14 @@ def pasta_de_recuperacao() -> Path:
     from platformdirs import user_data_dir
 
     return Path(user_data_dir(APLICATIVO, ORGANIZACAO)) / "recuperacao"
+
+
+def pasta_dos_limites() -> Path:
+    """Onde ficam as curvas de limite das bandas (``dados/limites.py``), ao lado da configuração quando
+    ``SH_ANALYZER_CONFIG`` está definida; senão, na pasta de dados do usuário."""
+    pasta = os.environ.get(VARIAVEL_DA_PASTA)
+    if pasta:
+        return Path(pasta) / "limites"
+    from platformdirs import user_data_dir
+
+    return Path(user_data_dir(APLICATIVO, ORGANIZACAO)) / "limites"

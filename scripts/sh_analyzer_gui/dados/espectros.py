@@ -40,6 +40,7 @@ import numpy as np
 import supraharmonicos.api as api
 
 from .cadeia import Cadeia, ContextoDaCadeia
+from .limites import CurvaLimite, LimiteInvalido
 from .materializacao import leitor_do_canal
 from .piramide import Piramide, construir
 
@@ -91,6 +92,7 @@ class OpcoesDoEspectro:
     picos: int = 5
     harmonicos: bool = True
     diferenca: bool = False                    # os outros traços menos o primeiro, em dB (comparar capturas)
+    faixas_cenelec: bool = False               # marca as faixas A a D da EN 50065-1 (só no desenho)
 
     def __post_init__(self) -> None:
         for nome, aceitos in (("metodo", METODOS), ("escala", ESCALAS), ("trecho", TRECHOS), ("modo", MODOS)):
@@ -103,7 +105,7 @@ class OpcoesDoEspectro:
             raise OpcoesInvalidas(f"número de picos inválido: {self.picos!r} (de 0 a 50)")
         if self.escala == "rms" and self.modo == "ruido":
             raise OpcoesInvalidas("o valor RMS por bin só existe no modo tom (no modo ruído, cada bin é uma densidade)")
-        for nome in ("frequencia_log", "harmonicos", "diferenca"):
+        for nome in ("frequencia_log", "harmonicos", "diferenca", "faixas_cenelec"):
             if not isinstance(getattr(self, nome), bool):
                 raise OpcoesInvalidas(f"{nome} tem de ser verdadeiro ou falso")
         if self.janela not in JANELAS:
@@ -124,8 +126,9 @@ class OpcoesDoEspectro:
 
     def para_dict(self) -> dict:
         dados = {f.name: getattr(self, f.name) for f in fields(self)}
-        if not self.diferenca:                 # só quando ligada: um projeto sem ela abre na v0.9
-            del dados["diferenca"]
+        for nome in ("diferenca", "faixas_cenelec"):
+            if not dados[nome]:                # só quando ligadas: um projeto sem elas abre na v0.9
+                del dados[nome]
         return dados
 
     @classmethod
@@ -391,7 +394,8 @@ class _OpcoesComDicionario:
 @dataclass(frozen=True)
 class OpcoesDasBandas(_OpcoesComDicionario):
     """A vista das bandas IEC 61000-4-7 (anexo B): de qual traço (a posição na vista de tempo), o trecho, a faixa, a
-    estatística do mapa de calor e as janelas sincronizadas."""
+    estatística do mapa de calor, as janelas sincronizadas e a curva de limite para a margem (``dados/limites.py``;
+    vai inteira no projeto, e só quando escolhida: um projeto sem ela abre na v0.9)."""
 
     traco: int = 0
     trecho: str = "captura"
@@ -400,9 +404,12 @@ class OpcoesDasBandas(_OpcoesComDicionario):
     freq_max: float | None = None
     estatistica: str = "p95"
     sincronizar: bool = False
+    limite: CurvaLimite | None = None
 
     def __post_init__(self) -> None:
         _validar_comum(self)
+        if self.limite is not None and not isinstance(self.limite, CurvaLimite):
+            raise OpcoesInvalidas(f"limite inválido: {self.limite!r}")
         if self.estatistica not in ESTATISTICAS:
             raise OpcoesInvalidas(f"estatística inválida: {self.estatistica!r} (use {', '.join(ESTATISTICAS)})")
         if not isinstance(self.sincronizar, bool):
@@ -416,6 +423,23 @@ class OpcoesDasBandas(_OpcoesComDicionario):
     def parametros(self) -> api.ParametrosBandasIEC:
         return api.ParametrosBandasIEC(float(self.freq_min), None if self.freq_max is None else float(self.freq_max),
                                        sincronizar=self.sincronizar)
+
+    def para_dict(self) -> dict:
+        dados = super().para_dict()
+        if self.limite is None:
+            del dados["limite"]
+        else:
+            dados["limite"] = self.limite.para_dict()
+        return dados
+
+    @classmethod
+    def de_dict(cls, dados) -> OpcoesDasBandas:
+        if isinstance(dados, dict) and dados.get("limite") is not None:
+            try:
+                dados = {**dados, "limite": CurvaLimite.de_dict(dados["limite"])}
+            except LimiteInvalido as e:
+                raise OpcoesInvalidas(f"limite inválido: {e}") from None
+        return super().de_dict(dados)
 
 
 @dataclass(frozen=True)

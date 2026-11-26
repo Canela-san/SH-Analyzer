@@ -171,3 +171,40 @@ def test_os_cursores_nos_mapas_e_nos_harmonicos_vao_para_as_medidas(janela, qtbo
     h.cursores.mover(1, 7.2)
     assert "ordem 3 → ordem 7" in tabela.resumo.text() and tabela.tabela.rowCount() == 1
     assert h.cursores.andar(1, 1.0) and "ordem 3 → ordem 8" in tabela.resumo.text()
+
+
+def test_o_limite_nas_bandas_a_margem_e_o_editor(janela, qtbot, plotado, monkeypatch):
+    from sh_analyzer_gui.configuracao import pasta_dos_limites
+    from sh_analyzer_gui.dados import limites as lim
+
+    fonte, traco, tempo = plotado
+    w = abrir(janela, qtbot, "bandas")
+    assert w.perfil.isHidden() and w.tabela.columnCount() == 5
+    # O tom de 9 050 Hz tem ~0,035 V na banda de 9,1 kHz (≈ 91 dBµV): um limite de 80 dBµV o pega.
+    curva = lim.CurvaLimite("inventada", ((2_000, 80.0), (99_000, 80.0)), fonte="pontos do teste")
+    lim.salvar(curva, pasta_dos_limites())
+    w._refazer_limites()
+    w._limite_escolhido(w.limite.findText("inventada"))
+    qtbot.waitUntil(lambda: w.opcoes_calculadas == w.opcoes, timeout=10_000)
+    assert w.opcoes.limite == curva and not w.perfil.isHidden()
+    assert w.tabela.columnCount() == 7 and w.tabela.horizontalHeaderItem(6).text() == "margem do P95 (dB)"
+    assert w.tabela.item(0, 0).text() == "9,1 kHz" and float(w.tabela.item(0, 6).text().replace(",", ".")) < 0
+    assert "1 de" in w.info.text() and "acima do limite" in w.info.text()
+    # Um traço em ampères com um limite de tensão: sem margem, e a vista diz por quê.
+    monkeypatch.setattr(w, "traco_unidade", lambda: "A")
+    w._desenhar()
+    w._mostrar_info()
+    assert w.tabela.columnCount() == 5 and "o traço está em A" in w.info.text()
+    monkeypatch.undo()
+    janela.projeto.pilha.undo()
+    assert w.opcoes.limite is None and w.tabela.columnCount() == 5
+    # O editor: colar da planilha e salvar põe a curva na lista da vista.
+    dialogo = w.editar_limites()
+    dialogo.nova()
+    dialogo.nome.setText("colada")
+    assert dialogo.colar("9000;66\n150000;56\n") == 2
+    assert dialogo.salvar() is not None
+    assert w.limite.findText("colada") > 0
+    dialogo.lista.setCurrentRow([dialogo.lista.item(k).text() for k in range(dialogo.lista.count())].index("colada"))
+    assert dialogo.apagar(perguntar=False) and w.limite.findText("colada") < 0
+    dialogo.close()

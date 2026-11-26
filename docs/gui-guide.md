@@ -113,11 +113,26 @@ Os picos (acima do piso) podem ser marcados. **O aviso de imagem**: o único ant
 de 2ª ordem do ADS8688 (~15 kHz); acima de ~0,24 da taxa (96 kHz a 400 kS/s), uma entrada em fs − f chega ao espectro
 menos de 20 dB abaixo de uma real em f, e um pico dali pode ser uma imagem. O **assistente de aliasing** separa.
 
+**Comparar capturas:** ponha na vista de tempo o mesmo canal de duas capturas (antes e depois de ligar uma carga,
+dois dias) e ligue a **Diferença**: os outros traços viram o nível deles menos o do primeiro, em dB, bin a bin (na
+grade de cada um); o primeiro é o zero, e o rótulo do eixo diz para quem. **CENELEC** marca as faixas A (3 a
+95 kHz), B (95 a 125 kHz), C (125 a 140 kHz) e D (140 a 148,5 kHz) da comunicação pela rede (EN 50065-1).
+
 ## As bandas IEC {#bandas}
 
 As bandas de 200 Hz de 2 a 150 kHz (IEC 61000-4-7, anexo B) ao longo do tempo, num mapa ligado ao tempo, e a tabela
 com o P95, o RMS, o máximo e o mínimo de cada banda. "Sincronizar" usa as janelas de 10/12 ciclos da fundamental
 (IEC 61000-4-30) no lugar dos 200 ms fixos.
+
+**O limite:** escolha uma curva no seletor ao lado de "Sincronizar" e a tabela ganha o limite e a **margem** de cada
+banda (o limite menos a estatística escolhida, em dB; negativa, a banda passou, e a linha fica vermelha), o perfil
+mostra a estatística por banda com o limite tracejado e um x nas que passam, e a informação diz quantas passaram e a
+pior margem. **O programa não traz os valores das normas** (IEC 61000-2-2, IEC 61000-2-12, CISPR, EN 50065-1 são
+publicações pagas): em "Editar as curvas…", digite os pontos da sua cópia, ou cole de uma planilha (a frequência e o
+nível por linha; "9k" vale 9000), escolha a grandeza (tensão em dBµV, corrente em dBµA) e diga na **fonte** a
+norma, a edição e a tabela. Entre os pontos, a reta em log f; dois pontos na mesma frequência fazem um degrau (vale
+o menor); fora da curva, sem margem. As curvas ficam na pasta de dados do usuário (`limites/`), e o projeto guarda
+uma cópia da escolhida, para abrir igual em outra máquina.
 
 ## O espectrograma {#espectrograma}
 
@@ -216,7 +231,9 @@ A área **Figuras** monta figuras para publicação: "Fazer uma figura com a vis
 figura (os painéis podem ser congelados ou religados à vista); as páginas dão a largura de uma coluna da IEEE ou da
 Elsevier, e os modelos de estilo guardam o seu; a figura é exportada em PDF, SVG, EPS, PGF (o LaTeX com as fontes do
 documento), PNG ou TIFF, ou copiada. O **pacote reproduzível** (`.zip`) guarda a figura, os dados e o programa que a
-redesenha. "Exportar os dados da vista…" grava os números em CSV ou HDF5.
+redesenha. "Exportar os dados da vista…" grava os números em CSV, HDF5, WAV (ponto flutuante de 32 bits, nas
+unidades; crus, os códigos em PCM de 16 bits) ou COMTRADE 1999 binário (o `.cfg` com o `.dat`), para abrir em outro
+programa de qualidade de energia ou de áudio.
 
 ## A aquisição {#aquisicao}
 
@@ -228,7 +245,8 @@ a placa de verdade.
 
 ## As configurações {#configuracoes}
 
-O tema, o idioma dos números (o separador decimal), os prefixos do SI nos eixos, as pastas (os dados, as sondas e o
+O tema, a **densidade** (a compacta põe mais linhas na árvore e nas tabelas), o idioma dos números (o separador
+decimal), os prefixos do SI nos eixos, as pastas (os dados, as sondas e o
 cache) e o **cache**: as pirâmides, os traços transformados e os pacotes extraídos, cada um com o limite (passar dele
 apaga os menos usados; o que está aberto fica) e o "Limpar".
 

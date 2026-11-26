@@ -58,6 +58,7 @@ from ...componentes.numeros import decimal, formatar_si, separador_decimal
 from ...dados import espectros as esp
 from ...dados.bancada import limite_das_imagens_hz
 from ...dados.cadeia import CorrecaoSonda
+from ...dados.limites import FAIXAS_CENELEC
 from ...dados.qualidade import intervalo_do_welch
 from ...graficos.clique import distancia_a_linha, mais_perto
 from ...graficos.cursores import CursoresDaVista
@@ -68,8 +69,9 @@ from ...modelo.comandos import MudarOpcoesDaVista
 from ...modelo.objetos import Projeto, Traco, Vista
 from ...modelo.selecao import Selecao
 from ...tema.aplicar import aparencia
+from ...tema.fontes import fonte_da_interface
 from ...tema.icones import IconeDoTema
-from ...tema.tokens import Tema, cor_do_traco
+from ...tema.tokens import TAMANHOS, Tema, cor_do_traco
 from .acoes_da_escala import acoes_da_escala, atualizar_acoes_da_escala, estado_do_chip
 from .anotacoes import AnotacoesDaVista
 from .medidas import LinhaDaTabela, MedidasDaVista, numero_para_planilha
@@ -220,7 +222,13 @@ class VistaDeEspectro(QWidget):
                                           "tempo o mesmo canal de duas capturas (antes e depois de ligar uma carga, "
                                           "dois dias) e veja o que mudou"))
         self.diferenca.clicked.connect(lambda marcado: self._mudar(diferenca=bool(marcado)))
-        for w in (self.metodo, self.resolucao, self.escala, self.trecho, self.log, self.harmonicos, self.diferenca):
+        self.cenelec = QCheckBox(self.tr("CENELEC"))
+        self.cenelec.setObjectName("faixas_cenelec")
+        self.cenelec.setToolTip(self.tr("Marca as faixas A (3 a 95 kHz), B (95 a 125 kHz), C (125 a 140 kHz) e D (140 "
+                                        "a 148,5 kHz) da comunicação pela rede elétrica (EN 50065-1)"))
+        self.cenelec.clicked.connect(lambda marcado: self._mudar(faixas_cenelec=bool(marcado)))
+        for w in (self.metodo, self.resolucao, self.escala, self.trecho, self.log, self.harmonicos, self.diferenca,
+                  self.cenelec):
             linha.addWidget(w)
         self.acao_ajustar = QAction(self.tr("Ajustar tudo"), self)
         self.acao_ajustar.setShortcut(QKeySequence("F"))
@@ -363,6 +371,9 @@ class VistaDeEspectro(QWidget):
         self.harmonicos.setChecked(o.harmonicos)
         self.diferenca.setChecked(o.diferenca)
         self.diferenca.setEnabled(o.escala != "rms")
+        self.cenelec.setChecked(o.faixas_cenelec)
+        if self._log_desenhado is not None:
+            self._desenhar_faixas()
 
     def _vista_mudou(self, _vista, campos) -> None:
         if "opcoes" in campos and isValid(self):
@@ -644,6 +655,38 @@ class VistaDeEspectro(QWidget):
                                   [self._travado_e_comum(t) for t in (selecionados or list(self.curvas))])
         self._rotular_y()
 
+    def _desenhar_faixas(self) -> None:
+        """As faixas A a D da EN 50065-1, atrás dos traços (fora do ajuste automático), com a letra no alto."""
+        if not hasattr(self, "_faixas"):
+            self._faixas = []
+            for nome, _f0, _f1 in FAIXAS_CENELEC:
+                regiao = pg.LinearRegionItem(movable=False)
+                regiao.setZValue(-20)
+                for linha in regiao.lines:
+                    linha.setPen(pg.mkPen(None))
+                rotulo = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen(None), label=nome,
+                                         labelOpts={"position": 0.96, "anchors": [(0.5, 0), (0.5, 0)]})
+                rotulo.setZValue(-19)
+                self.grafico.addItem(regiao, ignoreBounds=True)
+                self.grafico.addItem(rotulo, ignoreBounds=True)
+                self._faixas.append((regiao, rotulo))
+            self._colorir_faixas(aparencia().tema)
+        ligadas = self.opcoes.faixas_cenelec
+        for (regiao, rotulo), (_nome, f0, f1) in zip(self._faixas, FAIXAS_CENELEC, strict=True):
+            regiao.setVisible(ligadas)
+            rotulo.setVisible(ligadas)
+            if ligadas:
+                regiao.setRegion((self._x(f0), self._x(f1)))
+                rotulo.setValue(self._x(math.sqrt(f0 * f1)) if self.opcoes.frequencia_log else self._x((f0 + f1) / 2))
+
+    def _colorir_faixas(self, t: Tema) -> None:
+        for k, (regiao, rotulo) in enumerate(getattr(self, "_faixas", ())):
+            cor = QColor(t.mudo)
+            cor.setAlpha(30 if k % 2 == 0 else 16)
+            regiao.setBrush(pg.mkBrush(cor))
+            rotulo.label.setColor(QColor(t.mudo))
+            rotulo.label.setFont(fonte_da_interface(TAMANHOS["secundario"]))
+
     def _x(self, f: float) -> float:
         """A posição de ``f`` no eixo (log10 na frequência logarítmica: é como o PyQtGraph posiciona os itens)."""
         return math.log10(max(f, 1e-12)) if self.opcoes.frequencia_log else f
@@ -668,6 +711,7 @@ class VistaDeEspectro(QWidget):
             vb.disableAutoRange()
             vb.setXRange(*self._faixa_no_eixo(faixa_hz, prontos), padding=0)
         self.cursores.reposicionar()
+        self._desenhar_faixas()
         for r in prontos:
             self._curva(r, QColor(cor_do_traco(r.traco.receita.cor, t)[0]))
         self.escalas.definir_itens({r.traco: self.curvas[r.traco] for r in prontos})
@@ -1085,6 +1129,7 @@ class VistaDeEspectro(QWidget):
             eixo.aplicar_tema(t)
         self.grade.aplicar_tema(t)
         self.cursores.aplicar_tema(t)
+        self._colorir_faixas(t)
         self.anotacoes.refazer()
         self.valor_no_mouse.setColor(QColor(t.texto))
         self.valor_no_mouse.fill = pg.mkBrush(QColor(t.elevada))

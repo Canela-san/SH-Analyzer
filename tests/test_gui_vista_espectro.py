@@ -275,3 +275,18 @@ def test_a_diferenca_entre_dois_tracos(janela, qtbot, aberto):
     janela.projeto.pilha.undo()
     qtbot.waitUntil(lambda: espectro.resultados[0].desenho.niveis.max() > 0, timeout=10_000)
     assert "diferenca" not in espectro.vista.opcoes.para_dict()          # desligada, o projeto abre na v0.9
+
+
+def test_as_faixas_cenelec_no_espectro(janela, qtbot, aberto):
+    w = aberto[3]
+    assert "faixas_cenelec" not in w.opcoes.para_dict()
+    w.cenelec.click()
+    assert w.opcoes.faixas_cenelec and "faixas_cenelec" in w.opcoes.para_dict()
+    regioes = [r for r, _ in w._faixas]
+    assert all(r.isVisible() for r in regioes) and regioes[0].getRegion() == (3e3, 95e3)
+    assert [rotulo.label.toPlainText() for _, rotulo in w._faixas] == ["A", "B", "C", "D"]
+    recalcular(qtbot, w, lambda: w.log.click(), quando=lambda: w._log_desenhado is True)   # no log: o log10
+    assert regioes[3].getRegion() == pytest.approx((np.log10(140e3), np.log10(148.5e3)))
+    janela.projeto.pilha.undo()
+    janela.projeto.pilha.undo()
+    assert not any(r.isVisible() for r in regioes)

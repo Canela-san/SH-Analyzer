@@ -51,7 +51,9 @@ from ...ajuda import SECAO_DO_TIPO, botao_de_ajuda
 from ...componentes.basicos import CampoComUnidade, Segmentado
 from ...componentes.fluxo import LayoutDeFluxo
 from ...componentes.numeros import decimal, formatar_si
+from ...configuracao import pasta_dos_limites
 from ...dados import espectros as esp
+from ...dados import limites as lim
 from ...graficos.cursores import CursoresDaVista
 from ...graficos.faixa import EixoDoTema
 from ...modelo.comandos import MudarOpcoesDaVista
@@ -375,7 +377,8 @@ class VistaLigada(QWidget):
         chave = (id(traco), r.fonte, r.canal, r.cadeia, r.ganho, r.offset, a, b, da_conta, pronta is not None,
                  chave_extra)
         if chave == self._chave_calculada and not self.aguardando:
-            self._mostrar_info()               # o mesmo trecho com as mesmas opções: nada a refazer
+            self.opcoes_calculadas = opcoes    # o mesmo trecho com as mesmas opções da conta: nada a refazer
+            self._mostrar_info()
             return
 
         def calcular(progresso, cancelado):
@@ -471,6 +474,12 @@ class VistaLigada(QWidget):
         if not isValid(self) or not hasattr(self, "grafico"):
             return
         self.grafico.setBackground(QColor(t.afundada))
+        if hasattr(self, "perfil"):
+            self.perfil.setBackground(QColor(t.afundada))
+            self.perfil_nivel.setPen(pg.mkPen(cor_do_traco(0, t)[0], width=1.5))
+            self.perfil_limite.setPen(pg.mkPen(t.aviso, width=2, style=Qt.PenStyle.DashLine))
+            self.perfil_acima.setPen(pg.mkPen(t.erro, width=2))
+            self.perfil_acima.setBrush(QColor(t.erro))
         if self.resultado is not None:
             self._desenhar()
         self._mostrar_info()
@@ -488,24 +497,43 @@ def _imagem_com_barra(grafico: pg.PlotWidget, rotulo: str) -> tuple[pg.ImageItem
 
 class VistaDeBandas(VistaLigada):
     nome_da_conta = "Bandas IEC"
+    opcoes_do_desenho = ("estatistica", "limite")
 
     def _montar_conteudo(self, coluna: QVBoxLayout) -> None:
         self.setObjectName("vista_bandas")
         self.estatistica = Segmentado(["P95", "RMS", self.tr("Máximo"), self.tr("Mínimo")])
         self.estatistica.setToolTip(self.tr("A ordem da tabela: as bandas de maior P95 primeiro (como no adc_tool), ou "
-                                            "da estatística escolhida"))
+                                            "da estatística escolhida; com um limite, a margem é dela"))
         self.estatistica.escolhaMudou.connect(lambda i: self._mudar(estatistica=("p95", "rms", "maximo", "minimo")[i]))
         self.sincronizar = QCheckBox(self.tr("Sincronizar"))
         self.sincronizar.setObjectName("sincronizar_bandas")
         self.sincronizar.setToolTip(self.tr("Janelas de 10 ciclos (50 Hz) ou 12 (60 Hz) da fundamental medida, em vez "
                                             "de 200 ms fixos (IEC 61000-4-30)"))
         self.sincronizar.clicked.connect(lambda marcado: self._mudar(sincronizar=bool(marcado)))
+        self.limite = QComboBox()
+        self.limite.setObjectName("limite_bandas")
+        self.limite.setToolTip(self.tr("Uma curva de limite (as suas, digitadas da norma): a margem de cada banda na "
+                                       "tabela e o perfil com o limite"))
+        self.limite.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.limite.setMinimumContentsLength(22)
+        self.limite.activated.connect(self._limite_escolhido)
         self._linha.addWidget(self.estatistica)
         self._linha.addWidget(self.sincronizar)
+        self._linha.addWidget(self.limite)
         self.grafico = self._novo_grafico()
         self.grafico.setObjectName("mapa_bandas")
         self.grafico.setLabel("left", self.tr("banda"), units="Hz")
         self.imagem, self.barra = _imagem_com_barra(self.grafico, self.tr("nível RMS da banda (dB)"))
+        self.perfil = pg.PlotWidget(axisItems={"bottom": EixoDoTema("bottom"), "left": EixoDoTema("left")})
+        self.perfil.setObjectName("perfil_bandas")
+        self.perfil.setMenuEnabled(False)
+        self.perfil.hideButtons()
+        self.perfil.setLabel("bottom", self.tr("banda"), units="Hz")
+        self.perfil_nivel = self.perfil.plot([], [], name="nivel")
+        self.perfil_limite = self.perfil.plot([], [], name="limite")
+        self.perfil_acima = pg.ScatterPlotItem(size=7, symbol="x")
+        self.perfil.addItem(self.perfil_acima)
+        self.perfil.hide()
         self.tabela = QTableWidget(0, 5)
         self.tabela.setObjectName("tabela_bandas")
         self.tabela.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -513,17 +541,72 @@ class VistaDeBandas(VistaLigada):
         self.tabela.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         divisor = QSplitter(Qt.Orientation.Vertical)
         divisor.addWidget(self.grafico)
+        divisor.addWidget(self.perfil)
         divisor.addWidget(self.tabela)
-        divisor.setSizes([400, 220])
+        divisor.setSizes([360, 200, 220])
         coluna.addWidget(divisor, 1)
+        self._refazer_limites()
+
+    # ------------------------------------------------------------------ o limite
+
+    def _refazer_limites(self) -> None:
+        """As curvas da pasta, a do projeto (se não estiver lá) e o editor."""
+        escolhida = self.opcoes.limite
+        self.limite.blockSignals(True)
+        self.limite.clear()
+        self.limite.addItem(self.tr("Sem limite"), None)
+        achou = False
+        for _caminho, curva in lim.curvas(pasta_dos_limites()):
+            self.limite.addItem(curva.nome, curva)
+            if curva == escolhida:
+                self.limite.setCurrentIndex(self.limite.count() - 1)
+                achou = True
+        if escolhida is not None and not achou:
+            self.limite.addItem(self.tr("{} (do projeto)").format(escolhida.nome), escolhida)
+            self.limite.setCurrentIndex(self.limite.count() - 1)
+        self.limite.insertSeparator(self.limite.count())
+        self.limite.addItem(self.tr("Editar as curvas…"), "editar")
+        self.limite.blockSignals(False)
+
+    def _limite_escolhido(self, indice: int) -> None:
+        dado = self.limite.itemData(indice)
+        if dado == "editar":
+            self._refazer_limites()                  # volta a mostrar a escolhida enquanto o editor abre
+            self.editar_limites()
+            return
+        self._mudar(limite=dado)
+
+    def editar_limites(self):
+        from .limites import DialogoDosLimites
+
+        dialogo = DialogoDosLimites(pasta_dos_limites(), self, escolhida=self.opcoes.limite)
+        dialogo.curvasMudaram.connect(self._refazer_limites)
+        dialogo.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialogo.open()
+        return dialogo
+
+    def limite_aplicavel(self) -> lim.CurvaLimite | None:
+        """A curva escolhida, se compara com o traço (a de tensão com volts, a de corrente com ampères)."""
+        curva = self.opcoes.limite
+        return curva if curva is not None and lim.serve_para(curva, self.traco_unidade()) else None
+
+    def margens(self) -> np.ndarray | None:
+        """A margem de cada banda (na ordem do resultado), da estatística escolhida, em dB; None sem limite."""
+        curva = self.limite_aplicavel()
+        if curva is None or self.resultado is None:
+            return None
+        b = self.resultado.bandas
+        return lim.margens(curva, b.centros_hz, b.estatisticas()[self.opcoes.estatistica])
 
     def _mostrar_opcoes_proprias(self) -> None:
         self.estatistica.blockSignals(True)
         self.estatistica.escolher(("p95", "rms", "maximo", "minimo").index(self.opcoes.estatistica))
         self.estatistica.blockSignals(False)
         self.sincronizar.setChecked(self.opcoes.sincronizar)
+        self._refazer_limites()
         if self.resultado is not None:
             self._preencher_tabela()
+            self._desenhar_o_perfil()
 
     def _conta(self, trecho, progresso, cancelado):
         return esp.bandas_do_trecho(trecho, self.opcoes.parametros, progresso=progresso, cancelado=cancelado)
@@ -540,14 +623,63 @@ class VistaDeBandas(VistaLigada):
 
     def _preencher_tabela(self) -> None:
         unidade = self.traco_unidade()
-        self.tabela.setHorizontalHeaderLabels([self.tr("banda"), "P95", "RMS", self.tr("máximo"), self.tr("mínimo")])
+        curva = self.limite_aplicavel()
+        cabecalho = [self.tr("banda"), "P95", "RMS", self.tr("máximo"), self.tr("mínimo")]
+        if curva is not None:
+            nome = {"p95": "P95", "rms": "RMS", "maximo": self.tr("máximo"), "minimo": self.tr("mínimo")}
+            cabecalho += [self.tr("limite ({})").format(curva.unidade),
+                          self.tr("margem do {} (dB)").format(nome[self.opcoes.estatistica])]
+        self.tabela.setColumnCount(len(cabecalho))
+        self.tabela.setHorizontalHeaderLabels(cabecalho)
         linhas = self.linhas()
         self.tabela.setRowCount(len(linhas))
+        if curva is not None:
+            centros = np.array([c for c, _ in linhas])
+            limites = curva.em(centros)
+            margens = limites - lim.em_db([est[self.opcoes.estatistica] for _, est in linhas])
+        fundo_acima = QColor(aparencia().tema.erro)
+        fundo_acima.setAlpha(46)
         for k, (centro, est) in enumerate(linhas):
             valores = [formatar_si(centro, "Hz", 5)] + [formatar_si(est[nome], unidade, 4)
                                                         for nome in ("p95", "rms", "maximo", "minimo")]
+            if curva is not None:
+                valores += ["—" if not np.isfinite(limites[k]) else decimal(f"{limites[k]:.1f}"),
+                            "—" if not np.isfinite(margens[k]) else decimal(f"{margens[k]:+.1f}")]
+            acima = curva is not None and np.isfinite(margens[k]) and margens[k] < 0
             for c, texto in enumerate(valores):
-                self.tabela.setItem(k, c, QTableWidgetItem(texto))
+                item = QTableWidgetItem(texto)
+                if acima:
+                    item.setBackground(fundo_acima)
+                self.tabela.setItem(k, c, item)
+
+    def _desenhar_o_perfil(self) -> None:
+        """O perfil da estatística escolhida por banda, em dB acima de 1 µV (ou µA), com o limite e as que passam."""
+        curva = self.opcoes.limite
+        if curva is None or self.resultado is None:
+            self.perfil.hide()
+            return
+        self.perfil.show()
+        b = self.resultado.bandas
+        niveis = lim.em_db(b.estatisticas()[self.opcoes.estatistica])
+        unidade = "dBµA" if self.traco_unidade() == "A" else ("dBµV" if self.traco_unidade() == "V" else "dB")
+        nome = {"p95": "P95", "rms": "RMS", "maximo": self.tr("máximo"), "minimo": self.tr("mínimo")}
+        self.perfil.setLabel("left", f"{nome[self.opcoes.estatistica]} ({unidade})")
+        finitos = np.isfinite(niveis)
+        self.perfil_nivel.setData(b.centros_hz[finitos], niveis[finitos])
+        aplicavel = self.limite_aplicavel()
+        if aplicavel is None:
+            self.perfil_limite.setData([], [])
+            self.perfil_acima.setData([], [])
+            return
+        f0, f1 = aplicavel.faixa_hz
+        f = np.linspace(max(f0, float(b.centros_hz[0])), min(f1, float(b.centros_hz[-1])), 400)
+        if f[-1] > f[0]:
+            self.perfil_limite.setData(f, aplicavel.em(f))
+        else:
+            self.perfil_limite.setData([], [])
+        m = aplicavel.em(b.centros_hz) - niveis
+        acima = np.isfinite(m) & (m < 0)
+        self.perfil_acima.setData(b.centros_hz[acima], niveis[acima])
 
     def _desenhar(self) -> None:
         if self.resultado is None:
@@ -565,6 +697,7 @@ class VistaDeBandas(VistaLigada):
         f0 = float(b.centros_hz[0] - b.largura_hz / 2)
         self.imagem.setRect(QRectF(t0, f0, float(largura), float(len(b.centros_hz) * b.largura_hz)))
         self._preencher_tabela()
+        self._desenhar_o_perfil()
         self._ligar_o_tempo(self.grafico.getViewBox())
 
     def _descricao(self) -> list[str]:
@@ -574,8 +707,29 @@ class VistaDeBandas(VistaLigada):
         partes = [self.tr("{} bandas de {} ({} a {}), {}").format(
             len(b.centros_hz), formatar_si(b.largura_hz, "Hz", 3), formatar_si(b.centros_hz[0], "Hz", 4),
             formatar_si(b.centros_hz[-1], "Hz", 4), b.descricao_janelas())]
+        partes += self._descricao_do_limite()
         partes += [a.texto for a in self.resultado.avisos]
         return partes
+
+    def _descricao_do_limite(self) -> list[str]:
+        curva = self.opcoes.limite
+        if curva is None:
+            return []
+        if self.limite_aplicavel() is None:
+            return [self.tr("o limite {} é de {} ({}); o traço está em {}").format(
+                curva.nome, self.tr("tensão") if curva.grandeza == "tensao" else self.tr("corrente"), curva.unidade,
+                self.traco_unidade() or self.tr("sem unidade"))]
+        m = self.margens()
+        avaliadas = int(np.count_nonzero(np.isfinite(m)))
+        if not avaliadas:
+            return [self.tr("o limite {} não cobre as bandas desta faixa").format(curva.nome)]
+        pior = int(np.nanargmin(m))
+        texto = self.tr("{}: {} de {} bandas acima do limite, a pior margem {} dB em {}").format(
+            curva.nome, lim.passam(m), avaliadas, decimal(f"{m[pior]:+.1f}"),
+            formatar_si(self.resultado.bandas.centros_hz[pior], "Hz", 5))
+        if not curva.fonte:
+            texto += self.tr(" (a curva não diz a fonte dos valores)")
+        return [texto]
 
 
 class VistaDeEspectrograma(VistaLigada):
