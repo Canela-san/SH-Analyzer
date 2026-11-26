@@ -559,31 +559,34 @@ def _talvez(valor, formato: str = "{}") -> str | None:
 _NOMES_DOS_TIPOS = {"bin": ".bin", "csv": ".csv do adc_tool", "h5": ".h5 do adc_tool --export-hdf5"}
 
 
-def descrever_cabecalho(captura: Captura) -> list[tuple[str, list[tuple[str, str]]]]:
+def descrever_cabecalho(captura: Captura, numero: Callable[[float, str], str] = format,
+                        ) -> list[tuple[str, list[tuple[str, str]]]]:
     """O cabeçalho em seções de ``(rótulo, valor)`` para mostrar (o inspetor da interface): a captura, os canais, a
     integridade, a BeagleBone e a PRU. Só o que o cabeçalho traz: um campo de uma versão anterior fica de fora, em
     vez de aparecer como "?". Sem o cabeçalho, o que se sabe: o arquivo, a taxa e os canais informados ao abrir; num
-    ``.h5``, também de onde ele veio."""
+    ``.h5``, também de onde ele veio. ``numero(valor, especificacao)`` escreve cada número (``".3f"``, ``"g"``,
+    ``"d"``): o padrão é o ``format`` do Python; a interface passa o dela (o separador decimal, o de milhar)."""
     cab = captura.cabecalho
     captura_secao = [("Arquivo", captura.caminho.name),
-                     ("Tamanho", f"{captura.caminho.stat().st_size / 1e6:.1f} MB")]
+                     ("Tamanho", f"{numero(captura.caminho.stat().st_size / 1e6, '.1f')} MB")]
     if captura.tipo != "bin":
         captura_secao.append(("Tipo", _NOMES_DOS_TIPOS[captura.tipo]))
     if captura.hdf5 is not None:
         inicio, fim = captura.hdf5.trecho
         captura_secao += [("Exportado de", _talvez(captura.hdf5.arquivo)),
-                          ("Trecho exportado", f"amostras brutas {inicio} a {fim}"),
+                          ("Trecho exportado", f"amostras brutas {numero(inicio, 'd')} a {numero(fim, 'd')}"),
                           ("Exportado por", _talvez(captura.hdf5.versao_codigo))]
     canais = []
     for c in captura.canais:
         sonda = f", sonda {c.sonda_id}" if c.sonda_id else ""
-        canais.append((f"Canal {c.numero}", f"{c.nome_grandeza}, faixa {c.faixa_v:g} V"
-                                            f"{'' if c.faixa_confiavel else ' (suposta)'}, ganho {c.ganho:g}{sonda}"))
+        canais.append((f"Canal {c.numero}", f"{c.nome_grandeza}, faixa {numero(c.faixa_v, 'g')} V"
+                                            f"{'' if c.faixa_confiavel else ' (suposta)'}, ganho {numero(c.ganho, 'g')}"
+                                            f"{sonda}"))
     if cab is None:
         parametros = captura.parametros
         captura_secao += [("Cabeçalho", "nenhum: a taxa e os canais foram informados ao abrir"),
-                          ("Taxa total", f"{parametros.taxa_total_hz:g} Hz"),
-                          ("Amostras", f"{len(captura.amostras)}")]
+                          ("Taxa total", f"{numero(parametros.taxa_total_hz, 'g')} Hz"),
+                          ("Amostras", numero(len(captura.amostras), "d"))]
         secoes = [("Captura", captura_secao), ("Canais", canais)]
         return [(titulo, [(r, v) for r, v in linhas if v is not None]) for titulo, linhas in secoes]
     duracao = cab.duracao_real_segundos
@@ -592,10 +595,10 @@ def descrever_cabecalho(captura: Captura) -> list[tuple[str, list[tuple[str, str
         ("Cabeçalho", f"v{cab.versao_cabecalho}{origem}"
                       + ("" if cab.crc32_valido else " (CRC do cabeçalho NÃO confere)")),
         ("Início (relógio da placa)", cab.timestamp_iso_utc),
-        ("Duração", None if duracao is None else f"{duracao:.3f} s"),
-        ("Taxa total", f"{cab.frequencia_hz} Hz"),
-        ("Taxa medida", _talvez(cab.taxa_medida_hz, "{:.2f} Hz")),
-        ("Amostras", f"{cab.total_amostras_gravadas}"),
+        ("Duração", None if duracao is None else f"{numero(duracao, '.3f')} s"),
+        ("Taxa total", f"{numero(int(cab.frequencia_hz), 'd')} Hz"),
+        ("Taxa medida", None if cab.taxa_medida_hz is None else f"{numero(cab.taxa_medida_hz, '.2f')} Hz"),
+        ("Amostras", numero(int(cab.total_amostras_gravadas), "d")),
         ("Título", _talvez(cab.titulo)),
         ("Descrição", _talvez(cab.descricao)),
         ("Identificador", _talvez(cab.id_captura)),
@@ -606,7 +609,7 @@ def descrever_cabecalho(captura: Captura) -> list[tuple[str, list[tuple[str, str
     integridade = [("Problema", texto) for texto in cab.problemas_integridade]
     integridade += [("Grade", cab.descrever_grade()), ("SPI", cab.descrever_spi()),
                     ("CRC das amostras", _talvez(cab.crc32_amostras, "0x{:08X} (gravado)")),
-                    ("Pior bloco", _talvez(cab.pior_bloco_ms, "{} ms"))]
+                    ("Pior bloco", None if cab.pior_bloco_ms is None else f"{numero(cab.pior_bloco_ms, 'g')} ms")]
     placa = [("Firmware", _talvez(cab.versao_firmware))]
     placa += [(f"Sistema {i + 1}", linha) for i, linha in enumerate(cab.descrever_sistema())]
     secoes = [("Captura", captura_secao), ("Canais", canais), ("Integridade", integridade), ("BeagleBone", placa)]

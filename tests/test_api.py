@@ -165,6 +165,26 @@ def test_descrever_cabecalho(tmp_path):
     assert "CRC das amostras" not in dict(antigo["Integridade"])
 
 
+def test_descrever_cabecalho_com_quem_escreve_os_numeros(tmp_path):
+    """A interface escreve os números do jeito dela (a vírgula, o separador de milhar): ``numero`` recebe cada um com
+    a especificação do ``format``; o texto em volta não muda."""
+    from supraharmonicos.api import abrir_captura, descrever_cabecalho
+
+    caminho = escrever_bin(tmp_path / "c.bin", [np.zeros(4096), np.zeros(4096)], canais=(1, 3), versao=9,
+                           extensao={"ganhos": [19.65, 20.0]})
+    vistos = []
+
+    def numero(valor, especificacao):
+        vistos.append(especificacao)
+        return f"<{format(valor, especificacao)}>"
+
+    secoes = dict(descrever_cabecalho(abrir_captura(caminho, sondas_dir=tmp_path), numero))
+    captura = dict(secoes["Captura"])
+    assert captura["Amostras"] == "<8192>" and captura["Duração"].endswith("> s") and "<" in captura["Tamanho"]
+    assert "ganho <19.65>" in dict(secoes["Canais"])["Canal 1"]
+    assert {"d", ".3f", ".1f", "g"} <= set(vistos)
+
+
 def test_o_cabecalho_em_dict_vai_inteiro_para_o_json(tmp_path):
     import dataclasses
     import json
