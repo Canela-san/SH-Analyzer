@@ -13,6 +13,7 @@ com os números completos e a vírgula decimal: cola direto numa planilha em por
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt
@@ -58,6 +59,18 @@ class MedidasDaVista:
     colunas: tuple[str, ...] = ()
     linhas: tuple[LinhaDaTabela, ...] = ()
     planilha: str = ""
+
+
+_NUMERICO = re.compile(r"^[−+-]?\d")
+
+
+def celula(texto: str) -> QTableWidgetItem:
+    """A célula de uma tabela de resultados: um número à direita (os dígitos alinhados pela coluna), o resto à
+    esquerda."""
+    item = QTableWidgetItem(texto)
+    if _NUMERICO.match(texto):
+        item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    return item
 
 
 def numero_para_planilha(valor: float | None) -> str:

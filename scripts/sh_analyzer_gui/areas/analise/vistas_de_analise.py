@@ -41,7 +41,7 @@ from ...dados import qualidade as q
 from ...graficos.faixa import EixoDoTema
 from ...tema.aplicar import aparencia
 from ...tema.tokens import cor_do_traco
-from .medidas import MedidasDaVista, numero_para_planilha
+from .medidas import MedidasDaVista, celula, numero_para_planilha
 from .vistas_de_mapa import VistaLigada
 
 
@@ -82,7 +82,7 @@ def _preencher(tabela: QTableWidget, linhas: list[tuple[str, ...]]) -> None:
     tabela.setRowCount(len(linhas))
     for k, linha in enumerate(linhas):
         for c, texto in enumerate(linha):
-            item = QTableWidgetItem(texto)
+            item = celula(texto) if c else QTableWidgetItem(texto)
             if len(texto) > 24:
                 item.setToolTip(texto)
             tabela.setItem(k, c, item)

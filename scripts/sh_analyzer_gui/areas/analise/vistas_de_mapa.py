@@ -40,7 +40,6 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSplitter,
     QTableWidget,
-    QTableWidgetItem,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -61,7 +60,7 @@ from ...modelo.objetos import Projeto, Traco, Vista
 from ...modelo.selecao import Selecao
 from ...tema.aplicar import aparencia
 from ...tema.tokens import Tema, cor_do_traco
-from .medidas import LinhaDaTabela, MedidasDaVista, numero_para_planilha
+from .medidas import LinhaDaTabela, MedidasDaVista, celula, numero_para_planilha
 
 ESPERA_MS = 40
 TRECHOS = ("captura", "janela", "cursores")
@@ -647,7 +646,7 @@ class VistaDeBandas(VistaLigada):
                             "—" if not np.isfinite(margens[k]) else decimal(f"{margens[k]:+.1f}")]
             acima = curva is not None and np.isfinite(margens[k]) and margens[k] < 0
             for c, texto in enumerate(valores):
-                item = QTableWidgetItem(texto)
+                item = celula(texto)
                 if acima:
                     item.setBackground(fundo_acima)
                 self.tabela.setItem(k, c, item)
@@ -910,7 +909,7 @@ class VistaDeHarmonicos(VistaLigada):
                       formatar_si(h.rms_subgrupo, unidade, 5), formatar_si(h.rms_grupo, unidade, 5),
                       decimal(f"{h.pct_fundamental:.4f}"), decimal(f"{h.fase_graus:.2f}").replace("-", "−")]
             for c, texto in enumerate(textos):
-                self.tabela.setItem(k, c, QTableWidgetItem(texto))
+                self.tabela.setItem(k, c, celula(texto))
         if ajustar:
             self.grafico.getViewBox().autoRange(padding=0.02)
 
