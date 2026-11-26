@@ -19,6 +19,7 @@ from PySide6.QtGui import QAction, QActionGroup, QColor, QIcon, QKeySequence, QP
 from PySide6.QtWidgets import QFrame, QMenu, QToolButton, QWidget
 from shiboken6 import isValid
 
+from ...ajuda import botao_de_ajuda
 from ...componentes.fluxo import LayoutDeFluxo
 from ...dados.anotacoes import MARCAS, PONTAS, TRACOS
 from ...tema.aplicar import aparencia
@@ -151,6 +152,7 @@ class BarraDeAnotacao(QFrame):
         fluxo.addWidget(self._separador())
         self.acao_caderno = acao("anotacao_ao_caderno", self.tr("Referenciar no caderno de notas (as escolhidas ou a "
                                                                 "janela visível)"), "caderno", self._ao_caderno)
+        fluxo.addWidget(botao_de_ajuda("anotacoes"))
 
         # Por métodos (não lambdas): o Qt desliga sozinho quando a barra some com a vista.
         anotacoes.ferramentaMudou.connect(self._ferramenta_mudou)

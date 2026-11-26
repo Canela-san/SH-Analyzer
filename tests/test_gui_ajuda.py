@@ -20,7 +20,7 @@ def test_o_guia_tem_as_secoes_que_a_janela_pede():
     secoes = {s.id: s for s in ajuda.ler_guia()}
     pedidas = set(ajuda.SECAO_DO_TIPO.values()) | {"primeiros-passos", "janela", "abrir", "projeto", "inspetor",
                                                   "medidas", "transformacoes", "aliasing", "alinhar", "figuras",
-                                                  "aquisicao", "configuracoes"}
+                                                  "aquisicao", "configuracoes", "anotacoes", "caderno"}
     assert pedidas <= set(secoes), pedidas - set(secoes)
     assert all("{#" not in s.texto for s in secoes.values() if s.id != "guia")       # a introdução explica a sintaxe
     assert secoes["espectro"].texto.startswith("## O espectro") and "intervalo de confiança" in secoes["espectro"].texto

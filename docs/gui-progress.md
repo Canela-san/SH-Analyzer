@@ -3561,6 +3561,33 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
   - **O diálogo dos pinos da PRU cortava a explicação:** com os 4 pinos, o botão alargava o diálogo, e o layout
     media a altura do texto na largura da janela (menos linhas que as desenhadas). O rótulo mede na largura fixa
     dele; com 3 ou mais pinos o botão diz quantos.
+- **26/11, a v0.9.1: o gráfico como caderno e o caderno de notas** (o pedido do usuário: as anotações "rústicas"
+  viram um ambiente livre e customizável; o desenho à mão, só quando ligado; um bloco de notas com referências aos
+  gráficos):
+  - **A camada de anotações** (`graficos/camada_de_anotacoes.py`): um item só por caixa desenha todas as anotações
+    em pixels da tela (as coordenadas vão para pixels no NumPy, como no `TracoLOD`; o retângulo do item é o da
+    vista), escolhe, move e estica pelas alças e recebe as ferramentas. Antes, cada anotação eram vários itens do
+    PyQtGraph (o `TextItem`, o `ArrowItem`, o `LinearRegionItem`), sem estilo e sem alças. O que ela não quer (o
+    arrasto fora das anotações, com a ferramenta de escolher) passa para a caixa: o gráfico se comporta como antes.
+  - **O modelo** (`dados/anotacoes.py`, o projeto na versão 8): os tipos linha, retângulo, elipse, nível, marcador e
+    desenho (os pontos e a pressão da mesa); o estilo de cada uma, que o JSON só guarda fora do padrão.
+  - **A barra de anotação** (A; `areas/analise/barra_de_anotacao.py`): as ferramentas com as teclas (só com a barra
+    aberta), o estilo das escolhidas e das próximas, duplicar, a ordem, travar, tirar e a referência ao caderno. O
+    Delete da janela tira as anotações escolhidas antes dos traços (dois atalhos Delete seriam ambíguos e nenhum
+    dispararia).
+  - **A mesa digitalizadora:** um filtro no viewport lê a pressão do evento da mesa e o deixa seguir; o Qt o entrega
+    de novo como mouse, e a camada usa a pressão guardada (`Mesa`).
+  - **A figura e o pacote:** os tipos novos com o que o pacote já descrevia (as linhas, com NaN entre os trechos do
+    desenho com pressão; os textos) e o polígono cheio (o fundo das formas), que ele passou a descrever; o quadro do
+    texto com a transparência na cor (no quadro inteiro, a figura refeita diferia em 2 pixels).
+  - **O caderno de notas** (Ctrl+Shift+N; `componentes/caderno_de_notas.py`, `dados/notas.py`): páginas `.md` na
+    pasta `caderno` dos dados, o realce do Markdown no editor, as listas que continuam, os atalhos de marcação (o
+    `ShortcutOverride` aceito no editor: o Ctrl+B do painel do projeto não dispara), a página formatada, a busca e
+    a lixeira do sistema. As referências (`shanalyzer:ref?...`) levam a vista ao trecho e o destacam.
+  - **Cuidados aprendidos:** o PyQtGraph ignora mais de 100 movimentos do mouse por segundo: um arrasto de teste sem
+    pausa entre os passos vira um clique. A lixeira do sistema nos testes manda as páginas para a lixeira de verdade
+    do usuário: o caderno tem a `lixeira` trocável. Os testes do caderno usam uma pasta só deles (o `$DADOS` dos
+    testes é um só para a sessão).
 ---
 
 ## 8. Perguntas em aberto

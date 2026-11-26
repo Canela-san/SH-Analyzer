@@ -53,6 +53,14 @@ GESTOS = (
     ("Somar à seleção", "Ctrl + clique"),
     ("Ligar os cursores; mover o ativo", "C; setas (Shift: 10 amostras)"),
     ("Plotar um canal", "Duplo clique no canal, no painel do projeto"),
+    ("Abrir a barra de anotação (as formas, os textos, a caneta)", "A"),
+    ("As ferramentas de anotação (com a barra aberta)",
+     "V escolher, T texto, S seta, L linha, R retângulo, O elipse, G região, D cota, H nível, M marcador, P caneta, "
+     "K marca-texto, E borracha"),
+    ("Mover, esticar e mudar o texto de uma anotação", "Arrastar ela ou as alças; duplo clique no texto"),
+    ("Duplicar, mudar a ordem, tirar a anotação escolhida", "Ctrl+D; Ctrl+] e Ctrl+[; Del"),
+    ("Abrir o caderno de notas", "Ctrl+Shift+N"),
+    ("Ir a uma referência do caderno", "Clique (no editor, Ctrl + clique)"),
 )
 
 

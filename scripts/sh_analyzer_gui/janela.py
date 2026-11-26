@@ -1107,6 +1107,7 @@ class JanelaPrincipal(QMainWindow):
                           dica=self.tr("O caderno de notas: páginas em Markdown, com referências aos gráficos"),
                           acao=self.dock_caderno.toggleViewAction())
         acao.setText(self.tr("Caderno de notas"))
+        self.dock_caderno.titulo.adicionar_ajuda("caderno")
         self.dock_caderno.visibilityChanged.connect(self._caderno_visivel)
         central().referenciaPedida.connect(self._referencia_pedida)
         central().irPedido.connect(self.ir_para_referencia)

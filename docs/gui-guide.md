@@ -82,6 +82,57 @@ separadas ou sobrepostas e eixos ligados entre vistas.
 eles. As setas andam com os cursores (Shift: dez passos). As análises ligadas a esta vista usam a captura inteira,
 a janela visível ou o trecho dos cursores (o seletor "Captura / Janela / Cursores" de cada uma).
 
+## As anotações: o gráfico como caderno {#anotacoes}
+
+O gráfico aceita anotações como uma folha de caderno: textos, setas, linhas, retângulos, elipses, regiões, cotas de
+Δt (ou Δf), níveis (uma linha horizontal: um limiar), marcadores e desenhos à mão livre. Elas são da vista: ficam no
+projeto, acompanham o zoom e o pan e vão para a figura.
+
+**A barra de anotação** abre pelo botão da caneta da vista (ou a tecla **A**), e fecha do mesmo jeito. Fechada, o
+gráfico se comporta como sempre: ninguém rabisca sem querer. Aberta, cada ferramenta tem a sua tecla:
+
+| Ferramenta | Tecla | Como se usa |
+| --- | --- | --- |
+| Escolher | V | o clique escolhe (Shift: soma à escolha), o arrasto move |
+| Texto | T | o clique abre o campo ali mesmo; Enter grava, Shift+Enter quebra a linha, Esc desiste |
+| Seta | S | arraste do alvo até onde fica o texto |
+| Linha, retângulo, elipse | L, R, O | arraste de um canto ao outro (Shift: na horizontal, o quadrado, o círculo) |
+| Região, cota | G, D | arraste de um x ao outro |
+| Nível, marcador | H, M | um clique |
+| Caneta, marca-texto | P, K | desenhe à mão livre; da mesa digitalizadora, a pressão afina e engrossa a linha |
+| Borracha | E | apaga os desenhos que toca (a ponta de borracha da caneta também apaga) |
+
+Uma anotação escolhida mostra as **alças**: as pontas da seta (o alvo também), da linha e da cota, as bordas da
+região, os cantos e os lados do retângulo, da elipse e do desenho (que se esticam; Shift mantém a proporção) e o
+canto do texto, que muda o tamanho da fonte. O duplo clique muda o texto. **O estilo** está na barra e no clique
+direito: a cor (a do tema ou qualquer outra), o preenchimento e a transparência dele, a espessura, o traço
+(tracejado, pontilhado...), a opacidade, a fonte (o tamanho, o negrito, o itálico e o texto num quadro), a ponta
+da seta e a forma do marcador. Com anotações escolhidas, ele muda as escolhidas; sempre, fica para as próximas.
+Ctrl+D duplica, Ctrl+] e Ctrl+[ mudam a ordem, Del tira, as setas do teclado andam um pixel (Shift: dez) e o
+cadeado trava a anotação (ela não se move nem muda pelo mouse). Cada mudança é um passo de desfazer.
+
+O clique direito no gráfico também põe cada tipo ali e, perto de uma anotação, muda o estilo dela; e leva ao
+caderno de notas uma referência ao ponto, ao trecho entre os cursores, à janela visível ou à anotação.
+
+## O caderno de notas {#caderno}
+
+Um bloco de notas sempre à mão: **Ctrl+Shift+N** (ou o botão do caderno, no alto da janela) o abre no lado
+direito, em qualquer área, e o recolhe. As páginas são arquivos Markdown na pasta `caderno` da pasta de dados (as
+mesmas que qualquer editor abre); a gravação é sozinha.
+
+O editor entende o Markdown enquanto se escreve: `#` faz um título (`##` um subtítulo), `**negrito**`, `*itálico*`,
+`~~tachado~~`, `` `código` ``, as listas (`-` e `1.`), as tarefas (`- [ ]`, e a feita, `- [x]`), as citações (`>`),
+os blocos de código (```` ``` ````), as tabelas e os links. As listas continuam no Enter (um item vazio as acaba) e Tab
+muda o nível. A barra e os atalhos põem cada marcação: Ctrl+B, Ctrl+I, Ctrl+K (o link), Ctrl+Shift+X (o tachado),
+Ctrl+1, 2 e 3 (os títulos) e Ctrl+Shift+L (a tarefa). "Ver" mostra a página formatada. Uma imagem colada (Ctrl+V)
+fica guardada no caderno, e "Imagem da vista" põe a do gráfico à frente.
+
+**As referências aos gráficos** são links para um ponto ou um trecho de uma vista: o clique direito no gráfico
+("Referenciar este ponto no caderno", "...o trecho entre os cursores", "...a janela visível"), o botão da barra de
+anotação ou o "Referência à vista" do caderno. O clique na referência (no editor, Ctrl+clique) leva a vista até
+ali, com o mesmo zoom, e destaca o ponto ou o trecho por um instante; uma referência de outro projeto pergunta se
+ele deve ser aberto.
+
 ## As medidas {#medidas}
 
 A aba **Medidas** mostra os números da vista à frente: na vista de tempo, os dos cursores; nas de frequência, os dos

@@ -19,25 +19,22 @@ Para conferir o que baixou, as somas SHA-256 de cada arquivo estão no `SHA256SU
 
 ## O que há de novo
 
-A v0.9 traz a **interface gráfica** do SH-Analyzer, para quem analisa sem a linha de comando:
+A v0.9.1 transforma o gráfico num **caderno de anotações** e traz o **caderno de notas**:
 
-- **Análise:**
-  - o espectro, o espectrograma, a forma de onda e o modo Instrumento (os ciclos sobrepostos, como num osciloscópio, com o disparo que rejeita a alta frequência);
-  - a grade de vistas com os eixos ligados.
-- **Análises para pesquisa:**
-  - a detecção de eventos;
-  - os índices de qualidade de energia da IEC 61000-4-30 (janelas de 12 ciclos, com as janelas marcadas);
-  - a função de transferência e a coerência, com o intervalo de confiança;
-  - as métricas de bancada e o aliasing.
-- **Figuras para artigo:**
-  - os modelos IEEE e outros, o estilo de cada elemento, a visão em cinza e com daltonismo;
-  - a exportação em PDF, SVG, PNG e PGF;
-  - o pacote que refaz cada figura sem o SH-Analyzer.
-- **Dados:** a exportação em HDF5, MAT, NPZ e CSV, e os pacotes compactados `.zpaq.tar`.
-- **A placa:**
-  - a conexão pela rede e a captura direto no computador, com o "Conferir antes";
-  - as rotinas de coleta e o caderno de bancada;
-  - a manutenção: o firmware, os logs, os serviços e o resgate pela serial;
-  - uma placa simulada, para aprender sem o hardware.
-- **Ajuda:** o guia embutido ("?" e F1 em cada vista) e os primeiros passos.
-- **Projetos** `.shproj`, que guardam as vistas, os cursores e as figuras.
+- **Anotações no gráfico** (a tecla A, ou o botão da caneta da vista):
+  - textos, setas, linhas, retângulos, elipses, regiões, cotas de Δt e Δf, níveis e marcadores, cada um com a sua tecla;
+  - o desenho à mão livre, com o mouse ou com a mesa digitalizadora (a pressão afina e engrossa a linha), o marca-texto e a borracha;
+  - escolher, mover, esticar e distorcer pelas alças, inclusive o alvo de uma seta; o texto escrito no próprio gráfico;
+  - o estilo de cada uma: a cor, o preenchimento, a espessura, o traço, a opacidade, a fonte, a ponta da seta, a forma do marcador e a trava;
+  - as anotações vão para as figuras e para o pacote que as refaz.
+- **O caderno de notas** (Ctrl+Shift+N, de qualquer lugar):
+  - páginas em Markdown com o realce ao vivo (`#` vira um título, as listas, as tarefas, o código...) e a página formatada;
+  - referências a um ponto ou a um trecho de um gráfico: o clique nelas leva a vista até ali;
+  - a imagem do gráfico e as imagens coladas guardadas junto.
+- **Correções:**
+  - o traço não some mais a partir de um certo zoom;
+  - apagar a duração na Captura para escrever outra não mostra mais um erro;
+  - o diálogo dos pinos da PRU não corta mais o texto.
+- E o que veio desde a v0.9: importar dados de fora (osciloscópio, CSV, WAV, COMTRADE), o relatório da captura, a análise em lote com a tendência, as curvas de limite das bandas IEC, a diferença entre espectros, o notebook do Jupyter no pacote da figura e uma partida três vezes mais rápida.
+
+Os projetos com as anotações novas usam o formato 8: a v0.9 não os abre (ela pede para atualizar o aplicativo).
