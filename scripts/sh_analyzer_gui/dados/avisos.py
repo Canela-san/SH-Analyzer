@@ -98,3 +98,15 @@ def para_a_tela(aviso: api.Aviso, separador: str = ",") -> api.Aviso:
     elif m := _GANHO.fullmatch(texto):
         texto = "o ganho de cada canal é o declarado na captura: " + m[1].replace(", canal", "; canal")
     return api.Aviso(aviso.nivel, com_o_separador(texto, separador))
+
+
+def do_exemplo(avisos) -> list[api.Aviso]:
+    """Os avisos da captura de exemplo dos primeiros passos: a corrente dela vem da sonda ideal da placa simulada
+    (100 mV/A, plana), e o aviso de "sem perfil" não pede nada a quem está começando: vira uma informação."""
+    saida = []
+    for a in avisos:
+        if a.nivel == "aviso" and _SEM_PERFIL.fullmatch(a.texto):
+            a = api.Aviso("info", "no exemplo, a corrente vem da sonda ideal da placa simulada (100 mV/A, plana): não "
+                                  "há perfil de sonda a aplicar")
+        saida.append(a)
+    return saida

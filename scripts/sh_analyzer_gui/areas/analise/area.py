@@ -21,9 +21,11 @@ from ... import preferencias
 from ...componentes.avisos import ListaDeAvisos
 from ...componentes.grade_de_vistas import CELULAS
 from ...componentes.numeros import formatar_bytes, formatar_si
+from ...componentes.primeiros_passos import e_o_exemplo
 from ...componentes.toast import Toast
 from ...dados import alinhamento as al
 from ...dados import exportar_dados as ed
+from ...dados.avisos import do_exemplo
 from ...dados.espectros import OPCOES_DO_TIPO
 from ...dados.proveniencia import dos_dados
 from ...dados.receita import ReceitaDoTraco
@@ -656,7 +658,10 @@ class AreaDeAnalise(QObject):
 
     def _avisos_da_fonte(self, fonte: FonteDoProjeto) -> None:
         if not fonte.esta_ausente:
-            self.avisos.adicionar(fonte.fonte.captura.avisos, fonte.id, fonte.nome)
+            avisos = fonte.fonte.captura.avisos
+            if e_o_exemplo(fonte.caminho):
+                avisos = do_exemplo(avisos)
+            self.avisos.adicionar(avisos, fonte.id, fonte.nome)
 
     # ------------------------------------------------------------------ as notas (os cadernos de bancada)
 

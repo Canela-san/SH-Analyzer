@@ -117,6 +117,8 @@ def test_os_primeiros_passos_levam_a_primeira_medida(primeira_vez, qtbot):
     qtbot.waitUntil(lambda: cartao.feitos()["abrir"], timeout=ESPERA_MS)
     fonte = janela.projeto.fontes[0]
     assert fonte.nome == "exemplo-rede-60Hz.bin" and fonte.caminho.is_relative_to(preferencias.pasta("cache"))
+    # O exemplo não abre com um aviso para quem está começando (só informações).
+    assert {a.nivel for a, _ in janela.avisos.avisos} <= {"info"}
     cartao.conferir()
     cartao.botoes["plotar"].click()
     qtbot.waitUntil(lambda: cartao.feitos()["plotar"], timeout=ESPERA_MS)

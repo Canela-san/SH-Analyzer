@@ -39,6 +39,12 @@ def marcar_vistos() -> None:
     gravar(CHAVE_DOS_PRIMEIROS_PASSOS, VISTOS)
 
 
+def e_o_exemplo(caminho: Path) -> bool:
+    """Se ``caminho`` é a captura de exemplo (o nome dela, na pasta ``exemplos`` do cache)."""
+    caminho = Path(caminho)
+    return caminho.name == NOME_DO_EXEMPLO and caminho.parent.name == "exemplos"
+
+
 def gerar_exemplo(pasta: Path) -> Path:
     """A captura de exemplo em ``pasta/exemplos`` (gerada uma vez; a janela passa a pasta do cache, que se refaz, e
     não a dos dados do laboratório): 2 blocos da placa simulada, a corrente no canal 0 e a tensão da tomada no
