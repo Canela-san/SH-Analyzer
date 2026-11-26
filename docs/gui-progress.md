@@ -9,9 +9,10 @@ O diário e a lista de tarefas do desenvolvimento da GUI. O **plano** (o quê e 
 ## Próxima tarefa
 
 > **Depois da v0.9 (25/11/2026):** a lista do que falta, com a prioridade, está no `docs/gui-plan.md`, seção 16
-> ("Depois da v0.9: a lista priorizada"). Ela junta o que os documentos deixaram em aberto e o que a análise da v0.9
-> achou. A próxima tarefa sai dos itens P1. O primeiro é a unidade do espectro na figura com a tensão e a corrente
-> juntas.
+> ("Depois da v0.9: a lista priorizada"). **Em 26/11, os P1 de código e boa parte dos P2 ficaram prontos** (o diário
+> de 26/11). A próxima tarefa sai do que ficou em aberto lá: os P1 "com o usuário" (as validações na tela, o
+> Windows, a placa com alguém na bancada, o teste com três pesquisadores), o Bode como painel de figura, os
+> assistentes de calibração e o instalador menor.
 >
 > **A Fase 2 está feita** (seção 4c, F2.1 a F2.11; diário de 15/11): a jornada do pesquisador vai da captura ao
 > espectro corrigido pela sonda, com os números da CLI (`tests/test_gui_jornada.py`), e o G1 passa com a cadeia
@@ -3519,6 +3520,29 @@ Uma entrada por sessão, a mais nova no fim: o que foi feito, onde parou e o que
     laço de eventos de verdade, ela ficou pronta em ~1 s.
   - **Nenhum código mudou.**
   - **Próximo:** os itens P1, a começar pela unidade do espectro na figura.
+- **26/11/2026:** **as propostas da lista implementadas, a revisão gráfica e a partida mais curta.** O pedido:
+  "implemente as propostas", o cartão dos primeiros passos no canto da janela inteira, "procure mais funções,
+  utilidades e melhorias de qualidade de vida", uma revisão gráfica e os bugs achados no caminho, com os testes
+  rápidos, a documentação em dia e um commit por passo.
+  - **Os P1:** o eixo da direita para a outra grandeza no espectro da figura (e no pacote); os números do cabeçalho
+    e dos avisos com o separador da interface; o exemplo sem o aviso da CLI; o cartão no canto e recolhível; o pacote
+    de origem guardado no projeto (a captura extraída de novo) e o "Localizar a captura…"; a trava do Matplotlib; a
+    densidade compacta; os nomes curtos das vistas, os ícones e o "← Tempo" na árvore, o vazio das Medidas, o
+    inspetor das derivadas, o vão mínimo da qualidade, a fonte dos eventos, a janela visível; os nomes acessíveis.
+  - **Os P2 e o resto:** importar dados de fora (o osciloscópio, o CSV com o assistente, o WAV, o COMTRADE); exportar
+    em WAV e COMTRADE; a Diferença no espectro; as curvas de limite das bandas (do usuário: os valores das normas não
+    estão em fonte pública) e as faixas CENELEC no espectro; o relatório da captura (HTML e PDF); o notebook no
+    pacote; a análise em lote com a tendência; a fonte derivada (TR-08); a partida de ~2,95 s para ~1,0 s (as
+    Figuras e a Aquisição montam depois da primeira pintura, sem o Matplotlib na partida).
+  - **Os bugs achados:** a faixa nova da vista de tempo levava a folga do ajuste automático do PyQtGraph para a
+    principal (a vista começava em −0,195 s); o detector de descontinuidades via cada degrau de quantização de um
+    sinal lento como um salto (19 161 num segundo a 0,8 V); o eixo do tempo do cabeçalho sem a unidade.
+  - **A revisão gráfica:** as fotos sem tela nos dois temas; os números das tabelas das vistas à direita; o diálogo
+    da exportação largo o bastante para os 7 formatos; o PDF do relatório com o CSS que o Qt entende.
+  - **Ficou em aberto:** o Bode como painel de figura (o desenho e o pacote não conhecem a vista da sonda nem as
+    barras de erro); o Parquet (pediria o `pyarrow`); os P1 com o usuário e os P2 da placa e da distribuição.
+  - **Cuidado aprendido:** o ajuste automático do PyQtGraph roda na pintura: um teste que confere a faixa da vista
+    precisa deixar o laço de eventos andar (`qtbot.wait`) antes, ou passa sem a correção.
 ---
 
 ## 8. Perguntas em aberto

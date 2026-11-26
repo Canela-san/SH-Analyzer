@@ -1678,56 +1678,92 @@ nome, com a prioridade:
 
 **P1: o que está errado**
 
-- [ ] **A unidade do espectro na figura com grandezas misturadas.** O `dados/desenho_da_figura.py` dá ao painel o
+- [x] **A unidade do espectro na figura com grandezas misturadas.** O `dados/desenho_da_figura.py` dá ao painel o
   rótulo da primeira série (`rotulo_y=series[0].rotulo_y`). Um espectro com a tensão e a corrente vira figura com um
   eixo só, "Nível (dBV)", e a corrente desenhada nele. Na tela, o rótulo sai na cor do traço de referência; na figura,
   nada avisa. Proposta:
   - separar as grandezas sozinho (um painel por unidade, ou o segundo eixo à direita);
   - até lá, um aviso no painel da figura.
-- [ ] **Os números do motor fora das preferências.** Dois casos:
+
+  **Feito (26/11):** a outra grandeza vai no eixo da direita (o `twinx`), com o rótulo dela, também no pacote
+  reproduzível.
+- [x] **Os números do motor fora das preferências.** Dois casos:
   - os campos do cabeçalho no inspetor vêm prontos da `api` (`supraharmonicos/api.py`, `"{:.2f} Hz"`) e saem com o
     ponto ("5.243 s", "399998.72 Hz", "4.2 MB") e sem o separador de milhar ("2097152" amostras);
   - os avisos do motor também ("canal 1: 19.357"), enquanto as medidas saem com a vírgula.
 
   Proposta: a `api` devolve o valor e a unidade, e a interface formata (`componentes/numeros.py`). Isso também prepara o
   inglês.
-- [ ] **O exemplo da primeira execução abre com avisos.** A captura de exemplo põe dois avisos no painel. Um deles é do
+
+  **Feito (26/11):** o `descrever_cabecalho` recebe quem escreve os números (o separador decimal e o de milhar da
+  interface), e os avisos do motor passam pelo separador e pelas palavras da interface.
+- [x] **O exemplo da primeira execução abre com avisos.** A captura de exemplo põe dois avisos no painel. Um deles é do
   nível "aviso": o canal 0 é de corrente e não tem o perfil da sonda. O texto ainda manda usar as opções da CLI
   (`--sonda em ler_adc`, `--sonda-perfil 0:ARQUIVO`). Proposta:
   - o exemplo com o perfil da sonda (ou com a grandeza que não pede um);
   - os avisos do motor com a ação da interface ("Escolher o perfil…" no inspetor) no lugar da opção da CLI.
-- [ ] **O cartão "Primeiros passos" cobre o gráfico.** Ele ocupa ~40 % da área central, por cima do traço e do botão
+
+  **Feito (26/11):** no exemplo (e nos importados), o "sem perfil" vira informação; os avisos do motor dizem a ação
+  da interface ("Adicionar etapa" → "Correção de sonda").
+- [x] **O cartão "Primeiros passos" cobre o gráfico.** Ele ocupa ~40 % da área central, por cima do traço e do botão
   "Abrir…" do estado vazio, até ser fechado. Proposta: encaixá-lo num canto, ou recolhê-lo num chip ("Primeiros passos
   2/5") que abre de novo.
-- [ ] **O pacote de origem das capturas no projeto** (da lista acima). Com o cache limpo, o projeto aponta para uma
+
+  **Feito (26/11):** no canto de baixo à direita da janela inteira, e recolhível ("Primeiros passos · 2 de 5").
+- [x] **O pacote de origem das capturas no projeto** (da lista acima). Com o cache limpo, o projeto aponta para uma
   captura extraída que não existe mais.
-- [ ] **A figura do pacote reproduzível que difere sob carga** (da lista acima). Conferir primeiro se o lock entre as
+
+  **Feito (26/11):** o projeto guarda o pacote e o nome da captura nele (campos opcionais), e a extrai de novo
+  sozinho; a captura ausente volta pelo "Localizar a captura…" (desfazível, com o CRC conferido).
+- [x] **A figura do pacote reproduzível que difere sob carga** (da lista acima). Conferir primeiro se o lock entre as
   tarefas de desenho da F7.12 já resolve. Hoje é um teste instável na CI completa.
-- [ ] **A densidade da interface** (GE-05, v0.9). As Configurações têm o tema, o movimento, o separador, os prefixos e
+
+  **Feito (26/11):** um desenho com o Matplotlib por vez (a trava reentrante em volta do `rc_context`).
+- [x] **A densidade da interface** (GE-05, v0.9). As Configurações têm o tema, o movimento, o separador, os prefixos e
   as atualizações; a densidade (compacta e confortável) não existe.
+
+  **Feita (26/11):** Confortável e Compacta, nas Configurações.
 
 **P1: os acertos pequenos da tela** (achados na janela sem tela, a 1 440 × 900 px)
 
-- [ ] **Os nomes das vistas derivadas:** "Espectro de Tempo", "Qualidade de energia de Tempo", "Eventos de Tempo".
+- [x] **Os nomes das vistas derivadas:** "Espectro de Tempo", "Qualidade de energia de Tempo", "Eventos de Tempo".
   - Com quatro abas, a barra já rola, e a árvore corta o nome ("Qualidade de...gia de Tempo").
   - Proposta: nomes curtos pelo tipo e pelo canal ("Espectro · canal 1").
-- [ ] **A árvore do projeto:**
+
+  **Feito (26/11):** "Espectro", "Qualidade"…, com " · Tempo 2" só quando há mais de uma vista de tempo.
+- [x] **A árvore do projeto:**
   - todas as vistas aparecem com o ícone da onda, enquanto as abas têm o ícone de cada tipo;
   - as vistas derivadas dizem "0 traços" e mostram dois.
-- [ ] **O painel Medidas com o canal já plotado.** Com o espectro, a qualidade ou os eventos na frente e sem os
+
+  **Feito (26/11):** o ícone de cada tipo, e "← Tempo" nas derivadas.
+- [x] **O painel Medidas com o canal já plotado.** Com o espectro, a qualidade ou os eventos na frente e sem os
   cursores, ele diz "Plote um canal". Proposta: dizer o que fazer naquela vista (os cursores do espectro), ou mostrar as
   medidas da vista de tempo.
-- [ ] **O inspetor das vistas de qualidade e de eventos** mostra "Nada selecionado". Proposta: as opções da vista, como
+
+  **Feito (26/11):** o vazio diz o que fazer em cada vista.
+- [x] **O inspetor das vistas de qualidade e de eventos** mostra "Nada selecionado". Proposta: as opções da vista, como
   já acontece no espectro.
-- [ ] **A escala automática da qualidade exagera variações mínimas.** Uma THD de 3,9857 a 3,9867 % ocupa a altura toda
+
+  **Feito (26/11):** o que a vista faz, quem ela segue e a ajuda dela, em todas as derivadas.
+- [x] **A escala automática da qualidade exagera variações mínimas.** Uma THD de 3,9857 a 3,9867 % ocupa a altura toda
   e parece instável. Proposta: um vão mínimo relativo nas séries dos índices, ou a opção "incluir o zero".
-- [ ] **Os eventos:** os nomes das categorias no eixo saem numa fonte monoespaçada, diferente do resto da interface.
-- [ ] **A janela visível:**
+
+  **Feito (26/11):** o vão mínimo de 1 % do valor (também nas figuras do relatório).
+- [x] **Os eventos:** os nomes das categorias no eixo saem numa fonte monoespaçada, diferente do resto da interface.
+
+  **Feito (26/11):** a fonte da interface nas categorias.
+- [x] **A janela visível:**
   - os números têm dígitos demais ("−195,3904 ms → 5,438265 s");
   - a vista inicial começa em −0,195 s numa captura que começa em 0.
-- [ ] **A acessibilidade.** Só `componentes/painel.py` e `componentes/chip.py` dão o nome acessível. Os botões só com
+
+  **Feito (26/11):** 5 dígitos; o tempo sem folga, e a faixa nova sem o ajuste automático do PyQtGraph (era ele que
+  levava o −0,195 s para a principal).
+- [x] **A acessibilidade.** Só `componentes/painel.py` e `componentes/chip.py` dão o nome acessível. Os botões só com
   ícone (a barra de cada vista, as abas, a barra superior) ficam mudos num leitor de tela. Proposta: o nome acessível
   tirado da dica, com um teste que percorre a janela.
+
+  **Feita (26/11):** o nome acessível tirado da dica em todo botão sem texto (um filtro na aplicação), com o teste
+  que percorre a janela.
 
 **P1: com o usuário**
 
@@ -1761,31 +1797,50 @@ nome, com a prioridade:
 
 **P2: as análises, para os pesquisadores e para o relatório final**
 
-- [ ] **Importar dados de fora** (PD-03, e o MAT e o COMTRADE do PD-10; da lista acima). Sobe de prioridade: a
+- [x] **Importar dados de fora** (PD-03, e o MAT e o COMTRADE do PD-10; da lista acima). Sobe de prioridade: a
   demonstração principal do relatório final será no laboratório, contra o osciloscópio de referência, e comparar as
   duas medições na mesma vista é o caminho natural.
-- [ ] **Os limites das normas no espectro e nas bandas.** Hoje nada fala de limite, nem a interface nem o motor.
+
+  **Feito (26/11):** o osciloscópio, o CSV qualquer (o assistente das colunas), o WAV e o COMTRADE, como capturas do
+  projeto (Ctrl+Shift+I).
+- [x] **Os limites das normas no espectro e nas bandas.** Hoje nada fala de limite, nem a interface nem o motor.
   Proposta:
   - os níveis de compatibilidade de 2 a 150 kHz (IEC 61000-2-2) e as faixas do CENELEC EN 50065-1 (A a D), em curvas
     por cima do espectro;
   - o "passa" ou "excede" de cada banda na tabela;
   - os valores conferidos na norma, sem copiá-los de memória.
-- [ ] **O relatório da captura.** Um botão que gera um PDF (ou HTML) com:
+
+  **Feito (26/11), sem os valores das normas** (publicações pagas, que não estão em fonte pública): as curvas de
+  limite do usuário (digitadas ou coladas, com a fonte), com a margem de cada banda na tabela, as que passam em
+  vermelho e o perfil; as faixas A a D da EN 50065-1 no espectro.
+- [x] **O relatório da captura.** Um botão que gera um PDF (ou HTML) com:
   - o cabeçalho e a integridade;
   - os índices da qualidade e os eventos;
   - as figuras escolhidas e a proveniência.
 
   Serve para o caderno, para o relatório da FAPESP e para anexar a um artigo.
-- [ ] **A análise em lote e as tendências.** Escolher uma pasta, ou as sessões de vários dias, e calcular os mesmos
+
+  **Feito (26/11):** HTML (um arquivo só) ou PDF A4, Ctrl+Shift+R.
+- [x] **A análise em lote e as tendências.** Escolher uma pasta, ou as sessões de vários dias, e calcular os mesmos
   índices em cada captura (as bandas, a THD, os eventos): uma tabela e um gráfico de tendência, exportáveis. Hoje cada
   captura é analisada à mão; o motor tem os modos em lote da CLI (`modos.py`), ainda fora da `api`.
-- [ ] **Comparar espectros de capturas diferentes.** A diferença em dB (A − B), ou a razão dos espectros médios (antes
+
+  **Feita (26/11):** "Análise em lote…": a tabela, a tendência por canal no tempo e o CSV.
+- [x] **Comparar espectros de capturas diferentes.** A diferença em dB (A − B), ou a razão dos espectros médios (antes
   e depois de ligar uma carga, dois dias), com o mesmo método e a mesma resolução garantidos. Hoje a transferência
   (F7.7) é só entre os canais da mesma captura.
+
+  **Feito (26/11):** a "Diferença" do espectro (os outros traços menos o primeiro, em dB, bin a bin).
 - [ ] **A fonte derivada** (TR-08), **a figura do Bode** (ES-07 como painel) e **exportar WAV, Parquet e COMTRADE**
   (FG-10), da lista acima.
-- [ ] **O notebook.** O pacote reproduzível também como `.ipynb`, com a cadeia da vista pela `supraharmonicos.api`,
+
+  **Em parte (26/11):** a fonte derivada ("Captura" na exportação dos dados) e o WAV e o COMTRADE estão feitos.
+  Faltam o Bode como painel (o desenho da figura e o pacote ainda não conhecem a vista da sonda nem as barras de
+  erro) e o Parquet (pediria o `pyarrow`, ~100 MB no instalador).
+- [x] **O notebook.** O pacote reproduzível também como `.ipynb`, com a cadeia da vista pela `supraharmonicos.api`,
   para quem continua a análise no Jupyter.
+
+  **Feito (26/11):** o `analise.ipynb` no pacote, com o teste que roda as células.
 
 **P2: a placa e a calibração**
 
@@ -1802,7 +1857,10 @@ nome, com a prioridade:
 
 **P2: o desempenho e a distribuição**
 
-- [ ] **A partida mais curta** (da lista acima): 2,7 a 3,0 s, contra a meta de 1,5 s (seção 4.1).
+- [x] **A partida mais curta** (da lista acima): 2,7 a 3,0 s, contra a meta de 1,5 s (seção 4.1).
+
+  **Feita (26/11):** as Figuras e a Aquisição montam depois da primeira pintura, e o Matplotlib sai da partida: ~1,0
+  s sem tela até a janela (antes ~2,95 s).
 - [ ] **Os índices de qualidade mais rápidos** (da lista acima).
 - [ ] **O instalador menor.** Ele tem 420 MB; a F0.11 deixou para cortar as duas cópias do OpenBLAS (48 MB) e o Qt
   Quick, o Qml e o Pdf (21 MB).
