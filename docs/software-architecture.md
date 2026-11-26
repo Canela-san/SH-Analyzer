@@ -104,6 +104,7 @@ Camada = quem pode importar quem (um módulo só importa camadas **menores**).
 | 2 | `exportacao` | Resultados da análise em CSV + JSON de metadados (`--exportar`) e em `.mat` do MATLAB/Octave (`--exportar-mat`; scipy.io só ao usar) | `exportar_csv`, `exportar_mat` |
 | 2 | `conversao` | `.bin` ↔ `.csv` em blocos | `converter_arquivo` |
 | 2 | `hdf5` | `.bin` → `.h5` em blocos (`h5py` importado só ao usar) | `exportar_hdf5` |
+| 3 | `importacao` | Os dados de fora (osciloscópio, CSV genérico, WAV, COMTRADE) lidos e gravados num `.h5` que abre como captura, com a taxa e a calibração exatas; a escrita em COMTRADE 1999 | `ler`, `previa_do_csv`, `ler_csv`, `gravar_como_captura`, `gravar_comtrade` |
 | 2 | `metricas_captura` | Métricas de uma captura, sem I/O: estatística, ruído, tom, THD/SINAD/SNR/ENOB/SFDR, continuidade, salto nas trocas de buffer, diafonia/atraso (FFT única, janela Kaiser β = 14) | `analisar_espectro`, `verificar_continuidade`, `comparar_trocas_de_buffer`, `calcular_acoplamento`, `calcular_basicas` |
 | 2 | `compactacao` | Pacote `.zpaq.tar` sem perdas: formato (tar + manifesto JSON + peças zpaq/xz independentes), desentrelaçamento reversível dos canais, compressores em paralelo (cabe na RAM livre), verificação por SHA-256, extração segura | `compactar`, `Pacote`, `descobrir_entradas`, `Desentrelacamento`, `remover_originais` |
 | 2 | `saida_continua` | A captura que chega pela saída contínua do `ler_adc` (`-o - --progresso-json`), gravada num arquivo do computador: as linhas de progresso (`Acompanhamento`) e o fechamento (`fechar`): o cabeçalho final no lugar do provisório; na queda, os blocos inteiros, o CRC e o sinal de cada canal medidos aqui, os contadores e o tempo das linhas de progresso e a marca `fim_pelo_computador` na reserva da v9 (sem rede e sem Qt: quem recebe é o `sh_placa`) | `fechar`, `Fechamento`, `Acompanhamento`, `CapturaVazia` |
@@ -190,7 +191,7 @@ Cada comando carrega só o que usa. Antes desta regra, `adc_tool.py --help` leva
 * **SciPy:** nunca no topo de um módulo (`tests/test_arquitetura.py` confere). Cada função importa a parte que usa, na primeira linha que precisa dela: `from scipy.signal import butter, sosfiltfilt  # sob demanda`. O Python guarda o módulo depois da primeira importação, então chamar a função de novo não custa nada.
 * `matplotlib`: só em `plotagem.py` (topo) e dentro de `escrita_perfil.gerar_grafico` (para `--plot`). `modos` importa `plotagem` **dentro** de `executar_plotagem`, e só quando vai desenhar (há `-o` ou uma tela, e não há `--sem-grafico`).
 * As CLIs: `cli_principal` importa a de cada subcomando dentro de uma função, só quando ele é pedido.
-* `h5py`: só dentro de `hdf5.exportar_hdf5`.
+* `h5py`: só dentro das funções do `hdf5` (a exportação, a leitura e a gravação dos dados importados).
 * `rich` (interface do `compactar_amostras`): só em `cli_compactar`. O formato e a verificação (`compactacao`) não dependem dele.
 * Dependências novas: declare em **dois** lugares — `pyproject.toml` e o bloco PEP 723 de cada script que a usa (`tests/test_dependencias.py` falha se faltar no bloco algo que o script importa ao carregar, ou se as versões divergirem).
 

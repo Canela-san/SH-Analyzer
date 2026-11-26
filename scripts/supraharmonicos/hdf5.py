@@ -290,6 +290,8 @@ class ConteudoHdf5:
     arquivo_origem: str
     trecho: tuple[int, int]        # [início, fim) em amostras brutas do .bin de origem
     versao_codigo: str | None
+    taxa_total_hz: float | None = None   # a taxa gravada (os dados importados, importacao.gravar_como_captura)
+    importado_de: str | None = None      # a origem dos dados importados (osciloscópio, WAV, COMTRADE...)
 
 
 def ler_cabecalho_bruto(caminho: Path) -> bytes | None:
@@ -348,8 +350,43 @@ def ler_hdf5(caminho: Path, *, limite_bytes: int = LIMITE_DO_HDF5_EM_MEMORIA) ->
                 arquivo_origem=str(attrs.get("arquivo_origem", "")),
                 trecho=(inicio, int(attrs.get("trecho_fim_amostra_bruta", inicio + n_linhas * n_colunas))),
                 versao_codigo=str(attrs["versao_codigo"]) if "versao_codigo" in attrs else None,
+                taxa_total_hz=float(attrs["taxa_total_hz"]) if "taxa_total_hz" in attrs else None,
+                importado_de=str(attrs["importado_de"]) if "importado_de" in attrs else None,
             )
     except FileNotFoundError:
         raise ErroSHAN(f"arquivo '{caminho}' não encontrado.") from None
     except OSError as e:
         raise ErroSHAN(f"'{caminho}' não é um HDF5 legível ({e}).") from None
+
+
+def gravar_amostras_importadas(destino: Path, codigos: np.ndarray, *, faixas, offsets, grandezas,
+                               taxa_total_hz: float, nomes, origem: str, versao_codigo: str = "") -> Path:
+    """O ``.h5`` dos dados de fora (``importacao.gravar_como_captura``): os ``codigos`` ``int16`` (uma coluna por
+    canal) no leiaute do ``--export-hdf5``, com a calibração de cada canal (ganho 1), a taxa total e a origem nos
+    atributos (:func:`ler_hdf5` os devolve em ``taxa_total_hz`` e ``importado_de``). Gravado inteiro ou nada (um
+    ``.parcial`` renomeado no fim)."""
+    import h5py
+
+    destino = Path(destino)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    k = codigos.shape[1]
+    temporario = destino.with_name(destino.name + ".parcial")
+    with h5py.File(temporario, "w") as f5:
+        f5.create_dataset("amostras", data=np.asarray(codigos, dtype="<i2"), chunks=True)
+        a = f5.attrs
+        a["formato_amostra"] = "int16"
+        a["canais_ordem"] = np.arange(k, dtype=np.int64)
+        a["faixa_v_por_canal"] = np.asarray(faixas, dtype=np.float64)
+        a["ganho_por_canal"] = np.ones(k)
+        a["offset_v_por_canal"] = np.asarray(offsets, dtype=np.float64)
+        a["grandeza_por_canal"] = np.asarray(grandezas, dtype=np.int64)
+        a["taxa_total_hz"] = float(taxa_total_hz)
+        a["nomes_dos_canais"] = list(nomes)
+        a["importado_de"] = origem
+        a["arquivo_origem"] = origem
+        a["trecho_inicio_amostra_bruta"] = 0
+        a["trecho_fim_amostra_bruta"] = int(codigos.size)
+        if versao_codigo:
+            a["versao_codigo"] = versao_codigo
+    temporario.replace(destino)
+    return destino

@@ -52,6 +52,7 @@ import numpy as np
 # CLI fica nos testes deles.
 from . import aliasing as aliasing
 from . import compactacao as compactacao
+from . import importacao as importacao
 from . import metricas_captura as metricas_captura
 from .amostras import carregar_amostras_bin, carregar_colunas_csv, converter_para_tensao
 from .bandas_iec import (
@@ -216,6 +217,7 @@ class OrigemDoHdf5:
     arquivo: str
     trecho: tuple[int, int]
     versao_codigo: str | None
+    importado_de: str | None = None     # os dados de fora (importacao): de onde vieram
 
 
 @dataclass(frozen=True, eq=False)
@@ -328,6 +330,8 @@ def abrir_captura(caminho: Path, *, formato: str | None = None, sondas_dir: Path
     abrir = {"bin": _abrir_bin, "csv": _abrir_csv, "h5": _abrir_hdf5}[tipo]
     with capturar_avisos() as avisos:
         ctx, amostras, formato, taxa_total, declarados, hdf5 = abrir(caminho, formato, sondas_dir, parametros)
+        if parametros is None and ctx.cabecalho is None and hdf5 is not None and hdf5.importado_de:
+            parametros = ParametrosSemCabecalho(taxa_total, tuple(ctx.canais))    # a taxa gravada na importação
         canais = _canais_da_captura(caminho, ctx, amostras, formato, taxa_total, declarados, avisos)
     return Captura(caminho, ctx.cabecalho, formato, amostras, canais, tuple(avisos), ctx, tipo, parametros, hdf5)
 
@@ -483,6 +487,8 @@ def _abrir_hdf5(caminho: Path, formato: str | None, sondas_dir: Path | None,
     formato, canais = conteudo.formato, tuple(conteudo.canais)
     cab = None if conteudo.cabecalho_bruto is None else interpretar_cabecalho(conteudo.cabecalho_bruto, caminho)
     if cab is None:
+        if parametros is None and conteudo.taxa_total_hz:      # os dados importados gravam a taxa
+            parametros = ParametrosSemCabecalho(conteudo.taxa_total_hz, canais)
         if parametros is None:
             raise CapturaSemCabecalho(f"{caminho.name}: exportado de um .bin sem o cabeçalho do SH-Analyzer. Diga a "
                                       "taxa total.", tipo="h5", canais=canais, n_amostras=len(conteudo.amostras))
@@ -496,9 +502,10 @@ def _abrir_hdf5(caminho: Path, formato: str | None, sondas_dir: Path | None,
     # A calibração é a da exportação (o --faixa, o --ganho e o --offset dela, ou os do cabeçalho); a faixa é a real
     # do ADC onde coincide com a que o cabeçalho registra (a regra de resolver_faixas).
     reais = cab.faixa_adc_total_v_por_canal if cab is not None and len(cab.lista_canais) == len(canais) else ()
-    confiaveis = [i < len(reais) and reais[i] is not None
-                  and abs(faixa_cli_do_total_v(reais[i], formato) - faixa) <= TOLERANCIA_FAIXA_V
-                  for i, faixa in enumerate(conteudo.faixas)]
+    confiaveis = [conteudo.importado_de is not None or (
+                  i < len(reais) and reais[i] is not None
+                  and abs(faixa_cli_do_total_v(reais[i], formato) - faixa) <= TOLERANCIA_FAIXA_V)
+                  for i, faixa in enumerate(conteudo.faixas)]     # a calibração de um importado é a exata
     ctx = ContextoCaptura(
         caminho_entrada=caminho, cabecalho=cab, offset_amostras=0, canais=list(canais),
         canais_veio_do_cabecalho=False, canais_exibir=list(canais), faixas=conteudo.faixas, ganhos=conteudo.ganhos,
@@ -506,8 +513,9 @@ def _abrir_hdf5(caminho: Path, formato: str | None, sondas_dir: Path | None,
         overrides_grandeza={} if conteudo.grandezas is None else dict(zip(canais, conteudo.grandezas)),
         overrides_perfil={}, sondas_dir=sondas_dir if sondas_dir is not None else SONDAS_DIR_PADRAO)
     # O ganho está na unidade física se a captura o declarou ou se a exportação usou um --ganho.
-    declarados = [d or g != 1.0 for d, g in zip(_declarados(cab, len(canais)), conteudo.ganhos)]
-    origem = OrigemDoHdf5(conteudo.arquivo_origem, conteudo.trecho, conteudo.versao_codigo)
+    declarados = [d or g != 1.0 or conteudo.importado_de is not None
+                  for d, g in zip(_declarados(cab, len(canais)), conteudo.ganhos)]
+    origem = OrigemDoHdf5(conteudo.arquivo_origem, conteudo.trecho, conteudo.versao_codigo, conteudo.importado_de)
     return ctx, conteudo.amostras, formato, taxa_total, declarados, origem
 
 
@@ -571,7 +579,9 @@ def descrever_cabecalho(captura: Captura, numero: Callable[[float, str], str] = 
                      ("Tamanho", f"{numero(captura.caminho.stat().st_size / 1e6, '.1f')} MB")]
     if captura.tipo != "bin":
         captura_secao.append(("Tipo", _NOMES_DOS_TIPOS[captura.tipo]))
-    if captura.hdf5 is not None:
+    if captura.hdf5 is not None and captura.hdf5.importado_de:
+        captura_secao += [("Importado de", captura.hdf5.importado_de)]
+    elif captura.hdf5 is not None:
         inicio, fim = captura.hdf5.trecho
         captura_secao += [("Exportado de", _talvez(captura.hdf5.arquivo)),
                           ("Trecho exportado", f"amostras brutas {numero(inicio, 'd')} a {numero(fim, 'd')}"),
