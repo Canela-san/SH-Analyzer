@@ -121,6 +121,22 @@ def test_o_corrigir_dos_pinos_so_roda_depois_de_confirmar(qtbot, placas, conecta
     assert pinos.item.nivel == "ok" and pinos.acao is None
 
 
+def test_o_texto_dos_pinos_cabe_inteiro_com_os_quatro_errados(qtbot, placas, conectar, monkeypatch):
+    """Com os 4 pinos errados, o botão de confirmar alargava o diálogo, o layout media a explicação na largura dele e
+    ela saía cortada (mais linhas do que a altura dada)."""
+    area = conectar(placas.nova(cenario="pinos_errados"))
+    quatro = ["P9_28", "P9_29", "P9_30", "P9_31"]
+    monkeypatch.setattr(type(area.saude.saude), "pinos_errados", property(lambda _e: quatro))
+    dialogo = area.corrigir("pinos")
+    qtbot.waitUntil(dialogo.isVisible, timeout=ESPERA_MS)
+    assert "P9_29, P9_30 e P9_31" in dialogo.explicacao.text()
+    assert dialogo.confirmar.text() == "Pôr os 4 pinos no modo da PRU"
+    for rotulo in (dialogo.titulo, dialogo.explicacao):
+        assert rotulo.height() >= rotulo.heightForWidth(rotulo.width()) > 0
+    assert dialogo.width() <= 520 + 1
+    dialogo.reject()
+
+
 def test_o_relogio_pede_a_senha_do_sudo_e_ela_nao_aparece(qtbot, placas, conectar, caplog):
     caplog.set_level(logging.DEBUG)
     servidor = placas.nova(senha_do_sudo=SENHA_DO_SUDO)                   # outra senha que a do SSH

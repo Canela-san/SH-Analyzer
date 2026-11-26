@@ -25,8 +25,17 @@ from .visao_geral import texto_da_diferenca
 LARGURA = 520
 
 
+class _Texto(QLabel):
+    """Um texto que quebra as linhas na largura fixa dele: o layout do diálogo pede a altura para a largura da coluna
+    inteira (mais larga quando o botão de confirmar é comprido), e o QLabel contava menos linhas do que as que ele
+    desenha (o texto saía cortado, com as de cima fora da caixa)."""
+
+    def heightForWidth(self, largura: int) -> int:
+        return super().heightForWidth(min(largura, self.maximumWidth()))
+
+
 def _texto(texto: str = "", nome: str = "texto_do_dialogo") -> QLabel:
-    rotulo = QLabel(texto)
+    rotulo = _Texto(texto)
     rotulo.setObjectName(nome)
     rotulo.setWordWrap(True)
     return rotulo
@@ -122,7 +131,8 @@ class DialogoDeCorrecao(QDialog):
             self.explicacao.setText(traduzir(
                 "Roda o config-pin em {}, como o setup.sh faz. Não pede senha e não reinicia nada (o ler_adc também "
                 "tenta isso ao capturar).").format(_lista(errados)))
-            self.confirmar.setText(traduzir("Pôr {} no modo da PRU").format(_lista(errados)))
+            self.confirmar.setText(traduzir("Pôr {} no modo da PRU").format(_lista(errados)) if len(errados) <= 2
+                                   else traduzir("Pôr os {} pinos no modo da PRU").format(len(errados)))
             return
         if self.nome == "pru":
             self.setWindowTitle(traduzir("O firmware da PRU"))
