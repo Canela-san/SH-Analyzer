@@ -69,7 +69,7 @@ def _clicar(qtbot, w, ponto: QPoint, modificadores=Qt.KeyboardModifier.NoModifie
 
 
 def test_mover_puxar_o_alvo_da_seta_e_esticar_pelas_alcas(vista_aberta, qtbot):
-    janela, vista, w, caixa, faixa = vista_aberta
+    janela, vista, w, caixa, faixa = vista_aberta  # noqa: F811
     (x0, x1), (y0, y1) = caixa.viewRange()
     X, Y = (lambda f: x0 + f * (x1 - x0)), (lambda f: y0 + f * (y1 - y0))
     an, pilha = w.anotacoes, janela.projeto.pilha
@@ -114,7 +114,7 @@ def test_mover_puxar_o_alvo_da_seta_e_esticar_pelas_alcas(vista_aberta, qtbot):
 
 
 def test_as_ferramentas_criam_e_a_barra_fechada_nao_rabisca(vista_aberta, qtbot, monkeypatch):
-    janela, vista, w, caixa, faixa = vista_aberta
+    janela, vista, w, caixa, faixa = vista_aberta  # noqa: F811
     (x0, x1), (y0, y1) = caixa.viewRange()
     X, Y = (lambda f: x0 + f * (x1 - x0)), (lambda f: y0 + f * (y1 - y0))
     an = w.anotacoes
@@ -178,7 +178,7 @@ def test_as_ferramentas_criam_e_a_barra_fechada_nao_rabisca(vista_aberta, qtbot,
 
 
 def test_o_estilo_pela_barra_o_texto_no_grafico_e_o_delete(vista_aberta, qtbot):
-    janela, vista, w, caixa, faixa = vista_aberta
+    janela, vista, w, caixa, faixa = vista_aberta  # noqa: F811
     (x0, x1), (y0, y1) = caixa.viewRange()
     X, Y = (lambda f: x0 + f * (x1 - x0)), (lambda f: y0 + f * (y1 - y0))
     an, pilha = w.anotacoes, janela.projeto.pilha
@@ -222,7 +222,7 @@ def test_o_estilo_pela_barra_o_texto_no_grafico_e_o_delete(vista_aberta, qtbot):
 
 
 def test_o_desenho_vai_e_volta_pelo_projeto_e_a_camada_desenha_todos(vista_aberta, qtbot, tmp_path):
-    janela, vista, w, caixa, faixa = vista_aberta
+    janela, vista, w, caixa, faixa = vista_aberta  # noqa: F811
     (x0, x1), (y0, y1) = caixa.viewRange()
     X, Y = (lambda f: x0 + f * (x1 - x0)), (lambda f: y0 + f * (y1 - y0))
     an = w.anotacoes
