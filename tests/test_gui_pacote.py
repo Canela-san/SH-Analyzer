@@ -167,3 +167,55 @@ def test_o_cancelar_nao_deixa_arquivo(tmp_path):
         pacote.empacotar(FIGURA, VISTAS, Dados(200_000), destino, OpcoesDeExportacao("pdf"), proveniencia={},
                          cancelado=lambda: True)
     assert list(tmp_path.iterdir()) == []
+
+
+def _rodar_o_notebook(caminho, pasta, ate=None):
+    """As células de código do notebook, em ordem, na pasta do pacote (como o Jupyter faria)."""
+    import os
+    caderno = json.loads(caminho.read_text(encoding="utf-8"))
+    assert caderno["nbformat"] == 4 and len({c["id"] for c in caderno["cells"]}) == len(caderno["cells"])
+    codigos = ["".join(c["source"]) for c in caderno["cells"] if c["cell_type"] == "code"][:ate]
+    antes = os.getcwd()
+    sys.path.insert(0, str(pasta))
+    os.chdir(pasta)
+    try:
+        espaco = {}
+        for codigo in codigos:
+            exec(compile(codigo, "celula", "exec"), espaco)
+        return espaco
+    finally:
+        os.chdir(antes)
+        sys.path.remove(str(pasta))
+        sys.modules.pop("refazer_figura", None)
+
+
+def test_o_notebook_refaz_a_figura_e_os_sinais(tmp_path):
+    from capturas_sinteticas import escrever_bin
+    from sh_analyzer_gui.dados import jupyter
+    from supraharmonicos import api
+
+    figura, pasta, nomes = _empacotar(tmp_path, "tempo")
+    assert f"{figura.nome}/analise.ipynb" in nomes
+    espaco = _rodar_o_notebook(pasta / "analise.ipynb", pasta)               # a figura e os pontos dela
+    assert len(espaco["figura"].axes) == 3 and ("00", "V_A") in espaco["curvas"]
+    # A seção 3 com uma captura de verdade: o filtro da cadeia, o ganho e o espectro com os parâmetros da vista.
+    fs, n = 200_000.0, 200_000
+    t = np.arange(n) / fs
+    captura = escrever_bin(tmp_path / "rede.bin", [np.sin(2 * np.pi * 60 * t) + 0.01 * np.sin(2 * np.pi * 9e3 * t),
+                                                  0.5 * np.sin(2 * np.pi * 60 * t)], grandezas=(0, 1), versao=9)
+    receita = {"fonte": "f1", "canal": 0, "nome": "V", "ganho": 2.0, "offset": 0.0,
+               "etapas": [{"tipo": "filtro", "ligada": True, "filtro": "passa_altas", "cortes": [2000.0], "ordem": 4},
+                          {"tipo": "derivar", "ligada": True}]}
+    proveniencia = {"aplicativo": {"versao": "teste"}, "fontes": [{"id": "f1", "nome": "rede.bin",
+                                                                      "caminho": str(captura)}],
+                    "paineis": [{"rotulo": "(a)", "vista": {"nome": "Espectro", "tipo": "espectro",
+                                                            "opcoes": {"metodo": "welch"}, "tracos": [receita]}}]}
+    caderno = tmp_path / "secao3.ipynb"
+    caderno.write_text(jupyter.notebook(proveniencia, "teste"), encoding="utf-8")
+    assert "'derivar' é da interface" in caderno.read_text(encoding="utf-8")
+    espaco = _rodar_o_notebook(caderno, pasta)
+    cap = api.abrir_captura(captura)
+    esperado = 2.0 * api.filtrar(api.sinal_do_canal(cap, 0), fs, "passa_altas", (2000.0,), 4)
+    np.testing.assert_allclose(espaco["sinais"]["(a)/V"], esperado)
+    resultado = espaco["resultados"]["(a)/V"]
+    assert resultado.freqs_hz[np.argmax(resultado.db)] == pytest.approx(9e3, abs=200)

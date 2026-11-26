@@ -231,7 +231,9 @@ A área **Figuras** monta figuras para publicação: "Fazer uma figura com a vis
 figura (os painéis podem ser congelados ou religados à vista); as páginas dão a largura de uma coluna da IEEE ou da
 Elsevier, e os modelos de estilo guardam o seu; a figura é exportada em PDF, SVG, EPS, PGF (o LaTeX com as fontes do
 documento), PNG ou TIFF, ou copiada. O **pacote reproduzível** (`.zip`) guarda a figura, os dados e o programa que a
-redesenha. "Exportar os dados da vista…" grava os números em CSV, HDF5, WAV (ponto flutuante de 32 bits, nas
+redesenha, e um notebook (`analise.ipynb`) para continuar no Jupyter: a figura, os pontos dela e, com a
+`supraharmonicos.api` e as capturas, os sinais de cada traço com a mesma receita (o filtro, a sonda e o DC; as outras
+etapas são só da interface, e a célula avisa). "Exportar os dados da vista…" grava os números em CSV, HDF5, WAV (ponto flutuante de 32 bits, nas
 unidades; crus, os códigos em PCM de 16 bits) ou COMTRADE 1999 binário (o `.cfg` com o `.dat`), para abrir em outro
 programa de qualidade de energia ou de áudio.
 

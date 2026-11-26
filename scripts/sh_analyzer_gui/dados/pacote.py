@@ -10,6 +10,8 @@ pacote:
 * ``refazer_figura.py`` (``recursos/``): refaz a figura só com NumPy, h5py e Matplotlib, e diz se ela tem os mesmos
   pixels da ``figura.png``;
 * ``fontes/``: as fontes do aplicativo que a figura usa (a STIX e a DejaVu vêm com o Matplotlib), com as licenças;
+* ``analise.ipynb`` (``dados/jupyter.py``): o notebook para continuar no Jupyter (a figura, os pontos dela e os
+  sinais de cada traço pela ``supraharmonicos.api``, com a receita do traço);
 * ``proveniencia.json`` e ``LEIA-ME.md``.
 
 **Um desenho só** dá todos os arquivos: os dados do ``dados.h5`` são os pontos que estão nas figuras. A descrição é
@@ -52,6 +54,7 @@ from .exportar_figura import (
     parte_do_progresso,
 )
 from .figura import Figura
+from .jupyter import notebook
 from .projeto import VistaSalva
 
 FORMATO = "sh-analyzer-figura"
@@ -330,6 +333,7 @@ def empacotar(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFi
     for fonte in fontes_da_figura(rc):
         arquivos[f"fontes/{fonte.name}"] = fonte.read_bytes()
     arquivos["proveniencia.json"] = (json.dumps(proveniencia, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    arquivos["analise.ipynb"] = notebook(proveniencia, figura.nome).encode("utf-8")
     arquivos["LEIA-ME.md"] = leia_me(figura, formato.extensao, dpi, aplicativo, sorted(arquivos)).encode("utf-8")
     pasta = _nome_da_pasta(destino.stem)
     parcial = destino.with_name(destino.name + ".parcial")
@@ -367,6 +371,7 @@ Feito pelo {versao} em {momento:%d/%m/%Y %H:%M} ({figura.modelo}, {figura.largur
 | `figura.png` | a mesma figura em PNG, a {dpi:g} dpi: a referência dos pixels |
 | `dados.h5` | a figura descrita: a posição de cada eixo, os limites, as marcas, os textos e cada curva (os pontos desenhados, na resolução da figura) |
 | `refazer_figura.py` | refaz a figura a partir do `dados.h5`, só com NumPy, h5py e Matplotlib |
+| `analise.ipynb` | o notebook para continuar no Jupyter: a figura, os pontos dela e, com a `supraharmonicos.api` e as capturas, os sinais de cada traço com a mesma receita |
 | `proveniencia.json` | de onde a figura veio: as capturas (o caminho, o tamanho, o CRC das amostras, o cabeçalho), as vistas e a receita de cada traço |
 {"| `fontes/` | as fontes da figura que não vêm com o Matplotlib (" + ", ".join(fontes) + "), com as licenças |" if fontes else ""}
 
@@ -394,7 +399,8 @@ A reproducible package of the figure *{figura.nome}*: `figura{extensao}` (the ex
 pixel reference, {dpi:g} dpi), `dados.h5` (the drawn figure: axes positions, limits, ticks, texts and every curve as
 drawn), `refazer_figura.py` (rebuilds the figure from `dados.h5` with NumPy, h5py and Matplotlib only; run
 `python refazer_figura.py` and it reports whether the result matches `figura.png` pixel by pixel) and
-`proveniencia.json` (the source captures with their checksums, and the recipe of every trace).
+`proveniencia.json` (the source captures with their checksums, and the recipe of every trace). `analise.ipynb`
+continues the analysis in Jupyter.
 """
 
 
