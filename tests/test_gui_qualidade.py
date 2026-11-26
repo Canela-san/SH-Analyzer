@@ -86,6 +86,19 @@ def test_a_saturacao_e_o_salto(tmp_path):
     assert any(abs(e.inicio_s - 60_000 / FS) < 3 / FS for e in saltos)
 
 
+def test_a_quantizacao_de_um_sinal_lento_nao_e_salto(tmp_path):
+    """Um seno de 0,8 V de pico: quase toda segunda diferença é 0 LSB, e o desvio robusto ia a zero (cada degrau
+    de quantização virava um salto: 19 161 em 1 s). O piso do desvio é o degrau do ADC; o salto de verdade fica."""
+    t = np.arange(int(FS)) / FS
+    x = 0.8 * np.sin(W * t)
+    assert not [e for e in q.eventos(trecho(abrir(tmp_path, x)), q.CriteriosDosEventos(tensao=False))
+                if e.tipo == "descontinuidade"]
+    x[100_000] += 0.05                                          # 160 LSB
+    eventos = q.eventos(trecho(abrir(tmp_path, x, nome="s.bin")), q.CriteriosDosEventos(tensao=False))
+    saltos = [round(e.inicio_s * FS) for e in eventos if e.tipo == "descontinuidade"]
+    assert len(saltos) == 1 and abs(saltos[0] - 100_000) <= 2         # o mesmo de test_a_saturacao_e_o_salto
+
+
 def test_o_pico_de_supraharmonicos(tmp_path):
     t = np.arange(int(FS * 3)) / FS
     tom = np.where((t >= 1.0) & (t < 1.2), 0.5, 0.005) * np.sin(2 * np.pi * 30_000 * t)

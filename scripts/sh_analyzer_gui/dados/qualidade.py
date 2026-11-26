@@ -18,7 +18,8 @@ estatísticas** de cada índice: o mínimo, a média, o P95, o P99 e o máximo d
   (20 dB) a mediana dele (as janelas vizinhas juntas num evento só);
 * **a saturação**: as sequências de amostras no menor ou no maior código do ADC (só no traço sem cadeia);
 * **as descontinuidades**: os saltos de uma amostra para a outra maiores que 8 desvios robustos da diferença (o
-  desvio pela mediana do módulo, que um salto não puxa) e que não seguem a forma de onda;
+  desvio pela mediana do módulo, que um salto não puxa, e nunca menor que o degrau do ADC) e que não seguem a forma
+  de onda;
 * **o cabeçalho**: os buffers sobrescritos e as amostras atrasadas que o ``ler_adc`` contou (sem o instante).
 
 A captura inteira não vai para a memória: o trecho é lido em pedaços de :data:`PEDACO` amostras, com a sobreposição de
@@ -342,6 +343,7 @@ def eventos(trecho: TrechoDoTraco, opcoes: CriteriosDosEventos = CriteriosDosEve
     instantes, rms = [], []
     saltos = []
     codigos = None if not trecho.cadeia.vazia else canal.amostras
+    lsb = abs(canal.escala * trecho.ganho) if trecho.cadeia.vazia else 0.0      # o degrau do ADC, na unidade do traço
     baixo = alto = None
     if codigos is not None and np.issubdtype(codigos.dtype, np.integer):
         info = np.iinfo(codigos.dtype)
@@ -375,6 +377,9 @@ def eventos(trecho: TrechoDoTraco, opcoes: CriteriosDosEventos = CriteriosDosEve
         if len(d) > 2:
             d2 = np.diff(d)                                        # o salto que não segue a forma de onda
             desvio = 1.4826 * float(np.median(np.abs(d2 - np.median(d2)))) or float(np.std(d2)) or 1e-30
+            # Num sinal lento e quantizado, quase toda segunda diferença é 0 LSB e o desvio robusto vai a zero:
+            # sem um piso, cada degrau de quantização virava um salto (19 161 num segundo a 0,8 V de pico).
+            desvio = max(desvio, lsb)
             for j in np.nonzero(np.abs(d2) > DESVIOS_DO_SALTO * 3 * desvio)[0]:
                 saltos.append(((pos if pos > a else p0) + j + 1, float(d[j + 1] if j + 1 < len(d) else d[j])))
         if progresso is not None:
