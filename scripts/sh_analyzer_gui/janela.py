@@ -79,6 +79,7 @@ from .areas.configuracoes import DialogoDeConfiguracoes
 from .componentes.avisos import ListaDeAvisos
 from .componentes.barra_superior import BarraSuperior
 from .componentes.basicos import Botao
+from .componentes.caderno_de_notas import CadernoDeNotas
 from .componentes.dialogo_de_erro import DialogoDeErro
 from .componentes.grade_de_vistas import DISPOSICOES, AbasEmGrade, nome_da_disposicao
 from .componentes.painel import EstadoVazio, PainelComAbas, TituloDoPainel, TrilhoDoPainel, botao_de_icone
@@ -92,6 +93,7 @@ from .configuracao import gravar, ler_bytes
 from .controle_do_projeto import ControleDoProjeto
 from .dados.cache import CacheDePiramides
 from .dados.materializacao import CacheDeMaterializacoes
+from .dados.notas import Referencia
 from .dados.pacotes import CacheDePacotes
 from .dados.piramide import Cancelado
 from .modelo.objetos import Projeto, Vista
@@ -102,6 +104,7 @@ from .servicos.conexao_da_placa import ConexaoDaPlaca
 from .servicos.erros import ErroInesperado, relator
 from .servicos.fontes import ServicoDeFontes
 from .servicos.materializar import ServicoDeMaterializacao
+from .servicos.notas import central
 from .servicos.pacotes import ServicoDePacotes
 from .servicos.placa import ServicoDaPlaca
 from .servicos.saude_da_placa import SaudeDaPlaca
@@ -190,6 +193,7 @@ class JanelaPrincipal(QMainWindow):
         self.acoes: dict[str, QAction] = {}
         self.controle = ControleDoProjeto(self)
         self._criar_acoes()
+        self._criar_caderno()
 
         self.barra = BarraSuperior(self.acoes["paleta"].shortcut())
         self.setMenuWidget(self.barra)
@@ -199,6 +203,7 @@ class JanelaPrincipal(QMainWindow):
         self.barra.botao_tema.setDefaultAction(self.acoes["alternar_tema"])
         self.barra.botao_ajuda.setDefaultAction(self.acoes["ajuda"])
         self.barra.botao_ajustes.setDefaultAction(self.acoes["configuracoes"])
+        self.barra.botao_caderno.setDefaultAction(self.acoes["caderno"])
         self.barra.definir_menu_do_projeto(self._menu_do_projeto())
         self.barra.areaMudou.connect(self.mostrar_area)
         self.barra.chip_placa.clicked.connect(lambda: self.mostrar_area(AREA_AQUISICAO))
@@ -1070,6 +1075,7 @@ class JanelaPrincipal(QMainWindow):
         if (self._aquisicao is not None and not self._aquisicao.pode_fechar()) or not self.controle.pode_descartar():
             evento.ignore()
             return
+        self.caderno.gravar()
         self.salvar_layout()
         self.tarefas.encerrar()          # nenhuma thread rodando depois da janela
         self.materializacoes.encerrar()
@@ -1079,6 +1085,116 @@ class JanelaPrincipal(QMainWindow):
             # A atualização pedida no aviso: o instalador calado fecha o que restar e reabre o aplicativo.
             versao_nova.iniciar_instalador(self.instalador_ao_fechar)
         super().closeEvent(evento)
+
+    # ------------------------------------------------------------------ o caderno de notas
+
+    def _criar_caderno(self) -> None:
+        """O caderno de notas (``componentes/caderno_de_notas.py``) no lado direito da janela, por cima de qualquer
+        área: Ctrl+Shift+N (ou o botão da barra) o mostra e o recolhe."""
+        self.caderno = CadernoDeNotas(preferencias.pasta_do_caderno)
+        self.caderno.referencia_da_vista = self._referencia_da_vista_ativa
+        self.caderno.imagem_da_vista = self._imagem_da_vista_ativa
+        self.dock_caderno = QDockWidget(self.tr("Caderno"), self)
+        self.dock_caderno.setObjectName("caderno")
+        self.dock_caderno.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable)
+        self.dock_caderno.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
+        self.dock_caderno.titulo = TituloDoPainel(self.tr("Caderno"))
+        self.dock_caderno.setTitleBarWidget(self.dock_caderno.titulo)
+        self.dock_caderno.setWidget(self.caderno)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_caderno)
+        self.dock_caderno.hide()
+        acao = self._acao("caderno", self.tr("Caderno de notas"), atalho="Ctrl+Shift+N", icone="caderno",
+                          dica=self.tr("O caderno de notas: páginas em Markdown, com referências aos gráficos"),
+                          acao=self.dock_caderno.toggleViewAction())
+        acao.setText(self.tr("Caderno de notas"))
+        self.dock_caderno.visibilityChanged.connect(self._caderno_visivel)
+        central().referenciaPedida.connect(self._referencia_pedida)
+        central().irPedido.connect(self.ir_para_referencia)
+
+    def _caderno_visivel(self, visivel: bool) -> None:
+        if visivel:
+            self.caderno.editor.setFocus()
+        else:
+            self.caderno.gravar()
+
+    def mostrar_caderno(self) -> None:
+        self.dock_caderno.show()
+        self.dock_caderno.raise_()
+
+    def _referencia_pedida(self, referencia: Referencia) -> None:
+        self.mostrar_caderno()
+        self.caderno.inserir_referencia(referencia)
+
+    def _widget_ativo(self):
+        vista = self.area.vista_ativa() if self.projeto is not None else None
+        return (vista, self.area.widget_da_vista(vista)) if vista is not None else (None, None)
+
+    def _referencia_da_vista_ativa(self) -> Referencia | None:
+        """A referência ao que a vista à frente da Análise mostra (o tempo ou a frequência)."""
+        vista, w = self._widget_ativo()
+        anotacoes = getattr(w, "anotacoes", None)
+        if anotacoes is None:
+            return None
+        caixas = anotacoes.caixas()
+        if not caixas:
+            return None
+        faixa, caixa = caixas[0]
+        v0, v1 = caixa.viewRange()[0]
+        caminho = self.projeto.caminho
+        return Referencia(vista=vista.id, nome=vista.nome, x0=anotacoes.do_eixo(v0), x1=anotacoes.do_eixo(v1),
+                          faixa=faixa, dominio="f" if anotacoes.frequencia else "t",
+                          projeto=str(caminho) if caminho else "")
+
+    def _imagem_da_vista_ativa(self):
+        vista, w = self._widget_ativo()
+        if w is None:
+            return None
+        grafico = getattr(w, "grafico", w)
+        return grafico.grab(), f"{vista.nome}, {time.strftime('%H:%M')}"
+
+    def ir_para_referencia(self, referencia: Referencia) -> bool:
+        """Leva a Análise até a referência: abre o projeto dela (perguntando), a vista e o trecho (com uma folga), e
+        destaca o ponto ou o trecho por um instante."""
+        if referencia.projeto and (self.projeto.caminho is None
+                                   or Path(referencia.projeto) != Path(self.projeto.caminho)):
+            caminho = Path(referencia.projeto)
+            if not caminho.exists():
+                Toast.mostrar(self, self.tr("A referência é do projeto {}, que não está mais lá.").format(caminho.name),
+                              "aviso")
+                return False
+            resposta = self.controle.dialogos.perguntar(
+                self.tr("Ir à referência"),
+                self.tr("A referência é do projeto “{}”. Abrir esse projeto?").format(caminho.stem),
+                {"abrir": self.tr("Abrir o projeto")}, "abrir")
+            if resposta != "abrir" or not self.controle.abrir(caminho):
+                return False
+        vista = next((v for v in self.projeto.vistas if v.id == referencia.vista), None)
+        if vista is None:
+            Toast.mostrar(self, self.tr("A vista da referência não está neste projeto."), "aviso")
+            return False
+        self.mostrar_area(AREA_ANALISE)
+        self.area.ativar_vista(vista)
+        w = self.area.widget_da_vista(vista)
+        if w is None:
+            return False
+        x0, x1 = referencia.x0, referencia.x1
+        if referencia.tipo == "intervalo" or x1 <= x0:
+            largura = (x1 - x0) or abs(x0) * 0.1 or 1e-3
+            x0, x1 = x0 - 0.15 * largura, x1 + 0.15 * largura
+        if referencia.dominio == "f" and hasattr(w, "mostrar_frequencias"):
+            w.mostrar_frequencias(x0, x1)
+        elif hasattr(w, "mostrar_tempo"):
+            w.mostrar_tempo(x0, x1)
+        anotacoes = getattr(w, "anotacoes", None)
+        if anotacoes is not None:
+            caixa = anotacoes.caixa_da_faixa(referencia.faixa)
+            if caixa is None and anotacoes.caixas():
+                caixa = anotacoes.caixas()[0][1]
+            if referencia.tipo == "ponto":
+                QTimer.singleShot(60, lambda: anotacoes.destacar(caixa, referencia.px, y=referencia.py))
+            else:
+                QTimer.singleShot(60, lambda: anotacoes.destacar(caixa, referencia.x0, referencia.x1))
+        return True
 
     # ------------------------------------------------------------------ o aviso de versão nova
 

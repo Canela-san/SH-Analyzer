@@ -148,6 +148,7 @@ class BarraSuperior(QWidget):
 
         self.campo_paleta = CampoDaPaleta(atalho_da_paleta)
         self.chip_placa = ChipDaPlaca()
+        self.botao_caderno = self._botao("botao_caderno")
         self.botao_desfazer = self._botao("botao_desfazer")
         self.botao_refazer = self._botao("botao_refazer")
         self.botao_tema = self._botao("botao_tema")
@@ -177,7 +178,8 @@ class BarraSuperior(QWidget):
         lado_direito.addSpacing(10)
         lado_direito.addWidget(self.chip_placa)
         lado_direito.addSpacing(10)
-        for b in (self.botao_desfazer, self.botao_refazer, self.botao_tema, self.botao_ajuda, self.botao_ajustes):
+        for b in (self.botao_caderno, self.botao_desfazer, self.botao_refazer, self.botao_tema, self.botao_ajuda,
+                  self.botao_ajustes):
             lado_direito.addWidget(b)
         for lado in (self.esquerda, self.direita):
             lado.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)

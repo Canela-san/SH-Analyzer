@@ -345,6 +345,14 @@ def pasta_da_sessao(dia: datetime.date | None = None) -> Path:
     return base / "lab" / (dia or datetime.date.today()).isoformat()
 
 
+def pasta_do_caderno() -> Path:
+    """A pasta do caderno de notas (``componentes/caderno_de_notas.py``): ``<dados>/caderno``, com ``<dados>`` como
+    na :func:`pasta_da_sessao`. Criada na primeira página."""
+    variavel = os.environ.get(VARIAVEL_DOS_DADOS)
+    base = pasta_escolhida("dados") or (Path(variavel) if variavel else DADOS_DO_LABORATORIO)
+    return base / "caderno"
+
+
 def mudar_pasta(nome: str, caminho: Path | None) -> None:
     """Escolhe a pasta ``nome``; ``None`` volta à padrão."""
     if nome not in CHAVES_DAS_PASTAS:

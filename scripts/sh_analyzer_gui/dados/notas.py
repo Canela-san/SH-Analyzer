@@ -7,8 +7,8 @@ temporário na mesma pasta, renomeado no fim). As imagens coladas ficam em ``ima
 como ``![](imagens/nome.png)``.
 
 **Uma referência** é um link do Markdown com o endereço ``shanalyzer:ref?...``: a vista (o id dela no projeto), o
-trecho a mostrar (``x0`` e ``x1``, em segundos ou em hertz), o ponto marcado (``px``, ``py``), a faixa e o projeto
-(o caminho do ``.shproj``). O texto do link é legível sozinho ("Tempo 1 · t = 12,5 ms"); o endereço vai junto, para
+trecho a mostrar (``x0`` e ``x1``, em segundos ou em hertz), o ponto marcado (``px``, ``py``), a faixa, o nome da
+vista e o projeto (o caminho do ``.shproj``). O texto do link é legível sozinho ("Tempo 1 · t = 12,5 ms"); o endereço vai junto, para
 a referência continuar valendo copiada para outra página ou outro editor.
 """
 
@@ -74,6 +74,8 @@ class Referencia:
 
     def url(self) -> str:
         campos = {"vista": self.vista, "tipo": self.tipo, "x0": repr(self.x0), "x1": repr(self.x1)}
+        if self.nome:
+            campos["nome"] = self.nome
         if self.px is not None:
             campos["px"] = repr(self.px)
         if self.py is not None:
@@ -108,6 +110,7 @@ class Referencia:
         except ValueError:
             raise ReferenciaInvalida("a faixa da referência não é um número") from None
         return cls(vista=campos.get("vista", ""), x0=numero("x0"), x1=numero("x1"), tipo=campos.get("tipo", "intervalo"),
+                   nome=campos.get("nome", ""),
                    px=numero("px"), py=numero("py"), faixa=faixa, dominio=campos.get("dominio", "t"),
                    projeto=campos.get("projeto", ""))
 
