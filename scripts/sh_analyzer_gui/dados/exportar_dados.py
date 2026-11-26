@@ -53,7 +53,12 @@ FORMATOS: dict[str, FormatoDeDados] = {f.id: f for f in (
     FormatoDeDados("hdf5", "HDF5", ".h5", "No estilo do adc_tool, com o cabeçalho da captura"),
     FormatoDeDados("mat", "MAT", ".mat", "MATLAB e Octave (v7.3 acima de 2 GB)"),
     FormatoDeDados("npz", "NPZ", ".npz", "Python (numpy.load)"),
+    FormatoDeDados("wav", "WAV", ".wav", "Áudio: em unidades, ponto flutuante de 32 bits; crus, os códigos em 16 bits"),
+    FormatoDeDados("comtrade", "COMTRADE", ".cfg", "IEEE C37.111 (1999, binário): o .cfg e o .dat, para os programas "
+                                                   "de qualidade de energia"),
 )}
+LIMITE_DO_WAV = (1 << 32) - 64
+"""Os bytes de dados que o cabeçalho do WAV (32 bits) consegue dizer."""
 
 
 class DadosInvalidos(ErroSHAN, ValueError):
@@ -158,6 +163,14 @@ class OpcoesDosDados:
 
 
 def conferir(trecho: TrechoDeDados, opcoes: OpcoesDosDados) -> None:
+    if opcoes.formato == "comtrade" and opcoes.crus:
+        raise DadosInvalidos("o COMTRADE guarda os valores na unidade (o a·x + b de cada canal): exporte em unidades")
+    if opcoes.formato == "wav":
+        largura = 2 if opcoes.crus else 4
+        if trecho.n * len(trecho.colunas) * largura > LIMITE_DO_WAV:
+            raise DadosInvalidos("o trecho passa de 4 GB, o maior WAV que existe: exporte em HDF5 ou escolha uma região")
+        if len({round(c.taxa_hz) for c in trecho.colunas}) > 1:
+            raise DadosInvalidos("os traços têm taxas diferentes, e um WAV tem uma só")
     if opcoes.crus:
         transformados = [c.nome for c in trecho.colunas if not c.codigos]
         if transformados:
@@ -187,8 +200,10 @@ def exportar(trecho: TrechoDeDados, destino: Path, opcoes: OpcoesDosDados, *, pr
     (``api.cabecalho_para_hdf5``: os atributos e os bytes), que o HDF5 guarda no grupo ``/captura``."""
     conferir(trecho, opcoes)
     destino = Path(destino)
+    if opcoes.formato == "comtrade":
+        return _comtrade(trecho, destino, proveniencia, progresso)
     parcial = destino.with_name(destino.name + ".parcial")
-    escrever = {"csv": _csv, "hdf5": _hdf5, "mat": _mat, "npz": _npz}[opcoes.formato]
+    escrever = {"csv": _csv, "hdf5": _hdf5, "mat": _mat, "npz": _npz, "wav": _wav}[opcoes.formato]
     blocos = _Blocos(trecho, linhas_por_bloco, progresso, cancelado)
     try:
         escrever(trecho, parcial, opcoes, proveniencia, captura, blocos)
@@ -352,6 +367,44 @@ def _npz(trecho, caminho, opcoes, proveniencia, _captura, blocos) -> None:
                                                      "fortran_order": False, "shape": (trecho.n, k)})
             for a, b in blocos():
                 f.write(np.ascontiguousarray(trecho.bloco(a, b, crus=opcoes.crus), dtype=tipo).tobytes())
+
+
+# ------------------------------------------------------------------ WAV e COMTRADE
+
+def _wav(trecho, caminho, opcoes, _proveniencia, _captura, blocos) -> None:
+    """O WAV: os valores em ponto flutuante de 32 bits (o formato 3, IEEE), na unidade de cada traço (um programa de
+    áudio só toca bem o que fica em ±1; o Python e o MATLAB leem os números exatos), ou os códigos do ADC em PCM de 16
+    bits. A taxa do cabeçalho é inteira (arredondada)."""
+    k = len(trecho.colunas)
+    tipo, codigo = (np.dtype("<i2"), 1) if opcoes.crus else (np.dtype("<f4"), 3)
+    largura = tipo.itemsize
+    tamanho = trecho.n * k * largura
+    taxa = int(round(trecho.taxa_hz))
+    with open(caminho, "wb") as f:
+        f.write(b"RIFF" + struct.pack("<I", 36 + tamanho) + b"WAVE")
+        f.write(b"fmt " + struct.pack("<IHHIIHH", 16, codigo, k, taxa, taxa * k * largura, k * largura,
+                                      8 * largura))
+        f.write(b"data" + struct.pack("<I", tamanho))
+        for a, b in blocos():
+            bloco = trecho.bloco(a, b, crus=opcoes.crus)
+            if opcoes.crus and bloco.dtype == np.uint16:       # o uint16 do ADC unipolar: o PCM é com sinal
+                bloco = bloco.astype(np.int32) - 32768
+            f.write(np.ascontiguousarray(bloco, dtype=tipo).tobytes())
+
+
+def _comtrade(trecho, destino: Path, proveniencia, progresso) -> list[Path]:
+    """O COMTRADE 1999 binário (``api.importacao.gravar_comtrade``): o ``.cfg`` e o ``.dat`` com o mesmo nome, e a
+    proveniência ao lado."""
+    from supraharmonicos.api import importacao
+
+    valores = [np.asarray(trecho.bloco(0, trecho.n, crus=False)[:, j]) for j in range(len(trecho.colunas))]
+    cfg, dat = importacao.gravar_comtrade(destino, [c.nome for c in trecho.colunas],
+                                          [c.unidade or "V" for c in trecho.colunas], valores, trecho.taxa_hz)
+    json_ = caminho_da_proveniencia(cfg)
+    json_.write_text(json.dumps(proveniencia, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if progresso is not None:
+        progresso(1.0)
+    return [cfg, dat, json_]
 
 
 # ------------------------------------------------------------------ MAT

@@ -146,6 +146,38 @@ def test_o_npz(tmp_path, captura):
         assert json.loads(str(z["proveniencia"]))["colunas"][0]["receita"]["ganho"] == -1.5
 
 
+def test_o_wav_em_unidades_e_crus(tmp_path, captura):
+    """O WAV: os valores em float32 (lidos de volta pelo scipy), e os códigos do ADC em PCM de 16 bits."""
+    from scipy.io import wavfile
+
+    trecho = ed.recortar(_colunas(captura), [(0.0, 0.2)] * 2)
+    taxa, lido = wavfile.read(_exportar(tmp_path, trecho, OpcoesDosDados("wav"), captura, linhas_por_bloco=7_000))
+    assert taxa == round(trecho.taxa_hz) and lido.dtype == np.float32
+    np.testing.assert_allclose(lido, _esperado(trecho), rtol=1e-6, atol=1e-6)
+    (tmp_path / "crus").mkdir()
+    _, crus = wavfile.read(_exportar(tmp_path / "crus", trecho, OpcoesDosDados("wav", crus=True), captura))
+    assert crus.dtype == np.int16 and crus.shape == (trecho.n, 2)
+
+
+def test_o_comtrade_lido_de_volta(tmp_path, captura):
+    """O COMTRADE em unidades (o .cfg e o .dat), lido de volta pela importação, a um código de cada canal; os crus
+    são recusados."""
+    from supraharmonicos.api import importacao
+
+    trecho = ed.recortar(_colunas(captura), [(0.0, 0.2)] * 2)
+    p = prov.dos_dados(trecho, OpcoesDosDados("comtrade"), _fontes(captura), aplicativo="0.8.0", regiao="janela")
+    cfg, dat, json_ = ed.exportar(trecho, tmp_path / "rede.cfg", OpcoesDosDados("comtrade"), proveniencia=p)
+    assert dat.suffix == ".dat" and json_.is_file()
+    lido = importacao.ler(cfg)
+    assert lido.taxa_hz == pytest.approx(trecho.taxa_hz) and [c.unidade for c in lido.canais] == ["V", "A"]
+    esperado = _esperado(trecho)
+    for j, canal in enumerate(lido.canais):
+        um_codigo = (esperado[:, j].max() - esperado[:, j].min()) / 65534
+        assert np.max(np.abs(canal.valores - esperado[:, j])) <= um_codigo * 1.01
+    with pytest.raises(ed.DadosInvalidos, match="unidades"):
+        ed.conferir(trecho, OpcoesDosDados("comtrade", crus=True))
+
+
 def test_o_mat_v5_lido_pelo_scipy(tmp_path, captura):
     trecho = ed.recortar(_colunas(captura, True), [(0.0, 0.2)] * 3)
     m = scipy.io.loadmat(_exportar(tmp_path, trecho, OpcoesDosDados("mat"), captura, linhas_por_bloco=5_000))
