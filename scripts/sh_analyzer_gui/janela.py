@@ -325,8 +325,12 @@ class JanelaPrincipal(QMainWindow):
                    dica=self.tr("Fazer uma figura com a vista (a área Figuras)"),
                    da_analise=True).triggered.connect(self.figura_da_vista_ativa)
         self._acao("exportar_dados", self.tr("Exportar os dados da vista…"), icone="baixar",
-                   dica=self.tr("Exportar os dados da vista (CSV, HDF5, MAT ou NPZ)"),
+                   dica=self.tr("Exportar os dados da vista (CSV, HDF5, MAT, NPZ, WAV ou COMTRADE)"),
                    da_analise=True).triggered.connect(lambda: self.area.exportar_dados())
+        self._acao("relatorio", self.tr("Relatório da captura…"), atalho="Ctrl+Shift+R", icone="pagina",
+                   dica=self.tr("Um relatório (HTML ou PDF) dos traços da vista de tempo: o cabeçalho, a integridade, "
+                                "os índices de qualidade, as bandas, os eventos e as figuras"),
+                   da_analise=True).triggered.connect(lambda: self.area.gerar_relatorio())
         self._acao("fechar_vista", self.tr("Fechar a vista"), atalho="Ctrl+W", icone="x",
                    da_analise=True).triggered.connect(lambda: self.area.fechar_vista_ativa())
         self._acao("espectro", self.tr("Abrir o espectro da vista"), atalho="Ctrl+E", icone="espectro",
@@ -493,6 +497,7 @@ class JanelaPrincipal(QMainWindow):
         menu.addAction(self.acoes["novo_projeto"])
         menu.addAction(self.acoes["abrir_projeto"])
         menu.addAction(self.acoes["importar"])
+        menu.addAction(self.acoes["relatorio"])
         self.menu_recentes = menu.addMenu(self.tr("Abrir recente"))
         self.menu_capturas_recentes = menu.addMenu(self.tr("Capturas recentes"))
         menu.addSeparator()

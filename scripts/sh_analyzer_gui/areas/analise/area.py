@@ -68,6 +68,7 @@ def nome_do_traco(fonte: FonteDoProjeto, numero: int) -> str:
 class AreaDeAnalise(QObject):
     exibicaoMudou = Signal(object)        # a vista: a janela que ela mostra ou o espectro dela (a figura acompanha)
     dadosExportados = Signal(object)      # o caminho do arquivo (a F5.5)
+    relatorioGerado = Signal(object)      # o caminho do relatório da captura
 
     def __init__(self, janela, painel: PainelDoProjeto, inspetor: Inspetor, avisos: ListaDeAvisos,
                  status_fonte: QLabel, status_integridade: QLabel, abas: QTabWidget, medidas: TabelaDeMedidas):
@@ -596,6 +597,12 @@ class AreaDeAnalise(QObject):
         return self.janela.tarefas.iniciar(
             self.tr("Exportar os dados de {} ({})").format(coleta.vista.nome, formato.nome), trabalho, "dados",
             pesada=True, ao_terminar=lambda tarefa: self._dados_exportados(tarefa, coleta))
+
+    def gerar_relatorio(self, caminho: Path | None = None, *, notas: str = ""):
+        """O relatório da captura (HTML ou PDF) dos traços da vista de tempo: ``areas/analise/relatorio.py``."""
+        from .relatorio import gerar
+
+        return gerar(self, caminho, notas=notas)
 
     def _largar_coleta(self, coleta: ColetaDaVista) -> None:
         if isValid(coleta):

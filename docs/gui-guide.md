@@ -235,6 +235,19 @@ redesenha. "Exportar os dados da vista…" grava os números em CSV, HDF5, WAV (
 unidades; crus, os códigos em PCM de 16 bits) ou COMTRADE 1999 binário (o `.cfg` com o `.dat`), para abrir em outro
 programa de qualidade de energia ou de áudio.
 
+## O relatório da captura {#relatorio}
+
+"Relatório da captura…" (Ctrl+Shift+R, também no menu do projeto) grava uma página com os traços visíveis da vista
+de tempo aberta (ou da que a vista aberta segue), cada um no trecho inteiro e com a cadeia dele:
+
+- de cada captura, o cabeçalho (o mesmo do inspetor), a integridade das amostras e os avisos;
+- de cada traço, os índices de qualidade (as estatísticas das janelas de 10/12 ciclos, sem as marcadas), as 12
+  bandas IEC de maior P95, os eventos e duas figuras (as bandas por frequência; o RMS e o THD no tempo);
+- a proveniência: o canal, a captura e a cadeia de cada traço, a versão do aplicativo e a data.
+
+Em `.html`, as figuras vão dentro da página (um arquivo só, que se abre no navegador e se imprime); em `.pdf`, sai em
+A4. As contas rodam numa tarefa, como as das vistas, e os números seguem o separador decimal das configurações.
+
 ## A aquisição {#aquisicao}
 
 A área **Aquisição** fala com a placa (pelo USB, pela rede local ou pelo simulador): a **Visão geral** (a placa, o
