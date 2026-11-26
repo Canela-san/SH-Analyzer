@@ -63,6 +63,31 @@ def test_abrir_um_pacote(janela, pacote, qtbot):
     assert len(janela.projeto.fontes) == 2
 
 
+def test_o_projeto_reextrai_do_pacote_depois_de_limpar_o_cache(janela, pacote, qtbot, tmp_path):
+    """O projeto guarda de qual pacote veio cada captura; com o cache dos pacotes limpo, abrir o projeto as extrai
+    de novo, e elas voltam com os traços."""
+    from dialogos_falsos import DialogosFalsos
+
+    caminho, originais = pacote
+    janela.controle.abrir_arquivos([caminho])
+    qtbot.waitUntil(lambda: len(janela.projeto.fontes) == 2, timeout=ESPERA_MS)
+    fonte = janela.projeto.fontes[0]
+    assert fonte.pacote == (caminho.resolve().as_posix(), "sessao/c0.bin")
+    janela.area.plotar_canal(fonte, 1)
+    projeto = tmp_path / "p.shproj"
+    assert janela.controle.salvar_como(projeto)
+    janela.projeto.pilha.setClean()
+    janela.controle.dialogos = DialogosFalsos()
+    assert janela.controle.novo()
+    assert janela.pacotes.limpar_cache() > 0 and not janela.pacotes.cache.pasta_do_pacote(caminho).exists()
+    assert janela.controle.abrir(projeto)
+    qtbot.waitUntil(lambda: not any(f.esta_ausente for f in janela.projeto.fontes), timeout=ESPERA_MS)
+    de_volta = janela.projeto.fontes[0]
+    assert de_volta.id == fonte.id and de_volta.pacote == fonte.pacote
+    assert np.array_equal(de_volta.canal(1).amostras, api.abrir_captura(originais[0]).canal(1).amostras)
+    assert janela.projeto.vistas[0].tracos[0].receita.fonte == de_volta.id
+
+
 def test_um_pacote_que_nao_abre(janela, tmp_path, qtbot):
     falso = tmp_path / "quebrado.zpaq.tar"
     falso.write_bytes(b"\0" * 2048)

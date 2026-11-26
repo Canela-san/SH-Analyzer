@@ -401,7 +401,7 @@ class VistaDeEspectro(QWidget):
         self._pedir()
 
     def _traco_de_la(self, _traco, campos):
-        if campos & {"cadeia", "ganho", "visivel", "cor", "nome", "deslocamento_s", "unidade"}:
+        if campos & {"cadeia", "ganho", "visivel", "cor", "nome", "deslocamento_s", "unidade", "fonte"}:
             self._pedir()
 
     def _materializacao_mudou(self, estado) -> None:

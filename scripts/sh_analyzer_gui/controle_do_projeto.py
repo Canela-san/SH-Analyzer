@@ -16,6 +16,7 @@ lado (``.shproj~``; o de um projeto sem título vai para a pasta de recuperaçã
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import logging
 from pathlib import Path
@@ -29,7 +30,7 @@ from .configuracao import esquecer, gravar, lembrar, ler_lista, ler_texto, pasta
 from .dados import projeto as arquivo
 from .dados.captura import Aviso, CapturaSemCabecalho, ErroSHAN, Fonte, ParametrosSemCabecalho, abrir_fonte
 from .dados.pacotes import eh_pacote
-from .modelo.comandos import AdicionarFonte
+from .modelo.comandos import AdicionarFonte, TrocarFonte
 from .modelo.objetos import FonteDoProjeto, Projeto
 from .modelo.persistencia import descrever, montar
 
@@ -234,6 +235,10 @@ class ControleDoProjeto(QObject):
                 return
             lembrar(CHAVE_DAS_CAPTURAS_RECENTES, str(caminho.resolve()))
             abertas = self.abrir_capturas(capturas, lembrar_recentes=False)
+            pasta = self.janela.pacotes.cache.pasta_do_pacote(caminho)
+            for fonte in abertas:                   # o projeto lembra de onde ela veio, e a reextrai se sumir
+                with contextlib.suppress(ValueError):
+                    fonte.pacote = (caminho.resolve().as_posix(), fonte.caminho.resolve().relative_to(pasta).as_posix())
             log.info("pacote aberto: %s (%d captura(s), %d nova(s) no projeto)", caminho, len(capturas), len(abertas))
 
         return self.janela.pacotes.abrir(caminho, terminou)
@@ -315,10 +320,62 @@ class ControleDoProjeto(QObject):
         projeto.pilha.resetClean()
         return True
 
+    # ------------------------------------------------------------------ as capturas ausentes
+
+    def localizar_fonte(self, fonte: FonteDoProjeto, caminho: Path | None = None) -> FonteDoProjeto | None:
+        """Uma captura ausente (movida, renomeada, num disco que não está montado) apontada para ``caminho`` (sem
+        ele, pergunta): ela volta com o mesmo id, e os traços dela voltam a ter dados. Desfazível. A captura
+        apontada precisa ser a mesma (o CRC das amostras, quando o projeto o tem); devolve a fonte nova, ou None."""
+        if not fonte.esta_ausente:
+            return None
+        if caminho is None:
+            escolhido = self.dialogos.abrir_arquivo(self.tr("Localizar {}").format(fonte.nome), FILTRO_DE_ABRIR,
+                                                    self._pasta_inicial())
+            if not escolhido:
+                return None
+            caminho = Path(escolhido)
+        origem = fonte.origem
+        try:
+            aberta = self._abrir_fonte(Path(caminho), formato=origem.formato, parametros=origem.sem_cabecalho)
+        except (ErroSHAN, OSError) as e:
+            self._erro(self.tr("Não foi possível abrir {}: {}").format(Path(caminho).name, e))
+            return None
+        crc = aberta.captura.crc32_amostras
+        if origem.crc32_amostras is not None and crc is not None and crc != origem.crc32_amostras:
+            self._erro(self.tr("{} não é a captura que o projeto procura (o CRC das amostras é outro)").format(
+                Path(caminho).name))
+            return None
+        nova = FonteDoProjeto(aberta, fonte.id)
+        nova.pacote = fonte.pacote
+        self.projeto.pilha.push(TrocarFonte(self.projeto, fonte, nova, self.tr("Localizar {}").format(fonte.nome)))
+        return nova
+
+    def reextrair_dos_pacotes(self) -> list:
+        """As capturas ausentes que vieram de um pacote ainda existente são extraídas de novo (o cache dos pacotes
+        foi limpo), numa tarefa por pacote, e voltam sozinhas. Devolve as tarefas."""
+        por_pacote: dict[str, list[FonteDoProjeto]] = {}
+        for fonte in self.projeto.fontes:
+            if fonte.esta_ausente and fonte.pacote and Path(fonte.pacote[0]).is_file():
+                por_pacote.setdefault(fonte.pacote[0], []).append(fonte)
+        tarefas = []
+        for pacote, fontes in por_pacote.items():
+            def terminou(capturas, erro: str, fontes=fontes, pacote=Path(pacote)) -> None:
+                if capturas is None:
+                    if erro:
+                        self._erro(self.tr("Não foi possível extrair {} de novo: {}").format(pacote.name, erro))
+                    return
+                pasta = self.janela.pacotes.cache.pasta_do_pacote(pacote)
+                for fonte in fontes:
+                    if fonte in self.projeto.fontes and fonte.esta_ausente:
+                        self.localizar_fonte(fonte, pasta / fonte.pacote[1])
+            tarefas.append(self.janela.pacotes.abrir(Path(pacote), terminou))
+        return tarefas
+
     def _mostrar(self, projeto: Projeto, salvo: arquivo.ProjetoSalvo, avisos: list[Aviso]) -> None:
         self.janela.trocar_projeto(projeto)
         self.janela.avisos.remover_origem(ORIGEM_DO_PROJETO)
         self.janela.avisos.adicionar(avisos, ORIGEM_DO_PROJETO)
+        self.reextrair_dos_pacotes()                   # as capturas de um pacote, com o cache limpo, voltam
         estado = salvo.layout.get("janela")
         if estado:
             try:

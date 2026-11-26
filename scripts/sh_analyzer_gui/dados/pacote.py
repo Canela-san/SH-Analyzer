@@ -34,14 +34,14 @@ from tempfile import TemporaryDirectory
 
 import matplotlib
 import numpy as np
-from matplotlib import font_manager, rc_context
+from matplotlib import font_manager
 from matplotlib.colors import to_hex
 from matplotlib.inset import InsetIndicator
 from matplotlib.patches import Rectangle
 from matplotlib.text import Annotation
 from supraharmonicos.api import ErroSHAN
 
-from .desenho_da_figura import PASTA_DAS_FONTES, DadosDaFigura, PaginaDesenhada, registrar_as_fontes
+from .desenho_da_figura import PASTA_DAS_FONTES, DadosDaFigura, PaginaDesenhada, no_estilo, registrar_as_fontes
 from .exportar_figura import (
     OpcoesDeExportacao,
     conferir,
@@ -320,7 +320,7 @@ def empacotar(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFi
     arquivos["figura.png"] = png.getvalue()
     largura, altura = (float(v) for v in pagina.mpl.get_size_inches())
     rc = parametros_da_gravacao(pagina, figura, referencia)
-    with rc_context(rc):              # as marcas dependem do estilo (o tamanho dos números): leia-as com ele
+    with no_estilo(rc):              # as marcas dependem do estilo (o tamanho dos números): leia-as com ele
         descricao = descrever(pagina)
     arquivos["dados.h5"] = dados_h5(descricao, rc, largura_pol=largura, altura_pol=altura, dpi=dpi, figura=figura,
                                     aplicativo=aplicativo)

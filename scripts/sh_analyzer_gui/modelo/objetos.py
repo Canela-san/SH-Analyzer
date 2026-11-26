@@ -171,6 +171,10 @@ class FonteDoProjeto(QObject):
         self.piramides: list | None = None
         self.progresso_da_piramide: float | None = None     # None: sem construção em andamento
         self.integridade = "pendente"
+        # O pacote .zpaq.tar de onde a captura foi extraída (o caminho dele e o nome dela lá dentro), ou None: o
+        # projeto o guarda, e a reextrai quando o cache dos pacotes foi limpo.
+        self.pacote: tuple[str, str] | None = (origem.pacote, origem.membro) if origem is not None and \
+            getattr(origem, "pacote", "") else None
 
     @classmethod
     def ausente(cls, origem: FonteSalva) -> FonteDoProjeto:
@@ -336,6 +340,14 @@ class Projeto(QObject):
         del self._fontes[indice]
         self.fonteSaiu.emit(fonte, indice)
         return indice
+
+    def _fonte_voltou(self, id_da_fonte: str) -> None:
+        """Os dados da fonte ``id_da_fonte`` mudaram por inteiro (a captura localizada): cada traço dela avisa o
+        campo ``"fonte"``, e quem desenha refaz o traço."""
+        for vista in self._vistas:
+            for traco in vista.tracos:
+                if traco.receita.fonte == id_da_fonte:
+                    traco.mudou.emit(traco, frozenset({"fonte"}))
 
     def _inserir_vista(self, vista: Vista, indice: int | None = None) -> int:
         if vista in self._vistas:

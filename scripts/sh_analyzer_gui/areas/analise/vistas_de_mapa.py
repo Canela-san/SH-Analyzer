@@ -292,7 +292,7 @@ class VistaLigada(QWidget):
         self._pedir()
 
     def _traco_de_la(self, traco, campos):
-        if campos & {"cadeia", "ganho", "visivel", "nome", "deslocamento_s"}:
+        if campos & {"cadeia", "ganho", "visivel", "nome", "deslocamento_s", "fonte"}:
             self._pedir()
         elif "unidade" in campos and traco is self.traco and self.resultado is not None:
             self._desenhar()                     # os mesmos números, com a unidade nova

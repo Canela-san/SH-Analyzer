@@ -313,3 +313,35 @@ def test_a_grandeza_do_canal_no_rotulo():
     assert pagina.mpl.axes[0].get_ylabel() == "Vibração (u.a.)"
     en = dd.desenhar(replace(f, idioma="en"), {"v": _vista("v", TENSAO)}, dados, dpi=60)
     assert en.mpl.axes[0].get_ylabel() == "vibração (u.a.)"        # fora do catálogo: como o canal a escreve
+
+
+def test_um_desenho_por_vez_com_o_estilo_dele():
+    """O ``rcParams`` é global: com o ``no_estilo``, o estilo de uma tarefa nunca muda o de outra no meio do desenho
+    (a figura do pacote reproduzível que saía diferente numa CI carregada)."""
+    import threading
+    import time
+
+    import matplotlib
+
+    vistos, dentro = [], threading.Event()
+
+    def primeira():
+        with dd.no_estilo({"font.size": 3.0}):
+            dentro.set()
+            for _ in range(5):
+                vistos.append(matplotlib.rcParams["font.size"])
+                time.sleep(0.01)
+
+    def segunda():
+        dentro.wait()
+        with dd.no_estilo({"font.size": 20.0}):
+            vistos.append(("segunda", matplotlib.rcParams["font.size"]))
+
+    linhas = [threading.Thread(target=primeira), threading.Thread(target=segunda)]
+    for linha in linhas:
+        linha.start()
+    for linha in linhas:
+        linha.join(5)
+    assert vistos == [3.0] * 5 + [("segunda", 20.0)]
+    with dd.no_estilo({"font.size": 7.0}), dd.no_estilo({"font.size": 8.0}):     # reentrante
+        assert matplotlib.rcParams["font.size"] == 8.0

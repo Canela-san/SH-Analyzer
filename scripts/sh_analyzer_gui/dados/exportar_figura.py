@@ -36,12 +36,11 @@ from pathlib import Path
 from typing import BinaryIO
 
 import numpy as np
-from matplotlib import rc_context
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 from supraharmonicos.api import Cancelado, ErroSHAN
 
-from .desenho_da_figura import DadosDaFigura, PaginaDesenhada, desenhar, pontos
+from .desenho_da_figura import DadosDaFigura, PaginaDesenhada, desenhar, no_estilo, pontos
 from .figura import Figura
 from .projeto import VistaSalva
 from .proveniencia import em_texto
@@ -191,7 +190,7 @@ def gravar(pagina: PaginaDesenhada, figura: Figura, destino: Path | BinaryIO, op
     criador = f"SH-Analyzer {aplicativo}".strip()
     rc = parametros_da_gravacao(pagina, figura, opcoes)
     try:
-        with rc_context(rc):
+        with no_estilo(rc):
             if formato.id == "pgf" and isinstance(destino, (str, Path)):
                 _pgf_no_arquivo(pagina, Path(destino), dpi, proveniencia)
             else:

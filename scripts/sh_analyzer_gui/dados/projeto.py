@@ -68,6 +68,8 @@ class FonteSalva:
     crc32_amostras: int | None = None  # o do cabeçalho v9; None nas versões anteriores
     formato: str = "uint16"
     sem_cabecalho: ParametrosSemCabecalho | None = None   # a taxa e os canais informados ao abrir, sem o cabeçalho
+    pacote: str = ""                   # o .zpaq.tar de onde ela foi extraída (absoluto), ou ""; opcional: a v0.9 o ignora
+    membro: str = ""                   # o nome dela dentro do pacote
 
     @property
     def nome(self) -> str:
@@ -168,6 +170,9 @@ def _vista_para_dict(v: VistaSalva) -> dict:
 
 def _fonte_para_dict(fonte: FonteSalva) -> dict:
     dados = asdict(fonte)
+    for vazio in ("pacote", "membro"):
+        if not dados[vazio]:
+            del dados[vazio]
     if fonte.sem_cabecalho is None:
         del dados["sem_cabecalho"]
     else:
@@ -221,7 +226,8 @@ def de_dict(dados) -> ProjetoSalvo:
                                  caminho_absoluto=_campo(f, "caminho_absoluto", str, onde),
                                  tamanho=_campo(f, "tamanho", int, onde), crc32_amostras=crc,
                                  formato=f.get("formato", "uint16"),
-                                 sem_cabecalho=_sem_cabecalho(f.get("sem_cabecalho"), onde)))
+                                 sem_cabecalho=_sem_cabecalho(f.get("sem_cabecalho"), onde),
+                                 pacote=str(f.get("pacote", "")), membro=str(f.get("membro", ""))))
     ids = [f.id for f in fontes]
     if len(set(ids)) != len(ids):
         raise ProjetoInvalido("duas fontes com o mesmo id")

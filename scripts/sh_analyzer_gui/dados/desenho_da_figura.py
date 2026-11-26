@@ -49,6 +49,7 @@ from __future__ import annotations
 import math
 import threading
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
@@ -202,6 +203,18 @@ def colher(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFigur
 
 _registradas = False
 _registrando = threading.Lock()
+TRAVA_DO_MATPLOTLIB = threading.RLock()
+"""Um desenho com o Matplotlib por vez, no processo inteiro: o ``rcParams`` é global, e o ``rc_context`` de uma
+tarefa (o pacote reproduzível) mudava o estilo da outra no meio (a prévia da área Figuras): a figura refeita saía
+com 1,8 % dos pixels diferentes numa CI carregada (20/11/2026). Reentrante: um desenho dentro de outro (o pacote
+desenha e lê as marcas no mesmo estilo) não se tranca."""
+
+
+@contextmanager
+def no_estilo(rc: Mapping):
+    """O ``rc_context(rc)`` com a :data:`TRAVA_DO_MATPLOTLIB`: use no lugar dele em todo desenho."""
+    with TRAVA_DO_MATPLOTLIB, rc_context(rc):
+        yield
 
 
 def registrar_as_fontes() -> None:
@@ -269,7 +282,7 @@ class PaginaDesenhada:
 
     def pixels(self) -> np.ndarray:
         """A página rasterizada (RGBA, ``altura × largura × 4``) no dpi dela: a prévia e o teste de fidelidade."""
-        with rc_context(self.rc):
+        with no_estilo(self.rc):
             self.mpl.canvas.draw()
             return np.asarray(self.mpl.canvas.buffer_rgba()).copy()
 
@@ -670,7 +683,7 @@ def desenhar(figura: Figura, vistas: Mapping[str, VistaSalva], dados: DadosDaFig
     textos = TEXTOS[figura.idioma]
     planos = [_plano(p, vistas, dados) for p in figura.em_ordem()]
     _compartilhar(planos, figura)
-    with rc_context(rc):
+    with no_estilo(rc):
         dpi_do_leiaute = min(dpi, DPI_DO_LEIAUTE)
         tamanho = (figura.largura_mm / 25.4, figura.altura_mm / 25.4)
         if pixels_inteiros:

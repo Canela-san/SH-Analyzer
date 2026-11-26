@@ -274,6 +274,28 @@ class AdicionarFonte(QUndoCommand):
         self.projeto._retirar_fonte(self.fonte)
 
 
+class TrocarFonte(QUndoCommand):
+    """Troca uma fonte por outra com o mesmo id, no mesmo lugar: a captura ausente localizada (ou reextraída do
+    pacote) volta, e os traços dela voltam a ter dados. Desfazer a deixa ausente de novo."""
+
+    def __init__(self, projeto: Projeto, antiga: FonteDoProjeto, nova: FonteDoProjeto, texto: str = ""):
+        super().__init__(texto or f"Localizar {nova.nome}")
+        if antiga.id != nova.id:
+            raise ValueError("a fonte nova precisa do id da antiga (os traços apontam para ele)")
+        self.projeto, self.antiga, self.nova = projeto, antiga, nova
+
+    def _trocar(self, sai: FonteDoProjeto, entra: FonteDoProjeto) -> None:
+        indice = self.projeto._retirar_fonte(sai)
+        self.projeto._inserir_fonte(entra, indice)
+        self.projeto._fonte_voltou(entra.id)
+
+    def redo(self) -> None:
+        self._trocar(self.antiga, self.nova)
+
+    def undo(self) -> None:
+        self._trocar(self.nova, self.antiga)
+
+
 class RemoverFonte(QUndoCommand):
     """Fecha uma captura: tira os traços dela de todas as vistas e depois a fonte. Um passo só de desfazer, que
     devolve tudo no lugar.

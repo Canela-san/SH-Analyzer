@@ -203,7 +203,10 @@ class ArvoreDoProjeto(QAbstractItemModel):
             if papel == PAPEL_DETALHE:
                 return _meta_da_fonte(fonte)
             if papel == Qt.ItemDataRole.ToolTipRole:
-                return f"{fonte.caminho}\n{_meta_da_fonte(fonte)}"
+                dica = f"{fonte.caminho}\n{_meta_da_fonte(fonte)}"
+                if fonte.esta_ausente:
+                    dica += "\nO arquivo não foi achado: clique com o botão direito e \"Localizar a captura…\""
+                return dica
             return None
         if no.tipo == "canal":
             fonte, numero = no.objeto
@@ -463,6 +466,7 @@ class PainelDoProjeto(QWidget):
     vistaAtivada = Signal(object)
     selecaoMudou = Signal(str, object)
     fecharFontePedido = Signal(object)
+    localizarFontePedido = Signal(object)          # uma captura ausente: "Localizar…"
     notaAtivada = Signal(object)                   # o Path do anotacoes.md: abrir no editor
 
     def __init__(self, acao_abrir: QAction, parent: QWidget | None = None):
@@ -571,6 +575,8 @@ class PainelDoProjeto(QWidget):
             fonte, numero = objeto
             menu.addAction(self.tr("Plotar na vista ativa"), lambda: self.canalAtivado.emit(fonte, numero))
         elif tipo == "fonte":
+            if objeto.esta_ausente:
+                menu.addAction(self.tr("Localizar a captura…"), lambda: self.localizarFontePedido.emit(objeto))
             menu.addAction(self.tr("Fechar a captura"), lambda: self.fecharFontePedido.emit(objeto))
         elif tipo == "nota":
             menu.addAction(self.tr("Abrir no editor"), lambda: self.notaAtivada.emit(objeto))

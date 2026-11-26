@@ -59,9 +59,10 @@ def descrever_fonte(fonte: FonteDoProjeto, pasta: Path) -> FonteSalva:
         return fonte.origem
     caminho = fonte.fonte.caminho.resolve()
     captura = fonte.fonte.captura
+    pacote, membro = fonte.pacote or ("", "")
     return FonteSalva(id=fonte.id, caminho=caminho_relativo(caminho, pasta), caminho_absoluto=caminho.as_posix(),
                       tamanho=caminho.stat().st_size, crc32_amostras=captura.crc32_amostras,
-                      formato=captura.formato, sem_cabecalho=captura.parametros)
+                      formato=captura.formato, sem_cabecalho=captura.parametros, pacote=pacote, membro=membro)
 
 
 def descrever_vista(vista: Vista) -> VistaSalva:
@@ -104,6 +105,8 @@ def montar(salvo: ProjetoSalvo, caminho: Path | None, pasta: Path, *,
             try:
                 fonte = FonteDoProjeto(abrir(local, formato=origem.formato, parametros=origem.sem_cabecalho),
                                        origem.id)
+                if origem.pacote:
+                    fonte.pacote = (origem.pacote, origem.membro)
             except ErroSHAN as e:
                 avisos.append(Aviso("erro", f"{origem.nome}: {e}"))
             else:

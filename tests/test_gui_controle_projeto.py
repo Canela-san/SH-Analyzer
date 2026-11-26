@@ -112,6 +112,31 @@ def test_a_captura_que_sumiu_fica_ausente_sem_perder_os_tracos(janela, tmp_path)
     assert arq.abrir(caminho).fontes[0].caminho_absoluto == original.resolve().as_posix()
 
 
+def test_localizar_a_captura_ausente(janela, tmp_path, tmp_path_factory):
+    """A captura movida para onde o CRC não acha volta pelo "Localizar a captura…": o mesmo id (os traços voltam), um
+    passo de desfazer; uma captura de outras amostras é recusada."""
+    original = captura(tmp_path / "dados", valor=1.0)
+    _, vista, a, _ = montar_projeto(janela, original)
+    caminho = tmp_path / "rede.shproj"
+    assert janela.controle.salvar_como(caminho)
+    movida = tmp_path_factory.mktemp("longe") / "outro-nome.bin"            # fora da busca pelo CRC
+    original.rename(movida)
+    assert janela.controle.abrir(caminho)
+    ausente = janela.projeto.fontes[0]
+    assert ausente.esta_ausente
+    outra = captura(tmp_path / "outra", valor=2.0)                      # outras amostras: o CRC não bate
+    assert janela.controle.localizar_fonte(ausente, outra) is None and janela.projeto.fontes[0] is ausente
+    janela.controle.dialogos = DialogosFalsos(str(movida))               # pelo diálogo
+    nova = janela.controle.localizar_fonte(ausente)
+    assert nova is not None and not nova.esta_ausente and nova.id == ausente.id
+    assert tuple(janela.projeto.fontes) == (nova,) and nova.canal(1).amostras[0] != 0
+    assert [t.receita.fonte for t in janela.projeto.vistas[0].tracos] == [nova.id, nova.id]
+    janela.projeto.pilha.undo()
+    assert janela.projeto.fontes[0].esta_ausente
+    janela.projeto.pilha.redo()
+    assert janela.projeto.fontes[0] is nova
+
+
 def test_perguntas_antes_de_perder_trabalho(janela, tmp_path):
     montar_projeto(janela, captura(tmp_path / "dados"))
     janela.controle.dialogos = d = DialogosFalsos(None)            # cancelar

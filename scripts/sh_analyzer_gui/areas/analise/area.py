@@ -88,6 +88,7 @@ class AreaDeAnalise(QObject):
         painel.vistaAtivada.connect(self.ativar_vista)
         painel.selecaoMudou.connect(self._selecao_mudou)
         painel.fecharFontePedido.connect(self.fechar_fonte)
+        painel.localizarFontePedido.connect(lambda f: self.janela.controle.localizar_fonte(f))
         painel.notaAtivada.connect(self.abrir_no_editor)
         inspetor.do_caderno.abrirPedido.connect(self.abrir_no_editor)
         inspetor.do_traco.alinharPedido.connect(self.alinhar)

@@ -880,7 +880,7 @@ class VistaDeTempo(QWidget):
             self.semRegiao.emit()
 
     def _traco_mudou(self, traco: Traco, campos) -> None:
-        if "faixa" in campos:
+        if campos & {"faixa", "fonte"}:          # outra faixa, ou os dados da fonte (a captura localizada)
             self.reconstruir()
             return
         item, chip, r = self.itens.get(traco), self.chips.get(traco), traco.receita
