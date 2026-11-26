@@ -83,6 +83,8 @@ class DadosDoProjeto:
             if r.desenho is None:
                 continue
             rotulo = {"rms": r.unidade, "dbc": "dBc"}.get(opcoes.escala) or _unidade_em_db(r.espectro, r.unidade)
+            if widget._em_diferenca():                # os outros menos o primeiro: uma razão, sem unidade
+                rotulo = "dB, diferença"
             cor, tracejado = cor_do_traco(r.traco.receita.cor, CLARO)
             series.append(SerieDoEspectro(r.desenho, r.traco.receita.nome, cor, rotulo,
                                           frequencia_log=opcoes.frequencia_log, tracejado=tracejado,

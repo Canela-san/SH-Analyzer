@@ -33,7 +33,7 @@ sincronizada (o Welch de 200 Hz não separa harmônicos de 50 Hz).
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, fields, replace
 
 import numpy as np
@@ -90,6 +90,7 @@ class OpcoesDoEspectro:
     vista_de_tempo: str | None = None          # o id da vista de tempo ligada (None: a primeira do projeto)
     picos: int = 5
     harmonicos: bool = True
+    diferenca: bool = False                    # os outros traços menos o primeiro, em dB (comparar capturas)
 
     def __post_init__(self) -> None:
         for nome, aceitos in (("metodo", METODOS), ("escala", ESCALAS), ("trecho", TRECHOS), ("modo", MODOS)):
@@ -102,7 +103,7 @@ class OpcoesDoEspectro:
             raise OpcoesInvalidas(f"número de picos inválido: {self.picos!r} (de 0 a 50)")
         if self.escala == "rms" and self.modo == "ruido":
             raise OpcoesInvalidas("o valor RMS por bin só existe no modo tom (no modo ruído, cada bin é uma densidade)")
-        for nome in ("frequencia_log", "harmonicos"):
+        for nome in ("frequencia_log", "harmonicos", "diferenca"):
             if not isinstance(getattr(self, nome), bool):
                 raise OpcoesInvalidas(f"{nome} tem de ser verdadeiro ou falso")
         if self.janela not in JANELAS:
@@ -122,7 +123,10 @@ class OpcoesDoEspectro:
                                       n_ciclos=self.ciclos if self.metodo == "fft" else None)
 
     def para_dict(self) -> dict:
-        return {f.name: getattr(self, f.name) for f in fields(self)}
+        dados = {f.name: getattr(self, f.name) for f in fields(self)}
+        if not self.diferenca:                 # só quando ligada: um projeto sem ela abre na v0.9
+            del dados["diferenca"]
+        return dados
 
     @classmethod
     def de_dict(cls, dados) -> OpcoesDoEspectro:
@@ -776,3 +780,28 @@ def espectrograma_do_trecho(trecho: TrechoDoTraco, parametros: api.ParametrosEsp
         return resultado
     d = 20.0 * math.log10(abs(fator))
     return replace(resultado, db=np.maximum(resultado.db + d, PISO_DO_MOTOR_DB[parametros.modo]))
+
+
+def em_diferenca(desenhos: Sequence[Desenho | None]) -> list[Desenho | None]:
+    """Os desenhos menos o primeiro (os níveis em dB): cada um, na grade dele, menos o primeiro interpolado nela; o
+    primeiro vira o zero. Os bins sem os dois (fora da faixa comum, o −∞ do DC) ficam no zero; as marcas somem (os
+    picos da diferença não são tons)."""
+    referencia = next((d for d in desenhos if d is not None), None)
+    if referencia is None:
+        return list(desenhos)
+    f_ref = referencia.f0 + referencia.df * np.arange(len(referencia.niveis))
+    sem_marcas = Marcas((), float("nan"), ())
+    saida = []
+    for d in desenhos:
+        if d is None:
+            saida.append(None)
+            continue
+        if d is referencia:
+            niveis = np.zeros(len(d.niveis))
+        else:
+            f = d.f0 + d.df * np.arange(len(d.niveis))
+            ref = np.interp(f, f_ref, referencia.niveis, left=np.nan, right=np.nan)
+            with np.errstate(invalid="ignore"):
+                niveis = np.nan_to_num(np.asarray(d.niveis, dtype=np.float64) - ref, nan=0.0, posinf=0.0, neginf=0.0)
+        saida.append(Desenho(niveis, construir(niveis)[0], sem_marcas, d.f0, d.df))
+    return saida

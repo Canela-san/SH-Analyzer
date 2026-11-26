@@ -78,7 +78,7 @@ ESPERA_MS = 40
 METODOS, ESCALAS, TRECHOS = ("fft", "welch"), ("db", "rms", "dbc"), ("janela", "cursores", "captura")
 AMOSTRAS_PARA_MOSTRAR_A_TAREFA = 20_000_000
 ESPERA_DA_ENVOLTORIA_MS = 30
-OPCOES_DA_UNIDADE_DO_Y = ("escala", "modo")
+OPCOES_DA_UNIDADE_DO_Y = ("escala", "modo", "diferenca")
 """As opções que mudam o que o eixo Y mede (dB, valor RMS, dBc; amplitude ou densidade): com elas, o Y se ajusta de
 novo. As outras (o método, o trecho, a janela, a resolução, os ciclos) deixam a vista onde o usuário a pôs."""
 
@@ -214,7 +214,13 @@ class VistaDeEspectro(QWidget):
         self.harmonicos.setObjectName("harmonicos")
         self.harmonicos.setToolTip(self.tr("Marca os harmônicos de f₁ (com a FFT sincronizada)"))
         self.harmonicos.clicked.connect(lambda marcado: self._mudar(harmonicos=bool(marcado)))
-        for w in (self.metodo, self.resolucao, self.escala, self.trecho, self.log, self.harmonicos):
+        self.diferenca = QCheckBox(self.tr("Diferença"))
+        self.diferenca.setObjectName("diferenca")
+        self.diferenca.setToolTip(self.tr("Os outros traços menos o primeiro, em dB, bin a bin: ponha na vista de "
+                                          "tempo o mesmo canal de duas capturas (antes e depois de ligar uma carga, "
+                                          "dois dias) e veja o que mudou"))
+        self.diferenca.clicked.connect(lambda marcado: self._mudar(diferenca=bool(marcado)))
+        for w in (self.metodo, self.resolucao, self.escala, self.trecho, self.log, self.harmonicos, self.diferenca):
             linha.addWidget(w)
         self.acao_ajustar = QAction(self.tr("Ajustar tudo"), self)
         self.acao_ajustar.setShortcut(QKeySequence("F"))
@@ -355,6 +361,8 @@ class VistaDeEspectro(QWidget):
         self.resolucao.setEnabled(o.metodo == "welch")
         self.log.setChecked(o.frequencia_log)
         self.harmonicos.setChecked(o.harmonicos)
+        self.diferenca.setChecked(o.diferenca)
+        self.diferenca.setEnabled(o.escala != "rms")
 
     def _vista_mudou(self, _vista, campos) -> None:
         if "opcoes" in campos and isValid(self):
@@ -527,6 +535,11 @@ class VistaDeEspectro(QWidget):
                 aguardando, erro = falhas.get(chave_do_desenho, (False, ""))
                 resultados.append(ResultadoDoTraco(traco, erro=erro, aguardando=aguardando, unidade=unidade,
                                                    trecho=trecho))
+        if opcoes.diferenca and opcoes.escala != "rms" and sum(r.desenho is not None for r in resultados) > 1:
+            # Comparar: os outros menos o primeiro (os espectros e os números da tabela continuam os de cada um).
+            diferencas = esp.em_diferenca([r.desenho for r in resultados])
+            resultados = [ResultadoDoTraco(r.traco, r.espectro, d, r.erro, r.aguardando, r.unidade, r.trecho)
+                          for r, d in zip(resultados, diferencas)]
         self.opcoes_calculadas, self.resultados = opcoes, resultados
         self._desenhar()
         self.calculado.emit()
@@ -565,9 +578,16 @@ class VistaDeEspectro(QWidget):
         escala = self.opcoes.escala
         if escala == "rms":
             return self.tr("valor RMS ({})").format(unidade)
+        if self._em_diferenca():
+            primeiro = next((x for x in self.resultados if x.desenho is not None), None)
+            return self.tr("diferença para {} (dB)").format(primeiro.traco.receita.nome if primeiro else "")
         if escala == "dbc":
             return "dBc"
         return r.espectro.rotulo(unidade) if r is not None else ""
+
+    def _em_diferenca(self) -> bool:
+        o = self.opcoes_calculadas or self.opcoes
+        return o.diferenca and o.escala != "rms" and sum(r.desenho is not None for r in self.resultados) > 1
 
     def _rotular_y(self) -> None:
         """O rótulo do eixo Y: o do traço de referência; com unidades ou escalas diferentes entre os traços, na cor

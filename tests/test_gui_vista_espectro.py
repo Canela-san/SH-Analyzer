@@ -256,3 +256,22 @@ def test_o_duplo_clique_nao_mexe_no_zoom_e_o_f_ajusta(janela, aberto):
     espectro.acao_ajustar.trigger()
     (x0, x1), _ = caixa.viewRange()
     assert x0 < 1_000.0 and x1 > 50_000.0                               # o espectro inteiro
+
+
+def test_a_diferenca_entre_dois_tracos(janela, qtbot, aberto):
+    """Comparar: com dois traços (o canal 1 é a metade do 0), a Diferença mostra o segundo menos o primeiro: −6 dB nos
+    tons; o primeiro vira o zero; o rótulo diz para quem; desfazer volta aos níveis."""
+    fonte, traco, tempo, espectro = aberto
+    janela.area.plotar_canal(fonte, 1, tempo.vista)
+    qtbot.waitUntil(lambda: len([r for r in espectro.resultados if r.desenho is not None]) == 2, timeout=10_000)
+    recalcular(qtbot, espectro, lambda: espectro.diferenca.click(),
+               quando=lambda: espectro.resultados[0].desenho.niveis.max() == 0)
+    primeiro, segundo = espectro.resultados
+    assert np.all(primeiro.desenho.niveis == 0)
+    pico = int(np.argmax(primeiro.espectro.db))                      # o tom de 50 Hz: a metade é −6,02 dB
+    assert segundo.desenho.niveis[pico] == pytest.approx(20 * np.log10(0.5), abs=0.01)
+    assert "diferença para" in espectro._rotulo_y()
+    assert espectro.vista.opcoes.para_dict()["diferenca"] is True
+    janela.projeto.pilha.undo()
+    qtbot.waitUntil(lambda: espectro.resultados[0].desenho.niveis.max() > 0, timeout=10_000)
+    assert "diferenca" not in espectro.vista.opcoes.para_dict()          # desligada, o projeto abre na v0.9
