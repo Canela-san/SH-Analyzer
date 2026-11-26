@@ -250,6 +250,17 @@ de tempo aberta (ou da que a vista aberta segue), cada um no trecho inteiro e co
 Em `.html`, as figuras vão dentro da página (um arquivo só, que se abre no navegador e se imprime); em `.pdf`, sai em
 A4. As contas rodam numa tarefa, como as das vistas, e os números seguem o separador decimal das configurações.
 
+## A análise em lote {#lote}
+
+"Análise em lote…" (no menu do projeto e na paleta) calcula os mesmos índices em cada captura de uma pasta (com as
+subpastas: as sessões de vários dias), uma linha por captura e canal, no canal sem transformações (o valor físico
+com o ganho da captura): a frequência e o RMS médios, o THD e o RMS de 2 a 9 kHz e de 9 a 150 kHz (o P95 das
+janelas da IEC 61000-4-30, sem as marcadas), a maior banda IEC (o P95), os eventos, as janelas marcadas e a
+integridade (o CRC). "Os primeiros 60 s" ou "10 min" de cada captura fazem um lote longo andar rápido. O gráfico
+mostra a **tendência** da coluna escolhida no tempo (o início gravado no cabeçalho), um traço por canal; "Exportar
+CSV…" grava a tabela, e um duplo clique numa linha abre a captura no projeto. Um `.h5` com o `.bin` do mesmo nome ao
+lado fica de fora (é a exportação dele).
+
 ## A aquisição {#aquisicao}
 
 A área **Aquisição** fala com a placa (pelo USB, pela rede local ou pelo simulador): a **Visão geral** (a placa, o

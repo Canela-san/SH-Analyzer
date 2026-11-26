@@ -81,7 +81,7 @@ def gerar(area, caminho: Path | None = None, *, notas: str = ""):
             r.canal, fonte.nome, formatar_si(canal.taxa_hz, "S/s", 5),
             QCoreApplication.translate("Relatorio", "cadeia: {}").format(cadeia) if cadeia
             else QCoreApplication.translate("Relatorio", "sem transformações"))
-        pedidos.append((trecho, traco.nome, unidade, descricao))
+        pedidos.append((trecho, traco.nome, unidade, descricao, canal.nome_grandeza == "tensão"))
         fontes.setdefault(fonte.id, fonte)
     if not pedidos:
         Toast.mostrar(janela, QCoreApplication.translate("Relatorio", "O relatório sai dos traços de uma vista de "
@@ -104,11 +104,11 @@ def gerar(area, caminho: Path | None = None, *, notas: str = ""):
 
     def trabalho(progresso, cancelado):
         secoes = []
-        for k, (trecho, nome, unidade, descricao) in enumerate(pedidos):
+        for k, (trecho, nome, unidade, descricao, tensao) in enumerate(pedidos):
             if cancelado():
                 return None
             secoes.append(rel.calcular_traco(
-                trecho, nome, unidade, descricao, tensao=unidade == "V", numero=_numero_do_evento,
+                trecho, nome, unidade, descricao, tensao=tensao, numero=_numero_do_evento,
                 separador=separador_decimal(),
                 progresso=lambda f, k=k: progresso((k + f) / len(pedidos)), cancelado=cancelado))
         return rel.Relatorio(titulo, fontes_do_relatorio, secoes, aplicativo, datetime.datetime.now(), notas)

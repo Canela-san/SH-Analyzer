@@ -331,6 +331,9 @@ class JanelaPrincipal(QMainWindow):
                    dica=self.tr("Um relatório (HTML ou PDF) dos traços da vista de tempo: o cabeçalho, a integridade, "
                                 "os índices de qualidade, as bandas, os eventos e as figuras"),
                    da_analise=True).triggered.connect(lambda: self.area.gerar_relatorio())
+        self._acao("lote", self.tr("Análise em lote…"), icone="camadas",
+                   dica=self.tr("Os mesmos índices em cada captura de uma pasta: a tabela, a tendência no tempo e o "
+                                "CSV")).triggered.connect(lambda: self.analise_em_lote())
         self._acao("fechar_vista", self.tr("Fechar a vista"), atalho="Ctrl+W", icone="x",
                    da_analise=True).triggered.connect(lambda: self.area.fechar_vista_ativa())
         self._acao("espectro", self.tr("Abrir o espectro da vista"), atalho="Ctrl+E", icone="espectro",
@@ -498,6 +501,7 @@ class JanelaPrincipal(QMainWindow):
         menu.addAction(self.acoes["abrir_projeto"])
         menu.addAction(self.acoes["importar"])
         menu.addAction(self.acoes["relatorio"])
+        menu.addAction(self.acoes["lote"])
         self.menu_recentes = menu.addMenu(self.tr("Abrir recente"))
         self.menu_capturas_recentes = menu.addMenu(self.tr("Capturas recentes"))
         menu.addSeparator()
@@ -873,6 +877,19 @@ class JanelaPrincipal(QMainWindow):
         if caminho is not None:
             dialogo.carregar(Path(caminho))
         self.dialogo_de_importacao = dialogo
+        return dialogo
+
+    def analise_em_lote(self, pasta: Path | None = None):
+        """O diálogo da análise em lote (não bloqueia a janela); o duplo clique numa linha abre a captura aqui.
+        Devolve o diálogo."""
+        from .areas.analise.lote import DialogoDoLote
+
+        dialogo = DialogoDoLote(self.tarefas, self.controle.dialogos, self,
+                                pasta=pasta or preferencias.pasta("dados"))
+        dialogo.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialogo.abrirCaptura.connect(lambda caminho: self._na_analise(self.controle.abrir_capturas([caminho])))
+        dialogo.show()
+        self.dialogo_do_lote = dialogo
         return dialogo
 
     def abrir_o_exemplo(self) -> None:

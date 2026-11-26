@@ -91,7 +91,8 @@ def montar_cabecalho(n_por_canal: int, canais, grandezas, sondas, fs_total: int,
                      codigos_faixa_adc=None, integridade=(0, 0, 0), atrasos_cs=(200, 100, 100),
                      amostras_por_buffer: int = 1048576, versao_firmware: str = "v0.0-teste",
                      taxa_medida_hz: float = 0.0, grade=(20, 0, 2, 2), blocos: int = 1, spi=(0, 0, 0),
-                     sistema: dict | None = None, crc_amostras: int = 0, extensao: dict | None = None) -> bytes:
+                     sistema: dict | None = None, crc_amostras: int = 0, extensao: dict | None = None,
+                     timestamp_unix: int = 1_700_000_000) -> bytes:
     """Cabeçalho de 1024 bytes (v1 a v8) com CRC-32 correto (ou propositalmente errado).
 
     ``codigos_faixa_adc`` (v3+): um código de faixa por canal (padrão: 0 = ±10,24 V em todos).
@@ -108,7 +109,7 @@ def montar_cabecalho(n_por_canal: int, canais, grandezas, sondas, fs_total: int,
     lista = list(canais) + [0xFF] * (8 - k)
     mascara = sum(1 << c for c in canais)
     total = k * n_por_canal if total_amostras is None else total_amostras
-    comuns = [b"SHAN", versao, 1024, 1_700_000_000, int(fs_total), mascara, k, *lista,
+    comuns = [b"SHAN", versao, 1024, int(timestamp_unix), int(fs_total), mascara, k, *lista,
               amostras_por_buffer, 2, 200_000_000, 200_000_000 // int(fs_total), 0, n_por_canal / (fs_total / k), blocos, total,
               titulo.encode("utf-8"), descricao.encode("utf-8")]
     if versao >= 3:
