@@ -22,7 +22,7 @@ from sh_analyzer_gui.dados.exportar_figura import OpcoesDeExportacao
 from sh_analyzer_gui.dados.figura import Estilo, Figura, Painel
 from sh_analyzer_gui.dados.piramide import construir
 from supraharmonicos.api import Cancelado
-from test_gui_desenho_da_figura import CORRENTE, TENSAO, Dados, _vista
+from test_gui_desenho_da_figura import CORRENTE, TENSAO, Dados, DadosMistos, _vista
 from test_gui_exportar_figura import FIGURA, PROVENIENCIA, VISTAS
 
 SEM_O_APLICATIVO = ("import runpy, sys; sys.modules.update(dict.fromkeys(['sh_analyzer_gui', 'supraharmonicos'])); "
@@ -39,11 +39,21 @@ def _espectro(log: bool):
     return f, {"e": _vista("e", TENSAO, tipo="espectro", frequencia_log=log)}, Dados(1000, espectro=desenho)
 
 
+def _espectro_misto():
+    """A tensão (dBV) e a corrente (dBA): a corrente no eixo da direita (o ``twinx``)."""
+    niveis_v, niveis_i = np.full(2001, -80.0), np.full(2001, -140.0)
+    niveis_v[12], niveis_i[30] = 40.0, -20.0
+    desenhos = [Desenho(n, construir(n)[0], Marcas((), float("nan"), ()), 0.0, 5.0) for n in (niveis_v, niveis_i)]
+    f = replace(fig.nova("f", "Misto", "ieee_1", vista="e"), idioma="en")
+    return f, {"e": _vista("e", TENSAO, CORRENTE, tipo="espectro")}, DadosMistos(*desenhos)
+
+
 CASOS = {
     "tempo": lambda: (FIGURA, VISTAS, Dados(200_000)),
     "legenda": lambda: (Figura("f", "Legenda", "ieee_1", paineis=(Painel("a", vista="v"),)),
                         {"v": _vista("v", TENSAO, replace(TENSAO, nome="V_B", cor=2))}, Dados(50_000)),
     "espectro_em_log": lambda: _espectro(True),
+    "espectro_com_duas_grandezas": _espectro_misto,
     "paineis_sem_desenho_e_inter": lambda: (
         Figura("f", "Grade", "ieee_2", colunas=3, estilo=Estilo("Inter"), paineis=(
             Painel("a", 0, 0, vista="b"), Painel("b", 0, 1), Painel("c", 0, 2, vista="v"))),

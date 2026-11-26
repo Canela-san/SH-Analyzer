@@ -452,6 +452,9 @@ class _Plano:
     limites_y: tuple[float, float] | None = None
     rotulo_y: str = ""
     anotacoes: tuple[Anotacao, ...] = ()
+    direita: list[SerieDoEspectro] = field(default_factory=list)   # o espectro: as séries de outra unidade
+    limites_y2: tuple[float, float] | None = None
+    rotulo_y2: str = ""
 
     @property
     def chave_x(self) -> tuple | None:
@@ -552,9 +555,15 @@ def _plano_do_espectro(painel: Painel, vista: VistaSalva, dados: DadosDaFigura) 
     f_min = min(s.desenho.f0 + (s.desenho.df if log else 0.0) for s in series)
     f_max = max(s.desenho.f0 + s.desenho.df * (len(s.desenho.niveis) - 1) for s in series)
     janela = _janela_da_vista(painel, vista, dados) or (f_min, f_max)
-    limites_y = painel.limites_y or _limites_do_espectro(series, janela)
-    return _Plano(painel, "espectro", janela, espectros=series, log=log, limites_y=limites_y,
-                  rotulo_y=series[0].rotulo_y, anotacoes=vista.anotacoes)
+    # Grandezas diferentes (a tensão em dBV e a corrente em dBA) nunca dividem um eixo: a unidade da primeira série
+    # fica à esquerda, e as outras vão para o eixo da direita, com o rótulo delas.
+    esquerda = [s for s in series if s.rotulo_y == series[0].rotulo_y]
+    direita = [s for s in series if s.rotulo_y != series[0].rotulo_y]
+    limites_y = painel.limites_y or _limites_do_espectro(esquerda, janela)
+    rotulo_y2 = " · ".join(dict.fromkeys(s.rotulo_y for s in direita))
+    return _Plano(painel, "espectro", janela, espectros=esquerda, log=log, limites_y=limites_y,
+                  rotulo_y=series[0].rotulo_y, anotacoes=vista.anotacoes, direita=direita,
+                  limites_y2=_limites_do_espectro(direita, janela) if direita else None, rotulo_y2=rotulo_y2)
 
 
 def _limites_do_espectro(series: list[SerieDoEspectro], janela: tuple[float, float]) -> tuple[float, float]:
@@ -958,14 +967,16 @@ def _anotar(eixo, a: Anotacao, fator_x: float, fator_y: float, figura: Figura, *
 def _desenhar_o_espectro(eixo, plano: _Plano, figura: Figura, textos: dict, suavizar: bool) -> list[_Curva]:
     painel = plano.painel
     fator_x, prefixo_x = _prefixo("Hz", max(abs(plano.janela[0]), abs(plano.janela[1])), painel.prefixo_x)
-    ordem = _ordem_dos_marcadores(painel, [s.traco for s in plano.espectros])
+    ordem = _ordem_dos_marcadores(painel, [s.traco for s in plano.espectros + plano.direita])
+    direito = eixo.twinx() if plano.direita else None
     curvas, linhas = [], []
-    for s in plano.espectros:
-        linha = _plotar(eixo, painel, s.traco, s.cor, s.nome, s.tracejado, suavizar, ordem[s.traco])
-        linhas.append(linha)
-        d = s.desenho
-        curvas.append(_Curva(linha, eixo, d.niveis, d.piramide, d.f0, d.df, fator_x,
-                             desenho_log=d if plano.log else None))
+    for alvo, series in ((eixo, plano.espectros), (direito, plano.direita)):
+        for s in series:
+            linha = _plotar(alvo, painel, s.traco, s.cor, s.nome, s.tracejado, suavizar, ordem[s.traco])
+            linhas.append(linha)
+            d = s.desenho
+            curvas.append(_Curva(linha, alvo, d.niveis, d.piramide, d.f0, d.df, fator_x,
+                                 desenho_log=d if plano.log else None))
     if plano.log:
         eixo.set_xscale("log")
     eixo.set_xlim(plano.janela[0] * fator_x, plano.janela[1] * fator_x)
@@ -976,6 +987,11 @@ def _desenhar_o_espectro(eixo, plano: _Plano, figura: Figura, textos: dict, suav
         eixo.xaxis.set_minor_formatter(NullFormatter())
     eixo.set_xlabel(_rotulo(textos["frequencia"], painel.nome_x, f"{prefixo_x}Hz"))
     eixo.set_ylabel(_rotulo(textos["nivel"], painel.nome_y, plano.rotulo_y))
+    if direito is not None:
+        direito.set_ylim(*plano.limites_y2)
+        # Só o y: o x é o mesmo objeto do eixo da esquerda (a escala log e o formatador dele).
+        direito.yaxis.set_major_formatter(_NumerosDoIdioma(figura.separador_decimal))
+        direito.set_ylabel(_rotulo(textos["nivel"], None, plano.rotulo_y2))
     _legenda(eixo, painel, linhas)
     if painel.inset is not None:
         curvas += _inset_do_espectro(eixo, plano, figura, suavizar, fator_x)

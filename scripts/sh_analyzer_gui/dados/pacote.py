@@ -109,6 +109,8 @@ def _descrever_o_eixo(ax, eixos, renderizador) -> tuple[dict, list]:
         "textos": [_texto(t, ax) for t in ax.texts],
         "faixas": [_faixa(r) for r in ax.patches],
         "legenda": _legenda(ax, eixos, renderizador),
+        "fundo": bool(ax.patch.get_visible()),             # o twinx não tem fundo (senão cobriria o da esquerda)
+        "molduras": {nome: bool(m.get_visible()) for nome, m in ax.spines.items()},
     }, linhas
 
 
@@ -174,6 +176,8 @@ def _eixo(eixo, limites, escala: str) -> dict:
         "parametros": {qual: {k: _json_simples(v) for k, v in eixo.get_tick_params(which=qual).items()}
                        for qual in ("major", "minor")},
         "rotulo": eixo.get_label_text(),
+        "lado_do_rotulo": eixo.get_label_position(),      # o eixo da direita (o twinx de outra grandeza): "right"
+        "visivel": bool(eixo.get_visible()),              # o x do twinx é o do eixo da esquerda: escondido
     }
 
 

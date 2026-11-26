@@ -127,6 +127,11 @@ def _montar(ax, grupo: h5py.Group, e: dict) -> None:
             if d["parametros"][qual]:
                 ax.tick_params(axis=k, which=qual, **d["parametros"][qual])
         eixo.set_label_text(d["rotulo"])
+        eixo.set_label_position(d.get("lado_do_rotulo", "bottom" if k == "x" else "left"))
+        eixo.set_visible(d.get("visivel", True))
+    ax.patch.set_visible(e.get("fundo", True))
+    for nome, visivel in e.get("molduras", {}).items():
+        ax.spines[nome].set_visible(visivel)
     ax.set_xlim(e["x"]["limites"])
     ax.set_ylim(e["y"]["limites"])
     for onde, titulo in e["titulos"].items():

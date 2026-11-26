@@ -208,6 +208,42 @@ def test_o_espectro(log):
     assert eixo.get_ylim()[0] < niveis[1:].min() and eixo.get_ylim()[1] > 40.0
 
 
+class DadosMistos(Dados):
+    """A tensão (dBV) e a corrente (dBA) no mesmo espectro."""
+
+    def __init__(self, tensao: Desenho, corrente: Desenho):
+        super().__init__(1000)
+        self._series = (tensao, corrente)
+
+    def espectros(self, vista):
+        log = vista.opcoes.get("frequencia_log", False)
+        return [dd.SerieDoEspectro(self._series[0], "V", AZUL, "dBV", frequencia_log=log, traco="t0"),
+                dd.SerieDoEspectro(self._series[1], "I", LARANJA, "dBA", frequencia_log=log, traco="t1")]
+
+
+@pytest.mark.parametrize("log", [False, True])
+def test_o_espectro_com_grandezas_diferentes_tem_um_eixo_para_cada(log):
+    """A tensão e a corrente nunca dividem o eixo: a corrente vai para o da direita, com o rótulo e a escala dela
+    (antes, o painel inteiro saía em dBV, com a corrente desenhada nele)."""
+    niveis_v = np.full(2001, -80.0)
+    niveis_v[12] = 40.0
+    niveis_i = np.full(2001, -140.0)
+    niveis_i[12] = -20.0
+    desenho = (Desenho(niveis_v, construir(niveis_v)[0], Marcas((), float("nan"), ()), 0.0, 5.0),
+               Desenho(niveis_i, construir(niveis_i)[0], Marcas((), float("nan"), ()), 0.0, 5.0))
+    f = replace(fig.nova("f", "F", "ieee_1", vista="e"), idioma="en")
+    vista = _vista("e", TENSAO, CORRENTE, tipo="espectro", frequencia_log=log)
+    pagina = dd.desenhar(f, {"e": vista}, DadosMistos(*desenho), dpi=100)
+    pagina.pixels()
+    esquerdo, direito = pagina.mpl.axes
+    assert (esquerdo.get_ylabel(), direito.get_ylabel()) == ("Level (dBV)", "Level (dBA)")
+    assert esquerdo.get_ylim()[1] > 40.0 > -80.0 > esquerdo.get_ylim()[0]
+    assert direito.get_ylim()[1] > -20.0 > -140.0 > direito.get_ylim()[0] and direito.get_ylim()[1] < 40.0
+    assert len(esquerdo.get_lines()) == 1 and len(direito.get_lines()) == 1
+    assert esquerdo.get_xscale() == ("log" if log else "linear")
+    assert len(esquerdo.get_legend().get_texts()) == 2
+
+
 def test_os_paineis_sem_desenho():
     f = Figura("f", "F", "ieee_2", colunas=3, paineis=(
         Painel("a", 0, 0, vista="b"), Painel("b", 0, 1), Painel("c", 0, 2, vista="v")))
