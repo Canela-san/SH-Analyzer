@@ -36,6 +36,7 @@ painel também, e o painel recolhido deixa a aba dele na borda da área central,
 from __future__ import annotations
 
 import logging
+import os
 import time
 from functools import partial
 from pathlib import Path
@@ -467,7 +468,10 @@ class JanelaPrincipal(QMainWindow):
             self.paginas.setCurrentWidget(pagina)
 
     def montar_as_areas(self) -> None:
-        """As duas áreas que faltam, uma por vez, com a janela já na tela."""
+        """As duas áreas que faltam, uma por vez, com a janela já na tela (com ``SH_ANALYZER_AREAS_SO_NO_USO``, como
+        nos testes, só no primeiro uso)."""
+        if os.environ.get("SH_ANALYZER_AREAS_SO_NO_USO"):
+            return
         QTimer.singleShot(ESPERA_PARA_MONTAR_MS, lambda: isValid(self) and self.figuras)
         QTimer.singleShot(2 * ESPERA_PARA_MONTAR_MS, lambda: isValid(self) and self.aquisicao)
 

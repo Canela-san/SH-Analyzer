@@ -20,6 +20,9 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 # A interface gráfica sem tela (tests/test_interface.py): na CI não há monitor, e na sua máquina nenhuma janela pisca.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# As Figuras e a Aquisição montam no primeiro uso, e não depois da primeira pintura (janela.montar_as_areas): cada
+# janela de teste montava as duas no meio do teste, e sob a carga da suíte isso segurava o laço de eventos por segundos.
+os.environ.setdefault("SH_ANALYZER_AREAS_SO_NO_USO", "1")
 # A configuração da interface (layout, tema, fontes) numa pasta temporária: nenhum teste lê nem grava a de quem
 # desenvolve. Vale também para os subprocessos (o teste de partida do aplicativo). Os testes que precisam de uma
 # configuração limpa usam a fixture ``config_limpa``.

@@ -115,6 +115,9 @@ def test_os_eventos_e_o_clique_que_mostra_no_tempo(janela, rede_com_afundamento,
     assert widget.tabela.item(k, 0).text() == "Afundamento"
     e = widget.eventos_mostrados()[k]                             # o RMS de ½ ciclo: até um ciclo de atraso
     assert e.inicio_s == pytest.approx(0.2, abs=1 / 60) and e.inicio_s + e.duracao_s == pytest.approx(0.3, abs=1.5 / 60)
+    # Sob carga, a pirâmide da vista de tempo chega depois dos eventos: sem os dados, o clique fica pedido (vale quando
+    # eles chegam) e a janela ainda não mudou.
+    qtbot.waitUntil(lambda: widget.vista_de_tempo().tem_dados, timeout=ESPERA_MS)
     widget.tabela.selectRow(k)                                    # o clique: o evento na vista de tempo
     inicio, fim = widget.vista_de_tempo().janela_de_tempo()
     margem = max(0.5 * e.duracao_s, 0.05)
