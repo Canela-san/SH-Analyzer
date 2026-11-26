@@ -155,9 +155,13 @@ class PedidoDeCaptura:
 
     @property
     def blocos_pedidos(self) -> int:
-        """Os blocos que o ``ler_adc`` vai gravar (0 = até parar)."""
+        """Os blocos que o ``ler_adc`` vai gravar (0 = até parar; -1: a duração ou a taxa não valem, como o campo
+        vazio no meio da edição, que a validação aponta)."""
         if self.duracao_s is not None:
-            return blocos_para_duracao(self.duracao_s, self.taxa_hz)
+            d = self.duracao_s
+            if not (isinstance(d, (int, float)) and math.isfinite(d) and d > 0) or not self.taxa_hz or self.taxa_hz <= 0:
+                return -1
+            return blocos_para_duracao(d, self.taxa_hz)
         return self.blocos
 
     @property
@@ -166,8 +170,8 @@ class PedidoDeCaptura:
 
     @property
     def duracao_real_s(self) -> float | None:
-        """A duração dos blocos inteiros (``None`` até parar)."""
-        if self.ate_parar:
+        """A duração dos blocos inteiros (``None`` até parar ou sem uma duração válida)."""
+        if self.ate_parar or self.blocos_pedidos < 0:
             return None
         return self.blocos_pedidos * AMOSTRAS_POR_BLOCO / self.taxa_real_hz
 
@@ -177,8 +181,8 @@ class PedidoDeCaptura:
 
     @property
     def bytes_do_arquivo(self) -> int | None:
-        """O tamanho do ``.bin`` no fim (``None`` até parar)."""
-        if self.ate_parar:
+        """O tamanho do ``.bin`` no fim (``None`` até parar ou sem uma duração válida)."""
+        if self.ate_parar or self.blocos_pedidos < 0:
             return None
         return BYTES_DO_CABECALHO + self.blocos_pedidos * AMOSTRAS_POR_BLOCO * BYTES_POR_AMOSTRA
 

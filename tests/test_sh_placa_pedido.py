@@ -291,6 +291,16 @@ def test_ate_parar_nao_tem_tamanho_nem_duracao():
     assert p.ate_parar and p.bytes_do_arquivo is None and p.duracao_real_s is None
 
 
+@pytest.mark.parametrize("duracao", [math.nan, math.inf, 0.0, -1.0])
+def test_duracao_invalida_nao_quebra_o_resumo(duracao):
+    """O campo da duração vazio no meio da edição vira NaN: o pedido não tem tamanho nem duração, e a validação
+    aponta o erro (antes, o ``blocos_pedidos`` levantava ValueError e a interface mostrava o erro inesperado)."""
+    p = PedidoDeCaptura(duracao_s=duracao)
+    assert p.blocos_pedidos == -1 and not p.ate_parar
+    assert p.duracao_real_s is None and p.bytes_do_arquivo is None
+    assert any(x.campo == "duracao" for x in pd.validar(p))
+
+
 def test_com_canal_troca_ou_acrescenta():
     p = PedidoDeCaptura().com_canal(Canal(1, "corrente")).com_canal(Canal(0))
     assert p.canais == (Canal(0), Canal(1, "corrente"))
